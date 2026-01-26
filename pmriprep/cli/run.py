@@ -140,6 +140,86 @@ Examples:
         help="Skip DCE (Dynamic Contrast Enhanced) perfusion pipeline.",
     )
 
+    # DSC options
+    dsc_group = parser.add_argument_group(
+        "DSC options",
+        "Options for DSC (Dynamic Susceptibility Contrast) perfusion processing.",
+    )
+    dsc_group.add_argument(
+        "--dsc-deconv-method",
+        "--dsc_deconv_method",
+        dest="dsc_deconv_method",
+        choices=["sSVD", "cSVD", "oSVD", "tikhonov", "vascular", "cpi"],
+        default="sSVD",
+        help="Deconvolution method for DSC (default: sSVD).",
+    )
+    dsc_group.add_argument(
+        "--dsc-bayesian",
+        "--dsc_bayesian",
+        dest="dsc_bayesian",
+        choices=["none", "map", "vi", "mcmc"],
+        default="none",
+        help="Bayesian inference method for DSC (default: none).",
+    )
+    # Mutually exclusive preload flags
+    preload_group = dsc_group.add_mutually_exclusive_group()
+    preload_group.add_argument(
+        "--dsc-preload",
+        "--dsc_preload",
+        dest="dsc_preload",
+        action="store_true",
+        default=None,
+        help="Indicate contrast preload is present.",
+    )
+    preload_group.add_argument(
+        "--dsc-no-preload",
+        "--dsc_no_preload",
+        dest="dsc_preload",
+        action="store_false",
+        help="Indicate no contrast preload is present.",
+    )
+    dsc_group.add_argument(
+        "--dsc-dose",
+        "--dsc_dose",
+        dest="dsc_dose",
+        choices=["half", "full", "double"],
+        default="full",
+        help="Contrast agent dose for DSC (default: full).",
+    )
+    dsc_group.add_argument(
+        "--dsc-gbm-preset",
+        "--dsc_gbm_preset",
+        dest="dsc_gbm_preset",
+        action="store_true",
+        default=False,
+        help="Apply GBM preset: oSVD method, pre_bolus=10, aif_criteria=relaxed, "
+        "n_aif_candidates=5, save_k2_map=true.",
+    )
+    dsc_group.add_argument(
+        "--dsc-aif-method",
+        "--dsc_aif_method",
+        dest="dsc_aif_method",
+        choices=["auto", "population"],
+        default="auto",
+        help="AIF detection method for DSC (default: auto).",
+    )
+    dsc_group.add_argument(
+        "--dsc-absolute-quant",
+        "--dsc_absolute_quant",
+        dest="dsc_absolute_quant",
+        action="store_true",
+        default=False,
+        help="Enable absolute quantification for DSC (requires relaxivity).",
+    )
+    dsc_group.add_argument(
+        "--dsc-use-gpu",
+        "--dsc_use_gpu",
+        dest="dsc_use_gpu",
+        action="store_true",
+        default=False,
+        help="Enable GPU acceleration for DSC processing.",
+    )
+
     return parser
 
 
