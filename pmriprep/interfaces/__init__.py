@@ -8,12 +8,16 @@ from pmriprep.interfaces.anat import (
     ReorientAndCrop,
     TissueSegmentation,
 )
+from pmriprep.interfaces.dsc import (
+    MotionCorrection,
+)
 
 __all__ = [
     "ACPCAlignment",
     "BiasCorrection",
     "BrainExtraction",
     "Coregistration",
+    "MotionCorrection",
     "ReorientAndCrop",
     "TissueSegmentation",
 ]
