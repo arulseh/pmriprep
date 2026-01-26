@@ -22,6 +22,38 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
+dependencies = [
+    # Core dependencies
+    "nipype>=1.8.0",
+    "nibabel>=5.0.0",
+    "numpy>=1.22.0",
+    "scipy>=1.9.0",
+    "nilearn>=0.10.0",
+    # Neuroimaging tools
+    "niworkflows>=1.9.0",
+    "templateflow>=23.0.0",
+    # Config dependencies
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "cupy>=12.0.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+dev = [
+    "pmriprep[test]",
+    "mypy>=1.0.0",
+]
+all = [
+    "pmriprep[gpu,test,dev]",
+]
+
+[project.scripts]
+pmriprep = "pmriprep.cli.run:main"
 
 [tool.mypy]
 python_version = "3.9"
