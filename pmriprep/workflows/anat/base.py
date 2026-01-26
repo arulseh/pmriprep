@@ -5,12 +5,43 @@ following the NiPreps/fMRIPrep workflow design patterns.
 """
 
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from nipype.interfaces import utility as niu  # type: ignore[import-untyped]
 from nipype.pipeline import engine as pe  # type: ignore[import-untyped]
 
 from pmriprep.config.anat import AnatConfig
+from pmriprep.interfaces.anat import (
+    ACPCAlignment,
+    BiasCorrection,
+    BrainExtraction,
+    ReorientAndCrop,
+    TissueSegmentation,
+)
+
+
+def _merge_qc_metrics(
+    brain_qc: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge QC metrics from multiple preprocessing steps.
+
+    Parameters
+    ----------
+    brain_qc : dict
+        QC metrics from brain extraction.
+
+    Returns
+    -------
+    dict
+        Merged QC metrics dictionary.
+    """
+    merged: dict[str, Any] = {}
+
+    # Add brain extraction QC
+    if brain_qc:
+        merged["brain_extraction"] = brain_qc
+
+    return merged
 
 
 def init_anat_preproc_wf(
@@ -82,14 +113,14 @@ def init_anat_preproc_wf(
     -----
     The workflow follows this processing flow:
     1. Reorient and crop (robustfov)
-    2. Bias field correction (N4)
-    3. Optional denoising (ANTs DenoiseImage)
-    4. Coregistration of other modalities to T1w
-    5. Brain extraction (HD-BET or ANTs)
-    6. Tissue segmentation (FSL FAST)
-    7. Optional ACPC alignment (rigid to MNI)
+    2. Bias field correction (N4) with optional denoising
+    3. Brain extraction (HD-BET or ANTs)
+    4. Tissue segmentation (FSL FAST)
+    5. Optional ACPC alignment (rigid to MNI)
 
-    Processing steps are implemented in separate interfaces (see US-020 to US-025).
+    Note: Coregistration of other modalities (T1w postcon, T2w, FLAIR) to T1w
+    is handled separately in the workflow connecting step since it requires
+    the bias-corrected T1w as reference.
     """
     # Use default config if not provided
     if config is None:
@@ -133,21 +164,130 @@ def init_anat_preproc_wf(
         name="outputnode",
     )
 
-    # --- Processing nodes will be added in subsequent user stories ---
-    #
-    # US-020: ReorientAndCrop (fslreorient2std + robustfov)
-    # US-021: BiasCorrection (N4BiasFieldCorrection + optional denoising)
-    # US-022: Coregistration (FLIRT to T1w space)
-    # US-023: BrainExtraction (HD-BET or ANTs)
-    # US-024: TissueSegmentation (FSL FAST)
-    # US-025: ACPCAlignment (FLIRT to MNI)
-    # US-027: Wire all nodes together
+    # -------------------------------------------------------------------
+    # Step 1: Reorient and Crop
+    # Reorient to standard orientation and crop FOV using robustfov
+    # -------------------------------------------------------------------
+    reorient = pe.Node(
+        ReorientAndCrop(),
+        name="reorient",
+    )
 
-    # Placeholder pass-through connection for initial skeleton
-    # This will be replaced with proper node connections in US-027
+    # -------------------------------------------------------------------
+    # Step 2: Bias Correction (with optional denoising)
+    # Apply N4 bias field correction, optionally preceded by denoising
+    # -------------------------------------------------------------------
+    bias_correct = pe.Node(
+        BiasCorrection(
+            denoise=config.denoise,
+        ),
+        name="bias_correct",
+    )
+
+    # -------------------------------------------------------------------
+    # Step 3: Brain Extraction
+    # Extract brain using HD-BET (default) or ANTs
+    # -------------------------------------------------------------------
+    brain_extract = pe.Node(
+        BrainExtraction(
+            tool=config.tool,
+        ),
+        name="brain_extract",
+    )
+
+    # -------------------------------------------------------------------
+    # Step 4: Tissue Segmentation
+    # Segment brain into WM/GM/CSF using FSL FAST
+    # -------------------------------------------------------------------
+    tissue_segment = pe.Node(
+        TissueSegmentation(),
+        name="tissue_segment",
+    )
+
+    # -------------------------------------------------------------------
+    # Step 5: ACPC Alignment (optional)
+    # Rigid alignment to MNI template for standardized orientation
+    # -------------------------------------------------------------------
+    acpc_align = pe.Node(
+        ACPCAlignment(
+            skip_acpc=config.skip_acpc,
+        ),
+        name="acpc_align",
+    )
+
+    # -------------------------------------------------------------------
+    # QC Metrics Merger
+    # Combine QC metrics from all preprocessing steps
+    # -------------------------------------------------------------------
+    merge_qc = pe.Node(
+        niu.Function(
+            input_names=["brain_qc"],
+            output_names=["qc_metrics"],
+            function=_merge_qc_metrics,
+        ),
+        name="merge_qc",
+    )
+
+    # -------------------------------------------------------------------
+    # Wire all nodes together
+    # Flow: reorient → bias_correct → brain_extract → segment → acpc
+    # -------------------------------------------------------------------
+
+    # Input → Reorient
     workflow.connect([
-        (inputnode, outputnode, [
-            ("t1w", "t1w_preproc"),  # Placeholder: pass input to output
+        (inputnode, reorient, [("t1w", "in_file")]),
+    ])
+
+    # Reorient → Bias Correction
+    workflow.connect([
+        (reorient, bias_correct, [("out_file", "in_file")]),
+    ])
+
+    # Bias Correction → Brain Extraction
+    workflow.connect([
+        (bias_correct, brain_extract, [("out_file", "in_file")]),
+    ])
+
+    # Brain Extraction → Tissue Segmentation
+    workflow.connect([
+        (brain_extract, tissue_segment, [("out_file", "in_file")]),
+    ])
+
+    # Brain Extraction → ACPC Alignment (brain-extracted image)
+    workflow.connect([
+        (brain_extract, acpc_align, [("out_file", "in_file")]),
+    ])
+
+    # Brain Extraction QC → QC Merger
+    workflow.connect([
+        (brain_extract, merge_qc, [("qc_metrics", "brain_qc")]),
+    ])
+
+    # -------------------------------------------------------------------
+    # Connect outputs to output node
+    # -------------------------------------------------------------------
+    workflow.connect([
+        # Preprocessed T1w is the brain-extracted image
+        (brain_extract, outputnode, [
+            ("out_file", "t1w_preproc"),
+            ("out_mask", "brain_mask"),
+        ]),
+        # Tissue probability maps from segmentation
+        (tissue_segment, outputnode, [
+            ("wm_probseg", "wm_probseg"),
+            ("gm_probseg", "gm_probseg"),
+            ("csf_probseg", "csf_probseg"),
+        ]),
+        # ACPC alignment outputs
+        (acpc_align, outputnode, [
+            ("out_file", "t1w_acpc"),
+            ("out_matrix", "acpc_xfm"),
+            # ACPC transform is also the T1w to MNI transform (rigid)
+            ("out_matrix", "t1w_to_mni_xfm"),
+        ]),
+        # QC metrics
+        (merge_qc, outputnode, [
+            ("qc_metrics", "qc_metrics"),
         ]),
     ])
 
