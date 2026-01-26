@@ -914,3 +914,207 @@ class BrainExtraction(CommandLine):
         if name == "out_mask":
             return self._gen_maskfilename()
         return None
+
+
+class TissueSegmentationInputSpec(CommandLineInputSpec):
+    """Input specification for TissueSegmentation interface."""
+
+    in_file = File(
+        exists=True,
+        mandatory=True,
+        desc="Input brain-extracted T1w image for segmentation",
+    )
+    out_basename = traits.Str(
+        genfile=True,
+        desc="Output basename for segmentation files",
+    )
+    num_classes = traits.Int(
+        3,
+        usedefault=True,
+        desc="Number of tissue classes to segment (default: 3 for WM/GM/CSF)",
+    )
+    bias_iters = traits.Int(
+        4,
+        usedefault=True,
+        desc="Number of bias field estimation iterations (default: 4)",
+    )
+    segments = traits.Bool(
+        True,
+        usedefault=True,
+        desc="Output binary segmentation images (default: True)",
+    )
+    probability_maps = traits.Bool(
+        True,
+        usedefault=True,
+        desc="Output probability maps for each class (default: True)",
+    )
+
+
+class TissueSegmentationOutputSpec(TraitedSpec):
+    """Output specification for TissueSegmentation interface."""
+
+    wm_probseg = File(exists=True, desc="White matter probability map")
+    gm_probseg = File(exists=True, desc="Gray matter probability map")
+    csf_probseg = File(exists=True, desc="CSF probability map")
+    wm_mask = File(desc="White matter binary mask (if segments=True)")
+    gm_mask = File(desc="Gray matter binary mask (if segments=True)")
+    csf_mask = File(desc="CSF binary mask (if segments=True)")
+    mixeltype = File(desc="Mixel-type map (if available)")
+    partial_volume_map = File(desc="Partial volume estimate for each class")
+
+
+class TissueSegmentation(CommandLine):
+    """FSL FAST tissue segmentation for WM/GM/CSF probability maps.
+
+    This interface wraps FSL FAST (FMRIB's Automated Segmentation Tool) to
+    perform tissue classification on brain-extracted T1w images. FAST uses
+    a hidden Markov random field model with an associated expectation-maximization
+    algorithm to segment the brain into white matter (WM), gray matter (GM),
+    and cerebrospinal fluid (CSF).
+
+    Parameters
+    ----------
+    in_file : str
+        Input brain-extracted T1w image
+    num_classes : int
+        Number of tissue classes (default: 3 for WM/GM/CSF)
+    bias_iters : int
+        Number of bias field estimation iterations (default: 4)
+    segments : bool
+        If True, output binary segmentation images
+    probability_maps : bool
+        If True, output probability maps for each class
+
+    Returns
+    -------
+    wm_probseg : str
+        White matter probability map
+    gm_probseg : str
+        Gray matter probability map
+    csf_probseg : str
+        CSF probability map
+    wm_mask : str
+        White matter binary mask (if segments=True)
+    gm_mask : str
+        Gray matter binary mask (if segments=True)
+    csf_mask : str
+        CSF binary mask (if segments=True)
+
+    Examples
+    --------
+    >>> seg = TissueSegmentation()
+    >>> seg.inputs.in_file = 'T1w_brain.nii.gz'
+    >>> result = seg.run()  # doctest: +SKIP
+
+    Notes
+    -----
+    FSL FAST output naming convention for 3-class segmentation:
+    - *_pve_0.nii.gz: CSF probability (class 0)
+    - *_pve_1.nii.gz: GM probability (class 1)
+    - *_pve_2.nii.gz: WM probability (class 2)
+    - *_seg.nii.gz: Combined hard segmentation (0=background, 1=CSF, 2=GM, 3=WM)
+
+    Note that FSL FAST class numbering differs from BIDS convention:
+    - FAST: 0=CSF, 1=GM, 2=WM
+    - BIDS probseg: label-CSF, label-GM, label-WM
+
+    Requires FSL to be installed and available in PATH.
+
+    See Also
+    --------
+    FSL FAST: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FAST
+    """
+
+    input_spec = TissueSegmentationInputSpec
+    output_spec = TissueSegmentationOutputSpec
+
+    _cmd = "fast"
+
+    def _gen_basename(self) -> str:
+        """Generate output basename if not specified."""
+        if self.inputs.out_basename:
+            return str(self.inputs.out_basename)
+
+        in_file = Path(self.inputs.in_file)
+        # Handle .nii.gz extension
+        if in_file.name.endswith(".nii.gz"):
+            base = in_file.name[:-7]
+        elif in_file.name.endswith(".nii"):
+            base = in_file.stem
+        else:
+            base = in_file.stem
+
+        return str(Path.cwd() / f"{base}_fast")
+
+    @property
+    def cmdline(self) -> str:
+        """Build the FAST command line."""
+        in_file = str(self.inputs.in_file)
+        out_basename = self._gen_basename()
+        num_classes = self.inputs.num_classes
+        bias_iters = self.inputs.bias_iters
+        segments = self.inputs.segments
+        probability_maps = self.inputs.probability_maps
+
+        # Build FAST command
+        cmd_parts = ["fast"]
+
+        # Type of image (1=T1, 2=T2, 3=PD)
+        cmd_parts.append("-t 1")
+
+        # Number of classes
+        cmd_parts.append(f"-n {num_classes}")
+
+        # Bias iterations
+        cmd_parts.append(f"-I {bias_iters}")
+
+        # Segments output
+        if segments:
+            cmd_parts.append("-g")
+
+        # Probability maps output (default on, -p is deprecated)
+        # FAST outputs pve (partial volume estimates) by default
+
+        # Output basename
+        cmd_parts.append(f"-o {out_basename}")
+
+        # Input file
+        cmd_parts.append(in_file)
+
+        return " ".join(cmd_parts)
+
+    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
+        """List expected outputs."""
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
+        out_basename = self._gen_basename()
+
+        # FSL FAST output naming convention for 3-class segmentation:
+        # *_pve_0.nii.gz = CSF probability
+        # *_pve_1.nii.gz = GM probability
+        # *_pve_2.nii.gz = WM probability
+        outputs["csf_probseg"] = f"{out_basename}_pve_0.nii.gz"
+        outputs["gm_probseg"] = f"{out_basename}_pve_1.nii.gz"
+        outputs["wm_probseg"] = f"{out_basename}_pve_2.nii.gz"
+
+        # Hard segmentations (if -g flag was used)
+        if self.inputs.segments:
+            outputs["csf_mask"] = f"{out_basename}_seg_0.nii.gz"
+            outputs["gm_mask"] = f"{out_basename}_seg_1.nii.gz"
+            outputs["wm_mask"] = f"{out_basename}_seg_2.nii.gz"
+
+        # Optional outputs
+        mixel_file = f"{out_basename}_mixeltype.nii.gz"
+        if Path(mixel_file).exists():
+            outputs["mixeltype"] = mixel_file
+
+        pv_file = f"{out_basename}_pveseg.nii.gz"
+        if Path(pv_file).exists():
+            outputs["partial_volume_map"] = pv_file
+
+        return outputs
+
+    def _gen_filename(self, name: str) -> Optional[str]:
+        """Generate filename for outputs."""
+        if name == "out_basename":
+            return self._gen_basename()
+        return None

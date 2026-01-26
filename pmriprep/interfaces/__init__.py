@@ -5,6 +5,7 @@ from pmriprep.interfaces.anat import (
     BrainExtraction,
     Coregistration,
     ReorientAndCrop,
+    TissueSegmentation,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "BrainExtraction",
     "Coregistration",
     "ReorientAndCrop",
+    "TissueSegmentation",
 ]
