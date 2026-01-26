@@ -1118,3 +1118,243 @@ class TissueSegmentation(CommandLine):
         if name == "out_basename":
             return self._gen_basename()
         return None
+
+
+class ACPCAlignmentInputSpec(CommandLineInputSpec):
+    """Input specification for ACPCAlignment interface."""
+
+    in_file = File(
+        exists=True,
+        mandatory=True,
+        desc="Input brain-extracted T1w image to align to ACPC",
+    )
+    out_file = File(
+        genfile=True,
+        desc="Output ACPC-aligned image",
+    )
+    out_matrix = File(
+        genfile=True,
+        desc="Output transformation matrix (FLIRT .mat format)",
+    )
+    mni_template = File(
+        exists=True,
+        desc="MNI T1w template for ACPC alignment target",
+    )
+    skip_acpc = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Skip ACPC alignment (pass through input unchanged)",
+    )
+    dof = traits.Int(
+        6,
+        usedefault=True,
+        desc="Degrees of freedom for registration (default: 6 for rigid)",
+    )
+    cost = traits.Enum(
+        "normmi",
+        "corratio",
+        "normcorr",
+        "mutualinfo",
+        "leastsq",
+        usedefault=True,
+        desc="Cost function for registration (default: normmi)",
+    )
+
+
+class ACPCAlignmentOutputSpec(TraitedSpec):
+    """Output specification for ACPCAlignment interface."""
+
+    out_file = File(exists=True, desc="ACPC-aligned image (or input if skipped)")
+    out_matrix = File(exists=True, desc="Affine transformation matrix (identity if skipped)")
+    was_skipped = traits.Bool(desc="Whether ACPC alignment was skipped")
+
+
+class ACPCAlignment(CommandLine):
+    """ACPC alignment using rigid registration to MNI template.
+
+    This interface wraps FSL FLIRT to perform rigid body (6-DOF) registration
+    of a brain-extracted T1w image to an MNI template for ACPC alignment.
+    This provides a standardized visualization orientation without performing
+    full spatial normalization.
+
+    The alignment uses normalized mutual information (normmi) as the cost
+    function, which is robust to intensity differences between the subject
+    image and the template.
+
+    Parameters
+    ----------
+    in_file : str
+        Input brain-extracted T1w image
+    mni_template : str, optional
+        MNI T1w template (default: uses FSL's MNI152 template)
+    skip_acpc : bool
+        If True, skip alignment and pass through input unchanged
+    dof : int
+        Degrees of freedom (default: 6 for rigid body)
+    cost : str
+        Cost function (default: normmi)
+
+    Examples
+    --------
+    Standard ACPC alignment:
+
+    >>> acpc = ACPCAlignment()
+    >>> acpc.inputs.in_file = 'T1w_brain.nii.gz'
+    >>> result = acpc.run()  # doctest: +SKIP
+
+    Skip ACPC alignment (pass-through mode):
+
+    >>> acpc = ACPCAlignment()
+    >>> acpc.inputs.in_file = 'T1w_brain.nii.gz'
+    >>> acpc.inputs.skip_acpc = True
+    >>> result = acpc.run()  # doctest: +SKIP
+
+    With custom MNI template:
+
+    >>> acpc = ACPCAlignment()
+    >>> acpc.inputs.in_file = 'T1w_brain.nii.gz'
+    >>> acpc.inputs.mni_template = '/path/to/MNI152_T1_1mm_brain.nii.gz'
+    >>> result = acpc.run()  # doctest: +SKIP
+
+    Notes
+    -----
+    ACPC alignment provides:
+    - Standardized orientation for visualization
+    - Consistent coordinate system across subjects
+    - Does NOT warp the brain (rigid body only)
+
+    The transformation is 6-DOF (translation + rotation), preserving the
+    native brain shape while aligning to the AC-PC line as approximated
+    by the MNI template orientation.
+
+    When skip_acpc=True, the interface copies the input file to the output
+    location and creates an identity transformation matrix, allowing
+    downstream workflows to proceed without modification.
+
+    Requires FSL to be installed and available in PATH.
+
+    See Also
+    --------
+    FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
+    """
+
+    input_spec = ACPCAlignmentInputSpec
+    output_spec = ACPCAlignmentOutputSpec
+
+    _cmd = "bash -c"
+
+    # Default MNI template path (FSL installation)
+    _DEFAULT_MNI_TEMPLATE = (
+        "/usr/local/fsl/data/standard/MNI152_T1_1mm_brain.nii.gz"
+    )
+
+    def _gen_outfilename(self) -> str:
+        """Generate output filename if not specified."""
+        if self.inputs.out_file:
+            return str(self.inputs.out_file)
+
+        in_file = Path(self.inputs.in_file)
+        if in_file.name.endswith(".nii.gz"):
+            base = in_file.name[:-7]
+            ext = ".nii.gz"
+        elif in_file.name.endswith(".nii"):
+            base = in_file.stem
+            ext = ".nii"
+        else:
+            base = in_file.stem
+            ext = in_file.suffix
+
+        return str(Path.cwd() / f"{base}_acpc{ext}")
+
+    def _gen_matfilename(self) -> str:
+        """Generate output matrix filename if not specified."""
+        if self.inputs.out_matrix:
+            return str(self.inputs.out_matrix)
+
+        out_file = Path(self._gen_outfilename())
+        if out_file.name.endswith(".nii.gz"):
+            base = out_file.name[:-7]
+        elif out_file.name.endswith(".nii"):
+            base = out_file.stem
+        else:
+            base = out_file.stem
+
+        return str(out_file.parent / f"{base}.mat")
+
+    def _get_mni_template(self) -> str:
+        """Get MNI template path."""
+        mni_template = getattr(self.inputs, "mni_template", None)
+        if mni_template and Path(mni_template).exists():
+            return str(mni_template)
+
+        # Try FSL standard locations
+        import os
+
+        fsldir = os.environ.get("FSLDIR", "/usr/local/fsl")
+        fsl_template = Path(fsldir) / "data/standard/MNI152_T1_1mm_brain.nii.gz"
+        if fsl_template.exists():
+            return str(fsl_template)
+
+        # Try common alternate location
+        alt_template = Path("/usr/share/fsl/data/standard/MNI152_T1_1mm_brain.nii.gz")
+        if alt_template.exists():
+            return str(alt_template)
+
+        # Use default path (may fail at runtime if not present)
+        return self._DEFAULT_MNI_TEMPLATE
+
+    def _format_arg(
+        self, name: str, trait_spec: Any, value: Any
+    ) -> str:
+        """Format command line arguments."""
+        if name == "in_file":
+            in_file = str(value)
+            out_file = self._gen_outfilename()
+            out_matrix = self._gen_matfilename()
+            skip_acpc = self.inputs.skip_acpc
+            dof = self.inputs.dof
+            cost = self.inputs.cost
+
+            cmd_parts = []
+
+            if skip_acpc:
+                # Skip mode: copy input to output and create identity matrix
+                # Copy the input file to output location
+                cmd_parts.append(f"cp {in_file} {out_file}")
+
+                # Create identity transformation matrix (4x4)
+                # FSL format is plain text with 4x4 matrix
+                identity_matrix = "1 0 0 0\\n0 1 0 0\\n0 0 1 0\\n0 0 0 1"
+                cmd_parts.append(f"echo -e \"{identity_matrix}\" > {out_matrix}")
+            else:
+                # ACPC alignment using FLIRT
+                mni_template = self._get_mni_template()
+
+                flirt_cmd = (
+                    f"flirt -in {in_file} -ref {mni_template} "
+                    f"-out {out_file} -omat {out_matrix} "
+                    f"-dof {dof} -cost {cost}"
+                )
+                cmd_parts.append(flirt_cmd)
+
+            cmd = "'" + " && ".join(cmd_parts) + "'"
+            return cmd
+
+        result: str = super()._format_arg(name, trait_spec, value)
+        return result
+
+    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
+        """List expected outputs."""
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
+        outputs["out_file"] = self._gen_outfilename()
+        outputs["out_matrix"] = self._gen_matfilename()
+        outputs["was_skipped"] = self.inputs.skip_acpc
+        return outputs
+
+    def _gen_filename(self, name: str) -> Optional[str]:
+        """Generate filename for outputs."""
+        if name == "out_file":
+            return self._gen_outfilename()
+        if name == "out_matrix":
+            return self._gen_matfilename()
+        return None
