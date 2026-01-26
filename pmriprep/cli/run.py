@@ -282,6 +282,34 @@ Examples:
         help="Enable GPU acceleration for DCE processing.",
     )
 
+    # Anatomical options
+    anat_group = parser.add_argument_group(
+        "Anatomical options",
+        "Options for anatomical preprocessing.",
+    )
+    anat_group.add_argument(
+        "--brain-extraction-tool",
+        "--brain_extraction_tool",
+        dest="brain_extraction_tool",
+        choices=["hdbet", "ants"],
+        default="hdbet",
+        help="Tool for brain extraction (default: hdbet).",
+    )
+    anat_group.add_argument(
+        "--denoise",
+        action="store_true",
+        default=False,
+        help="Apply ANTs denoising to anatomical images.",
+    )
+    anat_group.add_argument(
+        "--skip-acpc",
+        "--skip_acpc",
+        dest="skip_acpc",
+        action="store_true",
+        default=False,
+        help="Skip ACPC alignment to MNI template.",
+    )
+
     return parser
 
 
