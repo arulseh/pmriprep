@@ -220,6 +220,68 @@ Examples:
         help="Enable GPU acceleration for DSC processing.",
     )
 
+    # DCE options
+    dce_group = parser.add_argument_group(
+        "DCE options",
+        "Options for DCE (Dynamic Contrast Enhanced) perfusion processing.",
+    )
+    dce_group.add_argument(
+        "--dce-model",
+        "--dce_model",
+        dest="dce_model",
+        choices=["auto", "tofts", "extended_tofts", "patlak", "2cxm"],
+        default="auto",
+        help="Pharmacokinetic model for DCE (default: auto).",
+    )
+    dce_group.add_argument(
+        "--dce-bayesian",
+        "--dce_bayesian",
+        dest="dce_bayesian",
+        choices=["none", "map", "mcmc"],
+        default="none",
+        help="Bayesian inference method for DCE (default: none).",
+    )
+    dce_group.add_argument(
+        "--dce-aif-method",
+        "--dce_aif_method",
+        dest="dce_aif_method",
+        choices=["auto", "population"],
+        default="auto",
+        help="AIF detection method for DCE (default: auto).",
+    )
+    dce_group.add_argument(
+        "--dce-scale-aif",
+        "--dce_scale_aif",
+        dest="dce_scale_aif",
+        action="store_true",
+        default=False,
+        help="Scale AIF amplitude to population reference.",
+    )
+    dce_group.add_argument(
+        "--dce-no-b1",
+        "--dce_no_b1",
+        dest="dce_no_b1",
+        action="store_true",
+        default=False,
+        help="Skip B1+ mapping (use nominal flip angles).",
+    )
+    dce_group.add_argument(
+        "--dce-no-t1",
+        "--dce_no_t1",
+        dest="dce_no_t1",
+        action="store_true",
+        default=False,
+        help="Skip T1 mapping (use default T1=1200ms).",
+    )
+    dce_group.add_argument(
+        "--dce-use-gpu",
+        "--dce_use_gpu",
+        dest="dce_use_gpu",
+        action="store_true",
+        default=False,
+        help="Enable GPU acceleration for DCE processing.",
+    )
+
     return parser
 
 
