@@ -102,6 +102,44 @@ Examples:
         help="Path to a YAML or JSON configuration file for advanced options.",
     )
 
+    # Pipeline component skip flags
+    skip_group = parser.add_argument_group(
+        "Pipeline components",
+        "Flags to skip specific pipeline components.",
+    )
+    skip_group.add_argument(
+        "--skip-anat",
+        "--skip_anat",
+        dest="skip_anat",
+        action="store_true",
+        default=False,
+        help="Skip anatomical preprocessing pipeline.",
+    )
+    skip_group.add_argument(
+        "--skip-tumor-seg",
+        "--skip_tumor_seg",
+        dest="skip_tumor_seg",
+        action="store_true",
+        default=False,
+        help="Skip HD-GLIO tumor segmentation.",
+    )
+    skip_group.add_argument(
+        "--skip-dsc",
+        "--skip_dsc",
+        dest="skip_dsc",
+        action="store_true",
+        default=False,
+        help="Skip DSC (Dynamic Susceptibility Contrast) perfusion pipeline.",
+    )
+    skip_group.add_argument(
+        "--skip-dce",
+        "--skip_dce",
+        dest="skip_dce",
+        action="store_true",
+        default=False,
+        help="Skip DCE (Dynamic Contrast Enhanced) perfusion pipeline.",
+    )
+
     return parser
 
 
