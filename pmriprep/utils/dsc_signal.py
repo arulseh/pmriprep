@@ -211,3 +211,179 @@ def find_bolus_arrival(
             return i
 
     raise ValueError("No bolus arrival detected in signal")
+
+
+def compute_psr(
+    signal: npt.NDArray[np.floating],
+    baseline_frames: int = 10,
+    tail_frames: int = 10,
+) -> Union[float, npt.NDArray[np.floating]]:
+    """Compute percent signal recovery (PSR).
+
+    PSR quantifies how much signal recovers after the bolus passage,
+    indicating blood-brain barrier integrity.
+
+    Formula:
+        PSR = 100 × (S_tail - S_min) / (S_baseline - S_min)
+
+    Clinical interpretation:
+        - PSR < 70%: Blood-brain barrier disruption (leakage)
+        - PSR 70-90%: Partial BBB disruption
+        - PSR > 90%: Intact blood-brain barrier
+
+    Args:
+        signal: DSC signal array. Can be:
+            - 1D (time,): Single voxel time course
+            - 4D (x, y, z, time): Full 4D volume
+        baseline_frames: Number of pre-bolus frames for S_baseline.
+            Default is 10.
+        tail_frames: Number of post-bolus frames for S_tail.
+            Default is 10 (last 10 frames).
+
+    Returns:
+        PSR value(s) as percentage (0-100+ range).
+        - Scalar float for 1D input
+        - 3D array (x, y, z) for 4D input
+
+    Raises:
+        ValueError: If signal has invalid dimensions.
+        ValueError: If baseline_frames or tail_frames exceeds signal length.
+
+    Notes:
+        - PSR can exceed 100% in cases where the signal overshoots baseline
+          after bolus passage (rare, usually indicates motion artifact).
+        - PSR can be negative if signal never recovers (very high leakage
+          or signal artifact).
+        - Epsilon is added to denominator to prevent division by zero.
+    """
+    # Validate input dimensions
+    if signal.ndim not in (1, 4):
+        raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
+
+    # Get number of timepoints
+    n_timepoints = signal.shape[-1] if signal.ndim == 4 else signal.shape[0]
+
+    if baseline_frames >= n_timepoints:
+        raise ValueError(
+            f"baseline_frames ({baseline_frames}) must be less than "
+            f"number of timepoints ({n_timepoints})"
+        )
+
+    if tail_frames >= n_timepoints:
+        raise ValueError(
+            f"tail_frames ({tail_frames}) must be less than "
+            f"number of timepoints ({n_timepoints})"
+        )
+
+    if baseline_frames < 1 or tail_frames < 1:
+        raise ValueError("baseline_frames and tail_frames must be at least 1")
+
+    # Compute signal components
+    if signal.ndim == 1:
+        # 1D time series
+        s_baseline = float(np.mean(signal[:baseline_frames]))
+        s_min = float(np.min(signal))
+        s_tail = float(np.mean(signal[-tail_frames:]))
+    else:
+        # 4D volume (x, y, z, time)
+        s_baseline = np.mean(signal[..., :baseline_frames], axis=-1)
+        s_min = np.min(signal, axis=-1)
+        s_tail = np.mean(signal[..., -tail_frames:], axis=-1)
+
+    # Compute PSR with epsilon guard in denominator
+    denominator = s_baseline - s_min
+    # Add small epsilon to prevent division by zero
+    denominator_safe = np.maximum(np.abs(denominator), EPSILON_SIGNAL)
+    # Preserve sign of denominator
+    denominator_safe = np.where(
+        denominator >= 0, denominator_safe, -denominator_safe
+    )
+
+    psr = 100.0 * (s_tail - s_min) / denominator_safe
+
+    # Return appropriate type
+    if signal.ndim == 1:
+        return float(psr)
+    else:
+        return psr
+
+
+def compute_peak_height(
+    signal: npt.NDArray[np.floating],
+    baseline_frames: int = 10,
+) -> Union[float, npt.NDArray[np.floating]]:
+    """Compute peak height (PH) of DSC signal.
+
+    PH quantifies the maximum signal drop during bolus passage,
+    reflecting contrast agent concentration and vascular density.
+
+    Formula:
+        PH = 100 × (S_baseline - S_min) / S_baseline
+
+    Clinical interpretation:
+        - Higher PH indicates greater signal drop (more contrast effect)
+        - PH correlates with cerebral blood volume (CBV)
+        - Typical values: 20-60% in normal tissue, may be higher in tumors
+
+    Args:
+        signal: DSC signal array. Can be:
+            - 1D (time,): Single voxel time course
+            - 4D (x, y, z, time): Full 4D volume
+        baseline_frames: Number of pre-bolus frames for S_baseline.
+            Default is 10.
+
+    Returns:
+        Peak height value(s) as percentage (0-100 range typically).
+        - Scalar float for 1D input
+        - 3D array (x, y, z) for 4D input
+
+    Raises:
+        ValueError: If signal has invalid dimensions.
+        ValueError: If baseline_frames exceeds signal length.
+
+    Notes:
+        - PH is always positive when computed from valid DSC signal
+          (signal drops during bolus passage).
+        - PH can exceed 100% if signal drops below zero (artifact).
+        - Epsilon is added to baseline to prevent division by zero.
+    """
+    # Validate input dimensions
+    if signal.ndim not in (1, 4):
+        raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
+
+    # Get number of timepoints
+    n_timepoints = signal.shape[-1] if signal.ndim == 4 else signal.shape[0]
+
+    if baseline_frames >= n_timepoints:
+        raise ValueError(
+            f"baseline_frames ({baseline_frames}) must be less than "
+            f"number of timepoints ({n_timepoints})"
+        )
+
+    if baseline_frames < 1:
+        raise ValueError("baseline_frames must be at least 1")
+
+    # Compute signal components
+    if signal.ndim == 1:
+        # 1D time series
+        s_baseline = float(np.mean(signal[:baseline_frames]))
+        s_min = float(np.min(signal))
+    else:
+        # 4D volume (x, y, z, time)
+        s_baseline = np.mean(signal[..., :baseline_frames], axis=-1)
+        s_min = np.min(signal, axis=-1)
+
+    # Compute PH with epsilon guard in denominator
+    s_baseline_safe = np.maximum(np.abs(s_baseline), EPSILON_SIGNAL)
+    # Preserve sign of baseline
+    s_baseline_safe = np.where(
+        s_baseline >= 0, s_baseline_safe, -s_baseline_safe
+    )
+
+    ph = 100.0 * (s_baseline - s_min) / s_baseline_safe
+
+    # Return appropriate type
+    if signal.ndim == 1:
+        return float(ph)
+    else:
+        return ph
