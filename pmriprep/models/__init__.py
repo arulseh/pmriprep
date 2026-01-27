@@ -28,7 +28,14 @@ from pmriprep.models.dsc import (
     select_n_control_points,
 )
 
+from pmriprep.models.dce import (
+    FitResult,
+    ModelParameter,
+    PKModel,
+)
+
 __all__ = [
+    # DSC models
     "BayesianDSCFitter",
     "BayesianPrior",
     "CPIModel",
@@ -45,4 +52,8 @@ __all__ = [
     "get_optimal_batch_size",
     "select_n_by_bic",
     "select_n_control_points",
+    # DCE models
+    "FitResult",
+    "ModelParameter",
+    "PKModel",
 ]
