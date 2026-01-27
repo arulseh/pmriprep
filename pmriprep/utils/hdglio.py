@@ -10,10 +10,13 @@ extract_tumor_masks
     Extract binary masks for enhancing, non-enhancing, and whole tumor
 dilate_mask
     Dilate a binary mask using a spherical kernel with anisotropy support
+create_nawm_roi
+    Create contralateral normal-appearing white matter ROI for CBV normalization
 """
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
+from typing import Any, Literal, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -458,4 +461,411 @@ def get_mask_statistics(
         "bounding_box": bounding_box,  # type: ignore[dict-item]
         "centroid_voxels": centroid_voxels,  # type: ignore[dict-item]
         "voxel_sizes": tuple(float(z) for z in zooms),  # type: ignore[dict-item]
+    }
+
+
+@dataclass
+class TumorAnalysis:
+    """Results from analyzing tumor anatomical location.
+
+    Attributes
+    ----------
+    is_supratentorial : bool
+        True if tumor is supratentorial (above tentorium)
+    laterality : Literal["left", "right", "bilateral"]
+        Hemisphere containing majority of tumor mass
+    centroid_voxels : tuple[float, float, float]
+        Center of mass in voxel coordinates
+    volume_ml : float
+        Tumor volume in milliliters
+    """
+
+    is_supratentorial: bool
+    laterality: Literal["left", "right", "bilateral"]
+    centroid_voxels: tuple[float, float, float]
+    volume_ml: float
+
+
+def _analyze_tumor_anatomy(
+    tumor_mask: npt.NDArray[np.bool_],
+    affine: npt.NDArray[np.float64],
+    voxel_sizes: tuple[float, float, float],
+) -> TumorAnalysis:
+    """Analyze tumor location to determine anatomy for NAWM selection.
+
+    Determines whether tumor is supratentorial or infratentorial based on
+    centroid position, and which hemisphere contains the majority of tumor
+    mass for contralateral NAWM selection.
+
+    Parameters
+    ----------
+    tumor_mask : ndarray of bool
+        3D binary mask of whole tumor
+    affine : ndarray
+        4x4 affine transformation matrix
+    voxel_sizes : tuple of float
+        Voxel dimensions (x, y, z) in millimeters
+
+    Returns
+    -------
+    TumorAnalysis
+        Analysis results including location and laterality
+
+    Notes
+    -----
+    Laterality is determined by comparing tumor volume in each hemisphere.
+    The midline is assumed to be at x=0 in RAS coordinates. If tumor spans
+    both hemispheres relatively equally (<60% in either), it's marked as
+    bilateral.
+
+    Supratentorial determination uses z coordinate in MNI space, with
+    z > -20mm being considered supratentorial (above approximate tentorium).
+    """
+    from scipy import ndimage  # type: ignore[import-untyped]
+
+    # Get centroid in voxel coordinates
+    centroid_voxels = ndimage.center_of_mass(tumor_mask)
+
+    # Convert centroid to physical (RAS) coordinates
+    # Affine transforms from voxel to physical space
+    centroid_vox_homog = np.array([*centroid_voxels, 1.0])
+    centroid_ras = affine @ centroid_vox_homog
+    centroid_x, centroid_y, centroid_z = centroid_ras[:3]
+
+    # Determine supratentorial vs infratentorial
+    # Tentorium is approximately at z = -20mm in MNI space
+    is_supratentorial = centroid_z > -20.0
+
+    # Calculate volume
+    voxel_volume_mm3 = float(np.prod(voxel_sizes))
+    n_voxels = int(np.sum(tumor_mask))
+    volume_ml = n_voxels * voxel_volume_mm3 / 1000.0
+
+    # Determine laterality by comparing volume in each hemisphere
+    # Create coordinate grid for x position (RAS)
+    shape = tumor_mask.shape
+    i_coords = np.arange(shape[0])
+    j_coords = np.arange(shape[1])
+    k_coords = np.arange(shape[2])
+    ii, jj, kk = np.meshgrid(i_coords, j_coords, k_coords, indexing="ij")
+
+    # Transform to physical x coordinate
+    # x_physical = affine[0,0]*i + affine[0,1]*j + affine[0,2]*k + affine[0,3]
+    x_physical = (
+        affine[0, 0] * ii + affine[0, 1] * jj + affine[0, 2] * kk + affine[0, 3]
+    )
+
+    # Count tumor voxels in each hemisphere (x < 0 is right, x > 0 is left in RAS)
+    left_voxels = int(np.sum(tumor_mask & (x_physical > 0)))
+    right_voxels = int(np.sum(tumor_mask & (x_physical < 0)))
+    total_voxels = left_voxels + right_voxels
+
+    if total_voxels == 0:
+        laterality: Literal["left", "right", "bilateral"] = "bilateral"
+    else:
+        left_fraction = left_voxels / total_voxels
+        right_fraction = right_voxels / total_voxels
+
+        # If >60% in one hemisphere, assign laterality
+        if left_fraction > 0.6:
+            laterality = "left"
+        elif right_fraction > 0.6:
+            laterality = "right"
+        else:
+            laterality = "bilateral"
+
+    return TumorAnalysis(
+        is_supratentorial=is_supratentorial,
+        laterality=laterality,
+        centroid_voxels=tuple(float(c) for c in centroid_voxels),  # type: ignore[arg-type]
+        volume_ml=volume_ml,
+    )
+
+
+def _create_hemisphere_mask(
+    shape: tuple[int, int, int],
+    affine: npt.NDArray[np.float64],
+    hemisphere: Literal["left", "right"],
+) -> npt.NDArray[np.bool_]:
+    """Create a mask for one hemisphere based on RAS x coordinate.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        Image dimensions (i, j, k)
+    affine : ndarray
+        4x4 affine transformation matrix
+    hemisphere : {"left", "right"}
+        Which hemisphere to select (left = x > 0, right = x < 0 in RAS)
+
+    Returns
+    -------
+    ndarray of bool
+        Binary mask for the selected hemisphere
+    """
+    # Create coordinate grid
+    i_coords = np.arange(shape[0])
+    j_coords = np.arange(shape[1])
+    k_coords = np.arange(shape[2])
+    ii, jj, kk = np.meshgrid(i_coords, j_coords, k_coords, indexing="ij")
+
+    # Transform to physical x coordinate
+    x_physical = (
+        affine[0, 0] * ii + affine[0, 1] * jj + affine[0, 2] * kk + affine[0, 3]
+    )
+
+    # In RAS: left hemisphere has x > 0, right hemisphere has x < 0
+    if hemisphere == "left":
+        mask: npt.NDArray[np.bool_] = x_physical > 0
+    else:
+        mask = x_physical < 0
+
+    return mask
+
+
+def create_nawm_roi(
+    tumor_mask_file: Union[str, Path],
+    wm_probseg_file: Union[str, Path],
+    output_file: Union[str, Path, None] = None,
+    wm_threshold: float = 0.9,
+    tumor_margin_mm: float = 20.0,
+    nawm_erosion: int = 2,
+    nawm_min_voxels: int = 500,
+) -> dict[str, Any]:
+    """Create contralateral normal-appearing white matter ROI for CBV normalization.
+
+    This function creates an NAWM (Normal Appearing White Matter) ROI for
+    use in normalizing DSC CBV maps. The NAWM is selected from the hemisphere
+    contralateral to the tumor to avoid contamination by peritumoral edema
+    or infiltrating tumor cells.
+
+    Parameters
+    ----------
+    tumor_mask_file : str or Path
+        Path to whole tumor binary mask NIfTI file (from HD-GLIO)
+    wm_probseg_file : str or Path
+        Path to white matter probability segmentation from FSL FAST
+    output_file : str or Path, optional
+        Path to output NAWM mask file. If None, generates filename by
+        appending "_nawm" to tumor mask filename.
+    wm_threshold : float, default=0.9
+        Minimum white matter probability for inclusion in NAWM ROI
+    tumor_margin_mm : float, default=20.0
+        Exclusion margin (mm) around tumor to avoid peritumoral effects
+    nawm_erosion : int, default=2
+        Number of erosion iterations to clean up partial volume effects
+        (from HDGLIOConfig.nawm_erosion)
+    nawm_min_voxels : int, default=500
+        Minimum required voxels in final NAWM ROI
+        (from HDGLIOConfig.nawm_min_voxels)
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - "output_file": Path to output NAWM mask file
+        - "analysis": Dictionary with analysis details:
+            - "tumor_laterality": "left", "right", or "bilateral"
+            - "tumor_supratentorial": bool
+            - "selected_hemisphere": "left" or "right"
+            - "n_voxels": Final voxel count in NAWM ROI
+            - "volume_ml": NAWM ROI volume in milliliters
+            - "fallback_used": bool indicating if adaptive fallback was needed
+
+    Raises
+    ------
+    ValueError
+        If no suitable NAWM region can be found even with adaptive fallback
+
+    Examples
+    --------
+    >>> result = create_nawm_roi(
+    ...     "tumor_mask.nii.gz",
+    ...     "wm_probseg.nii.gz",
+    ...     nawm_erosion=2,
+    ...     nawm_min_voxels=500
+    ... )
+    >>> print(f"NAWM voxels: {result['analysis']['n_voxels']}")
+    NAWM voxels: 2847
+
+    Notes
+    -----
+    The NAWM selection algorithm:
+
+    1. Analyze tumor anatomy to determine laterality (left/right/bilateral)
+    2. Select contralateral hemisphere:
+       - For unilateral tumors: opposite hemisphere
+       - For bilateral tumors: select hemisphere with less tumor volume
+    3. Apply WM restriction: probseg >= wm_threshold (default 0.9)
+    4. Exclude voxels within tumor_margin_mm (default 20mm) of tumor
+    5. Apply erosion (nawm_erosion iterations) to clean up partial volume
+    6. If insufficient voxels, apply adaptive fallback:
+       - Reduce WM threshold to 0.7
+       - Reduce erosion to 1 iteration
+       - Reduce tumor margin to 15mm
+       - If still insufficient, include ipsilateral hemisphere with
+         increased tumor margin (30mm)
+
+    References
+    ----------
+    Prah MA, Schmainda KM. rCBV estimation in tumors: comparison of methods
+    for normalization to normal appearing white matter. J Magn Reson Imaging.
+    2024.
+    """
+    import nibabel as nib  # type: ignore[import-untyped]
+    from scipy import ndimage  # type: ignore[import-untyped]
+
+    # Load tumor mask
+    tumor_path = Path(tumor_mask_file)
+    tumor_img = nib.load(tumor_path)
+    tumor_data = tumor_img.get_fdata()  # type: ignore[attr-defined]
+    tumor_mask = tumor_data > 0.5
+    affine: npt.NDArray[np.float64] = tumor_img.affine  # type: ignore[attr-defined]
+    header = tumor_img.header  # type: ignore[attr-defined]
+
+    # Load WM probability map
+    wm_img = nib.load(wm_probseg_file)
+    wm_data = wm_img.get_fdata()  # type: ignore[attr-defined]
+
+    # Verify dimensions match
+    if tumor_mask.shape != wm_data.shape:
+        raise ValueError(
+            f"Dimension mismatch: tumor mask {tumor_mask.shape} vs "
+            f"WM probseg {wm_data.shape}"
+        )
+
+    # Get voxel sizes
+    zooms = header.get_zooms()[:3]  # type: ignore[attr-defined]
+    voxel_sizes = tuple(float(z) for z in zooms)
+
+    # Analyze tumor anatomy
+    analysis = _analyze_tumor_anatomy(tumor_mask, affine, voxel_sizes)  # type: ignore[arg-type]
+
+    # Determine which hemisphere to use for NAWM
+    # For unilateral tumors: select contralateral hemisphere
+    # For bilateral tumors: select hemisphere with less tumor volume
+    if analysis.laterality == "left":
+        selected_hemisphere: Literal["left", "right"] = "right"
+    elif analysis.laterality == "right":
+        selected_hemisphere = "left"
+    else:
+        # Bilateral: count voxels in each hemisphere and pick the one with less tumor
+        hemi_left = _create_hemisphere_mask(tumor_mask.shape, affine, "left")
+        hemi_right = _create_hemisphere_mask(tumor_mask.shape, affine, "right")
+        left_tumor = int(np.sum(tumor_mask & hemi_left))
+        right_tumor = int(np.sum(tumor_mask & hemi_right))
+        selected_hemisphere = "left" if left_tumor <= right_tumor else "right"
+
+    # Create hemisphere mask
+    hemisphere_mask = _create_hemisphere_mask(tumor_mask.shape, affine, selected_hemisphere)
+
+    # Create dilated tumor exclusion mask
+    # Dilate tumor by tumor_margin_mm to create exclusion zone
+    dilated_tumor = dilate_mask_from_array(tumor_mask, tumor_margin_mm, voxel_sizes)  # type: ignore[arg-type]
+
+    def _compute_nawm(
+        wm_thresh: float,
+        n_erosion: int,
+        margin_mask: npt.NDArray[np.bool_],
+        hemi_mask: npt.NDArray[np.bool_],
+    ) -> npt.NDArray[np.bool_]:
+        """Compute NAWM mask with given parameters."""
+        # WM probability threshold
+        wm_mask = wm_data >= wm_thresh
+
+        # Combine constraints
+        nawm = wm_mask & hemi_mask & ~margin_mask
+
+        # Apply erosion to clean up partial volume effects
+        if n_erosion > 0:
+            # Create spherical erosion kernel (1 voxel radius)
+            erosion_kernel = _create_spherical_kernel(
+                min(voxel_sizes), voxel_sizes  # type: ignore[arg-type]
+            )
+            for _ in range(n_erosion):
+                nawm = ndimage.binary_erosion(nawm, structure=erosion_kernel)
+
+        return nawm  # type: ignore[return-value]
+
+    # Try standard parameters first
+    nawm_mask = _compute_nawm(wm_threshold, nawm_erosion, dilated_tumor, hemisphere_mask)
+    n_voxels = int(np.sum(nawm_mask))
+    fallback_used = False
+
+    # Adaptive fallback if insufficient voxels
+    if n_voxels < nawm_min_voxels:
+        fallback_used = True
+
+        # Fallback 1: Reduce WM threshold and erosion
+        nawm_mask = _compute_nawm(0.7, 1, dilated_tumor, hemisphere_mask)
+        n_voxels = int(np.sum(nawm_mask))
+
+        if n_voxels < nawm_min_voxels:
+            # Fallback 2: Reduce tumor margin
+            dilated_tumor_reduced = dilate_mask_from_array(
+                tumor_mask, 15.0, voxel_sizes  # type: ignore[arg-type]
+            )
+            nawm_mask = _compute_nawm(0.7, 1, dilated_tumor_reduced, hemisphere_mask)
+            n_voxels = int(np.sum(nawm_mask))
+
+        if n_voxels < nawm_min_voxels:
+            # Fallback 3: Include both hemispheres with larger margin
+            dilated_tumor_large = dilate_mask_from_array(
+                tumor_mask, 30.0, voxel_sizes  # type: ignore[arg-type]
+            )
+            # Full brain (both hemispheres)
+            full_brain_mask = np.ones(tumor_mask.shape, dtype=bool)
+            nawm_mask = _compute_nawm(0.7, 1, dilated_tumor_large, full_brain_mask)
+            n_voxels = int(np.sum(nawm_mask))
+
+        if n_voxels < nawm_min_voxels:
+            # Final fallback: no erosion, minimal WM threshold
+            nawm_mask = _compute_nawm(0.5, 0, dilated_tumor_large, full_brain_mask)  # type: ignore[possibly-undefined]
+            n_voxels = int(np.sum(nawm_mask))
+
+        if n_voxels < nawm_min_voxels:
+            raise ValueError(
+                f"Unable to create NAWM ROI with at least {nawm_min_voxels} voxels. "
+                f"Found only {n_voxels} voxels after all fallback attempts. "
+                "This may indicate extensive tumor involvement or WM abnormality."
+            )
+
+    # Calculate final volume
+    voxel_volume_mm3 = float(np.prod(voxel_sizes))
+    volume_ml = n_voxels * voxel_volume_mm3 / 1000.0
+
+    # Determine output path
+    if output_file is None:
+        if tumor_path.name.endswith(".nii.gz"):
+            base = tumor_path.name[:-7]
+            ext = ".nii.gz"
+        elif tumor_path.name.endswith(".nii"):
+            base = tumor_path.stem
+            ext = ".nii"
+        else:
+            base = tumor_path.stem
+            ext = tumor_path.suffix
+        out_path = tumor_path.parent / f"{base}_nawm{ext}"
+    else:
+        out_path = Path(output_file)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Save NAWM mask
+    nawm_img = nib.Nifti1Image(  # type: ignore[attr-defined]
+        nawm_mask.astype(np.uint8),
+        affine,
+        header,
+    )
+    nib.save(nawm_img, out_path)
+
+    return {
+        "output_file": str(out_path),
+        "analysis": {
+            "tumor_laterality": analysis.laterality,
+            "tumor_supratentorial": analysis.is_supratentorial,
+            "selected_hemisphere": selected_hemisphere,
+            "n_voxels": float(n_voxels),
+            "volume_ml": volume_ml,
+            "fallback_used": fallback_used,
+        },
     }
