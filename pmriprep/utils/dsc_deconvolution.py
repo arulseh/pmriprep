@@ -349,3 +349,387 @@ def svd_deconvolve_standard_batch(
         mtt = mtt.reshape(spatial_shape)
 
     return residues, cbf, cbv, mtt
+
+
+# =============================================================================
+# Circulant SVD (cSVD) - Delay-Insensitive Deconvolution
+# =============================================================================
+
+
+@dataclass
+class CirculantDeconvolutionResult:
+    """Result from circulant SVD deconvolution.
+
+    Extends the standard DeconvolutionResult with delay estimation,
+    which is uniquely available from the block-circulant approach.
+
+    Attributes:
+        residue: Residue function R(t) with length 2N-1 where N is input length.
+            The maximum value corresponds to CBF. The delay is encoded in the
+            position of the maximum.
+        cbf: Cerebral blood flow, max(R(t)).
+        cbv: Cerebral blood volume, integral of the positive portion of R(t).
+        mtt: Mean transit time (seconds), CBV/CBF via central volume theorem.
+        delay: Estimated delay between AIF and tissue in seconds.
+            Positive = tissue delayed relative to AIF.
+            Negative = tissue arrives before AIF (e.g., proximal to AIF sampling site).
+        delay_frames: Delay in frame units (before multiplication by dt).
+        threshold_used: SVD truncation threshold that was applied.
+        n_singular_values: Number of singular values retained after truncation.
+        condition_number: Condition number of the truncated matrix.
+    """
+
+    residue: npt.NDArray[np.floating]
+    cbf: float
+    cbv: float
+    mtt: float
+    delay: float
+    delay_frames: int
+    threshold_used: float
+    n_singular_values: int
+    condition_number: float
+
+    def get_tmax(self, dt: float = 1.0) -> float:
+        """Get time to maximum of residue function relative to delay.
+
+        For cSVD, this returns the time from bolus arrival (accounting for delay)
+        to the maximum of the residue function.
+
+        Args:
+            dt: Time step in seconds (default 1.0 for frame units).
+
+        Returns:
+            Tmax in seconds (or frames if dt=1.0).
+        """
+        return float(np.argmax(self.residue)) * dt
+
+
+def build_block_circulant_matrix(
+    aif: npt.NDArray[np.floating],
+    dt: float = 1.0,
+) -> npt.NDArray[np.floating]:
+    """Build block-circulant convolution matrix for delay-insensitive deconvolution.
+
+    Creates a circulant matrix by zero-padding the AIF to length 2N-1 and
+    constructing a circulant (periodic) convolution matrix. This allows
+    the deconvolution to estimate arbitrary positive or negative delays
+    between the AIF and tissue curve.
+
+    The block-circulant matrix approach treats the convolution as circular,
+    so that delays "wrap around" rather than causing boundary artifacts.
+
+    Args:
+        aif: Arterial input function concentration curve, shape (n_timepoints,).
+        dt: Time step in seconds for integration weighting.
+
+    Returns:
+        Block-circulant matrix of shape (2N-1, 2N-1) where N = len(aif).
+
+    References:
+        Wu O, Østergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG.
+        Tracer arrival timing-insensitive technique for estimating flow in
+        MR perfusion-weighted imaging using singular value decomposition
+        with a block-circulant deconvolution matrix.
+        Magn Reson Med. 2003;50(1):164-174.
+    """
+    n = len(aif)
+    # Padded length for full delay range
+    m = 2 * n - 1
+
+    # Zero-pad AIF to length 2N-1
+    aif_padded = np.zeros(m, dtype=np.float64)
+    aif_padded[:n] = aif
+
+    # Build circulant matrix where each row is a cyclic shift
+    # Row i has aif_padded shifted by i positions
+    matrix = np.zeros((m, m), dtype=np.float64)
+    for i in range(m):
+        for j in range(m):
+            # Circulant: element (i,j) = aif_padded[(i-j) mod m]
+            idx = (i - j) % m
+            matrix[i, j] = aif_padded[idx]
+
+    # Apply trapezoidal integration weighting
+    # For circulant matrix, we apply uniform weighting scaled by dt
+    matrix *= dt
+
+    return matrix
+
+
+def svd_deconvolve_circulant(
+    tissue_curve: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    dt: float = 1.0,
+    threshold: float = DEFAULT_SVD_THRESHOLD,
+    apply_non_negativity: bool = True,
+) -> CirculantDeconvolutionResult:
+    """Circulant SVD deconvolution (cSVD) for delay-insensitive estimation.
+
+    Performs deconvolution using a block-circulant matrix approach that is
+    insensitive to delays between the AIF and tissue curve. The method
+    zero-pads both the AIF and tissue curve to length 2N-1 and constructs
+    a circulant convolution matrix, allowing the residue function to peak
+    at any time point (positive or negative delay).
+
+    The deconvolution equation is:
+        C_tissue(t) = CBF × ∫_{-∞}^{∞} R(t-τ) × AIF(τ) dτ
+
+    The delay is extracted from the position of the residue maximum:
+        delay = argmax(R(t)) - (N-1)
+
+    where N is the original curve length and (N-1) is the zero-delay position.
+
+    Args:
+        tissue_curve: Tissue concentration curve, shape (n_timepoints,).
+        aif: Arterial input function, shape (n_timepoints,).
+            Must have same length as tissue_curve.
+        dt: Time step in seconds. Default 1.0 gives delay in frame units.
+            For absolute timing, provide actual TR.
+        threshold: SVD truncation threshold as fraction of maximum singular
+            value. Singular values below threshold × max(s) are set to zero.
+            Default is 0.2 (20% of max). Higher values = more regularization.
+        apply_non_negativity: If True, apply non-negativity constraint to
+            residue function by clipping negative values to zero.
+            Default is True.
+
+    Returns:
+        CirculantDeconvolutionResult containing residue function, perfusion
+        parameters, and estimated delay.
+
+    Raises:
+        ValueError: If tissue_curve and aif have different lengths.
+        ValueError: If arrays are empty.
+        ValueError: If threshold is not in (0, 1).
+
+    Notes:
+        - The residue function has length 2N-1, allowing delays from -(N-1) to +(N-1)
+        - CBF is extracted as max(R(t))
+        - CBV is computed as integral of R(t) using trapezoidal rule
+        - MTT = CBV / CBF (central volume theorem)
+        - Delay is estimated from the position of max(R(t))
+        - For large delays, consider if the delay is physiologically reasonable
+
+    References:
+        Wu O, Østergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG.
+        Tracer arrival timing-insensitive technique for estimating flow in
+        MR perfusion-weighted imaging using singular value decomposition
+        with a block-circulant deconvolution matrix.
+        Magn Reson Med. 2003;50(1):164-174.
+    """
+    # Validate inputs
+    if len(tissue_curve) != len(aif):
+        raise ValueError(
+            f"tissue_curve and aif must have same length, "
+            f"got {len(tissue_curve)} and {len(aif)}"
+        )
+
+    if len(tissue_curve) == 0:
+        raise ValueError("Arrays cannot be empty")
+
+    if not 0 < threshold < 1:
+        raise ValueError(f"threshold must be in (0, 1), got {threshold}")
+
+    n = len(tissue_curve)
+    m = 2 * n - 1  # Padded length
+
+    # Zero-pad tissue curve to length 2N-1
+    tissue_padded = np.zeros(m, dtype=np.float64)
+    tissue_padded[:n] = tissue_curve
+
+    # Build block-circulant matrix
+    matrix = build_block_circulant_matrix(aif, dt)
+
+    # Perform SVD
+    u, s, vh = linalg.svd(matrix, full_matrices=False)
+
+    # Truncate singular values below threshold
+    s_max = s[0] if len(s) > 0 else 1.0
+    truncation_threshold = threshold * s_max
+
+    # Count retained singular values
+    n_retained = int(np.sum(s >= truncation_threshold))
+    if n_retained == 0:
+        n_retained = 1  # Keep at least one singular value
+
+    # Create truncated inverse singular values
+    s_inv = np.zeros_like(s)
+    for i in range(n_retained):
+        if s[i] >= truncation_threshold:
+            s_inv[i] = 1.0 / s[i]
+
+    # Compute condition number of truncated matrix
+    if n_retained > 0 and s[n_retained - 1] > 0:
+        condition_number = float(s[0] / s[n_retained - 1])
+    else:
+        condition_number = float("inf")
+
+    # Solve for residue function: R = V @ S_inv @ U^T @ C
+    residue = vh.T @ (s_inv * (u.T @ tissue_padded))
+
+    # Apply non-negativity constraint
+    if apply_non_negativity:
+        residue = np.maximum(residue, 0.0)
+
+    # Extract perfusion parameters
+    cbf = float(np.max(residue))
+
+    # Extract delay from position of maximum
+    # The zero-delay position is at index (n-1) in the padded residue
+    # Delay = peak_position - (n-1)
+    peak_position = int(np.argmax(residue))
+    delay_frames = peak_position - (n - 1)
+    delay_seconds = float(delay_frames) * dt
+
+    # CBV via trapezoidal integration of residue
+    cbv = float(trapezoid(residue, dx=dt))
+
+    # MTT from central volume theorem: MTT = CBV / CBF
+    if cbf > EPSILON_CONCENTRATION:
+        mtt = cbv / cbf
+    else:
+        mtt = 0.0
+
+    return CirculantDeconvolutionResult(
+        residue=residue,
+        cbf=cbf,
+        cbv=cbv,
+        mtt=mtt,
+        delay=delay_seconds,
+        delay_frames=delay_frames,
+        threshold_used=threshold,
+        n_singular_values=n_retained,
+        condition_number=condition_number,
+    )
+
+
+def svd_deconvolve_circulant_batch(
+    tissue_curves: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    dt: float = 1.0,
+    threshold: float = DEFAULT_SVD_THRESHOLD,
+    apply_non_negativity: bool = True,
+    mask: Optional[npt.NDArray[np.bool_]] = None,
+) -> tuple[
+    npt.NDArray[np.floating],  # residues
+    npt.NDArray[np.floating],  # cbf
+    npt.NDArray[np.floating],  # cbv
+    npt.NDArray[np.floating],  # mtt
+    npt.NDArray[np.floating],  # delay (seconds)
+]:
+    """Batch cSVD deconvolution for multiple voxels.
+
+    Efficiently deconvolves multiple tissue curves using the circulant SVD
+    approach by precomputing the SVD decomposition once.
+
+    Args:
+        tissue_curves: Tissue concentration curves, shape (n_voxels, n_timepoints)
+            or (x, y, z, n_timepoints) for 4D data.
+        aif: Arterial input function, shape (n_timepoints,).
+        dt: Time step in seconds.
+        threshold: SVD truncation threshold (default 0.2).
+        apply_non_negativity: Apply non-negativity constraint on residue.
+        mask: Optional boolean mask of voxels to process. If None, process all.
+            Shape must match spatial dimensions of tissue_curves.
+
+    Returns:
+        Tuple of (residues, cbf, cbv, mtt, delay) arrays.
+        - residues has shape (..., 2N-1) where N is the number of timepoints
+        - cbf, cbv, mtt, delay have the same spatial shape as input
+    """
+    # Store original shape for reshaping output
+    original_shape = tissue_curves.shape
+    n_timepoints = original_shape[-1]
+    m = 2 * n_timepoints - 1  # Padded length
+
+    # Reshape to 2D (n_voxels, n_timepoints)
+    if tissue_curves.ndim > 2:
+        spatial_shape = original_shape[:-1]
+        n_voxels = int(np.prod(spatial_shape))
+        tissue_2d = tissue_curves.reshape(n_voxels, n_timepoints)
+    else:
+        spatial_shape = (original_shape[0],)
+        n_voxels = original_shape[0]
+        tissue_2d = tissue_curves
+
+    # Flatten mask if provided
+    if mask is not None:
+        mask_flat = mask.flatten()
+    else:
+        mask_flat = np.ones(n_voxels, dtype=bool)
+
+    # Build block-circulant matrix and compute SVD once
+    matrix = build_block_circulant_matrix(aif, dt)
+    u, s, vh = linalg.svd(matrix, full_matrices=False)
+
+    # Truncate singular values
+    s_max = s[0] if len(s) > 0 else 1.0
+    truncation_threshold = threshold * s_max
+    n_retained = max(1, int(np.sum(s >= truncation_threshold)))
+
+    # Create truncated inverse
+    s_inv = np.zeros_like(s)
+    for i in range(n_retained):
+        if s[i] >= truncation_threshold:
+            s_inv[i] = 1.0 / s[i]
+
+    # Initialize output arrays
+    residues = np.zeros((n_voxels, m), dtype=np.float64)
+    cbf = np.zeros(n_voxels, dtype=np.float64)
+    cbv = np.zeros(n_voxels, dtype=np.float64)
+    mtt = np.zeros(n_voxels, dtype=np.float64)
+    delay = np.zeros(n_voxels, dtype=np.float64)
+
+    # Process masked voxels
+    masked_indices = np.where(mask_flat)[0]
+    if len(masked_indices) > 0:
+        tissue_masked = tissue_2d[masked_indices, :]
+
+        # Zero-pad tissue curves to length 2N-1
+        tissue_padded = np.zeros((len(masked_indices), m), dtype=np.float64)
+        tissue_padded[:, :n_timepoints] = tissue_masked
+
+        # Batch deconvolution: R_batch = vh.T @ diag(s_inv) @ u.T @ C_batch.T
+        ut_tissue = u.T @ tissue_padded.T  # (m, n_vox)
+        scaled = s_inv[:, None] * ut_tissue  # (m, n_vox)
+        residues_masked = (vh.T @ scaled).T  # (n_vox, m)
+
+        # Apply non-negativity
+        if apply_non_negativity:
+            residues_masked = np.maximum(residues_masked, 0.0)
+
+        # Extract parameters
+        cbf_masked = np.max(residues_masked, axis=1)
+
+        # Extract delays from peak positions
+        peak_positions = np.argmax(residues_masked, axis=1)
+        delay_frames = peak_positions - (n_timepoints - 1)
+        delay_masked = delay_frames.astype(np.float64) * dt
+
+        # CBV via trapezoidal integration
+        cbv_masked = trapezoid(residues_masked, dx=dt, axis=1)
+
+        # MTT = CBV / CBF
+        with np.errstate(divide="ignore", invalid="ignore"):
+            mtt_masked = np.where(
+                cbf_masked > EPSILON_CONCENTRATION,
+                cbv_masked / cbf_masked,
+                0.0,
+            )
+
+        # Store results
+        residues[masked_indices, :] = residues_masked
+        cbf[masked_indices] = cbf_masked
+        cbv[masked_indices] = cbv_masked
+        mtt[masked_indices] = mtt_masked
+        delay[masked_indices] = delay_masked
+
+    # Reshape to original spatial dimensions
+    if tissue_curves.ndim > 2:
+        residue_shape = spatial_shape + (m,)
+        residues = residues.reshape(residue_shape)
+        cbf = cbf.reshape(spatial_shape)
+        cbv = cbv.reshape(spatial_shape)
+        mtt = mtt.reshape(spatial_shape)
+        delay = delay.reshape(spatial_shape)
+
+    return residues, cbf, cbv, mtt, delay
