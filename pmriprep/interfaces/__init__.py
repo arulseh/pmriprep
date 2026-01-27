@@ -11,9 +11,13 @@ from pmriprep.interfaces.anat import (
 from pmriprep.interfaces.dsc import (
     MotionCorrection,
 )
+from pmriprep.interfaces.dsc_aif import (
+    AIFDetection,
+)
 
 __all__ = [
     "ACPCAlignment",
+    "AIFDetection",
     "BiasCorrection",
     "BrainExtraction",
     "Coregistration",
