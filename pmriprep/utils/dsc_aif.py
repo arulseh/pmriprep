@@ -1,0 +1,899 @@
+"""AIF (Arterial Input Function) detection utilities for DSC-MRI.
+
+This module provides utilities for atlas-based AIF detection, candidate
+scoring, and quality assessment for DSC perfusion processing.
+
+The atlas-based search constrains AIF detection to anatomically plausible
+arterial regions (e.g., MCA territory) and scores candidates based on
+arterial curve characteristics: high peak, sharp washout, narrow FWHM.
+"""
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal, Optional, Sequence, Tuple, Union
+
+import numpy as np
+import numpy.typing as npt
+
+from pmriprep.utils.dsc_constants import (
+    EPSILON_CONCENTRATION,
+    QC_CNR_THRESHOLD,
+)
+
+
+# =============================================================================
+# Constants for AIF Detection
+# =============================================================================
+
+# AIF quality thresholds by criteria level
+AIF_STRICT_THRESHOLDS: dict[str, float] = {
+    "washout_min": 0.20,
+    "fwhm_min": 5.0,
+    "fwhm_max": 15.0,
+    "cnr_min": 4.0,
+    "baseline_cv_max": 0.10,
+    "peak_time_min": 3.0,  # frames after baseline
+    "peak_time_max": 20.0,  # frames after baseline
+}
+
+AIF_RELAXED_THRESHOLDS: dict[str, float] = {
+    "washout_min": 0.10,
+    "fwhm_min": 3.0,
+    "fwhm_max": 20.0,
+    "cnr_min": 2.0,
+    "baseline_cv_max": 0.20,
+    "peak_time_min": 2.0,
+    "peak_time_max": 25.0,
+}
+
+
+def get_aif_thresholds(
+    criteria: Literal["strict", "relaxed"] = "strict",
+) -> dict[str, float]:
+    """Get AIF quality thresholds for specified criteria level.
+
+    Parameters
+    ----------
+    criteria : Literal["strict", "relaxed"]
+        Criteria level: 'strict' for high-quality AIF detection,
+        'relaxed' for lower-quality but more robust detection.
+
+    Returns
+    -------
+    dict[str, float]
+        Dictionary of threshold values.
+    """
+    if criteria == "strict":
+        return AIF_STRICT_THRESHOLDS.copy()
+    return AIF_RELAXED_THRESHOLDS.copy()
+
+
+# =============================================================================
+# Data Classes
+# =============================================================================
+
+
+@dataclass
+class AIFCandidateMetrics:
+    """Metrics for an AIF candidate voxel.
+
+    Attributes
+    ----------
+    cnr : float
+        Contrast-to-noise ratio (higher is better).
+    washout : float
+        Washout fraction (0-1, closer to 0.5 ideal).
+    fwhm : float
+        Full width at half maximum in frames.
+    baseline_cv : float
+        Coefficient of variation of baseline (lower is better).
+    peak_time : int
+        Time to peak in frames from start.
+    peak_value : float
+        Peak concentration value.
+    """
+
+    cnr: float
+    washout: float
+    fwhm: float
+    baseline_cv: float
+    peak_time: int
+    peak_value: float
+
+
+@dataclass
+class AIFCandidate:
+    """An AIF candidate voxel with location, score, and metrics.
+
+    Attributes
+    ----------
+    coordinates : Tuple[int, int, int]
+        (x, y, z) voxel coordinates.
+    score : float
+        Composite quality score (0-1).
+    metrics : AIFCandidateMetrics
+        Individual quality metrics.
+    curve : npt.NDArray[Any]
+        The concentration time course for this voxel.
+    """
+
+    coordinates: Tuple[int, int, int]
+    score: float
+    metrics: AIFCandidateMetrics
+    curve: npt.NDArray[Any]
+
+
+@dataclass
+class AIFSearchResult:
+    """Result of atlas-based AIF search.
+
+    Attributes
+    ----------
+    candidates : Sequence[AIFCandidate]
+        List of candidate voxels sorted by score (descending).
+    aif_curve : npt.NDArray[Any]
+        Final AIF curve (average of top candidates).
+    aif_mask : npt.NDArray[Any]
+        Binary mask indicating AIF voxel locations.
+    detection_level : str
+        Detection method used: 'atlas_strict', 'atlas_relaxed',
+        'whole_brain_strict', 'whole_brain_relaxed', or 'synthetic'.
+    quality_score : float
+        Overall quality score (0-1).
+    n_candidates_evaluated : int
+        Total number of voxels evaluated.
+    n_candidates_passed : int
+        Number of voxels passing threshold criteria.
+    qc_metrics : dict[str, Any]
+        Aggregate QC metrics from candidates.
+    """
+
+    candidates: Sequence[AIFCandidate]
+    aif_curve: npt.NDArray[Any]
+    aif_mask: npt.NDArray[Any]
+    detection_level: str
+    quality_score: float
+    n_candidates_evaluated: int
+    n_candidates_passed: int
+    qc_metrics: dict[str, Any]
+
+
+# =============================================================================
+# Core Metric Functions
+# =============================================================================
+
+
+def compute_aif_cnr(
+    aif_curve: npt.NDArray[Any],
+    baseline_frames: int = 5,
+) -> float:
+    """Compute contrast-to-noise ratio for an AIF curve.
+
+    CNR = (peak - baseline_mean) / baseline_std
+
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        1D AIF concentration time course.
+    baseline_frames : int
+        Number of pre-bolus baseline frames (default: 5).
+
+    Returns
+    -------
+    float
+        Contrast-to-noise ratio. Higher is better (>4.0 typically good).
+    """
+    if len(aif_curve) < baseline_frames + 1:
+        return 0.0
+
+    baseline = aif_curve[:baseline_frames]
+    baseline_mean = float(np.mean(baseline))
+    baseline_std = float(np.std(baseline))
+
+    if baseline_std < EPSILON_CONCENTRATION:
+        # Perfect baseline (zero noise), return high CNR
+        return 100.0
+
+    peak = float(np.max(aif_curve))
+    cnr = (peak - baseline_mean) / baseline_std
+
+    return max(0.0, cnr)
+
+
+def compute_aif_washout_fraction(
+    aif_curve: npt.NDArray[Any],
+    baseline_frames: int = 5,
+    tail_frames: int = 5,
+) -> float:
+    """Compute washout fraction for an AIF curve.
+
+    Washout fraction = (peak - tail_mean) / (peak - baseline_mean)
+    A value of 1.0 indicates complete washout; 0.0 indicates no washout.
+
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        1D AIF concentration time course.
+    baseline_frames : int
+        Number of pre-bolus baseline frames (default: 5).
+    tail_frames : int
+        Number of tail frames to average (default: 5).
+
+    Returns
+    -------
+    float
+        Washout fraction (0-1). Arterial curves typically show >0.2 washout.
+    """
+    if len(aif_curve) < baseline_frames + tail_frames + 1:
+        return 0.0
+
+    baseline_mean = float(np.mean(aif_curve[:baseline_frames]))
+    tail_mean = float(np.mean(aif_curve[-tail_frames:]))
+    peak = float(np.max(aif_curve))
+
+    # Denominator: signal drop from baseline to peak
+    denom = peak - baseline_mean
+    if denom < EPSILON_CONCENTRATION:
+        return 0.0
+
+    # Numerator: recovery from peak to tail
+    washout = (peak - tail_mean) / denom
+
+    return max(0.0, min(1.0, washout))
+
+
+def compute_aif_fwhm_frames(
+    aif_curve: npt.NDArray[Any],
+    baseline_frames: int = 5,
+) -> int:
+    """Compute full width at half maximum (FWHM) of AIF peak in frames.
+
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        1D AIF concentration time course.
+    baseline_frames : int
+        Number of pre-bolus baseline frames (default: 5).
+
+    Returns
+    -------
+    int
+        FWHM in number of frames. Arterial curves typically 5-15 frames.
+    """
+    if len(aif_curve) < baseline_frames + 1:
+        return 0
+
+    baseline_mean = float(np.mean(aif_curve[:baseline_frames]))
+    peak = float(np.max(aif_curve))
+    peak_idx = int(np.argmax(aif_curve))
+
+    half_max = baseline_mean + (peak - baseline_mean) / 2.0
+
+    # Find first crossing above half max (rising edge)
+    rising_idx = 0
+    for i in range(baseline_frames, peak_idx):
+        if aif_curve[i] >= half_max:
+            rising_idx = i
+            break
+
+    # Find first crossing below half max after peak (falling edge)
+    falling_idx = len(aif_curve) - 1
+    for i in range(peak_idx + 1, len(aif_curve)):
+        if aif_curve[i] <= half_max:
+            falling_idx = i
+            break
+
+    fwhm = falling_idx - rising_idx
+    return max(0, fwhm)
+
+
+def compute_baseline_stability(
+    aif_curve: npt.NDArray[Any],
+    baseline_frames: int = 5,
+) -> float:
+    """Compute baseline stability as coefficient of variation.
+
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        1D AIF concentration time course.
+    baseline_frames : int
+        Number of pre-bolus baseline frames (default: 5).
+
+    Returns
+    -------
+    float
+        Coefficient of variation (std/mean) of baseline. Lower is better (<0.1 good).
+    """
+    if len(aif_curve) < baseline_frames:
+        return 1.0
+
+    baseline = aif_curve[:baseline_frames]
+    baseline_mean = np.abs(np.mean(baseline))
+    baseline_std = float(np.std(baseline))
+
+    if baseline_mean < EPSILON_CONCENTRATION:
+        return baseline_std / EPSILON_CONCENTRATION
+
+    return baseline_std / float(baseline_mean)
+
+
+def compute_peak_time(
+    aif_curve: npt.NDArray[Any],
+) -> int:
+    """Compute time to peak in frames.
+
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        1D AIF concentration time course.
+
+    Returns
+    -------
+    int
+        Frame index of peak concentration.
+    """
+    return int(np.argmax(aif_curve))
+
+
+# =============================================================================
+# Candidate Scoring
+# =============================================================================
+
+
+def compute_candidate_metrics(
+    curve: npt.NDArray[Any],
+    baseline_frames: int = 5,
+) -> AIFCandidateMetrics:
+    """Compute all quality metrics for a candidate AIF curve.
+
+    Parameters
+    ----------
+    curve : np.ndarray
+        1D concentration time course.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+
+    Returns
+    -------
+    AIFCandidateMetrics
+        Computed metrics for the candidate.
+    """
+    cnr = compute_aif_cnr(curve, baseline_frames)
+    washout = compute_aif_washout_fraction(curve, baseline_frames)
+    fwhm = float(compute_aif_fwhm_frames(curve, baseline_frames))
+    baseline_cv = compute_baseline_stability(curve, baseline_frames)
+    peak_time = compute_peak_time(curve)
+    peak_value = float(np.max(curve))
+
+    return AIFCandidateMetrics(
+        cnr=cnr,
+        washout=washout,
+        fwhm=fwhm,
+        baseline_cv=baseline_cv,
+        peak_time=peak_time,
+        peak_value=peak_value,
+    )
+
+
+def score_aif_candidate(
+    metrics: AIFCandidateMetrics,
+    thresholds: dict[str, float],
+    baseline_frames: int = 5,
+) -> float:
+    """Score an AIF candidate based on arterial characteristics.
+
+    Returns 0 if any threshold is not met, otherwise returns a composite
+    score (0-1) based on how well the curve matches ideal arterial
+    characteristics.
+
+    Parameters
+    ----------
+    metrics : AIFCandidateMetrics
+        Computed metrics for the candidate.
+    thresholds : dict[str, float]
+        Quality thresholds (from get_aif_thresholds).
+    baseline_frames : int
+        Number of baseline frames (for peak time validation).
+
+    Returns
+    -------
+    float
+        Composite quality score (0-1), or 0 if thresholds not met.
+    """
+    # Check hard thresholds - return 0 if any fail
+    if metrics.cnr < thresholds["cnr_min"]:
+        return 0.0
+    if metrics.washout < thresholds["washout_min"]:
+        return 0.0
+    if metrics.fwhm < thresholds["fwhm_min"] or metrics.fwhm > thresholds["fwhm_max"]:
+        return 0.0
+    if metrics.baseline_cv > thresholds["baseline_cv_max"]:
+        return 0.0
+
+    # Check peak time is reasonable
+    peak_from_baseline = metrics.peak_time - baseline_frames
+    if peak_from_baseline < thresholds["peak_time_min"]:
+        return 0.0
+    if peak_from_baseline > thresholds["peak_time_max"]:
+        return 0.0
+
+    # Compute composite score (all thresholds met)
+    # Weight factors: CNR most important, then washout, then FWHM, then baseline
+    score = 0.0
+
+    # CNR contribution (0-0.4): normalized to expected range
+    # Typical good CNR is 4-20, exceptional is >20
+    cnr_score = min(1.0, (metrics.cnr - thresholds["cnr_min"]) / 16.0)
+    score += 0.4 * cnr_score
+
+    # Washout contribution (0-0.3): closer to 0.4-0.6 is ideal for arterial
+    ideal_washout = 0.5
+    washout_score = 1.0 - abs(metrics.washout - ideal_washout) / 0.5
+    score += 0.3 * max(0.0, washout_score)
+
+    # FWHM contribution (0-0.2): closer to 8-10 frames is ideal
+    ideal_fwhm = 9.0
+    fwhm_range = thresholds["fwhm_max"] - thresholds["fwhm_min"]
+    fwhm_score = 1.0 - abs(metrics.fwhm - ideal_fwhm) / (fwhm_range / 2.0)
+    score += 0.2 * max(0.0, fwhm_score)
+
+    # Baseline stability contribution (0-0.1): lower CV is better
+    baseline_score = 1.0 - (metrics.baseline_cv / thresholds["baseline_cv_max"])
+    score += 0.1 * max(0.0, baseline_score)
+
+    return min(1.0, score)
+
+
+# =============================================================================
+# Distance and Exclusion Utilities
+# =============================================================================
+
+
+def compute_distance_map(
+    mask: npt.NDArray[Any],
+    voxel_sizes: Tuple[float, float, float],
+) -> npt.NDArray[Any]:
+    """Compute distance transform from a binary mask.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        3D binary mask (nonzero indicates region of interest).
+    voxel_sizes : Tuple[float, float, float]
+        Voxel dimensions in mm (x, y, z).
+
+    Returns
+    -------
+    np.ndarray
+        3D array of Euclidean distances (mm) from nearest mask voxel.
+    """
+    from scipy import ndimage
+
+    # Invert mask for distance transform (distance FROM mask)
+    inverted = (mask <= 0).astype(np.uint8)
+
+    # Compute distance with voxel spacing
+    distance = ndimage.distance_transform_edt(inverted, sampling=voxel_sizes)
+
+    return distance
+
+
+def exclude_near_lesion(
+    search_mask: npt.NDArray[Any],
+    lesion_mask: npt.NDArray[Any],
+    voxel_sizes: Tuple[float, float, float],
+    min_distance_mm: float = 20.0,
+) -> npt.NDArray[Any]:
+    """Exclude voxels within specified distance of lesion.
+
+    Parameters
+    ----------
+    search_mask : np.ndarray
+        3D binary mask of candidate search region.
+    lesion_mask : np.ndarray
+        3D binary mask of lesion(s) to avoid.
+    voxel_sizes : Tuple[float, float, float]
+        Voxel dimensions in mm.
+    min_distance_mm : float
+        Minimum distance (mm) from lesion for valid candidates.
+
+    Returns
+    -------
+    np.ndarray
+        Updated search mask with near-lesion voxels excluded.
+    """
+    # Compute distance from lesion
+    distance = compute_distance_map(lesion_mask, voxel_sizes)
+
+    # Create exclusion mask
+    far_from_lesion = distance >= min_distance_mm
+
+    # Combine with search mask
+    return (search_mask > 0) & far_from_lesion
+
+
+def get_contralateral_mask(
+    brain_mask: npt.NDArray[Any],
+    lesion_mask: npt.NDArray[Any],
+) -> npt.NDArray[Any]:
+    """Get mask for contralateral hemisphere relative to lesion.
+
+    Assumes axial orientation with left-right along first axis.
+
+    Parameters
+    ----------
+    brain_mask : np.ndarray
+        3D brain mask.
+    lesion_mask : np.ndarray
+        3D lesion mask.
+
+    Returns
+    -------
+    np.ndarray
+        3D mask for contralateral hemisphere within brain.
+    """
+    # Find lesion center of mass
+    lesion_coords = np.where(lesion_mask > 0)
+    if len(lesion_coords[0]) == 0:
+        return brain_mask.copy()
+
+    lesion_center_x = np.mean(lesion_coords[0])
+    brain_center_x = brain_mask.shape[0] / 2.0
+
+    # Determine which side lesion is on
+    lesion_on_left = lesion_center_x < brain_center_x
+
+    # Create contralateral mask
+    contralateral = np.zeros_like(brain_mask, dtype=np.uint8)
+    midline = int(brain_mask.shape[0] / 2)
+
+    if lesion_on_left:
+        # Lesion on left, use right hemisphere
+        contralateral[midline:, :, :] = 1
+    else:
+        # Lesion on right, use left hemisphere
+        contralateral[:midline, :, :] = 1
+
+    return (brain_mask > 0) & (contralateral > 0)
+
+
+# =============================================================================
+# Atlas-Based AIF Search
+# =============================================================================
+
+
+def atlas_based_aif_search(
+    concentration_data: npt.NDArray[Any],
+    brain_mask: npt.NDArray[Any],
+    atlas_mask: Optional[npt.NDArray[Any]] = None,
+    lesion_mask: Optional[npt.NDArray[Any]] = None,
+    voxel_sizes: Tuple[float, float, float] = (1.0, 1.0, 1.0),
+    criteria: Literal["strict", "relaxed"] = "strict",
+    n_candidates: int = 10,
+    baseline_frames: int = 5,
+    lesion_distance_mm: float = 20.0,
+    prefer_contralateral: bool = True,
+) -> AIFSearchResult:
+    """Perform atlas-constrained AIF search.
+
+    This function implements multi-level AIF detection:
+    1. Atlas-based with strict criteria
+    2. Atlas-based with relaxed criteria
+    3. Whole-brain with strict criteria
+    4. Whole-brain with relaxed criteria
+
+    Parameters
+    ----------
+    concentration_data : np.ndarray
+        4D concentration time courses (x, y, z, time).
+    brain_mask : np.ndarray
+        3D brain mask.
+    atlas_mask : np.ndarray, optional
+        3D arterial atlas mask in DSC space. If None, uses whole brain.
+    lesion_mask : np.ndarray, optional
+        3D lesion mask for exclusion.
+    voxel_sizes : Tuple[float, float, float]
+        Voxel dimensions in mm.
+    criteria : Literal["strict", "relaxed"]
+        Initial criteria level for thresholds.
+    n_candidates : int
+        Number of top candidate voxels to return.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+    lesion_distance_mm : float
+        Minimum distance (mm) from lesion for candidates.
+    prefer_contralateral : bool
+        Prefer contralateral hemisphere when lesion present.
+
+    Returns
+    -------
+    AIFSearchResult
+        Complete search result with candidates, AIF curve, and QC metrics.
+    """
+    # Build base search mask
+    search_mask = brain_mask.copy().astype(np.uint8)
+
+    # Apply lesion exclusion
+    if lesion_mask is not None and np.any(lesion_mask > 0):
+        search_mask = exclude_near_lesion(
+            search_mask, lesion_mask, voxel_sizes, lesion_distance_mm
+        ).astype(np.uint8)
+
+        # Optionally prefer contralateral
+        if prefer_contralateral:
+            contra_mask = get_contralateral_mask(brain_mask, lesion_mask)
+            # Weight contralateral voxels higher (done during candidate selection)
+            # For now, just ensure contralateral is included
+            search_mask = search_mask * contra_mask.astype(np.uint8)
+            # If no voxels remain in contralateral, use full search mask
+            if np.sum(search_mask) == 0:
+                search_mask = exclude_near_lesion(
+                    brain_mask.copy(), lesion_mask, voxel_sizes, lesion_distance_mm
+                ).astype(np.uint8)
+
+    # Define search levels
+    # Each level is (name, mask, criteria_level)
+    search_levels: list[
+        Tuple[str, npt.NDArray[Any], Literal["strict", "relaxed"]]
+    ] = []
+
+    if atlas_mask is not None:
+        # Level 1: Atlas with strict
+        search_levels.append(
+            ("atlas_strict", search_mask * (atlas_mask > 0).astype(np.uint8), "strict")
+        )
+        # Level 2: Atlas with relaxed
+        search_levels.append(
+            ("atlas_relaxed", search_mask * (atlas_mask > 0).astype(np.uint8), "relaxed")
+        )
+
+    # Level 3: Whole brain with user criteria
+    search_levels.append((f"whole_brain_{criteria}", search_mask, criteria))
+
+    # Level 4: Whole brain with relaxed (if not already relaxed)
+    if criteria == "strict":
+        search_levels.append(("whole_brain_relaxed", search_mask, "relaxed"))
+
+    # Try each level until we find candidates
+    all_candidates: list[AIFCandidate] = []
+    detection_level = "none"
+    n_evaluated = 0
+
+    for level_name, level_mask, level_criteria in search_levels:
+        if np.sum(level_mask) == 0:
+            continue
+
+        thresholds = get_aif_thresholds(level_criteria)
+        level_candidates, level_evaluated = _search_candidates_in_mask(
+            concentration_data,
+            level_mask,
+            thresholds,
+            baseline_frames,
+            n_candidates * 2,  # Get extra candidates for ranking
+        )
+        n_evaluated += level_evaluated
+
+        if level_candidates:
+            all_candidates = level_candidates
+            detection_level = level_name
+            break
+
+    # Build result
+    if not all_candidates:
+        # No candidates found - return empty result
+        empty_curve = np.zeros(concentration_data.shape[3], dtype=np.float64)
+        empty_mask = np.zeros(concentration_data.shape[:3], dtype=np.uint8)
+        return AIFSearchResult(
+            candidates=[],
+            aif_curve=empty_curve,
+            aif_mask=empty_mask,
+            detection_level="none",
+            quality_score=0.0,
+            n_candidates_evaluated=n_evaluated,
+            n_candidates_passed=0,
+            qc_metrics={
+                "cnr_mean": 0.0,
+                "washout_mean": 0.0,
+                "fwhm_mean": 0.0,
+                "baseline_cv_mean": 0.0,
+            },
+        )
+
+    # Sort by score and take top N
+    all_candidates.sort(key=lambda c: c.score, reverse=True)
+    top_candidates = all_candidates[:n_candidates]
+
+    # Build AIF mask
+    aif_mask = np.zeros(concentration_data.shape[:3], dtype=np.uint8)
+    for cand in top_candidates:
+        x, y, z = cand.coordinates
+        aif_mask[x, y, z] = 1
+
+    # Average curves for final AIF
+    curves = [c.curve for c in top_candidates]
+    aif_curve = np.mean(np.stack(curves, axis=0), axis=0)
+
+    # Aggregate QC metrics
+    quality_score = float(np.mean([c.score for c in top_candidates]))
+    qc_metrics = {
+        "cnr_mean": float(np.mean([c.metrics.cnr for c in top_candidates])),
+        "cnr_std": float(np.std([c.metrics.cnr for c in top_candidates])),
+        "washout_mean": float(np.mean([c.metrics.washout for c in top_candidates])),
+        "fwhm_mean": float(np.mean([c.metrics.fwhm for c in top_candidates])),
+        "baseline_cv_mean": float(
+            np.mean([c.metrics.baseline_cv for c in top_candidates])
+        ),
+        "peak_value_mean": float(
+            np.mean([c.metrics.peak_value for c in top_candidates])
+        ),
+        "n_candidates_used": len(top_candidates),
+    }
+
+    return AIFSearchResult(
+        candidates=top_candidates,
+        aif_curve=aif_curve,
+        aif_mask=aif_mask,
+        detection_level=detection_level,
+        quality_score=quality_score,
+        n_candidates_evaluated=n_evaluated,
+        n_candidates_passed=len(all_candidates),
+        qc_metrics=qc_metrics,
+    )
+
+
+def _search_candidates_in_mask(
+    concentration_data: npt.NDArray[Any],
+    mask: npt.NDArray[Any],
+    thresholds: dict[str, float],
+    baseline_frames: int,
+    max_candidates: int,
+) -> Tuple[list[AIFCandidate], int]:
+    """Search for AIF candidates within a mask.
+
+    Parameters
+    ----------
+    concentration_data : np.ndarray
+        4D concentration data.
+    mask : np.ndarray
+        3D search mask.
+    thresholds : dict[str, float]
+        Quality thresholds.
+    baseline_frames : int
+        Number of baseline frames.
+    max_candidates : int
+        Maximum candidates to return.
+
+    Returns
+    -------
+    Tuple[list[AIFCandidate], int]
+        List of passing candidates and total voxels evaluated.
+    """
+    candidates: list[AIFCandidate] = []
+
+    # Get mask coordinates
+    mask_coords = np.where(mask > 0)
+    n_voxels = len(mask_coords[0])
+
+    for i in range(n_voxels):
+        x, y, z = (
+            int(mask_coords[0][i]),
+            int(mask_coords[1][i]),
+            int(mask_coords[2][i]),
+        )
+        curve = concentration_data[x, y, z, :].astype(np.float64)
+
+        # Skip empty curves
+        if np.max(np.abs(curve)) < EPSILON_CONCENTRATION:
+            continue
+
+        # Compute metrics
+        metrics = compute_candidate_metrics(curve, baseline_frames)
+
+        # Score candidate
+        score = score_aif_candidate(metrics, thresholds, baseline_frames)
+
+        if score > 0:
+            candidates.append(
+                AIFCandidate(
+                    coordinates=(x, y, z),
+                    score=score,
+                    metrics=metrics,
+                    curve=curve,
+                )
+            )
+
+    # Sort by score and limit
+    candidates.sort(key=lambda c: c.score, reverse=True)
+    return candidates[:max_candidates], n_voxels
+
+
+# =============================================================================
+# File-Based Wrapper
+# =============================================================================
+
+
+def atlas_based_aif_search_from_files(
+    concentration_file: Union[str, Path],
+    brain_mask_file: Union[str, Path],
+    atlas_mask_file: Optional[Union[str, Path]] = None,
+    lesion_mask_file: Optional[Union[str, Path]] = None,
+    criteria: Literal["strict", "relaxed"] = "strict",
+    n_candidates: int = 10,
+    baseline_frames: int = 5,
+    lesion_distance_mm: float = 20.0,
+    prefer_contralateral: bool = True,
+) -> AIFSearchResult:
+    """Perform atlas-based AIF search from NIfTI files.
+
+    Convenience wrapper that loads NIfTI files and calls atlas_based_aif_search.
+
+    Parameters
+    ----------
+    concentration_file : str or Path
+        Path to 4D concentration NIfTI file.
+    brain_mask_file : str or Path
+        Path to 3D brain mask NIfTI file.
+    atlas_mask_file : str or Path, optional
+        Path to 3D arterial atlas mask NIfTI file.
+    lesion_mask_file : str or Path, optional
+        Path to 3D lesion mask NIfTI file.
+    criteria : Literal["strict", "relaxed"]
+        Quality criteria level.
+    n_candidates : int
+        Number of top candidates to return.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+    lesion_distance_mm : float
+        Minimum distance (mm) from lesion.
+    prefer_contralateral : bool
+        Prefer contralateral hemisphere when lesion present.
+
+    Returns
+    -------
+    AIFSearchResult
+        Complete search result.
+    """
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    # Load concentration data
+    conc_img = nib.load(concentration_file)
+    concentration_data: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
+
+    # Get voxel sizes
+    header = conc_img.header  # type: ignore[attr-defined]
+    zooms = header.get_zooms()[:3]  # type: ignore[attr-defined]
+    voxel_sizes: Tuple[float, float, float] = (
+        float(zooms[0]),
+        float(zooms[1]),
+        float(zooms[2]),
+    )
+
+    # Load brain mask
+    brain_img = nib.load(brain_mask_file)
+    brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
+
+    # Load optional atlas mask
+    atlas_mask: Optional[npt.NDArray[Any]] = None
+    if atlas_mask_file is not None:
+        atlas_img = nib.load(atlas_mask_file)
+        atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
+
+    # Load optional lesion mask
+    lesion_mask: Optional[npt.NDArray[Any]] = None
+    if lesion_mask_file is not None:
+        lesion_img = nib.load(lesion_mask_file)
+        lesion_mask = lesion_img.get_fdata()  # type: ignore[attr-defined]
+
+    return atlas_based_aif_search(
+        concentration_data=concentration_data,
+        brain_mask=brain_mask,
+        atlas_mask=atlas_mask,
+        lesion_mask=lesion_mask,
+        voxel_sizes=voxel_sizes,
+        criteria=criteria,
+        n_candidates=n_candidates,
+        baseline_frames=baseline_frames,
+        lesion_distance_mm=lesion_distance_mm,
+        prefer_contralateral=prefer_contralateral,
+    )
