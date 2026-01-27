@@ -14,6 +14,16 @@ from pmriprep.utils.dce_aif import (
     compute_dce_time_to_peak,
     compute_dce_washout_fraction,
 )
+from pmriprep.utils.dce_dsc_validation import (
+    ValidationMetrics,
+    ValidationResult,
+    calculate_correction_factor,
+    calculate_vp_cbv_ratio,
+    get_expected_ratio,
+    should_skip_validation,
+    validate_vp_cbv,
+    validate_vp_cbv_from_files,
+)
 from pmriprep.utils.gpu import (
     GPUVoxelProcessor,
     array_on_device,
@@ -55,6 +65,15 @@ __all__ = [
     "compute_dce_peak_concentration",
     "compute_dce_time_to_peak",
     "compute_dce_washout_fraction",
+    # dce_dsc_validation
+    "ValidationMetrics",
+    "ValidationResult",
+    "calculate_correction_factor",
+    "calculate_vp_cbv_ratio",
+    "get_expected_ratio",
+    "should_skip_validation",
+    "validate_vp_cbv",
+    "validate_vp_cbv_from_files",
     # gpu
     "GPUVoxelProcessor",
     "array_on_device",
