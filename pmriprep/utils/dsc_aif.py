@@ -8,9 +8,9 @@ arterial regions (e.g., MCA territory) and scores candidates based on
 arterial curve characteristics: high peak, sharp washout, narrow FWHM.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Literal, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -19,6 +19,7 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     QC_CNR_THRESHOLD,
 )
+from pmriprep.utils.qc_standards import QCStatus
 
 
 # =============================================================================
@@ -156,6 +157,49 @@ class AIFSearchResult:
     n_candidates_evaluated: int
     n_candidates_passed: int
     qc_metrics: dict[str, Any]
+
+
+@dataclass
+class AIFQualityResult:
+    """Result of AIF quality assessment.
+
+    Attributes
+    ----------
+    status : str
+        Overall QC status: "PASS", "WARN", or "FAIL".
+    quality_score : float
+        Overall quality score (0-1).
+    washout_fraction : float
+        Signal recovery after bolus passage (0-1).
+    fwhm_frames : int
+        Full width at half maximum of the bolus in frames.
+    baseline_cv : float
+        Coefficient of variation of baseline (lower is better).
+    cnr : float
+        Contrast-to-noise ratio (higher is better).
+    peak_value : float
+        Peak concentration value.
+    peak_time : int
+        Time to peak in frames from start.
+    meets_strict : bool
+        Whether the AIF meets strict criteria.
+    meets_relaxed : bool
+        Whether the AIF meets relaxed criteria.
+    criteria_details : dict[str, str]
+        Per-metric pass/warn/fail status details.
+    """
+
+    status: str
+    quality_score: float
+    washout_fraction: float
+    fwhm_frames: int
+    baseline_cv: float
+    cnr: float
+    peak_value: float
+    peak_time: int
+    meets_strict: bool
+    meets_relaxed: bool
+    criteria_details: dict[str, str] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -334,6 +378,319 @@ def compute_peak_time(
         Frame index of peak concentration.
     """
     return int(np.argmax(aif_curve))
+
+
+# =============================================================================
+# AIF Quality Assessment
+# =============================================================================
+
+
+def assess_aif_quality(
+    aif_curve: npt.NDArray[Any],
+    baseline_frames: int = 5,
+    criteria: Literal["strict", "relaxed"] = "strict",
+) -> AIFQualityResult:
+    """Assess the quality of an AIF curve and return pass/warn/fail status.
+
+    This function evaluates an AIF curve against strict and relaxed criteria
+    and provides a comprehensive quality assessment including individual
+    metric evaluations.
+
+    Quality is assessed based on four key metrics:
+    - Washout fraction: Signal recovery after bolus (arterial shows >20% strict, >10% relaxed)
+    - FWHM: Bolus width in frames (5-15 strict, 3-20 relaxed)
+    - Baseline stability: CV of pre-bolus signal (<0.10 strict, <0.20 relaxed)
+    - CNR: Contrast-to-noise ratio (>4.0 strict, >2.0 relaxed)
+
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        1D AIF concentration time course.
+    baseline_frames : int
+        Number of pre-bolus baseline frames (default: 5).
+    criteria : Literal["strict", "relaxed"]
+        Primary criteria level for overall status determination.
+        Both strict and relaxed thresholds are evaluated regardless.
+
+    Returns
+    -------
+    AIFQualityResult
+        Comprehensive quality assessment with status, score, and per-metric details.
+
+    Notes
+    -----
+    Overall status is determined as follows:
+    - PASS: All metrics meet the specified criteria level thresholds
+    - WARN: Some metrics fail specified criteria but all meet relaxed thresholds
+    - FAIL: One or more metrics fail even relaxed thresholds
+
+    Clinical significance of AIF quality:
+    - PSR-like interpretation: washout >50% is ideal, <20% suggests venous contamination
+    - Narrow FWHM (5-10 frames) indicates arterial input without dispersion
+    - Low baseline CV (<0.1) ensures accurate bolus peak detection
+    - High CNR (>4) provides reliable curve shape for deconvolution
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> # Create a synthetic AIF curve
+    >>> t = np.arange(60)
+    >>> aif = np.zeros(60)
+    >>> aif[5:] = 10 * ((t[5:] - 5) ** 2) * np.exp(-(t[5:] - 5) / 3)  # gamma-variate
+    >>> result = assess_aif_quality(aif, baseline_frames=5)
+    >>> print(f"Status: {result.status}, Score: {result.quality_score:.2f}")
+    """
+    # Compute all metrics
+    cnr = compute_aif_cnr(aif_curve, baseline_frames)
+    washout = compute_aif_washout_fraction(aif_curve, baseline_frames)
+    fwhm = compute_aif_fwhm_frames(aif_curve, baseline_frames)
+    baseline_cv = compute_baseline_stability(aif_curve, baseline_frames)
+    peak_time = compute_peak_time(aif_curve)
+    peak_value = float(np.max(aif_curve))
+
+    # Get both threshold sets for evaluation
+    strict_thresholds = get_aif_thresholds("strict")
+    relaxed_thresholds = get_aif_thresholds("relaxed")
+
+    # Evaluate against strict thresholds
+    strict_pass = _evaluate_against_thresholds(
+        cnr, washout, fwhm, baseline_cv, peak_time, baseline_frames, strict_thresholds
+    )
+
+    # Evaluate against relaxed thresholds
+    relaxed_pass = _evaluate_against_thresholds(
+        cnr, washout, fwhm, baseline_cv, peak_time, baseline_frames, relaxed_thresholds
+    )
+
+    # Determine per-metric status for detailed reporting
+    criteria_details = _get_criteria_details(
+        cnr, washout, fwhm, baseline_cv, strict_thresholds, relaxed_thresholds
+    )
+
+    # Compute quality score (0-1) based on how well metrics compare to ideal
+    quality_score = _compute_quality_score(
+        cnr, washout, fwhm, baseline_cv, strict_thresholds
+    )
+
+    # Determine overall status
+    if criteria == "strict":
+        if strict_pass:
+            status = QCStatus.PASS
+        elif relaxed_pass:
+            status = QCStatus.WARN
+        else:
+            status = QCStatus.FAIL
+    else:  # relaxed criteria
+        if relaxed_pass:
+            status = QCStatus.PASS
+        else:
+            status = QCStatus.FAIL
+
+    return AIFQualityResult(
+        status=status,
+        quality_score=quality_score,
+        washout_fraction=washout,
+        fwhm_frames=fwhm,
+        baseline_cv=baseline_cv,
+        cnr=cnr,
+        peak_value=peak_value,
+        peak_time=peak_time,
+        meets_strict=strict_pass,
+        meets_relaxed=relaxed_pass,
+        criteria_details=criteria_details,
+    )
+
+
+def _evaluate_against_thresholds(
+    cnr: float,
+    washout: float,
+    fwhm: int,
+    baseline_cv: float,
+    peak_time: int,
+    baseline_frames: int,
+    thresholds: dict[str, float],
+) -> bool:
+    """Check if all metrics meet the specified thresholds.
+
+    Parameters
+    ----------
+    cnr : float
+        Contrast-to-noise ratio.
+    washout : float
+        Washout fraction (0-1).
+    fwhm : int
+        Full width at half maximum in frames.
+    baseline_cv : float
+        Coefficient of variation of baseline.
+    peak_time : int
+        Time to peak in frames.
+    baseline_frames : int
+        Number of baseline frames.
+    thresholds : dict[str, float]
+        Threshold values from get_aif_thresholds().
+
+    Returns
+    -------
+    bool
+        True if all metrics meet thresholds, False otherwise.
+    """
+    # Check CNR
+    if cnr < thresholds["cnr_min"]:
+        return False
+
+    # Check washout
+    if washout < thresholds["washout_min"]:
+        return False
+
+    # Check FWHM bounds
+    if fwhm < thresholds["fwhm_min"] or fwhm > thresholds["fwhm_max"]:
+        return False
+
+    # Check baseline stability
+    if baseline_cv > thresholds["baseline_cv_max"]:
+        return False
+
+    # Check peak time is reasonable
+    peak_from_baseline = peak_time - baseline_frames
+    if peak_from_baseline < thresholds["peak_time_min"]:
+        return False
+    if peak_from_baseline > thresholds["peak_time_max"]:
+        return False
+
+    return True
+
+
+def _get_criteria_details(
+    cnr: float,
+    washout: float,
+    fwhm: int,
+    baseline_cv: float,
+    strict_thresholds: dict[str, float],
+    relaxed_thresholds: dict[str, float],
+) -> dict[str, str]:
+    """Get per-metric pass/warn/fail status details.
+
+    Parameters
+    ----------
+    cnr : float
+        Contrast-to-noise ratio.
+    washout : float
+        Washout fraction (0-1).
+    fwhm : int
+        Full width at half maximum in frames.
+    baseline_cv : float
+        Coefficient of variation of baseline.
+    strict_thresholds : dict[str, float]
+        Strict threshold values.
+    relaxed_thresholds : dict[str, float]
+        Relaxed threshold values.
+
+    Returns
+    -------
+    dict[str, str]
+        Dictionary mapping metric name to status string.
+    """
+    details: dict[str, str] = {}
+
+    # CNR evaluation (higher is better)
+    if cnr >= strict_thresholds["cnr_min"]:
+        details["cnr"] = QCStatus.PASS
+    elif cnr >= relaxed_thresholds["cnr_min"]:
+        details["cnr"] = QCStatus.WARN
+    else:
+        details["cnr"] = QCStatus.FAIL
+
+    # Washout evaluation (higher is better, up to ~0.5)
+    if washout >= strict_thresholds["washout_min"]:
+        details["washout"] = QCStatus.PASS
+    elif washout >= relaxed_thresholds["washout_min"]:
+        details["washout"] = QCStatus.WARN
+    else:
+        details["washout"] = QCStatus.FAIL
+
+    # FWHM evaluation (within range is better)
+    fwhm_float = float(fwhm)
+    if (
+        strict_thresholds["fwhm_min"] <= fwhm_float <= strict_thresholds["fwhm_max"]
+    ):
+        details["fwhm"] = QCStatus.PASS
+    elif (
+        relaxed_thresholds["fwhm_min"] <= fwhm_float <= relaxed_thresholds["fwhm_max"]
+    ):
+        details["fwhm"] = QCStatus.WARN
+    else:
+        details["fwhm"] = QCStatus.FAIL
+
+    # Baseline CV evaluation (lower is better)
+    if baseline_cv <= strict_thresholds["baseline_cv_max"]:
+        details["baseline_cv"] = QCStatus.PASS
+    elif baseline_cv <= relaxed_thresholds["baseline_cv_max"]:
+        details["baseline_cv"] = QCStatus.WARN
+    else:
+        details["baseline_cv"] = QCStatus.FAIL
+
+    return details
+
+
+def _compute_quality_score(
+    cnr: float,
+    washout: float,
+    fwhm: int,
+    baseline_cv: float,
+    thresholds: dict[str, float],
+) -> float:
+    """Compute overall quality score (0-1) based on metrics.
+
+    The score is a weighted combination of individual metric scores:
+    - CNR: 40% weight (most important for deconvolution reliability)
+    - Washout: 30% weight (indicates arterial vs venous)
+    - FWHM: 20% weight (indicates dispersion)
+    - Baseline CV: 10% weight (noise assessment)
+
+    Parameters
+    ----------
+    cnr : float
+        Contrast-to-noise ratio.
+    washout : float
+        Washout fraction (0-1).
+    fwhm : int
+        Full width at half maximum in frames.
+    baseline_cv : float
+        Coefficient of variation of baseline.
+    thresholds : dict[str, float]
+        Threshold values for normalization.
+
+    Returns
+    -------
+    float
+        Quality score between 0 and 1.
+    """
+    score = 0.0
+
+    # CNR contribution (0-0.4): normalized to expected range
+    # Typical good CNR is 4-20, exceptional is >20
+    cnr_normalized = min(1.0, max(0.0, (cnr - thresholds["cnr_min"]) / 16.0))
+    score += 0.4 * cnr_normalized
+
+    # Washout contribution (0-0.3): closer to 0.4-0.6 is ideal for arterial
+    # Peak score at 0.5, decays towards 0 and 1
+    ideal_washout = 0.5
+    washout_deviation = abs(washout - ideal_washout)
+    washout_normalized = max(0.0, 1.0 - washout_deviation / 0.5)
+    score += 0.3 * washout_normalized
+
+    # FWHM contribution (0-0.2): closer to 8-10 frames is ideal
+    ideal_fwhm = 9.0
+    fwhm_range = thresholds["fwhm_max"] - thresholds["fwhm_min"]
+    fwhm_deviation = abs(float(fwhm) - ideal_fwhm)
+    fwhm_normalized = max(0.0, 1.0 - fwhm_deviation / (fwhm_range / 2.0))
+    score += 0.2 * fwhm_normalized
+
+    # Baseline stability contribution (0-0.1): lower CV is better
+    baseline_normalized = max(0.0, 1.0 - baseline_cv / thresholds["baseline_cv_max"])
+    score += 0.1 * baseline_normalized
+
+    return min(1.0, score)
 
 
 # =============================================================================
