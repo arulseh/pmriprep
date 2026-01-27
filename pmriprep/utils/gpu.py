@@ -240,3 +240,409 @@ def ensure_contiguous(arr: ArrayLike) -> ArrayLike:
     """
     xp = get_array_module(arr)
     return xp.ascontiguousarray(arr)
+
+
+class GPUVoxelProcessor:
+    """GPU memory management for large-scale voxel-wise processing.
+
+    This class provides automatic batch size optimization based on available
+    GPU memory, memory pooling for reduced allocation overhead, and efficient
+    batch iteration for processing large volumes.
+
+    The processor estimates memory requirements per voxel and determines the
+    optimal batch size to maximize GPU utilization while avoiding out-of-memory
+    errors. It also provides memory pooling to reduce allocation overhead
+    during iterative processing.
+
+    Attributes:
+        n_voxels: Total number of voxels to process.
+        n_timepoints: Number of timepoints per voxel (for time series data).
+        bytes_per_element: Size of each array element in bytes (default: 8 for float64).
+        memory_fraction: Fraction of free GPU memory to use (default: 0.5).
+        min_batch_size: Minimum batch size to use.
+        device: Target device ("gpu", "cuda", or "cpu").
+
+    Example:
+        >>> processor = GPUVoxelProcessor(
+        ...     n_voxels=100000,
+        ...     n_timepoints=60,
+        ...     memory_fraction=0.5,
+        ... )
+        >>> for batch_start, batch_end, batch_data in processor.iter_batches(data):
+        ...     # Process batch_data on GPU
+        ...     results[batch_start:batch_end] = process(batch_data)
+    """
+
+    def __init__(
+        self,
+        n_voxels: int,
+        n_timepoints: int = 1,
+        bytes_per_element: int = 8,
+        memory_fraction: float = 0.5,
+        min_batch_size: int = 100,
+        device: Literal["cpu", "cuda", "gpu"] = "gpu",
+        output_arrays: int = 5,
+        intermediate_factor: float = 2.0,
+    ) -> None:
+        """Initialize the GPU voxel processor.
+
+        Args:
+            n_voxels: Total number of voxels to process.
+            n_timepoints: Number of timepoints per voxel (for 4D data).
+            bytes_per_element: Bytes per array element (8 for float64, 4 for float32).
+            memory_fraction: Fraction of free GPU memory to use (0.0-1.0).
+                Higher values maximize utilization but risk OOM errors.
+            min_batch_size: Minimum voxels per batch.
+            device: Target device ("gpu", "cuda", or "cpu").
+            output_arrays: Expected number of output arrays per voxel
+                (e.g., CBF, CBV, MTT, Tmax, residue = 5).
+            intermediate_factor: Multiplier for intermediate memory usage
+                during computation (accounts for temporaries).
+        """
+        if n_voxels <= 0:
+            raise ValueError(f"n_voxels must be positive, got {n_voxels}")
+        if n_timepoints <= 0:
+            raise ValueError(f"n_timepoints must be positive, got {n_timepoints}")
+        if not 0.0 < memory_fraction <= 1.0:
+            raise ValueError(f"memory_fraction must be in (0.0, 1.0], got {memory_fraction}")
+        if min_batch_size <= 0:
+            raise ValueError(f"min_batch_size must be positive, got {min_batch_size}")
+
+        self.n_voxels = n_voxels
+        self.n_timepoints = n_timepoints
+        self.bytes_per_element = bytes_per_element
+        self.memory_fraction = memory_fraction
+        self.min_batch_size = min_batch_size
+        self.device = device
+        self.output_arrays = output_arrays
+        self.intermediate_factor = intermediate_factor
+
+        # Compute memory requirements per voxel
+        # Input: n_timepoints elements per voxel
+        # Output: output_arrays elements per voxel (or n_timepoints if keeping full residue)
+        # Intermediate: varies by algorithm, use intermediate_factor
+        self._bytes_per_voxel = self._estimate_bytes_per_voxel()
+
+        # Determine if GPU is actually available
+        self._use_gpu = (
+            device in ("gpu", "cuda") and is_cupy_available()
+        )
+
+        # Memory pool for reusable arrays (reduces allocation overhead)
+        self._memory_pool: dict[str, ArrayLike] = {}
+        self._pool_shapes: dict[str, tuple[int, ...]] = {}
+
+    def _estimate_bytes_per_voxel(self) -> int:
+        """Estimate memory requirements per voxel in bytes.
+
+        This accounts for:
+        - Input time series data
+        - Output arrays (CBF, CBV, MTT, etc.)
+        - Intermediate computation arrays
+
+        Returns:
+            Estimated bytes needed per voxel.
+        """
+        # Input: one time series per voxel
+        input_bytes = self.n_timepoints * self.bytes_per_element
+
+        # Output: output_arrays scalars OR residue function per voxel
+        # Use max(output_arrays, n_timepoints) for conservative estimate
+        output_bytes = max(self.output_arrays, self.n_timepoints) * self.bytes_per_element
+
+        # Intermediate: factor for temporary arrays during computation
+        intermediate_bytes = int(input_bytes * self.intermediate_factor)
+
+        total = input_bytes + output_bytes + intermediate_bytes
+        return total
+
+    def get_optimal_batch_size(self) -> int:
+        """Calculate optimal batch size based on available GPU memory.
+
+        This method queries the available GPU memory and calculates how many
+        voxels can be processed in a single batch while staying within the
+        memory_fraction limit.
+
+        Returns:
+            Optimal number of voxels per batch. Returns n_voxels if using CPU
+            or if all voxels fit in available memory.
+
+        Notes:
+            - Always returns at least min_batch_size
+            - Returns n_voxels if processing on CPU (no memory limit)
+            - Accounts for memory_fraction safety margin
+        """
+        # CPU processing: no memory limit, process all at once
+        if not self._use_gpu:
+            return self.n_voxels
+
+        # Get available GPU memory
+        mem_info = get_gpu_memory_info()
+        free_bytes = mem_info["free"]
+
+        if free_bytes == 0:
+            # Unknown memory, use conservative default
+            return max(self.min_batch_size, min(1000, self.n_voxels))
+
+        # Calculate available memory with safety margin
+        available_bytes = int(free_bytes * self.memory_fraction)
+
+        # Calculate batch size
+        batch_size = available_bytes // max(self._bytes_per_voxel, 1)
+
+        # Clamp to valid range
+        batch_size = max(self.min_batch_size, batch_size)
+        batch_size = min(batch_size, self.n_voxels)
+
+        return batch_size
+
+    def get_memory_estimate(self, batch_size: int | None = None) -> dict[str, int | float]:
+        """Estimate memory usage for a given batch size.
+
+        Args:
+            batch_size: Batch size to estimate. If None, uses optimal batch size.
+
+        Returns:
+            Dictionary with memory estimates:
+                - "per_voxel": Bytes per voxel
+                - "batch_total": Total bytes for batch
+                - "gpu_free": Free GPU memory (0 if CPU)
+                - "gpu_total": Total GPU memory (0 if CPU)
+                - "utilization": Estimated memory utilization (0-1)
+        """
+        if batch_size is None:
+            batch_size = self.get_optimal_batch_size()
+
+        batch_total = batch_size * self._bytes_per_voxel
+        mem_info = get_gpu_memory_info()
+
+        utilization = 0.0
+        if mem_info["total"] > 0:
+            utilization = batch_total / mem_info["total"]
+
+        return {
+            "per_voxel": self._bytes_per_voxel,
+            "batch_total": batch_total,
+            "gpu_free": mem_info["free"],
+            "gpu_total": mem_info["total"],
+            "utilization": utilization,
+        }
+
+    def allocate_pool(self, name: str, shape: tuple[int, ...], dtype: Any = None) -> ArrayLike:
+        """Allocate or retrieve a reusable array from the memory pool.
+
+        This method reduces allocation overhead by reusing arrays across
+        batch iterations. Arrays are created on the target device (GPU or CPU).
+
+        Args:
+            name: Unique identifier for this array in the pool.
+            shape: Shape of the array to allocate.
+            dtype: Data type (default: float64).
+
+        Returns:
+            Array from the pool (may be reused if shape matches).
+
+        Notes:
+            If an array with the same name exists but different shape,
+            it is replaced with a new allocation.
+        """
+        if dtype is None:
+            dtype = np.float64
+
+        # Check if we have a compatible array in the pool
+        if name in self._memory_pool and self._pool_shapes.get(name) == shape:
+            return self._memory_pool[name]
+
+        # Allocate new array
+        xp = get_array_module(prefer_gpu=self._use_gpu)
+        arr = xp.zeros(shape, dtype=dtype)
+
+        # Store in pool
+        self._memory_pool[name] = arr
+        self._pool_shapes[name] = shape
+
+        return arr
+
+    def free_pool(self, name: str | None = None) -> None:
+        """Free arrays from the memory pool.
+
+        Args:
+            name: Specific array to free. If None, frees entire pool.
+        """
+        if name is None:
+            self._memory_pool.clear()
+            self._pool_shapes.clear()
+        elif name in self._memory_pool:
+            del self._memory_pool[name]
+            del self._pool_shapes[name]
+
+        # Trigger GPU memory cleanup if on GPU
+        if self._use_gpu:
+            clear_gpu_memory()
+
+    def iter_batches(
+        self,
+        data: npt.NDArray[Any],
+        batch_size: int | None = None,
+    ) -> Any:
+        """Iterate over data in optimized batches.
+
+        This generator yields batches of voxel data, automatically handling
+        GPU transfer and memory management. Each batch is transferred to the
+        target device (GPU or CPU) for processing.
+
+        Args:
+            data: Input data array of shape (n_voxels, n_timepoints) or (n_voxels,).
+                First dimension should be voxels.
+            batch_size: Batch size to use. If None, uses optimal batch size.
+
+        Yields:
+            Tuples of (start_idx, end_idx, batch_data) where:
+                - start_idx: Starting index in original array
+                - end_idx: Ending index in original array
+                - batch_data: Batch on target device (GPU or CPU array)
+
+        Example:
+            >>> processor = GPUVoxelProcessor(n_voxels=100000, n_timepoints=60)
+            >>> results = np.zeros(100000)
+            >>> for start, end, batch in processor.iter_batches(data):
+            ...     batch_result = some_gpu_function(batch)
+            ...     results[start:end] = to_host(batch_result)
+        """
+        if batch_size is None:
+            batch_size = self.get_optimal_batch_size()
+
+        n_total = data.shape[0]
+
+        for start_idx in range(0, n_total, batch_size):
+            end_idx = min(start_idx + batch_size, n_total)
+
+            # Extract batch
+            batch_cpu = data[start_idx:end_idx]
+
+            # Transfer to target device
+            if self._use_gpu:
+                batch_device = to_device(batch_cpu, device="gpu")
+            else:
+                batch_device = batch_cpu
+
+            yield start_idx, end_idx, batch_device
+
+            # Synchronize and potentially clear memory between batches
+            if self._use_gpu:
+                synchronize()
+
+    def iter_batches_multiple(
+        self,
+        *arrays: npt.NDArray[Any],
+        batch_size: int | None = None,
+    ) -> Any:
+        """Iterate over multiple arrays in synchronized batches.
+
+        Similar to iter_batches, but handles multiple input arrays that
+        should be batched together along the first dimension.
+
+        Args:
+            *arrays: Input arrays to batch. All must have same first dimension.
+            batch_size: Batch size to use. If None, uses optimal batch size.
+
+        Yields:
+            Tuples of (start_idx, end_idx, *batch_arrays) where batch_arrays
+            are the batched portions of each input array on target device.
+
+        Raises:
+            ValueError: If arrays have different first dimensions.
+
+        Example:
+            >>> for start, end, conc_batch, mask_batch in processor.iter_batches_multiple(
+            ...     concentration_curves, brain_mask
+            ... ):
+            ...     process(conc_batch, mask_batch)
+        """
+        if not arrays:
+            return
+
+        # Verify all arrays have same first dimension
+        n_total = arrays[0].shape[0]
+        for i, arr in enumerate(arrays[1:], start=2):
+            if arr.shape[0] != n_total:
+                raise ValueError(
+                    f"Array 1 has shape {arrays[0].shape} but array {i} has shape {arr.shape}. "
+                    "First dimensions must match."
+                )
+
+        if batch_size is None:
+            batch_size = self.get_optimal_batch_size()
+
+        for start_idx in range(0, n_total, batch_size):
+            end_idx = min(start_idx + batch_size, n_total)
+
+            # Extract and transfer batches
+            batches: list[ArrayLike] = []
+            for arr in arrays:
+                batch_cpu = arr[start_idx:end_idx]
+                if self._use_gpu:
+                    batch_device = to_device(batch_cpu, device="gpu")
+                else:
+                    batch_device = batch_cpu
+                batches.append(batch_device)
+
+            yield (start_idx, end_idx, *batches)
+
+            # Synchronize between batches
+            if self._use_gpu:
+                synchronize()
+
+    def process_in_batches(
+        self,
+        data: npt.NDArray[Any],
+        process_func: Any,
+        output_shape: tuple[int, ...] | None = None,
+        batch_size: int | None = None,
+    ) -> npt.NDArray[Any]:
+        """Process all voxels using a function with automatic batching.
+
+        This is a convenience method that handles the full batch processing
+        loop, including result aggregation.
+
+        Args:
+            data: Input data array of shape (n_voxels, ...).
+            process_func: Function that takes a batch and returns results.
+                Should accept GPU arrays if GPU processing is enabled.
+            output_shape: Shape of output array. If None, assumes (n_voxels,).
+            batch_size: Batch size to use. If None, uses optimal batch size.
+
+        Returns:
+            Complete results array on CPU.
+
+        Example:
+            >>> def compute_cbf(batch):
+            ...     # batch is on GPU if GPU enabled
+            ...     return some_computation(batch)
+            >>> results = processor.process_in_batches(data, compute_cbf)
+        """
+        n_total = data.shape[0]
+        if output_shape is None:
+            output_shape = (n_total,)
+
+        # Allocate output on CPU
+        results = np.zeros(output_shape, dtype=np.float64)
+
+        # Process batches
+        for start_idx, end_idx, batch_data in self.iter_batches(data, batch_size):
+            batch_result = process_func(batch_data)
+
+            # Transfer result to CPU and store
+            batch_result_cpu = to_host(batch_result)
+            results[start_idx:end_idx] = batch_result_cpu
+
+        return results
+
+    def __repr__(self) -> str:
+        """Return string representation of the processor."""
+        return (
+            f"GPUVoxelProcessor(n_voxels={self.n_voxels}, "
+            f"n_timepoints={self.n_timepoints}, "
+            f"device={'GPU' if self._use_gpu else 'CPU'}, "
+            f"optimal_batch_size={self.get_optimal_batch_size()})"
+        )

@@ -1,6 +1,7 @@
 """Utility modules for PMRIPrep."""
 
 from pmriprep.utils.gpu import (
+    GPUVoxelProcessor,
     array_on_device,
     clear_gpu_memory,
     ensure_contiguous,
@@ -28,6 +29,7 @@ from pmriprep.utils.structural_reference import (
 
 __all__ = [
     # gpu
+    "GPUVoxelProcessor",
     "array_on_device",
     "clear_gpu_memory",
     "ensure_contiguous",
