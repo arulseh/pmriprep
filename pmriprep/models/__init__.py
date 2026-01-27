@@ -12,10 +12,12 @@ from pmriprep.models.dsc import (
     DSCFitResult,
     DSCModel,
     DSCModelParameter,
+    VascularModel,
 )
 
 __all__ = [
     "DSCFitResult",
     "DSCModel",
     "DSCModelParameter",
+    "VascularModel",
 ]

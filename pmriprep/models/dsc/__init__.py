@@ -10,9 +10,11 @@ from pmriprep.models.dsc.base import (
     DSCModel,
     DSCModelParameter,
 )
+from pmriprep.models.dsc.vascular import VascularModel
 
 __all__ = [
     "DSCFitResult",
     "DSCModel",
     "DSCModelParameter",
+    "VascularModel",
 ]
