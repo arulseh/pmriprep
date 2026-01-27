@@ -30,6 +30,7 @@ from scipy import linalg
 from scipy.integrate import trapezoid
 
 from pmriprep.utils.dsc_constants import (
+    DEFAULT_LAMBDA_RANGE,
     DEFAULT_OI_THRESHOLD,
     DEFAULT_SVD_THRESHOLD,
     EPSILON_CONCENTRATION,
@@ -1236,3 +1237,361 @@ def svd_deconvolve_oscillation_batch(
         threshold_used = threshold_used.reshape(spatial_shape)
 
     return residues, cbf, cbv, mtt, oscillation_index, threshold_used
+
+
+# =============================================================================
+# Tikhonov Regularization
+# =============================================================================
+
+
+@dataclass
+class TikhonovDeconvolutionResult:
+    """Result from Tikhonov regularized deconvolution.
+
+    Extends the standard DeconvolutionResult with Tikhonov-specific information.
+
+    Attributes:
+        residue: Residue function R(t) with same length as input curves.
+            The maximum value corresponds to CBF.
+        cbf: Cerebral blood flow, max(R(t)).
+        cbv: Cerebral blood volume, integral of R(t).
+        mtt: Mean transit time (seconds), CBV/CBF via central volume theorem.
+        lambda_optimal: The optimal regularization parameter λ found by GCV.
+        gcv_score: The GCV score at the optimal λ.
+        n_lambda_evaluated: Number of λ values evaluated during optimization.
+        residual_norm: ||AR - C||² at the solution.
+        regularization_norm: ||R||² at the solution.
+    """
+
+    residue: npt.NDArray[np.floating]
+    cbf: float
+    cbv: float
+    mtt: float
+    lambda_optimal: float
+    gcv_score: float
+    n_lambda_evaluated: int
+    residual_norm: float
+    regularization_norm: float
+
+    def get_tmax(self, dt: float = 1.0) -> float:
+        """Get time to maximum of residue function.
+
+        Args:
+            dt: Time step in seconds (default 1.0 for frame units).
+
+        Returns:
+            Tmax in seconds (or frames if dt=1.0).
+        """
+        return float(np.argmax(self.residue)) * dt
+
+
+def _compute_gcv_score(
+    tissue_curve: npt.NDArray[np.floating],
+    u: npt.NDArray[np.floating],
+    s: npt.NDArray[np.floating],
+    vh: npt.NDArray[np.floating],
+    lambda_val: float,
+) -> tuple[float, npt.NDArray[np.floating]]:
+    """Compute Generalized Cross-Validation score for a given λ.
+
+    The GCV function is defined as:
+        GCV(λ) = n × ||AR_λ - C||² / (tr(I - A × A_λ^†))²
+
+    where A_λ^† is the Tikhonov-regularized pseudoinverse.
+
+    For SVD-based computation:
+        GCV(λ) = n × Σ[(u_i^T C)² × λ²/(s_i² + λ²)²] / [Σ(λ²/(s_i² + λ²))]²
+
+    Args:
+        tissue_curve: Tissue concentration curve.
+        u, s, vh: SVD decomposition of the Toeplitz matrix.
+        lambda_val: Regularization parameter λ.
+
+    Returns:
+        Tuple of (GCV score, residue function at this λ).
+    """
+    n = len(tissue_curve)
+    lambda_sq = lambda_val ** 2
+    s_sq = s ** 2
+
+    # Filter factors: f_i = s_i² / (s_i² + λ²)
+    filter_factors = s_sq / (s_sq + lambda_sq)
+
+    # Compute residue via Tikhonov regularization
+    # R = V @ diag(s / (s² + λ²)) @ U^T @ C
+    s_reg = s / (s_sq + lambda_sq)
+    ut_c = u.T @ tissue_curve  # (n,)
+    residue = vh.T @ (s_reg * ut_c)
+
+    # Residual part of GCV: Σ[(u_i^T C)² × (1 - f_i)²]
+    # = Σ[(u_i^T C)² × (λ²/(s_i² + λ²))²]
+    residual_terms = (ut_c ** 2) * ((1 - filter_factors) ** 2)
+    residual_sum = float(np.sum(residual_terms))
+
+    # Denominator: (Σ(1 - f_i))² = (Σ(λ²/(s_i² + λ²)))²
+    trace_term = float(np.sum(1 - filter_factors))
+
+    # GCV = n × residual_sum / trace_term²
+    if trace_term > 1e-12:
+        gcv = n * residual_sum / (trace_term ** 2)
+    else:
+        gcv = float("inf")
+
+    return gcv, residue
+
+
+def tikhonov_deconvolve(
+    tissue_curve: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    dt: float = 1.0,
+    lambda_min: float = DEFAULT_LAMBDA_RANGE.min,
+    lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
+    n_lambda: int = 50,
+    apply_non_negativity: bool = True,
+) -> TikhonovDeconvolutionResult:
+    """Tikhonov regularized deconvolution with GCV parameter selection.
+
+    Performs deconvolution by solving the regularized least squares problem:
+        minimize ||AR - C||² + λ²||R||²
+
+    where A is the Toeplitz convolution matrix from the AIF, R is the residue
+    function, C is the tissue curve, and λ is the regularization parameter.
+
+    The optimal λ is selected using Generalized Cross-Validation (GCV), which
+    minimizes the leave-one-out cross-validation error:
+        GCV(λ) = n × ||AR_λ - C||² / (tr(I - A × A_λ^†))²
+
+    Args:
+        tissue_curve: Tissue concentration curve, shape (n_timepoints,).
+        aif: Arterial input function, shape (n_timepoints,).
+            Must have same length as tissue_curve.
+        dt: Time step in seconds. Default 1.0 gives results in frame units.
+            For absolute quantification, provide actual TR.
+        lambda_min: Minimum λ value to consider. Default 1e-4.
+        lambda_max: Maximum λ value to consider. Default 1.0.
+        n_lambda: Number of λ values to evaluate in log-space grid. Default 50.
+        apply_non_negativity: If True, apply non-negativity constraint to
+            residue function by clipping negative values to zero.
+            Default is True.
+
+    Returns:
+        TikhonovDeconvolutionResult containing residue function, perfusion
+        parameters, and optimal λ.
+
+    Raises:
+        ValueError: If tissue_curve and aif have different lengths.
+        ValueError: If arrays are empty.
+        ValueError: If lambda_min >= lambda_max.
+
+    Notes:
+        - CBF is extracted as max(R(t))
+        - CBV is computed as integral of R(t) using trapezoidal rule
+        - MTT = CBV / CBF (central volume theorem)
+        - Tikhonov regularization provides smooth solutions by penalizing
+          the norm of the residue function
+        - GCV provides automatic parameter selection without requiring a
+          noise estimate
+        - This method is NOT delay-insensitive; consider cSVD for delay estimation
+
+    References:
+        Hansen PC. Rank-Deficient and Discrete Ill-Posed Problems: Numerical
+        Aspects of Linear Inversion. SIAM, 1998.
+
+        Golub GH, Heath M, Wahba G. Generalized cross-validation as a method
+        for choosing a good ridge parameter. Technometrics. 1979;21(2):215-223.
+    """
+    # Validate inputs
+    if len(tissue_curve) != len(aif):
+        raise ValueError(
+            f"tissue_curve and aif must have same length, "
+            f"got {len(tissue_curve)} and {len(aif)}"
+        )
+
+    if len(tissue_curve) == 0:
+        raise ValueError("Arrays cannot be empty")
+
+    if lambda_min >= lambda_max:
+        raise ValueError(
+            f"lambda_min must be less than lambda_max, "
+            f"got {lambda_min} >= {lambda_max}"
+        )
+
+    n = len(tissue_curve)
+
+    # Build Toeplitz convolution matrix
+    matrix = build_toeplitz_matrix(aif, dt)
+
+    # Perform SVD
+    u, s, vh = linalg.svd(matrix, full_matrices=False)
+
+    # Create log-spaced grid of λ values
+    lambda_values = np.logspace(
+        np.log10(lambda_min),
+        np.log10(lambda_max),
+        n_lambda,
+    )
+
+    # Evaluate GCV at each λ
+    best_gcv = float("inf")
+    best_lambda = lambda_values[0]
+    best_residue = np.zeros(n, dtype=np.float64)
+
+    for lam in lambda_values:
+        gcv, residue = _compute_gcv_score(tissue_curve, u, s, vh, lam)
+
+        if gcv < best_gcv:
+            best_gcv = gcv
+            best_lambda = lam
+            best_residue = residue
+
+    # Apply non-negativity constraint
+    if apply_non_negativity:
+        best_residue = np.maximum(best_residue, 0.0)
+
+    # Compute residual and regularization norms
+    predicted = matrix @ best_residue
+    residual_norm = float(np.sum((predicted - tissue_curve) ** 2))
+    regularization_norm = float(np.sum(best_residue ** 2))
+
+    # Extract perfusion parameters
+    cbf = float(np.max(best_residue))
+
+    # CBV via trapezoidal integration of residue
+    cbv = float(trapezoid(best_residue, dx=dt))
+
+    # MTT from central volume theorem: MTT = CBV / CBF
+    if cbf > EPSILON_CONCENTRATION:
+        mtt = cbv / cbf
+    else:
+        mtt = 0.0
+
+    return TikhonovDeconvolutionResult(
+        residue=best_residue,
+        cbf=cbf,
+        cbv=cbv,
+        mtt=mtt,
+        lambda_optimal=float(best_lambda),
+        gcv_score=float(best_gcv),
+        n_lambda_evaluated=n_lambda,
+        residual_norm=residual_norm,
+        regularization_norm=regularization_norm,
+    )
+
+
+def tikhonov_deconvolve_batch(
+    tissue_curves: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    dt: float = 1.0,
+    lambda_min: float = DEFAULT_LAMBDA_RANGE.min,
+    lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
+    n_lambda: int = 50,
+    apply_non_negativity: bool = True,
+    mask: Optional[npt.NDArray[np.bool_]] = None,
+) -> tuple[
+    npt.NDArray[np.floating],  # residues
+    npt.NDArray[np.floating],  # cbf
+    npt.NDArray[np.floating],  # cbv
+    npt.NDArray[np.floating],  # mtt
+    npt.NDArray[np.floating],  # lambda_optimal
+]:
+    """Batch Tikhonov deconvolution for multiple voxels.
+
+    Deconvolves multiple tissue curves using Tikhonov regularization with
+    GCV-based parameter selection. Each voxel gets an individually optimized λ.
+
+    Note: This function processes voxels sequentially because each voxel
+    may require a different optimal λ.
+
+    Args:
+        tissue_curves: Tissue concentration curves, shape (n_voxels, n_timepoints)
+            or (x, y, z, n_timepoints) for 4D data.
+        aif: Arterial input function, shape (n_timepoints,).
+        dt: Time step in seconds.
+        lambda_min: Minimum λ value. Default 1e-4.
+        lambda_max: Maximum λ value. Default 1.0.
+        n_lambda: Number of λ values in grid. Default 50.
+        apply_non_negativity: Apply non-negativity constraint on residue.
+        mask: Optional boolean mask of voxels to process. If None, process all.
+            Shape must match spatial dimensions of tissue_curves.
+
+    Returns:
+        Tuple of (residues, cbf, cbv, mtt, lambda_optimal) arrays.
+        All output arrays have the same spatial shape as input (excluding time dimension).
+    """
+    # Store original shape for reshaping output
+    original_shape = tissue_curves.shape
+    n_timepoints = original_shape[-1]
+
+    # Reshape to 2D (n_voxels, n_timepoints)
+    if tissue_curves.ndim > 2:
+        spatial_shape = original_shape[:-1]
+        n_voxels = int(np.prod(spatial_shape))
+        tissue_2d = tissue_curves.reshape(n_voxels, n_timepoints)
+    else:
+        spatial_shape = (original_shape[0],)
+        n_voxels = original_shape[0]
+        tissue_2d = tissue_curves
+
+    # Flatten mask if provided
+    if mask is not None:
+        mask_flat = mask.flatten()
+    else:
+        mask_flat = np.ones(n_voxels, dtype=bool)
+
+    # Build Toeplitz matrix and compute SVD once (shared across all voxels)
+    matrix = build_toeplitz_matrix(aif, dt)
+    u, s, vh = linalg.svd(matrix, full_matrices=False)
+
+    # Create log-spaced grid of λ values (shared across all voxels)
+    lambda_values = np.logspace(
+        np.log10(lambda_min),
+        np.log10(lambda_max),
+        n_lambda,
+    )
+
+    # Initialize output arrays
+    residues = np.zeros((n_voxels, n_timepoints), dtype=np.float64)
+    cbf = np.zeros(n_voxels, dtype=np.float64)
+    cbv = np.zeros(n_voxels, dtype=np.float64)
+    mtt = np.zeros(n_voxels, dtype=np.float64)
+    lambda_optimal = np.zeros(n_voxels, dtype=np.float64)
+
+    # Process each masked voxel with individual λ optimization
+    masked_indices = np.where(mask_flat)[0]
+    for idx in masked_indices:
+        tissue_curve = tissue_2d[idx, :]
+
+        # GCV optimization for this voxel
+        best_gcv = float("inf")
+        best_lambda = lambda_values[0]
+        best_residue = np.zeros(n_timepoints, dtype=np.float64)
+
+        for lam in lambda_values:
+            gcv, residue = _compute_gcv_score(tissue_curve, u, s, vh, lam)
+
+            if gcv < best_gcv:
+                best_gcv = gcv
+                best_lambda = lam
+                best_residue = residue
+
+        # Apply non-negativity
+        if apply_non_negativity:
+            best_residue = np.maximum(best_residue, 0.0)
+
+        # Store results for this voxel
+        residues[idx, :] = best_residue
+        cbf[idx] = float(np.max(best_residue))
+        cbv[idx] = float(trapezoid(best_residue, dx=dt))
+        if cbf[idx] > EPSILON_CONCENTRATION:
+            mtt[idx] = cbv[idx] / cbf[idx]
+        lambda_optimal[idx] = float(best_lambda)
+
+    # Reshape to original spatial dimensions
+    if tissue_curves.ndim > 2:
+        residues = residues.reshape(original_shape)
+        cbf = cbf.reshape(spatial_shape)
+        cbv = cbv.reshape(spatial_shape)
+        mtt = mtt.reshape(spatial_shape)
+        lambda_optimal = lambda_optimal.reshape(spatial_shape)
+
+    return residues, cbf, cbv, mtt, lambda_optimal
