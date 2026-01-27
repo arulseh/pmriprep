@@ -1,16 +1,26 @@
 """HD-GLIO tumor segmentation interfaces for PMRIPrep.
 
 This module implements Nipype interfaces for HD-GLIO deep learning tumor
-segmentation preprocessing. HD-GLIO requires minimal preprocessing:
+segmentation preprocessing and inference. HD-GLIO requires minimal preprocessing:
 brain extraction only, NO bias correction, NO intensity normalization.
+
+Interfaces
+----------
+HDGLIOPrep
+    Minimal preprocessing (brain extraction only) for HD-GLIO input
+HDGLIOSegment
+    Deep learning tumor segmentation using HD-GLIO
 """
 
+import platform
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterface,
     BaseInterfaceInputSpec,
+    CommandLine,
+    CommandLineInputSpec,
     File,
     TraitedSpec,
     traits,
@@ -340,6 +350,409 @@ class HDGLIOPrep(BaseInterface):
                 str(self.inputs.flair), "_flair_hdglio"
             )
             outputs["dimensions_matched"] = True
+            outputs["qc_metrics"] = {}
+
+        return outputs
+
+
+# --------------------------------------------------------------------------
+# HDGLIOSegment: Deep learning tumor segmentation
+# --------------------------------------------------------------------------
+
+
+class HDGLIOSegmentInputSpec(CommandLineInputSpec):
+    """Input specification for HDGLIOSegment interface."""
+
+    t1w_pre = File(
+        exists=True,
+        mandatory=True,
+        argstr="-t1 %s",
+        position=1,
+        desc="Brain-extracted T1-weighted pre-contrast image",
+    )
+    t1w_postcon = File(
+        exists=True,
+        mandatory=True,
+        argstr="-t1c %s",
+        position=2,
+        desc="Brain-extracted T1-weighted post-contrast (ce-GAD) image",
+    )
+    t2w = File(
+        exists=True,
+        mandatory=True,
+        argstr="-t2 %s",
+        position=3,
+        desc="Brain-extracted T2-weighted image",
+    )
+    flair = File(
+        exists=True,
+        mandatory=True,
+        argstr="-flair %s",
+        position=4,
+        desc="Brain-extracted FLAIR image",
+    )
+    output_dir = traits.Directory(
+        argstr="-o %s",
+        position=5,
+        desc="Output directory for segmentation results",
+        genfile=True,
+    )
+    device = traits.Enum(
+        "cuda",
+        "mps",
+        "cpu",
+        usedefault=True,
+        desc="Device for inference: cuda (NVIDIA GPU), mps (Apple Silicon), or cpu",
+    )
+    validate_output = traits.Bool(
+        True,
+        usedefault=True,
+        desc="Validate that output contains tumor voxels (default: True)",
+    )
+
+
+class HDGLIOSegmentOutputSpec(TraitedSpec):
+    """Output specification for HDGLIOSegment interface."""
+
+    segmentation = File(exists=True, desc="HD-GLIO segmentation output NIfTI file")
+    has_tumor = traits.Bool(desc="Whether segmentation contains tumor voxels")
+    tumor_volume_ml = traits.Float(desc="Total tumor volume in milliliters")
+    enhancing_volume_ml = traits.Float(desc="Enhancing tumor volume (label 2) in milliliters")
+    non_enhancing_volume_ml = traits.Float(desc="Non-enhancing tumor volume (label 1) in milliliters")
+    qc_metrics = traits.Dict(desc="QC metrics dictionary")
+
+
+class HDGLIOSegment(BaseInterface):
+    """HD-GLIO deep learning tumor segmentation interface.
+
+    This interface wraps the HD-GLIO (High-Definition GlioMa) deep learning
+    model for automated brain tumor segmentation. HD-GLIO produces multi-class
+    segmentation masks with the following labels:
+
+    - 0: Background (non-tumor)
+    - 1: Non-enhancing tumor (necrosis, non-enhancing core)
+    - 2: Enhancing tumor (contrast-enhancing tumor)
+
+    Parameters
+    ----------
+    t1w_pre : str
+        Path to brain-extracted T1-weighted pre-contrast image
+    t1w_postcon : str
+        Path to brain-extracted T1-weighted post-contrast (ce-GAD) image
+    t2w : str
+        Path to brain-extracted T2-weighted image
+    flair : str
+        Path to brain-extracted FLAIR image
+    output_dir : str, optional
+        Output directory for segmentation results
+    device : {'cuda', 'mps', 'cpu'}
+        Device for inference:
+        - 'cuda': NVIDIA GPU (requires CUDA and appropriate drivers)
+        - 'mps': Apple Silicon GPU (macOS with M1/M2/M3 chips)
+        - 'cpu': CPU only (slowest, but always available)
+    validate_output : bool
+        If True (default), validate that output contains tumor voxels
+
+    Returns
+    -------
+    segmentation : str
+        Path to HD-GLIO segmentation output NIfTI file
+    has_tumor : bool
+        Whether segmentation contains tumor voxels (labels 1 or 2)
+    tumor_volume_ml : float
+        Total tumor volume in milliliters
+    enhancing_volume_ml : float
+        Enhancing tumor (label 2) volume in milliliters
+    non_enhancing_volume_ml : float
+        Non-enhancing tumor (label 1) volume in milliliters
+    qc_metrics : dict
+        QC metrics including volume statistics and validation results
+
+    Examples
+    --------
+    >>> segment = HDGLIOSegment()
+    >>> segment.inputs.t1w_pre = 'T1w_pre_brain.nii.gz'
+    >>> segment.inputs.t1w_postcon = 'T1w_ce-GAD_brain.nii.gz'
+    >>> segment.inputs.t2w = 'T2w_brain.nii.gz'
+    >>> segment.inputs.flair = 'FLAIR_brain.nii.gz'
+    >>> segment.inputs.device = 'cuda'
+    >>> result = segment.run()  # doctest: +SKIP
+
+    Notes
+    -----
+    HD-GLIO requirements:
+
+    1. **Input images**: Must be brain-extracted (skull-stripped)
+    2. **All 4 modalities**: T1w-pre, T1w-ce-GAD, T2w, FLAIR required
+    3. **Matching dimensions**: All images must have same shape
+    4. **NO bias correction**: Images should NOT be bias-corrected
+    5. **GPU recommended**: CUDA or MPS for reasonable inference speed
+
+    Device selection:
+
+    - CUDA is fastest if NVIDIA GPU is available
+    - MPS works on Apple Silicon (M1/M2/M3) Macs
+    - CPU is always available but much slower (~10-30x slower)
+
+    The interface automatically detects Apple Silicon and uses MPS if
+    device='mps' is specified. On non-Apple systems, 'mps' falls back to CPU.
+
+    See Also
+    --------
+    HDGLIOPrep : Preprocessing interface to prepare images for HD-GLIO
+    HD-GLIO: https://github.com/MIC-DKFZ/HD-GLIO
+
+    References
+    ----------
+    .. [1] Isensee F, Kickingereder P, Wick W, Bendszus M, Maier-Hein KH.
+           "Brain Tumor Segmentation and Radiomics Survival Prediction:
+           Contribution to the BRATS 2017 Challenge." arXiv:1802.10508.
+    """
+
+    input_spec = HDGLIOSegmentInputSpec
+    output_spec = HDGLIOSegmentOutputSpec
+
+    def _get_output_dir(self) -> Path:
+        """Get output directory for segmentation results."""
+        if self.inputs.output_dir:
+            return Path(self.inputs.output_dir)
+        return Path.cwd()
+
+    def _get_device_flag(self) -> str:
+        """Get appropriate device flag for hd_glio_predict command.
+
+        Returns
+        -------
+        str
+            Device flag string for the command line
+
+        Notes
+        -----
+        Device handling:
+        - 'cuda': Use NVIDIA GPU (--device cuda)
+        - 'mps': Use Apple Silicon GPU, but HD-GLIO uses --device mps
+        - 'cpu': Use CPU only (--device cpu)
+
+        On non-Apple systems with 'mps' specified, falls back to 'cpu'.
+        """
+        device: str = str(self.inputs.device)
+
+        if device == "mps":
+            # Check if running on Apple Silicon
+            is_apple_silicon = (
+                platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64")
+            )
+            if not is_apple_silicon:
+                # Fall back to CPU on non-Apple systems
+                return "cpu"
+            return "mps"
+
+        return device
+
+    def _build_command(self) -> str:
+        """Build the hd_glio_predict command string.
+
+        Returns
+        -------
+        str
+            Full command string for hd_glio_predict
+        """
+        out_dir = self._get_output_dir()
+        device = self._get_device_flag()
+
+        cmd_parts = [
+            "hd_glio_predict",
+            f"-t1 {self.inputs.t1w_pre}",
+            f"-t1c {self.inputs.t1w_postcon}",
+            f"-t2 {self.inputs.t2w}",
+            f"-flair {self.inputs.flair}",
+            f"-o {out_dir}",
+            f"--device {device}",
+        ]
+
+        return " ".join(cmd_parts)
+
+    def _validate_segmentation(
+        self,
+        segmentation_file: str,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Validate segmentation output and compute volume metrics.
+
+        Parameters
+        ----------
+        segmentation_file : str
+            Path to segmentation NIfTI file
+
+        Returns
+        -------
+        has_tumor : bool
+            Whether segmentation contains any tumor voxels
+        metrics : dict
+            Dictionary with volume metrics and validation info
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+        import numpy as np
+
+        img = nib.load(segmentation_file)
+        data = img.get_fdata()  # type: ignore[attr-defined]
+        zooms = img.header.get_zooms()[:3]  # type: ignore[attr-defined]
+
+        # Calculate voxel volume in mm³, convert to mL
+        voxel_volume_mm3 = float(np.prod(zooms))
+        voxel_volume_ml = voxel_volume_mm3 / 1000.0
+
+        # Count voxels by label
+        # Label 0: background, Label 1: non-enhancing, Label 2: enhancing
+        non_enhancing_voxels = int(np.sum(data == 1))
+        enhancing_voxels = int(np.sum(data == 2))
+        total_tumor_voxels = non_enhancing_voxels + enhancing_voxels
+
+        # Compute volumes in mL
+        non_enhancing_volume_ml = non_enhancing_voxels * voxel_volume_ml
+        enhancing_volume_ml = enhancing_voxels * voxel_volume_ml
+        total_volume_ml = total_tumor_voxels * voxel_volume_ml
+
+        has_tumor = total_tumor_voxels > 0
+
+        metrics: dict[str, Any] = {
+            "non_enhancing_voxels": non_enhancing_voxels,
+            "enhancing_voxels": enhancing_voxels,
+            "total_tumor_voxels": total_tumor_voxels,
+            "non_enhancing_volume_ml": non_enhancing_volume_ml,
+            "enhancing_volume_ml": enhancing_volume_ml,
+            "total_tumor_volume_ml": total_volume_ml,
+            "voxel_volume_mm3": voxel_volume_mm3,
+            "has_tumor": has_tumor,
+            "shape": tuple(int(s) for s in data.shape[:3]),
+            "unique_labels": sorted([int(u) for u in np.unique(data)]),
+        }
+
+        return has_tumor, metrics
+
+    def _find_segmentation_output(self) -> Path:
+        """Find the segmentation output file from HD-GLIO.
+
+        HD-GLIO outputs a segmentation file in the output directory.
+        The exact filename may vary, so we look for common patterns.
+
+        Returns
+        -------
+        Path
+            Path to the segmentation output file
+
+        Raises
+        ------
+        FileNotFoundError
+            If no segmentation output is found
+        """
+        out_dir = self._get_output_dir()
+
+        # HD-GLIO typically outputs as 'segmentation.nii.gz' or similar
+        # Check common patterns
+        patterns = [
+            "segmentation.nii.gz",
+            "segmentation.nii",
+            "*_seg.nii.gz",
+            "*_seg.nii",
+            "*segmentation*.nii.gz",
+            "*segmentation*.nii",
+        ]
+
+        for pattern in patterns:
+            matches = list(out_dir.glob(pattern))
+            if matches:
+                # Return the most recently modified match
+                return max(matches, key=lambda p: p.stat().st_mtime)
+
+        # If no match found, list what's in the output directory
+        existing_files = list(out_dir.glob("*.nii*"))
+        if existing_files:
+            # Return the first NIfTI file found
+            return existing_files[0]
+
+        raise FileNotFoundError(
+            f"No segmentation output found in {out_dir}. "
+            f"Expected patterns: {patterns}"
+        )
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute the interface."""
+        import subprocess
+
+        # Ensure output directory exists
+        out_dir = self._get_output_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build and run the command
+        cmd = self._build_command()
+
+        # Execute HD-GLIO
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"hd_glio_predict failed with return code {result.returncode}.\n"
+                f"Command: {cmd}\n"
+                f"Stdout: {result.stdout}\n"
+                f"Stderr: {result.stderr}"
+            )
+
+        # Find the segmentation output file
+        segmentation_file = self._find_segmentation_output()
+
+        # Validate output if requested
+        qc_metrics: dict[str, Any] = {
+            "command": cmd,
+            "device": self._get_device_flag(),
+        }
+
+        if self.inputs.validate_output:
+            has_tumor, validation_metrics = self._validate_segmentation(
+                str(segmentation_file)
+            )
+            qc_metrics["validation"] = validation_metrics
+
+            if not has_tumor:
+                # Warning but don't fail - some images may legitimately have no tumor
+                qc_metrics["warning"] = "No tumor voxels detected in segmentation"
+        else:
+            # Still compute basic metrics even without full validation
+            has_tumor, validation_metrics = self._validate_segmentation(
+                str(segmentation_file)
+            )
+            qc_metrics["validation"] = validation_metrics
+
+        # Store results
+        self._results = {
+            "segmentation": str(segmentation_file),
+            "has_tumor": has_tumor,
+            "tumor_volume_ml": validation_metrics["total_tumor_volume_ml"],
+            "enhancing_volume_ml": validation_metrics["enhancing_volume_ml"],
+            "non_enhancing_volume_ml": validation_metrics["non_enhancing_volume_ml"],
+            "qc_metrics": qc_metrics,
+        }
+
+        return runtime
+
+    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
+        """List expected outputs."""
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
+
+        if hasattr(self, "_results"):
+            outputs.update(self._results)
+        else:
+            # Generate expected output before run
+            out_dir = self._get_output_dir()
+            outputs["segmentation"] = str(out_dir / "segmentation.nii.gz")
+            outputs["has_tumor"] = True
+            outputs["tumor_volume_ml"] = 0.0
+            outputs["enhancing_volume_ml"] = 0.0
+            outputs["non_enhancing_volume_ml"] = 0.0
             outputs["qc_metrics"] = {}
 
         return outputs

@@ -28,6 +28,7 @@ from pmriprep.interfaces.dsc_compute import (
 )
 from pmriprep.interfaces.hdglio import (
     HDGLIOPrep,
+    HDGLIOSegment,
 )
 
 # Alias for backward compatibility - DSC AIF was the original
@@ -46,6 +47,7 @@ __all__ = [
     "DSCAIFDetection",
     "DSCRegistration",
     "HDGLIOPrep",
+    "HDGLIOSegment",
     "MotionCorrection",
     "ReorientAndCrop",
     "T1Mapping",
