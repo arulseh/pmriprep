@@ -1963,3 +1963,246 @@ def apply_dispersion_correction_batch(
         preserve_auc=preserve_auc,
     )
     return result.aif_corrected
+
+
+# =============================================================================
+# Perfusion Parameter Extraction
+# =============================================================================
+
+
+@dataclass
+class PerfusionParameters:
+    """Perfusion parameters extracted from a residue function.
+
+    These parameters are derived from the residue (impulse response) function
+    obtained via deconvolution of the tissue concentration curve with the AIF.
+
+    Attributes:
+        cbf: Cerebral blood flow = max(R(t)).
+            Units depend on input: typically mL/100g/min for absolute quantification.
+        cbv: Cerebral blood volume = ∫R(t)dt.
+            Units: mL/100g for absolute quantification.
+        mtt: Mean transit time = CBV / CBF (central volume theorem).
+            Units: seconds.
+        tmax: Time to maximum of residue function = argmax(R(t)) × dt.
+            Units: seconds. Indicates delay between AIF and tissue response.
+            Clinical significance: Tmax > 6s may indicate penumbra.
+        ttp: Time to peak of residue function in frame units (before dt scaling).
+            Integer index of the maximum in the residue function.
+        auc: Area under the residue curve (same as CBV but kept for clarity).
+        r_max: Maximum value of the residue function (same as CBF).
+    """
+
+    cbf: float
+    cbv: float
+    mtt: float
+    tmax: float
+    ttp: int
+    auc: float
+    r_max: float
+
+
+def extract_perfusion_params(
+    residue: npt.NDArray[np.floating],
+    dt: float = 1.0,
+) -> dict[str, float]:
+    """Extract perfusion parameters from a residue function.
+
+    Given a residue function R(t) from deconvolution, extracts the standard
+    DSC perfusion parameters:
+
+    - CBF = max(R(t))
+        Cerebral blood flow, the maximum of the residue function.
+
+    - CBV = ∫R(t)dt
+        Cerebral blood volume, the integral of the residue function.
+
+    - MTT = CBV / CBF
+        Mean transit time via the central volume theorem.
+
+    - Tmax = argmax(R(t)) × dt
+        Time to maximum of the residue function (in seconds if dt provided).
+
+    This function is useful when you have a residue function from any source
+    (not necessarily from the DeconvolutionResult dataclass) and want to
+    extract the standard perfusion parameters.
+
+    Args:
+        residue: Residue function R(t), shape (n_timepoints,).
+            This should be the output from deconvolution (sSVD, cSVD, oSVD,
+            Tikhonov, or any other method).
+        dt: Time step in seconds. Default 1.0 gives Tmax in frame units.
+            For proper temporal units, provide the actual TR (repetition time).
+
+    Returns:
+        Dictionary containing:
+            - 'cbf': Cerebral blood flow = max(R(t))
+            - 'cbv': Cerebral blood volume = ∫R(t)dt
+            - 'mtt': Mean transit time = CBV/CBF (seconds)
+            - 'tmax': Time to maximum = argmax(R(t)) × dt (seconds)
+            - 'ttp': Time to peak in frame units (integer index)
+            - 'auc': Area under curve (same as CBV)
+            - 'r_max': Maximum residue value (same as CBF)
+
+    Raises:
+        ValueError: If residue array is empty.
+
+    Notes:
+        - CBF and CBV units depend on the input residue units:
+            - If residue is from relative deconvolution: unitless or arbitrary
+            - If residue includes r2* scaling: concentration units
+            - For absolute CBF in mL/100g/min, additional scaling factors needed
+        - MTT is always in seconds (or frames if dt=1.0)
+        - Tmax > 6 seconds is often used as a clinical threshold for penumbra
+        - For cSVD results, the delay is already accounted for in the residue
+
+    Example:
+        >>> import numpy as np
+        >>> from pmriprep.utils.dsc_deconvolution import (
+        ...     svd_deconvolve_standard,
+        ...     extract_perfusion_params,
+        ... )
+        >>> # Generate example data
+        >>> aif = np.exp(-np.arange(60) / 5.0) * 10
+        >>> tissue = np.convolve(aif, np.exp(-np.arange(60) / 10.0))[:60]
+        >>> # Deconvolve
+        >>> result = svd_deconvolve_standard(tissue, aif, dt=1.5)
+        >>> # Extract parameters (alternative to using result.cbf, etc.)
+        >>> params = extract_perfusion_params(result.residue, dt=1.5)
+        >>> print(f"CBF: {params['cbf']:.2f}, MTT: {params['mtt']:.2f}s")
+
+    References:
+        Østergaard L, Weisskoff RM, Chesler DA, Gyldensted C, Rosen BR.
+        High resolution measurement of cerebral blood flow using
+        intravascular tracer bolus passages. Part I: Mathematical approach
+        and statistical analysis. Magn Reson Med. 1996;36(5):715-725.
+
+        Central Volume Theorem:
+        MTT = CBV / CBF (Meier P, Zierler KL. J Appl Physiol. 1954;6:731-744)
+    """
+    # Validate input
+    if len(residue) == 0:
+        raise ValueError("Residue array cannot be empty")
+
+    # CBF = max(R(t))
+    cbf = float(np.max(residue))
+
+    # CBV = ∫R(t)dt using trapezoidal integration
+    cbv = float(trapezoid(residue, dx=dt))
+
+    # MTT = CBV / CBF (central volume theorem)
+    # Guard against division by zero
+    if cbf > EPSILON_CONCENTRATION:
+        mtt = cbv / cbf
+    else:
+        mtt = 0.0
+
+    # Tmax = argmax(R(t)) × dt
+    # Time to peak in frame units (integer index)
+    ttp = int(np.argmax(residue))
+    # Time to maximum in seconds (or whatever units dt is in)
+    tmax = float(ttp) * dt
+
+    return {
+        "cbf": cbf,
+        "cbv": cbv,
+        "mtt": mtt,
+        "tmax": tmax,
+        "ttp": ttp,
+        "auc": cbv,  # AUC is the same as CBV
+        "r_max": cbf,  # r_max is the same as CBF
+    }
+
+
+def extract_perfusion_params_batch(
+    residues: npt.NDArray[np.floating],
+    dt: float = 1.0,
+    mask: Optional[npt.NDArray[np.bool_]] = None,
+) -> tuple[
+    npt.NDArray[np.floating],  # cbf
+    npt.NDArray[np.floating],  # cbv
+    npt.NDArray[np.floating],  # mtt
+    npt.NDArray[np.floating],  # tmax
+]:
+    """Extract perfusion parameters from multiple residue functions.
+
+    Batch version of extract_perfusion_params() for processing multiple
+    voxels efficiently.
+
+    Args:
+        residues: Residue functions, shape (n_voxels, n_timepoints) or
+            (x, y, z, n_timepoints) for 4D data.
+        dt: Time step in seconds. Default 1.0.
+        mask: Optional boolean mask of voxels to process. If None, process all.
+            Shape must match spatial dimensions of residues.
+
+    Returns:
+        Tuple of (cbf, cbv, mtt, tmax) arrays with same spatial shape as input.
+            - cbf: Cerebral blood flow = max(R(t))
+            - cbv: Cerebral blood volume = ∫R(t)dt
+            - mtt: Mean transit time = CBV/CBF
+            - tmax: Time to maximum = argmax(R(t)) × dt
+    """
+    # Store original shape for reshaping output
+    original_shape = residues.shape
+    n_timepoints = original_shape[-1]
+
+    # Reshape to 2D (n_voxels, n_timepoints)
+    if residues.ndim > 2:
+        spatial_shape = original_shape[:-1]
+        n_voxels = int(np.prod(spatial_shape))
+        residues_2d = residues.reshape(n_voxels, n_timepoints)
+    else:
+        spatial_shape = (original_shape[0],)
+        n_voxels = original_shape[0]
+        residues_2d = residues
+
+    # Flatten mask if provided
+    if mask is not None:
+        mask_flat = mask.flatten()
+    else:
+        mask_flat = np.ones(n_voxels, dtype=bool)
+
+    # Initialize output arrays
+    cbf = np.zeros(n_voxels, dtype=np.float64)
+    cbv = np.zeros(n_voxels, dtype=np.float64)
+    mtt = np.zeros(n_voxels, dtype=np.float64)
+    tmax = np.zeros(n_voxels, dtype=np.float64)
+
+    # Process masked voxels
+    masked_indices = np.where(mask_flat)[0]
+    if len(masked_indices) > 0:
+        residues_masked = residues_2d[masked_indices, :]
+
+        # CBF = max(R(t))
+        cbf_masked = np.max(residues_masked, axis=1)
+
+        # CBV = ∫R(t)dt
+        cbv_masked = trapezoid(residues_masked, dx=dt, axis=1)
+
+        # MTT = CBV / CBF
+        with np.errstate(divide="ignore", invalid="ignore"):
+            mtt_masked = np.where(
+                cbf_masked > EPSILON_CONCENTRATION,
+                cbv_masked / cbf_masked,
+                0.0,
+            )
+
+        # Tmax = argmax(R(t)) × dt
+        ttp_masked = np.argmax(residues_masked, axis=1)
+        tmax_masked = ttp_masked.astype(np.float64) * dt
+
+        # Store results
+        cbf[masked_indices] = cbf_masked
+        cbv[masked_indices] = cbv_masked
+        mtt[masked_indices] = mtt_masked
+        tmax[masked_indices] = tmax_masked
+
+    # Reshape to original spatial dimensions
+    if residues.ndim > 2:
+        cbf = cbf.reshape(spatial_shape)
+        cbv = cbv.reshape(spatial_shape)
+        mtt = mtt.reshape(spatial_shape)
+        tmax = tmax.reshape(spatial_shape)
+
+    return cbf, cbv, mtt, tmax
