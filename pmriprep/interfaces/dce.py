@@ -1315,3 +1315,462 @@ class DCEPreprocess(SimpleInterface):
             ext = out_file.suffix
 
         return str(out_file.parent / f"{base}_mean_reg{ext}")
+
+
+class DCERegistrationInputSpec(BaseInterfaceInputSpec):
+    """Input specification for DCERegistration interface."""
+
+    t1w_file = File(
+        exists=True,
+        mandatory=True,
+        desc="T1-weighted structural image to register to DCE space",
+    )
+    dce_mean = File(
+        exists=True,
+        mandatory=True,
+        desc="Mean DCE image (reference/target space)",
+    )
+    out_file = File(
+        genfile=True,
+        desc="Output registered T1w in DCE space",
+    )
+    out_matrix = File(
+        genfile=True,
+        desc="Output transformation matrix (FLIRT .mat format)",
+    )
+    lesion_mask = File(
+        exists=True,
+        desc="Optional lesion mask for cost function weighting (excludes lesion region)",
+    )
+    brain_mask = File(
+        exists=True,
+        desc="Brain mask for QC metric calculation (optional)",
+    )
+    skip_bbr = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Skip BBR and use FLIRT only (default: use BBR with FLIRT init)",
+    )
+    dof = traits.Int(
+        6,
+        usedefault=True,
+        desc="Degrees of freedom for registration (default: 6 for rigid)",
+    )
+    cost = traits.Enum(
+        "normmi",
+        "normcorr",
+        "corratio",
+        "mutualinfo",
+        "leastsq",
+        usedefault=True,
+        desc="Cost function for FLIRT registration (default: normmi)",
+    )
+    wm_seg = File(
+        exists=True,
+        desc="White matter segmentation (required for BBR mode)",
+    )
+    reference_type = traits.Enum(
+        "postcon",
+        "precon",
+        "any",
+        default="postcon",
+        usedefault=True,
+        desc="Expected T1w reference type: postcon (post-contrast), precon, or any",
+    )
+    lesion_dilation = traits.Float(
+        15.0,
+        usedefault=True,
+        desc="Dilation radius (mm) for lesion mask in cost function weighting",
+    )
+
+
+class DCERegistrationOutputSpec(TraitedSpec):
+    """Output specification for DCERegistration interface."""
+
+    out_file = File(exists=True, desc="Registered T1w in DCE space")
+    out_matrix = File(exists=True, desc="Affine transformation matrix (FLIRT format)")
+    dice = traits.Float(desc="DICE coefficient (if brain mask provided)")
+    correlation = traits.Float(desc="Correlation coefficient (if brain mask provided)")
+    nmi = traits.Float(desc="Normalized mutual information")
+    qc_metrics = traits.Dict(desc="QC metrics dictionary")
+
+
+class DCERegistration(SimpleInterface):
+    """DCE to T1w structural registration for perfusion map overlays.
+
+    This interface wraps FSL FLIRT (and optionally BBR) to register a T1-weighted
+    structural image to DCE space. The registration enables overlay of perfusion
+    maps on anatomical images for clinical interpretation.
+
+    Two modes are available:
+
+    1. **BBR mode** (default, skip_bbr=False): Uses FSL's boundary-based registration
+       with white matter segmentation for accurate coregistration. Requires wm_seg.
+
+    2. **FLIRT mode** (skip_bbr=True): Uses standard FSL FLIRT rigid registration
+       with normalized mutual information cost function.
+
+    Both modes support lesion mask cost function weighting, where the lesion
+    region is excluded from the cost function to prevent tumors from biasing
+    the registration.
+
+    Parameters
+    ----------
+    t1w_file : str
+        T1-weighted image to register to DCE space
+    dce_mean : str
+        Mean DCE image (target space)
+    lesion_mask : str, optional
+        Binary lesion mask - lesion voxels will have reduced weight
+    brain_mask : str, optional
+        Brain mask for computing QC metrics
+    skip_bbr : bool
+        If True, use FLIRT only; if False (default), use BBR with FLIRT init
+    dof : int
+        Degrees of freedom (default: 6 for rigid body)
+    cost : str
+        Cost function for FLIRT: normmi, normcorr, corratio (default: normmi)
+    wm_seg : str
+        White matter segmentation (required for BBR mode)
+    reference_type : str
+        Expected T1w type: postcon (default for DCE), precon, or any
+    lesion_dilation : float
+        Dilation radius (mm) for lesion mask in cost weighting (default: 15.0)
+
+    Returns
+    -------
+    out_file : str
+        Registered T1w in DCE space
+    out_matrix : str
+        FSL FLIRT transformation matrix
+    dice : float
+        DICE coefficient of brain masks (if brain_mask provided)
+    correlation : float
+        Correlation coefficient within brain mask
+    nmi : float
+        Normalized mutual information
+    qc_metrics : dict
+        Complete QC metrics dictionary
+
+    Examples
+    --------
+    Using BBR mode (recommended):
+
+    >>> reg = DCERegistration()
+    >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
+    >>> reg.inputs.dce_mean = 'dce_mean.nii.gz'
+    >>> reg.inputs.wm_seg = 'T1w_wm_probseg.nii.gz'
+    >>> result = reg.run()  # doctest: +SKIP
+
+    Using FLIRT mode (skip BBR) with lesion mask:
+
+    >>> reg = DCERegistration()
+    >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
+    >>> reg.inputs.dce_mean = 'dce_mean.nii.gz'
+    >>> reg.inputs.skip_bbr = True
+    >>> reg.inputs.lesion_mask = 'lesion.nii.gz'
+    >>> result = reg.run()  # doctest: +SKIP
+
+    Notes
+    -----
+    BBR (Boundary-Based Registration) uses the white matter segmentation to
+    drive the registration based on the boundary between white matter and
+    gray matter, which is visible in both T1w and EPI-based images.
+
+    Lesion mask weighting creates a cost function weight image where:
+    weight = 1.0 - lesion_mask (i.e., lesion voxels have weight 0)
+
+    For DCE, the default reference is post-contrast T1w since DCE has contrast
+    enhancement similar to post-contrast T1w, providing better intensity
+    correspondence for registration.
+
+    QC metrics computed:
+    - DICE: Overlap of brain masks (requires brain_mask input)
+    - Correlation: Pearson correlation within brain mask
+    - NMI: Normalized mutual information (intensity correspondence)
+
+    Requires FSL to be installed and available in PATH.
+
+    See Also
+    --------
+    FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
+    FSL BBR: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT_BBR
+    """
+
+    input_spec = DCERegistrationInputSpec
+    output_spec = DCERegistrationOutputSpec
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE to T1w registration."""
+        import subprocess
+
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        # Generate output filenames
+        out_file = self._gen_outfilename()
+        out_matrix = self._gen_matfilename()
+
+        t1w_file = str(self.inputs.t1w_file)
+        dce_mean = str(self.inputs.dce_mean)
+        skip_bbr = self.inputs.skip_bbr
+        dof = self.inputs.dof
+        cost = self.inputs.cost
+
+        # Determine file extension for temp files
+        out_path = Path(out_file)
+        ext = ".nii.gz" if out_path.name.endswith(".nii.gz") else ".nii"
+        temp_dir = out_path.parent
+
+        cmd_parts: list[str] = []
+        temp_files: list[str] = []
+
+        # Handle lesion mask for cost function weighting
+        weight_file: Optional[str] = None
+        if self.inputs.lesion_mask and Path(self.inputs.lesion_mask).exists():
+            # Create weight image: weight = 1 - lesion_mask
+            weight_file = str(temp_dir / f"_tmp_dce_weight{ext}")
+            temp_files.append(weight_file)
+
+            # Optionally dilate the lesion mask first
+            lesion_dilation = self.inputs.lesion_dilation
+            if lesion_dilation > 0:
+                # Load lesion mask to get voxel sizes for kernel
+                lesion_img = nib.load(self.inputs.lesion_mask)
+                header = lesion_img.header  # type: ignore[attr-defined]
+                voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
+                # Calculate kernel radius in voxels (use mean voxel size)
+                mean_vox_size = float(np.mean(voxel_sizes))
+                kernel_radius = max(1.0, lesion_dilation / mean_vox_size)
+
+                # Dilate then invert: -dilM -mul -1 -add 1
+                invert_cmd = (
+                    f"fslmaths {self.inputs.lesion_mask} "
+                    f"-kernel sphere {kernel_radius:.1f} -dilM "
+                    f"-mul -1 -add 1 {weight_file}"
+                )
+            else:
+                # Just invert: 1 - lesion_mask
+                invert_cmd = (
+                    f"fslmaths {self.inputs.lesion_mask} "
+                    f"-mul -1 -add 1 {weight_file}"
+                )
+            cmd_parts.append(invert_cmd)
+
+        # Check if we have WM segmentation for BBR
+        wm_seg = getattr(self.inputs, "wm_seg", None)
+        has_wm_seg = wm_seg is not None and Path(wm_seg).exists()
+
+        if skip_bbr or not has_wm_seg:
+            # Standard FLIRT registration
+            flirt_cmd = (
+                f"flirt -in {t1w_file} -ref {dce_mean} "
+                f"-out {out_file} -omat {out_matrix} "
+                f"-dof {dof} -cost {cost}"
+            )
+
+            # Add weight flags if available
+            if weight_file:
+                flirt_cmd += f" -inweight {weight_file} -refweight {weight_file}"
+
+            cmd_parts.append(flirt_cmd)
+        else:
+            # BBR mode with FLIRT initialization
+            # Initial FLIRT registration for starting estimate
+            init_matrix = str(temp_dir / "_tmp_dce_init.mat")
+            temp_files.append(init_matrix)
+
+            flirt_init_cmd = (
+                f"flirt -in {t1w_file} -ref {dce_mean} "
+                f"-omat {init_matrix} "
+                f"-dof {dof} -cost {cost}"
+            )
+
+            if weight_file:
+                flirt_init_cmd += f" -inweight {weight_file} -refweight {weight_file}"
+
+            cmd_parts.append(flirt_init_cmd)
+
+            # Threshold WM segmentation for BBR
+            wm_thresh = str(temp_dir / f"_tmp_dce_wm_thresh{ext}")
+            temp_files.append(wm_thresh)
+            cmd_parts.append(f"fslmaths {wm_seg} -thr 0.5 -bin {wm_thresh}")
+
+            # FLIRT with BBR cost function
+            bbr_cmd = (
+                f"flirt -in {t1w_file} -ref {dce_mean} "
+                f"-out {out_file} -omat {out_matrix} "
+                f"-dof {dof} -cost bbr "
+                f"-init {init_matrix} "
+                f"-wmseg {wm_thresh} "
+                f"-schedule ${{FSLDIR}}/etc/flirtsch/bbr.sch"
+            )
+
+            if weight_file:
+                bbr_cmd += f" -refweight {weight_file}"
+
+            cmd_parts.append(bbr_cmd)
+
+        # Clean up temp files at the end
+        if temp_files:
+            cleanup_cmd = "rm -f " + " ".join(temp_files)
+            cmd_parts.append(cleanup_cmd)
+
+        # Execute the commands
+        full_cmd = " && ".join(cmd_parts)
+        result = subprocess.run(
+            full_cmd, shell=True, capture_output=True, text=True
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(f"DCE registration failed: {result.stderr}")
+
+        # Compute QC metrics
+        qc_metrics = self._compute_qc_metrics(out_file, dce_mean)
+
+        # Set outputs
+        self._results["out_file"] = out_file
+        self._results["out_matrix"] = out_matrix
+        self._results["qc_metrics"] = qc_metrics
+
+        if "dice" in qc_metrics:
+            self._results["dice"] = qc_metrics["dice"]
+        if "correlation" in qc_metrics:
+            self._results["correlation"] = qc_metrics["correlation"]
+        if "nmi" in qc_metrics:
+            self._results["nmi"] = qc_metrics["nmi"]
+
+        return runtime
+
+    def _compute_qc_metrics(
+        self, registered_t1w: str, dce_mean: str
+    ) -> dict[str, Any]:
+        """Compute registration QC metrics.
+
+        Args:
+            registered_t1w: Path to registered T1w image
+            dce_mean: Path to reference DCE mean image
+
+        Returns:
+            Dictionary of QC metrics
+        """
+        qc_metrics: dict[str, Any] = {}
+
+        if not Path(registered_t1w).exists():
+            return qc_metrics
+
+        try:
+            from pmriprep.utils.registration import (
+                calculate_correlation_from_files,
+                calculate_nmi_from_files,
+                calculate_dice_from_files,
+            )
+
+            # Get optional brain mask
+            brain_mask = getattr(self.inputs, "brain_mask", None)
+            mask_path: Optional[str] = None
+            if brain_mask and Path(brain_mask).exists():
+                mask_path = str(brain_mask)
+
+            # Calculate NMI (always possible)
+            try:
+                nmi = calculate_nmi_from_files(
+                    registered_t1w, dce_mean, mask_path=mask_path
+                )
+                qc_metrics["nmi"] = nmi
+            except Exception:
+                pass
+
+            # Calculate correlation within brain mask
+            try:
+                corr = calculate_correlation_from_files(
+                    registered_t1w, dce_mean, mask_path=mask_path
+                )
+                qc_metrics["correlation"] = corr
+            except Exception:
+                pass
+
+            # Calculate DICE if brain mask provided
+            # Note: DICE is computed between the thresholded registered image
+            # and the thresholded reference, or between two brain masks
+            if mask_path:
+                try:
+                    import nibabel as nib  # type: ignore[import-untyped]
+
+                    # Create a rough brain mask from registered T1w by thresholding
+                    reg_img = nib.load(registered_t1w)
+                    reg_data = reg_img.get_fdata()  # type: ignore[attr-defined]
+
+                    # Threshold at mean intensity
+                    threshold = np.percentile(reg_data[reg_data > 0], 10)
+                    reg_mask = reg_data > threshold
+
+                    # Load the provided brain mask
+                    mask_img = nib.load(mask_path)
+                    ref_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
+                    # Compute DICE between the two masks
+                    from pmriprep.utils.registration import calculate_dice
+
+                    dice = calculate_dice(
+                        reg_mask.astype(np.float64),
+                        ref_mask.astype(np.float64)
+                    )
+                    qc_metrics["dice"] = dice
+                except Exception:
+                    pass
+
+            # Add registration metadata
+            qc_metrics["skip_bbr"] = self.inputs.skip_bbr
+            qc_metrics["dof"] = self.inputs.dof
+            qc_metrics["cost_function"] = self.inputs.cost
+            qc_metrics["reference_type"] = self.inputs.reference_type
+            qc_metrics["brain_mask_used"] = mask_path is not None
+
+            # Determine lesion mask usage
+            lesion_used = (
+                self.inputs.lesion_mask is not None
+                and Path(self.inputs.lesion_mask).exists()
+            )
+            qc_metrics["lesion_mask_used"] = lesion_used
+
+        except ImportError:
+            # If registration utilities not available, skip QC
+            pass
+        except Exception:
+            # If QC computation fails, continue without metrics
+            pass
+
+        return qc_metrics
+
+    def _gen_outfilename(self) -> str:
+        """Generate output filename if not specified."""
+        if self.inputs.out_file:
+            return str(self.inputs.out_file)
+
+        t1w_file = Path(self.inputs.t1w_file)
+        if t1w_file.name.endswith(".nii.gz"):
+            base = t1w_file.name[:-7]
+            ext = ".nii.gz"
+        elif t1w_file.name.endswith(".nii"):
+            base = t1w_file.stem
+            ext = ".nii"
+        else:
+            base = t1w_file.stem
+            ext = t1w_file.suffix
+
+        return str(Path.cwd() / f"{base}_dce{ext}")
+
+    def _gen_matfilename(self) -> str:
+        """Generate output matrix filename if not specified."""
+        if self.inputs.out_matrix:
+            return str(self.inputs.out_matrix)
+
+        out_file = Path(self._gen_outfilename())
+        if out_file.name.endswith(".nii.gz"):
+            base = out_file.name[:-7]
+        elif out_file.name.endswith(".nii"):
+            base = out_file.stem
+        else:
+            base = out_file.stem
+
+        return str(out_file.parent / f"{base}.mat")
