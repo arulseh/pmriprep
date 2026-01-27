@@ -1,5 +1,17 @@
 """Utility modules for PMRIPrep."""
 
+from pmriprep.utils.outputs import (
+    DerivativeMetadata,
+    PERFUSION_SUFFIXES,
+    PIPELINE_DESCRIPTIONS,
+    create_dataset_description,
+    ensure_dataset_description,
+    get_derivative_filename,
+    get_derivative_path,
+    write_derivative,
+    write_perfusion_map,
+    write_qc_json,
+)
 from pmriprep.utils.dce_aif import (
     DCEAIFQualityMetrics,
     DCEAIFQualityResult,
@@ -59,6 +71,17 @@ from pmriprep.utils.structural_reference import (
 )
 
 __all__ = [
+    # outputs
+    "DerivativeMetadata",
+    "PERFUSION_SUFFIXES",
+    "PIPELINE_DESCRIPTIONS",
+    "create_dataset_description",
+    "ensure_dataset_description",
+    "get_derivative_filename",
+    "get_derivative_path",
+    "write_derivative",
+    "write_perfusion_map",
+    "write_qc_json",
     # dce_aif
     "DCEAIFQualityMetrics",
     "DCEAIFQualityResult",
