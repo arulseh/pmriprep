@@ -8,6 +8,7 @@ Classes:
     ModelParameter: Parameter definition with bounds and prior information.
     FitResult: Result from fitting a PK model to DCE data.
     PKModel: Abstract base class for pharmacokinetic models.
+    ToftsModel: Standard Tofts pharmacokinetic model.
 """
 
 from pmriprep.models.dce.base import (
@@ -15,9 +16,11 @@ from pmriprep.models.dce.base import (
     ModelParameter,
     PKModel,
 )
+from pmriprep.models.dce.tofts import ToftsModel
 
 __all__ = [
     "FitResult",
     "ModelParameter",
     "PKModel",
+    "ToftsModel",
 ]
