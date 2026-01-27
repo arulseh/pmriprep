@@ -24,6 +24,13 @@ from pmriprep.utils.dce_dsc_validation import (
     validate_vp_cbv,
     validate_vp_cbv_from_files,
 )
+from pmriprep.utils.hdglio import (
+    dilate_mask,
+    dilate_mask_from_array,
+    extract_tumor_masks,
+    get_mask_statistics,
+    get_mask_volume_ml,
+)
 from pmriprep.utils.gpu import (
     GPUVoxelProcessor,
     array_on_device,
@@ -74,6 +81,12 @@ __all__ = [
     "should_skip_validation",
     "validate_vp_cbv",
     "validate_vp_cbv_from_files",
+    # hdglio
+    "dilate_mask",
+    "dilate_mask_from_array",
+    "extract_tumor_masks",
+    "get_mask_statistics",
+    "get_mask_volume_ml",
     # gpu
     "GPUVoxelProcessor",
     "array_on_device",
