@@ -1,0 +1,35 @@
+# PMRIPrep test configuration for sub-0011/ses-0001
+# US-094: cpi, extended_tofts
+
+# DSC configuration
+dsc:
+  preload_detected: true
+  dose: half
+  method: cpi
+  bayesian: none
+  aif_criteria: strict
+  n_aif_candidates: 10
+  pre_bolus: 5
+  cpi_control_points: 0  # Auto-select
+  save_k2_map: false
+  use_gpu: false
+
+# DCE configuration
+dce:
+  model: extended_tofts
+  bayesian: none
+  aif_method: auto
+  scale_aif: true
+  no_b1: false
+  no_t1: false
+  use_gpu: false
+
+  # Advanced settings from config file
+  registration:
+    skip_bbr: true
+
+  aif:
+    method: auto
+
+  processing:
+    tsnr_threshold: 0

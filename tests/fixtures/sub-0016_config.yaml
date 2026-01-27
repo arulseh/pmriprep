@@ -1,0 +1,37 @@
+# PMRIPrep test configuration for sub-0016/ses-0002
+# US-095: oSVD bayesian_vi, 2cxm bayesian_map
+
+# DSC configuration
+dsc:
+  preload_detected: true
+  dose: half
+  method: oSVD
+  bayesian: vi
+  mcmc_samples: 500
+  aif_criteria: strict
+  n_aif_candidates: 10
+  pre_bolus: 5
+  save_k2_map: false
+  save_uncertainty: true
+  use_gpu: false
+
+# DCE configuration
+dce:
+  model: 2cxm
+  bayesian: map
+  aif_method: auto
+  scale_aif: true
+  no_b1: false
+  no_t1: false
+  save_uncertainty: true
+  use_gpu: false
+
+  # Advanced settings from config file
+  registration:
+    skip_bbr: true
+
+  aif:
+    method: auto
+
+  processing:
+    tsnr_threshold: 0
