@@ -12,6 +12,8 @@ Classes:
     ExtendedToftsModel: Extended Tofts pharmacokinetic model with vp.
     PatlakModel: Patlak pharmacokinetic model (no backflux).
     TwoCompartmentExchangeModel: Two-Compartment Exchange model (2CXM).
+    BayesianPKFitter: Bayesian inference for PK models (MAP, MCMC).
+    fit_pk_model: Convenience function for Bayesian fitting.
 """
 
 from pmriprep.models.dce.base import (
@@ -19,14 +21,17 @@ from pmriprep.models.dce.base import (
     ModelParameter,
     PKModel,
 )
+from pmriprep.models.dce.bayesian import BayesianPKFitter, fit_pk_model
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.patlak import PatlakModel
 from pmriprep.models.dce.tofts import ToftsModel
 from pmriprep.models.dce.two_compartment_exchange import TwoCompartmentExchangeModel
 
 __all__ = [
+    "BayesianPKFitter",
     "ExtendedToftsModel",
     "FitResult",
+    "fit_pk_model",
     "ModelParameter",
     "PatlakModel",
     "PKModel",
