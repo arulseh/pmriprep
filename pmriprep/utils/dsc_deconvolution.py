@@ -1595,3 +1595,371 @@ def tikhonov_deconvolve_batch(
         lambda_optimal = lambda_optimal.reshape(spatial_shape)
 
     return residues, cbf, cbv, mtt, lambda_optimal
+
+
+# =============================================================================
+# Arterial Dispersion Correction
+# =============================================================================
+
+
+@dataclass
+class DispersionCorrectionResult:
+    """Result from arterial dispersion correction.
+
+    Dispersion correction accounts for the broadening and attenuation of
+    the bolus as it travels from the AIF sampling site to the tissue of interest.
+    This is modeled using a vascular transport function (VTF).
+
+    Attributes:
+        aif_corrected: The dispersion-corrected AIF, with same length as input AIF.
+            This represents the estimated AIF at the tissue site.
+        vtf: The vascular transport function used for correction.
+        auc_original: AUC of the original AIF (dose preserved).
+        auc_corrected: AUC of the corrected AIF (should match original).
+        peak_original: Peak value of the original AIF.
+        peak_corrected: Peak value of the corrected AIF (typically higher).
+        fwhm_original: FWHM of the original AIF in frames.
+        fwhm_corrected: FWHM of the corrected AIF (typically narrower).
+        dispersion_factor: Ratio of corrected to original peak (typically 1.15-1.30).
+    """
+
+    aif_corrected: npt.NDArray[np.floating]
+    vtf: npt.NDArray[np.floating]
+    auc_original: float
+    auc_corrected: float
+    peak_original: float
+    peak_corrected: float
+    fwhm_original: float
+    fwhm_corrected: float
+    dispersion_factor: float
+
+
+def _gamma_variate_vtf(
+    t: npt.NDArray[np.floating],
+    alpha: float,
+    beta: float,
+    delay: float = 0.0,
+) -> npt.NDArray[np.floating]:
+    """Generate a gamma-variate vascular transport function (VTF).
+
+    The VTF models the probability distribution of transit times through
+    the arterial tree between the AIF sampling site and the tissue.
+
+    Model: h(t) = ((t - delay) / beta)^alpha × exp(-(t - delay) / beta) / (beta × Gamma(alpha + 1))
+
+    This is a normalized gamma distribution (integrates to 1) representing
+    the probability density of transit times.
+
+    Args:
+        t: Time points in seconds (or frames if dt=1), shape (n_timepoints,).
+        alpha: Shape parameter controlling the skewness of the VTF.
+            Higher alpha = more symmetric distribution.
+            Typical range: 0.5-2.0 for arterial dispersion.
+        beta: Scale parameter in seconds (or frames), controlling the
+            mean transit time and width.
+            MTT_vtf = (alpha + 1) × beta
+            Typical range: 0.5-2.0 seconds.
+        delay: Onset delay in same units as t. Default 0.
+
+    Returns:
+        Normalized VTF with same shape as t. Integrates to approximately 1.
+    """
+    # Shift time by delay
+    t_shifted = t - delay
+
+    # Output array (zeros where t <= delay)
+    vtf = np.zeros_like(t, dtype=np.float64)
+
+    # Valid time points
+    valid = t_shifted > 0
+    t_valid = t_shifted[valid]
+
+    # Gamma distribution: (t/beta)^alpha * exp(-t/beta) / (beta * Gamma(alpha+1))
+    # This is the PDF of a gamma distribution with shape (alpha+1) and scale beta
+    from scipy.special import gamma as gamma_func
+
+    normalization = beta * gamma_func(alpha + 1)
+    if normalization > EPSILON_CONCENTRATION:
+        vtf[valid] = (
+            np.power(t_valid / beta, alpha)
+            * np.exp(-t_valid / beta)
+            / normalization
+        )
+
+    return vtf
+
+
+def _compute_fwhm_frames(curve: npt.NDArray[np.floating]) -> float:
+    """Compute FWHM of a curve in frame units.
+
+    Args:
+        curve: 1D array representing the curve.
+
+    Returns:
+        FWHM in frames. Returns 0 if curve is flat or invalid.
+    """
+    if len(curve) < 3:
+        return 0.0
+
+    peak = float(np.max(curve))
+    if peak <= EPSILON_CONCENTRATION:
+        return 0.0
+
+    half_max = peak / 2.0
+
+    # Find indices where curve crosses half-max
+    above_half = curve >= half_max
+
+    if not np.any(above_half):
+        return 0.0
+
+    # Find first and last indices above half-max
+    indices = np.where(above_half)[0]
+    first_idx = int(indices[0])
+    last_idx = int(indices[-1])
+
+    # FWHM in frames
+    return float(last_idx - first_idx + 1)
+
+
+def _deconvolve_aif_with_vtf(
+    aif: npt.NDArray[np.floating],
+    vtf: npt.NDArray[np.floating],
+    dt: float,
+    threshold: float = 0.2,
+) -> npt.NDArray[np.floating]:
+    """Deconvolve the measured AIF with the VTF to recover the true local AIF.
+
+    The measured AIF is the convolution of the true (local) AIF with the VTF:
+        AIF_measured = AIF_true ⊗ VTF
+
+    Deconvolving removes the dispersion effect:
+        AIF_true = deconvolve(AIF_measured, VTF)
+
+    Args:
+        aif: Measured AIF concentration curve, shape (n_timepoints,).
+        vtf: Vascular transport function, shape (n_timepoints,).
+        dt: Time step in seconds.
+        threshold: SVD truncation threshold for regularization.
+
+    Returns:
+        Dispersion-corrected (true local) AIF.
+    """
+    n = len(aif)
+
+    # Build Toeplitz matrix from VTF
+    matrix = np.zeros((n, n), dtype=np.float64)
+    for i in range(n):
+        for j in range(i + 1):
+            # Trapezoidal rule weighting
+            if j == 0 or j == i:
+                weight = 0.5
+            else:
+                weight = 1.0
+            matrix[i, j] = vtf[i - j] * weight * dt
+
+    # SVD of VTF convolution matrix
+    u, s, vh = linalg.svd(matrix, full_matrices=False)
+
+    # Truncate singular values
+    s_max = s[0] if len(s) > 0 else 1.0
+    truncation_threshold = threshold * s_max
+    n_retained = max(1, int(np.sum(s >= truncation_threshold)))
+
+    # Create truncated inverse
+    s_inv = np.zeros_like(s)
+    for i in range(n_retained):
+        if s[i] >= truncation_threshold:
+            s_inv[i] = 1.0 / s[i]
+
+    # Deconvolve: AIF_true = V @ S_inv @ U^T @ AIF_measured
+    aif_corrected = vh.T @ (s_inv * (u.T @ aif))
+
+    # Apply non-negativity
+    aif_corrected = np.maximum(aif_corrected, 0.0)
+
+    return aif_corrected
+
+
+def apply_dispersion_correction(
+    aif: npt.NDArray[np.floating],
+    dt: float = 1.0,
+    vtf_alpha: float = 1.0,
+    vtf_beta: float = 1.5,
+    vtf_delay: float = 0.0,
+    svd_threshold: float = 0.2,
+    preserve_auc: bool = True,
+) -> DispersionCorrectionResult:
+    """Apply vascular transport function (VTF) based arterial dispersion correction.
+
+    Arterial dispersion occurs as the contrast bolus travels through the
+    arterial tree from the AIF sampling site (typically large arteries like
+    the MCA or carotid) to the tissue microvasculature. The bolus broadens
+    and attenuates due to:
+
+    1. Different path lengths through the vascular network
+    2. Laminar flow velocity profiles
+    3. Mixing at branch points
+
+    This effect causes CBF underestimation, particularly in distal territories
+    (15-30% underestimation in watershed regions).
+
+    The correction models dispersion using a gamma-variate VTF and deconvolves
+    the measured AIF to recover the estimated local AIF at the tissue site.
+
+    Model:
+        AIF_measured(t) = AIF_true(t) ⊗ VTF(t)
+        AIF_true(t) = deconvolve(AIF_measured(t), VTF(t))
+
+    where VTF is a gamma distribution modeling transit time distribution
+    through the arterial tree.
+
+    Args:
+        aif: Measured arterial input function, shape (n_timepoints,).
+            Can be in concentration (mM) or ΔR2* (s⁻¹) units.
+        dt: Time step in seconds. Default 1.0 gives results in frame units.
+        vtf_alpha: Shape parameter for the VTF gamma distribution.
+            Higher values = more symmetric VTF.
+            Typical range: 0.5-2.0. Default 1.0.
+        vtf_beta: Scale parameter for the VTF in seconds (or frames if dt=1).
+            Controls the mean arterial transit time: MTT_vtf = (alpha+1) × beta.
+            Typical range: 0.5-2.0 seconds. Default 1.5.
+        vtf_delay: Onset delay of the VTF in same units as dt.
+            Default 0.0.
+        svd_threshold: SVD truncation threshold for deconvolution.
+            Higher = more regularization = smoother result.
+            Default 0.2.
+        preserve_auc: If True, scale the corrected AIF to preserve the total
+            dose (AUC) of the original AIF. This ensures that CBV remains
+            unaffected by the correction. Default True.
+
+    Returns:
+        DispersionCorrectionResult containing corrected AIF and metrics.
+
+    Raises:
+        ValueError: If aif is empty.
+        ValueError: If vtf_alpha or vtf_beta are not positive.
+
+    Notes:
+        - The correction increases the AIF peak by 15-30% typically
+        - FWHM is reduced (narrower, sharper bolus)
+        - Total AUC is preserved to maintain accurate CBV
+        - CBF increases in distal territories after correction
+        - The effect is larger for regions far from the AIF sampling site
+        - For proximal regions, correction may over-correct
+
+    Impact on perfusion parameters:
+        - CBF: Increases 15-30% in distal (watershed) territories
+        - CBV: Unchanged if preserve_auc=True
+        - MTT: Decreases proportionally (MTT = CBV/CBF)
+        - Tmax: May decrease due to sharper bolus
+
+    References:
+        Calamante F, Gadian DG, Connelly A.
+        Delay and dispersion effects in dynamic susceptibility contrast MRI:
+        simulations using singular value decomposition.
+        Magn Reson Med. 2000;44(3):466-473.
+
+        Willats L, Calamante F.
+        The 39 steps: evading error and deciphering the secrets for
+        accurate dynamic susceptibility contrast MRI.
+        NMR Biomed. 2013;26(8):913-931.
+    """
+    # Validate inputs
+    if len(aif) == 0:
+        raise ValueError("AIF array cannot be empty")
+
+    if vtf_alpha <= 0:
+        raise ValueError(f"vtf_alpha must be positive, got {vtf_alpha}")
+
+    if vtf_beta <= 0:
+        raise ValueError(f"vtf_beta must be positive, got {vtf_beta}")
+
+    n = len(aif)
+
+    # Create time vector
+    t = np.arange(n, dtype=np.float64) * dt
+
+    # Generate VTF
+    vtf = _gamma_variate_vtf(t, vtf_alpha, vtf_beta, vtf_delay)
+
+    # Normalize VTF to integrate to 1 (probability distribution)
+    vtf_integral = trapezoid(vtf, dx=dt)
+    if vtf_integral > EPSILON_CONCENTRATION:
+        vtf = vtf / vtf_integral
+
+    # Compute original AIF metrics
+    auc_original = float(trapezoid(aif, dx=dt))
+    peak_original = float(np.max(aif))
+    fwhm_original = _compute_fwhm_frames(aif)
+
+    # Deconvolve AIF with VTF
+    aif_corrected = _deconvolve_aif_with_vtf(aif, vtf, dt, svd_threshold)
+
+    # Preserve AUC (dose) if requested
+    if preserve_auc:
+        auc_corrected_raw = float(trapezoid(aif_corrected, dx=dt))
+        if auc_corrected_raw > EPSILON_CONCENTRATION:
+            scale_factor = auc_original / auc_corrected_raw
+            aif_corrected = aif_corrected * scale_factor
+
+    # Compute corrected AIF metrics
+    auc_corrected = float(trapezoid(aif_corrected, dx=dt))
+    peak_corrected = float(np.max(aif_corrected))
+    fwhm_corrected = _compute_fwhm_frames(aif_corrected)
+
+    # Dispersion factor (ratio of corrected to original peak)
+    if peak_original > EPSILON_CONCENTRATION:
+        dispersion_factor = peak_corrected / peak_original
+    else:
+        dispersion_factor = 1.0
+
+    return DispersionCorrectionResult(
+        aif_corrected=aif_corrected,
+        vtf=vtf,
+        auc_original=auc_original,
+        auc_corrected=auc_corrected,
+        peak_original=peak_original,
+        peak_corrected=peak_corrected,
+        fwhm_original=fwhm_original,
+        fwhm_corrected=fwhm_corrected,
+        dispersion_factor=dispersion_factor,
+    )
+
+
+def apply_dispersion_correction_batch(
+    aif: npt.NDArray[np.floating],
+    dt: float = 1.0,
+    vtf_alpha: float = 1.0,
+    vtf_beta: float = 1.5,
+    vtf_delay: float = 0.0,
+    svd_threshold: float = 0.2,
+    preserve_auc: bool = True,
+) -> npt.NDArray[np.floating]:
+    """Convenience function to apply dispersion correction and return only the corrected AIF.
+
+    This is a simplified interface for batch processing pipelines that only
+    need the corrected AIF without the full metrics.
+
+    Args:
+        aif: Measured arterial input function, shape (n_timepoints,).
+        dt: Time step in seconds.
+        vtf_alpha: VTF shape parameter. Default 1.0.
+        vtf_beta: VTF scale parameter in seconds. Default 1.5.
+        vtf_delay: VTF onset delay. Default 0.0.
+        svd_threshold: SVD truncation threshold. Default 0.2.
+        preserve_auc: Preserve total AUC. Default True.
+
+    Returns:
+        Dispersion-corrected AIF, shape (n_timepoints,).
+    """
+    result = apply_dispersion_correction(
+        aif=aif,
+        dt=dt,
+        vtf_alpha=vtf_alpha,
+        vtf_beta=vtf_beta,
+        vtf_delay=vtf_delay,
+        svd_threshold=svd_threshold,
+        preserve_auc=preserve_auc,
+    )
+    return result.aif_corrected
