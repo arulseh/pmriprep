@@ -14,12 +14,16 @@ from pmriprep.interfaces.dsc import (
 from pmriprep.interfaces.dsc_aif import (
     AIFDetection,
 )
+from pmriprep.interfaces.dsc_compute import (
+    ComputeDSCMaps,
+)
 
 __all__ = [
     "ACPCAlignment",
     "AIFDetection",
     "BiasCorrection",
     "BrainExtraction",
+    "ComputeDSCMaps",
     "Coregistration",
     "MotionCorrection",
     "ReorientAndCrop",
