@@ -9,6 +9,7 @@ from pmriprep.interfaces.anat import (
     TissueSegmentation,
 )
 from pmriprep.interfaces.dsc import (
+    DSCRegistration,
     MotionCorrection,
 )
 from pmriprep.interfaces.dsc_aif import (
@@ -25,6 +26,7 @@ __all__ = [
     "BrainExtraction",
     "ComputeDSCMaps",
     "Coregistration",
+    "DSCRegistration",
     "MotionCorrection",
     "ReorientAndCrop",
     "TissueSegmentation",
