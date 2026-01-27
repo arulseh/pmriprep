@@ -9,15 +9,23 @@ Subpackages:
 """
 
 from pmriprep.models.dsc import (
+    CPIModel,
     DSCFitResult,
     DSCModel,
     DSCModelParameter,
     VascularModel,
+    estimate_bolus_duration,
+    select_n_by_bic,
+    select_n_control_points,
 )
 
 __all__ = [
+    "CPIModel",
     "DSCFitResult",
     "DSCModel",
     "DSCModelParameter",
     "VascularModel",
+    "estimate_bolus_duration",
+    "select_n_by_bic",
+    "select_n_control_points",
 ]
