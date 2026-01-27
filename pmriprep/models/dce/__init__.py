@@ -11,6 +11,7 @@ Classes:
     ToftsModel: Standard Tofts pharmacokinetic model.
     ExtendedToftsModel: Extended Tofts pharmacokinetic model with vp.
     PatlakModel: Patlak pharmacokinetic model (no backflux).
+    TwoCompartmentExchangeModel: Two-Compartment Exchange model (2CXM).
 """
 
 from pmriprep.models.dce.base import (
@@ -21,6 +22,7 @@ from pmriprep.models.dce.base import (
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.patlak import PatlakModel
 from pmriprep.models.dce.tofts import ToftsModel
+from pmriprep.models.dce.two_compartment_exchange import TwoCompartmentExchangeModel
 
 __all__ = [
     "ExtendedToftsModel",
@@ -29,4 +31,5 @@ __all__ = [
     "PatlakModel",
     "PKModel",
     "ToftsModel",
+    "TwoCompartmentExchangeModel",
 ]
