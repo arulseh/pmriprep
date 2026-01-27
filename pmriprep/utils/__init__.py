@@ -1,5 +1,17 @@
 """Utility modules for PMRIPrep."""
 
+from pmriprep.utils.gpu import (
+    array_on_device,
+    clear_gpu_memory,
+    ensure_contiguous,
+    get_array_module,
+    get_device_name,
+    get_gpu_memory_info,
+    is_cupy_available,
+    synchronize,
+    to_device,
+    to_host,
+)
 from pmriprep.utils.structural_reference import (
     ApplicationType,
     ImageResolutionInfo,
@@ -15,6 +27,17 @@ from pmriprep.utils.structural_reference import (
 )
 
 __all__ = [
+    # gpu
+    "array_on_device",
+    "clear_gpu_memory",
+    "ensure_contiguous",
+    "get_array_module",
+    "get_device_name",
+    "get_gpu_memory_info",
+    "is_cupy_available",
+    "synchronize",
+    "to_device",
+    "to_host",
     # structural_reference
     "ApplicationType",
     "ImageResolutionInfo",
