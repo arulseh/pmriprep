@@ -1788,3 +1788,408 @@ def fit_gamma_variate_from_file(
         preserve_auc=preserve_auc,
         tr=tr,
     )
+
+
+# =============================================================================
+# Synthetic AIF Generation
+# =============================================================================
+
+
+# Population parameters for synthetic gamma-variate AIF
+# Based on literature values: Parker et al. (2006), Mouridsen et al. (2006)
+SYNTHETIC_AIF_PARAMS: dict[str, float] = {
+    # Gamma-variate parameters (typical values for healthy subjects at 3T)
+    "alpha": 2.5,  # Shape parameter (typical 2-3)
+    "beta": 3.0,  # Scale parameter in frames (typical 2.5-4)
+    # Timing parameters
+    "arrival_frame": 5.0,  # Typical bolus arrival (frames after start)
+    # Amplitude scaling factors by dose
+    "peak_deltaR2_full_dose": 40.0,  # s^-1, typical peak ΔR2* for full dose
+    "peak_deltaR2_half_dose": 20.0,  # s^-1, typical peak ΔR2* for half dose
+    "peak_deltaR2_double_dose": 80.0,  # s^-1, typical peak ΔR2* for double dose
+}
+
+
+@dataclass
+class SyntheticAIFResult:
+    """Result of synthetic AIF generation.
+
+    Synthetic AIFs are used as a fallback when automatic AIF detection fails.
+    They enable relative perfusion quantification but are NOT suitable for
+    absolute CBV/CBF measurements.
+
+    Attributes
+    ----------
+    aif_curve : npt.NDArray[Any]
+        Generated synthetic AIF curve.
+    amplitude : float
+        Amplitude scaling factor used.
+    t0 : float
+        Bolus arrival time (frames).
+    alpha : float
+        Gamma-variate shape parameter.
+    beta : float
+        Gamma-variate scale parameter.
+    dose_level : str
+        Estimated dose level ('half', 'full', 'double').
+    scaling_factor : float
+        Factor applied to match estimated global signal.
+    is_synthetic : bool
+        Always True - indicates synthetic AIF.
+    absolute_quantification_valid : bool
+        Always False - synthetic AIFs don't support absolute quantification.
+    warning_message : str
+        Warning about limitations of synthetic AIF.
+    qc_metrics : dict[str, Any]
+        Quality metrics including source information.
+    """
+
+    aif_curve: npt.NDArray[Any]
+    amplitude: float
+    t0: float
+    alpha: float
+    beta: float
+    dose_level: str
+    scaling_factor: float
+    is_synthetic: bool = True
+    absolute_quantification_valid: bool = False
+    warning_message: str = ""
+    qc_metrics: dict[str, Any] = field(default_factory=dict)
+
+
+def _estimate_dose_from_global_signal(
+    concentration_data: npt.NDArray[Any],
+    brain_mask: npt.NDArray[Any],
+    baseline_frames: int = 5,
+) -> Tuple[str, float, float]:
+    """Estimate contrast dose from global signal characteristics.
+
+    Uses the peak ΔR2* of the global average signal to estimate the
+    contrast dose level.
+
+    Parameters
+    ----------
+    concentration_data : np.ndarray
+        4D concentration/ΔR2* data (x, y, z, time).
+    brain_mask : np.ndarray
+        3D brain mask.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+
+    Returns
+    -------
+    Tuple[str, float, float]
+        (dose_level, peak_deltaR2, scaling_factor)
+        dose_level: 'half', 'full', or 'double'
+        peak_deltaR2: Estimated peak ΔR2* value
+        scaling_factor: Factor to apply to population AIF
+    """
+    # Compute global average signal within brain
+    mask_indices = np.where(brain_mask > 0)
+    if len(mask_indices[0]) == 0:
+        # Empty mask, return defaults
+        return ("full", 40.0, 1.0)
+
+    # Extract time courses and compute mean
+    time_courses = concentration_data[mask_indices]  # (n_voxels, n_frames)
+    global_signal = np.mean(time_courses, axis=0)
+
+    # Compute peak ΔR2* (relative to baseline)
+    baseline_mean: float = float(np.mean(global_signal[:baseline_frames]))
+    peak_value: float = float(np.max(global_signal))
+    peak_deltaR2 = peak_value - baseline_mean
+
+    # Estimate dose based on peak ΔR2*
+    # Typical values at 3T:
+    # - Half dose: ~15-25 s^-1 peak
+    # - Full dose: ~35-50 s^-1 peak
+    # - Double dose: ~70-100 s^-1 peak
+
+    if peak_deltaR2 < 10.0:
+        dose_level = "half"
+        expected_peak = SYNTHETIC_AIF_PARAMS["peak_deltaR2_half_dose"]
+    elif peak_deltaR2 < 30.0:
+        dose_level = "half"
+        expected_peak = SYNTHETIC_AIF_PARAMS["peak_deltaR2_half_dose"]
+    elif peak_deltaR2 < 60.0:
+        dose_level = "full"
+        expected_peak = SYNTHETIC_AIF_PARAMS["peak_deltaR2_full_dose"]
+    else:
+        dose_level = "double"
+        expected_peak = SYNTHETIC_AIF_PARAMS["peak_deltaR2_double_dose"]
+
+    # Compute scaling factor to match observed signal
+    # This accounts for individual variation in signal magnitude
+    if expected_peak > EPSILON_CONCENTRATION:
+        scaling_factor = peak_deltaR2 / expected_peak
+    else:
+        scaling_factor = 1.0
+
+    # Clamp scaling factor to reasonable range
+    scaling_factor = max(0.2, min(5.0, scaling_factor))
+
+    return (dose_level, peak_deltaR2, scaling_factor)
+
+
+def generate_synthetic_aif(
+    n_frames: int,
+    baseline_frames: int = 5,
+    dose_level: str = "full",
+    field_strength: float = 3.0,
+    global_scaling: Optional[float] = None,
+    concentration_data: Optional[npt.NDArray[Any]] = None,
+    brain_mask: Optional[npt.NDArray[Any]] = None,
+) -> SyntheticAIFResult:
+    """Generate a synthetic AIF using population-derived gamma-variate parameters.
+
+    This function creates a synthetic arterial input function when automatic
+    AIF detection fails. The synthetic AIF enables relative perfusion
+    quantification but absolute CBV/CBF measurements are NOT valid.
+
+    The synthetic AIF is generated using a gamma-variate model with
+    population-derived parameters from the literature (Parker et al. 2006,
+    Mouridsen et al. 2006).
+
+    Parameters
+    ----------
+    n_frames : int
+        Number of time frames for the AIF curve.
+    baseline_frames : int
+        Number of pre-bolus baseline frames (AIF = 0 for these frames).
+    dose_level : str
+        Contrast dose level: 'half', 'full', or 'double'.
+        Used to set the AIF amplitude.
+    field_strength : float
+        Magnetic field strength in Tesla. Affects expected relaxivity.
+    global_scaling : float, optional
+        Custom scaling factor for AIF amplitude. If None, uses dose_level defaults.
+    concentration_data : np.ndarray, optional
+        4D concentration data for automatic dose estimation.
+        If provided along with brain_mask, dose will be estimated from global signal.
+    brain_mask : np.ndarray, optional
+        3D brain mask for global signal calculation.
+
+    Returns
+    -------
+    SyntheticAIFResult
+        Synthetic AIF with parameters and warning flags.
+
+    Notes
+    -----
+    **WARNING**: Synthetic AIFs have significant limitations:
+
+    1. **Absolute quantification is NOT valid**: CBF, CBV in absolute units
+       (mL/100g/min, mL/100g) require a measured AIF. Synthetic AIFs provide
+       only relative values.
+
+    2. **Inter-subject comparisons are limited**: Without measured AIF,
+       differences between subjects may reflect AIF variations rather than
+       true perfusion differences.
+
+    3. **Within-subject comparisons are acceptable**: Relative CBF/CBV
+       differences within the same scan (e.g., lesion vs normal tissue)
+       remain valid.
+
+    4. **Normalization recommended**: Use relative CBV (rCBV = CBV / CBV_NAWM)
+       to partially compensate for AIF uncertainty.
+
+    The synthetic AIF is flagged with:
+    - is_synthetic = True
+    - absolute_quantification_valid = False
+    - warning_message explaining limitations
+
+    Downstream processing should check these flags and:
+    - Mark outputs as relative-only
+    - Warn users about quantification limitations
+    - Recommend rCBV normalization
+
+    Clinical context:
+    - Synthetic AIFs may be necessary in tumor patients where lesions
+      affect vessel selection
+    - Multi-site studies benefit from synthetic AIFs for consistency
+    - Research protocols should document synthetic AIF usage
+
+    Examples
+    --------
+    >>> # Generate synthetic AIF for 60-frame scan, full dose
+    >>> result = generate_synthetic_aif(n_frames=60, baseline_frames=5, dose_level="full")
+    >>> print(f"Peak ΔR2*: {result.aif_curve.max():.1f} s^-1")
+    >>> print(f"Warning: {result.warning_message}")
+
+    >>> # Auto-estimate dose from global signal
+    >>> result = generate_synthetic_aif(
+    ...     n_frames=60,
+    ...     baseline_frames=5,
+    ...     concentration_data=conc_4d,
+    ...     brain_mask=mask,
+    ... )
+    >>> print(f"Estimated dose: {result.dose_level}")
+
+    See Also
+    --------
+    atlas_based_aif_search : Preferred AIF detection method
+    fit_gamma_variate : Gamma-variate fitting for measured AIFs
+    """
+    # Get population parameters
+    alpha = SYNTHETIC_AIF_PARAMS["alpha"]
+    beta = SYNTHETIC_AIF_PARAMS["beta"]
+    t0 = SYNTHETIC_AIF_PARAMS["arrival_frame"]
+
+    # Ensure baseline is respected
+    if t0 < baseline_frames:
+        t0 = float(baseline_frames)
+
+    # Estimate dose from global signal if data provided
+    estimated_dose = dose_level
+    estimated_peak = 0.0
+    auto_scaling = 1.0
+
+    if concentration_data is not None and brain_mask is not None:
+        estimated_dose, estimated_peak, auto_scaling = _estimate_dose_from_global_signal(
+            concentration_data, brain_mask, baseline_frames
+        )
+        # Use estimated dose if not explicitly specified
+        if global_scaling is None:
+            global_scaling = auto_scaling
+            dose_level = estimated_dose
+
+    # Determine amplitude from dose level
+    if dose_level == "half":
+        base_amplitude = SYNTHETIC_AIF_PARAMS["peak_deltaR2_half_dose"]
+    elif dose_level == "double":
+        base_amplitude = SYNTHETIC_AIF_PARAMS["peak_deltaR2_double_dose"]
+    else:  # full dose (default)
+        base_amplitude = SYNTHETIC_AIF_PARAMS["peak_deltaR2_full_dose"]
+
+    # Apply field strength correction (approximate)
+    # r2* scales roughly linearly with field strength
+    field_factor = field_strength / 3.0  # Normalize to 3T
+    base_amplitude = base_amplitude * field_factor
+
+    # Apply custom scaling if provided
+    if global_scaling is not None:
+        amplitude = base_amplitude * global_scaling
+    else:
+        amplitude = base_amplitude
+
+    # Generate time array
+    t = np.arange(n_frames, dtype=np.float64)
+
+    # Generate gamma-variate AIF
+    # The peak of gamma-variate occurs at t0 + alpha*beta
+    # We need to scale amplitude so that max(curve) = target peak
+    # For gamma-variate: max = A * (alpha)^alpha * exp(-alpha) / (beta^alpha)
+    # So: A = target_peak * (beta^alpha) / (alpha^alpha * exp(-alpha))
+
+    peak_term = np.power(alpha, alpha) * np.exp(-alpha) / np.power(beta, alpha)
+    if peak_term > EPSILON_CONCENTRATION:
+        amplitude_scaled = amplitude / peak_term
+    else:
+        amplitude_scaled = amplitude
+
+    # Generate the curve
+    aif_curve = _gamma_variate_model(t, amplitude_scaled, t0, alpha, beta)
+
+    # Ensure baseline is exactly zero
+    aif_curve[:baseline_frames] = 0.0
+
+    # Build warning message
+    warning_parts = [
+        "SYNTHETIC AIF WARNING:",
+        "This AIF was generated using population parameters because automatic detection failed.",
+        "LIMITATIONS:",
+        "  - Absolute CBF/CBV values are NOT valid",
+        "  - Inter-subject comparisons are unreliable",
+        "  - Use relative values (rCBV = CBV/CBV_NAWM) for clinical interpretation",
+        "RECOMMENDATIONS:",
+        "  - Report rCBV instead of absolute CBV",
+        "  - Note synthetic AIF usage in analysis records",
+        "  - Consider re-acquisition if absolute values are needed",
+    ]
+    warning_message = "\n".join(warning_parts)
+
+    # Build QC metrics
+    qc_metrics: dict[str, Any] = {
+        "source": "synthetic",
+        "population_params": {
+            "alpha": alpha,
+            "beta": beta,
+            "t0": t0,
+        },
+        "dose_level": dose_level,
+        "field_strength": field_strength,
+        "scaling_factor": global_scaling if global_scaling is not None else 1.0,
+        "peak_value": float(np.max(aif_curve)),
+        "auc": float(_compute_auc(aif_curve)),
+        "fwhm_frames": compute_aif_fwhm_frames(aif_curve, baseline_frames),
+        "auto_estimated": concentration_data is not None,
+        "estimated_peak_from_signal": estimated_peak if estimated_peak > 0 else None,
+    }
+
+    return SyntheticAIFResult(
+        aif_curve=aif_curve,
+        amplitude=amplitude_scaled,
+        t0=t0,
+        alpha=alpha,
+        beta=beta,
+        dose_level=dose_level,
+        scaling_factor=global_scaling if global_scaling is not None else 1.0,
+        is_synthetic=True,
+        absolute_quantification_valid=False,
+        warning_message=warning_message,
+        qc_metrics=qc_metrics,
+    )
+
+
+def generate_synthetic_aif_from_files(
+    n_frames: int,
+    brain_mask_file: Optional[Union[str, Path]] = None,
+    concentration_file: Optional[Union[str, Path]] = None,
+    baseline_frames: int = 5,
+    dose_level: str = "full",
+    field_strength: float = 3.0,
+) -> SyntheticAIFResult:
+    """Generate synthetic AIF with optional automatic dose estimation from files.
+
+    Convenience wrapper that loads NIfTI files for automatic dose estimation.
+
+    Parameters
+    ----------
+    n_frames : int
+        Number of time frames.
+    brain_mask_file : str or Path, optional
+        Path to brain mask NIfTI file.
+    concentration_file : str or Path, optional
+        Path to 4D concentration NIfTI file.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+    dose_level : str
+        Contrast dose level if not auto-estimated.
+    field_strength : float
+        Magnetic field strength in Tesla.
+
+    Returns
+    -------
+    SyntheticAIFResult
+        Synthetic AIF with parameters and warning flags.
+    """
+    concentration_data: Optional[npt.NDArray[Any]] = None
+    brain_mask: Optional[npt.NDArray[Any]] = None
+
+    if concentration_file is not None and brain_mask_file is not None:
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        conc_img = nib.load(concentration_file)
+        concentration_data = conc_img.get_fdata()  # type: ignore[attr-defined]
+
+        mask_img = nib.load(brain_mask_file)
+        brain_mask = mask_img.get_fdata()  # type: ignore[attr-defined]
+
+    return generate_synthetic_aif(
+        n_frames=n_frames,
+        baseline_frames=baseline_frames,
+        dose_level=dose_level,
+        field_strength=field_strength,
+        concentration_data=concentration_data,
+        brain_mask=brain_mask,
+    )
