@@ -1,15 +1,17 @@
 """DSC signal processing utilities.
 
 Functions for converting DSC-MRI signal to concentration (ΔR2*)
-and computing derived metrics like PSR and peak height.
+and computing derived metrics like PSR, peak height, and normalized CBV.
 """
 
-from typing import Optional, Union
+from pathlib import Path
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
 
 from pmriprep.utils.dsc_constants import (
+    EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
     R2_STAR_BY_FIELD,
     get_r2_star,
@@ -387,3 +389,280 @@ def compute_peak_height(
         return float(ph)
     else:
         return ph
+
+
+def find_nawm_mask(
+    derivatives_dir: Union[str, Path],
+    subject: str,
+    session: Optional[str] = None,
+) -> Optional[Path]:
+    """Find a NAWM (normal appearing white matter) mask in derivatives.
+
+    Searches for HD-GLIO or other NAWM ROI outputs.
+
+    Args:
+        derivatives_dir: Path to the derivatives directory.
+        subject: Subject ID (without 'sub-' prefix).
+        session: Session ID (without 'ses-' prefix), optional.
+
+    Returns:
+        Path to the NAWM mask, or None if not found.
+    """
+    deriv_path = Path(derivatives_dir)
+
+    # Build search patterns
+    patterns: List[str] = []
+
+    base_pattern = f"sub-{subject}"
+    if session:
+        base_pattern += f"_ses-{session}"
+
+    # Common NAWM mask naming patterns
+    nawm_keywords = ["nawm", "NAWM", "normalwm", "normwm", "contrawm"]
+
+    for keyword in nawm_keywords:
+        patterns.extend([
+            f"{base_pattern}*{keyword}*_mask.nii.gz",
+            f"{base_pattern}*desc-{keyword}*_mask.nii.gz",
+            f"{base_pattern}*label-{keyword}*_mask.nii.gz",
+        ])
+
+    # Also look for white matter probability maps as fallback
+    patterns.extend([
+        f"{base_pattern}*label-WM*_probseg.nii.gz",
+        f"{base_pattern}*desc-wm*_probseg.nii.gz",
+    ])
+
+    # Search in derivatives
+    for pattern in patterns:
+        matches = list(deriv_path.rglob(pattern))
+        if matches:
+            # Prefer 'nawm' or 'contra' (contralateral) masks
+            for m in matches:
+                name_lower = m.name.lower()
+                if "nawm" in name_lower or "contra" in name_lower:
+                    return m
+            return matches[0]
+
+    return None
+
+
+def normalize_cbv(
+    cbv_map: npt.NDArray[np.floating],
+    nawm_mask: Optional[npt.NDArray[np.bool_]] = None,
+    nawm_mask_file: Optional[Union[str, Path]] = None,
+    derivatives_dir: Optional[Union[str, Path]] = None,
+    subject: Optional[str] = None,
+    session: Optional[str] = None,
+    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
+    return_normalization_factor: bool = False,
+) -> Union[
+    npt.NDArray[np.floating],
+    Tuple[npt.NDArray[np.floating], float],
+]:
+    """Normalize CBV map to NAWM median (nCBV).
+
+    Computes normalized CBV (nCBV) by dividing the CBV map by the median
+    CBV value within the normal appearing white matter (NAWM) region.
+
+    nCBV = CBV / median(CBV_NAWM)
+
+    The NAWM mask can be provided directly, loaded from a file path, or
+    auto-detected from the derivatives directory (HD-GLIO outputs).
+
+    Args:
+        cbv_map: 3D array of CBV values to normalize.
+        nawm_mask: Binary 3D mask of NAWM region. If None, will attempt
+            to load from nawm_mask_file or auto-detect.
+        nawm_mask_file: Path to a NAWM mask NIfTI file. Used if nawm_mask
+            is not provided.
+        derivatives_dir: Path to derivatives directory for auto-detection.
+            Used if neither nawm_mask nor nawm_mask_file is provided.
+        subject: Subject ID (without 'sub-' prefix) for auto-detection.
+        session: Session ID (without 'ses-' prefix) for auto-detection.
+        brain_mask: Optional brain mask for fallback normalization if NAWM
+            mask is unavailable. Uses whole-brain median.
+        return_normalization_factor: If True, returns tuple of (nCBV, factor).
+
+    Returns:
+        If return_normalization_factor is False:
+            Normalized CBV map (nCBV) as a 3D array.
+        If return_normalization_factor is True:
+            Tuple of (nCBV map, normalization factor).
+
+    Raises:
+        ValueError: If CBV map is not 3D.
+        ValueError: If mask dimensions don't match CBV map.
+
+    Notes:
+        - If no NAWM mask is available and no brain mask is provided,
+          the function returns the original CBV map unchanged with
+          a normalization factor of 1.0.
+        - nCBV is unitless (ratio), typically ~1.0 in NAWM and elevated
+          (>1.7-2.0) in tumor regions.
+        - In glioblastoma, nCBV > 1.75 often indicates tumor vs. edema.
+    """
+    # Validate CBV map
+    if cbv_map.ndim != 3:
+        raise ValueError(f"CBV map must be 3D, got {cbv_map.ndim}D")
+
+    # Track if we have a valid NAWM mask
+    effective_mask: Optional[npt.NDArray[np.bool_]] = None
+
+    # Priority 1: Use provided NAWM mask directly
+    if nawm_mask is not None:
+        if nawm_mask.shape != cbv_map.shape:
+            raise ValueError(
+                f"NAWM mask shape {nawm_mask.shape} doesn't match "
+                f"CBV map shape {cbv_map.shape}"
+            )
+        effective_mask = nawm_mask
+
+    # Priority 2: Load from provided file path
+    if effective_mask is None and nawm_mask_file is not None:
+        nawm_path = Path(nawm_mask_file)
+        if nawm_path.exists():
+            import nibabel as nib  # type: ignore[import-untyped]
+
+            nawm_img = nib.load(nawm_path)
+            nawm_data = nawm_img.get_fdata()  # type: ignore[attr-defined]
+            # Convert to boolean mask (threshold at 0.5 for probability maps)
+            effective_mask = nawm_data > 0.5
+            if effective_mask.shape != cbv_map.shape:
+                # Silently fail if dimensions don't match
+                effective_mask = None
+
+    # Priority 3: Auto-detect from derivatives
+    if (
+        effective_mask is None
+        and derivatives_dir is not None
+        and subject is not None
+    ):
+        found_mask_path = find_nawm_mask(derivatives_dir, subject, session)
+        if found_mask_path is not None:
+            import nibabel as nib  # type: ignore[import-untyped]
+
+            nawm_img = nib.load(found_mask_path)
+            nawm_data = nawm_img.get_fdata()  # type: ignore[attr-defined]
+            effective_mask = nawm_data > 0.5
+            if effective_mask.shape != cbv_map.shape:
+                effective_mask = None
+
+    # Compute normalization factor
+    normalization_factor: float = 1.0
+
+    if effective_mask is not None:
+        # Ensure mask is boolean
+        mask_bool = effective_mask.astype(bool)
+
+        # Count voxels in NAWM region
+        n_voxels = int(np.sum(mask_bool))
+
+        if n_voxels > 0:
+            # Get CBV values within NAWM
+            cbv_nawm = cbv_map[mask_bool]
+
+            # Filter out non-positive values for median calculation
+            cbv_nawm_valid = cbv_nawm[cbv_nawm > EPSILON_CONCENTRATION]
+
+            if len(cbv_nawm_valid) > 0:
+                # Compute median CBV in NAWM
+                median_cbv_nawm = float(np.median(cbv_nawm_valid))
+
+                # Ensure non-zero normalization factor
+                if median_cbv_nawm > EPSILON_CONCENTRATION:
+                    normalization_factor = median_cbv_nawm
+
+    # Fallback: Use brain mask for whole-brain normalization
+    if normalization_factor == 1.0 and brain_mask is not None:
+        if brain_mask.shape == cbv_map.shape:
+            brain_bool = brain_mask.astype(bool)
+            n_brain_voxels = int(np.sum(brain_bool))
+
+            if n_brain_voxels > 0:
+                cbv_brain = cbv_map[brain_bool]
+                cbv_brain_valid = cbv_brain[cbv_brain > EPSILON_CONCENTRATION]
+
+                if len(cbv_brain_valid) > 0:
+                    # Use median of whole brain as fallback
+                    median_cbv_brain = float(np.median(cbv_brain_valid))
+
+                    if median_cbv_brain > EPSILON_CONCENTRATION:
+                        normalization_factor = median_cbv_brain
+
+    # Compute normalized CBV
+    ncbv_map = cbv_map / normalization_factor
+
+    if return_normalization_factor:
+        return ncbv_map, normalization_factor
+    else:
+        return ncbv_map
+
+
+def normalize_cbv_from_files(
+    cbv_file: Union[str, Path],
+    output_file: Union[str, Path],
+    nawm_mask_file: Optional[Union[str, Path]] = None,
+    derivatives_dir: Optional[Union[str, Path]] = None,
+    subject: Optional[str] = None,
+    session: Optional[str] = None,
+    brain_mask_file: Optional[Union[str, Path]] = None,
+) -> Tuple[Path, float]:
+    """Normalize a CBV NIfTI file and save the result.
+
+    Convenience wrapper that loads the CBV map from a file, performs
+    NAWM normalization, and saves the result.
+
+    Args:
+        cbv_file: Path to input CBV NIfTI file.
+        output_file: Path to save normalized CBV NIfTI.
+        nawm_mask_file: Path to NAWM mask NIfTI file.
+        derivatives_dir: Path to derivatives for auto-detection.
+        subject: Subject ID for auto-detection.
+        session: Session ID for auto-detection.
+        brain_mask_file: Path to brain mask for fallback normalization.
+
+    Returns:
+        Tuple of (output_file path, normalization_factor).
+
+    Raises:
+        FileNotFoundError: If CBV file does not exist.
+    """
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    cbv_path = Path(cbv_file)
+    if not cbv_path.exists():
+        raise FileNotFoundError(f"CBV file not found: {cbv_path}")
+
+    # Load CBV map
+    cbv_img = nib.load(cbv_path)
+    cbv_data = cbv_img.get_fdata()  # type: ignore[attr-defined]
+
+    # Load brain mask if provided
+    brain_mask: Optional[npt.NDArray[np.bool_]] = None
+    if brain_mask_file is not None:
+        brain_path = Path(brain_mask_file)
+        if brain_path.exists():
+            brain_img = nib.load(brain_path)
+            brain_mask = brain_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
+    # Normalize
+    ncbv_data, norm_factor = normalize_cbv(
+        cbv_map=cbv_data,
+        nawm_mask=None,
+        nawm_mask_file=nawm_mask_file,
+        derivatives_dir=derivatives_dir,
+        subject=subject,
+        session=session,
+        brain_mask=brain_mask,
+        return_normalization_factor=True,
+    )
+
+    # Save output
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    ncbv_img = nib.Nifti1Image(ncbv_data, cbv_img.affine, cbv_img.header)  # type: ignore[attr-defined]
+    nib.save(ncbv_img, output_path)
+
+    return output_path, norm_factor
