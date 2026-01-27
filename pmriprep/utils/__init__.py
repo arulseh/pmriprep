@@ -1,5 +1,19 @@
 """Utility modules for PMRIPrep."""
 
+from pmriprep.utils.dce_aif import (
+    DCEAIFQualityMetrics,
+    DCEAIFQualityResult,
+    assess_dce_aif_quality,
+    assess_dce_aif_quality_from_file,
+    compute_dce_auc,
+    compute_dce_baseline_mean,
+    compute_dce_baseline_std,
+    compute_dce_cnr,
+    compute_dce_fwhm_seconds,
+    compute_dce_peak_concentration,
+    compute_dce_time_to_peak,
+    compute_dce_washout_fraction,
+)
 from pmriprep.utils.gpu import (
     GPUVoxelProcessor,
     array_on_device,
@@ -28,6 +42,19 @@ from pmriprep.utils.structural_reference import (
 )
 
 __all__ = [
+    # dce_aif
+    "DCEAIFQualityMetrics",
+    "DCEAIFQualityResult",
+    "assess_dce_aif_quality",
+    "assess_dce_aif_quality_from_file",
+    "compute_dce_auc",
+    "compute_dce_baseline_mean",
+    "compute_dce_baseline_std",
+    "compute_dce_cnr",
+    "compute_dce_fwhm_seconds",
+    "compute_dce_peak_concentration",
+    "compute_dce_time_to_peak",
+    "compute_dce_washout_fraction",
     # gpu
     "GPUVoxelProcessor",
     "array_on_device",
