@@ -26,6 +26,9 @@ from pmriprep.interfaces.dsc_aif import (
 from pmriprep.interfaces.dsc_compute import (
     ComputeDSCMaps,
 )
+from pmriprep.interfaces.hdglio import (
+    HDGLIOPrep,
+)
 
 # Alias for backward compatibility - DSC AIF was the original
 AIFDetection = DSCAIFDetection
@@ -42,6 +45,7 @@ __all__ = [
     "DCEPreprocess",
     "DSCAIFDetection",
     "DSCRegistration",
+    "HDGLIOPrep",
     "MotionCorrection",
     "ReorientAndCrop",
     "T1Mapping",
