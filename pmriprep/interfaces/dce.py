@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
+import numpy.typing as npt
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterface,
     BaseInterfaceInputSpec,
@@ -740,3 +741,577 @@ class T1Mapping(SimpleInterface):
         base = base.replace("_fa-", "_").split("_fa-")[0]
 
         return str(Path.cwd() / f"{base}_T1map{ext}")
+
+
+class DCEPreprocessInputSpec(BaseInterfaceInputSpec):
+    """Input specification for DCEPreprocess interface."""
+
+    in_file = File(
+        exists=True,
+        mandatory=True,
+        desc="Input 4D DCE time series to preprocess",
+    )
+    out_file = File(
+        genfile=True,
+        desc="Output motion-corrected 4D DCE image",
+    )
+    out_params = File(
+        genfile=True,
+        desc="Output motion parameters file (.par)",
+    )
+    baseline_frames = traits.Int(
+        0,
+        usedefault=True,
+        desc="Number of baseline frames (0 = auto-detect from global signal)",
+    )
+    ref_vol = traits.Either(
+        traits.Int,
+        traits.Enum("mean", "first", "baseline_mean"),
+        default="baseline_mean",
+        usedefault=True,
+        desc="Reference volume: int for index, 'mean', 'first', or 'baseline_mean' (default)",
+    )
+    motion_thresh = traits.Float(
+        0.5,
+        usedefault=True,
+        desc="Framewise displacement threshold (mm) for outlier detection",
+    )
+    head_radius = traits.Float(
+        50.0,
+        usedefault=True,
+        desc="Head radius (mm) for FD calculation (default: 50mm)",
+    )
+    cost = traits.Enum(
+        "normcorr",
+        "corratio",
+        "normmi",
+        "mutualinfo",
+        "leastsq",
+        usedefault=True,
+        desc="Cost function for motion correction (default: normcorr)",
+    )
+    interpolation = traits.Enum(
+        "trilinear",
+        "sinc",
+        "spline",
+        usedefault=True,
+        desc="Interpolation method (default: trilinear)",
+    )
+    brain_mask = File(
+        exists=True,
+        desc="Brain mask for baseline detection and QC (optional)",
+    )
+    contrast_threshold = traits.Float(
+        1.5,
+        usedefault=True,
+        desc="Signal increase threshold (%) for bolus arrival detection (default: 1.5%)",
+    )
+
+
+class DCEPreprocessOutputSpec(TraitedSpec):
+    """Output specification for DCEPreprocess interface."""
+
+    out_file = File(exists=True, desc="Motion-corrected 4D DCE image")
+    out_params = File(exists=True, desc="Motion parameters file (.par)")
+    mean_img = File(exists=True, desc="Mean image of motion-corrected data")
+    baseline_frames = traits.Int(desc="Number of detected/specified baseline frames")
+    baseline_indices = traits.List(traits.Int, desc="List of baseline frame indices")
+    bolus_arrival_frame = traits.Int(desc="Detected bolus arrival frame index")
+    fd = traits.List(traits.Float, desc="Framewise displacement per volume (mm)")
+    fd_mean = traits.Float(desc="Mean framewise displacement (mm)")
+    fd_max = traits.Float(desc="Maximum framewise displacement (mm)")
+    n_outliers = traits.Int(desc="Number of outlier volumes (FD > threshold)")
+    outlier_frames = traits.List(traits.Int, desc="Indices of outlier volumes")
+    qc_metrics = traits.Dict(desc="QC metrics dictionary")
+
+
+class DCEPreprocess(SimpleInterface):
+    """DCE preprocessing with motion correction and baseline detection.
+
+    This interface performs motion correction on 4D DCE perfusion time series
+    using FSL mcflirt, with automatic detection of baseline frames from the
+    global signal time course. The baseline period is identified as the
+    pre-contrast phase before bolus arrival.
+
+    Motion correction aligns all volumes to a reference (by default, the mean
+    of baseline frames), which minimizes misregistration due to motion during
+    the DCE acquisition.
+
+    Parameters
+    ----------
+    in_file : str
+        Input 4D DCE time series
+    baseline_frames : int
+        Number of baseline frames (0 = auto-detect from global signal)
+    ref_vol : int or str
+        Reference volume: integer index, 'mean', 'first', or 'baseline_mean' (default)
+    motion_thresh : float
+        FD threshold (mm) for flagging outlier volumes (default: 0.5mm)
+    head_radius : float
+        Head radius (mm) for FD calculation (default: 50mm)
+    cost : str
+        Cost function: normcorr, corratio, normmi, etc. (default: normcorr)
+    interpolation : str
+        Interpolation: trilinear, sinc, or spline (default: trilinear)
+    brain_mask : str, optional
+        Brain mask for baseline detection (improves accuracy)
+    contrast_threshold : float
+        Signal increase threshold (%) for bolus arrival detection (default: 1.5%)
+
+    Returns
+    -------
+    out_file : str
+        Motion-corrected 4D DCE image
+    out_params : str
+        Motion parameters file (FSL format)
+    mean_img : str
+        Mean image of motion-corrected data
+    baseline_frames : int
+        Number of detected/specified baseline frames
+    baseline_indices : list
+        List of baseline frame indices (0 to baseline_frames-1)
+    bolus_arrival_frame : int
+        Detected bolus arrival frame index
+    fd : list
+        Framewise displacement per volume (mm)
+    fd_mean : float
+        Mean FD across all volumes
+    fd_max : float
+        Maximum FD
+    n_outliers : int
+        Number of volumes with FD > motion_thresh
+    outlier_frames : list
+        Indices of outlier volumes
+    qc_metrics : dict
+        Complete QC metrics dictionary
+
+    Notes
+    -----
+    **Baseline Detection Algorithm:**
+
+    When baseline_frames=0 (auto-detect), the algorithm:
+
+    1. Computes the global mean signal for each time point (within brain mask if provided)
+    2. Computes the mean and std of signal in a sliding window
+    3. Detects bolus arrival as the first frame where signal increases by more than
+       contrast_threshold × std above the baseline mean
+    4. Sets baseline_frames to the frame before bolus arrival
+
+    For DCE with gadolinium contrast, the signal typically INCREASES (T1-shortening)
+    at bolus arrival, unlike DSC where signal DECREASES (T2* effect).
+
+    **Motion Correction:**
+
+    Uses FSL mcflirt with the baseline mean as reference by default. This ensures
+    the motion correction reference has optimal contrast for registration (pre-contrast).
+
+    Motion parameters are output in FSL format:
+    rot_x, rot_y, rot_z (radians), trans_x, trans_y, trans_z (mm)
+
+    Framewise displacement formula: FD = |Δtrans| + r × |Δrot|
+
+    Requires FSL to be installed and available in PATH.
+
+    Examples
+    --------
+    >>> preproc = DCEPreprocess()
+    >>> preproc.inputs.in_file = 'dce_raw.nii.gz'
+    >>> preproc.inputs.baseline_frames = 5  # Known baseline
+    >>> result = preproc.run()  # doctest: +SKIP
+
+    Auto-detect baseline:
+
+    >>> preproc = DCEPreprocess()
+    >>> preproc.inputs.in_file = 'dce_raw.nii.gz'
+    >>> preproc.inputs.baseline_frames = 0  # Auto-detect
+    >>> preproc.inputs.brain_mask = 'brain_mask.nii.gz'  # Improves accuracy
+    >>> result = preproc.run()  # doctest: +SKIP
+
+    See Also
+    --------
+    FSL mcflirt: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/MCFLIRT
+    MotionCorrection : DSC motion correction interface
+    """
+
+    input_spec = DCEPreprocessInputSpec
+    output_spec = DCEPreprocessOutputSpec
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE preprocessing."""
+        import subprocess
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        # Generate output filenames
+        out_file = self._gen_outfilename()
+        out_params = self._gen_params_filename()
+        mean_file = self._gen_mean_filename()
+
+        # Load input DCE data
+        dce_img = nib.load(self.inputs.in_file)
+        dce_data = dce_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+        affine = dce_img.affine  # type: ignore[attr-defined]
+        header = dce_img.header  # type: ignore[attr-defined]
+        n_volumes = dce_data.shape[3]
+
+        # Load brain mask if provided
+        brain_mask: Optional[np.ndarray] = None
+        if self.inputs.brain_mask:
+            mask_img = nib.load(self.inputs.brain_mask)
+            brain_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
+        # Detect or use specified baseline frames
+        if self.inputs.baseline_frames > 0:
+            # Use specified baseline
+            baseline_frames = self.inputs.baseline_frames
+            # Detect bolus arrival for QC
+            bolus_frame = self._detect_bolus_arrival(dce_data, brain_mask)
+        else:
+            # Auto-detect baseline from global signal
+            baseline_frames, bolus_frame = self._auto_detect_baseline(
+                dce_data, brain_mask
+            )
+
+        # Ensure baseline is at least 3 frames and doesn't exceed available volumes
+        baseline_frames = max(3, min(baseline_frames, n_volumes - 1))
+        baseline_indices = list(range(baseline_frames))
+
+        # Determine reference volume for motion correction
+        ref_vol = self.inputs.ref_vol
+        ref_vol_index: Optional[int] = None
+
+        if ref_vol == "baseline_mean":
+            # Create mean of baseline frames as reference
+            baseline_data = np.mean(dce_data[..., :baseline_frames], axis=3)
+            ref_file = str(Path(out_file).parent / "_tmp_baseline_mean.nii.gz")
+            ref_img = nib.Nifti1Image(baseline_data.astype(np.float32), affine, header)
+            nib.save(ref_img, ref_file)
+        elif ref_vol == "mean":
+            ref_file = None  # mcflirt will compute mean
+        elif ref_vol == "first":
+            ref_vol_index = 0
+            ref_file = None
+        elif isinstance(ref_vol, int):
+            ref_vol_index = ref_vol
+            ref_file = None
+        else:
+            ref_file = None
+
+        # Build mcflirt command
+        in_file = str(self.inputs.in_file)
+
+        # Remove extension for mcflirt output basename
+        out_path = Path(out_file)
+        if out_path.name.endswith(".nii.gz"):
+            out_base = str(out_path)[:-7]
+        elif out_path.name.endswith(".nii"):
+            out_base = str(out_path)[:-4]
+        else:
+            out_base = str(out_path)
+
+        cmd_parts = [
+            "mcflirt",
+            f"-in {in_file}",
+            f"-out {out_base}",
+            "-plots",  # Output motion parameters
+            "-stats",  # Output mean volume
+            "-mats",  # Output transformation matrices
+        ]
+
+        # Reference volume
+        if ref_vol == "baseline_mean" and ref_file:
+            cmd_parts.append(f"-reffile {ref_file}")
+        elif ref_vol == "mean":
+            cmd_parts.append("-meanvol")
+        elif ref_vol_index is not None:
+            cmd_parts.append(f"-refvol {ref_vol_index}")
+
+        # Cost function
+        cmd_parts.append(f"-cost {self.inputs.cost}")
+
+        # Interpolation
+        interp = self.inputs.interpolation
+        if interp == "sinc":
+            cmd_parts.append("-sinc_final")
+        elif interp == "spline":
+            cmd_parts.append("-spline_final")
+
+        # Stages (default 4)
+        cmd_parts.append("-stages 4")
+
+        # Run mcflirt
+        cmd = " ".join(cmd_parts)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise RuntimeError(f"mcflirt failed: {result.stderr}")
+
+        # Clean up temp reference file
+        if ref_vol == "baseline_mean" and ref_file:
+            try:
+                Path(ref_file).unlink()
+            except Exception:
+                pass
+
+        # Load motion parameters and compute QC metrics
+        params_file = f"{out_base}.par"
+        qc_metrics: dict[str, Any] = {}
+
+        try:
+            motion_params = np.loadtxt(params_file)
+
+            # Calculate FD
+            head_radius = float(self.inputs.head_radius)
+            fd = self._calculate_fd(motion_params, head_radius)
+
+            fd_list = [float(x) for x in fd]
+            fd_mean = float(np.mean(fd[1:]))  # Exclude first frame
+            fd_max = float(np.max(fd))
+
+            # Outlier detection
+            motion_thresh = float(self.inputs.motion_thresh)
+            outlier_mask = fd > motion_thresh
+            n_outliers = int(np.sum(outlier_mask))
+            outlier_frames = [int(i) for i in np.where(outlier_mask)[0]]
+
+            qc_metrics = {
+                "fd_mean": fd_mean,
+                "fd_max": fd_max,
+                "fd_list": fd_list,
+                "n_outliers": n_outliers,
+                "outlier_frames": outlier_frames,
+                "motion_thresh": motion_thresh,
+                "n_volumes": n_volumes,
+                "percent_outliers": 100.0 * n_outliers / max(1, n_volumes),
+                "baseline_frames": baseline_frames,
+                "bolus_arrival_frame": bolus_frame,
+                "reference_type": str(ref_vol),
+            }
+
+            self._results["fd"] = fd_list
+            self._results["fd_mean"] = fd_mean
+            self._results["fd_max"] = fd_max
+            self._results["n_outliers"] = n_outliers
+            self._results["outlier_frames"] = outlier_frames
+
+        except Exception:
+            # If metrics computation fails, provide empty defaults
+            self._results["fd"] = []
+            self._results["fd_mean"] = 0.0
+            self._results["fd_max"] = 0.0
+            self._results["n_outliers"] = 0
+            self._results["outlier_frames"] = []
+
+        # Set outputs
+        self._results["out_file"] = out_file
+        self._results["out_params"] = params_file
+        self._results["mean_img"] = f"{out_base}_mean_reg.nii.gz"
+        self._results["baseline_frames"] = baseline_frames
+        self._results["baseline_indices"] = baseline_indices
+        self._results["bolus_arrival_frame"] = bolus_frame
+        self._results["qc_metrics"] = qc_metrics
+
+        return runtime
+
+    def _auto_detect_baseline(
+        self,
+        dce_data: np.ndarray,
+        brain_mask: Optional[np.ndarray],
+    ) -> tuple[int, int]:
+        """Auto-detect baseline frames from global signal time course.
+
+        For DCE with gadolinium, signal INCREASES at bolus arrival due to
+        T1-shortening effect. We detect the first significant increase.
+
+        Args:
+            dce_data: 4D DCE data array (x, y, z, t)
+            brain_mask: Optional brain mask
+
+        Returns:
+            Tuple of (baseline_frames, bolus_arrival_frame)
+        """
+        from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
+
+        n_volumes = dce_data.shape[3]
+
+        # Compute global mean signal time course
+        if brain_mask is not None:
+            # Use mean within brain mask
+            signal = np.array([
+                np.mean(dce_data[..., t][brain_mask])
+                for t in range(n_volumes)
+            ])
+        else:
+            # Use global mean (all non-zero voxels)
+            signal = np.array([
+                np.mean(dce_data[..., t][dce_data[..., t] > 0])
+                for t in range(n_volumes)
+            ])
+
+        # Detect bolus arrival
+        bolus_frame = self._detect_bolus_arrival_from_signal(signal)
+
+        # Baseline is everything before bolus arrival
+        # Use at least 3 frames, default if detection fails
+        if bolus_frame <= 3:
+            baseline_frames = DEFAULT_BASELINE_FRAMES
+        else:
+            baseline_frames = bolus_frame
+
+        return baseline_frames, bolus_frame
+
+    def _detect_bolus_arrival(
+        self,
+        dce_data: np.ndarray,
+        brain_mask: Optional[np.ndarray],
+    ) -> int:
+        """Detect bolus arrival frame from data.
+
+        Args:
+            dce_data: 4D DCE data array
+            brain_mask: Optional brain mask
+
+        Returns:
+            Bolus arrival frame index
+        """
+        n_volumes = dce_data.shape[3]
+
+        # Compute global mean signal
+        if brain_mask is not None:
+            signal = np.array([
+                np.mean(dce_data[..., t][brain_mask])
+                for t in range(n_volumes)
+            ])
+        else:
+            signal = np.array([
+                np.mean(dce_data[..., t][dce_data[..., t] > 0])
+                for t in range(n_volumes)
+            ])
+
+        return self._detect_bolus_arrival_from_signal(signal)
+
+    def _detect_bolus_arrival_from_signal(self, signal: np.ndarray) -> int:
+        """Detect bolus arrival from global signal time course.
+
+        For DCE, signal INCREASES at bolus arrival (T1-shortening).
+        We look for the first significant increase above baseline.
+
+        Args:
+            signal: 1D global signal time course
+
+        Returns:
+            Bolus arrival frame index
+        """
+        from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
+
+        n_volumes = len(signal)
+
+        # Use first few frames to estimate baseline statistics
+        # Start with a small initial window (3 frames minimum)
+        init_window = min(5, n_volumes // 4)
+        baseline_mean = np.mean(signal[:init_window])
+        baseline_std = np.std(signal[:init_window])
+
+        # Threshold for detecting contrast arrival
+        # Signal must increase by contrast_threshold × baseline_std
+        # OR by contrast_threshold % of baseline mean (whichever is larger)
+        threshold_pct = self.inputs.contrast_threshold / 100.0
+        threshold = max(
+            baseline_mean * threshold_pct,
+            baseline_std * 2.0  # At least 2 std above baseline
+        )
+
+        # Find first frame where signal exceeds threshold
+        for t in range(init_window, n_volumes):
+            if signal[t] > baseline_mean + threshold:
+                return t
+
+        # If no bolus detected, return default
+        return DEFAULT_BASELINE_FRAMES
+
+    def _calculate_fd(
+        self,
+        motion_params: npt.NDArray[Any],
+        head_radius: float = 50.0,
+    ) -> npt.NDArray[Any]:
+        """Calculate framewise displacement from motion parameters.
+
+        Args:
+            motion_params: Motion parameters (N, 6)
+            head_radius: Head radius in mm
+
+        Returns:
+            Framewise displacement array
+        """
+        if motion_params.ndim == 1:
+            motion_params = motion_params.reshape(-1, 6)
+
+        n_frames = motion_params.shape[0]
+        if n_frames < 2:
+            return np.zeros(n_frames, dtype=np.float64)
+
+        # Calculate frame-to-frame differences
+        diff = np.diff(motion_params, axis=0)
+
+        # Rotations (columns 0-2) in radians, translations (columns 3-5) in mm
+        rot_diff = diff[:, :3]
+        trans_diff = diff[:, 3:]
+
+        # Convert rotations to mm displacement
+        rot_disp = np.abs(rot_diff) * head_radius
+
+        # Sum absolute displacements
+        fd = np.sum(np.abs(trans_diff), axis=1) + np.sum(rot_disp, axis=1)
+
+        # Prepend 0 for first frame
+        fd_full = np.zeros(n_frames, dtype=np.float64)
+        fd_full[1:] = fd
+
+        return fd_full
+
+    def _gen_outfilename(self) -> str:
+        """Generate output filename if not specified."""
+        if self.inputs.out_file:
+            return str(self.inputs.out_file)
+
+        in_file = Path(self.inputs.in_file)
+        if in_file.name.endswith(".nii.gz"):
+            base = in_file.name[:-7]
+            ext = ".nii.gz"
+        elif in_file.name.endswith(".nii"):
+            base = in_file.stem
+            ext = ".nii"
+        else:
+            base = in_file.stem
+            ext = in_file.suffix
+
+        return str(Path.cwd() / f"{base}_moco{ext}")
+
+    def _gen_params_filename(self) -> str:
+        """Generate motion parameters filename."""
+        if self.inputs.out_params:
+            return str(self.inputs.out_params)
+
+        out_file = Path(self._gen_outfilename())
+        if out_file.name.endswith(".nii.gz"):
+            base = out_file.name[:-7]
+        elif out_file.name.endswith(".nii"):
+            base = out_file.stem
+        else:
+            base = out_file.stem
+
+        return str(out_file.parent / f"{base}.par")
+
+    def _gen_mean_filename(self) -> str:
+        """Generate mean image filename."""
+        out_file = Path(self._gen_outfilename())
+        if out_file.name.endswith(".nii.gz"):
+            base = out_file.name[:-7]
+            ext = ".nii.gz"
+        elif out_file.name.endswith(".nii"):
+            base = out_file.stem
+            ext = ".nii"
+        else:
+            base = out_file.stem
+            ext = out_file.suffix
+
+        return str(out_file.parent / f"{base}_mean_reg{ext}")

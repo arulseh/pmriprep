@@ -10,6 +10,7 @@ from pmriprep.interfaces.anat import (
 )
 from pmriprep.interfaces.dce import (
     B1Mapping,
+    DCEPreprocess,
     T1Mapping,
 )
 from pmriprep.interfaces.dce_aif import (
@@ -38,6 +39,7 @@ __all__ = [
     "ComputeDSCMaps",
     "Coregistration",
     "DCEAIFDetection",
+    "DCEPreprocess",
     "DSCAIFDetection",
     "DSCRegistration",
     "MotionCorrection",
