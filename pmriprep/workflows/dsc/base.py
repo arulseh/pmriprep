@@ -5,12 +5,267 @@ following the NiPreps/fMRIPrep workflow design patterns.
 """
 
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Tuple, Union
 
-from nipype.interfaces import utility as niu  # type: ignore[import-untyped]
-from nipype.pipeline import engine as pe  # type: ignore[import-untyped]
+import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
+import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 
 from pmriprep.config.dsc import DSCConfig
+from pmriprep.interfaces.dsc import MotionCorrection, DSCRegistration
+from pmriprep.interfaces.dsc_aif import AIFDetection
+from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+
+
+def _signal_to_concentration(
+    dsc_file: str,
+    te: float,
+    baseline_frames: int,
+    r2_star: Optional[float],
+    field_strength: Optional[float],
+) -> Tuple[str, str]:
+    """Convert DSC signal to concentration.
+
+    This is a Function node wrapper for the signal_to_concentration utility.
+
+    Args:
+        dsc_file: Path to motion-corrected 4D DSC NIfTI.
+        te: Echo time in seconds.
+        baseline_frames: Number of pre-bolus baseline frames.
+        r2_star: Optional r2* relaxivity for absolute quantification.
+        field_strength: Optional field strength for r2* lookup.
+
+    Returns:
+        Tuple of (concentration_file, signal_file) paths.
+    """
+    import numpy as np
+    import nibabel as nib  # type: ignore[import-untyped]
+    from pathlib import Path
+
+    from pmriprep.utils.dsc_signal import signal_to_concentration
+
+    # Load DSC data
+    dsc_img = nib.load(dsc_file)
+    signal = dsc_img.get_fdata()  # type: ignore[attr-defined]
+    affine = dsc_img.affine  # type: ignore[attr-defined]
+    header = dsc_img.header  # type: ignore[attr-defined]
+
+    # Convert to concentration
+    concentration = signal_to_concentration(
+        signal=signal,
+        te=te,
+        baseline_frames=baseline_frames,
+        r2_star=r2_star,
+        field_strength=field_strength,
+    )
+
+    # Save concentration file
+    dsc_path = Path(dsc_file)
+    if dsc_path.name.endswith(".nii.gz"):
+        base = dsc_path.name[:-7]
+    else:
+        base = dsc_path.stem
+
+    out_dir = Path.cwd()
+    conc_file = str(out_dir / f"{base}_concentration.nii.gz")
+    conc_img = nib.Nifti1Image(concentration.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+    nib.save(conc_img, conc_file)  # type: ignore[attr-defined]
+
+    # Also save signal file path for PSR/PH calculation
+    signal_file = str(dsc_file)
+
+    return conc_file, signal_file
+
+
+def _detect_and_correct_preload(
+    concentration_file: str,
+    aif_file: str,
+    brain_mask_file: str,
+    te: float,
+    field_strength: float,
+    tr: float,
+    preload_detected: Optional[bool],
+    save_k2_map: bool,
+) -> Tuple[str, Optional[str], dict]:
+    """Detect preload and apply K2 correction if needed.
+
+    This is a Function node wrapper for preload detection and K2 correction.
+
+    Args:
+        concentration_file: Path to 4D concentration NIfTI.
+        aif_file: Path to AIF curve text file.
+        brain_mask_file: Path to brain mask NIfTI.
+        te: Echo time in seconds.
+        field_strength: Magnetic field strength in Tesla.
+        tr: Repetition time in seconds.
+        preload_detected: User-specified preload flag (True/False/None for auto).
+        save_k2_map: Whether to save the K2 leakage map.
+
+    Returns:
+        Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
+    """
+    import numpy as np
+    import nibabel as nib  # type: ignore[import-untyped]
+    from pathlib import Path
+    from typing import Optional
+
+    from pmriprep.utils.dsc_preload import (
+        apply_k2_correction,
+    )
+
+    # Load concentration data
+    conc_img = nib.load(concentration_file)
+    conc_data = conc_img.get_fdata()  # type: ignore[attr-defined]
+    affine = conc_img.affine  # type: ignore[attr-defined]
+    header = conc_img.header  # type: ignore[attr-defined]
+
+    mask_img = nib.load(brain_mask_file)
+    brain_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
+    # Load AIF
+    aif = np.loadtxt(aif_file)
+
+    qc_metrics: dict = {}
+    k2_map_file: Optional[str] = None
+
+    # Detect preload if not explicitly specified
+    needs_correction = False
+    if preload_detected is True:
+        needs_correction = True
+        qc_metrics["preload_user_specified"] = True
+    elif preload_detected is False:
+        needs_correction = False
+        qc_metrics["preload_user_specified"] = True
+    else:
+        # Auto-detect based on baseline concentration characteristics
+        qc_metrics["preload_user_specified"] = False
+        # Simplified auto-detection based on baseline concentration
+        baseline_mean = float(np.mean(conc_data[brain_mask][..., :5]))
+        if baseline_mean > 0.5:  # Elevated baseline suggests preload
+            needs_correction = True
+        qc_metrics["preload_auto_detected"] = needs_correction
+        qc_metrics["baseline_concentration_mean"] = baseline_mean
+
+    qc_metrics["preload_correction_applied"] = needs_correction
+
+    # Apply K2 correction if needed
+    if needs_correction:
+        # Apply K2 leakage correction
+        correction_result = apply_k2_correction(
+            concentration=conc_data,
+            aif=aif,
+            brain_mask=brain_mask,
+            tr=tr,
+        )
+
+        corrected_conc = correction_result.concentration_corrected
+        k2_map = correction_result.k2_map
+
+        # Update QC metrics
+        if correction_result.qc_metrics:
+            qc_metrics.update(correction_result.qc_metrics)
+
+        # Save corrected concentration
+        conc_path = Path(concentration_file)
+        if conc_path.name.endswith(".nii.gz"):
+            base = conc_path.name[:-7]
+        else:
+            base = conc_path.stem
+
+        out_dir = Path.cwd()
+        corrected_file = str(out_dir / f"{base}_k2corrected.nii.gz")
+        corrected_img = nib.Nifti1Image(corrected_conc.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+        nib.save(corrected_img, corrected_file)  # type: ignore[attr-defined]
+
+        # Save K2 map if requested
+        if save_k2_map and k2_map is not None:
+            k2_map_file = str(out_dir / f"{base}_k2map.nii.gz")
+            k2_img = nib.Nifti1Image(k2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+            nib.save(k2_img, k2_map_file)  # type: ignore[attr-defined]
+
+        return corrected_file, k2_map_file, qc_metrics
+    else:
+        # No correction needed, pass through
+        return concentration_file, None, qc_metrics
+
+
+def _normalize_cbv(
+    cbv_file: str,
+    nawm_mask_file: Optional[str],
+    brain_mask_file: str,
+    derivatives_dir: str,
+    subject_id: str,
+    session_id: Optional[str],
+) -> Tuple[str, float]:
+    """Normalize CBV to NAWM median.
+
+    This is a Function node wrapper for CBV normalization.
+
+    Args:
+        cbv_file: Path to CBV map NIfTI.
+        nawm_mask_file: Path to NAWM mask NIfTI (optional).
+        brain_mask_file: Path to brain mask for fallback.
+        derivatives_dir: Path to derivatives directory for auto-detection.
+        subject_id: Subject ID for auto-detection.
+        session_id: Session ID for auto-detection.
+
+    Returns:
+        Tuple of (ncbv_file, normalization_factor).
+    """
+    from pathlib import Path
+    from pmriprep.utils.dsc_signal import normalize_cbv_from_files
+
+    cbv_path = Path(cbv_file)
+    if cbv_path.name.endswith(".nii.gz"):
+        base = cbv_path.name[:-7]
+    else:
+        base = cbv_path.stem
+
+    out_dir = Path.cwd()
+    ncbv_file = str(out_dir / f"{base.replace('_cbv', '')}_ncbv.nii.gz")
+
+    output_path, norm_factor = normalize_cbv_from_files(
+        cbv_file=cbv_file,
+        output_file=ncbv_file,
+        nawm_mask_file=nawm_mask_file,
+        derivatives_dir=derivatives_dir,
+        subject=subject_id,
+        session=session_id,
+        brain_mask_file=brain_mask_file,
+    )
+
+    return str(output_path), norm_factor
+
+
+def _merge_qc_metrics(
+    motion_qc: dict,
+    preload_qc: dict,
+    aif_qc: dict,
+    deconv_qc: dict,
+    registration_qc: dict,
+    normalization_factor: float,
+) -> dict:
+    """Merge all QC metrics into a single dictionary.
+
+    Args:
+        motion_qc: Motion correction QC metrics.
+        preload_qc: Preload detection and correction QC metrics.
+        aif_qc: AIF detection QC metrics.
+        deconv_qc: Deconvolution QC metrics.
+        registration_qc: Registration QC metrics.
+        normalization_factor: CBV normalization factor.
+
+    Returns:
+        Combined QC metrics dictionary.
+    """
+    merged: dict = {
+        "motion": motion_qc if motion_qc else {},
+        "preload": preload_qc if preload_qc else {},
+        "aif": aif_qc if aif_qc else {},
+        "deconvolution": deconv_qc if deconv_qc else {},
+        "registration": registration_qc if registration_qc else {},
+        "normalization_factor": normalization_factor,
+    }
+    return merged
 
 
 def init_dsc_preproc_wf(
@@ -58,6 +313,12 @@ def init_dsc_preproc_wf(
         Path to lesion mask for registration cost weighting and AIF exclusion.
     inputnode.nawm_mask : str, optional
         Path to pre-computed NAWM mask for CBV normalization.
+    inputnode.te : float, optional
+        Echo time in seconds (default from config or 0.03).
+    inputnode.field_strength : float, optional
+        Magnetic field strength in Tesla (default 3.0).
+    inputnode.tr : float, optional
+        Repetition time in seconds (default 1.5).
 
     Workflow Outputs
     ----------------
@@ -97,8 +358,8 @@ def init_dsc_preproc_wf(
     The workflow follows this processing flow:
     1. Motion correction (mcflirt)
     2. Signal-to-concentration conversion (ΔR2*)
-    3. Preload detection and K2 leakage correction (if needed)
-    4. AIF detection (atlas-based → automatic → synthetic fallback)
+    3. AIF detection (atlas-based → automatic → synthetic fallback)
+    4. Preload detection and K2 leakage correction (if needed)
     5. Deconvolution (method from config: sSVD, cSVD, oSVD, tikhonov, vascular, cpi)
     6. Perfusion parameter extraction (CBF, CBV, MTT, Tmax, PSR, PH)
     7. Registration to T1w space
@@ -131,10 +392,18 @@ def init_dsc_preproc_wf(
                 "wm_probseg",  # White matter probability map (optional)
                 "lesion_mask",  # Lesion mask (optional)
                 "nawm_mask",  # NAWM mask for normalization (optional)
+                "te",  # Echo time in seconds
+                "field_strength",  # Magnetic field strength
+                "tr",  # Repetition time in seconds
             ]
         ),
         name="inputnode",
     )
+
+    # Set defaults for optional inputs
+    inputnode.inputs.te = 0.03  # Default 30ms echo time
+    inputnode.inputs.field_strength = 3.0  # Default 3T
+    inputnode.inputs.tr = 1.5  # Default 1.5s TR
 
     # -------------------------------------------------------------------
     # Output Node
@@ -171,22 +440,262 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Processing Nodes (to be implemented in subsequent user stories)
+    # Node 1: Motion Correction
     # -------------------------------------------------------------------
-    # The following nodes will be added in subsequent user stories:
-    #
-    # US-029: MotionCorrection node (mcflirt)
-    # US-030: SignalToConcentration node (ΔR2* conversion)
-    # US-031: PSR and peak height computation
-    # US-032: PreloadDetection node
-    # US-033: K2LeakageCorrection node
-    # US-034-038: AIFDetection node and utilities
-    # US-039-044: Deconvolution nodes (sSVD, cSVD, oSVD, tikhonov, etc.)
-    # US-052: ComputeDSCMaps node
-    # US-053: DSCRegistration node
-    # US-054: CBV normalization
-    #
-    # The workflow wiring will be completed in US-055.
+    motion_correct = pe.Node(
+        MotionCorrection(
+            ref_vol="mean",
+            motion_thresh=config.motion_thresh,
+        ),
+        name="motion_correct",
+    )
+
+    # -------------------------------------------------------------------
+    # Node 2: Signal to Concentration Conversion
+    # -------------------------------------------------------------------
+    # Determine r2_star based on config
+    r2_star_value: Optional[float] = None
+    if config.absolute_quant and config.r2_star is not None:
+        r2_star_value = config.r2_star
+
+    signal_to_conc = pe.Node(
+        niu.Function(
+            input_names=["dsc_file", "te", "baseline_frames", "r2_star", "field_strength"],
+            output_names=["concentration_file", "signal_file"],
+            function=_signal_to_concentration,
+        ),
+        name="signal_to_conc",
+    )
+    signal_to_conc.inputs.baseline_frames = config.pre_bolus
+    signal_to_conc.inputs.r2_star = r2_star_value
+
+    # -------------------------------------------------------------------
+    # Node 3: AIF Detection
+    # AIF detection uses the uncorrected concentration - leakage doesn't
+    # affect arterial voxels (which should have intact BBB)
+    # -------------------------------------------------------------------
+    aif_detect = pe.Node(
+        AIFDetection(
+            aif_method=config.aif_method,
+            criteria=config.aif_criteria,
+            n_candidates=config.n_aif_candidates,
+            lesion_distance=config.lesion_distance,
+            prefer_contralateral=config.prefer_contralateral,
+            gamma_fit=config.gamma_fit,
+            disable_fallback=config.disable_aif_fallback,
+            baseline_frames=config.pre_bolus,
+        ),
+        name="aif_detect",
+    )
+
+    # -------------------------------------------------------------------
+    # Node 4: Preload Detection and K2 Correction
+    # K2 correction needs the AIF, so runs after AIF detection
+    # -------------------------------------------------------------------
+    preload_correct = pe.Node(
+        niu.Function(
+            input_names=[
+                "concentration_file",
+                "aif_file",
+                "brain_mask_file",
+                "te",
+                "field_strength",
+                "tr",
+                "preload_detected",
+                "save_k2_map",
+            ],
+            output_names=["corrected_concentration_file", "k2_map_file", "qc_dict"],
+            function=_detect_and_correct_preload,
+        ),
+        name="preload_correct",
+    )
+    preload_correct.inputs.preload_detected = config.preload_detected if config.preload_detected else None
+    preload_correct.inputs.save_k2_map = config.save_k2_map
+
+    # -------------------------------------------------------------------
+    # Node 5: DSC Map Computation (Deconvolution)
+    # -------------------------------------------------------------------
+    compute_maps = pe.Node(
+        ComputeDSCMaps(
+            method=config.method,
+            svd_threshold=0.2,  # Default SVD threshold
+            oi_threshold=0.065,  # Default OI threshold for oSVD
+            cpi_control_points=config.cpi_control_points,
+            bayesian=config.bayesian,
+            mcmc_samples=config.mcmc_samples,
+            use_gpu=config.use_gpu,
+            baseline_frames=config.pre_bolus,
+            tail_frames=10,  # Default tail frames for PSR
+        ),
+        name="compute_maps",
+    )
+
+    # -------------------------------------------------------------------
+    # Node 6: DSC to T1w Registration
+    # -------------------------------------------------------------------
+    register = pe.Node(
+        DSCRegistration(
+            use_flirt=config.use_flirt,
+            dof=6,  # Rigid body
+            cost="normmi",
+        ),
+        name="register",
+    )
+
+    # -------------------------------------------------------------------
+    # Node 7: CBV Normalization
+    # -------------------------------------------------------------------
+    normalize = pe.Node(
+        niu.Function(
+            input_names=[
+                "cbv_file",
+                "nawm_mask_file",
+                "brain_mask_file",
+                "derivatives_dir",
+                "subject_id",
+                "session_id",
+            ],
+            output_names=["ncbv_file", "normalization_factor"],
+            function=_normalize_cbv,
+        ),
+        name="normalize",
+    )
+    normalize.inputs.derivatives_dir = str(bids_dir / "derivatives")
+    normalize.inputs.subject_id = subject_id
+    normalize.inputs.session_id = session_id
+
+    # -------------------------------------------------------------------
+    # Node 8: Merge QC Metrics
+    # -------------------------------------------------------------------
+    merge_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "motion_qc",
+                "preload_qc",
+                "aif_qc",
+                "deconv_qc",
+                "registration_qc",
+                "normalization_factor",
+            ],
+            output_names=["merged_qc"],
+            function=_merge_qc_metrics,
+        ),
+        name="merge_qc",
+    )
+
+    # -------------------------------------------------------------------
+    # Workflow Connections
+    # -------------------------------------------------------------------
+
+    # Input to Motion Correction
+    workflow.connect([
+        (inputnode, motion_correct, [("dsc_file", "in_file")]),
+    ])
+
+    # Motion Correction to Signal Conversion
+    workflow.connect([
+        (motion_correct, signal_to_conc, [("out_file", "dsc_file")]),
+        (inputnode, signal_to_conc, [
+            ("te", "te"),
+            ("field_strength", "field_strength"),
+        ]),
+    ])
+
+    # Signal Conversion to AIF Detection
+    workflow.connect([
+        (signal_to_conc, aif_detect, [("concentration_file", "concentration_file")]),
+        (inputnode, aif_detect, [
+            ("brain_mask", "brain_mask_file"),
+            ("lesion_mask", "lesion_mask_file"),
+        ]),
+    ])
+
+    # AIF Detection and Signal Conversion to Preload Correction
+    workflow.connect([
+        (signal_to_conc, preload_correct, [("concentration_file", "concentration_file")]),
+        (aif_detect, preload_correct, [("out_aif_curve", "aif_file")]),
+        (inputnode, preload_correct, [
+            ("brain_mask", "brain_mask_file"),
+            ("te", "te"),
+            ("field_strength", "field_strength"),
+            ("tr", "tr"),
+        ]),
+    ])
+
+    # Preload Correction to DSC Map Computation
+    workflow.connect([
+        (preload_correct, compute_maps, [
+            ("corrected_concentration_file", "concentration_file"),
+        ]),
+        (aif_detect, compute_maps, [("out_aif_curve", "aif_file")]),
+        (inputnode, compute_maps, [
+            ("brain_mask", "brain_mask_file"),
+            ("tr", "tr"),
+        ]),
+        (signal_to_conc, compute_maps, [("signal_file", "signal_file")]),
+    ])
+
+    # DSC Map Computation to Registration
+    workflow.connect([
+        (inputnode, register, [
+            ("t1w_reference", "t1w_file"),
+            ("lesion_mask", "lesion_mask"),
+            ("brain_mask", "brain_mask"),
+            ("wm_probseg", "wm_seg"),
+        ]),
+        (motion_correct, register, [("mean_img", "dsc_mean")]),
+    ])
+
+    # DSC Map Computation to CBV Normalization
+    workflow.connect([
+        (compute_maps, normalize, [("out_cbv", "cbv_file")]),
+        (inputnode, normalize, [
+            ("nawm_mask", "nawm_mask_file"),
+            ("brain_mask", "brain_mask_file"),
+        ]),
+    ])
+
+    # Merge QC metrics
+    workflow.connect([
+        (motion_correct, merge_qc, [("qc_metrics", "motion_qc")]),
+        (preload_correct, merge_qc, [("qc_dict", "preload_qc")]),
+        (aif_detect, merge_qc, [("qc_metrics", "aif_qc")]),
+        (compute_maps, merge_qc, [("qc_metrics", "deconv_qc")]),
+        (register, merge_qc, [("qc_metrics", "registration_qc")]),
+        (normalize, merge_qc, [("normalization_factor", "normalization_factor")]),
+    ])
+
+    # Connect to Output Node
+    workflow.connect([
+        # Motion correction outputs
+        (motion_correct, outputnode, [
+            ("out_file", "dsc_moco"),
+            ("mean_img", "dsc_mean"),
+            ("out_params", "motion_params"),
+        ]),
+        # Perfusion maps
+        (compute_maps, outputnode, [
+            ("out_cbf", "cbf_map"),
+            ("out_cbv", "cbv_map"),
+            ("out_mtt", "mtt_map"),
+            ("out_tmax", "tmax_map"),
+            ("out_psr", "psr_map"),
+            ("out_ph", "ph_map"),
+        ]),
+        # AIF outputs
+        (aif_detect, outputnode, [
+            ("out_aif_curve", "aif_curve"),
+            ("out_aif_mask", "aif_mask"),
+        ]),
+        # Leakage correction
+        (preload_correct, outputnode, [("k2_map_file", "k2_map")]),
+        # Normalized CBV
+        (normalize, outputnode, [("ncbv_file", "ncbv_map")]),
+        # Registration
+        (register, outputnode, [("out_matrix", "dsc_to_t1w_xfm")]),
+        # QC metrics
+        (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
+    ])
 
     # Store config in workflow for reference by child nodes
     workflow.config_dsc = config  # type: ignore[attr-defined]
