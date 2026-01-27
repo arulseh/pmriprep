@@ -10,6 +10,7 @@ Classes:
     PKModel: Abstract base class for pharmacokinetic models.
     ToftsModel: Standard Tofts pharmacokinetic model.
     ExtendedToftsModel: Extended Tofts pharmacokinetic model with vp.
+    PatlakModel: Patlak pharmacokinetic model (no backflux).
 """
 
 from pmriprep.models.dce.base import (
@@ -18,12 +19,14 @@ from pmriprep.models.dce.base import (
     PKModel,
 )
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
+from pmriprep.models.dce.patlak import PatlakModel
 from pmriprep.models.dce.tofts import ToftsModel
 
 __all__ = [
     "ExtendedToftsModel",
     "FitResult",
     "ModelParameter",
+    "PatlakModel",
     "PKModel",
     "ToftsModel",
 ]
