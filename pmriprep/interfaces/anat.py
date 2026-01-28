@@ -336,6 +336,8 @@ class CoregistrationInputSpec(CommandLineInputSpec):
     in_file = File(
         exists=True,
         mandatory=True,
+        argstr="%s",
+        position=-1,
         desc="Moving image to be registered (e.g., T2w, FLAIR, T1w post-con)",
     )
     reference = File(
@@ -571,6 +573,8 @@ class BrainExtractionInputSpec(CommandLineInputSpec):
     in_file = File(
         exists=True,
         mandatory=True,
+        argstr="%s",
+        position=-1,
         desc="Input bias-corrected T1w image for brain extraction",
     )
     out_file = File(
@@ -734,27 +738,31 @@ class BrainExtraction(CommandLine):
     def _get_hdbet_device_flag(self) -> str:
         """Get HD-BET device flag based on settings and architecture."""
         import platform
+        import subprocess
 
         device = self.inputs.device
 
         if device == "auto":
-            # Auto-detect: prefer CUDA, then MPS on Apple Silicon, then CPU
-            arch = platform.machine()
+            # Auto-detect: prefer CUDA on Linux, CPU elsewhere
+            # Note: MPS (Apple Silicon) has compatibility issues with
+            # nnunetv2's pin_memory, and architecture detection is unreliable
+            # when running under Rosetta emulation (FSL requires x86_64)
             system = platform.system()
 
-            if arch in ("arm64", "aarch64") and system == "Darwin":
-                # Apple Silicon - try MPS first, fall back to CPU
-                # HD-BET uses PyTorch, which supports MPS on Apple Silicon
-                return "--device mps"
+            if system == "Darwin":
+                # macOS - always use CPU to avoid MPS issues
+                # Architecture detection via platform.machine() is unreliable
+                # under Rosetta emulation
+                return "-device cpu"
             else:
-                # Standard systems - HD-BET will auto-detect CUDA
-                return ""  # Let HD-BET auto-detect
+                # Linux - let HD-BET auto-detect CUDA
+                return ""
         elif device == "cuda":
-            return "--device cuda"
+            return "-device cuda"
         elif device == "mps":
-            return "--device mps"
+            return "-device mps"
         else:  # cpu
-            return "--device cpu"
+            return "-device cpu"
 
     def _format_arg(
         self, name: str, trait_spec: Any, value: Any
@@ -772,29 +780,24 @@ class BrainExtraction(CommandLine):
                 # HD-BET command
                 device_flag = self._get_hdbet_device_flag()
 
-                # HD-BET outputs: {out}_bet.nii.gz and {out}_bet_mask.nii.gz
-                # We need to work around this naming convention
+                # HD-BET requires output to end with .nii.gz
+                # It outputs: {out} (brain) and {out_base}_mask.nii.gz (mask)
                 out_path = Path(out_file)
-                ext = ".nii.gz" if out_path.name.endswith(".nii.gz") else ".nii"
 
-                # Create temp output base (HD-BET appends _bet suffix)
-                # Remove extension for HD-BET -o flag
-                if out_path.name.endswith(".nii.gz"):
-                    hdbet_out_base = str(out_path)[:-7]
-                else:
-                    hdbet_out_base = str(out_path.with_suffix(""))
+                # Ensure output has .nii.gz extension
+                if not out_file.endswith(".nii.gz"):
+                    out_file = out_file + ".nii.gz"
 
-                # HD-BET command
-                hdbet_cmd = f"hd-bet -i {in_file} -o {hdbet_out_base}"
+                # HD-BET command - pass full path with .nii.gz
+                # Use --disable_tta to speed up inference (test-time augmentation)
+                hdbet_cmd = f"hd-bet -i {in_file} -o {out_file} --disable_tta"
                 if device_flag:
                     hdbet_cmd += f" {device_flag}"
                 cmd_parts.append(hdbet_cmd)
 
-                # HD-BET outputs: {base}.nii.gz and {base}_mask.nii.gz
-                # Rename mask to our expected output
-                hdbet_mask = f"{hdbet_out_base}_mask{ext}"
-                if str(hdbet_mask) != str(out_mask):
-                    cmd_parts.append(f"mv {hdbet_mask} {out_mask}")
+                # HD-BET only outputs the brain-extracted image, not a mask
+                # Create mask by binarizing the brain output (like working script)
+                cmd_parts.append(f"fslmaths {out_file} -bin {out_mask}")
 
             else:  # ants
                 # ANTs antsBrainExtraction.sh command
@@ -1120,12 +1123,422 @@ class TissueSegmentation(CommandLine):
         return None
 
 
+class BBRRefinementInputSpec(CommandLineInputSpec):
+    """Input specification for BBRRefinement interface."""
+
+    in_file = File(
+        exists=True,
+        mandatory=True,
+        desc="Moving image to refine registration for",
+    )
+    reference = File(
+        exists=True,
+        mandatory=True,
+        desc="Reference image (target space, typically T1w pre-contrast)",
+    )
+    init_matrix = File(
+        exists=True,
+        mandatory=True,
+        desc="Initial transformation matrix from FLIRT (to be refined)",
+    )
+    wm_seg = File(
+        exists=True,
+        mandatory=True,
+        desc="White matter segmentation for BBR cost function",
+    )
+    out_file = File(
+        genfile=True,
+        desc="Output BBR-refined registered image",
+    )
+    out_matrix = File(
+        genfile=True,
+        desc="Output BBR-refined transformation matrix",
+    )
+    dof = traits.Int(
+        6,
+        usedefault=True,
+        desc="Degrees of freedom for registration (default: 6 for rigid)",
+    )
+
+
+class BBRRefinementOutputSpec(TraitedSpec):
+    """Output specification for BBRRefinement interface."""
+
+    out_file = File(exists=True, desc="BBR-refined registered image")
+    out_matrix = File(exists=True, desc="BBR-refined transformation matrix")
+
+
+class BBRRefinement(CommandLine):
+    """Boundary-based registration refinement using FSL FLIRT.
+
+    This interface wraps FSL FLIRT with the BBR cost function to refine
+    an initial rigid registration using white matter boundaries. BBR uses
+    the white matter segmentation to optimize alignment at tissue boundaries,
+    which can improve registration accuracy compared to intensity-based
+    methods alone.
+
+    The BBR cost function works by:
+    1. Taking the initial FLIRT registration as a starting point
+    2. Using the WM segmentation to identify tissue boundaries
+    3. Optimizing the alignment at these boundaries
+
+    Parameters
+    ----------
+    in_file : str
+        Moving image to be registered
+    reference : str
+        Reference/target image (typically bias-corrected T1w)
+    init_matrix : str
+        Initial transformation matrix from FLIRT
+    wm_seg : str
+        White matter segmentation (probability map or binary mask)
+    dof : int
+        Degrees of freedom (default: 6 for rigid body)
+
+    Examples
+    --------
+    >>> bbr = BBRRefinement()
+    >>> bbr.inputs.in_file = 'T2w_flirt.nii.gz'
+    >>> bbr.inputs.reference = 'T1w_biascorr.nii.gz'
+    >>> bbr.inputs.init_matrix = 'T2w_to_T1w.mat'
+    >>> bbr.inputs.wm_seg = 'wm_probseg.nii.gz'
+    >>> result = bbr.run()  # doctest: +SKIP
+
+    Notes
+    -----
+    BBR refinement is most effective when:
+    - The initial FLIRT registration is close to optimal
+    - Good quality WM segmentation is available
+    - The moving image has sufficient contrast at tissue boundaries
+
+    BBR may fail or degrade registration when:
+    - Initial registration is poor (BBR may converge to local minimum)
+    - WM segmentation is inaccurate (e.g., due to lesions, contrast agent)
+    - The modality has poor tissue contrast
+
+    For this reason, BBR results should be validated against the initial
+    FLIRT registration using a metric like NMI.
+
+    Requires FSL to be installed and available in PATH.
+
+    See Also
+    --------
+    FSL FLIRT BBR: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT_BBR
+    """
+
+    input_spec = BBRRefinementInputSpec
+    output_spec = BBRRefinementOutputSpec
+
+    _cmd = "flirt"
+
+    def _gen_outfilename(self) -> str:
+        """Generate output filename if not specified."""
+        if self.inputs.out_file:
+            return str(self.inputs.out_file)
+
+        in_file = Path(self.inputs.in_file)
+        if in_file.name.endswith(".nii.gz"):
+            base = in_file.name[:-7]
+            ext = ".nii.gz"
+        elif in_file.name.endswith(".nii"):
+            base = in_file.stem
+            ext = ".nii"
+        else:
+            base = in_file.stem
+            ext = in_file.suffix
+
+        return str(Path.cwd() / f"{base}_bbr{ext}")
+
+    def _gen_matfilename(self) -> str:
+        """Generate output matrix filename if not specified."""
+        if self.inputs.out_matrix:
+            return str(self.inputs.out_matrix)
+
+        out_file = Path(self._gen_outfilename())
+        if out_file.name.endswith(".nii.gz"):
+            base = out_file.name[:-7]
+        elif out_file.name.endswith(".nii"):
+            base = out_file.stem
+        else:
+            base = out_file.stem
+
+        return str(out_file.parent / f"{base}.mat")
+
+    @property
+    def cmdline(self) -> str:
+        """Build the FLIRT BBR command line."""
+        in_file = str(self.inputs.in_file)
+        reference = str(self.inputs.reference)
+        init_matrix = str(self.inputs.init_matrix)
+        wm_seg = str(self.inputs.wm_seg)
+        out_file = self._gen_outfilename()
+        out_matrix = self._gen_matfilename()
+        dof = self.inputs.dof
+
+        # Build FLIRT BBR command
+        cmd = (
+            f"flirt -in {in_file} -ref {reference} "
+            f"-out {out_file} -omat {out_matrix} "
+            f"-init {init_matrix} -wmseg {wm_seg} "
+            f"-cost bbr -dof {dof}"
+        )
+
+        return cmd
+
+    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
+        """List expected outputs."""
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
+        outputs["out_file"] = self._gen_outfilename()
+        outputs["out_matrix"] = self._gen_matfilename()
+        return outputs
+
+    def _gen_filename(self, name: str) -> Optional[str]:
+        """Generate filename for outputs."""
+        if name == "out_file":
+            return self._gen_outfilename()
+        if name == "out_matrix":
+            return self._gen_matfilename()
+        return None
+
+
+class T1wSubtractionInputSpec(CommandLineInputSpec):
+    """Input specification for T1wSubtraction interface."""
+
+    postcon_file = File(
+        exists=True,
+        mandatory=True,
+        argstr="%s",
+        position=-1,
+        desc="Post-contrast T1w image (coregistered to precon)",
+    )
+    precon_file = File(
+        exists=True,
+        mandatory=True,
+        desc="Pre-contrast T1w image (reference)",
+    )
+    brain_mask = File(
+        exists=True,
+        desc="Optional brain mask to apply to subtraction image",
+    )
+    out_file = File(
+        genfile=True,
+        desc="Output subtraction image (postcon - precon)",
+    )
+
+
+class T1wSubtractionOutputSpec(TraitedSpec):
+    """Output specification for T1wSubtraction interface."""
+
+    out_file = File(exists=True, desc="Subtraction image (postcon - precon)")
+
+
+class T1wSubtraction(CommandLine):
+    """Create T1w subtraction image (post-contrast minus pre-contrast).
+
+    This interface uses FSL fslmaths to compute the difference between
+    post-contrast and pre-contrast T1-weighted images. The resulting
+    subtraction image highlights areas of contrast enhancement, which
+    can be useful for:
+
+    - Tumor visualization (enhancing lesions become bright)
+    - Blood-brain barrier breakdown assessment
+    - Treatment response monitoring
+
+    Parameters
+    ----------
+    postcon_file : str
+        Post-contrast T1w image (must be coregistered to precon)
+    precon_file : str
+        Pre-contrast T1w image (reference space)
+    brain_mask : str, optional
+        Brain mask to apply to subtraction (removes background)
+
+    Examples
+    --------
+    >>> sub = T1wSubtraction()
+    >>> sub.inputs.postcon_file = 'T1w_postcon_coreg.nii.gz'
+    >>> sub.inputs.precon_file = 'T1w_precon.nii.gz'
+    >>> sub.inputs.brain_mask = 'brain_mask.nii.gz'
+    >>> result = sub.run()  # doctest: +SKIP
+
+    Notes
+    -----
+    Important considerations:
+    - Post-contrast image MUST be coregistered to pre-contrast space
+    - Both images should be bias-corrected for accurate subtraction
+    - Negative values may occur where signal decreases (e.g., T2* effects)
+    - Brain mask helps remove skull/background artifacts
+
+    The subtraction formula is: sub = postcon - precon
+
+    Requires FSL to be installed and available in PATH.
+    """
+
+    input_spec = T1wSubtractionInputSpec
+    output_spec = T1wSubtractionOutputSpec
+
+    _cmd = "bash -c"
+
+    def _gen_outfilename(self) -> str:
+        """Generate output filename if not specified."""
+        if self.inputs.out_file:
+            return str(self.inputs.out_file)
+
+        precon_file = Path(self.inputs.precon_file)
+        if precon_file.name.endswith(".nii.gz"):
+            base = precon_file.name[:-7]
+            ext = ".nii.gz"
+        elif precon_file.name.endswith(".nii"):
+            base = precon_file.stem
+            ext = ".nii"
+        else:
+            base = precon_file.stem
+            ext = precon_file.suffix
+
+        return str(Path.cwd() / f"{base}_subtraction{ext}")
+
+    def _format_arg(
+        self, name: str, trait_spec: Any, value: Any
+    ) -> str:
+        """Format command line arguments."""
+        if name == "postcon_file":
+            postcon = str(value)
+            precon = str(self.inputs.precon_file)
+            out_file = self._gen_outfilename()
+
+            brain_mask = getattr(self.inputs, "brain_mask", None)
+
+            if brain_mask and Path(brain_mask).exists():
+                # Subtract and apply mask: (postcon - precon) * mask
+                cmd = f"'fslmaths {postcon} -sub {precon} -mas {brain_mask} {out_file}'"
+            else:
+                # Simple subtraction
+                cmd = f"'fslmaths {postcon} -sub {precon} {out_file}'"
+
+            return cmd
+
+        result: str = super()._format_arg(name, trait_spec, value)
+        return result
+
+    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
+        """List expected outputs."""
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
+        outputs["out_file"] = self._gen_outfilename()
+        return outputs
+
+    def _gen_filename(self, name: str) -> Optional[str]:
+        """Generate filename for outputs."""
+        if name == "out_file":
+            return self._gen_outfilename()
+        return None
+
+
+class ApplyMaskInputSpec(CommandLineInputSpec):
+    """Input specification for ApplyMask interface."""
+
+    in_file = File(
+        exists=True,
+        mandatory=True,
+        desc="Input image to mask",
+    )
+    mask_file = File(
+        exists=True,
+        mandatory=True,
+        desc="Binary mask to apply",
+    )
+    out_file = File(
+        genfile=True,
+        desc="Output masked image",
+    )
+
+
+class ApplyMaskOutputSpec(TraitedSpec):
+    """Output specification for ApplyMask interface."""
+
+    out_file = File(exists=True, desc="Masked image")
+
+
+class ApplyMask(CommandLine):
+    """Apply a binary mask to an image using FSL fslmaths.
+
+    This interface wraps FSL fslmaths -mas to multiply an image by
+    a binary mask, setting values outside the mask to zero.
+
+    Parameters
+    ----------
+    in_file : str
+        Input image to mask
+    mask_file : str
+        Binary mask (non-zero values are retained)
+
+    Examples
+    --------
+    >>> mask = ApplyMask()
+    >>> mask.inputs.in_file = 'T2w_coreg.nii.gz'
+    >>> mask.inputs.mask_file = 'brain_mask.nii.gz'
+    >>> result = mask.run()  # doctest: +SKIP
+
+    Notes
+    -----
+    The mask should be in the same space as the input image.
+    Non-zero values in the mask are treated as "inside" the mask.
+
+    Requires FSL to be installed and available in PATH.
+    """
+
+    input_spec = ApplyMaskInputSpec
+    output_spec = ApplyMaskOutputSpec
+
+    _cmd = "fslmaths"
+
+    def _gen_outfilename(self) -> str:
+        """Generate output filename if not specified."""
+        if self.inputs.out_file:
+            return str(self.inputs.out_file)
+
+        in_file = Path(self.inputs.in_file)
+        if in_file.name.endswith(".nii.gz"):
+            base = in_file.name[:-7]
+            ext = ".nii.gz"
+        elif in_file.name.endswith(".nii"):
+            base = in_file.stem
+            ext = ".nii"
+        else:
+            base = in_file.stem
+            ext = in_file.suffix
+
+        return str(Path.cwd() / f"{base}_masked{ext}")
+
+    @property
+    def cmdline(self) -> str:
+        """Build the fslmaths command line."""
+        in_file = str(self.inputs.in_file)
+        mask_file = str(self.inputs.mask_file)
+        out_file = self._gen_outfilename()
+
+        return f"fslmaths {in_file} -mas {mask_file} {out_file}"
+
+    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
+        """List expected outputs."""
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
+        outputs["out_file"] = self._gen_outfilename()
+        return outputs
+
+    def _gen_filename(self, name: str) -> Optional[str]:
+        """Generate filename for outputs."""
+        if name == "out_file":
+            return self._gen_outfilename()
+        return None
+
+
 class ACPCAlignmentInputSpec(CommandLineInputSpec):
     """Input specification for ACPCAlignment interface."""
 
     in_file = File(
         exists=True,
         mandatory=True,
+        argstr="%s",
+        position=-1,
         desc="Input brain-extracted T1w image to align to ACPC",
     )
     out_file = File(

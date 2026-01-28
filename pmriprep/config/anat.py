@@ -36,3 +36,12 @@ class AnatConfig:
     # Registration settings
     cost_function: str = "normmi"
     use_lesion_mask: bool = True
+
+    # Cross-modal coregistration settings
+    coregister_modalities: bool = True  # Enable cross-modal coregistration
+
+    # Subtraction image settings
+    create_subtraction: bool = True  # Create post-pre subtraction image
+
+    # Postcon-only mode handling
+    skip_fast_if_postcon_only: bool = True  # Skip FAST when only T1 postcon available

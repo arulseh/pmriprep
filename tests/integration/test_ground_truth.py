@@ -207,16 +207,18 @@ class SubjectTestResult:
 def find_ground_truth_directory(
     subject: str,
     session: str,
+    pipeline: str = "dsc_pipeline",
     derivatives_base: Optional[Path] = None,
 ) -> Optional[Path]:
-    """Find the ground truth directory for a subject/session.
+    """Find the ground truth directory for a subject/session/pipeline.
 
     Ground truth is expected at:
-    ~/Developer/perf-plus/bidsroot/derivatives/{subject}/{session}/
+    ~/Developer/perf-plus/bidsroot/derivatives/{pipeline}/{subject}/{session}/
 
     Args:
         subject: Subject ID (e.g., 'sub-0001')
         session: Session ID (e.g., 'ses-0001')
+        pipeline: Pipeline name ('dsc_pipeline', 'dce_pipeline', 'anat_pipeline', 'hdglio_pipeline')
         derivatives_base: Base directory for derivatives. Defaults to
             ~/Developer/perf-plus/bidsroot/derivatives/
 
@@ -226,7 +228,7 @@ def find_ground_truth_directory(
     if derivatives_base is None:
         derivatives_base = PERF_PLUS_DERIVATIVES
 
-    gt_dir = derivatives_base / subject / session
+    gt_dir = derivatives_base / pipeline / subject / session
     if gt_dir.exists():
         return gt_dir
     return None
@@ -241,8 +243,8 @@ def find_ground_truth_file(
 ) -> Optional[Path]:
     """Find a specific ground truth output file.
 
-    Searches for files matching the BIDS naming pattern:
-    {subject}_{session}_*_{output_name}.nii.gz
+    Searches for files matching the BIDS naming pattern, preferring
+    unsmoothed/unnormalized versions for accurate comparison.
 
     Args:
         subject: Subject ID
@@ -254,7 +256,11 @@ def find_ground_truth_file(
     Returns:
         Path to ground truth file, or None if not found.
     """
-    gt_dir = find_ground_truth_directory(subject, session, derivatives_base)
+    # Map modality to pipeline name
+    pipeline = f"{modality}_pipeline"
+    gt_dir = find_ground_truth_directory(
+        subject, session, pipeline=pipeline, derivatives_base=derivatives_base
+    )
     if gt_dir is None:
         return None
 
@@ -263,17 +269,66 @@ def find_ground_truth_file(
     if not perf_dir.exists():
         perf_dir = gt_dir  # Fall back to session directory
 
-    # Search for matching file
-    patterns = [
-        f"{subject}_{session}*{output_name}.nii.gz",
-        f"{subject}_{session}*{output_name}.nii",
+    # Define specific patterns for each output to get the correct version
+    # Prefer unsmoothed (desc-dscproc) over smoothed (desc-fwhm3)
+    # Prefer relative CBF/CBV over absolute (pmriprep uses relative)
+    specific_patterns: Dict[str, List[str]] = {
+        # DSC outputs - prefer unsmoothed, relative values
+        "cbf": [
+            f"*desc-rel_cbf.nii.gz",  # Relative CBF (unsmoothed, unnormalized)
+            f"*desc-abs_cbf.nii.gz",  # Absolute CBF (unsmoothed, unnormalized)
+        ],
+        "cbv": [
+            f"*desc-rel_cbv.nii.gz",  # Relative CBV (unsmoothed, unnormalized)
+            f"*desc-abs_cbv.nii.gz",  # Absolute CBV (unsmoothed, unnormalized)
+        ],
+        "mtt": [
+            f"*desc-dscproc_mtt.nii.gz",  # Unsmoothed MTT
+        ],
+        "tmax": [
+            f"*desc-dscproc_tmax.nii.gz",  # Unsmoothed Tmax
+        ],
+        "ph": [
+            f"*desc-dscproc_ph.nii.gz",  # Unsmoothed peak height
+        ],
+        "psr": [
+            f"*desc-dscproc_psr.nii.gz",  # Unsmoothed PSR
+        ],
+        "k2": [
+            f"*desc-dscproc_k2.nii.gz",  # Unsmoothed k2
+        ],
+        # Normalized outputs
+        "ncbf": [
+            f"*desc-dscproc_ncbf.nii.gz",  # Normalized CBF
+        ],
+        "ncbv": [
+            f"*desc-dscproc_ncbv.nii.gz",  # Normalized CBV
+        ],
+    }
+
+    # Get patterns for this output, or use generic patterns
+    patterns = specific_patterns.get(output_name.lower(), [])
+
+    # Add generic fallback patterns
+    patterns.extend([
+        f"{subject}_{session}*_{output_name}.nii.gz",
+        f"{subject}_{session}*_{output_name}.nii",
         f"*{output_name}.nii.gz",
         f"*{output_name}.nii",
-    ]
+    ])
 
     for pattern in patterns:
         matches = list(perf_dir.glob(pattern))
         if matches:
+            # If multiple matches, prefer the one with exact output name
+            # (e.g., avoid ncbf when looking for cbf)
+            for match in matches:
+                # Check that we're not matching a longer suffix
+                # e.g., avoid matching "ncbf" when looking for "cbf"
+                stem = match.name.replace(".nii.gz", "").replace(".nii", "")
+                if stem.endswith(f"_{output_name}") or stem.endswith(f"-{output_name}"):
+                    return match
+            # If no exact match, return first match
             return matches[0]
 
     return None
@@ -321,6 +376,7 @@ def load_brain_mask(
     subject: str,
     session: str,
     derivatives_base: Optional[Path] = None,
+    pipeline: str = "dsc_pipeline",
 ) -> Tuple[Optional[NDArray[np.floating]], Optional[Path]]:
     """Load brain mask for comparison masking.
 
@@ -328,13 +384,16 @@ def load_brain_mask(
         subject: Subject ID
         session: Session ID
         derivatives_base: Base directory for derivatives
+        pipeline: Pipeline name to look for mask (default: dsc_pipeline)
 
     Returns:
         Tuple of (mask array, file path) or (None, None) if not found.
     """
     import nibabel as nib
 
-    gt_dir = find_ground_truth_directory(subject, session, derivatives_base)
+    gt_dir = find_ground_truth_directory(
+        subject, session, pipeline=pipeline, derivatives_base=derivatives_base
+    )
     if gt_dir is None:
         return None, None
 

@@ -586,6 +586,20 @@ class ComputeDSCMaps(BaseInterface):
         mask_img = nib.load(self.inputs.brain_mask_file)
         mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
 
+        # Check if brain mask dimensions match concentration data
+        # If not (e.g., mask is in T1w space, data is in DSC space), create mask from data
+        if mask.shape[:3] != conc_data.shape[:3]:
+            import warnings
+            warnings.warn(
+                f"Brain mask shape {mask.shape[:3]} does not match "
+                f"concentration data shape {conc_data.shape[:3]}. "
+                "Creating mask from DSC data intensity."
+            )
+            # Create simple mask from mean DSC intensity
+            mean_intensity = np.mean(np.abs(conc_data), axis=3)
+            threshold_val = np.percentile(mean_intensity[mean_intensity > 0], 10)
+            mask = (mean_intensity > threshold_val).astype(np.float64)
+
         # Load AIF
         aif = np.loadtxt(self.inputs.aif_file)
 

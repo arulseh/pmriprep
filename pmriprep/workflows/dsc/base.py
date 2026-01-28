@@ -9,20 +9,127 @@ from typing import Any, Optional, Tuple, Union
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
+from nipype.interfaces.base import (  # type: ignore[import-untyped]
+    CommandLine,
+    CommandLineInputSpec,
+    File,
+    TraitedSpec,
+    traits,
+    isdefined,
+)
+
+
+# Custom FSL wrappers to avoid nipype FSL module import bug (LooseVersion issue)
+class _ConvertXFMInputSpec(CommandLineInputSpec):
+    """Input spec for convert_xfm."""
+    # Explicit positions for correct FSL convert_xfm syntax:
+    # -omat out.mat -inverse in.mat  OR  -omat out.mat -concat second.mat first.mat
+    out_file = File(argstr="-omat %s", position=0, genfile=True, desc="Output matrix file")
+    invert_xfm = traits.Bool(argstr="-inverse", position=1, xor=["concat_xfm"],
+                             desc="Invert transform")
+    concat_xfm = traits.Bool(argstr="-concat", position=1, xor=["invert_xfm"],
+                             desc="Concatenate transforms")
+    in_file2 = File(exists=True, argstr="%s", position=2,
+                    desc="Second input for concatenation (second transform in chain)")
+    in_file = File(exists=True, mandatory=True, argstr="%s", position=3,
+                   desc="Primary input transform matrix (first transform in chain)")
+
+
+class _ConvertXFMOutputSpec(TraitedSpec):
+    """Output spec for convert_xfm."""
+    out_file = File(exists=True, desc="Output transform matrix")
+
+
+class ConvertXFM(CommandLine):
+    """FSL convert_xfm - transform matrix manipulation."""
+    _cmd = "convert_xfm"
+    input_spec = _ConvertXFMInputSpec
+    output_spec = _ConvertXFMOutputSpec
+
+    def _gen_filename(self, name):
+        if name == "out_file":
+            return self._gen_outfilename()
+        return None
+
+    def _gen_outfilename(self):
+        from pathlib import Path
+        in_file = Path(self.inputs.in_file)
+        if self.inputs.invert_xfm:
+            suffix = "_inv"
+        elif self.inputs.concat_xfm:
+            suffix = "_concat"
+        else:
+            suffix = "_out"
+        return str(Path.cwd() / f"{in_file.stem}{suffix}.mat")
+
+    def _list_outputs(self):
+        outputs = self.output_spec().get()
+        if isdefined(self.inputs.out_file):
+            outputs["out_file"] = self.inputs.out_file
+        else:
+            outputs["out_file"] = self._gen_outfilename()
+        return outputs
+
+
+class _FLIRTApplyXFMInputSpec(CommandLineInputSpec):
+    """Input spec for FLIRT applyxfm."""
+    in_file = File(exists=True, mandatory=True, argstr="-in %s",
+                   desc="Input file to transform")
+    reference = File(exists=True, mandatory=True, argstr="-ref %s",
+                     desc="Reference image for output geometry")
+    in_matrix_file = File(exists=True, mandatory=True, argstr="-init %s",
+                          desc="Transform matrix to apply")
+    out_file = File(argstr="-out %s", genfile=True, desc="Output file")
+    interp = traits.Enum("trilinear", "nearestneighbour", "sinc", "spline",
+                         argstr="-interp %s", desc="Interpolation method")
+    apply_xfm = traits.Bool(True, argstr="-applyxfm", usedefault=True,
+                            desc="Apply transform (required)")
+
+
+class _FLIRTApplyXFMOutputSpec(TraitedSpec):
+    """Output spec for FLIRT applyxfm."""
+    out_file = File(exists=True, desc="Transformed output file")
+
+
+class FLIRTApplyXFM(CommandLine):
+    """FSL FLIRT - apply transform to image."""
+    _cmd = "flirt"
+    input_spec = _FLIRTApplyXFMInputSpec
+    output_spec = _FLIRTApplyXFMOutputSpec
+
+    def _gen_filename(self, name):
+        if name == "out_file":
+            return self._gen_outfilename()
+        return None
+
+    def _gen_outfilename(self):
+        from pathlib import Path
+        in_file = Path(self.inputs.in_file)
+        stem = in_file.name.replace(".nii.gz", "").replace(".nii", "")
+        return str(Path.cwd() / f"{stem}_transformed.nii.gz")
+
+    def _list_outputs(self):
+        outputs = self.output_spec().get()
+        if isdefined(self.inputs.out_file):
+            outputs["out_file"] = self.inputs.out_file
+        else:
+            outputs["out_file"] = self._gen_outfilename()
+        return outputs
 
 from pmriprep.config.dsc import DSCConfig
+from pmriprep.data import get_arterial_atlas
 from pmriprep.interfaces.dsc import MotionCorrection, DSCRegistration
 from pmriprep.interfaces.dsc_aif import AIFDetection
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
 
 def _signal_to_concentration(
-    dsc_file: str,
-    te: float,
-    baseline_frames: int,
-    r2_star: Optional[float],
-    field_strength: Optional[float],
-) -> Tuple[str, str]:
+    dsc_file,
+    te,
+    baseline_frames,
+    r2_star,
+    field_strength,
+):
     """Convert DSC signal to concentration.
 
     This is a Function node wrapper for the signal_to_concentration utility.
@@ -77,15 +184,15 @@ def _signal_to_concentration(
 
 
 def _detect_and_correct_preload(
-    concentration_file: str,
-    aif_file: str,
-    brain_mask_file: str,
-    te: float,
-    field_strength: float,
-    tr: float,
-    preload_detected: Optional[bool],
-    save_k2_map: bool,
-) -> Tuple[str, Optional[str], dict]:
+    concentration_file,
+    aif_file,
+    brain_mask_file,
+    te,
+    field_strength,
+    tr,
+    preload_detected,
+    save_k2_map,
+):
     """Detect preload and apply K2 correction if needed.
 
     This is a Function node wrapper for preload detection and K2 correction.
@@ -120,6 +227,20 @@ def _detect_and_correct_preload(
 
     mask_img = nib.load(brain_mask_file)
     brain_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
+    # Check if brain mask dimensions match concentration data
+    # If not (e.g., mask is in T1w space, data is in DSC space), create mask from data
+    if brain_mask.shape[:3] != conc_data.shape[:3]:
+        import warnings
+        warnings.warn(
+            f"Brain mask shape {brain_mask.shape[:3]} does not match "
+            f"concentration data shape {conc_data.shape[:3]}. "
+            "Creating mask from DSC data intensity."
+        )
+        # Create simple mask from mean DSC intensity
+        mean_intensity = np.mean(np.abs(conc_data), axis=3)
+        threshold = np.percentile(mean_intensity[mean_intensity > 0], 10)
+        brain_mask = mean_intensity > threshold
 
     # Load AIF
     aif = np.loadtxt(aif_file)
@@ -189,13 +310,13 @@ def _detect_and_correct_preload(
 
 
 def _normalize_cbv(
-    cbv_file: str,
-    nawm_mask_file: Optional[str],
-    brain_mask_file: str,
-    derivatives_dir: str,
-    subject_id: str,
-    session_id: Optional[str],
-) -> Tuple[str, float]:
+    cbv_file,
+    brain_mask_file,
+    derivatives_dir,
+    subject_id,
+    session_id,
+    nawm_mask_file=None,
+):
     """Normalize CBV to NAWM median.
 
     This is a Function node wrapper for CBV normalization.
@@ -237,13 +358,13 @@ def _normalize_cbv(
 
 
 def _merge_qc_metrics(
-    motion_qc: dict,
-    preload_qc: dict,
-    aif_qc: dict,
-    deconv_qc: dict,
-    registration_qc: dict,
-    normalization_factor: float,
-) -> dict:
+    motion_qc,
+    preload_qc,
+    aif_qc,
+    deconv_qc,
+    registration_qc,
+    normalization_factor,
+):
     """Merge all QC metrics into a single dictionary.
 
     Args:
@@ -257,7 +378,7 @@ def _merge_qc_metrics(
     Returns:
         Combined QC metrics dictionary.
     """
-    merged: dict = {
+    merged = {
         "motion": motion_qc if motion_qc else {},
         "preload": preload_qc if preload_qc else {},
         "aif": aif_qc if aif_qc else {},
@@ -392,6 +513,7 @@ def init_dsc_preproc_wf(
                 "wm_probseg",  # White matter probability map (optional)
                 "lesion_mask",  # Lesion mask (optional)
                 "nawm_mask",  # NAWM mask for normalization (optional)
+                "t1w_to_mni_xfm",  # T1w to MNI transform (from ACPC alignment)
                 "te",  # Echo time in seconds
                 "field_strength",  # Magnetic field strength
                 "tr",  # Repetition time in seconds
@@ -426,6 +548,7 @@ def init_dsc_preproc_wf(
                 # AIF outputs
                 "aif_curve",
                 "aif_mask",
+                "aif_qc",
                 # Leakage correction
                 "k2_map",
                 # Normalized maps
@@ -543,17 +666,59 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
+    # Node 6b: Transform Chain for MNI Atlas to DSC Space
+    # Creates MNI→DSC transform by concatenating:
+    #   MNI→T1w (inverted T1w→MNI) + T1w→DSC (inverted DSC→T1w)
+    # -------------------------------------------------------------------
+
+    # Invert T1w→MNI to get MNI→T1w
+    invert_mni_xfm = pe.Node(
+        ConvertXFM(invert_xfm=True),
+        name="invert_mni_xfm",
+    )
+
+    # Invert DSC→T1w to get T1w→DSC
+    invert_dsc_xfm = pe.Node(
+        ConvertXFM(invert_xfm=True),
+        name="invert_dsc_xfm",
+    )
+
+    # Concatenate: MNI→T1w + T1w→DSC = MNI→DSC
+    concat_mni_to_dsc = pe.Node(
+        ConvertXFM(concat_xfm=True),
+        name="concat_mni_to_dsc",
+    )
+
+    # Transform arterial atlas from MNI to DSC space
+    # Use nearest neighbor interpolation for binary mask
+    transform_atlas = pe.Node(
+        FLIRTApplyXFM(
+            apply_xfm=True,
+            interp="nearestneighbour",
+        ),
+        name="transform_atlas",
+    )
+    # Set the arterial atlas as input (bundled with pmriprep)
+    try:
+        transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm"))
+    except FileNotFoundError:
+        import warnings
+        warnings.warn(
+            "Arterial atlas not found. AIF detection will use whole-brain search."
+        )
+
+    # -------------------------------------------------------------------
     # Node 7: CBV Normalization
     # -------------------------------------------------------------------
     normalize = pe.Node(
         niu.Function(
             input_names=[
                 "cbv_file",
-                "nawm_mask_file",
                 "brain_mask_file",
                 "derivatives_dir",
                 "subject_id",
                 "session_id",
+                "nawm_mask_file",
             ],
             output_names=["ncbv_file", "normalization_factor"],
             function=_normalize_cbv,
@@ -563,6 +728,7 @@ def init_dsc_preproc_wf(
     normalize.inputs.derivatives_dir = str(bids_dir / "derivatives")
     normalize.inputs.subject_id = subject_id
     normalize.inputs.session_id = session_id
+    normalize.inputs.nawm_mask_file = None  # Optional, will use fallback if not provided
 
     # -------------------------------------------------------------------
     # Node 8: Merge QC Metrics
@@ -646,6 +812,35 @@ def init_dsc_preproc_wf(
         (motion_correct, register, [("mean_img", "dsc_mean")]),
     ])
 
+    # Transform Chain: Create MNI→DSC transform for atlas
+    # Step 1: Invert T1w→MNI to get MNI→T1w
+    workflow.connect([
+        (inputnode, invert_mni_xfm, [("t1w_to_mni_xfm", "in_file")]),
+    ])
+
+    # Step 2: Invert DSC→T1w to get T1w→DSC
+    workflow.connect([
+        (register, invert_dsc_xfm, [("out_matrix", "in_file")]),
+    ])
+
+    # Step 3: Concatenate MNI→T1w + T1w→DSC = MNI→DSC
+    workflow.connect([
+        (invert_mni_xfm, concat_mni_to_dsc, [("out_file", "in_file")]),
+        (invert_dsc_xfm, concat_mni_to_dsc, [("out_file", "in_file2")]),
+    ])
+
+    # Step 4: Transform arterial atlas from MNI to DSC space
+    # Use motion-corrected mean DSC as reference for output geometry
+    workflow.connect([
+        (concat_mni_to_dsc, transform_atlas, [("out_file", "in_matrix_file")]),
+        (motion_correct, transform_atlas, [("mean_img", "reference")]),
+    ])
+
+    # Connect transformed atlas to AIF detection
+    workflow.connect([
+        (transform_atlas, aif_detect, [("out_file", "atlas_mask_file")]),
+    ])
+
     # DSC Map Computation to CBV Normalization
     workflow.connect([
         (compute_maps, normalize, [("out_cbv", "cbv_file")]),
@@ -686,6 +881,7 @@ def init_dsc_preproc_wf(
         (aif_detect, outputnode, [
             ("out_aif_curve", "aif_curve"),
             ("out_aif_mask", "aif_mask"),
+            ("qc_metrics", "aif_qc"),
         ]),
         # Leakage correction
         (preload_correct, outputnode, [("k2_map_file", "k2_map")]),

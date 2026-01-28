@@ -626,6 +626,11 @@ def _configure_nipype(args: argparse.Namespace) -> None:
     from nipype import config as nipype_config  # type: ignore[import-untyped]
     from nipype import logging as nipype_logging  # type: ignore[import-untyped]
 
+    # Create output and log directories if they don't exist
+    if args.output_dir:
+        log_dir = args.output_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
     # Configure execution settings
     nipype_config.enable_debug_mode()
     nipype_config.update_config(

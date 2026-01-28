@@ -55,7 +55,7 @@ EXPECTED_DCE_OUTPUTS: List[str] = []  # No DCE
 @pytest.fixture
 def subject_ground_truth_dir() -> Optional[Path]:
     """Get the ground truth directory for this subject."""
-    return find_ground_truth_directory(SUBJECT, SESSION, PERF_PLUS_DERIVATIVES)
+    return find_ground_truth_directory(SUBJECT, SESSION, "dsc_pipeline", PERF_PLUS_DERIVATIVES)
 
 
 @pytest.fixture
@@ -99,7 +99,6 @@ class TestSub0001Ses0002:
         output_name: str,
         subject_ground_truth_dir: Optional[Path],
         subject_brain_mask: Optional[Path],
-        tmp_path: Path,
     ) -> None:
         """Test DSC output against ground truth.
 
@@ -108,7 +107,12 @@ class TestSub0001Ses0002:
         2. Skip if PMRIPrep outputs are not available
         3. Compare PMRIPrep output to ground truth using correlation
         4. Assert correlation >= 0.99
+
+        Set PMRIPREP_WORK_DIR environment variable to point to the work directory
+        where PMRIPrep outputs are located (e.g., ~/Developer/pmriprep/work).
         """
+        import os
+
         if subject_ground_truth_dir is None:
             pytest.skip(f"Ground truth not found for {SUBJECT}/{SESSION}")
 
@@ -119,15 +123,26 @@ class TestSub0001Ses0002:
         if gt_path is None:
             pytest.skip(f"Ground truth not found for DSC {output_name}")
 
-        # For actual testing, PMRIPrep outputs would be at:
-        # pmriprep_derivatives / SUBJECT / SESSION / perf / *{output_name}.nii.gz
-        # Since PMRIPrep hasn't been run yet, skip this test
-        pmriprep_derivatives = tmp_path / "pmriprep"
-        pmriprep_output = pmriprep_derivatives / SUBJECT / SESSION / "perf"
+        # Get PMRIPrep work directory from environment
+        work_dir = os.environ.get("PMRIPREP_WORK_DIR")
+        if work_dir is None:
+            pytest.skip(
+                f"PMRIPREP_WORK_DIR not set. Set to work directory path to enable "
+                "ground truth comparison."
+            )
+
+        # Look for outputs in the work directory structure
+        # Work dir structure: work/pmriprep_{subject}_{session}_wf/dsc_wf/compute_maps/
+        work_path = Path(work_dir)
+        subject_id = SUBJECT.replace("sub-", "")
+        session_id = SESSION.replace("ses-", "")
+        pmriprep_output = (
+            work_path / f"pmriprep_sub{subject_id}_{SESSION}_wf" / "dsc_wf" / "compute_maps"
+        )
 
         if not pmriprep_output.exists():
             pytest.skip(
-                f"PMRIPrep outputs not available for {SUBJECT}/{SESSION}. "
+                f"PMRIPrep outputs not available for {SUBJECT}/{SESSION} in {pmriprep_output}. "
                 "Run PMRIPrep first to enable ground truth comparison."
             )
 

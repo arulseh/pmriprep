@@ -189,9 +189,9 @@ def init_pmriprep_wf(
     from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
     from pmriprep.workflows.hdglio.base import init_hdglio_wf
 
-    # Normalize paths
-    bids_dir = Path(bids_dir)
-    output_dir = Path(output_dir)
+    # Normalize paths (resolve to absolute for DataSink)
+    bids_dir = Path(bids_dir).resolve()
+    output_dir = Path(output_dir).resolve()
 
     # Use default skip flags if not provided
     if skip_flags is None:
@@ -234,6 +234,7 @@ def init_pmriprep_wf(
                 "t1w_postcon",
                 "t2w",
                 "flair",
+                "pdw",
                 # Perfusion inputs
                 "dsc_file",
                 "dce_file",
@@ -257,6 +258,8 @@ def init_pmriprep_wf(
         inputnode.inputs.t2w = str(session_data.modalities.t2w)
     if session_data.modalities.flair:
         inputnode.inputs.flair = str(session_data.modalities.flair)
+    if session_data.modalities.pdw:
+        inputnode.inputs.pdw = str(session_data.modalities.pdw)
     if session_data.modalities.dsc:
         inputnode.inputs.dsc_file = str(session_data.modalities.dsc)
     if session_data.modalities.dce:
@@ -323,6 +326,10 @@ def init_pmriprep_wf(
             subject_id=subject_id,
             session_id=session_id,
             config=anat_config,
+            has_t1w_postcon=session_data.modalities.t1w_ce_gad is not None,
+            has_t2w=session_data.modalities.t2w is not None,
+            has_flair=session_data.modalities.flair is not None,
+            has_pdw=session_data.modalities.pdw is not None,
             name="anat_wf",
         )
 
@@ -351,6 +358,10 @@ def init_pmriprep_wf(
             workflow.connect([
                 (inputnode, anat_wf, [("flair", "inputnode.flair")]),
             ])
+        if session_data.modalities.pdw:
+            workflow.connect([
+                (inputnode, anat_wf, [("pdw", "inputnode.pdw")]),
+            ])
 
         # Connect anat outputs to master outputnode
         workflow.connect([
@@ -363,6 +374,80 @@ def init_pmriprep_wf(
                 ("outputnode.qc_metrics", "anat_qc"),
             ]),
         ])
+
+        # -------------------------------------------------------------------
+        # AnatDerivativeWriter: Write BIDS-compliant anat outputs
+        # -------------------------------------------------------------------
+        from pmriprep.interfaces.anat_outputs import AnatDerivativeWriter
+
+        anat_writer = pe.Node(
+            AnatDerivativeWriter(
+                output_dir=str(output_dir),
+                subject_id=subject_id,
+                session_id=session_id or "",
+                bids_dir=str(bids_dir),
+            ),
+            name="anat_writer",
+        )
+
+        # Connect core anat outputs
+        workflow.connect([
+            (anat_wf, anat_writer, [
+                ("outputnode.t1w_preproc", "t1w_preproc"),
+                ("outputnode.brain_mask", "brain_mask"),
+                ("outputnode.wm_probseg", "wm_probseg"),
+                ("outputnode.gm_probseg", "gm_probseg"),
+                ("outputnode.csf_probseg", "csf_probseg"),
+                ("outputnode.t1w_to_mni_xfm", "acpc_xfm"),
+                ("outputnode.qc_metrics", "qc_metrics"),
+            ]),
+        ])
+
+        # Connect source paths for JSON sidecar Sources field
+        if session_data.modalities.t1w_pre:
+            workflow.connect([
+                (inputnode, anat_writer, [("t1w_pre", "source_t1w")]),
+            ])
+
+        # Connect optional modalities
+        if session_data.modalities.t1w_ce_gad:
+            writer_connections = [
+                ("outputnode.t1w_postcon_coreg", "t1w_postcon_coreg"),
+                ("outputnode.t1w_postcon_to_t1w_xfm", "t1w_postcon_to_t1w_xfm"),
+            ]
+            # Subtraction requires both pre and post-contrast
+            if session_data.modalities.t1w_pre:
+                writer_connections.append(
+                    ("outputnode.t1w_subtraction", "t1w_subtraction")
+                )
+            workflow.connect([
+                (anat_wf, anat_writer, writer_connections),
+                (inputnode, anat_writer, [("t1w_postcon", "source_t1w_postcon")]),
+            ])
+        if session_data.modalities.t2w:
+            workflow.connect([
+                (anat_wf, anat_writer, [
+                    ("outputnode.t2w_coreg", "t2w_coreg"),
+                    ("outputnode.t2w_to_t1w_xfm", "t2w_to_t1w_xfm"),
+                ]),
+                (inputnode, anat_writer, [("t2w", "source_t2w")]),
+            ])
+        if session_data.modalities.flair:
+            workflow.connect([
+                (anat_wf, anat_writer, [
+                    ("outputnode.flair_coreg", "flair_coreg"),
+                    ("outputnode.flair_to_t1w_xfm", "flair_to_t1w_xfm"),
+                ]),
+                (inputnode, anat_writer, [("flair", "source_flair")]),
+            ])
+        if session_data.modalities.pdw:
+            workflow.connect([
+                (anat_wf, anat_writer, [
+                    ("outputnode.pdw_coreg", "pdw_coreg"),
+                    ("outputnode.pdw_to_t1w_xfm", "pdw_to_t1w_xfm"),
+                ]),
+                (inputnode, anat_writer, [("pdw", "source_pdw")]),
+            ])
 
     # -------------------------------------------------------------------
     # HD-GLIO tumor segmentation workflow (requires anat outputs)
@@ -431,6 +516,7 @@ def init_pmriprep_wf(
                     ("outputnode.t1w_preproc", "inputnode.t1w_reference"),
                     ("outputnode.brain_mask", "inputnode.brain_mask"),
                     ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+                    ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
                 ]),
             ])
 

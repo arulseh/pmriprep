@@ -571,6 +571,20 @@ class AIFDetection(BaseInterface):
         brain_img = nib.load(self.inputs.brain_mask_file)
         brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
 
+        # Check if brain mask dimensions match concentration data
+        # If not (e.g., mask is in T1w space, data is in DSC space), create mask from data
+        if brain_mask.shape[:3] != conc_data.shape[:3]:
+            import warnings
+            warnings.warn(
+                f"Brain mask shape {brain_mask.shape[:3]} does not match "
+                f"concentration data shape {conc_data.shape[:3]}. "
+                "Creating mask from DSC data intensity."
+            )
+            # Create simple mask from mean DSC intensity
+            mean_intensity = np.mean(conc_data, axis=3)
+            threshold = np.percentile(mean_intensity[mean_intensity > 0], 10)
+            brain_mask = (mean_intensity > threshold).astype(np.float64)
+
         # Optional atlas mask
         atlas_mask: Optional[npt.NDArray[Any]] = None
         if self.inputs.atlas_mask_file:

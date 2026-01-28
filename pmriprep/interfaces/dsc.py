@@ -489,6 +489,8 @@ class DSCRegistrationInputSpec(CommandLineInputSpec):
     t1w_file = File(
         exists=True,
         mandatory=True,
+        argstr="%s",
+        position=-1,
         desc="T1-weighted structural image to register to DSC space",
     )
     dsc_mean = File(

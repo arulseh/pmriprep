@@ -584,16 +584,16 @@ def init_dce_preproc_wf(
 
 
 def _signal_to_concentration_node(
-    dce_file: str,
-    t1_map_file: str,
-    b1_map_file: str,
-    flip_angle: float,
-    tr: float,
-    field_strength: float,
-    r1_relaxivity: Optional[float],
-    baseline_frames: int,
-    no_t1: bool,
-) -> str:
+    dce_file,
+    t1_map_file,
+    b1_map_file,
+    flip_angle,
+    tr,
+    field_strength,
+    r1_relaxivity,
+    baseline_frames,
+    no_t1,
+):
     """Function node for signal to concentration conversion.
 
     This function wraps the signal_to_concentration utility for use in
@@ -652,12 +652,12 @@ def _signal_to_concentration_node(
 
 
 def _tortuosity_correction_node(
-    ktrans_file: str,
-    dwi_file: Optional[str],
-    dwi_bval: Optional[float],
-    brain_mask: str,
-    no_tortuosity: bool,
-) -> tuple[str, bool]:
+    ktrans_file,
+    dwi_file,
+    dwi_bval,
+    brain_mask,
+    no_tortuosity,
+):
     """Function node for tortuosity correction.
 
     Returns the (possibly corrected) Ktrans file and whether correction was applied.
@@ -719,11 +719,11 @@ def _tortuosity_correction_node(
 
 
 def _dsc_dce_validation_node(
-    vp_file: Optional[str],
-    dsc_cbv_file: Optional[str],
-    brain_mask: str,
-    no_dsc_validation: bool,
-) -> dict[str, Any]:
+    vp_file,
+    dsc_cbv_file,
+    brain_mask,
+    no_dsc_validation,
+):
     """Function node for DSC-DCE cross-validation.
 
     Returns a dictionary with validation results.
@@ -754,14 +754,14 @@ def _dsc_dce_validation_node(
 
 
 def _collect_qc_metrics(
-    b1_qc: Optional[dict[str, Any]],
-    t1_qc: Optional[dict[str, Any]],
-    preprocess_qc: Optional[dict[str, Any]],
-    registration_qc: Optional[dict[str, Any]],
-    aif_qc: Optional[dict[str, Any]],
-    pk_qc: Optional[dict[str, Any]],
-    validation_result: Optional[dict[str, Any]],
-) -> dict[str, Any]:
+    b1_qc,
+    t1_qc,
+    preprocess_qc,
+    registration_qc,
+    aif_qc,
+    pk_qc,
+    validation_result,
+):
     """Collect all QC metrics into a single dictionary."""
     qc_metrics: dict[str, Any] = {}
 
