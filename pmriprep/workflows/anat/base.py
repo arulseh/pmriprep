@@ -14,6 +14,7 @@ from pmriprep.config.anat import AnatConfig
 from pmriprep.interfaces.anat import (
     ACPCAlignment,
     ApplyMask,
+    ApplyTransform,
     BiasCorrection,
     BrainExtraction,
     Coregistration,
@@ -335,6 +336,11 @@ def init_anat_preproc_wf(
                 "pdw_to_t1w_xfm",
                 # Subtraction
                 "t1w_subtraction",
+                # HD-GLIO prepared inputs (no bias correction)
+                "hdglio_t1w_pre",
+                "hdglio_t1w_postcon",
+                "hdglio_t2w",
+                "hdglio_flair",
                 # Processing mode flag
                 "is_postcon_only",
                 # QC
@@ -520,6 +526,63 @@ def init_anat_preproc_wf(
                 (coreg_pdw, mask_pdw, [("out_file", "in_file")]),
                 (brain_extract, mask_pdw, [("out_mask", "mask_file")]),
             ])
+
+    # -------------------------------------------------------------------
+    # Step 6b: HD-GLIO input preparation (no bias correction track)
+    # Reuse coregistration transforms on reoriented (uncorrected) images,
+    # then skull-strip. HD-GLIO expects coregistered, skull-stripped,
+    # but NOT bias-corrected images (the DL model was trained on raw).
+    # -------------------------------------------------------------------
+    if (config.coregister_modalities
+            and has_t1w_postcon and has_t2w and has_flair):
+
+        # T1w pre: reoriented → mask with brain_extract mask
+        hdglio_mask_t1w = pe.Node(ApplyMask(), name="hdglio_mask_t1w")
+        workflow.connect([
+            (reorient, hdglio_mask_t1w, [("out_file", "in_file")]),
+            (brain_extract, hdglio_mask_t1w, [("out_mask", "mask_file")]),
+            (hdglio_mask_t1w, outputnode, [("out_file", "hdglio_t1w_pre")]),
+        ])
+
+        # T1w postcon: reoriented → apply coreg xfm → mask
+        hdglio_xfm_postcon = pe.Node(
+            ApplyTransform(), name="hdglio_xfm_postcon"
+        )
+        hdglio_mask_postcon = pe.Node(ApplyMask(), name="hdglio_mask_postcon")
+        workflow.connect([
+            (reorient_postcon, hdglio_xfm_postcon, [("out_file", "in_file")]),
+            (reorient, hdglio_xfm_postcon, [("out_file", "reference")]),
+            (coreg_postcon, hdglio_xfm_postcon, [("out_matrix", "in_matrix")]),
+            (hdglio_xfm_postcon, hdglio_mask_postcon, [("out_file", "in_file")]),
+            (brain_extract, hdglio_mask_postcon, [("out_mask", "mask_file")]),
+            (hdglio_mask_postcon, outputnode, [
+                ("out_file", "hdglio_t1w_postcon"),
+            ]),
+        ])
+
+        # T2w: reoriented → apply coreg xfm → mask
+        hdglio_xfm_t2w = pe.Node(ApplyTransform(), name="hdglio_xfm_t2w")
+        hdglio_mask_t2w = pe.Node(ApplyMask(), name="hdglio_mask_t2w")
+        workflow.connect([
+            (reorient_t2w, hdglio_xfm_t2w, [("out_file", "in_file")]),
+            (reorient, hdglio_xfm_t2w, [("out_file", "reference")]),
+            (coreg_t2w, hdglio_xfm_t2w, [("out_matrix", "in_matrix")]),
+            (hdglio_xfm_t2w, hdglio_mask_t2w, [("out_file", "in_file")]),
+            (brain_extract, hdglio_mask_t2w, [("out_mask", "mask_file")]),
+            (hdglio_mask_t2w, outputnode, [("out_file", "hdglio_t2w")]),
+        ])
+
+        # FLAIR: reoriented → apply coreg xfm → mask
+        hdglio_xfm_flair = pe.Node(ApplyTransform(), name="hdglio_xfm_flair")
+        hdglio_mask_flair = pe.Node(ApplyMask(), name="hdglio_mask_flair")
+        workflow.connect([
+            (reorient_flair, hdglio_xfm_flair, [("out_file", "in_file")]),
+            (reorient, hdglio_xfm_flair, [("out_file", "reference")]),
+            (coreg_flair, hdglio_xfm_flair, [("out_matrix", "in_matrix")]),
+            (hdglio_xfm_flair, hdglio_mask_flair, [("out_file", "in_file")]),
+            (brain_extract, hdglio_mask_flair, [("out_mask", "mask_file")]),
+            (hdglio_mask_flair, outputnode, [("out_file", "hdglio_flair")]),
+        ])
 
     # -------------------------------------------------------------------
     # Step 7: Tissue Segmentation (conditional on precon availability)

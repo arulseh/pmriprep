@@ -1531,6 +1531,126 @@ class ApplyMask(CommandLine):
         return None
 
 
+class ApplyTransformInputSpec(CommandLineInputSpec):
+    """Input specification for ApplyTransform interface."""
+
+    in_file = File(
+        exists=True,
+        mandatory=True,
+        desc="Input image to transform",
+    )
+    reference = File(
+        exists=True,
+        mandatory=True,
+        desc="Reference image defining output geometry",
+    )
+    in_matrix = File(
+        exists=True,
+        mandatory=True,
+        desc="FLIRT transformation matrix (.mat)",
+    )
+    out_file = File(
+        genfile=True,
+        desc="Output transformed image",
+    )
+    interp = traits.Enum(
+        "trilinear",
+        "nearestneighbour",
+        "sinc",
+        "spline",
+        usedefault=True,
+        desc="Interpolation method",
+    )
+
+
+class ApplyTransformOutputSpec(TraitedSpec):
+    """Output specification for ApplyTransform interface."""
+
+    out_file = File(exists=True, desc="Transformed image in reference space")
+
+
+class ApplyTransform(CommandLine):
+    """Apply an existing FLIRT transform via flirt -applyxfm.
+
+    This interface wraps FSL FLIRT with -applyxfm to apply a pre-computed
+    transformation matrix to a different image (e.g., applying a coregistration
+    transform computed on bias-corrected images to the uncorrected versions).
+
+    Parameters
+    ----------
+    in_file : str
+        Input image to transform.
+    reference : str
+        Reference image defining the output geometry.
+    in_matrix : str
+        FLIRT transformation matrix (.mat file).
+    interp : str
+        Interpolation method (default: trilinear).
+
+    Examples
+    --------
+    >>> xfm = ApplyTransform()
+    >>> xfm.inputs.in_file = 'T2w_reoriented.nii.gz'
+    >>> xfm.inputs.reference = 'T1w_reoriented.nii.gz'
+    >>> xfm.inputs.in_matrix = 'T2w_to_T1w.mat'
+    >>> result = xfm.run()  # doctest: +SKIP
+
+    Notes
+    -----
+    Requires FSL to be installed and available in PATH.
+    """
+
+    input_spec = ApplyTransformInputSpec
+    output_spec = ApplyTransformOutputSpec
+
+    _cmd = "flirt"
+
+    def _gen_outfilename(self) -> str:
+        """Generate output filename if not specified."""
+        if self.inputs.out_file:
+            return str(self.inputs.out_file)
+
+        in_file = Path(self.inputs.in_file)
+        if in_file.name.endswith(".nii.gz"):
+            base = in_file.name[:-7]
+            ext = ".nii.gz"
+        elif in_file.name.endswith(".nii"):
+            base = in_file.stem
+            ext = ".nii"
+        else:
+            base = in_file.stem
+            ext = in_file.suffix
+
+        return str(Path.cwd() / f"{base}_xfm{ext}")
+
+    @property
+    def cmdline(self) -> str:
+        """Build the FLIRT -applyxfm command line."""
+        in_file = str(self.inputs.in_file)
+        reference = str(self.inputs.reference)
+        in_matrix = str(self.inputs.in_matrix)
+        out_file = self._gen_outfilename()
+        interp = self.inputs.interp
+
+        return (
+            f"flirt -in {in_file} -ref {reference} "
+            f"-out {out_file} -init {in_matrix} "
+            f"-applyxfm -interp {interp}"
+        )
+
+    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
+        """List expected outputs."""
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
+        outputs["out_file"] = self._gen_outfilename()
+        return outputs
+
+    def _gen_filename(self, name: str) -> Optional[str]:
+        """Generate filename for outputs."""
+        if name == "out_file":
+            return self._gen_outfilename()
+        return None
+
+
 class ACPCAlignmentInputSpec(CommandLineInputSpec):
     """Input specification for ACPCAlignment interface."""
 

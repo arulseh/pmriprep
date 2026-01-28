@@ -93,9 +93,14 @@ def decide_pipelines(
         decision.run_anat = True
 
     # HD-GLIO tumor segmentation
+    # HD-GLIO requires anat pipeline for input preparation (coregistration,
+    # skull-stripping without bias correction)
     if skip_flags.skip_tumor_seg:
         decision.run_hdglio = False
         decision.hdglio_reason = "Skipped by user (--skip-tumor-seg)"
+    elif skip_flags.skip_anat:
+        decision.run_hdglio = False
+        decision.hdglio_reason = "Requires anatomical pipeline (--skip-anat disables it)"
     elif not session_data.pipelines.hdglio:
         decision.run_hdglio = False
         decision.hdglio_reason = session_data.pipelines.hdglio_reason
@@ -461,20 +466,16 @@ def init_pmriprep_wf(
             name="hdglio_wf",
         )
 
-        # Connect inputs from master inputnode
-        workflow.connect([
-            (inputnode, hdglio_wf, [
-                ("t1w_pre", "inputnode.t1w_pre"),
-                ("t1w_postcon", "inputnode.t1w_postcon"),
-                ("t2w", "inputnode.t2w"),
-                ("flair", "inputnode.flair"),
-            ]),
-        ])
-
-        # Connect brain mask from anat workflow if available
+        # Connect prepared inputs from anat workflow
+        # HD-GLIO receives coregistered, skull-stripped, non-bias-corrected
+        # images from the anat pipeline's HD-GLIO prep track
         if anat_wf is not None:
             workflow.connect([
                 (anat_wf, hdglio_wf, [
+                    ("outputnode.hdglio_t1w_pre", "inputnode.t1w_pre"),
+                    ("outputnode.hdglio_t1w_postcon", "inputnode.t1w_postcon"),
+                    ("outputnode.hdglio_t2w", "inputnode.t2w"),
+                    ("outputnode.hdglio_flair", "inputnode.flair"),
                     ("outputnode.brain_mask", "inputnode.brain_mask"),
                     ("outputnode.wm_probseg", "inputnode.wm_probseg"),
                 ]),
