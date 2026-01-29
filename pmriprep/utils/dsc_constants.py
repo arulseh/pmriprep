@@ -154,3 +154,40 @@ def get_r2_star(field_strength: float) -> float:
 
     # Fallback (should not reach here)
     return R2_STAR_BY_FIELD[3.0]
+
+
+# =============================================================================
+# Absolute Quantification Calibration
+# =============================================================================
+
+#: Large vessel hematocrit (population average)
+HEMATOCRIT_LV: Final[float] = 0.40
+
+#: Brain tissue density (g/mL)
+RHO_BRAIN: Final[float] = 1.04
+
+#: Blood density (g/mL)
+RHO_BLOOD: Final[float] = 1.05
+
+#: GRE vessel calibration factor at 3T (Boxerman et al. 2006)
+VESSEL_CALIBRATION_GRE_3T: Final[float] = 0.14
+
+
+def calculate_k_h(
+    hematocrit: float = HEMATOCRIT_LV,
+    rho_brain: float = RHO_BRAIN,
+    rho_blood: float = RHO_BLOOD,
+) -> float:
+    """K_H calibration factor for absolute quantification (Østergaard 1996).
+
+    K_H = (rho_brain / rho_blood) * (1 / hematocrit) * 100
+
+    Args:
+        hematocrit: Large vessel hematocrit fraction.
+        rho_brain: Brain tissue density in g/mL.
+        rho_blood: Blood density in g/mL.
+
+    Returns:
+        K_H calibration factor (dimensionless scaling).
+    """
+    return (rho_brain / rho_blood) * (1.0 / hematocrit) * 100.0

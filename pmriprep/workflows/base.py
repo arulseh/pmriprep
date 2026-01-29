@@ -562,14 +562,91 @@ def init_pmriprep_wf(
         # Connect DSC outputs to master outputnode
         workflow.connect([
             (dsc_wf, outputnode, [
-                ("outputnode.cbf_map", "dsc_cbf"),
-                ("outputnode.cbv_map", "dsc_cbv"),
+                ("outputnode.rel_cbf_map", "dsc_cbf"),
+                ("outputnode.rel_cbv_map", "dsc_cbv"),
                 ("outputnode.mtt_map", "dsc_mtt"),
                 ("outputnode.tmax_map", "dsc_tmax"),
                 ("outputnode.aif_qc", "dsc_aif_qc"),
                 ("outputnode.qc_metrics", "dsc_qc"),
             ]),
         ])
+
+        # -------------------------------------------------------------------
+        # DSCDerivativeWriter: Write BIDS-compliant DSC outputs
+        # -------------------------------------------------------------------
+        from pmriprep.interfaces.dsc_outputs import DSCDerivativeWriter
+        import dataclasses
+
+        dsc_config_dict = dataclasses.asdict(dsc_config)
+        # Convert Path objects to strings for JSON serialization
+        for k, v in dsc_config_dict.items():
+            if isinstance(v, Path):
+                dsc_config_dict[k] = str(v)
+
+        dsc_writer = pe.Node(
+            DSCDerivativeWriter(
+                output_dir=str(output_dir),
+                subject_id=subject_id,
+                session_id=session_id or "",
+                bids_dir=str(bids_dir),
+                config_dict=dsc_config_dict,
+                smooth_fwhm=dsc_config.smooth_fwhm,
+            ),
+            name="dsc_writer",
+        )
+
+        # Connect perfusion maps to writer
+        workflow.connect([
+            (dsc_wf, dsc_writer, [
+                # Quantification-independent maps
+                ("outputnode.mtt_map", "mtt_map"),
+                ("outputnode.tmax_map", "tmax_map"),
+                ("outputnode.psr_map", "psr_map"),
+                ("outputnode.ph_map", "ph_map"),
+                ("outputnode.ttp_map", "ttp_map"),
+                ("outputnode.cnr_map", "cnr_map"),
+                ("outputnode.auc_diff_map", "auc_diff_map"),
+                ("outputnode.snr_map", "snr_map"),
+                ("outputnode.tsnr_map", "tsnr_map"),
+                # Relative maps
+                ("outputnode.rel_cbf_map", "rel_cbf_map"),
+                ("outputnode.rel_cbv_map", "rel_cbv_map"),
+                ("outputnode.rel_auc_raw_map", "rel_auc_raw_map"),
+                ("outputnode.rel_auc_corr_map", "rel_auc_corr_map"),
+                # Absolute maps (may be undefined if gating failed)
+                ("outputnode.abs_cbf_map", "abs_cbf_map"),
+                ("outputnode.abs_cbv_map", "abs_cbv_map"),
+                ("outputnode.abs_auc_raw_map", "abs_auc_raw_map"),
+                ("outputnode.abs_auc_corr_map", "abs_auc_corr_map"),
+                # Normalized maps
+                ("outputnode.ncbv_map", "ncbv_map"),
+                ("outputnode.ncbf_map", "ncbf_map"),
+                # Leakage correction
+                ("outputnode.k2_map", "k2_map"),
+                # Motion-corrected data
+                ("outputnode.dsc_moco", "dsc_moco"),
+                ("outputnode.dsc_mean", "dsc_mean"),
+                # AIF outputs
+                ("outputnode.aif_curve", "aif_curve"),
+                ("outputnode.aif_mask", "aif_mask"),
+                # Registration
+                ("outputnode.dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
+                ("outputnode.registration_filmstrip", "registration_filmstrip"),
+                # QC metrics
+                ("outputnode.qc_metrics", "qc_metrics"),
+            ]),
+            (inputnode, dsc_writer, [("dsc_file", "source_dsc")]),
+        ])
+
+        # Connect smoothed maps to writer (if smoothing enabled)
+        if dsc_config.smooth_fwhm > 0:
+            workflow.connect([
+                (dsc_wf, dsc_writer, [
+                    ("outputnode.smooth_quant_indep", "smooth_quant_indep"),
+                    ("outputnode.smooth_rel", "smooth_rel"),
+                    ("outputnode.smooth_abs", "smooth_abs"),
+                ]),
+            ])
 
     # -------------------------------------------------------------------
     # DCE perfusion workflow (requires anat, uses DSC CBV if available)
@@ -641,7 +718,7 @@ def init_pmriprep_wf(
         if dsc_wf is not None:
             workflow.connect([
                 (dsc_wf, dce_wf, [
-                    ("outputnode.cbv_map", "inputnode.dsc_cbv_file"),
+                    ("outputnode.rel_cbv_map", "inputnode.dsc_cbv_file"),
                     ("outputnode.aif_qc", "inputnode.dsc_aif_qc_file"),
                 ]),
             ])

@@ -515,9 +515,9 @@ class DSCRegistrationInputSpec(CommandLineInputSpec):
         desc="Brain mask for QC metric calculation (optional)",
     )
     use_flirt = traits.Bool(
-        False,
+        True,
         usedefault=True,
-        desc="Use FLIRT only instead of BBR (default: BBR with FLIRT init)",
+        desc="Use two-stage FLIRT registration (default: True). Set False for BBR with FLIRT init",
     )
     dof = traits.Int(
         6,
@@ -557,13 +557,18 @@ class DSCRegistration(CommandLine):
     structural image to DSC space. The registration enables overlay of perfusion
     maps on anatomical images for clinical interpretation.
 
+    Two-stage registration is used in both modes:
+      Stage 1: Coarse global search (normcorr, -180 to 180 deg, coarsesearch 30)
+      Stage 2: Refined (normmi, -30 to 30 deg, init from stage 1)
+
     Two modes are available:
 
-    1. **BBR mode** (default, use_flirt=False): Uses FSL's boundary-based registration
-       with white matter segmentation for accurate coregistration. Requires wm_seg.
+    1. **FLIRT mode** (default, use_flirt=True): Uses two-stage FSL FLIRT rigid
+       registration. Recommended for most cases.
 
-    2. **FLIRT mode** (use_flirt=True): Uses standard FSL FLIRT rigid registration
-       with normalized mutual information cost function.
+    2. **BBR mode** (use_flirt=False): Uses two-stage FLIRT initialization followed
+       by boundary-based registration with white matter segmentation. Requires wm_seg.
+       May not be appropriate when T1w and DSC have different contrast states.
 
     Both modes support lesion mask cost function weighting, where the lesion
     region is excluded from the cost function to prevent tumors from biasing
@@ -685,7 +690,15 @@ class DSCRegistration(CommandLine):
     def _format_arg(
         self, name: str, trait_spec: Any, value: Any
     ) -> str:
-        """Format command line arguments."""
+        """Format command line arguments.
+
+        Implements two-stage FLIRT registration:
+          Stage 1: Coarse global search (normcorr, wide search range)
+          Stage 2: Refined (normmi, narrow search, init from stage 1)
+
+        For BBR mode (use_flirt=False), the two-stage FLIRT serves as
+        initialization before the BBR refinement step.
+        """
         if name == "t1w_file":
             t1w_file = str(value)
             dsc_mean = str(self.inputs.dsc_mean)
@@ -712,77 +725,106 @@ class DSCRegistration(CommandLine):
                 invert_cmd = f"fslmaths {lesion_mask} -mul -1 -add 1 {weight_file}"
                 cmd_parts.append(invert_cmd)
 
+            # Temporary matrix for stage 1 coarse registration
+            stage1_matrix = str(out_path.parent / "_tmp_stage1.mat")
+
+            # Weight flags string (reused across stages)
+            # Lesion weight is in T1w space (same as -in), so only use -inweight.
+            # Cannot use -refweight because DSC reference has different dimensions.
+            weight_flags = ""
+            if weight_file:
+                weight_flags = f" -inweight {weight_file}"
+
+            # --- Stage 1: Coarse global search ---
+            # Uses normcorr cost with wide search range to avoid local minima
+            # when T1w and DSC have different orientations
+            stage1_cmd = (
+                f"flirt -in {t1w_file} -ref {dsc_mean} "
+                f"-omat {stage1_matrix} "
+                f"-dof {dof} -cost normcorr "
+                f"-searchrx -180 180 -searchry -180 180 -searchrz -180 180 "
+                f"-coarsesearch 30 -finesearch 10"
+            )
+            stage1_cmd += weight_flags
+            cmd_parts.append(stage1_cmd)
+
             if use_flirt:
-                # Standard FLIRT registration
-                flirt_cmd = (
+                # --- Stage 2: Refined registration ---
+                # Uses normmi cost with narrow search, initialized from stage 1
+                stage2_cmd = (
                     f"flirt -in {t1w_file} -ref {dsc_mean} "
                     f"-out {out_file} -omat {out_matrix} "
-                    f"-dof {dof} -cost {cost}"
+                    f"-dof {dof} -cost {cost} "
+                    f"-init {stage1_matrix} "
+                    f"-searchrx -30 30 -searchry -30 30 -searchrz -30 30"
                 )
+                stage2_cmd += weight_flags
+                cmd_parts.append(stage2_cmd)
 
-                # Add weight flags if available
-                if weight_file:
-                    flirt_cmd += f" -inweight {weight_file} -refweight {weight_file}"
-
-                cmd_parts.append(flirt_cmd)
+                # Clean up stage 1 temp matrix
+                cmd_parts.append(f"rm -f {stage1_matrix}")
             else:
-                # BBR mode with FLIRT initialization
+                # BBR mode: two-stage FLIRT as initialization for BBR
+                import warnings
+                warnings.warn(
+                    "BBR registration requested. BBR assumes similar contrast "
+                    "states between T1w and DSC. If DSC was acquired after "
+                    "contrast injection, BBR may be suboptimal. Consider FLIRT "
+                    "mode (use_flirt=True)."
+                )
                 wm_seg = getattr(self.inputs, "wm_seg", None)
 
-                # Initial FLIRT registration for starting estimate
-                init_matrix = str(out_path.parent / f"_tmp_init{ext.replace('.nii', '.mat').replace('.gz', '')}")
-
-                flirt_init_cmd = (
+                # Stage 2: Refined FLIRT (same as FLIRT path but saves to
+                # a temp matrix that becomes the BBR init)
+                stage2_matrix = str(out_path.parent / "_tmp_stage2.mat")
+                stage2_cmd = (
                     f"flirt -in {t1w_file} -ref {dsc_mean} "
-                    f"-omat {init_matrix} "
-                    f"-dof {dof} -cost {cost}"
+                    f"-omat {stage2_matrix} "
+                    f"-dof {dof} -cost {cost} "
+                    f"-init {stage1_matrix} "
+                    f"-searchrx -30 30 -searchry -30 30 -searchrz -30 30"
                 )
+                stage2_cmd += weight_flags
+                cmd_parts.append(stage2_cmd)
 
-                if weight_file:
-                    flirt_init_cmd += f" -inweight {weight_file} -refweight {weight_file}"
-
-                cmd_parts.append(flirt_init_cmd)
+                # Clean up stage 1 temp matrix
+                cmd_parts.append(f"rm -f {stage1_matrix}")
 
                 # BBR refinement if wm_seg is available
                 if wm_seg and Path(wm_seg).exists():
-                    # Use FSL's epi_reg for BBR (handles all the complexity)
-                    # epi_reg takes EPI, T1, and WM seg and outputs registered EPI
-                    # But we're registering T1 to EPI, so we use FLIRT with BBR cost
-
                     # Threshold WM segmentation for BBR
                     wm_thresh = str(out_path.parent / f"_tmp_wm_thresh{ext}")
                     cmd_parts.append(
                         f"fslmaths {wm_seg} -thr 0.5 -bin {wm_thresh}"
                     )
 
-                    # FLIRT with BBR cost function
+                    # FLIRT with BBR cost function, init from two-stage result
                     bbr_cmd = (
                         f"flirt -in {t1w_file} -ref {dsc_mean} "
                         f"-out {out_file} -omat {out_matrix} "
                         f"-dof {dof} -cost bbr "
-                        f"-init {init_matrix} "
+                        f"-init {stage2_matrix} "
                         f"-wmseg {wm_thresh}"
                     )
 
                     if weight_file:
-                        bbr_cmd += f" -refweight {weight_file}"
+                        bbr_cmd += f" -inweight {weight_file}"
 
                     cmd_parts.append(bbr_cmd)
 
                     # Clean up temp files
-                    cmd_parts.append(f"rm -f {init_matrix} {wm_thresh}")
+                    cmd_parts.append(f"rm -f {stage2_matrix} {wm_thresh}")
                 else:
-                    # No WM seg available, fall back to using init result
-                    # Apply the init transform
+                    # No WM seg available, use stage 2 result directly
                     apply_cmd = (
                         f"flirt -in {t1w_file} -ref {dsc_mean} "
-                        f"-out {out_file} -init {init_matrix} -applyxfm"
+                        f"-out {out_file} -init {stage2_matrix} -applyxfm"
                     )
                     cmd_parts.append(apply_cmd)
 
-                    # Copy init matrix to final output
-                    cmd_parts.append(f"cp {init_matrix} {out_matrix}")
-                    cmd_parts.append(f"rm -f {init_matrix}")
+                    # Copy stage 2 matrix to final output
+                    cmd_parts.append(f"cp {stage2_matrix} {out_matrix}")
+                    cmd_parts.append(f"rm -f {stage2_matrix}")
 
             # Clean up weight file if created
             if weight_file:
@@ -814,6 +856,7 @@ class DSCRegistration(CommandLine):
                     calculate_correlation_from_files,
                     calculate_nmi_from_files,
                     calculate_dice_from_files,
+                    calculate_dice,
                 )
 
                 # Get optional brain mask
@@ -843,14 +886,40 @@ class DSCRegistration(CommandLine):
                     pass
 
                 # Calculate DICE if brain mask provided
-                # This compares the transformed T1w brain mask with the DSC brain mask
-                # For now, we just report NMI and correlation as main QC metrics
-                # DICE would require having a brain mask in both spaces
+                # Threshold registered T1w to create pseudo brain mask, compare
+                # with the DSC brain mask
                 if mask_path:
-                    # DICE is typically computed between two masks
-                    # Here we report a placeholder - actual DICE requires
-                    # comparing transformed brain mask with reference brain mask
-                    qc_metrics["brain_mask_used"] = True
+                    import nibabel as nib
+
+                    try:
+                        # Load registered T1w and threshold to create pseudo mask
+                        reg_img = nib.load(out_file)
+                        reg_data = reg_img.get_fdata()
+                        nonzero = reg_data[reg_data > 0]
+                        if len(nonzero) > 100:
+                            thresh = np.percentile(nonzero, 15)
+                            reg_mask = (reg_data > thresh).astype(np.float64)
+                        else:
+                            reg_mask = (reg_data > 0).astype(np.float64)
+
+                        # Load DSC brain mask
+                        dsc_mask_data = nib.load(mask_path).get_fdata()
+
+                        # Compute DICE
+                        dice = calculate_dice(reg_mask, dsc_mask_data, threshold=0.5)
+                        outputs["dice"] = dice
+                        qc_metrics["dice"] = dice
+                        qc_metrics["brain_mask_used"] = True
+
+                        if dice < 0.8:
+                            import warnings
+                            warnings.warn(
+                                f"Registration DICE coefficient is low ({dice:.3f} < 0.8). "
+                                "Check registration quality."
+                            )
+                    except Exception:
+                        qc_metrics["brain_mask_used"] = True
+                        qc_metrics["dice_computation_failed"] = True
 
             except Exception:
                 # If QC computation fails, continue without metrics

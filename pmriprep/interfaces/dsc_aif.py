@@ -204,6 +204,12 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         desc="Optional 3D lesion mask for exclusion",
     )
 
+    signal_file = File(
+        exists=True,
+        mandatory=False,
+        desc="4D raw signal for S0-based partial volume rejection",
+    )
+
     # Detection parameters
     aif_method = traits.Enum(
         "auto",
@@ -366,13 +372,20 @@ class AIFDetection(BaseInterface):
     input_spec = AIFDetectionInputSpec
     output_spec = AIFDetectionOutputSpec
 
-    # AIF quality thresholds
+    # AIF quality thresholds — 4 levels from strict to degraded.
+    # Each level includes the original 4 checks plus 5 new checks:
+    #   baseline_return, peak_to_baseline, secondary_peak, monotonicity, s0_fraction
     _STRICT_THRESHOLDS: dict[str, Any] = {
         "washout_min": 0.20,
         "fwhm_min": 5,
         "fwhm_max": 15,
         "cnr_min": 4.0,
         "baseline_cv_max": 0.10,
+        "baseline_return_max": 0.30,
+        "peak_to_baseline_min": 3.0,
+        "secondary_peak_max": 0.70,
+        "monotonicity_min": 0.60,
+        "s0_fraction_max": 0.40,
     }
     _RELAXED_THRESHOLDS: dict[str, Any] = {
         "washout_min": 0.10,
@@ -380,6 +393,35 @@ class AIFDetection(BaseInterface):
         "fwhm_max": 20,
         "cnr_min": 2.0,
         "baseline_cv_max": 0.20,
+        "baseline_return_max": 0.40,
+        "peak_to_baseline_min": 2.0,
+        "secondary_peak_max": 0.85,
+        "monotonicity_min": 0.50,
+        "s0_fraction_max": 0.60,
+    }
+    _PERMISSIVE_THRESHOLDS: dict[str, Any] = {
+        "washout_min": 0.05,
+        "fwhm_min": 2,
+        "fwhm_max": 25,
+        "cnr_min": 1.5,
+        "baseline_cv_max": 0.30,
+        "baseline_return_max": 0.50,
+        "peak_to_baseline_min": 1.5,
+        "secondary_peak_max": 1.00,
+        "monotonicity_min": 0.40,
+        "s0_fraction_max": 0.80,
+    }
+    _DEGRADED_THRESHOLDS: dict[str, Any] = {
+        "washout_min": 0.02,
+        "fwhm_min": 1,
+        "fwhm_max": 40,
+        "cnr_min": 1.0,
+        "baseline_cv_max": 0.40,
+        "baseline_return_max": 0.70,
+        "peak_to_baseline_min": 1.2,
+        "secondary_peak_max": 1.50,
+        "monotonicity_min": 0.30,
+        "s0_fraction_max": 0.95,
     }
 
     def _gen_outfilename(self, suffix: str = "_aif_curve.txt") -> str:
@@ -397,6 +439,10 @@ class AIFDetection(BaseInterface):
         """Get AIF quality thresholds for criteria level."""
         if criteria == "strict":
             return self._STRICT_THRESHOLDS.copy()
+        elif criteria == "permissive":
+            return self._PERMISSIVE_THRESHOLDS.copy()
+        elif criteria == "degraded":
+            return self._DEGRADED_THRESHOLDS.copy()
         return self._RELAXED_THRESHOLDS.copy()
 
     def _score_candidate(
@@ -404,15 +450,27 @@ class AIFDetection(BaseInterface):
         curve: npt.NDArray[Any],
         baseline_frames: int,
         thresholds: dict[str, Any],
+        s0_value: Optional[float] = None,
+        median_s0: Optional[float] = None,
     ) -> tuple[float, dict[str, float]]:
-        """Score a candidate AIF curve.
+        """Score a candidate AIF curve with 8 quality checks.
 
         Returns a composite quality score and individual metrics.
         Score is 0 if thresholds are not met, otherwise 0-1.
+
+        Quality checks (matching perf-plus source):
+        1. CNR (contrast-to-noise ratio)
+        2. Washout fraction
+        3. FWHM (full width at half maximum)
+        4. Baseline CV (coefficient of variation)
+        5. S0-based partial volume rejection (weight 5x — dominant factor)
+        6. Baseline return ratio
+        7. Peak-to-baseline ratio
+        8. Post-peak monotonicity
         """
         metrics: dict[str, float] = {}
 
-        # Compute individual metrics
+        # --- Original 4 metrics ---
         cnr = compute_aif_cnr(curve, baseline_frames)
         washout = compute_aif_washout_fraction(curve, baseline_frames)
         fwhm = compute_aif_fwhm_frames(curve, baseline_frames)
@@ -423,7 +481,7 @@ class AIFDetection(BaseInterface):
         metrics["fwhm"] = float(fwhm)
         metrics["baseline_cv"] = baseline_cv
 
-        # Check thresholds
+        # Check original thresholds
         if cnr < thresholds["cnr_min"]:
             return 0.0, metrics
         if washout < thresholds["washout_min"]:
@@ -433,28 +491,140 @@ class AIFDetection(BaseInterface):
         if baseline_cv > thresholds["baseline_cv_max"]:
             return 0.0, metrics
 
-        # Compute composite score (all thresholds met)
-        # Weight factors: CNR most important, then washout, then FWHM
+        # --- New metric 5: S0-based partial volume rejection ---
+        # Physics: blood T2* ~15ms at 3T, tissue T2* ~60ms.
+        # Pure blood voxels have LOW S0 (fast T2* decay).
+        # s0_fraction = s0_voxel / median_s0_brain
+        # Reject if s0_fraction > threshold (too much tissue signal)
+        s0_fraction = 0.0
+        if (
+            s0_value is not None
+            and median_s0 is not None
+            and median_s0 > EPSILON_CONCENTRATION
+        ):
+            s0_fraction = s0_value / median_s0
+            metrics["s0_fraction"] = s0_fraction
+            if "s0_fraction_max" in thresholds and s0_fraction > thresholds["s0_fraction_max"]:
+                return 0.0, metrics
+
+        # --- New metric 6: Baseline return ratio ---
+        # (tail_mean - baseline_mean) / (peak - baseline_mean)
+        # High return ratio means signal didn't recover → not arterial
+        n_frames = len(curve)
+        tail_frames = min(5, max(1, n_frames // 10))
+        baseline_mean = float(np.mean(curve[:baseline_frames]))
+        tail_mean = float(np.mean(curve[-tail_frames:]))
+        peak = float(np.max(curve))
+        peak_minus_baseline = peak - baseline_mean
+
+        baseline_return = 0.0
+        if peak_minus_baseline > EPSILON_CONCENTRATION:
+            baseline_return = abs(tail_mean - baseline_mean) / peak_minus_baseline
+        metrics["baseline_return"] = baseline_return
+        if "baseline_return_max" in thresholds and baseline_return > thresholds["baseline_return_max"]:
+            return 0.0, metrics
+
+        # --- New metric 7: Peak-to-baseline ratio ---
+        # peak_conc / baseline_std — should be high for arterial
+        baseline_std = float(np.std(curve[:baseline_frames]))
+        peak_to_baseline = 0.0
+        if baseline_std > EPSILON_CONCENTRATION:
+            peak_to_baseline = peak_minus_baseline / baseline_std
+        else:
+            peak_to_baseline = 100.0  # Perfect baseline
+        metrics["peak_to_baseline"] = peak_to_baseline
+        if "peak_to_baseline_min" in thresholds and peak_to_baseline < thresholds["peak_to_baseline_min"]:
+            return 0.0, metrics
+
+        # --- New metric 8: Secondary peak detection ---
+        # Detect secondary peak after initial washout; reject if too large
+        # relative to the primary peak (suggests venous contamination)
+        peak_idx = int(np.argmax(curve))
+        secondary_peak_ratio = 0.0
+        # Look for second peak starting well after the primary
+        search_start = min(peak_idx + max(5, n_frames // 10), n_frames - 2)
+        if search_start < n_frames - 1:
+            post_washout = curve[search_start:]
+            if len(post_washout) > 2:
+                local_max_idx = int(np.argmax(post_washout))
+                local_max_val = float(post_washout[local_max_idx])
+                if peak_minus_baseline > EPSILON_CONCENTRATION:
+                    secondary_peak_ratio = (local_max_val - baseline_mean) / peak_minus_baseline
+        metrics["secondary_peak"] = secondary_peak_ratio
+        if "secondary_peak_max" in thresholds and secondary_peak_ratio > thresholds["secondary_peak_max"]:
+            return 0.0, metrics
+
+        # --- New metric 9: Post-peak monotonicity ---
+        # Fraction of post-peak frames with decreasing values.
+        # Arterial curves should show monotonic decay after peak.
+        post_peak = curve[peak_idx + 1:]
+        if len(post_peak) > 1:
+            diffs = np.diff(post_peak)
+            monotonicity = float(np.sum(diffs <= 0)) / len(diffs)
+        else:
+            monotonicity = 1.0
+        metrics["monotonicity"] = monotonicity
+        if "monotonicity_min" in thresholds and monotonicity < thresholds["monotonicity_min"]:
+            return 0.0, metrics
+
+        # --- Composite score (all thresholds met) ---
+        # Weight factors match perf-plus source:
+        # S0 fraction = 50% (5x weight — dominant factor)
+        # CNR = 20% (2x)
+        # Washout, FWHM, baseline_cv, new metrics split remainder
         score = 0.0
 
-        # CNR contribution (0-0.4): normalized to expected range 4-20
-        cnr_score = min(1.0, (cnr - thresholds["cnr_min"]) / 16.0)
-        score += 0.4 * cnr_score
+        # Weights with S0 data:    S0=0.50, CNR=0.20, washout=0.10, FWHM=0.05,
+        #                           baseline_cv=0.05, monotonicity=0.05, return=0.05
+        # Weights without S0 data: CNR=0.40, washout=0.20, FWHM=0.10,
+        #                           baseline_cv=0.10, monotonicity=0.10, return=0.10
+        has_s0 = (
+            s0_value is not None
+            and median_s0 is not None
+            and "s0_fraction_max" in thresholds
+        )
 
-        # Washout contribution (0-0.3): closer to 0.5 is ideal
+        if has_s0:
+            w_s0, w_cnr, w_wash, w_fwhm, w_cv, w_mono, w_ret = (
+                0.50, 0.20, 0.10, 0.05, 0.05, 0.05, 0.05
+            )
+        else:
+            w_s0, w_cnr, w_wash, w_fwhm, w_cv, w_mono, w_ret = (
+                0.00, 0.40, 0.20, 0.10, 0.10, 0.10, 0.10
+            )
+
+        # S0 contribution: lower s0_fraction is better (more arterial)
+        if has_s0:
+            max_s0 = thresholds["s0_fraction_max"]
+            s0_score = max(0.0, 1.0 - s0_fraction / max_s0) if max_s0 > 0 else 0.5
+            score += w_s0 * s0_score
+
+        # CNR contribution
+        cnr_score = min(1.0, (cnr - thresholds["cnr_min"]) / 16.0)
+        score += w_cnr * cnr_score
+
+        # Washout contribution: closer to 0.5 is ideal
         ideal_washout = 0.5
         washout_score = 1.0 - abs(washout - ideal_washout) / 0.5
-        score += 0.3 * max(0, washout_score)
+        score += w_wash * max(0, washout_score)
 
-        # FWHM contribution (0-0.2): closer to 8-10 is ideal
+        # FWHM contribution
         ideal_fwhm = 9
         fwhm_range = thresholds["fwhm_max"] - thresholds["fwhm_min"]
-        fwhm_score = 1.0 - abs(fwhm - ideal_fwhm) / (fwhm_range / 2)
-        score += 0.2 * max(0, fwhm_score)
+        fwhm_score = 1.0 - abs(fwhm - ideal_fwhm) / max(1, fwhm_range / 2)
+        score += w_fwhm * max(0, fwhm_score)
 
-        # Baseline stability contribution (0-0.1): lower is better
+        # Baseline CV contribution: lower is better
         baseline_score = 1.0 - (baseline_cv / thresholds["baseline_cv_max"])
-        score += 0.1 * max(0, baseline_score)
+        score += w_cv * max(0, baseline_score)
+
+        # Monotonicity contribution
+        score += w_mono * monotonicity
+
+        # Baseline return contribution: lower is better
+        if "baseline_return_max" in thresholds and thresholds["baseline_return_max"] > 0:
+            return_score = 1.0 - baseline_return / thresholds["baseline_return_max"]
+            score += w_ret * max(0, return_score)
 
         return min(1.0, score), metrics
 
@@ -465,11 +635,21 @@ class AIFDetection(BaseInterface):
         n_candidates: int,
         baseline_frames: int,
         thresholds: dict[str, Any],
+        s0_map: Optional[npt.NDArray[Any]] = None,
+        median_s0: Optional[float] = None,
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
         """Find candidate AIF voxels within a mask.
 
         Returns voxel coordinates, scores, and metrics for candidates
         that meet the threshold criteria, sorted by score descending.
+
+        Parameters
+        ----------
+        s0_map : np.ndarray, optional
+            3D map of baseline signal intensity (S0) for partial volume
+            rejection. Computed from raw signal baseline frames.
+        median_s0 : float, optional
+            Median S0 within the brain mask for normalization.
         """
         candidates: list[tuple[int, int, int]] = []
         scores: list[float] = []
@@ -491,7 +671,15 @@ class AIFDetection(BaseInterface):
             if np.max(np.abs(curve)) < EPSILON_CONCENTRATION:
                 continue
 
-            score, metrics = self._score_candidate(curve, baseline_frames, thresholds)
+            # Get S0 value for this voxel if available
+            s0_value: Optional[float] = None
+            if s0_map is not None:
+                s0_value = float(s0_map[x, y, z])
+
+            score, metrics = self._score_candidate(
+                curve, baseline_frames, thresholds,
+                s0_value=s0_value, median_s0=median_s0,
+            )
             if score > 0:
                 candidates.append((x, y, z))
                 scores.append(score)
@@ -560,7 +748,17 @@ class AIFDetection(BaseInterface):
         return aif
 
     def _run_interface(self, runtime: Any) -> Any:
-        """Execute AIF detection."""
+        """Execute AIF detection with 7-level fallback hierarchy.
+
+        Detection levels (matching perf-plus source):
+        1. Atlas-based, strict criteria
+        2. Atlas-based, relaxed criteria
+        3. Whole-brain, user-specified criteria
+        4. Whole-brain, relaxed criteria
+        5. Whole-brain, permissive criteria
+        6. Whole-brain, degraded criteria
+        7. Synthetic (population) AIF fallback
+        """
         import nibabel as nib  # type: ignore[import-untyped]
 
         # Load data
@@ -571,19 +769,14 @@ class AIFDetection(BaseInterface):
         brain_img = nib.load(self.inputs.brain_mask_file)
         brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
 
-        # Check if brain mask dimensions match concentration data
-        # If not (e.g., mask is in T1w space, data is in DSC space), create mask from data
+        # Verify brain mask is in DSC space (guaranteed by extract_dsc_brain node)
         if brain_mask.shape[:3] != conc_data.shape[:3]:
-            import warnings
-            warnings.warn(
+            raise RuntimeError(
                 f"Brain mask shape {brain_mask.shape[:3]} does not match "
                 f"concentration data shape {conc_data.shape[:3]}. "
-                "Creating mask from DSC data intensity."
+                "The brain mask must be in native DSC space. "
+                "Ensure extract_dsc_brain node is connected upstream."
             )
-            # Create simple mask from mean DSC intensity
-            mean_intensity = np.mean(conc_data, axis=3)
-            threshold = np.percentile(mean_intensity[mean_intensity > 0], 10)
-            brain_mask = (mean_intensity > threshold).astype(np.float64)
 
         # Optional atlas mask
         atlas_mask: Optional[npt.NDArray[Any]] = None
@@ -591,11 +784,46 @@ class AIFDetection(BaseInterface):
             atlas_img = nib.load(self.inputs.atlas_mask_file)
             atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
 
-        # Optional lesion mask
+        # Optional lesion mask — may be in T1w space, resample to DSC if needed.
+        # Use affine comparison (not just shape) to detect space mismatch.
         lesion_mask: Optional[npt.NDArray[Any]] = None
         if self.inputs.lesion_mask_file:
             lesion_img = nib.load(self.inputs.lesion_mask_file)
-            lesion_mask = lesion_img.get_fdata()  # type: ignore[attr-defined]
+            lesion_data = lesion_img.get_fdata()  # type: ignore[attr-defined]
+
+            needs_resample = (
+                lesion_data.shape[:3] != conc_data.shape[:3]
+                or not np.allclose(lesion_img.affine, conc_img.affine, atol=1e-3)  # type: ignore[attr-defined]
+            )
+            if needs_resample:
+                from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+                resampled = resample_to_img(
+                    lesion_img, conc_img, interpolation="nearest"
+                )
+                lesion_mask = (resampled.get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
+            else:
+                lesion_mask = lesion_data
+
+        # --- Load raw signal for S0-based partial volume rejection ---
+        s0_map: Optional[npt.NDArray[Any]] = None
+        median_s0: Optional[float] = None
+        if self.inputs.signal_file:
+            signal_img = nib.load(self.inputs.signal_file)
+            signal_data: npt.NDArray[Any] = signal_img.get_fdata()  # type: ignore[attr-defined]
+            baseline_frames_s0 = int(self.inputs.baseline_frames)
+
+            # Compute S0 map: mean of baseline (pre-bolus) frames
+            # S0 reflects tissue T2* — blood has low T2* (~15ms at 3T)
+            # so pure arterial voxels have LOW S0
+            if signal_data.shape[3] > baseline_frames_s0:
+                s0_map = np.mean(signal_data[:, :, :, :baseline_frames_s0], axis=3)
+            else:
+                s0_map = np.mean(signal_data, axis=3)
+
+            # Compute median S0 within brain mask for normalization
+            brain_voxels = s0_map[brain_mask > 0.5]
+            if len(brain_voxels) > 0:
+                median_s0 = float(np.median(brain_voxels[brain_voxels > 0]))
 
         # Parameters
         aif_method = str(self.inputs.aif_method)
@@ -609,7 +837,7 @@ class AIFDetection(BaseInterface):
         tr = 1.5  # Default TR, would ideally come from header
 
         # Initialize results
-        detection_level: Literal["atlas", "relaxed", "synthetic"] = "synthetic"
+        detection_level = "synthetic"
         candidates: list[tuple[int, int, int]] = []
         scores: list[float] = []
         metrics_list: list[dict[str, float]] = []
@@ -619,7 +847,7 @@ class AIFDetection(BaseInterface):
             # Go directly to synthetic AIF
             pass
         else:
-            # Multi-level AIF detection
+            # Multi-level AIF detection (7 levels)
 
             # Create search mask (brain minus lesion with distance buffer)
             search_mask = brain_mask.copy()
@@ -633,38 +861,62 @@ class AIFDetection(BaseInterface):
                 combined_mask = search_mask * atlas_mask
                 thresholds = self._get_thresholds("strict")
                 candidates, scores, metrics_list = self._find_candidates_in_mask(
-                    conc_data, combined_mask, n_candidates, baseline_frames, thresholds
+                    conc_data, combined_mask, n_candidates, baseline_frames,
+                    thresholds, s0_map=s0_map, median_s0=median_s0,
                 )
                 if candidates:
-                    detection_level = "atlas"
+                    detection_level = "atlas_strict"
 
             # Level 2: Atlas-based with relaxed criteria
             if not candidates and atlas_mask is not None:
                 combined_mask = search_mask * atlas_mask
                 thresholds = self._get_thresholds("relaxed")
                 candidates, scores, metrics_list = self._find_candidates_in_mask(
-                    conc_data, combined_mask, n_candidates, baseline_frames, thresholds
+                    conc_data, combined_mask, n_candidates, baseline_frames,
+                    thresholds, s0_map=s0_map, median_s0=median_s0,
                 )
                 if candidates:
-                    detection_level = "relaxed"
+                    detection_level = "atlas_relaxed"
 
             # Level 3: Whole-brain with user-specified criteria
             if not candidates:
                 thresholds = self._get_thresholds(criteria)
                 candidates, scores, metrics_list = self._find_candidates_in_mask(
-                    conc_data, search_mask, n_candidates, baseline_frames, thresholds
+                    conc_data, search_mask, n_candidates, baseline_frames,
+                    thresholds, s0_map=s0_map, median_s0=median_s0,
                 )
                 if candidates:
-                    detection_level = "relaxed"
+                    detection_level = f"brain_{criteria}"
 
             # Level 4: Whole-brain with relaxed criteria (if not already relaxed)
             if not candidates and criteria == "strict":
                 thresholds = self._get_thresholds("relaxed")
                 candidates, scores, metrics_list = self._find_candidates_in_mask(
-                    conc_data, search_mask, n_candidates, baseline_frames, thresholds
+                    conc_data, search_mask, n_candidates, baseline_frames,
+                    thresholds, s0_map=s0_map, median_s0=median_s0,
                 )
                 if candidates:
-                    detection_level = "relaxed"
+                    detection_level = "brain_relaxed"
+
+            # Level 5: Whole-brain with permissive criteria
+            if not candidates:
+                thresholds = self._get_thresholds("permissive")
+                candidates, scores, metrics_list = self._find_candidates_in_mask(
+                    conc_data, search_mask, n_candidates, baseline_frames,
+                    thresholds, s0_map=s0_map, median_s0=median_s0,
+                )
+                if candidates:
+                    detection_level = "brain_permissive"
+
+            # Level 6: Whole-brain with degraded criteria
+            if not candidates:
+                thresholds = self._get_thresholds("degraded")
+                candidates, scores, metrics_list = self._find_candidates_in_mask(
+                    conc_data, search_mask, n_candidates, baseline_frames,
+                    thresholds, s0_map=s0_map, median_s0=median_s0,
+                )
+                if candidates:
+                    detection_level = "brain_degraded"
 
         # Generate AIF curve
         aif_curve: npt.NDArray[Any]
@@ -693,9 +945,22 @@ class AIFDetection(BaseInterface):
                     ),
                     "n_candidates": len(candidates),
                 }
+                # Add new metrics if present
+                if "s0_fraction" in metrics_list[0]:
+                    qc_metrics["s0_fraction_mean"] = float(
+                        np.mean([m.get("s0_fraction", 0.0) for m in metrics_list])
+                    )
+                if "monotonicity" in metrics_list[0]:
+                    qc_metrics["monotonicity_mean"] = float(
+                        np.mean([m.get("monotonicity", 0.0) for m in metrics_list])
+                    )
+                if "baseline_return" in metrics_list[0]:
+                    qc_metrics["baseline_return_mean"] = float(
+                        np.mean([m.get("baseline_return", 0.0) for m in metrics_list])
+                    )
 
         elif not disable_fallback:
-            # Generate synthetic AIF as fallback
+            # Level 7: Generate synthetic AIF as final fallback
             aif_curve = self._generate_synthetic_aif(n_timepoints, tr, baseline_frames)
             detection_level = "synthetic"
             quality_score = 0.3  # Low score for synthetic
@@ -710,14 +975,34 @@ class AIFDetection(BaseInterface):
         else:
             # No fallback, raise error
             raise RuntimeError(
-                "AIF detection failed and synthetic fallback is disabled"
+                "AIF detection failed at all 6 levels and synthetic fallback is disabled"
             )
 
-        # Gamma-variate fitting (placeholder, full implementation in US-037)
+        qc_metrics["detection_level"] = detection_level
+        qc_metrics["s0_rejection_available"] = s0_map is not None
+
+        # Gamma-variate fitting (wire existing utils/dsc_aif.py implementation)
         gamma_fit_applied = False
         if gamma_fit and detection_level != "synthetic":
-            # TODO: Implement gamma-variate fitting in utils/dsc_aif.py
-            gamma_fit_applied = False  # Will be True when US-037 implemented
+            try:
+                from pmriprep.utils.dsc_aif import fit_gamma_variate
+
+                fit_result = fit_gamma_variate(
+                    aif_curve=aif_curve,
+                    baseline_frames=baseline_frames,
+                    remove_recirculation=True,
+                    preserve_auc=True,
+                    tr=tr,
+                )
+                if fit_result.fit_converged and fit_result.r_squared > 0.5:
+                    aif_curve = fit_result.fitted_curve
+                    gamma_fit_applied = True
+                    qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
+                    qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
+                    qc_metrics["gamma_recirculation_removed"] = fit_result.recirculation_removed
+            except Exception:
+                # Gamma fitting failed, use unmodified AIF
+                pass
 
         # Save outputs
         out_aif_curve = self._gen_outfilename("_aif_curve.txt")

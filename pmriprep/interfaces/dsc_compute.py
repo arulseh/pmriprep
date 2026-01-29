@@ -21,8 +21,12 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
+    EPSILON_SIGNAL,
     DEFAULT_SVD_THRESHOLD,
     DEFAULT_OI_THRESHOLD,
+    calculate_k_h,
+    VESSEL_CALIBRATION_GRE_3T,
+    get_r2_star,
 )
 from pmriprep.utils.dsc_signal import compute_psr, compute_peak_height
 
@@ -49,6 +53,26 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         exists=True,
         mandatory=False,
         desc="Optional 4D raw signal for PSR/PH calculation (if not using concentration)",
+    )
+    raw_concentration_file = File(
+        exists=True,
+        mandatory=False,
+        desc="Pre-K2 concentration (for auc_raw when K2 correction was applied)",
+    )
+    field_strength = traits.Float(
+        3.0,
+        usedefault=True,
+        desc="Magnetic field strength in Tesla (for r2_star auto-lookup)",
+    )
+    aif_detection_level = traits.Str(
+        "atlas",
+        usedefault=True,
+        desc="AIF detection level: 'atlas_strict', 'atlas_relaxed', 'brain_*', or 'synthetic'",
+    )
+    preload_classification = traits.Str(
+        "none",
+        usedefault=True,
+        desc="Preload severity: 'none', 'minimal', 'half_dose', 'significant', 'severe'",
     )
 
     # Deconvolution method
@@ -124,42 +148,72 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Save residue functions (large output)",
     )
 
-    # Output files
-    out_cbf = File(
-        genfile=True,
-        desc="Output CBF map NIfTI",
-    )
-    out_cbv = File(
-        genfile=True,
-        desc="Output CBV map NIfTI",
-    )
-    out_mtt = File(
-        genfile=True,
-        desc="Output MTT map NIfTI",
-    )
-    out_tmax = File(
-        genfile=True,
-        desc="Output Tmax map NIfTI",
-    )
-    out_psr = File(
-        genfile=True,
-        desc="Output PSR map NIfTI",
-    )
-    out_ph = File(
-        genfile=True,
-        desc="Output peak height map NIfTI",
-    )
+    # Output files — quantification-independent
+    out_mtt = File(genfile=True, desc="Output MTT map NIfTI")
+    out_tmax = File(genfile=True, desc="Output Tmax map NIfTI")
+    out_psr = File(genfile=True, desc="Output PSR map NIfTI")
+    out_ph = File(genfile=True, desc="Output peak height map NIfTI")
+    out_ttp = File(genfile=True, desc="Output TTP map NIfTI")
+    out_cnr = File(genfile=True, desc="Output CNR map NIfTI")
+
+    # Output files — AUC decomposition
+    out_auc_raw = File(genfile=True, desc="Output AUC raw (pre-K2) map NIfTI")
+    out_auc_corr = File(genfile=True, desc="Output AUC corrected (post-K2) map NIfTI")
+    out_auc_diff = File(genfile=True, desc="Output AUC diff (leakage) map NIfTI")
+
+    # Output files — relative maps (always produced)
+    out_rel_cbf = File(genfile=True, desc="Output relative CBF map NIfTI")
+    out_rel_cbv = File(genfile=True, desc="Output relative CBV map NIfTI")
+    out_rel_auc_raw = File(genfile=True, desc="Output relative AUC raw map NIfTI")
+    out_rel_auc_corr = File(genfile=True, desc="Output relative AUC corrected map NIfTI")
+
+    # Output files — absolute maps (conditional on gating)
+    out_abs_cbf = File(genfile=True, desc="Output absolute CBF map NIfTI")
+    out_abs_cbv = File(genfile=True, desc="Output absolute CBV map NIfTI")
+    out_abs_auc_raw = File(genfile=True, desc="Output absolute AUC raw map NIfTI")
+    out_abs_auc_corr = File(genfile=True, desc="Output absolute AUC corrected map NIfTI")
+
+    # Output files — quality metrics
+    out_snr = File(genfile=True, desc="Output SNR (baseline) map NIfTI")
+    out_tsnr = File(genfile=True, desc="Output tSNR (temporal) map NIfTI")
 
 
 class ComputeDSCMapsOutputSpec(TraitedSpec):
     """Output specification for ComputeDSCMaps interface."""
 
-    out_cbf = File(exists=True, desc="CBF map (cerebral blood flow)")
-    out_cbv = File(exists=True, desc="CBV map (cerebral blood volume)")
+    # Quantification-independent (always produced)
     out_mtt = File(exists=True, desc="MTT map (mean transit time)")
     out_tmax = File(exists=True, desc="Tmax map (time to maximum of residue)")
     out_psr = File(exists=True, desc="PSR map (percent signal recovery)")
     out_ph = File(exists=True, desc="PH map (peak height)")
+    out_ttp = File(exists=True, desc="TTP map (time to peak concentration)")
+    out_cnr = File(exists=True, desc="CNR map (contrast-to-noise ratio)")
+
+    # AUC decomposition (always produced)
+    out_auc_raw = File(exists=True, desc="AUC raw (pre-K2) map")
+    out_auc_corr = File(exists=True, desc="AUC corrected (post-K2) map")
+    out_auc_diff = File(exists=True, desc="AUC diff (leakage contribution) map")
+
+    # Relative maps (always produced)
+    out_rel_cbf = File(exists=True, desc="Relative CBF map")
+    out_rel_cbv = File(exists=True, desc="Relative CBV map")
+    out_rel_auc_raw = File(exists=True, desc="Relative AUC raw map")
+    out_rel_auc_corr = File(exists=True, desc="Relative AUC corrected map")
+
+    # Absolute maps (conditional — only when gating passes)
+    out_abs_cbf = File(desc="Absolute CBF map (mL/100g/min)")
+    out_abs_cbv = File(desc="Absolute CBV map (mL/100g)")
+    out_abs_auc_raw = File(desc="Absolute AUC raw map (mM·s)")
+    out_abs_auc_corr = File(desc="Absolute AUC corrected map (mM·s)")
+
+    # Quality metrics
+    out_snr = File(exists=True, desc="SNR map (baseline signal)")
+    out_tsnr = File(exists=True, desc="tSNR map (temporal signal)")
+
+    # Gating flag
+    absolute_permitted = traits.Bool(desc="Whether absolute quantification gating passed")
+
+    # Optional extras
     out_delay = File(desc="Delay map (only for cSVD method)")
     out_residues = File(desc="Residue functions (if save_residue=True)")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
@@ -223,18 +277,18 @@ class ComputeDSCMaps(BaseInterface):
 
     Returns
     -------
-    out_cbf : str
-        Path to CBF map NIfTI.
-    out_cbv : str
-        Path to CBV map NIfTI.
-    out_mtt : str
-        Path to MTT map NIfTI.
-    out_tmax : str
-        Path to Tmax map NIfTI.
-    out_psr : str
-        Path to PSR map NIfTI.
-    out_ph : str
-        Path to peak height map NIfTI.
+    out_rel_cbf, out_rel_cbv, out_rel_auc_raw, out_rel_auc_corr : str
+        Paths to relative perfusion maps (always produced).
+    out_abs_cbf, out_abs_cbv, out_abs_auc_raw, out_abs_auc_corr : str, optional
+        Paths to absolute perfusion maps (only when gating passes).
+    out_mtt, out_tmax, out_psr, out_ph, out_ttp, out_cnr : str
+        Paths to quantification-independent maps.
+    out_auc_raw, out_auc_corr, out_auc_diff : str
+        Paths to AUC decomposition maps.
+    out_snr, out_tsnr : str
+        Paths to SNR and tSNR quality metric maps.
+    absolute_permitted : bool
+        Whether absolute quantification gating passed.
     out_delay : str, optional
         Path to delay map (cSVD only).
     out_residues : str, optional
@@ -395,8 +449,6 @@ class ComputeDSCMaps(BaseInterface):
                 mask=mask_bool,
             )
             # For cSVD, tmax includes delay
-            # Note: residue length is 2N-1, adjust argmax
-            n_orig = n_timepoints
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
             residues = res if self.inputs.save_residue else None
 
@@ -586,19 +638,14 @@ class ComputeDSCMaps(BaseInterface):
         mask_img = nib.load(self.inputs.brain_mask_file)
         mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
 
-        # Check if brain mask dimensions match concentration data
-        # If not (e.g., mask is in T1w space, data is in DSC space), create mask from data
+        # Verify brain mask is in DSC space (guaranteed by extract_dsc_brain node)
         if mask.shape[:3] != conc_data.shape[:3]:
-            import warnings
-            warnings.warn(
+            raise RuntimeError(
                 f"Brain mask shape {mask.shape[:3]} does not match "
                 f"concentration data shape {conc_data.shape[:3]}. "
-                "Creating mask from DSC data intensity."
+                "The brain mask must be in native DSC space. "
+                "Ensure extract_dsc_brain node is connected upstream."
             )
-            # Create simple mask from mean DSC intensity
-            mean_intensity = np.mean(np.abs(conc_data), axis=3)
-            threshold_val = np.percentile(mean_intensity[mean_intensity > 0], 10)
-            mask = (mean_intensity > threshold_val).astype(np.float64)
 
         # Load AIF
         aif = np.loadtxt(self.inputs.aif_file)
@@ -662,67 +709,202 @@ class ComputeDSCMaps(BaseInterface):
             # For now, output zeros - proper implementation needs raw signal
             qc_metrics["psr_ph_from_signal"] = False
 
-        # Mask outputs
+        # Compute TTP from concentration curves
+        # TTP: time to peak concentration (seconds)
+        ttp = np.argmax(conc_data, axis=-1).astype(np.float64) * dt
+
+        # -----------------------------------------------------------
+        # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
+        # -----------------------------------------------------------
+        # auc_corr = integral of the (post-K2) concentration passed in
+        try:
+            auc_corr = np.trapezoid(conc_data, dx=dt, axis=-1)
+        except AttributeError:
+            auc_corr = np.trapz(conc_data, dx=dt, axis=-1)
+
+        # auc_raw = integral of pre-K2 concentration (if available)
+        if self.inputs.raw_concentration_file:
+            raw_conc_img = nib.load(self.inputs.raw_concentration_file)
+            raw_conc_data: npt.NDArray[Any] = raw_conc_img.get_fdata()  # type: ignore[attr-defined]
+            try:
+                auc_raw = np.trapezoid(raw_conc_data, dx=dt, axis=-1)
+            except AttributeError:
+                auc_raw = np.trapz(raw_conc_data, dx=dt, axis=-1)
+        else:
+            # No K2 correction was applied — raw == corrected
+            auc_raw = auc_corr.copy()
+
+        auc_diff = auc_raw - auc_corr
+
+        # CNR: peak concentration / baseline std per voxel
+        baseline_std = np.std(conc_data[..., :baseline_frames], axis=-1)
+        peak_conc = np.max(conc_data, axis=-1)
+        cnr = np.where(
+            baseline_std > EPSILON_CONCENTRATION,
+            peak_conc / baseline_std,
+            0.0,
+        )
+
+        # -----------------------------------------------------------
+        # SNR / tSNR (from raw signal, not concentration)
+        # -----------------------------------------------------------
+        if signal_data is not None:
+            baseline_sig = signal_data[..., :baseline_frames]
+            baseline_mean = np.mean(baseline_sig, axis=-1)
+            baseline_std_sig = np.std(baseline_sig, axis=-1, ddof=1)
+            snr = np.where(baseline_std_sig > EPSILON_SIGNAL, baseline_mean / baseline_std_sig, 0.0)
+
+            all_mean = np.mean(signal_data, axis=-1)
+            all_std = np.std(signal_data, axis=-1, ddof=1)
+            tsnr = np.where(all_std > EPSILON_SIGNAL, all_mean / all_std, 0.0)
+        else:
+            snr = np.zeros(spatial_shape, dtype=np.float64)
+            tsnr = np.zeros(spatial_shape, dtype=np.float64)
+
+        # -----------------------------------------------------------
+        # Relative maps (always produced)
+        # -----------------------------------------------------------
+        rel_cbf = cbf
+        rel_cbv = cbv
+        rel_auc_raw = auc_raw
+        rel_auc_corr = auc_corr
+
+        # -----------------------------------------------------------
+        # Auto-absolute gating
+        # -----------------------------------------------------------
+        field_strength = float(self.inputs.field_strength) if self.inputs.field_strength else 0.0
+        aif_level = str(self.inputs.aif_detection_level)
+        preload_class = str(self.inputs.preload_classification)
+
+        absolute_permitted = (
+            field_strength > 0.0
+            and aif_level != "synthetic"
+            and preload_class in ("none", "minimal")
+        )
+
+        abs_cbf: Optional[npt.NDArray[Any]] = None
+        abs_cbv: Optional[npt.NDArray[Any]] = None
+        abs_auc_raw: Optional[npt.NDArray[Any]] = None
+        abs_auc_corr: Optional[npt.NDArray[Any]] = None
+
+        if absolute_permitted:
+            k_h = calculate_k_h()
+            vessel_cal = VESSEL_CALIBRATION_GRE_3T
+            r2_star = get_r2_star(field_strength)
+
+            abs_cbf = rel_cbf * k_h * vessel_cal * 60.0   # mL/100g/min
+            abs_cbv = rel_cbv * k_h * vessel_cal           # mL/100g
+            abs_auc_raw = auc_raw / r2_star                # mM·s
+            abs_auc_corr = auc_corr / r2_star              # mM·s
+
+        # -----------------------------------------------------------
+        # Mask all outputs
+        # -----------------------------------------------------------
         mask_bool = mask > 0
-        cbf = np.where(mask_bool, cbf, 0.0)
-        cbv = np.where(mask_bool, cbv, 0.0)
+        rel_cbf = np.where(mask_bool, rel_cbf, 0.0)
+        rel_cbv = np.where(mask_bool, rel_cbv, 0.0)
         mtt = np.where(mask_bool, mtt, 0.0)
         tmax = np.where(mask_bool, tmax, 0.0)
+        ttp = np.where(mask_bool, ttp, 0.0)
+        auc_raw = np.where(mask_bool, auc_raw, 0.0)
+        auc_corr = np.where(mask_bool, auc_corr, 0.0)
+        auc_diff = np.where(mask_bool, auc_diff, 0.0)
+        rel_auc_raw = np.where(mask_bool, rel_auc_raw, 0.0)
+        rel_auc_corr = np.where(mask_bool, rel_auc_corr, 0.0)
+        cnr = np.where(mask_bool, cnr, 0.0)
+        snr = np.where(mask_bool, snr, 0.0)
+        tsnr = np.where(mask_bool, tsnr, 0.0)
+
+        if absolute_permitted:
+            abs_cbf = np.where(mask_bool, abs_cbf, 0.0)  # type: ignore[arg-type]
+            abs_cbv = np.where(mask_bool, abs_cbv, 0.0)  # type: ignore[arg-type]
+            abs_auc_raw = np.where(mask_bool, abs_auc_raw, 0.0)  # type: ignore[arg-type]
+            abs_auc_corr = np.where(mask_bool, abs_auc_corr, 0.0)  # type: ignore[arg-type]
 
         # Add general QC metrics
         qc_metrics.update({
-            "cbf_mean": float(np.mean(cbf[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbf_std": float(np.std(cbf[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbv_mean": float(np.mean(cbv[mask_bool])) if np.any(mask_bool) else 0.0,
+            "cbf_mean": float(np.mean(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
+            "cbf_std": float(np.std(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
+            "cbv_mean": float(np.mean(rel_cbv[mask_bool])) if np.any(mask_bool) else 0.0,
             "mtt_mean": float(np.mean(mtt[mask_bool])) if np.any(mask_bool) else 0.0,
             "tmax_mean": float(np.mean(tmax[mask_bool])) if np.any(mask_bool) else 0.0,
             "n_voxels": int(np.sum(mask_bool)),
+            "absolute_permitted": absolute_permitted,
+            "aif_detection_level": aif_level,
+            "preload_classification": preload_class,
         })
 
-        # Save output files
-        out_cbf = self._gen_outfilename("_cbf")
-        out_cbv = self._gen_outfilename("_cbv")
-        out_mtt = self._gen_outfilename("_mtt")
-        out_tmax = self._gen_outfilename("_tmax")
-        out_psr = self._gen_outfilename("_psr")
-        out_ph = self._gen_outfilename("_ph")
+        # -----------------------------------------------------------
+        # Helper to save a 3D array as NIfTI
+        # -----------------------------------------------------------
+        def _save_map(data: npt.NDArray[Any], suffix: str) -> str:
+            path = self._gen_outfilename(suffix)
+            img = nib.Nifti1Image(data.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+            nib.save(img, path)  # type: ignore[attr-defined]
+            return path
 
-        # Create NIfTI images and save
-        cbf_img = nib.Nifti1Image(cbf.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(cbf_img, out_cbf)  # type: ignore[attr-defined]
+        # -----------------------------------------------------------
+        # Save all output maps
+        # -----------------------------------------------------------
+        # Quantification-independent
+        out_mtt = _save_map(mtt, "_mtt")
+        out_tmax = _save_map(tmax, "_tmax")
+        out_psr = _save_map(psr, "_psr")
+        out_ph = _save_map(ph, "_ph")
+        out_ttp = _save_map(ttp, "_ttp")
+        out_cnr = _save_map(cnr, "_cnr")
 
-        cbv_img = nib.Nifti1Image(cbv.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(cbv_img, out_cbv)  # type: ignore[attr-defined]
+        # AUC decomposition
+        out_auc_raw = _save_map(auc_raw, "_auc_raw")
+        out_auc_corr = _save_map(auc_corr, "_auc_corr")
+        out_auc_diff = _save_map(auc_diff, "_auc_diff")
 
-        mtt_img = nib.Nifti1Image(mtt.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(mtt_img, out_mtt)  # type: ignore[attr-defined]
+        # Relative maps
+        out_rel_cbf = _save_map(rel_cbf, "_rel_cbf")
+        out_rel_cbv = _save_map(rel_cbv, "_rel_cbv")
+        out_rel_auc_raw = _save_map(rel_auc_raw, "_rel_auc_raw")
+        out_rel_auc_corr = _save_map(rel_auc_corr, "_rel_auc_corr")
 
-        tmax_img = nib.Nifti1Image(tmax.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(tmax_img, out_tmax)  # type: ignore[attr-defined]
-
-        psr_img = nib.Nifti1Image(psr.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(psr_img, out_psr)  # type: ignore[attr-defined]
-
-        ph_img = nib.Nifti1Image(ph.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(ph_img, out_ph)  # type: ignore[attr-defined]
+        # Quality metrics
+        out_snr = _save_map(snr, "_snr")
+        out_tsnr = _save_map(tsnr, "_tsnr")
 
         # Store results
         self._results: dict[str, Any] = {
-            "out_cbf": out_cbf,
-            "out_cbv": out_cbv,
+            # Quantification-independent
             "out_mtt": out_mtt,
             "out_tmax": out_tmax,
             "out_psr": out_psr,
             "out_ph": out_ph,
+            "out_ttp": out_ttp,
+            "out_cnr": out_cnr,
+            # AUC decomposition
+            "out_auc_raw": out_auc_raw,
+            "out_auc_corr": out_auc_corr,
+            "out_auc_diff": out_auc_diff,
+            # Relative maps
+            "out_rel_cbf": out_rel_cbf,
+            "out_rel_cbv": out_rel_cbv,
+            "out_rel_auc_raw": out_rel_auc_raw,
+            "out_rel_auc_corr": out_rel_auc_corr,
+            # Quality metrics
+            "out_snr": out_snr,
+            "out_tsnr": out_tsnr,
+            # Gating
+            "absolute_permitted": absolute_permitted,
             "qc_metrics": qc_metrics,
         }
 
+        # Absolute maps (only if gating passes)
+        if absolute_permitted:
+            self._results["out_abs_cbf"] = _save_map(abs_cbf, "_abs_cbf")  # type: ignore[arg-type]
+            self._results["out_abs_cbv"] = _save_map(abs_cbv, "_abs_cbv")  # type: ignore[arg-type]
+            self._results["out_abs_auc_raw"] = _save_map(abs_auc_raw, "_abs_auc_raw")  # type: ignore[arg-type]
+            self._results["out_abs_auc_corr"] = _save_map(abs_auc_corr, "_abs_auc_corr")  # type: ignore[arg-type]
+
         # Save delay map if cSVD
         if delay is not None:
-            out_delay = self._gen_outfilename("_delay")
-            delay_img = nib.Nifti1Image(delay.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(delay_img, out_delay)  # type: ignore[attr-defined]
-            self._results["out_delay"] = out_delay
+            self._results["out_delay"] = _save_map(delay, "_delay")
 
         # Save residues if requested
         if residues is not None and self.inputs.save_residue:
