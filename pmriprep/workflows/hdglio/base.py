@@ -63,11 +63,15 @@ def _extract_masks_node(
         - non_enhancing: Path to non-enhancing tumor mask
         - whole_tumor: Path to whole tumor mask
     """
+    import os
+
     from pmriprep.utils.hdglio import extract_tumor_masks
 
+    # Write to this node's working directory (os.getcwd() in Nipype),
+    # not the input file's directory, so outputs survive upstream re-runs.
     return extract_tumor_masks(
         segmentation_file=segmentation_file,
-        output_dir=None,  # Use same directory as input file
+        output_dir=os.getcwd(),
         prefix=prefix,
     )
 
@@ -101,9 +105,10 @@ def _create_nawm_node(
     wm_probseg_file,
     nawm_erosion,
     nawm_min_voxels,
-    mni_to_t1w_xfm="",
+    t1w_to_mni_xfm="",
     reference_image="",
     atlases_dir="",
+    brain_mask_file="",
 ):
     """Node function to create NAWM ROI.
 
@@ -117,12 +122,14 @@ def _create_nawm_node(
         Erosion iterations for NAWM mask
     nawm_min_voxels : int
         Minimum voxels required in NAWM ROI
-    mni_to_t1w_xfm : str
-        Path to MNI-to-T1w transform for atlas-based restriction
+    t1w_to_mni_xfm : str
+        Path to T1w-to-MNI transform for atlas-based restriction
     reference_image : str
         Path to T1w reference image for atlas transformation
     atlases_dir : str
         Path to MNI lobar atlas directory
+    brain_mask_file : str
+        Path to brain mask for base constraint
 
     Returns
     -------
@@ -137,9 +144,10 @@ def _create_nawm_node(
         output_file=None,  # Auto-generate filename
         nawm_erosion=nawm_erosion,
         nawm_min_voxels=nawm_min_voxels,
-        mni_to_t1w_xfm=mni_to_t1w_xfm or None,
+        t1w_to_mni_xfm=t1w_to_mni_xfm or None,
         reference_image=reference_image or None,
         atlases_dir=atlases_dir or None,
+        brain_mask_file=brain_mask_file or None,
     )
 
 
@@ -449,9 +457,10 @@ def init_hdglio_wf(
                 "wm_probseg_file",
                 "nawm_erosion",
                 "nawm_min_voxels",
-                "mni_to_t1w_xfm",
+                "t1w_to_mni_xfm",
                 "reference_image",
                 "atlases_dir",
+                "brain_mask_file",
             ],
             output_names=["nawm_result"],
             function=_create_nawm_node,
@@ -468,8 +477,9 @@ def init_hdglio_wf(
         (select_whole_tumor, create_nawm, [("mask_path", "tumor_mask_file")]),
         (inputnode, create_nawm, [
             ("wm_probseg", "wm_probseg_file"),
-            ("t1w_to_mni_xfm", "mni_to_t1w_xfm"),
+            ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
             ("t1w_preproc", "reference_image"),
+            ("brain_mask", "brain_mask_file"),
         ]),
     ])
 

@@ -39,6 +39,7 @@ from pmriprep.utils.dce_dsc_validation import (
 from pmriprep.utils.hdglio import (
     dilate_mask,
     dilate_mask_from_array,
+    erode_mask_from_array,
     extract_tumor_masks,
     get_mask_statistics,
     get_mask_volume_ml,
@@ -107,6 +108,7 @@ __all__ = [
     # hdglio
     "dilate_mask",
     "dilate_mask_from_array",
+    "erode_mask_from_array",
     "extract_tumor_masks",
     "get_mask_statistics",
     "get_mask_volume_ml",

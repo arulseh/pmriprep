@@ -21,6 +21,9 @@ from typing import Any, Literal, Optional, Union
 import numpy as np
 import numpy.typing as npt
 
+EPSILON_VOXEL_SIZE = 1e-6      # Guard for zero voxel sizes
+MAX_KERNEL_RADIUS_VOXELS = 200  # Memory safety cap for kernel generation
+
 
 def extract_tumor_masks(
     segmentation_file: Union[str, Path],
@@ -166,7 +169,9 @@ def _create_spherical_kernel(
     >>> kernel.shape
     (11, 11, 5)
     """
-    vx, vy, vz = voxel_sizes
+    vx = max(float(voxel_sizes[0]), EPSILON_VOXEL_SIZE)
+    vy = max(float(voxel_sizes[1]), EPSILON_VOXEL_SIZE)
+    vz = max(float(voxel_sizes[2]), EPSILON_VOXEL_SIZE)
 
     # Calculate kernel size in voxels for each dimension
     # Need at least radius_mm / voxel_size voxels on each side of center
@@ -174,16 +179,24 @@ def _create_spherical_kernel(
     ny = int(np.ceil(radius_mm / vy))
     nz = int(np.ceil(radius_mm / vz))
 
+    # Safety cap: prevent enormous kernels from tiny voxels
+    if nx > MAX_KERNEL_RADIUS_VOXELS or ny > MAX_KERNEL_RADIUS_VOXELS or nz > MAX_KERNEL_RADIUS_VOXELS:
+        raise ValueError(
+            f"Kernel radius exceeds safety cap ({MAX_KERNEL_RADIUS_VOXELS} voxels): "
+            f"nx={nx}, ny={ny}, nz={nz} for radius_mm={radius_mm}, "
+            f"voxel_sizes=({vx}, {vy}, {vz})"
+        )
+
     # Total kernel size (diameter + 1 for center)
     size_x = 2 * nx + 1
     size_y = 2 * ny + 1
     size_z = 2 * nz + 1
 
     # Create coordinate grids centered at the kernel center
-    # Coordinates are in millimeters
-    x = np.arange(size_x) - nx
-    y = np.arange(size_y) - ny
-    z = np.arange(size_z) - nz
+    # Coordinates are in millimeters (float64 to prevent overflow with small voxels)
+    x = np.arange(size_x, dtype=np.float64) - nx
+    y = np.arange(size_y, dtype=np.float64) - ny
+    z = np.arange(size_z, dtype=np.float64) - nz
 
     # Scale by voxel sizes to get physical coordinates
     xx, yy, zz = np.meshgrid(x * vx, y * vy, z * vz, indexing="ij")
@@ -349,6 +362,42 @@ def dilate_mask_from_array(
     return dilated
 
 
+def erode_mask_from_array(
+    mask_data: npt.NDArray[np.bool_],
+    radius_mm: float,
+    voxel_sizes: tuple[float, float, float],
+) -> npt.NDArray[np.bool_]:
+    """Erode a binary mask using a single-pass spherical structuring element.
+
+    Matches the perf-plus ``erode_mask_mm`` approach: a single erosion pass
+    with an ellipsoidal kernel of the given physical radius, rather than
+    iterative 1-voxel erosions.
+
+    Parameters
+    ----------
+    mask_data : ndarray of bool
+        3D binary mask array
+    radius_mm : float
+        Erosion radius in millimeters
+    voxel_sizes : tuple of float
+        Voxel dimensions (x, y, z) in millimeters
+
+    Returns
+    -------
+    ndarray of bool
+        Eroded binary mask array
+    """
+    from scipy import ndimage  # type: ignore[import-untyped]
+
+    if radius_mm <= 0:
+        return mask_data.copy()
+
+    kernel = _create_spherical_kernel(radius_mm, voxel_sizes)
+    eroded: npt.NDArray[np.bool_] = ndimage.binary_erosion(mask_data, structure=kernel)
+
+    return eroded
+
+
 def get_mask_volume_ml(
     mask_file: Union[str, Path],
 ) -> float:
@@ -493,7 +542,7 @@ def _analyze_tumor_anatomy(
     tumor_mask: npt.NDArray[np.bool_],
     affine: npt.NDArray[np.float64],
     voxel_sizes: tuple[float, float, float],
-    mni_to_t1w_xfm: Optional[str] = None,
+    t1w_to_mni_xfm: Optional[str] = None,
 ) -> TumorAnalysis:
     """Analyze tumor location to determine anatomy for NAWM selection.
 
@@ -509,8 +558,8 @@ def _analyze_tumor_anatomy(
         4x4 affine transformation matrix
     voxel_sizes : tuple of float
         Voxel dimensions (x, y, z) in millimeters
-    mni_to_t1w_xfm : str, optional
-        Path to MNI-to-T1w transform (FLIRT .mat format). If provided,
+    t1w_to_mni_xfm : str, optional
+        Path to T1w-to-MNI transform (FLIRT .mat format). If provided,
         the centroid is transformed to MNI space for supratentorial
         classification using z > -15mm (matching source MNI_TENTORIUM_Z).
         If not provided, falls back to RAS z > -20mm heuristic.
@@ -527,11 +576,21 @@ def _analyze_tumor_anatomy(
     both hemispheres relatively equally (<60% in either), it's marked as
     bilateral.
 
-    When mni_to_t1w_xfm is provided, supratentorial determination uses
+    When t1w_to_mni_xfm is provided, supratentorial determination uses
     z > -15mm in MNI space (MNI_TENTORIUM_Z from source). Otherwise,
     falls back to z > -20mm in RAS space.
     """
     from scipy import ndimage  # type: ignore[import-untyped]
+
+    # Guard: empty tumor mask
+    if not np.any(tumor_mask):
+        return TumorAnalysis(
+            is_supratentorial=True,
+            laterality="bilateral",
+            centroid_voxels=(0.0, 0.0, 0.0),
+            volume_ml=0.0,
+            centroid_mni=None,
+        )
 
     # MNI tentorium z-threshold (matches source perf-plus)
     MNI_TENTORIUM_Z = -15.0
@@ -547,10 +606,10 @@ def _analyze_tumor_anatomy(
 
     # Determine supratentorial vs infratentorial
     centroid_mni: Optional[tuple[float, float, float]] = None
-    if mni_to_t1w_xfm is not None:
+    if t1w_to_mni_xfm is not None:
         # Transform centroid to MNI space for accurate classification
         mni_coords = _transform_point_to_mni(
-            centroid_ras[:3], mni_to_t1w_xfm
+            centroid_ras[:3], t1w_to_mni_xfm
         )
         if mni_coords is not None:
             centroid_mni = mni_coords
@@ -581,9 +640,9 @@ def _analyze_tumor_anatomy(
         affine[0, 0] * ii + affine[0, 1] * jj + affine[0, 2] * kk + affine[0, 3]
     )
 
-    # Count tumor voxels in each hemisphere (x < 0 is right, x > 0 is left in RAS)
-    left_voxels = int(np.sum(tumor_mask & (x_physical > 0)))
-    right_voxels = int(np.sum(tumor_mask & (x_physical < 0)))
+    # Count tumor voxels in each hemisphere (RAS: +x = right, -x = left)
+    left_voxels = int(np.sum(tumor_mask & (x_physical < 0)))
+    right_voxels = int(np.sum(tumor_mask & (x_physical > 0)))
     total_voxels = left_voxels + right_voxels
 
     if total_voxels == 0:
@@ -623,7 +682,7 @@ def _create_hemisphere_mask(
     affine : ndarray
         4x4 affine transformation matrix
     hemisphere : {"left", "right"}
-        Which hemisphere to select (left = x > 0, right = x < 0 in RAS)
+        Which hemisphere to select (RAS: left = x < 0, right = x > 0)
 
     Returns
     -------
@@ -641,56 +700,39 @@ def _create_hemisphere_mask(
         affine[0, 0] * ii + affine[0, 1] * jj + affine[0, 2] * kk + affine[0, 3]
     )
 
-    # In RAS: left hemisphere has x > 0, right hemisphere has x < 0
+    # RAS: +x = right, -x = left
     if hemisphere == "left":
-        mask: npt.NDArray[np.bool_] = x_physical > 0
+        mask: npt.NDArray[np.bool_] = x_physical < 0
     else:
-        mask = x_physical < 0
+        mask = x_physical > 0
 
     return mask
 
 
 def _transform_point_to_mni(
     point_ras: npt.NDArray[np.float64],
-    mni_to_t1w_xfm: str,
+    t1w_to_mni_xfm: str,
 ) -> Optional[tuple[float, float, float]]:
     """Transform a point from T1w RAS space to MNI space.
 
-    Uses the inverse of the MNI-to-T1w transform (FLIRT .mat format)
-    to convert a point from native T1w space to MNI space.
+    Applies the T1w-to-MNI transform (FLIRT .mat format) to convert
+    a point from native T1w space to MNI space.
 
     Parameters
     ----------
     point_ras : ndarray
         3-element array of RAS coordinates in T1w space
-    mni_to_t1w_xfm : str
-        Path to MNI-to-T1w FLIRT transform (.mat file)
+    t1w_to_mni_xfm : str
+        Path to T1w-to-MNI FLIRT transform (.mat file)
 
     Returns
     -------
     tuple of float or None
         (x, y, z) in MNI space, or None if transform fails
     """
-    import subprocess
-    import tempfile
-
     try:
-        # Invert the MNI-to-T1w transform to get T1w-to-MNI
-        with tempfile.NamedTemporaryFile(suffix=".mat", delete=False) as tmp:
-            t1w_to_mni_path = tmp.name
-
-        subprocess.run(
-            [
-                "convert_xfm",
-                "-omat", t1w_to_mni_path,
-                "-inverse", mni_to_t1w_xfm,
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-        # Load the inverted transform
-        t1w_to_mni = np.loadtxt(t1w_to_mni_path)
+        # Load T1w-to-MNI transform directly
+        t1w_to_mni = np.loadtxt(t1w_to_mni_xfm)
 
         # Apply transform: MNI = T1w_to_MNI @ [x, y, z, 1]
         point_homog = np.array([point_ras[0], point_ras[1], point_ras[2], 1.0])
@@ -698,13 +740,8 @@ def _transform_point_to_mni(
 
         return (float(mni_coords[0]), float(mni_coords[1]), float(mni_coords[2]))
 
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+    except (FileNotFoundError, OSError, ValueError):
         return None
-    finally:
-        # Clean up temp file
-        tmp_path = Path(t1w_to_mni_path)  # type: ignore[possibly-undefined]
-        if tmp_path.exists():
-            tmp_path.unlink()
 
 
 def _select_region_atlas(
@@ -758,13 +795,20 @@ def _select_region_atlas(
     if atlas_path.exists():
         return str(atlas_path)
 
+    # Fallback: try full-region atlas (no hemisphere suffix)
+    if analysis.laterality != "bilateral":
+        fallback_name = ("Supra" if analysis.is_supratentorial else "Cerebellum") + ".nii.gz"
+        fallback_path = atlases_path / fallback_name
+        if fallback_path.exists():
+            return str(fallback_path)
+
     return None
 
 
 def _transform_atlas_to_t1w(
     atlas_path: str,
     reference_path: str,
-    mni_to_t1w_xfm: str,
+    t1w_to_mni_xfm: str,
 ) -> Optional[str]:
     """Transform MNI atlas to T1w space via FLIRT.
 
@@ -774,8 +818,9 @@ def _transform_atlas_to_t1w(
         Path to MNI-space atlas NIfTI file
     reference_path : str
         Path to T1w reference image (for output geometry)
-    mni_to_t1w_xfm : str
-        Path to MNI-to-T1w FLIRT transform (.mat file)
+    t1w_to_mni_xfm : str
+        Path to T1w-to-MNI FLIRT transform (.mat file). Inverted
+        internally to obtain MNI-to-T1w before applying.
 
     Returns
     -------
@@ -786,6 +831,21 @@ def _transform_atlas_to_t1w(
     import tempfile
 
     try:
+        # Invert T1w-to-MNI to get MNI-to-T1w
+        inv_file = tempfile.NamedTemporaryFile(suffix="_inv.mat", delete=False)
+        inv_path = inv_file.name
+        inv_file.close()
+
+        subprocess.run(
+            [
+                "convert_xfm",
+                "-omat", inv_path,
+                "-inverse", t1w_to_mni_xfm,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
         out_file = tempfile.NamedTemporaryFile(
             suffix="_atlas_t1w.nii.gz", delete=False
         )
@@ -798,7 +858,7 @@ def _transform_atlas_to_t1w(
                 "-in", atlas_path,
                 "-ref", reference_path,
                 "-applyxfm",
-                "-init", mni_to_t1w_xfm,
+                "-init", inv_path,
                 "-interp", "nearestneighbour",
                 "-out", out_path,
             ],
@@ -810,6 +870,11 @@ def _transform_atlas_to_t1w(
 
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return None
+    finally:
+        # Clean up inverted transform temp file
+        tmp_inv = Path(inv_path)  # type: ignore[possibly-undefined]
+        if tmp_inv.exists():
+            tmp_inv.unlink()
 
 
 def create_nawm_roi(
@@ -820,9 +885,10 @@ def create_nawm_roi(
     tumor_margin_mm: float = 20.0,
     nawm_erosion: int = 2,
     nawm_min_voxels: int = 500,
-    mni_to_t1w_xfm: Optional[str] = None,
+    t1w_to_mni_xfm: Optional[str] = None,
     reference_image: Optional[str] = None,
     atlases_dir: Optional[str] = None,
+    brain_mask_file: Optional[Union[str, Path]] = None,
 ) -> dict[str, Any]:
     """Create contralateral normal-appearing white matter ROI for CBV normalization.
 
@@ -835,6 +901,10 @@ def create_nawm_roi(
     anatomically appropriate region (supratentorial or cerebellar) rather than
     just the contralateral hemisphere, preventing cerebellar WM from contaminating
     NAWM estimates for supratentorial tumors.
+
+    The order of operations follows the perf-plus reference pipeline:
+    brain_mask -> WM threshold -> region mask -> tumor exclusion -> erosion,
+    with an erosion-only adaptive fallback (2 -> 1 -> 0 voxels).
 
     Parameters
     ----------
@@ -850,19 +920,23 @@ def create_nawm_roi(
     tumor_margin_mm : float, default=20.0
         Exclusion margin (mm) around tumor to avoid peritumoral effects
     nawm_erosion : int, default=2
-        Number of erosion iterations to clean up partial volume effects
-        (from HDGLIOConfig.nawm_erosion)
+        Erosion level in voxels. Converted to mm as
+        ``nawm_erosion * min(voxel_sizes)`` for single-pass ellipsoidal
+        erosion (from HDGLIOConfig.nawm_erosion).
     nawm_min_voxels : int, default=500
         Minimum required voxels in final NAWM ROI
         (from HDGLIOConfig.nawm_min_voxels)
-    mni_to_t1w_xfm : str, optional
-        Path to MNI-to-T1w transform (.mat). Required for atlas-based
+    t1w_to_mni_xfm : str, optional
+        Path to T1w-to-MNI transform (.mat). Required for atlas-based
         region restriction and MNI-space tumor classification.
     reference_image : str, optional
         Path to T1w reference image for atlas transformation.
     atlases_dir : str, optional
         Path to directory containing MNI lobar atlas NIfTI files
         (e.g., Supra_L.nii.gz, Cerebellum_R.nii.gz).
+    brain_mask_file : str or Path, optional
+        Path to brain mask NIfTI file. Used as the initial base constraint
+        (Step 1). If None, all voxels are considered.
 
     Returns
     -------
@@ -877,11 +951,10 @@ def create_nawm_roi(
             - "volume_ml": NAWM ROI volume in milliliters
             - "fallback_used": bool indicating if adaptive fallback was needed
             - "atlas_used": bool indicating if atlas restriction was applied
-
-    Raises
-    ------
-    ValueError
-        If no suitable NAWM region can be found even with adaptive fallback
+            - "valid": bool indicating if minimum voxel count was met
+            - "erosion_voxels_final": int, final erosion level used
+            - "erosion_mm_final": float, final erosion radius in mm
+            - "qc_steps": dict with per-step voxel counts
 
     Examples
     --------
@@ -896,24 +969,19 @@ def create_nawm_roi(
 
     Notes
     -----
-    The NAWM selection algorithm:
+    The NAWM selection algorithm (matching perf-plus order of operations):
 
-    1. Analyze tumor anatomy to determine laterality (left/right/bilateral)
-    2. Select contralateral hemisphere:
-       - For unilateral tumors: opposite hemisphere
-       - For bilateral tumors: select hemisphere with less tumor volume
-    3. If atlas restriction is available:
-       - Transform MNI lobar atlas to T1w space
-       - Replace hemisphere mask with region-specific atlas mask
-    4. Apply WM restriction: probseg >= wm_threshold (default 0.9)
-    5. Exclude voxels within tumor_margin_mm (default 20mm) of tumor
-    6. Apply erosion (nawm_erosion iterations) to clean up partial volume
-    7. If insufficient voxels, apply adaptive fallback:
-       - Reduce WM threshold to 0.7
-       - Reduce erosion to 1 iteration
-       - Reduce tumor margin to 15mm
-       - If still insufficient, include ipsilateral hemisphere with
-         increased tumor margin (30mm)
+    1. Base mask: brain_mask (if provided) or np.ones()
+    2. WM threshold: intersect with wm_data >= 0.9
+    3. Region mask: intersect with atlas or hemisphere mask
+    4. Tumor exclusion: subtract dilated tumor (20mm margin)
+    5. Erosion: SINGLE pass, ellipsoidal kernel of nawm_erosion * min(voxel_sizes) mm
+    6. Adaptive fallback: erosion-only reduction (2 -> 1 -> 0 voxels)
+
+    Unlike the previous implementation, this does NOT relax WM threshold,
+    tumor margin, or hemisphere constraints. Only erosion is reduced.
+    If still below nawm_min_voxels after 0-erosion, the mask is saved
+    with ``valid=False`` rather than raising an error.
 
     References
     ----------
@@ -921,8 +989,11 @@ def create_nawm_roi(
     for normalization to normal appearing white matter. J Magn Reson Imaging.
     2024.
     """
+    import logging
+
     import nibabel as nib  # type: ignore[import-untyped]
-    from scipy import ndimage  # type: ignore[import-untyped]
+
+    logger = logging.getLogger(__name__)
 
     # Load tumor mask
     tumor_path = Path(tumor_mask_file)
@@ -950,7 +1021,7 @@ def create_nawm_roi(
     # Analyze tumor anatomy (with MNI transform if available)
     analysis = _analyze_tumor_anatomy(
         tumor_mask, affine, voxel_sizes,  # type: ignore[arg-type]
-        mni_to_t1w_xfm=mni_to_t1w_xfm,
+        t1w_to_mni_xfm=t1w_to_mni_xfm,
     )
 
     # Determine which hemisphere to use for NAWM
@@ -972,109 +1043,99 @@ def create_nawm_roi(
     hemisphere_mask = _create_hemisphere_mask(tumor_mask.shape, affine, selected_hemisphere)
 
     # --- Atlas-based region restriction ---
-    # If atlas files and transform are available, replace hemisphere mask
-    # with a region-specific atlas mask for more accurate NAWM selection
     atlas_used = False
     region_mask = hemisphere_mask
 
-    if atlases_dir and mni_to_t1w_xfm and reference_image:
+    if atlases_dir and t1w_to_mni_xfm and reference_image:
         atlas_path = _select_region_atlas(analysis, atlases_dir)
         if atlas_path is not None:
             transformed_atlas = _transform_atlas_to_t1w(
-                atlas_path, reference_image, mni_to_t1w_xfm
+                atlas_path, reference_image, t1w_to_mni_xfm
             )
             if transformed_atlas is not None:
                 try:
                     atlas_img = nib.load(transformed_atlas)
                     atlas_data = atlas_img.get_fdata()  # type: ignore[attr-defined]
-                    # Binarize (nearest-neighbour should give 0/1, but guard)
                     atlas_binary = atlas_data > 0.5
                     if atlas_binary.shape == tumor_mask.shape:
                         region_mask = atlas_binary
                         atlas_used = True
                 finally:
-                    # Clean up temporary atlas file
                     tmp_atlas = Path(transformed_atlas)
                     if tmp_atlas.exists():
                         tmp_atlas.unlink()
 
-    # Create dilated tumor exclusion mask
-    # Dilate tumor by tumor_margin_mm to create exclusion zone
+    # ---------------------------------------------------------------
+    # Sequential order of operations (matching perf-plus)
+    # ---------------------------------------------------------------
+    qc_steps: dict[str, int] = {}
+
+    # Step 1: Base mask — brain_mask (if provided) or all voxels
+    if brain_mask_file is not None:
+        brain_img = nib.load(brain_mask_file)
+        brain_data = brain_img.get_fdata()  # type: ignore[attr-defined]
+        nawm_mask = brain_data > 0.5
+    else:
+        nawm_mask = np.ones(tumor_mask.shape, dtype=bool)
+    qc_steps["initial_voxels"] = int(np.sum(nawm_mask))
+
+    # Step 2: WM threshold — intersect with wm_data >= wm_threshold
+    nawm_mask = nawm_mask & (wm_data >= wm_threshold)
+    qc_steps["after_wm_threshold"] = int(np.sum(nawm_mask))
+
+    # Step 3: Region mask — intersect with atlas or hemisphere mask
+    nawm_mask = nawm_mask & region_mask
+    qc_steps["after_region_mask"] = int(np.sum(nawm_mask))
+
+    # Step 4: Tumor exclusion — subtract dilated tumor
     dilated_tumor = dilate_mask_from_array(tumor_mask, tumor_margin_mm, voxel_sizes)  # type: ignore[arg-type]
+    nawm_mask = nawm_mask & ~dilated_tumor
+    qc_steps["after_tumor_exclusion"] = int(np.sum(nawm_mask))
 
-    def _compute_nawm(
-        wm_thresh: float,
-        n_erosion: int,
-        margin_mask: npt.NDArray[np.bool_],
-        hemi_mask: npt.NDArray[np.bool_],
-    ) -> npt.NDArray[np.bool_]:
-        """Compute NAWM mask with given parameters."""
-        # WM probability threshold
-        wm_mask = wm_data >= wm_thresh
+    # Step 5: Erosion — single pass, ellipsoidal kernel
+    # Convert nawm_erosion (voxel count) to mm: N × min(voxel_sizes)
+    min_vox = min(voxel_sizes)
+    erosion_mm = nawm_erosion * min_vox
+    erosion_voxels_final = nawm_erosion
+    erosion_mm_final = erosion_mm
 
-        # Combine constraints
-        nawm = wm_mask & hemi_mask & ~margin_mask
+    pre_erosion_mask = nawm_mask.copy()
+    if erosion_mm > 0:
+        nawm_mask = erode_mask_from_array(nawm_mask, erosion_mm, voxel_sizes)  # type: ignore[arg-type]
+    qc_steps["after_erosion"] = int(np.sum(nawm_mask))
 
-        # Apply erosion to clean up partial volume effects
-        if n_erosion > 0:
-            # Create spherical erosion kernel (1 voxel radius)
-            erosion_kernel = _create_spherical_kernel(
-                min(voxel_sizes), voxel_sizes  # type: ignore[arg-type]
-            )
-            for _ in range(n_erosion):
-                nawm = ndimage.binary_erosion(nawm, structure=erosion_kernel)
-
-        return nawm  # type: ignore[return-value]
-
-    # Try standard parameters first (using region_mask which may be atlas-based)
-    nawm_mask = _compute_nawm(wm_threshold, nawm_erosion, dilated_tumor, region_mask)
+    # Step 6: Adaptive fallback — erosion-only reduction (2→1→0)
     n_voxels = int(np.sum(nawm_mask))
     fallback_used = False
 
-    # Adaptive fallback if insufficient voxels
-    if n_voxels < nawm_min_voxels:
+    if n_voxels < nawm_min_voxels and nawm_erosion > 0:
         fallback_used = True
-
-        # Fallback 1: Reduce WM threshold and erosion
-        nawm_mask = _compute_nawm(0.7, 1, dilated_tumor, region_mask)
-        n_voxels = int(np.sum(nawm_mask))
-
-        if n_voxels < nawm_min_voxels:
-            # Fallback 2: Reduce tumor margin
-            dilated_tumor_reduced = dilate_mask_from_array(
-                tumor_mask, 15.0, voxel_sizes  # type: ignore[arg-type]
-            )
-            nawm_mask = _compute_nawm(0.7, 1, dilated_tumor_reduced, region_mask)
+        # Try reducing erosion: step down from nawm_erosion-1 to 0
+        for reduced_erosion in range(nawm_erosion - 1, -1, -1):
+            reduced_mm = reduced_erosion * min_vox
+            if reduced_mm > 0:
+                nawm_mask = erode_mask_from_array(pre_erosion_mask, reduced_mm, voxel_sizes)  # type: ignore[arg-type]
+            else:
+                nawm_mask = pre_erosion_mask.copy()
             n_voxels = int(np.sum(nawm_mask))
-
-        if n_voxels < nawm_min_voxels and atlas_used:
-            # Fallback 2b: Drop atlas restriction, use hemisphere mask
-            nawm_mask = _compute_nawm(0.7, 1, dilated_tumor, hemisphere_mask)
-            n_voxels = int(np.sum(nawm_mask))
+            erosion_voxels_final = reduced_erosion
+            erosion_mm_final = reduced_mm
             if n_voxels >= nawm_min_voxels:
-                atlas_used = False
+                break
 
-        if n_voxels < nawm_min_voxels:
-            # Fallback 3: Include both hemispheres with larger margin
-            dilated_tumor_large = dilate_mask_from_array(
-                tumor_mask, 30.0, voxel_sizes  # type: ignore[arg-type]
-            )
-            # Full brain (both hemispheres)
-            full_brain_mask = np.ones(tumor_mask.shape, dtype=bool)
-            nawm_mask = _compute_nawm(0.7, 1, dilated_tumor_large, full_brain_mask)
-            n_voxels = int(np.sum(nawm_mask))
+    qc_steps["after_adaptive_erosion"] = int(np.sum(nawm_mask))
+    n_voxels = int(np.sum(nawm_mask))
 
-        if n_voxels < nawm_min_voxels:
-            # Final fallback: no erosion, minimal WM threshold
-            nawm_mask = _compute_nawm(0.5, 0, dilated_tumor_large, full_brain_mask)  # type: ignore[possibly-undefined]
-            n_voxels = int(np.sum(nawm_mask))
-
-        if n_voxels < nawm_min_voxels:
-            raise ValueError(
-                f"Unable to create NAWM ROI with at least {nawm_min_voxels} voxels. "
-                f"Found only {n_voxels} voxels after all fallback attempts. "
-                "This may indicate extensive tumor involvement or WM abnormality."
-            )
+    # Determine validity — save mask even if below minimum
+    valid = n_voxels >= nawm_min_voxels
+    if not valid:
+        logger.warning(
+            "NAWM ROI has only %d voxels (minimum: %d). "
+            "Mask saved but marked valid=False. "
+            "This may indicate extensive tumor involvement or WM abnormality.",
+            n_voxels,
+            nawm_min_voxels,
+        )
 
     # Calculate final volume
     voxel_volume_mm3 = float(np.prod(voxel_sizes))
@@ -1114,5 +1175,9 @@ def create_nawm_roi(
             "volume_ml": volume_ml,
             "fallback_used": fallback_used,
             "atlas_used": atlas_used,
+            "valid": valid,
+            "erosion_voxels_final": erosion_voxels_final,
+            "erosion_mm_final": erosion_mm_final,
+            "qc_steps": qc_steps,
         },
     }

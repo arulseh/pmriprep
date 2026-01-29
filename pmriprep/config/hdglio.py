@@ -48,3 +48,17 @@ class HDGLIOConfig:
     # Atlas-based NAWM region restriction
     atlases_dir: Optional[str] = None
     use_atlas_restriction: bool = True
+
+    def __post_init__(self):
+        if self.atlases_dir is None:
+            from pathlib import Path
+
+            bundled = (
+                Path(__file__).resolve().parent.parent.parent
+                / "sourcedata"
+                / "atlases"
+                / "mni_lobar_masks"
+                / "MNI_1mm"
+            )
+            if bundled.is_dir():
+                self.atlases_dir = str(bundled)
