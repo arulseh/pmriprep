@@ -139,6 +139,10 @@ def merge_cli_config(
         "brain_extraction_tool": ("anat", "tool"),
         "denoise": ("anat", "denoise"),
         "skip_acpc": ("anat", "skip_acpc"),
+        # HD-GLIO options
+        "hdglio_conda_env": ("hdglio", "conda_env"),
+        "hdglio_device": ("hdglio", "device"),
+        "atlases_dir": ("hdglio", "atlases_dir"),
     }
 
     for cli_key, (section, config_key) in cli_to_config.items():

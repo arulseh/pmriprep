@@ -404,6 +404,14 @@ class HDGLIOSegmentInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Device for inference: cuda (NVIDIA GPU), mps (Apple Silicon), or cpu",
     )
+    conda_env = traits.Str(
+        desc=(
+            "Conda environment name to run hd_glio_predict in via "
+            "'conda run -n <env>'. Required when HD-GLIO is installed in a "
+            "separate environment due to dependency conflicts (e.g., "
+            "hdglio-mps for Apple Silicon)."
+        ),
+    )
     validate_output = traits.Bool(
         True,
         usedefault=True,
@@ -549,16 +557,43 @@ class HDGLIOSegment(BaseInterface):
 
         return device
 
+    def _get_output_file(self) -> Path:
+        """Get the output file path for hd_glio_predict.
+
+        hd_glio_predict requires ``-o`` to be a filename ending in
+        ``.nii.gz``, not a directory.
+
+        Returns
+        -------
+        Path
+            Full path to the output segmentation file.
+        """
+        out_dir = self._get_output_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return out_dir / "segmentation.nii.gz"
+
     def _build_command(self) -> str:
         """Build the hd_glio_predict command string.
+
+        When ``conda_env`` is set, the command is wrapped with
+        ``conda run -n <env> --no-capture-output`` so that
+        hd_glio_predict executes inside the correct environment.
 
         Returns
         -------
         str
             Full command string for hd_glio_predict
+
+        Notes
+        -----
+        hd_glio_predict does **not** accept a ``--device`` flag. Device
+        selection (cuda/mps/cpu) is controlled by the conda environment
+        and PyTorch installation within it. The ``device`` input on this
+        interface is retained for metadata/QC purposes only.
         """
-        out_dir = self._get_output_dir()
-        device = self._get_device_flag()
+        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+        out_file = self._get_output_file()
 
         cmd_parts = [
             "hd_glio_predict",
@@ -566,11 +601,17 @@ class HDGLIOSegment(BaseInterface):
             f"-t1c {self.inputs.t1w_postcon}",
             f"-t2 {self.inputs.t2w}",
             f"-flair {self.inputs.flair}",
-            f"-o {out_dir}",
-            f"--device {device}",
+            f"-o {out_file}",
         ]
 
-        return " ".join(cmd_parts)
+        cmd = " ".join(cmd_parts)
+
+        # Wrap with conda run if a separate environment is specified
+        conda_env = self.inputs.conda_env
+        if isdefined(conda_env) and conda_env:
+            cmd = f"conda run -n {conda_env} --no-capture-output {cmd}"
+
+        return cmd
 
     def _validate_segmentation(
         self,
@@ -632,8 +673,9 @@ class HDGLIOSegment(BaseInterface):
     def _find_segmentation_output(self) -> Path:
         """Find the segmentation output file from HD-GLIO.
 
-        HD-GLIO outputs a segmentation file in the output directory.
-        The exact filename may vary, so we look for common patterns.
+        First checks the exact output file path passed to ``-o``.
+        Falls back to searching the output directory for common patterns
+        in case the tool writes to a different name.
 
         Returns
         -------
@@ -645,10 +687,14 @@ class HDGLIOSegment(BaseInterface):
         FileNotFoundError
             If no segmentation output is found
         """
+        # Check the known output file path first
+        expected = self._get_output_file()
+        if expected.exists():
+            return expected
+
         out_dir = self._get_output_dir()
 
-        # HD-GLIO typically outputs as 'segmentation.nii.gz' or similar
-        # Check common patterns
+        # HD-GLIO may output under a slightly different name
         patterns = [
             "segmentation.nii.gz",
             "segmentation.nii",
@@ -672,7 +718,7 @@ class HDGLIOSegment(BaseInterface):
 
         raise FileNotFoundError(
             f"No segmentation output found in {out_dir}. "
-            f"Expected patterns: {patterns}"
+            f"Expected file: {expected}"
         )
 
     def _run_interface(self, runtime: Any) -> Any:

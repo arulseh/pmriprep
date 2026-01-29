@@ -314,6 +314,43 @@ Examples:
         help="Skip ACPC alignment to MNI template.",
     )
 
+    # HD-GLIO options
+    hdglio_group = parser.add_argument_group(
+        "HD-GLIO options",
+        "Options for HD-GLIO tumor segmentation.",
+    )
+    hdglio_group.add_argument(
+        "--hdglio-conda-env",
+        "--hdglio_conda_env",
+        dest="hdglio_conda_env",
+        type=str,
+        default=None,
+        help=(
+            "Conda environment name for hd_glio_predict "
+            "(e.g., 'hdglio-mps' for Apple Silicon). Required when HD-GLIO "
+            "is installed in a separate environment."
+        ),
+    )
+    hdglio_group.add_argument(
+        "--hdglio-device",
+        "--hdglio_device",
+        dest="hdglio_device",
+        choices=["cuda", "mps", "cpu"],
+        default=None,
+        help="Device for HD-GLIO inference (default: cuda).",
+    )
+    hdglio_group.add_argument(
+        "--atlases-dir",
+        "--atlases_dir",
+        dest="atlases_dir",
+        type=str,
+        default=None,
+        help=(
+            "Path to MNI lobar atlas directory for NAWM region restriction. "
+            "Enables atlas-based NAWM selection instead of hemisphere-only."
+        ),
+    )
+
     return parser
 
 

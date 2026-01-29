@@ -14,10 +14,35 @@ from pmriprep.config.hdglio import HDGLIOConfig
 from pmriprep.interfaces.hdglio import HDGLIOPrep, HDGLIOSegment
 
 
+def _select_enhancing(masks):
+    """Select enhancing mask path from masks dict."""
+    return masks["enhancing"]
+
+
+def _select_non_enhancing(masks):
+    """Select non-enhancing mask path from masks dict."""
+    return masks["non_enhancing"]
+
+
+def _select_whole_tumor(masks):
+    """Select whole tumor mask path from masks dict."""
+    return masks["whole_tumor"]
+
+
+def _extract_nawm_mask_path(nawm_result):
+    """Extract NAWM mask file path from result dict."""
+    return nawm_result["output_file"]
+
+
+def _extract_nawm_analysis_dict(nawm_result):
+    """Extract NAWM analysis sub-dict from result dict."""
+    return nawm_result["analysis"]
+
+
 def _extract_masks_node(
-    segmentation_file: str,
-    prefix: str,
-) -> dict[str, str]:
+    segmentation_file,
+    prefix,
+):
     """Node function to extract tumor masks from HD-GLIO segmentation.
 
     This function wraps the extract_tumor_masks utility for use in a
@@ -47,14 +72,8 @@ def _extract_masks_node(
     )
 
 
-def _dilate_mask_node(
-    mask_file: str,
-    radius_mm: float,
-) -> str:
+def _dilate_mask_node(mask_file, radius_mm):
     """Node function to dilate a tumor mask.
-
-    This function wraps the dilate_mask utility for use in a
-    Nipype Function node.
 
     Parameters
     ----------
@@ -78,15 +97,15 @@ def _dilate_mask_node(
 
 
 def _create_nawm_node(
-    tumor_mask_file: str,
-    wm_probseg_file: str,
-    nawm_erosion: int,
-    nawm_min_voxels: int,
-) -> dict[str, Any]:
+    tumor_mask_file,
+    wm_probseg_file,
+    nawm_erosion,
+    nawm_min_voxels,
+    mni_to_t1w_xfm="",
+    reference_image="",
+    atlases_dir="",
+):
     """Node function to create NAWM ROI.
-
-    This function wraps the create_nawm_roi utility for use in a
-    Nipype Function node.
 
     Parameters
     ----------
@@ -98,6 +117,12 @@ def _create_nawm_node(
         Erosion iterations for NAWM mask
     nawm_min_voxels : int
         Minimum voxels required in NAWM ROI
+    mni_to_t1w_xfm : str
+        Path to MNI-to-T1w transform for atlas-based restriction
+    reference_image : str
+        Path to T1w reference image for atlas transformation
+    atlases_dir : str
+        Path to MNI lobar atlas directory
 
     Returns
     -------
@@ -112,14 +137,13 @@ def _create_nawm_node(
         output_file=None,  # Auto-generate filename
         nawm_erosion=nawm_erosion,
         nawm_min_voxels=nawm_min_voxels,
+        mni_to_t1w_xfm=mni_to_t1w_xfm or None,
+        reference_image=reference_image or None,
+        atlases_dir=atlases_dir or None,
     )
 
 
-def _generate_qc_metrics(
-    prep_qc: dict[str, Any],
-    segment_qc: dict[str, Any],
-    nawm_analysis: dict[str, Any],
-) -> dict[str, Any]:
+def _generate_qc_metrics(prep_qc, segment_qc, nawm_analysis):
     """Combine QC metrics from all HD-GLIO processing steps.
 
     Parameters
@@ -188,6 +212,10 @@ def init_hdglio_wf(
         Path to brain mask from anatomical preprocessing.
     inputnode.wm_probseg : str
         Path to white matter probability map for NAWM ROI creation.
+    inputnode.t1w_to_mni_xfm : str, optional
+        Path to T1w-to-MNI transform for atlas-based NAWM restriction.
+    inputnode.t1w_preproc : str, optional
+        Path to preprocessed T1w image (reference for atlas transformation).
 
     Workflow Outputs
     ----------------
@@ -234,6 +262,7 @@ def init_hdglio_wf(
 
     # Define input node with required HD-GLIO inputs
     # HD-GLIO requires: T1w-pre, T1w-ce-GAD (post-contrast), T2w, FLAIR
+    # Optional: t1w_to_mni_xfm and t1w_preproc for atlas-based NAWM restriction
     inputnode = pe.Node(
         niu.IdentityInterface(
             fields=[
@@ -243,6 +272,8 @@ def init_hdglio_wf(
                 "flair",
                 "brain_mask",
                 "wm_probseg",
+                "t1w_to_mni_xfm",
+                "t1w_preproc",
             ]
         ),
         name="inputnode",
@@ -296,8 +327,11 @@ def init_hdglio_wf(
     # - Run hd_glio_predict with config.device (cuda/mps/cpu)
     # - Output labels: 0=background, 1=non-enhancing, 2=enhancing
     # -------------------------------------------------------------------
+    segment_kwargs: dict[str, Any] = {"device": config.device}
+    if config.conda_env:
+        segment_kwargs["conda_env"] = config.conda_env
     hdglio_segment = pe.Node(
-        HDGLIOSegment(device=config.device),
+        HDGLIOSegment(**segment_kwargs),
         name="hdglio_segment",
     )
 
@@ -336,11 +370,14 @@ def init_hdglio_wf(
     ])
 
     # Extract individual mask paths from the masks dict using Function nodes
+    # NOTE: Named functions are used instead of lambdas because Nipype
+    # serializes Function node callables for hashing/caching, and lambdas
+    # do not survive this process reliably.
     select_enhancing = pe.Node(
         niu.Function(
             input_names=["masks"],
             output_names=["mask_path"],
-            function=lambda masks: masks["enhancing"],
+            function=_select_enhancing,
         ),
         name="select_enhancing",
     )
@@ -348,7 +385,7 @@ def init_hdglio_wf(
         niu.Function(
             input_names=["masks"],
             output_names=["mask_path"],
-            function=lambda masks: masks["non_enhancing"],
+            function=_select_non_enhancing,
         ),
         name="select_non_enhancing",
     )
@@ -356,7 +393,7 @@ def init_hdglio_wf(
         niu.Function(
             input_names=["masks"],
             output_names=["mask_path"],
-            function=lambda masks: masks["whole_tumor"],
+            function=_select_whole_tumor,
         ),
         name="select_whole_tumor",
     )
@@ -412,6 +449,9 @@ def init_hdglio_wf(
                 "wm_probseg_file",
                 "nawm_erosion",
                 "nawm_min_voxels",
+                "mni_to_t1w_xfm",
+                "reference_image",
+                "atlases_dir",
             ],
             output_names=["nawm_result"],
             function=_create_nawm_node,
@@ -420,11 +460,17 @@ def init_hdglio_wf(
     )
     create_nawm.inputs.nawm_erosion = config.nawm_erosion
     create_nawm.inputs.nawm_min_voxels = config.nawm_min_voxels
+    create_nawm.inputs.atlases_dir = config.atlases_dir or ""
 
     # Connect whole tumor mask and WM probseg to NAWM creation
+    # Also connect MNI transform and T1w reference for atlas-based restriction
     workflow.connect([
         (select_whole_tumor, create_nawm, [("mask_path", "tumor_mask_file")]),
-        (inputnode, create_nawm, [("wm_probseg", "wm_probseg_file")]),
+        (inputnode, create_nawm, [
+            ("wm_probseg", "wm_probseg_file"),
+            ("t1w_to_mni_xfm", "mni_to_t1w_xfm"),
+            ("t1w_preproc", "reference_image"),
+        ]),
     ])
 
     # Extract NAWM mask path from result dict
@@ -432,7 +478,7 @@ def init_hdglio_wf(
         niu.Function(
             input_names=["nawm_result"],
             output_names=["nawm_mask"],
-            function=lambda nawm_result: nawm_result["output_file"],
+            function=_extract_nawm_mask_path,
         ),
         name="extract_nawm_path",
     )
@@ -459,7 +505,7 @@ def init_hdglio_wf(
         niu.Function(
             input_names=["nawm_result"],
             output_names=["analysis"],
-            function=lambda nawm_result: nawm_result["analysis"],
+            function=_extract_nawm_analysis_dict,
         ),
         name="extract_nawm_analysis",
     )

@@ -478,6 +478,8 @@ def init_pmriprep_wf(
                     ("outputnode.hdglio_flair", "inputnode.flair"),
                     ("outputnode.brain_mask", "inputnode.brain_mask"),
                     ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+                    ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
+                    ("outputnode.t1w_preproc", "inputnode.t1w_preproc"),
                 ]),
             ])
 
@@ -490,6 +492,33 @@ def init_pmriprep_wf(
                 ("outputnode.whole_tumor_mask", "whole_tumor_mask"),
                 ("outputnode.nawm_mask", "nawm_mask"),
                 ("outputnode.qc_metrics", "hdglio_qc"),
+            ]),
+        ])
+
+        # -------------------------------------------------------------------
+        # HDGLIODerivativeWriter: Write BIDS-compliant HD-GLIO outputs
+        # -------------------------------------------------------------------
+        from pmriprep.interfaces.hdglio_outputs import HDGLIODerivativeWriter
+
+        hdglio_writer = pe.Node(
+            HDGLIODerivativeWriter(
+                output_dir=str(output_dir),
+                subject_id=subject_id,
+                session_id=session_id or "",
+                bids_dir=str(bids_dir),
+            ),
+            name="hdglio_writer",
+        )
+
+        workflow.connect([
+            (hdglio_wf, hdglio_writer, [
+                ("outputnode.segmentation", "segmentation"),
+                ("outputnode.enhancing_mask", "enhancing_mask"),
+                ("outputnode.non_enhancing_mask", "non_enhancing_mask"),
+                ("outputnode.whole_tumor_mask", "whole_tumor_mask"),
+                ("outputnode.dilated_lesion_mask", "dilated_lesion_mask"),
+                ("outputnode.nawm_mask", "nawm_mask"),
+                ("outputnode.qc_metrics", "qc_metrics"),
             ]),
         ])
 
