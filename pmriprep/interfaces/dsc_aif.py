@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import numpy as np
 import numpy.typing as npt
-from scipy.ndimage import binary_erosion  # type: ignore[import-untyped]
+from scipy.ndimage import binary_dilation, binary_erosion  # type: ignore[import-untyped]
 from scipy.signal import savgol_filter  # type: ignore[import-untyped]
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
@@ -239,7 +239,7 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         desc="Number of AIF candidate voxels to average",
     )
     lesion_distance = traits.Float(
-        20.0,
+        15.0,
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
     )
@@ -334,8 +334,15 @@ class AIFDetection(BaseInterface):
         roi_mask: Optional[npt.NDArray[Any]],
         lesion_mask: Optional[npt.NDArray[Any]],
         erosion_iterations: int = 4,
+        lesion_dilation: int = 0,
     ) -> npt.NDArray[Any]:
         """Prepare binary search mask with erosion and exclusion.
+
+        Matches perf-plus ``_prepare_aif_search_mask``: erosion for
+        cortical vein exclusion, optional ROI intersection, and binary
+        lesion exclusion with optional dilation buffer.  Distance-based
+        lesion filtering happens *after* scoring (see
+        ``_apply_post_scoring_filters``).
 
         Parameters
         ----------
@@ -347,6 +354,9 @@ class AIFDetection(BaseInterface):
             Optional 3D lesion mask to exclude.
         erosion_iterations : int
             Number of binary erosion iterations (default 4).
+        lesion_dilation : int
+            Number of binary dilation iterations for lesion buffer
+            (default 0, use mask as-is).
 
         Returns
         -------
@@ -371,16 +381,143 @@ class AIFDetection(BaseInterface):
             if roi_mask is not None:
                 search &= roi_mask > 0.5
 
-        if lesion_mask is not None:
-            before = int(np.sum(search))
-            search = search & ~(lesion_mask > 0.5)
+        if lesion_mask is not None and np.any(lesion_mask > 0.5):
+            lesion_bool = lesion_mask > 0.5
+            if lesion_dilation > 0:
+                lesion_bool = binary_dilation(
+                    lesion_bool, iterations=lesion_dilation
+                )
+            pre_lesion = search.copy()
+            search = search & ~lesion_bool
             if not np.any(search):
-                # Lesion covers everything, fall back to pre-exclusion
-                search = (brain_mask > 0.5).copy()
-                if roi_mask is not None:
-                    search &= roi_mask > 0.5
+                search = pre_lesion
 
         return search
+
+    # -----------------------------------------------------------------
+    # Step 2b: World-coordinate hemisphere methods
+    # (perf-plus determine_tumor_laterality + filter_aif_candidates_by_hemisphere)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _determine_tumor_laterality(
+        lesion_mask: npt.NDArray[Any],
+        affine: npt.NDArray[Any],
+        midline_tolerance_mm: float = 10.0,
+    ) -> Optional[str]:
+        """Determine tumor hemisphere using world (RAS) coordinates.
+
+        Parameters
+        ----------
+        lesion_mask : ndarray
+            3D lesion mask (values > 0.5 = lesion).
+        affine : ndarray
+            4x4 affine transformation matrix (voxel -> RAS world).
+        midline_tolerance_mm : float
+            Distance from midline (x=0) for bilateral classification.
+
+        Returns
+        -------
+        str or None
+            ``'left'``, ``'right'``, ``'bilateral'``, or ``None`` if
+            the mask is empty.
+        """
+        coords = np.argwhere(lesion_mask > 0.5)  # (N, 3) voxel coords
+        if len(coords) == 0:
+            return None
+
+        # Center of mass in voxel space
+        com_voxel = coords.mean(axis=0)
+
+        # Convert to world coordinates using affine
+        com_world = affine @ np.append(com_voxel, 1.0)
+        x_mm = float(com_world[0])
+
+        # Convert all lesion voxels to world for bilateral check
+        coords_homog = np.column_stack([coords, np.ones(len(coords))])
+        coords_world = (affine @ coords_homog.T).T
+        x_coords_mm = coords_world[:, 0]
+
+        x_min, x_max = float(x_coords_mm.min()), float(x_coords_mm.max())
+
+        # Bilateral if tumor significantly spans midline on both sides
+        if x_min < -midline_tolerance_mm and x_max > midline_tolerance_mm:
+            return "bilateral"
+
+        # RAS convention: x < 0 = left hemisphere
+        return "left" if x_mm < 0 else "right"
+
+    @staticmethod
+    def _filter_candidates_by_hemisphere(
+        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        affine: npt.NDArray[Any],
+        tumor_laterality: str,
+        prefer_contralateral: bool = True,
+    ) -> tuple[
+        list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        str,
+        int,
+        int,
+    ]:
+        """Filter scored candidates by hemisphere preference.
+
+        For non-bilateral tumors, prefers contralateral hemisphere
+        candidates.  Falls back to ipsilateral if no contralateral
+        candidates are available.
+
+        Parameters
+        ----------
+        top_candidates : list
+            List of ``(cost, (x,y,z), metrics)`` tuples.
+        affine : ndarray
+            4x4 affine transformation matrix (voxel -> RAS world).
+        tumor_laterality : str
+            ``'left'``, ``'right'``, or ``'bilateral'``.
+        prefer_contralateral : bool
+            Whether to prefer contralateral candidates.
+
+        Returns
+        -------
+        tuple of (filtered, hemisphere_used, n_contra, n_ipsi)
+            filtered : candidates restricted to preferred hemisphere.
+            hemisphere_used : ``'contralateral'``, ``'ipsilateral'``,
+                or ``'both'``.
+            n_contra : count of contralateral candidates.
+            n_ipsi : count of ipsilateral candidates.
+        """
+        if (
+            tumor_laterality == "bilateral"
+            or not prefer_contralateral
+        ):
+            return top_candidates, "both", 0, 0
+
+        contra_side = "right" if tumor_laterality == "left" else "left"
+
+        contra: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        ipsi: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+
+        for entry in top_candidates:
+            _, coord, _ = entry
+            coord_homog = np.array(
+                [coord[0], coord[1], coord[2], 1.0]
+            )
+            world = affine @ coord_homog
+            cand_side = "left" if world[0] < 0 else "right"
+
+            if cand_side == contra_side:
+                contra.append(entry)
+            else:
+                ipsi.append(entry)
+
+        n_contra = len(contra)
+        n_ipsi = len(ipsi)
+
+        if n_contra >= 1:
+            return contra, "contralateral", n_contra, n_ipsi
+
+        # No contralateral candidates — fall back to ipsilateral
+        filtered = ipsi if n_ipsi > 0 else top_candidates
+        return filtered, "ipsilateral", n_contra, n_ipsi
 
     # -----------------------------------------------------------------
     # Step 3: Spatial exclusions  (perf-plus _apply_spatial_exclusions)
@@ -809,13 +946,14 @@ class AIFDetection(BaseInterface):
         criteria: str,
         tissue_ttp_frame: float,
         n_top: int = 10,
-    ) -> list[tuple[float, tuple[int, int, int], dict[str, float]]]:
+    ) -> tuple[list[tuple[float, tuple[int, int, int], dict[str, Any]]], int]:
         """Score pre-filtered candidates and return top N.
 
         Returns
         -------
-        list of (cost, (x,y,z), metrics)
-            Sorted ascending by cost (lower = better).
+        tuple of (top_candidates, n_available)
+            top_candidates : list of (cost, (x,y,z), metrics) sorted ascending.
+            n_available : total number of candidates that passed scoring.
         """
         # Median S0 for partial volume detection
         median_s0: Optional[float] = None
@@ -827,7 +965,7 @@ class AIFDetection(BaseInterface):
             if len(positive_s0) > 0:
                 median_s0 = float(np.median(positive_s0))
 
-        scored: list[tuple[float, tuple[int, int, int], dict[str, float]]] = []
+        scored: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
 
         for idx_arr in candidate_indices:
             ix = (int(idx_arr[0]), int(idx_arr[1]), int(idx_arr[2]))
@@ -868,7 +1006,125 @@ class AIFDetection(BaseInterface):
 
         # Sort by cost ascending (lower = better)
         scored.sort(key=lambda x: x[0])
-        return scored[:n_top]
+        n_available = len(scored)
+        return scored[:n_top], n_available
+
+    # -----------------------------------------------------------------
+    # Step 8b: Post-scoring filters (distance + contralateral)
+    # (perf-plus steps 4.5 + 4.6 in _find_aif_single_attempt)
+    # -----------------------------------------------------------------
+
+    def _apply_post_scoring_filters(
+        self,
+        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        lesion_mask: Optional[npt.NDArray[Any]],
+        affine: npt.NDArray[Any],
+        voxel_sizes: tuple[float, ...],
+        lesion_min_distance_mm: float = 15.0,
+        prefer_contralateral: bool = True,
+    ) -> tuple[
+        list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        dict[str, Any],
+    ]:
+        """Apply distance and hemisphere filters after scoring.
+
+        Matches perf-plus steps 4.5 (distance) and 4.6 (contralateral).
+
+        Parameters
+        ----------
+        top_candidates : list
+            Scored ``(cost, (x,y,z), metrics)`` tuples.
+        lesion_mask : ndarray or None
+            3D lesion mask.
+        affine : ndarray
+            4x4 affine transformation matrix (voxel -> RAS world).
+        voxel_sizes : tuple of float
+            Voxel dimensions in mm ``(dx, dy, dz)``.
+        lesion_min_distance_mm : float
+            Minimum Euclidean distance from lesion in mm.
+        prefer_contralateral : bool
+            Whether to prefer contralateral hemisphere candidates.
+
+        Returns
+        -------
+        tuple of (filtered_candidates, filter_metadata)
+        """
+        import warnings
+
+        meta: dict[str, Any] = {}
+
+        # --- Step 4.5: Distance-based lesion filtering ---
+        if (
+            lesion_mask is not None
+            and lesion_min_distance_mm > 0
+            and np.any(lesion_mask > 0.5)
+        ):
+            lesion_coords = np.argwhere(lesion_mask > 0.5)  # (N, 3)
+            # Scale to mm
+            lesion_mm = lesion_coords * np.array(voxel_sizes)
+
+            filtered = []
+            excluded = []
+            for entry in top_candidates:
+                _, coord, metrics = entry
+                coord_mm = np.array(coord) * np.array(voxel_sizes)
+                dists = np.linalg.norm(lesion_mm - coord_mm, axis=1)
+                min_dist = float(np.min(dists))
+                metrics["lesion_distance_mm"] = min_dist
+
+                if min_dist >= lesion_min_distance_mm:
+                    filtered.append(entry)
+                else:
+                    excluded.append(entry)
+
+            meta["n_distance_excluded"] = len(excluded)
+            if filtered:
+                top_candidates = filtered
+            else:
+                # All excluded — keep originals with warning
+                warnings.warn(
+                    f"All {len(top_candidates)} AIF candidates were "
+                    f"<{lesion_min_distance_mm}mm from lesion. "
+                    "Keeping closest candidate(s).",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                for _, _, m in top_candidates:
+                    m["lesion_distance_warning"] = True
+
+        # --- Step 4.6: Contralateral hemisphere preference ---
+        tumor_laterality: Optional[str] = None
+        hemisphere_used = "both"
+        n_contra = 0
+        n_ipsi = 0
+
+        if (
+            lesion_mask is not None
+            and prefer_contralateral
+            and np.any(lesion_mask > 0.5)
+        ):
+            tumor_laterality = self._determine_tumor_laterality(
+                lesion_mask, affine
+            )
+            if tumor_laterality is not None and tumor_laterality != "bilateral":
+                (
+                    top_candidates,
+                    hemisphere_used,
+                    n_contra,
+                    n_ipsi,
+                ) = self._filter_candidates_by_hemisphere(
+                    top_candidates, affine, tumor_laterality,
+                    prefer_contralateral=prefer_contralateral,
+                )
+            elif tumor_laterality == "bilateral":
+                hemisphere_used = "both"
+
+        meta["tumor_laterality"] = tumor_laterality
+        meta["hemisphere_used"] = hemisphere_used
+        meta["n_contralateral"] = n_contra
+        meta["n_ipsilateral"] = n_ipsi
+
+        return top_candidates, meta
 
     # -----------------------------------------------------------------
     # Step 9: ROI averaging + smoothing
@@ -877,7 +1133,7 @@ class AIFDetection(BaseInterface):
 
     @staticmethod
     def _compute_roi_averaged_aif(
-        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, float]]],
+        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
         roi_size: int = 3,
@@ -991,18 +1247,142 @@ class AIFDetection(BaseInterface):
         return aif
 
     # -----------------------------------------------------------------
+    # Step 9b: Finalize AIF metrics
+    # (perf-plus _finalize_aif_metrics)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _finalize_aif_metrics(
+        aif_curve: npt.NDArray[Any],
+        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        affine: npt.NDArray[Any],
+        tr: float,
+        n_candidates_requested: int,
+        n_available: int,
+    ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
+        """Finalize AIF: detect bolus arrival and compute comprehensive QC.
+
+        Parameters
+        ----------
+        aif_curve : ndarray
+            1D smoothed AIF concentration curve.
+        top_candidates : list
+            ``(cost, (x,y,z), metrics)`` tuples used.
+        conc_data : ndarray
+            4D concentration data.
+        brain_mask : ndarray
+            3D brain mask.
+        affine : ndarray
+            4x4 affine matrix.
+        tr : float
+            Repetition time in seconds.
+        n_candidates_requested : int
+            How many candidates were requested.
+        n_available : int
+            How many candidates passed scoring.
+
+        Returns
+        -------
+        tuple of (aif_curve, qc_dict)
+        """
+        from pmriprep.utils.dsc_signal import detect_bolus_arrival
+
+        # Bolus arrival on the final AIF curve
+        arrival_idx, n_baseline_detected = detect_bolus_arrival(
+            aif_curve, baseline_frames=3
+        )
+        arrival_time_s = arrival_idx * tr
+        total_frames = len(aif_curve)
+        baseline_fraction = n_baseline_detected / total_frames
+
+        # Best candidate info
+        best_cost, best_coord, best_m = top_candidates[0]
+        best_coord_int = tuple(int(c) for c in best_coord)
+
+        # Convert best coord to world mm
+        coord_homog = np.array(
+            [best_coord[0], best_coord[1], best_coord[2], 1.0]
+        )
+        aif_centroid_mm = (affine @ coord_homog)[:3].tolist()
+
+        # Hemisphere distribution (voxel midline for counting)
+        midline_x = brain_mask.shape[0] // 2
+        n_left = sum(
+            1 for _, coord, _ in top_candidates if coord[0] < midline_x
+        )
+        n_right = len(top_candidates) - n_left
+        is_bilateral = n_left > 0 and n_right > 0
+
+        # Determine AIF hemisphere via world coordinates
+        aif_hemisphere = "left" if aif_centroid_mm[0] < 0 else "right"
+
+        # Edge slice warning
+        n_slices = conc_data.shape[2]
+        aif_z = best_coord_int[2]
+        is_edge = aif_z == 0 or aif_z == n_slices - 1
+
+        n_used = len(top_candidates)
+
+        qc: dict[str, Any] = {
+            # Candidate counts
+            "n_aif_candidates_used": n_used,
+            "n_aif_candidates_requested": n_candidates_requested,
+            "n_aif_candidates_available": n_available,
+            "aif_insufficient_candidates": n_available < 3,
+            # Baseline / arrival
+            "n_baseline_frames": n_baseline_detected,
+            "baseline_fraction": float(baseline_fraction),
+            "arrival_time_seconds": float(arrival_time_s),
+            # Spatial
+            "aif_voxel_coord": list(best_coord_int),
+            "aif_centroid_mm": [float(v) for v in aif_centroid_mm],
+            "aif_hemisphere": aif_hemisphere,
+            "all_candidate_coords": [
+                [int(c) for c in coord]
+                for _, coord, _ in top_candidates
+            ],
+            # Hemisphere distribution
+            "n_left_hemisphere": n_left,
+            "n_right_hemisphere": n_right,
+            "is_bilateral": is_bilateral,
+            # Edge slice
+            "aif_slice": aif_z,
+            "n_slices": n_slices,
+            "aif_edge_slice_warning": is_edge,
+            # Best candidate quality metrics
+            "best_cost": float(best_cost),
+            "mean_cost": float(
+                np.mean([c for c, _, _ in top_candidates])
+            ),
+            "best_ttp": best_m.get("ttp", 0.0),
+            "best_fwhm": best_m.get("fwhm", 0.0),
+            "best_ph": best_m.get("ph", 0.0),
+            "best_psr": best_m.get("psr", 0.0),
+            "best_brr": best_m.get("baseline_return_ratio", 0.0),
+        }
+
+        return aif_curve, qc
+
+    # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute AIF detection with perf-plus pipeline.
 
-        Pipeline:
-        1. Atlas search (if atlas): eroded mask + atlas, strict then relaxed
-        2. Whole-brain search: eroded mask, user criteria -> degraded
-        3. Synthetic fallback
+        Pipeline mirrors perf-plus ``find_aif`` / ``_find_aif_single_attempt``:
+        1. Build attempts list: atlas (strict/relaxed/permissive) then
+           brain (relaxed/permissive/degraded).
+        2. Each attempt: prepare mask -> find candidates -> score ->
+           post-scoring filters (distance + contralateral).
+        3. On success, finalize metrics and break.
+        4. Synthetic fallback if all attempts fail.
         """
         import nibabel as nib  # type: ignore[import-untyped]
+
+        from pmriprep.utils.dsc_signal import detect_bolus_arrival
 
         # Load data
         conc_img = nib.load(self.inputs.concentration_file)
@@ -1052,19 +1432,24 @@ class AIFDetection(BaseInterface):
 
         # Parameters
         aif_method = str(self.inputs.aif_method)
-        criteria = str(self.inputs.criteria)
+        initial_criteria = str(self.inputs.criteria)
         n_candidates = int(self.inputs.n_candidates)
         baseline_frames = int(self.inputs.baseline_frames)
         gamma_fit = bool(self.inputs.gamma_fit)
         disable_fallback = bool(self.inputs.disable_fallback)
+        lesion_distance = float(self.inputs.lesion_distance)
+        prefer_contralateral = bool(self.inputs.prefer_contralateral)
         n_timepoints = conc_data.shape[3]
+
+        # Voxel sizes for distance-based lesion exclusion and TR detection
+        zooms = conc_img.header.get_zooms()  # type: ignore[attr-defined,union-attr]
+        voxel_sizes = tuple(float(z) for z in zooms[:3])
 
         # TR: from input, or auto-detect from NIfTI header, fallback 1.5 s
         tr = float(self.inputs.tr)
         if tr <= 0:
-            pixdim = conc_img.header.get_zooms()  # type: ignore[attr-defined,union-attr]
-            if len(pixdim) >= 4 and pixdim[3] > 0:
-                tr = float(pixdim[3])
+            if len(zooms) >= 4 and zooms[3] > 0:
+                tr = float(zooms[3])
                 # Sanity: DSC TR is typically 1-3 s; detect ms/us units
                 if tr > 100.0:
                     import warnings
@@ -1078,62 +1463,79 @@ class AIFDetection(BaseInterface):
             else:
                 tr = 1.5
 
+        # --- GAP 6: Auto-detect baseline frames ---
+        mean_brain_conc = np.mean(
+            conc_data[brain_mask > 0.5], axis=0
+        )
+        _, detected_baseline = detect_bolus_arrival(
+            mean_brain_conc, baseline_frames=3
+        )
+        if detected_baseline > baseline_frames:
+            baseline_frames = detected_baseline
+
         # Initialize
         detection_level = "synthetic"
-        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, float]]] = []
+        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        n_available = 0
+        filter_meta: dict[str, Any] = {}
 
         if aif_method == "population":
             pass  # Go directly to synthetic
         else:
-            # ---- Atlas search ----
-            if atlas_mask is not None:
-                atlas_search = self._prepare_search_mask(
-                    brain_mask, atlas_mask, lesion_mask
-                )
-                cand_atlas, peak_map_atlas = self._find_aif_candidate_voxels(
-                    conc_data, atlas_search, baseline_frames
-                )
-                if cand_atlas.shape[0] > 0:
-                    tissue_ttp = self._calculate_tissue_ttp_reference(
-                        conc_data, brain_mask, baseline_frames
-                    )
-                    for crit in ["strict", "relaxed"]:
-                        top_candidates = self._score_and_select_candidates(
-                            cand_atlas, conc_data, signal_data,
-                            peak_map_atlas, brain_mask, tr, baseline_frames,
-                            crit, tissue_ttp, n_top=n_candidates,
-                        )
-                        if top_candidates:
-                            detection_level = f"atlas_{crit}"
-                            break
+            # --- GAP 7: Unified attempts loop ---
+            # Build full attempts list, then filter by initial_criteria
+            criteria_order = ["strict", "relaxed", "permissive", "degraded"]
+            try:
+                start_idx = criteria_order.index(initial_criteria)
+            except ValueError:
+                start_idx = 0
 
-            # ---- Whole-brain search ----
-            if not top_candidates:
-                brain_search = self._prepare_search_mask(
-                    brain_mask, None, lesion_mask
+            all_attempts: list[tuple[str, Optional[npt.NDArray[Any]], str]] = []
+            if atlas_mask is not None:
+                for crit in ["strict", "relaxed", "permissive"]:
+                    all_attempts.append((crit, atlas_mask, f"atlas_{crit}"))
+            for crit in ["relaxed", "permissive", "degraded"]:
+                all_attempts.append((crit, None, f"brain_{crit}"))
+
+            # Skip attempts with criteria stricter than initial_criteria
+            attempts = [
+                (crit, roi, name)
+                for crit, roi, name in all_attempts
+                if criteria_order.index(crit) >= start_idx
+            ]
+
+            for crit, roi, level_name in attempts:
+                search = self._prepare_search_mask(
+                    brain_mask, roi, lesion_mask
                 )
-                cand_brain, peak_map_brain = self._find_aif_candidate_voxels(
-                    conc_data, brain_search, baseline_frames
+                cands, peak_map = self._find_aif_candidate_voxels(
+                    conc_data, search, baseline_frames
                 )
-                if cand_brain.shape[0] > 0:
-                    tissue_ttp = self._calculate_tissue_ttp_reference(
-                        conc_data, brain_mask, baseline_frames
-                    )
-                    # Build criteria fallback: user -> relaxed -> permissive -> degraded
-                    all_criteria = ["strict", "relaxed", "permissive", "degraded"]
-                    try:
-                        start_idx = all_criteria.index(criteria)
-                    except ValueError:
-                        start_idx = 0
-                    for crit in all_criteria[start_idx:]:
-                        top_candidates = self._score_and_select_candidates(
-                            cand_brain, conc_data, signal_data,
-                            peak_map_brain, brain_mask, tr, baseline_frames,
-                            crit, tissue_ttp, n_top=n_candidates,
-                        )
-                        if top_candidates:
-                            detection_level = f"brain_{crit}"
-                            break
+                if cands.shape[0] == 0:
+                    continue
+                tissue_ttp = self._calculate_tissue_ttp_reference(
+                    conc_data, brain_mask, baseline_frames
+                )
+                scored, n_avail = self._score_and_select_candidates(
+                    cands, conc_data, signal_data, peak_map,
+                    brain_mask, tr, baseline_frames, crit,
+                    tissue_ttp, n_top=n_candidates,
+                )
+                if not scored:
+                    continue
+
+                # Post-scoring filters (distance + contralateral)
+                scored, f_meta = self._apply_post_scoring_filters(
+                    scored, lesion_mask, affine, voxel_sizes,
+                    lesion_min_distance_mm=lesion_distance,
+                    prefer_contralateral=prefer_contralateral,
+                )
+                if scored:
+                    top_candidates = scored
+                    n_available = n_avail
+                    detection_level = level_name
+                    filter_meta = f_meta
+                    break
 
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
@@ -1146,7 +1548,6 @@ class AIFDetection(BaseInterface):
                 top_candidates, conc_data, brain_mask
             )
             aif_mask_arr[aif_bool_mask] = 1
-            # Also mark candidate voxel centers
             for _, coord, _ in top_candidates:
                 aif_mask_arr[coord[0], coord[1], coord[2]] = 1
 
@@ -1154,35 +1555,66 @@ class AIFDetection(BaseInterface):
             mean_cost = float(np.mean([c for c, _, _ in top_candidates]))
             quality_score = min(1.0, 1.0 / (1.0 + mean_cost))
 
-            # QC metrics from best candidate
-            best_m = top_candidates[0][2]
-            qc_metrics = {
-                "n_candidates": len(top_candidates),
-                "best_cost": float(top_candidates[0][0]),
-                "mean_cost": mean_cost,
-                "best_ttp": best_m.get("ttp", 0.0),
-                "best_fwhm": best_m.get("fwhm", 0.0),
-                "best_ph": best_m.get("ph", 0.0),
-                "best_psr": best_m.get("psr", 0.0),
-                "best_brr": best_m.get("baseline_return_ratio", 0.0),
-            }
+            # --- GAP 8: Finalize AIF metrics ---
+            aif_curve, finalized_qc = self._finalize_aif_metrics(
+                aif_curve, top_candidates, conc_data, brain_mask,
+                affine, tr, n_candidates, n_available,
+            )
+            qc_metrics.update(finalized_qc)
+            qc_metrics.update(filter_meta)
 
         elif not disable_fallback:
-            aif_curve = self._generate_synthetic_aif(n_timepoints, tr, baseline_frames)
+            aif_curve = self._generate_synthetic_aif(
+                n_timepoints, tr, baseline_frames
+            )
             detection_level = "synthetic"
             quality_score = 0.3
             qc_metrics = {
                 "synthetic": True,
-                "n_candidates": 0,
+                "n_aif_candidates_used": 0,
+                "n_aif_candidates_available": 0,
             }
         else:
             raise RuntimeError(
-                "AIF detection failed at all levels and synthetic fallback is disabled"
+                "AIF detection failed at all levels and "
+                "synthetic fallback is disabled"
             )
 
         qc_metrics["detection_level"] = detection_level
         qc_metrics["s0_rejection_available"] = signal_data is not None
         qc_metrics["tr_used"] = tr
+        qc_metrics["baseline_frames_used"] = baseline_frames
+
+        # --- GAP 9: Quantification validity flags ---
+        if "degraded" in detection_level:
+            qc_metrics["quantification_validity"] = {
+                "absolute_cbv": False,
+                "absolute_cbf": False,
+                "relative_cbv": "CAUTION",
+                "mtt": "CAUTION",
+                "ttp": True,
+                "tmax": True,
+            }
+            qc_metrics["degraded_aif_warnings"] = [
+                "AIF quality is DEGRADED - quantification unreliable",
+                "Absolute CBV/CBF values are NOT VALID",
+                "Relative CBV may have 30-50% error vs optimal AIF",
+                "Use TTP/Tmax for timing analysis (unaffected by AIF quality)",
+                "Consider manual AIF selection for publication-quality results",
+            ]
+        elif detection_level != "synthetic":
+            is_high_quality = any(
+                lvl in detection_level
+                for lvl in ("strict", "relaxed")
+            )
+            qc_metrics["quantification_validity"] = {
+                "absolute_cbv": True if is_high_quality else "ACCEPTABLE",
+                "absolute_cbf": True if is_high_quality else "ACCEPTABLE",
+                "relative_cbv": True,
+                "mtt": True,
+                "ttp": True,
+                "tmax": True,
+            }
 
         # Gamma-variate fitting
         gamma_fit_applied = False
@@ -1202,7 +1634,9 @@ class AIFDetection(BaseInterface):
                     gamma_fit_applied = True
                     qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
                     qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
-                    qc_metrics["gamma_recirculation_removed"] = fit_result.recirculation_removed
+                    qc_metrics["gamma_recirculation_removed"] = (
+                        fit_result.recirculation_removed
+                    )
             except Exception:
                 pass
 
