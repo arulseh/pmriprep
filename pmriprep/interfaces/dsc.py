@@ -187,6 +187,11 @@ class MotionCorrectionInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Number of search stages (default: 4)",
     )
+    pre_bolus_frames = traits.Int(
+        5,
+        usedefault=True,
+        desc="Number of pre-bolus frames for reference volume computation (default: 5)",
+    )
 
 
 class MotionCorrectionOutputSpec(TraitedSpec):
@@ -336,6 +341,30 @@ class MotionCorrection(CommandLine):
 
         return str(out_file.parent / f"{base}_mean_reg{ext}")
 
+    def _compute_pre_bolus_mean(self) -> str:
+        """Compute pre-bolus mean reference image and return its path."""
+        import nibabel as nib
+        import tempfile
+
+        in_file = str(self.inputs.in_file)
+        pre_bolus_frames = int(self.inputs.pre_bolus_frames)
+
+        img = nib.load(in_file)
+        data = img.get_fdata()  # type: ignore[attr-defined]
+        n_timepoints = data.shape[-1]
+        n_frames = min(pre_bolus_frames, n_timepoints)
+        n_frames = max(1, n_frames)
+
+        pre_bolus_mean = np.mean(data[..., :n_frames], axis=-1)
+        fd, ref_path = tempfile.mkstemp(
+            suffix="_prebolus_mean.nii.gz", dir=str(Path.cwd())
+        )
+        import os
+        os.close(fd)
+        ref_img = nib.Nifti1Image(pre_bolus_mean.astype(np.float32), img.affine, img.header)  # type: ignore[attr-defined]
+        nib.save(ref_img, ref_path)
+        return ref_path
+
     @property
     def cmdline(self) -> str:
         """Build the mcflirt command line."""
@@ -351,6 +380,9 @@ class MotionCorrection(CommandLine):
         else:
             out_base = str(out_path)
 
+        # Compute pre-bolus mean reference image
+        ref_file = self._compute_pre_bolus_mean()
+
         # Build command
         cmd_parts = [
             "mcflirt",
@@ -361,15 +393,8 @@ class MotionCorrection(CommandLine):
             "-mats",  # Output transformation matrices
         ]
 
-        # Reference volume
-        ref_vol = self.inputs.ref_vol
-        if isinstance(ref_vol, int):
-            cmd_parts.append(f"-refvol {ref_vol}")
-        elif ref_vol == "mean":
-            cmd_parts.append("-meanvol")
-        elif ref_vol == "first":
-            cmd_parts.append("-refvol 0")
-        # 'median' is not directly supported by mcflirt, use mean
+        # Use pre-bolus mean as reference via -reffile
+        cmd_parts.append(f"-reffile {ref_file}")
 
         # Cost function
         cost = self.inputs.cost
@@ -411,8 +436,16 @@ class MotionCorrection(CommandLine):
         params_file = f"{base}.par"
         outputs["out_params"] = params_file
 
-        # Mean image
+        # Mean image -- with -reffile mcflirt does not produce _mean_reg.nii.gz,
+        # so we compute the mean of the motion-corrected output ourselves.
         mean_file = f"{base}_mean_reg.nii.gz"
+        if not Path(mean_file).exists() and Path(out_file).exists():
+            import nibabel as nib
+            moco_img = nib.load(out_file)
+            moco_data = moco_img.get_fdata()  # type: ignore[attr-defined]
+            mean_data = np.mean(moco_data, axis=-1).astype(np.float32)
+            mean_img = nib.Nifti1Image(mean_data, moco_img.affine, moco_img.header)  # type: ignore[attr-defined]
+            nib.save(mean_img, mean_file)
         outputs["mean_img"] = mean_file
 
         # Compute motion metrics if params file exists
@@ -894,7 +927,7 @@ class DSCRegistration(CommandLine):
                     try:
                         # Load registered T1w and threshold to create pseudo mask
                         reg_img = nib.load(out_file)
-                        reg_data = reg_img.get_fdata()
+                        reg_data = reg_img.get_fdata()  # type: ignore[attr-defined]
                         nonzero = reg_data[reg_data > 0]
                         if len(nonzero) > 100:
                             thresh = np.percentile(nonzero, 15)
@@ -903,7 +936,7 @@ class DSCRegistration(CommandLine):
                             reg_mask = (reg_data > 0).astype(np.float64)
 
                         # Load DSC brain mask
-                        dsc_mask_data = nib.load(mask_path).get_fdata()
+                        dsc_mask_data = nib.load(mask_path).get_fdata()  # type: ignore[attr-defined]
 
                         # Compute DICE
                         dice = calculate_dice(reg_mask, dsc_mask_data, threshold=0.5)

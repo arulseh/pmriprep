@@ -21,7 +21,7 @@ from pmriprep.utils.dsc_constants import (
 def signal_to_concentration(
     signal: npt.NDArray[np.floating],
     te: float,
-    baseline_frames: int = 10,
+    baseline_frames: int = 5,
     r2_star: Optional[float] = None,
     field_strength: Optional[float] = None,
 ) -> npt.NDArray[np.floating]:
@@ -39,7 +39,7 @@ def signal_to_concentration(
             Signal values should be positive.
         te: Echo time in seconds. Typical values: 0.025-0.040s.
         baseline_frames: Number of pre-bolus frames for S0 estimation.
-            Default is 10 frames.
+            Default is 5 frames.
         r2_star: Transverse relaxivity in s^-1 per mM for absolute
             quantification. If None, returns relative ΔR2*.
         field_strength: Magnetic field strength in Tesla. Used to look up
@@ -130,7 +130,7 @@ def signal_to_concentration(
 def signal_to_delta_r2_star(
     signal: npt.NDArray[np.floating],
     te: float,
-    baseline_frames: int = 10,
+    baseline_frames: int = 5,
 ) -> npt.NDArray[np.floating]:
     """Convert DSC signal to ΔR2* (relative concentration).
 
@@ -155,7 +155,7 @@ def signal_to_delta_r2_star(
 
 def get_baseline_signal(
     signal: npt.NDArray[np.floating],
-    baseline_frames: int = 10,
+    baseline_frames: int = 5,
 ) -> Union[float, npt.NDArray[np.floating]]:
     """Compute baseline signal S0 from pre-bolus frames.
 
@@ -176,7 +176,7 @@ def get_baseline_signal(
 
 def find_bolus_arrival(
     signal: npt.NDArray[np.floating],
-    baseline_frames: int = 10,
+    baseline_frames: int = 5,
     threshold_factor: float = 3.0,
 ) -> int:
     """Find the bolus arrival time point.
@@ -213,6 +213,43 @@ def find_bolus_arrival(
             return i
 
     raise ValueError("No bolus arrival detected in signal")
+
+
+def detect_bolus_arrival(
+    concentration_curve: npt.NDArray[np.floating],
+    baseline_frames: int = 3,
+) -> Tuple[int, int]:
+    """Detect bolus arrival in a concentration curve.
+
+    Uses a 3-sigma threshold above the initial baseline to find the first
+    frame with significant contrast arrival, then returns both the arrival
+    index and the number of usable baseline frames.
+
+    Ported from perf-plus perfusion_utils.detect_bolus_arrival().
+
+    Args:
+        concentration_curve: 1D concentration time course (positive values
+            indicate contrast arrival in concentration space).
+        baseline_frames: Number of initial frames for baseline estimation.
+            Default is 3 to avoid early bolus contamination.
+
+    Returns:
+        Tuple of (arrival_idx, n_baseline_frames):
+            - arrival_idx: Frame index where bolus arrives
+            - n_baseline_frames: Number of usable pre-bolus frames
+              (always >= 2)
+    """
+    n_baseline = min(baseline_frames, len(concentration_curve) // 4)
+    n_baseline = max(2, n_baseline)
+    baseline = np.mean(concentration_curve[:n_baseline])
+    baseline_std = np.std(concentration_curve[:n_baseline])
+    threshold = baseline + 3 * baseline_std
+    arrival_indices = np.where(concentration_curve > threshold)[0]
+    if len(arrival_indices) > 0:
+        arrival_idx = int(arrival_indices[0])
+    else:
+        arrival_idx = 5  # fallback: 5 frames if no clear arrival
+    return arrival_idx, max(2, arrival_idx)
 
 
 def compute_psr(
@@ -252,6 +289,13 @@ def compute_psr(
         ValueError: If baseline_frames or tail_frames exceeds signal length.
 
     Notes:
+        - This is the physics-correct version for post-integration expert
+          review. The legacy version (compute_psr_legacy) matches perf-plus
+          ground truth and uses the Cha et al. (AJNR 2002) formula.
+        - TODO(physics-review): s_min currently uses the entire timeseries.
+          The physics expert recommends using post-baseline frames only
+          (signal[..., baseline_frames:]) to avoid baseline contamination,
+          matching the perf-plus convention.
         - PSR can exceed 100% in cases where the signal overshoots baseline
           after bolus passage (rare, usually indicates motion artifact).
         - PSR can be negative if signal never recovers (very high leakage
@@ -310,6 +354,50 @@ def compute_psr(
         return psr
 
 
+def compute_psr_legacy(
+    signal: npt.NDArray[np.floating],
+    baseline_frames: int = 5,
+    tail_frames: int = 5,
+) -> Union[float, npt.NDArray[np.floating]]:
+    """Compute PSR using the perf-plus legacy formula.
+
+    Legacy formula (Cha et al., AJNR 2002):
+        PSR = 100 × (S1 - Smin) / (S0 - Smin)
+    where S0 = mean baseline signal, S1 = mean tail signal,
+    Smin = minimum signal in post-baseline frames.
+
+    Returns percentage (~0-100+ range). Kept for integration test
+    compatibility with perf-plus ground truth.
+
+    Args:
+        signal: DSC signal array (1D or 4D).
+        baseline_frames: Number of pre-bolus frames for S0.
+        tail_frames: Number of post-bolus tail frames for S1 (recovery).
+
+    Returns:
+        PSR as percentage (0-100+ range).
+    """
+    if signal.ndim == 1:
+        s0 = float(np.mean(signal[:baseline_frames]))
+        s_min = float(np.min(signal[baseline_frames:]))
+        s1 = float(np.mean(signal[-tail_frames:]))
+        denom = s0 - s_min
+        denom_safe = max(abs(denom), EPSILON_SIGNAL)
+        if denom < 0:
+            denom_safe = -denom_safe
+        return 100.0 * (s1 - s_min) / denom_safe
+    elif signal.ndim == 4:
+        s0 = np.mean(signal[..., :baseline_frames], axis=-1)
+        s_min = np.min(signal[..., baseline_frames:], axis=-1)
+        s1 = np.mean(signal[..., -tail_frames:], axis=-1)
+        denom = s0 - s_min
+        denom_safe = np.maximum(np.abs(denom), EPSILON_SIGNAL)
+        denom_safe = np.where(denom >= 0, denom_safe, -denom_safe)
+        return 100.0 * (s1 - s_min) / denom_safe
+    else:
+        raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
+
+
 def compute_peak_height(
     signal: npt.NDArray[np.floating],
     baseline_frames: int = 10,
@@ -344,6 +432,14 @@ def compute_peak_height(
         ValueError: If baseline_frames exceeds signal length.
 
     Notes:
+        - This is the physics-correct version for post-integration expert
+          review. The legacy version (compute_peak_height_legacy) matches
+          perf-plus ground truth.
+        - TODO(physics-review): s_min currently uses the entire timeseries
+          (lines using np.min(signal) / np.min(signal, axis=-1)). The
+          physics expert recommends using post-baseline frames only
+          (signal[..., baseline_frames:]) to avoid baseline contamination,
+          matching the perf-plus convention.
         - PH is always positive when computed from valid DSC signal
           (signal drops during bolus passage).
         - PH can exceed 100% if signal drops below zero (artifact).
@@ -389,6 +485,141 @@ def compute_peak_height(
         return float(ph)
     else:
         return ph
+
+
+def compute_peak_height_legacy(
+    signal: npt.NDArray[np.floating],
+    baseline_frames: int = 5,
+) -> Union[float, npt.NDArray[np.floating]]:
+    """Compute peak height using the perf-plus legacy formula.
+
+    Legacy formula (standard % signal drop):
+        PH = 100 × (S0 - Smin) / S0
+    where S0 = mean baseline signal and Smin = minimum signal in
+    post-baseline frames only.
+
+    Returns percentage (0-100 range). Kept for integration test
+    compatibility with perf-plus ground truth.
+
+    Args:
+        signal: DSC signal array (1D or 4D).
+        baseline_frames: Number of pre-bolus frames for S0.
+
+    Returns:
+        Peak height as percentage (0-100 range).
+    """
+    if signal.ndim == 1:
+        s0 = float(np.mean(signal[:baseline_frames]))
+        s_min = float(np.min(signal[baseline_frames:]))
+        s0_safe = max(abs(s0), EPSILON_SIGNAL)
+        if s0 >= 0:
+            return 100.0 * (s0 - s_min) / s0_safe
+        else:
+            return 100.0 * (s0 - s_min) / (-s0_safe)
+    elif signal.ndim == 4:
+        s0 = np.mean(signal[..., :baseline_frames], axis=-1)
+        s_min = np.min(signal[..., baseline_frames:], axis=-1)
+        s0_safe = np.maximum(np.abs(s0), EPSILON_SIGNAL)
+        s0_safe = np.where(s0 >= 0, s0_safe, -s0_safe)
+        return 100.0 * (s0 - s_min) / s0_safe
+    else:
+        raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
+
+
+def compute_peak_height_conc(
+    signal: npt.NDArray[np.floating],
+    te_seconds: float,
+    baseline_end: int,
+) -> npt.NDArray[np.floating]:
+    """Compute peak height in concentration domain (ideal method).
+
+    PH = max(delta_R2*) in s^-1 units. Linear with contrast agent
+    concentration, TE-independent, compatible with K2 correction.
+
+    Args:
+        signal: DSC signal array (4D: x,y,z,time).
+        te_seconds: Echo time in seconds.
+        baseline_end: Index of end of baseline period.
+
+    Returns:
+        Peak height in s^-1 units.
+    """
+    s0 = np.mean(signal[..., :baseline_end], axis=-1, keepdims=True)
+    s0_safe = np.maximum(s0, EPSILON_SIGNAL)
+    s_ratio = np.clip(signal / s0_safe, EPSILON_SIGNAL, None)
+    delta_r2star = -np.log(s_ratio) / te_seconds
+    ph = np.max(delta_r2star, axis=-1)
+    return np.clip(ph, 0.0, None)
+
+
+def compute_ttp_legacy(
+    concentration: npt.NDArray[np.floating],
+    pre_bolus_frames: int,
+    dt: float,
+) -> npt.NDArray[np.floating]:
+    """Compute TTP using the perf-plus legacy method.
+
+    Finds time to peak concentration using unsmoothed post-bolus argmax,
+    clipping to [0, 60] seconds. Matches perf-plus ground truth.
+
+    Args:
+        concentration: Concentration array (4D: x,y,z,time or 1D: time).
+        pre_bolus_frames: Number of pre-bolus baseline frames to skip.
+        dt: Time step in seconds (TR).
+
+    Returns:
+        TTP map in seconds, clipped to [0, 60].
+    """
+    if concentration.ndim == 4:
+        conc_post = concentration[..., pre_bolus_frames:]
+        peak_idx = np.argmax(conc_post, axis=-1)
+        ttp = (pre_bolus_frames + peak_idx).astype(np.float64) * dt
+    elif concentration.ndim == 1:
+        conc_post = concentration[pre_bolus_frames:]
+        peak_idx = int(np.argmax(conc_post))
+        ttp = np.float64((pre_bolus_frames + peak_idx) * dt)
+    else:
+        raise ValueError(f"Concentration must be 1D or 4D, got {concentration.ndim}D")
+    return np.clip(ttp, 0.0, 60.0)
+
+
+def compute_ttp(
+    concentration: npt.NDArray[np.floating],
+    pre_bolus_frames: int,
+    dt: float,
+    sigma: float = 1.0,
+) -> npt.NDArray[np.floating]:
+    """Compute TTP using Gaussian-smoothed post-bolus argmax (ideal method).
+
+    Applies Gaussian smoothing (sigma=1 sample, FWHM ~3.5s) to suppress
+    single-frame noise spikes before finding peak. NaN for out-of-range values.
+
+    Args:
+        concentration: Concentration array (4D: x,y,z,time or 1D: time).
+        pre_bolus_frames: Number of pre-bolus baseline frames to skip.
+        dt: Time step in seconds (TR).
+        sigma: Gaussian smoothing sigma in samples (default 1.0).
+
+    Returns:
+        TTP map in seconds. Out-of-range values set to NaN.
+    """
+    from scipy.ndimage import gaussian_filter1d
+
+    conc_smooth = gaussian_filter1d(concentration, sigma=sigma, axis=-1)
+    if conc_smooth.ndim == 4:
+        conc_post = conc_smooth[..., pre_bolus_frames:]
+        peak_idx = np.argmax(conc_post, axis=-1)
+        ttp = (pre_bolus_frames + peak_idx).astype(np.float64) * dt
+    elif conc_smooth.ndim == 1:
+        conc_post = conc_smooth[pre_bolus_frames:]
+        peak_idx = int(np.argmax(conc_post))
+        ttp = np.float64((pre_bolus_frames + peak_idx) * dt)
+    else:
+        raise ValueError(f"Concentration must be 1D or 4D, got {concentration.ndim}D")
+    # NaN for out-of-range (preserves data quality info)
+    ttp_arr = np.asarray(ttp, dtype=np.float64)
+    ttp_arr[(ttp_arr < pre_bolus_frames * dt) | (ttp_arr > 60.0)] = np.nan
+    return ttp_arr
 
 
 def find_nawm_mask(

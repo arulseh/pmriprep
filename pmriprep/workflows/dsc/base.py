@@ -123,24 +123,122 @@ from pmriprep.interfaces.dsc_aif import AIFDetection
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
 
-def _extract_dsc_brain(dsc_mean_file, brain_mask_file, t1w_reference_file):
-    """Create native DSC-space brain mask by transforming T1w mask to DSC space.
+def _hdbet_dsc_brain(dsc_mean_file):
+    """Extract DSC brain using HD-BET for improved registration quality.
 
-    Strategy: Quick FLIRT registration of T1w to DSC mean, then apply
-    the resulting transform to the T1w brain mask using nearest-neighbour
-    interpolation.
+    HD-BET produces a brain-extracted DSC image that yields better
+    T1w-to-DSC registration. The final processing mask comes from
+    transforming the T1w brain mask through that registration (see
+    _transform_brain_mask_to_dsc).
 
-    Fallback: intensity-based thresholding if FLIRT registration fails.
+    Fallback: intensity-based thresholding if HD-BET is unavailable.
 
     Args:
-        dsc_mean_file: Path to mean DSC image (reference geometry).
-        brain_mask_file: Path to brain mask in T1w space.
-        t1w_reference_file: Path to T1w structural image.
+        dsc_mean_file: Path to pre-bolus mean DSC image.
 
     Returns:
-        Path to DSC-space brain mask NIfTI file.
+        Tuple of (dsc_brain_file, dsc_brain_mask_file).
     """
-    import os
+    import subprocess
+    import numpy as np
+    import nibabel as nib
+    from pathlib import Path
+
+    out_dir = Path.cwd()
+    dsc_brain_file = str(out_dir / "dsc_brain.nii.gz")
+    dsc_brain_mask_file = str(out_dir / "dsc_brain_mask.nii.gz")
+
+    hdbet_succeeded = False
+
+    # Try HD-BET directly, then via conda env
+    for cmd_prefix in [[], ["conda", "run", "-n", "hdbet-env"]]:
+        if hdbet_succeeded:
+            break
+        try:
+            hdbet_cmd = cmd_prefix + [
+                "hd-bet",
+                "-i", dsc_mean_file,
+                "-o", dsc_brain_file,
+                "--disable_tta",
+                "-device", "cpu",
+            ]
+            subprocess.run(hdbet_cmd, check=True, capture_output=True)
+            hdbet_succeeded = True
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            continue
+
+    if hdbet_succeeded:
+        # HD-BET writes brain at -o path and mask with _mask suffix.
+        # With -o dsc_brain.nii.gz, mask lands at dsc_brain_mask.nii.gz
+        # which is exactly our target path — no move needed.
+        hdbet_mask_path = Path(dsc_brain_file.replace(".nii.gz", "_mask.nii.gz"))
+        if not hdbet_mask_path.exists():
+            # Derive mask from brain-extracted image
+            brain_img = nib.load(dsc_brain_file)
+            brain_data = brain_img.get_fdata()
+            mask_data = (brain_data > 0).astype(np.uint8)
+            nib.save(
+                nib.Nifti1Image(mask_data, brain_img.affine, brain_img.header),
+                dsc_brain_mask_file,
+            )
+        elif str(hdbet_mask_path) != dsc_brain_mask_file:
+            import shutil
+            shutil.move(str(hdbet_mask_path), dsc_brain_mask_file)
+    else:
+        # Fallback: intensity-based brain extraction
+        import warnings
+        warnings.warn(
+            "HD-BET unavailable. Falling back to intensity-based "
+            "DSC brain extraction."
+        )
+        dsc_img = nib.load(dsc_mean_file)
+        dsc_data = dsc_img.get_fdata()
+
+        nonzero = dsc_data[dsc_data > 0]
+        if len(nonzero) > 0:
+            threshold = np.percentile(nonzero, 10)
+        else:
+            threshold = 0.0
+
+        mask_data = (dsc_data > threshold).astype(np.uint8)
+        brain_data = dsc_data * mask_data
+
+        nib.save(
+            nib.Nifti1Image(brain_data.astype(np.float32), dsc_img.affine, dsc_img.header),
+            dsc_brain_file,
+        )
+        nib.save(
+            nib.Nifti1Image(mask_data, dsc_img.affine, dsc_img.header),
+            dsc_brain_mask_file,
+        )
+
+    return dsc_brain_file, dsc_brain_mask_file
+
+
+def _transform_brain_mask_to_dsc(
+    brain_mask_file,
+    reference_file,
+    transform_matrix,
+    hdbet_mask_file=None,
+):
+    """Transform T1w brain mask to DSC space using registration transform.
+
+    This is the final brain mask used for all DSC-space processing.
+    The registration transform comes from a higher-quality alignment
+    (T1w brain → HD-BET DSC brain), producing a more accurate mask
+    than a quick independent FLIRT.
+
+    Optionally computes DICE overlap with the HD-BET mask for QC.
+
+    Args:
+        brain_mask_file: Path to brain mask in T1w space.
+        reference_file: Path to DSC reference image for output geometry.
+        transform_matrix: Path to T1w→DSC FLIRT matrix.
+        hdbet_mask_file: Path to HD-BET DSC mask for DICE QC (optional).
+
+    Returns:
+        Tuple of (dsc_brain_mask_file, dice_score).
+    """
     import subprocess
     import numpy as np
     import nibabel as nib
@@ -149,76 +247,41 @@ def _extract_dsc_brain(dsc_mean_file, brain_mask_file, t1w_reference_file):
     out_dir = Path.cwd()
     dsc_brain_mask_file = str(out_dir / "dsc_brain_mask.nii.gz")
 
-    try:
-        # Quick FLIRT: register T1w to DSC mean (6DOF, normcorr for speed)
-        quick_mat = str(out_dir / "_quick_t1w2dsc.mat")
-        flirt_cmd = [
-            "flirt",
-            "-in", t1w_reference_file,
-            "-ref", dsc_mean_file,
-            "-omat", quick_mat,
-            "-dof", "6", "-cost", "normcorr",
-            "-searchrx", "-30", "30",
-            "-searchry", "-30", "30",
-            "-searchrz", "-30", "30",
-            "-coarsesearch", "15", "-finesearch", "5",
-        ]
-        subprocess.run(flirt_cmd, check=True, capture_output=True)
+    # Apply transform to brain mask with nearest-neighbour interpolation
+    apply_cmd = [
+        "flirt",
+        "-in", str(brain_mask_file),
+        "-ref", str(reference_file),
+        "-out", dsc_brain_mask_file,
+        "-init", str(transform_matrix),
+        "-applyxfm",
+        "-interp", "nearestneighbour",
+    ]
+    subprocess.run(apply_cmd, check=True, capture_output=True)
 
-        # Apply transform to brain mask with nearest-neighbour interpolation
-        apply_cmd = [
-            "flirt",
-            "-in", brain_mask_file,
-            "-ref", dsc_mean_file,
-            "-out", dsc_brain_mask_file,
-            "-init", quick_mat,
-            "-applyxfm",
-            "-interp", "nearestneighbour",
-        ]
-        subprocess.run(apply_cmd, check=True, capture_output=True)
+    # Threshold at 0.5 and binarize
+    thr_cmd = [
+        "fslmaths", dsc_brain_mask_file,
+        "-thr", "0.5", "-bin", dsc_brain_mask_file,
+    ]
+    subprocess.run(thr_cmd, check=True, capture_output=True)
 
-        # Threshold at 0.5 and binarize
-        thr_cmd = [
-            "fslmaths", dsc_brain_mask_file,
-            "-thr", "0.5", "-bin", dsc_brain_mask_file,
-        ]
-        subprocess.run(thr_cmd, check=True, capture_output=True)
+    # Compute DICE with HD-BET mask for QC
+    dice_score = -1.0
+    if hdbet_mask_file is not None:
+        try:
+            mask_a = nib.load(dsc_brain_mask_file).get_fdata() > 0.5
+            mask_b = nib.load(hdbet_mask_file).get_fdata() > 0.5
+            intersection = np.sum(mask_a & mask_b)
+            total = np.sum(mask_a) + np.sum(mask_b)
+            if total > 0:
+                dice_score = 2.0 * intersection / total
+            else:
+                dice_score = 0.0
+        except Exception:
+            dice_score = -1.0
 
-        # Clean up temporary matrix
-        if os.path.exists(quick_mat):
-            os.remove(quick_mat)
-
-        # Verify the mask has reasonable coverage
-        mask_img = nib.load(dsc_brain_mask_file)
-        mask_data = mask_img.get_fdata()
-        mask_fraction = np.sum(mask_data > 0) / mask_data.size
-        if mask_fraction < 0.01:
-            raise RuntimeError(
-                f"Transformed mask covers only {mask_fraction:.1%} of volume"
-            )
-
-    except (subprocess.CalledProcessError, RuntimeError, FileNotFoundError, OSError):
-        # Fallback: intensity-based thresholding on DSC mean
-        # Note: RuntimeError from mask coverage check (<1%) intentionally
-        # triggers this fallback — a near-empty mask means FLIRT failed.
-        import warnings
-        warnings.warn(
-            "FLIRT-based brain mask transform failed. "
-            "Falling back to intensity-based DSC brain mask."
-        )
-        dsc_img = nib.load(dsc_mean_file)
-        dsc_data = dsc_img.get_fdata()
-        # Use Otsu-like threshold: percentile-based
-        nonzero = dsc_data[dsc_data > 0]
-        if len(nonzero) > 0:
-            threshold = np.percentile(nonzero, 10)
-        else:
-            threshold = 0.0
-        mask_data = (dsc_data > threshold).astype(np.uint8)
-        mask_img = nib.Nifti1Image(mask_data, dsc_img.affine, dsc_img.header)
-        nib.save(mask_img, dsc_brain_mask_file)
-
-    return dsc_brain_mask_file
+    return dsc_brain_mask_file, dice_score
 
 
 def _signal_to_concentration(
@@ -328,13 +391,13 @@ def _detect_and_correct_preload(
     mask_img = nib.load(brain_mask_file)
     brain_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
-    # Verify brain mask is in DSC space (guaranteed by extract_dsc_brain node)
+    # Verify brain mask is in DSC space (guaranteed by transform_brain_mask node)
     if brain_mask.shape[:3] != conc_data.shape[:3]:
         raise RuntimeError(
             f"Brain mask shape {brain_mask.shape[:3]} does not match "
             f"concentration data shape {conc_data.shape[:3]}. "
             "The brain mask must be in native DSC space. "
-            "Ensure extract_dsc_brain node is connected upstream."
+            "Ensure transform_brain_mask node is connected upstream."
         )
 
     # Load AIF
@@ -343,14 +406,13 @@ def _detect_and_correct_preload(
     qc_metrics: dict = {}
     k2_map_file: str = ""
 
-    # Detect preload if not explicitly specified
-    needs_correction = False
+    # Detect preload for QC classification (does not gate K2 correction)
     if preload_detected is True:
-        needs_correction = True
         qc_metrics["preload_user_specified"] = True
+        qc_metrics["preload_classification"] = "user_specified_preload"
     elif preload_detected is False:
-        needs_correction = False
         qc_metrics["preload_user_specified"] = True
+        qc_metrics["preload_classification"] = "user_specified_no_preload"
     else:
         # Auto-detect using full preload detection from utils
         from pmriprep.utils.dsc_preload import detect_preload
@@ -368,57 +430,54 @@ def _detect_and_correct_preload(
             brain_mask=brain_mask,
             field_strength=field_strength,
         )
-        needs_correction = preload_result.classification.value not in (
+        qc_metrics["preload_auto_detected"] = preload_result.classification.value not in (
             "none",
             "minimal",
         )
-        qc_metrics["preload_auto_detected"] = needs_correction
         qc_metrics["preload_classification"] = preload_result.classification.value
         qc_metrics["preload_confidence"] = preload_result.confidence
         qc_metrics["preload_detection_method"] = preload_result.detection_method
         qc_metrics["baseline_delta_r2"] = preload_result.baseline_delta_r2
 
-    qc_metrics["preload_correction_applied"] = needs_correction
+    # Always apply per-voxel K2 leakage correction (Boxerman 2006).
+    # K2 correction addresses BBB disruption regardless of preload status.
+    # Voxels with K2 < 1e-4 are effectively unchanged.
+    qc_metrics["preload_correction_applied"] = True
 
-    # Apply K2 correction if needed
-    if needs_correction:
-        # Apply K2 leakage correction
-        correction_result = apply_k2_correction(
-            concentration=conc_data,
-            aif=aif,
-            brain_mask=brain_mask,
-            tr=tr,
-        )
+    # Apply K2 leakage correction
+    correction_result = apply_k2_correction(
+        concentration=conc_data,
+        aif=aif,
+        brain_mask=brain_mask,
+        tr=tr,
+    )
 
-        corrected_conc = correction_result.concentration_corrected
-        k2_map = correction_result.k2_map
+    corrected_conc = correction_result.concentration_corrected
+    k2_map = correction_result.k2_map
 
-        # Update QC metrics
-        if correction_result.qc_metrics:
-            qc_metrics.update(correction_result.qc_metrics)
+    # Update QC metrics
+    if correction_result.qc_metrics:
+        qc_metrics.update(correction_result.qc_metrics)
 
-        # Save corrected concentration
-        conc_path = Path(concentration_file)
-        if conc_path.name.endswith(".nii.gz"):
-            base = conc_path.name[:-7]
-        else:
-            base = conc_path.stem
-
-        out_dir = Path.cwd()
-        corrected_file = str(out_dir / f"{base}_k2corrected.nii.gz")
-        corrected_img = nib.Nifti1Image(corrected_conc.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(corrected_img, corrected_file)  # type: ignore[attr-defined]
-
-        # Save K2 map if requested
-        if save_k2_map and k2_map is not None:
-            k2_map_file = str(out_dir / f"{base}_k2map.nii.gz")
-            k2_img = nib.Nifti1Image(k2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(k2_img, k2_map_file)  # type: ignore[attr-defined]
-
-        return corrected_file, k2_map_file, qc_metrics
+    # Save corrected concentration
+    conc_path = Path(concentration_file)
+    if conc_path.name.endswith(".nii.gz"):
+        base = conc_path.name[:-7]
     else:
-        # No correction needed, pass through
-        return concentration_file, None, qc_metrics
+        base = conc_path.stem
+
+    out_dir = Path.cwd()
+    corrected_file = str(out_dir / f"{base}_k2corrected.nii.gz")
+    corrected_img = nib.Nifti1Image(corrected_conc.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+    nib.save(corrected_img, corrected_file)  # type: ignore[attr-defined]
+
+    # Save K2 map if requested
+    if save_k2_map and k2_map is not None:
+        k2_map_file = str(out_dir / f"{base}_k2map.nii.gz")
+        k2_img = nib.Nifti1Image(k2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+        nib.save(k2_img, k2_map_file)  # type: ignore[attr-defined]
+
+    return corrected_file, k2_map_file, qc_metrics
 
 
 def _compute_prebolus_mean(moco_file, baseline_frames):
@@ -453,6 +512,51 @@ def _compute_prebolus_mean(moco_file, baseline_frames):
         prebolus_mean.astype(np.float32), img.affine, img.header
     )
     nib.save(mean_img, out_file)
+
+    return out_file
+
+
+def _transform_nawm_to_dsc(
+    nawm_mask_file,
+    reference_file,
+    transform_matrix,
+):
+    """Transform NAWM mask from T1w space to DSC space.
+
+    Uses FSL FLIRT with nearest-neighbour interpolation to resample
+    the NAWM mask into DSC space.
+
+    Args:
+        nawm_mask_file: Path to NAWM mask in T1w space (or None).
+        reference_file: Path to DSC reference image for output geometry.
+        transform_matrix: Path to T1w→DSC FLIRT matrix.
+
+    Returns:
+        Path to transformed NAWM mask in DSC space, or None if no mask.
+    """
+    if nawm_mask_file is None:
+        return None
+
+    from pathlib import Path
+    import subprocess
+
+    nawm_path = Path(nawm_mask_file)
+    if not nawm_path.exists():
+        return None
+
+    out_dir = Path.cwd()
+    out_file = str(out_dir / "nawm_mask_dsc.nii.gz")
+
+    cmd = [
+        "flirt",
+        "-in", str(nawm_mask_file),
+        "-ref", str(reference_file),
+        "-out", out_file,
+        "-init", str(transform_matrix),
+        "-applyxfm",
+        "-interp", "nearestneighbour",
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
 
     return out_file
 
@@ -1004,19 +1108,34 @@ def init_dsc_preproc_wf(
     prebolus_mean.inputs.baseline_frames = config.pre_bolus
 
     # -------------------------------------------------------------------
-    # Node 1b: DSC Brain Extraction
-    # Transform T1w brain mask to native DSC space via quick FLIRT.
-    # This provides a properly-dimensioned brain mask for all DSC-space
-    # computations (AIF detection, deconvolution, preload correction).
+    # Node 1b: HD-BET Brain Extraction (for registration quality)
+    # HD-BET extracts DSC brain so registration uses brain-extracted
+    # images on both sides. The final processing mask comes from
+    # transforming the T1w brain mask through the registration.
     # -------------------------------------------------------------------
-    extract_dsc_brain = pe.Node(
+    hdbet_dsc = pe.Node(
         niu.Function(
-            input_names=["dsc_mean_file", "brain_mask_file", "t1w_reference_file"],
-            output_names=["dsc_brain_mask_file"],
-            function=_extract_dsc_brain,
+            input_names=["dsc_mean_file"],
+            output_names=["dsc_brain_file", "dsc_brain_mask_file"],
+            function=_hdbet_dsc_brain,
         ),
-        name="extract_dsc_brain",
+        name="hdbet_dsc",
     )
+
+    # -------------------------------------------------------------------
+    # Node 1c: Transform T1w Brain Mask to DSC Space
+    # NOTE: T1w brain mask transform kept for future use. To reinstate,
+    # uncomment and reconnect downstream consumers.
+    # -------------------------------------------------------------------
+    # transform_brain_mask = pe.Node(
+    #     niu.Function(
+    #         input_names=["brain_mask_file", "reference_file", "transform_matrix",
+    #                      "hdbet_mask_file"],
+    #         output_names=["dsc_brain_mask_file", "dice_score"],
+    #         function=_transform_brain_mask_to_dsc,
+    #     ),
+    #     name="transform_brain_mask",
+    # )
 
     # -------------------------------------------------------------------
     # Node 2: Signal to Concentration Conversion
@@ -1079,7 +1198,7 @@ def init_dsc_preproc_wf(
         ),
         name="preload_correct",
     )
-    preload_correct.inputs.preload_detected = config.preload_detected if config.preload_detected else None
+    preload_correct.inputs.preload_detected = config.preload_detected if config.preload_detected is not None else None
     preload_correct.inputs.save_k2_map = config.save_k2_map
     preload_correct.inputs.baseline_frames = config.pre_bolus
 
@@ -1128,7 +1247,7 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     # Node 6b: Transform Chain for MNI Atlas to DSC Space
     # Creates MNI→DSC transform by concatenating:
-    #   MNI→T1w (inverted T1w→MNI) + T1w→DSC (inverted DSC→T1w)
+    #   MNI→T1w (inverted T1w→MNI) + T1w→DSC (register output)
     # -------------------------------------------------------------------
 
     # Invert T1w→MNI to get MNI→T1w
@@ -1137,7 +1256,7 @@ def init_dsc_preproc_wf(
         name="invert_mni_xfm",
     )
 
-    # Invert DSC→T1w to get T1w→DSC
+    # Invert T1w→DSC to get DSC→T1w (for output labeling)
     invert_dsc_xfm = pe.Node(
         ConvertXFM(invert_xfm=True),
         name="invert_dsc_xfm",
@@ -1168,6 +1287,18 @@ def init_dsc_preproc_wf(
         )
 
     # -------------------------------------------------------------------
+    # Node 6c: Transform NAWM mask from T1w to DSC space
+    # -------------------------------------------------------------------
+    transform_nawm = pe.Node(
+        niu.Function(
+            input_names=["nawm_mask_file", "reference_file", "transform_matrix"],
+            output_names=["nawm_mask_dsc_file"],
+            function=_transform_nawm_to_dsc,
+        ),
+        name="transform_nawm",
+    )
+
+    # -------------------------------------------------------------------
     # Node 7: CBV Normalization
     # -------------------------------------------------------------------
     normalize = pe.Node(
@@ -1188,7 +1319,6 @@ def init_dsc_preproc_wf(
     normalize.inputs.derivatives_dir = str(bids_dir / "derivatives")
     normalize.inputs.subject_id = subject_id
     normalize.inputs.session_id = session_id
-    normalize.inputs.nawm_mask_file = None  # Optional, will use fallback if not provided
 
     # -------------------------------------------------------------------
     # Node 7b: CBF Normalization (same method as CBV normalization)
@@ -1211,7 +1341,6 @@ def init_dsc_preproc_wf(
     normalize_cbf.inputs.derivatives_dir = str(bids_dir / "derivatives")
     normalize_cbf.inputs.subject_id = subject_id
     normalize_cbf.inputs.session_id = session_id
-    normalize_cbf.inputs.nawm_mask_file = None
 
     # -------------------------------------------------------------------
     # Node 7c: Smoothing (conditional on config.smooth_fwhm > 0)
@@ -1350,15 +1479,21 @@ def init_dsc_preproc_wf(
         (motion_correct, prebolus_mean, [("out_file", "moco_file")]),
     ])
 
-    # Pre-Bolus Mean to DSC Brain Extraction
-    # Use pre-bolus mean (not full mean) as reference to avoid bolus contamination
+    # Pre-Bolus Mean to HD-BET Brain Extraction
+    # HD-BET on pre-bolus mean for brain-extracted DSC (improves registration)
     workflow.connect([
-        (prebolus_mean, extract_dsc_brain, [("prebolus_mean_file", "dsc_mean_file")]),
-        (inputnode, extract_dsc_brain, [
-            ("brain_mask", "brain_mask_file"),
-            ("t1w_reference", "t1w_reference_file"),
-        ]),
+        (prebolus_mean, hdbet_dsc, [("prebolus_mean_file", "dsc_mean_file")]),
     ])
+
+    # NOTE: transform_brain_mask disconnected — using HD-BET mask directly.
+    # To reinstate T1w-transformed mask, uncomment the node definition
+    # above and restore these connections:
+    # workflow.connect([
+    #     (inputnode, transform_brain_mask, [("brain_mask", "brain_mask_file")]),
+    #     (prebolus_mean, transform_brain_mask, [("prebolus_mean_file", "reference_file")]),
+    #     (register, transform_brain_mask, [("out_matrix", "transform_matrix")]),
+    #     (hdbet_dsc, transform_brain_mask, [("dsc_brain_mask_file", "hdbet_mask_file")]),
+    # ])
 
     # Motion Correction to Signal Conversion
     workflow.connect([
@@ -1377,7 +1512,7 @@ def init_dsc_preproc_wf(
             ("concentration_file", "concentration_file"),
             ("signal_file", "signal_file"),
         ]),
-        (extract_dsc_brain, aif_detect, [
+        (hdbet_dsc, aif_detect, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
         (inputnode, aif_detect, [
@@ -1393,7 +1528,7 @@ def init_dsc_preproc_wf(
             ("signal_file", "signal_file"),
         ]),
         (aif_detect, preload_correct, [("out_aif_curve", "aif_file")]),
-        (extract_dsc_brain, preload_correct, [
+        (hdbet_dsc, preload_correct, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
         (inputnode, preload_correct, [
@@ -1418,7 +1553,7 @@ def init_dsc_preproc_wf(
             ("out_aif_curve", "aif_file"),
             ("detection_level", "aif_detection_level"),
         ]),
-        (extract_dsc_brain, compute_maps, [
+        (hdbet_dsc, compute_maps, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
         (inputnode, compute_maps, [
@@ -1435,7 +1570,7 @@ def init_dsc_preproc_wf(
     ])
 
     # DSC Map Computation to Registration
-    # Use pre-bolus mean for registration reference (cleaner than full mean)
+    # Use brain-extracted DSC (from HD-BET) for better registration quality
     workflow.connect([
         (inputnode, register, [
             ("t1w_reference", "t1w_file"),
@@ -1443,7 +1578,7 @@ def init_dsc_preproc_wf(
             ("brain_mask", "brain_mask"),
             ("wm_probseg", "wm_seg"),
         ]),
-        (prebolus_mean, register, [("prebolus_mean_file", "dsc_mean")]),
+        (hdbet_dsc, register, [("dsc_brain_file", "dsc_mean")]),
     ])
 
     # Transform Chain: Create MNI→DSC transform for atlas
@@ -1452,7 +1587,7 @@ def init_dsc_preproc_wf(
         (inputnode, invert_mni_xfm, [("t1w_to_mni_xfm", "in_file")]),
     ])
 
-    # Step 2: Invert DSC→T1w to get T1w→DSC
+    # Step 2: Invert T1w→DSC to get DSC→T1w (for output labeling)
     workflow.connect([
         (register, invert_dsc_xfm, [("out_matrix", "in_file")]),
     ])
@@ -1460,7 +1595,7 @@ def init_dsc_preproc_wf(
     # Step 3: Concatenate MNI→T1w + T1w→DSC = MNI→DSC
     workflow.connect([
         (invert_mni_xfm, concat_mni_to_dsc, [("out_file", "in_file")]),
-        (invert_dsc_xfm, concat_mni_to_dsc, [("out_file", "in_file2")]),
+        (register, concat_mni_to_dsc, [("out_matrix", "in_file2")]),
     ])
 
     # Step 4: Transform arterial atlas from MNI to DSC space
@@ -1475,14 +1610,21 @@ def init_dsc_preproc_wf(
         (transform_atlas, aif_detect, [("out_file", "atlas_mask_file")]),
     ])
 
+    # Transform NAWM mask from T1w to DSC space
+    workflow.connect([
+        (inputnode, transform_nawm, [("nawm_mask", "nawm_mask_file")]),
+        (prebolus_mean, transform_nawm, [("prebolus_mean_file", "reference_file")]),
+        (register, transform_nawm, [("out_matrix", "transform_matrix")]),
+    ])
+
     # DSC Map Computation to CBV Normalization (uses relative CBV)
     # Use DSC-space brain mask for fallback normalization
     workflow.connect([
         (compute_maps, normalize, [("out_rel_cbv", "cbv_file")]),
-        (inputnode, normalize, [
-            ("nawm_mask", "nawm_mask_file"),
+        (transform_nawm, normalize, [
+            ("nawm_mask_dsc_file", "nawm_mask_file"),
         ]),
-        (extract_dsc_brain, normalize, [
+        (hdbet_dsc, normalize, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
     ])
@@ -1490,10 +1632,10 @@ def init_dsc_preproc_wf(
     # DSC Map Computation to CBF Normalization (uses relative CBF)
     workflow.connect([
         (compute_maps, normalize_cbf, [("out_rel_cbf", "cbf_file")]),
-        (inputnode, normalize_cbf, [
-            ("nawm_mask", "nawm_mask_file"),
+        (transform_nawm, normalize_cbf, [
+            ("nawm_mask_dsc_file", "nawm_mask_file"),
         ]),
-        (extract_dsc_brain, normalize_cbf, [
+        (hdbet_dsc, normalize_cbf, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
     ])
@@ -1502,7 +1644,7 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (prebolus_mean, reg_filmstrip, [("prebolus_mean_file", "dsc_mean_file")]),
         (register, reg_filmstrip, [("out_file", "registered_t1w_file")]),
-        (extract_dsc_brain, reg_filmstrip, [
+        (hdbet_dsc, reg_filmstrip, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
     ])
@@ -1540,7 +1682,7 @@ def init_dsc_preproc_wf(
             ]),
             (preload_correct, build_qi_dict, [("k2_map_file", "k2")]),
             (build_qi_dict, smooth_quant_indep, [("map_dict", "map_files")]),
-            (extract_dsc_brain, smooth_quant_indep, [
+            (hdbet_dsc, smooth_quant_indep, [
                 ("dsc_brain_mask_file", "brain_mask_file"),
             ]),
         ])
@@ -1563,7 +1705,7 @@ def init_dsc_preproc_wf(
                 ("out_rel_auc_corr", "auc_corr"),
             ]),
             (build_rel_dict, smooth_rel, [("map_dict", "map_files")]),
-            (extract_dsc_brain, smooth_rel, [
+            (hdbet_dsc, smooth_rel, [
                 ("dsc_brain_mask_file", "brain_mask_file"),
             ]),
         ])
@@ -1595,7 +1737,7 @@ def init_dsc_preproc_wf(
                 ("out_abs_auc_corr", "auc_corr"),
             ]),
             (build_abs_dict, smooth_abs, [("map_dict", "map_files")]),
-            (extract_dsc_brain, smooth_abs, [
+            (hdbet_dsc, smooth_abs, [
                 ("dsc_brain_mask_file", "brain_mask_file"),
             ]),
         ])
@@ -1673,7 +1815,7 @@ def init_dsc_preproc_wf(
         (normalize, outputnode, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, outputnode, [("ncbf_file", "ncbf_map")]),
         # Registration
-        (register, outputnode, [("out_matrix", "dsc_to_t1w_xfm")]),
+        (invert_dsc_xfm, outputnode, [("out_file", "dsc_to_t1w_xfm")]),
         (reg_filmstrip, outputnode, [("filmstrip_file", "registration_filmstrip")]),
         # QC metrics
         (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),

@@ -1,0 +1,20 @@
+# Sub-0001 Integration Test Results: POST-ALIGNMENT CHANGES (Phases 1-4)
+# Date: 2026-01-30
+# Changes: Toeplitz uniform, CBV rectangular, baseline_frames=5, legacy PSR/TTP/PH/SNR,
+#          pre-bolus motion reference, K2 always-on, AUC rectangular
+
+Map         Before   After    Delta    Direction
+----        ------   -----    -----    ---------
+CBF         0.7403   0.4689   -0.271   WORSE
+CBV         0.6971   0.5200   -0.177   WORSE
+MTT         0.4636   0.3548   -0.109   WORSE
+Tmax        0.1521   0.1138   -0.038   WORSE
+PH          0.9452   0.9444   -0.001   ~same
+PSR         0.5620   0.6107   +0.049   better
+TTP         0.2053   0.1427   -0.063   WORSE
+CNR         0.7019   0.4403   -0.262   WORSE
+SNR         0.6960   0.4028   -0.293   WORSE
+tSNR        0.9376   0.7060   -0.232   WORSE
+
+Summary: 8/10 maps WORSE, 1 roughly same (PH), 1 slightly better (PSR)
+All 10 maps: FAIL (threshold r >= 0.99)

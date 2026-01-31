@@ -130,6 +130,125 @@ def decide_pipelines(
     return decision
 
 
+def _find_previous_anat_outputs(
+    work_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+) -> dict[str, Optional[str]]:
+    """Find previously-computed anat outputs in the work directory.
+
+    When --skip-anat is used, downstream workflows still need anat outputs
+    (brain mask, T1w reference, tissue segmentation, ACPC transform).
+    This function locates them from a prior run's work directory.
+
+    Args:
+        work_dir: Nipype working directory (parent of the workflow directory).
+        subject_id: BIDS subject ID (without 'sub-' prefix).
+        session_id: BIDS session ID (without 'ses-' prefix), or None.
+
+    Returns:
+        Dict with keys: t1w_preproc, brain_mask, wm_probseg, t1w_to_mni_xfm.
+        Values are file paths (str) or None if not found.
+    """
+    session_label = f"ses-{session_id}" if session_id else "no-session"
+    wf_name = f"pmriprep_sub{subject_id}_{session_label}_wf"
+    anat_dir = work_dir / wf_name / "anat_wf"
+
+    outputs: dict[str, Optional[str]] = {
+        "t1w_preproc": None,
+        "brain_mask": None,
+        "wm_probseg": None,
+        "t1w_to_mni_xfm": None,
+    }
+
+    if not anat_dir.exists():
+        return outputs
+
+    # T1w preprocessed (bias-corrected)
+    bias_dir = anat_dir / "bias_correct"
+    if bias_dir.exists():
+        candidates = sorted(bias_dir.glob("*_biascorr.nii.gz"))
+        if candidates:
+            outputs["t1w_preproc"] = str(candidates[0])
+
+    # Brain mask
+    brain_dir = anat_dir / "brain_extract"
+    if brain_dir.exists():
+        candidates = sorted(brain_dir.glob("*_brain_mask.nii.gz"))
+        if candidates:
+            outputs["brain_mask"] = str(candidates[0])
+
+    # White matter probability segmentation (FAST pve_2 = WM)
+    seg_dir = anat_dir / "tissue_segment"
+    if seg_dir.exists():
+        candidates = sorted(seg_dir.glob("*_pve_2.nii.gz"))
+        if candidates:
+            outputs["wm_probseg"] = str(candidates[0])
+
+    # ACPC alignment transform
+    acpc_dir = anat_dir / "acpc_align"
+    if acpc_dir.exists():
+        candidates = sorted(acpc_dir.glob("*.mat"))
+        if candidates:
+            outputs["t1w_to_mni_xfm"] = str(candidates[0])
+
+    return outputs
+
+
+def _find_previous_hdglio_outputs(
+    work_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+) -> dict[str, Optional[str]]:
+    """Find previously-computed hdglio outputs in the work directory.
+
+    When --skip-tumor-seg is used, DSC/DCE workflows may still need
+    lesion and NAWM masks from a prior HD-GLIO run.
+
+    Args:
+        work_dir: Nipype working directory.
+        subject_id: BIDS subject ID (without 'sub-' prefix).
+        session_id: BIDS session ID (without 'ses-' prefix), or None.
+
+    Returns:
+        Dict with keys: dilated_lesion_mask, nawm_mask.
+        Values are file paths (str) or None if not found.
+    """
+    session_label = f"ses-{session_id}" if session_id else "no-session"
+    wf_name = f"pmriprep_sub{subject_id}_{session_label}_wf"
+    hdglio_dir = work_dir / wf_name / "hdglio_wf"
+
+    outputs: dict[str, Optional[str]] = {
+        "dilated_lesion_mask": None,
+        "nawm_mask": None,
+    }
+
+    if not hdglio_dir.exists():
+        return outputs
+
+    masks_dir = hdglio_dir / "extract_masks"
+    if masks_dir.exists():
+        for f in masks_dir.glob("*_dilated.nii.gz"):
+            outputs["dilated_lesion_mask"] = str(f)
+        for f in masks_dir.glob("*_nawm.nii.gz"):
+            outputs["nawm_mask"] = str(f)
+
+    # Also check dilate_lesion and create_nawm nodes
+    if outputs["dilated_lesion_mask"] is None:
+        dl_dir = hdglio_dir / "dilate_lesion"
+        if dl_dir.exists():
+            for f in dl_dir.glob("*.nii.gz"):
+                outputs["dilated_lesion_mask"] = str(f)
+
+    if outputs["nawm_mask"] is None:
+        nawm_dir = hdglio_dir / "create_nawm"
+        if nawm_dir.exists():
+            for f in nawm_dir.glob("*.nii.gz"):
+                outputs["nawm_mask"] = str(f)
+
+    return outputs
+
+
 def init_pmriprep_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -140,6 +259,7 @@ def init_pmriprep_wf(
     hdglio_config: Optional[HDGLIOConfig] = None,
     dsc_config: Optional[DSCConfig] = None,
     dce_config: Optional[DCEConfig] = None,
+    work_dir: Optional[Union[str, Path]] = None,
     name: str = "pmriprep_wf",
 ) -> pe.Workflow:
     """Initialize the master PMRIPrep workflow.
@@ -169,6 +289,9 @@ def init_pmriprep_wf(
         Configuration for DSC perfusion processing.
     dce_config : DCEConfig, optional
         Configuration for DCE perfusion processing.
+    work_dir : Path or str, optional
+        Nipype working directory. Required when --skip-anat or --skip-tumor-seg
+        is used to locate previously-computed outputs.
     name : str
         Workflow name (default: "pmriprep_wf").
 
@@ -194,9 +317,11 @@ def init_pmriprep_wf(
     from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
     from pmriprep.workflows.hdglio.base import init_hdglio_wf
 
-    # Normalize paths (resolve to absolute for DataSink)
+    # Normalize paths (resolve to absolute for DataSink and FSL commands)
     bids_dir = Path(bids_dir).resolve()
     output_dir = Path(output_dir).resolve()
+    if work_dir is not None:
+        work_dir = Path(work_dir).resolve()
 
     # Use default skip flags if not provided
     if skip_flags is None:
@@ -549,6 +674,32 @@ def init_pmriprep_wf(
                     ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
                 ]),
             ])
+        elif work_dir is not None:
+            # --skip-anat: load previously-computed anat outputs from work dir
+            import logging as _logging
+            _log = _logging.getLogger("pmriprep.workflows")
+            prev_anat = _find_previous_anat_outputs(
+                Path(work_dir), subject_id, session_id,
+            )
+            if prev_anat["t1w_preproc"]:
+                dsc_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_preproc"]
+                _log.info("skip-anat: loaded t1w_reference from %s", prev_anat["t1w_preproc"])
+            if prev_anat["brain_mask"]:
+                dsc_wf.inputs.inputnode.brain_mask = prev_anat["brain_mask"]
+                _log.info("skip-anat: loaded brain_mask from %s", prev_anat["brain_mask"])
+            if prev_anat["wm_probseg"]:
+                dsc_wf.inputs.inputnode.wm_probseg = prev_anat["wm_probseg"]
+                _log.info("skip-anat: loaded wm_probseg from %s", prev_anat["wm_probseg"])
+            if prev_anat["t1w_to_mni_xfm"]:
+                dsc_wf.inputs.inputnode.t1w_to_mni_xfm = prev_anat["t1w_to_mni_xfm"]
+                _log.info("skip-anat: loaded t1w_to_mni_xfm from %s", prev_anat["t1w_to_mni_xfm"])
+
+            if not any(prev_anat.values()):
+                _log.warning(
+                    "skip-anat: no previous anat outputs found in %s. "
+                    "DSC nodes requiring anat inputs will fail.",
+                    work_dir,
+                )
 
         # Connect lesion mask from hdglio if available
         if hdglio_wf is not None:
@@ -558,6 +709,19 @@ def init_pmriprep_wf(
                     ("outputnode.nawm_mask", "inputnode.nawm_mask"),
                 ]),
             ])
+        elif work_dir is not None and not decision.run_hdglio:
+            # --skip-tumor-seg: load previously-computed hdglio outputs
+            import logging as _logging
+            _log = _logging.getLogger("pmriprep.workflows")
+            prev_hdglio = _find_previous_hdglio_outputs(
+                Path(work_dir), subject_id, session_id,
+            )
+            if prev_hdglio["dilated_lesion_mask"]:
+                dsc_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
+                _log.info("skip-tumor-seg: loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
+            if prev_hdglio["nawm_mask"]:
+                dsc_wf.inputs.inputnode.nawm_mask = prev_hdglio["nawm_mask"]
+                _log.info("skip-tumor-seg: loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
 
         # Connect DSC outputs to master outputnode
         workflow.connect([
@@ -682,6 +846,25 @@ def init_pmriprep_wf(
                     ("outputnode.wm_probseg", "inputnode.wm_probseg"),
                 ]),
             ])
+        elif work_dir is not None:
+            # --skip-anat: load previously-computed anat outputs from work dir
+            import logging as _logging
+            _log = _logging.getLogger("pmriprep.workflows")
+            prev_anat = _find_previous_anat_outputs(
+                Path(work_dir), subject_id, session_id,
+            )
+            if session_data.modalities.t1w_ce_gad:
+                # Post-contrast T1w is set from inputnode directly
+                workflow.connect([
+                    (inputnode, dce_wf, [("t1w_postcon", "inputnode.t1w_reference")]),
+                ])
+            elif prev_anat["t1w_preproc"]:
+                dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_preproc"]
+                _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_preproc"])
+            if prev_anat["brain_mask"]:
+                dce_wf.inputs.inputnode.brain_mask = prev_anat["brain_mask"]
+            if prev_anat["wm_probseg"]:
+                dce_wf.inputs.inputnode.wm_probseg = prev_anat["wm_probseg"]
 
         # Connect lesion mask from hdglio if available
         if hdglio_wf is not None:
@@ -690,6 +873,16 @@ def init_pmriprep_wf(
                     ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
                 ]),
             ])
+        elif work_dir is not None and not decision.run_hdglio:
+            # --skip-tumor-seg: load previously-computed hdglio outputs
+            import logging as _logging
+            _log = _logging.getLogger("pmriprep.workflows")
+            prev_hdglio = _find_previous_hdglio_outputs(
+                Path(work_dir), subject_id, session_id,
+            )
+            if prev_hdglio["dilated_lesion_mask"]:
+                dce_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
+                _log.info("skip-tumor-seg (DCE): loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
 
         # Connect VFA and AFI inputs if available
         if session_data.modalities.vfa:

@@ -1,0 +1,20 @@
+# Sub-0001 Integration Test Results: BASELINE (pre-alignment changes)
+# Source: plan document (encapsulated-stirring-pebble.md)
+# Date: before 2026-01-30 alignment changes
+# Pipeline: pmriprep default (trapezoidal Toeplitz, trapezoid CBV, baseline_frames=10, etc.)
+
+Map         Correlation  Category        Status
+----        -----------  --------        ------
+CBF         0.7403       deconvolution   FAIL (< 0.99)
+CBV         0.6971       deconvolution   FAIL (< 0.99)
+MTT         0.4636       deconvolution   FAIL (< 0.99)
+Tmax        0.1521       deconvolution   FAIL (< 0.99)
+PH          0.9452       model-free      FAIL (< 0.99)
+PSR         0.5620       model-free      FAIL (< 0.99)
+TTP         0.2053       model-free      FAIL (< 0.99)
+CNR         0.7019       model-free      FAIL (< 0.99)
+SNR         0.6960       model-free      FAIL (< 0.99)
+tSNR        0.9376       model-free      FAIL (< 0.99)
+
+All 10 maps: FAIL
+Threshold: r >= 0.99

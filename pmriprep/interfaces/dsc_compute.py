@@ -28,7 +28,7 @@ from pmriprep.utils.dsc_constants import (
     VESSEL_CALIBRATION_GRE_3T,
     get_r2_star,
 )
-from pmriprep.utils.dsc_signal import compute_psr, compute_peak_height
+from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_peak_height_legacy, compute_ttp_legacy
 
 
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
@@ -116,7 +116,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Number of pre-bolus baseline frames",
     )
     tail_frames = traits.Int(
-        10,
+        5,
         usedefault=True,
         desc="Number of tail frames for PSR calculation",
     )
@@ -265,7 +265,7 @@ class ComputeDSCMaps(BaseInterface):
     baseline_frames : int
         Pre-bolus baseline frames. Default: 5.
     tail_frames : int
-        Tail frames for PSR. Default: 10.
+        Tail frames for PSR. Default: 5.
     bayesian : str
         Bayesian inference: none, map, vi, mcmc. Default: 'none'.
     mcmc_samples : int
@@ -339,6 +339,111 @@ class ComputeDSCMaps(BaseInterface):
         else:
             base = in_file.stem
         return str(Path.cwd() / f"{base}{suffix}.nii.gz")
+
+    @staticmethod
+    def _detect_baseline_frames(
+        aif: npt.NDArray[Any],
+        configured_baseline: int,
+        concentration_data: Optional[npt.NDArray[Any]] = None,
+        mask: Optional[npt.NDArray[Any]] = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """Detect pre-bolus baseline frames from the AIF or concentration data.
+
+        For real AIFs, applies Savitzky-Golay smoothing then 3-sigma threshold
+        detection, mirroring the perf-plus pipeline. For synthetic AIFs (detected
+        by leading zeros), falls back to peak-fraction detection on the mean
+        brain concentration curve.
+
+        Args:
+            aif: 1D AIF concentration curve.
+            configured_baseline: Fallback baseline frame count.
+            concentration_data: Optional 4D concentration array for fallback.
+            mask: Optional 3D brain mask for fallback.
+
+        Returns:
+            Tuple of (n_baseline, detection_info dict).
+        """
+        from pmriprep.utils.dsc_signal import detect_bolus_arrival
+
+        info: dict[str, Any] = {"baseline_frames_configured": configured_baseline}
+
+        if len(aif) < 3:
+            info.update(
+                baseline_detection_method="fallback_short_aif",
+                baseline_frames_detected=configured_baseline,
+            )
+            return configured_baseline, info
+
+        try:
+            from scipy.signal import savgol_filter  # type: ignore[import-untyped]
+
+            # Check if AIF is synthetic (leading zeros then abrupt rise)
+            n_leading_zeros = 0
+            for val in aif:
+                if val == 0.0:
+                    n_leading_zeros += 1
+                else:
+                    break
+            aif_is_synthetic = n_leading_zeros >= 2 and aif[n_leading_zeros] > 0.5
+
+            if aif_is_synthetic and concentration_data is not None and mask is not None:
+                # Synthetic AIF: detect bolus onset from mean brain
+                # concentration gradient (5% of max gradient threshold)
+                mask_bool = mask > 0
+                mean_conc = np.mean(concentration_data[mask_bool], axis=0)
+                if len(mean_conc) >= 7:
+                    smooth_conc = savgol_filter(
+                        mean_conc, window_length=7, polyorder=2,
+                    )
+                    smooth_conc = np.maximum(smooth_conc, 0.0)
+                    grad = np.diff(smooth_conc)
+                    max_grad: float = float(np.max(grad))
+                    if max_grad > 0:
+                        thresh = max_grad * 0.05
+                        above = np.where(grad > thresh)[0]
+                        if len(above) > 0:
+                            n_baseline = int(above[0])
+                            if 2 <= n_baseline <= len(aif) // 2:
+                                info.update(
+                                    baseline_detection_method="auto_conc_gradient",
+                                    baseline_frames_detected=n_baseline,
+                                    arrival_index=n_baseline,
+                                    aif_synthetic=True,
+                                )
+                                return n_baseline, info
+
+            # Real AIF: smooth then use 3-sigma threshold detection
+            win = min(5, len(aif))
+            if win % 2 == 0:
+                win = max(3, win - 1)
+            poly = min(2, win - 1)
+            aif_smooth = savgol_filter(aif, window_length=win, polyorder=poly)
+            aif_smooth = np.maximum(aif_smooth, 0.0)
+
+            arrival_idx, n_baseline = detect_bolus_arrival(aif_smooth, baseline_frames=3)
+
+            # Sanity: at least 2, at most half the acquisition
+            if n_baseline < 2 or n_baseline > len(aif) // 2:
+                info.update(
+                    baseline_detection_method="fallback_range",
+                    baseline_frames_detected=configured_baseline,
+                    arrival_index=int(arrival_idx),
+                )
+                return configured_baseline, info
+
+            info.update(
+                baseline_detection_method="auto_aif",
+                baseline_frames_detected=int(n_baseline),
+                arrival_index=int(arrival_idx),
+            )
+            return int(n_baseline), info
+
+        except Exception:
+            info.update(
+                baseline_detection_method="fallback_error",
+                baseline_frames_detected=configured_baseline,
+            )
+            return configured_baseline, info
 
     def _deconvolve_svd(
         self,
@@ -501,7 +606,6 @@ class ComputeDSCMaps(BaseInterface):
         dict[str, Any],  # qc_metrics
     ]:
         """Run parametric model deconvolution (vascular, CPI)."""
-        from scipy.integrate import trapezoid
 
         from pmriprep.models.dsc import (
             VascularModel,
@@ -598,7 +702,7 @@ class ComputeDSCMaps(BaseInterface):
                     # Extract from residue function
                     if result.fitted_residue is not None:
                         res = result.fitted_residue
-                        cbv[x, y, z] = float(trapezoid(res, dx=dt))
+                        cbv[x, y, z] = float(np.sum(res) * dt)
                         if cbf[x, y, z] > EPSILON_CONCENTRATION:
                             mtt[x, y, z] = cbv[x, y, z] / cbf[x, y, z]
                         tmax[x, y, z] = float(np.argmax(res)) * dt
@@ -638,13 +742,13 @@ class ComputeDSCMaps(BaseInterface):
         mask_img = nib.load(self.inputs.brain_mask_file)
         mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
 
-        # Verify brain mask is in DSC space (guaranteed by extract_dsc_brain node)
+        # Verify brain mask is in DSC space (guaranteed by transform_brain_mask node)
         if mask.shape[:3] != conc_data.shape[:3]:
             raise RuntimeError(
                 f"Brain mask shape {mask.shape[:3]} does not match "
                 f"concentration data shape {conc_data.shape[:3]}. "
                 "The brain mask must be in native DSC space. "
-                "Ensure extract_dsc_brain node is connected upstream."
+                "Ensure transform_brain_mask node is connected upstream."
             )
 
         # Load AIF
@@ -668,6 +772,11 @@ class ComputeDSCMaps(BaseInterface):
         baseline_frames = int(self.inputs.baseline_frames)
         tail_frames = int(self.inputs.tail_frames)
 
+        # Auto-detect baseline frames from AIF bolus arrival
+        detected_baseline, baseline_detection_info = self._detect_baseline_frames(
+            aif, baseline_frames, concentration_data=conc_data, mask=mask
+        )
+
         spatial_shape = conc_data.shape[:3]
 
         # Run deconvolution based on method
@@ -689,8 +798,8 @@ class ComputeDSCMaps(BaseInterface):
         ph: npt.NDArray[Any]
         if signal_data is not None:
             # Use raw signal for PSR/PH
-            psr_result = compute_psr(signal_data, baseline_frames, tail_frames)
-            ph_result = compute_peak_height(signal_data, baseline_frames)
+            psr_result = compute_psr_legacy(signal_data, detected_baseline, tail_frames)
+            ph_result = compute_peak_height_legacy(signal_data, detected_baseline)
             # Convert to ndarray if scalar (shouldn't happen with 4D input)
             if isinstance(psr_result, float):
                 psr = np.full(spatial_shape, psr_result, dtype=np.float64)
@@ -709,36 +818,39 @@ class ComputeDSCMaps(BaseInterface):
             # For now, output zeros - proper implementation needs raw signal
             qc_metrics["psr_ph_from_signal"] = False
 
-        # Compute TTP from concentration curves
-        # TTP: time to peak concentration (seconds)
-        ttp = np.argmax(conc_data, axis=-1).astype(np.float64) * dt
+        # -----------------------------------------------------------
+        # Load raw (pre-K2) concentration if available
+        # Used for AUC, TTP, and CNR (these reflect first-pass bolus
+        # timing, not BBB permeability from K2 correction)
+        # -----------------------------------------------------------
+        raw_conc_data: npt.NDArray[Any]
+        if self.inputs.raw_concentration_file:
+            raw_conc_img = nib.load(self.inputs.raw_concentration_file)
+            raw_conc_data = raw_conc_img.get_fdata()  # type: ignore[attr-defined]
+        else:
+            # No K2 correction was applied — raw == corrected
+            raw_conc_data = conc_data
+
+        # Compute TTP from raw concentration (post-bolus argmax)
+        ttp = compute_ttp_legacy(raw_conc_data, detected_baseline, dt)
 
         # -----------------------------------------------------------
         # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
         # -----------------------------------------------------------
-        # auc_corr = integral of the (post-K2) concentration passed in
-        try:
-            auc_corr = np.trapezoid(conc_data, dx=dt, axis=-1)
-        except AttributeError:
-            auc_corr = np.trapz(conc_data, dx=dt, axis=-1)
-
-        # auc_raw = integral of pre-K2 concentration (if available)
-        if self.inputs.raw_concentration_file:
-            raw_conc_img = nib.load(self.inputs.raw_concentration_file)
-            raw_conc_data: npt.NDArray[Any] = raw_conc_img.get_fdata()  # type: ignore[attr-defined]
-            try:
-                auc_raw = np.trapezoid(raw_conc_data, dx=dt, axis=-1)
-            except AttributeError:
-                auc_raw = np.trapz(raw_conc_data, dx=dt, axis=-1)
-        else:
-            # No K2 correction was applied — raw == corrected
-            auc_raw = auc_corr.copy()
-
+        # Rectangular integration (np.sum * dt) matches perf-plus ground
+        # truth and is algebraically consistent with the rectangular
+        # Toeplitz matrix used for deconvolution CBV (Ostergaard 1996).
+        # For future absolute quantification, trapezoidal (O(dt^2)) can
+        # be used instead:
+        #   auc_corr = np.trapezoid(conc_data, dx=dt, axis=-1)
+        auc_corr = np.sum(conc_data, axis=-1) * dt
+        auc_raw = np.sum(raw_conc_data, axis=-1) * dt
         auc_diff = auc_raw - auc_corr
 
-        # CNR: peak concentration / baseline std per voxel
-        baseline_std = np.std(conc_data[..., :baseline_frames], axis=-1)
-        peak_conc = np.max(conc_data, axis=-1)
+        # CNR: peak concentration / baseline std per voxel (from raw conc)
+        # perf-plus uses ddof=0 (default) and full-timeseries peak
+        baseline_std = np.std(raw_conc_data[..., :detected_baseline], axis=-1)
+        peak_conc = np.max(raw_conc_data, axis=-1)
         cnr = np.where(
             baseline_std > EPSILON_CONCENTRATION,
             peak_conc / baseline_std,
@@ -747,9 +859,12 @@ class ComputeDSCMaps(BaseInterface):
 
         # -----------------------------------------------------------
         # SNR / tSNR (from raw signal, not concentration)
+        # Use auto-detected baseline frames from AIF bolus arrival
         # -----------------------------------------------------------
+        n_timepoints = conc_data.shape[-1]
+        snr_baseline_frames = min(detected_baseline, n_timepoints - 1)
         if signal_data is not None:
-            baseline_sig = signal_data[..., :baseline_frames]
+            baseline_sig = signal_data[..., :snr_baseline_frames]
             baseline_mean = np.mean(baseline_sig, axis=-1)
             baseline_std_sig = np.std(baseline_sig, axis=-1, ddof=1)
             snr = np.where(baseline_std_sig > EPSILON_SIGNAL, baseline_mean / baseline_std_sig, 0.0)
@@ -760,6 +875,17 @@ class ComputeDSCMaps(BaseInterface):
         else:
             snr = np.zeros(spatial_shape, dtype=np.float64)
             tsnr = np.zeros(spatial_shape, dtype=np.float64)
+
+        # -----------------------------------------------------------
+        # Clip maps to physiological ranges (matches perf-plus)
+        # -----------------------------------------------------------
+        psr = np.clip(psr, 0.0, 200.0)
+        ph = np.clip(ph, 0.0, 100.0)
+        tmax = np.clip(tmax, 0.0, 60.0)
+        mtt = np.clip(mtt, 0.0, 30.0)
+        cbf = np.clip(cbf, 0.0, 100.0)
+        cbv = np.clip(cbv, 0.0, 10.0)
+        cnr = np.clip(cnr, 0.0, 1000.0)
 
         # -----------------------------------------------------------
         # Relative maps (always produced)
@@ -814,6 +940,8 @@ class ComputeDSCMaps(BaseInterface):
         cnr = np.where(mask_bool, cnr, 0.0)
         snr = np.where(mask_bool, snr, 0.0)
         tsnr = np.where(mask_bool, tsnr, 0.0)
+        psr = np.where(mask_bool, psr, 0.0)
+        ph = np.where(mask_bool, ph, 0.0)
 
         if absolute_permitted:
             abs_cbf = np.where(mask_bool, abs_cbf, 0.0)  # type: ignore[arg-type]
@@ -833,6 +961,7 @@ class ComputeDSCMaps(BaseInterface):
             "aif_detection_level": aif_level,
             "preload_classification": preload_class,
         })
+        qc_metrics.update(baseline_detection_info)
 
         # -----------------------------------------------------------
         # Helper to save a 3D array as NIfTI

@@ -616,6 +616,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     hdglio_config=hdglio_config,
                     dsc_config=dsc_config,
                     dce_config=dce_config,
+                    work_dir=args.work_dir,
                     name=f"pmriprep_sub{subject_id}_{session_str}_wf",
                 )
 

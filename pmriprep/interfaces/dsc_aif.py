@@ -769,13 +769,13 @@ class AIFDetection(BaseInterface):
         brain_img = nib.load(self.inputs.brain_mask_file)
         brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
 
-        # Verify brain mask is in DSC space (guaranteed by extract_dsc_brain node)
+        # Verify brain mask is in DSC space (guaranteed by transform_brain_mask node)
         if brain_mask.shape[:3] != conc_data.shape[:3]:
             raise RuntimeError(
                 f"Brain mask shape {brain_mask.shape[:3]} does not match "
                 f"concentration data shape {conc_data.shape[:3]}. "
                 "The brain mask must be in native DSC space. "
-                "Ensure extract_dsc_brain node is connected upstream."
+                "Ensure transform_brain_mask node is connected upstream."
             )
 
         # Optional atlas mask

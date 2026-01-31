@@ -304,6 +304,19 @@ def find_ground_truth_file(
         "ncbv": [
             f"*desc-dscproc_ncbv.nii.gz",  # Normalized CBV
         ],
+        # Model-free maps (no AIF/deconvolution dependency)
+        "ttp": [
+            f"*desc-dscproc_ttp.nii.gz",  # Time to peak
+        ],
+        "cnr": [
+            f"*desc-dscproc_cnr.nii.gz",  # Contrast-to-noise ratio
+        ],
+        "snr": [
+            f"*desc-dscproc_snr.nii.gz",  # Signal-to-noise ratio
+        ],
+        "tsnr": [
+            f"*desc-dscproc_tsnr.nii.gz",  # Temporal SNR
+        ],
     }
 
     # Get patterns for this output, or use generic patterns

@@ -81,8 +81,9 @@ def build_toeplitz_matrix(
     Creates the lower-triangular Toeplitz matrix A such that:
         C_tissue = A @ R
 
-    where the convolution integral is discretized using the
-    trapezoidal rule.
+    where the convolution integral is discretized using uniform
+    (rectangular) weighting, consistent with Ostergaard (1996) and
+    the block-circulant matrix used by cSVD.
 
     Args:
         aif: Arterial input function concentration curve, shape (n_timepoints,).
@@ -92,17 +93,12 @@ def build_toeplitz_matrix(
         Toeplitz matrix of shape (n_timepoints, n_timepoints).
     """
     n = len(aif)
-    matrix = np.zeros((n, n), dtype=np.float64)
-
-    for i in range(n):
-        for j in range(i + 1):
-            # Trapezoidal rule weighting
-            if j == 0 or j == i:
-                weight = 0.5
-            else:
-                weight = 1.0
-            matrix[i, j] = aif[i - j] * weight * dt
-
+    # Build lower-triangular Toeplitz matrix with uniform weighting.
+    # First column is aif * dt, first row is [aif[0]*dt, 0, 0, ...].
+    first_col = aif * dt
+    first_row = np.zeros(n, dtype=np.float64)
+    first_row[0] = aif[0] * dt
+    matrix = linalg.toeplitz(first_col, first_row)
     return matrix
 
 
@@ -150,7 +146,7 @@ def svd_deconvolve_standard(
 
     Notes:
         - CBF is extracted as max(R(t))
-        - CBV is computed as integral of R(t) using trapezoidal rule
+        - CBV is computed as integral of R(t) using rectangular rule
         - MTT = CBV / CBF (central volume theorem)
         - This method is NOT delay-insensitive; delays cause CBF underestimation
         - For delay-insensitive deconvolution, use svd_deconvolve_circulant()
@@ -214,8 +210,8 @@ def svd_deconvolve_standard(
     # Extract perfusion parameters
     cbf = float(np.max(residue))
 
-    # CBV via trapezoidal integration of residue
-    cbv = float(trapezoid(residue, dx=dt))
+    # CBV via rectangular integration of residue (Ostergaard 1996)
+    cbv = float(np.sum(residue) * dt)
 
     # MTT from central volume theorem: MTT = CBV / CBF
     if cbf > EPSILON_CONCENTRATION:
@@ -326,8 +322,8 @@ def svd_deconvolve_standard_batch(
         # Extract parameters
         cbf_masked = np.max(residues_masked, axis=1)
 
-        # CBV via trapezoidal integration
-        cbv_masked = trapezoid(residues_masked, dx=dt, axis=1)
+        # CBV via rectangular integration (Ostergaard 1996)
+        cbv_masked = np.sum(residues_masked, axis=1) * dt
 
         # MTT = CBV / CBF
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -506,7 +502,7 @@ def svd_deconvolve_circulant(
     Notes:
         - The residue function has length 2N-1, allowing delays from -(N-1) to +(N-1)
         - CBF is extracted as max(R(t))
-        - CBV is computed as integral of R(t) using trapezoidal rule
+        - CBV is computed as integral of R(t) using rectangular rule
         - MTT = CBV / CBF (central volume theorem)
         - Delay is estimated from the position of max(R(t))
         - For large delays, consider if the delay is physiologically reasonable
@@ -582,8 +578,8 @@ def svd_deconvolve_circulant(
     delay_frames = peak_position - (n - 1)
     delay_seconds = float(delay_frames) * dt
 
-    # CBV via trapezoidal integration of residue
-    cbv = float(trapezoid(residue, dx=dt))
+    # CBV via rectangular integration of residue (Ostergaard 1996)
+    cbv = float(np.sum(residue) * dt)
 
     # MTT from central volume theorem: MTT = CBV / CBF
     if cbf > EPSILON_CONCENTRATION:
@@ -707,8 +703,8 @@ def svd_deconvolve_circulant_batch(
         delay_frames = peak_positions - (n_timepoints - 1)
         delay_masked = delay_frames.astype(np.float64) * dt
 
-        # CBV via trapezoidal integration
-        cbv_masked = trapezoid(residues_masked, dx=dt, axis=1)
+        # CBV via rectangular integration (Ostergaard 1996)
+        cbv_masked = np.sum(residues_masked, axis=1) * dt
 
         # MTT = CBV / CBF
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -947,7 +943,7 @@ def svd_deconvolve_oscillation(
 
     Notes:
         - CBF is extracted as max(R(t))
-        - CBV is computed as integral of R(t) using trapezoidal rule
+        - CBV is computed as integral of R(t) using rectangular rule
         - MTT = CBV / CBF (central volume theorem)
         - If OI cannot be reduced to oi_target even at threshold_max, returns
           the result at threshold_max with converged=False
@@ -995,7 +991,7 @@ def svd_deconvolve_oscillation(
         # Even maximum threshold doesn't achieve target OI
         # Return result at maximum threshold
         cbf = float(np.max(residue_hi))
-        cbv = float(trapezoid(residue_hi, dx=dt))
+        cbv = float(np.sum(residue_hi) * dt)
         mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION else 0.0
 
         return OscillationDeconvolutionResult(
@@ -1020,7 +1016,7 @@ def svd_deconvolve_oscillation(
         # Even minimum threshold achieves target OI
         # Return result at minimum threshold (maximum detail)
         cbf = float(np.max(residue_lo))
-        cbv = float(trapezoid(residue_lo, dx=dt))
+        cbv = float(np.sum(residue_lo) * dt)
         mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION else 0.0
 
         return OscillationDeconvolutionResult(
@@ -1073,7 +1069,7 @@ def svd_deconvolve_oscillation(
 
     # Extract perfusion parameters from best result
     cbf = float(np.max(best_residue))
-    cbv = float(trapezoid(best_residue, dx=dt))
+    cbv = float(np.sum(best_residue) * dt)
     mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION else 0.0
 
     return OscillationDeconvolutionResult(
@@ -1221,7 +1217,7 @@ def svd_deconvolve_oscillation_batch(
         # Store results for this voxel
         residues[idx, :] = best_residue
         cbf[idx] = float(np.max(best_residue))
-        cbv[idx] = float(trapezoid(best_residue, dx=dt))
+        cbv[idx] = float(np.sum(best_residue) * dt)
         if cbf[idx] > EPSILON_CONCENTRATION:
             mtt[idx] = cbv[idx] / cbf[idx]
         oscillation_index[idx] = best_oi
@@ -1385,7 +1381,7 @@ def tikhonov_deconvolve(
 
     Notes:
         - CBF is extracted as max(R(t))
-        - CBV is computed as integral of R(t) using trapezoidal rule
+        - CBV is computed as integral of R(t) using rectangular rule
         - MTT = CBV / CBF (central volume theorem)
         - Tikhonov regularization provides smooth solutions by penalizing
           the norm of the residue function
@@ -1456,8 +1452,8 @@ def tikhonov_deconvolve(
     # Extract perfusion parameters
     cbf = float(np.max(best_residue))
 
-    # CBV via trapezoidal integration of residue
-    cbv = float(trapezoid(best_residue, dx=dt))
+    # CBV via rectangular integration of residue (Ostergaard 1996)
+    cbv = float(np.sum(best_residue) * dt)
 
     # MTT from central volume theorem: MTT = CBV / CBF
     if cbf > EPSILON_CONCENTRATION:
@@ -1581,7 +1577,7 @@ def tikhonov_deconvolve_batch(
         # Store results for this voxel
         residues[idx, :] = best_residue
         cbf[idx] = float(np.max(best_residue))
-        cbv[idx] = float(trapezoid(best_residue, dx=dt))
+        cbv[idx] = float(np.sum(best_residue) * dt)
         if cbf[idx] > EPSILON_CONCENTRATION:
             mtt[idx] = cbv[idx] / cbf[idx]
         lambda_optimal[idx] = float(best_lambda)
@@ -2087,8 +2083,8 @@ def extract_perfusion_params(
     # CBF = max(R(t))
     cbf = float(np.max(residue))
 
-    # CBV = ∫R(t)dt using trapezoidal integration
-    cbv = float(trapezoid(residue, dx=dt))
+    # CBV = ∫R(t)dt using rectangular integration (Ostergaard 1996)
+    cbv = float(np.sum(residue) * dt)
 
     # MTT = CBV / CBF (central volume theorem)
     # Guard against division by zero
@@ -2177,8 +2173,8 @@ def extract_perfusion_params_batch(
         # CBF = max(R(t))
         cbf_masked = np.max(residues_masked, axis=1)
 
-        # CBV = ∫R(t)dt
-        cbv_masked = trapezoid(residues_masked, dx=dt, axis=1)
+        # CBV = ∫R(t)dt using rectangular integration (Ostergaard 1996)
+        cbv_masked = np.sum(residues_masked, axis=1) * dt
 
         # MTT = CBV / CBF
         with np.errstate(divide="ignore", invalid="ignore"):

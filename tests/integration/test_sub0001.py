@@ -49,6 +49,7 @@ DCE_CONFIG: Optional[Dict[str, Any]] = None
 
 # Expected outputs
 EXPECTED_DSC_OUTPUTS = ["cbf", "cbv", "mtt", "tmax"]
+EXPECTED_DSC_MODEL_FREE = ["ph", "psr", "ttp", "cnr", "snr", "tsnr"]
 EXPECTED_DCE_OUTPUTS: List[str] = []  # No DCE
 
 
@@ -164,6 +165,79 @@ class TestSub0001Ses0002:
 
         assert result.passed, (
             f"DSC {output_name} correlation {result.value:.4f} < "
+            f"threshold {CORRELATION_THRESHOLD}"
+        )
+
+    @pytest.mark.parametrize("output_name", EXPECTED_DSC_MODEL_FREE)
+    def test_dsc_model_free_ground_truth(
+        self,
+        output_name: str,
+        subject_ground_truth_dir: Optional[Path],
+        subject_brain_mask: Optional[Path],
+    ) -> None:
+        """Test model-free DSC maps against ground truth.
+
+        These maps do not depend on AIF selection or deconvolution:
+        - ph: peak height (signal-based)
+        - psr: percent signal recovery (signal-based)
+        - ttp: time to peak concentration
+        - cnr: contrast-to-noise ratio
+        - snr: signal-to-noise ratio (baseline)
+        - tsnr: temporal signal-to-noise ratio
+
+        Set PMRIPREP_WORK_DIR environment variable to point to the work directory.
+        """
+        import os
+
+        if subject_ground_truth_dir is None:
+            pytest.skip(f"Ground truth not found for {SUBJECT}/{SESSION}")
+
+        # Load ground truth
+        gt_data, gt_path = load_ground_truth_map(
+            SUBJECT, SESSION, output_name, "dsc", PERF_PLUS_DERIVATIVES
+        )
+        if gt_path is None:
+            pytest.skip(f"Ground truth not found for DSC {output_name}")
+
+        # Get PMRIPrep work directory from environment
+        work_dir = os.environ.get("PMRIPREP_WORK_DIR")
+        if work_dir is None:
+            pytest.skip(
+                f"PMRIPREP_WORK_DIR not set. Set to work directory path to enable "
+                "ground truth comparison."
+            )
+
+        # Look for outputs in the work directory structure
+        work_path = Path(work_dir)
+        subject_id = SUBJECT.replace("sub-", "")
+        pmriprep_output = (
+            work_path / f"pmriprep_sub{subject_id}_{SESSION}_wf" / "dsc_wf" / "compute_maps"
+        )
+
+        if not pmriprep_output.exists():
+            pytest.skip(
+                f"PMRIPrep outputs not available for {SUBJECT}/{SESSION} in {pmriprep_output}. "
+                "Run PMRIPrep first to enable ground truth comparison."
+            )
+
+        # Use underscore-prefixed pattern to avoid ambiguity (e.g., snr vs tsnr)
+        pmriprep_files = list(pmriprep_output.glob(f"*_{output_name}.nii*"))
+        if not pmriprep_files:
+            pytest.fail(
+                f"PMRIPrep output not found for {output_name} in {pmriprep_output}"
+            )
+
+        # Compare
+        result = compare_output_files(
+            pmriprep_files[0],
+            gt_path,
+            f"dsc_{output_name}",
+            is_mask=False,
+            mask_path=subject_brain_mask,
+        )
+
+        assert result.passed, (
+            f"DSC {output_name} (model-free) correlation {result.value:.4f} < "
             f"threshold {CORRELATION_THRESHOLD}"
         )
 
