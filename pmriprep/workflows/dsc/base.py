@@ -1517,6 +1517,7 @@ def init_dsc_preproc_wf(
         ]),
         (inputnode, aif_detect, [
             ("lesion_mask", "lesion_mask_file"),
+            ("tr", "tr"),
         ]),
     ])
 
