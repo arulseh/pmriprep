@@ -294,6 +294,7 @@ class AIFDetectionOutputSpec(TraitedSpec):
     detection_level = traits.Str(desc="Detection level: 'atlas', 'relaxed', 'synthetic'")
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
     candidate_count = traits.Int(desc="Number of candidate voxels evaluated")
+    n_baseline_frames = traits.Int(desc="Detected pre-bolus baseline frame count")
     gamma_fit_applied = traits.Bool(desc="Whether gamma-variate fitting was applied")
     qc_metrics = traits.Dict(desc="Detailed QC metrics dictionary")
 
@@ -1711,6 +1712,7 @@ class AIFDetection(BaseInterface):
             "detection_level": detection_level,
             "quality_score": quality_score,
             "candidate_count": n_cand,
+            "n_baseline_frames": baseline_frames,
             "gamma_fit_applied": gamma_fit_applied,
             "qc_metrics": qc_metrics,
         }

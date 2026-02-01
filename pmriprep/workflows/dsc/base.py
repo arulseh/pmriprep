@@ -291,6 +291,7 @@ def _signal_to_concentration(
     baseline_frames,
     r2_star,
     field_strength,
+    absolute_quant=False,
 ):
     """Convert DSC signal to concentration.
 
@@ -302,6 +303,8 @@ def _signal_to_concentration(
         baseline_frames: Number of pre-bolus baseline frames.
         r2_star: Optional r2* relaxivity for absolute quantification.
         field_strength: Optional field strength for r2* lookup.
+        absolute_quant: If True and r2_star is None, look up r2* from
+            field_strength for absolute quantification.
 
     Returns:
         Tuple of (concentration_file, signal_file) paths.
@@ -311,6 +314,12 @@ def _signal_to_concentration(
     from pathlib import Path
 
     from pmriprep.utils.dsc_signal import signal_to_concentration
+
+    # Resolve r2_star from field_strength when absolute_quant is enabled
+    effective_r2_star = r2_star
+    if effective_r2_star is None and absolute_quant and field_strength is not None:
+        from pmriprep.utils.dsc_constants import get_r2_star
+        effective_r2_star = get_r2_star(field_strength)
 
     # Load DSC data
     dsc_img = nib.load(dsc_file)
@@ -323,8 +332,7 @@ def _signal_to_concentration(
         signal=signal,
         te=te,
         baseline_frames=baseline_frames,
-        r2_star=r2_star,
-        field_strength=field_strength,
+        r2_star=effective_r2_star,
     )
 
     # Save concentration file
@@ -1150,13 +1158,17 @@ def init_dsc_preproc_wf(
     # Node 2: Signal to Concentration Conversion
     # -------------------------------------------------------------------
     # Determine r2_star based on config
+    # If absolute_quant is enabled but no explicit r2_star, the wrapper
+    # function will look up r2_star from the runtime field_strength (from
+    # BIDS sidecar) at execution time.
     r2_star_value: Optional[float] = None
     if config.absolute_quant and config.r2_star is not None:
         r2_star_value = config.r2_star
 
     signal_to_conc = pe.Node(
         niu.Function(
-            input_names=["dsc_file", "te", "baseline_frames", "r2_star", "field_strength"],
+            input_names=["dsc_file", "te", "baseline_frames", "r2_star",
+                         "field_strength", "absolute_quant"],
             output_names=["concentration_file", "signal_file"],
             function=_signal_to_concentration,
         ),
@@ -1164,6 +1176,7 @@ def init_dsc_preproc_wf(
     )
     signal_to_conc.inputs.baseline_frames = config.pre_bolus
     signal_to_conc.inputs.r2_star = r2_star_value
+    signal_to_conc.inputs.absolute_quant = config.absolute_quant
 
     # -------------------------------------------------------------------
     # Node 3: AIF Detection
@@ -1587,6 +1600,7 @@ def init_dsc_preproc_wf(
             ("out_aif_curve", "aif_file"),
             ("out_aif_mask", "aif_mask_file"),
             ("detection_level", "aif_detection_level"),
+            ("n_baseline_frames", "detected_baseline_frames"),
         ]),
         (hdbet_dsc, compute_maps, [
             ("dsc_brain_mask_file", "brain_mask_file"),

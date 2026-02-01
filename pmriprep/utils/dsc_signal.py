@@ -13,8 +13,6 @@ import numpy.typing as npt
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
-    R2_STAR_BY_FIELD,
-    get_r2_star,
 )
 
 
@@ -42,9 +40,9 @@ def signal_to_concentration(
             Default is 5 frames.
         r2_star: Transverse relaxivity in s^-1 per mM for absolute
             quantification. If None, returns relative ΔR2*.
-        field_strength: Magnetic field strength in Tesla. Used to look up
-            r2* if r2_star is not provided but absolute quantification
-            is desired. Common values: 1.5, 3.0, 7.0.
+        field_strength: Reserved for future use. Does not trigger
+            automatic r2* lookup. Pass an explicit r2_star value
+            for absolute quantification.
 
     Returns:
         Concentration array with same shape as input signal.
@@ -113,8 +111,6 @@ def signal_to_concentration(
 
     if r2_star is not None:
         effective_r2_star = r2_star
-    elif field_strength is not None:
-        effective_r2_star = get_r2_star(field_strength)
 
     # Return relative ΔR2* or absolute concentration
     if effective_r2_star is not None:

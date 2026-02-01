@@ -86,6 +86,12 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Preload severity: 'none', 'minimal', 'half_dose', 'significant', 'severe'",
     )
 
+    detected_baseline_frames = traits.Int(
+        0,
+        usedefault=True,
+        desc="AIF-detected baseline frames (0=re-detect locally)",
+    )
+
     # Deconvolution method
     method = traits.Enum(
         "sSVD",
@@ -431,7 +437,7 @@ class ComputeDSCMaps(BaseInterface):
             aif_smooth = savgol_filter(aif, window_length=win, polyorder=poly)
             aif_smooth = np.maximum(aif_smooth, 0.0)
 
-            arrival_idx, n_baseline = detect_bolus_arrival(aif_smooth, baseline_frames=configured_baseline)
+            arrival_idx, n_baseline = detect_bolus_arrival(aif_smooth, baseline_frames=3)
 
             # Sanity: at least 2, at most half the acquisition
             if n_baseline < 2 or n_baseline > len(aif) // 2:
@@ -783,10 +789,19 @@ class ComputeDSCMaps(BaseInterface):
         baseline_frames = int(self.inputs.baseline_frames)
         tail_frames = int(self.inputs.tail_frames)
 
-        # Auto-detect baseline frames from AIF bolus arrival
-        detected_baseline, baseline_detection_info = self._detect_baseline_frames(
-            aif, baseline_frames, concentration_data=conc_data, mask=mask
-        )
+        # Use AIF-propagated baseline if available, otherwise auto-detect
+        propagated = int(self.inputs.detected_baseline_frames)
+        if propagated > 0:
+            detected_baseline = propagated
+            baseline_detection_info: dict[str, Any] = {
+                "baseline_frames_configured": baseline_frames,
+                "baseline_detection_method": "propagated_from_aif",
+                "baseline_frames_detected": propagated,
+            }
+        else:
+            detected_baseline, baseline_detection_info = self._detect_baseline_frames(
+                aif, baseline_frames, concentration_data=conc_data, mask=mask
+            )
 
         te = float(self.inputs.te)
 
@@ -801,14 +816,11 @@ class ComputeDSCMaps(BaseInterface):
             signal_ratio = signal_data / new_s0
             signal_ratio = np.clip(signal_ratio, EPSILON_SIGNAL, 1.0)
             recomputed_raw_conc = -np.log(signal_ratio) / te
-            r2_star_val = get_r2_star(float(self.inputs.field_strength))
-            if r2_star_val is not None:
-                recomputed_raw_conc = recomputed_raw_conc / r2_star_val
 
             # Re-extract AIF from updated concentration
             if isdefined(self.inputs.aif_mask_file):
                 aif_mask_img = nib.load(self.inputs.aif_mask_file)
-                aif_mask_data = aif_mask_img.get_fdata() > 0.5
+                aif_mask_data = aif_mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
                 if aif_mask_data.shape[:3] == recomputed_raw_conc.shape[:3]:
                     aif_voxels = recomputed_raw_conc[aif_mask_data]
                     if aif_voxels.ndim == 2 and aif_voxels.shape[0] > 0:
