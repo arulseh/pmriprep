@@ -20,17 +20,15 @@ def signal_to_concentration(
     signal: npt.NDArray[np.floating],
     te: float,
     baseline_frames: int = 5,
-    r2_star: Optional[float] = None,
-    field_strength: Optional[float] = None,
 ) -> npt.NDArray[np.floating]:
-    """Convert DSC signal to concentration via ΔR2*.
+    """Convert DSC signal to ΔR2* concentration.
 
     Computes concentration from the signal decay using the relationship:
         ΔR2* = -ln(S(t)/S0) / TE
-        C(t) = ΔR2* / r2*  (if absolute quantification)
 
-    In relative mode (no r2* provided), returns ΔR2* directly.
-    In absolute mode (r2* provided), returns concentration in mM.
+    Always returns ΔR2* in s⁻¹. Conversion to absolute concentration
+    (mM) via r2* relaxivity is an output-time calibration step applied
+    downstream (see ComputeDSCMaps absolute quantification gating).
 
     Args:
         signal: 4D array of DSC signal (x, y, z, time) or 1D time series.
@@ -38,15 +36,9 @@ def signal_to_concentration(
         te: Echo time in seconds. Typical values: 0.025-0.040s.
         baseline_frames: Number of pre-bolus frames for S0 estimation.
             Default is 5 frames.
-        r2_star: Transverse relaxivity in s^-1 per mM for absolute
-            quantification. If None, returns relative ΔR2*.
-        field_strength: Reserved for future use. Does not trigger
-            automatic r2* lookup. Pass an explicit r2_star value
-            for absolute quantification.
 
     Returns:
-        Concentration array with same shape as input signal.
-        Units are s^-1 (ΔR2*) for relative mode or mM for absolute mode.
+        ΔR2* array with same shape as input signal, units s⁻¹.
 
     Raises:
         ValueError: If signal array is empty or has invalid dimensions.
@@ -106,21 +98,7 @@ def signal_to_concentration(
     # Note: negative of log because signal decreases with contrast
     delta_r2_star = -np.log(signal_ratio_clipped) / te
 
-    # Determine r2* for conversion
-    effective_r2_star: Optional[float] = None
-
-    if r2_star is not None:
-        effective_r2_star = r2_star
-
-    # Return relative ΔR2* or absolute concentration
-    if effective_r2_star is not None:
-        # Absolute quantification: C = ΔR2* / r2*
-        concentration = delta_r2_star / effective_r2_star
-    else:
-        # Relative mode: return ΔR2* directly (units: s^-1)
-        concentration = delta_r2_star
-
-    return concentration
+    return delta_r2_star
 
 
 def signal_to_delta_r2_star(
@@ -130,7 +108,8 @@ def signal_to_delta_r2_star(
 ) -> npt.NDArray[np.floating]:
     """Convert DSC signal to ΔR2* (relative concentration).
 
-    Convenience wrapper for signal_to_concentration with relative mode.
+    Convenience alias for signal_to_concentration, which now always
+    returns ΔR2* in s⁻¹.
 
     Args:
         signal: 4D array of DSC signal (x, y, z, time) or 1D time series.
@@ -138,14 +117,12 @@ def signal_to_delta_r2_star(
         baseline_frames: Number of pre-bolus frames for S0 estimation.
 
     Returns:
-        ΔR2* array with same shape as input signal, units s^-1.
+        ΔR2* array with same shape as input signal, units s⁻¹.
     """
     return signal_to_concentration(
         signal=signal,
         te=te,
         baseline_frames=baseline_frames,
-        r2_star=None,
-        field_strength=None,
     )
 
 
@@ -217,9 +194,13 @@ def detect_bolus_arrival(
 ) -> Tuple[int, int]:
     """Detect bolus arrival in a concentration curve.
 
-    Uses a 3-sigma threshold above the initial baseline to find the first
-    frame with significant contrast arrival, then returns both the arrival
-    index and the number of usable baseline frames.
+    Uses z-score normalization (3-sigma) above the initial baseline to
+    find the first frame with significant contrast arrival, then returns
+    both the arrival index and the number of usable baseline frames.
+
+    The z-score approach is scale-invariant: z = (x - mean) / std cancels
+    any constant scaling factor, so detection returns the same frame
+    whether input is in ΔR2* (s⁻¹) or concentration (mM).
 
     Ported from perf-plus perfusion_utils.detect_bolus_arrival().
 
@@ -237,13 +218,17 @@ def detect_bolus_arrival(
     """
     n_baseline = min(baseline_frames, len(concentration_curve) // 4)
     n_baseline = max(2, n_baseline)
-    baseline = np.mean(concentration_curve[:n_baseline])
+    baseline_mean = np.mean(concentration_curve[:n_baseline])
     baseline_std = np.std(concentration_curve[:n_baseline])
-    threshold = baseline + 3 * baseline_std
 
-    # Single-frame detection matching perf-plus: first frame above threshold
+    # Use z-score normalization for scale-invariant detection.
+    # z = (x - mean) / std cancels any constant scaling factor (e.g. r2*),
+    # so detection returns the same frame whether input is in s⁻¹ or mM.
+    z_scores = (concentration_curve - baseline_mean) / max(baseline_std, EPSILON_CONCENTRATION)
+
+    # Single-frame detection matching perf-plus: first frame above 3-sigma
     # (no consecutive requirement, search all frames including baseline window)
-    above = np.where(concentration_curve > threshold)[0]
+    above = np.where(z_scores > 3.0)[0]
     if len(above) > 0:
         arrival_idx = int(above[0])
     else:

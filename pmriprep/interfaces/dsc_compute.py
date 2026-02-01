@@ -86,12 +86,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Preload severity: 'none', 'minimal', 'half_dose', 'significant', 'severe'",
     )
 
-    detected_baseline_frames = traits.Int(
-        0,
-        usedefault=True,
-        desc="AIF-detected baseline frames (0=re-detect locally)",
-    )
-
     # Deconvolution method
     method = traits.Enum(
         "sSVD",
@@ -429,15 +423,11 @@ class ComputeDSCMaps(BaseInterface):
                                 )
                                 return n_baseline, info
 
-            # Real AIF: smooth then use 3-sigma threshold detection
-            win = min(5, len(aif))
-            if win % 2 == 0:
-                win = max(3, win - 1)
-            poly = min(2, win - 1)
-            aif_smooth = savgol_filter(aif, window_length=win, polyorder=poly)
-            aif_smooth = np.maximum(aif_smooth, 0.0)
-
-            arrival_idx, n_baseline = detect_bolus_arrival(aif_smooth, baseline_frames=3)
+            # Real AIF: call detect_bolus_arrival directly on the
+            # already-smoothed AIF (matches perf-plus line 1483).
+            # The AIF is pre-smoothed by AIFDetection._compute_roi_averaged_aif()
+            # (Savitzky-Golay window=5, polyorder=2) — no re-smoothing needed.
+            arrival_idx, n_baseline = detect_bolus_arrival(aif, baseline_frames=3)
 
             # Sanity: at least 2, at most half the acquisition
             if n_baseline < 2 or n_baseline > len(aif) // 2:
@@ -789,19 +779,10 @@ class ComputeDSCMaps(BaseInterface):
         baseline_frames = int(self.inputs.baseline_frames)
         tail_frames = int(self.inputs.tail_frames)
 
-        # Use AIF-propagated baseline if available, otherwise auto-detect
-        propagated = int(self.inputs.detected_baseline_frames)
-        if propagated > 0:
-            detected_baseline = propagated
-            baseline_detection_info: dict[str, Any] = {
-                "baseline_frames_configured": baseline_frames,
-                "baseline_detection_method": "propagated_from_aif",
-                "baseline_frames_detected": propagated,
-            }
-        else:
-            detected_baseline, baseline_detection_info = self._detect_baseline_frames(
-                aif, baseline_frames, concentration_data=conc_data, mask=mask
-            )
+        # Auto-detect baseline frames from AIF (matches perf-plus)
+        detected_baseline, baseline_detection_info = self._detect_baseline_frames(
+            aif, baseline_frames, concentration_data=conc_data, mask=mask
+        )
 
         te = float(self.inputs.te)
 
