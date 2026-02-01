@@ -244,21 +244,14 @@ def detect_bolus_arrival(
     baseline = np.mean(concentration_curve[:n_baseline])
     baseline_std = np.std(concentration_curve[:n_baseline])
     threshold = baseline + 3 * baseline_std
-    above = concentration_curve > threshold
 
-    # Require 2 consecutive frames above threshold to reject single-frame noise.
-    # Start search after baseline window to avoid detecting noise within baseline.
-    arrival_idx: Optional[int] = None
-    for i in range(n_baseline, len(above) - 1):
-        if above[i] and above[i + 1]:
-            arrival_idx = i
-            break
-
-    # Fallback: accept single post-baseline frame if no consecutive pair found
-    if arrival_idx is None:
-        single = np.where(above)[0]
-        post_baseline = single[single >= n_baseline]
-        arrival_idx = int(post_baseline[0]) if len(post_baseline) > 0 else n_baseline
+    # Single-frame detection matching perf-plus: first frame above threshold
+    # (no consecutive requirement, search all frames including baseline window)
+    above = np.where(concentration_curve > threshold)[0]
+    if len(above) > 0:
+        arrival_idx = int(above[0])
+    else:
+        arrival_idx = n_baseline
 
     return arrival_idx, max(2, arrival_idx)
 

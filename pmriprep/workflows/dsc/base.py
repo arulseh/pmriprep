@@ -1585,6 +1585,7 @@ def init_dsc_preproc_wf(
         ]),
         (aif_detect, compute_maps, [
             ("out_aif_curve", "aif_file"),
+            ("out_aif_mask", "aif_mask_file"),
             ("detection_level", "aif_detection_level"),
         ]),
         (hdbet_dsc, compute_maps, [
@@ -1592,6 +1593,7 @@ def init_dsc_preproc_wf(
         ]),
         (inputnode, compute_maps, [
             ("tr", "tr"),
+            ("te", "te"),
             ("field_strength", "field_strength"),
         ]),
         (signal_to_conc, compute_maps, [

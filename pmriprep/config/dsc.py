@@ -113,7 +113,7 @@ class DSCConfig:
     smooth_fwhm: float = 0.0  # No smoothing by default
     underlays: List[str] = field(default_factory=list)
     motion_thresh: float = 0.5
-    pre_bolus: int = 10
+    pre_bolus: int = 12
     save_k2_map: bool = False
     save_uncertainty: bool = False
 

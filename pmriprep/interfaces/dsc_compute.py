@@ -16,6 +16,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterfaceInputSpec,
     File,
     TraitedSpec,
+    isdefined,
     traits,
 )
 
@@ -58,6 +59,16 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         exists=True,
         mandatory=False,
         desc="Pre-K2 concentration (for auc_raw when K2 correction was applied)",
+    )
+    te = traits.Float(
+        0.035,
+        usedefault=True,
+        desc="Echo time in seconds (for S0 re-computation)",
+    )
+    aif_mask_file = File(
+        exists=True,
+        mandatory=False,
+        desc="3D AIF mask NIfTI (for re-extracting AIF after S0 update)",
     )
     field_strength = traits.Float(
         3.0,
@@ -420,7 +431,7 @@ class ComputeDSCMaps(BaseInterface):
             aif_smooth = savgol_filter(aif, window_length=win, polyorder=poly)
             aif_smooth = np.maximum(aif_smooth, 0.0)
 
-            arrival_idx, n_baseline = detect_bolus_arrival(aif_smooth, baseline_frames=3)
+            arrival_idx, n_baseline = detect_bolus_arrival(aif_smooth, baseline_frames=configured_baseline)
 
             # Sanity: at least 2, at most half the acquisition
             if n_baseline < 2 or n_baseline > len(aif) // 2:
@@ -777,6 +788,46 @@ class ComputeDSCMaps(BaseInterface):
             aif, baseline_frames, concentration_data=conc_data, mask=mask
         )
 
+        te = float(self.inputs.te)
+
+        # Match perf-plus: re-compute S0/concentration with detected baseline
+        # when it differs from configured baseline (perf-plus lines 5177-5205)
+        recomputed_raw_conc: Optional[npt.NDArray[Any]] = None
+        if detected_baseline != baseline_frames and signal_data is not None:
+            new_s0 = np.mean(
+                signal_data[..., :detected_baseline], axis=-1, keepdims=True
+            )
+            new_s0 = np.maximum(new_s0, EPSILON_SIGNAL)
+            signal_ratio = signal_data / new_s0
+            signal_ratio = np.clip(signal_ratio, EPSILON_SIGNAL, 1.0)
+            recomputed_raw_conc = -np.log(signal_ratio) / te
+            r2_star_val = get_r2_star(float(self.inputs.field_strength))
+            if r2_star_val is not None:
+                recomputed_raw_conc = recomputed_raw_conc / r2_star_val
+
+            # Re-extract AIF from updated concentration
+            if isdefined(self.inputs.aif_mask_file):
+                aif_mask_img = nib.load(self.inputs.aif_mask_file)
+                aif_mask_data = aif_mask_img.get_fdata() > 0.5
+                if aif_mask_data.shape[:3] == recomputed_raw_conc.shape[:3]:
+                    aif_voxels = recomputed_raw_conc[aif_mask_data]
+                    if aif_voxels.ndim == 2 and aif_voxels.shape[0] > 0:
+                        aif = np.mean(aif_voxels, axis=0)
+
+            # Re-apply K2 correction to updated concentration
+            from pmriprep.utils.dsc_preload import apply_k2_correction
+
+            k2_result = apply_k2_correction(
+                concentration=recomputed_raw_conc,
+                aif=aif,
+                brain_mask=mask.astype(bool),
+                tr=dt,
+            )
+            conc_data = k2_result.concentration_corrected
+
+            baseline_detection_info["s0_recomputed"] = True
+            baseline_detection_info["s0_recomputed_frames"] = detected_baseline
+
         spatial_shape = conc_data.shape[:3]
 
         # Run deconvolution based on method
@@ -824,7 +875,10 @@ class ComputeDSCMaps(BaseInterface):
         # timing, not BBB permeability from K2 correction)
         # -----------------------------------------------------------
         raw_conc_data: npt.NDArray[Any]
-        if self.inputs.raw_concentration_file:
+        if recomputed_raw_conc is not None:
+            # S0 was re-computed with detected baseline — use that
+            raw_conc_data = recomputed_raw_conc
+        elif self.inputs.raw_concentration_file:
             raw_conc_img = nib.load(self.inputs.raw_concentration_file)
             raw_conc_data = raw_conc_img.get_fdata()  # type: ignore[attr-defined]
         else:
