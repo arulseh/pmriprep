@@ -87,6 +87,14 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     smooth_abs = traits.Dict(desc="Smoothed absolute AUC map dict")
     smooth_fwhm = traits.Float(0.0, usedefault=True, desc="Smoothing FWHM in mm")
 
+    # Structural underlay (CE-T1 registered to DSC space)
+    t1w_in_dsc = traits.Str(desc="CE-T1w registered to DSC space NIfTI path")
+    t1w_to_dsc_xfm = traits.Str(desc="T1w-to-DSC transform matrix path")
+
+    # AIF QC plots
+    aif_curve_plot = traits.Str(desc="AIF curve QC plot PNG path")
+    aif_location_plot = traits.Str(desc="AIF location overlay PNG path")
+
 
 class DSCDerivativeWriterOutputSpec(TraitedSpec):
     """Output specification for DSCDerivativeWriter."""
@@ -345,6 +353,37 @@ class DSCDerivativeWriter(BaseInterface):
         qc_metrics = self.inputs.qc_metrics
         if isdefined(qc_metrics) and qc_metrics:
             self._write_json(qc_metrics, qc_dir / "dsc_qc.json")
+
+        # -----------------------------------------------------------
+        # 10b. AIF QC plots
+        # -----------------------------------------------------------
+        if self._has_input("aif_curve_plot"):
+            self._copy_file(
+                self.inputs.aif_curve_plot,
+                qc_dir / "aif_curve_qc.png",
+            )
+        if self._has_input("aif_location_plot"):
+            self._copy_file(
+                self.inputs.aif_location_plot,
+                qc_dir / "aif_location_qc.png",
+            )
+
+        # -----------------------------------------------------------
+        # 10c. Structural underlay (CE-T1 in DSC space)
+        # -----------------------------------------------------------
+        anat_dir = ses_dir / "anat"
+        if self._has_input("t1w_in_dsc"):
+            anat_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{prefix}_{spatial}_ce-GAD_T1w"
+            self._copy_nifti(self.inputs.t1w_in_dsc, anat_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "CE-T1w registered to DSC space"}
+            self._write_json(sidecar, anat_dir / f"{fname}.json")
+
+        if self._has_input("t1w_to_dsc_xfm"):
+            self._copy_file(
+                self.inputs.t1w_to_dsc_xfm,
+                xfm_dir / f"{prefix}_from-T1w_to-DSC_mode-image_xfm.mat",
+            )
 
         # -----------------------------------------------------------
         # 11. Dataset description

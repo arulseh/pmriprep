@@ -195,6 +195,49 @@ def _find_previous_anat_outputs(
     return outputs
 
 
+def _read_bids_sidecar(
+    nifti_path: Union[str, Path],
+) -> dict[str, Optional[float]]:
+    """Read acquisition parameters from the BIDS sidecar JSON.
+
+    Looks for the JSON sidecar corresponding to a NIfTI file and extracts
+    EchoTime, RepetitionTime, and MagneticFieldStrength.
+
+    Args:
+        nifti_path: Path to a NIfTI file (.nii.gz or .nii).
+
+    Returns:
+        Dict with keys: te, tr, field_strength.
+        Values are floats or None if not found in the sidecar.
+    """
+    import json
+
+    result: dict[str, Optional[float]] = {
+        "te": None,
+        "tr": None,
+        "field_strength": None,
+    }
+
+    nifti = Path(nifti_path)
+    sidecar = nifti.with_name(
+        nifti.name.replace(".nii.gz", ".json").replace(".nii", ".json")
+    )
+    if not sidecar.exists():
+        return result
+
+    with open(sidecar) as f:
+        meta = json.load(f)
+
+    if "EchoTime" in meta:
+        result["te"] = float(meta["EchoTime"])
+    if "RepetitionTime" in meta:
+        result["tr"] = float(meta["RepetitionTime"])
+    if "MagneticFieldStrength" in meta:
+        result["field_strength"] = float(meta["MagneticFieldStrength"])
+
+    return result
+
+
 def _find_previous_hdglio_outputs(
     work_dir: Path,
     subject_id: str,
@@ -211,7 +254,8 @@ def _find_previous_hdglio_outputs(
         session_id: BIDS session ID (without 'ses-' prefix), or None.
 
     Returns:
-        Dict with keys: dilated_lesion_mask, nawm_mask.
+        Dict with keys: dilated_lesion_mask, whole_tumor_mask,
+        enhancing_mask, nawm_mask.
         Values are file paths (str) or None if not found.
     """
     session_label = f"ses-{session_id}" if session_id else "no-session"
@@ -220,6 +264,8 @@ def _find_previous_hdglio_outputs(
 
     outputs: dict[str, Optional[str]] = {
         "dilated_lesion_mask": None,
+        "whole_tumor_mask": None,
+        "enhancing_mask": None,
         "nawm_mask": None,
     }
 
@@ -232,6 +278,11 @@ def _find_previous_hdglio_outputs(
             outputs["dilated_lesion_mask"] = str(f)
         for f in masks_dir.glob("*_nawm.nii.gz"):
             outputs["nawm_mask"] = str(f)
+        for f in masks_dir.glob("*wholetumor_mask.nii.gz"):
+            outputs["whole_tumor_mask"] = str(f)
+        for f in masks_dir.glob("*enhancing_mask.nii.gz"):
+            if "nonenhancing" not in f.name and "non_enhancing" not in f.name:
+                outputs["enhancing_mask"] = str(f)
 
     # Also check dilate_lesion and create_nawm nodes
     if outputs["dilated_lesion_mask"] is None:
@@ -245,6 +296,20 @@ def _find_previous_hdglio_outputs(
         if nawm_dir.exists():
             for f in nawm_dir.glob("*.nii.gz"):
                 outputs["nawm_mask"] = str(f)
+
+    # Check select_whole_tumor node for whole tumor mask
+    if outputs["whole_tumor_mask"] is None:
+        wt_dir = hdglio_dir / "select_whole_tumor"
+        if wt_dir.exists():
+            for f in wt_dir.glob("*.nii.gz"):
+                outputs["whole_tumor_mask"] = str(f)
+
+    # Check select_enhancing node for enhancing mask
+    if outputs["enhancing_mask"] is None:
+        enh_dir = hdglio_dir / "select_enhancing"
+        if enh_dir.exists():
+            for f in enh_dir.glob("*.nii.gz"):
+                outputs["enhancing_mask"] = str(f)
 
     return outputs
 
@@ -659,6 +724,16 @@ def init_pmriprep_wf(
             name="dsc_wf",
         )
 
+        # Read TE/TR/field_strength from BIDS sidecar JSON
+        if session_data.modalities.dsc:
+            sidecar = _read_bids_sidecar(session_data.modalities.dsc)
+            if sidecar["te"] is not None:
+                dsc_wf.inputs.inputnode.te = sidecar["te"]
+            if sidecar["tr"] is not None:
+                dsc_wf.inputs.inputnode.tr = sidecar["tr"]
+            if sidecar["field_strength"] is not None:
+                dsc_wf.inputs.inputnode.field_strength = sidecar["field_strength"]
+
         # Connect DSC file from inputnode
         workflow.connect([
             (inputnode, dsc_wf, [("dsc_file", "inputnode.dsc_file")]),
@@ -701,11 +776,13 @@ def init_pmriprep_wf(
                     work_dir,
                 )
 
-        # Connect lesion mask from hdglio if available
+        # Connect lesion mask and enhancing mask from hdglio if available
         if hdglio_wf is not None:
             workflow.connect([
                 (hdglio_wf, dsc_wf, [
                     ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
+                    ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
+                    ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
                     ("outputnode.nawm_mask", "inputnode.nawm_mask"),
                 ]),
             ])
@@ -719,6 +796,12 @@ def init_pmriprep_wf(
             if prev_hdglio["dilated_lesion_mask"]:
                 dsc_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
                 _log.info("skip-tumor-seg: loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
+            if prev_hdglio["whole_tumor_mask"]:
+                dsc_wf.inputs.inputnode.whole_tumor_mask = prev_hdglio["whole_tumor_mask"]
+                _log.info("skip-tumor-seg: loaded whole_tumor_mask from %s", prev_hdglio["whole_tumor_mask"])
+            if prev_hdglio["enhancing_mask"]:
+                dsc_wf.inputs.inputnode.enhancing_mask = prev_hdglio["enhancing_mask"]
+                _log.info("skip-tumor-seg: loaded enhancing_mask from %s", prev_hdglio["enhancing_mask"])
             if prev_hdglio["nawm_mask"]:
                 dsc_wf.inputs.inputnode.nawm_mask = prev_hdglio["nawm_mask"]
                 _log.info("skip-tumor-seg: loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
@@ -796,6 +879,12 @@ def init_pmriprep_wf(
                 # Registration
                 ("outputnode.dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
                 ("outputnode.registration_filmstrip", "registration_filmstrip"),
+                # Structural underlay
+                ("outputnode.t1w_in_dsc", "t1w_in_dsc"),
+                ("outputnode.t1w_to_dsc_xfm", "t1w_to_dsc_xfm"),
+                # AIF QC plots
+                ("outputnode.aif_curve_plot", "aif_curve_plot"),
+                ("outputnode.aif_location_plot", "aif_location_plot"),
                 # QC metrics
                 ("outputnode.qc_metrics", "qc_metrics"),
             ]),

@@ -90,7 +90,7 @@ class DSCConfig:
     # AIF detection settings
     mni_atlas: str = "MNI152NLin2009cAsym"
     aif_mask_file: Optional[Path] = None
-    lesion_distance: float = 20.0
+    lesion_distance: float = 15.0
     prefer_contralateral: bool = True
     aif_criteria: Literal["strict", "relaxed"] = "strict"
     n_aif_candidates: int = 10
@@ -113,7 +113,7 @@ class DSCConfig:
     smooth_fwhm: float = 0.0  # No smoothing by default
     underlays: List[str] = field(default_factory=list)
     motion_thresh: float = 0.5
-    pre_bolus: int = 5
+    pre_bolus: int = 10
     save_k2_map: bool = False
     save_uncertainty: bool = False
 

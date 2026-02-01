@@ -9,7 +9,6 @@ dsc:
   bayesian: none
   aif_criteria: strict
   n_aif_candidates: 10
-  pre_bolus: 5
   save_k2_map: false
   use_gpu: false
 

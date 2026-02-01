@@ -213,6 +213,11 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="Optional 3D lesion mask for exclusion",
     )
+    enhancing_mask_file = File(
+        exists=True,
+        mandatory=False,
+        desc="Optional 3D enhancing tumor mask for laterality determination",
+    )
 
     signal_file = File(
         exists=True,
@@ -1022,6 +1027,7 @@ class AIFDetection(BaseInterface):
         voxel_sizes: tuple[float, ...],
         lesion_min_distance_mm: float = 15.0,
         prefer_contralateral: bool = True,
+        enhancing_mask: Optional[npt.NDArray[Any]] = None,
     ) -> tuple[
         list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         dict[str, Any],
@@ -1035,7 +1041,7 @@ class AIFDetection(BaseInterface):
         top_candidates : list
             Scored ``(cost, (x,y,z), metrics)`` tuples.
         lesion_mask : ndarray or None
-            3D lesion mask.
+            3D lesion mask (dilated whole-tumor) for distance exclusion.
         affine : ndarray
             4x4 affine transformation matrix (voxel -> RAS world).
         voxel_sizes : tuple of float
@@ -1044,6 +1050,11 @@ class AIFDetection(BaseInterface):
             Minimum Euclidean distance from lesion in mm.
         prefer_contralateral : bool
             Whether to prefer contralateral hemisphere candidates.
+        enhancing_mask : ndarray or None
+            3D enhancing tumor mask for laterality determination.
+            Uses this instead of ``lesion_mask`` for laterality to
+            avoid bilateral misclassification from dilated whole-tumor
+            masks that cross the midline.
 
         Returns
         -------
@@ -1093,18 +1104,25 @@ class AIFDetection(BaseInterface):
                     m["lesion_distance_warning"] = True
 
         # --- Step 4.6: Contralateral hemisphere preference ---
+        # Use enhancing_mask for laterality if provided (avoids bilateral
+        # misclassification from dilated whole-tumor masks crossing midline).
+        # Fall back to lesion_mask if enhancing_mask is not available.
         tumor_laterality: Optional[str] = None
         hemisphere_used = "both"
         n_contra = 0
         n_ipsi = 0
 
+        laterality_mask = enhancing_mask if (
+            enhancing_mask is not None and np.any(enhancing_mask > 0.5)
+        ) else lesion_mask
+
         if (
-            lesion_mask is not None
+            laterality_mask is not None
             and prefer_contralateral
-            and np.any(lesion_mask > 0.5)
+            and np.any(laterality_mask > 0.5)
         ):
             tumor_laterality = self._determine_tumor_laterality(
-                lesion_mask, affine
+                laterality_mask, affine
             )
             if tumor_laterality is not None and tumor_laterality != "bilateral":
                 (
@@ -1123,6 +1141,10 @@ class AIFDetection(BaseInterface):
         meta["hemisphere_used"] = hemisphere_used
         meta["n_contralateral"] = n_contra
         meta["n_ipsilateral"] = n_ipsi
+        meta["laterality_mask_source"] = (
+            "enhancing" if (enhancing_mask is not None and np.any(enhancing_mask > 0.5))
+            else "lesion"
+        )
 
         return top_candidates, meta
 
@@ -1424,6 +1446,24 @@ class AIFDetection(BaseInterface):
             else:
                 lesion_mask = lesion_data
 
+        # Optional enhancing mask for laterality determination
+        enhancing_mask: Optional[npt.NDArray[Any]] = None
+        if self.inputs.enhancing_mask_file:
+            enh_img = nib.load(self.inputs.enhancing_mask_file)
+            enh_data = enh_img.get_fdata()  # type: ignore[attr-defined]
+            needs_resample = (
+                enh_data.shape[:3] != conc_data.shape[:3]
+                or not np.allclose(enh_img.affine, conc_img.affine, atol=1e-3)  # type: ignore[attr-defined]
+            )
+            if needs_resample:
+                from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+                resampled = resample_to_img(
+                    enh_img, conc_img, interpolation="nearest"
+                )
+                enhancing_mask = (resampled.get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
+            else:
+                enhancing_mask = enh_data
+
         # Load raw signal for S0 and signal-based metrics
         signal_data: Optional[npt.NDArray[Any]] = None
         if self.inputs.signal_file:
@@ -1529,6 +1569,7 @@ class AIFDetection(BaseInterface):
                     scored, lesion_mask, affine, voxel_sizes,
                     lesion_min_distance_mm=lesion_distance,
                     prefer_contralateral=prefer_contralateral,
+                    enhancing_mask=enhancing_mask,
                 )
                 if scored:
                     top_candidates = scored
@@ -1543,6 +1584,9 @@ class AIFDetection(BaseInterface):
         quality_score = 0.0
         qc_metrics: dict[str, Any] = {}
 
+        # Track initial baseline for QC reporting
+        baseline_frames_initial = baseline_frames
+
         if top_candidates:
             aif_curve, aif_bool_mask = self._compute_roi_averaged_aif(
                 top_candidates, conc_data, brain_mask
@@ -1550,6 +1594,13 @@ class AIFDetection(BaseInterface):
             aif_mask_arr[aif_bool_mask] = 1
             for _, coord, _ in top_candidates:
                 aif_mask_arr[coord[0], coord[1], coord[2]] = 1
+
+            # Stage 2: re-detect baseline on final smoothed AIF curve
+            _, aif_detected_baseline = detect_bolus_arrival(
+                aif_curve, baseline_frames=3
+            )
+            if aif_detected_baseline > baseline_frames:
+                baseline_frames = aif_detected_baseline
 
             # Quality: inverse of mean cost, clamped to [0, 1]
             mean_cost = float(np.mean([c for c, _, _ in top_candidates]))
@@ -1583,7 +1634,11 @@ class AIFDetection(BaseInterface):
         qc_metrics["detection_level"] = detection_level
         qc_metrics["s0_rejection_available"] = signal_data is not None
         qc_metrics["tr_used"] = tr
+        qc_metrics["baseline_frames_initial"] = baseline_frames_initial
         qc_metrics["baseline_frames_used"] = baseline_frames
+        qc_metrics["baseline_detection_method"] = (
+            "auto_aif" if baseline_frames > baseline_frames_initial else "config"
+        )
 
         # --- GAP 9: Quantification validity flags ---
         if "degraded" in detection_level:

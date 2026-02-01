@@ -120,6 +120,7 @@ from pmriprep.config.dsc import DSCConfig
 from pmriprep.data import get_arterial_atlas
 from pmriprep.interfaces.dsc import MotionCorrection, DSCRegistration
 from pmriprep.interfaces.dsc_aif import AIFDetection
+from pmriprep.interfaces.dsc_aif_qc import AIFQCPlot
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
 
@@ -1008,7 +1009,9 @@ def init_dsc_preproc_wf(
                 "t1w_reference",  # T1w reference for registration
                 "brain_mask",  # Brain mask in T1w space
                 "wm_probseg",  # White matter probability map (optional)
-                "lesion_mask",  # Lesion mask (optional)
+                "lesion_mask",  # Dilated lesion mask for registration (optional)
+                "whole_tumor_mask",  # Undilated whole-tumor mask for AIF distance exclusion (optional)
+                "enhancing_mask",  # Enhancing tumor mask for laterality (optional)
                 "nawm_mask",  # NAWM mask for normalization (optional)
                 "t1w_to_mni_xfm",  # T1w to MNI transform (from ACPC alignment)
                 "te",  # Echo time in seconds
@@ -1019,10 +1022,10 @@ def init_dsc_preproc_wf(
         name="inputnode",
     )
 
-    # Set defaults for optional inputs
-    inputnode.inputs.te = 0.03  # Default 30ms echo time
-    inputnode.inputs.field_strength = 3.0  # Default 3T
-    inputnode.inputs.tr = 1.5  # Default 1.5s TR
+    # Fallback defaults — overridden by BIDS sidecar values in base.py
+    inputnode.inputs.te = 0.035  # 35ms echo time (typical DSC-MRI at 3T)
+    inputnode.inputs.field_strength = 3.0  # 3T
+    inputnode.inputs.tr = 1.5  # 1.5s TR
 
     # -------------------------------------------------------------------
     # Output Node
@@ -1068,7 +1071,13 @@ def init_dsc_preproc_wf(
                 "ncbf_map",
                 # Registration
                 "dsc_to_t1w_xfm",
+                "t1w_to_dsc_xfm",
                 "registration_filmstrip",
+                # Structural underlay
+                "t1w_in_dsc",
+                # AIF QC plots
+                "aif_curve_plot",
+                "aif_location_plot",
                 # Smoothed maps (populated only if smooth_fwhm > 0)
                 "smooth_quant_indep",
                 "smooth_rel",
@@ -1415,6 +1424,29 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
+    # Node 9b: AIF QC Plots
+    # -------------------------------------------------------------------
+    aif_qc_plot = pe.Node(
+        AIFQCPlot(
+            subject_id=subject_id,
+            session_id=session_id or "",
+        ),
+        name="aif_qc_plot",
+    )
+
+    # -------------------------------------------------------------------
+    # Node 9c: Transform CE-T1 to DSC Space (structural underlay)
+    # register.out_matrix is T1w→DSC, so we use it directly.
+    # -------------------------------------------------------------------
+    transform_t1_to_dsc = pe.Node(
+        FLIRTApplyXFM(
+            apply_xfm=True,
+            interp="spline",
+        ),
+        name="transform_t1_to_dsc",
+    )
+
+    # -------------------------------------------------------------------
     # Node 10: Provenance Logging
     # -------------------------------------------------------------------
     import dataclasses
@@ -1516,7 +1548,8 @@ def init_dsc_preproc_wf(
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
         (inputnode, aif_detect, [
-            ("lesion_mask", "lesion_mask_file"),
+            ("whole_tumor_mask", "lesion_mask_file"),  # Undilated mask for AIF distance exclusion
+            ("enhancing_mask", "enhancing_mask_file"),
             ("tr", "tr"),
         ]),
     ])
@@ -1648,6 +1681,29 @@ def init_dsc_preproc_wf(
         (hdbet_dsc, reg_filmstrip, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
+    ])
+
+    # AIF QC plots
+    workflow.connect([
+        (aif_detect, aif_qc_plot, [
+            ("out_aif_curve", "aif_curve_file"),
+            ("out_aif_mask", "aif_mask_file"),
+            ("qc_metrics", "qc_metrics"),
+        ]),
+        (motion_correct, aif_qc_plot, [("out_file", "dsc_file")]),
+        (hdbet_dsc, aif_qc_plot, [
+            ("dsc_brain_mask_file", "brain_mask_file"),
+        ]),
+        (inputnode, aif_qc_plot, [("tr", "tr")]),
+    ])
+
+    # Transform CE-T1 to DSC space (structural underlay)
+    # register.out_matrix is T1w→DSC
+    # Use prebolus_mean (full FOV) as reference for complete DSC geometry
+    workflow.connect([
+        (inputnode, transform_t1_to_dsc, [("t1w_reference", "in_file")]),
+        (prebolus_mean, transform_t1_to_dsc, [("prebolus_mean_file", "reference")]),
+        (register, transform_t1_to_dsc, [("out_matrix", "in_matrix_file")]),
     ])
 
     # -------------------------------------------------------------------
@@ -1817,7 +1873,15 @@ def init_dsc_preproc_wf(
         (normalize_cbf, outputnode, [("ncbf_file", "ncbf_map")]),
         # Registration
         (invert_dsc_xfm, outputnode, [("out_file", "dsc_to_t1w_xfm")]),
+        (register, outputnode, [("out_matrix", "t1w_to_dsc_xfm")]),
         (reg_filmstrip, outputnode, [("filmstrip_file", "registration_filmstrip")]),
+        # Structural underlay
+        (transform_t1_to_dsc, outputnode, [("out_file", "t1w_in_dsc")]),
+        # AIF QC plots
+        (aif_qc_plot, outputnode, [
+            ("out_aif_plot", "aif_curve_plot"),
+            ("out_aif_location", "aif_location_plot"),
+        ]),
         # QC metrics
         (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
     ])
