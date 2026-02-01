@@ -541,16 +541,17 @@ def estimate_k2_per_voxel(
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
     tr: float = 1.5,
 ) -> npt.NDArray[np.floating]:
-    """Estimate K2 leakage parameter per voxel.
+    """Estimate K2 leakage parameter per voxel using BSW 2-regressor model.
 
     K2 represents the rate of contrast agent leakage through the BBB.
-    Estimated using linear regression of tissue signal vs AIF integral.
+    Estimated using the two-regressor Boxerman-Schmainda-Weisskoff model:
 
-    The BSW model assumes:
-        C_tissue(t) = K1 × ∫AIF(τ)dτ + K2 × ∫C_tissue(τ)dτ
+        C_tissue(t) = K1 × ∫₀ᵗ AIF(τ)dτ + K2 × ∫₀ᵗ C_tissue(τ)dτ
 
-    For leakage correction, K2 is estimated from the post-bolus phase
-    where the first term (K1 × ∫AIF) has stabilized.
+    K1 captures the intravascular susceptibility contribution (proportional
+    to CBV) and K2 captures T1-shortening leakage through the BBB. Both
+    regressors are fit simultaneously via ordinary least squares on the
+    post-bolus phase.
 
     Args:
         concentration: 4D concentration array (x, y, z, time).
@@ -559,12 +560,15 @@ def estimate_k2_per_voxel(
         tr: Repetition time in seconds for integration.
 
     Returns:
-        3D K2 map with leakage rate per voxel (min⁻¹).
+        3D K2 map with leakage rate per voxel (s⁻¹).
 
     Notes:
         - K2 ≈ 0: Intact blood-brain barrier
         - K2 > 0.5: Significant BBB disruption (leakage)
         - Negative K2 values are clipped to 0 (non-physical)
+
+    References:
+        Boxerman JL, Schmainda KM, Weisskoff RM. AJNR 2006;27:859-867.
     """
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
@@ -624,22 +628,18 @@ def estimate_k2_per_voxel(
         integral_post = integral_tissue[post_bolus_start:]
         aif_integral_post = cumsum_aif[post_bolus_start:]
 
-        # Simple linear regression: C = K1 × AIF_integral + K2 × tissue_integral
-        # We focus on K2 by regressing C against tissue_integral
-        # after accounting for AIF contribution
+        # BSW 2-regressor OLS: C_tissue = K1 × ∫AIF + K2 × ∫C_tissue
+        # Design matrix X = [∫AIF, ∫C_tissue], solve for [K1, K2]
+        X = np.column_stack([aif_integral_post, integral_post])
+        XtX = X.T @ X
 
-        # Denominator check
-        integral_var = float(np.var(integral_post))
-        if integral_var < EPSILON_CONCENTRATION:
+        # Singularity check
+        if np.linalg.det(XtX) < EPSILON_CONCENTRATION:
             continue
 
-        # Estimate K2 using least squares
-        # K2 ≈ cov(C, integral_tissue) / var(integral_tissue)
-        c_mean = float(np.mean(c_post))
-        integral_mean = float(np.mean(integral_post))
-
-        covariance = float(np.mean((c_post - c_mean) * (integral_post - integral_mean)))
-        k2_estimate = covariance / integral_var
+        # OLS: [K1, K2] = (X^T X)^{-1} X^T y
+        coeffs = np.linalg.solve(XtX, X.T @ c_post)
+        k2_estimate = coeffs[1]  # K2 is the second coefficient
 
         # Clip to physical range [0, inf)
         # Negative K2 would mean tissue is absorbing contrast from blood
@@ -660,12 +660,13 @@ def apply_k2_correction(
     Implements the Boxerman-Schmainda-Weisskoff (BSW) leakage correction
     method for DSC-MRI perfusion imaging.
 
-    The correction formula:
-        C_corrected(t) = C_tissue(t) - K2 × ∫C_tissue(τ)dτ
+    The correction formula (Boxerman et al., AJNR 2006):
+        C_corrected(t) = C_tissue(t) - K2 × ∫₀ᵗ C_AIF(τ)dτ
 
     This removes the T1-shortening effect of leaked contrast agent,
     which causes signal increase (reduced apparent concentration)
-    in regions with BBB disruption.
+    in regions with BBB disruption. The reference curve is the AIF,
+    not the tissue curve.
 
     Args:
         concentration: 4D concentration array (x, y, z, time).
@@ -712,18 +713,26 @@ def apply_k2_correction(
             tr=tr,
         )
 
-    # Compute cumulative integral of tissue concentration
-    # ∫C_tissue(τ)dτ from 0 to t
-    cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
+    # Gate K2: voxels with negligible leakage (intact BBB) are left uncorrected
+    K2_THRESHOLD = 1e-4  # s⁻¹
+    k2_map = np.where(k2_map > K2_THRESHOLD, k2_map, 0.0)
 
-    # Compute area under curve (before correction) for QC
+    # Compute cumulative integral of AIF (standard BSW reference curve)
+    # ∫₀ᵗ C_AIF(τ)dτ
+    cumsum_aif = np.cumsum(aif) * tr
+
+    # Compute area under tissue curve (before correction) for QC
+    cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
     auc_tissue = cumsum_tissue[..., -1].copy()
 
-    # Apply correction: C_corrected(t) = C_tissue(t) - K2 × ∫C_tissue(τ)dτ
+    # Apply correction: C_corrected(t) = C_tissue(t) - K2 × ∫₀ᵗ C_AIF(τ)dτ
+    # Broadcast AIF integral to 4D: (time,) → (1, 1, 1, time)
+    cumsum_aif_4d = cumsum_aif[np.newaxis, np.newaxis, np.newaxis, :]
+
     # Expand K2 map to match time dimension for broadcasting
     k2_expanded = k2_map[..., np.newaxis]
 
-    concentration_corrected = concentration - k2_expanded * cumsum_tissue
+    concentration_corrected = concentration - k2_expanded * cumsum_aif_4d
 
     # Ensure non-negative concentration (clip at zero)
     concentration_corrected = np.maximum(concentration_corrected, 0.0)

@@ -147,8 +147,12 @@ class TestSub0001Ses0002:
                 "Run PMRIPrep first to enable ground truth comparison."
             )
 
-        # Find PMRIPrep output file
-        pmriprep_files = list(pmriprep_output.glob(f"*{output_name}*.nii*"))
+        # Find PMRIPrep output file (use specific patterns to avoid ambiguity:
+        # e.g. *cbf* would match _rel_cbf, _abs_cbf, _ncbf)
+        if output_name in ("cbf", "cbv"):
+            pmriprep_files = list(pmriprep_output.glob(f"*_rel_{output_name}.nii*"))
+        else:
+            pmriprep_files = list(pmriprep_output.glob(f"*_{output_name}.nii*"))
         if not pmriprep_files:
             pytest.fail(
                 f"PMRIPrep output not found for {output_name} in {pmriprep_output}"
