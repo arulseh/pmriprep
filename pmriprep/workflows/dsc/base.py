@@ -1236,7 +1236,7 @@ def init_dsc_preproc_wf(
             mcmc_samples=config.mcmc_samples,
             use_gpu=config.use_gpu,
             baseline_frames=config.pre_bolus,
-            tail_frames=10,  # Default tail frames for PSR
+            tail_frames=5,  # Post-bolus frames for PSR (Cha et al. AJNR 2002)
         ),
         name="compute_maps",
     )
