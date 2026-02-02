@@ -1347,30 +1347,30 @@ class DCEPreprocess(SimpleInterface):
             self._results["outlier_frames"] = []
 
         # Compute mean of motion-corrected data for downstream registration.
-        # mcflirt -stats creates {out}_meanvol.nii.gz, but we also compute
-        # our own mean for robustness (mcflirt may not always produce it).
-        mcflirt_mean = f"{out_base}_meanvol.nii.gz"
+        # Always compute from the 4D output rather than relying on mcflirt's
+        # _meanvol.nii.gz, which is an undocumented side effect of -stats and
+        # may not be produced in all configurations.
         mean_out = self._gen_mean_filename()
+        moco_path = f"{out_base}.nii.gz"
 
-        if Path(mcflirt_mean).exists():
-            # Use mcflirt's mean volume, rename to our expected path
-            import shutil
-            shutil.copy(mcflirt_mean, mean_out)
-        elif Path(f"{out_base}.nii.gz").exists():
-            # Compute mean from motion-corrected 4D
-            moco_img = nib.load(f"{out_base}.nii.gz")
-            moco_data = moco_img.get_fdata()  # type: ignore[attr-defined]
-            mean_data = np.mean(moco_data, axis=3).astype(np.float32)
-            mean_img = nib.Nifti1Image(
-                mean_data,
-                moco_img.affine,  # type: ignore[attr-defined]
-                moco_img.header,  # type: ignore[attr-defined]
-            )
-            nib.save(mean_img, mean_out)
-        else:
+        if not Path(moco_path).exists():
             raise FileNotFoundError(
-                f"Neither mcflirt mean ({mcflirt_mean}) nor "
-                f"motion-corrected output ({out_base}.nii.gz) found"
+                f"Motion-corrected output not found: {moco_path}"
+            )
+
+        moco_img = nib.load(moco_path)
+        moco_data = moco_img.get_fdata()  # type: ignore[attr-defined]
+        mean_data = np.mean(moco_data, axis=3).astype(np.float32)
+        mean_nii = nib.Nifti1Image(
+            mean_data,
+            moco_img.affine,  # type: ignore[attr-defined]
+            moco_img.header,  # type: ignore[attr-defined]
+        )
+        nib.save(mean_nii, mean_out)
+
+        if not Path(mean_out).exists():
+            raise FileNotFoundError(
+                f"Failed to create mean image at: {mean_out}"
             )
 
         # Set outputs
