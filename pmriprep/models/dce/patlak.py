@@ -428,6 +428,121 @@ class PatlakModel(PKModel):
             fitted_curve=fitted_curve,
         )
 
+    def fit_constrained(
+        self,
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+        fixed_vp: float,
+        initial_guess: Optional[Sequence[float]] = None,
+    ) -> FitResult:
+        """Fit Patlak model with vp fixed from DSC CBV.
+
+        Only Ktrans is a free parameter. Uses graphical analysis:
+            C_t(t) - vp * Cp(t) = Ktrans * integral(Cp)
+        which simplifies to linear regression for Ktrans (slope).
+
+        Args:
+            tissue_curve: Observed tissue concentration values C_t(t) in mM.
+            aif: Arterial input function plasma concentration values Cp(t) in mM.
+            time_points: Time points (minutes) corresponding to measurements.
+            fixed_vp: Fixed plasma volume fraction from DSC CBV.
+            initial_guess: Not used (graphical method).
+
+        Returns:
+            FitResult with n_parameters=1 and fitting_method='graphical_constrained_vp'.
+        """
+        n_obs = len(time_points)
+
+        # Clamp fixed_vp
+        fixed_vp = float(np.clip(fixed_vp, VP_BOUNDS.min, VP_BOUNDS.max))
+
+        if n_obs < 2:
+            return FitResult(
+                parameters={"Ktrans": 0.0, "vp": fixed_vp},
+                r_squared=0.0,
+                residual_sum_squares=float("inf"),
+                aic=float("inf"),
+                bic=float("inf"),
+                model_name=self.name,
+                n_parameters=1,
+                n_observations=n_obs,
+                converged=False,
+                fitting_method="graphical_constrained_vp",
+                fitted_curve=self.evaluate([0.0, fixed_vp], aif, time_points),
+            )
+
+        dt = float(time_points[1] - time_points[0])
+
+        # Compute cumulative integral of AIF
+        aif_integral = np.zeros(n_obs, dtype=np.float64)
+        aif_integral[1:] = np.cumsum(0.5 * (aif[:-1] + aif[1:]) * dt)
+
+        # Subtract vascular contribution: residual = C_t(t) - vp * Cp(t)
+        residual = tissue_curve - fixed_vp * aif
+
+        # Find start index after AIF peak
+        peak_idx = int(np.argmax(aif))
+        start_index = min(peak_idx + 1, n_obs - 2)
+
+        # Valid points: AIF integral > 0, after peak
+        valid = np.zeros(n_obs, dtype=bool)
+        valid[start_index:] = True
+        valid &= aif_integral > EPSILON_AIF
+
+        n_valid = int(np.sum(valid))
+        if n_valid < 2:
+            return FitResult(
+                parameters={"Ktrans": 0.0, "vp": fixed_vp},
+                r_squared=0.0,
+                residual_sum_squares=float("inf"),
+                aic=float("inf"),
+                bic=float("inf"),
+                model_name=self.name,
+                n_parameters=1,
+                n_observations=n_obs,
+                converged=False,
+                fitting_method="graphical_constrained_vp",
+                fitted_curve=self.evaluate([0.0, fixed_vp], aif, time_points),
+            )
+
+        # Linear regression: residual = Ktrans * aif_integral (no intercept)
+        # Ktrans = sum(residual * aif_integral) / sum(aif_integral^2)
+        x = aif_integral[valid]
+        y = residual[valid]
+
+        try:
+            ktrans = float(np.sum(x * y) / np.sum(x * x))
+            converged = True
+        except Exception:
+            ktrans = 0.0
+            converged = False
+
+        ktrans = float(np.clip(ktrans, KTRANS_BOUNDS.min, KTRANS_BOUNDS.max))
+
+        fitted_params = [ktrans, fixed_vp]
+        fitted_curve = self.evaluate(fitted_params, aif, time_points)
+        rss = float(np.sum((tissue_curve - fitted_curve) ** 2))
+        r_squared = self.compute_r_squared(tissue_curve, fitted_curve)
+
+        n_free = 1
+        aic = float(n_obs * np.log(rss / n_obs) + 2 * n_free) if rss > 0 and n_obs > 0 else float("inf")
+        bic = float(n_obs * np.log(rss / n_obs) + n_free * np.log(n_obs)) if rss > 0 and n_obs > 0 else float("inf")
+
+        return FitResult(
+            parameters={"Ktrans": ktrans, "vp": fixed_vp},
+            r_squared=r_squared,
+            residual_sum_squares=rss,
+            aic=aic,
+            bic=bic,
+            model_name=self.name,
+            n_parameters=n_free,
+            n_observations=n_obs,
+            converged=converged,
+            fitting_method="graphical_constrained_vp",
+            fitted_curve=fitted_curve,
+        )
+
     def compute_derived_parameters(
         self, params: Sequence[float]
     ) -> dict[str, float]:

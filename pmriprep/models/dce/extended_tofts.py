@@ -312,6 +312,102 @@ class ExtendedToftsModel(PKModel):
             fitted_curve=fitted_curve,
         )
 
+    def fit_constrained(
+        self,
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+        fixed_vp: float,
+        initial_guess: Optional[Sequence[float]] = None,
+    ) -> FitResult:
+        """Fit Extended Tofts with vp fixed from DSC CBV.
+
+        Only Ktrans and ve are free parameters. The ve upper bound is
+        adjusted so that ve + fixed_vp <= 1.0.
+
+        Args:
+            tissue_curve: Observed tissue concentration values C_t(t) in mM.
+            aif: Arterial input function plasma concentration values Cp(t) in mM.
+            time_points: Time points (minutes) corresponding to measurements.
+            fixed_vp: Fixed plasma volume fraction from DSC CBV.
+            initial_guess: Optional initial values [Ktrans, ve].
+                If None, uses default initial guess.
+
+        Returns:
+            FitResult with n_parameters=2 and fitting_method='nlls_constrained_vp'.
+        """
+        n_obs = len(tissue_curve)
+
+        # Clamp fixed_vp to valid range
+        fixed_vp = float(np.clip(fixed_vp, VP_BOUNDS.min, VP_BOUNDS.max))
+
+        # Set initial guess for [Ktrans, ve]
+        if initial_guess is None:
+            defs = self.get_parameter_definitions()
+            x0 = [defs[0].get_prior_mean(), defs[1].get_prior_mean()]
+        else:
+            x0 = list(initial_guess[:2])
+
+        # Bounds: ve upper bound clamped so ve + vp <= 1.0
+        ve_upper = min(VE_BOUNDS.max, 1.0 - fixed_vp)
+        ve_upper = max(ve_upper, EPSILON_VE)
+        bounds_lo = [KTRANS_BOUNDS.min, VE_BOUNDS.min]
+        bounds_hi = [KTRANS_BOUNDS.max, ve_upper]
+
+        # Objective: evaluate with [Ktrans, ve, fixed_vp]
+        def objective(params: npt.NDArray[np.floating]) -> float:
+            full_params = [params[0], params[1], fixed_vp]
+            predicted = self.evaluate(full_params, aif, time_points)
+            return float(np.sum((tissue_curve - predicted) ** 2))
+
+        try:
+            result = optimize.minimize(
+                objective,
+                x0=x0,
+                method="L-BFGS-B",
+                bounds=list(zip(bounds_lo, bounds_hi)),
+                options={"maxiter": 1000, "ftol": 1e-10},
+            )
+            converged = result.success
+            fitted_2p = result.x.tolist()
+        except Exception:
+            converged = False
+            fitted_2p = x0
+
+        # Clip to bounds
+        ktrans = float(np.clip(fitted_2p[0], KTRANS_BOUNDS.min, KTRANS_BOUNDS.max))
+        ve = float(np.clip(fitted_2p[1], VE_BOUNDS.min, ve_upper))
+
+        fitted_params = [ktrans, ve, fixed_vp]
+
+        # Compute fitted curve and goodness-of-fit
+        fitted_curve = self.evaluate(fitted_params, aif, time_points)
+        rss = float(np.sum((tissue_curve - fitted_curve) ** 2))
+        r_squared = self.compute_r_squared(tissue_curve, fitted_curve)
+        # Use 2 free parameters for AIC/BIC
+        n_free = 2
+        aic = float(n_obs * np.log(rss / n_obs) + 2 * n_free) if rss > 0 and n_obs > 0 else float("inf")
+        bic = float(n_obs * np.log(rss / n_obs) + n_free * np.log(n_obs)) if rss > 0 and n_obs > 0 else float("inf")
+
+        # Derived parameters
+        kep = ktrans / max(ve, EPSILON_VE)
+
+        param_dict = {"Ktrans": ktrans, "ve": ve, "vp": fixed_vp, "kep": kep}
+
+        return FitResult(
+            parameters=param_dict,
+            r_squared=r_squared,
+            residual_sum_squares=rss,
+            aic=aic,
+            bic=bic,
+            model_name=self.name,
+            n_parameters=n_free,
+            n_observations=n_obs,
+            converged=converged,
+            fitting_method="nlls_constrained_vp",
+            fitted_curve=fitted_curve,
+        )
+
     def compute_derived_parameters(
         self, params: Sequence[float]
     ) -> dict[str, float]:

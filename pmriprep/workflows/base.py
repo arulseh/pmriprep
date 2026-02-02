@@ -1011,8 +1011,8 @@ def init_pmriprep_wf(
                 (inputnode, dce_wf, [("dwi_file", "inputnode.dwi_file")]),
             ])
 
-        # Connect DSC CBV for vp constraint (US-063 QC)
-        # This is why DCE runs after DSC when both are present
+        # Connect DSC CBV for vp constraint in DCE PK modeling.
+        # pk_modeling node receives dsc_cbv_file and quality-gates it before use.
         if dsc_wf is not None:
             workflow.connect([
                 (dsc_wf, dce_wf, [

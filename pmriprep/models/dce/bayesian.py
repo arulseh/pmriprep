@@ -101,6 +101,7 @@ class BayesianPKFitter:
         self,
         model: PKModel,
         noise_std: Optional[float] = None,
+        vp_prior_override: Optional[BayesianPrior] = None,
     ) -> None:
         """Initialize the Bayesian fitter.
 
@@ -108,6 +109,9 @@ class BayesianPKFitter:
             model: PK model implementing the PKModel interface.
             noise_std: Optional noise standard deviation. If None, will be
                 estimated from the data during fitting.
+            vp_prior_override: Optional informative prior for vp parameter,
+                typically derived from DSC CBV. If provided, replaces the
+                default vp prior built from model parameter definitions.
         """
         self.model = model
         self.noise_std = noise_std
@@ -120,6 +124,10 @@ class BayesianPKFitter:
         self._has_volume_constraint = "ve" in param_names and "vp" in param_names
         self._ve_index = param_names.index("ve") if "ve" in param_names else -1
         self._vp_index = param_names.index("vp") if "vp" in param_names else -1
+
+        # Override vp prior if provided (for DSC CBV soft constraint)
+        if vp_prior_override is not None and self._vp_index >= 0:
+            self.priors[self._vp_index] = vp_prior_override
 
     def _build_priors(
         self, param_defs: Sequence[ModelParameter]
@@ -885,6 +893,33 @@ class BayesianPKFitter:
             ess[p] = max(1, int(n / (2 * tau_int)))
 
         return ess
+
+
+def create_vp_prior_from_dsc(
+    vp_value: float,
+    relative_uncertainty: float = 0.2,
+) -> BayesianPrior:
+    """Create an informative vp prior from DSC-derived plasma volume.
+
+    The prior is a Gaussian centered on the DSC-derived vp value with
+    standard deviation proportional to the value (relative uncertainty).
+
+    A minimum std of 0.001 prevents degenerate priors when vp is very small.
+
+    Args:
+        vp_value: DSC-derived vp value for this voxel.
+        relative_uncertainty: Relative uncertainty (fraction). Default 0.2
+            means +/- 20% of the vp value.
+
+    Returns:
+        BayesianPrior with informative mean and std for vp.
+    """
+    std = max(vp_value * relative_uncertainty, 0.001)
+    return BayesianPrior(
+        mean=vp_value,
+        std=std,
+        log_transform=False,
+    )
 
 
 def fit_pk_model(

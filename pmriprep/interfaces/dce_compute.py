@@ -16,6 +16,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterfaceInputSpec,
     File,
     TraitedSpec,
+    isdefined,
     traits,
 )
 
@@ -94,6 +95,27 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="Number of baseline frames for tSNR calculation (0 = auto-detect)",
     )
 
+    # DSC CBV constraint options
+    dsc_cbv_file = File(
+        desc="DSC-derived CBV map for vp constraint (optional)",
+    )
+    dsc_aif_qc_file = File(
+        desc="DSC AIF QC JSON for CBV quality assessment (optional)",
+    )
+    constraint_mode = traits.Enum(
+        "auto",
+        "hard",
+        "soft",
+        "skip",
+        usedefault=True,
+        desc="DSC CBV constraint mode: auto, hard, soft, or skip",
+    )
+    hematocrit = traits.Float(
+        0.40,
+        usedefault=True,
+        desc="Blood hematocrit for CBV-to-vp conversion (default 0.40)",
+    )
+
     # Processing options
     use_gpu = traits.Bool(
         False,
@@ -153,6 +175,7 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_tsnr = File(desc="tSNR map")
     out_fitted_curves = File(desc="Fitted concentration curves (if save_fitted_curves=True)")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
+    constraint_qc = traits.Dict(desc="DSC CBV constraint QC report")
 
 
 class ComputeDCEMaps(BaseInterface):
@@ -444,6 +467,11 @@ class ComputeDCEMaps(BaseInterface):
             BayesianPKFitter,
             fit_pk_model,
         )
+        from pmriprep.models.dce.bayesian import create_vp_prior_from_dsc
+        from pmriprep.utils.dsc_cbv_constraint import (
+            ConstraintMode,
+            prepare_vp_constraint,
+        )
 
         # Load data
         conc_img = nib.load(self.inputs.concentration_file)
@@ -511,7 +539,42 @@ class ComputeDCEMaps(BaseInterface):
 
         spatial_shape = conc_data.shape[:3]
 
+        # =====================================================================
+        # DSC CBV vp Constraint
+        # =====================================================================
+        vp_constraint_map: Optional[npt.NDArray[Any]] = None
+        constraint_mode = ConstraintMode.SKIP
+        constraint_vp_uncertainty: float = 0.2
+        constraint_qc: dict[str, Any] = {"constraint_mode": "skip", "reason": "No DSC CBV provided"}
+
+        has_dsc_cbv = (
+            isdefined(self.inputs.dsc_cbv_file)
+            and isdefined(self.inputs.dsc_aif_qc_file)
+            and self._has_vp(model_name)
+        )
+
+        if has_dsc_cbv:
+            try:
+                vp_result = prepare_vp_constraint(
+                    cbv_file=self.inputs.dsc_cbv_file,
+                    aif_qc_file=self.inputs.dsc_aif_qc_file,
+                    brain_mask_file=self.inputs.brain_mask_file,
+                    mode_override=str(self.inputs.constraint_mode),
+                    hematocrit=float(self.inputs.hematocrit),
+                )
+                vp_constraint_map = vp_result.vp_map
+                constraint_mode = vp_result.config.mode
+                constraint_vp_uncertainty = vp_result.config.vp_uncertainty
+                constraint_qc = vp_result.qc_report
+            except Exception as exc:
+                constraint_qc = {
+                    "constraint_mode": "skip",
+                    "reason": f"Failed to load DSC CBV constraint: {exc}",
+                }
+
+        # =====================================================================
         # Initialize output arrays
+        # =====================================================================
         ktrans = np.zeros(spatial_shape, dtype=np.float64)
         ve = np.zeros(spatial_shape, dtype=np.float64)
         vp = np.zeros(spatial_shape, dtype=np.float64)
@@ -546,13 +609,16 @@ class ComputeDCEMaps(BaseInterface):
             "tsnr_threshold": tsnr_threshold,
             "baseline_frames": baseline_frames,
             "tr_seconds": tr_seconds,
+            "constraint_mode": constraint_mode.value,
         }
 
         n_converged = 0
         n_failed = 0
+        n_constrained = 0
+        n_unconstrained_fallback = 0
         r2_list: list[float] = []
 
-        # Set up Bayesian fitter if needed
+        # Set up Bayesian fitter if needed (default, without vp override)
         fitter: Optional[BayesianPKFitter] = None
         if bayesian != "none":
             fitter = BayesianPKFitter(model)
@@ -571,20 +637,74 @@ class ComputeDCEMaps(BaseInterface):
                 n_failed += 1
                 continue
 
+            # Determine per-voxel vp constraint
+            voxel_vp: Optional[float] = None
+            if vp_constraint_map is not None and constraint_mode != ConstraintMode.SKIP:
+                vp_val = float(vp_constraint_map[x, y, z])
+                if np.isfinite(vp_val) and vp_val > 0:
+                    voxel_vp = vp_val
+
             try:
-                # Fit model
-                if bayesian == "none":
-                    # Use NLLS fitting from model
-                    result = model.fit(tissue_curve, aif, time_points)
-                elif bayesian == "map" and fitter is not None:
-                    result = fitter.fit_map(tissue_curve, aif, time_points)
-                elif bayesian == "mcmc" and fitter is not None:
-                    result = fitter.fit_mcmc(
-                        tissue_curve, aif, time_points,
-                        n_samples=mcmc_samples
+                result = None
+
+                # HARD constraint: use fit_constrained with fixed vp
+                if (
+                    voxel_vp is not None
+                    and constraint_mode == ConstraintMode.HARD
+                    and hasattr(model, "fit_constrained")
+                ):
+                    result = model.fit_constrained(
+                        tissue_curve, aif, time_points, fixed_vp=voxel_vp
                     )
-                else:
-                    result = model.fit(tissue_curve, aif, time_points)
+                    n_constrained += 1
+
+                # SOFT constraint: Bayesian with informative vp prior
+                elif (
+                    voxel_vp is not None
+                    and constraint_mode == ConstraintMode.SOFT
+                    and bayesian != "none"
+                ):
+                    vp_prior = create_vp_prior_from_dsc(
+                        voxel_vp, relative_uncertainty=constraint_vp_uncertainty
+                    )
+                    soft_fitter = BayesianPKFitter(
+                        model, vp_prior_override=vp_prior
+                    )
+                    if bayesian == "map":
+                        result = soft_fitter.fit_map(tissue_curve, aif, time_points)
+                    else:
+                        result = soft_fitter.fit_mcmc(
+                            tissue_curve, aif, time_points, n_samples=mcmc_samples
+                        )
+                    n_constrained += 1
+
+                # SOFT constraint with NLLS: fall back to hard constraint
+                elif (
+                    voxel_vp is not None
+                    and constraint_mode == ConstraintMode.SOFT
+                    and bayesian == "none"
+                    and hasattr(model, "fit_constrained")
+                ):
+                    result = model.fit_constrained(
+                        tissue_curve, aif, time_points, fixed_vp=voxel_vp
+                    )
+                    n_constrained += 1
+
+                # Unconstrained fallback (no valid vp, skip mode, or no constraint)
+                if result is None:
+                    if voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
+                        n_unconstrained_fallback += 1
+                    if bayesian == "none":
+                        result = model.fit(tissue_curve, aif, time_points)
+                    elif bayesian == "map" and fitter is not None:
+                        result = fitter.fit_map(tissue_curve, aif, time_points)
+                    elif bayesian == "mcmc" and fitter is not None:
+                        result = fitter.fit_mcmc(
+                            tissue_curve, aif, time_points,
+                            n_samples=mcmc_samples,
+                        )
+                    else:
+                        result = model.fit(tissue_curve, aif, time_points)
 
                 # Extract parameters
                 ktrans[x, y, z] = result.parameters.get("Ktrans", 0.0)
@@ -629,6 +749,8 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["n_converged"] = n_converged
         qc_metrics["n_failed"] = n_failed
         qc_metrics["convergence_rate"] = n_converged / max(1, n_voxels)
+        qc_metrics["n_constrained"] = n_constrained
+        qc_metrics["n_unconstrained_fallback"] = n_unconstrained_fallback
 
         if r2_list:
             qc_metrics["r2_mean"] = float(np.mean(r2_list))
@@ -673,6 +795,7 @@ class ComputeDCEMaps(BaseInterface):
             "out_kep": out_kep,
             "out_r2": out_r2,
             "qc_metrics": qc_metrics,
+            "constraint_qc": constraint_qc,
         }
 
         # Save vp if applicable

@@ -117,6 +117,10 @@ class DCEConfig:
     bayesian: str = "none"
     mcmc_samples: int = 500
 
+    # DSC CBV constraint settings
+    cbv_constraint_mode: str = "auto"  # "auto", "hard", "soft", "skip"
+    hematocrit: float = 0.40  # Blood hematocrit for CBV-to-vp conversion
+
     # Resource settings
     num_processes: int = 0  # 0 = use system default
     use_gpu: bool = False

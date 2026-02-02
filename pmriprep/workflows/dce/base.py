@@ -438,6 +438,8 @@ def init_dce_preproc_wf(
             tsnr_threshold=config.tsnr_threshold,
             use_gpu=config.use_gpu,
             save_uncertainty=config.save_uncertainty,
+            constraint_mode=config.cbv_constraint_mode,
+            hematocrit=config.hematocrit,
         ),
         name="pk_modeling",
     )
@@ -454,6 +456,8 @@ def init_dce_preproc_wf(
         ]),
         (inputnode, pk_modeling, [
             ("tr", "tr"),
+            ("dsc_cbv_file", "dsc_cbv_file"),
+            ("dsc_aif_qc_file", "dsc_aif_qc_file"),
         ]),
         (t1_mapping, pk_modeling, [
             ("out_file", "t1_map_file"),
@@ -848,7 +852,7 @@ def _collect_qc_metrics(
     validation_result,
 ):
     """Collect all QC metrics into a single dictionary."""
-    qc_metrics: dict[str, Any] = {}
+    qc_metrics = {}
 
     if b1_qc is not None:
         qc_metrics["b1_mapping"] = b1_qc
