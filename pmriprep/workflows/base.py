@@ -216,6 +216,7 @@ def _read_bids_sidecar(
         "te": None,
         "tr": None,
         "field_strength": None,
+        "flip_angle": None,
     }
 
     nifti = Path(nifti_path)
@@ -230,12 +231,79 @@ def _read_bids_sidecar(
 
     if "EchoTime" in meta:
         result["te"] = float(meta["EchoTime"])
-    if "RepetitionTime" in meta:
+
+    # TR: prefer RepetitionTimeExcitation for 3D sequences (per-excitation TR),
+    # fall back to RepetitionTime (which may be the volume TR for dynamic scans)
+    if "RepetitionTimeExcitation" in meta:
+        result["tr"] = float(meta["RepetitionTimeExcitation"])
+    elif "RepetitionTime" in meta:
         result["tr"] = float(meta["RepetitionTime"])
+
     if "MagneticFieldStrength" in meta:
         result["field_strength"] = float(meta["MagneticFieldStrength"])
 
+    if "FlipAngle" in meta:
+        result["flip_angle"] = float(meta["FlipAngle"])
+
     return result
+
+
+def _ensure_tr_ms(
+    tr_value: float,
+    label: str = "TR",
+) -> float:
+    """Convert a TR/TE value to milliseconds, auto-detecting the input unit.
+
+    BIDS stores RepetitionTime and EchoTime in seconds, but some non-compliant
+    datasets or manual overrides may already be in milliseconds.
+
+    Heuristic: brain MRI excitation TR is typically 2-50 ms (0.002-0.050 s).
+    Values < 1.0 are assumed seconds; values >= 1.0 are assumed milliseconds.
+    """
+    import logging
+
+    _log = logging.getLogger("pmriprep.workflows")
+
+    if tr_value <= 0:
+        _log.warning("%s value is non-positive (%.6f), returning as-is", label, tr_value)
+        return tr_value
+
+    if tr_value < 1.0:
+        # Likely in seconds (BIDS-compliant) — convert to ms
+        tr_ms = tr_value * 1000.0
+        _log.debug("%s: %.6f s → %.2f ms", label, tr_value, tr_ms)
+        return tr_ms
+
+    # Already in milliseconds (or a very long TR like volume TR for 3D dynamic)
+    if tr_value > 500.0:
+        _log.warning(
+            "%s value %.2f ms is unusually large for an excitation TR; "
+            "verify this is not a volume TR",
+            label,
+            tr_value,
+        )
+    return tr_value
+
+
+def _validate_flip_angle(fa: float, label: str = "") -> float:
+    """Validate a flip angle value is in degrees and within a plausible range.
+
+    Typical VFA flip angles: 2-30 degrees.
+    DCE flip angles: 10-35 degrees.
+    """
+    import logging
+
+    _log = logging.getLogger("pmriprep.workflows")
+
+    if fa <= 0:
+        _log.warning("Flip angle %s is non-positive (%.2f), this is likely an error", label, fa)
+    elif fa > 90:
+        _log.warning(
+            "Flip angle %s = %.2f° exceeds 90° — may be in radians or invalid",
+            label,
+            fa,
+        )
+    return fa
 
 
 def _find_previous_hdglio_outputs(
@@ -918,6 +986,18 @@ def init_pmriprep_wf(
             (inputnode, dce_wf, [("dce_file", "inputnode.dce_file")]),
         ])
 
+        # Read acquisition parameters from DCE BIDS sidecar JSON
+        if session_data.modalities.dce:
+            dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
+            if dce_sidecar["te"] is not None:
+                dce_wf.inputs.inputnode.te = dce_sidecar["te"]
+            if dce_sidecar["tr"] is not None:
+                dce_wf.inputs.inputnode.tr = dce_sidecar["tr"]
+            if dce_sidecar["flip_angle"] is not None:
+                dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
+            if dce_sidecar["field_strength"] is not None:
+                dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
+
         # Connect anat outputs to DCE workflow
         if anat_wf is not None:
             # Use post-contrast T1w as reference if available, otherwise preprocessed T1w
@@ -975,9 +1055,52 @@ def init_pmriprep_wf(
 
         # Connect VFA and AFI inputs if available
         if session_data.modalities.vfa:
+            import logging as _logging
+
+            _log = _logging.getLogger("pmriprep.workflows")
+            vfa_list = session_data.modalities.vfa
+
             workflow.connect([
                 (inputnode, dce_wf, [("vfa_files", "inputnode.vfa_files")]),
             ])
+
+            # Read flip angles and TR from VFA BIDS sidecar JSONs
+            vfa_flip_angles: list[float] = []
+            vfa_tr_ms: Optional[float] = None
+            for vfa_path in vfa_list:
+                vfa_sidecar = _read_bids_sidecar(vfa_path)
+                if vfa_sidecar["flip_angle"] is not None:
+                    fa = _validate_flip_angle(
+                        vfa_sidecar["flip_angle"],
+                        label=str(Path(str(vfa_path)).name),
+                    )
+                    vfa_flip_angles.append(fa)
+                # VFA TR should be identical across all flip angles; take from first
+                if vfa_tr_ms is None and vfa_sidecar["tr"] is not None:
+                    vfa_tr_ms = _ensure_tr_ms(vfa_sidecar["tr"], label="VFA TR")
+
+            if vfa_flip_angles:
+                if len(vfa_flip_angles) != len(vfa_list):
+                    _log.warning(
+                        "Found FlipAngle in %d of %d VFA sidecars; "
+                        "T1 mapping may fail",
+                        len(vfa_flip_angles),
+                        len(vfa_list),
+                    )
+                dce_wf.inputs.inputnode.vfa_flip_angles = vfa_flip_angles
+            else:
+                _log.warning(
+                    "No FlipAngle found in VFA sidecar JSONs; "
+                    "T1 mapping will fail unless flip angles are configured manually"
+                )
+
+            if vfa_tr_ms is not None:
+                dce_wf.inputs.inputnode.vfa_tr = vfa_tr_ms
+            else:
+                _log.warning(
+                    "No RepetitionTime found in VFA sidecar JSONs; "
+                    "T1 mapping will fail unless TR is configured manually"
+                )
         if session_data.modalities.afi:
             afi_mode = session_data.modalities.afi_mode
 

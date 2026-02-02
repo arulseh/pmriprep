@@ -173,6 +173,7 @@ def init_dce_preproc_wf(
                 # VFA T1 mapping inputs
                 "vfa_files",
                 "vfa_flip_angles",
+                "vfa_tr",
                 # AFI B1+ mapping inputs
                 "afi_tr1_file",
                 "afi_tr2_file",
@@ -266,6 +267,7 @@ def init_dce_preproc_wf(
         (inputnode, t1_mapping, [
             ("vfa_files", "vfa_files"),
             ("vfa_flip_angles", "flip_angles"),
+            ("vfa_tr", "tr"),
             ("brain_mask", "brain_mask"),
             ("field_strength", "field_strength"),
         ]),
