@@ -15,6 +15,8 @@ from pmriprep.utils.dce_constants import (
     DEFAULT_BASELINE_FRAMES,
     DEFAULT_T1_MS,
     EPSILON_B1,
+    EPSILON_E1_UPPER,
+    EPSILON_SIGNAL,
     EPSILON_T1,
     HEMATOCRIT,
     get_r1_relaxivity,
@@ -148,7 +150,8 @@ def solve_e1_from_signal_ratio(
 
     # Clip E1 to valid range (0, 1) since E1 = exp(-TR/T1)
     # E1 must be positive (T1 > 0) and less than 1 (TR > 0)
-    e1_clipped = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_T1)
+    # Use EPSILON_E1_UPPER (1e-4) for upper bound to preserve long-T1 voxels
+    e1_clipped = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
 
     return e1_clipped
 
@@ -174,7 +177,7 @@ def e1_to_r1(
         - R1 = 1/T1, so typical values are 0.5-2.0 s^-1 for tissue.
     """
     # Ensure E1 is in valid range for log
-    e1_safe = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_T1)
+    e1_safe = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
 
     r1 = -np.log(e1_safe) / tr
 
@@ -360,12 +363,12 @@ def signal_to_concentration(
 
     # Prevent division by zero in baseline signal
     if isinstance(baseline_signal, np.ndarray):
-        baseline_signal_safe = np.maximum(np.abs(baseline_signal), EPSILON_T1)
+        baseline_signal_safe = np.maximum(np.abs(baseline_signal), EPSILON_SIGNAL)
         baseline_signal_safe = np.where(
             baseline_signal >= 0, baseline_signal_safe, -baseline_signal_safe
         )
     else:
-        baseline_signal_safe = max(abs(baseline_signal), EPSILON_T1)
+        baseline_signal_safe = max(abs(baseline_signal), EPSILON_SIGNAL)
         if baseline_signal < 0:
             baseline_signal_safe = -baseline_signal_safe
 

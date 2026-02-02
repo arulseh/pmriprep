@@ -620,6 +620,83 @@ class AIFDetection(BaseInterface):
 
         return min(1.0, score), metrics
 
+    @staticmethod
+    def _apply_spatial_exclusions(
+        candidate_indices: list[tuple[int, int, int]],
+        brain_shape: tuple[int, ...],
+    ) -> list[tuple[int, int, int]]:
+        """Exclude SSS (midline + superior/posterior) and edge-slice voxels.
+
+        Ported from DSC AIF detector. Excludes voxels that are in the
+        sagittal sinus region (midline AND superior/posterior).
+
+        Args:
+            candidate_indices: List of (x, y, z) voxel coordinates.
+            brain_shape: (nx, ny, nz) spatial dimensions.
+
+        Returns:
+            Filtered list of coordinates.
+        """
+        if not candidate_indices:
+            return candidate_indices
+
+        nx, ny, nz = brain_shape[:3]
+        x_center = nx // 2
+        x_exclude = int(nx * 0.1)  # Central 20% (+/-10%)
+        z_superior = int(nz * 0.65)  # Superior 35%
+        y_posterior = int(ny * 0.45)  # Posterior 45%
+
+        # SSS exclusion
+        kept: list[tuple[int, int, int]] = []
+        for coord in candidate_indices:
+            x, y, z = coord
+            is_midline = (x_center - x_exclude) <= x <= (x_center + x_exclude)
+            if is_midline and (z > z_superior or y < y_posterior):
+                continue  # SSS region
+            kept.append(coord)
+
+        if not kept:
+            # Would remove all — keep originals
+            kept = list(candidate_indices)
+
+        # Edge slice exclusion (z == 0 or z == nz-1)
+        non_edge = [c for c in kept if 0 < c[2] < nz - 1]
+        if non_edge:
+            kept = non_edge
+
+        return kept
+
+    @staticmethod
+    def _validate_peak_timing(
+        candidates: list[tuple[int, int, int]],
+        concentration_data: npt.NDArray[Any],
+        n_timepoints: int,
+    ) -> list[tuple[int, int, int]]:
+        """Reject candidates peaking after 40% of timepoints.
+
+        Args:
+            candidates: Candidate voxel coordinates.
+            concentration_data: 4D concentration data.
+            n_timepoints: Total number of timepoints.
+
+        Returns:
+            Filtered candidates with valid peak timing.
+        """
+        if not candidates:
+            return candidates
+
+        max_peak_idx = int(n_timepoints * 0.4)
+        kept: list[tuple[int, int, int]] = []
+        for x, y, z in candidates:
+            peak_idx = int(np.argmax(concentration_data[x, y, z, :]))
+            if peak_idx <= max_peak_idx:
+                kept.append((x, y, z))
+
+        if not kept:
+            # Would remove all — keep originals
+            return candidates
+        return kept
+
     def _find_candidates_in_mask(
         self,
         concentration_data: npt.NDArray[Any],
@@ -631,8 +708,8 @@ class AIFDetection(BaseInterface):
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
         """Find candidate AIF voxels within a mask.
 
-        Returns voxel coordinates, scores, and metrics for candidates
-        that meet the threshold criteria, sorted by score descending.
+        Applies spatial exclusion (SSS/edge), peak timing validation, and
+        quality scoring. Returns top candidates sorted by score descending.
         """
         candidates: list[tuple[int, int, int]] = []
         scores: list[float] = []
@@ -641,6 +718,7 @@ class AIFDetection(BaseInterface):
         # Get mask coordinates
         mask_coords = np.where(mask > 0)
         n_voxels = len(mask_coords[0])
+        n_timepoints = concentration_data.shape[3]
 
         for i in range(n_voxels):
             x, y, z = (
@@ -663,7 +741,29 @@ class AIFDetection(BaseInterface):
                 scores.append(score)
                 all_metrics.append(metrics)
 
-        # Sort by score descending
+        # Apply spatial exclusions (SSS + edge slices)
+        if candidates:
+            brain_shape = concentration_data.shape[:3]
+            filtered = self._apply_spatial_exclusions(candidates, brain_shape)
+            # Keep only filtered candidates with their scores/metrics
+            filtered_set = set(filtered)
+            keep_idx = [i for i, c in enumerate(candidates) if c in filtered_set]
+            candidates = [candidates[i] for i in keep_idx]
+            scores = [scores[i] for i in keep_idx]
+            all_metrics = [all_metrics[i] for i in keep_idx]
+
+        # Peak timing validation
+        if candidates:
+            valid_timing = self._validate_peak_timing(
+                candidates, concentration_data, n_timepoints
+            )
+            valid_set = set(valid_timing)
+            keep_idx = [i for i, c in enumerate(candidates) if c in valid_set]
+            candidates = [candidates[i] for i in keep_idx]
+            scores = [scores[i] for i in keep_idx]
+            all_metrics = [all_metrics[i] for i in keep_idx]
+
+        # Sort by score descending and take top N
         if candidates:
             sorted_indices = np.argsort(scores)[::-1]
             candidates = [candidates[int(i)] for i in sorted_indices[:n_candidates]]
@@ -806,10 +906,29 @@ class AIFDetection(BaseInterface):
                 }
 
         else:
-            # Generate Parker population AIF
+            # Generate BAT-aligned Parker population AIF
+            from pmriprep.utils.dce_bat import detect_bolus_arrival_time
+
             dose_factor = self._get_dose_factor()
             t = np.arange(n_timepoints) * tr
-            aif_curve = parker_population_aif(t, dose_factor)
+
+            # Detect BAT from global mean concentration curve
+            mask_bool = brain_mask > 0
+            global_curve = np.array([
+                float(np.mean(conc_data[..., tidx][mask_bool]))
+                for tidx in range(n_timepoints)
+            ])
+            # time_points in minutes for BAT detection
+            t_min = t / 60.0
+            bat_result = detect_bolus_arrival_time(
+                global_curve, t_min, baseline_frames
+            )
+
+            # Time-shift Parker AIF to align with detected BAT
+            bat_shift = bat_result.bat_seconds
+            t_shifted = t - bat_shift
+            t_shifted = np.maximum(t_shifted, 0.0)
+            aif_curve = parker_population_aif(t_shifted, dose_factor)
             detection_method = "population"
             quality_score = 0.5  # Moderate score for population AIF
 
@@ -817,6 +936,9 @@ class AIFDetection(BaseInterface):
                 "population_aif": True,
                 "dose_factor": dose_factor,
                 "n_candidates": 0,
+                "bat_seconds": bat_result.bat_seconds,
+                "bat_method": bat_result.method,
+                "bat_confidence": bat_result.confidence,
             }
 
         # Apply AIF scaling if requested

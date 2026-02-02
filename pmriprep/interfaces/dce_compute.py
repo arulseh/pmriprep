@@ -24,6 +24,7 @@ from pmriprep.utils.dce_constants import (
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
 )
+from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
 
 class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
@@ -170,7 +171,15 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_ve_std = File(desc="ve standard deviation map (Bayesian)")
     out_vp_std = File(desc="vp standard deviation map (Bayesian)")
 
+    # Model-free maps
+    out_iauc60 = File(desc="IAUC at 60s (mM·min)")
+    out_iauc90 = File(desc="IAUC at 90s (mM·min)")
+    out_iauc120 = File(desc="IAUC at 120s (mM·min)")
+    out_peak_enhancement = File(desc="Peak enhancement percentage")
+    out_time_to_peak = File(desc="Time to peak (seconds)")
+
     # QC outputs
+    out_quality_flag = File(desc="Quality flag map (0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty)")
     out_r2 = File(desc="R² (goodness of fit) map")
     out_tsnr = File(desc="tSNR map")
     out_fitted_curves = File(desc="Fitted concentration curves (if save_fitted_curves=True)")
@@ -523,6 +532,16 @@ class ComputeDCEMaps(BaseInterface):
         if tsnr_threshold > 0:
             tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
 
+        # Subtract residual baseline concentration to remove T1/B1 noise bias
+        baseline_mean = np.mean(conc_data[..., :baseline_frames], axis=-1, keepdims=True)
+        conc_data = conc_data - baseline_mean
+        conc_data = np.maximum(conc_data, 0.0)
+
+        # Subtract baseline from AIF as well
+        aif_baseline = np.mean(aif[:baseline_frames])
+        aif = aif - aif_baseline
+        aif = np.maximum(aif, 0.0)
+
         # Create fitting mask (brain mask + tSNR threshold)
         mask_bool = mask > 0
         if tsnr_map is not None and tsnr_threshold > 0:
@@ -573,6 +592,21 @@ class ComputeDCEMaps(BaseInterface):
                 }
 
         # =====================================================================
+        # Compute model-free maps (vectorized, fast, before PK fitting loop)
+        # =====================================================================
+        from pmriprep.utils.dce_model_free import (
+            compute_iauc,
+            compute_peak_enhancement,
+            compute_time_to_peak,
+        )
+
+        iauc60 = compute_iauc(conc_data, time_points, cutoff_s=60.0)
+        iauc90 = compute_iauc(conc_data, time_points, cutoff_s=90.0)
+        iauc120 = compute_iauc(conc_data, time_points, cutoff_s=120.0)
+        peak_enh = compute_peak_enhancement(conc_data, baseline_frames)
+        ttp = compute_time_to_peak(conc_data, time_points)
+
+        # =====================================================================
         # Initialize output arrays
         # =====================================================================
         ktrans = np.zeros(spatial_shape, dtype=np.float64)
@@ -585,6 +619,10 @@ class ComputeDCEMaps(BaseInterface):
         fp_map = np.zeros(spatial_shape, dtype=np.float64)
         ps_map = np.zeros(spatial_shape, dtype=np.float64)
         e_map = np.zeros(spatial_shape, dtype=np.float64)
+
+        # Quality flag map: 0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty
+        quality_flag_map = np.zeros(spatial_shape, dtype=np.int8)
+        _QUALITY_FLAG_CODES = {"good": 1, "poor_convergence": 2, "high_uncertainty": 3}
 
         # Uncertainty maps
         ktrans_std = np.zeros(spatial_shape, dtype=np.float64)
@@ -617,6 +655,7 @@ class ComputeDCEMaps(BaseInterface):
         n_constrained = 0
         n_unconstrained_fallback = 0
         r2_list: list[float] = []
+        failure_reason_counts: dict[str, int] = {}
 
         # Set up Bayesian fitter if needed (default, without vp override)
         fitter: Optional[BayesianPKFitter] = None
@@ -632,8 +671,11 @@ class ComputeDCEMaps(BaseInterface):
             )
             tissue_curve = conc_data[x, y, z, :]
 
-            # Skip if curve is mostly zeros
-            if np.max(np.abs(tissue_curve)) < EPSILON_VE:
+            # Validate voxel before fitting
+            prep = prepare_voxel_for_fitting(tissue_curve, baseline_frames)
+            if not prep.is_valid:
+                reason = prep.failure_reason
+                failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
                 n_failed += 1
                 continue
 
@@ -733,6 +775,10 @@ class ComputeDCEMaps(BaseInterface):
                     if result.fitted_curve is not None:
                         fitted_curves[x, y, z, :] = result.fitted_curve.astype(np.float32)
 
+                # Set quality flag
+                qf = getattr(result, "quality_flag", "good")
+                quality_flag_map[x, y, z] = _QUALITY_FLAG_CODES.get(qf, 1)
+
                 # Track convergence
                 if result.converged:
                     n_converged += 1
@@ -751,6 +797,13 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["convergence_rate"] = n_converged / max(1, n_voxels)
         qc_metrics["n_constrained"] = n_constrained
         qc_metrics["n_unconstrained_fallback"] = n_unconstrained_fallback
+        qc_metrics["failure_reasons"] = failure_reason_counts
+
+        # Quality flag breakdown
+        qf_vals = quality_flag_map[fitting_mask]
+        qc_metrics["quality_n_good"] = int(np.sum(qf_vals == 1))
+        qc_metrics["quality_n_poor_convergence"] = int(np.sum(qf_vals == 2))
+        qc_metrics["quality_n_high_uncertainty"] = int(np.sum(qf_vals == 3))
 
         if r2_list:
             qc_metrics["r2_mean"] = float(np.mean(r2_list))
@@ -768,6 +821,17 @@ class ComputeDCEMaps(BaseInterface):
             if self._has_vp(model_name):
                 qc_metrics["vp_mean"] = float(np.mean(vp[fitted_mask]))
                 qc_metrics["vp_median"] = float(np.median(vp[fitted_mask]))
+
+            # Histogram statistics for fitted parameters
+            ktrans_vals = ktrans[fitted_mask]
+            hist_counts, hist_edges = np.histogram(ktrans_vals, bins=50)
+            qc_metrics["ktrans_histogram"] = hist_counts.tolist()
+            qc_metrics["ktrans_histogram_edges"] = hist_edges.tolist()
+
+            ve_vals = ve[fitted_mask]
+            hist_counts_ve, hist_edges_ve = np.histogram(ve_vals, bins=50)
+            qc_metrics["ve_histogram"] = hist_counts_ve.tolist()
+            qc_metrics["ve_histogram_edges"] = hist_edges_ve.tolist()
 
         # Generate output filenames
         out_ktrans = self._gen_outfilename("_Ktrans")
@@ -788,12 +852,40 @@ class ComputeDCEMaps(BaseInterface):
         r2_img = nib.Nifti1Image(r2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
         nib.save(r2_img, out_r2)  # type: ignore[attr-defined]
 
+        # Save quality flag map
+        out_quality_flag = self._gen_outfilename("_quality_flag")
+        qf_img = nib.Nifti1Image(quality_flag_map, affine, header)  # type: ignore[attr-defined]
+        nib.save(qf_img, out_quality_flag)  # type: ignore[attr-defined]
+
+        # Save model-free maps
+        out_iauc60_path = self._gen_outfilename("_IAUC60")
+        out_iauc90_path = self._gen_outfilename("_IAUC90")
+        out_iauc120_path = self._gen_outfilename("_IAUC120")
+        out_peak_enh_path = self._gen_outfilename("_peak_enhancement")
+        out_ttp_path = self._gen_outfilename("_time_to_peak")
+
+        for arr, path in [
+            (iauc60, out_iauc60_path),
+            (iauc90, out_iauc90_path),
+            (iauc120, out_iauc120_path),
+            (peak_enh, out_peak_enh_path),
+            (ttp, out_ttp_path),
+        ]:
+            img = nib.Nifti1Image(arr.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+            nib.save(img, path)  # type: ignore[attr-defined]
+
         # Initialize results
         self._results: dict[str, Any] = {
             "out_ktrans": out_ktrans,
             "out_ve": out_ve,
             "out_kep": out_kep,
             "out_r2": out_r2,
+            "out_quality_flag": out_quality_flag,
+            "out_iauc60": out_iauc60_path,
+            "out_iauc90": out_iauc90_path,
+            "out_iauc120": out_iauc120_path,
+            "out_peak_enhancement": out_peak_enh_path,
+            "out_time_to_peak": out_ttp_path,
             "qc_metrics": qc_metrics,
             "constraint_qc": constraint_qc,
         }

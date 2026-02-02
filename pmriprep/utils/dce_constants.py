@@ -27,16 +27,29 @@ EPSILON_VP: Final[float] = 0.001
 #: Minimum B1+ correction factor
 EPSILON_B1: Final[float] = 1e-6
 
+#: E1 upper bound offset (E1 clipped to [EPSILON_T1, 1.0 - EPSILON_E1_UPPER])
+#: perf-plus uses 1e-4 giving upper bound 0.9999 to avoid clipping long-T1 voxels
+EPSILON_E1_UPPER: Final[float] = 1e-4
+
+#: Signal epsilon for baseline guard (matches perf-plus EPSILON_SIGNAL)
+EPSILON_SIGNAL: Final[float] = 1e-9
+
+#: Minimum signal standard deviation for voxel to be considered valid
+MIN_SIGNAL_STD: Final[float] = 1.0
+
+#: Minimum enhancement in mM for voxel to be considered valid
+MIN_ENHANCEMENT_MM: Final[float] = 1e-8
+
 
 # =============================================================================
 # Field-Strength Dependent R1 Relaxivity
 # =============================================================================
 
 #: r1 relaxivity by field strength (T) in s^-1 per mM (Gd-DTPA, plasma)
-#: Values from literature for typical gadolinium-based contrast agents
+#: OSIPI standard values (https://osipi.org/)
 R1_RELAXIVITY_BY_FIELD: Final[dict[float, float]] = {
-    1.5: 4.1,   # Gd-DTPA at 1.5T
-    3.0: 3.7,   # Gd-DTPA at 3.0T (slight decrease at higher field)
+    1.5: 3.9,   # Gd-DTPA at 1.5T (OSIPI standard)
+    3.0: 3.8,   # Gd-DTPA at 3.0T (OSIPI standard)
     7.0: 3.5,   # Gd-DTPA at 7.0T
 }
 

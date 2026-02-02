@@ -23,6 +23,7 @@ from typing import Optional, Sequence
 import numpy as np
 import numpy.typing as npt
 from scipy import optimize
+from scipy.optimize import curve_fit
 
 from pmriprep.models.dce.base import FitResult, ModelParameter, PKModel
 from pmriprep.utils.dce_constants import (
@@ -119,6 +120,67 @@ class ExtendedToftsModel(PKModel):
                 units="",
             ),
         ]
+
+    def estimate_initial_guess(
+        self,
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+    ) -> list[float]:
+        """Estimate data-driven initial parameters from curve shape.
+
+        Estimates Ktrans from early slope, ve from washout decay, and
+        vp from the peak tissue-to-AIF ratio.
+
+        Args:
+            tissue_curve: Observed tissue concentration C_t(t).
+            aif: Arterial input function Cp(t).
+            time_points: Time points in minutes.
+
+        Returns:
+            List of [Ktrans_init, ve_init, vp_init].
+        """
+        try:
+            peak_idx = int(np.argmax(aif))
+            peak_time = time_points[peak_idx]
+
+            # Estimate vp from peak ratio (tissue peak / AIF peak)
+            aif_peak = float(np.max(aif))
+            tissue_peak = float(np.max(tissue_curve))
+            if aif_peak > 1e-6:
+                vp_init = float(np.clip(tissue_peak / aif_peak, VP_BOUNDS.min, VP_BOUNDS.max))
+            else:
+                vp_init = 0.02
+
+            # Estimate Ktrans from early slope (0.5-2.0 min post-peak)
+            early_mask = (time_points > peak_time + 0.5) & (time_points < peak_time + 2.0)
+            if np.sum(early_mask) >= 2:
+                coeffs = np.polyfit(time_points[early_mask], tissue_curve[early_mask], 1)
+                slope = coeffs[0]
+                mean_aif_early = float(np.mean(aif[early_mask]))
+                ktrans_init = max(slope / max(mean_aif_early, 1e-6), 0.001)
+            else:
+                ktrans_init = 0.1
+
+            # Estimate ve from late-phase decay
+            late_mask = time_points > time_points[-1] * 0.6
+            if np.sum(late_mask) >= 3 and ktrans_init > 0.001:
+                late_t = time_points[late_mask]
+                late_c = tissue_curve[late_mask]
+                late_c_safe = np.maximum(late_c, 1e-10)
+                log_c = np.log(late_c_safe)
+                coeffs_late = np.polyfit(late_t, log_c, 1)
+                kep_est = max(-coeffs_late[0], 0.01)
+                ve_init = float(np.clip(ktrans_init / kep_est, 0.01, 1.0))
+            else:
+                ve_init = 0.2
+
+            ktrans_init = float(np.clip(ktrans_init, KTRANS_BOUNDS.min + 1e-6, KTRANS_BOUNDS.max))
+            ve_init = float(np.clip(ve_init, VE_BOUNDS.min, VE_BOUNDS.max))
+            vp_init = float(np.clip(vp_init, VP_BOUNDS.min, VP_BOUNDS.max))
+            return [ktrans_init, ve_init, vp_init]
+        except Exception:
+            return self.get_initial_guess()
 
     def evaluate(
         self,
@@ -225,59 +287,79 @@ class ExtendedToftsModel(PKModel):
     ) -> FitResult:
         """Fit the Extended Tofts model to observed tissue concentration data.
 
-        Uses nonlinear least squares optimization (L-BFGS-B) with bounds.
-        Enforces the constraint ve + vp ≤ 1.0 during fitting.
+        Uses scipy.optimize.curve_fit with TRF method, with L-BFGS-B fallback.
+        Enforces the constraint ve + vp <= 1.0 after fitting.
 
         Args:
             tissue_curve: Observed tissue concentration values C_t(t) in mM.
             aif: Arterial input function plasma concentration values Cp(t) in mM.
             time_points: Time points (minutes) corresponding to measurements.
             initial_guess: Optional initial parameter values [Ktrans, ve, vp].
-                If None, uses default initial guess from typical ranges.
+                If None, uses data-driven estimate or default.
 
         Returns:
-            FitResult containing:
-                - parameters: Fitted Ktrans, ve, and vp values
-                - derived parameters: kep
-                - goodness-of-fit: R², AIC, BIC
-                - fitted curve
+            FitResult containing fitted parameters, uncertainties, and quality flag.
         """
         n_obs = len(tissue_curve)
 
-        # Set initial guess
+        # Set initial guess: data-driven if no explicit guess
         if initial_guess is None:
-            x0 = self.get_initial_guess()
+            x0 = self.estimate_initial_guess(tissue_curve, aif, time_points)
         else:
             x0 = list(initial_guess)
 
         # Get bounds for optimization
         bounds = self.get_bounds()
-        bounds_scipy = list(zip(*bounds))  # Convert to scipy format
+        lower_bounds = [b[0] for b in bounds]
+        upper_bounds = [b[1] for b in bounds]
 
-        # Define objective function with constraint penalty
-        def objective(params: npt.NDArray[np.floating]) -> float:
-            # Apply volume constraint
-            ktrans, ve, vp = self._apply_volume_constraint(params)
-            constrained_params = [ktrans, ve, vp]
+        # curve_fit wrapper with volume constraint
+        def _curve_func(
+            t: npt.NDArray[np.floating], *params: float
+        ) -> npt.NDArray[np.floating]:
+            ktrans, ve, vp = self._apply_volume_constraint(list(params))
+            return self.evaluate([ktrans, ve, vp], aif, t)
 
-            predicted = self.evaluate(constrained_params, aif, time_points)
-            return float(np.sum((tissue_curve - predicted) ** 2))
+        converged = False
+        fitted_params = x0
+        uncertainties: dict[str, float] = {}
 
-        # Run optimization
+        # Primary: curve_fit with TRF
         try:
-            result = optimize.minimize(
-                objective,
-                x0=x0,
-                method="L-BFGS-B",
-                bounds=list(zip(bounds_scipy[0], bounds_scipy[1])),
-                options={"maxiter": 1000, "ftol": 1e-10},
+            popt, pcov = curve_fit(
+                _curve_func,
+                time_points,
+                tissue_curve,
+                p0=x0,
+                bounds=(lower_bounds, upper_bounds),
+                method="trf",
+                maxfev=2000,
             )
-            converged = result.success
-            fitted_params = result.x.tolist()
-        except Exception:
-            # Optimization failed, return initial guess
-            converged = False
-            fitted_params = x0
+            converged = True
+            fitted_params = popt.tolist()
+            perr = np.sqrt(np.diag(pcov))
+            param_names = self.get_parameter_names()
+            uncertainties = dict(zip(param_names, perr.tolist()))
+        except (RuntimeError, ValueError):
+            # Fallback: L-BFGS-B
+            try:
+                def objective(params: npt.NDArray[np.floating]) -> float:
+                    ktrans, ve, vp = self._apply_volume_constraint(params)
+                    predicted = self.evaluate([ktrans, ve, vp], aif, time_points)
+                    return float(np.sum((tissue_curve - predicted) ** 2))
+
+                result = optimize.minimize(
+                    objective,
+                    x0=x0,
+                    method="L-BFGS-B",
+                    bounds=list(zip(lower_bounds, upper_bounds)),
+                    options={"maxiter": 1000, "ftol": 1e-10},
+                )
+                converged = result.success
+                fitted_params = result.x.tolist()
+            except Exception:
+                converged = False
+                fitted_params = x0
 
         # Clip parameters to bounds and apply constraint
         fitted_params = self.clip_params(fitted_params)
@@ -296,10 +378,22 @@ class ExtendedToftsModel(PKModel):
 
         # Build result
         param_dict = self.params_to_dict(fitted_params)
-        param_dict.update(derived)  # Add kep to parameters
+        param_dict.update(derived)
+
+        # Compute quality flag
+        quality_flag = "good"
+        if not converged:
+            quality_flag = "poor_convergence"
+        elif uncertainties:
+            for pname, unc in uncertainties.items():
+                pval = param_dict.get(pname, 0.0)
+                if abs(pval) > 1e-10 and unc / abs(pval) > 0.5:
+                    quality_flag = "high_uncertainty"
+                    break
 
         return FitResult(
             parameters=param_dict,
+            uncertainties=uncertainties,
             r_squared=r_squared,
             residual_sum_squares=rss,
             aic=aic,
@@ -310,6 +404,7 @@ class ExtendedToftsModel(PKModel):
             converged=converged,
             fitting_method="nlls",
             fitted_curve=fitted_curve,
+            quality_flag=quality_flag,
         )
 
     def fit_constrained(

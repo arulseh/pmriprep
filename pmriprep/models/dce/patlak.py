@@ -25,6 +25,7 @@ from typing import Optional, Sequence
 import numpy as np
 import numpy.typing as npt
 from scipy import optimize
+from scipy.optimize import curve_fit
 
 from pmriprep.models.dce.base import FitResult, ModelParameter, PKModel
 from pmriprep.utils.dce_constants import (
@@ -368,7 +369,7 @@ class PatlakModel(PKModel):
         if use_graphical:
             return self.fit_graphical(tissue_curve, aif, time_points)
 
-        # Nonlinear least squares fitting
+        # Nonlinear least squares fitting with curve_fit/TRF
         n_obs = len(tissue_curve)
 
         # Set initial guess
@@ -379,27 +380,53 @@ class PatlakModel(PKModel):
 
         # Get bounds for optimization
         bounds = self.get_bounds()
-        bounds_scipy = list(zip(*bounds))
+        lower_bounds = [b[0] for b in bounds]
+        upper_bounds = [b[1] for b in bounds]
 
-        # Define objective function
-        def objective(params: npt.NDArray[np.floating]) -> float:
-            predicted = self.evaluate(params, aif, time_points)
-            return float(np.sum((tissue_curve - predicted) ** 2))
+        def _curve_func(
+            t: npt.NDArray[np.floating], *params: float
+        ) -> npt.NDArray[np.floating]:
+            return self.evaluate(list(params), aif, t)
 
-        # Run optimization
+        converged = False
+        fitted_params = x0
+        uncertainties: dict[str, float] = {}
+
+        # Primary: curve_fit with TRF
         try:
-            result = optimize.minimize(
-                objective,
-                x0=x0,
-                method="L-BFGS-B",
-                bounds=list(zip(bounds_scipy[0], bounds_scipy[1])),
-                options={"maxiter": 1000, "ftol": 1e-10},
+            popt, pcov = curve_fit(
+                _curve_func,
+                time_points,
+                tissue_curve,
+                p0=x0,
+                bounds=(lower_bounds, upper_bounds),
+                method="trf",
+                maxfev=2000,
             )
-            converged = result.success
-            fitted_params = result.x.tolist()
-        except Exception:
-            converged = False
-            fitted_params = x0
+            converged = True
+            fitted_params = popt.tolist()
+            perr = np.sqrt(np.diag(pcov))
+            param_names = self.get_parameter_names()
+            uncertainties = dict(zip(param_names, perr.tolist()))
+        except (RuntimeError, ValueError):
+            # Fallback: L-BFGS-B
+            try:
+                def objective(params: npt.NDArray[np.floating]) -> float:
+                    predicted = self.evaluate(params, aif, time_points)
+                    return float(np.sum((tissue_curve - predicted) ** 2))
+
+                result = optimize.minimize(
+                    objective,
+                    x0=x0,
+                    method="L-BFGS-B",
+                    bounds=list(zip(lower_bounds, upper_bounds)),
+                    options={"maxiter": 1000, "ftol": 1e-10},
+                )
+                converged = result.success
+                fitted_params = result.x.tolist()
+            except Exception:
+                converged = False
+                fitted_params = x0
 
         # Clip parameters to bounds
         fitted_params = self.clip_params(fitted_params)
@@ -414,8 +441,20 @@ class PatlakModel(PKModel):
         # Build result
         param_dict = self.params_to_dict(fitted_params)
 
+        # Compute quality flag
+        quality_flag = "good"
+        if not converged:
+            quality_flag = "poor_convergence"
+        elif uncertainties:
+            for pname, unc in uncertainties.items():
+                pval = param_dict.get(pname, 0.0)
+                if abs(pval) > 1e-10 and unc / abs(pval) > 0.5:
+                    quality_flag = "high_uncertainty"
+                    break
+
         return FitResult(
             parameters=param_dict,
+            uncertainties=uncertainties,
             r_squared=r_squared,
             residual_sum_squares=rss,
             aic=aic,
@@ -426,6 +465,7 @@ class PatlakModel(PKModel):
             converged=converged,
             fitting_method="nlls",
             fitted_curve=fitted_curve,
+            quality_flag=quality_flag,
         )
 
     def fit_constrained(

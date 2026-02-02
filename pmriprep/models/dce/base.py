@@ -151,6 +151,9 @@ class FitResult:
     # Fitted curve
     fitted_curve: Optional[npt.NDArray[np.floating]] = None
 
+    # Fit quality flag: "good", "poor_convergence", or "high_uncertainty"
+    quality_flag: str = "good"
+
     def has_uncertainty(self) -> bool:
         """Check if uncertainty estimates are available.
 
@@ -360,6 +363,27 @@ class PKModel(ABC):
             List of initial parameter values (center of typical range).
         """
         return [p.get_prior_mean() for p in self.get_parameter_definitions()]
+
+    def estimate_initial_guess(
+        self,
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+    ) -> list[float]:
+        """Estimate data-driven initial parameters from the data.
+
+        Override in subclasses for model-specific heuristics.
+        Default falls back to prior midpoints via get_initial_guess().
+
+        Args:
+            tissue_curve: Observed tissue concentration C_t(t).
+            aif: Arterial input function Cp(t).
+            time_points: Time points in minutes.
+
+        Returns:
+            List of initial parameter values.
+        """
+        return self.get_initial_guess()
 
     def validate_params(self, params: Sequence[float]) -> bool:
         """Check if parameters are within bounds.
