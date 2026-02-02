@@ -1013,6 +1013,7 @@ def init_pmriprep_wf(
                 (anat_wf, dce_wf, [
                     ("outputnode.brain_mask", "inputnode.brain_mask"),
                     ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+                    ("outputnode.csf_probseg", "inputnode.csf_probseg"),
                 ]),
             ])
         elif work_dir is not None:

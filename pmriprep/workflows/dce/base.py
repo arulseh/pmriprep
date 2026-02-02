@@ -14,6 +14,7 @@ from pmriprep.config.dce import DCEConfig
 from pmriprep.interfaces.dce import (
     B1Mapping,
     T1Mapping,
+    VFAPreprocess,
     DCEPreprocess,
     DCERegistration,
 )
@@ -169,6 +170,7 @@ def init_dce_preproc_wf(
                 "t1w_reference",
                 "brain_mask",
                 "wm_probseg",
+                "csf_probseg",
                 "lesion_mask",
                 # VFA T1 mapping inputs
                 "vfa_files",
@@ -252,27 +254,72 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
+    # Node 1b: VFA Preprocessing (coregistration + quality assessment)
+    # ==========================================================================
+    vfa_preprocess = pe.Node(
+        VFAPreprocess(
+            skip_coregistration=False,
+            skip_flip_validation=config.skip_flip_validation,
+        ),
+        name="vfa_preprocess",
+    )
+
+    workflow.connect([
+        (inputnode, vfa_preprocess, [
+            ("vfa_files", "vfa_files"),
+            ("vfa_flip_angles", "flip_angles"),
+            ("vfa_tr", "tr"),
+            ("field_strength", "field_strength"),
+        ]),
+    ])
+
+    # ==========================================================================
+    # Node 1c: Transform B1+ map to VFA space (for T1 fitting)
+    # ==========================================================================
+    transform_b1_to_vfa = pe.Node(
+        niu.Function(
+            input_names=["b1_map_file", "vfa_ref_file"],
+            output_names=["out_file"],
+            function=_transform_b1_to_vfa,
+        ),
+        name="transform_b1_to_vfa",
+    )
+
+    workflow.connect([
+        (b1_mapping, transform_b1_to_vfa, [
+            ("out_file", "b1_map_file"),
+        ]),
+        (vfa_preprocess, transform_b1_to_vfa, [
+            ("reference_file", "vfa_ref_file"),
+        ]),
+    ])
+
+    # ==========================================================================
     # Node 2: T1 Mapping (optional - skip if config.no_t1=True)
     # ==========================================================================
     t1_mapping = pe.Node(
         T1Mapping(
             skip_t1=config.no_t1,
             lenient_qc=config.lenient_t1_qc,
+            t1_correction_mode=config.t1_correction,
         ),
         name="t1_mapping",
     )
 
-    # Connect T1 mapping inputs
+    # Connect T1 mapping inputs — use coregistered VFA and resampled B1
     workflow.connect([
+        (vfa_preprocess, t1_mapping, [
+            ("out_files", "vfa_files"),
+        ]),
         (inputnode, t1_mapping, [
-            ("vfa_files", "vfa_files"),
             ("vfa_flip_angles", "flip_angles"),
             ("vfa_tr", "tr"),
             ("brain_mask", "brain_mask"),
             ("field_strength", "field_strength"),
+            ("csf_probseg", "csf_probseg"),
         ]),
-        # Connect B1 map for flip angle correction (from B1Mapping)
-        (b1_mapping, t1_mapping, [
+        # Connect B1 map resampled to VFA space
+        (transform_b1_to_vfa, t1_mapping, [
             ("out_file", "b1_map"),
         ]),
     ])
@@ -351,6 +398,48 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
+    # Node 4c: Transform T1 map to DCE space
+    # ==========================================================================
+    transform_t1_to_dce = pe.Node(
+        niu.Function(
+            input_names=["t1_map_file", "reference_file"],
+            output_names=["out_file"],
+            function=_transform_t1_to_dce,
+        ),
+        name="transform_t1_to_dce",
+    )
+
+    workflow.connect([
+        (t1_mapping, transform_t1_to_dce, [
+            ("out_file", "t1_map_file"),
+        ]),
+        (dce_preprocess, transform_t1_to_dce, [
+            ("mean_img", "reference_file"),
+        ]),
+    ])
+
+    # ==========================================================================
+    # Node 4d: Transform B1+ map to DCE space (for signal_to_concentration)
+    # ==========================================================================
+    transform_b1_to_dce = pe.Node(
+        niu.Function(
+            input_names=["b1_map_file", "reference_file"],
+            output_names=["out_file"],
+            function=_transform_b1_to_dce,
+        ),
+        name="transform_b1_to_dce",
+    )
+
+    workflow.connect([
+        (b1_mapping, transform_b1_to_dce, [
+            ("out_file", "b1_map_file"),
+        ]),
+        (dce_preprocess, transform_b1_to_dce, [
+            ("mean_img", "reference_file"),
+        ]),
+    ])
+
+    # ==========================================================================
     # Node 5: Signal to Concentration Conversion
     # ==========================================================================
     # This is implemented as a Function node to call the signal_to_concentration
@@ -377,15 +466,16 @@ def init_dce_preproc_wf(
     # Pass config.no_t1 to the node
     signal_to_conc.inputs.no_t1 = config.no_t1
 
+    # Use T1 and B1 maps resampled to DCE space
     workflow.connect([
         (dce_preprocess, signal_to_conc, [
             ("out_file", "dce_file"),
             ("baseline_frames", "baseline_frames"),
         ]),
-        (t1_mapping, signal_to_conc, [
+        (transform_t1_to_dce, signal_to_conc, [
             ("out_file", "t1_map_file"),
         ]),
-        (b1_mapping, signal_to_conc, [
+        (transform_b1_to_dce, signal_to_conc, [
             ("out_file", "b1_map_file"),
         ]),
         (inputnode, signal_to_conc, [
@@ -461,7 +551,8 @@ def init_dce_preproc_wf(
             ("dsc_cbv_file", "dsc_cbv_file"),
             ("dsc_aif_qc_file", "dsc_aif_qc_file"),
         ]),
-        (t1_mapping, pk_modeling, [
+        # Use T1 map resampled to DCE space
+        (transform_t1_to_dce, pk_modeling, [
             ("out_file", "t1_map_file"),
         ]),
     ])
@@ -872,3 +963,117 @@ def _collect_qc_metrics(
         qc_metrics["dsc_dce_validation"] = validation_result
 
     return qc_metrics
+
+
+def _transform_b1_to_vfa(b1_map_file=None, vfa_ref_file=None):
+    """Resample B1+ map from AFI space to VFA space.
+
+    Uses nilearn continuous interpolation via NIfTI affine headers.
+    Passes through None unchanged if B1 mapping was skipped.
+
+    Args:
+        b1_map_file: Path to B1+ map in AFI space (or None).
+        vfa_ref_file: Path to VFA reference image for output geometry.
+
+    Returns:
+        Path to B1+ map resampled to VFA space, or original if same space.
+    """
+    if b1_map_file is None or vfa_ref_file is None:
+        return b1_map_file
+
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    b1_img = nib.load(b1_map_file)
+    ref_img = nib.load(vfa_ref_file)
+
+    # Check if already in the same space (same shape + affine)
+    if b1_img.shape[:3] == ref_img.shape[:3]:
+        affine_diff = float(np.abs(b1_img.affine - ref_img.affine).max())
+        if affine_diff < 1e-4:
+            return b1_map_file
+
+    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+    resampled = resample_to_img(b1_img, ref_img, interpolation="continuous")
+    out_file = str(Path.cwd() / "b1_map_vfa_space.nii.gz")
+    nib.save(resampled, out_file)
+    return out_file
+
+
+def _transform_b1_to_dce(b1_map_file=None, reference_file=None):
+    """Resample B1+ map to DCE space for signal-to-concentration.
+
+    Uses nilearn continuous interpolation via NIfTI affine headers.
+
+    Args:
+        b1_map_file: Path to B1+ map (or None).
+        reference_file: Path to DCE mean image for output geometry.
+
+    Returns:
+        Path to B1+ map resampled to DCE space, or original if same space.
+    """
+    if b1_map_file is None or reference_file is None:
+        return b1_map_file
+
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    b1_img = nib.load(b1_map_file)
+    ref_img = nib.load(reference_file)
+
+    # Check if already in the same space
+    if b1_img.shape[:3] == ref_img.shape[:3]:
+        affine_diff = float(np.abs(b1_img.affine - ref_img.affine).max())
+        if affine_diff < 1e-4:
+            return b1_map_file
+
+    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+    resampled = resample_to_img(b1_img, ref_img, interpolation="continuous")
+    out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
+    nib.save(resampled, out_file)
+    return out_file
+
+
+def _transform_t1_to_dce(t1_map_file=None, reference_file=None):
+    """Resample T1 map from VFA space to DCE space.
+
+    Uses nilearn continuous interpolation via NIfTI affine headers.
+    This is critical to avoid shape mismatches in signal_to_concentration
+    and pk_modeling.
+
+    Args:
+        t1_map_file: Path to T1 map in VFA space (or None).
+        reference_file: Path to DCE mean image for output geometry.
+
+    Returns:
+        Path to T1 map resampled to DCE space, or original if same space.
+    """
+    if t1_map_file is None or reference_file is None:
+        return t1_map_file
+
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    t1_img = nib.load(t1_map_file)
+    ref_img = nib.load(reference_file)
+
+    # Check if already in the same space
+    if t1_img.shape[:3] == ref_img.shape[:3]:
+        affine_diff = float(np.abs(t1_img.affine - ref_img.affine).max())
+        if affine_diff < 1e-4:
+            return t1_map_file
+
+    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+    resampled = resample_to_img(t1_img, ref_img, interpolation="continuous")
+    out_file = str(Path.cwd() / "t1_map_dce_space.nii.gz")
+    nib.save(resampled, out_file)
+    return out_file

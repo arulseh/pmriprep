@@ -101,6 +101,7 @@ class DCEConfig:
     no_t1: bool = False
     skip_flip_validation: bool = False
     lenient_t1_qc: bool = False
+    t1_correction: Literal["auto", "none", "offset", "fallback"] = "auto"
 
     # Processing settings
     no_tortuosity: bool = False

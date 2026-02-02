@@ -1,0 +1,249 @@
+"""QC visualization for VFA T1 mapping.
+
+Generates a 3x3 diagnostic plot for VFA T1 mapping quality assessment:
+
+Row 1: VFA images and signal ratio
+Row 2: T1 map, M0 map, synthetic T1w contrast
+Row 3: T1 histogram, M0 histogram, T1 vs M0 scatter
+
+Uses the colorblind-safe palette from qc_standards.py.
+
+Ported from perf-plus dce_vfa_t1_mapping.py with adaptations for
+NiPreps-style visualization conventions.
+"""
+
+import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import numpy.typing as npt
+
+logger = logging.getLogger("pmriprep.utils.dce_qc_plots")
+
+
+def generate_vfa_t1_qc_plot(
+    vfa_data: List[npt.NDArray[np.floating]],
+    flip_angles: List[float],
+    t1_map: npt.NDArray[np.floating],
+    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
+    field_strength: float = 3.0,
+    output_path: Optional[str] = None,
+    correction_info: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Generate a 3x3 QC plot for VFA T1 mapping.
+
+    Parameters
+    ----------
+    vfa_data : list of ndarray
+        List of 3D VFA signal arrays (one per flip angle).
+    flip_angles : list of float
+        Flip angles in degrees corresponding to vfa_data.
+    t1_map : ndarray
+        T1 map in milliseconds.
+    brain_mask : ndarray, optional
+        Brain mask for windowing and histogram analysis.
+    field_strength : float
+        Magnetic field strength in Tesla (default: 3.0).
+    output_path : str, optional
+        Output path for the PNG file. If None, uses cwd.
+    correction_info : dict, optional
+        T1 correction info dictionary for annotation.
+
+    Returns
+    -------
+    str
+        Path to the saved QC plot PNG file.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+
+    from pmriprep.utils.qc_standards import COLORBLIND_PALETTE
+    from pmriprep.utils.qc_utils import get_radiological_slice
+
+    if output_path is None:
+        output_path = str(Path.cwd() / "vfa_t1_qc.png")
+
+    n_fa = len(vfa_data)
+
+    # Select middle axial slice
+    mid_slice = t1_map.shape[2] // 2
+
+    # Determine display window for T1 map (exclude CSF)
+    if brain_mask is not None:
+        valid_t1 = t1_map[brain_mask > 0.5]
+    else:
+        valid_t1 = t1_map[~np.isnan(t1_map)]
+    valid_t1 = valid_t1[(valid_t1 > 100) & (valid_t1 < 2500)]
+
+    if len(valid_t1) > 0:
+        t1_vmin = float(np.percentile(valid_t1, 1))
+        t1_vmax = float(np.percentile(valid_t1, 99))
+    else:
+        t1_vmin, t1_vmax = 0.0, 3000.0
+
+    # Get T1 reference ranges
+    from pmriprep.utils.dce_t1_validation import T1_TISSUE_REFERENCE, get_field_strength_key
+
+    field_key = get_field_strength_key(field_strength)
+    t1_ref = T1_TISSUE_REFERENCE[field_key]
+
+    # Create figure
+    fig, axes = plt.subplots(3, 3, figsize=(15, 13))
+    fig.suptitle("VFA T1 Mapping QC", fontsize=14, fontweight="bold", y=0.98)
+
+    # ---- Row 1: VFA images and signal ratio ----
+    # Show first two VFA images and their ratio
+    for i in range(min(n_fa, 2)):
+        ax = axes[0, i]
+        sl = get_radiological_slice(vfa_data[i], axis=2, slice_idx=mid_slice)
+        vmax = float(np.percentile(sl[sl > 0], 99)) if np.any(sl > 0) else 1.0
+        ax.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="lower")
+        ax.set_title(f"VFA {flip_angles[i]:.0f}\u00b0", fontsize=11)
+        ax.axis("off")
+
+    # Signal ratio
+    ax = axes[0, 2]
+    if n_fa >= 2:
+        eps = 1e-6
+        ratio = vfa_data[1] / np.maximum(vfa_data[0], eps)
+        ratio_sl = get_radiological_slice(ratio, axis=2, slice_idx=mid_slice)
+        # Window ratio around expected range
+        ratio_valid = ratio_sl[(ratio_sl > 0.1) & (ratio_sl < 10)]
+        if len(ratio_valid) > 0:
+            r_vmin = float(np.percentile(ratio_valid, 5))
+            r_vmax = float(np.percentile(ratio_valid, 95))
+        else:
+            r_vmin, r_vmax = 0.5, 3.0
+        im = ax.imshow(ratio_sl, cmap="coolwarm", vmin=r_vmin, vmax=r_vmax, origin="lower")
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_title(
+            f"Signal Ratio (S({flip_angles[1]:.0f}\u00b0)/S({flip_angles[0]:.0f}\u00b0))",
+            fontsize=10,
+        )
+    else:
+        ax.text(0.5, 0.5, "Need 2+ flip angles\nfor ratio", ha="center", va="center",
+                transform=ax.transAxes)
+    ax.axis("off")
+
+    # ---- Row 2: T1 map, M0 estimate, synthetic T1w ----
+    # T1 map
+    ax = axes[1, 0]
+    t1_sl = get_radiological_slice(t1_map, axis=2, slice_idx=mid_slice)
+    im = ax.imshow(t1_sl, cmap="plasma", vmin=t1_vmin, vmax=t1_vmax, origin="lower")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="ms")
+    ax.set_title("T1 Map", fontsize=11)
+    ax.axis("off")
+
+    # M0 estimate (from first VFA image / sin(alpha))
+    ax = axes[1, 1]
+    if n_fa >= 1:
+        fa_rad = np.radians(flip_angles[0])
+        sin_fa = np.sin(fa_rad)
+        m0_est = vfa_data[0] / max(sin_fa, 1e-6)
+        m0_sl = get_radiological_slice(m0_est, axis=2, slice_idx=mid_slice)
+        m0_valid = m0_sl[m0_sl > 0]
+        if len(m0_valid) > 0:
+            m0_vmax = float(np.percentile(m0_valid, 99))
+        else:
+            m0_vmax = 1.0
+        ax.imshow(m0_sl, cmap="gray", vmin=0, vmax=m0_vmax, origin="lower")
+        ax.set_title("M0 Estimate (S/sin(\u03b1))", fontsize=11)
+    ax.axis("off")
+
+    # Synthetic T1w contrast
+    ax = axes[1, 2]
+    if n_fa >= 1:
+        tr_assumed = 0.010  # 10ms TR typical for VFA
+        t1_s = np.clip(t1_map, 100, 5000) / 1000.0
+        synth = m0_est * (1.0 - np.exp(-tr_assumed / t1_s))
+        synth_sl = get_radiological_slice(synth, axis=2, slice_idx=mid_slice)
+        synth_valid = synth_sl[synth_sl > 0]
+        if len(synth_valid) > 0:
+            s_vmax = float(np.percentile(synth_valid, 99))
+        else:
+            s_vmax = 1.0
+        ax.imshow(synth_sl, cmap="gray", vmin=0, vmax=s_vmax, origin="lower")
+        ax.set_title("Synthetic T1w", fontsize=11)
+    ax.axis("off")
+
+    # ---- Row 3: Histograms and scatter ----
+    # T1 histogram
+    ax = axes[2, 0]
+    if brain_mask is not None:
+        hist_t1 = t1_map[(brain_mask > 0.5) & (t1_map > 100) & (t1_map < 3000)]
+    else:
+        hist_t1 = t1_map[(t1_map > 100) & (t1_map < 3000)]
+
+    if len(hist_t1) > 0:
+        ax.hist(hist_t1, bins=100, color=COLORBLIND_PALETTE.primary, alpha=0.7,
+                edgecolor="none", density=True)
+        # Add reference ranges
+        wm_range = t1_ref["wm"]
+        gm_range = t1_ref["gm"]
+        ax.axvspan(wm_range[0], wm_range[1], alpha=0.15, color=COLORBLIND_PALETTE.success,
+                   label=f"WM ({wm_range[0]}-{wm_range[1]}ms)")
+        ax.axvspan(gm_range[0], gm_range[1], alpha=0.15, color=COLORBLIND_PALETTE.warning,
+                   label=f"GM ({gm_range[0]}-{gm_range[1]}ms)")
+        median_val = float(np.median(hist_t1))
+        ax.axvline(median_val, color=COLORBLIND_PALETTE.error, linestyle="--",
+                   label=f"Median: {median_val:.0f}ms")
+        ax.legend(fontsize=7, loc="upper right")
+    ax.set_xlabel("T1 (ms)")
+    ax.set_ylabel("Density")
+    ax.set_title("T1 Distribution (Brain)", fontsize=11)
+
+    # M0 histogram
+    ax = axes[2, 1]
+    if n_fa >= 1:
+        if brain_mask is not None:
+            hist_m0 = m0_est[(brain_mask > 0.5) & (m0_est > 0)]
+        else:
+            hist_m0 = m0_est[m0_est > 0]
+        # IQR-based outlier rejection for display
+        if len(hist_m0) > 0:
+            q1, q3 = np.percentile(hist_m0, [25, 75])
+            iqr = q3 - q1
+            m0_display = hist_m0[(hist_m0 >= q1 - 1.5 * iqr) & (hist_m0 <= q3 + 1.5 * iqr)]
+            if len(m0_display) > 0:
+                ax.hist(m0_display, bins=80, color=COLORBLIND_PALETTE.secondary, alpha=0.7,
+                        edgecolor="none", density=True)
+    ax.set_xlabel("M0 (a.u.)")
+    ax.set_ylabel("Density")
+    ax.set_title("M0 Distribution (Brain)", fontsize=11)
+
+    # T1 vs M0 scatter
+    ax = axes[2, 2]
+    if n_fa >= 1 and brain_mask is not None:
+        scatter_mask = (brain_mask > 0.5) & (t1_map > 100) & (t1_map < 3000) & (m0_est > 0)
+        t1_sc = t1_map[scatter_mask]
+        m0_sc = m0_est[scatter_mask]
+        if len(t1_sc) > 1000:
+            # Subsample for performance
+            idx = np.random.default_rng(42).choice(len(t1_sc), 1000, replace=False)
+            t1_sc = t1_sc[idx]
+            m0_sc = m0_sc[idx]
+        if len(t1_sc) > 0:
+            ax.scatter(t1_sc, m0_sc, s=1, alpha=0.3, c=COLORBLIND_PALETTE.primary, rasterized=True)
+    ax.set_xlabel("T1 (ms)")
+    ax.set_ylabel("M0 (a.u.)")
+    ax.set_title("T1 vs M0", fontsize=11)
+
+    # Add correction annotation if provided
+    if correction_info is not None:
+        correction_text = (
+            f"Correction: {correction_info.get('correction_applied', 'none')} | "
+            f"Original median: {correction_info.get('median_t1_original', 0):.0f}ms | "
+            f"Corrected: {correction_info.get('median_t1_corrected', 0):.0f}ms"
+        )
+        fig.text(0.5, 0.01, correction_text, ha="center", fontsize=9,
+                 style="italic", color="gray")
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    logger.info("VFA T1 QC plot saved to %s", output_path)
+    return output_path

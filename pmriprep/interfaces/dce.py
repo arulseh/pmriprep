@@ -627,6 +627,23 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Magnetic field strength in Tesla for QC range selection",
     )
+    csf_probseg = File(
+        exists=True,
+        desc="CSF probability map for excluding CSF voxels from T1 fitting",
+    )
+    csf_threshold = traits.Float(
+        0.3,
+        usedefault=True,
+        desc="CSF probability threshold for exclusion (default: 0.3 = 30%)",
+    )
+    t1_correction_mode = traits.Enum(
+        "auto",
+        "none",
+        "offset",
+        "fallback",
+        usedefault=True,
+        desc="T1 correction mode: auto, none, offset, or fallback",
+    )
 
 
 class T1MappingOutputSpec(TraitedSpec):
@@ -637,6 +654,7 @@ class T1MappingOutputSpec(TraitedSpec):
     mean_t1_gm = traits.Float(desc="Mean T1 in gray matter region (ms)")
     qc_pass = traits.Bool(desc="Whether T1 map passed QC criteria")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
+    qc_plot = File(desc="VFA T1 mapping QC plot PNG")
 
 
 class T1Mapping(SimpleInterface):
@@ -734,6 +752,7 @@ class T1Mapping(SimpleInterface):
     def _run_interface(self, runtime: Any) -> Any:
         """Execute VFA T1 mapping computation."""
         import nibabel as nib  # type: ignore[import-untyped]
+        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
         from pmriprep.utils.dce_constants import (
             DEFAULT_T1_MS,
@@ -788,7 +807,7 @@ class T1Mapping(SimpleInterface):
             signal_data[i] = img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
 
         # Load B1+ map if provided, otherwise use unity
-        if self.inputs.b1_map:
+        if isdefined(self.inputs.b1_map) and self.inputs.b1_map:
             b1_img = nib.load(self.inputs.b1_map)
             b1_map = b1_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
         else:
@@ -819,23 +838,88 @@ class T1Mapping(SimpleInterface):
         # Convert T1 from seconds to milliseconds
         t1_map = t1_map * 1000.0
 
-        # Clamp T1 to reasonable range (0 to 10000 ms)
-        t1_map = np.clip(t1_map, 0.0, 10000.0)
-
-        # Convert to float32 for storage
-        t1_map = t1_map.astype(np.float32)
-
         # Load brain mask for QC if provided
-        if self.inputs.brain_mask:
+        if isdefined(self.inputs.brain_mask) and self.inputs.brain_mask:
             mask_img = nib.load(self.inputs.brain_mask)
+            # Resample mask to VFA space if dimensions differ (e.g. T1w MPRAGE vs VFA VIBE)
+            if mask_img.shape[:3] != shape:
+                from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+                mask_img = resample_to_img(
+                    mask_img, first_img, interpolation="nearest",
+                )
             brain_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
         else:
             # Use simple thresholding on first VFA image as rough brain mask
             threshold = np.percentile(signal_data[0][signal_data[0] > 0], 10)
             brain_mask = signal_data[0] > threshold
 
-        # Calculate QC metrics
+        # CSF exclusion: mask out voxels with high CSF probability
+        # Must happen BEFORE median filter to prevent CSF contamination
+        # from spreading into neighboring tissue voxels
+        csf_excluded = False
+        if isdefined(self.inputs.csf_probseg) and self.inputs.csf_probseg:
+            csf_img = nib.load(self.inputs.csf_probseg)
+            # Resample CSF probseg to VFA space if needed
+            if csf_img.shape[:3] != shape:
+                from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+                csf_img = resample_to_img(
+                    csf_img, first_img, interpolation="continuous",
+                )
+            csf_prob = csf_img.get_fdata()  # type: ignore[attr-defined]
+            csf_mask = csf_prob >= self.inputs.csf_threshold
+
+            n_brain_before = int(np.sum(brain_mask))
+            n_csf = int(np.sum(csf_mask & brain_mask))
+            # Zero out CSF voxels before median filter
+            t1_map[csf_mask & brain_mask] = 0.0
+            brain_mask = brain_mask & (~csf_mask)
+            n_brain_after = int(np.sum(brain_mask))
+
+            logger.info(
+                "CSF exclusion: removed %d voxels (%.1f%% of brain), "
+                "%d tissue voxels remaining",
+                n_csf,
+                100.0 * n_csf / max(n_brain_before, 1),
+                n_brain_after,
+            )
+            csf_excluded = True
+
+        # Apply 3x3x3 median filter to reduce noise spikes
+        # Applied after CSF exclusion so CSF values don't contaminate neighbors
+        from scipy.ndimage import median_filter  # type: ignore[import-untyped]
+
+        t1_map = median_filter(t1_map, size=3)
+
+        # Clamp T1 to reasonable range (0 to 10000 ms)
+        t1_map = np.clip(t1_map, 0.0, 10000.0)
+
+        # Convert to float32 for storage
+        t1_map = t1_map.astype(np.float32)
+
+        # T1 value correction (field-strength-aware)
         field_strength = self.inputs.field_strength
+        correction_mode = self.inputs.t1_correction_mode
+
+        from pmriprep.utils.dce_t1_validation import apply_t1_correction
+
+        t1_map_arr, correction_result = apply_t1_correction(
+            t1_map,
+            field_strength=field_strength,
+            correction_mode=correction_mode,
+            brain_mask=brain_mask,
+        )
+        t1_map = t1_map_arr.astype(np.float32)
+        correction_info = correction_result.to_dict()
+        logger.info(
+            "T1 correction: %s (median %.0fms -> %.0fms)",
+            correction_result.correction_applied,
+            correction_result.median_t1_original,
+            correction_result.median_t1_corrected,
+        )
+
+        # Calculate QC metrics
         qc_ranges = get_tissue_t1_ranges(field_strength)
 
         # Use lenient range if specified
@@ -861,14 +945,15 @@ class T1Mapping(SimpleInterface):
         qc_pass = wm_pass and gm_pass
 
         # Build QC metrics dictionary
-        qc_metrics = {
+        has_b1 = isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map)
+        qc_metrics: dict[str, Any] = {
             "mean_t1_wm_ms": wm_t1_estimate,
             "mean_t1_gm_ms": gm_t1_estimate,
             "qc_pass": qc_pass,
             "wm_pass": wm_pass,
             "gm_pass": gm_pass,
             "skipped": False,
-            "b1_corrected": self.inputs.b1_map is not None,
+            "b1_corrected": has_b1,
             "n_flip_angles": n_fa,
             "flip_angles_deg": flip_angles_deg.tolist(),
             "tr_ms": tr_ms,
@@ -876,11 +961,31 @@ class T1Mapping(SimpleInterface):
             "wm_range_ms": wm_range,
             "gm_range_ms": gm_range,
             "lenient_qc": self.inputs.lenient_qc,
+            "csf_excluded": csf_excluded,
+            "median_filtered": True,
         }
+        qc_metrics["t1_correction"] = correction_info
 
         # Save output T1 map
         out_img = nib.Nifti1Image(t1_map, affine, header)
         nib.save(out_img, out_file)
+
+        # Generate QC plot
+        qc_plot_path: Optional[str] = None
+        try:
+            from pmriprep.utils.dce_qc_plots import generate_vfa_t1_qc_plot
+
+            vfa_data_list = [signal_data[i] for i in range(n_fa)]
+            qc_plot_path = generate_vfa_t1_qc_plot(
+                vfa_data=vfa_data_list,
+                flip_angles=flip_angles_deg.tolist(),
+                t1_map=t1_map,
+                brain_mask=brain_mask,
+                field_strength=field_strength,
+                correction_info=correction_info,
+            )
+        except Exception as e:
+            logger.warning("Failed to generate VFA T1 QC plot: %s", e, exc_info=True)
 
         # Set outputs
         self._results["out_file"] = out_file
@@ -888,6 +993,8 @@ class T1Mapping(SimpleInterface):
         self._results["mean_t1_gm"] = gm_t1_estimate
         self._results["qc_pass"] = qc_pass
         self._results["qc_metrics"] = qc_metrics
+        if qc_plot_path is not None:
+            self._results["qc_plot"] = qc_plot_path
 
         return runtime
 
@@ -978,6 +1085,359 @@ class T1Mapping(SimpleInterface):
         base = base.replace("_fa-", "_").split("_fa-")[0]
 
         return str(Path.cwd() / f"{base}_T1map{ext}")
+
+
+class VFAPreprocessInputSpec(BaseInterfaceInputSpec):
+    """Input specification for VFAPreprocess interface."""
+
+    vfa_files = traits.List(
+        File(exists=True),
+        mandatory=True,
+        minlen=2,
+        maxlen=5,
+        desc="List of VFA images at different flip angles",
+    )
+    flip_angles = traits.List(
+        traits.Float,
+        mandatory=True,
+        minlen=2,
+        maxlen=5,
+        desc="Flip angles in degrees corresponding to vfa_files",
+    )
+    skip_coregistration = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Skip inter-volume coregistration (if affines are identical)",
+    )
+    field_strength = traits.Float(
+        3.0,
+        usedefault=True,
+        desc="Magnetic field strength in Tesla for flip angle validation",
+    )
+    skip_flip_validation = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Skip flip angle validation",
+    )
+    tr = traits.Float(
+        desc="Repetition time in milliseconds (for flip angle validation)",
+    )
+
+
+class VFAPreprocessOutputSpec(TraitedSpec):
+    """Output specification for VFAPreprocess interface."""
+
+    out_files = traits.List(
+        File(exists=True),
+        desc="Coregistered VFA images",
+    )
+    reference_file = File(
+        exists=True,
+        desc="VFA image used as registration reference",
+    )
+    reference_index = traits.Int(desc="Index of reference volume in vfa_files")
+    qc_metrics = traits.Dict(desc="VFA preprocessing QC metrics")
+
+
+class VFAPreprocess(SimpleInterface):
+    """VFA inter-volume coregistration and quality assessment.
+
+    This interface performs:
+    1. Quality assessment (SNR/contrast scoring) per VFA volume
+    2. Selection of best-quality VFA as registration reference
+    3. Affine check: skip FLIRT if affines are identical
+    4. FLIRT 6DOF rigid coregistration for non-reference volumes
+    5. Optional flip angle validation from signal ratio
+
+    Parameters
+    ----------
+    vfa_files : list of str
+        VFA image paths at different flip angles.
+    flip_angles : list of float
+        Nominal flip angles in degrees.
+    skip_coregistration : bool
+        If True, skip FLIRT coregistration.
+    field_strength : float
+        Field strength in Tesla for flip angle validation.
+    skip_flip_validation : bool
+        If True, skip flip angle validation.
+    tr : float, optional
+        Repetition time in ms for flip angle validation.
+
+    Returns
+    -------
+    out_files : list of str
+        Coregistered VFA images.
+    reference_file : str
+        Path to the reference VFA image.
+    reference_index : int
+        Index of the reference volume.
+    qc_metrics : dict
+        QC metrics dictionary.
+    """
+
+    input_spec = VFAPreprocessInputSpec
+    output_spec = VFAPreprocessOutputSpec
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute VFA preprocessing."""
+        import shutil
+        import subprocess
+
+        import nibabel as nib  # type: ignore[import-untyped]
+        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+        vfa_files = list(self.inputs.vfa_files)
+        flip_angles = list(self.inputs.flip_angles)
+        n_fa = len(vfa_files)
+
+        qc_metrics: dict[str, Any] = {
+            "n_flip_angles": n_fa,
+            "flip_angles_deg": flip_angles,
+            "coregistered": False,
+            "affines_identical": False,
+        }
+
+        # Load all VFA images
+        vfa_imgs = [nib.load(f) for f in vfa_files]
+        vfa_data = [
+            img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            for img in vfa_imgs
+        ]
+
+        # Quality assessment: pick reference by SNR
+        snr_scores = []
+        for i, data in enumerate(vfa_data):
+            nonzero = data[data > 0]
+            if len(nonzero) > 100:
+                snr = float(np.mean(nonzero) / max(np.std(nonzero), 1e-10))
+            else:
+                snr = 0.0
+            snr_scores.append(snr)
+
+        ref_idx = int(np.argmax(snr_scores))
+        qc_metrics["snr_scores"] = snr_scores
+        qc_metrics["reference_index"] = ref_idx
+
+        # Check if affines are identical (skip coregistration if so)
+        ref_affine = vfa_imgs[ref_idx].affine  # type: ignore[attr-defined]
+        affines_identical = True
+        for i, img in enumerate(vfa_imgs):
+            if i == ref_idx:
+                continue
+            diff = float(np.abs(img.affine - ref_affine).max())  # type: ignore[attr-defined]
+            if diff > 1e-4:
+                affines_identical = False
+                break
+
+        qc_metrics["affines_identical"] = affines_identical
+
+        # Determine whether to coregister
+        do_coreg = (
+            not self.inputs.skip_coregistration
+            and not affines_identical
+            and n_fa >= 2
+        )
+
+        out_dir = Path.cwd()
+        out_files: list[str] = []
+
+        if do_coreg:
+            logger.info(
+                "VFA affines differ - coregistering %d volumes to reference (index %d)",
+                n_fa, ref_idx,
+            )
+            # Save reference as-is
+            ref_path = vfa_files[ref_idx]
+            correlations = []
+
+            for i in range(n_fa):
+                if i == ref_idx:
+                    # Copy reference unchanged
+                    out_name = out_dir / f"vfa_coreg_{i:02d}.nii.gz"
+                    shutil.copy(vfa_files[i], str(out_name))
+                    out_files.append(str(out_name))
+                    correlations.append(1.0)
+                    continue
+
+                # FLIRT 6DOF rigid coregistration
+                out_name = out_dir / f"vfa_coreg_{i:02d}.nii.gz"
+                mat_name = out_dir / f"vfa_coreg_{i:02d}.mat"
+
+                cmd = [
+                    "flirt",
+                    "-in", str(vfa_files[i]),
+                    "-ref", str(ref_path),
+                    "-out", str(out_name),
+                    "-omat", str(mat_name),
+                    "-dof", "6",
+                    "-cost", "normmi",
+                    "-searchrx", "-5", "5",
+                    "-searchry", "-5", "5",
+                    "-searchrz", "-5", "5",
+                    "-interp", "spline",
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+
+                if result.returncode != 0:
+                    logger.warning(
+                        "FLIRT coregistration failed for VFA %d: %s",
+                        i, result.stderr,
+                    )
+                    # Fall back to original
+                    shutil.copy(vfa_files[i], str(out_name))
+
+                out_files.append(str(out_name))
+
+                # Compute correlation for QC
+                try:
+                    coreg_img = nib.load(str(out_name))
+                    coreg_data = coreg_img.get_fdata()  # type: ignore[attr-defined]
+                    ref_data = vfa_data[ref_idx]
+                    mask = (ref_data > 0) & (coreg_data > 0)
+                    if np.sum(mask) > 100:
+                        corr = float(np.corrcoef(
+                            ref_data[mask].ravel(),
+                            coreg_data[mask].ravel(),
+                        )[0, 1])
+                    else:
+                        corr = 0.0
+                    correlations.append(corr)
+                except Exception:
+                    correlations.append(0.0)
+
+            qc_metrics["coregistered"] = True
+            qc_metrics["correlations"] = correlations
+        else:
+            # No coregistration needed — copy files as-is
+            for i, vfa_file in enumerate(vfa_files):
+                out_name = out_dir / f"vfa_coreg_{i:02d}.nii.gz"
+                shutil.copy(vfa_file, str(out_name))
+                out_files.append(str(out_name))
+
+            if affines_identical:
+                logger.info("VFA affines identical - skipping coregistration")
+            elif self.inputs.skip_coregistration:
+                logger.info("VFA coregistration skipped by user")
+
+        # Flip angle validation
+        if (
+            not self.inputs.skip_flip_validation
+            and n_fa >= 2
+            and isdefined(self.inputs.tr)
+        ):
+            fa_validation = self._validate_flip_angles(
+                vfa_data, flip_angles, self.inputs.tr, self.inputs.field_strength,
+            )
+            qc_metrics["flip_angle_validation"] = fa_validation
+
+        # Set outputs
+        self._results["out_files"] = out_files
+        self._results["reference_file"] = out_files[ref_idx]
+        self._results["reference_index"] = ref_idx
+        self._results["qc_metrics"] = qc_metrics
+
+        return runtime
+
+    def _validate_flip_angles(
+        self,
+        vfa_data: list[np.ndarray],
+        flip_angles: list[float],
+        tr_ms: float,
+        field_strength: float,
+    ) -> dict[str, Any]:
+        """Validate flip angles by comparing observed vs theoretical signal ratio.
+
+        Parameters
+        ----------
+        vfa_data : list of ndarray
+            VFA signal arrays.
+        flip_angles : list of float
+            Nominal flip angles in degrees.
+        tr_ms : float
+            Repetition time in milliseconds.
+        field_strength : float
+            Field strength in Tesla.
+
+        Returns
+        -------
+        dict
+            Validation results with confidence level.
+        """
+        from pmriprep.utils.dce_t1_validation import (
+            T1_TISSUE_REFERENCE,
+            get_field_strength_key,
+        )
+
+        field_key = get_field_strength_key(field_strength)
+        t1_assumed = T1_TISSUE_REFERENCE[field_key]["default"]
+
+        s1 = vfa_data[0]
+        s2 = vfa_data[1]
+        a1 = flip_angles[0]
+        a2 = flip_angles[1]
+
+        # Use central brain voxels
+        nz, ny, nx = s1.shape
+        z_sl = slice(int(nz * 0.3), int(nz * 0.7))
+        y_sl = slice(int(ny * 0.3), int(ny * 0.7))
+        x_sl = slice(int(nx * 0.3), int(nx * 0.7))
+        center_mask = np.zeros_like(s1, dtype=bool)
+        center_mask[z_sl, y_sl, x_sl] = (
+            (s1[z_sl, y_sl, x_sl] > 0) & (s2[z_sl, y_sl, x_sl] > 0)
+        )
+
+        if np.sum(center_mask) < 100:
+            return {"confidence": "low", "reason": "Insufficient voxels"}
+
+        ratio_observed = float(np.median(s2[center_mask]) / np.median(s1[center_mask]))
+
+        E1 = np.exp(-tr_ms / t1_assumed)
+        a1_rad = np.radians(a1)
+        a2_rad = np.radians(a2)
+
+        ratio_expected = (
+            (np.sin(a2_rad) / np.sin(a1_rad))
+            * ((1 - E1 * np.cos(a1_rad)) / (1 - E1 * np.cos(a2_rad)))
+        )
+
+        ratio_error = abs(ratio_observed - ratio_expected) / max(ratio_expected, 1e-6)
+
+        result: dict[str, Any] = {
+            "ratio_observed": ratio_observed,
+            "ratio_expected": ratio_expected,
+            "ratio_error_pct": ratio_error * 100,
+            "flip_angles_deg": [a1, a2],
+            "t1_assumed_ms": t1_assumed,
+        }
+
+        # Short TR tolerance
+        tolerance = 0.50 if tr_ms < 10 else 0.35
+
+        if ratio_error < 0.20:
+            result["confidence"] = "high"
+            result["status"] = "nominal_angles_correct"
+        elif ratio_error < tolerance:
+            result["confidence"] = "high"
+            result["status"] = "nominal_angles_accepted"
+        else:
+            result["confidence"] = "low"
+            result["status"] = "large_ratio_error"
+            # Check for swapped images
+            if ratio_observed < 0.8 and ratio_expected > 1.5:
+                ratio_swapped = 1.0 / ratio_observed
+                error_swapped = abs(ratio_swapped - ratio_expected) / ratio_expected
+                if error_swapped < 0.30:
+                    result["status"] = "images_may_be_swapped"
+                    result["confidence"] = "medium"
+
+            logger.warning(
+                "Flip angle validation: large ratio error (%.1f%%) "
+                "- T1 values may be unreliable",
+                ratio_error * 100,
+            )
+
+        return result
 
 
 class DCEPreprocessInputSpec(BaseInterfaceInputSpec):
