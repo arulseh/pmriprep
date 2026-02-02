@@ -514,9 +514,9 @@ def _compute_prebolus_mean(moco_file, baseline_frames):
 
 
 def _transform_nawm_to_dsc(
-    nawm_mask_file,
-    reference_file,
-    transform_matrix,
+    nawm_mask_file=None,
+    reference_file=None,
+    transform_matrix=None,
 ):
     """Transform NAWM mask from T1w space to DSC space.
 

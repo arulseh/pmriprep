@@ -176,6 +176,7 @@ def init_dce_preproc_wf(
                 # AFI B1+ mapping inputs
                 "afi_tr1_file",
                 "afi_tr2_file",
+                "afi_4d_file",
                 "afi_tr1",
                 "afi_tr2",
                 # DSC integration inputs
@@ -242,6 +243,7 @@ def init_dce_preproc_wf(
         (inputnode, b1_mapping, [
             ("afi_tr1_file", "tr1_file"),
             ("afi_tr2_file", "tr2_file"),
+            ("afi_4d_file", "afi_4d_file"),
             ("afi_tr1", "tr1"),
             ("afi_tr2", "tr2"),
             ("brain_mask", "brain_mask"),
@@ -317,6 +319,36 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
+    # Node 4b: Transform brain mask to DCE space
+    # ==========================================================================
+    # The brain mask from anat is in T1w space. After registration gives us
+    # the T1w→DCE transform, we resample the mask to DCE space.
+    transform_brain_mask = pe.Node(
+        niu.Function(
+            input_names=[
+                "mask_file",
+                "reference_file",
+                "transform_matrix",
+            ],
+            output_names=["out_file"],
+            function=_transform_mask_to_dce,
+        ),
+        name="transform_brain_mask",
+    )
+
+    workflow.connect([
+        (inputnode, transform_brain_mask, [
+            ("brain_mask", "mask_file"),
+        ]),
+        (dce_preprocess, transform_brain_mask, [
+            ("mean_img", "reference_file"),
+        ]),
+        (dce_registration, transform_brain_mask, [
+            ("out_matrix", "transform_matrix"),
+        ]),
+    ])
+
+    # ==========================================================================
     # Node 5: Signal to Concentration Conversion
     # ==========================================================================
     # This is implemented as a Function node to call the signal_to_concentration
@@ -385,8 +417,10 @@ def init_dce_preproc_wf(
         (signal_to_conc, aif_detection, [
             ("concentration_file", "concentration_file"),
         ]),
+        (transform_brain_mask, aif_detection, [
+            ("out_file", "brain_mask_file"),
+        ]),
         (inputnode, aif_detection, [
-            ("brain_mask", "brain_mask_file"),
             ("lesion_mask", "lesion_mask_file"),
             ("tr", "tr"),
             ("field_strength", "field_strength"),
@@ -415,8 +449,10 @@ def init_dce_preproc_wf(
         (aif_detection, pk_modeling, [
             ("out_aif_curve", "aif_file"),
         ]),
+        (transform_brain_mask, pk_modeling, [
+            ("out_file", "brain_mask_file"),
+        ]),
         (inputnode, pk_modeling, [
-            ("brain_mask", "brain_mask_file"),
             ("tr", "tr"),
         ]),
         (t1_mapping, pk_modeling, [
@@ -453,7 +489,9 @@ def init_dce_preproc_wf(
         (inputnode, tortuosity_corr, [
             ("dwi_file", "dwi_file"),
             ("dwi_bval", "dwi_bval"),
-            ("brain_mask", "brain_mask"),
+        ]),
+        (transform_brain_mask, tortuosity_corr, [
+            ("out_file", "brain_mask"),
         ]),
     ])
 
@@ -482,7 +520,9 @@ def init_dce_preproc_wf(
         ]),
         (inputnode, dsc_dce_validation, [
             ("dsc_cbv_file", "dsc_cbv_file"),
-            ("brain_mask", "brain_mask"),
+        ]),
+        (transform_brain_mask, dsc_dce_validation, [
+            ("out_file", "brain_mask"),
         ]),
     ])
 
@@ -581,6 +621,51 @@ def init_dce_preproc_wf(
 # =============================================================================
 # Helper Functions for Function Nodes
 # =============================================================================
+
+
+def _transform_mask_to_dce(
+    mask_file=None,
+    reference_file=None,
+    transform_matrix=None,
+):
+    """Transform brain mask from T1w space to DCE space.
+
+    Uses FSL FLIRT with nearest-neighbour interpolation to resample
+    the brain mask into DCE space.
+
+    Args:
+        mask_file: Path to brain mask in T1w space (or None).
+        reference_file: Path to DCE reference image for output geometry.
+        transform_matrix: Path to T1w→DCE FLIRT matrix.
+
+    Returns:
+        Path to transformed brain mask in DCE space, or None if no mask.
+    """
+    if mask_file is None:
+        return None
+
+    from pathlib import Path
+    import subprocess
+
+    mask_path = Path(mask_file)
+    if not mask_path.exists():
+        return None
+
+    out_dir = Path.cwd()
+    out_file = str(out_dir / "brain_mask_dce.nii.gz")
+
+    cmd = [
+        "flirt",
+        "-in", str(mask_file),
+        "-ref", str(reference_file),
+        "-out", out_file,
+        "-init", str(transform_matrix),
+        "-applyxfm",
+        "-interp", "nearestneighbour",
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+    return out_file
 
 
 def _signal_to_concentration_node(

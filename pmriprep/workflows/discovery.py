@@ -4,9 +4,13 @@ This module implements automatic detection of available imaging modalities
 in a BIDS dataset and determines which pipeline components can run.
 """
 
+import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Union
+
+logger = logging.getLogger("pmriprep.workflows.discovery")
 
 
 @dataclass
@@ -35,6 +39,10 @@ class ModalityAvailability:
     vfa: List[Path] = field(default_factory=list)
     afi: List[Path] = field(default_factory=list)
     dwi: Optional[Path] = None
+    afi_mode: Optional[str] = None  # "3d" or "4d"
+    afi_4d_file: Optional[Path] = None  # Set when afi_mode="4d"
+    afi_tr1_ms: Optional[float] = None  # TR1 in ms (from sidecar)
+    afi_tr2_ms: Optional[float] = None  # TR2 in ms (from sidecar)
 
 
 @dataclass
@@ -302,7 +310,11 @@ def _find_vfa(anat_dir: Path, perf_dir: Optional[Path] = None) -> List[Path]:
     return sorted(unique_vfa)
 
 
-def _find_afi(anat_dir: Path, perf_dir: Optional[Path] = None) -> List[Path]:
+def _find_afi(
+    anat_dir: Path,
+    perf_dir: Optional[Path] = None,
+    fmap_dir: Optional[Path] = None,
+) -> List[Path]:
     """Find AFI (Actual Flip Angle Imaging) images for B1+ mapping.
 
     AFI images are identified by:
@@ -312,6 +324,7 @@ def _find_afi(anat_dir: Path, perf_dir: Optional[Path] = None) -> List[Path]:
     Args:
         anat_dir: Path to the anatomical directory.
         perf_dir: Path to the perfusion directory (AFI sometimes stored there).
+        fmap_dir: Path to the fieldmap directory (AFI stored here per BIDS spec).
 
     Returns:
         List of paths to AFI images.
@@ -337,6 +350,10 @@ def _find_afi(anat_dir: Path, perf_dir: Optional[Path] = None) -> List[Path]:
         for pattern in afi_patterns:
             afi_files.extend(perf_dir.glob(pattern))
 
+    if fmap_dir:
+        for pattern in afi_patterns:
+            afi_files.extend(fmap_dir.glob(pattern))
+
     # Remove duplicates while preserving order
     seen = set()
     unique_afi: List[Path] = []
@@ -346,6 +363,99 @@ def _find_afi(anat_dir: Path, perf_dir: Optional[Path] = None) -> List[Path]:
             unique_afi.append(f)
 
     return sorted(unique_afi)
+
+
+def _classify_afi_data(
+    afi_files: List[Path],
+) -> dict[str, Optional[Union[str, Path, float]]]:
+    """Classify AFI files as 4D (single volume) or 3D (paired volumes).
+
+    Checks if a single AFI file contains 2 volumes (4D mode) or if there are
+    two separate 3D files with different TRs.
+
+    Args:
+        afi_files: List of discovered AFI NIfTI paths.
+
+    Returns:
+        Dict with keys: afi_mode ("3d", "4d", or None), afi_4d_file,
+        afi_tr1_ms, afi_tr2_ms.
+    """
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    result: dict[str, Optional[Union[str, Path, float]]] = {
+        "afi_mode": None,
+        "afi_4d_file": None,
+        "afi_tr1_ms": None,
+        "afi_tr2_ms": None,
+    }
+
+    if not afi_files:
+        return result
+
+    # Check if any single file is 4D with exactly 2 volumes
+    for afi_path in afi_files:
+        try:
+            img = nib.load(str(afi_path))
+            shape = img.shape  # type: ignore[attr-defined]
+            if len(shape) == 4 and shape[3] == 2:
+                logger.info("Found 4D AFI volume (2 timepoints): %s", afi_path)
+                result["afi_mode"] = "4d"
+                result["afi_4d_file"] = afi_path
+
+                # Try to extract TRs from sidecar
+                json_path = Path(
+                    str(afi_path)
+                    .replace(".nii.gz", ".json")
+                    .replace(".nii", ".json")
+                )
+                if json_path.exists():
+                    with open(json_path) as f:
+                        metadata = json.load(f)
+
+                    # RepetitionTimeExcitation (BIDS standard)
+                    if "RepetitionTimeExcitation" in metadata:
+                        tr_exc = metadata["RepetitionTimeExcitation"]
+                        if isinstance(tr_exc, list) and len(tr_exc) >= 2:
+                            trs = sorted([tr_exc[0] * 1000, tr_exc[1] * 1000])
+                            result["afi_tr1_ms"] = trs[0]
+                            result["afi_tr2_ms"] = trs[1]
+
+                    # Fallback: RepetitionTime array
+                    if result["afi_tr1_ms"] is None and "RepetitionTime" in metadata:
+                        rt = metadata["RepetitionTime"]
+                        if isinstance(rt, list) and len(rt) >= 2:
+                            trs = sorted([rt[0] * 1000, rt[1] * 1000])
+                            result["afi_tr1_ms"] = trs[0]
+                            result["afi_tr2_ms"] = trs[1]
+
+                return result
+        except Exception:
+            continue
+
+    # If we have 2+ 3D files, classify as 3D mode
+    if len(afi_files) >= 2:
+        result["afi_mode"] = "3d"
+        logger.info("Found %d separate AFI volumes (3D mode)", len(afi_files))
+
+        # Try to read TR values from sidecars for the first two files
+        for idx, afi_path in enumerate(afi_files[:2]):
+            json_path = Path(
+                str(afi_path)
+                .replace(".nii.gz", ".json")
+                .replace(".nii", ".json")
+            )
+            if json_path.exists():
+                with open(json_path) as f:
+                    meta = json.load(f)
+                tr_val = meta.get("RepetitionTime")
+                if tr_val is not None:
+                    tr_ms = float(tr_val) * 1000
+                    if idx == 0:
+                        result["afi_tr1_ms"] = tr_ms
+                    else:
+                        result["afi_tr2_ms"] = tr_ms
+
+    return result
 
 
 def _find_dwi(bids_dir: Path, subject: str, session: Optional[str]) -> Optional[Path]:
@@ -456,6 +566,10 @@ def discover_session_data(
 
     # Find anatomical directory
     anat_dir = base_path / "anat"
+    # Find fieldmap directory (AFI/B1 maps stored here per BIDS spec)
+    fmap_dir = base_path / "fmap"
+    fmap_dir_opt = fmap_dir if fmap_dir.is_dir() else None
+
     if anat_dir.is_dir():
         modalities.t1w_pre = _find_t1w_precontrast(anat_dir)
         modalities.t1w_ce_gad = _find_t1w_ce_gad(anat_dir)
@@ -463,7 +577,7 @@ def discover_session_data(
         modalities.flair = _find_flair(anat_dir)
         modalities.pdw = _find_pdw(anat_dir)
         modalities.vfa = _find_vfa(anat_dir)
-        modalities.afi = _find_afi(anat_dir)
+        modalities.afi = _find_afi(anat_dir, fmap_dir=fmap_dir_opt)
 
     # Find perfusion directory
     perf_dir = base_path / "perf"
@@ -473,7 +587,19 @@ def discover_session_data(
         # Also check perf for VFA/AFI
         if anat_dir.is_dir():
             modalities.vfa = _find_vfa(anat_dir, perf_dir)
-            modalities.afi = _find_afi(anat_dir, perf_dir)
+            modalities.afi = _find_afi(anat_dir, perf_dir, fmap_dir=fmap_dir_opt)
+
+    # Classify AFI data as 4D or 3D
+    if modalities.afi:
+        afi_info = _classify_afi_data(modalities.afi)
+        if afi_info["afi_mode"] is not None:
+            modalities.afi_mode = str(afi_info["afi_mode"])
+        if afi_info["afi_4d_file"] is not None:
+            modalities.afi_4d_file = Path(str(afi_info["afi_4d_file"]))
+        if afi_info["afi_tr1_ms"] is not None:
+            modalities.afi_tr1_ms = float(afi_info["afi_tr1_ms"])
+        if afi_info["afi_tr2_ms"] is not None:
+            modalities.afi_tr2_ms = float(afi_info["afi_tr2_ms"])
 
     # Find DWI
     modalities.dwi = _find_dwi(bids_path, subject, session)

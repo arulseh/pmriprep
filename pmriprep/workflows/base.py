@@ -979,15 +979,31 @@ def init_pmriprep_wf(
                 (inputnode, dce_wf, [("vfa_files", "inputnode.vfa_files")]),
             ])
         if session_data.modalities.afi:
-            # AFI typically has 2 files - connect first two if available
-            afi_list = session_data.modalities.afi
-            if len(afi_list) >= 2:
-                workflow.connect([
-                    (inputnode, dce_wf, [
-                        (("afi_files", lambda x: x[0] if x else None), "inputnode.afi_tr1_file"),
-                        (("afi_files", lambda x: x[1] if len(x) > 1 else None), "inputnode.afi_tr2_file"),
-                    ]),
-                ])
+            afi_mode = session_data.modalities.afi_mode
+
+            if afi_mode == "4d" and session_data.modalities.afi_4d_file:
+                # 4D mode: single file with 2 volumes
+                dce_wf.inputs.inputnode.afi_4d_file = str(
+                    session_data.modalities.afi_4d_file
+                )
+                # Pass TR overrides from discovery if available
+                if session_data.modalities.afi_tr1_ms is not None:
+                    dce_wf.inputs.inputnode.afi_tr1 = session_data.modalities.afi_tr1_ms
+                if session_data.modalities.afi_tr2_ms is not None:
+                    dce_wf.inputs.inputnode.afi_tr2 = session_data.modalities.afi_tr2_ms
+            else:
+                # 3D mode: separate files (existing behavior)
+                afi_list = session_data.modalities.afi
+                if len(afi_list) >= 2:
+                    dce_wf.inputs.inputnode.afi_tr1_file = str(afi_list[0])
+                    dce_wf.inputs.inputnode.afi_tr2_file = str(afi_list[1])
+                    # Read AFI TR values from BIDS sidecar JSONs
+                    # B1Mapping expects TR in ms; BIDS stores RepetitionTime in s
+                    afi_sidecar_1 = _read_bids_sidecar(afi_list[0])
+                    afi_sidecar_2 = _read_bids_sidecar(afi_list[1])
+                    if afi_sidecar_1["tr"] is not None and afi_sidecar_2["tr"] is not None:
+                        dce_wf.inputs.inputnode.afi_tr1 = afi_sidecar_1["tr"] * 1000
+                        dce_wf.inputs.inputnode.afi_tr2 = afi_sidecar_2["tr"] * 1000
 
         # Connect DWI for tortuosity if available
         if session_data.modalities.dwi:

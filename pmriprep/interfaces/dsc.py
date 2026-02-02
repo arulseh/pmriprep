@@ -522,8 +522,6 @@ class DSCRegistrationInputSpec(CommandLineInputSpec):
     t1w_file = File(
         exists=True,
         mandatory=True,
-        argstr="%s",
-        position=-1,
         desc="T1-weighted structural image to register to DSC space",
     )
     dsc_mean = File(
@@ -685,7 +683,7 @@ class DSCRegistration(CommandLine):
     input_spec = DSCRegistrationInputSpec
     output_spec = DSCRegistrationOutputSpec
 
-    _cmd = "bash -c"
+    _cmd = "flirt"
 
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""
@@ -720,10 +718,9 @@ class DSCRegistration(CommandLine):
 
         return str(out_file.parent / f"{base}.mat")
 
-    def _format_arg(
-        self, name: str, trait_spec: Any, value: Any
-    ) -> str:
-        """Format command line arguments.
+    @property
+    def cmdline(self) -> str:
+        """Build the two-stage FLIRT registration command.
 
         Implements two-stage FLIRT registration:
           Stage 1: Coarse global search (normcorr, wide search range)
@@ -732,142 +729,117 @@ class DSCRegistration(CommandLine):
         For BBR mode (use_flirt=False), the two-stage FLIRT serves as
         initialization before the BBR refinement step.
         """
-        if name == "t1w_file":
-            t1w_file = str(value)
-            dsc_mean = str(self.inputs.dsc_mean)
-            out_file = self._gen_outfilename()
-            out_matrix = self._gen_matfilename()
-            use_flirt = self.inputs.use_flirt
-            dof = self.inputs.dof
-            cost = self.inputs.cost
+        t1w_file = str(self.inputs.t1w_file)
+        dsc_mean = str(self.inputs.dsc_mean)
+        out_file = self._gen_outfilename()
+        out_matrix = self._gen_matfilename()
+        use_flirt = self.inputs.use_flirt
+        dof = self.inputs.dof
+        cost = self.inputs.cost
 
-            cmd_parts = []
+        cmd_parts: list[str] = []
 
-            # Determine file extension for temp files
-            out_path = Path(out_file)
-            ext = ".nii.gz" if out_path.name.endswith(".nii.gz") else ".nii"
+        # Determine file extension for temp files
+        out_path = Path(out_file)
+        ext = ".nii.gz" if out_path.name.endswith(".nii.gz") else ".nii"
 
-            # Check if we have a lesion mask for cost function weighting
-            lesion_mask = getattr(self.inputs, "lesion_mask", None)
-            weight_file: Optional[str] = None
-            if lesion_mask and Path(lesion_mask).exists():
-                # Create weight image: weight = 1 - lesion_mask
-                weight_file = str(out_path.parent / f"_tmp_weight{ext}")
+        # Check if we have a lesion mask for cost function weighting
+        lesion_mask = getattr(self.inputs, "lesion_mask", None)
+        weight_file: Optional[str] = None
+        if lesion_mask and Path(lesion_mask).exists():
+            weight_file = str(out_path.parent / f"_tmp_weight{ext}")
+            invert_cmd = f"fslmaths {lesion_mask} -mul -1 -add 1 {weight_file}"
+            cmd_parts.append(invert_cmd)
 
-                # fslmaths to create weight: 1 - lesion_mask
-                invert_cmd = f"fslmaths {lesion_mask} -mul -1 -add 1 {weight_file}"
-                cmd_parts.append(invert_cmd)
+        # Temporary matrix for stage 1 coarse registration
+        stage1_matrix = str(out_path.parent / "_tmp_stage1.mat")
 
-            # Temporary matrix for stage 1 coarse registration
-            stage1_matrix = str(out_path.parent / "_tmp_stage1.mat")
+        # Weight flags string (reused across stages)
+        # Lesion weight is in T1w space (same as -in), so only use -inweight.
+        weight_flags = ""
+        if weight_file:
+            weight_flags = f" -inweight {weight_file}"
 
-            # Weight flags string (reused across stages)
-            # Lesion weight is in T1w space (same as -in), so only use -inweight.
-            # Cannot use -refweight because DSC reference has different dimensions.
-            weight_flags = ""
-            if weight_file:
-                weight_flags = f" -inweight {weight_file}"
+        # --- Stage 1: Coarse global search ---
+        stage1_cmd = (
+            f"flirt -in {t1w_file} -ref {dsc_mean} "
+            f"-omat {stage1_matrix} "
+            f"-dof {dof} -cost normcorr "
+            f"-searchrx -180 180 -searchry -180 180 -searchrz -180 180 "
+            f"-coarsesearch 30 -finesearch 10"
+        )
+        stage1_cmd += weight_flags
+        cmd_parts.append(stage1_cmd)
 
-            # --- Stage 1: Coarse global search ---
-            # Uses normcorr cost with wide search range to avoid local minima
-            # when T1w and DSC have different orientations
-            stage1_cmd = (
+        if use_flirt:
+            # --- Stage 2: Refined registration ---
+            stage2_cmd = (
                 f"flirt -in {t1w_file} -ref {dsc_mean} "
-                f"-omat {stage1_matrix} "
-                f"-dof {dof} -cost normcorr "
-                f"-searchrx -180 180 -searchry -180 180 -searchrz -180 180 "
-                f"-coarsesearch 30 -finesearch 10"
+                f"-out {out_file} -omat {out_matrix} "
+                f"-dof {dof} -cost {cost} "
+                f"-init {stage1_matrix} "
+                f"-searchrx -30 30 -searchry -30 30 -searchrz -30 30"
             )
-            stage1_cmd += weight_flags
-            cmd_parts.append(stage1_cmd)
+            stage2_cmd += weight_flags
+            cmd_parts.append(stage2_cmd)
 
-            if use_flirt:
-                # --- Stage 2: Refined registration ---
-                # Uses normmi cost with narrow search, initialized from stage 1
-                stage2_cmd = (
+            cmd_parts.append(f"rm -f {stage1_matrix}")
+        else:
+            # BBR mode: two-stage FLIRT as initialization for BBR
+            import warnings
+            warnings.warn(
+                "BBR registration requested. BBR assumes similar contrast "
+                "states between T1w and DSC. If DSC was acquired after "
+                "contrast injection, BBR may be suboptimal. Consider FLIRT "
+                "mode (use_flirt=True)."
+            )
+            wm_seg = getattr(self.inputs, "wm_seg", None)
+
+            stage2_matrix = str(out_path.parent / "_tmp_stage2.mat")
+            stage2_cmd = (
+                f"flirt -in {t1w_file} -ref {dsc_mean} "
+                f"-omat {stage2_matrix} "
+                f"-dof {dof} -cost {cost} "
+                f"-init {stage1_matrix} "
+                f"-searchrx -30 30 -searchry -30 30 -searchrz -30 30"
+            )
+            stage2_cmd += weight_flags
+            cmd_parts.append(stage2_cmd)
+
+            cmd_parts.append(f"rm -f {stage1_matrix}")
+
+            if wm_seg and Path(wm_seg).exists():
+                wm_thresh = str(out_path.parent / f"_tmp_wm_thresh{ext}")
+                cmd_parts.append(
+                    f"fslmaths {wm_seg} -thr 0.5 -bin {wm_thresh}"
+                )
+
+                bbr_cmd = (
                     f"flirt -in {t1w_file} -ref {dsc_mean} "
                     f"-out {out_file} -omat {out_matrix} "
-                    f"-dof {dof} -cost {cost} "
-                    f"-init {stage1_matrix} "
-                    f"-searchrx -30 30 -searchry -30 30 -searchrz -30 30"
+                    f"-dof {dof} -cost bbr "
+                    f"-init {stage2_matrix} "
+                    f"-wmseg {wm_thresh}"
                 )
-                stage2_cmd += weight_flags
-                cmd_parts.append(stage2_cmd)
+                if weight_file:
+                    bbr_cmd += f" -inweight {weight_file}"
 
-                # Clean up stage 1 temp matrix
-                cmd_parts.append(f"rm -f {stage1_matrix}")
+                cmd_parts.append(bbr_cmd)
+                cmd_parts.append(f"rm -f {stage2_matrix} {wm_thresh}")
             else:
-                # BBR mode: two-stage FLIRT as initialization for BBR
-                import warnings
-                warnings.warn(
-                    "BBR registration requested. BBR assumes similar contrast "
-                    "states between T1w and DSC. If DSC was acquired after "
-                    "contrast injection, BBR may be suboptimal. Consider FLIRT "
-                    "mode (use_flirt=True)."
-                )
-                wm_seg = getattr(self.inputs, "wm_seg", None)
-
-                # Stage 2: Refined FLIRT (same as FLIRT path but saves to
-                # a temp matrix that becomes the BBR init)
-                stage2_matrix = str(out_path.parent / "_tmp_stage2.mat")
-                stage2_cmd = (
+                apply_cmd = (
                     f"flirt -in {t1w_file} -ref {dsc_mean} "
-                    f"-omat {stage2_matrix} "
-                    f"-dof {dof} -cost {cost} "
-                    f"-init {stage1_matrix} "
-                    f"-searchrx -30 30 -searchry -30 30 -searchrz -30 30"
+                    f"-out {out_file} -init {stage2_matrix} -applyxfm"
                 )
-                stage2_cmd += weight_flags
-                cmd_parts.append(stage2_cmd)
+                cmd_parts.append(apply_cmd)
+                cmd_parts.append(f"cp {stage2_matrix} {out_matrix}")
+                cmd_parts.append(f"rm -f {stage2_matrix}")
 
-                # Clean up stage 1 temp matrix
-                cmd_parts.append(f"rm -f {stage1_matrix}")
+        # Clean up weight file if created
+        if weight_file:
+            cmd_parts.append(f"rm -f {weight_file}")
 
-                # BBR refinement if wm_seg is available
-                if wm_seg and Path(wm_seg).exists():
-                    # Threshold WM segmentation for BBR
-                    wm_thresh = str(out_path.parent / f"_tmp_wm_thresh{ext}")
-                    cmd_parts.append(
-                        f"fslmaths {wm_seg} -thr 0.5 -bin {wm_thresh}"
-                    )
-
-                    # FLIRT with BBR cost function, init from two-stage result
-                    bbr_cmd = (
-                        f"flirt -in {t1w_file} -ref {dsc_mean} "
-                        f"-out {out_file} -omat {out_matrix} "
-                        f"-dof {dof} -cost bbr "
-                        f"-init {stage2_matrix} "
-                        f"-wmseg {wm_thresh}"
-                    )
-
-                    if weight_file:
-                        bbr_cmd += f" -inweight {weight_file}"
-
-                    cmd_parts.append(bbr_cmd)
-
-                    # Clean up temp files
-                    cmd_parts.append(f"rm -f {stage2_matrix} {wm_thresh}")
-                else:
-                    # No WM seg available, use stage 2 result directly
-                    apply_cmd = (
-                        f"flirt -in {t1w_file} -ref {dsc_mean} "
-                        f"-out {out_file} -init {stage2_matrix} -applyxfm"
-                    )
-                    cmd_parts.append(apply_cmd)
-
-                    # Copy stage 2 matrix to final output
-                    cmd_parts.append(f"cp {stage2_matrix} {out_matrix}")
-                    cmd_parts.append(f"rm -f {stage2_matrix}")
-
-            # Clean up weight file if created
-            if weight_file:
-                cmd_parts.append(f"rm -f {weight_file}")
-
-            cmd = "'" + " && ".join(cmd_parts) + "'"
-            return cmd
-
-        result: str = super()._format_arg(name, trait_spec, value)
-        return result
+        return "bash -c '" + " && ".join(cmd_parts) + "'"
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs and compute QC metrics."""

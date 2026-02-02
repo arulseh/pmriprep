@@ -5,6 +5,7 @@ including B1+ mapping, T1 mapping, motion correction, registration, and
 signal processing.
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
@@ -19,27 +20,29 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
 )
 
+logger = logging.getLogger("pmriprep.interfaces.dce")
+
 
 class B1MappingInputSpec(BaseInterfaceInputSpec):
     """Input specification for B1Mapping interface."""
 
     tr1_file = File(
         exists=True,
-        mandatory=True,
         desc="AFI image acquired with short TR (TR1, typically ~20ms)",
     )
     tr2_file = File(
         exists=True,
-        mandatory=True,
         desc="AFI image acquired with long TR (TR2, typically ~100ms)",
     )
     tr1 = traits.Float(
-        mandatory=True,
         desc="Short TR value in milliseconds (TR1, typically 20ms)",
     )
     tr2 = traits.Float(
-        mandatory=True,
         desc="Long TR value in milliseconds (TR2, typically 100ms)",
+    )
+    afi_4d_file = File(
+        exists=True,
+        desc="Single 4D AFI volume with 2 timepoints (alternative to separate tr1/tr2 files)",
     )
     nominal_flip_angle = traits.Float(
         60.0,
@@ -159,6 +162,204 @@ class B1Mapping(SimpleInterface):
     input_spec = B1MappingInputSpec
     output_spec = B1MappingOutputSpec
 
+    def _load_afi_data(
+        self,
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], Any, Any, float, float]:
+        """Load AFI data from either a single 4D volume or separate 3D volumes.
+
+        For 4D input, auto-detects TR1/TR2 ordering from JSON sidecar using:
+        1. RepetitionTimeExcitation array (BIDS standard for per-volume TRs)
+        2. RepetitionTime array (if present)
+        3. PerFrameFunctionalGroupsSequence (enhanced DICOM)
+        4. Fallback to default TR values (20/100ms) if no JSON metadata
+
+        Returns
+        -------
+        tuple
+            (s1, s2, affine, header, tr1_ms, tr2_ms) where s1 is the short-TR
+            signal, s2 is the long-TR signal, and TRs are in milliseconds.
+        """
+        import json as _json
+
+        import nibabel as nib  # type: ignore[import-untyped]
+        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+        afi_4d = self.inputs.afi_4d_file if isdefined(self.inputs.afi_4d_file) else None
+        tr1_file = self.inputs.tr1_file if isdefined(self.inputs.tr1_file) else None
+        tr2_file = self.inputs.tr2_file if isdefined(self.inputs.tr2_file) else None
+        tr1_override = self.inputs.tr1 if isdefined(self.inputs.tr1) else None
+        tr2_override = self.inputs.tr2 if isdefined(self.inputs.tr2) else None
+
+        if afi_4d is not None:
+            # --- 4D mode: single file with 2 volumes ---
+            logger.info("Loading 4D AFI: %s", afi_4d)
+
+            afi_img = nib.load(afi_4d)
+            afi_data = afi_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            affine = afi_img.affine  # type: ignore[attr-defined]
+            header = afi_img.header  # type: ignore[attr-defined]
+
+            if afi_data.ndim != 4:
+                raise ValueError(f"Expected 4D AFI volume, got {afi_data.ndim}D")
+            if afi_data.shape[3] != 2:
+                raise ValueError(
+                    f"Expected 2 volumes in 4D AFI, got {afi_data.shape[3]}"
+                )
+
+            # Try to read TR values from JSON sidecar
+            afi_path = Path(str(afi_4d))
+            json_path = Path(
+                str(afi_4d).replace(".nii.gz", ".json").replace(".nii", ".json")
+            )
+
+            vol0_tr: Optional[float] = None
+            vol1_tr: Optional[float] = None
+
+            if json_path.exists():
+                logger.info("Reading JSON sidecar: %s", json_path.name)
+                with open(json_path) as f:
+                    metadata = _json.load(f)
+
+                # Priority 1: RepetitionTimeExcitation (BIDS standard)
+                if "RepetitionTimeExcitation" in metadata:
+                    tr_exc = metadata["RepetitionTimeExcitation"]
+                    if isinstance(tr_exc, list) and len(tr_exc) >= 2:
+                        vol0_tr = tr_exc[0] * 1000  # s -> ms
+                        vol1_tr = tr_exc[1] * 1000
+                        logger.info(
+                            "Found RepetitionTimeExcitation: [%.1f, %.1f] ms",
+                            vol0_tr, vol1_tr,
+                        )
+
+                # Priority 2: RepetitionTime array
+                if vol0_tr is None and "RepetitionTime" in metadata:
+                    rt = metadata["RepetitionTime"]
+                    if isinstance(rt, list) and len(rt) >= 2:
+                        vol0_tr = rt[0] * 1000
+                        vol1_tr = rt[1] * 1000
+                        logger.info(
+                            "Found RepetitionTime array: [%.1f, %.1f] ms",
+                            vol0_tr, vol1_tr,
+                        )
+
+                # Priority 3: PerFrameFunctionalGroupsSequence (enhanced DICOM)
+                # NOTE: DICOM RepetitionTime (0018,0080) is natively in ms.
+                # dcm2niix does NOT normalize this field when embedded in
+                # PerFrameFunctionalGroupsSequence, so values are already in ms.
+                if vol0_tr is None and "PerFrameFunctionalGroupsSequence" in metadata:
+                    pfgs = metadata["PerFrameFunctionalGroupsSequence"]
+                    if isinstance(pfgs, list) and len(pfgs) >= 2:
+                        try:
+                            vol0_tr = pfgs[0].get(
+                                "MRTimingAndRelatedParametersSequence", [{}]
+                            )[0].get("RepetitionTime", None)
+                            vol1_tr = pfgs[1].get(
+                                "MRTimingAndRelatedParametersSequence", [{}]
+                            )[0].get("RepetitionTime", None)
+                            if vol0_tr is not None and vol1_tr is not None:
+                                logger.info(
+                                    "Found per-frame TRs: [%.1f, %.1f] ms",
+                                    vol0_tr, vol1_tr,
+                                )
+                        except (KeyError, IndexError, TypeError):
+                            pass
+
+            # Apply override values if provided
+            if tr1_override is not None and tr2_override is not None:
+                logger.info(
+                    "Using override TR values: TR1=%.1fms, TR2=%.1fms",
+                    tr1_override, tr2_override,
+                )
+                tr1_ms = float(tr1_override)
+                tr2_ms = float(tr2_override)
+                s1 = afi_data[:, :, :, 0]
+                s2 = afi_data[:, :, :, 1]
+            elif vol0_tr is not None and vol1_tr is not None:
+                # Auto-detect volume ordering: shorter TR = TR1
+                if vol0_tr < vol1_tr:
+                    tr1_ms = vol0_tr
+                    tr2_ms = vol1_tr
+                    s1 = afi_data[:, :, :, 0]
+                    s2 = afi_data[:, :, :, 1]
+                    logger.info(
+                        "Volume ordering: vol0=TR1 (%.1fms), vol1=TR2 (%.1fms)",
+                        tr1_ms, tr2_ms,
+                    )
+                else:
+                    tr1_ms = vol1_tr
+                    tr2_ms = vol0_tr
+                    s1 = afi_data[:, :, :, 1]
+                    s2 = afi_data[:, :, :, 0]
+                    logger.info(
+                        "Volume ordering: vol0=TR2 (%.1fms), vol1=TR1 (%.1fms)",
+                        tr2_ms, tr1_ms,
+                    )
+            else:
+                # No TR info found - use defaults, assume standard ordering
+                logger.warning(
+                    "No TR values in JSON sidecar - using defaults (20/100 ms)"
+                )
+                tr1_ms = tr1_override if tr1_override is not None else 20.0
+                tr2_ms = tr2_override if tr2_override is not None else 100.0
+                s1 = afi_data[:, :, :, 0]
+                s2 = afi_data[:, :, :, 1]
+
+            return s1, s2, affine, header, tr1_ms, tr2_ms
+
+        elif tr1_file is not None and tr2_file is not None:
+            # --- 3D mode: separate files ---
+            logger.info("Loading separate 3D AFI volumes")
+
+            tr1_img = nib.load(tr1_file)
+            tr2_img = nib.load(tr2_file)
+
+            s1 = tr1_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            s2 = tr2_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            affine = tr1_img.affine  # type: ignore[attr-defined]
+            header = tr1_img.header  # type: ignore[attr-defined]
+
+            # Get TR values: override > JSON sidecar > defaults
+            if tr1_override is not None:
+                tr1_ms = float(tr1_override)
+            else:
+                tr1_json = Path(
+                    str(tr1_file).replace(".nii.gz", ".json").replace(".nii", ".json")
+                )
+                if tr1_json.exists():
+                    with open(tr1_json) as f:
+                        tr1_ms = _json.load(f).get("RepetitionTime", 0.020) * 1000
+                else:
+                    tr1_ms = 20.0
+
+            if tr2_override is not None:
+                tr2_ms = float(tr2_override)
+            else:
+                tr2_json = Path(
+                    str(tr2_file).replace(".nii.gz", ".json").replace(".nii", ".json")
+                )
+                if tr2_json.exists():
+                    with open(tr2_json) as f:
+                        tr2_ms = _json.load(f).get("RepetitionTime", 0.100) * 1000
+                else:
+                    tr2_ms = 100.0
+
+            # Auto-correct TR ordering: TR1 must be the short TR, TR2 the long TR.
+            # Files may arrive in arbitrary order (e.g., sorted alphabetically).
+            if tr1_ms > tr2_ms:
+                logger.info(
+                    "Swapping TR ordering: tr1_file had TR=%.1fms > tr2_file TR=%.1fms",
+                    tr1_ms, tr2_ms,
+                )
+                s1, s2 = s2, s1
+                tr1_ms, tr2_ms = tr2_ms, tr1_ms
+
+            return s1, s2, affine, header, tr1_ms, tr2_ms
+
+        else:
+            raise ValueError(
+                "Must provide either afi_4d_file or both tr1_file and tr2_file"
+            )
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute B1+ mapping computation."""
         import nibabel as nib  # type: ignore[import-untyped]
@@ -176,10 +377,23 @@ class B1Mapping(SimpleInterface):
 
         # Check if B1 mapping should be skipped
         if self.inputs.skip_b1:
-            # Load one image to get the shape and affine
-            tr1_img = nib.load(self.inputs.tr1_file)
-            shape = tr1_img.shape[:3]  # type: ignore[attr-defined]  # 3D shape
-            affine = tr1_img.affine  # type: ignore[attr-defined]
+            from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+            # Try to get shape/affine from AFI data; fall back to brain_mask
+            try:
+                s1, s2, affine, header, tr1_ms, tr2_ms = self._load_afi_data()
+                shape = s1.shape[:3]
+            except ValueError:
+                # No AFI data available — use brain mask for shape/affine
+                if isdefined(self.inputs.brain_mask) and self.inputs.brain_mask:
+                    mask_img = nib.load(self.inputs.brain_mask)
+                    shape = mask_img.shape[:3]  # type: ignore[attr-defined]
+                    affine = mask_img.affine  # type: ignore[attr-defined]
+                else:
+                    raise ValueError(
+                        "skip_b1=True but no AFI data or brain_mask provided "
+                        "to determine output shape"
+                    )
 
             # Create unity B1+ map
             b1_map = np.ones(shape, dtype=np.float32)
@@ -201,18 +415,10 @@ class B1Mapping(SimpleInterface):
             }
             return runtime
 
-        # Load AFI images
-        tr1_img = nib.load(self.inputs.tr1_file)
-        tr2_img = nib.load(self.inputs.tr2_file)
-
-        s1 = tr1_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-        s2 = tr2_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-        affine = tr1_img.affine  # type: ignore[attr-defined]
-        header = tr1_img.header  # type: ignore[attr-defined]
+        # Load AFI data (supports both 4D and 3D modes)
+        s1, s2, affine, header, tr1_ms, tr2_ms = self._load_afi_data()
 
         # Get TR ratio
-        tr1_ms = self.inputs.tr1
-        tr2_ms = self.inputs.tr2
         n = tr2_ms / tr1_ms
 
         # Compute signal ratio r = S1/S2
@@ -260,21 +466,42 @@ class B1Mapping(SimpleInterface):
         # Convert to float32 for storage
         b1_map = b1_map.astype(np.float32)
 
-        # Load brain mask for QC if provided
+        # Load brain mask for QC if provided.
+        # Brain mask may be in T1w space (different resolution from AFI).
+        # Following perf-plus: require exact shape+affine match, ignore mask
+        # entirely if mismatched (no resampling for QC).
+        mask: Optional[np.ndarray] = None
         if self.inputs.brain_mask:
             mask_img = nib.load(self.inputs.brain_mask)
-            mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
-        else:
-            # Use simple thresholding on S2 image as rough brain mask
-            threshold = np.percentile(s2[s2 > 0], 10)
-            mask = s2 > threshold
+            mask_data = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+            mask_affine = mask_img.affine  # type: ignore[attr-defined]
 
-        # Calculate QC metrics within brain mask
-        b1_in_mask = b1_map[mask]
+            shape_match = mask_data.shape[:3] == b1_map.shape[:3]
+            affine_diff = float(np.abs(affine - mask_affine).max())
+
+            if not shape_match:
+                logger.warning(
+                    "Brain mask shape %s != B1+ map shape %s — ignoring mask",
+                    mask_data.shape[:3], b1_map.shape[:3],
+                )
+            elif affine_diff > 1e-4:
+                logger.warning(
+                    "Brain mask affine mismatch (max diff=%.6f) — ignoring mask",
+                    affine_diff,
+                )
+            else:
+                mask = mask_data
+
+        # Calculate QC metrics within brain mask (or whole volume if no mask)
+        if mask is not None:
+            b1_in_roi = b1_map[mask]
+        else:
+            # No usable mask — use all non-zero voxels
+            b1_in_roi = b1_map[b1_map > 0]
 
         # Remove outliers for robust statistics
-        b1_clean = b1_in_mask[
-            (b1_in_mask > 0.5) & (b1_in_mask < 1.5)
+        b1_clean = b1_in_roi[
+            (b1_in_roi > 0.5) & (b1_in_roi < 1.5)
         ]
 
         if len(b1_clean) > 0:
@@ -320,10 +547,20 @@ class B1Mapping(SimpleInterface):
 
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""
-        if self.inputs.out_file:
+        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+        if isdefined(self.inputs.out_file) and self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.tr1_file)
+        # Determine source file for naming
+        if isdefined(self.inputs.afi_4d_file) and self.inputs.afi_4d_file:
+            in_file = Path(str(self.inputs.afi_4d_file))
+        elif isdefined(self.inputs.tr1_file) and self.inputs.tr1_file:
+            in_file = Path(self.inputs.tr1_file)
+        else:
+            # No input file available (e.g., skip_b1 with no AFI data)
+            return str(Path.cwd() / "B1plus.nii.gz")
+
         # Handle .nii.gz extension
         if in_file.name.endswith(".nii.gz"):
             base = in_file.name[:-7]
@@ -957,7 +1194,15 @@ class DCEPreprocess(SimpleInterface):
         brain_mask: Optional[np.ndarray] = None
         if self.inputs.brain_mask:
             mask_img = nib.load(self.inputs.brain_mask)
-            brain_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+            mask_data = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+            if mask_data.shape == dce_data.shape[:3]:
+                brain_mask = mask_data
+            else:
+                logger.warning(
+                    "Brain mask shape %s != DCE data shape %s, "
+                    "ignoring mask (will use signal-based threshold)",
+                    mask_data.shape, dce_data.shape[:3],
+                )
 
         # Detect or use specified baseline frames
         if self.inputs.baseline_frames > 0:
@@ -1101,10 +1346,37 @@ class DCEPreprocess(SimpleInterface):
             self._results["n_outliers"] = 0
             self._results["outlier_frames"] = []
 
+        # Compute mean of motion-corrected data for downstream registration.
+        # mcflirt -stats creates {out}_meanvol.nii.gz, but we also compute
+        # our own mean for robustness (mcflirt may not always produce it).
+        mcflirt_mean = f"{out_base}_meanvol.nii.gz"
+        mean_out = self._gen_mean_filename()
+
+        if Path(mcflirt_mean).exists():
+            # Use mcflirt's mean volume, rename to our expected path
+            import shutil
+            shutil.copy(mcflirt_mean, mean_out)
+        elif Path(f"{out_base}.nii.gz").exists():
+            # Compute mean from motion-corrected 4D
+            moco_img = nib.load(f"{out_base}.nii.gz")
+            moco_data = moco_img.get_fdata()  # type: ignore[attr-defined]
+            mean_data = np.mean(moco_data, axis=3).astype(np.float32)
+            mean_img = nib.Nifti1Image(
+                mean_data,
+                moco_img.affine,  # type: ignore[attr-defined]
+                moco_img.header,  # type: ignore[attr-defined]
+            )
+            nib.save(mean_img, mean_out)
+        else:
+            raise FileNotFoundError(
+                f"Neither mcflirt mean ({mcflirt_mean}) nor "
+                f"motion-corrected output ({out_base}.nii.gz) found"
+            )
+
         # Set outputs
         self._results["out_file"] = out_file
         self._results["out_params"] = params_file
-        self._results["mean_img"] = f"{out_base}_mean_reg.nii.gz"
+        self._results["mean_img"] = mean_out
         self._results["baseline_frames"] = baseline_frames
         self._results["baseline_indices"] = baseline_indices
         self._results["bolus_arrival_frame"] = bolus_frame

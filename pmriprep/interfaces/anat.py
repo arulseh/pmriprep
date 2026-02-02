@@ -23,13 +23,9 @@ class ReorientAndCropInputSpec(CommandLineInputSpec):
     in_file = File(
         exists=True,
         mandatory=True,
-        argstr="%s",
-        position=-2,
         desc="Input NIfTI image to reorient and crop",
     )
     out_file = File(
-        argstr="%s",
-        position=-1,
         genfile=True,
         desc="Output reoriented and cropped image",
     )
@@ -72,8 +68,7 @@ class ReorientAndCrop(CommandLine):
     input_spec = ReorientAndCropInputSpec
     output_spec = ReorientAndCropOutputSpec
 
-    # We'll use bash to chain the commands
-    _cmd = "bash -c"
+    _cmd = "fslreorient2std"
 
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""
@@ -94,32 +89,23 @@ class ReorientAndCrop(CommandLine):
 
         return str(Path.cwd() / f"{base}_reoriented{ext}")
 
-    def _format_arg(
-        self, name: str, trait_spec: Any, value: Any
-    ) -> str:
-        """Format command line arguments."""
-        if name == "in_file":
-            # Build the full bash command string
-            in_file = str(value)
-            out_file = self._gen_outfilename()
+    @property
+    def cmdline(self) -> str:
+        """Build the fslreorient2std + robustfov command chain."""
+        in_file = str(self.inputs.in_file)
+        out_file = self._gen_outfilename()
 
-            # Create intermediate filename for reorient step
-            in_path = Path(in_file)
-            if in_path.name.endswith(".nii.gz"):
-                ext = ".nii.gz"
-            else:
-                ext = ".nii"
-            intermediate = str(Path(out_file).parent / f"_tmp_reoriented{ext}")
+        # Create intermediate filename for reorient step
+        in_path = Path(in_file)
+        ext = ".nii.gz" if in_path.name.endswith(".nii.gz") else ".nii"
+        intermediate = str(Path(out_file).parent / f"_tmp_reoriented{ext}")
 
-            # Chain: fslreorient2std -> robustfov
-            cmd = (
-                f"'fslreorient2std {in_file} {intermediate} && "
-                f"robustfov -i {intermediate} -r {out_file} && "
-                f"rm -f {intermediate}'"
-            )
-            return cmd
-        result: str = super()._format_arg(name, trait_spec, value)
-        return result
+        # Chain: fslreorient2std -> robustfov
+        return (
+            f"bash -c 'fslreorient2std {in_file} {intermediate} && "
+            f"robustfov -i {intermediate} -r {out_file} && "
+            f"rm -f {intermediate}'"
+        )
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
@@ -140,13 +126,9 @@ class BiasCorrectionInputSpec(CommandLineInputSpec):
     in_file = File(
         exists=True,
         mandatory=True,
-        argstr="%s",
-        position=-2,
         desc="Input NIfTI image to bias correct",
     )
     out_file = File(
-        argstr="%s",
-        position=-1,
         genfile=True,
         desc="Output bias-corrected image",
     )
@@ -237,8 +219,7 @@ class BiasCorrection(CommandLine):
     input_spec = BiasCorrectionInputSpec
     output_spec = BiasCorrectionOutputSpec
 
-    # Use bash to chain commands
-    _cmd = "bash -c"
+    _cmd = "N4BiasFieldCorrection"
 
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""
@@ -259,63 +240,43 @@ class BiasCorrection(CommandLine):
 
         return str(Path.cwd() / f"{base}_biascorr{ext}")
 
-    def _format_arg(
-        self, name: str, trait_spec: Any, value: Any
-    ) -> str:
-        """Format command line arguments."""
-        if name == "in_file":
-            # Build the full bash command string
-            in_file = str(value)
-            out_file = self._gen_outfilename()
-            denoise = self.inputs.denoise
-            shrink = self.inputs.shrink_factor
-            convergence = self.inputs.convergence
-            bspline = self.inputs.bspline_fitting
-            noise_model = self.inputs.noise_model
+    @property
+    def cmdline(self) -> str:
+        """Build the N4BiasFieldCorrection command (with optional denoising)."""
+        in_file = str(self.inputs.in_file)
+        out_file = self._gen_outfilename()
+        denoise = self.inputs.denoise
+        shrink = self.inputs.shrink_factor
+        convergence = self.inputs.convergence
+        bspline = self.inputs.bspline_fitting
+        noise_model = self.inputs.noise_model
 
-            # Determine file extension
-            in_path = Path(in_file)
-            if in_path.name.endswith(".nii.gz"):
-                ext = ".nii.gz"
-            else:
-                ext = ".nii"
+        # Determine file extension
+        in_path = Path(in_file)
+        ext = ".nii.gz" if in_path.name.endswith(".nii.gz") else ".nii"
 
-            cmd_parts = []
+        if denoise:
+            # Denoise first, then bias correct (multi-command chain)
+            denoised_file = str(Path(out_file).parent / f"_tmp_denoised{ext}")
 
-            if denoise:
-                # Denoise first, then bias correct
-                denoised_file = str(Path(out_file).parent / f"_tmp_denoised{ext}")
-
-                # DenoiseImage command
-                denoise_cmd = (
-                    f"DenoiseImage -d 3 -i {in_file} -o {denoised_file} "
-                    f"-n {noise_model}"
-                )
-                cmd_parts.append(denoise_cmd)
-
-                # N4 on denoised image
-                n4_input = denoised_file
-            else:
-                n4_input = in_file
-                denoised_file = None
-
-            # N4BiasFieldCorrection command
+            denoise_cmd = (
+                f"DenoiseImage -d 3 -i {in_file} -o {denoised_file} "
+                f"-n {noise_model}"
+            )
             n4_cmd = (
-                f"N4BiasFieldCorrection -d 3 -i {n4_input} -o {out_file} "
+                f"N4BiasFieldCorrection -d 3 -i {denoised_file} -o {out_file} "
                 f"-s {shrink} -c {convergence} -b {bspline}"
             )
-            cmd_parts.append(n4_cmd)
-
-            # Cleanup intermediate file if denoising was applied
-            if denoised_file:
-                cmd_parts.append(f"rm -f {denoised_file}")
-
-            # Join with && for sequential execution
-            cmd = "'" + " && ".join(cmd_parts) + "'"
-            return cmd
-
-        result: str = super()._format_arg(name, trait_spec, value)
-        return result
+            return (
+                f"bash -c '{denoise_cmd} && {n4_cmd} && "
+                f"rm -f {denoised_file}'"
+            )
+        else:
+            # Single command, no chain needed
+            return (
+                f"N4BiasFieldCorrection -d 3 -i {in_file} -o {out_file} "
+                f"-s {shrink} -c {convergence} -b {bspline}"
+            )
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
@@ -336,8 +297,6 @@ class CoregistrationInputSpec(CommandLineInputSpec):
     in_file = File(
         exists=True,
         mandatory=True,
-        argstr="%s",
-        position=-1,
         desc="Moving image to be registered (e.g., T2w, FLAIR, T1w post-con)",
     )
     reference = File(
@@ -452,7 +411,7 @@ class Coregistration(CommandLine):
     input_spec = CoregistrationInputSpec
     output_spec = CoregistrationOutputSpec
 
-    _cmd = "bash -c"
+    _cmd = "flirt"
 
     # Cost function mapping by modality
     _COST_FUNCTIONS: dict[str, str] = {
@@ -496,60 +455,43 @@ class Coregistration(CommandLine):
 
         return str(out_file.parent / f"{base}.mat")
 
-    def _format_arg(
-        self, name: str, trait_spec: Any, value: Any
-    ) -> str:
-        """Format command line arguments."""
-        if name == "in_file":
-            in_file = str(value)
-            reference = str(self.inputs.reference)
-            out_file = self._gen_outfilename()
-            out_matrix = self._gen_matfilename()
-            modality = self.inputs.modality
-            dof = self.inputs.dof
+    @property
+    def cmdline(self) -> str:
+        """Build the FLIRT coregistration command."""
+        in_file = str(self.inputs.in_file)
+        reference = str(self.inputs.reference)
+        out_file = self._gen_outfilename()
+        out_matrix = self._gen_matfilename()
+        modality = self.inputs.modality
+        dof = self.inputs.dof
 
-            # Get cost function for modality
-            cost = self._COST_FUNCTIONS.get(modality, "corratio")
+        # Get cost function for modality
+        cost = self._COST_FUNCTIONS.get(modality, "corratio")
 
-            cmd_parts = []
+        # Check if we have a lesion mask for cost function weighting
+        lesion_mask = getattr(self.inputs, "lesion_mask", None)
+        if lesion_mask and Path(lesion_mask).exists():
+            out_path = Path(out_file)
+            ext = ".nii.gz" if out_path.name.endswith(".nii.gz") else ".nii"
+            weight_file = str(out_path.parent / f"_tmp_weight{ext}")
 
-            # Check if we have a lesion mask for cost function weighting
-            lesion_mask = getattr(self.inputs, "lesion_mask", None)
-            if lesion_mask and Path(lesion_mask).exists():
-                # Create weight image: weight = 1 - lesion_mask
-                out_path = Path(out_file)
-                ext = ".nii.gz" if out_path.name.endswith(".nii.gz") else ".nii"
-                weight_file = str(out_path.parent / f"_tmp_weight{ext}")
-
-                # fslmaths to create weight: 1 - lesion_mask
-                invert_cmd = f"fslmaths {lesion_mask} -mul -1 -add 1 {weight_file}"
-                cmd_parts.append(invert_cmd)
-
-                # FLIRT with cost function weighting
-                flirt_cmd = (
-                    f"flirt -in {in_file} -ref {reference} "
-                    f"-out {out_file} -omat {out_matrix} "
-                    f"-dof {dof} -cost {cost} "
-                    f"-inweight {weight_file} -refweight {weight_file}"
-                )
-                cmd_parts.append(flirt_cmd)
-
-                # Clean up weight file
-                cmd_parts.append(f"rm -f {weight_file}")
-            else:
-                # Standard FLIRT without weighting
-                flirt_cmd = (
-                    f"flirt -in {in_file} -ref {reference} "
-                    f"-out {out_file} -omat {out_matrix} "
-                    f"-dof {dof} -cost {cost}"
-                )
-                cmd_parts.append(flirt_cmd)
-
-            cmd = "'" + " && ".join(cmd_parts) + "'"
-            return cmd
-
-        result: str = super()._format_arg(name, trait_spec, value)
-        return result
+            invert_cmd = f"fslmaths {lesion_mask} -mul -1 -add 1 {weight_file}"
+            flirt_cmd = (
+                f"flirt -in {in_file} -ref {reference} "
+                f"-out {out_file} -omat {out_matrix} "
+                f"-dof {dof} -cost {cost} "
+                f"-inweight {weight_file} -refweight {weight_file}"
+            )
+            return (
+                f"bash -c '{invert_cmd} && {flirt_cmd} && "
+                f"rm -f {weight_file}'"
+            )
+        else:
+            return (
+                f"flirt -in {in_file} -ref {reference} "
+                f"-out {out_file} -omat {out_matrix} "
+                f"-dof {dof} -cost {cost}"
+            )
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
@@ -573,8 +515,6 @@ class BrainExtractionInputSpec(CommandLineInputSpec):
     in_file = File(
         exists=True,
         mandatory=True,
-        argstr="%s",
-        position=-1,
         desc="Input bias-corrected T1w image for brain extraction",
     )
     out_file = File(
@@ -697,7 +637,7 @@ class BrainExtraction(CommandLine):
     input_spec = BrainExtractionInputSpec
     output_spec = BrainExtractionOutputSpec
 
-    _cmd = "bash -c"
+    _cmd = "bash"
 
     def _gen_outfilename(self) -> str:
         """Generate output brain image filename if not specified."""
@@ -738,7 +678,6 @@ class BrainExtraction(CommandLine):
     def _get_hdbet_device_flag(self) -> str:
         """Get HD-BET device flag based on settings and architecture."""
         import platform
-        import subprocess
 
         device = self.inputs.device
 
@@ -764,80 +703,58 @@ class BrainExtraction(CommandLine):
         else:  # cpu
             return "-device cpu"
 
-    def _format_arg(
-        self, name: str, trait_spec: Any, value: Any
-    ) -> str:
-        """Format command line arguments."""
-        if name == "in_file":
-            in_file = str(value)
-            out_file = self._gen_outfilename()
-            out_mask = self._gen_maskfilename()
-            tool = self.inputs.tool
+    @property
+    def cmdline(self) -> str:
+        """Build the brain extraction command."""
+        in_file = str(self.inputs.in_file)
+        out_file = self._gen_outfilename()
+        out_mask = self._gen_maskfilename()
+        tool = self.inputs.tool
 
-            cmd_parts = []
+        cmd_parts: list[str] = []
 
-            if tool == "hdbet":
-                # HD-BET command
-                device_flag = self._get_hdbet_device_flag()
+        if tool == "hdbet":
+            device_flag = self._get_hdbet_device_flag()
 
-                # HD-BET requires output to end with .nii.gz
-                # It outputs: {out} (brain) and {out_base}_mask.nii.gz (mask)
-                out_path = Path(out_file)
+            # Ensure output has .nii.gz extension (HD-BET requirement)
+            if not out_file.endswith(".nii.gz"):
+                out_file = out_file + ".nii.gz"
 
-                # Ensure output has .nii.gz extension
-                if not out_file.endswith(".nii.gz"):
-                    out_file = out_file + ".nii.gz"
+            hdbet_cmd = f"hd-bet -i {in_file} -o {out_file} --disable_tta"
+            if device_flag:
+                hdbet_cmd += f" {device_flag}"
+            cmd_parts.append(hdbet_cmd)
 
-                # HD-BET command - pass full path with .nii.gz
-                # Use --disable_tta to speed up inference (test-time augmentation)
-                hdbet_cmd = f"hd-bet -i {in_file} -o {out_file} --disable_tta"
-                if device_flag:
-                    hdbet_cmd += f" {device_flag}"
-                cmd_parts.append(hdbet_cmd)
+            # Create mask by binarizing the brain output
+            cmd_parts.append(f"fslmaths {out_file} -bin {out_mask}")
 
-                # HD-BET only outputs the brain-extracted image, not a mask
-                # Create mask by binarizing the brain output (like working script)
-                cmd_parts.append(f"fslmaths {out_file} -bin {out_mask}")
+        else:  # ants
+            ants_template = getattr(self.inputs, "ants_template", None)
+            ants_prob_mask = getattr(self.inputs, "ants_probability_mask", None)
 
-            else:  # ants
-                # ANTs antsBrainExtraction.sh command
-                ants_template = getattr(self.inputs, "ants_template", None)
-                ants_prob_mask = getattr(self.inputs, "ants_probability_mask", None)
+            if not ants_template:
+                ants_template = "/usr/share/ants/OASIS_template/T_template0.nii.gz"
+            if not ants_prob_mask:
+                ants_prob_mask = "/usr/share/ants/OASIS_template/T_template0_BrainCerebellumProbabilityMask.nii.gz"
 
-                if not ants_template:
-                    # Use default OASIS template location
-                    ants_template = "/usr/share/ants/OASIS_template/T_template0.nii.gz"
-                if not ants_prob_mask:
-                    # Use default OASIS probability mask
-                    ants_prob_mask = "/usr/share/ants/OASIS_template/T_template0_BrainCerebellumProbabilityMask.nii.gz"
+            out_path = Path(out_file)
+            ants_prefix = str(out_path.parent / "ants_brain_")
 
-                # ANTs outputs to a directory
-                out_path = Path(out_file)
-                ants_prefix = str(out_path.parent / "ants_brain_")
+            ants_cmd = (
+                f"antsBrainExtraction.sh -d 3 -a {in_file} "
+                f"-e {ants_template} -m {ants_prob_mask} "
+                f"-o {ants_prefix}"
+            )
+            cmd_parts.append(ants_cmd)
 
-                ants_cmd = (
-                    f"antsBrainExtraction.sh -d 3 -a {in_file} "
-                    f"-e {ants_template} -m {ants_prob_mask} "
-                    f"-o {ants_prefix}"
-                )
-                cmd_parts.append(ants_cmd)
+            ants_brain = f"{ants_prefix}BrainExtractionBrain.nii.gz"
+            ants_mask = f"{ants_prefix}BrainExtractionMask.nii.gz"
 
-                # ANTs outputs: {prefix}BrainExtractionBrain.nii.gz, {prefix}BrainExtractionMask.nii.gz
-                ants_brain = f"{ants_prefix}BrainExtractionBrain.nii.gz"
-                ants_mask = f"{ants_prefix}BrainExtractionMask.nii.gz"
+            cmd_parts.append(f"mv {ants_brain} {out_file}")
+            cmd_parts.append(f"mv {ants_mask} {out_mask}")
+            cmd_parts.append(f"rm -f {ants_prefix}*")
 
-                # Move to expected outputs
-                cmd_parts.append(f"mv {ants_brain} {out_file}")
-                cmd_parts.append(f"mv {ants_mask} {out_mask}")
-
-                # Clean up ANTs temp files
-                cmd_parts.append(f"rm -f {ants_prefix}*")
-
-            cmd = "'" + " && ".join(cmd_parts) + "'"
-            return cmd
-
-        result: str = super()._format_arg(name, trait_spec, value)
-        return result
+        return "bash -c '" + " && ".join(cmd_parts) + "'"
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
@@ -1307,8 +1224,6 @@ class T1wSubtractionInputSpec(CommandLineInputSpec):
     postcon_file = File(
         exists=True,
         mandatory=True,
-        argstr="%s",
-        position=-1,
         desc="Post-contrast T1w image (coregistered to precon)",
     )
     precon_file = File(
@@ -1377,7 +1292,7 @@ class T1wSubtraction(CommandLine):
     input_spec = T1wSubtractionInputSpec
     output_spec = T1wSubtractionOutputSpec
 
-    _cmd = "bash -c"
+    _cmd = "fslmaths"
 
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""
@@ -1397,28 +1312,19 @@ class T1wSubtraction(CommandLine):
 
         return str(Path.cwd() / f"{base}_subtraction{ext}")
 
-    def _format_arg(
-        self, name: str, trait_spec: Any, value: Any
-    ) -> str:
-        """Format command line arguments."""
-        if name == "postcon_file":
-            postcon = str(value)
-            precon = str(self.inputs.precon_file)
-            out_file = self._gen_outfilename()
+    @property
+    def cmdline(self) -> str:
+        """Build the fslmaths subtraction command."""
+        postcon = str(self.inputs.postcon_file)
+        precon = str(self.inputs.precon_file)
+        out_file = self._gen_outfilename()
 
-            brain_mask = getattr(self.inputs, "brain_mask", None)
+        brain_mask = getattr(self.inputs, "brain_mask", None)
 
-            if brain_mask and Path(brain_mask).exists():
-                # Subtract and apply mask: (postcon - precon) * mask
-                cmd = f"'fslmaths {postcon} -sub {precon} -mas {brain_mask} {out_file}'"
-            else:
-                # Simple subtraction
-                cmd = f"'fslmaths {postcon} -sub {precon} {out_file}'"
-
-            return cmd
-
-        result: str = super()._format_arg(name, trait_spec, value)
-        return result
+        if brain_mask and Path(brain_mask).exists():
+            return f"fslmaths {postcon} -sub {precon} -mas {brain_mask} {out_file}"
+        else:
+            return f"fslmaths {postcon} -sub {precon} {out_file}"
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
@@ -1657,8 +1563,6 @@ class ACPCAlignmentInputSpec(CommandLineInputSpec):
     in_file = File(
         exists=True,
         mandatory=True,
-        argstr="%s",
-        position=-1,
         desc="Input brain-extracted T1w image to align to ACPC",
     )
     out_file = File(
@@ -1774,7 +1678,7 @@ class ACPCAlignment(CommandLine):
     input_spec = ACPCAlignmentInputSpec
     output_spec = ACPCAlignmentOutputSpec
 
-    _cmd = "bash -c"
+    _cmd = "flirt"
 
     # Default MNI template path (FSL installation)
     _DEFAULT_MNI_TEMPLATE = (
@@ -1836,45 +1740,30 @@ class ACPCAlignment(CommandLine):
         # Use default path (may fail at runtime if not present)
         return self._DEFAULT_MNI_TEMPLATE
 
-    def _format_arg(
-        self, name: str, trait_spec: Any, value: Any
-    ) -> str:
-        """Format command line arguments."""
-        if name == "in_file":
-            in_file = str(value)
-            out_file = self._gen_outfilename()
-            out_matrix = self._gen_matfilename()
-            skip_acpc = self.inputs.skip_acpc
-            dof = self.inputs.dof
-            cost = self.inputs.cost
+    @property
+    def cmdline(self) -> str:
+        """Build the ACPC alignment command."""
+        in_file = str(self.inputs.in_file)
+        out_file = self._gen_outfilename()
+        out_matrix = self._gen_matfilename()
+        skip_acpc = self.inputs.skip_acpc
+        dof = self.inputs.dof
+        cost = self.inputs.cost
 
-            cmd_parts = []
-
-            if skip_acpc:
-                # Skip mode: copy input to output and create identity matrix
-                # Copy the input file to output location
-                cmd_parts.append(f"cp {in_file} {out_file}")
-
-                # Create identity transformation matrix (4x4)
-                # FSL format is plain text with 4x4 matrix
-                identity_matrix = "1 0 0 0\\n0 1 0 0\\n0 0 1 0\\n0 0 0 1"
-                cmd_parts.append(f"echo -e \"{identity_matrix}\" > {out_matrix}")
-            else:
-                # ACPC alignment using FLIRT
-                mni_template = self._get_mni_template()
-
-                flirt_cmd = (
-                    f"flirt -in {in_file} -ref {mni_template} "
-                    f"-out {out_file} -omat {out_matrix} "
-                    f"-dof {dof} -cost {cost}"
-                )
-                cmd_parts.append(flirt_cmd)
-
-            cmd = "'" + " && ".join(cmd_parts) + "'"
-            return cmd
-
-        result: str = super()._format_arg(name, trait_spec, value)
-        return result
+        if skip_acpc:
+            # Skip mode: copy input and create identity matrix
+            identity_matrix = "1 0 0 0\\n0 1 0 0\\n0 0 1 0\\n0 0 0 1"
+            return (
+                f"bash -c 'cp {in_file} {out_file} && "
+                f"echo -e \"{identity_matrix}\" > {out_matrix}'"
+            )
+        else:
+            mni_template = self._get_mni_template()
+            return (
+                f"flirt -in {in_file} -ref {mni_template} "
+                f"-out {out_file} -omat {out_matrix} "
+                f"-dof {dof} -cost {cost}"
+            )
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
