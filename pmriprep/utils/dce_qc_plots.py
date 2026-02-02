@@ -247,3 +247,169 @@ def generate_vfa_t1_qc_plot(
 
     logger.info("VFA T1 QC plot saved to %s", output_path)
     return output_path
+
+
+def generate_b1_qc_plot(
+    s1: npt.NDArray[np.floating],
+    s2: npt.NDArray[np.floating],
+    signal_ratio: npt.NDArray[np.floating],
+    b1_map: npt.NDArray[np.floating],
+    nominal_flip_angle: float,
+    signal_mask: npt.NDArray[np.bool_],
+    valid_mask: npt.NDArray[np.bool_],
+    mean_b1: float = 1.0,
+    std_b1: float = 0.0,
+    qc_pass: bool = True,
+    output_path: Optional[str] = None,
+) -> str:
+    """Generate a 6-panel QC plot for AFI B1+ mapping.
+
+    Layout (2 rows x 3 columns):
+        Row 1: TR1 image, TR2 image, Signal ratio (S_TR1/S_TR2)
+        Row 2: B1+ map, Actual flip angle map, B1+ histogram
+
+    Parameters
+    ----------
+    s1 : ndarray
+        3D TR1 (short TR) signal array.
+    s2 : ndarray
+        3D TR2 (long TR) signal array.
+    signal_ratio : ndarray
+        3D S1/S2 ratio array.
+    b1_map : ndarray
+        3D B1+ correction factor map.
+    nominal_flip_angle : float
+        Nominal flip angle in degrees.
+    signal_mask : ndarray
+        Boolean mask of voxels with valid signal.
+    valid_mask : ndarray
+        Boolean mask of voxels used in B1+ calculation.
+    mean_b1 : float
+        Mean B1+ value in brain.
+    std_b1 : float
+        Standard deviation of B1+ in brain.
+    qc_pass : bool
+        Whether B1+ map passed QC.
+    output_path : str, optional
+        Output path for the PNG file. If None, uses cwd.
+
+    Returns
+    -------
+    str
+        Path to the saved QC plot PNG file.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+
+    from pmriprep.utils.qc_standards import COLORBLIND_PALETTE
+    from pmriprep.utils.qc_utils import get_radiological_slice
+
+    if output_path is None:
+        output_path = str(Path.cwd() / "b1_qc.png")
+
+    # Select middle axial slice
+    mid_slice = b1_map.shape[2] // 2
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+    qc_color = COLORBLIND_PALETTE.success if qc_pass else COLORBLIND_PALETTE.error
+    qc_label = "PASS" if qc_pass else "WARN"
+    fig.suptitle(
+        f"AFI B1+ Mapping QC  [{qc_label}]",
+        fontsize=14, fontweight="bold", y=0.98, color=qc_color,
+    )
+
+    # ---- Panel 1: TR1 image ----
+    ax = axes[0, 0]
+    sl = get_radiological_slice(s1, axis=2, slice_idx=mid_slice)
+    vmax = float(np.percentile(sl[sl > 0], 99)) if np.any(sl > 0) else 1.0
+    ax.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="lower")
+    ax.set_title("TR1 (short TR)", fontsize=11)
+    ax.axis("off")
+
+    # ---- Panel 2: TR2 image ----
+    ax = axes[0, 1]
+    sl = get_radiological_slice(s2, axis=2, slice_idx=mid_slice)
+    vmax = float(np.percentile(sl[sl > 0], 99)) if np.any(sl > 0) else 1.0
+    ax.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="lower")
+    ax.set_title("TR2 (long TR)", fontsize=11)
+    ax.axis("off")
+
+    # ---- Panel 3: Signal ratio ----
+    ax = axes[0, 2]
+    ratio_sl = get_radiological_slice(signal_ratio, axis=2, slice_idx=mid_slice)
+    mask_sl = get_radiological_slice(signal_mask.astype(float), axis=2, slice_idx=mid_slice)
+    ratio_display = np.where(mask_sl > 0.5, ratio_sl, np.nan)
+    im = ax.imshow(
+        ratio_display, cmap="coolwarm", vmin=0.2, vmax=0.8, origin="lower",
+    )
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_title("Signal Ratio (S\u2081/S\u2082)", fontsize=11)
+    ax.axis("off")
+
+    # ---- Panel 4: B1+ map ----
+    ax = axes[1, 0]
+    b1_sl = get_radiological_slice(b1_map, axis=2, slice_idx=mid_slice)
+    b1_display = np.where(mask_sl > 0.5, b1_sl, np.nan)
+    im = ax.imshow(
+        b1_display, cmap="plasma", vmin=0.5, vmax=1.5, origin="lower",
+    )
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_title("B1+ Map", fontsize=11)
+    ax.axis("off")
+
+    # ---- Panel 5: Actual flip angle map ----
+    ax = axes[1, 1]
+    fa_map = b1_map * nominal_flip_angle
+    fa_sl = get_radiological_slice(fa_map, axis=2, slice_idx=mid_slice)
+    fa_display = np.where(mask_sl > 0.5, fa_sl, np.nan)
+    expected_fa = nominal_flip_angle
+    im = ax.imshow(
+        fa_display, cmap="jet",
+        vmin=expected_fa * 0.5, vmax=expected_fa * 1.5,
+        origin="lower",
+    )
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="\u00b0")
+    ax.set_title(f"Actual FA (nominal={expected_fa:.0f}\u00b0)", fontsize=11)
+    ax.axis("off")
+
+    # ---- Panel 6: B1+ histogram ----
+    ax = axes[1, 2]
+    b1_brain = b1_map[valid_mask]
+    b1_brain = b1_brain[(b1_brain > 0.2) & (b1_brain < 2.0)]
+
+    if len(b1_brain) > 0:
+        ax.hist(
+            b1_brain, bins=80, range=(0.3, 1.8),
+            color=COLORBLIND_PALETTE.primary, alpha=0.7,
+            edgecolor="none", density=True,
+        )
+        # Reference zones
+        ax.axvspan(0.7, 1.5, alpha=0.10, color=COLORBLIND_PALETTE.success,
+                   label="Typical (0.7\u20131.5)")
+        ax.axvspan(1.5, 1.7, alpha=0.10, color=COLORBLIND_PALETTE.warning,
+                   label="Dielectric (1.5\u20131.7)")
+        # Reference lines
+        ax.axvline(1.0, color="gray", linestyle="--", linewidth=1.0,
+                   label="Nominal (1.0)")
+        ax.axvline(mean_b1, color=COLORBLIND_PALETTE.error, linestyle="-",
+                   linewidth=1.5, label=f"Mean: {mean_b1:.3f}")
+        median_b1 = float(np.median(b1_brain))
+        ax.axvline(median_b1, color=COLORBLIND_PALETTE.secondary, linestyle=":",
+                   linewidth=1.5, label=f"Median: {median_b1:.3f}")
+        ax.legend(fontsize=7, loc="upper right")
+
+    ax.set_xlabel("B1+ Correction Factor")
+    ax.set_ylabel("Density")
+    ax.set_title(
+        f"B1+ Distribution (mean={mean_b1:.3f}, std={std_b1:.3f})",
+        fontsize=10,
+    )
+
+    plt.tight_layout(rect=[0, 0.02, 1, 0.96])
+    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    logger.info("B1+ QC plot saved to %s", output_path)
+    return output_path

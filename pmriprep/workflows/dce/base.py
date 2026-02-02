@@ -800,17 +800,28 @@ def _signal_to_concentration_node(
         try:
             t1_img = nib.load(t1_map_file)
             t1_map = t1_img.get_fdata()  # type: ignore[attr-defined]
-        except Exception:
-            pass  # Use default T1 if loading fails
+        except Exception as exc:
+            import logging as _logging
 
-    # Load B1 map
+            _logging.getLogger("pmriprep.workflows.dce").warning(
+                "Failed to load T1 map (%s) — using default T1", exc,
+            )
+
+    # Load B1 map — clip to DCE-appropriate range [0.5, 1.5] (Gap 8).
+    # Tighter than VFA T1 mapping range because signal-to-concentration
+    # conversion is more sensitive to B1+ errors.
     b1_map = None
     if b1_map_file:
         try:
             b1_img = nib.load(b1_map_file)
             b1_map = b1_img.get_fdata()  # type: ignore[attr-defined]
-        except Exception:
-            pass  # B1+ not critical
+            b1_map = np.clip(b1_map, 0.5, 1.5)
+        except Exception as exc:
+            import logging as _logging
+
+            _logging.getLogger("pmriprep.workflows.dce").warning(
+                "Failed to load B1 map (%s) — using no B1 correction", exc,
+            )
 
     # Convert signal to concentration
     result = signal_to_concentration(

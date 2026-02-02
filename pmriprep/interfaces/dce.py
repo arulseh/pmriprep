@@ -77,6 +77,7 @@ class B1MappingOutputSpec(TraitedSpec):
     std_b1 = traits.Float(desc="Standard deviation of B1+ within brain mask")
     qc_pass = traits.Bool(desc="Whether B1+ map passed QC criteria")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
+    qc_plot = File(desc="B1+ mapping QC plot PNG")
 
 
 class B1Mapping(SimpleInterface):
@@ -352,6 +353,41 @@ class B1Mapping(SimpleInterface):
                 )
                 s1, s2 = s2, s1
                 tr1_ms, tr2_ms = tr2_ms, tr1_ms
+                # Also swap the image references so coregistration uses correct files
+                tr1_img, tr2_img = tr2_img, tr1_img
+                tr1_file, tr2_file = tr2_file, tr1_file
+
+            # Coregister TR2 → TR1 if affines differ (Gap 5, matches perf-plus).
+            # Separate 3D AFI acquisitions may have slight inter-scan motion.
+            affine_diff = float(np.abs(tr1_img.affine - tr2_img.affine).max())
+            if affine_diff > 1e-4:
+                import subprocess as _sp
+
+                coreg_out = str(Path.cwd() / "afi_tr2_coreg.nii.gz")
+                coreg_mat = str(Path.cwd() / "afi_tr2_to_tr1.mat")
+                cmd = [
+                    "flirt",
+                    "-in", str(tr2_file),
+                    "-ref", str(tr1_file),
+                    "-out", coreg_out,
+                    "-omat", coreg_mat,
+                    "-dof", "6",
+                    "-cost", "normcorr",
+                    "-searchrx", "-5", "5",
+                    "-searchry", "-5", "5",
+                    "-searchrz", "-5", "5",
+                ]
+                try:
+                    _sp.run(cmd, check=True, capture_output=True)
+                    s2 = nib.load(coreg_out).get_fdata().astype(np.float64)
+                    logger.info(
+                        "Coregistered AFI TR2 → TR1 (affine diff=%.4f)", affine_diff,
+                    )
+                except (FileNotFoundError, _sp.CalledProcessError) as exc:
+                    logger.warning(
+                        "AFI coregistration failed (%s) — using unregistered volumes",
+                        exc,
+                    )
 
             return s1, s2, affine, header, tr1_ms, tr2_ms
 
@@ -369,7 +405,6 @@ class B1Mapping(SimpleInterface):
             B1_EXPECTED_MEAN,
             B1_MAX_STD,
             B1_MEAN_RANGE,
-            EPSILON_B1,
         )
 
         # Generate output filename
@@ -417,54 +452,114 @@ class B1Mapping(SimpleInterface):
 
         # Load AFI data (supports both 4D and 3D modes)
         s1, s2, affine, header, tr1_ms, tr2_ms = self._load_afi_data()
+        shape = s1.shape[:3]
 
         # Get TR ratio
         n = tr2_ms / tr1_ms
-
-        # Compute signal ratio r = S1/S2
-        # Add small epsilon to prevent division by zero
-        r = s1 / np.maximum(s2, EPSILON_B1)
-
-        # AFI equation (assuming TR2 >> T1, i.e., E2 ≈ 0):
-        # cos(alpha) = (r*n - 1) / (n - r)
-        # We need to handle edge cases where denominator approaches zero
-        numerator = r * n - 1.0
-        denominator = n - r
-
-        # Clip denominator to prevent division by zero
-        # When r approaches n, the flip angle is very large (>90 deg)
-        denominator_safe = np.where(
-            np.abs(denominator) < EPSILON_B1,
-            np.sign(denominator) * EPSILON_B1,
-            denominator,
-        )
-
-        cos_alpha = numerator / denominator_safe
-
-        # Clip cos(alpha) to valid range [-1, 1]
-        cos_alpha = np.clip(cos_alpha, -1.0, 1.0)
-
-        # Calculate actual flip angle in degrees
-        alpha_actual = np.degrees(np.arccos(cos_alpha))
-
-        # Calculate B1+ correction factor
-        # B1+ = actual_flip_angle / nominal_flip_angle
         nominal_fa = self.inputs.nominal_flip_angle
-        b1_map = alpha_actual / nominal_fa
 
-        # Apply smoothing to reduce noise
+        # -----------------------------------------------------------------
+        # Signal masking: only compute B1+ where both signals are above
+        # noise floor. Uses 5th-percentile threshold to preserve
+        # low-signal dropout regions (Gap 4, matches perf-plus).
+        # -----------------------------------------------------------------
+        positive_signals = np.concatenate([
+            s1[s1 > 0].ravel(), s2[s2 > 0].ravel(),
+        ])
+        if len(positive_signals) > 0:
+            signal_threshold = max(
+                float(np.percentile(positive_signals, 5)), 1e-6,
+            )
+        else:
+            signal_threshold = 1e-6
+        signal_mask = (s1 > signal_threshold) & (s2 > signal_threshold)
+
+        # -----------------------------------------------------------------
+        # Compute signal ratio r = S1/S2
+        # -----------------------------------------------------------------
+        r = np.ones(shape, dtype=np.float64)
+        r[signal_mask] = s1[signal_mask] / np.maximum(s2[signal_mask], 1e-10)
+
+        # -----------------------------------------------------------------
+        # Ratio validation + denominator stability (Gaps 1, 9).
+        # perf-plus: ratio in (0.05, 1.5) and |n - r| > 0.1
+        # -----------------------------------------------------------------
+        DENOMINATOR_THRESHOLD = 0.1
+        ratio_valid = (r > 0.05) & (r < 1.5)
+        denominator_stable = np.abs(n - r) > DENOMINATOR_THRESHOLD
+        valid = signal_mask & ratio_valid & denominator_stable
+
+        # -----------------------------------------------------------------
+        # AFI equation (assuming TR2 >> T1, i.e., E2 ≈ 0):
+        #   cos(alpha) = (r*n - 1) / (n - r)
+        # Compute only for valid voxels; set the rest to B1+=1.0.
+        # -----------------------------------------------------------------
+        b1_map = np.ones(shape, dtype=np.float64)
+
+        numerator = r[valid] * n - 1.0
+        denominator = n - r[valid]
+        cos_alpha = numerator / denominator
+        cos_alpha = np.clip(cos_alpha, -1.0, 1.0)
+        alpha_actual = np.degrees(np.arccos(cos_alpha))
+        b1_map[valid] = alpha_actual / nominal_fa
+
+        # -----------------------------------------------------------------
+        # B1+ physiological clipping (Gap 2, matches perf-plus [0.2, 2.0])
+        # -----------------------------------------------------------------
+        b1_map = np.clip(b1_map, 0.2, 2.0)
+        b1_map[~signal_mask] = 1.0  # Background = nominal
+
+        # Flag extreme values for QC
+        n_extreme_low = int(np.sum((b1_map < 0.5) & signal_mask))
+        n_extreme_high = int(np.sum((b1_map > 1.5) & signal_mask))
+        n_signal = max(int(np.sum(signal_mask)), 1)
+        if n_extreme_low > 0:
+            logger.info(
+                "%.1f%% of brain has B1+ < 0.5 (expected in temporal lobes at 3T)",
+                100.0 * n_extreme_low / n_signal,
+            )
+        if n_extreme_high > 0:
+            logger.warning(
+                "%.1f%% of brain has B1+ > 1.5 (check for flow/dielectric artifacts)",
+                100.0 * n_extreme_high / n_signal,
+            )
+
+        # -----------------------------------------------------------------
+        # Normalized convolution smoothing (Gap 3, matches perf-plus).
+        # smooth(B1*mask) / smooth(mask) averages only within brain
+        # voxels and avoids bias at brain edges.
+        # -----------------------------------------------------------------
         smoothing_fwhm = self.inputs.smoothing_fwhm
         if smoothing_fwhm > 0:
-            # Get voxel sizes for proper FWHM calculation
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
-            # Convert FWHM to sigma in voxels
             sigma_voxels = [
                 smoothing_fwhm / (2.355 * vs) for vs in voxel_sizes
             ]
-            b1_map = gaussian_filter(b1_map, sigma=sigma_voxels)
+            mask_float = valid.astype(np.float64)
+            smoothed_num = gaussian_filter(b1_map * mask_float, sigma=sigma_voxels)
+            smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
+            smoothed_den = np.maximum(smoothed_den, 1e-6)
+            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 1.0)
+            # Defensive re-clip after smoothing to preserve physiological range
+            b1_map = np.clip(b1_map, 0.2, 2.0)
 
         # Convert to float32 for storage
         b1_map = b1_map.astype(np.float32)
+
+        # -----------------------------------------------------------------
+        # Detect uniform (pathological) B1+ maps (Gap 7).
+        # If all brain voxels are zero or all ones, the map is unusable.
+        # -----------------------------------------------------------------
+        uniform_detected = False
+        b1_unique = np.unique(b1_map[signal_mask])
+        if len(b1_unique) <= 1:
+            if len(b1_unique) == 0 or np.isclose(b1_unique[0], 0.0, atol=1e-6):
+                logger.warning("B1+ map is all zeros — returning unity map")
+                b1_map = np.ones(shape, dtype=np.float32)
+                uniform_detected = True
+            elif np.isclose(b1_unique[0], 1.0, atol=1e-3):
+                logger.info("B1+ map is all ones (no correction needed)")
+                uniform_detected = True
 
         # Load brain mask for QC if provided.
         # Brain mask may be in T1w space (different resolution from AFI).
@@ -530,11 +625,38 @@ class B1Mapping(SimpleInterface):
             "tr_ratio": n,
             "b1_range_expected": B1_MEAN_RANGE,
             "b1_max_std_expected": B1_MAX_STD,
+            "n_signal_voxels": n_signal,
+            "n_valid_voxels": int(np.sum(valid)),
+            "n_ratio_invalid": int(np.sum(signal_mask & ~ratio_valid)),
+            "n_denominator_unstable": int(np.sum(signal_mask & ~denominator_stable)),
+            "n_extreme_low_b1": n_extreme_low,
+            "n_extreme_high_b1": n_extreme_high,
+            "uniform_detected": uniform_detected,
         }
 
         # Save output B1+ map
         out_img = nib.Nifti1Image(b1_map, affine, header)
         nib.save(out_img, out_file)
+
+        # Generate QC plot
+        qc_plot_path: Optional[str] = None
+        try:
+            from pmriprep.utils.dce_qc_plots import generate_b1_qc_plot
+
+            qc_plot_path = generate_b1_qc_plot(
+                s1=s1,
+                s2=s2,
+                signal_ratio=r,
+                b1_map=b1_map,
+                nominal_flip_angle=nominal_fa,
+                signal_mask=signal_mask,
+                valid_mask=valid,
+                mean_b1=mean_b1,
+                std_b1=std_b1,
+                qc_pass=qc_pass,
+            )
+        except Exception as e:
+            logger.warning("Failed to generate B1+ QC plot: %s", e, exc_info=True)
 
         # Set outputs
         self._results["out_file"] = out_file
@@ -542,6 +664,8 @@ class B1Mapping(SimpleInterface):
         self._results["std_b1"] = std_b1
         self._results["qc_pass"] = qc_pass
         self._results["qc_metrics"] = qc_metrics
+        if qc_plot_path is not None:
+            self._results["qc_plot"] = qc_plot_path
 
         return runtime
 
@@ -807,9 +931,12 @@ class T1Mapping(SimpleInterface):
             signal_data[i] = img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
 
         # Load B1+ map if provided, otherwise use unity
+        # Clip to VFA-appropriate range [0.5, 1.7] to allow dielectric
+        # resonance effects while preventing extreme corrections (Gap 8).
         if isdefined(self.inputs.b1_map) and self.inputs.b1_map:
             b1_img = nib.load(self.inputs.b1_map)
             b1_map = b1_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            b1_map = np.clip(b1_map, 0.5, 1.7)
         else:
             b1_map = np.ones(shape, dtype=np.float64)
 
