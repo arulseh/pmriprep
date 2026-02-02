@@ -28,9 +28,14 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 from pmriprep.utils.dce_constants import (
     AIF_THRESHOLDS_RELAXED,
     AIF_THRESHOLDS_STRICT,
+    BRAIN_EROSION_ITERATIONS,
+    BRAIN_EROSION_MIN_VOXELS,
     DCE_AIF_EXPECTED_FULL_DOSE,
     EPSILON_T1,
     HEMATOCRIT,
+    LESION_EXCLUSION_DISTANCE_MM,
+    PARKER_R1_REFERENCE,
+    SLAB_EDGE_EXCLUSION_MM,
     get_aif_thresholds,
     get_blood_t1,
 )
@@ -79,6 +84,7 @@ class ParkerAIFParams:
 def parker_population_aif(
     t: npt.NDArray[Any],
     dose_factor: float = 1.0,
+    r1_actual: float | None = None,
 ) -> npt.NDArray[Any]:
     """Generate Parker population AIF.
 
@@ -86,6 +92,11 @@ def parker_population_aif(
         t: Time array in seconds.
         dose_factor: Scaling factor for dose (1.0 = full dose 0.1 mmol/kg,
             0.5 = half dose, 2.0 = double dose).
+        r1_actual: Actual r1 relaxivity (s^-1 mM^-1) of the contrast agent
+            used.  If provided, a relaxivity correction is applied:
+            ``effective_factor = dose_factor * (r1_actual / PARKER_R1_REFERENCE)``
+            where ``PARKER_R1_REFERENCE = 4.1`` (Gd-DTPA at 1.5T).
+            Use this for non-Gd-DTPA agents (e.g. Vueway r1=11.6).
 
     Returns:
         Concentration time course in mM.
@@ -97,6 +108,11 @@ def parker_population_aif(
     """
     # Convert time to minutes
     t_min = t / 60.0
+
+    # Apply relaxivity correction if non-standard agent
+    effective_factor = dose_factor
+    if r1_actual is not None and r1_actual > 0:
+        effective_factor = dose_factor * (r1_actual / PARKER_R1_REFERENCE)
 
     # Get parameters
     p = ParkerAIFParams()
@@ -113,7 +129,7 @@ def parker_population_aif(
     exp_tail = p.alpha * np.exp(-p.beta * t_min) * sigmoid
 
     # Total AIF
-    aif = (g1 + g2 + exp_tail) * dose_factor
+    aif = (g1 + g2 + exp_tail) * effective_factor
 
     # Ensure non-negative
     aif = np.maximum(aif, 0.0)
@@ -145,7 +161,10 @@ def compute_dce_aif_fwhm_seconds(
     tr: float,
     baseline_frames: int = 5,
 ) -> float:
-    """Compute FWHM of DCE AIF peak in seconds.
+    """Compute FWHM of DCE AIF peak in seconds with sub-frame interpolation.
+
+    Uses linear interpolation between frames for sub-frame precision at
+    half-maximum crossings.
 
     Args:
         aif_curve: AIF concentration time course in mM.
@@ -164,23 +183,37 @@ def compute_dce_aif_fwhm_seconds(
 
     half_max = baseline_mean + (peak - baseline_mean) / 2.0
 
-    # Find first crossing above half max (rising edge)
-    rising_idx = baseline_frames
+    # Find rising edge with sub-frame interpolation
+    rising_time = float(baseline_frames) * tr
     for i in range(baseline_frames, peak_idx):
         if aif_curve[i] >= half_max:
-            rising_idx = i
+            if i > baseline_frames and aif_curve[i - 1] < half_max:
+                denom = aif_curve[i] - aif_curve[i - 1]
+                if abs(denom) > EPSILON_T1:
+                    frac = (half_max - aif_curve[i - 1]) / denom
+                    rising_time = (i - 1 + frac) * tr
+                else:
+                    rising_time = float(i) * tr
+            else:
+                rising_time = float(i) * tr
             break
 
-    # Find first crossing below half max after peak (falling edge)
-    falling_idx = len(aif_curve) - 1
+    # Find falling edge with sub-frame interpolation
+    falling_time = float(len(aif_curve) - 1) * tr
     for i in range(peak_idx + 1, len(aif_curve)):
         if aif_curve[i] <= half_max:
-            falling_idx = i
+            if aif_curve[i - 1] > half_max:
+                denom = aif_curve[i - 1] - aif_curve[i]
+                if abs(denom) > EPSILON_T1:
+                    frac = (aif_curve[i - 1] - half_max) / denom
+                    falling_time = (i - 1 + frac) * tr
+                else:
+                    falling_time = float(i) * tr
+            else:
+                falling_time = float(i) * tr
             break
 
-    fwhm_frames = falling_idx - rising_idx
-    fwhm_seconds = fwhm_frames * tr
-
+    fwhm_seconds = falling_time - rising_time
     return max(0.0, fwhm_seconds)
 
 
@@ -380,6 +413,15 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Contrast agent dose level (affects expected peak)",
     )
+    r1_relaxivity = traits.Float(
+        0.0,
+        usedefault=True,
+        desc=(
+            "r1 relaxivity (s^-1 mM^-1) of the contrast agent.  "
+            "0 = assume Gd-DTPA (no correction).  Set to actual "
+            "relaxivity for non-standard agents (e.g. Vueway r1=11.6)."
+        ),
+    )
 
     # Output files
     out_aif_curve = File(
@@ -418,17 +460,21 @@ class AIFDetection(BaseInterface):
     search, automatic detection, and Parker population AIF fallback.
     It is specifically designed for DCE-MRI where concentration is in mM.
 
-    The detection follows this hierarchy:
-    1. Atlas-based search (strict criteria)
-    2. Atlas-based search (relaxed criteria)
-    3. Automatic whole-brain search (relaxed criteria)
-    4. Parker population AIF as fallback
+    The detection follows a multi-level cascade:
+    1. Atlas-based search (strict → relaxed → permissive)
+    2. Automatic whole-brain search (relaxed → permissive → degraded)
+    3. Parker population AIF as fallback
 
-    DCE-specific considerations:
-    - Blood T1 depends on field strength (1.5T→1.35s, 3T→1.65s)
-    - Expected peak concentration for full dose: 5.0-7.6 mM
-    - FWHM typically 8-25 seconds
-    - Population AIF from Parker et al. (2006)
+    Enhanced search includes:
+    - Brain mask erosion to exclude cortical surface veins
+    - Slab edge exclusion to avoid inflow artifacts
+    - Adaptive percentile cascade for candidate pre-filtering
+    - Tissue TTP cross-validation to reject venous voxels
+    - Upstroke slope metric for arterial/venous discrimination
+    - Cluster-based spatial selection (26-connectivity)
+    - Inverse-cost weighted + 3x3x3 ROI averaging
+    - Savitzky-Golay smoothing
+    - Contralateral hemisphere preference and distance-based lesion filtering
 
     Parameters
     ----------
@@ -458,6 +504,8 @@ class AIFDetection(BaseInterface):
         Temporal resolution in seconds.
     dose : str
         Contrast dose level: 'half', 'full', or 'double'.
+    r1_relaxivity : float
+        Contrast agent relaxivity for Parker AIF correction.
 
     Returns
     -------
@@ -541,6 +589,307 @@ class AIFDetection(BaseInterface):
 
         return (base_min * dose_factor, base_max * dose_factor)
 
+    # -----------------------------------------------------------------
+    # Signal Characteristics (Phase 2)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _compute_signal_characteristics(
+        curves: npt.NDArray[Any],
+        baseline_frames: int = 5,
+        tr: float = 1.0,
+    ) -> dict[str, npt.NDArray[Any]]:
+        """Compute AIF candidate signal characteristics (vectorized).
+
+        Computes peak values, timing, enhancement, washout, upstroke slope,
+        and sub-frame FWHM for each candidate voxel curve.
+
+        Args:
+            curves: 2D array (n_voxels, n_timepoints) of concentration curves.
+            baseline_frames: Number of pre-contrast baseline frames.
+            tr: Temporal resolution in seconds.
+
+        Returns:
+            Dictionary with arrays (one value per voxel):
+            - peak_values: Peak concentration after baseline.
+            - peak_times: Time-to-peak in seconds.
+            - peak_indices: Frame index of peak.
+            - baseline: Mean baseline concentration.
+            - enhancement: Peak minus baseline.
+            - washout_fraction: (peak - tail) / (peak - baseline).
+            - fwhm_seconds: Sub-frame interpolated FWHM in seconds.
+            - upstroke_slope: Maximum dC/dt during wash-in.
+        """
+        n_voxels, n_timepoints = curves.shape
+
+        # Baseline
+        baseline = np.mean(curves[:, :baseline_frames], axis=1)
+
+        # Post-baseline portion
+        post = curves[:, baseline_frames:]
+        peak_values = np.max(post, axis=1)
+        peak_rel_indices = np.argmax(post, axis=1)
+        peak_indices = peak_rel_indices + baseline_frames
+        peak_times = peak_indices.astype(np.float64) * tr
+
+        # Enhancement
+        enhancement = peak_values - baseline
+
+        # Washout fraction: (peak - tail_mean) / (peak - baseline)
+        tail_frames = min(5, n_timepoints - baseline_frames - 1)
+        if tail_frames > 0:
+            tail_mean = np.mean(curves[:, -tail_frames:], axis=1)
+        else:
+            tail_mean = curves[:, -1]
+        denom = peak_values - baseline
+        safe_denom = np.where(np.abs(denom) > EPSILON_T1, denom, 1.0)
+        washout_fraction = np.clip(
+            (peak_values - tail_mean) / safe_denom, 0.0, 1.0
+        )
+        washout_fraction = np.where(np.abs(denom) > EPSILON_T1, washout_fraction, 0.0)
+
+        # Upstroke slope: max dC/dt during wash-in (baseline to peak)
+        upstroke_slope = np.zeros(n_voxels, dtype=np.float64)
+        for v in range(n_voxels):
+            pi = int(peak_indices[v])
+            if pi > baseline_frames:
+                segment = curves[v, baseline_frames : pi + 1]
+                if len(segment) > 1:
+                    diffs = np.diff(segment) / tr
+                    upstroke_slope[v] = float(np.max(diffs))
+
+        # Sub-frame FWHM
+        fwhm_seconds = np.zeros(n_voxels, dtype=np.float64)
+        for v in range(n_voxels):
+            fwhm_seconds[v] = compute_dce_aif_fwhm_seconds(
+                curves[v, :], tr, baseline_frames
+            )
+
+        return {
+            "peak_values": peak_values,
+            "peak_times": peak_times,
+            "peak_indices": peak_indices,
+            "baseline": baseline,
+            "enhancement": enhancement,
+            "washout_fraction": washout_fraction,
+            "fwhm_seconds": fwhm_seconds,
+            "upstroke_slope": upstroke_slope,
+        }
+
+    # -----------------------------------------------------------------
+    # Tissue TTP Reference (Phase 3)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _calculate_tissue_ttp_reference(
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        baseline_frames: int,
+    ) -> float:
+        """Compute median tissue TTP from 25th-75th percentile brain voxels.
+
+        Uses the interquartile range of peak concentrations to select
+        parenchymal tissue voxels (avoiding vessels and CSF), then
+        returns the median time-to-peak as a reference for cross-validation.
+
+        Args:
+            conc_data: 4D concentration data (x, y, z, t).
+            brain_mask: 3D brain mask.
+            baseline_frames: Number of pre-contrast baseline frames.
+
+        Returns:
+            Median tissue TTP as frame index (float).
+        """
+        # Peak time and concentration maps (post-baseline)
+        post_data = conc_data[..., baseline_frames:]
+        peak_time_map = np.argmax(post_data, axis=-1) + baseline_frames
+        peak_conc_all = np.max(post_data, axis=-1)
+
+        # Get parenchymal voxels (25th-75th percentile of peak concentration)
+        brain_peaks = peak_conc_all[brain_mask > 0.5]
+        positive_peaks = brain_peaks[brain_peaks > 0]
+
+        if len(positive_peaks) < 10:
+            # Not enough voxels; return midpoint as fallback
+            return float(conc_data.shape[-1]) * 0.3
+
+        p25 = float(np.percentile(positive_peaks, 25))
+        p75 = float(np.percentile(positive_peaks, 75))
+
+        parenchyma = (
+            (brain_mask > 0.5)
+            & (peak_conc_all > p25)
+            & (peak_conc_all < p75)
+        )
+
+        if np.sum(parenchyma) < 10:
+            return float(conc_data.shape[-1]) * 0.3
+
+        return float(np.median(peak_time_map[parenchyma]))
+
+    # -----------------------------------------------------------------
+    # Search Mask Preparation (Phase 1)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _prepare_search_mask(
+        brain_mask: npt.NDArray[Any],
+        voxel_sizes: tuple[float, ...],
+        lesion_mask: Optional[npt.NDArray[Any]] = None,
+        lesion_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
+    ) -> npt.NDArray[Any]:
+        """Prepare the search mask with erosion, slab exclusion, and lesion distance.
+
+        Steps:
+        1. Erode brain mask (8 iterations) to exclude cortical surface veins.
+        2. Exclude inferior/superior slab edges (15mm) to avoid inflow artifacts.
+        3. Exclude voxels within ``lesion_distance_mm`` of any lesion voxel.
+
+        Args:
+            brain_mask: 3D brain mask.
+            voxel_sizes: Voxel dimensions (dx, dy, dz) in mm.
+            lesion_mask: Optional 3D lesion mask.
+            lesion_distance_mm: Minimum distance (mm) from lesion.
+
+        Returns:
+            Prepared 3D search mask.
+        """
+        from scipy.ndimage import binary_erosion
+
+        # Step 1: Erode brain mask
+        search_mask = binary_erosion(
+            brain_mask > 0.5, iterations=BRAIN_EROSION_ITERATIONS
+        ).astype(brain_mask.dtype)
+        if np.sum(search_mask) < BRAIN_EROSION_MIN_VOXELS:
+            search_mask = (brain_mask > 0.5).astype(brain_mask.dtype)
+
+        # Step 2: Slab edge exclusion (15mm from inferior/superior)
+        nz = search_mask.shape[2]
+        slice_thickness = float(voxel_sizes[2]) if len(voxel_sizes) > 2 else 1.0
+        if slice_thickness > 0:
+            edge_slices = max(1, int(np.ceil(SLAB_EDGE_EXCLUSION_MM / slice_thickness)))
+            if edge_slices * 2 < nz:
+                search_mask[:, :, :edge_slices] = 0
+                search_mask[:, :, -edge_slices:] = 0
+
+        # Step 3: Lesion exclusion (binary + distance-based)
+        if lesion_mask is not None:
+            # Binary exclusion
+            search_mask[lesion_mask > 0] = 0
+
+            # Distance-based exclusion
+            if lesion_distance_mm > 0:
+                from scipy.ndimage import distance_transform_edt
+
+                lesion_distance_map = distance_transform_edt(
+                    lesion_mask < 0.5, sampling=voxel_sizes[:3]
+                )
+                search_mask[lesion_distance_map < lesion_distance_mm] = 0
+
+        return search_mask
+
+    # -----------------------------------------------------------------
+    # Contralateral Hemisphere Preference (Phase 6)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _determine_tumor_laterality(
+        lesion_mask: npt.NDArray[Any],
+        affine: npt.NDArray[Any],
+    ) -> str | None:
+        """Determine tumor laterality from lesion mask center-of-mass.
+
+        Args:
+            lesion_mask: 3D lesion mask.
+            affine: 4x4 NIfTI affine matrix (voxel→RAS world).
+
+        Returns:
+            'left', 'right', 'bilateral', or None if no lesion.
+        """
+        lesion_coords = np.argwhere(lesion_mask > 0.5)
+        if len(lesion_coords) == 0:
+            return None
+
+        # Center of mass in voxel space
+        com_voxel = np.mean(lesion_coords, axis=0)
+
+        # Convert to RAS world coordinates
+        com_world = affine[:3, :3] @ com_voxel + affine[:3, 3]
+        x_ras = com_world[0]
+
+        # Check extent: bilateral if lesion spans >10mm past midline on both sides
+        all_world = (affine[:3, :3] @ lesion_coords.T).T + affine[:3, 3]
+        x_min, x_max = float(np.min(all_world[:, 0])), float(np.max(all_world[:, 0]))
+
+        if x_min < -10.0 and x_max > 10.0:
+            return "bilateral"
+        elif x_ras < 0:
+            return "left"
+        else:
+            return "right"
+
+    @staticmethod
+    def _filter_candidates_by_hemisphere(
+        candidates: list[tuple[int, int, int]],
+        scores: list[float],
+        metrics_list: list[dict[str, float]],
+        brain_shape: tuple[int, ...],
+        affine: npt.NDArray[Any],
+        tumor_laterality: str | None,
+    ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
+        """Prefer contralateral hemisphere candidates when lesion is lateralized.
+
+        Args:
+            candidates: Candidate voxel coordinates.
+            scores: Candidate scores.
+            metrics_list: Candidate metrics.
+            brain_shape: Spatial dimensions.
+            affine: Affine matrix.
+            tumor_laterality: 'left', 'right', 'bilateral', or None.
+
+        Returns:
+            Filtered (candidates, scores, metrics).
+        """
+        if not candidates or tumor_laterality is None or tumor_laterality == "bilateral":
+            return candidates, scores, metrics_list
+
+        # Determine contralateral side in voxel coordinates
+        # In RAS: x < 0 is left, x > 0 is right
+        # Preferred side is opposite to tumor
+        contra: list[int] = []
+        ipsi: list[int] = []
+        for i, (x, y, z) in enumerate(candidates):
+            voxel = np.array([x, y, z], dtype=float)
+            world = affine[:3, :3] @ voxel + affine[:3, 3]
+            x_ras = world[0]
+
+            if tumor_laterality == "left":
+                # Tumor is left (x<0), prefer right (x>0)
+                if x_ras > 0:
+                    contra.append(i)
+                else:
+                    ipsi.append(i)
+            else:
+                # Tumor is right (x>0), prefer left (x<0)
+                if x_ras < 0:
+                    contra.append(i)
+                else:
+                    ipsi.append(i)
+
+        # Use contralateral if we have enough candidates (at least 3)
+        if len(contra) >= 3:
+            return (
+                [candidates[i] for i in contra],
+                [scores[i] for i in contra],
+                [metrics_list[i] for i in contra],
+            )
+
+        return candidates, scores, metrics_list
+
+    # -----------------------------------------------------------------
+    # Candidate Scoring (replaces old _score_dce_candidate)
+    # -----------------------------------------------------------------
+
     def _score_dce_candidate(
         self,
         curve: npt.NDArray[Any],
@@ -563,15 +912,28 @@ class AIFDetection(BaseInterface):
         cnr = compute_dce_aif_cnr(curve, baseline_frames)
         auc = compute_dce_aif_auc(curve, tr)
 
+        # Upstroke slope
+        peak_idx = int(np.argmax(curve))
+        upstroke = 0.0
+        if peak_idx > baseline_frames:
+            segment = curve[baseline_frames : peak_idx + 1]
+            if len(segment) > 1:
+                upstroke = float(np.max(np.diff(segment) / tr))
+
+        # Peak time in frames
+        peak_time_frame = float(peak_idx)
+
         metrics["peak_mm"] = peak
         metrics["fwhm_seconds"] = fwhm
         metrics["washout"] = washout
         metrics["baseline_std"] = baseline_std
         metrics["cnr"] = cnr
         metrics["auc"] = auc
+        metrics["upstroke_slope"] = upstroke
+        metrics["peak_time_frame"] = peak_time_frame
 
-        # Get thresholds based on criteria
-        thresholds = get_aif_thresholds(criteria)
+        # Get thresholds based on criteria (TR-adaptive)
+        thresholds = get_aif_thresholds(criteria, tr=tr)
 
         # Get expected peak range for dose
         peak_min, peak_max = self._get_expected_peak_range()
@@ -586,39 +948,51 @@ class AIFDetection(BaseInterface):
             return 0.0, metrics
 
         # 3. Peak concentration (must be physiological)
-        # Allow some tolerance for partial volume effects
-        if peak < peak_min * 0.3 or peak > peak_max * 3.0:
+        # Allow tolerance scaling with criteria level
+        peak_tol = 0.3 if criteria in ("strict", "relaxed") else 0.15
+        peak_ceiling = 3.0 if criteria in ("strict", "relaxed") else 5.0
+        if peak < peak_min * peak_tol or peak > peak_max * peak_ceiling:
             return 0.0, metrics
 
-        # 4. CNR (should be reasonably high)
-        min_cnr = 5.0 if criteria == "strict" else 3.0
+        # 4. CNR
+        cnr_map = {"strict": 5.0, "relaxed": 3.0, "permissive": 2.0, "degraded": 1.0}
+        min_cnr = cnr_map.get(criteria, 3.0)
         if cnr < min_cnr:
             return 0.0, metrics
 
         # Compute composite score (all thresholds met)
         score = 0.0
 
-        # Peak contribution (0-0.3): closer to expected range is better
+        # Peak contribution (0-0.25): closer to expected range is better
         expected_peak = (peak_min + peak_max) / 2.0
-        peak_deviation = abs(peak - expected_peak) / expected_peak
+        peak_deviation = abs(peak - expected_peak) / max(expected_peak, EPSILON_T1)
         peak_score = max(0.0, 1.0 - peak_deviation)
-        score += 0.3 * peak_score
+        score += 0.25 * peak_score
 
-        # CNR contribution (0-0.25): higher is better
-        cnr_score = min(1.0, cnr / 50.0)  # Normalize to 0-1
-        score += 0.25 * cnr_score
+        # CNR contribution (0-0.2): higher is better
+        cnr_score = min(1.0, cnr / 50.0)
+        score += 0.2 * cnr_score
 
-        # Washout contribution (0-0.25): closer to 0.5 is ideal
+        # Washout contribution (0-0.2): closer to 0.5 is ideal
         washout_score = 1.0 - abs(washout - 0.5) / 0.5
-        score += 0.25 * max(0.0, washout_score)
+        score += 0.2 * max(0.0, washout_score)
 
-        # FWHM contribution (0-0.2): closer to ~15s is ideal for DCE
+        # FWHM contribution (0-0.15): closer to ~15s is ideal for DCE
         ideal_fwhm = 15.0
         fwhm_range = thresholds.fwhm_max_seconds - thresholds.fwhm_min_seconds
-        fwhm_score = 1.0 - abs(fwhm - ideal_fwhm) / (fwhm_range / 2)
-        score += 0.2 * max(0.0, fwhm_score)
+        fwhm_score = 1.0 - abs(fwhm - ideal_fwhm) / max(fwhm_range / 2, 1.0)
+        score += 0.15 * max(0.0, fwhm_score)
+
+        # Upstroke slope contribution (0-0.2): steeper is better for arteries
+        if upstroke > 0:
+            upstroke_score = min(1.0, upstroke / (peak / max(tr * 3, EPSILON_T1)))
+            score += 0.2 * upstroke_score
 
         return min(1.0, score), metrics
+
+    # -----------------------------------------------------------------
+    # Spatial Exclusions (unchanged from original)
+    # -----------------------------------------------------------------
 
     @staticmethod
     def _apply_spatial_exclusions(
@@ -697,6 +1071,122 @@ class AIFDetection(BaseInterface):
             return candidates
         return kept
 
+    # -----------------------------------------------------------------
+    # Cluster-Based Selection (Phase 4)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _score_and_select_cluster(
+        candidates: list[tuple[int, int, int]],
+        scores: list[float],
+        metrics_list: list[dict[str, float]],
+        brain_shape: tuple[int, ...],
+    ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
+        """Score spatial clusters and select the best arterial cluster.
+
+        Uses 26-connectivity labeling and composite scoring:
+        0.3 * FWHM_score + 0.3 * washout_score + 0.15 * upstroke_score + 0.25 * size_score
+
+        Args:
+            candidates: Candidate voxel coordinates.
+            scores: Per-candidate quality scores.
+            metrics_list: Per-candidate metric dictionaries.
+            brain_shape: Spatial dimensions (nx, ny, nz).
+
+        Returns:
+            (candidates, scores, metrics) for the best cluster.
+            If only 1 cluster exists or clustering fails, returns input unchanged.
+        """
+        if len(candidates) < 3:
+            return candidates, scores, metrics_list
+
+        from scipy.ndimage import label
+
+        # Build binary volume of candidate voxels
+        vol = np.zeros(brain_shape[:3], dtype=np.int32)
+        for x, y, z in candidates:
+            vol[x, y, z] = 1
+
+        # 26-connectivity structuring element
+        struct = np.ones((3, 3, 3), dtype=np.int32)
+        labeled, n_labels = label(vol, structure=struct)
+
+        if n_labels <= 1:
+            return candidates, scores, metrics_list
+
+        # Map each candidate to its cluster label
+        candidate_labels = [labeled[x, y, z] for x, y, z in candidates]
+
+        # Compute cluster scores
+        best_cluster_label = 0
+        best_cluster_score = -1.0
+
+        for cluster_id in range(1, n_labels + 1):
+            cluster_indices = [
+                i for i, lbl in enumerate(candidate_labels) if lbl == cluster_id
+            ]
+            if not cluster_indices:
+                continue
+
+            cluster_size = len(cluster_indices)
+
+            # FWHM score: prefer narrow FWHM (arterial)
+            fwhm_vals = [
+                metrics_list[i].get("fwhm_seconds", 30.0) for i in cluster_indices
+            ]
+            mean_fwhm = np.mean(fwhm_vals)
+            fwhm_score = max(0.0, 1.0 - mean_fwhm / 30.0)
+
+            # Washout score: prefer high washout (arterial)
+            washout_vals = [
+                metrics_list[i].get("washout", 0.0) for i in cluster_indices
+            ]
+            washout_score = float(np.mean(washout_vals))
+
+            # Upstroke score: prefer steep upstroke (arterial)
+            upstroke_vals = [
+                metrics_list[i].get("upstroke_slope", 0.0) for i in cluster_indices
+            ]
+            max_upstroke = max(upstroke_vals) if upstroke_vals else 0.0
+            upstroke_ref = max_upstroke if max_upstroke > 0 else 1.0
+            upstroke_score = float(np.mean(upstroke_vals)) / upstroke_ref
+
+            # Size score: prefer larger clusters (more spatial coherence)
+            max_cluster = max(
+                sum(1 for lbl in candidate_labels if lbl == cid)
+                for cid in range(1, n_labels + 1)
+            )
+            size_score = cluster_size / max(max_cluster, 1)
+
+            composite = (
+                0.30 * fwhm_score
+                + 0.30 * washout_score
+                + 0.15 * upstroke_score
+                + 0.25 * size_score
+            )
+
+            if composite > best_cluster_score:
+                best_cluster_score = composite
+                best_cluster_label = cluster_id
+
+        # Extract best cluster
+        keep_idx = [
+            i for i, lbl in enumerate(candidate_labels) if lbl == best_cluster_label
+        ]
+
+        if not keep_idx:
+            return candidates, scores, metrics_list
+
+        return (
+            [candidates[i] for i in keep_idx],
+            [scores[i] for i in keep_idx],
+            [metrics_list[i] for i in keep_idx],
+        )
+
+    # -----------------------------------------------------------------
+    # Adaptive Percentile Pre-filtering + Candidate Search (Phase 3)
+    # -----------------------------------------------------------------
+
     def _find_candidates_in_mask(
         self,
         concentration_data: npt.NDArray[Any],
@@ -705,30 +1195,66 @@ class AIFDetection(BaseInterface):
         tr: float,
         baseline_frames: int,
         criteria: str,
+        tissue_ttp_frame: float | None = None,
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
         """Find candidate AIF voxels within a mask.
 
-        Applies spatial exclusion (SSS/edge), peak timing validation, and
-        quality scoring. Returns top candidates sorted by score descending.
+        Uses adaptive percentile cascade for pre-filtering, then applies
+        quality scoring, spatial exclusion, peak timing validation, tissue
+        TTP cross-validation, and upstroke filtering.  Returns top
+        candidates sorted by score descending.
+
+        Args:
+            concentration_data: 4D concentration data.
+            mask: 3D search mask.
+            n_candidates: Number of candidates to return.
+            tr: Temporal resolution in seconds.
+            baseline_frames: Number of pre-contrast frames.
+            criteria: Quality criteria level.
+            tissue_ttp_frame: Median tissue TTP frame for cross-validation.
+
+        Returns:
+            (candidates, scores, metrics_list) — top N voxels.
         """
+        brain_shape = concentration_data.shape[:3]
+        n_timepoints = concentration_data.shape[3]
+
+        # ----- Adaptive percentile pre-filtering -----
+        # Compute peak concentration map within mask
+        post_data = concentration_data[..., baseline_frames:]
+        peak_conc_map = np.max(post_data, axis=-1)
+        peak_conc_map[mask < 0.5] = 0.0
+
+        valid_peaks = peak_conc_map[mask > 0.5]
+        if len(valid_peaks) == 0:
+            return [], [], []
+
+        # Cascade from most to least restrictive
+        percentiles = [99.5, 99.0, 98.5, 98.0, 97.0, 95.0]
+        min_prefilter = max(n_candidates, 20)
+        prefilter_coords: npt.NDArray[Any] | None = None
+
+        for pct in percentiles:
+            thresh = float(np.nanpercentile(valid_peaks, pct))
+            prefilter_coords = np.argwhere(
+                (peak_conc_map >= thresh) & (mask > 0.5)
+            )
+            if prefilter_coords.shape[0] >= min_prefilter:
+                break
+
+        if prefilter_coords is None or prefilter_coords.shape[0] == 0:
+            # Fall back to all mask voxels
+            prefilter_coords = np.argwhere(mask > 0.5)
+
+        # ----- Score each pre-filtered voxel -----
         candidates: list[tuple[int, int, int]] = []
         scores: list[float] = []
         all_metrics: list[dict[str, float]] = []
 
-        # Get mask coordinates
-        mask_coords = np.where(mask > 0)
-        n_voxels = len(mask_coords[0])
-        n_timepoints = concentration_data.shape[3]
-
-        for i in range(n_voxels):
-            x, y, z = (
-                int(mask_coords[0][i]),
-                int(mask_coords[1][i]),
-                int(mask_coords[2][i]),
-            )
+        for row in prefilter_coords:
+            x, y, z = int(row[0]), int(row[1]), int(row[2])
             curve = concentration_data[x, y, z, :]
 
-            # Skip if curve is empty or all zeros
             peak = float(np.max(curve))
             if peak < EPSILON_T1:
                 continue
@@ -741,29 +1267,67 @@ class AIFDetection(BaseInterface):
                 scores.append(score)
                 all_metrics.append(metrics)
 
-        # Apply spatial exclusions (SSS + edge slices)
-        if candidates:
-            brain_shape = concentration_data.shape[:3]
-            filtered = self._apply_spatial_exclusions(candidates, brain_shape)
-            # Keep only filtered candidates with their scores/metrics
-            filtered_set = set(filtered)
-            keep_idx = [i for i, c in enumerate(candidates) if c in filtered_set]
-            candidates = [candidates[i] for i in keep_idx]
-            scores = [scores[i] for i in keep_idx]
-            all_metrics = [all_metrics[i] for i in keep_idx]
+        # ----- Tissue TTP cross-validation -----
+        if candidates and tissue_ttp_frame is not None:
+            kept_idx: list[int] = []
+            for i, m in enumerate(all_metrics):
+                candidate_peak_frame = m.get("peak_time_frame", 0.0)
+                frames_after_tissue = candidate_peak_frame - tissue_ttp_frame
+                if frames_after_tissue > 2:
+                    # Venous: peaks > 2 frames after tissue median
+                    continue
+                elif frames_after_tissue > 0:
+                    # Mild penalty: close to tissue but slightly late
+                    scores[i] *= 0.7
+                kept_idx.append(i)
 
-        # Peak timing validation
+            if kept_idx:
+                candidates = [candidates[i] for i in kept_idx]
+                scores = [scores[i] for i in kept_idx]
+                all_metrics = [all_metrics[i] for i in kept_idx]
+
+        # ----- Upstroke slope filter: keep top 25% steepest -----
+        if len(candidates) > n_candidates:
+            slopes = np.array([
+                m.get("upstroke_slope", 0.0) for m in all_metrics
+            ])
+            if np.max(slopes) > 0:
+                slope_thresh = float(np.percentile(slopes, 75))
+                steep_idx = [
+                    i for i, s in enumerate(slopes) if s >= slope_thresh
+                ]
+                if len(steep_idx) >= n_candidates:
+                    candidates = [candidates[i] for i in steep_idx]
+                    scores = [scores[i] for i in steep_idx]
+                    all_metrics = [all_metrics[i] for i in steep_idx]
+
+        # ----- Spatial exclusions (SSS + edge slices) -----
+        if candidates:
+            filtered = self._apply_spatial_exclusions(candidates, brain_shape)
+            filtered_set = set(filtered)
+            keep_idx_sp = [i for i, c in enumerate(candidates) if c in filtered_set]
+            candidates = [candidates[i] for i in keep_idx_sp]
+            scores = [scores[i] for i in keep_idx_sp]
+            all_metrics = [all_metrics[i] for i in keep_idx_sp]
+
+        # ----- Peak timing validation -----
         if candidates:
             valid_timing = self._validate_peak_timing(
                 candidates, concentration_data, n_timepoints
             )
             valid_set = set(valid_timing)
-            keep_idx = [i for i, c in enumerate(candidates) if c in valid_set]
-            candidates = [candidates[i] for i in keep_idx]
-            scores = [scores[i] for i in keep_idx]
-            all_metrics = [all_metrics[i] for i in keep_idx]
+            keep_idx_pt = [i for i, c in enumerate(candidates) if c in valid_set]
+            candidates = [candidates[i] for i in keep_idx_pt]
+            scores = [scores[i] for i in keep_idx_pt]
+            all_metrics = [all_metrics[i] for i in keep_idx_pt]
 
-        # Sort by score descending and take top N
+        # ----- Cluster-based selection -----
+        if len(candidates) > n_candidates:
+            candidates, scores, all_metrics = self._score_and_select_cluster(
+                candidates, scores, all_metrics, brain_shape
+            )
+
+        # ----- Sort by score descending and take top N -----
         if candidates:
             sorted_indices = np.argsort(scores)[::-1]
             candidates = [candidates[int(i)] for i in sorted_indices[:n_candidates]]
@@ -771,6 +1335,156 @@ class AIFDetection(BaseInterface):
             all_metrics = [all_metrics[int(i)] for i in sorted_indices[:n_candidates]]
 
         return candidates, scores, all_metrics
+
+    # -----------------------------------------------------------------
+    # Weighted ROI Averaging + Smoothing (Phase 5)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _compute_weighted_roi_aif(
+        candidates: list[tuple[int, int, int]],
+        scores: list[float],
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        roi_size: int = 3,
+    ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
+        """Compute inverse-cost weighted AIF with 3x3x3 ROI averaging and smoothing.
+
+        Args:
+            candidates: Candidate voxel coordinates.
+            scores: Quality scores (higher is better).
+            conc_data: 4D concentration data.
+            brain_mask: 3D brain mask.
+            roi_size: Side length of cubic ROI.
+
+        Returns:
+            (aif_curve, aif_mask) — smoothed 1D AIF and 3D boolean mask.
+        """
+        from scipy.signal import savgol_filter
+
+        nt = conc_data.shape[-1]
+        aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+
+        if len(candidates) == 1:
+            x, y, z = candidates[0]
+            # 3x3x3 ROI around single candidate
+            slices = []
+            for dim, coord_val in enumerate((x, y, z)):
+                s = max(0, coord_val - roi_size // 2)
+                e = min(conc_data.shape[dim], coord_val + roi_size // 2 + 1)
+                slices.append(slice(s, e))
+            roi = np.zeros(conc_data.shape[:3], dtype=bool)
+            roi[tuple(slices)] = True
+            valid = roi & (brain_mask > 0.5)
+            aif_mask[valid] = 1
+            roi_data = conc_data[valid]
+            if roi_data.shape[0] > 0:
+                aif_curve = np.mean(roi_data, axis=0)
+            else:
+                aif_mask[x, y, z] = 1
+                aif_curve = conc_data[x, y, z, :]
+        else:
+            # Inverse-score weighting (lower cost = higher weight)
+            score_arr = np.array(scores)
+            weights = score_arr / np.sum(score_arr)  # higher score → higher weight
+
+            weighted_aif = np.zeros(nt, dtype=np.float64)
+            for i, (x, y, z) in enumerate(candidates):
+                slices = []
+                for dim, coord_val in enumerate((x, y, z)):
+                    s = max(0, coord_val - roi_size // 2)
+                    e = min(conc_data.shape[dim], coord_val + roi_size // 2 + 1)
+                    slices.append(slice(s, e))
+                roi = np.zeros(conc_data.shape[:3], dtype=bool)
+                roi[tuple(slices)] = True
+                valid = roi & (brain_mask > 0.5)
+                aif_mask[valid] = 1
+
+                roi_data = conc_data[valid]
+                if roi_data.shape[0] > 0:
+                    roi_aif = np.mean(roi_data, axis=0)
+                else:
+                    roi_aif = conc_data[x, y, z, :]
+                weighted_aif += weights[i] * roi_aif
+
+            aif_curve = weighted_aif
+
+        # Savitzky-Golay smoothing (window=5, polyorder=2)
+        if len(aif_curve) >= 5:
+            aif_curve = savgol_filter(aif_curve, window_length=5, polyorder=2)
+
+        # Clip negative to zero
+        aif_curve = np.maximum(aif_curve, 0.0)
+
+        return aif_curve, aif_mask
+
+    # -----------------------------------------------------------------
+    # S0-based Partial Volume Rejection (Phase 5)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _reject_partial_volume_candidates(
+        candidates: list[tuple[int, int, int]],
+        scores: list[float],
+        metrics_list: list[dict[str, float]],
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        baseline_frames: int,
+    ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
+        """Reject candidates with high baseline signal (partial volume).
+
+        Candidates with baseline signal (S0) above median brain S0 indicate
+        tissue contamination (large tissue fraction = partial volume AIF).
+
+        Args:
+            candidates: Candidate coordinates.
+            scores: Candidate scores.
+            metrics_list: Candidate metrics.
+            conc_data: 4D concentration data.
+            brain_mask: 3D brain mask.
+            baseline_frames: Number of baseline frames.
+
+        Returns:
+            Filtered (candidates, scores, metrics).
+        """
+        if not candidates or baseline_frames < 1:
+            return candidates, scores, metrics_list
+
+        # Compute S0 (mean baseline) for each candidate
+        s0_candidates = np.array([
+            float(np.mean(conc_data[x, y, z, :baseline_frames]))
+            for x, y, z in candidates
+        ])
+
+        # Compute median S0 across brain
+        baseline_mean_vol = np.mean(conc_data[..., :baseline_frames], axis=-1)
+        brain_s0 = baseline_mean_vol[brain_mask > 0.5]
+        if len(brain_s0) == 0:
+            return candidates, scores, metrics_list
+        median_brain_s0 = float(np.median(brain_s0))
+
+        if median_brain_s0 < EPSILON_T1:
+            return candidates, scores, metrics_list
+
+        # Reject candidates with S0 > 2× median (high tissue content)
+        keep_idx = [
+            i for i, s0 in enumerate(s0_candidates)
+            if s0 <= median_brain_s0 * 2.0
+        ]
+
+        if not keep_idx or len(keep_idx) < 3:
+            # Don't reject if it would leave too few candidates
+            return candidates, scores, metrics_list
+
+        return (
+            [candidates[i] for i in keep_idx],
+            [scores[i] for i in keep_idx],
+            [metrics_list[i] for i in keep_idx],
+        )
+
+    # -----------------------------------------------------------------
+    # Main Interface Execution
+    # -----------------------------------------------------------------
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE AIF detection."""
@@ -780,6 +1494,7 @@ class AIFDetection(BaseInterface):
         conc_img = nib.load(self.inputs.concentration_file)
         conc_data: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
         affine = conc_img.affine  # type: ignore[attr-defined]
+        header = conc_img.header  # type: ignore[attr-defined]
 
         brain_img = nib.load(self.inputs.brain_mask_file)
         brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
@@ -805,11 +1520,17 @@ class AIFDetection(BaseInterface):
         tr = float(self.inputs.tr)
         scale_aif = bool(self.inputs.scale_aif)
         target_peak = float(self.inputs.target_peak)
+        lesion_distance = float(self.inputs.lesion_distance)
+        prefer_contralateral = bool(self.inputs.prefer_contralateral)
+        r1_relaxivity = float(self.inputs.r1_relaxivity)
 
         n_timepoints = conc_data.shape[3]
 
         # Get blood T1 for this field strength
         blood_t1 = get_blood_t1(field_strength)
+
+        # Voxel sizes from header
+        voxel_sizes = tuple(float(v) for v in header.get_zooms()[:3])
 
         # Initialize results
         detection_method: Literal["atlas", "automatic", "population"] = "population"
@@ -819,61 +1540,64 @@ class AIFDetection(BaseInterface):
 
         # Skip auto detection if population method requested
         if aif_method == "population":
-            # Go directly to population AIF
             pass
         else:
-            # Multi-level AIF detection
+            # ===== Phase 1: Prepare search mask =====
+            search_mask = self._prepare_search_mask(
+                brain_mask,
+                voxel_sizes,
+                lesion_mask=lesion_mask,
+                lesion_distance_mm=max(lesion_distance, LESION_EXCLUSION_DISTANCE_MM),
+            )
 
-            # Create search mask (brain minus lesion)
-            search_mask = brain_mask.copy()
-            if lesion_mask is not None:
-                search_mask[lesion_mask > 0] = 0
+            # ===== Phase 3: Compute tissue TTP reference =====
+            tissue_ttp_frame = self._calculate_tissue_ttp_reference(
+                conc_data, brain_mask, baseline_frames
+            )
 
-            # Level 1: Atlas-based with strict criteria
+            # ===== Multi-level detection cascade =====
+            # Atlas attempts: strict → relaxed → permissive
             if atlas_mask is not None:
-                combined_mask = search_mask * atlas_mask
-                candidates, scores, metrics_list = self._find_candidates_in_mask(
-                    conc_data, combined_mask, n_candidates, tr, baseline_frames, "strict"
-                )
-                if candidates:
-                    detection_method = "atlas"
+                for crit in ("strict", "relaxed", "permissive"):
+                    combined_mask = (search_mask > 0.5) & (atlas_mask > 0.5)
+                    combined_mask = combined_mask.astype(search_mask.dtype)
+                    candidates, scores, metrics_list = self._find_candidates_in_mask(
+                        conc_data, combined_mask, n_candidates, tr,
+                        baseline_frames, crit,
+                        tissue_ttp_frame=tissue_ttp_frame,
+                    )
+                    if candidates:
+                        detection_method = "atlas"
+                        break
 
-            # Level 2: Atlas-based with relaxed criteria
-            if not candidates and atlas_mask is not None:
-                combined_mask = search_mask * atlas_mask
-                candidates, scores, metrics_list = self._find_candidates_in_mask(
-                    conc_data,
-                    combined_mask,
-                    n_candidates,
-                    tr,
-                    baseline_frames,
-                    "relaxed",
-                )
-                if candidates:
-                    detection_method = "atlas"
-
-            # Level 3: Whole-brain with user-specified criteria
+            # Whole-brain attempts: relaxed → permissive → degraded
             if not candidates:
-                candidates, scores, metrics_list = self._find_candidates_in_mask(
-                    conc_data, search_mask, n_candidates, tr, baseline_frames, criteria
-                )
-                if candidates:
-                    detection_method = "automatic"
+                for crit in ("relaxed", "permissive", "degraded"):
+                    candidates, scores, metrics_list = self._find_candidates_in_mask(
+                        conc_data, search_mask, n_candidates, tr,
+                        baseline_frames, crit,
+                        tissue_ttp_frame=tissue_ttp_frame,
+                    )
+                    if candidates:
+                        detection_method = "automatic"
+                        break
 
-            # Level 4: Whole-brain with relaxed criteria (if not already relaxed)
-            if not candidates and criteria == "strict":
-                candidates, scores, metrics_list = self._find_candidates_in_mask(
-                    conc_data,
-                    search_mask,
-                    n_candidates,
-                    tr,
-                    baseline_frames,
-                    "relaxed",
+            # ===== Phase 5: S0-based partial volume rejection =====
+            if candidates:
+                candidates, scores, metrics_list = self._reject_partial_volume_candidates(
+                    candidates, scores, metrics_list,
+                    conc_data, brain_mask, baseline_frames,
                 )
-                if candidates:
-                    detection_method = "automatic"
 
-        # Generate AIF curve
+            # ===== Phase 6: Contralateral hemisphere preference =====
+            if candidates and lesion_mask is not None and prefer_contralateral:
+                tumor_lat = self._determine_tumor_laterality(lesion_mask, affine)
+                candidates, scores, metrics_list = self._filter_candidates_by_hemisphere(
+                    candidates, scores, metrics_list,
+                    conc_data.shape[:3], affine, tumor_lat,
+                )
+
+        # ===== Generate AIF curve =====
         aif_curve: npt.NDArray[Any]
         aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
         quality_score = 0.0
@@ -881,13 +1605,10 @@ class AIFDetection(BaseInterface):
         qc_metrics: dict[str, Any] = {}
 
         if candidates:
-            # Average curves from candidate voxels
-            curves = []
-            for x, y, z in candidates:
-                curves.append(conc_data[x, y, z, :])
-                aif_mask[x, y, z] = 1
-
-            aif_curve = np.mean(curves, axis=0)
+            # Phase 5: Weighted ROI averaging + smoothing
+            aif_curve, aif_mask = self._compute_weighted_roi_aif(
+                candidates, scores, conc_data, brain_mask
+            )
             quality_score = float(np.mean(scores))
 
             # Aggregate QC metrics
@@ -902,6 +1623,9 @@ class AIFDetection(BaseInterface):
                     ),
                     "cnr_mean": float(np.mean([m["cnr"] for m in metrics_list])),
                     "auc_mean": float(np.mean([m["auc"] for m in metrics_list])),
+                    "upstroke_slope_mean": float(
+                        np.mean([m.get("upstroke_slope", 0.0) for m in metrics_list])
+                    ),
                     "n_candidates": len(candidates),
                 }
 
@@ -928,7 +1652,13 @@ class AIFDetection(BaseInterface):
             bat_shift = bat_result.bat_seconds
             t_shifted = t - bat_shift
             t_shifted = np.maximum(t_shifted, 0.0)
-            aif_curve = parker_population_aif(t_shifted, dose_factor)
+
+            # Apply relaxivity correction for non-standard agents
+            r1_arg: float | None = None
+            if r1_relaxivity > 0:
+                r1_arg = r1_relaxivity
+
+            aif_curve = parker_population_aif(t_shifted, dose_factor, r1_actual=r1_arg)
             detection_method = "population"
             quality_score = 0.5  # Moderate score for population AIF
 

@@ -251,25 +251,57 @@ AIF_THRESHOLDS_RELAXED: Final[AIFThresholds] = AIFThresholds(
     baseline_frames=3,          # 3 frames for baseline (shorter for preload)
 )
 
+#: Permissive AIF quality thresholds (for very difficult cases)
+AIF_THRESHOLDS_PERMISSIVE: Final[AIFThresholds] = AIFThresholds(
+    washout_min=0.05,           # At least 5% washout
+    fwhm_min_seconds=3.0,       # FWHM at least 3 seconds
+    fwhm_max_seconds=45.0,      # FWHM at most 45 seconds
+    baseline_frames=3,          # 3 frames for baseline
+)
 
-def get_aif_thresholds(criteria: str = "strict") -> AIFThresholds:
+#: Degraded AIF quality thresholds (last resort before population fallback)
+AIF_THRESHOLDS_DEGRADED: Final[AIFThresholds] = AIFThresholds(
+    washout_min=0.02,           # Minimal washout required
+    fwhm_min_seconds=2.0,       # FWHM at least 2 seconds
+    fwhm_max_seconds=60.0,      # FWHM at most 60 seconds
+    baseline_frames=2,          # 2 frames for baseline
+)
+
+
+def get_aif_thresholds(criteria: str = "strict", tr: float = 0.0) -> AIFThresholds:
     """Get AIF quality thresholds based on criteria level.
 
+    Supports TR-adaptive FWHM minimum for low temporal resolution DCE
+    acquisitions (TR > 5s), where the bolus may span only 1-2 samples.
+
     Args:
-        criteria: Either "strict" or "relaxed"
+        criteria: One of "strict", "relaxed", "permissive", or "degraded".
+        tr: Temporal resolution in seconds. If > 5.0, FWHM minimum is
+            adapted to ``max(tr * 0.8, base_fwhm_min)``.
 
     Returns:
-        AIFThresholds with appropriate values
+        AIFThresholds with appropriate values.
 
     Raises:
-        ValueError: If criteria is not "strict" or "relaxed"
+        ValueError: If criteria is not a recognized level.
     """
-    if criteria == "strict":
-        return AIF_THRESHOLDS_STRICT
-    elif criteria == "relaxed":
-        return AIF_THRESHOLDS_RELAXED
-    else:
-        raise ValueError(f"Unknown AIF criteria: {criteria}. Use 'strict' or 'relaxed'.")
+    thresholds_map: dict[str, AIFThresholds] = {
+        "strict": AIF_THRESHOLDS_STRICT,
+        "relaxed": AIF_THRESHOLDS_RELAXED,
+        "permissive": AIF_THRESHOLDS_PERMISSIVE,
+        "degraded": AIF_THRESHOLDS_DEGRADED,
+    }
+    if criteria not in thresholds_map:
+        valid = ", ".join(sorted(thresholds_map.keys()))
+        raise ValueError(f"Unknown AIF criteria: {criteria}. Use one of: {valid}.")
+
+    base = thresholds_map[criteria]
+
+    if tr > 5.0:
+        adaptive_min = max(tr * 0.8, base.fwhm_min_seconds)
+        return base._replace(fwhm_min_seconds=adaptive_min)
+
+    return base
 
 
 # =============================================================================
@@ -360,3 +392,27 @@ DEFAULT_TSNR_THRESHOLD: Final[float] = 3.0
 
 #: Tissue density in g/mL (for unit conversions)
 TISSUE_DENSITY: Final[float] = 1.04
+
+
+# =============================================================================
+# AIF Search Mask Preparation
+# =============================================================================
+
+#: Number of binary erosion iterations for brain mask before AIF search.
+#: Excludes cortical surface veins that would contaminate the AIF.
+BRAIN_EROSION_ITERATIONS: Final[int] = 8
+
+#: Minimum number of voxels remaining after erosion; fall back to original
+#: mask if erosion leaves fewer than this.
+BRAIN_EROSION_MIN_VOXELS: Final[int] = 100
+
+#: Distance (mm) from inferior/superior slab edges to exclude from AIF search.
+#: Avoids 3D VIBE inflow artifacts at slab boundaries.
+SLAB_EDGE_EXCLUSION_MM: Final[float] = 15.0
+
+#: Minimum distance (mm) from lesion for AIF candidate voxels.
+LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
+
+#: Parker AIF reference relaxivity (s^-1 mM^-1) for Gd-DTPA at 1.5T.
+#: Used for relaxivity correction when contrast agent differs from original model.
+PARKER_R1_REFERENCE: Final[float] = 4.1

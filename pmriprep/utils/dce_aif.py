@@ -18,6 +18,8 @@ import numpy as np
 import numpy.typing as npt
 
 from pmriprep.utils.dce_constants import (
+    AIF_THRESHOLDS_DEGRADED,
+    AIF_THRESHOLDS_PERMISSIVE,
     AIF_THRESHOLDS_RELAXED,
     AIF_THRESHOLDS_STRICT,
     DCE_AIF_EXPECTED_FULL_DOSE,
@@ -393,13 +395,13 @@ def assess_dce_aif_quality(
     aif_curve: npt.NDArray[Any],
     tr: float,
     baseline_frames: int = 5,
-    criteria: Literal["strict", "relaxed"] = "strict",
+    criteria: Literal["strict", "relaxed", "permissive", "degraded"] = "strict",
     dose_level: Literal["half", "full", "double"] = "full",
     field_strength: float = 3.0,
 ) -> DCEAIFQualityResult:
     """Assess the quality of a DCE AIF curve and return pass/warn/fail status.
 
-    This function evaluates a DCE AIF curve against strict and relaxed criteria
+    This function evaluates a DCE AIF curve against four criteria levels
     and provides a comprehensive quality assessment. Metrics are compared to
     the Parker et al. (2006) population AIF as a reference.
 
@@ -418,9 +420,9 @@ def assess_dce_aif_quality(
         Temporal resolution (TR) in seconds.
     baseline_frames : int
         Number of pre-contrast baseline frames (default: 5).
-    criteria : Literal["strict", "relaxed"]
+    criteria : Literal["strict", "relaxed", "permissive", "degraded"]
         Primary criteria level for overall status determination.
-        Both strict and relaxed thresholds are evaluated regardless.
+        All four levels are evaluated regardless.
     dose_level : Literal["half", "full", "double"]
         Contrast dose level, affects expected peak range.
     field_strength : float
@@ -502,9 +504,11 @@ def assess_dce_aif_quality(
     expected_peak_max = ParkerAIFExpected.PEAK_MAX_MM * dose_factor
     expected_peak_typical = ParkerAIFExpected.PEAK_TYPICAL_MM * dose_factor
 
-    # Get thresholds
-    strict_thresholds = get_aif_thresholds("strict")
-    relaxed_thresholds = get_aif_thresholds("relaxed")
+    # Get thresholds for all 4 levels (TR-adaptive)
+    strict_thresholds = get_aif_thresholds("strict", tr=tr)
+    relaxed_thresholds = get_aif_thresholds("relaxed", tr=tr)
+    permissive_thresholds = get_aif_thresholds("permissive", tr=tr)
+    degraded_thresholds = get_aif_thresholds("degraded", tr=tr)
 
     # Evaluate against strict thresholds
     strict_pass = _evaluate_dce_thresholds(
@@ -520,6 +524,22 @@ def assess_dce_aif_quality(
         thresholds=relaxed_thresholds,
         expected_peak_min=expected_peak_min * 0.3,  # Allow lower due to PV effects
         expected_peak_max=expected_peak_max * 3.0,  # Allow higher for some tolerance
+    )
+
+    # Evaluate against permissive thresholds
+    permissive_pass = _evaluate_dce_thresholds(
+        metrics=metrics,
+        thresholds=permissive_thresholds,
+        expected_peak_min=expected_peak_min * 0.15,
+        expected_peak_max=expected_peak_max * 5.0,
+    )
+
+    # Evaluate against degraded thresholds
+    degraded_pass = _evaluate_dce_thresholds(
+        metrics=metrics,
+        thresholds=degraded_thresholds,
+        expected_peak_min=expected_peak_min * 0.1,
+        expected_peak_max=expected_peak_max * 10.0,
     )
 
     # Determine per-metric status for detailed reporting
@@ -550,19 +570,29 @@ def assess_dce_aif_quality(
         expected_peak_typical=expected_peak_typical,
     )
 
-    # Determine overall status
-    if criteria == "strict":
-        if strict_pass:
-            status = QCStatus.PASS
-        elif relaxed_pass:
-            status = QCStatus.WARN
-        else:
-            status = QCStatus.FAIL
-    else:  # relaxed criteria
-        if relaxed_pass:
-            status = QCStatus.PASS
-        else:
-            status = QCStatus.FAIL
+    # Determine overall status based on requested criteria level
+    # Cascade: if criteria=strict, PASS requires strict, WARN allows relaxed
+    # If criteria=permissive, PASS requires permissive, WARN allows degraded
+    pass_map = {
+        "strict": strict_pass,
+        "relaxed": relaxed_pass,
+        "permissive": permissive_pass,
+        "degraded": degraded_pass,
+    }
+    # The "next easier" level for WARN fallback
+    fallback_map = {
+        "strict": relaxed_pass,
+        "relaxed": permissive_pass,
+        "permissive": degraded_pass,
+        "degraded": degraded_pass,
+    }
+
+    if pass_map[criteria]:
+        status = QCStatus.PASS
+    elif fallback_map[criteria]:
+        status = QCStatus.WARN
+    else:
+        status = QCStatus.FAIL
 
     return DCEAIFQualityResult(
         status=status,
@@ -930,7 +960,7 @@ def assess_dce_aif_quality_from_file(
     aif_file: str,
     tr: float,
     baseline_frames: int = 5,
-    criteria: Literal["strict", "relaxed"] = "strict",
+    criteria: Literal["strict", "relaxed", "permissive", "degraded"] = "strict",
     dose_level: Literal["half", "full", "double"] = "full",
     field_strength: float = 3.0,
 ) -> DCEAIFQualityResult:
