@@ -558,6 +558,51 @@ def _transform_nawm_to_dsc(
     return out_file
 
 
+def _transform_lesion_mask_to_dsc(
+    lesion_mask_file=None,
+    reference_file=None,
+    transform_matrix=None,
+):
+    """Transform lesion mask from T1w space to DSC space.
+
+    Uses FSL FLIRT with nearest-neighbour interpolation to resample
+    the lesion mask into DSC space, preserving integer labels.
+
+    Args:
+        lesion_mask_file: Path to lesion mask in T1w space (or None).
+        reference_file: Path to DSC reference image for output geometry.
+        transform_matrix: Path to T1w→DSC FLIRT matrix.
+
+    Returns:
+        Path to transformed lesion mask in DSC space, or None if no mask.
+    """
+    if lesion_mask_file is None:
+        return None
+
+    from pathlib import Path
+    import subprocess
+
+    lesion_path = Path(lesion_mask_file)
+    if not lesion_path.exists():
+        return None
+
+    out_dir = Path.cwd()
+    out_file = str(out_dir / "lesion_mask_dsc.nii.gz")
+
+    cmd = [
+        "flirt",
+        "-in", str(lesion_mask_file),
+        "-ref", str(reference_file),
+        "-out", out_file,
+        "-init", str(transform_matrix),
+        "-applyxfm",
+        "-interp", "nearestneighbour",  # Preserve integer labels
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+    return out_file
+
+
 def _normalize_cbv(
     cbv_file,
     brain_mask_file,
@@ -1082,6 +1127,10 @@ def init_dsc_preproc_wf(
                 "smooth_abs",
                 # QC metrics
                 "qc_metrics",
+                # Lesion statistics (conditional on lesion mask)
+                "lesion_stats_json",
+                "lesion_stats_txt",
+                "lesion_mask_dsc",
             ]
         ),
         name="outputnode",
@@ -1300,6 +1349,32 @@ def init_dsc_preproc_wf(
         ),
         name="transform_nawm",
     )
+
+    # -------------------------------------------------------------------
+    # Node 6d: Transform Lesion mask from T1w to DSC space
+    # -------------------------------------------------------------------
+    transform_lesion = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dsc_file"],
+            function=_transform_lesion_mask_to_dsc,
+        ),
+        name="transform_lesion",
+    )
+
+    # -------------------------------------------------------------------
+    # Node 6e: Lesion Statistics Extraction
+    # Conditional - only run if lesion mask is available
+    # -------------------------------------------------------------------
+    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+
+    lesion_stats = pe.Node(
+        DSCLesionStats(),
+        name="lesion_stats",
+    )
+    lesion_stats.inputs.subject_id = subject_id
+    lesion_stats.inputs.session_id = session_id
+    lesion_stats.inputs.output_dir = str(bids_dir / "derivatives" / "dsc_pipeline")
 
     # -------------------------------------------------------------------
     # Node 7: CBV Normalization
@@ -1703,6 +1778,46 @@ def init_dsc_preproc_wf(
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
         (inputnode, aif_qc_plot, [("tr", "tr")]),
+    ])
+
+    # -------------------------------------------------------------------
+    # Lesion mask transform and statistics (conditional)
+    # -------------------------------------------------------------------
+    # Transform lesion mask from T1w to DSC space
+    workflow.connect([
+        (inputnode, transform_lesion, [("whole_tumor_mask", "lesion_mask_file")]),
+        (prebolus_mean, transform_lesion, [("prebolus_mean_file", "reference_file")]),
+        (register, transform_lesion, [("out_matrix", "transform_matrix")]),
+    ])
+
+    # Lesion statistics extraction
+    # Connect lesion mask in DSC space
+    workflow.connect([
+        (transform_lesion, lesion_stats, [("lesion_mask_dsc_file", "lesion_mask")]),
+        (transform_nawm, lesion_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
+    ])
+    # Connect perfusion maps
+    workflow.connect([
+        (compute_maps, lesion_stats, [
+            ("out_rel_cbf", "cbf_map"),
+            ("out_rel_cbv", "cbv_map"),
+            ("out_mtt", "mtt_map"),
+            ("out_tmax", "tmax_map"),
+            ("out_psr", "psr_map"),
+            ("out_ph", "ph_map"),
+            ("out_ttp", "ttp_map"),
+        ]),
+        (normalize, lesion_stats, [("ncbv_file", "ncbv_map")]),
+        (normalize_cbf, lesion_stats, [("ncbf_file", "ncbf_map")]),
+        (preload_correct, lesion_stats, [("k2_map_file", "k2_map")]),
+    ])
+    # Connect lesion stats outputs to outputnode
+    workflow.connect([
+        (transform_lesion, outputnode, [("lesion_mask_dsc_file", "lesion_mask_dsc")]),
+        (lesion_stats, outputnode, [
+            ("stats_json", "lesion_stats_json"),
+            ("stats_txt", "lesion_stats_txt"),
+        ]),
     ])
 
     # Transform structural underlays to DSC space (conditional)

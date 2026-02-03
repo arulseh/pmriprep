@@ -235,6 +235,10 @@ def init_dce_preproc_wf(
                 # Structural underlays
                 "t1w_in_dce",
                 "flair_in_dce",
+                # Lesion statistics (conditional on lesion mask)
+                "lesion_stats_json",
+                "lesion_stats_txt",
+                "lesion_mask_dce",
             ]
         ),
         name="outputnode",
@@ -775,7 +779,47 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
-    # Node 11: Structural underlays (conditional on config.underlays)
+    # Node 11: Lesion Statistics (conditional on lesion mask availability)
+    # ==========================================================================
+    # Transform lesion mask from T1w to DCE space
+    transform_lesion = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dce_file"],
+            function=_transform_lesion_mask_to_dce,
+        ),
+        name="transform_lesion",
+    )
+
+    workflow.connect([
+        (inputnode, transform_lesion, [("lesion_mask", "lesion_mask_file")]),
+        (dce_preprocess, transform_lesion, [("mean_img", "reference_file")]),
+        (dce_registration, transform_lesion, [("out_matrix", "transform_matrix")]),
+    ])
+
+    # Lesion statistics extraction
+    from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+    lesion_stats = pe.Node(
+        DCELesionStats(),
+        name="lesion_stats",
+    )
+    lesion_stats.inputs.subject_id = subject_id
+    lesion_stats.inputs.session_id = session_id
+    lesion_stats.inputs.output_dir = str(Path(bids_dir) / "derivatives" / "dce_pipeline")
+
+    workflow.connect([
+        (transform_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),
+        (pk_modeling, lesion_stats, [
+            ("out_ktrans", "ktrans_map"),
+            ("out_ve", "ve_map"),
+            ("out_vp", "vp_map"),
+            ("out_kep", "kep_map"),
+        ]),
+    ])
+
+    # ==========================================================================
+    # Node 12: Structural underlays (conditional on config.underlays)
     # ==========================================================================
     transform_t1w_underlay = None
     if "t1w" in config.underlays:
@@ -872,6 +916,15 @@ def init_dce_preproc_wf(
             (transform_flair_underlay, outputnode, [("out_file", "flair_in_dce")]),
         ])
 
+    # Lesion statistics output connections
+    workflow.connect([
+        (transform_lesion, outputnode, [("lesion_mask_dce_file", "lesion_mask_dce")]),
+        (lesion_stats, outputnode, [
+            ("stats_json", "lesion_stats_json"),
+            ("stats_txt", "lesion_stats_txt"),
+        ]),
+    ])
+
     return workflow
 
 
@@ -960,6 +1013,51 @@ def _transform_mask_to_dce(
         Path(tmp_file).unlink(missing_ok=True)
     except Exception:
         pass
+
+    return out_file
+
+
+def _transform_lesion_mask_to_dce(
+    lesion_mask_file=None,
+    reference_file=None,
+    transform_matrix=None,
+):
+    """Transform lesion mask from T1w space to DCE space.
+
+    Uses FSL FLIRT with nearest-neighbour interpolation to resample
+    the lesion mask into DCE space, preserving integer label values.
+
+    Args:
+        lesion_mask_file: Path to lesion mask in T1w space (or None).
+        reference_file: Path to DCE reference image for output geometry.
+        transform_matrix: Path to T1w→DCE FLIRT matrix.
+
+    Returns:
+        Path to transformed lesion mask in DCE space, or None if no mask.
+    """
+    if lesion_mask_file is None:
+        return None
+
+    from pathlib import Path
+    import subprocess
+
+    lesion_path = Path(lesion_mask_file)
+    if not lesion_path.exists():
+        return None
+
+    out_dir = Path.cwd()
+    out_file = str(out_dir / "lesion_mask_dce.nii.gz")
+
+    cmd = [
+        "flirt",
+        "-in", str(lesion_mask_file),
+        "-ref", str(reference_file),
+        "-out", out_file,
+        "-init", str(transform_matrix),
+        "-applyxfm",
+        "-interp", "nearestneighbour",  # Preserve integer labels
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
 
     return out_file
 

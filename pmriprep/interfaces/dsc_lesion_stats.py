@@ -1,0 +1,390 @@
+"""DSC lesion/tumor ROI statistics extraction Nipype interface.
+
+This module implements a Nipype interface for extracting comprehensive
+statistics from DSC perfusion maps within lesion/tumor regions of interest.
+
+Supports:
+- Multi-label masks (HD-GLIO: 1=non-enhancing, 2=enhancing)
+- Binary tumor masks
+- NAWM reference values for normalization context
+- Clinical interpretation thresholds
+"""
+
+import json
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+import nibabel as nib
+import numpy as np
+from nipype.interfaces.base import (
+    BaseInterface,
+    BaseInterfaceInputSpec,
+    File,
+    TraitedSpec,
+    traits,
+)
+
+from pmriprep.utils.lesion_stats import (
+    LesionStatisticsResult,
+    RegionStatistics,
+    compute_dsc_derived_metrics,
+    compute_map_statistics,
+    compute_nawm_reference,
+    compute_region_volume,
+    detect_mask_type,
+    extract_label_mask,
+    get_dsc_clinical_context,
+)
+
+
+# Region label definitions (HD-GLIO convention)
+HDGLIO_LABELS = {
+    1: "non_enhancing_tumor",
+    2: "contrast_enhancing_tumor",
+}
+
+
+class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
+    """Input specification for DSC lesion statistics extraction."""
+
+    # Required inputs
+    lesion_mask = File(
+        exists=True, mandatory=True, desc="Lesion/tumor mask in DSC space"
+    )
+    subject_id = traits.Str(mandatory=True, desc="Subject ID (without sub- prefix)")
+    session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
+    output_dir = traits.Str(mandatory=True, desc="Output directory for statistics files")
+
+    # Optional NAWM mask for reference values
+    nawm_mask = traits.Str(desc="NAWM mask in DSC space for reference values")
+
+    # Core perfusion maps (required for meaningful analysis)
+    cbf_map = traits.Str(desc="CBF map path (relative or absolute)")
+    cbv_map = traits.Str(desc="CBV map path (relative or absolute)")
+    mtt_map = File(exists=True, desc="MTT map path")
+    tmax_map = File(exists=True, desc="Tmax map path")
+
+    # Normalized maps (for nCBV/nCBF thresholds)
+    ncbv_map = traits.Str(desc="Normalized CBV map path")
+    ncbf_map = traits.Str(desc="Normalized CBF map path")
+
+    # Additional maps
+    psr_map = traits.Str(desc="PSR (percent signal recovery) map path")
+    ph_map = traits.Str(desc="PH (peak height) map path")
+    k2_map = traits.Str(desc="K2 leakage correction map path")
+    ttp_map = traits.Str(desc="TTP map path")
+
+
+class DSCLesionStatsOutputSpec(TraitedSpec):
+    """Output specification for DSC lesion statistics extraction."""
+
+    stats_json = traits.Str(desc="Path to JSON statistics file")
+    stats_txt = traits.Str(desc="Path to text summary file")
+
+
+class DSCLesionStats(BaseInterface):
+    """Extract lesion/tumor ROI statistics from DSC perfusion maps.
+
+    This interface extracts comprehensive statistics from DSC perfusion
+    maps within lesion/tumor regions, supporting:
+
+    - Multi-label masks (HD-GLIO: label 1 = non-enhancing, label 2 = enhancing)
+    - Binary tumor masks
+    - Whole-tumor statistics (combined regions)
+    - NAWM reference values for normalization context
+    - Clinical interpretation thresholds (nCBV > 1.75 = high-grade)
+
+    Output files:
+        {prefix}_space-DSC_lesion-stats.json  - Comprehensive JSON statistics
+        {prefix}_space-DSC_lesion-stats.txt   - Human-readable text summary
+    """
+
+    input_spec = DSCLesionStatsInputSpec
+    output_spec = DSCLesionStatsOutputSpec
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute lesion statistics extraction."""
+        # Load lesion mask
+        lesion_img = nib.load(self.inputs.lesion_mask)
+        lesion_data = np.asarray(lesion_img.dataobj)
+        voxel_sizes: Tuple[float, float, float] = lesion_img.header.get_zooms()[:3]
+
+        # Detect mask type
+        mask_type, max_label = detect_mask_type(lesion_data)
+
+        # Load all available perfusion maps
+        maps = self._load_maps()
+
+        # Initialize result
+        result = LesionStatisticsResult(
+            subject_id=self.inputs.subject_id,
+            session_id=self.inputs.session_id,
+            modality="DSC",
+            mask_type=mask_type,
+            mask_source=Path(self.inputs.lesion_mask).name,
+            total_voxels=int(np.sum(lesion_data > 0)),
+        )
+
+        # Extract statistics for each region
+        if mask_type == "multi_label_hdglio":
+            # Extract per-label statistics
+            for label, region_name in HDGLIO_LABELS.items():
+                if label > max_label:
+                    continue
+                label_mask = extract_label_mask(lesion_data, label)
+                if np.sum(label_mask) == 0:
+                    continue
+
+                region_stats = self._compute_region_stats(
+                    region_name, label_mask, maps, voxel_sizes
+                )
+                if region_stats is not None:
+                    result.regions[region_name] = region_stats
+
+            # Also compute whole-tumor statistics (all labels combined)
+            whole_mask = lesion_data > 0
+            whole_stats = self._compute_region_stats(
+                "whole_tumor", whole_mask, maps, voxel_sizes
+            )
+            if whole_stats is not None:
+                result.regions["whole_tumor"] = whole_stats
+        else:
+            # Binary mask - single region
+            binary_mask = lesion_data > 0
+            region_stats = self._compute_region_stats(
+                "tumor", binary_mask, maps, voxel_sizes
+            )
+            if region_stats is not None:
+                result.regions["tumor"] = region_stats
+
+        # Compute NAWM reference if mask provided
+        if self._has_input("nawm_mask"):
+            nawm_img = nib.load(self.inputs.nawm_mask)
+            nawm_data = np.asarray(nawm_img.dataobj) > 0
+            nawm_maps = {
+                k: v for k, v in maps.items()
+                if k in ["cbv", "cbf", "ncbv", "ncbf", "mtt"]
+            }
+            result.nawm_reference = compute_nawm_reference(
+                nawm_data, nawm_maps, voxel_sizes
+            )
+
+        # Compute derived metrics for primary region
+        primary_mask = lesion_data > 0
+        result.derived_metrics = compute_dsc_derived_metrics(
+            ncbv_data=maps.get("ncbv"),
+            ncbf_data=maps.get("ncbf"),
+            cbv_data=maps.get("cbv"),
+            cbf_data=maps.get("cbf"),
+            mask=primary_mask,
+        )
+
+        # Add clinical context
+        result.clinical_context = get_dsc_clinical_context()
+
+        # Write outputs
+        output_dir = Path(self.inputs.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        prefix = f"sub-{self.inputs.subject_id}"
+        if self.inputs.session_id:
+            prefix += f"_ses-{self.inputs.session_id}"
+
+        # JSON output
+        json_path = output_dir / f"{prefix}_space-DSC_lesion-stats.json"
+        with open(json_path, "w") as f:
+            json.dump(result.to_dict(), f, indent=2, default=str)
+
+        # Text summary
+        txt_path = output_dir / f"{prefix}_space-DSC_lesion-stats.txt"
+        self._write_text_summary(result, txt_path)
+
+        # Set outputs
+        self._results["stats_json"] = str(json_path)
+        self._results["stats_txt"] = str(txt_path)
+
+        return runtime
+
+    def _list_outputs(self) -> Dict[str, str]:
+        """Return outputs."""
+        return self._results
+
+    def _load_maps(self) -> Dict[str, np.ndarray]:
+        """Load all available perfusion maps.
+
+        Returns:
+            Dictionary mapping map name to 3D numpy array.
+        """
+        maps: Dict[str, np.ndarray] = {}
+
+        map_attrs = [
+            ("cbf_map", "cbf"),
+            ("cbv_map", "cbv"),
+            ("mtt_map", "mtt"),
+            ("tmax_map", "tmax"),
+            ("ncbv_map", "ncbv"),
+            ("ncbf_map", "ncbf"),
+            ("psr_map", "psr"),
+            ("ph_map", "ph"),
+            ("k2_map", "k2"),
+            ("ttp_map", "ttp"),
+        ]
+
+        for attr, name in map_attrs:
+            if self._has_input(attr):
+                path = getattr(self.inputs, attr)
+                if Path(path).exists():
+                    img = nib.load(path)
+                    maps[name] = np.asarray(img.dataobj)
+
+        return maps
+
+    def _has_input(self, attr: str) -> bool:
+        """Check if an input is defined and non-empty."""
+        from nipype.interfaces.base import isdefined
+
+        val = getattr(self.inputs, attr, None)
+        if val is None:
+            return False
+        if not isdefined(val):
+            return False
+        if isinstance(val, str) and val.strip() == "":
+            return False
+        return True
+
+    def _compute_region_stats(
+        self,
+        region_name: str,
+        mask: np.ndarray,
+        maps: Dict[str, np.ndarray],
+        voxel_sizes: Tuple[float, float, float],
+    ) -> Optional[RegionStatistics]:
+        """Compute statistics for a single region.
+
+        Args:
+            region_name: Name of the region.
+            mask: Boolean mask for the region.
+            maps: Dictionary of perfusion maps.
+            voxel_sizes: Voxel dimensions in mm.
+
+        Returns:
+            RegionStatistics object or None if mask is empty.
+        """
+        voxel_count, volume_mm3, volume_ml = compute_region_volume(mask, voxel_sizes)
+        if voxel_count == 0:
+            return None
+
+        region = RegionStatistics(
+            region_name=region_name,
+            voxel_count=voxel_count,
+            volume_mm3=volume_mm3,
+            volume_ml=volume_ml,
+        )
+
+        # Compute statistics for each available map
+        for map_name, map_data in maps.items():
+            stats = compute_map_statistics(map_data, mask)
+            if stats is not None:
+                region.perfusion_maps[map_name] = stats
+
+        return region
+
+    def _write_text_summary(
+        self, result: LesionStatisticsResult, path: Path
+    ) -> None:
+        """Write human-readable text summary.
+
+        Args:
+            result: LesionStatisticsResult object.
+            path: Output file path.
+        """
+        lines = [
+            "=" * 70,
+            "DSC PERFUSION LESION STATISTICS",
+            "=" * 70,
+            f"Subject: sub-{result.subject_id}",
+            f"Session: ses-{result.session_id}" if result.session_id else "",
+            f"Lesion Mask: {result.mask_source}",
+            f"Mask Type: {result.mask_type}",
+            f"Total Lesion Voxels: {result.total_voxels}",
+            "",
+        ]
+
+        # Region statistics
+        for region_name, region in result.regions.items():
+            lines.extend([
+                "-" * 50,
+                f"Region: {region_name.upper().replace('_', ' ')}",
+                "-" * 50,
+                f"  Voxels: {region.voxel_count}",
+                f"  Volume: {region.volume_ml:.2f} mL ({region.volume_mm3:.1f} mm³)",
+                "",
+            ])
+
+            for map_name, stats in region.perfusion_maps.items():
+                lines.extend([
+                    f"  {map_name.upper()}:",
+                    f"    Mean ± SD: {stats.mean:.4f} ± {stats.std:.4f}",
+                    f"    Median (IQR): {stats.median:.4f} ({stats.p25:.4f} - {stats.p75:.4f})",
+                    f"    Range: [{stats.min:.4f}, {stats.max:.4f}]",
+                    f"    P90/P95: {stats.p90:.4f} / {stats.p95:.4f}",
+                ])
+                if stats.cv is not None:
+                    lines.append(f"    CV: {stats.cv:.4f}")
+                lines.append("")
+
+        # Derived metrics
+        if result.derived_metrics:
+            lines.extend([
+                "-" * 50,
+                "DERIVED METRICS",
+                "-" * 50,
+            ])
+            if "fractional_volumes" in result.derived_metrics:
+                fv = result.derived_metrics["fractional_volumes"]
+                lines.append("  Fractional Volumes:")
+                for key, val in fv.items():
+                    if key != "interpretation" and val is not None:
+                        lines.append(f"    {key}: {val:.1%}")
+
+            if "hotspot_summary" in result.derived_metrics:
+                hs = result.derived_metrics["hotspot_summary"]
+                lines.append("  Hotspot Values (P90):")
+                for key, val in hs.items():
+                    if key != "description" and val is not None:
+                        lines.append(f"    {key}: {val:.4f}")
+            lines.append("")
+
+        # NAWM reference
+        if result.nawm_reference:
+            lines.extend([
+                "-" * 50,
+                "NAWM REFERENCE VALUES",
+                "-" * 50,
+                f"  Voxels: {result.nawm_reference.get('voxel_count', 'N/A')}",
+                f"  Volume: {result.nawm_reference.get('volume_ml', 'N/A')} mL",
+            ])
+            for key, val in result.nawm_reference.items():
+                if isinstance(val, dict) and "median" in val:
+                    lines.append(f"  {key.upper()}: median={val['median']:.4f}")
+            lines.append("")
+
+        # Clinical context
+        if result.clinical_context:
+            lines.extend([
+                "-" * 50,
+                "CLINICAL INTERPRETATION",
+                "-" * 50,
+            ])
+            ctx = result.clinical_context
+            if "nCBV_threshold_high_grade" in ctx:
+                lines.append(f"  nCBV threshold (high-grade): {ctx['nCBV_threshold_high_grade']}")
+                lines.append(f"    {ctx.get('nCBV_interpretation', '')}")
+            if "reference" in ctx:
+                lines.append(f"  Reference: {ctx['reference']}")
+
+        lines.append("")
+        lines.append("=" * 70)
+
+        with open(path, "w") as f:
+            f.write("\n".join(lines))

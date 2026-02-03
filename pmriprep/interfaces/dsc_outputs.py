@@ -96,6 +96,11 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     aif_curve_plot = traits.Str(desc="AIF curve QC plot PNG path")
     aif_location_plot = traits.Str(desc="AIF location overlay PNG path")
 
+    # Lesion statistics
+    lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
+    lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
+    lesion_mask_dsc = traits.Str(desc="Lesion mask in DSC space path")
+
 
 class DSCDerivativeWriterOutputSpec(TraitedSpec):
     """Output specification for DSCDerivativeWriter."""
@@ -386,6 +391,31 @@ class DSCDerivativeWriter(BaseInterface):
             self._copy_nifti(self.inputs.flair_in_dsc, anat_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "FLAIR registered to DSC space"}
             self._write_json(sidecar, anat_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 10d. Lesion statistics (conditional)
+        # -----------------------------------------------------------
+        if self._has_input("lesion_stats_json"):
+            stats_dir = ses_dir / "stats"
+            stats_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(
+                self.inputs.lesion_stats_json,
+                stats_dir / f"{prefix}_{spatial}_lesion-stats.json",
+            )
+        if self._has_input("lesion_stats_txt"):
+            stats_dir = ses_dir / "stats"
+            stats_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(
+                self.inputs.lesion_stats_txt,
+                stats_dir / f"{prefix}_{spatial}_lesion-stats.txt",
+            )
+        if self._has_input("lesion_mask_dsc"):
+            roi_dir = ses_dir / "roi"
+            roi_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{prefix}_{spatial}_desc-lesion_mask"
+            self._copy_nifti(self.inputs.lesion_mask_dsc, roi_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "Lesion mask registered to DSC space"}
+            self._write_json(sidecar, roi_dir / f"{fname}.json")
 
         if self._has_input("t1w_to_dsc_xfm"):
             self._copy_file(

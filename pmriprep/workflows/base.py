@@ -961,6 +961,10 @@ def init_pmriprep_wf(
                 ("outputnode.aif_location_plot", "aif_location_plot"),
                 # QC metrics
                 ("outputnode.qc_metrics", "qc_metrics"),
+                # Lesion statistics
+                ("outputnode.lesion_stats_json", "lesion_stats_json"),
+                ("outputnode.lesion_stats_txt", "lesion_stats_txt"),
+                ("outputnode.lesion_mask_dsc", "lesion_mask_dsc"),
             ]),
             (inputnode, dsc_writer, [("dsc_file", "source_dsc")]),
         ])
