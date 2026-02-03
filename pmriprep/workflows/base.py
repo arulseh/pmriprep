@@ -1139,6 +1139,30 @@ def init_pmriprep_wf(
             workflow.connect([
                 (inputnode, dce_wf, [("dwi_file", "inputnode.dwi_file")]),
             ])
+            # Gap 4: Extract b-value from BIDS .bval sidecar for tortuosity correction
+            import logging as _logging
+            _log = _logging.getLogger("pmriprep.workflows")
+            dwi_path = session_data.modalities.dwi
+            bval_path = str(dwi_path).replace(".nii.gz", ".bval").replace(".nii", ".bval")
+            if Path(bval_path).exists():
+                try:
+                    import numpy as _np
+                    bvals = _np.loadtxt(bval_path)
+                    # Select high-b value in range 800-1200 s/mm²
+                    high_b = bvals[(bvals >= 800) & (bvals <= 1200)]
+                    if len(high_b) > 0:
+                        dce_wf.inputs.inputnode.dwi_bval = float(high_b[0])
+                        _log.info(
+                            "DWI: extracted b-value %.0f s/mm² from %s",
+                            high_b[0], bval_path
+                        )
+                    else:
+                        _log.warning(
+                            "DWI: no b-value in range 800-1200 s/mm² found in %s",
+                            bval_path
+                        )
+                except Exception as exc:
+                    _log.warning("DWI: failed to read b-value from %s: %s", bval_path, exc)
 
         # Connect DSC CBV for vp constraint in DCE PK modeling.
         # pk_modeling node receives dsc_cbv_file and quality-gates it before use.

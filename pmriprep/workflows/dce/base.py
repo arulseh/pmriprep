@@ -625,6 +625,38 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
+    # Node 7b: Register DWI to DCE space (Gap 1 fix)
+    # ==========================================================================
+    # DWI must be registered to DCE space for proper voxel-wise tortuosity
+    # correction. Chain: DWI → T1w (FLIRT 6-DOF) → DCE (via existing xfm)
+    register_dwi_to_dce = pe.Node(
+        niu.Function(
+            input_names=[
+                "dwi_file",
+                "t1w_file",
+                "t1w_to_dce_xfm",
+                "dce_reference",
+            ],
+            output_names=["dwi_in_dce", "dwi_to_dce_xfm"],
+            function=_register_dwi_to_dce,
+        ),
+        name="register_dwi_to_dce",
+    )
+
+    workflow.connect([
+        (inputnode, register_dwi_to_dce, [
+            ("dwi_file", "dwi_file"),
+            ("t1w_reference", "t1w_file"),
+        ]),
+        (dce_registration, register_dwi_to_dce, [
+            ("out_matrix", "t1w_to_dce_xfm"),
+        ]),
+        (dce_preprocess, register_dwi_to_dce, [
+            ("mean_img", "dce_reference"),
+        ]),
+    ])
+
+    # ==========================================================================
     # Node 8: Tortuosity Correction (optional - skip if config.no_tortuosity=True)
     # ==========================================================================
     # Tortuosity correction requires DWI data
@@ -638,7 +670,7 @@ def init_dce_preproc_wf(
                 "brain_mask",
                 "no_tortuosity",
             ],
-            output_names=["ktrans_corrected_file", "was_corrected"],
+            output_names=["ktrans_corrected_file", "was_corrected", "qc_plot"],
             function=_tortuosity_correction_node,
         ),
         name="tortuosity_correction",
@@ -650,8 +682,11 @@ def init_dce_preproc_wf(
         (pk_modeling, tortuosity_corr, [
             ("out_ktrans", "ktrans_file"),
         ]),
+        # Use registered DWI instead of raw DWI (Gap 1 fix)
+        (register_dwi_to_dce, tortuosity_corr, [
+            ("dwi_in_dce", "dwi_file"),
+        ]),
         (inputnode, tortuosity_corr, [
-            ("dwi_file", "dwi_file"),
             ("dwi_bval", "dwi_bval"),
         ]),
         (transform_brain_mask, tortuosity_corr, [
@@ -1129,22 +1164,54 @@ def _tortuosity_correction_node(
 ):
     """Function node for tortuosity correction.
 
-    Returns the (possibly corrected) Ktrans file and whether correction was applied.
+    Returns the (possibly corrected) Ktrans file, whether correction was applied,
+    and path to QC plot.
+
+    Includes:
+    - Gap 3: B-value auto-detection from BIDS .bval sidecar
+    - Gap 5: QC visualization (6-panel figure)
+    - Gap 7: JSON sidecar with provenance metadata
     """
+    import json
     import shutil
     from pathlib import Path
 
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
-    from pmriprep.utils.dce_tortuosity import calculate_and_apply_tortuosity_correction
+    from pmriprep.utils.dce_tortuosity import (
+        D_FREE_GD,
+        calculate_and_apply_tortuosity_correction,
+        generate_tortuosity_qc_plot,
+    )
 
     # If skipping tortuosity or no DWI data, return original Ktrans
-    if no_tortuosity or dwi_file is None or dwi_bval is None:
+    if no_tortuosity or dwi_file is None:
         # Just copy the file to output directory for consistency
         out_file = str(Path.cwd() / "ktrans_final.nii.gz")
         shutil.copy(ktrans_file, out_file)
-        return out_file, False
+        return out_file, False, None
+
+    # Gap 4: Auto-detect b-values from BIDS sidecar if not provided
+    effective_bval = dwi_bval
+    if effective_bval is None:
+        bval_file = str(dwi_file).replace(".nii.gz", ".bval").replace(".nii", ".bval")
+        if Path(bval_file).exists():
+            try:
+                bvals = np.loadtxt(bval_file)
+                # Select b0 (<50) and high-b (800-1200 s/mm²)
+                b0_idx = np.where(bvals < 50)[0]
+                high_b_idx = np.where((bvals >= 800) & (bvals <= 1200))[0]
+                if len(b0_idx) > 0 and len(high_b_idx) > 0:
+                    effective_bval = float(bvals[high_b_idx[0]])
+            except Exception:
+                pass
+
+    # If still no b-value, cannot proceed
+    if effective_bval is None:
+        out_file = str(Path.cwd() / "ktrans_final.nii.gz")
+        shutil.copy(ktrans_file, out_file)
+        return out_file, False, None
 
     try:
         # Load files
@@ -1157,9 +1224,9 @@ def _tortuosity_correction_node(
         mask_img = nib.load(brain_mask)
         mask_data = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
-        # Create b_values array: [0, dwi_bval]
-        # Assume dwi_file is 4D with b0 and b1
-        b_values = np.array([0.0, dwi_bval])
+        # Create b_values array: [0, effective_bval]
+        # Assume dwi_file is 4D with b0 and b>0
+        b_values = np.array([0.0, effective_bval])
 
         # Apply tortuosity correction
         correction_result, tortuosity_result = calculate_and_apply_tortuosity_correction(
@@ -1178,13 +1245,48 @@ def _tortuosity_correction_node(
         )
         nib.save(corrected_img, out_file)
 
-        return out_file, correction_result.was_corrected
+        # Gap 5: Generate QC visualization
+        qc_plot = None
+        try:
+            qc_plot_path = str(Path.cwd() / "tortuosity_qc.png")
+            qc_plot = generate_tortuosity_qc_plot(
+                adc_map=tortuosity_result.adc,
+                tortuosity_map=tortuosity_result.tortuosity,
+                ktrans_orig=correction_result.ktrans_original,
+                ktrans_corr=correction_result.ktrans_corrected,
+                mask=mask_data,
+                out_file=qc_plot_path,
+            )
+        except Exception:
+            pass  # QC plot is optional
+
+        # Gap 7: Write JSON sidecar with provenance metadata
+        sidecar = {
+            "Description": "Ktrans corrected for tissue tortuosity using DWI-derived ADC",
+            "Sources": [str(ktrans_file), str(dwi_file)],
+            "TortuosityCorrection": True,
+            "TortuosityMethod": "simple",
+            "FreeDiffusionCoefficient": D_FREE_GD,
+            "FreeDiffusionCoefficientUnits": "mm²/s",
+            "BValue": effective_bval,
+            "BValueUnits": "s/mm²",
+            "Units": "min^-1",
+        }
+        # Add QC metrics if available
+        if tortuosity_result.qc_metrics is not None:
+            sidecar["QCMetrics"] = tortuosity_result.qc_metrics
+
+        sidecar_path = out_file.replace(".nii.gz", ".json")
+        with open(sidecar_path, "w") as f:
+            json.dump(sidecar, f, indent=2)
+
+        return out_file, correction_result.was_corrected, qc_plot
 
     except Exception:
         # If correction fails, return original Ktrans
         out_file = str(Path.cwd() / "ktrans_final.nii.gz")
         shutil.copy(ktrans_file, out_file)
-        return out_file, False
+        return out_file, False, None
 
 
 def _dsc_dce_validation_node(
@@ -1325,6 +1427,123 @@ def _transform_b1_to_dce(b1_map_file=None, reference_file=None):
     out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
     nib.save(resampled, out_file)
     return out_file
+
+
+def _register_dwi_to_dce(
+    dwi_file=None,
+    t1w_file=None,
+    t1w_to_dce_xfm=None,
+    dce_reference=None,
+):
+    """Register DWI to DCE space via T1w (Gap 1 fix).
+
+    Performs a two-step registration chain:
+        DWI → T1w (FLIRT, 6-DOF, normmi) → DCE (apply existing xfm)
+
+    This ensures the ADC map is properly aligned with Ktrans for
+    voxel-wise tortuosity correction.
+
+    Args:
+        dwi_file: Path to DWI image (4D with b0 and b>0 volumes).
+        t1w_file: Path to T1w reference image.
+        t1w_to_dce_xfm: Path to T1w→DCE FLIRT transform matrix
+            (from DCE registration step).
+        dce_reference: Path to DCE reference image for output geometry.
+
+    Returns:
+        Tuple of (dwi_in_dce, dwi_to_dce_xfm):
+            - dwi_in_dce: Path to DWI resampled to DCE space
+            - dwi_to_dce_xfm: Path to concatenated transform matrix
+    """
+    if dwi_file is None or t1w_file is None:
+        return None, None
+    if t1w_to_dce_xfm is None or dce_reference is None:
+        return None, None
+
+    from pathlib import Path
+    import subprocess
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    dwi_path = Path(dwi_file)
+    if not dwi_path.exists():
+        return None, None
+
+    out_dir = Path.cwd()
+
+    # For 4D DWI, extract b0 volume for registration
+    dwi_img = nib.load(dwi_file)
+    dwi_data = dwi_img.get_fdata()  # type: ignore[attr-defined]
+
+    if dwi_data.ndim == 4:
+        # Use first volume (assumed b0) for registration
+        b0_data = dwi_data[..., 0]
+        b0_img = nib.Nifti1Image(b0_data, dwi_img.affine)
+        b0_file = str(out_dir / "_tmp_dwi_b0.nii.gz")
+        nib.save(b0_img, b0_file)
+        reg_input = b0_file
+    else:
+        reg_input = str(dwi_file)
+
+    # Step 1: DWI → T1w registration (6-DOF rigid, normalized mutual info)
+    dwi_to_t1w_xfm = str(out_dir / "dwi_to_t1w.mat")
+    flirt_cmd = [
+        "flirt",
+        "-in", reg_input,
+        "-ref", str(t1w_file),
+        "-omat", dwi_to_t1w_xfm,
+        "-dof", "6",
+        "-cost", "normmi",
+        "-searchrx", "-30", "30",
+        "-searchry", "-30", "30",
+        "-searchrz", "-30", "30",
+    ]
+    result = subprocess.run(flirt_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Clean up temp file
+        if dwi_data.ndim == 4:
+            Path(b0_file).unlink(missing_ok=True)
+        return None, None
+
+    # Step 2: Concatenate DWI→T1w + T1w→DCE = DWI→DCE
+    dwi_to_dce_xfm = str(out_dir / "dwi_to_dce.mat")
+    concat_cmd = [
+        "convert_xfm",
+        "-omat", dwi_to_dce_xfm,
+        "-concat", str(t1w_to_dce_xfm), dwi_to_t1w_xfm,
+    ]
+    result = subprocess.run(concat_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Clean up temp files
+        if dwi_data.ndim == 4:
+            Path(b0_file).unlink(missing_ok=True)
+        Path(dwi_to_t1w_xfm).unlink(missing_ok=True)
+        return None, None
+
+    # Step 3: Apply transform to full 4D DWI (spline interpolation)
+    dwi_in_dce = str(out_dir / "dwi_in_dce.nii.gz")
+    apply_cmd = [
+        "flirt",
+        "-in", str(dwi_file),
+        "-ref", str(dce_reference),
+        "-out", dwi_in_dce,
+        "-init", dwi_to_dce_xfm,
+        "-applyxfm",
+        "-interp", "spline",
+    ]
+    result = subprocess.run(apply_cmd, capture_output=True, text=True)
+
+    # Clean up temp files
+    if dwi_data.ndim == 4:
+        Path(b0_file).unlink(missing_ok=True)
+    Path(dwi_to_t1w_xfm).unlink(missing_ok=True)
+
+    if result.returncode != 0:
+        Path(dwi_to_dce_xfm).unlink(missing_ok=True)
+        return None, None
+
+    return dwi_in_dce, dwi_to_dce_xfm
 
 
 def _transform_t1_to_dce(t1_map_file=None, reference_file=None):

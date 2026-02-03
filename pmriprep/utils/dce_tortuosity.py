@@ -29,7 +29,9 @@ import numpy.typing as npt
 D_FREE_GD: float = 3.0e-3  # mm²/s
 
 # Epsilon guard for ADC calculations to prevent division by zero
-EPSILON_ADC: float = 1e-10  # mm²/s
+# Using 0.1e-3 mm²/s limits max tortuosity to ~30 (= D_free / EPSILON_ADC)
+# This prevents extreme corrections from noise/artifacts (Gap 2 fix)
+EPSILON_ADC: float = 0.1e-3  # mm²/s
 
 # Typical ADC ranges for validation (mm²/s)
 # Normal brain tissue: 0.7-1.0 × 10⁻³
@@ -41,8 +43,9 @@ ADC_MAX_VALID: float = 3.0e-3  # mm²/s
 # λ = 1.0: unrestricted diffusion (ADC = D_free)
 # λ = 1.5-2.5: typical brain tissue
 # λ > 3.0: highly restricted (dense tumor)
+# Values > 5.0 are physiologically implausible and likely artifacts (Gap 3 fix)
 TORTUOSITY_MIN_VALID: float = 1.0
-TORTUOSITY_MAX_VALID: float = 10.0
+TORTUOSITY_MAX_VALID: float = 5.0
 
 
 @dataclass
@@ -56,6 +59,7 @@ class TortuosityResult:
         is_valid: Boolean mask indicating valid voxels.
         n_valid: Number of valid voxels.
         n_total: Total number of voxels.
+        qc_metrics: Comprehensive QC metrics dictionary (Gap 6 enhancement).
     """
 
     adc: npt.NDArray[np.floating]
@@ -64,6 +68,7 @@ class TortuosityResult:
     is_valid: npt.NDArray[np.bool_]
     n_valid: int
     n_total: int
+    qc_metrics: Optional[dict] = None
 
 
 @dataclass
@@ -292,6 +297,34 @@ def calculate_tortuosity(
     n_valid = int(np.sum(is_valid))
     n_total = int(adc.size)
 
+    # Build comprehensive QC metrics dict (Gap 6 enhancement)
+    qc_metrics: Optional[dict] = None
+    if n_valid > 0:
+        adc_valid = adc[is_valid]
+        tort_valid = tortuosity[is_valid]
+        qc_metrics = {
+            "adc": {
+                "mean": float(np.mean(adc_valid)),
+                "median": float(np.median(adc_valid)),
+                "std": float(np.std(adc_valid)),
+                "min": float(np.min(adc_valid)),
+                "max": float(np.max(adc_valid)),
+                "units": "mm²/s",
+            },
+            "tortuosity": {
+                "mean": float(np.mean(tort_valid)),
+                "median": float(np.median(tort_valid)),
+                "std": float(np.std(tort_valid)),
+                "min": float(np.min(tort_valid)),
+                "max": float(np.max(tort_valid)),
+            },
+            "d_free": d_free,
+            "d_free_units": "mm²/s",
+            "n_valid_voxels": n_valid,
+            "n_total_voxels": n_total,
+            "valid_fraction": n_valid / n_total if n_total > 0 else 0.0,
+        }
+
     return TortuosityResult(
         adc=adc,
         tortuosity=tortuosity,
@@ -299,6 +332,7 @@ def calculate_tortuosity(
         is_valid=is_valid,
         n_valid=n_valid,
         n_total=n_total,
+        qc_metrics=qc_metrics,
     )
 
 
@@ -495,3 +529,170 @@ def load_and_apply_tortuosity_correction(
     nib.save(ktrans_corr_img, output_path)
 
     return output_path, correction_result, tortuosity_result
+
+
+def generate_tortuosity_qc_plot(
+    adc_map: npt.NDArray[np.floating],
+    tortuosity_map: npt.NDArray[np.floating],
+    ktrans_orig: npt.NDArray[np.floating],
+    ktrans_corr: npt.NDArray[np.floating],
+    mask: npt.NDArray[np.bool_],
+    out_file: Union[str, Path],
+    slice_idx: Optional[int] = None,
+) -> str:
+    """Generate 6-panel QC figure for tortuosity correction (Gap 5).
+
+    Creates a comprehensive visualization of the tortuosity correction
+    process for quality control.
+
+    Panels:
+        1. ADC map (×10⁻³ mm²/s, range 0-2)
+        2. Tortuosity map (λ, range 1.0-3.0)
+        3. Original Ktrans (min⁻¹)
+        4. Corrected Ktrans (min⁻¹)
+        5. Correction factor heatmap (0.8-2.0, RdBu_r colormap)
+        6. Histogram overlay (original vs corrected Ktrans)
+
+    Args:
+        adc_map: ADC map in mm²/s.
+        tortuosity_map: Tortuosity factor λ = D_free / ADC.
+        ktrans_orig: Original Ktrans map in min⁻¹.
+        ktrans_corr: Corrected Ktrans map in min⁻¹.
+        mask: Brain mask for masking display.
+        out_file: Output path for the QC figure.
+        slice_idx: Axial slice index to display. If None, auto-selects
+            the slice with most brain voxels.
+
+    Returns:
+        Path to the saved QC figure.
+    """
+    import matplotlib.pyplot as plt
+
+    # Auto-select slice with most brain voxels if not specified
+    if slice_idx is None:
+        slice_idx = int(np.argmax(mask.sum(axis=(0, 1))))
+
+    # Calculate correction factor (avoid div by zero)
+    ktrans_safe = np.maximum(np.abs(ktrans_orig), 1e-10)
+    correction_factor = ktrans_corr / ktrans_safe
+
+    # Mask the data for display
+    adc_display = np.where(mask, adc_map * 1000, np.nan)  # Convert to ×10⁻³
+    tort_display = np.where(mask, tortuosity_map, np.nan)
+    ktrans_orig_display = np.where(mask, ktrans_orig, np.nan)
+    ktrans_corr_display = np.where(mask, ktrans_corr, np.nan)
+    cf_display = np.where(mask, correction_factor, np.nan)
+
+    # Create figure
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    fig.suptitle(f"Tortuosity Correction QC (slice {slice_idx})", fontsize=14)
+
+    # Panel 1: ADC map
+    ax = axes[0, 0]
+    im = ax.imshow(
+        adc_display[:, :, slice_idx].T,
+        cmap="hot",
+        vmin=0,
+        vmax=2,
+        origin="lower",
+    )
+    ax.set_title("ADC (×10⁻³ mm²/s)")
+    ax.axis("off")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    # Panel 2: Tortuosity map
+    ax = axes[0, 1]
+    im = ax.imshow(
+        tort_display[:, :, slice_idx].T,
+        cmap="viridis",
+        vmin=1.0,
+        vmax=3.0,
+        origin="lower",
+    )
+    ax.set_title("Tortuosity (λ)")
+    ax.axis("off")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    # Panel 3: Original Ktrans
+    ax = axes[0, 2]
+    ktrans_max = np.nanpercentile(ktrans_corr_display, 99)
+    im = ax.imshow(
+        ktrans_orig_display[:, :, slice_idx].T,
+        cmap="hot",
+        vmin=0,
+        vmax=max(ktrans_max, 0.1),
+        origin="lower",
+    )
+    ax.set_title("Original Ktrans (min⁻¹)")
+    ax.axis("off")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    # Panel 4: Corrected Ktrans
+    ax = axes[1, 0]
+    im = ax.imshow(
+        ktrans_corr_display[:, :, slice_idx].T,
+        cmap="hot",
+        vmin=0,
+        vmax=max(ktrans_max, 0.1),
+        origin="lower",
+    )
+    ax.set_title("Corrected Ktrans (min⁻¹)")
+    ax.axis("off")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    # Panel 5: Correction factor heatmap
+    ax = axes[1, 1]
+    im = ax.imshow(
+        cf_display[:, :, slice_idx].T,
+        cmap="RdBu_r",
+        vmin=0.8,
+        vmax=2.0,
+        origin="lower",
+    )
+    ax.set_title("Correction Factor")
+    ax.axis("off")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    # Panel 6: Histogram overlay
+    ax = axes[1, 2]
+    ktrans_orig_masked = ktrans_orig[mask & (ktrans_orig > 0)]
+    ktrans_corr_masked = ktrans_corr[mask & (ktrans_corr > 0)]
+
+    if len(ktrans_orig_masked) > 0 and len(ktrans_corr_masked) > 0:
+        bins = np.linspace(0, np.percentile(ktrans_corr_masked, 99), 50)
+        ax.hist(
+            ktrans_orig_masked,
+            bins=bins,
+            alpha=0.5,
+            label="Original",
+            color="blue",
+        )
+        ax.hist(
+            ktrans_corr_masked,
+            bins=bins,
+            alpha=0.5,
+            label="Corrected",
+            color="red",
+        )
+        ax.set_xlabel("Ktrans (min⁻¹)")
+        ax.set_ylabel("Voxel count")
+        ax.set_title("Ktrans Distribution")
+        ax.legend()
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No valid data",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_title("Ktrans Distribution")
+
+    plt.tight_layout()
+    out_path = Path(out_file)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(str(out_path), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    return str(out_path)
