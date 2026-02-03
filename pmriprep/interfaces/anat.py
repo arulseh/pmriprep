@@ -756,6 +756,10 @@ class BrainExtraction(CommandLine):
 
         return "bash -c '" + " && ".join(cmd_parts) + "'"
 
+    # Brain volume validation thresholds (Gap 7)
+    BRAIN_VOL_MIN_ML = 1000.0  # Minimum expected brain volume in mL
+    BRAIN_VOL_MAX_ML = 2000.0  # Maximum expected brain volume in mL
+
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
         outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
@@ -764,6 +768,7 @@ class BrainExtraction(CommandLine):
 
         # Compute QC metrics after execution
         qc_metrics: dict[str, Any] = {}
+        warnings_list: list[str] = []
 
         try:
             # Compute brain volume
@@ -771,6 +776,23 @@ class BrainExtraction(CommandLine):
             if brain_vol is not None:
                 outputs["brain_volume_mm3"] = brain_vol
                 qc_metrics["brain_volume_mm3"] = brain_vol
+
+                # Validate brain volume (Gap 7)
+                brain_vol_ml = brain_vol / 1000.0  # mm3 to mL
+                qc_metrics["brain_volume_ml"] = brain_vol_ml
+
+                if brain_vol_ml < self.BRAIN_VOL_MIN_ML:
+                    warnings_list.append(
+                        f"Brain volume {brain_vol_ml:.0f} mL below expected "
+                        f"minimum {self.BRAIN_VOL_MIN_ML:.0f} mL - "
+                        "brain extraction may have missed cortex"
+                    )
+                elif brain_vol_ml > self.BRAIN_VOL_MAX_ML:
+                    warnings_list.append(
+                        f"Brain volume {brain_vol_ml:.0f} mL above expected "
+                        f"maximum {self.BRAIN_VOL_MAX_ML:.0f} mL - "
+                        "brain extraction may have included skull/dura"
+                    )
         except Exception:
             pass
 
@@ -782,6 +804,13 @@ class BrainExtraction(CommandLine):
                 qc_metrics["dice_vs_mni"] = dice
         except Exception:
             pass
+
+        # Store warnings and QC status
+        qc_metrics["warnings"] = warnings_list
+        if warnings_list:
+            qc_metrics["qc_status"] = "WARN"
+        else:
+            qc_metrics["qc_status"] = "PASS"
 
         outputs["qc_metrics"] = qc_metrics
         return outputs

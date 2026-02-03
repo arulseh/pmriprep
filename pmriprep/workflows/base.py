@@ -1014,6 +1014,8 @@ def init_pmriprep_wf(
                     ("outputnode.brain_mask", "inputnode.brain_mask"),
                     ("outputnode.wm_probseg", "inputnode.wm_probseg"),
                     ("outputnode.csf_probseg", "inputnode.csf_probseg"),
+                    # Pass T1w→MNI transform for atlas-guided AIF (Gap 6)
+                    ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
                 ]),
             ])
         elif work_dir is not None:
@@ -1035,6 +1037,9 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.brain_mask = prev_anat["brain_mask"]
             if prev_anat["wm_probseg"]:
                 dce_wf.inputs.inputnode.wm_probseg = prev_anat["wm_probseg"]
+            if prev_anat["t1w_to_mni_xfm"]:
+                dce_wf.inputs.inputnode.t1w_to_mni_xfm = prev_anat["t1w_to_mni_xfm"]
+                _log.info("skip-anat (DCE): loaded t1w_to_mni_xfm from %s", prev_anat["t1w_to_mni_xfm"])
 
         # Connect lesion mask from hdglio if available
         if hdglio_wf is not None:

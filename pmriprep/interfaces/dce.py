@@ -2241,6 +2241,11 @@ class DCERegistrationInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Dilation radius (mm) for lesion mask in cost function weighting",
     )
+    search_range = traits.Int(
+        30,
+        usedefault=True,
+        desc="FLIRT search range in degrees for all axes (default: 30)",
+    )
 
 
 class DCERegistrationOutputSpec(TraitedSpec):
@@ -2360,10 +2365,18 @@ class DCERegistration(SimpleInterface):
     output_spec = DCERegistrationOutputSpec
 
     def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE to T1w registration."""
+        """Execute DCE to T1w registration.
+
+        Implements dual-path registration with DICE selection:
+        - Path A: Header pre-aligned T1w → FLIRT
+        - Path B: Original T1w → FLIRT
+        - Select path with best DICE (B must beat A by >0.01 margin)
+        """
         import subprocess
+        import warnings
 
         import nibabel as nib  # type: ignore[import-untyped]
+        from nibabel.processing import resample_from_to  # type: ignore[import-untyped]
 
         # Generate output filenames
         out_file = self._gen_outfilename()
@@ -2374,117 +2387,237 @@ class DCERegistration(SimpleInterface):
         skip_bbr = self.inputs.skip_bbr
         dof = self.inputs.dof
         cost = self.inputs.cost
+        search_range = self.inputs.search_range
+
+        # Auto-skip BBR for post-contrast T1w (Phase 8: Gap 13)
+        # Post-contrast T1w has unreliable WM/GM boundaries after Gd
+        if not skip_bbr and self.inputs.reference_type == "postcon":
+            warnings.warn(
+                "Skipping BBR for post-contrast T1w reference "
+                "(WM/GM boundaries unreliable after Gd administration)",
+                stacklevel=2,
+            )
+            skip_bbr = True
 
         # Determine file extension for temp files
         out_path = Path(out_file)
         ext = ".nii.gz" if out_path.name.endswith(".nii.gz") else ".nii"
         temp_dir = out_path.parent
 
-        cmd_parts: list[str] = []
         temp_files: list[str] = []
 
         # Handle lesion mask for cost function weighting
         weight_file: Optional[str] = None
         if self.inputs.lesion_mask and Path(self.inputs.lesion_mask).exists():
-            # Create weight image: weight = 1 - lesion_mask
             weight_file = str(temp_dir / f"_tmp_dce_weight{ext}")
             temp_files.append(weight_file)
 
-            # Optionally dilate the lesion mask first
             lesion_dilation = self.inputs.lesion_dilation
             if lesion_dilation > 0:
-                # Load lesion mask to get voxel sizes for kernel
                 lesion_img = nib.load(self.inputs.lesion_mask)
                 header = lesion_img.header  # type: ignore[attr-defined]
                 voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
-                # Calculate kernel radius in voxels (use mean voxel size)
                 mean_vox_size = float(np.mean(voxel_sizes))
                 kernel_radius = max(1.0, lesion_dilation / mean_vox_size)
 
-                # Dilate then invert: -dilM -mul -1 -add 1
                 invert_cmd = (
                     f"fslmaths {self.inputs.lesion_mask} "
                     f"-kernel sphere {kernel_radius:.1f} -dilM "
                     f"-mul -1 -add 1 {weight_file}"
                 )
             else:
-                # Just invert: 1 - lesion_mask
                 invert_cmd = (
                     f"fslmaths {self.inputs.lesion_mask} "
                     f"-mul -1 -add 1 {weight_file}"
                 )
-            cmd_parts.append(invert_cmd)
+            result = subprocess.run(
+                invert_cmd, shell=True, capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                logger.warning("Lesion mask inversion failed: %s", result.stderr)
+                weight_file = None
+
+        # =====================================================================
+        # Phase 1: Header-based pre-alignment (Gap 1)
+        # Resample T1w into DCE space using header geometry before FLIRT
+        # =====================================================================
+        t1w_img = nib.load(t1w_file)
+        dce_img = nib.load(dce_mean)
+
+        t1w_header_aligned = resample_from_to(t1w_img, dce_img)
+        header_aligned_file = str(temp_dir / f"_tmp_t1w_header_aligned{ext}")
+        nib.save(t1w_header_aligned, header_aligned_file)
+        temp_files.append(header_aligned_file)
+
+        # FLIRT search range parameters (Gap 3)
+        search_params = (
+            f"-searchrx -{search_range} {search_range} "
+            f"-searchry -{search_range} {search_range} "
+            f"-searchrz -{search_range} {search_range} "
+            f"-coarsesearch 15 -finesearch 6"
+        )
 
         # Check if we have WM segmentation for BBR
         wm_seg = getattr(self.inputs, "wm_seg", None)
         has_wm_seg = wm_seg is not None and Path(wm_seg).exists()
 
+        # =====================================================================
+        # Phase 2: Dual-path FLIRT with DICE selection (Gap 2)
+        # Path A: header-aligned T1w → FLIRT
+        # Path B: original T1w → FLIRT
+        # Select path with best DICE (B must beat A by >0.01)
+        # =====================================================================
+        out_file_a = str(temp_dir / f"_tmp_t1w_reg_pathA{ext}")
+        out_matrix_a = str(temp_dir / "_tmp_t1w_reg_pathA.mat")
+        out_file_b = str(temp_dir / f"_tmp_t1w_reg_pathB{ext}")
+        out_matrix_b = str(temp_dir / "_tmp_t1w_reg_pathB.mat")
+        temp_files.extend([out_file_a, out_matrix_a, out_file_b, out_matrix_b])
+
         if skip_bbr or not has_wm_seg:
-            # Standard FLIRT registration
-            flirt_cmd = (
+            # Standard FLIRT registration (no BBR)
+            # Path A: header-aligned
+            flirt_cmd_a = (
+                f"flirt -in {header_aligned_file} -ref {dce_mean} "
+                f"-out {out_file_a} -omat {out_matrix_a} "
+                f"-dof {dof} -cost {cost} {search_params}"
+            )
+            if weight_file:
+                flirt_cmd_a += f" -inweight {weight_file} -refweight {weight_file}"
+
+            # Path B: original T1w
+            flirt_cmd_b = (
                 f"flirt -in {t1w_file} -ref {dce_mean} "
-                f"-out {out_file} -omat {out_matrix} "
-                f"-dof {dof} -cost {cost}"
+                f"-out {out_file_b} -omat {out_matrix_b} "
+                f"-dof {dof} -cost {cost} {search_params}"
+            )
+            if weight_file:
+                flirt_cmd_b += f" -inweight {weight_file} -refweight {weight_file}"
+
+            # Run both paths
+            result_a = subprocess.run(
+                flirt_cmd_a, shell=True, capture_output=True, text=True
+            )
+            result_b = subprocess.run(
+                flirt_cmd_b, shell=True, capture_output=True, text=True
             )
 
-            # Add weight flags if available
-            if weight_file:
-                flirt_cmd += f" -inweight {weight_file} -refweight {weight_file}"
+            if result_a.returncode != 0 and result_b.returncode != 0:
+                raise RuntimeError(
+                    f"Both FLIRT paths failed:\nA: {result_a.stderr}\nB: {result_b.stderr}"
+                )
 
-            cmd_parts.append(flirt_cmd)
         else:
-            # BBR mode with FLIRT initialization
-            # Initial FLIRT registration for starting estimate
-            init_matrix = str(temp_dir / "_tmp_dce_init.mat")
-            temp_files.append(init_matrix)
+            # BBR mode with FLIRT initialization (dual-path)
+            # Path A: header-aligned T1w → init FLIRT → BBR
+            init_matrix_a = str(temp_dir / "_tmp_dce_init_a.mat")
+            temp_files.append(init_matrix_a)
 
-            flirt_init_cmd = (
-                f"flirt -in {t1w_file} -ref {dce_mean} "
-                f"-omat {init_matrix} "
-                f"-dof {dof} -cost {cost}"
+            flirt_init_cmd_a = (
+                f"flirt -in {header_aligned_file} -ref {dce_mean} "
+                f"-omat {init_matrix_a} "
+                f"-dof {dof} -cost {cost} {search_params}"
             )
-
             if weight_file:
-                flirt_init_cmd += f" -inweight {weight_file} -refweight {weight_file}"
+                flirt_init_cmd_a += f" -inweight {weight_file} -refweight {weight_file}"
 
-            cmd_parts.append(flirt_init_cmd)
+            # Path B: original T1w → init FLIRT → BBR
+            init_matrix_b = str(temp_dir / "_tmp_dce_init_b.mat")
+            temp_files.append(init_matrix_b)
+
+            flirt_init_cmd_b = (
+                f"flirt -in {t1w_file} -ref {dce_mean} "
+                f"-omat {init_matrix_b} "
+                f"-dof {dof} -cost {cost} {search_params}"
+            )
+            if weight_file:
+                flirt_init_cmd_b += f" -inweight {weight_file} -refweight {weight_file}"
 
             # Threshold WM segmentation for BBR
             wm_thresh = str(temp_dir / f"_tmp_dce_wm_thresh{ext}")
             temp_files.append(wm_thresh)
-            cmd_parts.append(f"fslmaths {wm_seg} -thr 0.5 -bin {wm_thresh}")
+            wm_thresh_cmd = f"fslmaths {wm_seg} -thr 0.5 -bin {wm_thresh}"
 
-            # FLIRT with BBR cost function
-            bbr_cmd = (
-                f"flirt -in {t1w_file} -ref {dce_mean} "
-                f"-out {out_file} -omat {out_matrix} "
+            # BBR commands for both paths
+            bbr_cmd_a = (
+                f"flirt -in {header_aligned_file} -ref {dce_mean} "
+                f"-out {out_file_a} -omat {out_matrix_a} "
                 f"-dof {dof} -cost bbr "
-                f"-init {init_matrix} "
+                f"-init {init_matrix_a} "
                 f"-wmseg {wm_thresh} "
                 f"-schedule ${{FSLDIR}}/etc/flirtsch/bbr.sch"
             )
-
             if weight_file:
-                bbr_cmd += f" -refweight {weight_file}"
+                bbr_cmd_a += f" -refweight {weight_file}"
 
-            cmd_parts.append(bbr_cmd)
+            bbr_cmd_b = (
+                f"flirt -in {t1w_file} -ref {dce_mean} "
+                f"-out {out_file_b} -omat {out_matrix_b} "
+                f"-dof {dof} -cost bbr "
+                f"-init {init_matrix_b} "
+                f"-wmseg {wm_thresh} "
+                f"-schedule ${{FSLDIR}}/etc/flirtsch/bbr.sch"
+            )
+            if weight_file:
+                bbr_cmd_b += f" -refweight {weight_file}"
 
-        # Clean up temp files at the end
-        if temp_files:
-            cleanup_cmd = "rm -f " + " ".join(temp_files)
-            cmd_parts.append(cleanup_cmd)
+            # Run init, threshold, then both BBR paths
+            subprocess.run(flirt_init_cmd_a, shell=True, capture_output=True)
+            subprocess.run(flirt_init_cmd_b, shell=True, capture_output=True)
+            subprocess.run(wm_thresh_cmd, shell=True, capture_output=True)
 
-        # Execute the commands
-        full_cmd = " && ".join(cmd_parts)
-        result = subprocess.run(
-            full_cmd, shell=True, capture_output=True, text=True
+            result_a = subprocess.run(
+                bbr_cmd_a, shell=True, capture_output=True, text=True
+            )
+            result_b = subprocess.run(
+                bbr_cmd_b, shell=True, capture_output=True, text=True
+            )
+
+            if result_a.returncode != 0 and result_b.returncode != 0:
+                raise RuntimeError(
+                    f"Both BBR paths failed:\nA: {result_a.stderr}\nB: {result_b.stderr}"
+                )
+
+        # =====================================================================
+        # DICE selection: pick best path (Gap 2)
+        # Method B must beat Method A by >0.01 margin to be selected
+        # =====================================================================
+        dice_a = self._compute_dice_for_selection(out_file_a, dce_mean)
+        dice_b = self._compute_dice_for_selection(out_file_b, dce_mean)
+
+        # Select best path (B must beat A by >0.01 margin)
+        if dice_b > dice_a + 0.01:
+            selected_path = "B"
+            selected_out_file = out_file_b
+            selected_matrix = out_matrix_b
+        else:
+            selected_path = "A"
+            selected_out_file = out_file_a
+            selected_matrix = out_matrix_a
+
+        logger.info(
+            "Registration path selection: A=%.3f, B=%.3f → selected %s",
+            dice_a, dice_b, selected_path,
         )
 
-        if result.returncode != 0:
-            raise RuntimeError(f"DCE registration failed: {result.stderr}")
+        # Copy selected outputs to final locations
+        import shutil
+        shutil.copy(selected_out_file, out_file)
+        shutil.copy(selected_matrix, out_matrix)
+
+        # Clean up temp files
+        for temp_file in temp_files:
+            try:
+                Path(temp_file).unlink(missing_ok=True)
+            except Exception:
+                pass
 
         # Compute QC metrics
         qc_metrics = self._compute_qc_metrics(out_file, dce_mean)
+        qc_metrics["path_selection"] = {
+            "dice_a": dice_a,
+            "dice_b": dice_b,
+            "selected": selected_path,
+        }
 
         # Set outputs
         self._results["out_file"] = out_file
@@ -2500,21 +2633,84 @@ class DCERegistration(SimpleInterface):
 
         return runtime
 
+    def _compute_dice_for_selection(
+        self, registered_file: str, reference_file: str
+    ) -> float:
+        """Compute DICE coefficient for path selection.
+
+        Creates a rough brain mask from both images by thresholding
+        and computes DICE overlap.
+
+        Args:
+            registered_file: Path to registered T1w image
+            reference_file: Path to reference DCE mean image
+
+        Returns:
+            DICE coefficient (0.0 if files don't exist or computation fails)
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        if not Path(registered_file).exists():
+            return 0.0
+
+        try:
+            reg_img = nib.load(registered_file)
+            ref_img = nib.load(reference_file)
+
+            reg_data = reg_img.get_fdata()  # type: ignore[attr-defined]
+            ref_data = ref_img.get_fdata()  # type: ignore[attr-defined]
+
+            # Create masks by thresholding at 5th percentile of positive values
+            reg_nonzero = reg_data[reg_data > 0]
+            ref_nonzero = ref_data[ref_data > 0]
+
+            if len(reg_nonzero) == 0 or len(ref_nonzero) == 0:
+                return 0.0
+
+            reg_thresh = np.percentile(reg_nonzero, 5)
+            ref_thresh = np.percentile(ref_nonzero, 5)
+
+            reg_mask = reg_data > reg_thresh
+            ref_mask = ref_data > ref_thresh
+
+            # Compute DICE
+            intersection = np.logical_and(reg_mask, ref_mask).sum()
+            dice = 2.0 * intersection / (reg_mask.sum() + ref_mask.sum() + 1e-9)
+
+            return float(dice)
+        except Exception as exc:
+            logger.warning("DICE computation failed: %s", exc)
+            return 0.0
+
+    # QC thresholds for registration validation (Gap 8)
+    REG_QC_THRESHOLDS = {
+        "dice_min": 0.80,
+        "dice_good": 0.85,
+        "correlation_min": 0.65,
+        "correlation_good": 0.70,
+        "nmi_min": 1.40,
+        "determinant_min": 0.85,
+        "determinant_max": 1.15,
+    }
+
     def _compute_qc_metrics(
         self, registered_t1w: str, dce_mean: str
     ) -> dict[str, Any]:
-        """Compute registration QC metrics.
+        """Compute registration QC metrics with validation thresholds.
 
         Args:
             registered_t1w: Path to registered T1w image
             dce_mean: Path to reference DCE mean image
 
         Returns:
-            Dictionary of QC metrics
+            Dictionary of QC metrics including qc_status (PASS/WARN/FAIL)
         """
         qc_metrics: dict[str, Any] = {}
+        warnings_list: list[str] = []
 
         if not Path(registered_t1w).exists():
+            qc_metrics["qc_status"] = "FAIL"
+            qc_metrics["warnings"] = ["Registered file does not exist"]
             return qc_metrics
 
         try:
@@ -2536,6 +2732,11 @@ class DCERegistration(SimpleInterface):
                     registered_t1w, dce_mean, mask_path=mask_path
                 )
                 qc_metrics["nmi"] = nmi
+                if nmi < self.REG_QC_THRESHOLDS["nmi_min"]:
+                    warnings_list.append(
+                        f"NMI {nmi:.2f} below threshold "
+                        f"{self.REG_QC_THRESHOLDS['nmi_min']}"
+                    )
             except Exception:
                 pass
 
@@ -2545,6 +2746,11 @@ class DCERegistration(SimpleInterface):
                     registered_t1w, dce_mean, mask_path=mask_path
                 )
                 qc_metrics["correlation"] = corr
+                if corr < self.REG_QC_THRESHOLDS["correlation_min"]:
+                    warnings_list.append(
+                        f"Correlation {corr:.2f} below threshold "
+                        f"{self.REG_QC_THRESHOLDS['correlation_min']}"
+                    )
             except Exception:
                 pass
 
@@ -2575,6 +2781,32 @@ class DCERegistration(SimpleInterface):
                         ref_mask.astype(np.float64)
                     )
                     qc_metrics["dice"] = dice
+                    if dice < self.REG_QC_THRESHOLDS["dice_min"]:
+                        warnings_list.append(
+                            f"DICE {dice:.2f} below threshold "
+                            f"{self.REG_QC_THRESHOLDS['dice_min']}"
+                        )
+                except Exception:
+                    pass
+
+            # Check transform determinant for volume preservation (Gap 8)
+            out_matrix = self._gen_matfilename()
+            if Path(out_matrix).exists():
+                try:
+                    det = self._check_transform_determinant(out_matrix)
+                    qc_metrics["transform_determinant"] = det
+                    if det < self.REG_QC_THRESHOLDS["determinant_min"]:
+                        warnings_list.append(
+                            f"Transform determinant {det:.3f} < "
+                            f"{self.REG_QC_THRESHOLDS['determinant_min']} "
+                            "(volume shrinkage)"
+                        )
+                    elif det > self.REG_QC_THRESHOLDS["determinant_max"]:
+                        warnings_list.append(
+                            f"Transform determinant {det:.3f} > "
+                            f"{self.REG_QC_THRESHOLDS['determinant_max']} "
+                            "(volume expansion)"
+                        )
                 except Exception:
                     pass
 
@@ -2592,14 +2824,45 @@ class DCERegistration(SimpleInterface):
             )
             qc_metrics["lesion_mask_used"] = lesion_used
 
+            # Determine overall QC status
+            qc_metrics["warnings"] = warnings_list
+            if warnings_list:
+                # Check if any are failures (below min thresholds)
+                dice = qc_metrics.get("dice", 1.0)
+                corr = qc_metrics.get("correlation", 1.0)
+                if dice < self.REG_QC_THRESHOLDS["dice_min"] or \
+                   corr < self.REG_QC_THRESHOLDS["correlation_min"]:
+                    qc_metrics["qc_status"] = "FAIL"
+                else:
+                    qc_metrics["qc_status"] = "WARN"
+            else:
+                qc_metrics["qc_status"] = "PASS"
+
         except ImportError:
             # If registration utilities not available, skip QC
-            pass
+            qc_metrics["qc_status"] = "UNKNOWN"
         except Exception:
             # If QC computation fails, continue without metrics
-            pass
+            qc_metrics["qc_status"] = "UNKNOWN"
 
         return qc_metrics
+
+    def _check_transform_determinant(self, mat_file: str) -> float:
+        """Check affine determinant for volume preservation (Gap 8).
+
+        The determinant of the rotation/scale part of the affine should
+        be near 1.0 for a rigid body transform. Values significantly
+        different from 1.0 indicate scaling/shearing.
+
+        Args:
+            mat_file: Path to FLIRT .mat file
+
+        Returns:
+            Determinant of the 3x3 rotation/scale submatrix
+        """
+        mat = np.loadtxt(mat_file)
+        det = float(np.linalg.det(mat[:3, :3]))
+        return det
 
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""

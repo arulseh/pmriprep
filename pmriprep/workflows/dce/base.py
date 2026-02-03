@@ -194,6 +194,10 @@ def init_dce_preproc_wf(
                 "te",
                 "field_strength",
                 "r1_relaxivity",
+                # Registration transforms (from anat pipeline)
+                "t1w_to_mni_xfm",  # T1w to MNI transform for atlas-guided AIF
+                # Atlas inputs (optional)
+                "atlas_mask_file",  # MNI-space atlas mask for AIF search territories
             ]
         ),
         name="inputnode",
@@ -398,6 +402,64 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
+    # Node 4b2: Create conservative AIF search mask (Gap 5)
+    # ==========================================================================
+    # Intersect T1w-transformed mask with DCE-native mask to exclude
+    # non-brain regions that may be included in thin DCE slabs.
+    create_aif_mask = pe.Node(
+        niu.Function(
+            input_names=[
+                "t1w_mask_in_dce",
+                "dce_mean",
+            ],
+            output_names=["out_file"],
+            function=_create_aif_search_mask,
+        ),
+        name="create_aif_mask",
+    )
+
+    workflow.connect([
+        (transform_brain_mask, create_aif_mask, [
+            ("out_file", "t1w_mask_in_dce"),
+        ]),
+        (dce_preprocess, create_aif_mask, [
+            ("mean_img", "dce_mean"),
+        ]),
+    ])
+
+    # ==========================================================================
+    # Node 4b3: Transform MNI atlas to DCE space (Gap 6) - optional
+    # ==========================================================================
+    # Atlas-guided AIF search (MCA/ACA territories) for improved AIF detection
+    # Only runs if atlas_mask_file and t1w_to_mni_xfm are provided
+    transform_atlas_to_dce = pe.Node(
+        niu.Function(
+            input_names=[
+                "atlas_file",
+                "t1w_to_mni_xfm",
+                "t1w_to_dce_xfm",
+                "reference_file",
+            ],
+            output_names=["out_file"],
+            function=_transform_atlas_to_dce,
+        ),
+        name="transform_atlas_to_dce",
+    )
+
+    workflow.connect([
+        (inputnode, transform_atlas_to_dce, [
+            ("atlas_mask_file", "atlas_file"),
+            ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
+        ]),
+        (dce_registration, transform_atlas_to_dce, [
+            ("out_matrix", "t1w_to_dce_xfm"),
+        ]),
+        (dce_preprocess, transform_atlas_to_dce, [
+            ("mean_img", "reference_file"),
+        ]),
+    ])
+
+    # ==========================================================================
     # Node 4c: Transform T1 map to DCE space
     # ==========================================================================
     transform_t1_to_dce = pe.Node(
@@ -509,8 +571,13 @@ def init_dce_preproc_wf(
         (signal_to_conc, aif_detection, [
             ("concentration_file", "concentration_file"),
         ]),
-        (transform_brain_mask, aif_detection, [
+        # Use conservative AIF search mask (Gap 5) instead of plain transformed mask
+        (create_aif_mask, aif_detection, [
             ("out_file", "brain_mask_file"),
+        ]),
+        # Connect atlas mask for atlas-guided AIF search (Gap 6)
+        (transform_atlas_to_dce, aif_detection, [
+            ("out_file", "atlas_mask_file"),
         ]),
         (inputnode, aif_detection, [
             ("lesion_mask", "lesion_mask_file"),
@@ -728,7 +795,9 @@ def _transform_mask_to_dce(
     """Transform brain mask from T1w space to DCE space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
-    the brain mask into DCE space.
+    the brain mask into DCE space. Includes:
+    - Same-space shortcut: skip transform if mask and ref share geometry (Gap 10)
+    - Hole-filling: apply -thr 0.5 -bin -fillh after transform (Gap 4)
 
     Args:
         mask_file: Path to brain mask in T1w space (or None).
@@ -744,6 +813,9 @@ def _transform_mask_to_dce(
     from pathlib import Path
     import subprocess
 
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
     mask_path = Path(mask_file)
     if not mask_path.exists():
         return None
@@ -751,16 +823,220 @@ def _transform_mask_to_dce(
     out_dir = Path.cwd()
     out_file = str(out_dir / "brain_mask_dce.nii.gz")
 
+    # Same-space shortcut (Gap 10): skip transform if already aligned
+    mask_img = nib.load(mask_file)
+    ref_img = nib.load(reference_file)
+    if mask_img.shape[:3] == ref_img.shape[:3]:
+        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+        if affine_diff < 1e-4:
+            # Already in same space, just copy with hole-filling
+            mask_data = mask_img.get_fdata()  # type: ignore[attr-defined]
+            # Apply threshold and binarize
+            mask_bin = (mask_data > 0.5).astype(np.int16)
+            # Fill holes using scipy
+            from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
+            mask_filled = binary_fill_holes(mask_bin).astype(np.int16)
+            # Save
+            out_img = nib.Nifti1Image(mask_filled, ref_img.affine)
+            nib.save(out_img, out_file)
+            return out_file
+
+    # Transform with FLIRT
+    tmp_file = str(out_dir / "_tmp_brain_mask_dce.nii.gz")
     cmd = [
         "flirt",
         "-in", str(mask_file),
         "-ref", str(reference_file),
-        "-out", out_file,
+        "-out", tmp_file,
         "-init", str(transform_matrix),
         "-applyxfm",
         "-interp", "nearestneighbour",
     ]
     subprocess.run(cmd, check=True, capture_output=True)
+
+    # Hole-filling (Gap 4): threshold, binarize, fill holes
+    # Using fslmaths: -thr 0.5 -bin -fillh
+    cmd_fillh = [
+        "fslmaths", tmp_file,
+        "-thr", "0.5", "-bin", "-fillh", out_file,
+    ]
+    subprocess.run(cmd_fillh, check=True, capture_output=True)
+
+    # Clean up temp file
+    try:
+        Path(tmp_file).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return out_file
+
+
+def _create_aif_search_mask(
+    t1w_mask_in_dce=None,
+    dce_mean=None,
+):
+    """Create conservative AIF search mask (Gap 5).
+
+    Creates an intersection of T1w-transformed mask with a DCE-native
+    mask to exclude non-brain regions (e.g., temporal bone) that may
+    be incorrectly included by HD-BET on thin DCE slabs.
+
+    1. Create DCE-native mask using Otsu thresholding on DCE mean
+    2. Intersect with T1w-transformed mask
+    3. Fill holes
+
+    Args:
+        t1w_mask_in_dce: Path to T1w brain mask transformed to DCE space.
+        dce_mean: Path to DCE mean image for native mask generation.
+
+    Returns:
+        Path to conservative AIF search mask, or None if inputs missing.
+    """
+    if t1w_mask_in_dce is None or dce_mean is None:
+        return None
+
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+    from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
+    from skimage.filters import threshold_otsu  # type: ignore[import-untyped]
+
+    t1w_mask_path = Path(t1w_mask_in_dce)
+    if not t1w_mask_path.exists():
+        return None
+
+    # Load DCE mean
+    dce_img = nib.load(dce_mean)
+    dce_data = dce_img.get_fdata()  # type: ignore[attr-defined]
+
+    # Create DCE-native mask using Otsu thresholding
+    # Use only positive values for threshold calculation
+    dce_positive = dce_data[dce_data > 0]
+    if len(dce_positive) < 100:
+        # Not enough data, just return T1w mask
+        return str(t1w_mask_in_dce)
+
+    try:
+        thresh = threshold_otsu(dce_positive)
+    except ValueError:
+        # Otsu failed, use percentile
+        thresh = np.percentile(dce_positive, 25)
+
+    # Use 50% of Otsu threshold for more inclusive mask
+    dce_mask = (dce_data > thresh * 0.5).astype(np.int16)
+
+    # Load T1w mask
+    t1w_mask_img = nib.load(t1w_mask_in_dce)
+    t1w_mask_data = t1w_mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
+    # Intersect masks
+    aif_mask = np.logical_and(t1w_mask_data, dce_mask).astype(np.int16)
+
+    # Fill holes
+    aif_mask = binary_fill_holes(aif_mask).astype(np.int16)
+
+    # Save
+    out_file = str(Path.cwd() / "aif_search_mask.nii.gz")
+    out_img = nib.Nifti1Image(aif_mask, dce_img.affine)
+    nib.save(out_img, out_file)
+
+    return out_file
+
+
+def _transform_atlas_to_dce(
+    atlas_file=None,
+    t1w_to_mni_xfm=None,
+    t1w_to_dce_xfm=None,
+    reference_file=None,
+):
+    """Transform MNI atlas mask to DCE space via T1w (Gap 6).
+
+    Creates a concatenated transform MNI→T1w→DCE and applies it to the
+    atlas mask. Includes morphological refinement (dilate-dilate-erode)
+    to clean up edges after interpolation.
+
+    Args:
+        atlas_file: Path to MNI-space atlas mask (e.g., MCA/ACA territories).
+        t1w_to_mni_xfm: Path to T1w→MNI FLIRT matrix (from anat pipeline).
+        t1w_to_dce_xfm: Path to T1w→DCE FLIRT matrix (from DCE registration).
+        reference_file: Path to DCE reference image for output geometry.
+
+    Returns:
+        Path to atlas mask in DCE space, or None if inputs missing.
+    """
+    if atlas_file is None or t1w_to_mni_xfm is None:
+        return None
+    if t1w_to_dce_xfm is None or reference_file is None:
+        return None
+
+    from pathlib import Path
+    import subprocess
+
+    atlas_path = Path(atlas_file)
+    if not atlas_path.exists():
+        return None
+
+    out_dir = Path.cwd()
+
+    # Step 1: Invert T1w→MNI to get MNI→T1w
+    mni_to_t1w_xfm = str(out_dir / "_tmp_mni_to_t1w.mat")
+    invert_cmd = [
+        "convert_xfm", "-omat", mni_to_t1w_xfm,
+        "-inverse", str(t1w_to_mni_xfm),
+    ]
+    result = subprocess.run(invert_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+
+    # Step 2: Concatenate MNI→T1w + T1w→DCE = MNI→DCE
+    mni_to_dce_xfm = str(out_dir / "_tmp_mni_to_dce.mat")
+    concat_cmd = [
+        "convert_xfm", "-omat", mni_to_dce_xfm,
+        "-concat", str(t1w_to_dce_xfm), mni_to_t1w_xfm,
+    ]
+    result = subprocess.run(concat_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Clean up
+        Path(mni_to_t1w_xfm).unlink(missing_ok=True)
+        return None
+
+    # Step 3: Apply transform with nearest-neighbour interpolation
+    tmp_atlas = str(out_dir / "_tmp_atlas_dce.nii.gz")
+    flirt_cmd = [
+        "flirt",
+        "-in", str(atlas_file),
+        "-ref", str(reference_file),
+        "-out", tmp_atlas,
+        "-init", mni_to_dce_xfm,
+        "-applyxfm",
+        "-interp", "nearestneighbour",
+    ]
+    result = subprocess.run(flirt_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Clean up
+        Path(mni_to_t1w_xfm).unlink(missing_ok=True)
+        Path(mni_to_dce_xfm).unlink(missing_ok=True)
+        return None
+
+    # Step 4: Morphological refinement - dilate-dilate-erode (1mm sphere)
+    # This cleans up edges after interpolation artifacts
+    out_file = str(out_dir / "atlas_mask_dce.nii.gz")
+    morph_cmd = [
+        "fslmaths", tmp_atlas,
+        "-kernel", "sphere", "1",
+        "-dilM", "-dilM", "-ero",
+        "-bin", out_file,
+    ]
+    result = subprocess.run(morph_cmd, capture_output=True, text=True)
+
+    # Clean up temp files
+    Path(mni_to_t1w_xfm).unlink(missing_ok=True)
+    Path(mni_to_dce_xfm).unlink(missing_ok=True)
+    Path(tmp_atlas).unlink(missing_ok=True)
+
+    if result.returncode != 0:
+        return None
 
     return out_file
 
