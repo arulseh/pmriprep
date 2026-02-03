@@ -1013,6 +1013,7 @@ def init_dsc_preproc_wf(
                 "te",  # Echo time in seconds
                 "field_strength",  # Magnetic field strength
                 "tr",  # Repetition time in seconds
+                "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
             ]
         ),
         name="inputnode",
@@ -1069,8 +1070,9 @@ def init_dsc_preproc_wf(
                 "dsc_to_t1w_xfm",
                 "t1w_to_dsc_xfm",
                 "registration_filmstrip",
-                # Structural underlay
+                # Structural underlays
                 "t1w_in_dsc",
+                "flair_in_dsc",
                 # AIF QC plots
                 "aif_curve_plot",
                 "aif_location_plot",
@@ -1427,16 +1429,29 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 9c: Transform CE-T1 to DSC Space (structural underlay)
+    # Node 9c: Transform structural underlays to DSC Space
     # register.out_matrix is T1w→DSC, so we use it directly.
+    # Underlays are conditional based on config.underlays list.
     # -------------------------------------------------------------------
-    transform_t1_to_dsc = pe.Node(
-        FLIRTApplyXFM(
-            apply_xfm=True,
-            interp="spline",
-        ),
-        name="transform_t1_to_dsc",
-    )
+    transform_t1_to_dsc = None
+    if "t1w" in config.underlays:
+        transform_t1_to_dsc = pe.Node(
+            FLIRTApplyXFM(
+                apply_xfm=True,
+                interp="spline",
+            ),
+            name="transform_t1_to_dsc",
+        )
+
+    transform_flair_to_dsc = None
+    if "flair" in config.underlays:
+        transform_flair_to_dsc = pe.Node(
+            FLIRTApplyXFM(
+                apply_xfm=True,
+                interp="spline",
+            ),
+            name="transform_flair_to_dsc",
+        )
 
     # -------------------------------------------------------------------
     # Node 10: Provenance Logging
@@ -1690,14 +1705,22 @@ def init_dsc_preproc_wf(
         (inputnode, aif_qc_plot, [("tr", "tr")]),
     ])
 
-    # Transform CE-T1 to DSC space (structural underlay)
+    # Transform structural underlays to DSC space (conditional)
     # register.out_matrix is T1w→DSC
     # Use prebolus_mean (full FOV) as reference for complete DSC geometry
-    workflow.connect([
-        (inputnode, transform_t1_to_dsc, [("t1w_reference", "in_file")]),
-        (prebolus_mean, transform_t1_to_dsc, [("prebolus_mean_file", "reference")]),
-        (register, transform_t1_to_dsc, [("out_matrix", "in_matrix_file")]),
-    ])
+    if transform_t1_to_dsc is not None:
+        workflow.connect([
+            (inputnode, transform_t1_to_dsc, [("t1w_reference", "in_file")]),
+            (prebolus_mean, transform_t1_to_dsc, [("prebolus_mean_file", "reference")]),
+            (register, transform_t1_to_dsc, [("out_matrix", "in_matrix_file")]),
+        ])
+
+    if transform_flair_to_dsc is not None:
+        workflow.connect([
+            (inputnode, transform_flair_to_dsc, [("flair_in_t1w", "in_file")]),
+            (prebolus_mean, transform_flair_to_dsc, [("prebolus_mean_file", "reference")]),
+            (register, transform_flair_to_dsc, [("out_matrix", "in_matrix_file")]),
+        ])
 
     # -------------------------------------------------------------------
     # Smoothing connections (only if smooth_fwhm > 0)
@@ -1868,8 +1891,20 @@ def init_dsc_preproc_wf(
         (invert_dsc_xfm, outputnode, [("out_file", "dsc_to_t1w_xfm")]),
         (register, outputnode, [("out_matrix", "t1w_to_dsc_xfm")]),
         (reg_filmstrip, outputnode, [("filmstrip_file", "registration_filmstrip")]),
-        # Structural underlay
-        (transform_t1_to_dsc, outputnode, [("out_file", "t1w_in_dsc")]),
+    ])
+
+    # Structural underlay connections (conditional)
+    if transform_t1_to_dsc is not None:
+        workflow.connect([
+            (transform_t1_to_dsc, outputnode, [("out_file", "t1w_in_dsc")]),
+        ])
+
+    if transform_flair_to_dsc is not None:
+        workflow.connect([
+            (transform_flair_to_dsc, outputnode, [("out_file", "flair_in_dsc")]),
+        ])
+
+    workflow.connect([
         # AIF QC plots
         (aif_qc_plot, outputnode, [
             ("out_aif_plot", "aif_curve_plot"),

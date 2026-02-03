@@ -93,7 +93,7 @@ class DCEConfig:
     prefer_contralateral: bool = True
 
     # Structural settings
-    underlays: List[str] = field(default_factory=list)
+    underlays: List[str] = field(default_factory=lambda: ["t1w", "flair"])
     reference_roi: Optional[Path] = None
 
     # T1 mapping settings

@@ -87,8 +87,9 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     smooth_abs = traits.Dict(desc="Smoothed absolute AUC map dict")
     smooth_fwhm = traits.Float(0.0, usedefault=True, desc="Smoothing FWHM in mm")
 
-    # Structural underlay (CE-T1 registered to DSC space)
+    # Structural underlays (registered to DSC space)
     t1w_in_dsc = traits.Str(desc="CE-T1w registered to DSC space NIfTI path")
+    flair_in_dsc = traits.Str(desc="FLAIR registered to DSC space NIfTI path")
     t1w_to_dsc_xfm = traits.Str(desc="T1w-to-DSC transform matrix path")
 
     # AIF QC plots
@@ -369,7 +370,7 @@ class DSCDerivativeWriter(BaseInterface):
             )
 
         # -----------------------------------------------------------
-        # 10c. Structural underlay (CE-T1 in DSC space)
+        # 10c. Structural underlays (in DSC space)
         # -----------------------------------------------------------
         anat_dir = ses_dir / "anat"
         if self._has_input("t1w_in_dsc"):
@@ -377,6 +378,13 @@ class DSCDerivativeWriter(BaseInterface):
             fname = f"{prefix}_{spatial}_ce-GAD_T1w"
             self._copy_nifti(self.inputs.t1w_in_dsc, anat_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "CE-T1w registered to DSC space"}
+            self._write_json(sidecar, anat_dir / f"{fname}.json")
+
+        if self._has_input("flair_in_dsc"):
+            anat_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{prefix}_{spatial}_FLAIR"
+            self._copy_nifti(self.inputs.flair_in_dsc, anat_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "FLAIR registered to DSC space"}
             self._write_json(sidecar, anat_dir / f"{fname}.json")
 
         if self._has_input("t1w_to_dsc_xfm"):

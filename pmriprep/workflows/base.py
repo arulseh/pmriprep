@@ -817,6 +817,11 @@ def init_pmriprep_wf(
                     ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
                 ]),
             ])
+            # Connect FLAIR underlay if available
+            if session_data.modalities.flair:
+                workflow.connect([
+                    (anat_wf, dsc_wf, [("outputnode.flair_coreg", "inputnode.flair_in_t1w")]),
+                ])
         elif work_dir is not None:
             # --skip-anat: load previously-computed anat outputs from work dir
             import logging as _logging
@@ -947,8 +952,9 @@ def init_pmriprep_wf(
                 # Registration
                 ("outputnode.dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
                 ("outputnode.registration_filmstrip", "registration_filmstrip"),
-                # Structural underlay
+                # Structural underlays
                 ("outputnode.t1w_in_dsc", "t1w_in_dsc"),
+                ("outputnode.flair_in_dsc", "flair_in_dsc"),
                 ("outputnode.t1w_to_dsc_xfm", "t1w_to_dsc_xfm"),
                 # AIF QC plots
                 ("outputnode.aif_curve_plot", "aif_curve_plot"),
@@ -1018,6 +1024,11 @@ def init_pmriprep_wf(
                     ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
                 ]),
             ])
+            # Connect FLAIR underlay if available
+            if session_data.modalities.flair:
+                workflow.connect([
+                    (anat_wf, dce_wf, [("outputnode.flair_coreg", "inputnode.flair_in_t1w")]),
+                ])
         elif work_dir is not None:
             # --skip-anat: load previously-computed anat outputs from work dir
             import logging as _logging

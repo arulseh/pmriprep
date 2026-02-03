@@ -111,7 +111,7 @@ class DSCConfig:
 
     # Processing settings
     smooth_fwhm: float = 0.0  # No smoothing by default
-    underlays: List[str] = field(default_factory=list)
+    underlays: List[str] = field(default_factory=lambda: ["t1w", "flair"])
     motion_thresh: float = 0.5
     pre_bolus: int = 12
     save_k2_map: bool = False

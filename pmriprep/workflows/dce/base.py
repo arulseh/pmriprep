@@ -198,6 +198,8 @@ def init_dce_preproc_wf(
                 "t1w_to_mni_xfm",  # T1w to MNI transform for atlas-guided AIF
                 # Atlas inputs (optional)
                 "atlas_mask_file",  # MNI-space atlas mask for AIF search territories
+                # Structural underlay inputs
+                "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
             ]
         ),
         name="inputnode",
@@ -230,6 +232,9 @@ def init_dce_preproc_wf(
                 "vp_uncertainty",
                 # QC metrics
                 "qc_metrics",
+                # Structural underlays
+                "t1w_in_dce",
+                "flair_in_dce",
             ]
         ),
         name="outputnode",
@@ -770,6 +775,48 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
+    # Node 11: Structural underlays (conditional on config.underlays)
+    # ==========================================================================
+    transform_t1w_underlay = None
+    if "t1w" in config.underlays:
+        transform_t1w_underlay = pe.Node(
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dce,
+            ),
+            name="transform_t1w_underlay",
+        )
+        transform_t1w_underlay.inputs.output_name = "t1w_in_dce.nii.gz"
+
+    transform_flair_underlay = None
+    if "flair" in config.underlays:
+        transform_flair_underlay = pe.Node(
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dce,
+            ),
+            name="transform_flair_underlay",
+        )
+        transform_flair_underlay.inputs.output_name = "flair_in_dce.nii.gz"
+
+    # Connect structural underlay transforms
+    if transform_t1w_underlay is not None:
+        workflow.connect([
+            (inputnode, transform_t1w_underlay, [("t1w_reference", "structural_file")]),
+            (dce_preprocess, transform_t1w_underlay, [("mean_img", "reference_file")]),
+            (dce_registration, transform_t1w_underlay, [("out_matrix", "transform_matrix")]),
+        ])
+
+    if transform_flair_underlay is not None:
+        workflow.connect([
+            (inputnode, transform_flair_underlay, [("flair_in_t1w", "structural_file")]),
+            (dce_preprocess, transform_flair_underlay, [("mean_img", "reference_file")]),
+            (dce_registration, transform_flair_underlay, [("out_matrix", "transform_matrix")]),
+        ])
+
+    # ==========================================================================
     # Connect outputs
     # ==========================================================================
     workflow.connect([
@@ -813,6 +860,17 @@ def init_dce_preproc_wf(
             ("qc_metrics", "qc_metrics"),
         ]),
     ])
+
+    # Structural underlay output connections (conditional)
+    if transform_t1w_underlay is not None:
+        workflow.connect([
+            (transform_t1w_underlay, outputnode, [("out_file", "t1w_in_dce")]),
+        ])
+
+    if transform_flair_underlay is not None:
+        workflow.connect([
+            (transform_flair_underlay, outputnode, [("out_file", "flair_in_dce")]),
+        ])
 
     return workflow
 
@@ -1582,4 +1640,47 @@ def _transform_t1_to_dce(t1_map_file=None, reference_file=None):
     resampled = resample_to_img(t1_img, ref_img, interpolation="continuous")
     out_file = str(Path.cwd() / "t1_map_dce_space.nii.gz")
     nib.save(resampled, out_file)
+    return out_file
+
+
+def _transform_structural_to_dce(
+    structural_file=None,
+    reference_file=None,
+    transform_matrix=None,
+    output_name="structural_in_dce.nii.gz",
+):
+    """Transform structural image from T1w space to DCE space via FLIRT.
+
+    Args:
+        structural_file: Path to structural image in T1w space (or None).
+        reference_file: Path to DCE reference image for output geometry.
+        transform_matrix: Path to T1w→DCE FLIRT matrix.
+        output_name: Output filename.
+
+    Returns:
+        Path to transformed structural image in DCE space, or None if inputs missing.
+    """
+    if structural_file is None or reference_file is None or transform_matrix is None:
+        return None
+
+    from pathlib import Path
+    import subprocess
+
+    if not Path(structural_file).exists():
+        return None
+
+    out_file = str(Path.cwd() / output_name)
+    subprocess.run(
+        [
+            "flirt",
+            "-in", str(structural_file),
+            "-ref", str(reference_file),
+            "-out", out_file,
+            "-init", str(transform_matrix),
+            "-applyxfm",
+            "-interp", "spline",
+        ],
+        check=True,
+        capture_output=True,
+    )
     return out_file
