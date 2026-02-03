@@ -322,8 +322,8 @@ def signal_to_concentration(
         # B1+ map is relative: actual_flip = nominal_flip × B1+
         b1_safe = np.maximum(b1_map, EPSILON_B1)
         if signal.ndim == 4:
-            # Expand B1 map for broadcasting with flip angle
-            effective_flip_rad = flip_angle_rad * b1_safe[..., np.newaxis]
+            # B1 map is 3D (spatial), same for all timepoints
+            effective_flip_rad = flip_angle_rad * b1_safe
         else:
             # 1D signal: assume scalar B1 (should be provided as scalar or single value)
             effective_flip_rad = flip_angle_rad * float(np.mean(b1_safe))
