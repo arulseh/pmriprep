@@ -2581,18 +2581,33 @@ class DCERegistration(SimpleInterface):
         # DICE selection: pick best path (Gap 2)
         # Method B must beat Method A by >0.01 margin to be selected
         # =====================================================================
-        dice_a = self._compute_dice_for_selection(out_file_a, dce_mean)
-        dice_b = self._compute_dice_for_selection(out_file_b, dce_mean)
+        # Only compute DICE if output file exists
+        file_a_exists = Path(out_file_a).exists()
+        file_b_exists = Path(out_file_b).exists()
 
-        # Select best path (B must beat A by >0.01 margin)
-        if dice_b > dice_a + 0.01:
+        if not file_a_exists and not file_b_exists:
+            raise RuntimeError(
+                "FLIRT registration produced no valid output files. "
+                "Check FSL installation and input images."
+            )
+
+        dice_a = self._compute_dice_for_selection(out_file_a, dce_mean) if file_a_exists else 0.0
+        dice_b = self._compute_dice_for_selection(out_file_b, dce_mean) if file_b_exists else 0.0
+
+        # Select best path (B must beat A by >0.01 margin), but only if file exists
+        if file_b_exists and (not file_a_exists or dice_b > dice_a + 0.01):
             selected_path = "B"
             selected_out_file = out_file_b
             selected_matrix = out_matrix_b
-        else:
+        elif file_a_exists:
             selected_path = "A"
             selected_out_file = out_file_a
             selected_matrix = out_matrix_a
+        else:
+            raise RuntimeError(
+                "FLIRT registration produced no valid output files. "
+                "Check FSL installation and input images."
+            )
 
         logger.info(
             "Registration path selection: A=%.3f, B=%.3f → selected %s",

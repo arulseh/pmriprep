@@ -1143,6 +1143,14 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
             if dce_sidecar["field_strength"] is not None:
                 dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
+                # Derive r1_relaxivity from field_strength (standard Gadolinium contrast)
+                from pmriprep.utils.dce_constants import get_r1_relaxivity
+                dce_wf.inputs.inputnode.r1_relaxivity = get_r1_relaxivity(
+                    dce_sidecar["field_strength"]
+                )
+            else:
+                # Default to 3T value (3.8 s^-1/mM)
+                dce_wf.inputs.inputnode.r1_relaxivity = 3.8
 
         # Connect anat outputs to DCE workflow
         if anat_wf is not None:

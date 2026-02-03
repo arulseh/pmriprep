@@ -111,6 +111,9 @@ class DCELesionStats(BaseInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute lesion statistics extraction."""
+        # Initialize results dictionary
+        self._results: Dict[str, str] = {}
+
         # Check if lesion mask is available
         if not self._has_input("lesion_mask"):
             # No lesion mask - skip processing
