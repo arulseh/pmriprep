@@ -121,6 +121,38 @@ class DSCConfig:
     num_processes: int = 0  # 0 = use system default
     use_gpu: bool = False
 
+    def __post_init__(self):
+        """Ensure numeric fields have correct types after initialization.
+
+        This handles cases where values may be passed as strings from
+        YAML/JSON config files or CLI arguments.
+        """
+        # Coerce integer fields (these have non-None defaults)
+        try:
+            self.pre_bolus = int(self.pre_bolus)
+            self.mcmc_samples = int(self.mcmc_samples)
+            self.cpi_control_points = int(self.cpi_control_points)
+            self.n_aif_candidates = int(self.n_aif_candidates)
+            self.num_processes = int(self.num_processes)
+        except (ValueError, TypeError) as e:
+            raise TypeError(f"DSCConfig integer field has invalid type: {e}") from e
+
+        # Coerce float fields (these have non-None defaults)
+        try:
+            self.smooth_fwhm = float(self.smooth_fwhm)
+            self.lesion_distance = float(self.lesion_distance)
+            self.lesion_dilation = float(self.lesion_dilation)
+            self.motion_thresh = float(self.motion_thresh)
+        except (ValueError, TypeError) as e:
+            raise TypeError(f"DSCConfig float field has invalid type: {e}") from e
+
+        # Handle Optional[float] field
+        if self.r2_star is not None:
+            try:
+                self.r2_star = float(self.r2_star)
+            except (ValueError, TypeError) as e:
+                raise TypeError(f"DSCConfig.r2_star has invalid type: {e}") from e
+
     def apply_gbm_preset(self) -> "DSCConfig":
         """Apply GBM clinical preset settings.
 

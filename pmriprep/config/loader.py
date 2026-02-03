@@ -160,6 +160,24 @@ def _dict_to_path(d: Dict[str, Any], key: str) -> None:
         d[key] = Path(d[key])
 
 
+def _coerce_int(d: Dict[str, Any], key: str) -> None:
+    """Convert a value to int in-place if key exists and is not None."""
+    if key in d and d[key] is not None:
+        try:
+            d[key] = int(d[key])
+        except (ValueError, TypeError):
+            pass  # Leave as-is if conversion fails
+
+
+def _coerce_float(d: Dict[str, Any], key: str) -> None:
+    """Convert a value to float in-place if key exists and is not None."""
+    if key in d and d[key] is not None:
+        try:
+            d[key] = float(d[key])
+        except (ValueError, TypeError):
+            pass  # Leave as-is if conversion fails
+
+
 def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     """Build DSCConfig from a configuration dictionary.
 
@@ -178,6 +196,17 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     # Convert path strings to Path objects
     for path_key in ("aif_mask_file", "lesion_mask", "nawm_mask"):
         _dict_to_path(dsc_dict, path_key)
+
+    # Type coerce numeric fields
+    _coerce_int(dsc_dict, "pre_bolus")
+    _coerce_int(dsc_dict, "mcmc_samples")
+    _coerce_int(dsc_dict, "cpi_control_points")
+    _coerce_int(dsc_dict, "n_aif_candidates")
+    _coerce_int(dsc_dict, "num_processes")
+    _coerce_float(dsc_dict, "smooth_fwhm")
+    _coerce_float(dsc_dict, "lesion_distance")
+    _coerce_float(dsc_dict, "lesion_dilation")
+    _coerce_float(dsc_dict, "motion_thresh")
 
     # Filter to only valid DSCConfig fields
     valid_fields = {f.name for f in DSCConfig.__dataclass_fields__.values()}
@@ -204,6 +233,17 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     # Convert path strings to Path objects
     for path_key in ("lesion_mask", "aif_mask_file", "reference_roi"):
         _dict_to_path(dce_dict, path_key)
+
+    # Type coerce numeric fields
+    _coerce_int(dce_dict, "baseline_frames")
+    _coerce_int(dce_dict, "mcmc_samples")
+    _coerce_int(dce_dict, "num_processes")
+    _coerce_float(dce_dict, "smooth")
+    _coerce_float(dce_dict, "lesion_distance")
+    _coerce_float(dce_dict, "lesion_dilation")
+    _coerce_float(dce_dict, "tsnr_threshold")
+    _coerce_float(dce_dict, "hematocrit")
+    _coerce_float(dce_dict, "target_peak")
 
     # Filter to only valid DCEConfig fields
     valid_fields = {f.name for f in DCEConfig.__dataclass_fields__.values()}

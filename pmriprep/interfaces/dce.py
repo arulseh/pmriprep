@@ -2656,6 +2656,7 @@ class DCERegistration(SimpleInterface):
         """
         # Path A: header-aligned T1w
         flirt_a = FLIRT()
+        flirt_a.inputs.output_type = 'NIFTI_GZ'
         flirt_a.inputs.in_file = header_aligned_file
         flirt_a.inputs.reference = dce_mean
         flirt_a.inputs.out_file = out_file_a
@@ -2673,6 +2674,7 @@ class DCERegistration(SimpleInterface):
 
         # Path B: original T1w
         flirt_b = FLIRT()
+        flirt_b.inputs.output_type = 'NIFTI_GZ'
         flirt_b.inputs.in_file = t1w_file
         flirt_b.inputs.reference = dce_mean
         flirt_b.inputs.out_file = out_file_b
@@ -2759,6 +2761,7 @@ class DCERegistration(SimpleInterface):
 
         # Run FLIRT init for path A
         flirt_init_a = FLIRT()
+        flirt_init_a.inputs.output_type = 'NIFTI_GZ'
         flirt_init_a.inputs.in_file = header_aligned_file
         flirt_init_a.inputs.reference = dce_mean
         flirt_init_a.inputs.out_matrix_file = init_matrix_a
@@ -2775,6 +2778,7 @@ class DCERegistration(SimpleInterface):
 
         # Run FLIRT init for path B
         flirt_init_b = FLIRT()
+        flirt_init_b.inputs.output_type = 'NIFTI_GZ'
         flirt_init_b.inputs.in_file = t1w_file
         flirt_init_b.inputs.reference = dce_mean
         flirt_init_b.inputs.out_matrix_file = init_matrix_b
@@ -2824,6 +2828,7 @@ class DCERegistration(SimpleInterface):
         if Path(init_matrix_a).exists():
             try:
                 bbr_a = FLIRT()
+                bbr_a.inputs.output_type = 'NIFTI_GZ'
                 bbr_a.inputs.in_file = header_aligned_file
                 bbr_a.inputs.reference = dce_mean
                 bbr_a.inputs.out_file = out_file_a
@@ -2846,6 +2851,7 @@ class DCERegistration(SimpleInterface):
         if Path(init_matrix_b).exists():
             try:
                 bbr_b = FLIRT()
+                bbr_b.inputs.output_type = 'NIFTI_GZ'
                 bbr_b.inputs.in_file = t1w_file
                 bbr_b.inputs.reference = dce_mean
                 bbr_b.inputs.out_file = out_file_b

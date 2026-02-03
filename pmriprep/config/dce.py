@@ -125,3 +125,34 @@ class DCEConfig:
     # Resource settings
     num_processes: int = 0  # 0 = use system default
     use_gpu: bool = False
+
+    def __post_init__(self):
+        """Ensure numeric fields have correct types after initialization.
+
+        This handles cases where values may be passed as strings from
+        YAML/JSON config files or CLI arguments.
+        """
+        # Coerce integer fields (these have non-None defaults)
+        try:
+            self.baseline_frames = int(self.baseline_frames)
+            self.mcmc_samples = int(self.mcmc_samples)
+            self.num_processes = int(self.num_processes)
+        except (ValueError, TypeError) as e:
+            raise TypeError(f"DCEConfig integer field has invalid type: {e}") from e
+
+        # Coerce float fields (these have non-None defaults)
+        try:
+            self.smooth = float(self.smooth)
+            self.lesion_distance = float(self.lesion_distance)
+            self.lesion_dilation = float(self.lesion_dilation)
+            self.tsnr_threshold = float(self.tsnr_threshold)
+            self.hematocrit = float(self.hematocrit)
+        except (ValueError, TypeError) as e:
+            raise TypeError(f"DCEConfig float field has invalid type: {e}") from e
+
+        # Handle Optional[float] field
+        if self.target_peak is not None:
+            try:
+                self.target_peak = float(self.target_peak)
+            except (ValueError, TypeError) as e:
+                raise TypeError(f"DCEConfig.target_peak has invalid type: {e}") from e

@@ -661,8 +661,15 @@ def _configure_nipype(args: argparse.Namespace) -> None:
         - mem_gb: Memory limit in GB
         - work_dir: Working directory
     """
+    import os
+
     from nipype import config as nipype_config  # type: ignore[import-untyped]
     from nipype import logging as nipype_logging  # type: ignore[import-untyped]
+
+    # Ensure FSL environment variables are set
+    if "FSLOUTPUTTYPE" not in os.environ:
+        os.environ["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+        logger.debug("Set FSLOUTPUTTYPE=NIFTI_GZ")
 
     # Create output and log directories if they don't exist
     if args.output_dir:
