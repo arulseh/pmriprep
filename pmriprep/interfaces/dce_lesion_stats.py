@@ -48,36 +48,38 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     """Input specification for DCE lesion statistics extraction."""
 
     # Required inputs
-    lesion_mask = File(
-        exists=True, mandatory=True, desc="Lesion/tumor mask in DCE space"
+    lesion_mask = traits.Either(
+        traits.Str, None, desc="Lesion/tumor mask in DCE space (optional)"
     )
     subject_id = traits.Str(mandatory=True, desc="Subject ID (without sub- prefix)")
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
     output_dir = traits.Str(mandatory=True, desc="Output directory for statistics files")
 
     # Optional NAWM mask for reference values
-    nawm_mask = traits.Str(desc="NAWM mask in DCE space for reference values")
+    nawm_mask = traits.Either(
+        traits.Str, None, desc="NAWM mask in DCE space for reference values"
+    )
 
-    # Core pharmacokinetic maps
-    ktrans_map = traits.Str(desc="Ktrans map path (min^-1)")
-    ve_map = traits.Str(desc="ve (EES volume fraction) map path")
-    vp_map = traits.Str(desc="vp (plasma volume fraction) map path")
-    kep_map = traits.Str(desc="kep (rate constant) map path")
+    # Core pharmacokinetic maps (all optional - stats computed for available maps)
+    ktrans_map = traits.Either(traits.Str, None, desc="Ktrans map path (min^-1)")
+    ve_map = traits.Either(traits.Str, None, desc="ve (EES volume fraction) map path")
+    vp_map = traits.Either(traits.Str, None, desc="vp (plasma volume fraction) map path")
+    kep_map = traits.Either(traits.Str, None, desc="kep (rate constant) map path")
 
-    # Normalized maps
-    nktrans_map = traits.Str(desc="Normalized Ktrans map path")
+    # Normalized maps (optional - only available when NAWM mask present)
+    nktrans_map = traits.Either(traits.Str, None, desc="Normalized Ktrans map path")
 
-    # IAUC maps
-    iauc60_map = traits.Str(desc="IAUC at 60 seconds map path")
-    iauc90_map = traits.Str(desc="IAUC at 90 seconds map path")
-    iauc120_map = traits.Str(desc="IAUC at 120 seconds map path")
-    niauc60_map = traits.Str(desc="Normalized IAUC60 map path")
+    # IAUC maps (all optional)
+    iauc60_map = traits.Either(traits.Str, None, desc="IAUC at 60 seconds map path")
+    iauc90_map = traits.Either(traits.Str, None, desc="IAUC at 90 seconds map path")
+    iauc120_map = traits.Either(traits.Str, None, desc="IAUC at 120 seconds map path")
+    niauc60_map = traits.Either(traits.Str, None, desc="Normalized IAUC60 map path")
 
-    # Additional derived maps
-    wash_in_map = traits.Str(desc="Wash-in rate map path")
-    wash_out_map = traits.Str(desc="Wash-out rate map path")
-    ttp_map = traits.Str(desc="Time to peak map path")
-    auc_map = traits.Str(desc="Total AUC map path")
+    # Additional derived maps (all optional)
+    wash_in_map = traits.Either(traits.Str, None, desc="Wash-in rate map path")
+    wash_out_map = traits.Either(traits.Str, None, desc="Wash-out rate map path")
+    ttp_map = traits.Either(traits.Str, None, desc="Time to peak map path")
+    auc_map = traits.Either(traits.Str, None, desc="Total AUC map path")
 
 
 class DCELesionStatsOutputSpec(TraitedSpec):
@@ -109,6 +111,13 @@ class DCELesionStats(BaseInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute lesion statistics extraction."""
+        # Check if lesion mask is available
+        if not self._has_input("lesion_mask"):
+            # No lesion mask - skip processing
+            self._results["stats_json"] = ""
+            self._results["stats_txt"] = ""
+            return runtime
+
         # Load lesion mask
         lesion_img = nib.load(self.inputs.lesion_mask)
         lesion_data = np.asarray(lesion_img.dataobj)

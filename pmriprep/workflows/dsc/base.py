@@ -576,7 +576,14 @@ def _transform_lesion_mask_to_dsc(
     Returns:
         Path to transformed lesion mask in DSC space, or None if no mask.
     """
-    if lesion_mask_file is None:
+    from nipype.interfaces.base import isdefined
+
+    # Handle both None and Nipype Undefined
+    if not isdefined(lesion_mask_file) or lesion_mask_file is None:
+        return None
+    if not isdefined(reference_file) or reference_file is None:
+        return None
+    if not isdefined(transform_matrix) or transform_matrix is None:
         return None
 
     from pathlib import Path
@@ -603,6 +610,59 @@ def _transform_lesion_mask_to_dsc(
     return out_file
 
 
+def _transform_structural_to_dsc(
+    structural_file=None,
+    reference_file=None,
+    transform_matrix=None,
+    output_name="structural_in_dsc.nii.gz",
+):
+    """Transform structural image from T1w space to DSC space via FLIRT.
+
+    Handles None/undefined inputs gracefully by returning None.
+
+    Args:
+        structural_file: Path to structural image in T1w space (or None).
+        reference_file: Path to DSC reference image for output geometry.
+        transform_matrix: Path to T1w→DSC FLIRT matrix.
+        output_name: Output filename.
+
+    Returns:
+        Path to transformed structural image in DSC space, or None if no input.
+    """
+    from nipype.interfaces.base import isdefined
+
+    # Handle both None and Nipype Undefined
+    if not isdefined(structural_file) or structural_file is None:
+        return None
+    if not isdefined(reference_file) or reference_file is None:
+        return None
+    if not isdefined(transform_matrix) or transform_matrix is None:
+        return None
+
+    from pathlib import Path
+    import subprocess
+
+    structural_path = Path(structural_file)
+    if not structural_path.exists():
+        return None
+
+    out_dir = Path.cwd()
+    out_file = str(out_dir / output_name)
+
+    cmd = [
+        "flirt",
+        "-in", str(structural_file),
+        "-ref", str(reference_file),
+        "-out", out_file,
+        "-init", str(transform_matrix),
+        "-applyxfm",
+        "-interp", "spline",
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+    return out_file
+
+
 def _normalize_cbv(
     cbv_file,
     brain_mask_file,
@@ -614,19 +674,30 @@ def _normalize_cbv(
     """Normalize CBV to NAWM median.
 
     This is a Function node wrapper for CBV normalization.
+    Returns (None, None) when NAWM mask is not available - normalization
+    requires NAWM reference for clinically valid results.
 
     Args:
         cbv_file: Path to CBV map NIfTI.
-        nawm_mask_file: Path to NAWM mask NIfTI (optional).
-        brain_mask_file: Path to brain mask for fallback.
+        nawm_mask_file: Path to NAWM mask NIfTI (required for normalization).
+        brain_mask_file: Path to brain mask (unused, kept for interface compat).
         derivatives_dir: Path to derivatives directory for auto-detection.
         subject_id: Subject ID for auto-detection.
         session_id: Session ID for auto-detection.
 
     Returns:
-        Tuple of (ncbv_file, normalization_factor).
+        Tuple of (ncbv_file, normalization_factor), or (None, None) if no NAWM mask.
     """
     from pathlib import Path
+
+    # Skip normalization if no NAWM mask available
+    if nawm_mask_file is None:
+        return None, None
+
+    nawm_path = Path(nawm_mask_file)
+    if not nawm_path.exists():
+        return None, None
+
     from pmriprep.utils.dsc_signal import normalize_cbv_from_files
 
     cbv_path = Path(cbv_file)
@@ -645,7 +716,7 @@ def _normalize_cbv(
         derivatives_dir=derivatives_dir,
         subject=subject_id,
         session=session_id,
-        brain_mask_file=brain_mask_file,
+        brain_mask_file=None,  # Don't use fallback
     )
 
     return str(output_path), norm_factor
@@ -661,18 +732,30 @@ def _normalize_cbf(
 ):
     """Normalize CBF to NAWM median (same method as CBV normalization).
 
+    Returns (None, None) when NAWM mask is not available - normalization
+    requires NAWM reference for clinically valid results.
+
     Args:
         cbf_file: Path to CBF map NIfTI.
-        brain_mask_file: Path to brain mask for fallback.
+        brain_mask_file: Path to brain mask (unused, kept for interface compat).
         derivatives_dir: Path to derivatives directory for auto-detection.
         subject_id: Subject ID for auto-detection.
         session_id: Session ID for auto-detection.
-        nawm_mask_file: Path to NAWM mask NIfTI (optional).
+        nawm_mask_file: Path to NAWM mask NIfTI (required for normalization).
 
     Returns:
-        Tuple of (ncbf_file, normalization_factor).
+        Tuple of (ncbf_file, normalization_factor), or (None, None) if no NAWM mask.
     """
     from pathlib import Path
+
+    # Skip normalization if no NAWM mask available
+    if nawm_mask_file is None:
+        return None, None
+
+    nawm_path = Path(nawm_mask_file)
+    if not nawm_path.exists():
+        return None, None
+
     from pmriprep.utils.dsc_signal import normalize_cbv_from_files
 
     cbf_path = Path(cbf_file)
@@ -691,7 +774,7 @@ def _normalize_cbf(
         derivatives_dir=derivatives_dir,
         subject=subject_id,
         session=session_id,
-        brain_mask_file=brain_mask_file,
+        brain_mask_file=None,  # Don't use fallback
     )
 
     return str(output_path), norm_factor
@@ -1507,26 +1590,31 @@ def init_dsc_preproc_wf(
     # Node 9c: Transform structural underlays to DSC Space
     # register.out_matrix is T1w→DSC, so we use it directly.
     # Underlays are conditional based on config.underlays list.
+    # Uses Function interface to handle undefined inputs gracefully.
     # -------------------------------------------------------------------
     transform_t1_to_dsc = None
     if "t1w" in config.underlays:
         transform_t1_to_dsc = pe.Node(
-            FLIRTApplyXFM(
-                apply_xfm=True,
-                interp="spline",
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dsc,
             ),
             name="transform_t1_to_dsc",
         )
+        transform_t1_to_dsc.inputs.output_name = "t1w_in_dsc.nii.gz"
 
     transform_flair_to_dsc = None
     if "flair" in config.underlays:
         transform_flair_to_dsc = pe.Node(
-            FLIRTApplyXFM(
-                apply_xfm=True,
-                interp="spline",
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dsc,
             ),
             name="transform_flair_to_dsc",
         )
+        transform_flair_to_dsc.inputs.output_name = "flair_in_dsc.nii.gz"
 
     # -------------------------------------------------------------------
     # Node 10: Provenance Logging
@@ -1825,16 +1913,16 @@ def init_dsc_preproc_wf(
     # Use prebolus_mean (full FOV) as reference for complete DSC geometry
     if transform_t1_to_dsc is not None:
         workflow.connect([
-            (inputnode, transform_t1_to_dsc, [("t1w_reference", "in_file")]),
-            (prebolus_mean, transform_t1_to_dsc, [("prebolus_mean_file", "reference")]),
-            (register, transform_t1_to_dsc, [("out_matrix", "in_matrix_file")]),
+            (inputnode, transform_t1_to_dsc, [("t1w_reference", "structural_file")]),
+            (prebolus_mean, transform_t1_to_dsc, [("prebolus_mean_file", "reference_file")]),
+            (register, transform_t1_to_dsc, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_flair_to_dsc is not None:
         workflow.connect([
-            (inputnode, transform_flair_to_dsc, [("flair_in_t1w", "in_file")]),
-            (prebolus_mean, transform_flair_to_dsc, [("prebolus_mean_file", "reference")]),
-            (register, transform_flair_to_dsc, [("out_matrix", "in_matrix_file")]),
+            (inputnode, transform_flair_to_dsc, [("flair_in_t1w", "structural_file")]),
+            (prebolus_mean, transform_flair_to_dsc, [("prebolus_mean_file", "reference_file")]),
+            (register, transform_flair_to_dsc, [("out_matrix", "transform_matrix")]),
         ])
 
     # -------------------------------------------------------------------

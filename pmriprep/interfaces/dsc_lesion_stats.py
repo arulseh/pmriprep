@@ -48,31 +48,33 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     """Input specification for DSC lesion statistics extraction."""
 
     # Required inputs
-    lesion_mask = File(
-        exists=True, mandatory=True, desc="Lesion/tumor mask in DSC space"
+    lesion_mask = traits.Either(
+        traits.Str, None, desc="Lesion/tumor mask in DSC space (optional)"
     )
     subject_id = traits.Str(mandatory=True, desc="Subject ID (without sub- prefix)")
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
     output_dir = traits.Str(mandatory=True, desc="Output directory for statistics files")
 
     # Optional NAWM mask for reference values
-    nawm_mask = traits.Str(desc="NAWM mask in DSC space for reference values")
+    nawm_mask = traits.Either(
+        traits.Str, None, desc="NAWM mask in DSC space for reference values"
+    )
 
-    # Core perfusion maps (required for meaningful analysis)
-    cbf_map = traits.Str(desc="CBF map path (relative or absolute)")
-    cbv_map = traits.Str(desc="CBV map path (relative or absolute)")
-    mtt_map = File(exists=True, desc="MTT map path")
-    tmax_map = File(exists=True, desc="Tmax map path")
+    # Core perfusion maps (all optional - stats computed for available maps)
+    cbf_map = traits.Either(traits.Str, None, desc="CBF map path")
+    cbv_map = traits.Either(traits.Str, None, desc="CBV map path")
+    mtt_map = traits.Either(traits.Str, None, desc="MTT map path")
+    tmax_map = traits.Either(traits.Str, None, desc="Tmax map path")
 
-    # Normalized maps (for nCBV/nCBF thresholds)
-    ncbv_map = traits.Str(desc="Normalized CBV map path")
-    ncbf_map = traits.Str(desc="Normalized CBF map path")
+    # Normalized maps (optional - only available when NAWM mask present)
+    ncbv_map = traits.Either(traits.Str, None, desc="Normalized CBV map path")
+    ncbf_map = traits.Either(traits.Str, None, desc="Normalized CBF map path")
 
-    # Additional maps
-    psr_map = traits.Str(desc="PSR (percent signal recovery) map path")
-    ph_map = traits.Str(desc="PH (peak height) map path")
-    k2_map = traits.Str(desc="K2 leakage correction map path")
-    ttp_map = traits.Str(desc="TTP map path")
+    # Additional maps (all optional)
+    psr_map = traits.Either(traits.Str, None, desc="PSR map path")
+    ph_map = traits.Either(traits.Str, None, desc="PH map path")
+    k2_map = traits.Either(traits.Str, None, desc="K2 leakage correction map path")
+    ttp_map = traits.Either(traits.Str, None, desc="TTP map path")
 
 
 class DSCLesionStatsOutputSpec(TraitedSpec):
@@ -104,6 +106,13 @@ class DSCLesionStats(BaseInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute lesion statistics extraction."""
+        # Check if lesion mask is available
+        if not self._has_input("lesion_mask"):
+            # No lesion mask - skip processing
+            self._results["stats_json"] = ""
+            self._results["stats_txt"] = ""
+            return runtime
+
         # Load lesion mask
         lesion_img = nib.load(self.inputs.lesion_mask)
         lesion_data = np.asarray(lesion_img.dataobj)

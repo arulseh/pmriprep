@@ -953,7 +953,14 @@ def _transform_mask_to_dce(
     Returns:
         Path to transformed brain mask in DCE space, or None if no mask.
     """
-    if mask_file is None:
+    from nipype.interfaces.base import isdefined
+
+    # Handle both None and Nipype Undefined
+    if not isdefined(mask_file) or mask_file is None:
+        return None
+    if not isdefined(reference_file) or reference_file is None:
+        return None
+    if not isdefined(transform_matrix) or transform_matrix is None:
         return None
 
     from pathlib import Path
@@ -1035,7 +1042,14 @@ def _transform_lesion_mask_to_dce(
     Returns:
         Path to transformed lesion mask in DCE space, or None if no mask.
     """
-    if lesion_mask_file is None:
+    from nipype.interfaces.base import isdefined
+
+    # Handle both None and Nipype Undefined
+    if not isdefined(lesion_mask_file) or lesion_mask_file is None:
+        return None
+    if not isdefined(reference_file) or reference_file is None:
+        return None
+    if not isdefined(transform_matrix) or transform_matrix is None:
         return None
 
     from pathlib import Path
@@ -1156,9 +1170,16 @@ def _transform_atlas_to_dce(
     Returns:
         Path to atlas mask in DCE space, or None if inputs missing.
     """
-    if atlas_file is None or t1w_to_mni_xfm is None:
+    from nipype.interfaces.base import isdefined
+
+    # Handle both None and Nipype Undefined
+    if not isdefined(atlas_file) or atlas_file is None:
         return None
-    if t1w_to_dce_xfm is None or reference_file is None:
+    if not isdefined(t1w_to_mni_xfm) or t1w_to_mni_xfm is None:
+        return None
+    if not isdefined(t1w_to_dce_xfm) or t1w_to_dce_xfm is None:
+        return None
+    if not isdefined(reference_file) or reference_file is None:
         return None
 
     from pathlib import Path
@@ -1758,7 +1779,14 @@ def _transform_structural_to_dce(
     Returns:
         Path to transformed structural image in DCE space, or None if inputs missing.
     """
-    if structural_file is None or reference_file is None or transform_matrix is None:
+    from nipype.interfaces.base import isdefined
+
+    # Handle both None and Nipype Undefined
+    if not isdefined(structural_file) or structural_file is None:
+        return None
+    if not isdefined(reference_file) or reference_file is None:
+        return None
+    if not isdefined(transform_matrix) or transform_matrix is None:
         return None
 
     from pathlib import Path

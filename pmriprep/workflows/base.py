@@ -93,18 +93,16 @@ def decide_pipelines(
         decision.run_anat = True
 
     # HD-GLIO tumor segmentation
-    # HD-GLIO requires anat pipeline for input preparation (coregistration,
-    # skull-stripping without bias correction)
+    # HD-GLIO requires anat outputs (can come from running anat or previous run)
     if skip_flags.skip_tumor_seg:
         decision.run_hdglio = False
         decision.hdglio_reason = "Skipped by user (--skip-tumor-seg)"
-    elif skip_flags.skip_anat:
-        decision.run_hdglio = False
-        decision.hdglio_reason = "Requires anatomical pipeline (--skip-anat disables it)"
     elif not session_data.pipelines.hdglio:
         decision.run_hdglio = False
         decision.hdglio_reason = session_data.pipelines.hdglio_reason
     else:
+        # HD-GLIO can run if anat is running OR if previous anat outputs exist
+        # (checked at workflow connection time)
         decision.run_hdglio = True
 
     # DSC perfusion
@@ -147,7 +145,7 @@ def _find_previous_anat_outputs(
         session_id: BIDS session ID (without 'ses-' prefix), or None.
 
     Returns:
-        Dict with keys: t1w_preproc, brain_mask, wm_probseg, t1w_to_mni_xfm.
+        Dict with keys: t1w_preproc, brain_mask, wm_probseg, t1w_to_mni_xfm, flair_coreg.
         Values are file paths (str) or None if not found.
     """
     session_label = f"ses-{session_id}" if session_id else "no-session"
@@ -159,6 +157,7 @@ def _find_previous_anat_outputs(
         "brain_mask": None,
         "wm_probseg": None,
         "t1w_to_mni_xfm": None,
+        "flair_coreg": None,
     }
 
     if not anat_dir.exists():
@@ -191,6 +190,108 @@ def _find_previous_anat_outputs(
         candidates = sorted(acpc_dir.glob("*.mat"))
         if candidates:
             outputs["t1w_to_mni_xfm"] = str(candidates[0])
+
+    # FLAIR coregistered to T1w
+    flair_dir = anat_dir / "coreg_flair"
+    if flair_dir.exists():
+        candidates = sorted(flair_dir.glob("*_coreg.nii.gz"))
+        if candidates:
+            outputs["flair_coreg"] = str(candidates[0])
+
+    return outputs
+
+
+def _find_previous_hdglio_inputs(
+    work_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+) -> dict[str, Optional[str]]:
+    """Find previously-computed anat outputs needed for HD-GLIO.
+
+    When --skip-anat is used but HD-GLIO should run, this function locates
+    the skull-stripped, coregistered images from a prior anat run.
+
+    Args:
+        work_dir: Nipype working directory (parent of the workflow directory).
+        subject_id: BIDS subject ID (without 'sub-' prefix).
+        session_id: BIDS session ID (without 'ses-' prefix), or None.
+
+    Returns:
+        Dict with keys for HD-GLIO inputs. Values are file paths or None.
+    """
+    session_label = f"ses-{session_id}" if session_id else "no-session"
+    wf_name = f"pmriprep_sub{subject_id}_{session_label}_wf"
+    anat_dir = work_dir / wf_name / "anat_wf"
+
+    outputs: dict[str, Optional[str]] = {
+        "hdglio_t1w_pre": None,
+        "hdglio_t1w_postcon": None,
+        "hdglio_t2w": None,
+        "hdglio_flair": None,
+        "brain_mask": None,
+        "wm_probseg": None,
+        "t1w_to_mni_xfm": None,
+        "t1w_preproc": None,
+    }
+
+    if not anat_dir.exists():
+        return outputs
+
+    # HD-GLIO masked T1w (pre-contrast) - skull-stripped without bias correction
+    hdglio_t1w_dir = anat_dir / "hdglio_mask_t1w"
+    if hdglio_t1w_dir.exists():
+        candidates = sorted(hdglio_t1w_dir.glob("*_masked.nii.gz"))
+        if candidates:
+            outputs["hdglio_t1w_pre"] = str(candidates[0])
+
+    # HD-GLIO masked post-contrast T1w
+    hdglio_postcon_dir = anat_dir / "hdglio_mask_postcon"
+    if hdglio_postcon_dir.exists():
+        candidates = sorted(hdglio_postcon_dir.glob("*_masked.nii.gz"))
+        if candidates:
+            outputs["hdglio_t1w_postcon"] = str(candidates[0])
+
+    # HD-GLIO masked T2w
+    hdglio_t2w_dir = anat_dir / "hdglio_mask_t2w"
+    if hdglio_t2w_dir.exists():
+        candidates = sorted(hdglio_t2w_dir.glob("*_masked.nii.gz"))
+        if candidates:
+            outputs["hdglio_t2w"] = str(candidates[0])
+
+    # HD-GLIO masked FLAIR
+    hdglio_flair_dir = anat_dir / "hdglio_mask_flair"
+    if hdglio_flair_dir.exists():
+        candidates = sorted(hdglio_flair_dir.glob("*_masked.nii.gz"))
+        if candidates:
+            outputs["hdglio_flair"] = str(candidates[0])
+
+    # Brain mask
+    brain_dir = anat_dir / "brain_extract"
+    if brain_dir.exists():
+        candidates = sorted(brain_dir.glob("*_brain_mask.nii.gz"))
+        if candidates:
+            outputs["brain_mask"] = str(candidates[0])
+
+    # White matter probability segmentation
+    seg_dir = anat_dir / "tissue_segment"
+    if seg_dir.exists():
+        candidates = sorted(seg_dir.glob("*_pve_2.nii.gz"))
+        if candidates:
+            outputs["wm_probseg"] = str(candidates[0])
+
+    # ACPC alignment transform
+    acpc_dir = anat_dir / "acpc_align"
+    if acpc_dir.exists():
+        candidates = sorted(acpc_dir.glob("*.mat"))
+        if candidates:
+            outputs["t1w_to_mni_xfm"] = str(candidates[0])
+
+    # T1w preprocessed (bias-corrected)
+    bias_dir = anat_dir / "bias_correct"
+    if bias_dir.exists():
+        candidates = sorted(bias_dir.glob("*_biascorr.nii.gz"))
+        if candidates:
+            outputs["t1w_preproc"] = str(candidates[0])
 
     return outputs
 
@@ -740,6 +841,38 @@ def init_pmriprep_wf(
                     ("outputnode.t1w_preproc", "inputnode.t1w_preproc"),
                 ]),
             ])
+        elif work_dir is not None:
+            # --skip-anat: load previously-computed anat outputs for HD-GLIO
+            import logging as _logging
+            _log = _logging.getLogger("pmriprep.workflows")
+            prev_hdglio = _find_previous_hdglio_inputs(
+                Path(work_dir), subject_id, session_id,
+            )
+            # Check if required inputs are available
+            if prev_hdglio["hdglio_t1w_pre"]:
+                hdglio_wf.inputs.inputnode.t1w_pre = prev_hdglio["hdglio_t1w_pre"]
+                _log.info("skip-anat (HD-GLIO): loaded t1w_pre from %s", prev_hdglio["hdglio_t1w_pre"])
+            if prev_hdglio["hdglio_t1w_postcon"]:
+                hdglio_wf.inputs.inputnode.t1w_postcon = prev_hdglio["hdglio_t1w_postcon"]
+                _log.info("skip-anat (HD-GLIO): loaded t1w_postcon from %s", prev_hdglio["hdglio_t1w_postcon"])
+            if prev_hdglio["hdglio_t2w"]:
+                hdglio_wf.inputs.inputnode.t2w = prev_hdglio["hdglio_t2w"]
+                _log.info("skip-anat (HD-GLIO): loaded t2w from %s", prev_hdglio["hdglio_t2w"])
+            if prev_hdglio["hdglio_flair"]:
+                hdglio_wf.inputs.inputnode.flair = prev_hdglio["hdglio_flair"]
+                _log.info("skip-anat (HD-GLIO): loaded flair from %s", prev_hdglio["hdglio_flair"])
+            if prev_hdglio["brain_mask"]:
+                hdglio_wf.inputs.inputnode.brain_mask = prev_hdglio["brain_mask"]
+                _log.info("skip-anat (HD-GLIO): loaded brain_mask from %s", prev_hdglio["brain_mask"])
+            if prev_hdglio["wm_probseg"]:
+                hdglio_wf.inputs.inputnode.wm_probseg = prev_hdglio["wm_probseg"]
+                _log.info("skip-anat (HD-GLIO): loaded wm_probseg from %s", prev_hdglio["wm_probseg"])
+            if prev_hdglio["t1w_to_mni_xfm"]:
+                hdglio_wf.inputs.inputnode.t1w_to_mni_xfm = prev_hdglio["t1w_to_mni_xfm"]
+                _log.info("skip-anat (HD-GLIO): loaded t1w_to_mni_xfm from %s", prev_hdglio["t1w_to_mni_xfm"])
+            if prev_hdglio["t1w_preproc"]:
+                hdglio_wf.inputs.inputnode.t1w_preproc = prev_hdglio["t1w_preproc"]
+                _log.info("skip-anat (HD-GLIO): loaded t1w_preproc from %s", prev_hdglio["t1w_preproc"])
 
         # Connect hdglio outputs to master outputnode
         workflow.connect([
@@ -841,6 +974,9 @@ def init_pmriprep_wf(
             if prev_anat["t1w_to_mni_xfm"]:
                 dsc_wf.inputs.inputnode.t1w_to_mni_xfm = prev_anat["t1w_to_mni_xfm"]
                 _log.info("skip-anat: loaded t1w_to_mni_xfm from %s", prev_anat["t1w_to_mni_xfm"])
+            if prev_anat["flair_coreg"]:
+                dsc_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
+                _log.info("skip-anat: loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
 
             if not any(prev_anat.values()):
                 _log.warning(
@@ -1055,6 +1191,9 @@ def init_pmriprep_wf(
             if prev_anat["t1w_to_mni_xfm"]:
                 dce_wf.inputs.inputnode.t1w_to_mni_xfm = prev_anat["t1w_to_mni_xfm"]
                 _log.info("skip-anat (DCE): loaded t1w_to_mni_xfm from %s", prev_anat["t1w_to_mni_xfm"])
+            if prev_anat["flair_coreg"]:
+                dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
+                _log.info("skip-anat (DCE): loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
 
         # Connect lesion mask from hdglio if available
         if hdglio_wf is not None:
