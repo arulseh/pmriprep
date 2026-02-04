@@ -9,7 +9,7 @@ References:
     - Physiological T1 values from Stanisz et al. (2005)
 """
 
-from typing import Final, NamedTuple
+from typing import Any, Final, NamedTuple
 
 
 # =============================================================================
@@ -250,3 +250,157 @@ def get_status_color(status: str) -> str:
         QCStatus.UNKNOWN: COLORBLIND_PALETTE.secondary,
     }
     return status_colors.get(status, COLORBLIND_PALETTE.secondary)
+
+
+# =============================================================================
+# QC Exclusion Recommendations (NiPreps-aligned)
+# =============================================================================
+
+
+class QCRecommendation(NamedTuple):
+    """QC recommendation for data exclusion or review.
+
+    Following NiPreps conventions for providing actionable QC feedback.
+
+    Attributes:
+        action: Recommended action ("include", "review", "exclude").
+        reason: Brief explanation of the recommendation.
+        severity: Severity level (0=none, 1=minor, 2=moderate, 3=severe).
+    """
+    action: str
+    reason: str
+    severity: int
+
+
+#: Action constants for QC recommendations
+class QCAction:
+    """QC action strings for consistent recommendations."""
+    INCLUDE: Final[str] = "include"
+    REVIEW: Final[str] = "review"
+    EXCLUDE: Final[str] = "exclude"
+
+
+def get_qc_recommendation(
+    status: str,
+    metric_name: str,
+    value: float,
+    thresholds: QCThresholds,
+    higher_is_better: bool = True,
+) -> QCRecommendation:
+    """Generate a QC recommendation based on metric value and status.
+
+    Follows NiPreps convention of providing actionable exclusion recommendations
+    rather than just pass/warn/fail status.
+
+    Args:
+        status: QC status string from get_qc_status().
+        metric_name: Human-readable name of the metric (e.g., "FD mean").
+        value: The metric value.
+        thresholds: QCThresholds used for evaluation.
+        higher_is_better: Whether higher values indicate better quality.
+
+    Returns:
+        QCRecommendation with action, reason, and severity.
+    """
+    if status == QCStatus.PASS:
+        return QCRecommendation(
+            action=QCAction.INCLUDE,
+            reason=f"{metric_name} within acceptable range ({value:.3f})",
+            severity=0,
+        )
+    elif status == QCStatus.WARN:
+        return QCRecommendation(
+            action=QCAction.REVIEW,
+            reason=f"{metric_name} marginal ({value:.3f}); visual inspection recommended",
+            severity=1,
+        )
+    else:  # FAIL
+        if higher_is_better:
+            threshold_desc = f"below {thresholds.warn_threshold}"
+        else:
+            threshold_desc = f"above {thresholds.warn_threshold}"
+        return QCRecommendation(
+            action=QCAction.EXCLUDE,
+            reason=f"{metric_name} {threshold_desc} ({value:.3f}); consider exclusion",
+            severity=3,
+        )
+
+
+def aggregate_qc_recommendations(
+    recommendations: list[QCRecommendation],
+) -> QCRecommendation:
+    """Aggregate multiple QC recommendations into a single overall recommendation.
+
+    Uses the most severe recommendation as the overall action.
+
+    Args:
+        recommendations: List of QCRecommendation objects.
+
+    Returns:
+        Aggregated QCRecommendation with combined reasons.
+    """
+    if not recommendations:
+        return QCRecommendation(
+            action=QCAction.INCLUDE,
+            reason="No QC metrics evaluated",
+            severity=0,
+        )
+
+    # Find the most severe recommendation
+    max_severity = max(r.severity for r in recommendations)
+
+    # Determine overall action based on max severity
+    if max_severity >= 3:
+        action = QCAction.EXCLUDE
+    elif max_severity >= 1:
+        action = QCAction.REVIEW
+    else:
+        action = QCAction.INCLUDE
+
+    # Collect reasons from all non-passing recommendations
+    reasons = [r.reason for r in recommendations if r.severity > 0]
+    if not reasons:
+        combined_reason = "All QC metrics passed"
+    else:
+        combined_reason = "; ".join(reasons)
+
+    return QCRecommendation(
+        action=action,
+        reason=combined_reason,
+        severity=max_severity,
+    )
+
+
+def build_qc_summary(
+    metrics: dict[str, tuple[float, str]],
+    overall_status: str,
+    overall_recommendation: QCRecommendation,
+) -> dict[str, Any]:
+    """Build a NiPreps-style QC summary dictionary.
+
+    Creates a structured QC summary that includes both detailed metrics
+    and actionable recommendations, following MRIQC/fMRIPrep conventions.
+
+    Args:
+        metrics: Dictionary mapping metric names to (value, status) tuples.
+        overall_status: Overall QC status (PASS/WARN/FAIL).
+        overall_recommendation: Aggregated QC recommendation.
+
+    Returns:
+        Dictionary suitable for JSON serialization with:
+        - overall_status: The aggregate status
+        - recommendation: Action recommendation with reason
+        - metrics: Per-metric details with values and status
+    """
+    return {
+        "overall_status": overall_status,
+        "recommendation": {
+            "action": overall_recommendation.action,
+            "reason": overall_recommendation.reason,
+            "severity": overall_recommendation.severity,
+        },
+        "metrics": {
+            name: {"value": value, "status": status}
+            for name, (value, status) in metrics.items()
+        },
+    }

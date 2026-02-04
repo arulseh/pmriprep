@@ -19,6 +19,7 @@ from pmriprep.interfaces.dce import (
     DCERegistration,
 )
 from pmriprep.interfaces.dce_aif import AIFDetection
+from pmriprep.interfaces.dce_aif_qc import DCEAIFQCPlot
 from pmriprep.interfaces.dce_compute import ComputeDCEMaps
 
 
@@ -271,6 +272,12 @@ def init_dce_preproc_wf(
                 "vp_uncertainty",
                 # QC metrics
                 "qc_metrics",
+                # QC plots
+                "registration_qc_filmstrip",
+                "aif_curve_qc_plot",
+                "aif_location_qc_plot",
+                "vfa_registration_qc_plot",  # optional, only if VFA coregistration occurred
+                "afi_registration_qc_plot",  # optional, only if AFI coregistration occurred
                 # Structural underlays
                 "t1w_in_dce",
                 "flair_in_dce",
@@ -782,7 +789,47 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
-    # Node 10: Collect QC Metrics
+    # Node 10: Registration QC Filmstrip
+    # ==========================================================================
+    reg_filmstrip = pe.Node(
+        niu.Function(
+            input_names=["dce_mean_file", "registered_t1w_file", "brain_mask_file"],
+            output_names=["filmstrip_file"],
+            function=_create_dce_registration_filmstrip,
+        ),
+        name="reg_filmstrip",
+    )
+
+    workflow.connect([
+        (dce_preprocess, reg_filmstrip, [("mean_img", "dce_mean_file")]),
+        (dce_registration, reg_filmstrip, [("out_file", "registered_t1w_file")]),
+        (transform_brain_mask, reg_filmstrip, [("out_file", "brain_mask_file")]),
+    ])
+
+    # ==========================================================================
+    # Node 10b: AIF QC Plots
+    # ==========================================================================
+    aif_qc_plot = pe.Node(
+        DCEAIFQCPlot(
+            subject_id=subject_id,
+            session_id=session_id or "",
+        ),
+        name="aif_qc_plot",
+    )
+
+    workflow.connect([
+        (aif_detection, aif_qc_plot, [
+            ("out_aif_curve", "aif_curve_file"),
+            ("out_aif_mask", "aif_mask_file"),
+            ("qc_metrics", "qc_metrics"),
+        ]),
+        (dce_preprocess, aif_qc_plot, [("out_file", "dce_file")]),
+        (transform_brain_mask, aif_qc_plot, [("out_file", "brain_mask_file")]),
+        (inputnode, aif_qc_plot, [("volume_tr", "tr")]),
+    ])
+
+    # ==========================================================================
+    # Node 11: Collect QC Metrics
     # ==========================================================================
     collect_qc = pe.Node(
         niu.Function(
@@ -997,6 +1044,23 @@ def init_dce_preproc_wf(
         # QC metrics
         (collect_qc, outputnode, [
             ("qc_metrics", "qc_metrics"),
+        ]),
+        # QC plots - registration filmstrip
+        (reg_filmstrip, outputnode, [
+            ("filmstrip_file", "registration_qc_filmstrip"),
+        ]),
+        # QC plots - AIF QC
+        (aif_qc_plot, outputnode, [
+            ("out_aif_plot", "aif_curve_qc_plot"),
+            ("out_aif_location", "aif_location_qc_plot"),
+        ]),
+        # QC plots - VFA registration (optional, only if VFA coregistration occurred)
+        (vfa_preprocess, outputnode, [
+            ("registration_qc_plot", "vfa_registration_qc_plot"),
+        ]),
+        # QC plots - AFI registration (optional, only if AFI coregistration occurred)
+        (b1_mapping, outputnode, [
+            ("registration_qc_plot", "afi_registration_qc_plot"),
         ]),
     ])
 
@@ -1906,3 +1970,62 @@ def _transform_structural_to_dce(
         capture_output=True,
     )
     return out_file
+
+
+def _create_dce_registration_filmstrip(
+    dce_mean_file=None,
+    registered_t1w_file=None,
+    brain_mask_file=None,
+):
+    """Create registration QC filmstrip for DCE-T1w registration.
+
+    Generates a multi-slice filmstrip showing the DCE mean image with
+    contours of the registered T1w image overlaid. This allows visual
+    assessment of registration quality.
+
+    Args:
+        dce_mean_file: Path to DCE mean image.
+        registered_t1w_file: Path to T1w image registered to DCE space.
+        brain_mask_file: Path to brain mask in DCE space (optional).
+
+    Returns:
+        Path to registration QC filmstrip PNG, or None if inputs missing.
+    """
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+
+    if dce_mean_file is None or registered_t1w_file is None:
+        return None
+
+    if not Path(dce_mean_file).exists():
+        return None
+    if not Path(registered_t1w_file).exists():
+        return None
+
+    # Load data
+    dce_img = nib.load(dce_mean_file)
+    dce_data = dce_img.get_fdata()  # type: ignore[attr-defined]
+
+    t1w_img = nib.load(registered_t1w_file)
+    t1w_data = t1w_img.get_fdata()  # type: ignore[attr-defined]
+
+    # Load mask if provided
+    mask = None
+    if brain_mask_file is not None and Path(brain_mask_file).exists():
+        mask_img = nib.load(brain_mask_file)
+        mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
+    # Generate filmstrip
+    out_path = Path.cwd() / "registration_qc_filmstrip.png"
+    plot_registration_qc_filmstrip(
+        fixed=dce_data,
+        moving=t1w_data,
+        output_path=out_path,
+        mask=mask,
+        title="DCE-T1w Registration QC",
+    )
+
+    return str(out_path)

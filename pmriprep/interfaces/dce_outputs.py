@@ -311,7 +311,9 @@ class DCEDerivativeWriter(BaseInterface):
         qc_metrics = self.inputs.qc_metrics
         if isdefined(qc_metrics) and qc_metrics:
             qc_dir.mkdir(parents=True, exist_ok=True)
-            self._write_json(qc_metrics, qc_dir / "dce_qc.json")
+            # Add NiPreps-style recommendation to QC metrics
+            enhanced_qc = self._add_qc_recommendation(qc_metrics)
+            self._write_json(enhanced_qc, qc_dir / "dce_qc.json")
 
         # -----------------------------------------------------------
         # 11. Dataset description
@@ -381,6 +383,72 @@ class DCEDerivativeWriter(BaseInterface):
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(data, f, indent=2, default=str)
+
+    @staticmethod
+    def _add_qc_recommendation(qc_metrics: dict[str, Any]) -> dict[str, Any]:
+        """Add NiPreps-style QC recommendation to metrics.
+
+        Evaluates the QC metrics and adds an overall recommendation
+        for data inclusion/exclusion, following NiPreps conventions.
+
+        Args:
+            qc_metrics: Original QC metrics dictionary.
+
+        Returns:
+            Enhanced QC metrics with 'recommendation' field added.
+        """
+        from pmriprep.utils.qc_standards import (
+            QCAction,
+            QCRecommendation,
+            aggregate_qc_recommendations,
+        )
+
+        recommendations: list[QCRecommendation] = []
+        enhanced = dict(qc_metrics)
+
+        # Evaluate AIF quality if available
+        aif_qc = qc_metrics.get("aif", {})
+        quality_score = aif_qc.get("quality_score")
+        if quality_score is not None:
+            if quality_score >= 0.7:
+                aif_rec = QCRecommendation(QCAction.INCLUDE, f"AIF quality good ({quality_score:.2f})", 0)
+            elif quality_score >= 0.4:
+                aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF quality marginal ({quality_score:.2f})", 1)
+            else:
+                aif_rec = QCRecommendation(QCAction.EXCLUDE, f"AIF quality poor ({quality_score:.2f})", 3)
+            recommendations.append(aif_rec)
+
+        # Evaluate PK model fit if available
+        pk_qc = qc_metrics.get("pk_modeling", {})
+        fit_residual = pk_qc.get("median_residual")
+        if fit_residual is not None:
+            if fit_residual < 0.1:
+                fit_rec = QCRecommendation(QCAction.INCLUDE, f"PK fit residual acceptable ({fit_residual:.3f})", 0)
+            elif fit_residual < 0.2:
+                fit_rec = QCRecommendation(QCAction.REVIEW, f"PK fit residual marginal ({fit_residual:.3f})", 1)
+            else:
+                fit_rec = QCRecommendation(QCAction.EXCLUDE, f"PK fit residual high ({fit_residual:.3f})", 2)
+            recommendations.append(fit_rec)
+
+        # Evaluate physiological plausibility of Ktrans
+        ktrans_median = pk_qc.get("ktrans_median")
+        if ktrans_median is not None:
+            # Typical brain Ktrans: 0.001-0.01 min^-1 (healthy), up to 0.5 min^-1 (tumor)
+            if 0.0001 < ktrans_median < 1.0:
+                kt_rec = QCRecommendation(QCAction.INCLUDE, f"Ktrans physiologically plausible ({ktrans_median:.4f})", 0)
+            else:
+                kt_rec = QCRecommendation(QCAction.REVIEW, f"Ktrans outside typical range ({ktrans_median:.4f})", 1)
+            recommendations.append(kt_rec)
+
+        # Aggregate recommendations
+        overall = aggregate_qc_recommendations(recommendations)
+        enhanced["recommendation"] = {
+            "action": overall.action,
+            "reason": overall.reason,
+            "severity": overall.severity,
+        }
+
+        return enhanced
 
     @staticmethod
     def _write_dataset_description(pipeline_dir: Path) -> None:

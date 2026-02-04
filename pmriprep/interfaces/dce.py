@@ -85,6 +85,9 @@ class B1MappingOutputSpec(TraitedSpec):
     qc_pass = traits.Bool(desc="Whether B1+ map passed QC criteria")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
     qc_plot = File(desc="B1+ mapping QC plot PNG")
+    registration_qc_plot = File(
+        desc="AFI TR1-TR2 registration QC filmstrip (only if coregistration performed)",
+    )
 
 
 class B1Mapping(SimpleInterface):
@@ -172,7 +175,7 @@ class B1Mapping(SimpleInterface):
 
     def _load_afi_data(
         self,
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], Any, Any, float, float]:
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], Any, Any, float, float, dict[str, Any]]:
         """Load AFI data from either a single 4D volume or separate 3D volumes.
 
         For 4D input, auto-detects TR1/TR2 ordering from JSON sidecar using:
@@ -184,8 +187,10 @@ class B1Mapping(SimpleInterface):
         Returns
         -------
         tuple
-            (s1, s2, affine, header, tr1_ms, tr2_ms) where s1 is the short-TR
-            signal, s2 is the long-TR signal, and TRs are in milliseconds.
+            (s1, s2, affine, header, tr1_ms, tr2_ms, coreg_info) where s1 is the short-TR
+            signal, s2 is the long-TR signal, TRs are in milliseconds, and coreg_info
+            contains coregistration metadata including s1_original, s2_original if
+            coregistration was performed.
         """
         import json as _json
 
@@ -312,7 +317,9 @@ class B1Mapping(SimpleInterface):
                 s1 = afi_data[:, :, :, 0]
                 s2 = afi_data[:, :, :, 1]
 
-            return s1, s2, affine, header, tr1_ms, tr2_ms
+            # 4D mode: no coregistration needed (same acquisition)
+            coreg_info: dict[str, Any] = {"coregistered": False}
+            return s1, s2, affine, header, tr1_ms, tr2_ms, coreg_info
 
         elif tr1_file is not None and tr2_file is not None:
             # --- 3D mode: separate files ---
@@ -366,6 +373,10 @@ class B1Mapping(SimpleInterface):
 
             # Coregister TR2 → TR1 if affines differ (Gap 5, matches perf-plus).
             # Separate 3D AFI acquisitions may have slight inter-scan motion.
+            coreg_info: dict[str, Any] = {"coregistered": False}
+            s1_original = s1.copy()
+            s2_original = s2.copy()
+
             affine_diff = float(np.abs(tr1_img.affine - tr2_img.affine).max())
             if affine_diff > 1e-4:
                 import subprocess as _sp
@@ -390,13 +401,23 @@ class B1Mapping(SimpleInterface):
                     logger.info(
                         "Coregistered AFI TR2 → TR1 (affine diff=%.4f)", affine_diff,
                     )
+                    # Track coregistration for QC plot generation
+                    coreg_info = {
+                        "coregistered": True,
+                        "s1_original": s1_original,
+                        "s2_original": s2_original,
+                        "s2_coregistered": s2.copy(),
+                        "affine_diff": affine_diff,
+                        "tr1_ms": tr1_ms,
+                        "tr2_ms": tr2_ms,
+                    }
                 except (FileNotFoundError, _sp.CalledProcessError) as exc:
                     logger.warning(
                         "AFI coregistration failed (%s) — using unregistered volumes",
                         exc,
                     )
 
-            return s1, s2, affine, header, tr1_ms, tr2_ms
+            return s1, s2, affine, header, tr1_ms, tr2_ms, coreg_info
 
         else:
             raise ValueError(
@@ -423,7 +444,7 @@ class B1Mapping(SimpleInterface):
 
             # Try to get shape/affine from AFI data; fall back to brain_mask
             try:
-                s1, s2, affine, header, tr1_ms, tr2_ms = self._load_afi_data()
+                s1, s2, affine, header, tr1_ms, tr2_ms, _coreg_info = self._load_afi_data()
                 shape = s1.shape[:3]
             except ValueError:
                 # No AFI data available — use brain mask for shape/affine
@@ -455,10 +476,11 @@ class B1Mapping(SimpleInterface):
                 "qc_pass": True,
                 "skipped": True,
             }
+            self._results["registration_qc_plot"] = None
             return runtime
 
         # Load AFI data (supports both 4D and 3D modes)
-        s1, s2, affine, header, tr1_ms, tr2_ms = self._load_afi_data()
+        s1, s2, affine, header, tr1_ms, tr2_ms, coreg_info = self._load_afi_data()
         shape = s1.shape[:3]
 
         # Get TR ratio
@@ -665,6 +687,31 @@ class B1Mapping(SimpleInterface):
         except Exception as e:
             logger.warning("Failed to generate B1+ QC plot: %s", e, exc_info=True)
 
+        # Generate AFI registration QC plot (only if coregistration was performed)
+        reg_qc_plot_path: Optional[str] = None
+        if coreg_info.get("coregistered", False):
+            try:
+                from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+
+                # Use s1 (reference) and s2_original (before coregistration)
+                s1_ref = coreg_info.get("s1_original", s1)
+                s2_orig = coreg_info.get("s2_original", s2)
+                s2_coreg = coreg_info.get("s2_coregistered", s2)
+                tr1_val = coreg_info.get("tr1_ms", tr1_ms)
+                tr2_val = coreg_info.get("tr2_ms", tr2_ms)
+
+                reg_qc_path = Path.cwd() / "afi_registration_qc.png"
+                plot_registration_qc_filmstrip(
+                    fixed=s1_ref,
+                    moving=s2_coreg,
+                    output_path=reg_qc_path,
+                    title=f"AFI Registration QC (ref=TR1={tr1_val:.0f}ms, moving=TR2={tr2_val:.0f}ms)",
+                )
+                reg_qc_plot_path = str(reg_qc_path)
+                logger.info("Generated AFI registration QC plot: %s", reg_qc_plot_path)
+            except Exception as exc:
+                logger.warning("Failed to generate AFI registration QC plot: %s", exc)
+
         # Set outputs
         self._results["out_file"] = out_file
         self._results["mean_b1"] = mean_b1
@@ -673,6 +720,7 @@ class B1Mapping(SimpleInterface):
         self._results["qc_metrics"] = qc_metrics
         if qc_plot_path is not None:
             self._results["qc_plot"] = qc_plot_path
+        self._results["registration_qc_plot"] = reg_qc_plot_path
 
         return runtime
 
@@ -1271,6 +1319,9 @@ class VFAPreprocessOutputSpec(TraitedSpec):
     )
     reference_index = traits.Int(desc="Index of reference volume in vfa_files")
     qc_metrics = traits.Dict(desc="VFA preprocessing QC metrics")
+    registration_qc_plot = File(
+        desc="VFA inter-volume registration QC filmstrip (only if coregistration performed)",
+    )
 
 
 class VFAPreprocess(SimpleInterface):
@@ -1442,6 +1493,31 @@ class VFAPreprocess(SimpleInterface):
 
             qc_metrics["coregistered"] = True
             qc_metrics["correlations"] = correlations
+
+            # Generate registration QC filmstrip
+            try:
+                from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+
+                # Load reference and first coregistered non-reference volume
+                ref_img = nib.load(out_files[ref_idx])
+                ref_data = ref_img.get_fdata()  # type: ignore[attr-defined]
+
+                # Find first non-reference volume
+                first_coreg_idx = 0 if ref_idx != 0 else 1
+                coreg_img = nib.load(out_files[first_coreg_idx])
+                coreg_data = coreg_img.get_fdata()  # type: ignore[attr-defined]
+
+                qc_plot_path = out_dir / "vfa_registration_qc.png"
+                plot_registration_qc_filmstrip(
+                    fixed=ref_data,
+                    moving=coreg_data,
+                    output_path=qc_plot_path,
+                    title=f"VFA Registration QC (ref=FA{flip_angles[ref_idx]:.0f}, moving=FA{flip_angles[first_coreg_idx]:.0f})",
+                )
+                self._results["registration_qc_plot"] = str(qc_plot_path)
+            except Exception as exc:
+                logger.warning("Failed to generate VFA registration QC plot: %s", exc)
+                self._results["registration_qc_plot"] = None
         else:
             # No coregistration needed — copy files as-is
             for i, vfa_file in enumerate(vfa_files):
@@ -1453,6 +1529,9 @@ class VFAPreprocess(SimpleInterface):
                 logger.info("VFA affines identical - skipping coregistration")
             elif self.inputs.skip_coregistration:
                 logger.info("VFA coregistration skipped by user")
+
+            # No registration QC plot when no coregistration
+            self._results["registration_qc_plot"] = None
 
         # Flip angle validation
         if (

@@ -1,5 +1,25 @@
 """Utility modules for PMRIPrep."""
 
+from pmriprep.utils.qc_standards import (
+    COLORBLIND_PALETTE,
+    ColorPalette,
+    DICE_THRESHOLDS,
+    DICE_THRESHOLDS_STRICT,
+    DIVERGING_COLORMAP,
+    MOTION_FD_THRESHOLDS,
+    MOTION_OUTLIER_FRACTION_MAX,
+    MOTION_RMS_THRESHOLDS,
+    QCAction,
+    QCRecommendation,
+    QCStatus,
+    QCThresholds,
+    SEQUENTIAL_COLORMAP,
+    aggregate_qc_recommendations,
+    build_qc_summary,
+    get_qc_recommendation,
+    get_qc_status,
+    get_status_color,
+)
 from pmriprep.utils.outputs import (
     DerivativeMetadata,
     PERFUSION_SUFFIXES,
@@ -72,6 +92,25 @@ from pmriprep.utils.structural_reference import (
 )
 
 __all__ = [
+    # qc_standards
+    "COLORBLIND_PALETTE",
+    "ColorPalette",
+    "DICE_THRESHOLDS",
+    "DICE_THRESHOLDS_STRICT",
+    "DIVERGING_COLORMAP",
+    "MOTION_FD_THRESHOLDS",
+    "MOTION_OUTLIER_FRACTION_MAX",
+    "MOTION_RMS_THRESHOLDS",
+    "QCAction",
+    "QCRecommendation",
+    "QCStatus",
+    "QCThresholds",
+    "SEQUENTIAL_COLORMAP",
+    "aggregate_qc_recommendations",
+    "build_qc_summary",
+    "get_qc_recommendation",
+    "get_qc_status",
+    "get_status_color",
     # outputs
     "DerivativeMetadata",
     "PERFUSION_SUFFIXES",

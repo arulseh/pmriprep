@@ -358,7 +358,9 @@ class DSCDerivativeWriter(BaseInterface):
 
         qc_metrics = self.inputs.qc_metrics
         if isdefined(qc_metrics) and qc_metrics:
-            self._write_json(qc_metrics, qc_dir / "dsc_qc.json")
+            # Add NiPreps-style recommendation to QC metrics
+            enhanced_qc = self._add_qc_recommendation(qc_metrics)
+            self._write_json(enhanced_qc, qc_dir / "dsc_qc.json")
 
         # -----------------------------------------------------------
         # 10b. AIF QC plots
@@ -497,6 +499,77 @@ class DSCDerivativeWriter(BaseInterface):
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(data, f, indent=2, default=str)
+
+    @staticmethod
+    def _add_qc_recommendation(qc_metrics: dict[str, Any]) -> dict[str, Any]:
+        """Add NiPreps-style QC recommendation to metrics.
+
+        Evaluates the QC metrics and adds an overall recommendation
+        for data inclusion/exclusion, following NiPreps conventions.
+
+        Args:
+            qc_metrics: Original QC metrics dictionary.
+
+        Returns:
+            Enhanced QC metrics with 'recommendation' field added.
+        """
+        from pmriprep.utils.qc_standards import (
+            QCAction,
+            QCRecommendation,
+            QCStatus,
+            aggregate_qc_recommendations,
+        )
+
+        recommendations: list[QCRecommendation] = []
+        enhanced = dict(qc_metrics)
+
+        # Evaluate AIF detection quality
+        aif_qc = qc_metrics.get("aif", {})
+        detection_level = aif_qc.get("detection_level", "unknown")
+        level_to_rec = {
+            "atlas": QCRecommendation(QCAction.INCLUDE, "AIF detected via atlas method", 0),
+            "relaxed": QCRecommendation(QCAction.REVIEW, "AIF detected via relaxed criteria", 1),
+            "synthetic": QCRecommendation(QCAction.EXCLUDE, "Synthetic AIF used; verify clinically", 3),
+        }
+        aif_rec = level_to_rec.get(
+            detection_level,
+            QCRecommendation(QCAction.REVIEW, f"AIF detection: {detection_level}", 1),
+        )
+        recommendations.append(aif_rec)
+
+        # Evaluate motion QC if available
+        motion_qc = qc_metrics.get("motion", {})
+        fd_mean = motion_qc.get("fd_mean")
+        if fd_mean is not None:
+            if fd_mean < 0.3:
+                motion_rec = QCRecommendation(QCAction.INCLUDE, f"Motion acceptable (FD={fd_mean:.2f}mm)", 0)
+            elif fd_mean < 0.5:
+                motion_rec = QCRecommendation(QCAction.REVIEW, f"Motion marginal (FD={fd_mean:.2f}mm)", 1)
+            else:
+                motion_rec = QCRecommendation(QCAction.EXCLUDE, f"Excessive motion (FD={fd_mean:.2f}mm)", 3)
+            recommendations.append(motion_rec)
+
+        # Evaluate CNR if available
+        cnr_qc = qc_metrics.get("cnr_whole_brain", {})
+        cnr_fraction = cnr_qc.get("fraction_cnr_gt_4")
+        if cnr_fraction is not None:
+            if cnr_fraction >= 0.84:
+                cnr_rec = QCRecommendation(QCAction.INCLUDE, f"CNR excellent ({cnr_fraction:.0%})", 0)
+            elif cnr_fraction >= 0.65:
+                cnr_rec = QCRecommendation(QCAction.REVIEW, f"CNR marginal ({cnr_fraction:.0%})", 1)
+            else:
+                cnr_rec = QCRecommendation(QCAction.EXCLUDE, f"CNR poor ({cnr_fraction:.0%})", 3)
+            recommendations.append(cnr_rec)
+
+        # Aggregate recommendations
+        overall = aggregate_qc_recommendations(recommendations)
+        enhanced["recommendation"] = {
+            "action": overall.action,
+            "reason": overall.reason,
+            "severity": overall.severity,
+        }
+
+        return enhanced
 
     @staticmethod
     def _write_dataset_description(pipeline_dir: Path) -> None:

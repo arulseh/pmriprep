@@ -237,6 +237,33 @@ class AIFQCPlot(BaseInterface):
                 bbox=props,
             )
 
+            # Recommendation badge (NiPreps-style)
+            # Map detection level to recommendation action
+            from pmriprep.utils.qc_standards import QCAction, get_status_color, QCStatus
+            level_to_status = {
+                "atlas": QCStatus.PASS,
+                "relaxed": QCStatus.WARN,
+                "synthetic": QCStatus.FAIL,
+                "unknown": QCStatus.UNKNOWN,
+            }
+            level_to_action = {
+                "atlas": QCAction.INCLUDE,
+                "relaxed": QCAction.REVIEW,
+                "synthetic": QCAction.EXCLUDE,
+                "unknown": QCAction.REVIEW,
+            }
+            status = level_to_status.get(detection_level, QCStatus.UNKNOWN)
+            action = level_to_action.get(detection_level, QCAction.REVIEW)
+            badge_color = get_status_color(status)
+            badge_text = f"[{action.upper()}]"
+            ax.text(
+                0.98, 0.97, badge_text,
+                transform=ax.transAxes, fontsize=10, fontweight="bold",
+                verticalalignment="top", horizontalalignment="right",
+                color="white",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor=badge_color, alpha=0.9),
+            )
+
             plt.tight_layout()
             fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
         finally:
