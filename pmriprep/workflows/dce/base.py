@@ -22,6 +22,41 @@ from pmriprep.interfaces.dce_aif import AIFDetection
 from pmriprep.interfaces.dce_compute import ComputeDCEMaps
 
 
+def _get_atlas_from_bids(bids_dir: Union[str, Path], atlas_type: str = "auto") -> Optional[Path]:
+    """Get arterial atlas from BIDS sourcedata with tiered fallback.
+
+    Fallback order: MCA_ACA_dil3 → CoW_dil3 → full_dil3
+
+    Args:
+        bids_dir: Path to BIDS dataset root.
+        atlas_type: 'auto' for tiered fallback, or specific type.
+
+    Returns:
+        Path to atlas file, or None if not found.
+    """
+    atlas_dir = Path(bids_dir) / "sourcedata" / "atlases" / "mni_aif"
+    if not atlas_dir.exists():
+        return None
+
+    # Tiered fallback order (most specific → most general)
+    if atlas_type == "auto":
+        candidates = [
+            "MNI_2mm_MRA_arterial_MCA_ACA_dil3.nii.gz",
+            "MNI_2mm_MRA_arterial_CoW_mask_dil3.nii.gz",
+            "MNI_2mm_MRA_arterial_full_mask_dil3.nii.gz",
+            "MNI_2mm_MRA_arterial_full_mask.nii.gz",
+        ]
+    else:
+        candidates = [f"MNI_2mm_MRA_arterial_{atlas_type}.nii.gz"]
+
+    for candidate in candidates:
+        atlas_path = atlas_dir / candidate
+        if atlas_path.exists():
+            return atlas_path
+
+    return None
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     subject_id: str,
@@ -455,9 +490,20 @@ def init_dce_preproc_wf(
         name="transform_atlas_to_dce",
     )
 
+    # Load arterial atlas from BIDS sourcedata with tiered fallback
+    # (like perf-plus: MCA_ACA → CoW → full)
+    atlas_file = _get_atlas_from_bids(bids_dir, "auto")
+    if atlas_file is not None:
+        transform_atlas_to_dce.inputs.atlas_file = str(atlas_file)
+    else:
+        import warnings
+        warnings.warn(
+            f"No arterial atlas found in {bids_dir}/sourcedata/atlases/mni_aif/. "
+            "AIF detection will use whole-brain search."
+        )
+
     workflow.connect([
         (inputnode, transform_atlas_to_dce, [
-            ("atlas_mask_file", "atlas_file"),
             ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
         ]),
         (dce_registration, transform_atlas_to_dce, [
@@ -589,7 +635,6 @@ def init_dce_preproc_wf(
             ("out_file", "atlas_mask_file"),
         ]),
         (inputnode, aif_detection, [
-            ("lesion_mask", "lesion_mask_file"),
             ("tr", "tr"),
             ("field_strength", "field_strength"),
         ]),
@@ -624,8 +669,6 @@ def init_dce_preproc_wf(
         ]),
         (inputnode, pk_modeling, [
             ("tr", "tr"),
-            ("dsc_cbv_file", "dsc_cbv_file"),
-            ("dsc_aif_qc_file", "dsc_aif_qc_file"),
         ]),
         # Use T1 map resampled to DCE space
         (transform_t1_to_dce, pk_modeling, [
@@ -721,13 +764,12 @@ def init_dce_preproc_wf(
     )
 
     dsc_dce_validation.inputs.no_dsc_validation = config.no_dsc_validation
+    # Default to None - will be overridden by parent workflow connection when DSC is available
+    dsc_dce_validation.inputs.dsc_cbv_file = None
 
     workflow.connect([
         (pk_modeling, dsc_dce_validation, [
             ("out_vp", "vp_file"),
-        ]),
-        (inputnode, dsc_dce_validation, [
-            ("dsc_cbv_file", "dsc_cbv_file"),
         ]),
         (transform_brain_mask, dsc_dce_validation, [
             ("out_file", "brain_mask"),
@@ -795,6 +837,13 @@ def init_dce_preproc_wf(
         (inputnode, transform_lesion, [("lesion_mask", "lesion_mask_file")]),
         (dce_preprocess, transform_lesion, [("mean_img", "reference_file")]),
         (dce_registration, transform_lesion, [("out_matrix", "transform_matrix")]),
+    ])
+
+    # Connect transformed lesion mask to AIF detection (must be in DCE space)
+    workflow.connect([
+        (transform_lesion, aif_detection, [
+            ("lesion_mask_dce_file", "lesion_mask_file"),
+        ]),
     ])
 
     # Lesion statistics extraction

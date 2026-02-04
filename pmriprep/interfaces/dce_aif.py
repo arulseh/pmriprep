@@ -22,6 +22,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterfaceInputSpec,
     File,
     TraitedSpec,
+    isdefined,
     traits,
 )
 
@@ -343,9 +344,9 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         mandatory=True,
         desc="3D brain mask NIfTI",
     )
-    atlas_mask_file = File(
-        exists=True,
-        mandatory=False,
+    atlas_mask_file = traits.Either(
+        traits.Str,
+        None,
         desc="Optional 3D arterial atlas mask in DCE space",
     )
     lesion_mask_file = File(
@@ -1499,9 +1500,14 @@ class AIFDetection(BaseInterface):
         brain_img = nib.load(self.inputs.brain_mask_file)
         brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
 
-        # Optional atlas mask
+        # Optional atlas mask (validated at runtime since exists=True removed from trait)
         atlas_mask: Optional[npt.NDArray[Any]] = None
-        if self.inputs.atlas_mask_file:
+        if (
+            isdefined(self.inputs.atlas_mask_file)
+            and self.inputs.atlas_mask_file is not None
+            and str(self.inputs.atlas_mask_file) != "None"
+            and Path(self.inputs.atlas_mask_file).exists()
+        ):
             atlas_img = nib.load(self.inputs.atlas_mask_file)
             atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
 

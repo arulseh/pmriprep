@@ -1327,12 +1327,13 @@ def init_pmriprep_wf(
                     _log.warning("DWI: failed to read b-value from %s: %s", bval_path, exc)
 
         # Connect DSC CBV for vp constraint in DCE PK modeling.
-        # pk_modeling node receives dsc_cbv_file and quality-gates it before use.
+        # Connect directly to internal nodes since these are optional inputs.
         if dsc_wf is not None:
             workflow.connect([
                 (dsc_wf, dce_wf, [
-                    ("outputnode.rel_cbv_map", "inputnode.dsc_cbv_file"),
-                    ("outputnode.aif_qc", "inputnode.dsc_aif_qc_file"),
+                    ("outputnode.rel_cbv_map", "pk_modeling.dsc_cbv_file"),
+                    ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc_file"),
+                    ("outputnode.rel_cbv_map", "dsc_dce_validation.dsc_cbv_file"),
                 ]),
             ])
 
@@ -1344,6 +1345,66 @@ def init_pmriprep_wf(
                 ("outputnode.vp_map", "dce_vp"),
                 ("outputnode.kep_map", "dce_kep"),
                 ("outputnode.qc_metrics", "dce_qc"),
+            ]),
+        ])
+
+        # -------------------------------------------------------------------
+        # DCEDerivativeWriter: Write BIDS-compliant DCE outputs
+        # -------------------------------------------------------------------
+        from pmriprep.interfaces.dce_outputs import DCEDerivativeWriter
+        import dataclasses
+
+        dce_config_dict = dataclasses.asdict(dce_config)
+        # Convert Path objects to strings for JSON serialization
+        for k, v in dce_config_dict.items():
+            if isinstance(v, Path):
+                dce_config_dict[k] = str(v)
+
+        dce_writer = pe.Node(
+            DCEDerivativeWriter(
+                output_dir=str(output_dir),
+                subject_id=subject_id,
+                session_id=session_id or "",
+                bids_dir=str(bids_dir),
+                pk_model=dce_config.model,
+                config_dict=dce_config_dict,
+            ),
+            name="dce_writer",
+        )
+
+        # Connect DCE outputs to writer
+        workflow.connect([
+            (dce_wf, dce_writer, [
+                # Core PK parameter maps
+                ("outputnode.ktrans_map", "ktrans_map"),
+                ("outputnode.ve_map", "ve_map"),
+                ("outputnode.kep_map", "kep_map"),
+                ("outputnode.vp_map", "vp_map"),
+                # T1/B1 mapping
+                ("outputnode.t1_map", "t1_map"),
+                ("outputnode.b1_map", "b1_map"),
+                # Motion-corrected data
+                ("outputnode.dce_moco", "dce_moco"),
+                ("outputnode.dce_mean", "dce_mean"),
+                ("outputnode.motion_params", "motion_params"),
+                # AIF outputs
+                ("outputnode.aif_curve", "aif_curve"),
+                ("outputnode.aif_mask", "aif_mask"),
+                # Registration
+                ("outputnode.dce_to_t1w_xfm", "dce_to_t1w_xfm"),
+                # Uncertainty maps (Bayesian)
+                ("outputnode.ktrans_uncertainty", "ktrans_uncertainty"),
+                ("outputnode.ve_uncertainty", "ve_uncertainty"),
+                ("outputnode.vp_uncertainty", "vp_uncertainty"),
+                # QC metrics
+                ("outputnode.qc_metrics", "qc_metrics"),
+                # Structural underlays
+                ("outputnode.t1w_in_dce", "t1w_in_dce"),
+                ("outputnode.flair_in_dce", "flair_in_dce"),
+                # Lesion statistics
+                ("outputnode.lesion_stats_json", "lesion_stats_json"),
+                ("outputnode.lesion_stats_txt", "lesion_stats_txt"),
+                ("outputnode.lesion_mask_dce", "lesion_mask_dce"),
             ]),
         ])
 

@@ -732,20 +732,29 @@ class HDGLIOSegment(BaseInterface):
         # Build and run the command
         cmd = self._build_command()
 
-        # Execute HD-GLIO
-        result = subprocess.run(
+        # Execute HD-GLIO with proper signal handling
+        # Use Popen to allow Ctrl+C to propagate to child process
+        process = subprocess.Popen(
             cmd,
             shell=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
+            start_new_session=False,  # Keep in same process group for signal forwarding
         )
+        try:
+            stdout, stderr = process.communicate()
+        except KeyboardInterrupt:
+            process.terminate()
+            process.wait(timeout=5)
+            raise
 
-        if result.returncode != 0:
+        if process.returncode != 0:
             raise RuntimeError(
-                f"hd_glio_predict failed with return code {result.returncode}.\n"
+                f"hd_glio_predict failed with return code {process.returncode}.\n"
                 f"Command: {cmd}\n"
-                f"Stdout: {result.stdout}\n"
-                f"Stderr: {result.stderr}"
+                f"Stdout: {stdout}\n"
+                f"Stderr: {stderr}"
             )
 
         # Find the segmentation output file

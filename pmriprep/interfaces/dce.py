@@ -2668,9 +2668,8 @@ class DCERegistration(SimpleInterface):
         flirt_a.inputs.searchr_z = [-search_range, search_range]
         flirt_a.inputs.coarse_search = FLIRT_COARSE_SEARCH
         flirt_a.inputs.fine_search = FLIRT_FINE_SEARCH
-        if weight_file:
-            flirt_a.inputs.in_weight = weight_file
-            flirt_a.inputs.ref_weight = weight_file
+        # Note: in_weight NOT applied to path A - weight file is in T1w space,
+        # but header_aligned_file has DCE dimensions, causing FLIRT to fail silently
 
         # Path B: original T1w
         flirt_b = FLIRT()
@@ -2688,7 +2687,7 @@ class DCERegistration(SimpleInterface):
         flirt_b.inputs.fine_search = FLIRT_FINE_SEARCH
         if weight_file:
             flirt_b.inputs.in_weight = weight_file
-            flirt_b.inputs.ref_weight = weight_file
+            # Note: ref_weight omitted - weight file is in T1w space, not DCE space
 
         # Run both paths, capture failures
         error_a: Optional[str] = None
@@ -2772,9 +2771,8 @@ class DCERegistration(SimpleInterface):
         flirt_init_a.inputs.searchr_z = [-search_range, search_range]
         flirt_init_a.inputs.coarse_search = FLIRT_COARSE_SEARCH
         flirt_init_a.inputs.fine_search = FLIRT_FINE_SEARCH
-        if weight_file:
-            flirt_init_a.inputs.in_weight = weight_file
-            flirt_init_a.inputs.ref_weight = weight_file
+        # Note: in_weight NOT applied to path A - weight file is in T1w space,
+        # but header_aligned_file has DCE dimensions, causing FLIRT to fail silently
 
         # Run FLIRT init for path B
         flirt_init_b = FLIRT()
@@ -2791,7 +2789,7 @@ class DCERegistration(SimpleInterface):
         flirt_init_b.inputs.fine_search = FLIRT_FINE_SEARCH
         if weight_file:
             flirt_init_b.inputs.in_weight = weight_file
-            flirt_init_b.inputs.ref_weight = weight_file
+            # Note: ref_weight omitted - weight file is in T1w space, not DCE space
 
         # Run init FLIRT for both paths
         try:
@@ -2838,8 +2836,7 @@ class DCERegistration(SimpleInterface):
                 bbr_a.inputs.in_matrix_file = init_matrix_a
                 bbr_a.inputs.wm_seg = wm_thresh
                 bbr_a.inputs.schedule = "${FSLDIR}/etc/flirtsch/bbr.sch"
-                if weight_file:
-                    bbr_a.inputs.ref_weight = weight_file
+                # Note: ref_weight omitted - weight file is in T1w space, not DCE space
                 bbr_a.run()
             except Exception as exc:
                 error_a = str(exc)
@@ -2861,8 +2858,7 @@ class DCERegistration(SimpleInterface):
                 bbr_b.inputs.in_matrix_file = init_matrix_b
                 bbr_b.inputs.wm_seg = wm_thresh
                 bbr_b.inputs.schedule = "${FSLDIR}/etc/flirtsch/bbr.sch"
-                if weight_file:
-                    bbr_b.inputs.ref_weight = weight_file
+                # Note: ref_weight omitted - weight file is in T1w space, not DCE space
                 bbr_b.run()
             except Exception as exc:
                 error_b = str(exc)
