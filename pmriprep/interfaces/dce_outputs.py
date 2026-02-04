@@ -124,10 +124,20 @@ class DCEDerivativeWriter(BaseInterface):
         voxel_sizes = ref_img.header.get_zooms()[:3]  # type: ignore[attr-defined]
         res_str = "x".join(f"{v:.2f}" for v in voxel_sizes)
 
-        # Get model name for filename
+        # Get model name for filename - extract resolved model from qc_metrics if "auto"
         pk_model = self.inputs.pk_model
-        if not isdefined(pk_model) or not pk_model:
-            pk_model = "unknown"
+        if not isdefined(pk_model) or not pk_model or pk_model == "auto":
+            # Extract resolved model from qc_metrics["pk_modeling"]["model"]
+            qc_metrics = self.inputs.qc_metrics
+            if (
+                isdefined(qc_metrics)
+                and qc_metrics
+                and "pk_modeling" in qc_metrics
+                and "model" in qc_metrics["pk_modeling"]
+            ):
+                pk_model = qc_metrics["pk_modeling"]["model"]
+            else:
+                pk_model = "unknown"
 
         # Build spatial entity string
         spatial = f"space-DCE_res-{res_str}"
@@ -312,7 +322,7 @@ class DCEDerivativeWriter(BaseInterface):
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:
-        outputs = self.output_spec().get()  # type: ignore[misc]
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
         outputs["out_dir"] = getattr(self, "_out_dir", "")
         return outputs
 
@@ -359,7 +369,11 @@ class DCEDerivativeWriter(BaseInterface):
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src), str(dst))
 
-    _copy_nifti = _copy_file
+    @staticmethod
+    def _copy_nifti(src: str, dst: Path) -> None:
+        """Copy a NIfTI file to the destination path."""
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src), str(dst))
 
     @staticmethod
     def _write_json(data: dict, path: Path) -> None:
