@@ -444,7 +444,7 @@ def _find_previous_hdglio_outputs(
 
     Returns:
         Dict with keys: dilated_lesion_mask, whole_tumor_mask,
-        enhancing_mask, nawm_mask.
+        enhancing_mask, segmentation, nawm_mask.
         Values are file paths (str) or None if not found.
     """
     session_label = f"ses-{session_id}" if session_id else "no-session"
@@ -455,6 +455,7 @@ def _find_previous_hdglio_outputs(
         "dilated_lesion_mask": None,
         "whole_tumor_mask": None,
         "enhancing_mask": None,
+        "segmentation": None,
         "nawm_mask": None,
     }
 
@@ -472,6 +473,14 @@ def _find_previous_hdglio_outputs(
         for f in masks_dir.glob("*enhancing_mask.nii.gz"):
             if "nonenhancing" not in f.name and "non_enhancing" not in f.name:
                 outputs["enhancing_mask"] = str(f)
+
+    # Check hdglio_segment node for segmentation output
+    seg_dir = hdglio_dir / "hdglio_segment"
+    if seg_dir.exists():
+        for f in seg_dir.glob("*_seg.nii.gz"):
+            outputs["segmentation"] = str(f)
+        for f in seg_dir.glob("*segmentation*.nii.gz"):
+            outputs["segmentation"] = str(f)
 
     # Also check dilate_lesion and create_nawm nodes
     if outputs["dilated_lesion_mask"] is None:
@@ -1005,13 +1014,14 @@ def init_pmriprep_wf(
                     work_dir,
                 )
 
-        # Connect lesion mask and enhancing mask from hdglio if available
+        # Connect lesion mask and tumor segmentation from hdglio if available
         if hdglio_wf is not None:
             workflow.connect([
                 (hdglio_wf, dsc_wf, [
                     ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
                     ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                     ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+                    ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
                     ("outputnode.nawm_mask", "inputnode.nawm_mask"),
                 ]),
             ])
@@ -1031,6 +1041,9 @@ def init_pmriprep_wf(
             if prev_hdglio["enhancing_mask"]:
                 dsc_wf.inputs.inputnode.enhancing_mask = prev_hdglio["enhancing_mask"]
                 _log.info("skip-tumor-seg: loaded enhancing_mask from %s", prev_hdglio["enhancing_mask"])
+            if prev_hdglio["segmentation"]:
+                dsc_wf.inputs.inputnode.hdglio_segmentation = prev_hdglio["segmentation"]
+                _log.info("skip-tumor-seg: loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])
             if prev_hdglio["nawm_mask"]:
                 dsc_wf.inputs.inputnode.nawm_mask = prev_hdglio["nawm_mask"]
                 _log.info("skip-tumor-seg: loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
@@ -1226,11 +1239,13 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
                 _log.info("skip-anat (DCE): loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
 
-        # Connect lesion mask from hdglio if available
+        # Connect lesion mask and tumor segmentation from hdglio if available
         if hdglio_wf is not None:
             workflow.connect([
                 (hdglio_wf, dce_wf, [
                     ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
+                    ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
+                    ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
                 ]),
             ])
         elif work_dir is not None and not decision.run_hdglio:
@@ -1243,6 +1258,12 @@ def init_pmriprep_wf(
             if prev_hdglio["dilated_lesion_mask"]:
                 dce_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
                 _log.info("skip-tumor-seg (DCE): loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
+            if prev_hdglio["whole_tumor_mask"]:
+                dce_wf.inputs.inputnode.whole_tumor_mask = prev_hdglio["whole_tumor_mask"]
+                _log.info("skip-tumor-seg (DCE): loaded whole_tumor_mask from %s", prev_hdglio["whole_tumor_mask"])
+            if prev_hdglio["segmentation"]:
+                dce_wf.inputs.inputnode.hdglio_segmentation = prev_hdglio["segmentation"]
+                _log.info("skip-tumor-seg (DCE): loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])
 
         # Connect VFA and AFI inputs if available
         if session_data.modalities.vfa:

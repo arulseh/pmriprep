@@ -207,6 +207,9 @@ def init_dce_preproc_wf(
                 "wm_probseg",
                 "csf_probseg",
                 "lesion_mask",
+                # Tumor mask inputs for lesion statistics
+                "whole_tumor_mask",  # Undilated whole-tumor mask (fallback for lesion stats)
+                "hdglio_segmentation",  # HD-GLIO multi-label segmentation for lesion stats (optional)
                 # VFA T1 mapping inputs
                 "vfa_files",
                 "vfa_flip_angles",
@@ -825,7 +828,7 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 11: Lesion Statistics (conditional on lesion mask availability)
     # ==========================================================================
-    # Transform lesion mask from T1w to DCE space
+    # Transform dilated lesion mask from T1w to DCE space (for AIF exclusion)
     transform_lesion = pe.Node(
         niu.Function(
             input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
@@ -848,6 +851,47 @@ def init_dce_preproc_wf(
         ]),
     ])
 
+    # Select best available tumor mask for lesion statistics
+    # Priority: hdglio_segmentation (multi-label) > whole_tumor
+    from pmriprep.utils.lesion_stats import combine_tumor_masks
+
+    combine_masks = pe.Node(
+        niu.Function(
+            input_names=[
+                "hdglio_segmentation_file",
+                "whole_tumor_mask_file",
+                "reference_file",
+            ],
+            output_names=["combined_mask_file"],
+            function=combine_tumor_masks,
+        ),
+        name="combine_masks",
+    )
+
+    workflow.connect([
+        (inputnode, combine_masks, [
+            ("hdglio_segmentation", "hdglio_segmentation_file"),
+            ("whole_tumor_mask", "whole_tumor_mask_file"),
+        ]),
+        (dce_preprocess, combine_masks, [("mean_img", "reference_file")]),
+    ])
+
+    # Transform combined tumor mask from T1w to DCE space (for lesion stats)
+    transform_stats_lesion = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dce_file"],
+            function=_transform_lesion_mask_to_dce,
+        ),
+        name="transform_stats_lesion",
+    )
+
+    workflow.connect([
+        (combine_masks, transform_stats_lesion, [("combined_mask_file", "lesion_mask_file")]),
+        (dce_preprocess, transform_stats_lesion, [("mean_img", "reference_file")]),
+        (dce_registration, transform_stats_lesion, [("out_matrix", "transform_matrix")]),
+    ])
+
     # Lesion statistics extraction
     from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
 
@@ -860,7 +904,7 @@ def init_dce_preproc_wf(
     lesion_stats.inputs.output_dir = str(Path(bids_dir) / "derivatives" / "dce_pipeline")
 
     workflow.connect([
-        (transform_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),
+        (transform_stats_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),
         (pk_modeling, lesion_stats, [
             ("out_ktrans", "ktrans_map"),
             ("out_ve", "ve_map"),
@@ -968,8 +1012,9 @@ def init_dce_preproc_wf(
         ])
 
     # Lesion statistics output connections
+    # Use the combined tumor mask (with multi-label support) for lesion_mask_dce output
     workflow.connect([
-        (transform_lesion, outputnode, [("lesion_mask_dce_file", "lesion_mask_dce")]),
+        (transform_stats_lesion, outputnode, [("lesion_mask_dce_file", "lesion_mask_dce")]),
         (lesion_stats, outputnode, [
             ("stats_json", "lesion_stats_json"),
             ("stats_txt", "lesion_stats_txt"),

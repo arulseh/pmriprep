@@ -1136,6 +1136,7 @@ def init_dsc_preproc_wf(
                 "lesion_mask",  # Dilated lesion mask for registration (optional)
                 "whole_tumor_mask",  # Undilated whole-tumor mask for AIF distance exclusion (optional)
                 "enhancing_mask",  # Enhancing tumor mask for laterality (optional)
+                "hdglio_segmentation",  # HD-GLIO multi-label segmentation for lesion stats (optional)
                 "nawm_mask",  # NAWM mask for normalization (optional)
                 "t1w_to_mni_xfm",  # T1w to MNI transform (from ACPC alignment)
                 "te",  # Echo time in seconds
@@ -1434,7 +1435,26 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 6d: Transform Lesion mask from T1w to DSC space
+    # Node 6d: Select tumor mask for lesion statistics
+    # Priority: hdglio_segmentation (multi-label) > whole_tumor > None
+    # -------------------------------------------------------------------
+    from pmriprep.utils.lesion_stats import combine_tumor_masks
+
+    combine_masks = pe.Node(
+        niu.Function(
+            input_names=[
+                "hdglio_segmentation_file",
+                "whole_tumor_mask_file",
+                "reference_file",
+            ],
+            output_names=["combined_mask_file"],
+            function=combine_tumor_masks,
+        ),
+        name="combine_masks",
+    )
+
+    # -------------------------------------------------------------------
+    # Node 6e: Transform combined lesion mask from T1w to DSC space
     # -------------------------------------------------------------------
     transform_lesion = pe.Node(
         niu.Function(
@@ -1446,7 +1466,7 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 6e: Lesion Statistics Extraction
+    # Node 6f: Lesion Statistics Extraction
     # Conditional - only run if lesion mask is available
     # -------------------------------------------------------------------
     from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
@@ -1869,11 +1889,21 @@ def init_dsc_preproc_wf(
     ])
 
     # -------------------------------------------------------------------
-    # Lesion mask transform and statistics (conditional)
+    # Lesion mask selection and transform (conditional)
     # -------------------------------------------------------------------
-    # Transform lesion mask from T1w to DSC space
+    # Select best available tumor mask for lesion stats
+    # Priority: hdglio_segmentation (multi-label) > whole_tumor
     workflow.connect([
-        (inputnode, transform_lesion, [("whole_tumor_mask", "lesion_mask_file")]),
+        (inputnode, combine_masks, [
+            ("hdglio_segmentation", "hdglio_segmentation_file"),
+            ("whole_tumor_mask", "whole_tumor_mask_file"),
+        ]),
+        (prebolus_mean, combine_masks, [("prebolus_mean_file", "reference_file")]),
+    ])
+
+    # Transform combined lesion mask from T1w to DSC space
+    workflow.connect([
+        (combine_masks, transform_lesion, [("combined_mask_file", "lesion_mask_file")]),
         (prebolus_mean, transform_lesion, [("prebolus_mean_file", "reference_file")]),
         (register, transform_lesion, [("out_matrix", "transform_matrix")]),
     ])

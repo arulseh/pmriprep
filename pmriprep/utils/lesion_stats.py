@@ -458,6 +458,53 @@ def compute_dce_derived_metrics(
     return derived if derived else {}
 
 
+def combine_tumor_masks(
+    hdglio_segmentation_file: Optional[str],
+    whole_tumor_mask_file: Optional[str],
+    reference_file: str,
+) -> Optional[str]:
+    """Select the best tumor mask for lesion statistics.
+
+    Priority:
+    1. If HD-GLIO segmentation present: use it (already multi-label:
+       0=bg, 1=non-enhancing, 2=enhancing)
+    2. If only whole_tumor present: use as binary mask
+    3. If none present: return None
+
+    Args:
+        hdglio_segmentation_file: Path to HD-GLIO multi-label segmentation (or None).
+        whole_tumor_mask_file: Path to whole tumor binary mask (or None).
+        reference_file: Path to reference image for output geometry (unused but
+            kept for interface compatibility).
+
+    Returns:
+        Path to tumor mask file for lesion stats, or None if no masks available.
+    """
+    from pathlib import Path
+
+    # Check for Nipype Undefined
+    from nipype.interfaces.base import isdefined
+
+    def _is_valid_file(f: Optional[str]) -> bool:
+        """Check if file path is valid (not None, not Undefined, exists)."""
+        if f is None:
+            return False
+        if not isdefined(f):
+            return False
+        return Path(f).exists()
+
+    # Priority 1: Use HD-GLIO segmentation directly (already multi-label)
+    if _is_valid_file(hdglio_segmentation_file):
+        return hdglio_segmentation_file
+
+    # Priority 2: Use whole_tumor as binary mask
+    if _is_valid_file(whole_tumor_mask_file):
+        return whole_tumor_mask_file
+
+    # Priority 3: No masks available
+    return None
+
+
 def compute_nawm_reference(
     nawm_mask: np.ndarray,
     maps: Dict[str, np.ndarray],
