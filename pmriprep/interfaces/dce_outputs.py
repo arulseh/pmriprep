@@ -73,6 +73,11 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     pk_model = traits.Str(desc="Pharmacokinetic model name")
     config_dict = traits.Dict(desc="DCE processing config as dictionary")
 
+    # QC plots (optional)
+    aif_curve_plot = traits.Str(desc="AIF curve QC plot PNG path")
+    aif_location_plot = traits.Str(desc="AIF location overlay PNG path")
+    registration_filmstrip = traits.Str(desc="Registration QC filmstrip PNG path")
+
 
 class DCEDerivativeWriterOutputSpec(TraitedSpec):
     """Output specification for DCEDerivativeWriter."""
@@ -314,6 +319,19 @@ class DCEDerivativeWriter(BaseInterface):
             # Add NiPreps-style recommendation to QC metrics
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
             self._write_json(enhanced_qc, qc_dir / "dce_qc.json")
+
+        # Copy QC plots
+        if self._has_input("aif_curve_plot"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(self.inputs.aif_curve_plot, qc_dir / "aif_curve_qc.png")
+        if self._has_input("aif_location_plot"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(self.inputs.aif_location_plot, qc_dir / "aif_location_qc.png")
+        if self._has_input("registration_filmstrip"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(
+                self.inputs.registration_filmstrip, qc_dir / "registration_qc_filmstrip.png"
+            )
 
         # -----------------------------------------------------------
         # 11. Dataset description

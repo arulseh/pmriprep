@@ -1376,7 +1376,7 @@ def init_pmriprep_wf(
             workflow.connect([
                 (dsc_wf, dce_wf, [
                     ("outputnode.rel_cbv_map", "pk_modeling.dsc_cbv_file"),
-                    ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc_file"),
+                    ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc"),  # Dict input
                     ("outputnode.rel_cbv_map", "dsc_dce_validation.dsc_cbv_file"),
                 ]),
             ])
@@ -1442,6 +1442,10 @@ def init_pmriprep_wf(
                 ("outputnode.vp_uncertainty", "vp_uncertainty"),
                 # QC metrics
                 ("outputnode.qc_metrics", "qc_metrics"),
+                # QC plots
+                ("outputnode.aif_curve_qc_plot", "aif_curve_plot"),
+                ("outputnode.aif_location_qc_plot", "aif_location_plot"),
+                ("outputnode.registration_qc_filmstrip", "registration_filmstrip"),
                 # Structural underlays
                 ("outputnode.t1w_in_dce", "t1w_in_dce"),
                 ("outputnode.flair_in_dce", "flair_in_dce"),

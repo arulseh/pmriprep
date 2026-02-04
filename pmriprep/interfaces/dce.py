@@ -476,7 +476,7 @@ class B1Mapping(SimpleInterface):
                 "qc_pass": True,
                 "skipped": True,
             }
-            self._results["registration_qc_plot"] = None
+            # Note: registration_qc_plot left undefined (File traits cannot be None)
             return runtime
 
         # Load AFI data (supports both 4D and 3D modes)
@@ -720,7 +720,8 @@ class B1Mapping(SimpleInterface):
         self._results["qc_metrics"] = qc_metrics
         if qc_plot_path is not None:
             self._results["qc_plot"] = qc_plot_path
-        self._results["registration_qc_plot"] = reg_qc_plot_path
+        if reg_qc_plot_path is not None:
+            self._results["registration_qc_plot"] = reg_qc_plot_path
 
         return runtime
 
@@ -1517,7 +1518,7 @@ class VFAPreprocess(SimpleInterface):
                 self._results["registration_qc_plot"] = str(qc_plot_path)
             except Exception as exc:
                 logger.warning("Failed to generate VFA registration QC plot: %s", exc)
-                self._results["registration_qc_plot"] = None
+                # Note: registration_qc_plot left undefined (File traits cannot be None)
         else:
             # No coregistration needed — copy files as-is
             for i, vfa_file in enumerate(vfa_files):
@@ -1530,8 +1531,7 @@ class VFAPreprocess(SimpleInterface):
             elif self.inputs.skip_coregistration:
                 logger.info("VFA coregistration skipped by user")
 
-            # No registration QC plot when no coregistration
-            self._results["registration_qc_plot"] = None
+            # Note: registration_qc_plot left undefined when no coregistration (File traits cannot be None)
 
         # Flip angle validation
         if (

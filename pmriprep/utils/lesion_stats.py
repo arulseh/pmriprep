@@ -459,10 +459,10 @@ def compute_dce_derived_metrics(
 
 
 def combine_tumor_masks(
-    hdglio_segmentation_file: Optional[str],
-    whole_tumor_mask_file: Optional[str],
-    reference_file: str,
-) -> Optional[str]:
+    hdglio_segmentation_file,  # Optional[str] - type hint removed for Nipype Function
+    whole_tumor_mask_file,     # Optional[str] - type hint removed for Nipype Function
+    reference_file,            # str
+):  # -> Optional[str]
     """Select the best tumor mask for lesion statistics.
 
     Priority:
@@ -479,13 +479,17 @@ def combine_tumor_masks(
 
     Returns:
         Path to tumor mask file for lesion stats, or None if no masks available.
+
+    Note:
+        This function is used as a Nipype Function node, so type hints are removed
+        from the signature (Optional requires import which breaks Function nodes).
     """
     from pathlib import Path
 
     # Check for Nipype Undefined
     from nipype.interfaces.base import isdefined
 
-    def _is_valid_file(f: Optional[str]) -> bool:
+    def _is_valid_file(f):
         """Check if file path is valid (not None, not Undefined, exists)."""
         if f is None:
             return False

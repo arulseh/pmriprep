@@ -502,3 +502,92 @@ def prepare_vp_constraint(
         result.vp_map = None
 
     return result
+
+
+def prepare_vp_constraint_from_data(
+    cbv_file: Union[str, Path],
+    aif_qc_data: dict[str, Any],
+    brain_mask_file: Union[str, Path],
+    mode_override: Optional[str] = None,
+    hematocrit: float = HEMATOCRIT_TISSUE,
+) -> VpConstraintResult:
+    """Prepare vp constraint map from DSC CBV for DCE PK modeling.
+
+    Same as prepare_vp_constraint but accepts AIF QC data as a dict directly
+    instead of reading from a JSON file.
+
+    Args:
+        cbv_file: Path to DSC-derived CBV map NIfTI.
+        aif_qc_data: DSC AIF QC metrics dictionary (from workflow).
+        brain_mask_file: Path to brain mask NIfTI.
+        mode_override: User-specified constraint mode override.
+        hematocrit: Blood hematocrit for CBV-to-vp conversion.
+
+    Returns:
+        VpConstraintResult with vp_map, config, quality, and qc_report.
+    """
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    result = VpConstraintResult()
+
+    # Load brain mask
+    mask_img = nib.load(str(brain_mask_file))
+    mask_data: npt.NDArray[np.floating] = mask_img.get_fdata()  # type: ignore[attr-defined]
+
+    # Load CBV map
+    cbv_img = nib.load(str(cbv_file))
+    cbv_data: npt.NDArray[np.floating] = cbv_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+
+    # Step 1: Assess quality using provided AIF QC data
+    quality = assess_dsc_cbv_quality(
+        aif_qc_data=aif_qc_data if aif_qc_data else {},
+        cbv_data=cbv_data,
+        brain_mask=mask_data,
+    )
+    result.quality = quality
+
+    # Step 2: Determine constraint mode
+    config = determine_constraint_mode(quality, user_override=mode_override)
+    result.config = config
+
+    # Step 3: Convert CBV to vp (even for skip mode, for QC reporting)
+    vp_map = cbv_to_vp(cbv_data, hematocrit=hematocrit)
+
+    # Build QC report
+    mask_bool = mask_data > 0
+    vp_in_brain = vp_map[mask_bool]
+    vp_valid = vp_in_brain[np.isfinite(vp_in_brain)]
+
+    qc_report: dict[str, Any] = {
+        "constraint_mode": config.mode.value,
+        "constraint_reason": config.reason,
+        "dsc_cbv_confidence": quality.confidence,
+        "dsc_cbv_use_constraint": quality.use_constraint,
+        "cnr_coverage": quality.cnr_coverage,
+        "aif_peak_height": quality.aif_peak_height,
+        "aif_baseline_return": quality.aif_baseline_return,
+        "hematocrit": hematocrit,
+    }
+
+    if len(vp_valid) > 0:
+        qc_report["vp_median"] = float(np.median(vp_valid))
+        qc_report["vp_p5"] = float(np.percentile(vp_valid, 5))
+        qc_report["vp_p95"] = float(np.percentile(vp_valid, 95))
+        qc_report["vp_nan_fraction"] = float(
+            np.sum(~np.isfinite(vp_in_brain)) / len(vp_in_brain)
+        )
+
+    if quality.cbv_median is not None:
+        qc_report["cbv_median"] = quality.cbv_median
+    if quality.cbv_negative_fraction is not None:
+        qc_report["cbv_negative_fraction"] = quality.cbv_negative_fraction
+
+    result.qc_report = qc_report
+
+    # Only provide vp_map if constraint will be used
+    if config.mode != ConstraintMode.SKIP:
+        result.vp_map = vp_map
+    else:
+        result.vp_map = None
+
+    return result

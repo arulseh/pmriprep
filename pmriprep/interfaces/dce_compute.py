@@ -103,8 +103,8 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     dsc_cbv_file = File(
         desc="DSC-derived CBV map for vp constraint (optional)",
     )
-    dsc_aif_qc_file = File(
-        desc="DSC AIF QC JSON for CBV quality assessment (optional)",
+    dsc_aif_qc = traits.Dict(
+        desc="DSC AIF QC metrics dict for CBV quality assessment (optional)",
     )
     constraint_mode = traits.Enum(
         "auto",
@@ -482,7 +482,7 @@ class ComputeDCEMaps(BaseInterface):
         from pmriprep.models.dce.bayesian import create_vp_prior_from_dsc
         from pmriprep.utils.dsc_cbv_constraint import (
             ConstraintMode,
-            prepare_vp_constraint,
+            prepare_vp_constraint_from_data,
         )
 
         # Load data
@@ -574,15 +574,20 @@ class ComputeDCEMaps(BaseInterface):
 
         has_dsc_cbv = (
             isdefined(self.inputs.dsc_cbv_file)
-            and isdefined(self.inputs.dsc_aif_qc_file)
             and self._has_vp(model_name)
         )
 
         if has_dsc_cbv:
             try:
-                vp_result = prepare_vp_constraint(
+                # Get AIF QC dict if available
+                aif_qc_data = (
+                    self.inputs.dsc_aif_qc
+                    if isdefined(self.inputs.dsc_aif_qc)
+                    else {}
+                )
+                vp_result = prepare_vp_constraint_from_data(
                     cbv_file=self.inputs.dsc_cbv_file,
-                    aif_qc_file=self.inputs.dsc_aif_qc_file,
+                    aif_qc_data=aif_qc_data,
                     brain_mask_file=self.inputs.brain_mask_file,
                     mode_override=str(self.inputs.constraint_mode),
                     hematocrit=float(self.inputs.hematocrit),
