@@ -834,6 +834,31 @@ def _extract_preload_class(qc_dict):
     return qc_dict.get("preload_classification", "none")
 
 
+def _generate_motion_qc_plot(motion_params_file, out_dir, tr):
+    """Generate motion QC plot from motion parameters.
+
+    Creates a two-panel figure showing raw motion parameters and
+    framewise displacement over time.
+
+    Args:
+        motion_params_file: Path to motion parameters text file.
+        out_dir: Output directory for the plot.
+        tr: Repetition time in seconds.
+
+    Returns:
+        Path to the generated motion QC plot PNG.
+    """
+    import numpy as np
+    from pathlib import Path
+    from pmriprep.utils.qc_utils import plot_motion_qc
+
+    motion_params = np.loadtxt(motion_params_file)
+    out_path = Path(out_dir) / "motion_qc.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plot_motion_qc(motion_params, out_path, tr=tr)
+    return str(out_path)
+
+
 def _smooth_maps(map_files, brain_mask_file, fwhm):
     """Apply Gaussian smoothing to a dict of maps.
 
@@ -1215,6 +1240,8 @@ def init_dsc_preproc_wf(
                 "lesion_stats_json",
                 "lesion_stats_txt",
                 "lesion_mask_dsc",
+                # Motion QC
+                "motion_qc_plot",
             ]
         ),
         name="outputnode",
@@ -1232,7 +1259,21 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 1a: Pre-Bolus Mean Reference
+    # Node 1a: Motion QC Plot
+    # Generate motion QC visualization from motion parameters.
+    # -------------------------------------------------------------------
+    motion_qc_plot = pe.Node(
+        niu.Function(
+            input_names=["motion_params_file", "out_dir", "tr"],
+            output_names=["plot_file"],
+            function=_generate_motion_qc_plot,
+        ),
+        name="motion_qc_plot",
+    )
+    motion_qc_plot.inputs.out_dir = str(bids_dir / "derivatives" / "dsc_pipeline")
+
+    # -------------------------------------------------------------------
+    # Node 1b: Pre-Bolus Mean Reference
     # Compute mean of pre-bolus frames only, avoiding bolus passage
     # contamination in the reference volume used for brain extraction
     # and registration.
@@ -1701,6 +1742,12 @@ def init_dsc_preproc_wf(
         (motion_correct, prebolus_mean, [("out_file", "moco_file")]),
     ])
 
+    # Motion Correction to Motion QC Plot
+    workflow.connect([
+        (motion_correct, motion_qc_plot, [("out_params", "motion_params_file")]),
+        (inputnode, motion_qc_plot, [("tr", "tr")]),
+    ])
+
     # Pre-Bolus Mean to HD-BET Brain Extraction
     # HD-BET on pre-bolus mean for brain-extracted DSC (improves registration)
     workflow.connect([
@@ -2143,6 +2190,8 @@ def init_dsc_preproc_wf(
             ("out_aif_plot", "aif_curve_plot"),
             ("out_aif_location", "aif_location_plot"),
         ]),
+        # Motion QC plot
+        (motion_qc_plot, outputnode, [("plot_file", "motion_qc_plot")]),
         # QC metrics
         (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
     ])

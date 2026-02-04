@@ -77,12 +77,14 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     aif_curve_plot = traits.Str(desc="AIF curve QC plot PNG path")
     aif_location_plot = traits.Str(desc="AIF location overlay PNG path")
     registration_filmstrip = traits.Str(desc="Registration QC filmstrip PNG path")
+    motion_qc_plot = traits.Str(desc="Motion QC plot PNG path")
 
 
 class DCEDerivativeWriterOutputSpec(TraitedSpec):
     """Output specification for DCEDerivativeWriter."""
 
     out_dir = traits.Str(desc="Path to the output session directory")
+    qc_json = traits.Str(desc="Path to the QC JSON file")
 
 
 class DCEDerivativeWriter(BaseInterface):
@@ -314,11 +316,14 @@ class DCEDerivativeWriter(BaseInterface):
         # 10. QC outputs
         # -----------------------------------------------------------
         qc_metrics = self.inputs.qc_metrics
+        self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
             qc_dir.mkdir(parents=True, exist_ok=True)
             # Add NiPreps-style recommendation to QC metrics
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
-            self._write_json(enhanced_qc, qc_dir / "dce_qc.json")
+            qc_json_path = qc_dir / "dce_qc.json"
+            self._write_json(enhanced_qc, qc_json_path)
+            self._qc_json = str(qc_json_path)
 
         # Copy QC plots
         if self._has_input("aif_curve_plot"):
@@ -333,6 +338,12 @@ class DCEDerivativeWriter(BaseInterface):
                 self.inputs.registration_filmstrip, qc_dir / "registration_qc_filmstrip.png"
             )
 
+        if self._has_input("motion_qc_plot"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(
+                self.inputs.motion_qc_plot, qc_dir / "motion_qc.png"
+            )
+
         # -----------------------------------------------------------
         # 11. Dataset description
         # -----------------------------------------------------------
@@ -344,6 +355,7 @@ class DCEDerivativeWriter(BaseInterface):
     def _list_outputs(self) -> dict[str, Any]:
         outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
         outputs["out_dir"] = getattr(self, "_out_dir", "")
+        outputs["qc_json"] = getattr(self, "_qc_json", "")
         return outputs
 
     # -------------------------------------------------------------------

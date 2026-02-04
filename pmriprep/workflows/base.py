@@ -1128,6 +1128,8 @@ def init_pmriprep_wf(
                 # AIF QC plots
                 ("outputnode.aif_curve_plot", "aif_curve_plot"),
                 ("outputnode.aif_location_plot", "aif_location_plot"),
+                # Motion QC plot
+                ("outputnode.motion_qc_plot", "motion_qc_plot"),
                 # QC metrics
                 ("outputnode.qc_metrics", "qc_metrics"),
                 # Lesion statistics
@@ -1147,6 +1149,31 @@ def init_pmriprep_wf(
                     ("outputnode.smooth_abs", "smooth_abs"),
                 ]),
             ])
+
+        # -------------------------------------------------------------------
+        # DSC HTML Report Generation
+        # -------------------------------------------------------------------
+        from pmriprep.interfaces.reports import GenerateReport
+
+        dsc_report = pe.Node(
+            GenerateReport(
+                subject_id=subject_id,
+                session_id=session_id or "",
+                pipeline="dsc",
+                output_dir=str(output_dir),
+            ),
+            name="dsc_report",
+        )
+
+        workflow.connect([
+            (dsc_writer, dsc_report, [("qc_json", "qc_json")]),
+            (dsc_wf, dsc_report, [
+                ("outputnode.motion_qc_plot", "motion_qc_plot"),
+                ("outputnode.aif_curve_plot", "aif_curve_plot"),
+                ("outputnode.aif_location_plot", "aif_location_plot"),
+                ("outputnode.registration_filmstrip", "registration_filmstrip"),
+            ]),
+        ])
 
     # -------------------------------------------------------------------
     # DCE perfusion workflow (requires anat, uses DSC CBV if available)
@@ -1446,6 +1473,7 @@ def init_pmriprep_wf(
                 ("outputnode.aif_curve_qc_plot", "aif_curve_plot"),
                 ("outputnode.aif_location_qc_plot", "aif_location_plot"),
                 ("outputnode.registration_qc_filmstrip", "registration_filmstrip"),
+                ("outputnode.motion_qc_plot", "motion_qc_plot"),
                 # Structural underlays
                 ("outputnode.t1w_in_dce", "t1w_in_dce"),
                 ("outputnode.flair_in_dce", "flair_in_dce"),
@@ -1453,6 +1481,31 @@ def init_pmriprep_wf(
                 ("outputnode.lesion_stats_json", "lesion_stats_json"),
                 ("outputnode.lesion_stats_txt", "lesion_stats_txt"),
                 ("outputnode.lesion_mask_dce", "lesion_mask_dce"),
+            ]),
+        ])
+
+        # -------------------------------------------------------------------
+        # DCE HTML Report Generation
+        # -------------------------------------------------------------------
+        from pmriprep.interfaces.reports import GenerateReport
+
+        dce_report = pe.Node(
+            GenerateReport(
+                subject_id=subject_id,
+                session_id=session_id or "",
+                pipeline="dce",
+                output_dir=str(output_dir),
+            ),
+            name="dce_report",
+        )
+
+        workflow.connect([
+            (dce_writer, dce_report, [("qc_json", "qc_json")]),
+            (dce_wf, dce_report, [
+                ("outputnode.motion_qc_plot", "motion_qc_plot"),
+                ("outputnode.aif_curve_qc_plot", "aif_curve_plot"),
+                ("outputnode.aif_location_qc_plot", "aif_location_plot"),
+                ("outputnode.registration_qc_filmstrip", "registration_filmstrip"),
             ]),
         ])
 

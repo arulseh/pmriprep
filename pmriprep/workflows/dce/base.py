@@ -285,6 +285,8 @@ def init_dce_preproc_wf(
                 "lesion_stats_json",
                 "lesion_stats_txt",
                 "lesion_mask_dce",
+                # Motion QC
+                "motion_qc_plot",
             ]
         ),
         name="outputnode",
@@ -399,6 +401,26 @@ def init_dce_preproc_wf(
             ("dce_file", "in_file"),
             ("brain_mask", "brain_mask"),
         ]),
+    ])
+
+    # ==========================================================================
+    # Node 3b: Motion QC Plot
+    # Generate motion QC visualization from motion parameters.
+    # ==========================================================================
+    motion_qc_plot = pe.Node(
+        niu.Function(
+            input_names=["motion_params_file", "out_dir", "tr"],
+            output_names=["plot_file"],
+            function=_generate_dce_motion_qc_plot,
+        ),
+        name="motion_qc_plot",
+    )
+    motion_qc_plot.inputs.out_dir = str(Path(bids_dir) / "derivatives" / "dce_pipeline")
+
+    # Connect motion QC plot
+    workflow.connect([
+        (dce_preprocess, motion_qc_plot, [("out_params", "motion_params_file")]),
+        (inputnode, motion_qc_plot, [("volume_tr", "tr")]),
     ])
 
     # ==========================================================================
@@ -1061,6 +1083,10 @@ def init_dce_preproc_wf(
         # QC plots - AFI registration (optional, only if AFI coregistration occurred)
         (b1_mapping, outputnode, [
             ("registration_qc_plot", "afi_registration_qc_plot"),
+        ]),
+        # Motion QC plot
+        (motion_qc_plot, outputnode, [
+            ("plot_file", "motion_qc_plot"),
         ]),
     ])
 
@@ -1970,6 +1996,31 @@ def _transform_structural_to_dce(
         capture_output=True,
     )
     return out_file
+
+
+def _generate_dce_motion_qc_plot(motion_params_file, out_dir, tr):
+    """Generate motion QC plot from DCE motion parameters.
+
+    Creates a two-panel figure showing raw motion parameters and
+    framewise displacement over time.
+
+    Args:
+        motion_params_file: Path to motion parameters text file.
+        out_dir: Output directory for the plot.
+        tr: Repetition time in seconds.
+
+    Returns:
+        Path to the generated motion QC plot PNG.
+    """
+    import numpy as np
+    from pathlib import Path
+    from pmriprep.utils.qc_utils import plot_motion_qc
+
+    motion_params = np.loadtxt(motion_params_file)
+    out_path = Path(out_dir) / "motion_qc.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plot_motion_qc(motion_params, out_path, tr=tr, title="DCE Motion QC")
+    return str(out_path)
 
 
 def _create_dce_registration_filmstrip(

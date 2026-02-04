@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>PMRIPrep DSC Report - sub-{{ subject_id }}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { color: #4477AA; border-bottom: 2px solid #4477AA; }
+        .section { background: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .section h2 { color: #333; margin-top: 0; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+        .metric { background: white; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .metric-label { font-size: 0.85em; color: #666; }
+        .metric-value { font-size: 1.4em; font-weight: bold; }
+        .pass { color: #228833; }
+        .warn { color: #CCBB44; }
+        .fail { color: #EE6677; }
+        .include { background: #e8f5e9; border-left: 4px solid #228833; }
+        .review { background: #fff8e1; border-left: 4px solid #CCBB44; }
+        .exclude { background: #ffebee; border-left: 4px solid #EE6677; }
+        img { max-width: 100%; height: auto; border-radius: 4px; }
+        .plot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 800px) { .plot-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <h1>PMRIPrep {{ pipeline }} Processing Report</h1>
+    <p><strong>Subject:</strong> sub-{{ subject_id }} | <strong>Session:</strong> ses-{{ session_id }}</p>
+
+    <!-- Overall Recommendation -->
+    {% if qc_metrics.recommendation %}
+    <div class="section {{ qc_metrics.recommendation.action }}">
+        <h2>QC Recommendation: {{ qc_metrics.recommendation.action | upper }}</h2>
+        <p>{{ qc_metrics.recommendation.reason }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Motion QC -->
+    {% if images.motion or qc_metrics.motion %}
+    <div class="section">
+        <h2>Motion Quality Control</h2>
+        {% if qc_metrics.motion %}
+        <div class="metrics">
+            {% if qc_metrics.motion.fd_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean FD</div>
+                <div class="metric-value">{{ "%.3f"|format(qc_metrics.motion.fd_mean) }} mm</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.motion.fd_max is defined %}
+            <div class="metric">
+                <div class="metric-label">Max FD</div>
+                <div class="metric-value">{{ "%.3f"|format(qc_metrics.motion.fd_max) }} mm</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.motion.outlier_count is defined and qc_metrics.motion.outlier_fraction is defined %}
+            <div class="metric">
+                <div class="metric-label">Outlier Frames</div>
+                <div class="metric-value">{{ qc_metrics.motion.outlier_count }} ({{ "%.1f"|format(qc_metrics.motion.outlier_fraction * 100) }}%)</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if images.motion %}
+        <div style="margin-top: 20px;">
+            <img src="data:image/png;base64,{{ images.motion }}" alt="Motion QC">
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- AIF Detection -->
+    {% if images.aif_curve or qc_metrics.aif %}
+    <div class="section">
+        <h2>Arterial Input Function (AIF) Detection</h2>
+        {% if qc_metrics.aif %}
+        <div class="metrics">
+            {% if qc_metrics.aif.detection_level is defined %}
+            <div class="metric">
+                <div class="metric-label">Detection Level</div>
+                <div class="metric-value">{{ qc_metrics.aif.detection_level }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif.best_psr is defined %}
+            <div class="metric">
+                <div class="metric-label">Peak Signal Ratio</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif.best_psr) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif.aif_hemisphere is defined %}
+            <div class="metric">
+                <div class="metric-label">Hemisphere</div>
+                <div class="metric-value">{{ qc_metrics.aif.aif_hemisphere }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        <div class="plot-grid" style="margin-top: 20px;">
+            {% if images.aif_curve %}
+            <div><img src="data:image/png;base64,{{ images.aif_curve }}" alt="AIF Curve"></div>
+            {% endif %}
+            {% if images.aif_location %}
+            <div><img src="data:image/png;base64,{{ images.aif_location }}" alt="AIF Location"></div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Preload Detection -->
+    {% if qc_metrics.preload %}
+    <div class="section">
+        <h2>Preload Detection</h2>
+        <div class="metrics">
+            {% if qc_metrics.preload.preload_classification is defined %}
+            <div class="metric">
+                <div class="metric-label">Classification</div>
+                <div class="metric-value">{{ qc_metrics.preload.preload_classification }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.preload_correction_applied is defined %}
+            <div class="metric">
+                <div class="metric-label">K2 Correction</div>
+                <div class="metric-value">{{ "Applied" if qc_metrics.preload.preload_correction_applied else "Not Applied" }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.baseline_delta_r2 is defined %}
+            <div class="metric">
+                <div class="metric-label">Baseline Delta R2*</div>
+                <div class="metric-value">{{ "%.3f"|format(qc_metrics.preload.baseline_delta_r2) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Deconvolution -->
+    {% if qc_metrics.deconvolution %}
+    <div class="section">
+        <h2>Deconvolution Quality</h2>
+        <div class="metrics">
+            {% if qc_metrics.deconvolution.method is defined %}
+            <div class="metric">
+                <div class="metric-label">Method</div>
+                <div class="metric-value">{{ qc_metrics.deconvolution.method }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.bayesian is defined %}
+            <div class="metric">
+                <div class="metric-label">Bayesian</div>
+                <div class="metric-value">{{ qc_metrics.deconvolution.bayesian }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.abs_gating_passed is defined %}
+            <div class="metric">
+                <div class="metric-label">Absolute Gating</div>
+                <div class="metric-value">{{ "Passed" if qc_metrics.deconvolution.abs_gating_passed else "Failed" }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Registration -->
+    {% if images.registration %}
+    <div class="section">
+        <h2>Registration Quality</h2>
+        <p>Multi-slice overlay showing {{ pipeline }} to T1w registration.</p>
+        <img src="data:image/png;base64,{{ images.registration }}" alt="Registration QC">
+    </div>
+    {% endif %}
+
+    <footer style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 0.85em;">
+        Generated by PMRIPrep | <a href="https://github.com/arulseh/pmriprep">GitHub</a>
+    </footer>
+</body>
+</html>

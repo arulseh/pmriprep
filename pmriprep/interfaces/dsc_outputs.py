@@ -96,6 +96,9 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     aif_curve_plot = traits.Str(desc="AIF curve QC plot PNG path")
     aif_location_plot = traits.Str(desc="AIF location overlay PNG path")
 
+    # Motion QC plot
+    motion_qc_plot = traits.Str(desc="Motion QC plot PNG path")
+
     # Lesion statistics
     lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
     lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
@@ -106,6 +109,7 @@ class DSCDerivativeWriterOutputSpec(TraitedSpec):
     """Output specification for DSCDerivativeWriter."""
 
     out_dir = traits.Str(desc="Path to the output session directory")
+    qc_json = traits.Str(desc="Path to the QC JSON file")
 
 
 class DSCDerivativeWriter(BaseInterface):
@@ -357,10 +361,13 @@ class DSCDerivativeWriter(BaseInterface):
             )
 
         qc_metrics = self.inputs.qc_metrics
+        self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
             # Add NiPreps-style recommendation to QC metrics
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
-            self._write_json(enhanced_qc, qc_dir / "dsc_qc.json")
+            qc_json_path = qc_dir / "dsc_qc.json"
+            self._write_json(enhanced_qc, qc_json_path)
+            self._qc_json = str(qc_json_path)
 
         # -----------------------------------------------------------
         # 10b. AIF QC plots
@@ -374,6 +381,13 @@ class DSCDerivativeWriter(BaseInterface):
             self._copy_file(
                 self.inputs.aif_location_plot,
                 qc_dir / "aif_location_qc.png",
+            )
+
+        if self._has_input("motion_qc_plot"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(
+                self.inputs.motion_qc_plot,
+                qc_dir / "motion_qc.png",
             )
 
         # -----------------------------------------------------------
@@ -436,6 +450,7 @@ class DSCDerivativeWriter(BaseInterface):
     def _list_outputs(self) -> dict[str, Any]:
         outputs = self.output_spec().get()  # type: ignore[misc]
         outputs["out_dir"] = getattr(self, "_out_dir", "")
+        outputs["qc_json"] = getattr(self, "_qc_json", "")
         return outputs
 
     # -------------------------------------------------------------------

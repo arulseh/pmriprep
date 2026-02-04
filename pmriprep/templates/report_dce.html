@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>PMRIPrep DCE Report - sub-{{ subject_id }}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { color: #4477AA; border-bottom: 2px solid #4477AA; }
+        .section { background: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .section h2 { color: #333; margin-top: 0; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+        .metric { background: white; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .metric-label { font-size: 0.85em; color: #666; }
+        .metric-value { font-size: 1.4em; font-weight: bold; }
+        .pass { color: #228833; }
+        .warn { color: #CCBB44; }
+        .fail { color: #EE6677; }
+        .include { background: #e8f5e9; border-left: 4px solid #228833; }
+        .review { background: #fff8e1; border-left: 4px solid #CCBB44; }
+        .exclude { background: #ffebee; border-left: 4px solid #EE6677; }
+        img { max-width: 100%; height: auto; border-radius: 4px; }
+        .plot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 800px) { .plot-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <h1>PMRIPrep {{ pipeline }} Processing Report</h1>
+    <p><strong>Subject:</strong> sub-{{ subject_id }} | <strong>Session:</strong> ses-{{ session_id }}</p>
+
+    <!-- Overall Recommendation -->
+    {% if qc_metrics.recommendation %}
+    <div class="section {{ qc_metrics.recommendation.action }}">
+        <h2>QC Recommendation: {{ qc_metrics.recommendation.action | upper }}</h2>
+        <p>{{ qc_metrics.recommendation.reason }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Motion QC -->
+    {% if images.motion or qc_metrics.preprocessing %}
+    <div class="section">
+        <h2>Motion Quality Control</h2>
+        {% if qc_metrics.preprocessing %}
+        <div class="metrics">
+            {% if qc_metrics.preprocessing.fd_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean FD</div>
+                <div class="metric-value">{{ "%.3f"|format(qc_metrics.preprocessing.fd_mean) }} mm</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preprocessing.fd_max is defined %}
+            <div class="metric">
+                <div class="metric-label">Max FD</div>
+                <div class="metric-value">{{ "%.3f"|format(qc_metrics.preprocessing.fd_max) }} mm</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preprocessing.baseline_frames is defined %}
+            <div class="metric">
+                <div class="metric-label">Baseline Frames</div>
+                <div class="metric-value">{{ qc_metrics.preprocessing.baseline_frames }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if images.motion %}
+        <div style="margin-top: 20px;">
+            <img src="data:image/png;base64,{{ images.motion }}" alt="Motion QC">
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- T1 Mapping -->
+    {% if qc_metrics.t1_mapping %}
+    <div class="section">
+        <h2>T1 Mapping Quality</h2>
+        <div class="metrics">
+            {% if qc_metrics.t1_mapping.t1_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median T1</div>
+                <div class="metric-value">{{ "%.0f"|format(qc_metrics.t1_mapping.t1_median) }} ms</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.t1_mapping.t1_iqr is defined %}
+            <div class="metric">
+                <div class="metric-label">T1 IQR</div>
+                <div class="metric-value">{{ "%.0f"|format(qc_metrics.t1_mapping.t1_iqr) }} ms</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.t1_mapping.fraction_valid is defined %}
+            <div class="metric">
+                <div class="metric-label">Valid Voxels</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.t1_mapping.fraction_valid * 100) }}%</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- B1 Mapping -->
+    {% if qc_metrics.b1_mapping %}
+    <div class="section">
+        <h2>B1+ Mapping Quality</h2>
+        <div class="metrics">
+            {% if qc_metrics.b1_mapping.b1_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median B1+</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.b1_median) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.b1_mapping.b1_std is defined %}
+            <div class="metric">
+                <div class="metric-label">B1+ Std</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.b1_std) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.b1_mapping.skipped is defined %}
+            <div class="metric">
+                <div class="metric-label">Status</div>
+                <div class="metric-value">{{ "Skipped" if qc_metrics.b1_mapping.skipped else "Computed" }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- AIF Detection -->
+    {% if images.aif_curve or qc_metrics.aif_detection %}
+    <div class="section">
+        <h2>Arterial Input Function (AIF) Detection</h2>
+        {% if qc_metrics.aif_detection %}
+        <div class="metrics">
+            {% if qc_metrics.aif_detection.quality_score is defined %}
+            <div class="metric">
+                <div class="metric-label">Quality Score</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif_detection.quality_score) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.peak_concentration is defined %}
+            <div class="metric">
+                <div class="metric-label">Peak Concentration</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif_detection.peak_concentration) }} mM</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.aif_method is defined %}
+            <div class="metric">
+                <div class="metric-label">Method</div>
+                <div class="metric-value">{{ qc_metrics.aif_detection.aif_method }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        <div class="plot-grid" style="margin-top: 20px;">
+            {% if images.aif_curve %}
+            <div><img src="data:image/png;base64,{{ images.aif_curve }}" alt="AIF Curve"></div>
+            {% endif %}
+            {% if images.aif_location %}
+            <div><img src="data:image/png;base64,{{ images.aif_location }}" alt="AIF Location"></div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- PK Modeling -->
+    {% if qc_metrics.pk_modeling %}
+    <div class="section">
+        <h2>Pharmacokinetic Modeling</h2>
+        <div class="metrics">
+            {% if qc_metrics.pk_modeling.model is defined %}
+            <div class="metric">
+                <div class="metric-label">Model</div>
+                <div class="metric-value">{{ qc_metrics.pk_modeling.model }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.pk_modeling.ktrans_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median Ktrans</div>
+                <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.ktrans_median) }} min<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.pk_modeling.ve_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median ve</div>
+                <div class="metric-value">{{ "%.3f"|format(qc_metrics.pk_modeling.ve_median) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.pk_modeling.vp_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median vp</div>
+                <div class="metric-value">{{ "%.3f"|format(qc_metrics.pk_modeling.vp_median) }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- DSC-DCE Validation -->
+    {% if qc_metrics.dsc_dce_validation and not qc_metrics.dsc_dce_validation.skipped %}
+    <div class="section">
+        <h2>DSC-DCE Cross-Validation</h2>
+        <div class="metrics">
+            {% if qc_metrics.dsc_dce_validation.correlation is defined %}
+            <div class="metric">
+                <div class="metric-label">vp-CBV Correlation</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.dsc_dce_validation.correlation) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.dsc_dce_validation.status is defined %}
+            <div class="metric">
+                <div class="metric-label">Status</div>
+                <div class="metric-value">{{ qc_metrics.dsc_dce_validation.status }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Registration -->
+    {% if images.registration %}
+    <div class="section">
+        <h2>Registration Quality</h2>
+        <p>Multi-slice overlay showing {{ pipeline }} to T1w registration.</p>
+        <img src="data:image/png;base64,{{ images.registration }}" alt="Registration QC">
+    </div>
+    {% endif %}
+
+    <footer style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 0.85em;">
+        Generated by PMRIPrep | <a href="https://github.com/arulseh/pmriprep">GitHub</a>
+    </footer>
+</body>
+</html>
