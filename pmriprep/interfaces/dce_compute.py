@@ -63,7 +63,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
 
     # Time parameters
     tr = traits.Float(
-        desc="Repetition time in seconds (required if model='auto')",
+        desc="Pulse TR in seconds for time vector (RepetitionTimeExcitation)",
+    )
+    volume_tr = traits.Float(
+        desc="Volume TR in seconds for model auto-selection (RepetitionTime, temporal resolution)",
     )
     time_points_file = File(
         exists=True,
@@ -507,16 +510,19 @@ class ComputeDCEMaps(BaseInterface):
             raise ValueError("Either tr or time_points_file must be provided")
 
         # Get TR for auto-model selection
-        if self.inputs.tr:
-            tr_seconds = float(self.inputs.tr)
+        # Use volume_tr (temporal resolution) if available, else fall back to tr
+        if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
+            selection_tr_seconds = float(self.inputs.volume_tr)
+        elif isdefined(self.inputs.tr) and self.inputs.tr is not None:
+            selection_tr_seconds = float(self.inputs.tr)
         else:
             # Estimate TR from time points (minutes -> seconds)
-            tr_seconds = float(time_points[1] - time_points[0]) * 60.0
+            selection_tr_seconds = float(time_points[1] - time_points[0]) * 60.0
 
         # Select model
         model_name = str(self.inputs.model)
         if model_name == "auto":
-            model_name = self._select_model(tr_seconds)
+            model_name = self._select_model(selection_tr_seconds)
 
         model = self._get_model_instance(model_name)
 
@@ -646,7 +652,7 @@ class ComputeDCEMaps(BaseInterface):
             "n_voxels_fitted": n_voxels,
             "tsnr_threshold": tsnr_threshold,
             "baseline_frames": baseline_frames,
-            "tr_seconds": tr_seconds,
+            "selection_tr_seconds": selection_tr_seconds,  # TR used for model selection
             "constraint_mode": constraint_mode.value,
         }
 

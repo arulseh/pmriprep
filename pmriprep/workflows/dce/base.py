@@ -225,7 +225,8 @@ def init_dce_preproc_wf(
                 "dwi_bval",
                 # Acquisition parameters
                 "flip_angle",
-                "tr",
+                "tr",  # Pulse TR for SPGR signal equation
+                "volume_tr",  # Volume TR for model auto-selection (temporal resolution)
                 "te",
                 "field_strength",
                 "r1_relaxivity",
@@ -669,6 +670,7 @@ def init_dce_preproc_wf(
         ]),
         (inputnode, pk_modeling, [
             ("tr", "tr"),
+            ("volume_tr", "volume_tr"),  # For model auto-selection
         ]),
         # Use T1 map resampled to DCE space
         (transform_t1_to_dce, pk_modeling, [

@@ -302,13 +302,22 @@ def _read_bids_sidecar(
     """Read acquisition parameters from the BIDS sidecar JSON.
 
     Looks for the JSON sidecar corresponding to a NIfTI file and extracts
-    EchoTime, RepetitionTime, and MagneticFieldStrength.
+    EchoTime, RepetitionTime, RepetitionTimeExcitation, and MagneticFieldStrength.
+
+    For DCE 3D sequences, there are two different TRs:
+    - Volume TR (RepetitionTime): Time between successive 3D volume acquisitions
+      (~5-10 seconds). Used for: time vector, model auto-selection, AIF timing.
+    - Pulse TR (RepetitionTimeExcitation): Time between RF excitations (~3-10 ms).
+      Used for: SPGR signal equation in signal-to-concentration conversion.
 
     Args:
         nifti_path: Path to a NIfTI file (.nii.gz or .nii).
 
     Returns:
-        Dict with keys: te, tr, field_strength.
+        Dict with keys: te, tr, volume_tr, pulse_tr, field_strength, flip_angle.
+        - tr: Pulse TR for signal equation (defaults to pulse_tr)
+        - volume_tr: Volume TR for temporal resolution (model selection, time vector)
+        - pulse_tr: Pulse TR for SPGR signal equation
         Values are floats or None if not found in the sidecar.
     """
     import json
@@ -316,6 +325,8 @@ def _read_bids_sidecar(
     result: dict[str, Optional[float]] = {
         "te": None,
         "tr": None,
+        "volume_tr": None,
+        "pulse_tr": None,
         "field_strength": None,
         "flip_angle": None,
     }
@@ -333,12 +344,21 @@ def _read_bids_sidecar(
     if "EchoTime" in meta:
         result["te"] = float(meta["EchoTime"])
 
-    # TR: prefer RepetitionTimeExcitation for 3D sequences (per-excitation TR),
-    # fall back to RepetitionTime (which may be the volume TR for dynamic scans)
+    # Volume TR: temporal resolution between 3D volume acquisitions
+    # Used for: time vector, model auto-selection, AIF timing
+    if "RepetitionTime" in meta:
+        result["volume_tr"] = float(meta["RepetitionTime"])
+
+    # Pulse TR: time between RF excitations (for SPGR signal equation)
+    # Used for: signal-to-concentration conversion
     if "RepetitionTimeExcitation" in meta:
-        result["tr"] = float(meta["RepetitionTimeExcitation"])
+        result["pulse_tr"] = float(meta["RepetitionTimeExcitation"])
     elif "RepetitionTime" in meta:
-        result["tr"] = float(meta["RepetitionTime"])
+        # Fallback: if no pulse TR, use volume TR (2D sequences)
+        result["pulse_tr"] = float(meta["RepetitionTime"])
+
+    # For backward compatibility, "tr" defaults to pulse TR (signal equation)
+    result["tr"] = result.get("pulse_tr")
 
     if "MagneticFieldStrength" in meta:
         result["field_strength"] = float(meta["MagneticFieldStrength"])
@@ -1139,6 +1159,9 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.te = dce_sidecar["te"]
             if dce_sidecar["tr"] is not None:
                 dce_wf.inputs.inputnode.tr = dce_sidecar["tr"]
+            # Volume TR for model auto-selection (temporal resolution)
+            if dce_sidecar["volume_tr"] is not None:
+                dce_wf.inputs.inputnode.volume_tr = dce_sidecar["volume_tr"]
             if dce_sidecar["flip_angle"] is not None:
                 dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
             if dce_sidecar["field_strength"] is not None:
