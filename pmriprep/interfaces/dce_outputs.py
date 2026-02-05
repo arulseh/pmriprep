@@ -85,9 +85,16 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Tortuosity-corrected output (optional)
     ktrans_tortuosity_corrected = traits.Str(desc="Ktrans with tortuosity correction map path")
 
+    # Normalized maps (optional, requires NAWM mask)
+    nktrans_map = traits.Str(desc="nKtrans (NAWM-normalized Ktrans) map path")
+    nvp_map = traits.Str(desc="nvp (NAWM-normalized vp) map path")
+    niauc60_map = traits.Str(desc="nIAUC60 (NAWM-normalized IAUC at 60s) map path")
+
     # Smoothed maps (optional, dict of name->path)
     smooth_pk_maps = traits.Dict(desc="Smoothed PK maps dict")
     smooth_model_free_maps = traits.Dict(desc="Smoothed model-free maps dict")
+    smooth_uncertainty_maps = traits.Dict(desc="Smoothed uncertainty maps dict (Std, CV, CI95)")
+    smooth_tortuosity_maps = traits.Dict(desc="Smoothed tortuosity-corrected maps dict")
 
     # QC metrics (optional)
     qc_metrics = traits.Dict(desc="Merged QC metrics dictionary")
@@ -343,6 +350,36 @@ class DCEDerivativeWriter(BaseInterface):
             self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
+        # 3f2. Normalized maps (nKtrans, nvp, nIAUC60) - requires NAWM mask
+        # -----------------------------------------------------------
+        if self._has_input("nktrans_map"):
+            fname = f"{prefix}_{spatial}_{model_entity}_nKtrans"
+            self._copy_nifti(self.inputs.nktrans_map, perf_dir / f"{fname}.nii.gz")
+            sidecar = {
+                **base_sidecar,
+                "Description": "Ktrans normalized by NAWM (normal-appearing white matter) mean",
+            }
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        if self._has_input("nvp_map"):
+            fname = f"{prefix}_{spatial}_{model_entity}_nvp"
+            self._copy_nifti(self.inputs.nvp_map, perf_dir / f"{fname}.nii.gz")
+            sidecar = {
+                **base_sidecar,
+                "Description": "vp normalized by NAWM (normal-appearing white matter) mean",
+            }
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        if self._has_input("niauc60_map"):
+            fname = f"{prefix}_{spatial}_desc-modelfree_nIAUC60"
+            self._copy_nifti(self.inputs.niauc60_map, perf_dir / f"{fname}.nii.gz")
+            sidecar = {
+                **base_sidecar,
+                "Description": "IAUC at 60s normalized by NAWM (normal-appearing white matter) mean",
+            }
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
         # 3g. Smoothed maps (conditional on smoothing being applied)
         # -----------------------------------------------------------
         smooth_pk = self.inputs.smooth_pk_maps
@@ -373,6 +410,60 @@ class DCEDerivativeWriter(BaseInterface):
                     sidecar = {
                         **base_sidecar,
                         "Description": f"Smoothed model-free {map_name} map",
+                    }
+                    self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # Smoothed uncertainty maps (Bayesian std, CV, CI95)
+        smooth_uncertainty = self.inputs.smooth_uncertainty_maps
+        if isdefined(smooth_uncertainty) and smooth_uncertainty:
+            for map_name, src_path in smooth_uncertainty.items():
+                if src_path and Path(src_path).exists():
+                    import re
+                    fwhm_match = re.search(r"_fwhm(\d+)", str(src_path))
+                    fwhm_str = f"fwhm{fwhm_match.group(1)}" if fwhm_match else "fwhmN"
+                    # Map names like "Ktrans_std" -> "Std_Ktrans", "Ktrans_cv" -> "CV_Ktrans"
+                    # "Ktrans_ci95lower" -> "CI95lower_Ktrans"
+                    if "_std" in map_name:
+                        param = map_name.replace("_std", "")
+                        desc_part = f"{model_entity}Std"
+                        out_name = param
+                    elif "_cv" in map_name:
+                        param = map_name.replace("_cv", "")
+                        desc_part = f"{model_entity}CV"
+                        out_name = param
+                    elif "_ci95lower" in map_name:
+                        param = map_name.replace("_ci95lower", "")
+                        desc_part = f"{model_entity}CI95lower"
+                        out_name = param
+                    elif "_ci95upper" in map_name:
+                        param = map_name.replace("_ci95upper", "")
+                        desc_part = f"{model_entity}CI95upper"
+                        out_name = param
+                    else:
+                        desc_part = model_entity
+                        out_name = map_name
+                    fname = f"{prefix}_{spatial}_desc-{fwhm_str}-{desc_part}_{out_name}"
+                    self._copy_nifti(src_path, perf_dir / f"{fname}.nii.gz")
+                    sidecar = {
+                        **base_sidecar,
+                        "Description": f"Smoothed {map_name} uncertainty map",
+                    }
+                    self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # Smoothed tortuosity-corrected maps
+        smooth_tort = self.inputs.smooth_tortuosity_maps
+        if isdefined(smooth_tort) and smooth_tort:
+            for map_name, src_path in smooth_tort.items():
+                if src_path and Path(src_path).exists():
+                    import re
+                    fwhm_match = re.search(r"_fwhm(\d+)", str(src_path))
+                    fwhm_str = f"fwhm{fwhm_match.group(1)}" if fwhm_match else "fwhmN"
+                    # map_name is "Ktrans_tortuositycorr"
+                    fname = f"{prefix}_{spatial}_desc-{fwhm_str}-tortuositycorr_Ktrans"
+                    self._copy_nifti(src_path, perf_dir / f"{fname}.nii.gz")
+                    sidecar = {
+                        **base_sidecar,
+                        "Description": "Smoothed Ktrans corrected for tissue tortuosity",
                     }
                     self._write_json(sidecar, perf_dir / f"{fname}.json")
 

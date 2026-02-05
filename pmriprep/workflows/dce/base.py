@@ -240,6 +240,8 @@ def init_dce_preproc_wf(
                 "atlas_mask_file",  # MNI-space atlas mask for AIF search territories
                 # Structural underlay inputs
                 "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
+                # NAWM mask input (from hdglio, for normalization)
+                "nawm_mask",  # NAWM mask in T1w space for nKtrans, nvp, nIAUC60
             ]
         ),
         name="inputnode",
@@ -297,6 +299,12 @@ def init_dce_preproc_wf(
                 # Smoothed maps (populated only if config.smooth > 0)
                 "smooth_pk_maps",
                 "smooth_model_free_maps",
+                "smooth_uncertainty_maps",
+                "smooth_tortuosity_maps",
+                # Normalized maps (requires NAWM mask)
+                "nktrans_map",
+                "nvp_map",
+                "niauc60_map",
                 # QC metrics
                 "qc_metrics",
                 # QC plots
@@ -809,6 +817,63 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
+    # Node 8b: Transform NAWM mask to DCE space (for normalization)
+    # ==========================================================================
+    transform_nawm_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "transform_matrix"],
+            output_names=["out_file"],
+            function=_transform_mask_to_dce,
+        ),
+        name="transform_nawm_mask",
+    )
+
+    workflow.connect([
+        (inputnode, transform_nawm_mask, [("nawm_mask", "mask_file")]),
+        (dce_preprocess, transform_nawm_mask, [("mean_img", "reference_file")]),
+        (dce_registration, transform_nawm_mask, [("out_matrix", "transform_matrix")]),
+    ])
+
+    # ==========================================================================
+    # Node 8c: NAWM Normalization (nKtrans, nvp, nIAUC60)
+    # ==========================================================================
+    normalize_ktrans = pe.Node(
+        niu.Function(
+            input_names=["param_map", "nawm_mask"],
+            output_names=["out_file"],
+            function=_normalize_by_nawm,
+        ),
+        name="normalize_ktrans",
+    )
+
+    normalize_vp = pe.Node(
+        niu.Function(
+            input_names=["param_map", "nawm_mask"],
+            output_names=["out_file"],
+            function=_normalize_by_nawm,
+        ),
+        name="normalize_vp",
+    )
+
+    normalize_iauc60 = pe.Node(
+        niu.Function(
+            input_names=["param_map", "nawm_mask"],
+            output_names=["out_file"],
+            function=_normalize_by_nawm,
+        ),
+        name="normalize_iauc60",
+    )
+
+    workflow.connect([
+        (pk_modeling, normalize_ktrans, [("out_ktrans", "param_map")]),
+        (transform_nawm_mask, normalize_ktrans, [("out_file", "nawm_mask")]),
+        (pk_modeling, normalize_vp, [("out_vp", "param_map")]),
+        (transform_nawm_mask, normalize_vp, [("out_file", "nawm_mask")]),
+        (pk_modeling, normalize_iauc60, [("out_iauc60", "param_map")]),
+        (transform_nawm_mask, normalize_iauc60, [("out_file", "nawm_mask")]),
+    ])
+
+    # ==========================================================================
     # Node 9: DSC-DCE Cross-Validation (optional - skip if config.no_dsc_validation=True)
     # ==========================================================================
     dsc_dce_validation = pe.Node(
@@ -843,6 +908,8 @@ def init_dce_preproc_wf(
     # ==========================================================================
     smooth_pk = None
     smooth_model_free = None
+    smooth_uncertainty = None
+    smooth_tortuosity = None
 
     if config.smooth > 0:
         # Build dict of PK maps for smoothing
@@ -915,6 +982,87 @@ def init_dce_preproc_wf(
         workflow.connect([
             (build_mf_dict, smooth_model_free, [("map_dict", "map_files")]),
             (transform_brain_mask, smooth_model_free, [("out_file", "brain_mask_file")]),
+        ])
+
+        # Build dict of uncertainty maps for smoothing (Bayesian outputs)
+        build_uncertainty_dict = pe.Node(
+            niu.Function(
+                input_names=[
+                    "ktrans_std", "ve_std", "vp_std",
+                    "ktrans_cv", "ve_cv", "vp_cv",
+                    "ktrans_ci95_lower", "ktrans_ci95_upper",
+                    "ve_ci95_lower", "ve_ci95_upper",
+                    "vp_ci95_lower", "vp_ci95_upper",
+                ],
+                output_names=["map_dict"],
+                function=_build_uncertainty_map_dict,
+            ),
+            name="build_uncertainty_dict",
+        )
+
+        workflow.connect([
+            (pk_modeling, build_uncertainty_dict, [
+                ("out_ktrans_std", "ktrans_std"),
+                ("out_ve_std", "ve_std"),
+                ("out_vp_std", "vp_std"),
+                ("out_ktrans_cv", "ktrans_cv"),
+                ("out_ve_cv", "ve_cv"),
+                ("out_vp_cv", "vp_cv"),
+                ("out_ktrans_ci95_lower", "ktrans_ci95_lower"),
+                ("out_ktrans_ci95_upper", "ktrans_ci95_upper"),
+                ("out_ve_ci95_lower", "ve_ci95_lower"),
+                ("out_ve_ci95_upper", "ve_ci95_upper"),
+                ("out_vp_ci95_lower", "vp_ci95_lower"),
+                ("out_vp_ci95_upper", "vp_ci95_upper"),
+            ]),
+        ])
+
+        # Smoothing for uncertainty maps
+        smooth_uncertainty = pe.Node(
+            niu.Function(
+                input_names=["map_files", "brain_mask_file", "fwhm"],
+                output_names=["smoothed_files"],
+                function=_smooth_dce_maps,
+            ),
+            name="smooth_uncertainty_maps",
+        )
+        smooth_uncertainty.inputs.fwhm = config.smooth
+
+        workflow.connect([
+            (build_uncertainty_dict, smooth_uncertainty, [("map_dict", "map_files")]),
+            (transform_brain_mask, smooth_uncertainty, [("out_file", "brain_mask_file")]),
+        ])
+
+        # Build dict of tortuosity-corrected Ktrans for smoothing
+        build_tortuosity_dict = pe.Node(
+            niu.Function(
+                input_names=["ktrans_tortuosity_corrected"],
+                output_names=["map_dict"],
+                function=_build_tortuosity_map_dict,
+            ),
+            name="build_tortuosity_dict",
+        )
+
+        workflow.connect([
+            (tortuosity_corr, build_tortuosity_dict, [
+                ("ktrans_corrected_file", "ktrans_tortuosity_corrected"),
+            ]),
+        ])
+
+        # Smoothing for tortuosity-corrected Ktrans
+        smooth_tortuosity = pe.Node(
+            niu.Function(
+                input_names=["map_files", "brain_mask_file", "fwhm"],
+                output_names=["smoothed_files"],
+                function=_smooth_dce_maps,
+            ),
+            name="smooth_tortuosity_maps",
+        )
+        smooth_tortuosity.inputs.fwhm = config.smooth
+
+        workflow.connect([
+            (build_tortuosity_dict, smooth_tortuosity, [("map_dict", "map_files")]),
+            (transform_brain_mask, smooth_tortuosity, [("out_file", "brain_mask_file")]),
         ])
 
     # ==========================================================================
@@ -1255,7 +1403,16 @@ def init_dce_preproc_wf(
         workflow.connect([
             (smooth_pk, outputnode, [("smoothed_files", "smooth_pk_maps")]),
             (smooth_model_free, outputnode, [("smoothed_files", "smooth_model_free_maps")]),
+            (smooth_uncertainty, outputnode, [("smoothed_files", "smooth_uncertainty_maps")]),
+            (smooth_tortuosity, outputnode, [("smoothed_files", "smooth_tortuosity_maps")]),
         ])
+
+    # Normalized map output connections (requires NAWM mask from hdglio)
+    workflow.connect([
+        (normalize_ktrans, outputnode, [("out_file", "nktrans_map")]),
+        (normalize_vp, outputnode, [("out_file", "nvp_map")]),
+        (normalize_iauc60, outputnode, [("out_file", "niauc60_map")]),
+    ])
 
     return workflow
 
@@ -2292,3 +2449,114 @@ def _build_model_free_map_dict(iauc60, iauc90, iauc120, peak, ttp, ser):
         "time_to_peak": ttp,
         "ser": ser,
     }
+
+
+def _build_uncertainty_map_dict(
+    ktrans_std, ve_std, vp_std,
+    ktrans_cv, ve_cv, vp_cv,
+    ktrans_ci95_lower, ktrans_ci95_upper,
+    ve_ci95_lower, ve_ci95_upper,
+    vp_ci95_lower, vp_ci95_upper,
+):
+    """Build dictionary of uncertainty maps for smoothing."""
+    from nipype.interfaces.base import isdefined
+
+    d = {}
+    # Std maps
+    if ktrans_std and isdefined(ktrans_std):
+        d["Ktrans_std"] = ktrans_std
+    if ve_std and isdefined(ve_std):
+        d["ve_std"] = ve_std
+    if vp_std and isdefined(vp_std):
+        d["vp_std"] = vp_std
+    # CV maps
+    if ktrans_cv and isdefined(ktrans_cv):
+        d["Ktrans_cv"] = ktrans_cv
+    if ve_cv and isdefined(ve_cv):
+        d["ve_cv"] = ve_cv
+    if vp_cv and isdefined(vp_cv):
+        d["vp_cv"] = vp_cv
+    # CI95 lower bounds
+    if ktrans_ci95_lower and isdefined(ktrans_ci95_lower):
+        d["Ktrans_ci95lower"] = ktrans_ci95_lower
+    if ve_ci95_lower and isdefined(ve_ci95_lower):
+        d["ve_ci95lower"] = ve_ci95_lower
+    if vp_ci95_lower and isdefined(vp_ci95_lower):
+        d["vp_ci95lower"] = vp_ci95_lower
+    # CI95 upper bounds
+    if ktrans_ci95_upper and isdefined(ktrans_ci95_upper):
+        d["Ktrans_ci95upper"] = ktrans_ci95_upper
+    if ve_ci95_upper and isdefined(ve_ci95_upper):
+        d["ve_ci95upper"] = ve_ci95_upper
+    if vp_ci95_upper and isdefined(vp_ci95_upper):
+        d["vp_ci95upper"] = vp_ci95_upper
+    return d
+
+
+def _build_tortuosity_map_dict(ktrans_tortuosity_corrected):
+    """Build dictionary for tortuosity-corrected Ktrans for smoothing."""
+    from nipype.interfaces.base import isdefined
+
+    d = {}
+    if ktrans_tortuosity_corrected and isdefined(ktrans_tortuosity_corrected):
+        d["Ktrans_tortuositycorr"] = ktrans_tortuosity_corrected
+    return d
+
+
+def _normalize_by_nawm(param_map, nawm_mask):
+    """Normalize parameter map by NAWM mean.
+
+    Args:
+        param_map: Path to parameter map NIfTI file.
+        nawm_mask: Path to NAWM mask NIfTI file in the same space.
+
+    Returns:
+        Path to normalized parameter map, or None if normalization failed.
+    """
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+    from nipype.interfaces.base import isdefined
+
+    if not isdefined(nawm_mask) or nawm_mask is None:
+        return None
+    if not isdefined(param_map) or param_map is None:
+        return None
+    if not Path(nawm_mask).exists():
+        return None
+    if not Path(param_map).exists():
+        return None
+
+    param_img = nib.load(param_map)
+    nawm_img = nib.load(nawm_mask)
+
+    param_data = param_img.get_fdata()  # type: ignore[attr-defined]
+    nawm_data = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
+
+    # Check shapes match
+    if param_data.shape[:3] != nawm_data.shape[:3]:
+        return None
+
+    # Compute NAWM mean
+    nawm_values = param_data[nawm_data]
+    nawm_values = nawm_values[np.isfinite(nawm_values) & (nawm_values > 0)]
+    if len(nawm_values) < 10:
+        # Not enough valid NAWM voxels
+        return None
+
+    nawm_mean = np.mean(nawm_values)
+    if nawm_mean <= 0:
+        return None
+
+    # Normalize
+    normalized = param_data / nawm_mean
+
+    # Save
+    param_stem = Path(param_map).name.replace(".nii.gz", "").replace(".nii", "")
+    out_file = str(Path.cwd() / f"n{param_stem}.nii.gz")
+    nib.save(
+        nib.Nifti1Image(normalized.astype(np.float32), param_img.affine),
+        out_file,
+    )
+    return out_file

@@ -1293,13 +1293,14 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
                 _log.info("skip-anat (DCE): loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
 
-        # Connect lesion mask and tumor segmentation from hdglio if available
+        # Connect lesion mask, tumor segmentation, and NAWM mask from hdglio if available
         if hdglio_wf is not None:
             workflow.connect([
                 (hdglio_wf, dce_wf, [
                     ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
                     ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                     ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
+                    ("outputnode.nawm_mask", "inputnode.nawm_mask"),  # For nKtrans, nvp, nIAUC60
                 ]),
             ])
         elif work_dir is not None and not decision.run_hdglio:
@@ -1318,6 +1319,9 @@ def init_pmriprep_wf(
             if prev_hdglio["segmentation"]:
                 dce_wf.inputs.inputnode.hdglio_segmentation = prev_hdglio["segmentation"]
                 _log.info("skip-tumor-seg (DCE): loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])
+            if prev_hdglio["nawm_mask"]:
+                dce_wf.inputs.inputnode.nawm_mask = prev_hdglio["nawm_mask"]
+                _log.info("skip-tumor-seg (DCE): loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
 
         # Connect VFA and AFI inputs if available
         if session_data.modalities.vfa:
@@ -1519,9 +1523,15 @@ def init_pmriprep_wf(
                 ("outputnode.vp_ci95_upper", "vp_ci95_upper"),
                 # Tortuosity-corrected Ktrans
                 ("outputnode.ktrans_tortuosity_corrected", "ktrans_tortuosity_corrected"),
+                # Normalized maps (NAWM-normalized)
+                ("outputnode.nktrans_map", "nktrans_map"),
+                ("outputnode.nvp_map", "nvp_map"),
+                ("outputnode.niauc60_map", "niauc60_map"),
                 # Smoothed maps
                 ("outputnode.smooth_pk_maps", "smooth_pk_maps"),
                 ("outputnode.smooth_model_free_maps", "smooth_model_free_maps"),
+                ("outputnode.smooth_uncertainty_maps", "smooth_uncertainty_maps"),
+                ("outputnode.smooth_tortuosity_maps", "smooth_tortuosity_maps"),
                 # QC metrics
                 ("outputnode.qc_metrics", "qc_metrics"),
                 # QC plots
