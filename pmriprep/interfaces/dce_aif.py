@@ -11,6 +11,7 @@ The DCE AIF differs from DSC AIF in several important ways:
 - Blood T1 depends on field strength (1.5T→1.35s, 3T→1.65s)
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -27,19 +28,34 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dce_constants import (
+    AIF_FWHM_MAX_RELAXED_FRAMES,
+    AIF_FWHM_MAX_STRICT_FRAMES,
+    AIF_FWHM_NOISE_SCORE,
+    AIF_FWHM_SCORING_WIDTH,
+    AIF_FWHM_VENOUS_SCORE,
+    AIF_FWHM_VENOUS_THRESHOLD_FRAMES,
+    AIF_IDEAL_FWHM_FRAMES,
+    AIF_PEAK_TIMING_FRACTION,
     AIF_THRESHOLDS_RELAXED,
     AIF_THRESHOLDS_STRICT,
+    AIF_TIMING_BEFORE_TISSUE_FRAMES,
+    AIF_WASHOUT_THRESHOLD_RELAXED,
+    AIF_WASHOUT_THRESHOLD_STRICT,
     BRAIN_EROSION_ITERATIONS,
     BRAIN_EROSION_MIN_VOXELS,
     DCE_AIF_EXPECTED_FULL_DOSE,
     EPSILON_T1,
     HEMATOCRIT,
     LESION_EXCLUSION_DISTANCE_MM,
+    MIDLINE_EXCLUSION_FRACTION,
     PARKER_R1_REFERENCE,
     SLAB_EDGE_EXCLUSION_MM,
+    SUPERIOR_EXCLUSION_FRACTION,
     get_aif_thresholds,
     get_blood_t1,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -675,6 +691,9 @@ class AIFDetection(BaseInterface):
                 curves[v, :], tr, baseline_frames
             )
 
+        # FWHM in frames (for arterial criteria cascade)
+        fwhm_frames = fwhm_seconds / tr if tr > 0 else fwhm_seconds
+
         return {
             "peak_values": peak_values,
             "peak_times": peak_times,
@@ -683,8 +702,149 @@ class AIFDetection(BaseInterface):
             "enhancement": enhancement,
             "washout_fraction": washout_fraction,
             "fwhm_seconds": fwhm_seconds,
+            "fwhm_frames": fwhm_frames,
             "upstroke_slope": upstroke_slope,
         }
+
+    # -----------------------------------------------------------------
+    # Arterial Criteria Cascade (perf-plus exact port)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _apply_arterial_criteria(
+        chars: dict[str, npt.NDArray[Any]],
+        spatial_exclude: npt.NDArray[Any],
+        nt: int,
+        percentile_threshold: float = 98.0,
+        n_candidates: int = 100,
+    ) -> tuple[npt.NDArray[Any], float, int]:
+        """Apply arterial criteria with 7-tier fallback cascade (perf-plus exact).
+
+        This implements the exact logic from perf-plus dce_aif_detection.py
+        lines 636-722, using vectorized boolean operations.
+
+        Args:
+            chars: Signal characteristics dictionary from _compute_signal_characteristics.
+            spatial_exclude: Boolean array of voxels to exclude (midline, superior, etc).
+            nt: Number of timepoints.
+            percentile_threshold: Percentile for peak threshold (default 98).
+            n_candidates: Target number of candidates.
+
+        Returns:
+            (candidate_indices, tissue_ttp, tier_used) where:
+            - candidate_indices: Array of indices passing criteria
+            - tissue_ttp: Median tissue TTP frame
+            - tier_used: Which tier (1-7) produced the result
+        """
+        n_voxels = len(chars["peak_values"])
+
+        # 1. High peak enhancement (exclude spatially constrained voxels)
+        peak_threshold = float(np.percentile(chars["peak_values"], percentile_threshold))
+        high_peak = (chars["peak_values"] > peak_threshold) & (~spatial_exclude)
+
+        # 2. Tissue reference timing (median TTP of 25th-75th percentile enhancement voxels)
+        # This approximates parenchymal tissue TTP
+        enh_values = chars["enhancement"]
+        p25 = float(np.percentile(enh_values, 25))
+        p75 = float(np.percentile(enh_values, 75))
+        moderate_enh = (enh_values > p25) & (enh_values < p75)
+
+        if np.sum(moderate_enh) > 100:
+            tissue_ttp = float(np.median(chars["peak_indices"][moderate_enh]))
+        else:
+            tissue_ttp = float(np.median(chars["peak_indices"]))
+
+        # 3. Arterial timing: AIF should peak BEFORE tissue (by at least 2 frames)
+        arterial_timing = chars["peak_indices"] < (tissue_ttp - AIF_TIMING_BEFORE_TISSUE_FRAMES)
+
+        # 3b. Relaxed arterial timing: AIF must peak BEFORE tissue (no margin)
+        # Used in Tier 6-7 to prevent venous contamination (SSS peaks AFTER tissue)
+        arterial_timing_relaxed = chars["peak_indices"] < tissue_ttp
+
+        # 4. Early arrival: peak in first 40% of acquisition
+        early_arrival = chars["peak_indices"] < (nt * AIF_PEAK_TIMING_FRACTION)
+
+        # 5. Rapid uptake (90th percentile enhancement)
+        enhancement_threshold = float(np.percentile(enh_values, 90))
+        rapid_uptake = enh_values > enhancement_threshold
+
+        # 6. Washout criterion (20% strict)
+        has_washout = chars["washout_fraction"] > AIF_WASHOUT_THRESHOLD_STRICT
+
+        # 7. FWHM criterion (5 frames strict)
+        narrow_bolus = chars["fwhm_frames"] < AIF_FWHM_MAX_STRICT_FRAMES
+
+        # 8. Upstroke criterion (top 25% of high-peak voxels)
+        upstroke_high_peak = chars["upstroke_slope"][high_peak]
+        if len(upstroke_high_peak) > 10:
+            upstroke_threshold = float(np.percentile(upstroke_high_peak, 75))
+            steep_upstroke = chars["upstroke_slope"] > upstroke_threshold
+        else:
+            steep_upstroke = np.ones(n_voxels, dtype=bool)
+
+        min_candidates = n_candidates // 2
+
+        # TIER 1: Strict criteria (arterial timing)
+        candidates_mask = (
+            high_peak & arterial_timing & rapid_uptake &
+            has_washout & narrow_bolus & steep_upstroke
+        )
+        candidate_indices = np.where(candidates_mask)[0]
+        tier_used = 1
+
+        # TIER 2: Relax timing to early arrival
+        if len(candidate_indices) < min_candidates:
+            candidates_mask = (
+                high_peak & early_arrival & rapid_uptake &
+                has_washout & narrow_bolus
+            )
+            candidate_indices = np.where(candidates_mask)[0]
+            tier_used = 2
+
+        # TIER 3: Relax enhancement
+        if len(candidate_indices) < min_candidates:
+            candidates_mask = (
+                high_peak & early_arrival & has_washout & narrow_bolus
+            )
+            candidate_indices = np.where(candidates_mask)[0]
+            tier_used = 3
+
+        # TIER 4: Relax washout to 10%
+        if len(candidate_indices) < min_candidates:
+            has_washout_relaxed = chars["washout_fraction"] > AIF_WASHOUT_THRESHOLD_RELAXED
+            candidates_mask = (
+                high_peak & early_arrival & has_washout_relaxed & narrow_bolus
+            )
+            candidate_indices = np.where(candidates_mask)[0]
+            tier_used = 4
+
+        # TIER 5: Relax FWHM to 8 frames
+        if len(candidate_indices) < min_candidates:
+            narrow_bolus_relaxed = chars["fwhm_frames"] < AIF_FWHM_MAX_RELAXED_FRAMES
+            has_washout_relaxed = chars["washout_fraction"] > AIF_WASHOUT_THRESHOLD_RELAXED
+            candidates_mask = (
+                high_peak & early_arrival & has_washout_relaxed & narrow_bolus_relaxed
+            )
+            candidate_indices = np.where(candidates_mask)[0]
+            tier_used = 5
+
+        # TIER 6: Peak + relaxed timing + FWHM (< 10 candidates)
+        # CRITICAL: Use arterial_timing_relaxed (peak before tissue TTP, no margin)
+        # NOT early_arrival, which ignores tissue TTP and allows SSS contamination
+        if len(candidate_indices) < 10:
+            candidates_mask = high_peak & arterial_timing_relaxed & narrow_bolus
+            candidate_indices = np.where(candidates_mask)[0]
+            tier_used = 6
+
+        # TIER 7: Peak + relaxed timing (LAST RESORT)
+        # NEVER drop timing completely - always require peak before tissue TTP
+        # SSS peaks 3-8 frames AFTER tissue, so this filter excludes venous structures
+        if len(candidate_indices) < 10:
+            candidates_mask = high_peak & arterial_timing_relaxed
+            candidate_indices = np.where(candidates_mask)[0]
+            tier_used = 7
+
+        return candidate_indices, tissue_ttp, tier_used
 
     # -----------------------------------------------------------------
     # Tissue TTP Reference (Phase 3)
@@ -782,8 +942,26 @@ class AIFDetection(BaseInterface):
                 search_mask[:, :, :edge_slices] = 0
                 search_mask[:, :, -edge_slices:] = 0
 
-        # Step 3: Lesion exclusion (binary + distance-based)
-        if lesion_mask is not None:
+        # Step 3: Midline exclusion (central 20%) - avoid SSS, ISS, sagittal sinus
+        # Applied unconditionally to all midline voxels, not just superior regions
+        nx = search_mask.shape[0]
+        x_center = nx // 2
+        x_exclude = int(nx * MIDLINE_EXCLUSION_FRACTION)
+        x_lo = max(0, x_center - x_exclude)
+        x_hi = min(nx, x_center + x_exclude + 1)
+        search_mask[x_lo:x_hi, :, :] = 0
+
+        # Step 4: Superior slice exclusion (top 25%) - avoid cortical vein drainage
+        z_superior = int(nz * SUPERIOR_EXCLUSION_FRACTION)
+        if z_superior < nz:
+            search_mask[:, :, z_superior:] = 0
+
+        # NOTE: Posterior exclusion REMOVED - perf-plus does NOT have posterior exclusion.
+        # The ISS is adequately excluded by the midline exclusion since it runs
+        # along the falx cerebri (midline structure).
+
+        # Step 5: Lesion exclusion (binary + distance-based)
+        if lesion_mask is not None and np.any(lesion_mask > 0):
             # Binary exclusion
             search_mask[lesion_mask > 0] = 0
 
@@ -894,7 +1072,83 @@ class AIFDetection(BaseInterface):
                 [metrics_list[i] for i in contra],
             )
 
+        # Fallback: filter out any flagged as likely venous before returning all
+        # This ensures marginal venous candidates don't contaminate the AIF
+        # when falling back to ipsilateral hemisphere
+        non_venous = [
+            i for i, m in enumerate(metrics_list)
+            if not m.get("is_likely_venous", False)
+        ]
+        if len(non_venous) >= 3:
+            return (
+                [candidates[i] for i in non_venous],
+                [scores[i] for i in non_venous],
+                [metrics_list[i] for i in non_venous],
+            )
+
         return candidates, scores, metrics_list
+
+    @staticmethod
+    def _filter_venous_candidates(
+        candidates: list[tuple[int, int, int]],
+        scores: list[float],
+        metrics_list: list[dict[str, float]],
+        min_non_venous: int = 3,
+    ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
+        """Filter out candidates flagged as likely venous.
+
+        This method enforces the venous exclusion that is flagged but not
+        enforced elsewhere in the pipeline. It should be called unconditionally
+        after candidate selection to remove venous contamination.
+
+        Args:
+            candidates: Candidate voxel coordinates.
+            scores: Candidate scores.
+            metrics_list: Candidate metrics (must contain is_likely_venous flag).
+            min_non_venous: Minimum non-venous candidates required to apply filter.
+
+        Returns:
+            Filtered (candidates, scores, metrics) with venous candidates removed.
+            If filtering would leave fewer than min_non_venous candidates,
+            returns original input unchanged (with warning logged).
+        """
+        if not candidates:
+            return candidates, scores, metrics_list
+
+        # Identify non-venous candidates
+        non_venous_indices = [
+            i for i, m in enumerate(metrics_list)
+            if not m.get("is_likely_venous", False)
+        ]
+
+        n_venous = len(candidates) - len(non_venous_indices)
+
+        if n_venous == 0:
+            # No venous candidates, return unchanged
+            return candidates, scores, metrics_list
+
+        if len(non_venous_indices) >= min_non_venous:
+            # Enough non-venous candidates, filter out venous
+            logger.info(
+                "Filtering %d venous candidates (keeping %d arterial)",
+                n_venous, len(non_venous_indices),
+            )
+            return (
+                [candidates[i] for i in non_venous_indices],
+                [scores[i] for i in non_venous_indices],
+                [metrics_list[i] for i in non_venous_indices],
+            )
+
+        # Not enough non-venous candidates - return EMPTY to trigger population AIF
+        # Returning venous-contaminated candidates is worse than using population AIF
+        # because venous AIF causes systematic errors in PK modeling
+        logger.warning(
+            "VENOUS CONTAMINATION DETECTED: %d of %d candidates flagged as likely venous. "
+            "Insufficient non-venous candidates (%d < %d). "
+            "Returning empty to trigger population AIF fallback.",
+            n_venous, len(candidates), len(non_venous_indices), min_non_venous,
+        )
+        return [], [], []
 
     # -----------------------------------------------------------------
     # Candidate Scoring (replaces old _score_dce_candidate)
@@ -906,11 +1160,22 @@ class AIFDetection(BaseInterface):
         tr: float,
         baseline_frames: int,
         criteria: str,
+        tissue_ttp_frame: float | None = None,
     ) -> tuple[float, dict[str, float]]:
         """Score a candidate DCE AIF curve.
 
         Returns a composite quality score and individual metrics.
         Score is 0 if thresholds are not met, otherwise 0-1.
+
+        Args:
+            curve: Candidate concentration time course.
+            tr: Temporal resolution in seconds.
+            baseline_frames: Number of pre-contrast frames.
+            criteria: Quality criteria level.
+            tissue_ttp_frame: Tissue TTP for timing validation (optional).
+
+        Returns:
+            (score, metrics) tuple.
         """
         metrics: dict[str, float] = {}
 
@@ -971,21 +1236,22 @@ class AIFDetection(BaseInterface):
             return 0.0, metrics
 
         # Compute composite score (all thresholds met)
+        # Weights: peak=0.20, CNR=0.15, washout=0.20, FWHM=0.15, upstroke=0.15, timing=0.15
         score = 0.0
 
-        # Peak contribution (0-0.25): closer to expected range is better
+        # Peak contribution (0-0.20): closer to expected range is better
         expected_peak = (peak_min + peak_max) / 2.0
         peak_deviation = abs(peak - expected_peak) / max(expected_peak, EPSILON_T1)
         peak_score = max(0.0, 1.0 - peak_deviation)
-        score += 0.25 * peak_score
+        score += 0.20 * peak_score
 
-        # CNR contribution (0-0.2): higher is better
+        # CNR contribution (0-0.15): higher is better
         cnr_score = min(1.0, cnr / 50.0)
-        score += 0.2 * cnr_score
+        score += 0.15 * cnr_score
 
-        # Washout contribution (0-0.2): closer to 0.5 is ideal
+        # Washout contribution (0-0.20): closer to 0.5 is ideal
         washout_score = 1.0 - abs(washout - 0.5) / 0.5
-        score += 0.2 * max(0.0, washout_score)
+        score += 0.20 * max(0.0, washout_score)
 
         # FWHM contribution (0-0.15): closer to ~15s is ideal for DCE
         ideal_fwhm = 15.0
@@ -993,10 +1259,26 @@ class AIFDetection(BaseInterface):
         fwhm_score = 1.0 - abs(fwhm - ideal_fwhm) / max(fwhm_range / 2, 1.0)
         score += 0.15 * max(0.0, fwhm_score)
 
-        # Upstroke slope contribution (0-0.2): steeper is better for arteries
+        # Upstroke slope contribution (0-0.15): steeper is better for arteries
         if upstroke > 0:
             upstroke_score = min(1.0, upstroke / (peak / max(tr * 3, EPSILON_T1)))
-            score += 0.2 * upstroke_score
+            score += 0.15 * upstroke_score
+
+        # Timing contribution (0-0.15): AIF should peak before tissue
+        # Score is 1.0 if peaks >= 2 frames before tissue, 0.0 otherwise
+        # This penalizes venous candidates that peak with or after tissue
+        if tissue_ttp_frame is not None:
+            frames_before_tissue = tissue_ttp_frame - peak_time_frame
+            if frames_before_tissue >= AIF_TIMING_BEFORE_TISSUE_FRAMES:
+                timing_score = 1.0
+            elif frames_before_tissue >= 0:
+                # Partial credit for marginal timing (0-2 frames before tissue)
+                timing_score = frames_before_tissue / AIF_TIMING_BEFORE_TISSUE_FRAMES
+            else:
+                # Zero score if AIF peaks AFTER tissue (venous)
+                timing_score = 0.0
+            score += 0.15 * timing_score
+            metrics["timing_score"] = timing_score
 
         return min(1.0, score), metrics
 
@@ -1009,10 +1291,11 @@ class AIFDetection(BaseInterface):
         candidate_indices: list[tuple[int, int, int]],
         brain_shape: tuple[int, ...],
     ) -> list[tuple[int, int, int]]:
-        """Exclude SSS (midline + superior/posterior) and edge-slice voxels.
+        """Exclude edge-slice voxels (z == 0 or z == nz-1).
 
-        Ported from DSC AIF detector. Excludes voxels that are in the
-        sagittal sinus region (midline AND superior/posterior).
+        Note: Midline and superior exclusions are now handled in
+        _prepare_search_mask() for earlier, more comprehensive filtering.
+        This method now only handles edge slice exclusion as a final check.
 
         Args:
             candidate_indices: List of (x, y, z) voxel coordinates.
@@ -1024,31 +1307,13 @@ class AIFDetection(BaseInterface):
         if not candidate_indices:
             return candidate_indices
 
-        nx, ny, nz = brain_shape[:3]
-        x_center = nx // 2
-        x_exclude = int(nx * 0.1)  # Central 20% (+/-10%)
-        z_superior = int(nz * 0.65)  # Superior 35%
-        y_posterior = int(ny * 0.45)  # Posterior 45%
-
-        # SSS exclusion
-        kept: list[tuple[int, int, int]] = []
-        for coord in candidate_indices:
-            x, y, z = coord
-            is_midline = (x_center - x_exclude) <= x <= (x_center + x_exclude)
-            if is_midline and (z > z_superior or y < y_posterior):
-                continue  # SSS region
-            kept.append(coord)
-
-        if not kept:
-            # Would remove all — keep originals
-            kept = list(candidate_indices)
+        nz = brain_shape[2]
 
         # Edge slice exclusion (z == 0 or z == nz-1)
-        non_edge = [c for c in kept if 0 < c[2] < nz - 1]
-        if non_edge:
-            kept = non_edge
+        non_edge = [c for c in candidate_indices if 0 < c[2] < nz - 1]
 
-        return kept
+        # Return filtered list, or original if filtering would remove all
+        return non_edge if non_edge else list(candidate_indices)
 
     @staticmethod
     def _validate_peak_timing(
@@ -1140,12 +1405,28 @@ class AIFDetection(BaseInterface):
 
             cluster_size = len(cluster_indices)
 
-            # FWHM score: prefer narrow FWHM (arterial)
+            # FWHM score: Gaussian centered on ideal ~3 frames (arterial)
+            # Uses fwhm_seconds and converts to frames assuming ~2s TR typical for DCE
             fwhm_vals = [
                 metrics_list[i].get("fwhm_seconds", 30.0) for i in cluster_indices
             ]
             mean_fwhm = float(np.mean(fwhm_vals))
-            fwhm_score = max(0.0, 1.0 - mean_fwhm / 30.0)
+            # Approximate conversion to frames (assume ~2s TR typical for DCE)
+            mean_fwhm_frames = mean_fwhm / 2.0
+
+            if mean_fwhm_frames < 0.5:
+                # Noise spike - too narrow
+                fwhm_score = AIF_FWHM_NOISE_SCORE
+            elif mean_fwhm_frames > AIF_FWHM_VENOUS_THRESHOLD_FRAMES:
+                # Venous - too broad
+                fwhm_score = AIF_FWHM_VENOUS_SCORE
+            else:
+                # Gaussian scoring centered on ideal FWHM
+                deviation = (
+                    (mean_fwhm_frames - AIF_IDEAL_FWHM_FRAMES)
+                    / AIF_FWHM_SCORING_WIDTH
+                )
+                fwhm_score = float(np.exp(-deviation**2))
 
             # Washout score: prefer high washout (arterial)
             washout_vals = [
@@ -1194,7 +1475,7 @@ class AIFDetection(BaseInterface):
         )
 
     # -----------------------------------------------------------------
-    # Adaptive Percentile Pre-filtering + Candidate Search (Phase 3)
+    # Vectorized Candidate Search with perf-plus Arterial Cascade
     # -----------------------------------------------------------------
 
     def _find_candidates_in_mask(
@@ -1207,12 +1488,17 @@ class AIFDetection(BaseInterface):
         criteria: str,
         tissue_ttp_frame: float | None = None,
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
-        """Find candidate AIF voxels within a mask.
+        """Find candidate AIF voxels using perf-plus 7-tier arterial cascade.
 
-        Uses adaptive percentile cascade for pre-filtering, then applies
-        quality scoring, spatial exclusion, peak timing validation, tissue
-        TTP cross-validation, and upstroke filtering.  Returns top
-        candidates sorted by score descending.
+        This is an exact port of perf-plus dce_aif_detection.py apply_arterial_criteria().
+        Uses vectorized boolean operations with 7-tier fallback cascade:
+        1. Strict: high_peak & arterial_timing & rapid_uptake & has_washout & narrow_bolus & steep_upstroke
+        2. Relax timing to early_arrival
+        3. Relax enhancement (drop rapid_uptake)
+        4. Relax washout to 10%
+        5. Relax FWHM to 8 frames
+        6. Peak + FWHM only
+        7. Peak only (last resort)
 
         Args:
             concentration_data: 4D concentration data.
@@ -1220,8 +1506,8 @@ class AIFDetection(BaseInterface):
             n_candidates: Number of candidates to return.
             tr: Temporal resolution in seconds.
             baseline_frames: Number of pre-contrast frames.
-            criteria: Quality criteria level.
-            tissue_ttp_frame: Median tissue TTP frame for cross-validation.
+            criteria: Quality criteria level (used for final scoring only).
+            tissue_ttp_frame: Ignored (computed internally from data).
 
         Returns:
             (candidates, scores, metrics_list) — top N voxels.
@@ -1229,112 +1515,138 @@ class AIFDetection(BaseInterface):
         brain_shape = concentration_data.shape[:3]
         n_timepoints = concentration_data.shape[3]
 
-        # ----- Adaptive percentile pre-filtering -----
-        # Compute peak concentration map within mask
-        post_data = concentration_data[..., baseline_frames:]
-        peak_conc_map = np.max(post_data, axis=-1)
-        peak_conc_map[mask < 0.5] = 0.0
-
-        valid_peaks = peak_conc_map[mask > 0.5]
-        if len(valid_peaks) == 0:
+        # Get all masked voxel coordinates
+        mask_coords = np.argwhere(mask > 0.5)
+        if mask_coords.shape[0] == 0:
             return [], [], []
 
-        # Cascade from most to least restrictive
-        percentiles = [99.5, 99.0, 98.5, 98.0, 97.0, 95.0]
-        min_prefilter = max(n_candidates, 20)
-        prefilter_coords: npt.NDArray[Any] | None = None
+        # Extract curves for all masked voxels (vectorized)
+        curves = np.array([
+            concentration_data[x, y, z, :]
+            for x, y, z in mask_coords
+        ])
+        n_voxels = curves.shape[0]
 
-        for pct in percentiles:
-            thresh = float(np.nanpercentile(valid_peaks, pct))
-            prefilter_coords = np.argwhere(
-                (peak_conc_map >= thresh) & (mask > 0.5)
-            )
-            if prefilter_coords.shape[0] >= min_prefilter:
-                break
+        if n_voxels == 0:
+            return [], [], []
 
-        if prefilter_coords is None or prefilter_coords.shape[0] == 0:
-            # Fall back to all mask voxels
-            prefilter_coords = np.argwhere(mask > 0.5)
+        # Compute signal characteristics for ALL masked voxels (vectorized)
+        chars = self._compute_signal_characteristics(curves, baseline_frames, tr)
 
-        # ----- Score each pre-filtered voxel -----
+        # Build spatial exclusion array matching mask_coords order
+        # Edge slices only (midline/superior already in mask)
+        nz = brain_shape[2]
+        spatial_exclude = np.array([
+            (z == 0 or z == nz - 1) for x, y, z in mask_coords
+        ], dtype=bool)
+
+        # Apply 7-tier arterial criteria cascade (perf-plus exact)
+        candidate_idx_in_masked, tissue_ttp_computed, tier_used = self._apply_arterial_criteria(
+            chars, spatial_exclude, n_timepoints,
+            percentile_threshold=98.0, n_candidates=n_candidates * 2,
+        )
+
+        logger.debug(
+            "Arterial cascade: tier %d, %d candidates (of %d masked voxels)",
+            tier_used, len(candidate_idx_in_masked), n_voxels,
+        )
+
+        if len(candidate_idx_in_masked) == 0:
+            return [], [], []
+
+        # Convert indices back to voxel coordinates
         candidates: list[tuple[int, int, int]] = []
-        scores: list[float] = []
         all_metrics: list[dict[str, float]] = []
 
-        for row in prefilter_coords:
-            x, y, z = int(row[0]), int(row[1]), int(row[2])
+        for idx in candidate_idx_in_masked:
+            x, y, z = int(mask_coords[idx, 0]), int(mask_coords[idx, 1]), int(mask_coords[idx, 2])
+            candidates.append((x, y, z))
+
+            # Build metrics dict from vectorized characteristics
+            metrics: dict[str, float] = {
+                "peak_mm": float(chars["peak_values"][idx]),
+                "fwhm_seconds": float(chars["fwhm_seconds"][idx]),
+                "fwhm_frames": float(chars["fwhm_frames"][idx]),
+                "washout": float(chars["washout_fraction"][idx]),
+                "baseline_std": 0.0,  # Not computed in vectorized path
+                "cnr": 0.0,  # Will compute below if needed
+                "auc": 0.0,  # Will compute below if needed
+                "upstroke_slope": float(chars["upstroke_slope"][idx]),
+                "peak_time_frame": float(chars["peak_indices"][idx]),
+                "enhancement": float(chars["enhancement"][idx]),
+                "tier_used": float(tier_used),
+            }
+
+            # Compute CNR for QC
+            curve = curves[idx]
+            if baseline_frames > 0:
+                baseline_std = float(np.std(curve[:baseline_frames]))
+                if baseline_std > EPSILON_T1:
+                    metrics["cnr"] = metrics["peak_mm"] / baseline_std
+                    metrics["baseline_std"] = baseline_std
+                else:
+                    metrics["cnr"] = 100.0
+
+            # Compute AUC
+            trapezoid_fn = getattr(np, "trapezoid", None) or getattr(np, "trapz")
+            metrics["auc"] = float(trapezoid_fn(curve) * tr)
+
+            # Check timing against tissue TTP
+            frames_before_tissue = tissue_ttp_computed - metrics["peak_time_frame"]
+            metrics["frames_before_tissue"] = frames_before_tissue
+            if frames_before_tissue < AIF_TIMING_BEFORE_TISSUE_FRAMES:
+                metrics["is_likely_venous"] = True
+
+            all_metrics.append(metrics)
+
+        # Score candidates for ranking (using individual _score_dce_candidate for ranking)
+        # Pass tissue TTP so timing is factored into scoring
+        scores: list[float] = []
+        for idx, (x, y, z) in enumerate(candidates):
             curve = concentration_data[x, y, z, :]
-
-            peak = float(np.max(curve))
-            if peak < EPSILON_T1:
-                continue
-
-            score, metrics = self._score_dce_candidate(
-                curve, tr, baseline_frames, criteria
+            score, scored_metrics = self._score_dce_candidate(
+                curve, tr, baseline_frames, criteria,
+                tissue_ttp_frame=tissue_ttp_computed,
             )
-            if score > 0:
-                candidates.append((x, y, z))
-                scores.append(score)
-                all_metrics.append(metrics)
+            # Update metrics with timing score if computed
+            if "timing_score" in scored_metrics:
+                all_metrics[idx]["timing_score"] = scored_metrics["timing_score"]
+            # If score is 0, use a small positive value based on tier
+            # (candidates already passed arterial criteria cascade)
+            if score <= 0:
+                # Fallback score based on tier (higher tier = less strict = lower score)
+                # Venous candidates (is_likely_venous=True) get additional penalty
+                base_score = max(0.1, 1.0 - (tier_used - 1) * 0.1)
+                if all_metrics[idx].get("is_likely_venous", False):
+                    # Significant penalty for venous candidates
+                    score = base_score * 0.3
+                else:
+                    score = base_score
+            scores.append(score)
 
-        # ----- Tissue TTP cross-validation -----
-        if candidates and tissue_ttp_frame is not None:
-            kept_idx: list[int] = []
-            for i, m in enumerate(all_metrics):
-                candidate_peak_frame = m.get("peak_time_frame", 0.0)
-                frames_after_tissue = candidate_peak_frame - tissue_ttp_frame
-                if frames_after_tissue > 2:
-                    # Venous: peaks > 2 frames after tissue median
-                    continue
-                elif frames_after_tissue > 0:
-                    # Mild penalty: close to tissue but slightly late
-                    scores[i] *= 0.7
-                kept_idx.append(i)
-
-            if kept_idx:
-                candidates = [candidates[i] for i in kept_idx]
-                scores = [scores[i] for i in kept_idx]
-                all_metrics = [all_metrics[i] for i in kept_idx]
-
-        # ----- Upstroke slope filter: keep top 25% steepest -----
-        if len(candidates) > n_candidates:
-            slopes = np.array([
-                m.get("upstroke_slope", 0.0) for m in all_metrics
-            ])
-            if np.max(slopes) > 0:
-                slope_thresh = float(np.percentile(slopes, 75))
-                steep_idx = [
-                    i for i, s in enumerate(slopes) if s >= slope_thresh
-                ]
-                if len(steep_idx) >= n_candidates:
-                    candidates = [candidates[i] for i in steep_idx]
-                    scores = [scores[i] for i in steep_idx]
-                    all_metrics = [all_metrics[i] for i in steep_idx]
-
-        # ----- Spatial exclusions (SSS + edge slices) -----
-        if candidates:
-            filtered = self._apply_spatial_exclusions(candidates, brain_shape)
-            filtered_set = set(filtered)
-            keep_idx_sp = [i for i, c in enumerate(candidates) if c in filtered_set]
-            candidates = [candidates[i] for i in keep_idx_sp]
-            scores = [scores[i] for i in keep_idx_sp]
-            all_metrics = [all_metrics[i] for i in keep_idx_sp]
-
-        # ----- Peak timing validation -----
+        # ----- Peak timing validation (40% cutoff) -----
         if candidates:
             valid_timing = self._validate_peak_timing(
                 candidates, concentration_data, n_timepoints
             )
             valid_set = set(valid_timing)
             keep_idx_pt = [i for i, c in enumerate(candidates) if c in valid_set]
-            candidates = [candidates[i] for i in keep_idx_pt]
-            scores = [scores[i] for i in keep_idx_pt]
-            all_metrics = [all_metrics[i] for i in keep_idx_pt]
+            if keep_idx_pt:
+                candidates = [candidates[i] for i in keep_idx_pt]
+                scores = [scores[i] for i in keep_idx_pt]
+                all_metrics = [all_metrics[i] for i in keep_idx_pt]
 
         # ----- Cluster-based selection -----
         if len(candidates) > n_candidates:
             candidates, scores, all_metrics = self._score_and_select_cluster(
                 candidates, scores, all_metrics, brain_shape
+            )
+
+        # ----- Filter venous candidates (Fix 1: Enforce venous exclusion) -----
+        # This is the critical fix: venous candidates were flagged but never filtered
+        if candidates:
+            candidates, scores, all_metrics = self._filter_venous_candidates(
+                candidates, scores, all_metrics, min_non_venous=3
             )
 
         # ----- Sort by score descending and take top N -----
@@ -1552,6 +1864,7 @@ class AIFDetection(BaseInterface):
         candidates: list[tuple[int, int, int]] = []
         scores: list[float] = []
         metrics_list: list[dict[str, float]] = []
+        tissue_ttp_frame: float | None = None
 
         # Skip auto detection if population method requested
         if aif_method == "population":
@@ -1612,6 +1925,14 @@ class AIFDetection(BaseInterface):
                     conc_data.shape[:3], affine, tumor_lat,
                 )
 
+            # ===== Fix 2: Apply venous filter UNCONDITIONALLY =====
+            # Previously venous filtering only happened inside _filter_candidates_by_hemisphere
+            # which was conditional on lesion_mask. Now we always filter venous candidates.
+            if candidates:
+                candidates, scores, metrics_list = self._filter_venous_candidates(
+                    candidates, scores, metrics_list, min_non_venous=3
+                )
+
         # ===== Generate AIF curve =====
         aif_curve: npt.NDArray[Any]
         aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
@@ -1628,11 +1949,17 @@ class AIFDetection(BaseInterface):
 
             # Aggregate QC metrics
             if metrics_list:
+                # Get tier used from first candidate (all from same tier)
+                tier_used = int(metrics_list[0].get("tier_used", 0))
+                fwhm_frames_mean = float(
+                    np.mean([m.get("fwhm_frames", 0.0) for m in metrics_list])
+                )
                 qc_metrics = {
                     "peak_mm_mean": float(np.mean([m["peak_mm"] for m in metrics_list])),
                     "fwhm_seconds_mean": float(
                         np.mean([m["fwhm_seconds"] for m in metrics_list])
                     ),
+                    "fwhm_frames_mean": fwhm_frames_mean,
                     "washout_mean": float(
                         np.mean([m["washout"] for m in metrics_list])
                     ),
@@ -1642,7 +1969,40 @@ class AIFDetection(BaseInterface):
                         np.mean([m.get("upstroke_slope", 0.0) for m in metrics_list])
                     ),
                     "n_candidates": len(candidates),
+                    "arterial_cascade_tier": tier_used,
                 }
+
+            # Venous contamination detection and warning
+            # Check if any candidates were flagged as likely venous
+            n_venous = sum(
+                1 for m in metrics_list if m.get("is_likely_venous", False)
+            )
+            if n_venous > 0:
+                qc_metrics["n_likely_venous_candidates"] = n_venous
+                qc_metrics["venous_fraction"] = n_venous / len(metrics_list)
+
+            # Cross-validate final AIF peak timing against tissue TTP
+            if tissue_ttp_frame is not None:
+                aif_peak_frame = int(np.argmax(aif_curve))
+                timing_diff = tissue_ttp_frame - aif_peak_frame
+                qc_metrics["aif_ttp_frame"] = aif_peak_frame
+                qc_metrics["tissue_ttp_frame"] = tissue_ttp_frame
+                qc_metrics["aif_before_tissue_frames"] = timing_diff
+                qc_metrics["is_likely_venous"] = timing_diff < AIF_TIMING_BEFORE_TISSUE_FRAMES
+
+                if timing_diff < 0:
+                    logger.warning(
+                        "VENOUS CONTAMINATION: AIF peaks %.0f frames AFTER tissue TTP. "
+                        "Likely SSS or venous structure. Consider population AIF fallback.",
+                        abs(timing_diff),
+                    )
+                elif timing_diff < AIF_TIMING_BEFORE_TISSUE_FRAMES:
+                    logger.warning(
+                        "MARGINAL AIF TIMING: AIF peaks only %.0f frames before tissue TTP "
+                        "(expected >= %d). May have venous contamination.",
+                        timing_diff,
+                        AIF_TIMING_BEFORE_TISSUE_FRAMES,
+                    )
 
         else:
             # Generate BAT-aligned Parker population AIF
@@ -1753,17 +2113,15 @@ class AIFDetection(BaseInterface):
         out_aif_curve = self._gen_outfilename("_dce_aif_curve.txt")
         np.savetxt(out_aif_curve, aif_curve)
 
-        # Only save AIF mask for voxel-based detection (not population AIF)
-        out_aif_mask: str | None = None
-        if detection_method != "population" and np.any(aif_mask > 0):
-            out_aif_mask = self._gen_outfilename("_dce_aif_mask.nii.gz")
-            mask_img = nib.Nifti1Image(aif_mask, affine)  # type: ignore[attr-defined]
-            nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
+        # Save AIF mask (zeros for population AIF, actual voxels otherwise)
+        out_aif_mask = self._gen_outfilename("_dce_aif_mask.nii.gz")
+        mask_img = nib.Nifti1Image(aif_mask, affine)  # type: ignore[attr-defined]
+        nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
 
         # Store results for _list_outputs
         self._results = {
             "out_aif_curve": out_aif_curve,
-            "out_aif_mask": out_aif_mask,  # None for population AIF
+            "out_aif_mask": out_aif_mask,  # Zeros for population AIF
             "aif_curve": [float(x) for x in aif_curve],
             "detection_method": detection_method,
             "quality_score": quality_score,

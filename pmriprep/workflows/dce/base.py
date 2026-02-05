@@ -261,6 +261,18 @@ def init_dce_preproc_wf(
                 "ve_map",
                 "vp_map",
                 "kep_map",
+                # Model-free maps
+                "iauc60_map",
+                "iauc90_map",
+                "iauc120_map",
+                "peak_enhancement_map",
+                "time_to_peak_map",
+                "ser_map",
+                # QC maps
+                "tsnr_map",
+                "qc_mask",
+                "r2_map",
+                "quality_flag_map",
                 # AIF outputs
                 "aif_curve",
                 "aif_mask",
@@ -270,6 +282,21 @@ def init_dce_preproc_wf(
                 "ktrans_uncertainty",
                 "ve_uncertainty",
                 "vp_uncertainty",
+                # Bayesian CV and CI outputs
+                "ktrans_cv",
+                "ve_cv",
+                "vp_cv",
+                "ktrans_ci95_lower",
+                "ktrans_ci95_upper",
+                "ve_ci95_lower",
+                "ve_ci95_upper",
+                "vp_ci95_lower",
+                "vp_ci95_upper",
+                # Tortuosity-corrected output
+                "ktrans_tortuosity_corrected",
+                # Smoothed maps (populated only if config.smooth > 0)
+                "smooth_pk_maps",
+                "smooth_model_free_maps",
                 # QC metrics
                 "qc_metrics",
                 # QC plots
@@ -647,6 +674,7 @@ def init_dce_preproc_wf(
             lesion_distance=config.lesion_distance,
             prefer_contralateral=config.prefer_contralateral,
             baseline_frames=config.baseline_frames if config.baseline_frames > 0 else 5,
+            dose=config.dose,
         ),
         name="aif_detection",
     )
@@ -668,7 +696,7 @@ def init_dce_preproc_wf(
             ("out_file", "atlas_mask_file"),
         ]),
         (inputnode, aif_detection, [
-            ("tr", "tr"),
+            ("volume_tr", "tr"),  # Use volume TR for time array, not pulse TR
             ("field_strength", "field_strength"),
         ]),
     ])
@@ -809,6 +837,85 @@ def init_dce_preproc_wf(
             ("out_file", "brain_mask"),
         ]),
     ])
+
+    # ==========================================================================
+    # Node 9b: Smoothing (conditional on config.smooth > 0)
+    # ==========================================================================
+    smooth_pk = None
+    smooth_model_free = None
+
+    if config.smooth > 0:
+        # Build dict of PK maps for smoothing
+        build_pk_dict = pe.Node(
+            niu.Function(
+                input_names=["ktrans", "ve", "vp", "kep"],
+                output_names=["map_dict"],
+                function=_build_pk_map_dict,
+            ),
+            name="build_pk_dict",
+        )
+
+        workflow.connect([
+            (pk_modeling, build_pk_dict, [
+                ("out_ktrans", "ktrans"),
+                ("out_ve", "ve"),
+                ("out_vp", "vp"),
+                ("out_kep", "kep"),
+            ]),
+        ])
+
+        # Smoothing for PK maps
+        smooth_pk = pe.Node(
+            niu.Function(
+                input_names=["map_files", "brain_mask_file", "fwhm"],
+                output_names=["smoothed_files"],
+                function=_smooth_dce_maps,
+            ),
+            name="smooth_pk_maps",
+        )
+        smooth_pk.inputs.fwhm = config.smooth
+
+        workflow.connect([
+            (build_pk_dict, smooth_pk, [("map_dict", "map_files")]),
+            (transform_brain_mask, smooth_pk, [("out_file", "brain_mask_file")]),
+        ])
+
+        # Build dict of model-free maps for smoothing
+        build_mf_dict = pe.Node(
+            niu.Function(
+                input_names=["iauc60", "iauc90", "iauc120", "peak", "ttp", "ser"],
+                output_names=["map_dict"],
+                function=_build_model_free_map_dict,
+            ),
+            name="build_model_free_dict",
+        )
+
+        workflow.connect([
+            (pk_modeling, build_mf_dict, [
+                ("out_iauc60", "iauc60"),
+                ("out_iauc90", "iauc90"),
+                ("out_iauc120", "iauc120"),
+                ("out_peak_enhancement", "peak"),
+                ("out_time_to_peak", "ttp"),
+                ("out_ser", "ser"),
+            ]),
+        ])
+
+        # Smoothing for model-free maps
+        smooth_model_free = pe.Node(
+            niu.Function(
+                input_names=["map_files", "brain_mask_file", "fwhm"],
+                output_names=["smoothed_files"],
+                function=_smooth_dce_maps,
+            ),
+            name="smooth_model_free_maps",
+        )
+        smooth_model_free.inputs.fwhm = config.smooth
+
+        workflow.connect([
+            (build_mf_dict, smooth_model_free, [("map_dict", "map_files")]),
+            (transform_brain_mask, smooth_model_free, [("out_file", "brain_mask_file")]),
+        ])
 
     # ==========================================================================
     # Node 10: Registration QC Filmstrip
@@ -1048,11 +1155,43 @@ def init_dce_preproc_wf(
             ("out_vp", "vp_map"),
             ("out_kep", "kep_map"),
         ]),
+        # Model-free maps
+        (pk_modeling, outputnode, [
+            ("out_iauc60", "iauc60_map"),
+            ("out_iauc90", "iauc90_map"),
+            ("out_iauc120", "iauc120_map"),
+            ("out_peak_enhancement", "peak_enhancement_map"),
+            ("out_time_to_peak", "time_to_peak_map"),
+            ("out_ser", "ser_map"),
+        ]),
+        # QC maps
+        (pk_modeling, outputnode, [
+            ("out_tsnr", "tsnr_map"),
+            ("out_qc_mask", "qc_mask"),
+            ("out_r2", "r2_map"),
+            ("out_quality_flag", "quality_flag_map"),
+        ]),
         # Uncertainty maps (if Bayesian)
         (pk_modeling, outputnode, [
             ("out_ktrans_std", "ktrans_uncertainty"),
             ("out_ve_std", "ve_uncertainty"),
             ("out_vp_std", "vp_uncertainty"),
+        ]),
+        # Bayesian CV and CI maps (if Bayesian)
+        (pk_modeling, outputnode, [
+            ("out_ktrans_cv", "ktrans_cv"),
+            ("out_ve_cv", "ve_cv"),
+            ("out_vp_cv", "vp_cv"),
+            ("out_ktrans_ci95_lower", "ktrans_ci95_lower"),
+            ("out_ktrans_ci95_upper", "ktrans_ci95_upper"),
+            ("out_ve_ci95_lower", "ve_ci95_lower"),
+            ("out_ve_ci95_upper", "ve_ci95_upper"),
+            ("out_vp_ci95_lower", "vp_ci95_lower"),
+            ("out_vp_ci95_upper", "vp_ci95_upper"),
+        ]),
+        # Tortuosity-corrected Ktrans
+        (tortuosity_corr, outputnode, [
+            ("ktrans_corrected_file", "ktrans_tortuosity_corrected"),
         ]),
         # AIF outputs
         (aif_detection, outputnode, [
@@ -1110,6 +1249,13 @@ def init_dce_preproc_wf(
             ("stats_txt", "lesion_stats_txt"),
         ]),
     ])
+
+    # Smoothing output connections (only if config.smooth > 0)
+    if smooth_pk is not None:
+        workflow.connect([
+            (smooth_pk, outputnode, [("smoothed_files", "smooth_pk_maps")]),
+            (smooth_model_free, outputnode, [("smoothed_files", "smooth_model_free_maps")]),
+        ])
 
     return workflow
 
@@ -2080,3 +2226,69 @@ def _create_dce_registration_filmstrip(
     )
 
     return str(out_path)
+
+
+def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
+    """Apply Gaussian smoothing to a dict of DCE maps.
+
+    Uses fslmaths -s for smoothing and -mas for re-masking.
+
+    Args:
+        map_files: Dict mapping map name to file path.
+        brain_mask_file: Path to brain mask for re-masking after smoothing.
+        fwhm: Smoothing FWHM in mm.
+
+    Returns:
+        Dict mapping map name to smoothed file path.
+    """
+    import subprocess
+    from pathlib import Path
+
+    from nipype.interfaces.base import isdefined
+
+    results = {}
+    if not map_files:
+        return results
+    if not brain_mask_file or not isdefined(brain_mask_file):
+        return results
+    if not Path(brain_mask_file).exists():
+        return results
+
+    sigma = fwhm / 2.355
+    for name, filepath in map_files.items():
+        if not filepath or not isdefined(filepath):
+            continue
+        if isinstance(filepath, str) and filepath in ("", "None"):
+            continue
+        if not Path(filepath).exists():
+            continue
+        out_path = str(Path.cwd() / f"{Path(filepath).stem}_fwhm{int(fwhm)}.nii.gz")
+        subprocess.run(
+            ["fslmaths", filepath, "-s", str(sigma), "-mas", brain_mask_file, out_path],
+            check=True,
+            capture_output=True,
+        )
+        results[name] = out_path
+    return results
+
+
+def _build_pk_map_dict(ktrans, ve, vp, kep):
+    """Build dictionary of PK maps for smoothing."""
+    from nipype.interfaces.base import isdefined
+
+    d = {"ktrans": ktrans, "ve": ve, "kep": kep}
+    if vp and isdefined(vp):
+        d["vp"] = vp
+    return d
+
+
+def _build_model_free_map_dict(iauc60, iauc90, iauc120, peak, ttp, ser):
+    """Build dictionary of model-free maps for smoothing."""
+    return {
+        "iauc60": iauc60,
+        "iauc90": iauc90,
+        "iauc120": iauc120,
+        "peak_enhancement": peak,
+        "time_to_peak": ttp,
+        "ser": ser,
+    }

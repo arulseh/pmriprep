@@ -174,17 +174,32 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_ve_std = File(desc="ve standard deviation map (Bayesian)")
     out_vp_std = File(desc="vp standard deviation map (Bayesian)")
 
+    # Coefficient of Variation maps (Bayesian only)
+    out_ktrans_cv = File(desc="Ktrans coefficient of variation (std/mean, Bayesian)")
+    out_ve_cv = File(desc="ve coefficient of variation (std/mean, Bayesian)")
+    out_vp_cv = File(desc="vp coefficient of variation (std/mean, Bayesian)")
+
+    # 95% Credible Interval bounds (Bayesian only)
+    out_ktrans_ci95_lower = File(desc="Ktrans 95% CI lower bound (Bayesian)")
+    out_ktrans_ci95_upper = File(desc="Ktrans 95% CI upper bound (Bayesian)")
+    out_ve_ci95_lower = File(desc="ve 95% CI lower bound (Bayesian)")
+    out_ve_ci95_upper = File(desc="ve 95% CI upper bound (Bayesian)")
+    out_vp_ci95_lower = File(desc="vp 95% CI lower bound (Bayesian)")
+    out_vp_ci95_upper = File(desc="vp 95% CI upper bound (Bayesian)")
+
     # Model-free maps
     out_iauc60 = File(desc="IAUC at 60s (mM·min)")
     out_iauc90 = File(desc="IAUC at 90s (mM·min)")
     out_iauc120 = File(desc="IAUC at 120s (mM·min)")
     out_peak_enhancement = File(desc="Peak enhancement percentage")
     out_time_to_peak = File(desc="Time to peak (seconds)")
+    out_ser = File(desc="Signal Enhancement Ratio (washout characterization)")
 
     # QC outputs
     out_quality_flag = File(desc="Quality flag map (0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty)")
     out_r2 = File(desc="R² (goodness of fit) map")
-    out_tsnr = File(desc="tSNR map")
+    out_tsnr = File(desc="tSNR map (always computed)")
+    out_qc_mask = File(desc="QC mask (1=good fit, 0=unfitted/poor)")
     out_fitted_curves = File(desc="Fitted concentration curves (if save_fitted_curves=True)")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
     constraint_qc = traits.Dict(desc="DSC CBV constraint QC report")
@@ -531,12 +546,9 @@ class ComputeDCEMaps(BaseInterface):
         if baseline_frames == 0:
             baseline_frames = self._detect_baseline_frames(conc_data, mask)
 
-        # Compute tSNR if threshold is set
+        # Always compute tSNR for QC (even if threshold is 0)
         tsnr_threshold = float(self.inputs.tsnr_threshold)
-        tsnr_map: Optional[npt.NDArray[Any]] = None
-
-        if tsnr_threshold > 0:
-            tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
+        tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
 
         # Subtract residual baseline concentration to remove T1/B1 noise bias
         baseline_mean = np.mean(conc_data[..., :baseline_frames], axis=-1, keepdims=True)
@@ -548,9 +560,9 @@ class ComputeDCEMaps(BaseInterface):
         aif = aif - aif_baseline
         aif = np.maximum(aif, 0.0)
 
-        # Create fitting mask (brain mask + tSNR threshold)
+        # Create fitting mask (brain mask + tSNR threshold if specified)
         mask_bool = mask > 0
-        if tsnr_map is not None and tsnr_threshold > 0:
+        if tsnr_threshold > 0:
             fitting_mask = mask_bool & (tsnr_map >= tsnr_threshold)
         else:
             fitting_mask = mask_bool
@@ -608,6 +620,7 @@ class ComputeDCEMaps(BaseInterface):
         from pmriprep.utils.dce_model_free import (
             compute_iauc,
             compute_peak_enhancement,
+            compute_signal_enhancement_ratio,
             compute_time_to_peak,
         )
 
@@ -616,6 +629,7 @@ class ComputeDCEMaps(BaseInterface):
         iauc120 = compute_iauc(conc_data, time_points, cutoff_s=120.0)
         peak_enh = compute_peak_enhancement(conc_data, baseline_frames)
         ttp = compute_time_to_peak(conc_data, time_points)
+        ser = compute_signal_enhancement_ratio(conc_data, time_points)
 
         # =====================================================================
         # Initialize output arrays
@@ -874,6 +888,7 @@ class ComputeDCEMaps(BaseInterface):
         out_iauc120_path = self._gen_outfilename("_IAUC120")
         out_peak_enh_path = self._gen_outfilename("_peak_enhancement")
         out_ttp_path = self._gen_outfilename("_time_to_peak")
+        out_ser_path = self._gen_outfilename("_SER")
 
         for arr, path in [
             (iauc60, out_iauc60_path),
@@ -881,6 +896,7 @@ class ComputeDCEMaps(BaseInterface):
             (iauc120, out_iauc120_path),
             (peak_enh, out_peak_enh_path),
             (ttp, out_ttp_path),
+            (ser, out_ser_path),
         ]:
             img = nib.Nifti1Image(arr.astype(np.float32), affine, header)  # type: ignore[attr-defined]
             nib.save(img, path)  # type: ignore[attr-defined]
@@ -897,6 +913,7 @@ class ComputeDCEMaps(BaseInterface):
             "out_iauc120": out_iauc120_path,
             "out_peak_enhancement": out_peak_enh_path,
             "out_time_to_peak": out_ttp_path,
+            "out_ser": out_ser_path,
             "qc_metrics": qc_metrics,
             "constraint_qc": constraint_qc,
         }
@@ -947,12 +964,82 @@ class ComputeDCEMaps(BaseInterface):
                 nib.save(vp_std_img, out_vp_std)  # type: ignore[attr-defined]
                 self._results["out_vp_std"] = out_vp_std
 
-        # Save tSNR map
-        if tsnr_map is not None and tsnr_threshold > 0:
-            out_tsnr = self._gen_outfilename("_tSNR")
-            tsnr_img = nib.Nifti1Image(tsnr_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(tsnr_img, out_tsnr)  # type: ignore[attr-defined]
-            self._results["out_tsnr"] = out_tsnr
+            # Compute and save Coefficient of Variation (CV = std / mean)
+            # Use safe division to avoid divide-by-zero
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ktrans_cv = np.where(
+                    ktrans > EPSILON_VE, ktrans_std / ktrans, 0.0
+                ).astype(np.float32)
+                ve_cv = np.where(
+                    ve > EPSILON_VE, ve_std / ve, 0.0
+                ).astype(np.float32)
+
+            out_ktrans_cv = self._gen_outfilename("_Ktrans_cv")
+            out_ve_cv = self._gen_outfilename("_ve_cv")
+
+            nib.save(nib.Nifti1Image(ktrans_cv, affine, header), out_ktrans_cv)  # type: ignore[attr-defined]
+            nib.save(nib.Nifti1Image(ve_cv, affine, header), out_ve_cv)  # type: ignore[attr-defined]
+
+            self._results["out_ktrans_cv"] = out_ktrans_cv
+            self._results["out_ve_cv"] = out_ve_cv
+
+            if self._has_vp(model_name):
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    vp_cv = np.where(
+                        vp > EPSILON_VE, vp_std / vp, 0.0
+                    ).astype(np.float32)
+                out_vp_cv = self._gen_outfilename("_vp_cv")
+                nib.save(nib.Nifti1Image(vp_cv, affine, header), out_vp_cv)  # type: ignore[attr-defined]
+                self._results["out_vp_cv"] = out_vp_cv
+
+            # Compute and save 95% Credible Intervals (mean ± 1.96 * std)
+            # Assuming approximately normal posterior (valid for MAP/MLE)
+            ktrans_ci95_lower = np.maximum(ktrans - 1.96 * ktrans_std, 0.0).astype(np.float32)
+            ktrans_ci95_upper = (ktrans + 1.96 * ktrans_std).astype(np.float32)
+            ve_ci95_lower = np.clip(ve - 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
+            ve_ci95_upper = np.clip(ve + 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
+
+            out_ktrans_ci95_lower = self._gen_outfilename("_Ktrans_ci95lower")
+            out_ktrans_ci95_upper = self._gen_outfilename("_Ktrans_ci95upper")
+            out_ve_ci95_lower = self._gen_outfilename("_ve_ci95lower")
+            out_ve_ci95_upper = self._gen_outfilename("_ve_ci95upper")
+
+            nib.save(nib.Nifti1Image(ktrans_ci95_lower, affine, header), out_ktrans_ci95_lower)  # type: ignore[attr-defined]
+            nib.save(nib.Nifti1Image(ktrans_ci95_upper, affine, header), out_ktrans_ci95_upper)  # type: ignore[attr-defined]
+            nib.save(nib.Nifti1Image(ve_ci95_lower, affine, header), out_ve_ci95_lower)  # type: ignore[attr-defined]
+            nib.save(nib.Nifti1Image(ve_ci95_upper, affine, header), out_ve_ci95_upper)  # type: ignore[attr-defined]
+
+            self._results["out_ktrans_ci95_lower"] = out_ktrans_ci95_lower
+            self._results["out_ktrans_ci95_upper"] = out_ktrans_ci95_upper
+            self._results["out_ve_ci95_lower"] = out_ve_ci95_lower
+            self._results["out_ve_ci95_upper"] = out_ve_ci95_upper
+
+            if self._has_vp(model_name):
+                vp_ci95_lower = np.clip(vp - 1.96 * vp_std, 0.0, 1.0).astype(np.float32)
+                vp_ci95_upper = np.clip(vp + 1.96 * vp_std, 0.0, 1.0).astype(np.float32)
+
+                out_vp_ci95_lower = self._gen_outfilename("_vp_ci95lower")
+                out_vp_ci95_upper = self._gen_outfilename("_vp_ci95upper")
+
+                nib.save(nib.Nifti1Image(vp_ci95_lower, affine, header), out_vp_ci95_lower)  # type: ignore[attr-defined]
+                nib.save(nib.Nifti1Image(vp_ci95_upper, affine, header), out_vp_ci95_upper)  # type: ignore[attr-defined]
+
+                self._results["out_vp_ci95_lower"] = out_vp_ci95_lower
+                self._results["out_vp_ci95_upper"] = out_vp_ci95_upper
+
+        # Save tSNR map (always computed)
+        out_tsnr = self._gen_outfilename("_tSNR")
+        tsnr_img = nib.Nifti1Image(tsnr_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+        nib.save(tsnr_img, out_tsnr)  # type: ignore[attr-defined]
+        self._results["out_tsnr"] = out_tsnr
+
+        # Create and save QC mask (1=good fit, 0=unfitted/poor)
+        # Good fit = quality_flag == 1
+        qc_mask = (quality_flag_map == 1).astype(np.uint8)
+        out_qc_mask = self._gen_outfilename("_qc_mask")
+        qc_mask_img = nib.Nifti1Image(qc_mask, affine, header)  # type: ignore[attr-defined]
+        nib.save(qc_mask_img, out_qc_mask)  # type: ignore[attr-defined]
+        self._results["out_qc_mask"] = out_qc_mask
 
         # Save fitted curves
         if save_fitted_curves and fitted_curves is not None:

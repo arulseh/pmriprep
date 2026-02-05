@@ -1478,6 +1478,18 @@ def init_pmriprep_wf(
                 ("outputnode.ve_map", "ve_map"),
                 ("outputnode.kep_map", "kep_map"),
                 ("outputnode.vp_map", "vp_map"),
+                # Model-free maps
+                ("outputnode.iauc60_map", "iauc60_map"),
+                ("outputnode.iauc90_map", "iauc90_map"),
+                ("outputnode.iauc120_map", "iauc120_map"),
+                ("outputnode.peak_enhancement_map", "peak_enhancement_map"),
+                ("outputnode.time_to_peak_map", "time_to_peak_map"),
+                ("outputnode.ser_map", "ser_map"),
+                # QC maps
+                ("outputnode.tsnr_map", "tsnr_map"),
+                ("outputnode.qc_mask", "qc_mask"),
+                ("outputnode.r2_map", "r2_map"),
+                ("outputnode.quality_flag_map", "quality_flag_map"),
                 # T1/B1 mapping
                 ("outputnode.t1_map", "t1_map"),
                 ("outputnode.b1_map", "b1_map"),
@@ -1494,6 +1506,22 @@ def init_pmriprep_wf(
                 ("outputnode.ktrans_uncertainty", "ktrans_uncertainty"),
                 ("outputnode.ve_uncertainty", "ve_uncertainty"),
                 ("outputnode.vp_uncertainty", "vp_uncertainty"),
+                # Bayesian CV maps
+                ("outputnode.ktrans_cv", "ktrans_cv"),
+                ("outputnode.ve_cv", "ve_cv"),
+                ("outputnode.vp_cv", "vp_cv"),
+                # Bayesian CI maps
+                ("outputnode.ktrans_ci95_lower", "ktrans_ci95_lower"),
+                ("outputnode.ktrans_ci95_upper", "ktrans_ci95_upper"),
+                ("outputnode.ve_ci95_lower", "ve_ci95_lower"),
+                ("outputnode.ve_ci95_upper", "ve_ci95_upper"),
+                ("outputnode.vp_ci95_lower", "vp_ci95_lower"),
+                ("outputnode.vp_ci95_upper", "vp_ci95_upper"),
+                # Tortuosity-corrected Ktrans
+                ("outputnode.ktrans_tortuosity_corrected", "ktrans_tortuosity_corrected"),
+                # Smoothed maps
+                ("outputnode.smooth_pk_maps", "smooth_pk_maps"),
+                ("outputnode.smooth_model_free_maps", "smooth_model_free_maps"),
                 # QC metrics
                 ("outputnode.qc_metrics", "qc_metrics"),
                 # QC plots

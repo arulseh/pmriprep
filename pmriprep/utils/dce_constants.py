@@ -416,3 +416,77 @@ LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
 #: Parker AIF reference relaxivity (s^-1 mM^-1) for Gd-DTPA at 1.5T.
 #: Used for relaxivity correction when contrast agent differs from original model.
 PARKER_R1_REFERENCE: Final[float] = 4.1
+
+
+# =============================================================================
+# AIF Spatial Exclusion Filters
+# =============================================================================
+#: Exclusions applied during search mask preparation to avoid venous structures.
+#: SSS (Superior Sagittal Sinus) runs midline and drains superiorly.
+
+#: Midline exclusion: fraction from center on each side (total = 2x this value).
+#: E.g., 0.10 excludes central 20% of FOV, avoiding SSS, ISS, sagittal sinus.
+MIDLINE_EXCLUSION_FRACTION: Final[float] = 0.10
+
+#: Superior exclusion: fraction of slices from top to exclude.
+#: E.g., 0.75 means exclude top 25% (z >= 0.75 * nz).
+#: Avoids cortical vein drainage zone.
+SUPERIOR_EXCLUSION_FRACTION: Final[float] = 0.75
+
+# NOTE: Posterior exclusion REMOVED - perf-plus does NOT have posterior exclusion.
+# Only midline and superior exclusions are applied. The ISS is adequately
+# excluded by the midline exclusion since it runs along the falx cerebri.
+
+
+# =============================================================================
+# AIF Timing Criterion
+# =============================================================================
+#: Arterial blood arrives BEFORE tissue enhancement.
+#: This defines minimum frames the AIF peak must precede tissue TTP.
+
+#: Number of frames AIF must peak BEFORE tissue TTP to be considered arterial.
+#: Candidates peaking at or after tissue are likely venous (SSS, etc.).
+AIF_TIMING_BEFORE_TISSUE_FRAMES: Final[int] = 2
+
+#: Fraction of acquisition for early arrival criterion (AIF should peak in first 40%).
+AIF_PEAK_TIMING_FRACTION: Final[float] = 0.4
+
+
+# =============================================================================
+# AIF FWHM Thresholds (Frame-Based, from perf-plus)
+# =============================================================================
+#: These are used in the 7-tier arterial criteria cascade.
+
+#: Strict FWHM threshold in frames (Tier 1-3).
+AIF_FWHM_MAX_STRICT_FRAMES: Final[int] = 5
+
+#: Relaxed FWHM threshold in frames (Tier 4-5).
+AIF_FWHM_MAX_RELAXED_FRAMES: Final[int] = 8
+
+#: Washout threshold for strict arterial criterion.
+AIF_WASHOUT_THRESHOLD_STRICT: Final[float] = 0.20
+
+#: Washout threshold for relaxed arterial criterion.
+AIF_WASHOUT_THRESHOLD_RELAXED: Final[float] = 0.10
+
+
+# =============================================================================
+# AIF FWHM Scoring (Gaussian-Based)
+# =============================================================================
+#: Gaussian scoring centered on ideal arterial FWHM (~3 frames for typical DCE).
+#: Venous structures have broader FWHM due to slower washout.
+
+#: Ideal FWHM in frames for arterial first-pass bolus.
+AIF_IDEAL_FWHM_FRAMES: Final[float] = 3.0
+
+#: Width parameter for Gaussian FWHM scoring.
+AIF_FWHM_SCORING_WIDTH: Final[float] = 3.0
+
+#: FWHM threshold (frames) above which structure is likely venous.
+AIF_FWHM_VENOUS_THRESHOLD_FRAMES: Final[int] = 8
+
+#: Score assigned to candidates with venous-like FWHM (> threshold).
+AIF_FWHM_VENOUS_SCORE: Final[float] = 0.2
+
+#: Score assigned to candidates with noise-like FWHM (< 0.5 frames).
+AIF_FWHM_NOISE_SCORE: Final[float] = 0.1

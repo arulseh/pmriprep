@@ -57,6 +57,38 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     ve_uncertainty = traits.Str(desc="ve uncertainty map path")
     vp_uncertainty = traits.Str(desc="vp uncertainty map path")
 
+    # Bayesian CV and CI outputs (optional)
+    ktrans_cv = traits.Str(desc="Ktrans coefficient of variation map path")
+    ve_cv = traits.Str(desc="ve coefficient of variation map path")
+    vp_cv = traits.Str(desc="vp coefficient of variation map path")
+    ktrans_ci95_lower = traits.Str(desc="Ktrans 95% CI lower bound map path")
+    ktrans_ci95_upper = traits.Str(desc="Ktrans 95% CI upper bound map path")
+    ve_ci95_lower = traits.Str(desc="ve 95% CI lower bound map path")
+    ve_ci95_upper = traits.Str(desc="ve 95% CI upper bound map path")
+    vp_ci95_lower = traits.Str(desc="vp 95% CI lower bound map path")
+    vp_ci95_upper = traits.Str(desc="vp 95% CI upper bound map path")
+
+    # Model-free maps (optional)
+    iauc60_map = traits.Str(desc="IAUC at 60s map path")
+    iauc90_map = traits.Str(desc="IAUC at 90s map path")
+    iauc120_map = traits.Str(desc="IAUC at 120s map path")
+    peak_enhancement_map = traits.Str(desc="Peak enhancement map path")
+    time_to_peak_map = traits.Str(desc="Time to peak map path")
+    ser_map = traits.Str(desc="Signal enhancement ratio map path")
+
+    # QC maps (optional)
+    tsnr_map = traits.Str(desc="tSNR map path")
+    qc_mask = traits.Str(desc="QC mask (good fit voxels) path")
+    r2_map = traits.Str(desc="R² goodness-of-fit map path")
+    quality_flag_map = traits.Str(desc="Quality flag map path")
+
+    # Tortuosity-corrected output (optional)
+    ktrans_tortuosity_corrected = traits.Str(desc="Ktrans with tortuosity correction map path")
+
+    # Smoothed maps (optional, dict of name->path)
+    smooth_pk_maps = traits.Dict(desc="Smoothed PK maps dict")
+    smooth_model_free_maps = traits.Dict(desc="Smoothed model-free maps dict")
+
     # QC metrics (optional)
     qc_metrics = traits.Dict(desc="Merged QC metrics dictionary")
 
@@ -205,6 +237,144 @@ class DCEDerivativeWriter(BaseInterface):
                 self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": description}
                 self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 3b. Coefficient of Variation maps (Bayesian inference only)
+        # -----------------------------------------------------------
+        cv_maps = {
+            "Ktrans": ("ktrans_cv", "Ktrans coefficient of variation (std/mean)"),
+            "ve": ("ve_cv", "ve coefficient of variation (std/mean)"),
+            "vp": ("vp_cv", "vp coefficient of variation (std/mean)"),
+        }
+        for map_name, (attr, description) in cv_maps.items():
+            if self._has_input(attr):
+                src = getattr(self.inputs, attr)
+                fname = f"{prefix}_{spatial}_{model_entity}_desc-cv_{map_name}"
+                self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+                sidecar = {**base_sidecar, "Description": description}
+                self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 3c. 95% Credible Interval maps (Bayesian inference only)
+        # -----------------------------------------------------------
+        ci_maps = {
+            "Ktrans": [
+                ("ktrans_ci95_lower", "Ktrans 95% credible interval lower bound"),
+                ("ktrans_ci95_upper", "Ktrans 95% credible interval upper bound"),
+            ],
+            "ve": [
+                ("ve_ci95_lower", "ve 95% credible interval lower bound"),
+                ("ve_ci95_upper", "ve 95% credible interval upper bound"),
+            ],
+            "vp": [
+                ("vp_ci95_lower", "vp 95% credible interval lower bound"),
+                ("vp_ci95_upper", "vp 95% credible interval upper bound"),
+            ],
+        }
+        for map_name, bounds in ci_maps.items():
+            for attr, description in bounds:
+                if self._has_input(attr):
+                    src = getattr(self.inputs, attr)
+                    bound_type = "ci95lower" if "lower" in attr else "ci95upper"
+                    fname = f"{prefix}_{spatial}_{model_entity}_desc-{bound_type}_{map_name}"
+                    self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+                    sidecar = {**base_sidecar, "Description": description}
+                    self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 3d. Model-free maps (IAUC, peak, TTP, SER)
+        # -----------------------------------------------------------
+        model_free_maps = {
+            "IAUC60": ("iauc60_map", "Initial Area Under Curve at 60s (mM·min)"),
+            "IAUC90": ("iauc90_map", "Initial Area Under Curve at 90s (mM·min)"),
+            "IAUC120": ("iauc120_map", "Initial Area Under Curve at 120s (mM·min)"),
+            "peak": ("peak_enhancement_map", "Peak enhancement percentage"),
+            "TTP": ("time_to_peak_map", "Time to peak (seconds)"),
+            "SER": ("ser_map", "Signal Enhancement Ratio (washout characterization)"),
+        }
+        for map_name, (attr, description) in model_free_maps.items():
+            if self._has_input(attr):
+                src = getattr(self.inputs, attr)
+                fname = f"{prefix}_{spatial}_desc-modelfree_{map_name}"
+                self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+                sidecar = {**base_sidecar, "Description": description}
+                self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 3e. QC maps (tSNR, QC mask, R², quality flag)
+        # -----------------------------------------------------------
+        if self._has_input("tsnr_map"):
+            fname = f"{prefix}_{spatial}_desc-tSNR_perfmap"
+            self._copy_nifti(self.inputs.tsnr_map, perf_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "Temporal signal-to-noise ratio"}
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        if self._has_input("qc_mask"):
+            fname = f"{prefix}_{spatial}_desc-qc_mask"
+            self._copy_nifti(self.inputs.qc_mask, perf_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "QC mask (1=good fit, 0=unfitted/poor)"}
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        if self._has_input("r2_map"):
+            fname = f"{prefix}_{spatial}_{model_entity}_desc-R2_perfmap"
+            self._copy_nifti(self.inputs.r2_map, perf_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "R² goodness of fit"}
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        if self._has_input("quality_flag_map"):
+            fname = f"{prefix}_{spatial}_{model_entity}_desc-qualityflag_perfmap"
+            self._copy_nifti(self.inputs.quality_flag_map, perf_dir / f"{fname}.nii.gz")
+            sidecar = {
+                **base_sidecar,
+                "Description": "Quality flag map (0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty)",
+            }
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 3f. Tortuosity-corrected Ktrans
+        # -----------------------------------------------------------
+        if self._has_input("ktrans_tortuosity_corrected"):
+            fname = f"{prefix}_{spatial}_{model_entity}_desc-tortuositycorr_Ktrans"
+            self._copy_nifti(self.inputs.ktrans_tortuosity_corrected, perf_dir / f"{fname}.nii.gz")
+            sidecar = {
+                **base_sidecar,
+                "Description": "Ktrans corrected for tissue tortuosity using DWI-derived ADC",
+            }
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 3g. Smoothed maps (conditional on smoothing being applied)
+        # -----------------------------------------------------------
+        smooth_pk = self.inputs.smooth_pk_maps
+        if isdefined(smooth_pk) and smooth_pk:
+            for map_name, src_path in smooth_pk.items():
+                if src_path and Path(src_path).exists():
+                    # Extract FWHM from filename (e.g., "_fwhm3.nii.gz")
+                    import re
+                    fwhm_match = re.search(r"_fwhm(\d+)", str(src_path))
+                    fwhm_str = f"fwhm{fwhm_match.group(1)}" if fwhm_match else "fwhmN"
+                    fname = f"{prefix}_{spatial}_{model_entity}_desc-{fwhm_str}_{map_name}"
+                    self._copy_nifti(src_path, perf_dir / f"{fname}.nii.gz")
+                    sidecar = {
+                        **base_sidecar,
+                        "Description": f"Smoothed {map_name} map",
+                    }
+                    self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        smooth_mf = self.inputs.smooth_model_free_maps
+        if isdefined(smooth_mf) and smooth_mf:
+            for map_name, src_path in smooth_mf.items():
+                if src_path and Path(src_path).exists():
+                    import re
+                    fwhm_match = re.search(r"_fwhm(\d+)", str(src_path))
+                    fwhm_str = f"fwhm{fwhm_match.group(1)}" if fwhm_match else "fwhmN"
+                    fname = f"{prefix}_{spatial}_desc-{fwhm_str}-modelfree_{map_name}"
+                    self._copy_nifti(src_path, perf_dir / f"{fname}.nii.gz")
+                    sidecar = {
+                        **base_sidecar,
+                        "Description": f"Smoothed model-free {map_name} map",
+                    }
+                    self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 4. T1/B1 mapping outputs

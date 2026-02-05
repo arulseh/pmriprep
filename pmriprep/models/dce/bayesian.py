@@ -349,7 +349,9 @@ class BayesianPKFitter:
     ) -> npt.NDArray[np.floating]:
         """Compute Hessian matrix using finite differences.
 
-        Uses central differences for second derivatives.
+        Uses central differences for second derivatives. When perturbations
+        push parameters into invalid regions (causing non-finite objective
+        values), falls back to using prior curvature for those entries.
 
         Args:
             params: Parameter values at which to evaluate Hessian.
@@ -385,7 +387,22 @@ class BayesianPKFitter:
                 f_mp = objective(params_mp)
                 f_mm = objective(params_mm)
 
-                hessian[i, j] = (f_pp - f_pm - f_mp + f_mm) / (4 * epsilon**2)
+                # Check for non-finite values before arithmetic
+                # This handles cases where perturbations violate constraints
+                # (e.g., ve + vp > 1.0) causing objective to return inf
+                if all(np.isfinite([f_pp, f_pm, f_mp, f_mm])):
+                    hessian[i, j] = (f_pp - f_pm - f_mp + f_mm) / (4 * epsilon**2)
+                else:
+                    # Fall back to prior curvature when perturbations hit invalid region
+                    # Use 1/prior_variance as diagonal Hessian approximation
+                    if i == j:
+                        prior_std = self.priors[i].std
+                        if prior_std > 0:
+                            hessian[i, j] = 1.0 / (prior_std**2)
+                        else:
+                            hessian[i, j] = 1.0  # Default regularization
+                    # Off-diagonal remains 0 (assumes independent parameters)
+
                 hessian[j, i] = hessian[i, j]
 
         return hessian

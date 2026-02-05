@@ -128,10 +128,12 @@ class DCEAIFQCPlot(BaseInterface):
                 qc, sub, ses, aif_location_path,
             )
 
-        self._results = {
+        self._results: dict[str, Any] = {
             "out_aif_plot": aif_plot_path,
-            "out_aif_location": aif_location_path,  # None for population AIF
         }
+        # Only include location plot if it was generated (not for population AIF)
+        if aif_location_path is not None:
+            self._results["out_aif_location"] = aif_location_path
 
         return runtime
 

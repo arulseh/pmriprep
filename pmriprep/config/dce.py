@@ -63,6 +63,8 @@ class DCEConfig:
         CBV source for DSC constraint (dsc, free).
     baseline_frames : int
         Number of baseline frames (0 = auto-detect).
+    dose : Literal["half", "full", "double"]
+        Contrast agent dose level (default: full).
     tsnr_threshold : float
         tSNR threshold for voxel inclusion (0 = no threshold).
     model : str
@@ -111,6 +113,7 @@ class DCEConfig:
     leakage: str = "none"
     cbv_source: str = "dsc"  # Use DSC CBV when available
     baseline_frames: int = 0  # 0 = auto-detect
+    dose: Literal["half", "full", "double"] = "full"
     tsnr_threshold: float = 0.0  # 0 = no threshold
 
     # Model settings

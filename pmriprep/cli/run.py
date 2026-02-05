@@ -254,6 +254,14 @@ Examples:
         help="AIF detection method for DCE (default: auto).",
     )
     dce_group.add_argument(
+        "--dce-dose",
+        "--dce_dose",
+        dest="dce_dose",
+        choices=["half", "full", "double"],
+        default="full",
+        help="Contrast agent dose for DCE (default: full).",
+    )
+    dce_group.add_argument(
         "--dce-scale-aif",
         "--dce_scale_aif",
         dest="dce_scale_aif",
