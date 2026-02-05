@@ -7,7 +7,7 @@ user-specified skip flags.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
@@ -298,11 +298,12 @@ def _find_previous_hdglio_inputs(
 
 def _read_bids_sidecar(
     nifti_path: Union[str, Path],
-) -> dict[str, Optional[float]]:
+) -> dict[str, Any]:
     """Read acquisition parameters from the BIDS sidecar JSON.
 
     Looks for the JSON sidecar corresponding to a NIfTI file and extracts
-    EchoTime, RepetitionTime, RepetitionTimeExcitation, and MagneticFieldStrength.
+    EchoTime, RepetitionTime, RepetitionTimeExcitation, MagneticFieldStrength,
+    and contrast agent information.
 
     For DCE 3D sequences, there are two different TRs:
     - Volume TR (RepetitionTime): Time between successive 3D volume acquisitions
@@ -314,21 +315,28 @@ def _read_bids_sidecar(
         nifti_path: Path to a NIfTI file (.nii.gz or .nii).
 
     Returns:
-        Dict with keys: te, tr, volume_tr, pulse_tr, field_strength, flip_angle.
+        Dict with keys: te, tr, volume_tr, pulse_tr, field_strength, flip_angle,
+        r1_relaxivity, contrast_agent.
         - tr: Pulse TR for signal equation (defaults to pulse_tr)
         - volume_tr: Volume TR for temporal resolution (model selection, time vector)
         - pulse_tr: Pulse TR for SPGR signal equation
-        Values are floats or None if not found in the sidecar.
+        - r1_relaxivity: r1 from contrast agent lookup, or None
+        - contrast_agent: Contrast agent name from DICOM, or None
+        Values are floats/str or None if not found in the sidecar.
     """
     import json
 
-    result: dict[str, Optional[float]] = {
+    from pmriprep.utils.contrast_agent import get_r1_from_sidecar_dict
+
+    result: dict[str, Any] = {
         "te": None,
         "tr": None,
         "volume_tr": None,
         "pulse_tr": None,
         "field_strength": None,
         "flip_angle": None,
+        "r1_relaxivity": None,
+        "contrast_agent": None,
     }
 
     nifti = Path(nifti_path)
@@ -365,6 +373,13 @@ def _read_bids_sidecar(
 
     if "FlipAngle" in meta:
         result["flip_angle"] = float(meta["FlipAngle"])
+
+    # Extract contrast agent r1 relaxivity from DICOM metadata
+    # This enables agent-specific r1 values (e.g., Gadovist r1=5.0 at 3T)
+    r1_info = get_r1_from_sidecar_dict(meta, result["field_strength"])
+    if r1_info["r1"] is not None:
+        result["r1_relaxivity"] = r1_info["r1"]
+        result["contrast_agent"] = r1_info["agent_name"]
 
     return result
 
@@ -1206,7 +1221,19 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
             if dce_sidecar["field_strength"] is not None:
                 dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
-                # Derive r1_relaxivity from field_strength (standard Gadolinium contrast)
+
+            # Set r1 relaxivity from contrast agent lookup or default
+            # Agent-specific r1 (e.g., Gadovist=5.0 at 3T) improves AIF accuracy
+            if dce_sidecar["r1_relaxivity"] is not None:
+                dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
+                import logging
+                logger = logging.getLogger("pmriprep.workflows")
+                logger.info(
+                    f"Using r1={dce_sidecar['r1_relaxivity']:.1f} s^-1/mM "
+                    f"for contrast agent: {dce_sidecar['contrast_agent']}"
+                )
+            elif dce_sidecar["field_strength"] is not None:
+                # Fallback to generic Gd-DTPA r1 for field strength
                 from pmriprep.utils.dce_constants import get_r1_relaxivity
                 dce_wf.inputs.inputnode.r1_relaxivity = get_r1_relaxivity(
                     dce_sidecar["field_strength"]

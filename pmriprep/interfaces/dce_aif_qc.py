@@ -35,8 +35,8 @@ class DCEAIFQCPlotInputSpec(BaseInterfaceInputSpec):
     )
     aif_mask_file = File(
         exists=True,
-        mandatory=True,
-        desc="3D AIF voxel mask NIfTI",
+        mandatory=False,
+        desc="3D AIF voxel mask NIfTI (not provided for population AIF)",
     )
     dce_file = File(
         exists=True,
@@ -73,7 +73,7 @@ class DCEAIFQCPlotOutputSpec(TraitedSpec):
     """Output specification for DCEAIFQCPlot interface."""
 
     out_aif_plot = File(exists=True, desc="AIF curve QC plot PNG")
-    out_aif_location = File(exists=True, desc="AIF location overlay PNG")
+    out_aif_location = File(desc="AIF location overlay PNG (None for population AIF)")
 
 
 class DCEAIFQCPlot(BaseInterface):
@@ -92,8 +92,6 @@ class DCEAIFQCPlot(BaseInterface):
 
         # Load data
         aif_curve = np.loadtxt(self.inputs.aif_curve_file)
-        aif_mask_img = nib.load(self.inputs.aif_mask_file)
-        aif_mask = aif_mask_img.get_fdata()  # type: ignore[attr-defined]
 
         dce_img = nib.load(self.inputs.dce_file)
         dce_data = dce_img.get_fdata()  # type: ignore[attr-defined]
@@ -107,30 +105,38 @@ class DCEAIFQCPlot(BaseInterface):
         qc = self.inputs.qc_metrics if isdefined(self.inputs.qc_metrics) else {}
         sub = self.inputs.subject_id or ""
         ses = self.inputs.session_id or ""
+        detection_method = qc.get("detection_method", "unknown")
 
         # Generate plots
         out_dir = Path.cwd()
 
+        # Always generate curve plot
         aif_plot_path = str(out_dir / "aif_curve_qc.png")
         self._plot_aif_curve(
             aif_curve, tr, qc, sub, ses, aif_plot_path,
         )
 
-        aif_location_path = str(out_dir / "aif_location_qc.png")
-        self._plot_aif_location(
-            dce_data, aif_mask, brain_mask, voxel_sizes,
-            qc, sub, ses, aif_location_path,
-        )
+        # Only generate location plot if voxel-based detection was used
+        aif_location_path: str | None = None
+        if detection_method != "population" and isdefined(self.inputs.aif_mask_file):
+            aif_mask_img = nib.load(self.inputs.aif_mask_file)
+            aif_mask = aif_mask_img.get_fdata()  # type: ignore[attr-defined]
+
+            aif_location_path = str(out_dir / "aif_location_qc.png")
+            self._plot_aif_location(
+                dce_data, aif_mask, brain_mask, voxel_sizes,
+                qc, sub, ses, aif_location_path,
+            )
 
         self._results = {
             "out_aif_plot": aif_plot_path,
-            "out_aif_location": aif_location_path,
+            "out_aif_location": aif_location_path,  # None for population AIF
         }
 
         return runtime
 
-    def _list_outputs(self) -> dict[str, Any]:
-        outputs = self.output_spec().get()  # type: ignore[misc]
+    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
         if hasattr(self, "_results"):
             outputs.update(self._results)
         return outputs

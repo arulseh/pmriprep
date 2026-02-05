@@ -39,6 +39,9 @@ def detect_bolus_arrival_time(
     2. Gradient: first time the derivative exceeds 3*std(derivative_baseline)
     3. Default: 10% of total acquisition time
 
+    Uses adaptive baseline frame count (perf-plus style) and MAD-based outlier
+    detection to handle frame 0 artifacts.
+
     Args:
         curve: 1D concentration time course (mM).
         time_points: 1D time array in minutes.
@@ -61,13 +64,29 @@ def detect_bolus_arrival_time(
     peak_idx = int(np.argmax(curve))
     peak_seconds = float(time_sec[peak_idx])
 
-    baseline = curve[:baseline_frames]
+    # Adaptive baseline frame count (perf-plus style)
+    n_baseline = min(baseline_frames, n // 4)
+    n_baseline = max(2, n_baseline)
+
+    baseline = curve[:n_baseline]
+
+    # Outlier detection using MAD (robust to artifacts like frame 0 spikes)
+    # MAD = median absolute deviation, converted to std-equivalent via 1.4826
+    median_bl = np.median(baseline)
+    mad = np.median(np.abs(baseline - median_bl))
+    if mad > 1e-9:
+        z_scores = np.abs(baseline - median_bl) / (1.4826 * mad)
+        valid_mask = z_scores < 3.0
+        if np.sum(valid_mask) >= 2:
+            baseline = baseline[valid_mask]
+
     bl_mean = float(np.mean(baseline))
     bl_std = float(np.std(baseline))
 
     # Method 1: Threshold detection
+    # Start search after baseline frames (use n_baseline for consistency)
     threshold = bl_mean + 3.0 * max(bl_std, 1e-9)
-    for i in range(baseline_frames, n):
+    for i in range(n_baseline, n):
         if curve[i] > threshold:
             return BATResult(
                 bat_seconds=float(time_sec[i]),
@@ -77,15 +96,15 @@ def detect_bolus_arrival_time(
             )
 
     # Method 2: Gradient detection
-    if n > baseline_frames + 1:
+    if n > n_baseline + 1:
         dt = float(time_sec[1] - time_sec[0])
         if dt > 0:
             gradient = np.diff(curve) / dt
-            grad_baseline = gradient[:max(baseline_frames - 1, 1)]
+            grad_baseline = gradient[:max(n_baseline - 1, 1)]
             grad_std = float(np.std(grad_baseline))
             grad_threshold = 3.0 * max(grad_std, 1e-9)
 
-            for i in range(baseline_frames, len(gradient)):
+            for i in range(n_baseline, len(gradient)):
                 if gradient[i] > grad_threshold:
                     return BATResult(
                         bat_seconds=float(time_sec[i]),

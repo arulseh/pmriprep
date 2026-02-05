@@ -89,6 +89,11 @@ def parker_population_aif(
 ) -> npt.NDArray[Any]:
     """Generate Parker population AIF.
 
+    Uses normalized Gaussian components where A1/A2 are areas (mM·min) under
+    the Gaussian curves. Dividing by (sigma * sqrt(2*pi)) converts these to
+    peak amplitudes, producing ~6 mM peak for full dose (0.1 mmol/kg), which
+    matches Parker et al. 2006 reported values (6.3 ± 1.5 mM).
+
     Args:
         t: Time array in seconds.
         dose_factor: Scaling factor for dose (1.0 = full dose 0.1 mmol/kg,
@@ -118,16 +123,20 @@ def parker_population_aif(
     # Get parameters
     p = ParkerAIFParams()
 
-    # First Gaussian component
-    g1 = p.A1 * np.exp(-((t_min - p.T1) ** 2) / (2 * p.sigma1**2))
+    # Normalized Gaussians: A1/A2 are areas (mM·min), not peak amplitudes
+    # Dividing by (sigma * sqrt(2*pi)) converts area to peak amplitude in mM
+    # This produces ~6 mM peak for full dose, matching Parker et al. reported values
+    norm1 = p.sigma1 * np.sqrt(2.0 * np.pi)
+    g1 = (p.A1 / norm1) * np.exp(-((t_min - p.T1) ** 2) / (2 * p.sigma1**2))
 
-    # Second Gaussian component
-    g2 = p.A2 * np.exp(-((t_min - p.T2) ** 2) / (2 * p.sigma2**2))
+    norm2 = p.sigma2 * np.sqrt(2.0 * np.pi)
+    g2 = (p.A2 / norm2) * np.exp(-((t_min - p.T2) ** 2) / (2 * p.sigma2**2))
 
     # Exponential tail with sigmoid onset
     # exp_tail = alpha * exp(-beta * t) / (1 + exp(-s * (t - tau)))
+    # Use maximum(t_min, 0) to avoid issues with negative time
     sigmoid = 1.0 / (1.0 + np.exp(-p.s * (t_min - p.tau)))
-    exp_tail = p.alpha * np.exp(-p.beta * t_min) * sigmoid
+    exp_tail = p.alpha * np.exp(-p.beta * np.maximum(t_min, 0.0)) * sigmoid
 
     # Total AIF
     aif = (g1 + g2 + exp_tail) * effective_factor
@@ -135,7 +144,7 @@ def parker_population_aif(
     # Ensure non-negative
     aif = np.maximum(aif, 0.0)
 
-    return aif
+    return np.asarray(aif)
 
 
 # =============================================================================
@@ -439,7 +448,7 @@ class DCEAIFDetectionOutputSpec(TraitedSpec):
     """Output specification for DCE AIFDetection interface."""
 
     out_aif_curve = File(exists=True, desc="AIF curve as 1D text file")
-    out_aif_mask = File(exists=True, desc="AIF voxel mask NIfTI")
+    out_aif_mask = File(desc="AIF voxel mask NIfTI (None for population AIF)")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values (mM)")
     detection_method = traits.Str(
         desc="Detection method used: 'atlas', 'automatic', 'population'"
@@ -787,7 +796,7 @@ class AIFDetection(BaseInterface):
                 )
                 search_mask[lesion_distance_map < lesion_distance_mm] = 0
 
-        return search_mask
+        return np.asarray(search_mask)
 
     # -----------------------------------------------------------------
     # Contralateral Hemisphere Preference (Phase 6)
@@ -1135,7 +1144,7 @@ class AIFDetection(BaseInterface):
             fwhm_vals = [
                 metrics_list[i].get("fwhm_seconds", 30.0) for i in cluster_indices
             ]
-            mean_fwhm = np.mean(fwhm_vals)
+            mean_fwhm = float(np.mean(fwhm_vals))
             fwhm_score = max(0.0, 1.0 - mean_fwhm / 30.0)
 
             # Washout score: prefer high washout (arterial)
@@ -1536,7 +1545,7 @@ class AIFDetection(BaseInterface):
         blood_t1 = get_blood_t1(field_strength)
 
         # Voxel sizes from header
-        voxel_sizes = tuple(float(v) for v in header.get_zooms()[:3])
+        voxel_sizes = tuple(float(v) for v in header.get_zooms()[:3])  # type: ignore[attr-defined]
 
         # Initialize results
         detection_method: Literal["atlas", "automatic", "population"] = "population"
@@ -1650,21 +1659,47 @@ class AIFDetection(BaseInterface):
             ])
             # time_points in minutes for BAT detection
             t_min = t / 60.0
+
+            # Use adaptive baseline (perf-plus style) for BAT detection
+            adaptive_baseline = min(baseline_frames, n_timepoints // 4)
+            adaptive_baseline = max(2, adaptive_baseline)
+
             bat_result = detect_bolus_arrival_time(
-                global_curve, t_min, baseline_frames
+                global_curve, t_min, adaptive_baseline
             )
 
             # Time-shift Parker AIF to align with detected BAT
             bat_shift = bat_result.bat_seconds
             t_shifted = t - bat_shift
-            t_shifted = np.maximum(t_shifted, 0.0)
 
             # Apply relaxivity correction for non-standard agents
             r1_arg: float | None = None
             if r1_relaxivity > 0:
                 r1_arg = r1_relaxivity
 
-            aif_curve = parker_population_aif(t_shifted, dose_factor, r1_actual=r1_arg)
+            # Generate Parker AIF with shifted time (use max(0) internally)
+            t_for_parker = np.maximum(t_shifted, 0.0)
+            aif_curve = parker_population_aif(t_for_parker, dose_factor, r1_actual=r1_arg)
+
+            # Zero out pre-bolus values (where t_shifted < 0)
+            # Use small positive value (1e-6) to avoid log(0) issues downstream
+            aif_curve = np.where(t_shifted < 0, 1e-6, aif_curve)
+
+            # Sanity check: population AIF must have proper peak
+            # If BAT shift clipped the AIF too early, regenerate without shift
+            pop_peak = float(np.max(aif_curve))
+            expected_min_peak = 2.5 * dose_factor  # ~2.5 mM minimum for full dose
+            bat_override = False
+            original_bat_seconds = bat_result.bat_seconds
+
+            if pop_peak < expected_min_peak:
+                # BAT shift is wrong - regenerate without shift
+                t_unshifted = np.arange(n_timepoints) * tr
+                aif_curve = parker_population_aif(
+                    t_unshifted, dose_factor, r1_actual=r1_arg
+                )
+                bat_override = True
+
             detection_method = "population"
             quality_score = 0.5  # Moderate score for population AIF
 
@@ -1676,6 +1711,9 @@ class AIFDetection(BaseInterface):
                 "bat_method": bat_result.method,
                 "bat_confidence": bat_result.confidence,
             }
+            if bat_override:
+                qc_metrics["bat_override"] = True
+                qc_metrics["original_bat_seconds"] = original_bat_seconds
 
         # Apply AIF scaling if requested
         if scale_aif and detection_method != "population":
@@ -1715,14 +1753,17 @@ class AIFDetection(BaseInterface):
         out_aif_curve = self._gen_outfilename("_dce_aif_curve.txt")
         np.savetxt(out_aif_curve, aif_curve)
 
-        out_aif_mask = self._gen_outfilename("_dce_aif_mask.nii.gz")
-        mask_img = nib.Nifti1Image(aif_mask, affine)  # type: ignore[attr-defined]
-        nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
+        # Only save AIF mask for voxel-based detection (not population AIF)
+        out_aif_mask: str | None = None
+        if detection_method != "population" and np.any(aif_mask > 0):
+            out_aif_mask = self._gen_outfilename("_dce_aif_mask.nii.gz")
+            mask_img = nib.Nifti1Image(aif_mask, affine)  # type: ignore[attr-defined]
+            nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
 
         # Store results for _list_outputs
         self._results = {
             "out_aif_curve": out_aif_curve,
-            "out_aif_mask": out_aif_mask,
+            "out_aif_mask": out_aif_mask,  # None for population AIF
             "aif_curve": [float(x) for x in aif_curve],
             "detection_method": detection_method,
             "quality_score": quality_score,
