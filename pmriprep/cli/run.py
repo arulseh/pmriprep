@@ -293,6 +293,15 @@ Examples:
         default=False,
         help="Enable GPU acceleration for DCE processing.",
     )
+    dce_group.add_argument(
+        "--hdbet-device",
+        "--hdbet_device",
+        dest="hdbet_device",
+        choices=["auto", "cuda", "mps", "cpu"],
+        default="auto",
+        help="Device for HD-BET brain extraction (default: auto). "
+        "Use 'mps' for Mac GPU, 'cuda' for NVIDIA GPU, 'cpu' for CPU-only.",
+    )
 
     # Anatomical options
     anat_group = parser.add_argument_group(

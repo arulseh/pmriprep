@@ -136,6 +136,7 @@ def merge_cli_config(
         "dce_no_t1": ("dce", "no_t1"),
         "dce_use_gpu": ("dce", "use_gpu"),
         "dce_dose": ("dce", "dose"),
+        "hdbet_device": ("dce", "hdbet_device"),
         # Anatomical options
         "brain_extraction_tool": ("anat", "tool"),
         "denoise": ("anat", "denoise"),

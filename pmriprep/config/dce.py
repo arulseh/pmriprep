@@ -77,6 +77,8 @@ class DCEConfig:
         Number of parallel processes (0 = use system default).
     use_gpu : bool
         Enable GPU acceleration.
+    hdbet_device : str
+        Device for HD-BET brain extraction: auto, cuda, mps, or cpu.
     """
 
     # Registration settings
@@ -128,6 +130,7 @@ class DCEConfig:
     # Resource settings
     num_processes: int = 0  # 0 = use system default
     use_gpu: bool = False
+    hdbet_device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
 
     def __post_init__(self):
         """Ensure numeric fields have correct types after initialization.

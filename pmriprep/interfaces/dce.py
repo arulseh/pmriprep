@@ -1783,6 +1783,7 @@ class DCEPreprocessOutputSpec(TraitedSpec):
     out_file = File(exists=True, desc="Motion-corrected 4D DCE image")
     out_params = File(exists=True, desc="Motion parameters file (.par)")
     mean_img = File(exists=True, desc="Mean image of motion-corrected data")
+    baseline_mean_img = File(exists=True, desc="Mean of baseline (pre-contrast) frames")
     baseline_frames = traits.Int(desc="Number of detected/specified baseline frames")
     baseline_indices = traits.List(traits.Int, desc="List of baseline frame indices")
     bolus_arrival_frame = traits.Int(desc="Detected bolus arrival frame index")
@@ -2105,10 +2106,23 @@ class DCEPreprocess(SimpleInterface):
                 f"Failed to create mean image at: {mean_out}"
             )
 
+        # Save baseline mean for downstream use (HD-BET input)
+        # Using pre-contrast baseline mean avoids contrast-enhanced vessels
+        # inflating the brain mask
+        baseline_mean_out = self._gen_baseline_mean_filename()
+        baseline_data = np.mean(moco_data[..., :baseline_frames], axis=3)
+        baseline_nii = nib.Nifti1Image(
+            baseline_data.astype(np.float32),
+            moco_img.affine,  # type: ignore[attr-defined]
+            moco_img.header,  # type: ignore[attr-defined]
+        )
+        nib.save(baseline_nii, baseline_mean_out)
+
         # Set outputs
         self._results["out_file"] = out_file
         self._results["out_params"] = params_file
         self._results["mean_img"] = mean_out
+        self._results["baseline_mean_img"] = baseline_mean_out
         self._results["baseline_frames"] = baseline_frames
         self._results["baseline_indices"] = baseline_indices
         self._results["bolus_arrival_frame"] = bolus_frame
@@ -2320,6 +2334,21 @@ class DCEPreprocess(SimpleInterface):
 
         return str(out_file.parent / f"{base}_mean_reg{ext}")
 
+    def _gen_baseline_mean_filename(self) -> str:
+        """Generate baseline mean image filename."""
+        out_file = Path(self._gen_outfilename())
+        if out_file.name.endswith(".nii.gz"):
+            base = out_file.name[:-7]
+            ext = ".nii.gz"
+        elif out_file.name.endswith(".nii"):
+            base = out_file.stem
+            ext = ".nii"
+        else:
+            base = out_file.stem
+            ext = out_file.suffix
+
+        return str(out_file.parent / f"{base}_baseline_mean{ext}")
+
 
 # =============================================================================
 # DCE Brain Extraction Interface
@@ -2362,6 +2391,14 @@ class DCEBrainExtractInputSpec(BaseInterfaceInputSpec):
         True,
         usedefault=True,
         desc="Fill holes in the brain mask (default: True)",
+    )
+    hdbet_device = traits.Enum(
+        "auto",
+        "cuda",
+        "mps",
+        "cpu",
+        usedefault=True,
+        desc="Device for HD-BET: auto, cuda, mps, or cpu (default: auto)",
     )
 
 
@@ -2498,20 +2535,23 @@ class DCEBrainExtract(SimpleInterface):
         """Run HD-BET brain extraction via conda environment."""
         import subprocess
 
-        # HD-BET outputs to <output>_bet.nii.gz and <output>_bet_mask.nii.gz
-        # We need to rename them
-        hdbet_out = str(Path(out_brain).with_suffix("").with_suffix(""))
-        if hdbet_out.endswith("_brain"):
-            hdbet_out = hdbet_out[:-6]
+        # HD-BET requires output to end with .nii.gz
+        # It creates <output>.nii.gz (brain) and <output>_mask.nii.gz (mask)
+        hdbet_out = out_brain  # Already ends with .nii.gz
+
+        # Get device setting
+        device = self.inputs.hdbet_device
+        if device == "auto":
+            # Auto-detect: try cuda first, then mps, then cpu
+            device = self._detect_hdbet_device()
 
         cmd = [
             "conda", "run", "-n", "hdbet-env",
             "hd-bet",
             "-i", str(dce_mean),
             "-o", hdbet_out,
-            "-device", "cpu",  # Use CPU (GPU may not be available)
-            "-mode", "fast",   # Fast mode for efficiency
-            "-tta", "0",       # No test-time augmentation
+            "-device", device,
+            "--disable_tta",
         ]
 
         try:
@@ -2524,27 +2564,18 @@ class DCEBrainExtract(SimpleInterface):
             )
             logger.info("HD-BET completed successfully")
 
-            # HD-BET outputs: <basename>.nii.gz (brain) and <basename>_mask.nii.gz
-            hdbet_brain = Path(hdbet_out + ".nii.gz")
-            hdbet_mask = Path(hdbet_out + "_mask.nii.gz")
-
-            # Also check alternative naming
-            if not hdbet_brain.exists():
-                hdbet_brain = Path(hdbet_out + "_bet.nii.gz")
-            if not hdbet_mask.exists():
-                hdbet_mask = Path(hdbet_out + "_bet_mask.nii.gz")
-
-            if hdbet_brain.exists():
-                shutil.copy(str(hdbet_brain), out_brain)
-            else:
-                # Create brain from mask
-                self._apply_mask(str(dce_mean), str(hdbet_mask), out_brain)
-
-            if hdbet_mask.exists():
-                shutil.copy(str(hdbet_mask), out_mask)
-            else:
-                logger.warning("HD-BET mask not found at expected location")
+            # HD-BET writes brain-extracted image directly to out_brain
+            if not Path(out_brain).exists():
+                logger.warning("HD-BET brain not found at expected location")
                 return False
+
+            # Derive mask by binarizing the brain-extracted output
+            import nibabel as nib
+            brain_img = nib.load(out_brain)
+            brain_data = brain_img.get_fdata()
+            mask_data = (brain_data > 0).astype(np.uint8)
+            mask_img = nib.Nifti1Image(mask_data, brain_img.affine, brain_img.header)
+            nib.save(mask_img, out_mask)
 
             return True
 
@@ -2557,6 +2588,36 @@ class DCEBrainExtract(SimpleInterface):
         except FileNotFoundError:
             logger.warning("conda or hdbet-env not available")
             return False
+
+    def _detect_hdbet_device(self) -> str:
+        """Auto-detect best device for HD-BET.
+
+        Returns
+        -------
+        str
+            Device name: 'cuda', 'mps', or 'cpu'.
+        """
+        import sys
+
+        # Try to detect available devices
+        try:
+            import torch
+            if torch.cuda.is_available():
+                logger.info("HD-BET: CUDA GPU detected")
+                return "cuda"
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                logger.info("HD-BET: Apple MPS detected")
+                return "mps"
+        except ImportError:
+            pass
+
+        # Fallback: check platform for macOS (likely has MPS)
+        if sys.platform == "darwin":
+            logger.info("HD-BET: macOS detected, trying MPS")
+            return "mps"
+
+        logger.info("HD-BET: No GPU detected, using CPU")
+        return "cpu"
 
     def _run_bet(self, dce_mean: Path, out_brain: str, out_mask: str) -> bool:
         """Run FSL BET brain extraction."""

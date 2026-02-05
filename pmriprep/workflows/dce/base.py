@@ -506,12 +506,13 @@ def init_dce_preproc_wf(
             method="hdbet",  # Prefer HD-BET, fallback to BET
             bet_frac=0.3,    # Lower threshold for DCE contrast
             fill_holes=True,
+            hdbet_device=config.hdbet_device,
         ),
         name="dce_brain_extract",
     )
 
     workflow.connect([
-        (dce_preprocess, dce_brain_extract, [("mean_img", "dce_mean")]),
+        (dce_preprocess, dce_brain_extract, [("baseline_mean_img", "dce_mean")]),
     ])
 
     # ==========================================================================
@@ -534,8 +535,8 @@ def init_dce_preproc_wf(
             ("brain_mask", "brain_mask"),
             ("wm_probseg", "wm_seg"),  # For BBR mode
         ]),
-        (dce_preprocess, dce_registration, [
-            ("mean_img", "dce_mean"),
+        (dce_brain_extract, dce_registration, [
+            ("out_brain", "dce_mean"),  # Brain-extracted baseline mean
         ]),
     ])
 
