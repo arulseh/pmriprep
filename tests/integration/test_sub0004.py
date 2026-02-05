@@ -26,6 +26,9 @@ from tests.integration.test_ground_truth import (
     load_ground_truth_map,
 )
 
+# PMRIPrep test outputs directory
+PMRIPREP_TEST_OUTPUTS = Path(__file__).parent.parent.parent / "test_outputs"
+
 # Subject-specific configuration
 SUBJECT = "sub-0004"
 SESSION = "ses-0001"
@@ -67,11 +70,93 @@ DCE_CONFIG: Dict[str, Any] = {
 EXPECTED_DSC_OUTPUTS = ["cbf", "cbv", "mtt", "tmax", "k2"]
 EXPECTED_DCE_OUTPUTS = ["Ktrans", "ve", "vp", "kep"]
 
+# Specific file patterns for PMRIPrep outputs to avoid ambiguous matches
+# (e.g., avoid matching ncbf when looking for cbf)
+DSC_OUTPUT_PATTERNS: Dict[str, List[str]] = {
+    "cbf": ["*desc-rel_cbf.nii*", "*_cbf.nii*"],
+    "cbv": ["*desc-rel_cbv.nii*", "*_cbv.nii*"],
+    "mtt": ["*desc-dscproc_mtt.nii*", "*_mtt.nii*"],
+    "tmax": ["*desc-dscproc_tmax.nii*", "*_tmax.nii*"],
+    "k2": ["*desc-dscproc_k2.nii*", "*_k2.nii*"],
+}
+
+# DCE output patterns - prefer model-specific with underscore separator
+# IMPORTANT: Patterns must match base parameter maps, not uncertainty variants (Std, CV, CI95)
+DCE_OUTPUT_PATTERNS: Dict[str, List[str]] = {
+    "Ktrans": [
+        "*model-extended_tofts_Ktrans.nii*",  # PMRIPrep output (model-extended_tofts)
+    ],
+    "ve": [
+        "*model-extended_tofts_ve.nii*",  # PMRIPrep output
+    ],
+    "vp": [
+        "*model-extended_tofts_vp.nii*",  # PMRIPrep output
+    ],
+    "kep": [
+        "*model-extended_tofts_kep.nii*",  # PMRIPrep output
+    ],
+}
+
+# Ground truth DCE patterns - use model-ExtTofts with desc-vpDSCmod
+# CRITICAL: Match only the base maps, not uncertainty maps like Std, CV, CI95lower, CI95upper
+DCE_GT_PATTERNS: Dict[str, List[str]] = {
+    "Ktrans": [
+        "*model-ExtTofts_desc-vpDSCmod_Ktrans.nii*",  # GT uses ExtTofts, not extended_tofts
+    ],
+    "ve": [
+        "*model-ExtTofts_desc-vpDSCmod_ve.nii*",
+    ],
+    "vp": [
+        "*model-ExtTofts_desc-vpDSCmod_vp.nii*",
+    ],
+    "kep": [
+        "*model-ExtTofts_desc-vpDSCmod_kep.nii*",
+    ],
+}
+
+
+def find_pmriprep_output(
+    output_dir: Path, output_name: str, patterns: Dict[str, List[str]]
+) -> Optional[Path]:
+    """Find PMRIPrep output file using specific patterns to avoid ambiguous matches."""
+    if output_name in patterns:
+        for pattern in patterns[output_name]:
+            matches = list(output_dir.glob(pattern))
+            if matches:
+                return matches[0]
+    # Fallback to generic pattern
+    generic_matches = list(output_dir.glob(f"*_{output_name}.nii*"))
+    if generic_matches:
+        return generic_matches[0]
+    return None
+
+
+def find_ground_truth_file_with_patterns(
+    gt_dir: Path, output_name: str, patterns: Dict[str, List[str]]
+) -> Optional[Path]:
+    """Find ground truth file using specific patterns to avoid ambiguous matches.
+
+    This is used for DCE outputs where generic patterns might match uncertainty
+    maps (Std, CV, CI95lower, CI95upper) instead of the actual parameter maps.
+    """
+    perf_dir = gt_dir / "perf"
+    if not perf_dir.exists():
+        perf_dir = gt_dir
+
+    if output_name in patterns:
+        for pattern in patterns[output_name]:
+            matches = list(perf_dir.glob(pattern))
+            if matches:
+                return matches[0]
+    return None
+
 
 @pytest.fixture
 def subject_ground_truth_dir() -> Optional[Path]:
     """Get the ground truth directory for this subject."""
-    return find_ground_truth_directory(SUBJECT, SESSION, PERF_PLUS_DERIVATIVES)
+    return find_ground_truth_directory(
+        SUBJECT, SESSION, pipeline="dsc_pipeline", derivatives_base=PERF_PLUS_DERIVATIVES
+    )
 
 
 @pytest.fixture
@@ -119,7 +204,6 @@ class TestSub0004Ses0001:
         output_name: str,
         subject_ground_truth_dir: Optional[Path],
         subject_brain_mask: Optional[Path],
-        tmp_path: Path,
     ) -> None:
         """Test DSC output against ground truth."""
         if subject_ground_truth_dir is None:
@@ -131,20 +215,21 @@ class TestSub0004Ses0001:
         if gt_path is None:
             pytest.skip(f"Ground truth not found for DSC {output_name}")
 
-        pmriprep_derivatives = tmp_path / "pmriprep"
-        pmriprep_output = pmriprep_derivatives / SUBJECT / SESSION / "perf"
+        pmriprep_output_dir = PMRIPREP_TEST_OUTPUTS / "dsc_pipeline" / SUBJECT / SESSION / "perf"
 
-        if not pmriprep_output.exists():
+        if not pmriprep_output_dir.exists():
             pytest.skip(
                 f"PMRIPrep outputs not available for {SUBJECT}/{SESSION}"
             )
 
-        pmriprep_files = list(pmriprep_output.glob(f"*{output_name}*.nii*"))
-        if not pmriprep_files:
+        pmriprep_file = find_pmriprep_output(
+            pmriprep_output_dir, output_name, DSC_OUTPUT_PATTERNS
+        )
+        if pmriprep_file is None:
             pytest.fail(f"PMRIPrep output not found for {output_name}")
 
         result = compare_output_files(
-            pmriprep_files[0],
+            pmriprep_file,
             gt_path,
             f"dsc_{output_name}",
             is_mask=False,
@@ -162,36 +247,50 @@ class TestSub0004Ses0001:
         output_name: str,
         subject_ground_truth_dir: Optional[Path],
         subject_brain_mask: Optional[Path],
-        tmp_path: Path,
     ) -> None:
         """Test DCE output against ground truth."""
         if subject_ground_truth_dir is None:
             pytest.skip(f"Ground truth not found for {SUBJECT}/{SESSION}")
 
-        gt_data, gt_path = load_ground_truth_map(
-            SUBJECT, SESSION, output_name, "dce", PERF_PLUS_DERIVATIVES
+        # Find DCE ground truth directory
+        dce_gt_dir = find_ground_truth_directory(
+            SUBJECT, SESSION, pipeline="dce_pipeline", derivatives_base=PERF_PLUS_DERIVATIVES
         )
+        if dce_gt_dir is None:
+            pytest.skip(f"DCE ground truth not found for {SUBJECT}/{SESSION}")
+
+        # Use pattern-based GT file finding to avoid matching uncertainty maps
+        gt_path = find_ground_truth_file_with_patterns(
+            dce_gt_dir, output_name, DCE_GT_PATTERNS
+        )
+        if gt_path is None:
+            # Fall back to generic load if specific patterns don't match
+            _, gt_path = load_ground_truth_map(
+                SUBJECT, SESSION, output_name, "dce", PERF_PLUS_DERIVATIVES
+            )
         if gt_path is None:
             pytest.skip(f"Ground truth not found for DCE {output_name}")
 
-        pmriprep_derivatives = tmp_path / "pmriprep"
-        pmriprep_output = pmriprep_derivatives / SUBJECT / SESSION / "perf"
+        pmriprep_output_dir = PMRIPREP_TEST_OUTPUTS / "dce_pipeline" / SUBJECT / SESSION / "perf"
 
-        if not pmriprep_output.exists():
+        if not pmriprep_output_dir.exists():
             pytest.skip(
                 f"PMRIPrep outputs not available for {SUBJECT}/{SESSION}"
             )
 
-        pmriprep_files = list(pmriprep_output.glob(f"*{output_name}*.nii*"))
-        if not pmriprep_files:
+        pmriprep_file = find_pmriprep_output(
+            pmriprep_output_dir, output_name, DCE_OUTPUT_PATTERNS
+        )
+        if pmriprep_file is None:
             pytest.fail(f"PMRIPrep output not found for {output_name}")
 
+        # DCE images may be in different space than DSC mask, skip masking if shapes mismatch
         result = compare_output_files(
-            pmriprep_files[0],
+            pmriprep_file,
             gt_path,
             f"dce_{output_name}",
             is_mask=False,
-            mask_path=subject_brain_mask,
+            mask_path=None,  # Skip masking for DCE (different resolution)
         )
 
         assert result.passed, (

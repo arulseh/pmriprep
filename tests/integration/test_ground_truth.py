@@ -317,6 +317,39 @@ def find_ground_truth_file(
         "tsnr": [
             f"*desc-dscproc_tsnr.nii.gz",  # Temporal SNR
         ],
+        # DCE outputs - prefer model-specific patterns with vpDSCmod or vpFit descriptor
+        # IMPORTANT: Use specific patterns to avoid matching uncertainty maps (Std, CV, CI95)
+        # Different models use different naming conventions:
+        # - ExtTofts/Tofts: model-ExtTofts_desc-vpDSCmod_* or model-Tofts_desc-vpDSCmod_*
+        # - 2CXM: model-2CXM_desc-vpFit_*
+        # - Patlak: model-Patlak_desc-vpFit_*
+        "ktrans": [
+            f"*model-ExtTofts_desc-vpDSCmod_Ktrans.nii.gz",  # Extended Tofts
+            f"*model-Tofts_desc-vpDSCmod_Ktrans.nii.gz",  # Standard Tofts
+            f"*model-2CXM_desc-vpFit_Ktrans.nii.gz",  # 2CXM model
+            f"*model-Patlak_desc-vpFit_Ktrans.nii.gz",  # Patlak model
+        ],
+        "ve": [
+            f"*model-ExtTofts_desc-vpDSCmod_ve.nii.gz",  # Extended Tofts
+            f"*model-Tofts_desc-vpDSCmod_ve.nii.gz",  # Standard Tofts
+            f"*model-2CXM_desc-vpFit_ve.nii.gz",  # 2CXM model
+        ],
+        "vp": [
+            f"*model-ExtTofts_desc-vpDSCmod_vp.nii.gz",  # Extended Tofts
+            f"*model-2CXM_desc-vpFit_vp.nii.gz",  # 2CXM model
+            f"*model-Patlak_desc-vpFit_vp.nii.gz",  # Patlak model
+        ],
+        "kep": [
+            f"*model-ExtTofts_desc-vpDSCmod_kep.nii.gz",  # Extended Tofts
+            f"*model-Tofts_desc-vpDSCmod_kep.nii.gz",  # Standard Tofts
+        ],
+        # 2CXM-specific parameters
+        "fp": [
+            f"*model-2CXM_desc-vpFit_Fp.nii.gz",  # 2CXM plasma flow
+        ],
+        "ps": [
+            f"*model-2CXM_desc-vpFit_PS.nii.gz",  # 2CXM permeability-surface area product
+        ],
     }
 
     # Get patterns for this output, or use generic patterns
