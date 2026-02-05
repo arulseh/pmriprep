@@ -2631,8 +2631,11 @@ class DCERegistration(SimpleInterface):
         weight_file = str(temp_path / f"dce_weight{ext}")
         lesion_dilation = self.inputs.lesion_dilation
 
+        # Skip dilation if input mask is already pre-dilated (e.g., from hdglio_wf)
+        is_pre_dilated = "dilated" in Path(self.inputs.lesion_mask).name.lower()
+
         try:
-            if lesion_dilation > 0:
+            if lesion_dilation > 0 and not is_pre_dilated:
                 # Calculate kernel radius in voxels
                 lesion_img = nib.load(self.inputs.lesion_mask)
                 header = lesion_img.header
