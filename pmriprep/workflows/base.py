@@ -154,6 +154,7 @@ def _find_previous_anat_outputs(
 
     outputs: dict[str, Optional[str]] = {
         "t1w_preproc": None,
+        "t1w_postcon_coreg": None,
         "brain_mask": None,
         "wm_probseg": None,
         "t1w_to_mni_xfm": None,
@@ -197,6 +198,13 @@ def _find_previous_anat_outputs(
         candidates = sorted(flair_dir.glob("*_coreg.nii.gz"))
         if candidates:
             outputs["flair_coreg"] = str(candidates[0])
+
+    # T1w post-contrast coregistered and masked
+    postcon_dir = anat_dir / "mask_postcon"
+    if postcon_dir.exists():
+        candidates = sorted(postcon_dir.glob("*_masked.nii.gz"))
+        if candidates:
+            outputs["t1w_postcon_coreg"] = str(candidates[0])
 
     return outputs
 
@@ -1245,9 +1253,11 @@ def init_pmriprep_wf(
         # Connect anat outputs to DCE workflow
         if anat_wf is not None:
             # Use post-contrast T1w as reference if available, otherwise preprocessed T1w
+            # IMPORTANT: Always use anat pipeline's preprocessed outputs (RAS-reoriented,
+            # bias-corrected) rather than raw BIDS inputs for proper orientation alignment
             if session_data.modalities.t1w_ce_gad:
                 workflow.connect([
-                    (inputnode, dce_wf, [("t1w_postcon", "inputnode.t1w_reference")]),
+                    (anat_wf, dce_wf, [("outputnode.t1w_postcon_coreg", "inputnode.t1w_reference")]),
                 ])
             else:
                 workflow.connect([
@@ -1274,11 +1284,10 @@ def init_pmriprep_wf(
             prev_anat = _find_previous_anat_outputs(
                 Path(work_dir), subject_id, session_id,
             )
-            if session_data.modalities.t1w_ce_gad:
-                # Post-contrast T1w is set from inputnode directly
-                workflow.connect([
-                    (inputnode, dce_wf, [("t1w_postcon", "inputnode.t1w_reference")]),
-                ])
+            if session_data.modalities.t1w_ce_gad and prev_anat["t1w_postcon_coreg"]:
+                # Use preprocessed postcon T1w (RAS-reoriented, bias-corrected, masked)
+                dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_postcon_coreg"]
+                _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_postcon_coreg"])
             elif prev_anat["t1w_preproc"]:
                 dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_preproc"]
                 _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_preproc"])
@@ -1546,6 +1555,9 @@ def init_pmriprep_wf(
                 ("outputnode.lesion_stats_json", "lesion_stats_json"),
                 ("outputnode.lesion_stats_txt", "lesion_stats_txt"),
                 ("outputnode.lesion_mask_dce", "lesion_mask_dce"),
+                # Anatomical masks in DCE space
+                ("outputnode.brain_mask", "brain_mask"),
+                ("outputnode.nawm_mask", "nawm_mask"),
             ]),
         ])
 

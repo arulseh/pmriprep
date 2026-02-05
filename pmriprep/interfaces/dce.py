@@ -30,6 +30,48 @@ from nipype.interfaces.fsl import FLIRT, ImageMaths  # type: ignore[import-untyp
 logger = logging.getLogger("pmriprep.interfaces.dce")
 
 
+def _reorient_to_ras(in_file: Optional[str]) -> Optional[str]:
+    """Reorient NIfTI to RAS orientation using fslreorient2std.
+
+    Args:
+        in_file: Path to input NIfTI file, or None.
+
+    Returns:
+        Path to reoriented NIfTI file, or None if input was None.
+    """
+    if in_file is None:
+        return None
+
+    import subprocess
+
+    in_path = Path(in_file)
+    if not in_path.exists():
+        return None
+
+    # Generate output filename in current working directory
+    if in_path.name.endswith(".nii.gz"):
+        base = in_path.name[:-7]
+        ext = ".nii.gz"
+    elif in_path.name.endswith(".nii"):
+        base = in_path.stem
+        ext = ".nii"
+    else:
+        base = in_path.stem
+        ext = in_path.suffix
+
+    out_file = str(Path.cwd() / f"{base}_reoriented{ext}")
+
+    # Run fslreorient2std
+    cmd = ["fslreorient2std", str(in_file), out_file]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        logger.warning("fslreorient2std failed for %s: %s", in_file, e.stderr.decode())
+        return None
+
+    return out_file
+
+
 class B1MappingInputSpec(BaseInterfaceInputSpec):
     """Input specification for B1Mapping interface."""
 
@@ -202,6 +244,23 @@ class B1Mapping(SimpleInterface):
         tr2_file = self.inputs.tr2_file if isdefined(self.inputs.tr2_file) else None
         tr1_override = self.inputs.tr1 if isdefined(self.inputs.tr1) else None
         tr2_override = self.inputs.tr2 if isdefined(self.inputs.tr2) else None
+
+        # Reorient AFI files to RAS before loading
+        if afi_4d is not None:
+            afi_4d_reoriented = _reorient_to_ras(afi_4d)
+            if afi_4d_reoriented:
+                afi_4d = afi_4d_reoriented
+                logger.info("Reoriented 4D AFI to RAS")
+        if tr1_file is not None:
+            tr1_reoriented = _reorient_to_ras(tr1_file)
+            if tr1_reoriented:
+                tr1_file = tr1_reoriented
+                logger.info("Reoriented AFI TR1 to RAS")
+        if tr2_file is not None:
+            tr2_reoriented = _reorient_to_ras(tr2_file)
+            if tr2_reoriented:
+                tr2_file = tr2_reoriented
+                logger.info("Reoriented AFI TR2 to RAS")
 
         if afi_4d is not None:
             # --- 4D mode: single file with 2 volumes ---
@@ -2260,6 +2319,396 @@ class DCEPreprocess(SimpleInterface):
             ext = out_file.suffix
 
         return str(out_file.parent / f"{base}_mean_reg{ext}")
+
+
+# =============================================================================
+# DCE Brain Extraction Interface
+# =============================================================================
+
+
+class DCEBrainExtractInputSpec(BaseInterfaceInputSpec):
+    """Input specification for DCEBrainExtract interface."""
+
+    dce_mean = File(
+        exists=True,
+        mandatory=True,
+        desc="Mean DCE image (typically from DCEPreprocess)",
+    )
+    t1w_brain_mask = File(
+        exists=True,
+        desc="T1w-derived brain mask (fallback if native extraction fails)",
+    )
+    out_brain = File(
+        genfile=True,
+        desc="Output brain-extracted DCE image",
+    )
+    out_mask = File(
+        genfile=True,
+        desc="Output brain mask in DCE space",
+    )
+    method = traits.Enum(
+        "hdbet",
+        "bet",
+        "threshold",
+        usedefault=True,
+        desc="Brain extraction method: hdbet (default), bet (FSL), or threshold",
+    )
+    bet_frac = traits.Float(
+        0.3,
+        usedefault=True,
+        desc="BET fractional intensity threshold (default: 0.3 for DCE)",
+    )
+    fill_holes = traits.Bool(
+        True,
+        usedefault=True,
+        desc="Fill holes in the brain mask (default: True)",
+    )
+
+
+class DCEBrainExtractOutputSpec(TraitedSpec):
+    """Output specification for DCEBrainExtract interface."""
+
+    out_brain = File(exists=True, desc="Brain-extracted DCE image")
+    out_mask = File(exists=True, desc="Brain mask in DCE native space")
+    method_used = traits.Str(desc="Actual method used (may differ if fallback)")
+    qc_metrics = traits.Dict(desc="QC metrics for brain extraction")
+
+
+class DCEBrainExtract(SimpleInterface):
+    """Extract brain from DCE mean image using HD-BET with BET fallback.
+
+    This interface performs brain extraction on the DCE mean image to generate
+    a native-space brain mask. This is critical for accurate pharmacokinetic
+    modeling because:
+
+    1. The T1w brain mask may not align perfectly with DCE space after
+       registration, especially near edges
+    2. DCE acquisitions often have different coverage than T1w (e.g., thinner
+       slab covering only the tumor region)
+    3. Native extraction ensures the mask accurately reflects what's actually
+       in the DCE field of view
+
+    The method priority is:
+    1. HD-BET (deep learning, most accurate) - via conda environment
+    2. FSL BET (traditional, robust) - if HD-BET unavailable
+    3. Threshold-based (simple, fast) - if both fail
+
+    This matches the perf-plus approach which runs HD-BET on the DCE reference
+    image (see perf-plus lines 360-382).
+
+    Parameters
+    ----------
+    dce_mean : str
+        Mean DCE image (from DCEPreprocess.mean_img)
+    t1w_brain_mask : str, optional
+        T1w brain mask as fallback reference
+    method : str
+        Preferred method: 'hdbet' (default), 'bet', or 'threshold'
+    bet_frac : float
+        BET fractional intensity threshold (default: 0.3)
+    fill_holes : bool
+        Fill holes in the mask (default: True)
+
+    Returns
+    -------
+    out_brain : str
+        Brain-extracted DCE mean image
+    out_mask : str
+        Binary brain mask in DCE native space
+    method_used : str
+        Actual method used (may differ if preferred method failed)
+    qc_metrics : dict
+        QC metrics including volume, coverage, etc.
+
+    Examples
+    --------
+    >>> brain_extract = DCEBrainExtract()
+    >>> brain_extract.inputs.dce_mean = 'dce_mean.nii.gz'
+    >>> result = brain_extract.run()  # doctest: +SKIP
+
+    Notes
+    -----
+    HD-BET is called via conda environment to avoid dependency conflicts:
+
+        conda run -n hdbet-env hd-bet -i <input> -o <output>
+
+    If HD-BET is not available, falls back to FSL BET with parameters
+    optimized for DCE contrast (lower fractional intensity threshold).
+
+    References
+    ----------
+    Isensee F et al. "HD-BET: Robust skull stripping using deep learning."
+    Human Brain Mapping. 2019.
+    """
+
+    input_spec = DCEBrainExtractInputSpec
+    output_spec = DCEBrainExtractOutputSpec
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE brain extraction."""
+        import subprocess
+
+        dce_mean = Path(self.inputs.dce_mean)
+
+        # Generate output filenames
+        out_brain = self._gen_brain_filename()
+        out_mask = self._gen_mask_filename()
+
+        # Track which method was used
+        method_used = self.inputs.method
+        qc_metrics: dict[str, Any] = {}
+
+        # Try preferred method with fallback
+        if self.inputs.method == "hdbet":
+            success = self._run_hdbet(dce_mean, out_brain, out_mask)
+            if not success:
+                logger.warning("HD-BET failed, falling back to FSL BET")
+                method_used = "bet"
+                success = self._run_bet(dce_mean, out_brain, out_mask)
+            if not success:
+                logger.warning("FSL BET failed, falling back to threshold")
+                method_used = "threshold"
+                self._run_threshold(dce_mean, out_brain, out_mask)
+        elif self.inputs.method == "bet":
+            success = self._run_bet(dce_mean, out_brain, out_mask)
+            if not success:
+                logger.warning("FSL BET failed, falling back to threshold")
+                method_used = "threshold"
+                self._run_threshold(dce_mean, out_brain, out_mask)
+        else:
+            self._run_threshold(dce_mean, out_brain, out_mask)
+
+        # Fill holes if requested
+        if self.inputs.fill_holes and Path(out_mask).exists():
+            self._fill_holes(out_mask)
+
+        # Compute QC metrics
+        qc_metrics = self._compute_qc_metrics(out_mask, dce_mean)
+        qc_metrics["method_used"] = method_used
+
+        # Set outputs
+        self._results["out_brain"] = out_brain
+        self._results["out_mask"] = out_mask
+        self._results["method_used"] = method_used
+        self._results["qc_metrics"] = qc_metrics
+
+        return runtime
+
+    def _run_hdbet(self, dce_mean: Path, out_brain: str, out_mask: str) -> bool:
+        """Run HD-BET brain extraction via conda environment."""
+        import subprocess
+
+        # HD-BET outputs to <output>_bet.nii.gz and <output>_bet_mask.nii.gz
+        # We need to rename them
+        hdbet_out = str(Path(out_brain).with_suffix("").with_suffix(""))
+        if hdbet_out.endswith("_brain"):
+            hdbet_out = hdbet_out[:-6]
+
+        cmd = [
+            "conda", "run", "-n", "hdbet-env",
+            "hd-bet",
+            "-i", str(dce_mean),
+            "-o", hdbet_out,
+            "-device", "cpu",  # Use CPU (GPU may not be available)
+            "-mode", "fast",   # Fast mode for efficiency
+            "-tta", "0",       # No test-time augmentation
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout
+            )
+            logger.info("HD-BET completed successfully")
+
+            # HD-BET outputs: <basename>.nii.gz (brain) and <basename>_mask.nii.gz
+            hdbet_brain = Path(hdbet_out + ".nii.gz")
+            hdbet_mask = Path(hdbet_out + "_mask.nii.gz")
+
+            # Also check alternative naming
+            if not hdbet_brain.exists():
+                hdbet_brain = Path(hdbet_out + "_bet.nii.gz")
+            if not hdbet_mask.exists():
+                hdbet_mask = Path(hdbet_out + "_bet_mask.nii.gz")
+
+            if hdbet_brain.exists():
+                shutil.copy(str(hdbet_brain), out_brain)
+            else:
+                # Create brain from mask
+                self._apply_mask(str(dce_mean), str(hdbet_mask), out_brain)
+
+            if hdbet_mask.exists():
+                shutil.copy(str(hdbet_mask), out_mask)
+            else:
+                logger.warning("HD-BET mask not found at expected location")
+                return False
+
+            return True
+
+        except subprocess.CalledProcessError as e:
+            logger.warning("HD-BET failed: %s", e.stderr if e.stderr else str(e))
+            return False
+        except subprocess.TimeoutExpired:
+            logger.warning("HD-BET timed out after 5 minutes")
+            return False
+        except FileNotFoundError:
+            logger.warning("conda or hdbet-env not available")
+            return False
+
+    def _run_bet(self, dce_mean: Path, out_brain: str, out_mask: str) -> bool:
+        """Run FSL BET brain extraction."""
+        import subprocess
+
+        cmd = [
+            "bet",
+            str(dce_mean),
+            out_brain,
+            "-f", str(self.inputs.bet_frac),
+            "-m",  # Generate mask
+            "-R",  # Robust (iterative) mode
+        ]
+
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.info("FSL BET completed successfully")
+
+            # BET generates <output>_mask.nii.gz
+            bet_mask = Path(out_brain).with_name(
+                Path(out_brain).name.replace(".nii.gz", "_mask.nii.gz")
+                .replace(".nii", "_mask.nii")
+            )
+            if bet_mask.exists():
+                shutil.copy(str(bet_mask), out_mask)
+            return True
+
+        except subprocess.CalledProcessError as e:
+            logger.warning("FSL BET failed: %s", e.stderr if e.stderr else str(e))
+            return False
+        except FileNotFoundError:
+            logger.warning("FSL bet command not found")
+            return False
+
+    def _run_threshold(self, dce_mean: Path, out_brain: str, out_mask: str) -> None:
+        """Create brain mask using intensity thresholding."""
+        import nibabel as nib  # type: ignore[import-untyped]
+        from scipy.ndimage import binary_fill_holes, binary_erosion, binary_dilation
+
+        logger.info("Using threshold-based brain extraction (fallback)")
+
+        img = nib.load(str(dce_mean))
+        data = img.get_fdata()  # type: ignore[attr-defined]
+
+        # Use Otsu's method for thresholding
+        from skimage.filters import threshold_otsu  # type: ignore[import-untyped]
+
+        thresh = threshold_otsu(data[data > 0])
+        mask = data > thresh * 0.5  # Use half of Otsu threshold
+
+        # Clean up mask: fill holes and smooth edges
+        mask = binary_fill_holes(mask)
+        mask = binary_erosion(mask, iterations=1)
+        mask = binary_dilation(mask, iterations=1)
+
+        # Save mask
+        mask_img = nib.Nifti1Image(mask.astype(np.float32), img.affine)  # type: ignore[attr-defined]
+        nib.save(mask_img, out_mask)
+
+        # Apply mask to create brain image
+        brain_data = data * mask
+        brain_img = nib.Nifti1Image(brain_data.astype(np.float32), img.affine)  # type: ignore[attr-defined]
+        nib.save(brain_img, out_brain)
+
+    def _fill_holes(self, mask_path: str) -> None:
+        """Fill holes in brain mask using morphological operations."""
+        import nibabel as nib  # type: ignore[import-untyped]
+        from scipy.ndimage import binary_fill_holes
+
+        img = nib.load(mask_path)
+        mask = img.get_fdata() > 0  # type: ignore[attr-defined]
+
+        # Fill holes slice by slice (2D) and in 3D
+        filled = binary_fill_holes(mask)
+
+        # Save filled mask
+        filled_img = nib.Nifti1Image(filled.astype(np.float32), img.affine)  # type: ignore[attr-defined]
+        nib.save(filled_img, mask_path)
+
+    def _apply_mask(self, in_file: str, mask_file: str, out_file: str) -> None:
+        """Apply brain mask to image."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        img = nib.load(in_file)
+        mask_img = nib.load(mask_file)
+
+        data = img.get_fdata()  # type: ignore[attr-defined]
+        mask = mask_img.get_fdata() > 0  # type: ignore[attr-defined]
+
+        brain_data = data * mask
+        brain_img = nib.Nifti1Image(brain_data.astype(np.float32), img.affine)  # type: ignore[attr-defined]
+        nib.save(brain_img, out_file)
+
+    def _compute_qc_metrics(self, mask_path: str, dce_mean: Path) -> dict[str, Any]:
+        """Compute QC metrics for brain extraction."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        metrics: dict[str, Any] = {}
+
+        if not Path(mask_path).exists():
+            return metrics
+
+        mask_img = nib.load(mask_path)
+        mask_data = mask_img.get_fdata() > 0  # type: ignore[attr-defined]
+        voxel_vol = float(np.prod(mask_img.header.get_zooms()[:3]))  # type: ignore[attr-defined]
+
+        # Volume statistics
+        n_voxels = int(np.sum(mask_data))
+        volume_ml = n_voxels * voxel_vol / 1000.0  # Convert mm³ to ml
+
+        metrics["brain_voxels"] = n_voxels
+        metrics["brain_volume_ml"] = volume_ml
+
+        # Coverage: what fraction of the FOV is brain
+        total_voxels = int(np.prod(mask_data.shape))
+        metrics["brain_coverage_pct"] = 100.0 * n_voxels / total_voxels
+
+        # Check if volume is physiologically reasonable (300-1800 ml for adult brain)
+        # Note: DCE may only cover part of the brain
+        metrics["volume_reasonable"] = 50.0 < volume_ml < 2000.0
+
+        return metrics
+
+    def _gen_brain_filename(self) -> str:
+        """Generate output brain filename."""
+        if isdefined(self.inputs.out_brain) and self.inputs.out_brain:
+            return str(self.inputs.out_brain)
+
+        dce_mean = Path(self.inputs.dce_mean)
+        if dce_mean.name.endswith(".nii.gz"):
+            base = dce_mean.name[:-7]
+            ext = ".nii.gz"
+        else:
+            base = dce_mean.stem
+            ext = ".nii.gz"
+
+        return str(Path.cwd() / f"{base}_brain{ext}")
+
+    def _gen_mask_filename(self) -> str:
+        """Generate output mask filename."""
+        if isdefined(self.inputs.out_mask) and self.inputs.out_mask:
+            return str(self.inputs.out_mask)
+
+        dce_mean = Path(self.inputs.dce_mean)
+        if dce_mean.name.endswith(".nii.gz"):
+            base = dce_mean.name[:-7]
+            ext = ".nii.gz"
+        else:
+            base = dce_mean.stem
+            ext = ".nii.gz"
+
+        return str(Path.cwd() / f"{base}_brain_mask{ext}")
 
 
 # =============================================================================

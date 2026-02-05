@@ -823,8 +823,10 @@ def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
     # Compute first-order differences
     diff = np.abs(np.diff(residue))
 
-    # Mean absolute difference normalized by maximum
-    oi = float(np.mean(diff)) / max_residue
+    # Sum of absolute differences normalized by length and maximum
+    # This matches perf-plus: OI = sum(diff) / (N * max_residue)
+    # Using len(residue) (not len(diff)) as the normalizer
+    oi = float(np.sum(diff)) / (len(residue) * max_residue)
 
     return oi
 

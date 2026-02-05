@@ -118,6 +118,7 @@ class FLIRTApplyXFM(CommandLine):
 
 from pmriprep.config.dsc import DSCConfig
 from pmriprep.data import get_arterial_atlas
+from pmriprep.interfaces.common import Reorient
 from pmriprep.interfaces.dsc import MotionCorrection, DSCRegistration
 from pmriprep.interfaces.dsc_aif import AIFDetection
 from pmriprep.interfaces.dsc_aif_qc import AIFQCPlot
@@ -1248,6 +1249,18 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
+    # Node 0: Reorient DSC to RAS orientation
+    # -------------------------------------------------------------------
+    dsc_reorient = pe.Node(
+        Reorient(),
+        name="dsc_reorient",
+    )
+
+    workflow.connect([
+        (inputnode, dsc_reorient, [("dsc_file", "in_file")]),
+    ])
+
+    # -------------------------------------------------------------------
     # Node 1: Motion Correction
     # -------------------------------------------------------------------
     motion_correct = pe.Node(
@@ -1732,9 +1745,9 @@ def init_dsc_preproc_wf(
     # Workflow Connections
     # -------------------------------------------------------------------
 
-    # Input to Motion Correction
+    # Input to Motion Correction (using reoriented DSC file)
     workflow.connect([
-        (inputnode, motion_correct, [("dsc_file", "in_file")]),
+        (dsc_reorient, motion_correct, [("out_file", "in_file")]),
     ])
 
     # Motion Correction to Pre-Bolus Mean

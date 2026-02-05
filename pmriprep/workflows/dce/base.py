@@ -11,11 +11,13 @@ import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 
 from pmriprep.config.dce import DCEConfig
+from pmriprep.interfaces.common import Reorient, reorient_list_to_ras
 from pmriprep.interfaces.dce import (
     B1Mapping,
     T1Mapping,
     VFAPreprocess,
     DCEPreprocess,
+    DCEBrainExtract,
     DCERegistration,
 )
 from pmriprep.interfaces.dce_aif import AIFDetection
@@ -322,10 +324,44 @@ def init_dce_preproc_wf(
                 "lesion_mask_dce",
                 # Motion QC
                 "motion_qc_plot",
+                # Anatomical masks in DCE space
+                "brain_mask",
+                "nawm_mask",
             ]
         ),
         name="outputnode",
     )
+
+    # ==========================================================================
+    # Node 0: Reorient all raw BIDS inputs to RAS orientation
+    # ==========================================================================
+    # DCE timeseries (4D) - required input
+    dce_reorient = pe.Node(
+        Reorient(),
+        name="dce_reorient",
+    )
+
+    workflow.connect([
+        (inputnode, dce_reorient, [("dce_file", "in_file")]),
+    ])
+
+    # VFA images (list of 3D) - optional, use Function node to handle None
+    vfa_reorient = pe.Node(
+        niu.Function(
+            input_names=["in_files"],
+            output_names=["out_file"],
+            function=reorient_list_to_ras,
+        ),
+        name="vfa_reorient",
+    )
+
+    workflow.connect([
+        (inputnode, vfa_reorient, [("vfa_files", "in_files")]),
+    ])
+
+    # NOTE: AFI and DWI reorientation is handled inside their respective
+    # processing functions (B1Mapping, _register_dwi_to_dce) to avoid
+    # issues with nipype passing None to interfaces that expect files.
 
     # ==========================================================================
     # Node 1: B1+ Mapping (optional - skip if config.no_b1=True)
@@ -337,7 +373,7 @@ def init_dce_preproc_wf(
         name="b1_mapping",
     )
 
-    # Connect B1 mapping inputs
+    # Connect B1 mapping inputs (direct from inputnode - reorientation handled internally)
     workflow.connect([
         (inputnode, b1_mapping, [
             ("afi_tr1_file", "tr1_file"),
@@ -360,9 +396,10 @@ def init_dce_preproc_wf(
         name="vfa_preprocess",
     )
 
+    # Connect VFA preprocessing inputs (using reoriented VFA files)
     workflow.connect([
+        (vfa_reorient, vfa_preprocess, [("out_file", "vfa_files")]),
         (inputnode, vfa_preprocess, [
-            ("vfa_files", "vfa_files"),
             ("vfa_flip_angles", "flip_angles"),
             ("vfa_tr", "tr"),
             ("field_strength", "field_strength"),
@@ -430,12 +467,10 @@ def init_dce_preproc_wf(
         name="dce_preprocess",
     )
 
-    # Connect DCE preprocessing inputs
+    # Connect DCE preprocessing inputs (using reoriented DCE file)
     workflow.connect([
-        (inputnode, dce_preprocess, [
-            ("dce_file", "in_file"),
-            ("brain_mask", "brain_mask"),
-        ]),
+        (dce_reorient, dce_preprocess, [("out_file", "in_file")]),
+        (inputnode, dce_preprocess, [("brain_mask", "brain_mask")]),
     ])
 
     # ==========================================================================
@@ -456,6 +491,27 @@ def init_dce_preproc_wf(
     workflow.connect([
         (dce_preprocess, motion_qc_plot, [("out_params", "motion_params_file")]),
         (inputnode, motion_qc_plot, [("volume_tr", "tr")]),
+    ])
+
+    # ==========================================================================
+    # Node 3c: DCE Brain Extraction (native space)
+    # ==========================================================================
+    # Extract brain from DCE mean image using HD-BET with BET fallback.
+    # This provides a native DCE-space brain mask that:
+    # 1. Accurately reflects the DCE field of view
+    # 2. Avoids registration-induced edge artifacts
+    # 3. Matches perf-plus behavior (lines 360-382)
+    dce_brain_extract = pe.Node(
+        DCEBrainExtract(
+            method="hdbet",  # Prefer HD-BET, fallback to BET
+            bet_frac=0.3,    # Lower threshold for DCE contrast
+            fill_holes=True,
+        ),
+        name="dce_brain_extract",
+    )
+
+    workflow.connect([
+        (dce_preprocess, dce_brain_extract, [("mean_img", "dce_mean")]),
     ])
 
     # ==========================================================================
@@ -516,13 +572,14 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 4b2: Create conservative AIF search mask (Gap 5)
     # ==========================================================================
-    # Intersect T1w-transformed mask with DCE-native mask to exclude
-    # non-brain regions that may be included in thin DCE slabs.
+    # Intersect T1w-transformed mask with native DCE brain mask to exclude
+    # non-brain regions. Uses proper brain extraction (HD-BET) instead of
+    # simple Otsu thresholding for better accuracy.
     create_aif_mask = pe.Node(
         niu.Function(
             input_names=[
                 "t1w_mask_in_dce",
-                "dce_mean",
+                "dce_native_mask",
             ],
             output_names=["out_file"],
             function=_create_aif_search_mask,
@@ -534,8 +591,9 @@ def init_dce_preproc_wf(
         (transform_brain_mask, create_aif_mask, [
             ("out_file", "t1w_mask_in_dce"),
         ]),
-        (dce_preprocess, create_aif_mask, [
-            ("mean_img", "dce_mean"),
+        # Use native DCE brain mask from HD-BET extraction
+        (dce_brain_extract, create_aif_mask, [
+            ("out_mask", "dce_native_mask"),
         ]),
     ])
 
@@ -733,8 +791,11 @@ def init_dce_preproc_wf(
         (aif_detection, pk_modeling, [
             ("out_aif_curve", "aif_file"),
         ]),
-        (transform_brain_mask, pk_modeling, [
-            ("out_file", "brain_mask_file"),
+        # Use native DCE brain mask (from HD-BET) for PK modeling
+        # This avoids registration-induced edge artifacts and ensures
+        # the mask accurately reflects the DCE field of view
+        (dce_brain_extract, pk_modeling, [
+            ("out_mask", "brain_mask_file"),
         ]),
         (inputnode, pk_modeling, [
             ("tr", "tr"),
@@ -765,6 +826,7 @@ def init_dce_preproc_wf(
         name="register_dwi_to_dce",
     )
 
+    # Connect DWI registration inputs (reorientation handled inside _register_dwi_to_dce)
     workflow.connect([
         (inputnode, register_dwi_to_dce, [
             ("dwi_file", "dwi_file"),
@@ -811,8 +873,9 @@ def init_dce_preproc_wf(
         (inputnode, tortuosity_corr, [
             ("dwi_bval", "dwi_bval"),
         ]),
-        (transform_brain_mask, tortuosity_corr, [
-            ("out_file", "brain_mask"),
+        # Use native DCE brain mask for tortuosity correction
+        (dce_brain_extract, tortuosity_corr, [
+            ("out_mask", "brain_mask"),
         ]),
     ])
 
@@ -944,7 +1007,7 @@ def init_dce_preproc_wf(
 
         workflow.connect([
             (build_pk_dict, smooth_pk, [("map_dict", "map_files")]),
-            (transform_brain_mask, smooth_pk, [("out_file", "brain_mask_file")]),
+            (dce_brain_extract, smooth_pk, [("out_mask", "brain_mask_file")]),
         ])
 
         # Build dict of model-free maps for smoothing
@@ -981,7 +1044,7 @@ def init_dce_preproc_wf(
 
         workflow.connect([
             (build_mf_dict, smooth_model_free, [("map_dict", "map_files")]),
-            (transform_brain_mask, smooth_model_free, [("out_file", "brain_mask_file")]),
+            (dce_brain_extract, smooth_model_free, [("out_mask", "brain_mask_file")]),
         ])
 
         # Build dict of uncertainty maps for smoothing (Bayesian outputs)
@@ -1030,7 +1093,7 @@ def init_dce_preproc_wf(
 
         workflow.connect([
             (build_uncertainty_dict, smooth_uncertainty, [("map_dict", "map_files")]),
-            (transform_brain_mask, smooth_uncertainty, [("out_file", "brain_mask_file")]),
+            (dce_brain_extract, smooth_uncertainty, [("out_mask", "brain_mask_file")]),
         ])
 
         # Build dict of tortuosity-corrected Ktrans for smoothing
@@ -1062,7 +1125,7 @@ def init_dce_preproc_wf(
 
         workflow.connect([
             (build_tortuosity_dict, smooth_tortuosity, [("map_dict", "map_files")]),
-            (transform_brain_mask, smooth_tortuosity, [("out_file", "brain_mask_file")]),
+            (dce_brain_extract, smooth_tortuosity, [("out_mask", "brain_mask_file")]),
         ])
 
     # ==========================================================================
@@ -1080,7 +1143,7 @@ def init_dce_preproc_wf(
     workflow.connect([
         (dce_preprocess, reg_filmstrip, [("mean_img", "dce_mean_file")]),
         (dce_registration, reg_filmstrip, [("out_file", "registered_t1w_file")]),
-        (transform_brain_mask, reg_filmstrip, [("out_file", "brain_mask_file")]),
+        (dce_brain_extract, reg_filmstrip, [("out_mask", "brain_mask_file")]),
     ])
 
     # ==========================================================================
@@ -1101,7 +1164,7 @@ def init_dce_preproc_wf(
             ("qc_metrics", "qc_metrics"),
         ]),
         (dce_preprocess, aif_qc_plot, [("out_file", "dce_file")]),
-        (transform_brain_mask, aif_qc_plot, [("out_file", "brain_mask_file")]),
+        (dce_brain_extract, aif_qc_plot, [("out_mask", "brain_mask_file")]),
         (inputnode, aif_qc_plot, [("volume_tr", "tr")]),
     ])
 
@@ -1414,6 +1477,13 @@ def init_dce_preproc_wf(
         (normalize_iauc60, outputnode, [("out_file", "niauc60_map")]),
     ])
 
+    # Anatomical masks in DCE space output connections
+    # Use native DCE brain mask from HD-BET extraction for output
+    workflow.connect([
+        (dce_brain_extract, outputnode, [("out_mask", "brain_mask")]),
+        (transform_nawm_mask, outputnode, [("out_file", "nawm_mask")]),
+    ])
+
     return workflow
 
 
@@ -1567,72 +1637,64 @@ def _transform_lesion_mask_to_dce(
 
 def _create_aif_search_mask(
     t1w_mask_in_dce=None,
-    dce_mean=None,
+    dce_native_mask=None,
 ):
     """Create conservative AIF search mask (Gap 5).
 
-    Creates an intersection of T1w-transformed mask with a DCE-native
-    mask to exclude non-brain regions (e.g., temporal bone) that may
-    be incorrectly included by HD-BET on thin DCE slabs.
+    Creates an intersection of T1w-transformed mask with the native DCE
+    brain mask (from HD-BET or BET) to exclude non-brain regions that may
+    be incorrectly included in one mask but not the other.
 
-    1. Create DCE-native mask using Otsu thresholding on DCE mean
-    2. Intersect with T1w-transformed mask
-    3. Fill holes
+    The intersection approach ensures:
+    1. Regions outside T1w brain coverage are excluded
+    2. Regions outside DCE brain extraction are excluded
+    3. Only voxels in both masks are used for AIF search
 
     Args:
         t1w_mask_in_dce: Path to T1w brain mask transformed to DCE space.
-        dce_mean: Path to DCE mean image for native mask generation.
+        dce_native_mask: Path to native DCE brain mask from DCEBrainExtract.
 
     Returns:
         Path to conservative AIF search mask, or None if inputs missing.
     """
-    if t1w_mask_in_dce is None or dce_mean is None:
-        return None
+    if t1w_mask_in_dce is None:
+        # If no T1w mask, fall back to native DCE mask
+        return dce_native_mask
+
+    if dce_native_mask is None:
+        # If no native DCE mask, fall back to T1w mask
+        return t1w_mask_in_dce
 
     from pathlib import Path
 
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
     from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
-    from skimage.filters import threshold_otsu  # type: ignore[import-untyped]
 
     t1w_mask_path = Path(t1w_mask_in_dce)
+    dce_mask_path = Path(dce_native_mask)
+
     if not t1w_mask_path.exists():
-        return None
-
-    # Load DCE mean
-    dce_img = nib.load(dce_mean)
-    dce_data = dce_img.get_fdata()  # type: ignore[attr-defined]
-
-    # Create DCE-native mask using Otsu thresholding
-    # Use only positive values for threshold calculation
-    dce_positive = dce_data[dce_data > 0]
-    if len(dce_positive) < 100:
-        # Not enough data, just return T1w mask
+        return str(dce_native_mask)
+    if not dce_mask_path.exists():
         return str(t1w_mask_in_dce)
 
-    try:
-        thresh = threshold_otsu(dce_positive)
-    except ValueError:
-        # Otsu failed, use percentile
-        thresh = np.percentile(dce_positive, 25)
-
-    # Use 50% of Otsu threshold for more inclusive mask
-    dce_mask = (dce_data > thresh * 0.5).astype(np.int16)
-
-    # Load T1w mask
+    # Load masks
     t1w_mask_img = nib.load(t1w_mask_in_dce)
     t1w_mask_data = t1w_mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
-    # Intersect masks
-    aif_mask = np.logical_and(t1w_mask_data, dce_mask).astype(np.int16)
+    dce_mask_img = nib.load(dce_native_mask)
+    dce_mask_data = dce_mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
-    # Fill holes
+    # Intersect masks - conservative approach
+    aif_mask = np.logical_and(t1w_mask_data, dce_mask_data).astype(np.int16)
+
+    # Fill holes in the intersection
     aif_mask = binary_fill_holes(aif_mask).astype(np.int16)
 
     # Save
     out_file = str(Path.cwd() / "aif_search_mask.nii.gz")
-    out_img = nib.Nifti1Image(aif_mask, dce_img.affine)
+    out_img = nib.Nifti1Image(aif_mask, t1w_mask_img.affine)  # type: ignore[attr-defined]
     nib.save(out_img, out_file)
 
     return out_file
@@ -2137,6 +2199,19 @@ def _register_dwi_to_dce(
         return None, None
 
     out_dir = Path.cwd()
+
+    # Reorient DWI to RAS before registration
+    dwi_base = dwi_path.name.replace(".nii.gz", "").replace(".nii", "")
+    dwi_reoriented = str(out_dir / f"{dwi_base}_reoriented.nii.gz")
+    try:
+        subprocess.run(
+            ["fslreorient2std", str(dwi_file), dwi_reoriented],
+            check=True,
+            capture_output=True,
+        )
+        dwi_file = dwi_reoriented
+    except subprocess.CalledProcessError:
+        pass  # Use original file if reorientation fails
 
     # For 4D DWI, extract b0 volume for registration
     dwi_img = nib.load(dwi_file)

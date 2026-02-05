@@ -86,9 +86,9 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     ktrans_tortuosity_corrected = traits.Str(desc="Ktrans with tortuosity correction map path")
 
     # Normalized maps (optional, requires NAWM mask)
-    nktrans_map = traits.Str(desc="nKtrans (NAWM-normalized Ktrans) map path")
-    nvp_map = traits.Str(desc="nvp (NAWM-normalized vp) map path")
-    niauc60_map = traits.Str(desc="nIAUC60 (NAWM-normalized IAUC at 60s) map path")
+    nktrans_map = traits.Either(traits.Str, None, desc="nKtrans (NAWM-normalized Ktrans) map path")
+    nvp_map = traits.Either(traits.Str, None, desc="nvp (NAWM-normalized vp) map path")
+    niauc60_map = traits.Either(traits.Str, None, desc="nIAUC60 (NAWM-normalized IAUC at 60s) map path")
 
     # Smoothed maps (optional, dict of name->path)
     smooth_pk_maps = traits.Dict(desc="Smoothed PK maps dict")
@@ -107,6 +107,10 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
     lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
     lesion_mask_dce = traits.Str(desc="Lesion mask in DCE space path")
+
+    # Anatomical masks in DCE space (optional)
+    brain_mask = traits.Str(desc="Brain mask in DCE space path")
+    nawm_mask = traits.Either(traits.Str, None, desc="NAWM mask in DCE space path")
 
     # Processing config for sidecar (optional)
     pk_model = traits.Str(desc="Pharmacokinetic model name")
@@ -482,6 +486,23 @@ class DCEDerivativeWriter(BaseInterface):
             fname = f"{prefix}_{spatial}_B1map"
             self._copy_nifti(self.inputs.b1_map, anat_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "B1+ transmit field map (ratio)"}
+            self._write_json(sidecar, anat_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 4b. Anatomical masks in DCE space
+        # -----------------------------------------------------------
+        if self._has_input("brain_mask"):
+            anat_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{prefix}_{spatial}_desc-brain_mask"
+            self._copy_nifti(self.inputs.brain_mask, anat_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "Brain mask in DCE space"}
+            self._write_json(sidecar, anat_dir / f"{fname}.json")
+
+        if self._has_input("nawm_mask"):
+            anat_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{prefix}_{spatial}_desc-nawm_mask"
+            self._copy_nifti(self.inputs.nawm_mask, anat_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "Normal-appearing white matter mask in DCE space"}
             self._write_json(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

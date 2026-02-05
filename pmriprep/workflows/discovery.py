@@ -116,6 +116,16 @@ def _find_t1w_ce_gad(anat_dir: Path) -> Optional[Path]:
     - Having suffix _T1w
     - Having 'ce-' entity (e.g., ce-GAD, ce-Gd, ce-GADOLINIUM)
 
+    Preference order for acquisition type:
+    1. MPRAGE (3D GRE with inversion recovery) - best for registration
+    2. IR/MP2RAGE (other inversion recovery sequences)
+    3. Any non-SE acquisition
+    4. SE (spin echo) - 2D with thick slices, worst for registration
+
+    This ordering prevents incorrect T1w selection when multiple ce-GAD
+    images exist (e.g., both SE T1w and MPRAGE), which caused registration
+    failures in DCE pipeline due to coordinate space mismatches.
+
     Args:
         anat_dir: Path to the anatomical directory.
 
@@ -124,21 +134,50 @@ def _find_t1w_ce_gad(anat_dir: Path) -> Optional[Path]:
     """
     t1w_files = list(anat_dir.glob("*_T1w.nii.gz")) + list(anat_dir.glob("*_T1w.nii"))
 
-    for f in t1w_files:
-        fname = f.name.lower()
-        # Look for contrast-enhanced images
-        if "ce-" in fname or "ce_" in fname:
-            # Prefer GAD-specific
-            if "gad" in fname:
+    # Filter to ce-GAD files only
+    ce_gad_files = [
+        f for f in t1w_files
+        if ("ce-" in f.name.lower() or "ce_" in f.name.lower())
+        and "gad" in f.name.lower()
+    ]
+
+    if not ce_gad_files:
+        # Second pass: any ce- T1w (without requiring "gad")
+        ce_gad_files = [
+            f for f in t1w_files
+            if "ce-" in f.name.lower() or "ce_" in f.name.lower()
+        ]
+
+    if not ce_gad_files:
+        return None
+
+    # Priority: MPRAGE > other 3D IR sequences > any non-SE > SE
+    # MPRAGE is 3D with isotropic voxels, ideal for registration
+    # SE T1w is typically 2D with thick slices (e.g., 5mm), poor for registration
+    preferred_acq = ["mprage", "ir", "mp2rage", "spgr", "gre"]
+    for acq_pref in preferred_acq:
+        for f in ce_gad_files:
+            if acq_pref in f.name.lower():
+                logger.info(
+                    "Selected ce-GAD T1w (preferred acq=%s): %s",
+                    acq_pref, f.name
+                )
                 return f
 
-    # Second pass: any ce- T1w
-    for f in t1w_files:
-        fname = f.name.lower()
-        if "ce-" in fname or "ce_" in fname:
-            return f
+    # Avoid SE if possible (2D, thick slices, poor for registration)
+    non_se = [f for f in ce_gad_files if "acq-se" not in f.name.lower()]
+    if non_se:
+        logger.info(
+            "Selected ce-GAD T1w (non-SE fallback): %s", non_se[0].name
+        )
+        return non_se[0]
 
-    return None
+    # Last resort: return first match (may be SE)
+    logger.warning(
+        "Only SE T1w available for ce-GAD; registration may be suboptimal: %s",
+        ce_gad_files[0].name
+    )
+    return ce_gad_files[0]
 
 
 def _find_t2w(anat_dir: Path) -> Optional[Path]:
