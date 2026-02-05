@@ -25,10 +25,11 @@ import numpy.typing as npt
 from scipy import optimize
 from scipy.optimize import curve_fit
 
-from pmriprep.models.dce.base import FitResult, ModelParameter, PKModel
+from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.utils.dce_constants import (
     EPSILON_VE,
     KTRANS_BOUNDS,
+    MAX_KEP,
     VE_BOUNDS,
     VP_BOUNDS,
 )
@@ -184,7 +185,7 @@ class ExtendedToftsModel(PKModel):
 
     def evaluate(
         self,
-        params: Sequence[float],
+        params: ParamsType,
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
@@ -207,8 +208,8 @@ class ExtendedToftsModel(PKModel):
         ve = max(params[1], EPSILON_VE)  # Guard against division by zero
         vp = params[2]
 
-        # Compute efflux rate constant
-        kep = ktrans / ve
+        # Compute efflux rate constant, clamped to physiological maximum
+        kep = min(ktrans / ve, MAX_KEP)
 
         # Get time step (assume uniform sampling)
         n_times = len(time_points)
@@ -249,10 +250,13 @@ class ExtendedToftsModel(PKModel):
 
             c_tissue[i] = vascular_term + extravasation_term
 
+        # Sanitize: replace non-finite values with 0
+        c_tissue = np.where(np.isfinite(c_tissue), c_tissue, 0.0)
+
         return c_tissue
 
     def _apply_volume_constraint(
-        self, params: Sequence[float]
+        self, params: ParamsType
     ) -> tuple[float, float, float]:
         """Apply the ve + vp ≤ 1.0 constraint.
 
@@ -504,7 +508,7 @@ class ExtendedToftsModel(PKModel):
         )
 
     def compute_derived_parameters(
-        self, params: Sequence[float]
+        self, params: ParamsType
     ) -> dict[str, float]:
         """Compute kep from Ktrans and ve.
 

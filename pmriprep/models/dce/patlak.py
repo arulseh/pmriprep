@@ -27,7 +27,7 @@ import numpy.typing as npt
 from scipy import optimize
 from scipy.optimize import curve_fit
 
-from pmriprep.models.dce.base import FitResult, ModelParameter, PKModel
+from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.utils.dce_constants import (
     EPSILON_KTRANS,
     KTRANS_BOUNDS,
@@ -133,7 +133,7 @@ class PatlakModel(PKModel):
 
     def evaluate(
         self,
-        params: Sequence[float],
+        params: ParamsType,
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
@@ -169,6 +169,9 @@ class PatlakModel(PKModel):
 
         # Patlak model: C_t(t) = vp × Cp(t) + Ktrans × ∫Cp(τ)dτ
         c_tissue = vp * aif + ktrans * aif_integral
+
+        # Sanitize: replace non-finite values with 0
+        c_tissue = np.where(np.isfinite(c_tissue), c_tissue, 0.0)
 
         return c_tissue
 
@@ -584,7 +587,7 @@ class PatlakModel(PKModel):
         )
 
     def compute_derived_parameters(
-        self, params: Sequence[float]
+        self, params: ParamsType
     ) -> dict[str, float]:
         """Compute derived parameters from fitted values.
 

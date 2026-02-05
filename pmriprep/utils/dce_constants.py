@@ -348,6 +348,14 @@ VP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.001, 0.3)
 #: kep (efflux rate) bounds in min^-1
 KEP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 10.0)
 
+#: Maximum kep (efflux rate) for numerical stability
+#: kep > 10 min^-1 is unphysiological (would mean <4s EES half-life)
+#: Literature: Tofts 1999, Patankar 2005 - typical tumor kep 0.1-5.0 min^-1
+MAX_KEP: Final[float] = 10.0
+
+#: Maximum eigenvalue for 2CXM slow compartment (similar to kep)
+MAX_EIGENVALUE_SLOW: Final[float] = 20.0
+
 #: Fp (plasma flow) bounds in mL/min/100mL for 2CXM
 FP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 200.0)
 

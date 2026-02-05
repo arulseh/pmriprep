@@ -29,11 +29,12 @@ import numpy.typing as npt
 from scipy import optimize
 from scipy.optimize import curve_fit
 
-from pmriprep.models.dce.base import FitResult, ModelParameter, PKModel
+from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.utils.dce_constants import (
     EPSILON_VE,
     EPSILON_VP,
     FP_BOUNDS,
+    MAX_EIGENVALUE_SLOW,
     PS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
@@ -298,6 +299,10 @@ class TwoCompartmentExchangeModel(PKModel):
         k1 = max(k1, EPSILON_EIGENVALUE)
         k2 = max(k2, EPSILON_EIGENVALUE)
 
+        # Clamp k2 (slow eigenvalue) for numerical stability
+        # k1 (fast) can remain large - it's plasma transit
+        k2 = min(k2, MAX_EIGENVALUE_SLOW)
+
         # Compute coefficients A1 and A2 for the impulse response:
         # h(t) = A1 × exp(-K1×t) + A2 × exp(-K2×t)
         #
@@ -327,7 +332,7 @@ class TwoCompartmentExchangeModel(PKModel):
 
     def evaluate(
         self,
-        params: Sequence[float],
+        params: ParamsType,
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
@@ -391,10 +396,13 @@ class TwoCompartmentExchangeModel(PKModel):
             integrand = h_values * aif_reversed
             c_tissue[i] = np.trapezoid(integrand, dx=dt)
 
+        # Sanitize: replace non-finite values with 0
+        c_tissue = np.where(np.isfinite(c_tissue), c_tissue, 0.0)
+
         return c_tissue
 
     def _apply_volume_constraint(
-        self, params: Sequence[float]
+        self, params: ParamsType
     ) -> tuple[float, float, float, float]:
         """Apply the ve + vp <= 1.0 constraint.
 
@@ -649,7 +657,7 @@ class TwoCompartmentExchangeModel(PKModel):
         )
 
     def compute_derived_parameters(
-        self, params: Sequence[float]
+        self, params: ParamsType
     ) -> dict[str, float]:
         """Compute derived parameters from fitted values.
 

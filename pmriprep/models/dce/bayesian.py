@@ -629,10 +629,10 @@ class BayesianPKFitter:
         map_result = self.fit_map(
             tissue_curve, aif, time_points, max_iter=100
         )
-        map_params = self.model.dict_to_params(
+        map_params_list = self.model.dict_to_params(
             {k: v for k, v in map_result.parameters.items() if k in param_names}
         )
-        map_params = np.array(map_params, dtype=np.float64)
+        map_params = np.array(map_params_list, dtype=np.float64)
 
         # Initialize walkers with small perturbations around MAP
         init_positions = np.zeros((n_walkers, n_params))

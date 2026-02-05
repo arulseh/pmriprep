@@ -7,10 +7,13 @@ interface.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 import numpy as np
 import numpy.typing as npt
+
+# Type alias for parameter arrays (accepts both list and ndarray)
+ParamsType = Union[Sequence[float], npt.NDArray[np.floating]]
 
 
 @dataclass
@@ -300,7 +303,7 @@ class PKModel(ABC):
     @abstractmethod
     def evaluate(
         self,
-        params: Sequence[float],
+        params: ParamsType,
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
@@ -385,7 +388,7 @@ class PKModel(ABC):
         """
         return self.get_initial_guess()
 
-    def validate_params(self, params: Sequence[float]) -> bool:
+    def validate_params(self, params: ParamsType) -> bool:
         """Check if parameters are within bounds.
 
         Args:
@@ -399,7 +402,7 @@ class PKModel(ABC):
             return False
         return all(d.is_valid(p) for d, p in zip(definitions, params))
 
-    def clip_params(self, params: Sequence[float]) -> list[float]:
+    def clip_params(self, params: ParamsType) -> list[float]:
         """Clip parameters to bounds.
 
         Args:
@@ -411,7 +414,7 @@ class PKModel(ABC):
         definitions = self.get_parameter_definitions()
         return [d.clip_to_bounds(p) for d, p in zip(definitions, params)]
 
-    def params_to_dict(self, params: Sequence[float]) -> dict[str, float]:
+    def params_to_dict(self, params: ParamsType) -> dict[str, float]:
         """Convert parameter array to named dictionary.
 
         Args:
@@ -436,7 +439,7 @@ class PKModel(ABC):
         return [param_dict[name] for name in names]
 
     def compute_derived_parameters(
-        self, params: Sequence[float]
+        self, params: ParamsType
     ) -> dict[str, float]:
         """Compute derived parameters from fitted values.
 
