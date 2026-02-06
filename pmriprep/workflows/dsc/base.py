@@ -806,16 +806,19 @@ def _create_registration_filmstrip(
     out_dir = Path.cwd()
     output_path = str(out_dir / "registration_qc_filmstrip.png")
 
-    dsc_data = nib.load(dsc_mean_file).get_fdata()
+    dsc_img = nib.load(dsc_mean_file)
+    dsc_data = dsc_img.get_fdata()
     t1w_data = nib.load(registered_t1w_file).get_fdata()
     mask_data = nib.load(brain_mask_file).get_fdata()
+    voxel_sizes = tuple(dsc_img.header.get_zooms()[:3])
 
     plot_registration_qc_filmstrip(
-        fixed=dsc_data,
-        moving=t1w_data,
+        fixed=t1w_data,
+        moving=dsc_data,
         output_path=output_path,
         mask=mask_data,
         title="DSC-T1w Registration QC",
+        voxel_sizes=voxel_sizes,
     )
 
     return output_path

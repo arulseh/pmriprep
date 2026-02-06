@@ -2451,6 +2451,7 @@ def _create_dce_registration_filmstrip(
     # Load data
     dce_img = nib.load(dce_mean_file)
     dce_data = dce_img.get_fdata()  # type: ignore[attr-defined]
+    voxel_sizes = tuple(dce_img.header.get_zooms()[:3])
 
     t1w_img = nib.load(registered_t1w_file)
     t1w_data = t1w_img.get_fdata()  # type: ignore[attr-defined]
@@ -2461,14 +2462,15 @@ def _create_dce_registration_filmstrip(
         mask_img = nib.load(brain_mask_file)
         mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
-    # Generate filmstrip
+    # Generate filmstrip — T1w as background, DCE contours overlaid
     out_path = Path.cwd() / "registration_qc_filmstrip.png"
     plot_registration_qc_filmstrip(
-        fixed=dce_data,
-        moving=t1w_data,
+        fixed=t1w_data,
+        moving=dce_data,
         output_path=out_path,
         mask=mask,
         title="DCE-T1w Registration QC",
+        voxel_sizes=voxel_sizes,
     )
 
     return str(out_path)

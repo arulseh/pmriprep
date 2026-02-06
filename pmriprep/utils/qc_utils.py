@@ -143,23 +143,25 @@ def plot_registration_qc_filmstrip(
     title: Optional[str] = None,
     n_slices: int = 7,
     contour_color: Optional[str] = None,
-    axis: int = 2,
+    voxel_sizes: Optional[tuple[float, float, float]] = None,
 ) -> Path:
-    """Create a filmstrip visualization for registration QC.
+    """Create a 3-row orthogonal filmstrip for registration QC.
 
-    Generates a multi-slice filmstrip showing the fixed image with
-    contours of the moving image overlaid. This allows visual assessment
-    of registration quality.
+    Generates a multi-slice filmstrip with three rows (axial, coronal,
+    sagittal) showing the fixed image as grayscale background with
+    contours of the moving image overlaid. This follows the fMRIPrep-style
+    registration QC layout.
 
     Args:
-        fixed: 3D reference/fixed image array
-        moving: 3D moving/registered image array (same shape as fixed)
+        fixed: 3D reference/background image array (e.g. T1w)
+        moving: 3D moving/contour overlay array (e.g. DSC/DCE mean)
         output_path: Path to save the output PNG image
         mask: Optional 3D brain mask to restrict display region
         title: Optional title for the figure
-        n_slices: Number of slices to display in the filmstrip (default 7)
+        n_slices: Number of slices per row (default 7)
         contour_color: Color for contour overlay. If None, uses palette primary.
-        axis: Slice axis (0=sagittal, 1=coronal, 2=axial). Default is axial.
+        voxel_sizes: Voxel dimensions (dx, dy, dz) in mm for correct aspect
+            ratios. If None, uses equal aspect.
 
     Returns:
         Path to the saved figure
@@ -192,18 +194,24 @@ def plot_registration_qc_filmstrip(
     if contour_color is None:
         contour_color = COLORBLIND_PALETTE.primary
 
-    # Calculate slice positions (evenly spaced through the volume)
-    n_total = fixed.shape[axis]
-    # Exclude edge slices (10% margin on each side)
-    margin = int(n_total * 0.1)
-    slice_indices = np.linspace(margin, n_total - margin - 1, n_slices, dtype=int)
+    # Row definitions: (label, axis, aspect_ratio)
+    # Aspect ratios account for anisotropic voxels in each view plane
+    row_defs: list[tuple[str, int]] = [
+        ("Axial", 2),
+        ("Coronal", 1),
+        ("Sagittal", 0),
+    ]
 
-    # Create the figure
-    fig, axes = plt.subplots(1, n_slices, figsize=(n_slices * 2, 2.5))
-
-    # Handle single slice case
-    if n_slices == 1:
-        axes = [axes]
+    # Compute per-plane aspect ratios from voxel sizes
+    # After get_radiological_slice rotation, the displayed axes are:
+    #   Axial (axis=2):    rows=y, cols=x  -> aspect = dy/dx
+    #   Coronal (axis=1):  rows=z, cols=x  -> aspect = dz/dx
+    #   Sagittal (axis=0): rows=z, cols=y  -> aspect = dz/dy
+    if voxel_sizes is not None:
+        dx, dy, dz = voxel_sizes
+        aspect_ratios = [dy / dx, dz / dx, dz / dy]
+    else:
+        aspect_ratios = [1.0, 1.0, 1.0]
 
     # Determine intensity range from fixed image (exclude zeros if masked)
     if mask is not None:
@@ -219,50 +227,89 @@ def plot_registration_qc_filmstrip(
     else:
         vmin, vmax = 0.0, 1.0
 
-    for ax_idx, slice_idx in enumerate(slice_indices):
-        ax = axes[ax_idx]
+    # Optionally zero out background outside mask for cleaner display
+    if mask is not None:
+        fixed = fixed.copy()
+        fixed[mask == 0] = 0
 
-        # Get slices in radiological orientation
-        fixed_slice = get_radiological_slice(fixed, axis=axis, slice_idx=int(slice_idx))
-        moving_slice = get_radiological_slice(moving, axis=axis, slice_idx=int(slice_idx))
+    # Create the figure: 3 rows x n_slices columns
+    fig, axes = plt.subplots(
+        3, n_slices, figsize=(n_slices * 2.2, 3 * 2.5),
+    )
 
-        # Display the fixed image as background
-        ax.imshow(
-            fixed_slice,
-            cmap="gray",
-            vmin=vmin,
-            vmax=vmax,
-            aspect="equal",
+    # Handle single slice case (axes would be 1D)
+    if n_slices == 1:
+        axes = axes[:, np.newaxis]
+
+    for row_idx, (label, axis) in enumerate(row_defs):
+        aspect = aspect_ratios[row_idx]
+
+        # Calculate slice positions (evenly spaced, 10% margin each side)
+        n_total = fixed.shape[axis]
+        margin = int(n_total * 0.1)
+        slice_indices = np.linspace(
+            margin, n_total - margin - 1, n_slices, dtype=int,
         )
 
-        # Overlay contours of the moving image
-        # Use multiple contour levels for better visualization
-        if np.any(moving_slice > 0):
-            low_pct = float(np.percentile(moving_slice[moving_slice > 0], 30))
-            high_pct = float(np.percentile(moving_slice[moving_slice > 0], 70))
-        else:
-            low_pct, high_pct = 0.3, 0.7
+        # Axis label mapping for slice coordinate labels
+        axis_labels = {2: "z", 1: "y", 0: "x"}
+        coord_label = axis_labels[axis]
 
-        contour_levels = np.linspace(low_pct, high_pct, 3)
+        for col_idx, slice_idx in enumerate(slice_indices):
+            ax = axes[row_idx, col_idx]
 
-        # Only draw contours if there's meaningful data
-        if np.any(moving_slice > 0):
-            ax.contour(
-                moving_slice,
-                levels=contour_levels,
-                colors=[contour_color],
-                linewidths=0.5,
-                alpha=0.8,
+            # Get slices in radiological orientation
+            fixed_slice = get_radiological_slice(
+                fixed, axis=axis, slice_idx=int(slice_idx),
+            )
+            moving_slice = get_radiological_slice(
+                moving, axis=axis, slice_idx=int(slice_idx),
             )
 
-        ax.axis("off")
-        ax.set_title(f"z={slice_idx}", fontsize=8)
+            # Display the fixed image as background
+            ax.imshow(
+                fixed_slice,
+                cmap="gray",
+                vmin=vmin,
+                vmax=vmax,
+                aspect=aspect,
+            )
+
+            # Overlay contours of the moving image
+            if np.any(moving_slice > 0):
+                low_pct = float(
+                    np.percentile(moving_slice[moving_slice > 0], 30),
+                )
+                high_pct = float(
+                    np.percentile(moving_slice[moving_slice > 0], 70),
+                )
+                contour_levels = np.linspace(low_pct, high_pct, 3)
+                ax.contour(
+                    moving_slice,
+                    levels=contour_levels,
+                    colors=[contour_color],
+                    linewidths=0.5,
+                    alpha=0.8,
+                )
+
+            ax.axis("off")
+            ax.set_title(f"{coord_label}={slice_idx}", fontsize=7)
+
+    plt.tight_layout()
+
+    # Row labels — placed after tight_layout so positions are stable
+    for row_idx, (label, _axis) in enumerate(row_defs):
+        # Get the bounding box of the leftmost subplot in this row
+        bbox = axes[row_idx, 0].get_position()
+        fig.text(
+            bbox.x0 - 0.01, (bbox.y0 + bbox.y1) / 2, label,
+            fontsize=9, fontweight="bold", rotation=90,
+            ha="right", va="center",
+        )
 
     # Add overall title if provided
     if title:
         fig.suptitle(title, fontsize=10, y=1.02)
-
-    plt.tight_layout()
 
     # Save figure
     output_path = Path(output_path)
