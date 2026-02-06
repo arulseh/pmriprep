@@ -520,7 +520,7 @@ class BayesianPKFitter:
                 return 1e30
             return -lp
 
-        # Multi-start: try prior mean and data-driven guess, keep best.
+        # Multi-start: try NLLS warm-start, prior mean, and data-driven guess.
         # Use Nelder-Mead (gradient-free) because the profile likelihood
         # has non-smooth gradients that cause L-BFGS-B to stall.
         x0_prior = np.array(self.model.get_initial_guess(), dtype=np.float64)
@@ -529,16 +529,35 @@ class BayesianPKFitter:
             dtype=np.float64,
         )
 
+        # NLLS warm-start: use model.fit() (curve_fit TRF) as third start point
+        x0_nlls = x0_prior.copy()  # fallback if NLLS fails
+        try:
+            nlls_result = self.model.fit(tissue_curve, aif, time_points)
+            if nlls_result.converged:
+                param_names = self.model.get_parameter_names()
+                x0_nlls = np.array(
+                    [nlls_result.parameters.get(p, x0_prior[i])
+                     for i, p in enumerate(param_names)],
+                    dtype=np.float64,
+                )
+        except Exception:
+            pass
+
         # Build scipy Bounds for Nelder-Mead (supported since scipy 1.7)
-        lower = [b[0] for b in bounds]
-        upper = [b[1] for b in bounds]
+        lower = np.array([b[0] for b in bounds])
+        upper = np.array([b[1] for b in bounds])
         nm_bounds = Bounds(lower, upper)
+
+        # Clip all start points to bounds to avoid OptimizeWarning
+        x0_nlls = np.clip(x0_nlls, lower, upper)
+        x0_prior = np.clip(x0_prior, lower, upper)
+        x0_data = np.clip(x0_data, lower, upper)
 
         best_fun = float("inf")
         converged = False
         fitted_params = x0_prior
 
-        for x0 in [x0_prior, x0_data]:
+        for x0 in [x0_nlls, x0_prior, x0_data]:
             try:
                 result = optimize.minimize(
                     neg_log_posterior,

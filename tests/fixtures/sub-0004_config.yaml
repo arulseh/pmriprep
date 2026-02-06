@@ -19,6 +19,7 @@ dsc:
 dce:
   model: extended_tofts
   bayesian: map
+  dose: half
   aif_method: auto
   scale_aif: true
   no_b1: false

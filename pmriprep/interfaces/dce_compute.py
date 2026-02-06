@@ -701,8 +701,16 @@ class ComputeDCEMaps(BaseInterface):
 
         if self.inputs.time_points_file:
             time_points = np.loadtxt(self.inputs.time_points_file)
+        elif isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
+            # Use volume TR (temporal resolution between 3D acquisitions) for
+            # the time vector — this is the actual time between DCE frames.
+            # Note: self.inputs.tr is the pulse TR (RF excitation interval),
+            # which is ~1000x shorter for 3D sequences like VIBE.
+            vol_tr_minutes = float(self.inputs.volume_tr) / 60.0
+            time_points = np.arange(n_timepoints, dtype=np.float64) * vol_tr_minutes
         elif self.inputs.tr:
-            # TR is in seconds, convert to minutes for PK models
+            # Fallback to pulse TR (correct for 2D sequences where
+            # pulse TR == volume TR)
             tr_minutes = float(self.inputs.tr) / 60.0
             time_points = np.arange(n_timepoints, dtype=np.float64) * tr_minutes
         else:
@@ -742,16 +750,6 @@ class ComputeDCEMaps(BaseInterface):
                 "data (values will be low — consider wiring dce_preprocess.out_file)"
             )
             tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
-
-        # Subtract residual baseline concentration to remove T1/B1 noise bias
-        baseline_mean = np.mean(conc_data[..., :baseline_frames], axis=-1, keepdims=True)
-        conc_data = conc_data - baseline_mean
-        conc_data = np.maximum(conc_data, 0.0)
-
-        # Subtract baseline from AIF as well
-        aif_baseline = np.mean(aif[:baseline_frames])
-        aif = aif - aif_baseline
-        aif = np.maximum(aif, 0.0)
 
         # Create fitting mask (brain mask + tSNR threshold if specified)
         mask_bool = mask > 0

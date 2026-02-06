@@ -232,6 +232,14 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     """
     dce_dict = config_dict.get("dce", {}).copy()
 
+    # Flatten nested sections (e.g., processing.tsnr_threshold -> tsnr_threshold)
+    for nested_key in ("processing", "registration", "aif"):
+        nested = dce_dict.pop(nested_key, None)
+        if isinstance(nested, dict):
+            for k, v in nested.items():
+                if k not in dce_dict:  # Top-level keys take priority
+                    dce_dict[k] = v
+
     # Convert path strings to Path objects
     for path_key in ("lesion_mask", "aif_mask_file", "reference_roi"):
         _dict_to_path(dce_dict, path_key)

@@ -42,10 +42,10 @@ DSC_CORRELATION_THRESHOLDS: Dict[str, float] = {
 }
 
 DCE_CORRELATION_THRESHOLDS: Dict[str, float] = {
-    "Ktrans": 0.70,
-    "ve": 0.70,
-    "vp": 0.70,
-    "kep": 0.70,
+    "Ktrans": 0.99,
+    "ve": 0.99,
+    "vp": 0.99,
+    "kep": 0.99,
 }
 
 
