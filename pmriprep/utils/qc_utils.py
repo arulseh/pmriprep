@@ -91,9 +91,10 @@ def calculate_framewise_displacement(
     FD = |Δtx| + |Δty| + |Δtz| + r×|Δrx| + r×|Δry| + r×|Δrz|
 
     Args:
-        motion_params: Motion parameters array of shape (N, 6) where columns
-            are [tx, ty, tz, rx, ry, rz] (translations in mm, rotations in
-            radians) or shape (N, 12) for affine parameters (uses first 6).
+        motion_params: Motion parameters array of shape (N, 6) in MCFLIRT
+            format where columns are [rx, ry, rz, tx, ty, tz] (rotations
+            in radians, translations in mm), or shape (N, 12) for affine
+            parameters (uses first 6).
         radius: Head radius in mm for converting rotations to displacements.
             Default is 50.0mm.
 
@@ -111,7 +112,7 @@ def calculate_framewise_displacement(
 
     if motion_params.shape[1] < 6:
         raise ValueError(
-            f"Expected at least 6 columns (tx,ty,tz,rx,ry,rz), "
+            f"Expected at least 6 columns (rx,ry,rz,tx,ty,tz), "
             f"got {motion_params.shape[1]}"
         )
 
@@ -121,11 +122,9 @@ def calculate_framewise_displacement(
     # Calculate frame-to-frame differences
     diff = np.diff(params, axis=0)
 
-    # Translations are direct displacements (columns 0-2)
-    trans_disp = np.abs(diff[:, :3])
-
-    # Rotations converted to arc length: displacement = r × θ (columns 3-5)
-    rot_disp = np.abs(diff[:, 3:6]) * radius
+    # MCFLIRT format: cols 0-2 = rotations (radians), cols 3-5 = translations (mm)
+    rot_disp = np.abs(diff[:, :3]) * radius
+    trans_disp = np.abs(diff[:, 3:6])
 
     # Sum all displacements
     fd = np.sum(trans_disp, axis=1) + np.sum(rot_disp, axis=1)
@@ -281,17 +280,20 @@ def plot_motion_qc(
     title: Optional[str] = None,
     radius: float = 50.0,
 ) -> Path:
-    """Create a motion QC plot showing framewise displacement over time.
+    """Create a 3-panel motion QC plot matching perf-plus layout.
 
-    Generates a two-panel figure showing:
-    1. Top panel: Raw motion parameters (translations and rotations)
-    2. Bottom panel: Framewise displacement with threshold lines
+    Generates a three-panel figure showing:
+    1. Top panel: Translation parameters (mm)
+    2. Middle panel: Rotation parameters (degrees)
+    3. Bottom panel: Framewise displacement with threshold and outlier shading
 
     Args:
-        motion_params: Motion parameters array of shape (N, 6) where columns
-            are [tx, ty, tz, rx, ry, rz]
+        motion_params: Motion parameters array of shape (N, 6) in MCFLIRT
+            format where columns are [rx, ry, rz, tx, ty, tz] (rotations
+            in radians, translations in mm), or shape (N, 12) for affine
+            parameters (uses first 6).
         output_path: Path to save the output PNG image
-        tr: Repetition time in seconds for x-axis time labeling
+        tr: Repetition time in seconds (unused, x-axis is volume number)
         title: Optional title for the figure
         radius: Head radius in mm for FD calculation (default 50.0)
 
@@ -311,94 +313,105 @@ def plot_motion_qc(
             f"Expected shape (N, 6) or (N, 12), got {motion_params.shape}"
         )
 
-    # Extract the 6 rigid-body parameters
+    # Extract the 6 rigid-body parameters (MCFLIRT: rx, ry, rz, tx, ty, tz)
     params = motion_params[:, :6]
     n_frames = params.shape[0]
-
-    # Calculate time axis
-    time = np.arange(n_frames) * tr
+    volumes = np.arange(n_frames)
 
     # Calculate framewise displacement
     fd = calculate_framewise_displacement(params, radius=radius)
+    fd_threshold = MOTION_FD_THRESHOLDS.warn_threshold  # 0.5mm
 
-    # Create figure with two subplots
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+    # Perf-plus color scheme
+    color_1 = "#EE7733"  # Orange
+    color_2 = "#0077BB"  # Blue
+    color_3 = "#009988"  # Teal
+    color_fd = "#0077BB"  # Blue for FD fill
+    color_thresh = "#CC3311"  # Red for threshold
 
-    # Colors for motion parameters
-    trans_colors = [COLORBLIND_PALETTE.primary, COLORBLIND_PALETTE.secondary, COLORBLIND_PALETTE.success]
-    rot_colors = [COLORBLIND_PALETTE.error, COLORBLIND_PALETTE.warning, "#AA3377"]  # Purple for rz
+    # Create figure with three subplots, shared x-axis
+    fig, (ax1, ax2, ax3) = plt.subplots(
+        3, 1, figsize=(12, 9), sharex=True,
+    )
 
-    # Top panel: Raw motion parameters
-    # Translations
-    labels_trans = ["tx", "ty", "tz"]
-    for i, (label, color) in enumerate(zip(labels_trans, trans_colors)):
-        ax1.plot(time, params[:, i], label=label, color=color, linewidth=1)
-
-    # Rotations (convert to degrees for display)
-    labels_rot = ["rx", "ry", "rz"]
-    for i, (label, color) in enumerate(zip(labels_rot, rot_colors)):
-        ax1.plot(
-            time,
-            np.rad2deg(params[:, i + 3]),
-            label=label,
-            color=color,
-            linewidth=1,
-            linestyle="--",
-        )
-
-    ax1.set_ylabel("Motion (mm / deg)")
-    ax1.legend(loc="upper right", ncol=2, fontsize=8)
+    # --- Subplot 1: Translations (cols 3-5) ---
+    ax1.plot(volumes, params[:, 3], label="X (LR)", color=color_1, linewidth=1)
+    ax1.plot(volumes, params[:, 4], label="Y (AP)", color=color_2, linewidth=1)
+    ax1.plot(volumes, params[:, 5], label="Z (SI)", color=color_3, linewidth=1)
+    ax1.set_ylabel("Translation (mm)")
+    ax1.legend(loc="upper right", fontsize=8, ncol=3)
     ax1.axhline(y=0, color="gray", linestyle="-", linewidth=0.5, alpha=0.5)
     ax1.grid(True, alpha=0.3)
-    ax1.set_title("Motion Parameters")
+    ax1.set_title("Translation Parameters")
 
-    # Bottom panel: Framewise displacement
-    # Determine QC status for coloring
-    mean_fd = float(np.mean(fd))
-    qc_status = get_qc_status(mean_fd, MOTION_FD_THRESHOLDS, higher_is_better=False)
-    fd_color = get_status_color(qc_status)
-
-    ax2.fill_between(time, fd, alpha=0.3, color=fd_color)
-    ax2.plot(time, fd, color=fd_color, linewidth=1)
-
-    # Add threshold lines
-    ax2.axhline(
-        y=MOTION_FD_THRESHOLDS.pass_threshold,
-        color=COLORBLIND_PALETTE.success,
-        linestyle="--",
-        linewidth=1,
-        label=f"Pass (<{MOTION_FD_THRESHOLDS.pass_threshold}mm)",
+    # --- Subplot 2: Rotations (cols 0-2, converted to degrees) ---
+    ax2.plot(
+        volumes, np.rad2deg(params[:, 0]),
+        label="Pitch (X)", color=color_1, linewidth=1,
     )
-    ax2.axhline(
-        y=MOTION_FD_THRESHOLDS.warn_threshold,
-        color=COLORBLIND_PALETTE.warning,
-        linestyle="--",
-        linewidth=1,
-        label=f"Warn (<{MOTION_FD_THRESHOLDS.warn_threshold}mm)",
+    ax2.plot(
+        volumes, np.rad2deg(params[:, 1]),
+        label="Roll (Y)", color=color_2, linewidth=1,
     )
-
-    ax2.set_xlabel("Time (s)")
-    ax2.set_ylabel("FD (mm)")
-    ax2.legend(loc="upper right", fontsize=8)
+    ax2.plot(
+        volumes, np.rad2deg(params[:, 2]),
+        label="Yaw (Z)", color=color_3, linewidth=1,
+    )
+    ax2.set_ylabel("Rotation (\u00b0)")
+    ax2.legend(loc="upper right", fontsize=8, ncol=3)
+    ax2.axhline(y=0, color="gray", linestyle="-", linewidth=0.5, alpha=0.5)
     ax2.grid(True, alpha=0.3)
-    ax2.set_ylim(bottom=0)
+    ax2.set_title("Rotation Parameters")
 
-    # Add summary statistics
-    max_fd: float = float(np.max(fd))
-    outlier_count: int = int(np.sum(fd > MOTION_FD_THRESHOLDS.warn_threshold))
-    outlier_frac: float = outlier_count / len(fd) * 100
+    # --- Subplot 3: Framewise Displacement ---
+    ax3.fill_between(volumes, fd, alpha=0.3, color=color_fd)
+    ax3.plot(volumes, fd, color=color_fd, linewidth=1)
 
-    stats_text = (
-        f"Mean FD: {mean_fd:.3f}mm | Max FD: {max_fd:.3f}mm | "
-        f"Outliers: {outlier_count} ({outlier_frac:.1f}%) | Status: {qc_status}"
+    # Threshold line
+    ax3.axhline(
+        y=fd_threshold, color=color_thresh, linestyle="--", linewidth=1,
+        label=f"Threshold ({fd_threshold} mm)",
     )
-    ax2.set_title(f"Framewise Displacement\n{stats_text}", fontsize=9)
 
-    # Add overall title if provided
+    # Red shading for frames exceeding threshold
+    outlier_mask = fd > fd_threshold
+    for i in range(n_frames):
+        if outlier_mask[i]:
+            ax3.axvspan(i - 0.5, i + 0.5, alpha=0.15, color=color_thresh)
+
+    # Y-axis limits
+    max_fd = float(np.max(fd))
+    ax3.set_ylim(0, max(max_fd * 1.1, fd_threshold * 1.5))
+
+    ax3.set_xlabel("Volume")
+    ax3.set_ylabel("FD (mm)")
+    ax3.legend(loc="upper right", fontsize=8)
+    ax3.grid(True, alpha=0.3)
+    ax3.set_title("Framewise Displacement")
+
+    # Metrics box (bottom-left)
+    mean_fd = float(np.mean(fd))
+    outlier_count = int(np.sum(outlier_mask))
+    qc_status = get_qc_status(
+        mean_fd, MOTION_FD_THRESHOLDS, higher_is_better=False,
+    )
+    stats_text = (
+        f"Status: {qc_status}\n"
+        f"Mean FD: {mean_fd:.3f} mm\n"
+        f"Max FD: {max_fd:.3f} mm\n"
+        f"Outliers (>{fd_threshold} mm): {outlier_count}"
+    )
+    ax3.text(
+        0.02, 0.05, stats_text, transform=ax3.transAxes,
+        fontsize=8, verticalalignment="bottom",
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.8),
+    )
+
+    # Overall title
     if title:
-        fig.suptitle(title, fontsize=11, y=1.02)
+        fig.suptitle(title, fontsize=11)
 
-    plt.tight_layout()
+    fig.tight_layout(rect=[0, 0.12, 1, 0.985])
 
     # Save figure
     output_path = Path(output_path)
