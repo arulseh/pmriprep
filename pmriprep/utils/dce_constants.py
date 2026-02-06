@@ -35,7 +35,9 @@ EPSILON_E1_UPPER: Final[float] = 1e-4
 EPSILON_SIGNAL: Final[float] = 1e-9
 
 #: Minimum signal standard deviation for voxel to be considered valid
-MIN_SIGNAL_STD: Final[float] = 1.0
+#: Value is in mM (concentration units), not raw signal units
+#: Normal tissue concentration std is 0.01-0.5 mM; 0.01 filters noise-only voxels
+MIN_SIGNAL_STD: Final[float] = 0.01
 
 #: Minimum enhancement in mM for voxel to be considered valid
 MIN_ENHANCEMENT_MM: Final[float] = 1e-8

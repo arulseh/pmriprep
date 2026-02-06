@@ -1033,9 +1033,21 @@ class ComputeDCEMaps(BaseInterface):
         nib.save(tsnr_img, out_tsnr)  # type: ignore[attr-defined]
         self._results["out_tsnr"] = out_tsnr
 
-        # Create and save QC mask (1=good fit, 0=unfitted/poor)
-        # Good fit = quality_flag == 1
-        qc_mask = (quality_flag_map == 1).astype(np.uint8)
+        # Create QC mask using physiological bounds (matches perf-plus)
+        # Include voxels with: good R², physiological parameter values, adequate SNR
+        qc_mask = np.ones(spatial_shape, dtype=bool)
+        qc_mask &= fitting_mask  # Within brain mask
+        qc_mask &= (tsnr_map >= 10)  # Adequate tSNR (perf-plus threshold)
+        qc_mask &= (peak_enh >= 10)  # Visible enhancement
+        qc_mask &= (ktrans > 0) & (ktrans < 5.0)  # Physiological Ktrans
+        qc_mask &= (r2_map >= 0.5)  # Reasonable model fit
+
+        # Model-specific constraints
+        if model_name in ["extended_tofts", "2cxm"]:
+            qc_mask &= ((ve + vp) < 0.95)  # Volume fraction constraint
+        qc_mask &= (kep > 0.001)  # Non-zero efflux rate
+
+        qc_mask = qc_mask.astype(np.uint8)
         out_qc_mask = self._gen_outfilename("_qc_mask")
         qc_mask_img = nib.Nifti1Image(qc_mask, affine, header)  # type: ignore[attr-defined]
         nib.save(qc_mask_img, out_qc_mask)  # type: ignore[attr-defined]
