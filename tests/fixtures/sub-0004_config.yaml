@@ -33,4 +33,4 @@ dce:
     method: auto
 
   processing:
-    tsnr_threshold: 0
+    tsnr_threshold: 10

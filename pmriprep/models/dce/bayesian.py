@@ -28,6 +28,7 @@ from typing import Callable, Optional, Sequence
 import numpy as np
 import numpy.typing as npt
 from scipy import optimize  # type: ignore[import-untyped]
+from scipy.optimize import Bounds  # type: ignore[import-untyped]
 
 from pmriprep.models.dce.base import (
     FitResult,
@@ -35,6 +36,7 @@ from pmriprep.models.dce.base import (
     PKModel,
 )
 from pmriprep.utils.dce_constants import (
+    EPSILON_SIGNAL,
     EPSILON_VE,
 )
 
@@ -185,7 +187,8 @@ class BayesianPKFitter:
     ) -> float:
         """Compute log prior probability.
 
-        Uses Gaussian priors for each parameter, optionally in log space.
+        Uses simple Gaussian priors for all parameters (no log transform),
+        matching perf-plus behavior.
 
         Args:
             params: Parameter values.
@@ -196,21 +199,9 @@ class BayesianPKFitter:
         log_p = 0.0
 
         for i, (p, prior) in enumerate(zip(params, self.priors)):
-            # Transform to log space if needed
-            if prior.log_transform:
-                if p <= 0:
-                    return float("-inf")
-                p_trans = np.log(p)
-                mean_trans = np.log(max(prior.mean, EPSILON_VE))
-                # Jacobian term for log transform
-                log_p -= np.log(p)
-            else:
-                p_trans = p
-                mean_trans = prior.mean
-
-            # Gaussian prior
+            # Simple Gaussian prior (no log transform) - matches perf-plus
             if prior.std > 0:
-                log_p -= 0.5 * ((p_trans - mean_trans) / prior.std) ** 2
+                log_p -= 0.5 * ((p - prior.mean) / prior.std) ** 2
 
         return log_p
 
@@ -271,16 +262,26 @@ class BayesianPKFitter:
         time_points: npt.NDArray[np.floating],
         noise_std: float,
     ) -> float:
-        """Compute log likelihood.
+        """Compute log likelihood using profile likelihood noise estimation.
 
-        Assumes independent Gaussian noise on each time point.
+        Noise standard deviation is estimated from residuals at each
+        evaluation (profile likelihood), matching perf-plus behavior.
+        This self-tunes as the model approaches the data, giving a
+        balanced likelihood-prior tradeoff.
+
+        Note: With profile likelihood, the log-likelihood reduces to
+        -n * log(std(residuals)) + const, equivalent to penalized least
+        squares with the Gaussian prior providing L2 regularization.
+        This is intentional and matches the perf-plus reference pipeline.
+        Laplace approximation uncertainties are approximate under profile
+        likelihood -- use for relative voxel comparison, not calibrated CIs.
 
         Args:
             params: Parameter values.
             tissue_curve: Measured tissue concentration.
             aif: Arterial input function.
             time_points: Time points (minutes).
-            noise_std: Noise standard deviation.
+            noise_std: Unused (kept for API compatibility).
 
         Returns:
             Log likelihood (unnormalized).
@@ -291,13 +292,22 @@ class BayesianPKFitter:
         except (ValueError, RuntimeError):
             return float("-inf")
 
+        # Reject parameter sets that produce NaN/inf predictions
+        if not np.all(np.isfinite(predicted)):
+            return float("-inf")
+
         # Residuals
         residuals = tissue_curve - predicted
 
+        # Profile likelihood: estimate noise from residuals (matches perf-plus)
+        sigma_val = float(np.std(residuals))
+        if not np.isfinite(sigma_val):
+            return float("-inf")
+        sigma = max(sigma_val, EPSILON_SIGNAL)
+
         # Gaussian log likelihood
         n = len(tissue_curve)
-        log_lik = -0.5 * n * np.log(2 * np.pi * noise_std**2)
-        log_lik -= 0.5 * np.sum(residuals**2) / (noise_std**2)
+        log_lik = -n * np.log(sigma) - 0.5 * np.sum((residuals / sigma) ** 2)
 
         return float(log_lik)
 
@@ -339,7 +349,8 @@ class BayesianPKFitter:
             params, tissue_curve, aif, time_points, noise_std
         )
 
-        return log_prior + log_lik
+        posterior = log_prior + log_lik
+        return posterior if np.isfinite(posterior) else float("-inf")
 
     def _compute_hessian(
         self,
@@ -494,42 +505,60 @@ class BayesianPKFitter:
         Returns:
             FitResult with parameters, uncertainties, and credible intervals.
         """
-        # Estimate noise if not provided
-        noise_std = self.noise_std
-        if noise_std is None:
-            noise_std = self._estimate_noise_std(tissue_curve)
+        noise_std = 1.0  # Unused; profile likelihood estimates from residuals
 
-        # Initial guess
-        x0 = np.array(self.model.get_initial_guess(), dtype=np.float64)
         bounds = self.model.get_bounds()
 
         # Objective: negative log posterior
+        # Cap at large finite value instead of inf so that Nelder-Mead's
+        # convergence check (fsim[0] - fsim[1:]) never computes inf - inf = NaN
         def neg_log_posterior(params: npt.NDArray[np.floating]) -> float:
-            return -self._log_posterior(
+            lp = self._log_posterior(
                 params, tissue_curve, aif, time_points, noise_std
             )
+            if not np.isfinite(lp):
+                return 1e30
+            return -lp
 
-        # Optimize
-        try:
-            result = optimize.minimize(
-                neg_log_posterior,
-                x0,
-                method="L-BFGS-B",
-                bounds=bounds,
-                options={"maxiter": max_iter, "disp": False},
-            )
-            converged = result.success
-            fitted_params = np.array(result.x, dtype=np.float64)
+        # Multi-start: try prior mean and data-driven guess, keep best.
+        # Use Nelder-Mead (gradient-free) because the profile likelihood
+        # has non-smooth gradients that cause L-BFGS-B to stall.
+        x0_prior = np.array(self.model.get_initial_guess(), dtype=np.float64)
+        x0_data = np.array(
+            self.model.estimate_initial_guess(tissue_curve, aif, time_points),
+            dtype=np.float64,
+        )
 
-            # Apply volume constraint and clip to bounds
-            fitted_params = self._apply_volume_constraint(fitted_params)
-            fitted_params = np.array(
-                self.model.clip_params(list(fitted_params)), dtype=np.float64
-            )
+        # Build scipy Bounds for Nelder-Mead (supported since scipy 1.7)
+        lower = [b[0] for b in bounds]
+        upper = [b[1] for b in bounds]
+        nm_bounds = Bounds(lower, upper)
 
-        except (ValueError, RuntimeError):
-            converged = False
-            fitted_params = x0
+        best_fun = float("inf")
+        converged = False
+        fitted_params = x0_prior
+
+        for x0 in [x0_prior, x0_data]:
+            try:
+                result = optimize.minimize(
+                    neg_log_posterior,
+                    x0,
+                    method="Nelder-Mead",
+                    bounds=nm_bounds,
+                    options={"maxiter": max_iter, "xatol": 1e-6, "fatol": 1e-6},
+                )
+                if result.fun < best_fun:
+                    best_fun = result.fun
+                    converged = result.success
+                    fitted_params = np.array(result.x, dtype=np.float64)
+            except (ValueError, RuntimeError):
+                continue
+
+        # Apply volume constraint and clip to bounds
+        fitted_params = self._apply_volume_constraint(fitted_params)
+        fitted_params = np.array(
+            self.model.clip_params(list(fitted_params)), dtype=np.float64
+        )
 
         # Compute Laplace approximation uncertainties
         uncertainties, credible_intervals = self._compute_laplace_uncertainties(

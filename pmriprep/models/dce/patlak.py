@@ -131,6 +131,36 @@ class PatlakModel(PKModel):
             ),
         ]
 
+    def estimate_initial_guess(
+        self,
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+    ) -> list[float]:
+        """Estimate initial parameters from Patlak graphical analysis.
+
+        Uses the fast graphical (linear regression) method to provide
+        data-driven starting values for Bayesian MAP multi-start.
+
+        Args:
+            tissue_curve: Observed tissue concentration (mM).
+            aif: Arterial input function (mM).
+            time_points: Time points (minutes).
+
+        Returns:
+            List of [Ktrans, vp] estimates.
+        """
+        try:
+            result = self.fit_graphical(tissue_curve, aif, time_points)
+            ktrans = result.parameters.get("Ktrans", 0.0)
+            vp_val = result.parameters.get("vp", 0.0)
+            # Clamp to typical physiological range
+            ktrans = max(0.001, min(ktrans, 1.0))
+            vp_val = max(0.001, min(vp_val, 0.3))
+            return [ktrans, vp_val]
+        except Exception:
+            return self.get_initial_guess()
+
     def evaluate(
         self,
         params: ParamsType,

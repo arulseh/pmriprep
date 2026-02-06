@@ -5,8 +5,9 @@ pharmacokinetic parameter maps (Ktrans, ve, vp, kep) from concentration
 curves and AIF using various PK models.
 """
 
+import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -26,6 +27,212 @@ from pmriprep.utils.dce_constants import (
 )
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
+logger = logging.getLogger("nipype.interface")
+
+
+class VoxelInput(NamedTuple):
+    """Typed container for per-voxel fitting input data."""
+
+    x: int
+    y: int
+    z: int
+    tissue_curve: npt.NDArray[Any]
+    voxel_vp: Optional[float]
+
+
+# =========================================================================
+# Module-level worker functions for multiprocessing (must be picklable)
+# =========================================================================
+_worker_ctx: dict[str, Any] = {}
+
+
+def _init_worker(
+    aif: "np.ndarray[Any, Any]",
+    time_points: "np.ndarray[Any, Any]",
+    model_name: str,
+    bayesian: str,
+    mcmc_samples: int,
+    baseline_frames: int,
+    constraint_mode_str: str,
+    constraint_vp_uncertainty: float,
+    save_fitted_curves: bool = False,
+) -> None:
+    """Initialize per-worker model and fitter objects (called once per process)."""
+    import warnings
+
+    from pmriprep.models.dce import BayesianPKFitter
+    from pmriprep.models.dce import (
+        ToftsModel,
+        ExtendedToftsModel,
+        PatlakModel,
+        TwoCompartmentExchangeModel,
+    )
+    from pmriprep.models.dce.bayesian import create_vp_prior_from_dsc
+    from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+    # Suppress Nelder-Mead RuntimeWarnings in worker processes
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+    model_map: dict[str, type] = {
+        "tofts": ToftsModel,
+        "extended_tofts": ExtendedToftsModel,
+        "patlak": PatlakModel,
+        "2cxm": TwoCompartmentExchangeModel,
+    }
+    model = model_map[model_name]()
+
+    fitter = None
+    if bayesian != "none":
+        fitter = BayesianPKFitter(model)
+
+    _worker_ctx["aif"] = aif
+    _worker_ctx["time_points"] = time_points
+    _worker_ctx["model"] = model
+    _worker_ctx["model_name"] = model_name
+    _worker_ctx["fitter"] = fitter
+    _worker_ctx["bayesian"] = bayesian
+    _worker_ctx["mcmc_samples"] = mcmc_samples
+    _worker_ctx["baseline_frames"] = baseline_frames
+    _worker_ctx["constraint_mode_str"] = constraint_mode_str
+    _worker_ctx["constraint_vp_uncertainty"] = constraint_vp_uncertainty
+    _worker_ctx["save_fitted_curves"] = save_fitted_curves
+    _worker_ctx["BayesianPKFitter"] = BayesianPKFitter
+    _worker_ctx["create_vp_prior_from_dsc"] = create_vp_prior_from_dsc
+    _worker_ctx["ConstraintMode"] = ConstraintMode
+
+
+def _fit_single_voxel(
+    voxel_data: VoxelInput,
+) -> dict[str, Any]:
+    """Fit a single voxel using the worker-local model/fitter.
+
+    Args:
+        voxel_data: VoxelInput with (x, y, z, tissue_curve, voxel_vp).
+
+    Returns:
+        Dict with keys: coords, params, r_squared, converged, uncertainties,
+        fitted_curve, quality_flag, failed, failure_reason, constrained.
+    """
+    BayesianPKFitter = _worker_ctx["BayesianPKFitter"]
+    create_vp_prior_from_dsc = _worker_ctx["create_vp_prior_from_dsc"]
+    ConstraintMode = _worker_ctx["ConstraintMode"]
+
+    x, y, z, tissue_curve, voxel_vp = voxel_data
+
+    model = _worker_ctx["model"]
+    fitter = _worker_ctx["fitter"]
+    aif = _worker_ctx["aif"]
+    time_points = _worker_ctx["time_points"]
+    bayesian = _worker_ctx["bayesian"]
+    mcmc_samples = _worker_ctx["mcmc_samples"]
+    baseline_frames = _worker_ctx["baseline_frames"]
+    constraint_mode = ConstraintMode(_worker_ctx["constraint_mode_str"])
+    constraint_vp_uncertainty = _worker_ctx["constraint_vp_uncertainty"]
+    model_name = _worker_ctx["model_name"]
+
+    # Validate voxel
+    prep = prepare_voxel_for_fitting(tissue_curve, baseline_frames)
+    if not prep.is_valid:
+        return {
+            "coords": (x, y, z),
+            "failed": True,
+            "failure_reason": prep.failure_reason,
+        }
+
+    try:
+        result = None
+        constrained = False
+
+        # HARD constraint: use fit_constrained with fixed vp
+        if (
+            voxel_vp is not None
+            and constraint_mode == ConstraintMode.HARD
+            and hasattr(model, "fit_constrained")
+        ):
+            result = model.fit_constrained(
+                tissue_curve, aif, time_points, fixed_vp=voxel_vp
+            )
+            constrained = True
+
+        # SOFT constraint: Bayesian with informative vp prior
+        elif (
+            voxel_vp is not None
+            and constraint_mode == ConstraintMode.SOFT
+            and bayesian != "none"
+        ):
+            vp_prior = create_vp_prior_from_dsc(
+                voxel_vp, relative_uncertainty=constraint_vp_uncertainty
+            )
+            soft_fitter = BayesianPKFitter(
+                model, vp_prior_override=vp_prior
+            )
+            if bayesian == "map":
+                result = soft_fitter.fit_map(tissue_curve, aif, time_points)
+            else:
+                result = soft_fitter.fit_mcmc(
+                    tissue_curve, aif, time_points, n_samples=mcmc_samples
+                )
+            constrained = True
+
+        # SOFT constraint with NLLS: fall back to hard constraint
+        elif (
+            voxel_vp is not None
+            and constraint_mode == ConstraintMode.SOFT
+            and bayesian == "none"
+            and hasattr(model, "fit_constrained")
+        ):
+            result = model.fit_constrained(
+                tissue_curve, aif, time_points, fixed_vp=voxel_vp
+            )
+            constrained = True
+
+        # Unconstrained fallback
+        if result is None:
+            if bayesian == "none":
+                result = model.fit(tissue_curve, aif, time_points)
+            elif bayesian == "map" and fitter is not None:
+                result = fitter.fit_map(tissue_curve, aif, time_points)
+            elif bayesian == "mcmc" and fitter is not None:
+                result = fitter.fit_mcmc(
+                    tissue_curve, aif, time_points,
+                    n_samples=mcmc_samples,
+                )
+            else:
+                result = model.fit(tissue_curve, aif, time_points)
+
+        # Build output dict
+        has_vp = model_name in ("extended_tofts", "patlak", "2cxm")
+        uncertainties = {}
+        if result.has_uncertainty():
+            uncertainties["Ktrans"] = result.get_uncertainty("Ktrans", 0.0)
+            uncertainties["ve"] = result.get_uncertainty("ve", 0.0)
+            if has_vp:
+                uncertainties["vp"] = result.get_uncertainty("vp", 0.0)
+
+        fitted_curve = None
+        if _worker_ctx.get("save_fitted_curves") and result.fitted_curve is not None:
+            fitted_curve = result.fitted_curve
+
+        return {
+            "coords": (x, y, z),
+            "params": dict(result.parameters),
+            "r_squared": result.r_squared,
+            "converged": result.converged,
+            "uncertainties": uncertainties,
+            "fitted_curve": fitted_curve,
+            "quality_flag": getattr(result, "quality_flag", "good"),
+            "failed": False,
+            "failure_reason": None,
+            "constrained": constrained,
+        }
+
+    except Exception:
+        return {
+            "coords": (x, y, z),
+            "failed": True,
+            "failure_reason": "exception",
+        }
+
 
 class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDCEMaps interface."""
@@ -34,6 +241,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         exists=True,
         mandatory=True,
         desc="4D NIfTI concentration curves (output from signal_to_concentration)",
+    )
+    dce_signal_file = File(
+        exists=True,
+        desc="4D motion-corrected raw DCE signal for tSNR calculation",
     )
     aif_file = File(
         exists=True,
@@ -121,6 +332,11 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
 
     # Processing options
+    n_procs = traits.Int(
+        1,
+        usedefault=True,
+        desc="Number of parallel processes for voxel fitting (1 = serial)",
+    )
     use_gpu = traits.Bool(
         False,
         usedefault=True,
@@ -448,33 +664,6 @@ class ComputeDCEMaps(BaseInterface):
         # Default if no bolus detected
         return int(min(5, n_volumes - 1))
 
-    def _get_model_instance(self, model_name: str) -> Any:
-        """Get model instance by name.
-
-        Args:
-            model_name: Model name (tofts, extended_tofts, patlak, 2cxm).
-
-        Returns:
-            PKModel instance.
-        """
-        from pmriprep.models.dce import (
-            ToftsModel,
-            ExtendedToftsModel,
-            PatlakModel,
-            TwoCompartmentExchangeModel,
-        )
-
-        if model_name == "tofts":
-            return ToftsModel()
-        elif model_name == "extended_tofts":
-            return ExtendedToftsModel()
-        elif model_name == "patlak":
-            return PatlakModel()
-        elif model_name == "2cxm":
-            return TwoCompartmentExchangeModel()
-        else:
-            raise ValueError(f"Unknown model: {model_name}")
-
     def _has_vp(self, model_name: str) -> bool:
         """Check if model has vp parameter.
 
@@ -490,11 +679,6 @@ class ComputeDCEMaps(BaseInterface):
         """Execute DCE map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
 
-        from pmriprep.models.dce import (
-            BayesianPKFitter,
-            fit_pk_model,
-        )
-        from pmriprep.models.dce.bayesian import create_vp_prior_from_dsc
         from pmriprep.utils.dsc_cbv_constraint import (
             ConstraintMode,
             prepare_vp_constraint_from_data,
@@ -539,16 +723,25 @@ class ComputeDCEMaps(BaseInterface):
         if model_name == "auto":
             model_name = self._select_model(selection_tr_seconds)
 
-        model = self._get_model_instance(model_name)
-
         # Baseline frames for tSNR
         baseline_frames = int(self.inputs.baseline_frames)
         if baseline_frames == 0:
             baseline_frames = self._detect_baseline_frames(conc_data, mask)
 
         # Always compute tSNR for QC (even if threshold is 0)
+        # Use raw DCE signal for tSNR when available (matches perf-plus)
         tsnr_threshold = float(self.inputs.tsnr_threshold)
-        tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
+        if isdefined(self.inputs.dce_signal_file):
+            signal_img = nib.load(self.inputs.dce_signal_file)
+            signal_data = signal_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            tsnr_map = self._compute_tsnr(signal_data, mask, baseline_frames)
+            del signal_data
+        else:
+            logger.warning(
+                "dce_signal_file not provided; computing tSNR from concentration "
+                "data (values will be low — consider wiring dce_preprocess.out_file)"
+            )
+            tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
 
         # Subtract residual baseline concentration to remove T1/B1 noise bias
         baseline_mean = np.mean(conc_data[..., :baseline_frames], axis=-1, keepdims=True)
@@ -682,12 +875,8 @@ class ComputeDCEMaps(BaseInterface):
         r2_list: list[float] = []
         failure_reason_counts: dict[str, int] = {}
 
-        # Set up Bayesian fitter if needed (default, without vp override)
-        fitter: Optional[BayesianPKFitter] = None
-        if bayesian != "none":
-            fitter = BayesianPKFitter(model)
-
-        # Process voxels
+        # Build voxel data list for parallel/serial processing
+        voxel_data_list: list[VoxelInput] = []
         for i in range(n_voxels):
             x, y, z = (
                 int(mask_coords[0][i]),
@@ -695,126 +884,100 @@ class ComputeDCEMaps(BaseInterface):
                 int(mask_coords[2][i]),
             )
             tissue_curve = conc_data[x, y, z, :]
-
-            # Validate voxel before fitting
-            prep = prepare_voxel_for_fitting(tissue_curve, baseline_frames)
-            if not prep.is_valid:
-                reason = prep.failure_reason
-                failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
-                n_failed += 1
-                continue
-
-            # Determine per-voxel vp constraint
             voxel_vp: Optional[float] = None
             if vp_constraint_map is not None and constraint_mode != ConstraintMode.SKIP:
                 vp_val = float(vp_constraint_map[x, y, z])
                 if np.isfinite(vp_val) and vp_val > 0:
                     voxel_vp = vp_val
+            voxel_data_list.append(VoxelInput(x, y, z, tissue_curve, voxel_vp))
 
-            try:
-                result = None
+        # Worker initializer args (shared across all paths)
+        init_args = (
+            aif, time_points, model_name, bayesian, mcmc_samples,
+            baseline_frames, constraint_mode.value, constraint_vp_uncertainty,
+            save_fitted_curves,
+        )
 
-                # HARD constraint: use fit_constrained with fixed vp
-                if (
-                    voxel_vp is not None
-                    and constraint_mode == ConstraintMode.HARD
-                    and hasattr(model, "fit_constrained")
-                ):
-                    result = model.fit_constrained(
-                        tissue_curve, aif, time_points, fixed_vp=voxel_vp
-                    )
-                    n_constrained += 1
+        n_procs = max(1, int(self.inputs.n_procs))
 
-                # SOFT constraint: Bayesian with informative vp prior
-                elif (
-                    voxel_vp is not None
-                    and constraint_mode == ConstraintMode.SOFT
-                    and bayesian != "none"
-                ):
-                    vp_prior = create_vp_prior_from_dsc(
-                        voxel_vp, relative_uncertainty=constraint_vp_uncertainty
-                    )
-                    soft_fitter = BayesianPKFitter(
-                        model, vp_prior_override=vp_prior
-                    )
-                    if bayesian == "map":
-                        result = soft_fitter.fit_map(tissue_curve, aif, time_points)
-                    else:
-                        result = soft_fitter.fit_mcmc(
-                            tissue_curve, aif, time_points, n_samples=mcmc_samples
-                        )
-                    n_constrained += 1
+        if use_gpu:
+            # GPU path: future batched_tofts_model_gpu integration (unchanged)
+            _init_worker(*init_args)
+            results = [_fit_single_voxel(vd) for vd in voxel_data_list]
+        elif n_procs > 1:
+            from concurrent.futures import ProcessPoolExecutor
 
-                # SOFT constraint with NLLS: fall back to hard constraint
-                elif (
-                    voxel_vp is not None
-                    and constraint_mode == ConstraintMode.SOFT
-                    and bayesian == "none"
-                    and hasattr(model, "fit_constrained")
-                ):
-                    result = model.fit_constrained(
-                        tissue_curve, aif, time_points, fixed_vp=voxel_vp
-                    )
-                    n_constrained += 1
+            chunk_size = max(1, n_voxels // (n_procs * 10))
+            with ProcessPoolExecutor(
+                max_workers=n_procs,
+                initializer=_init_worker,
+                initargs=init_args,
+            ) as executor:
+                results = list(executor.map(
+                    _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
+                ))
+        else:
+            # Serial path (n_procs=1): avoid multiprocessing overhead
+            _init_worker(*init_args)
+            results = [_fit_single_voxel(vd) for vd in voxel_data_list]
 
-                # Unconstrained fallback (no valid vp, skip mode, or no constraint)
-                if result is None:
-                    if voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
-                        n_unconstrained_fallback += 1
-                    if bayesian == "none":
-                        result = model.fit(tissue_curve, aif, time_points)
-                    elif bayesian == "map" and fitter is not None:
-                        result = fitter.fit_map(tissue_curve, aif, time_points)
-                    elif bayesian == "mcmc" and fitter is not None:
-                        result = fitter.fit_mcmc(
-                            tissue_curve, aif, time_points,
-                            n_samples=mcmc_samples,
-                        )
-                    else:
-                        result = model.fit(tissue_curve, aif, time_points)
+        # Clear worker state to avoid stale references across runs
+        _worker_ctx.clear()
 
-                # Extract parameters
-                ktrans[x, y, z] = result.parameters.get("Ktrans", 0.0)
-                ve[x, y, z] = result.parameters.get("ve", 0.0)
-                kep[x, y, z] = result.parameters.get("kep", 0.0)
-                r2_map[x, y, z] = result.r_squared
-
-                if self._has_vp(model_name):
-                    vp[x, y, z] = result.parameters.get("vp", 0.0)
-
-                # 2CXM-specific parameters
-                if model_name == "2cxm":
-                    fp_map[x, y, z] = result.parameters.get("Fp", 0.0)
-                    ps_map[x, y, z] = result.parameters.get("PS", 0.0)
-                    e_map[x, y, z] = result.parameters.get("E", 0.0)
-
-                # Uncertainty (Bayesian only)
-                if save_uncertainty and result.has_uncertainty():
-                    ktrans_std[x, y, z] = result.get_uncertainty("Ktrans", 0.0)
-                    ve_std[x, y, z] = result.get_uncertainty("ve", 0.0)
-                    if self._has_vp(model_name):
-                        vp_std[x, y, z] = result.get_uncertainty("vp", 0.0)
-
-                # Fitted curve
-                if save_fitted_curves and fitted_curves is not None:
-                    if result.fitted_curve is not None:
-                        fitted_curves[x, y, z, :] = result.fitted_curve.astype(np.float32)
-
-                # Set quality flag
-                qf = getattr(result, "quality_flag", "good")
-                quality_flag_map[x, y, z] = _QUALITY_FLAG_CODES.get(qf, 1)
-
-                # Track convergence
-                if result.converged:
-                    n_converged += 1
-                    r2_list.append(result.r_squared)
-                else:
-                    n_failed += 1
-
-            except Exception:
-                # Skip problematic voxels
+        # Scatter results into output arrays
+        has_vp = self._has_vp(model_name)
+        for vd, res in zip(voxel_data_list, results):
+            if res["failed"]:
                 n_failed += 1
+                reason = res.get("failure_reason", "unknown")
+                failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
                 continue
+
+            x, y, z = res["coords"]
+            params = res["params"]
+
+            ktrans[x, y, z] = params.get("Ktrans", 0.0)
+            ve[x, y, z] = params.get("ve", 0.0)
+            kep[x, y, z] = params.get("kep", 0.0)
+            r2_map[x, y, z] = res["r_squared"]
+
+            if has_vp:
+                vp[x, y, z] = params.get("vp", 0.0)
+
+            # 2CXM-specific parameters
+            if model_name == "2cxm":
+                fp_map[x, y, z] = params.get("Fp", 0.0)
+                ps_map[x, y, z] = params.get("PS", 0.0)
+                e_map[x, y, z] = params.get("E", 0.0)
+
+            # Uncertainty (Bayesian only)
+            if save_uncertainty and res["uncertainties"]:
+                ktrans_std[x, y, z] = res["uncertainties"].get("Ktrans", 0.0)
+                ve_std[x, y, z] = res["uncertainties"].get("ve", 0.0)
+                if has_vp:
+                    vp_std[x, y, z] = res["uncertainties"].get("vp", 0.0)
+
+            # Fitted curve
+            if save_fitted_curves and fitted_curves is not None:
+                if res["fitted_curve"] is not None:
+                    fitted_curves[x, y, z, :] = res["fitted_curve"].astype(np.float32)
+
+            # Set quality flag
+            qf = res.get("quality_flag", "good")
+            quality_flag_map[x, y, z] = _QUALITY_FLAG_CODES.get(qf, 1)
+
+            # Track convergence and constraints
+            if res.get("constrained", False):
+                n_constrained += 1
+            elif vd.voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
+                # Had vp constraint but fell back to unconstrained
+                n_unconstrained_fallback += 1
+
+            if res["converged"]:
+                n_converged += 1
+                r2_list.append(res["r_squared"])
+            else:
+                n_failed += 1
 
         # Compile QC metrics
         qc_metrics["n_converged"] = n_converged

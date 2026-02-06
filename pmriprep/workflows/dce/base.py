@@ -781,6 +781,7 @@ def init_dce_preproc_wf(
             save_uncertainty=config.save_uncertainty,
             constraint_mode=config.cbv_constraint_mode,
             hematocrit=config.hematocrit,
+            n_procs=max(1, config.num_processes),
         ),
         name="pk_modeling",
     )
@@ -805,6 +806,10 @@ def init_dce_preproc_wf(
         # Use T1 map resampled to DCE space
         (transform_t1_to_dce, pk_modeling, [
             ("out_file", "t1_map_file"),
+        ]),
+        # Raw DCE signal for tSNR computation (matches perf-plus)
+        (dce_preprocess, pk_modeling, [
+            ("out_file", "dce_signal_file"),
         ]),
     ])
 

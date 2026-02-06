@@ -80,15 +80,15 @@ class ToftsModel(PKModel):
             ModelParameter(
                 name="Ktrans",
                 bounds=(KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
-                typical_range=(0.01, 0.5),
-                log_transform=True,
+                typical_range=(0.001, 0.2),
+                log_transform=False,
                 description="Volume transfer constant",
                 units="min^-1",
             ),
             ModelParameter(
                 name="ve",
                 bounds=(VE_BOUNDS.min, VE_BOUNDS.max),
-                typical_range=(0.1, 0.5),
+                typical_range=(0.01, 0.4),
                 log_transform=False,
                 description="Extravascular extracellular volume fraction",
                 units="",
@@ -181,31 +181,10 @@ class ToftsModel(PKModel):
 
         dt = float(time_points[1] - time_points[0])
 
-        # Compute convolution using trapezoidal rule
-        # C_t(t) = Ktrans × ∫₀ᵗ Cp(τ) × exp(-kep×(t-τ)) dτ
-        c_tissue = np.zeros(n_times, dtype=np.float64)
-
-        # Precompute exponential decay factors
-        # exp_decay[i] = exp(-kep × i × dt)
-        exp_decay = np.exp(-kep * dt * np.arange(n_times))
-
-        for i in range(n_times):
-            if i == 0:
-                c_tissue[i] = 0.0
-                continue
-
-            # Convolution integral from 0 to t[i]
-            # Use trapezoidal rule: sum of Cp(τ) × exp(-kep×(t-τ)) × dt
-            # At time point i, we integrate over all previous time points
-            # t - τ = (i - j) × dt, so exp(-kep×(t-τ)) = exp_decay[i-j]
-
-            # Build the integrand: Cp[j] × exp_decay[i-j] for j = 0 to i
-            integrand = aif[: i + 1] * exp_decay[i::-1][: i + 1]
-
-            # Trapezoidal integration
-            integral = np.trapezoid(integrand, dx=dt)
-
-            c_tissue[i] = ktrans * integral
+        # Compute convolution using np.convolve (matches perf-plus)
+        # C_t(t) = Ktrans × [Cp ⊗ exp(-kep×t)] × dt
+        exp_kernel = np.exp(-kep * dt * np.arange(n_times))
+        c_tissue = np.convolve(aif, exp_kernel, mode="full")[:n_times] * dt * ktrans
 
         # Sanitize: replace non-finite values with 0
         c_tissue = np.where(np.isfinite(c_tissue), c_tissue, 0.0)

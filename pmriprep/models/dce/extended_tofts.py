@@ -99,15 +99,15 @@ class ExtendedToftsModel(PKModel):
             ModelParameter(
                 name="Ktrans",
                 bounds=(KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
-                typical_range=(0.01, 0.5),
-                log_transform=True,
+                typical_range=(0.001, 0.2),
+                log_transform=False,
                 description="Volume transfer constant",
                 units="min^-1",
             ),
             ModelParameter(
                 name="ve",
                 bounds=(VE_BOUNDS.min, VE_BOUNDS.max),
-                typical_range=(0.1, 0.5),
+                typical_range=(0.01, 0.4),
                 log_transform=False,
                 description="Extravascular extracellular volume fraction",
                 units="",
@@ -115,7 +115,7 @@ class ExtendedToftsModel(PKModel):
             ModelParameter(
                 name="vp",
                 bounds=(VP_BOUNDS.min, VP_BOUNDS.max),
-                typical_range=(0.01, 0.1),
+                typical_range=(0.001, 0.04),
                 log_transform=False,
                 description="Plasma volume fraction",
                 units="",
@@ -218,37 +218,11 @@ class ExtendedToftsModel(PKModel):
 
         dt = float(time_points[1] - time_points[0])
 
-        # Compute convolution using trapezoidal rule
-        # C_t(t) = vp × Cp(t) + Ktrans × ∫₀ᵗ Cp(τ) × exp(-kep×(t-τ)) dτ
-        c_tissue = np.zeros(n_times, dtype=np.float64)
-
-        # Precompute exponential decay factors
-        # exp_decay[i] = exp(-kep × i × dt)
-        exp_decay = np.exp(-kep * dt * np.arange(n_times))
-
-        for i in range(n_times):
-            # Vascular contribution: vp × Cp(t)
-            vascular_term = vp * aif[i]
-
-            if i == 0:
-                c_tissue[i] = vascular_term
-                continue
-
-            # Convolution integral from 0 to t[i]
-            # Use trapezoidal rule: sum of Cp(τ) × exp(-kep×(t-τ)) × dt
-            # At time point i, we integrate over all previous time points
-            # t - τ = (i - j) × dt, so exp(-kep×(t-τ)) = exp_decay[i-j]
-
-            # Build the integrand: Cp[j] × exp_decay[i-j] for j = 0 to i
-            integrand = aif[: i + 1] * exp_decay[i::-1][: i + 1]
-
-            # Trapezoidal integration
-            integral = np.trapezoid(integrand, dx=dt)
-
-            # Extravasation contribution: Ktrans × convolution
-            extravasation_term = ktrans * integral
-
-            c_tissue[i] = vascular_term + extravasation_term
+        # Compute convolution using np.convolve (matches perf-plus)
+        # C_t(t) = vp × Cp(t) + Ktrans × [Cp ⊗ exp(-kep×t)] × dt
+        exp_kernel = np.exp(-kep * dt * np.arange(n_times))
+        conv_term = np.convolve(aif, exp_kernel, mode="full")[:n_times] * dt * ktrans
+        c_tissue = vp * aif + conv_term
 
         # Sanitize: replace non-finite values with 0
         c_tissue = np.where(np.isfinite(c_tissue), c_tissue, 0.0)

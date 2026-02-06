@@ -248,10 +248,6 @@ class TestSub0004Ses0001:
             f"threshold {threshold}"
         )
 
-    @pytest.mark.xfail(
-        reason="DCE mask mismatch: PMRIPrep has 5,721 voxels vs GT 179,298. Needs investigation.",
-        strict=False,
-    )
     @pytest.mark.parametrize("output_name", EXPECTED_DCE_OUTPUTS)
     def test_dce_output_ground_truth(
         self,

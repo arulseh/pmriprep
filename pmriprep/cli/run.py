@@ -585,6 +585,12 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     anat_config = build_anat_config(merged_config)
     hdglio_config = build_hdglio_config(merged_config)
 
+    # Propagate --nprocs as fallback for num_processes (intra-node parallelism)
+    if dsc_config.num_processes == 0:
+        dsc_config.num_processes = args.nprocs
+    if dce_config.num_processes == 0:
+        dce_config.num_processes = args.nprocs
+
     # Apply GBM preset if requested
     if args.dsc_gbm_preset:
         logger.info("Applying GBM clinical preset to DSC configuration")
