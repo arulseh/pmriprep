@@ -189,10 +189,13 @@ def plot_registration_qc_filmstrip(
             raise ValueError(
                 f"Mask shape {mask.shape} doesn't match image shape {fixed.shape}"
             )
+        # Brain-extract the overlay so contours only appear inside the brain
+        moving = moving.copy()
+        moving[mask == 0] = 0
 
     # Use colorblind-safe palette color for contours
     if contour_color is None:
-        contour_color = COLORBLIND_PALETTE.primary
+        contour_color = COLORBLIND_PALETTE.error
 
     # Row definitions: (label, axis, aspect_ratio)
     # Aspect ratios account for anisotropic voxels in each view plane
@@ -226,11 +229,6 @@ def plot_registration_qc_filmstrip(
         vmax = float(np.percentile(valid_voxels, 99))
     else:
         vmin, vmax = 0.0, 1.0
-
-    # Optionally zero out background outside mask for cleaner display
-    if mask is not None:
-        fixed = fixed.copy()
-        fixed[mask == 0] = 0
 
     # Create the figure: 3 rows x n_slices columns
     fig, axes = plt.subplots(
