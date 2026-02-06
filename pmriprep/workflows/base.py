@@ -1583,6 +1583,8 @@ def init_pmriprep_wf(
                 ("outputnode.aif_curve_qc_plot", "aif_curve_plot"),
                 ("outputnode.aif_location_qc_plot", "aif_location_plot"),
                 ("outputnode.registration_qc_filmstrip", "registration_filmstrip"),
+                ("outputnode.b1_qc_plot", "b1_qc_plot"),
+                ("outputnode.t1_qc_plot", "t1_qc_plot"),
             ]),
         ])
 

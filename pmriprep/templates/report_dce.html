@@ -70,9 +70,10 @@
     {% endif %}
 
     <!-- T1 Mapping -->
-    {% if qc_metrics.t1_mapping %}
+    {% if qc_metrics.t1_mapping or images.t1 %}
     <div class="section">
         <h2>T1 Mapping Quality</h2>
+        {% if qc_metrics.t1_mapping %}
         <div class="metrics">
             {% if qc_metrics.t1_mapping.t1_median is defined %}
             <div class="metric">
@@ -93,13 +94,20 @@
             </div>
             {% endif %}
         </div>
+        {% endif %}
+        {% if images.t1 %}
+        <div style="margin-top: 20px;">
+            <img src="data:image/png;base64,{{ images.t1 }}" alt="T1 Mapping QC">
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
     <!-- B1 Mapping -->
-    {% if qc_metrics.b1_mapping %}
+    {% if qc_metrics.b1_mapping or images.b1 %}
     <div class="section">
         <h2>B1+ Mapping Quality</h2>
+        {% if qc_metrics.b1_mapping %}
         <div class="metrics">
             {% if qc_metrics.b1_mapping.b1_median is defined %}
             <div class="metric">
@@ -120,6 +128,12 @@
             </div>
             {% endif %}
         </div>
+        {% endif %}
+        {% if images.b1 %}
+        <div style="margin-top: 20px;">
+            <img src="data:image/png;base64,{{ images.b1 }}" alt="B1+ Mapping QC">
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 

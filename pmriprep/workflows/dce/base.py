@@ -315,6 +315,8 @@ def init_dce_preproc_wf(
                 "aif_location_qc_plot",
                 "vfa_registration_qc_plot",  # optional, only if VFA coregistration occurred
                 "afi_registration_qc_plot",  # optional, only if AFI coregistration occurred
+                "b1_qc_plot",
+                "t1_qc_plot",
                 # Structural underlays
                 "t1w_in_dce",
                 "flair_in_dce",
@@ -1440,6 +1442,11 @@ def init_dce_preproc_wf(
         # QC plots - AFI registration (optional, only if AFI coregistration occurred)
         (b1_mapping, outputnode, [
             ("registration_qc_plot", "afi_registration_qc_plot"),
+            ("qc_plot", "b1_qc_plot"),
+        ]),
+        # QC plots - VFA T1 mapping
+        (t1_mapping, outputnode, [
+            ("qc_plot", "t1_qc_plot"),
         ]),
         # Motion QC plot
         (motion_qc_plot, outputnode, [

@@ -30,6 +30,8 @@ class GenerateReportInputSpec(BaseInterfaceInputSpec):
     aif_curve_plot = traits.Str(desc="AIF curve plot PNG path")
     aif_location_plot = traits.Str(desc="AIF location plot PNG path")
     registration_filmstrip = traits.Str(desc="Registration filmstrip PNG path")
+    b1_qc_plot = traits.Str(desc="B1+ mapping QC plot PNG path")
+    t1_qc_plot = traits.Str(desc="VFA T1 mapping QC plot PNG path")
 
 
 class GenerateReportOutputSpec(TraitedSpec):
@@ -105,6 +107,16 @@ class GenerateReport(BaseInterface):
             if Path(self.inputs.registration_filmstrip).exists():
                 registration_filmstrip = self.inputs.registration_filmstrip
 
+        b1_qc_plot = None
+        if isdefined(self.inputs.b1_qc_plot) and self.inputs.b1_qc_plot:
+            if Path(self.inputs.b1_qc_plot).exists():
+                b1_qc_plot = self.inputs.b1_qc_plot
+
+        t1_qc_plot = None
+        if isdefined(self.inputs.t1_qc_plot) and self.inputs.t1_qc_plot:
+            if Path(self.inputs.t1_qc_plot).exists():
+                t1_qc_plot = self.inputs.t1_qc_plot
+
         # Generate the report
         self._report_file = generate_qc_report(
             subject_id=subject_id,
@@ -116,6 +128,8 @@ class GenerateReport(BaseInterface):
             aif_curve_plot=aif_curve_plot,
             aif_location_plot=aif_location_plot,
             registration_filmstrip=registration_filmstrip,
+            b1_qc_plot=b1_qc_plot,
+            t1_qc_plot=t1_qc_plot,
         )
 
         return runtime

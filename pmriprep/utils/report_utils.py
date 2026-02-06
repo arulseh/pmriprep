@@ -38,6 +38,8 @@ def generate_qc_report(
     aif_curve_plot: Optional[str] = None,
     aif_location_plot: Optional[str] = None,
     registration_filmstrip: Optional[str] = None,
+    b1_qc_plot: Optional[str] = None,
+    t1_qc_plot: Optional[str] = None,
 ) -> str:
     """Generate self-contained HTML QC report with embedded images.
 
@@ -79,6 +81,8 @@ def generate_qc_report(
         ("aif_curve", aif_curve_plot),
         ("aif_location", aif_location_plot),
         ("registration", registration_filmstrip),
+        ("b1", b1_qc_plot),
+        ("t1", t1_qc_plot),
     ]:
         if path and Path(path).exists():
             images[name] = image_to_base64(path)
@@ -162,6 +166,22 @@ def _generate_fallback_report(
             aif_html += f'<div><img src="data:image/png;base64,{images["aif_location"]}" alt="AIF Location"></div>'
         aif_html += '</div></div>'
         image_sections.append(aif_html)
+
+    if "b1" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>B1+ Mapping QC</h2>
+            <img src="data:image/png;base64,{images["b1"]}" alt="B1+ Mapping QC">
+        </div>
+        ''')
+
+    if "t1" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>T1 Mapping QC</h2>
+            <img src="data:image/png;base64,{images["t1"]}" alt="T1 Mapping QC">
+        </div>
+        ''')
 
     if "registration" in images:
         image_sections.append(f'''
