@@ -995,7 +995,6 @@ class T1Mapping(SimpleInterface):
 
         from pmriprep.utils.dce_constants import (
             DEFAULT_T1_MS,
-            EPSILON_T1,
             LENIENT_T1_RANGE,
             get_tissue_t1_ranges,
         )
@@ -1064,9 +1063,11 @@ class T1Mapping(SimpleInterface):
         sin_fa = np.sin(corrected_fa_rad)
         tan_fa = np.tan(corrected_fa_rad)
 
-        # Prevent division by zero
-        sin_fa = np.where(np.abs(sin_fa) < EPSILON_T1, EPSILON_T1, sin_fa)
-        tan_fa = np.where(np.abs(tan_fa) < EPSILON_T1, EPSILON_T1, tan_fa)
+        # Prevent division by zero (use tight epsilon; B1+ floor of 0.5
+        # ensures corrected angles >= ~1° so sin/tan are well above 1e-6)
+        epsilon_trig = 1e-6
+        sin_fa = np.where(np.abs(sin_fa) < epsilon_trig, epsilon_trig, sin_fa)
+        tan_fa = np.where(np.abs(tan_fa) < epsilon_trig, epsilon_trig, tan_fa)
 
         # Calculate Y = S/sin(α) and X = S/tan(α) for DESPOT1 linearization
         y_data = signal_data / sin_fa  # Shape: (n_fa, x, y, z)
@@ -1096,9 +1097,15 @@ class T1Mapping(SimpleInterface):
             threshold = np.percentile(signal_data[0][signal_data[0] > 0], 10)
             brain_mask = signal_data[0] > threshold
 
+        # Apply 3x3x3 median filter to reduce noise spikes
+        # Applied BEFORE CSF exclusion to avoid introducing artificial zeros
+        # that would contaminate periventricular tissue during filtering.
+        # Matches perf-plus order: median filter → CSF exclusion → range clipping.
+        from scipy.ndimage import median_filter  # type: ignore[import-untyped]
+
+        t1_map = median_filter(t1_map, size=3)
+
         # CSF exclusion: mask out voxels with high CSF probability
-        # Must happen BEFORE median filter to prevent CSF contamination
-        # from spreading into neighboring tissue voxels
         csf_excluded = False
         if isdefined(self.inputs.csf_probseg) and self.inputs.csf_probseg:
             csf_img = nib.load(self.inputs.csf_probseg)
@@ -1114,8 +1121,8 @@ class T1Mapping(SimpleInterface):
 
             n_brain_before = int(np.sum(brain_mask))
             n_csf = int(np.sum(csf_mask & brain_mask))
-            # Zero out CSF voxels before median filter
-            t1_map[csf_mask & brain_mask] = 0.0
+            # Set CSF voxels to NaN (excluded from all downstream statistics)
+            t1_map[csf_mask & brain_mask] = np.nan
             brain_mask = brain_mask & (~csf_mask)
             n_brain_after = int(np.sum(brain_mask))
 
@@ -1128,14 +1135,11 @@ class T1Mapping(SimpleInterface):
             )
             csf_excluded = True
 
-        # Apply 3x3x3 median filter to reduce noise spikes
-        # Applied after CSF exclusion so CSF values don't contaminate neighbors
-        from scipy.ndimage import median_filter  # type: ignore[import-untyped]
-
-        t1_map = median_filter(t1_map, size=3)
-
-        # Clamp T1 to reasonable range (0 to 10000 ms)
-        t1_map = np.clip(t1_map, 0.0, 10000.0)
+        # Set out-of-range T1 to NaN (matches perf-plus [50, 6000] ms bounds)
+        # Values outside this range are non-physiological and should be excluded
+        t1_map = np.where(
+            (t1_map >= 50.0) & (t1_map <= 6000.0), t1_map, np.nan,
+        )
 
         # Convert to float32 for storage
         t1_map = t1_map.astype(np.float32)
@@ -1178,8 +1182,10 @@ class T1Mapping(SimpleInterface):
         # WM: lower T1 values (shorter relaxation time)
         # GM: higher T1 values
         # Simple approach: use histogram percentiles
-        wm_t1_estimate = float(np.percentile(t1_in_brain[t1_in_brain > 0], 25))
-        gm_t1_estimate = float(np.percentile(t1_in_brain[t1_in_brain > 0], 75))
+        # Use nanpercentile since T1 map may contain NaN (CSF, out-of-range)
+        valid_t1 = t1_in_brain[np.isfinite(t1_in_brain) & (t1_in_brain > 0)]
+        wm_t1_estimate = float(np.percentile(valid_t1, 25))
+        gm_t1_estimate = float(np.percentile(valid_t1, 75))
 
         # QC pass/fail criteria
         wm_pass = wm_range[0] <= wm_t1_estimate <= wm_range[1]
@@ -1266,7 +1272,7 @@ class T1Mapping(SimpleInterface):
         Returns:
             T1 map in seconds
         """
-        from pmriprep.utils.dce_constants import EPSILON_T1
+        from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1
 
         n_fa = x_data.shape[0]
         n_voxels = np.prod(shape)
@@ -1284,15 +1290,21 @@ class T1Mapping(SimpleInterface):
         sum_xy = np.sum(x_flat * y_flat, axis=0)
         sum_x2 = np.sum(x_flat * x_flat, axis=0)
 
-        # Calculate slope (E1)
+        # Calculate slope (E1) — sign-preserving denominator guard
         denom = n_fa * sum_x2 - sum_x * sum_x
-        denom = np.where(np.abs(denom) < EPSILON_T1, EPSILON_T1, denom)
+        denom = np.where(
+            np.abs(denom) < EPSILON_T1,
+            np.where(denom >= 0, EPSILON_T1, -EPSILON_T1),
+            denom,
+        )
 
         e1 = (n_fa * sum_xy - sum_x * sum_y) / denom
 
-        # Clamp E1 to valid range (0 < E1 < 1 for positive T1)
-        # E1 values outside this range indicate invalid fits
-        e1 = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_T1)
+        # Clamp E1 to valid range (0 < E1 < 1 for positive T1).
+        # Upper bound uses EPSILON_E1_UPPER (1e-4) to allow E1 up to 0.9999,
+        # which is needed for short-TR VFA (TR~4ms, T1~1000ms → E1≈0.996).
+        # Using EPSILON_T1 (0.01) would cap E1 at 0.99 → T1 ≤ 397ms.
+        e1 = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
 
         # Calculate T1 from E1
         # E1 = exp(-TR/T1)
