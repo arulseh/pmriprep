@@ -121,6 +121,8 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     aif_location_plot = traits.Str(desc="AIF location overlay PNG path")
     registration_filmstrip = traits.Str(desc="Registration QC filmstrip PNG path")
     motion_qc_plot = traits.Str(desc="Motion QC plot PNG path")
+    b1_qc_plot = traits.Str(desc="B1+ mapping QC plot PNG path")
+    t1_qc_plot = traits.Str(desc="VFA T1 mapping QC plot PNG path")
 
 
 class DCEDerivativeWriterOutputSpec(TraitedSpec):
@@ -625,6 +627,13 @@ class DCEDerivativeWriter(BaseInterface):
             self._copy_file(
                 self.inputs.motion_qc_plot, qc_dir / "motion_qc.png"
             )
+
+        if self._has_input("b1_qc_plot"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(self.inputs.b1_qc_plot, qc_dir / "b1_qc.png")
+        if self._has_input("t1_qc_plot"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(self.inputs.t1_qc_plot, qc_dir / "vfa_t1_qc.png")
 
         # -----------------------------------------------------------
         # 11. Dataset description

@@ -100,7 +100,7 @@ def generate_vfa_t1_qc_plot(
         ax = axes[0, i]
         sl = get_radiological_slice(vfa_data[i], axis=2, slice_idx=mid_slice)
         vmax = float(np.percentile(sl[sl > 0], 99)) if np.any(sl > 0) else 1.0
-        ax.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="lower")
+        ax.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="upper")
         ax.set_title(f"VFA {flip_angles[i]:.0f}\u00b0", fontsize=11)
         ax.axis("off")
 
@@ -117,7 +117,7 @@ def generate_vfa_t1_qc_plot(
             r_vmax = float(np.percentile(ratio_valid, 95))
         else:
             r_vmin, r_vmax = 0.5, 3.0
-        im = ax.imshow(ratio_sl, cmap="coolwarm", vmin=r_vmin, vmax=r_vmax, origin="lower")
+        im = ax.imshow(ratio_sl, cmap="coolwarm", vmin=r_vmin, vmax=r_vmax, origin="upper")
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         ax.set_title(
             f"Signal Ratio (S({flip_angles[1]:.0f}\u00b0)/S({flip_angles[0]:.0f}\u00b0))",
@@ -132,7 +132,7 @@ def generate_vfa_t1_qc_plot(
     # T1 map
     ax = axes[1, 0]
     t1_sl = get_radiological_slice(t1_map, axis=2, slice_idx=mid_slice)
-    im = ax.imshow(t1_sl, cmap="plasma", vmin=t1_vmin, vmax=t1_vmax, origin="lower")
+    im = ax.imshow(t1_sl, cmap="plasma", vmin=t1_vmin, vmax=t1_vmax, origin="upper")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="ms")
     ax.set_title("T1 Map", fontsize=11)
     ax.axis("off")
@@ -149,7 +149,7 @@ def generate_vfa_t1_qc_plot(
             m0_vmax = float(np.percentile(m0_valid, 99))
         else:
             m0_vmax = 1.0
-        ax.imshow(m0_sl, cmap="gray", vmin=0, vmax=m0_vmax, origin="lower")
+        ax.imshow(m0_sl, cmap="gray", vmin=0, vmax=m0_vmax, origin="upper")
         ax.set_title("M0 Estimate (S/sin(\u03b1))", fontsize=11)
     ax.axis("off")
 
@@ -165,7 +165,7 @@ def generate_vfa_t1_qc_plot(
             s_vmax = float(np.percentile(synth_valid, 99))
         else:
             s_vmax = 1.0
-        ax.imshow(synth_sl, cmap="gray", vmin=0, vmax=s_vmax, origin="lower")
+        ax.imshow(synth_sl, cmap="gray", vmin=0, vmax=s_vmax, origin="upper")
         ax.set_title("Synthetic T1w", fontsize=11)
     ax.axis("off")
 
@@ -324,7 +324,7 @@ def generate_b1_qc_plot(
     ax = axes[0, 0]
     sl = get_radiological_slice(s1, axis=2, slice_idx=mid_slice)
     vmax = float(np.percentile(sl[sl > 0], 99)) if np.any(sl > 0) else 1.0
-    ax.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="lower")
+    ax.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="upper")
     ax.set_title("TR1 (short TR)", fontsize=11)
     ax.axis("off")
 
@@ -332,7 +332,7 @@ def generate_b1_qc_plot(
     ax = axes[0, 1]
     sl = get_radiological_slice(s2, axis=2, slice_idx=mid_slice)
     vmax = float(np.percentile(sl[sl > 0], 99)) if np.any(sl > 0) else 1.0
-    ax.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="lower")
+    ax.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="upper")
     ax.set_title("TR2 (long TR)", fontsize=11)
     ax.axis("off")
 
@@ -342,7 +342,7 @@ def generate_b1_qc_plot(
     mask_sl = get_radiological_slice(signal_mask.astype(float), axis=2, slice_idx=mid_slice)
     ratio_display = np.where(mask_sl > 0.5, ratio_sl, np.nan)
     im = ax.imshow(
-        ratio_display, cmap="coolwarm", vmin=0.2, vmax=0.8, origin="lower",
+        ratio_display, cmap="coolwarm", vmin=0.2, vmax=0.8, origin="upper",
     )
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     ax.set_title("Signal Ratio (S\u2081/S\u2082)", fontsize=11)
@@ -353,7 +353,7 @@ def generate_b1_qc_plot(
     b1_sl = get_radiological_slice(b1_map, axis=2, slice_idx=mid_slice)
     b1_display = np.where(mask_sl > 0.5, b1_sl, np.nan)
     im = ax.imshow(
-        b1_display, cmap="plasma", vmin=0.5, vmax=1.5, origin="lower",
+        b1_display, cmap="plasma", vmin=0.5, vmax=1.5, origin="upper",
     )
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     ax.set_title("B1+ Map", fontsize=11)
@@ -368,7 +368,7 @@ def generate_b1_qc_plot(
     im = ax.imshow(
         fa_display, cmap="jet",
         vmin=expected_fa * 0.5, vmax=expected_fa * 1.5,
-        origin="lower",
+        origin="upper",
     )
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="\u00b0")
     ax.set_title(f"Actual FA (nominal={expected_fa:.0f}\u00b0)", fontsize=11)

@@ -1548,6 +1548,9 @@ def init_pmriprep_wf(
                 ("outputnode.aif_location_qc_plot", "aif_location_plot"),
                 ("outputnode.registration_qc_filmstrip", "registration_filmstrip"),
                 ("outputnode.motion_qc_plot", "motion_qc_plot"),
+                # B1/T1 QC plots
+                ("outputnode.b1_qc_plot", "b1_qc_plot"),
+                ("outputnode.t1_qc_plot", "t1_qc_plot"),
                 # Structural underlays
                 ("outputnode.t1w_in_dce", "t1w_in_dce"),
                 ("outputnode.flair_in_dce", "flair_in_dce"),
