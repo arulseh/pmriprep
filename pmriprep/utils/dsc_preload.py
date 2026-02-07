@@ -639,7 +639,7 @@ def estimate_k2_per_voxel(
 
         # OLS: [K1, K2] = (X^T X)^{-1} X^T y
         coeffs = np.linalg.solve(XtX, X.T @ c_post)
-        k2_estimate = coeffs[0]  # K1 = AIF-integral coefficient (BSW leakage rate)
+        k2_estimate = coeffs[1]  # K2 = tissue-integral coefficient (BSW leakage rate)
 
         # Clip to physical range [0, inf)
         # Negative K2 would mean tissue is absorbing contrast from blood
@@ -923,7 +923,7 @@ def _apply_k2_exponential(
         fit_time = time_points[fit_start_idx:] - time_points[fit_start_idx]
         fit_conc = tissue_curve[fit_start_idx:]
 
-        # Skip if tail has non-positive values
+        # Skip if any fit point is non-positive (matches perf-plus)
         if np.any(fit_conc <= EPSILON_SIGNAL):
             failure_counts["negative_tail"] = (
                 failure_counts.get("negative_tail", 0) + 1
@@ -956,7 +956,7 @@ def _apply_k2_exponential(
             k2_map[x, y, z] = k2_estimated
             continue
 
-        # Overflow guard
+        # Overflow guard: skip if exp(K2 * t_final) would overflow
         max_exponent = k2_estimated * time_points[-1]
         if max_exponent > OVERFLOW_LIMIT:
             failure_counts["overflow_risk"] = (
