@@ -297,19 +297,22 @@ class AIFQCPlot(BaseInterface):
         else:
             bg = dsc_data.copy()
 
-        # Find AIF centroid for crosshair placement
-        aif_coords = np.argwhere(aif_mask > 0.5)
-        if len(aif_coords) == 0:
-            # No AIF voxels — use center of brain
-            brain_coords = np.argwhere(brain_mask > 0.5)
-            if len(brain_coords) > 0:
-                centroid = brain_coords.mean(axis=0).astype(int)
-            else:
-                centroid = np.array([s // 2 for s in bg.shape[:3]])
+        # Prefer best candidate voxel coord (guaranteed to be an actual mask voxel)
+        aif_voxel = qc.get("aif_voxel_coord", None)
+        if aif_voxel is not None and len(aif_voxel) == 3:
+            cx, cy, cz = int(aif_voxel[0]), int(aif_voxel[1]), int(aif_voxel[2])
         else:
-            centroid = aif_coords.mean(axis=0).astype(int)
-
-        cx, cy, cz = int(centroid[0]), int(centroid[1]), int(centroid[2])
+            # Fallback to mask centroid
+            aif_coords = np.argwhere(aif_mask > 0.5)
+            if len(aif_coords) == 0:
+                brain_coords = np.argwhere(brain_mask > 0.5)
+                if len(brain_coords) > 0:
+                    centroid = brain_coords.mean(axis=0).astype(int)
+                else:
+                    centroid = np.array([s // 2 for s in bg.shape[:3]])
+            else:
+                centroid = aif_coords.mean(axis=0).astype(int)
+            cx, cy, cz = int(centroid[0]), int(centroid[1]), int(centroid[2])
 
         # Voxel aspect ratios
         dx, dy, dz = voxel_sizes[0], voxel_sizes[1], voxel_sizes[2]
@@ -367,6 +370,44 @@ class AIFQCPlot(BaseInterface):
 
                 # Magenta marker at centroid
                 ax_plt.plot(cross_x, cross_y, "m+", markersize=12, markeredgewidth=2)
+
+                # Candidate markers (perf-plus style: numbered circles)
+                all_coords = qc.get("all_candidate_coords", [])
+                if len(all_coords) > 0:
+                    candidate_colors = [
+                        "#EE3377", "#FFDD00", "#33BBEE", "#009988",
+                        "#EE7733", "#CC3311", "#0077BB", "#BBBBBB",
+                    ]
+                    for i, coord_3d in enumerate(all_coords):
+                        cand_x = int(coord_3d[0])
+                        cand_y = int(coord_3d[1])
+                        cand_z = int(coord_3d[2])
+
+                        # Check if candidate is within ±1 slice of this view
+                        if axis_id == 2 and abs(cand_z - slice_idx) <= 1:
+                            px = w - 1 - cand_x  # radiological flip
+                            py = h - 1 - cand_y
+                        elif axis_id == 1 and abs(cand_y - slice_idx) <= 1:
+                            px = w - 1 - cand_x
+                            py = h - 1 - cand_z
+                        elif axis_id == 0 and abs(cand_x - slice_idx) <= 1:
+                            px = cand_y
+                            py = h - 1 - cand_z
+                        else:
+                            continue  # Not in this view's slice range
+
+                        color = candidate_colors[i % len(candidate_colors)]
+                        size = 120 if i == 0 else 80
+                        ax_plt.scatter(
+                            [px], [py], c=color, s=size, marker="o",
+                            edgecolors="black", linewidths=1.5, zorder=10,
+                        )
+                        if len(all_coords) > 1:
+                            ax_plt.annotate(
+                                str(i + 1), (px, py), color="white", fontsize=7,
+                                ha="center", va="center", fontweight="bold",
+                                zorder=11,
+                            )
 
                 # L/R labels (radiological: L on right, R on left)
                 if lr[0] is not None:

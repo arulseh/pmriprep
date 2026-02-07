@@ -911,13 +911,14 @@ def svd_deconvolve_oscillation(
     The oscillation index is defined as:
         OI = (1/N) × Σ|R(t+1) - R(t)| / max(R)
 
-    A binary search is used to find the optimal threshold that achieves
-    OI ≤ oi_target while using the minimum regularization necessary.
+    A linear search from low to high threshold is used to find the first
+    threshold that achieves OI ≤ oi_target, matching the perf-plus
+    implementation.
 
     Strategy:
         - Lower threshold = more singular values retained = more detail but more noise
         - Higher threshold = fewer singular values = smoother but may lose detail
-        - Binary search finds the smallest threshold where OI ≤ target
+        - Linear search finds the first (lowest) threshold where OI ≤ target
 
     Args:
         tissue_curve: Tissue concentration curve, shape (n_timepoints,).
@@ -929,7 +930,8 @@ def svd_deconvolve_oscillation(
             OI above this value are considered too oscillatory. Default is 0.065.
         threshold_min: Minimum SVD threshold to consider. Default 0.01.
         threshold_max: Maximum SVD threshold to consider. Default 0.50.
-        max_iterations: Maximum iterations for binary search. Default 20.
+        max_iterations: Number of evenly-spaced thresholds in linear
+            search. Default 20.
         apply_non_negativity: If True, apply non-negativity constraint to
             residue function by clipping negative values to zero.
             Default is True.
@@ -977,97 +979,44 @@ def svd_deconvolve_oscillation(
     matrix = build_toeplitz_matrix(aif, dt)
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Binary search for optimal threshold
-    # We want the LOWEST threshold that achieves OI ≤ oi_target
-    # (lowest threshold = least regularization = most detail preserved)
-    lo = threshold_min
-    hi = threshold_max
+    # Linear search for optimal threshold (matches perf-plus)
+    # Search from LOW to HIGH, take the FIRST threshold where OI ≤ oi_target.
+    # This finds the lowest acceptable threshold (least regularization).
+    n_steps = max_iterations
+    thresholds = np.linspace(threshold_min, threshold_max, n_steps)
+
+    best_residue: Optional[npt.NDArray[np.floating]] = None
+    best_oi = float("inf")
+    best_threshold = threshold_max
+    best_n_ret = 0
+    best_cond = float("inf")
     converged = False
 
-    # First, check if we can achieve target at all
-    residue_hi, oi_hi, n_ret_hi, cond_hi = _deconvolve_with_threshold(
-        tissue_curve, aif, dt, hi, matrix, u, s, vh, apply_non_negativity
-    )
-
-    if oi_hi > oi_target:
-        # Even maximum threshold doesn't achieve target OI
-        # Return result at maximum threshold
-        cbf = float(np.max(residue_hi))
-        cbv = float(np.sum(residue_hi) * dt)
-        mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION else 0.0
-
-        return OscillationDeconvolutionResult(
-            residue=residue_hi,
-            cbf=cbf,
-            cbv=cbv,
-            mtt=mtt,
-            oscillation_index=oi_hi,
-            threshold_used=hi,
-            n_singular_values=n_ret_hi,
-            condition_number=cond_hi,
-            oi_target=oi_target,
-            converged=False,
+    for thresh in thresholds:
+        residue, oi, n_ret, cond = _deconvolve_with_threshold(
+            tissue_curve, aif, dt, thresh, matrix, u, s, vh,
+            apply_non_negativity,
         )
 
-    # Check minimum threshold
-    residue_lo, oi_lo, n_ret_lo, cond_lo = _deconvolve_with_threshold(
-        tissue_curve, aif, dt, lo, matrix, u, s, vh, apply_non_negativity
-    )
-
-    if oi_lo <= oi_target:
-        # Even minimum threshold achieves target OI
-        # Return result at minimum threshold (maximum detail)
-        cbf = float(np.max(residue_lo))
-        cbv = float(np.sum(residue_lo) * dt)
-        mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION else 0.0
-
-        return OscillationDeconvolutionResult(
-            residue=residue_lo,
-            cbf=cbf,
-            cbv=cbv,
-            mtt=mtt,
-            oscillation_index=oi_lo,
-            threshold_used=lo,
-            n_singular_values=n_ret_lo,
-            condition_number=cond_lo,
-            oi_target=oi_target,
-            converged=True,
-        )
-
-    # Binary search for optimal threshold
-    # Invariant: oi_lo > oi_target, oi_hi <= oi_target
-    best_residue = residue_hi
-    best_oi = oi_hi
-    best_threshold = hi
-    best_n_ret = n_ret_hi
-    best_cond = cond_hi
-
-    for _ in range(max_iterations):
-        mid = (lo + hi) / 2.0
-
-        residue_mid, oi_mid, n_ret_mid, cond_mid = _deconvolve_with_threshold(
-            tissue_curve, aif, dt, mid, matrix, u, s, vh, apply_non_negativity
-        )
-
-        if oi_mid <= oi_target:
-            # This threshold works, try lower (less regularization)
-            hi = mid
-            best_residue = residue_mid
-            best_oi = oi_mid
-            best_threshold = mid
-            best_n_ret = n_ret_mid
-            best_cond = cond_mid
-        else:
-            # Need more regularization
-            lo = mid
-
-        # Check for convergence
-        if hi - lo < 0.001:
+        if oi <= oi_target:
+            best_residue = residue
+            best_oi = oi
+            best_threshold = thresh
+            best_n_ret = n_ret
+            best_cond = cond
             converged = True
             break
-    else:
-        # Loop completed without break - still converged to best found
-        converged = True
+
+    # If no threshold achieved target, use maximum regularization
+    if best_residue is None:
+        best_residue, best_oi, best_n_ret, best_cond = (
+            _deconvolve_with_threshold(
+                tissue_curve, aif, dt, threshold_max, matrix, u, s, vh,
+                apply_non_negativity,
+            )
+        )
+        best_threshold = threshold_max
+        converged = False
 
     # Extract perfusion parameters from best result
     cbf = float(np.max(best_residue))

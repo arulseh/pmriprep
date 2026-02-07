@@ -1483,7 +1483,7 @@ def init_dsc_preproc_wf(
     )
     # Set the arterial atlas as input (bundled with pmriprep)
     try:
-        transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm"))
+        transform_atlas.inputs.in_file = str(get_arterial_atlas("1mm", "dil3"))
     except FileNotFoundError:
         import warnings
         warnings.warn(

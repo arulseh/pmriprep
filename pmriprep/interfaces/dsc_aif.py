@@ -263,6 +263,11 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Disable synthetic AIF fallback when detection fails",
     )
+    strict_roi_constraint = traits.Bool(
+        True,
+        usedefault=True,
+        desc="If True, do NOT fall back to whole brain when atlas/ROI mask is provided",
+    )
     baseline_frames = traits.Int(
         5,
         usedefault=True,
@@ -1571,16 +1576,6 @@ class AIFDetection(BaseInterface):
             else:
                 tr = 1.5
 
-        # --- GAP 6: Auto-detect baseline frames ---
-        mean_brain_conc = np.mean(
-            conc_data[brain_mask > 0.5], axis=0
-        )
-        _, detected_baseline = detect_bolus_arrival(
-            mean_brain_conc, baseline_frames=3
-        )
-        if detected_baseline > baseline_frames:
-            baseline_frames = detected_baseline
-
         # Initialize
         detection_level = "synthetic"
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
@@ -1603,8 +1598,12 @@ class AIFDetection(BaseInterface):
             if atlas_mask is not None:
                 for crit in ["strict", "relaxed", "permissive"]:
                     all_attempts.append((crit, atlas_mask, f"atlas_{crit}"))
-            for crit in ["relaxed", "permissive", "degraded"]:
-                all_attempts.append((crit, None, f"brain_{crit}"))
+
+            has_roi_constraint = atlas_mask is not None
+            strict_roi = bool(self.inputs.strict_roi_constraint)
+            if not (has_roi_constraint and strict_roi):
+                for crit in ["relaxed", "permissive", "degraded"]:
+                    all_attempts.append((crit, None, f"brain_{crit}"))
 
             # Skip attempts with criteria stricter than initial_criteria
             attempts = [
