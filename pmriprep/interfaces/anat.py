@@ -1755,6 +1755,19 @@ class ACPCAlignment(CommandLine):
         if alt_template.exists():
             return str(alt_template)
 
+        # Fallback: use templateflow MNI152NLin6Asym (FSL-equivalent MNI space)
+        try:
+            import templateflow.api as tflow  # type: ignore[import-untyped]
+
+            tf_path = tflow.get(
+                "MNI152NLin6Asym", desc="brain", resolution=1,
+                suffix="T1w", extension=".nii.gz",
+            )
+            if tf_path and Path(str(tf_path)).exists():
+                return str(tf_path)
+        except Exception:
+            pass
+
         # Use default path (may fail at runtime if not present)
         return self._DEFAULT_MNI_TEMPLATE
 
