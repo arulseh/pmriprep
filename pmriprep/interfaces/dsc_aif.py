@@ -1236,7 +1236,7 @@ class AIFDetection(BaseInterface):
         return aif_curve, aif_mask
 
     # -----------------------------------------------------------------
-    # Synthetic AIF (unchanged)
+    # Synthetic AIF (perf-plus calibrated gamma-variate)
     # -----------------------------------------------------------------
 
     def _generate_synthetic_aif(
@@ -1244,29 +1244,97 @@ class AIFDetection(BaseInterface):
         n_timepoints: int,
         tr: float = 1.5,
         baseline_frames: int = 5,
-    ) -> npt.NDArray[Any]:
-        """Generate synthetic (population) AIF using gamma-variate model."""
-        t0 = baseline_frames * tr
-        alpha = 3.5
-        beta = 1.5
-        amplitude = 10.0
+        tissue_max_delta_r2star: Optional[float] = None,
+    ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
+        """Generate synthetic AIF using physiologically calibrated gamma-variate.
 
+        Ported from perf-plus ``dsc_compute_maps.py:generate_synthetic_aif``
+        (lines 2363-2523). Uses ΔR2*-scaled peak amplitude with recirculation
+        component for more realistic bolus shape.
+
+        Parameters
+        ----------
+        n_timepoints : int
+            Number of time frames.
+        tr : float
+            Repetition time in seconds.
+        baseline_frames : int
+            Number of pre-bolus baseline frames.
+        tissue_max_delta_r2star : float or None
+            95th percentile of max ΔR2* across brain voxels. Used to scale
+            AIF peak amplitude. If None, uses literature default (250 s⁻¹).
+
+        Returns
+        -------
+        aif : ndarray
+            Synthetic AIF curve (ΔR2* units, s⁻¹).
+        metrics : dict
+            QC metadata describing the synthetic AIF parameters.
+        """
+        # --- First-pass gamma-variate parameters (perf-plus defaults) ---
+        alpha = 4.0
+        time_to_peak = 4.5  # seconds after arrival
+        arrival_frame = baseline_frames + 2
+        t0 = arrival_frame * tr  # bolus arrival time (seconds)
+
+        # Peak amplitude scaling
+        if tissue_max_delta_r2star is not None and tissue_max_delta_r2star > 0:
+            peak = float(np.clip(tissue_max_delta_r2star * 6.0, 20.0, 400.0))
+            amplitude_source = "tissue_scaled"
+        else:
+            peak = 250.0  # literature default (Bleeker 2011)
+            amplitude_source = "literature_default"
+
+        # Recirculation parameters
+        recirc_fraction = 0.35
+        recirc_delay = 20.0  # seconds after first-pass peak
+        recirc_dispersion = 8.0  # seconds (broadening)
+
+        # --- Build time axis ---
         t = np.arange(n_timepoints) * tr
         aif = np.zeros(n_timepoints, dtype=np.float64)
-        post_arrival = t > t0
 
+        # --- First-pass component ---
+        post_arrival = t > t0
         if np.any(post_arrival):
             t_shifted = t[post_arrival] - t0
-            t_max = alpha * beta
-            norm_factor = (t_max ** alpha) * np.exp(-alpha)
-            aif[post_arrival] = (
-                amplitude
-                * (t_shifted ** alpha)
-                * np.exp(-t_shifted / beta)
-                / norm_factor
+            ratio = t_shifted / time_to_peak
+            # Gamma-variate: C(t) = C_peak * (ratio)^alpha * exp(alpha*(1-ratio))
+            aif[post_arrival] = peak * (ratio ** alpha) * np.exp(
+                alpha * (1.0 - ratio)
             )
 
-        return aif
+        # --- Recirculation component ---
+        recirc_t0 = t0 + time_to_peak + recirc_delay
+        post_recirc = t > recirc_t0
+        if np.any(post_recirc):
+            t_recirc = t[post_recirc] - recirc_t0
+            ratio_r = t_recirc / recirc_dispersion
+            recirc_peak = peak * recirc_fraction
+            aif[post_recirc] += recirc_peak * (ratio_r ** alpha) * np.exp(
+                alpha * (1.0 - ratio_r)
+            )
+
+        # Clip negative values (numerical safety)
+        aif = np.clip(aif, 0.0, None)
+
+        # --- QC metrics ---
+        metrics: dict[str, Any] = {
+            "synthetic_aif_peak_delta_r2star": float(np.max(aif)),
+            "synthetic_aif_target_peak": peak,
+            "synthetic_aif_amplitude_source": amplitude_source,
+            "synthetic_aif_alpha": alpha,
+            "synthetic_aif_time_to_peak_s": time_to_peak,
+            "synthetic_aif_arrival_frame": arrival_frame,
+            "synthetic_aif_recirc_fraction": recirc_fraction,
+            "synthetic_aif_recirc_delay_s": recirc_delay,
+        }
+        if tissue_max_delta_r2star is not None:
+            metrics["tissue_max_delta_r2star"] = float(
+                tissue_max_delta_r2star
+            )
+
+        return aif, metrics
 
     # -----------------------------------------------------------------
     # Step 9b: Finalize AIF metrics
@@ -1518,6 +1586,7 @@ class AIFDetection(BaseInterface):
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
         n_available = 0
         filter_meta: dict[str, Any] = {}
+        contralateral_search_exhausted = False
 
         if aif_method == "population":
             pass  # Go directly to synthetic
@@ -1543,6 +1612,15 @@ class AIFDetection(BaseInterface):
                 for crit, roi, name in all_attempts
                 if criteria_order.index(crit) >= start_idx
             ]
+
+            ipsi_fallback: Optional[
+                tuple[
+                    list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+                    int,
+                    str,
+                    dict[str, Any],
+                ]
+            ] = None
 
             for crit, roi, level_name in attempts:
                 search = self._prepare_search_mask(
@@ -1571,12 +1649,36 @@ class AIFDetection(BaseInterface):
                     prefer_contralateral=prefer_contralateral,
                     enhancing_mask=enhancing_mask,
                 )
-                if scored:
-                    top_candidates = scored
-                    n_available = n_avail
-                    detection_level = level_name
-                    filter_meta = f_meta
-                    break
+                if not scored:
+                    continue
+
+                # When contralateral is preferred but only ipsilateral
+                # candidates were found, save as fallback and keep
+                # searching (e.g. brain-wide) for contralateral.
+                if (
+                    prefer_contralateral
+                    and f_meta.get("hemisphere_used") == "ipsilateral"
+                ):
+                    if ipsi_fallback is None:
+                        ipsi_fallback = (scored, n_avail, level_name, f_meta)
+                    continue
+
+                # Contralateral or "both" — accept and stop
+                top_candidates = scored
+                n_available = n_avail
+                detection_level = level_name
+                filter_meta = f_meta
+                break
+            else:
+                # All attempts exhausted without contralateral candidates.
+                contralateral_search_exhausted = True
+                if ipsi_fallback is not None:
+                    (
+                        top_candidates,
+                        n_available,
+                        detection_level,
+                        filter_meta,
+                    ) = ipsi_fallback
 
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
@@ -1613,10 +1715,23 @@ class AIFDetection(BaseInterface):
             )
             qc_metrics.update(finalized_qc)
             qc_metrics.update(filter_meta)
+            qc_metrics["contralateral_search_exhausted"] = contralateral_search_exhausted
 
         elif not disable_fallback:
-            aif_curve = self._generate_synthetic_aif(
-                n_timepoints, tr, baseline_frames
+            # Compute tissue max ΔR2* for amplitude scaling
+            brain_conc = conc_data[brain_mask > 0.5]
+            tissue_max: Optional[float] = None
+            if brain_conc.size > 0:
+                max_per_voxel = (
+                    brain_conc.max(axis=-1)
+                    if brain_conc.ndim > 1
+                    else float(brain_conc.max())
+                )
+                tissue_max = float(np.percentile(max_per_voxel, 95))
+
+            aif_curve, synth_metrics = self._generate_synthetic_aif(
+                n_timepoints, tr, baseline_frames,
+                tissue_max_delta_r2star=tissue_max,
             )
             detection_level = "synthetic"
             quality_score = 0.3
@@ -1625,6 +1740,7 @@ class AIFDetection(BaseInterface):
                 "n_aif_candidates_used": 0,
                 "n_aif_candidates_available": 0,
             }
+            qc_metrics.update(synth_metrics)
         else:
             raise RuntimeError(
                 "AIF detection failed at all levels and "
@@ -1641,7 +1757,24 @@ class AIFDetection(BaseInterface):
         )
 
         # --- GAP 9: Quantification validity flags ---
-        if "degraded" in detection_level:
+        if detection_level == "synthetic":
+            qc_metrics["quantification_validity"] = {
+                "absolute_cbv": False,
+                "absolute_cbf": False,
+                "relative_cbv": True,
+                "relative_cbf": True,
+                "mtt": "CAUTION",
+                "ttp": True,
+                "tmax": True,
+            }
+            qc_metrics["synthetic_aif_warnings"] = [
+                "Synthetic AIF used - automatic detection failed",
+                "Relative quantification only (rCBV, rCBF normalized to contralateral)",
+                "Absolute CBV/CBF have ±50% uncertainty - NOT valid for clinical thresholds",
+                "TTP and Tmax are valid (timing independent of AIF amplitude)",
+                "Manual AIF selection recommended for clinical use",
+            ]
+        elif "degraded" in detection_level:
             qc_metrics["quantification_validity"] = {
                 "absolute_cbv": False,
                 "absolute_cbf": False,
