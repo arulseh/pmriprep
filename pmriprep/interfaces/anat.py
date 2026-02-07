@@ -675,33 +675,20 @@ class BrainExtraction(CommandLine):
 
         return str(out_file.parent / f"{base}_mask{ext}")
 
-    def _get_hdbet_device_flag(self) -> str:
-        """Get HD-BET device flag based on settings and architecture."""
+    def _get_hdbet_device(self) -> str:
+        """Get HD-BET device string based on settings and architecture."""
         import platform
 
         device = self.inputs.device
 
         if device == "auto":
-            # Auto-detect: prefer CUDA on Linux, CPU elsewhere
-            # Note: MPS (Apple Silicon) has compatibility issues with
-            # nnunetv2's pin_memory, and architecture detection is unreliable
-            # when running under Rosetta emulation (FSL requires x86_64)
             system = platform.system()
-
             if system == "Darwin":
-                # macOS - always use CPU to avoid MPS issues
-                # Architecture detection via platform.machine() is unreliable
-                # under Rosetta emulation
-                return "-device cpu"
+                return "mps"
             else:
                 # Linux - let HD-BET auto-detect CUDA
-                return ""
-        elif device == "cuda":
-            return "-device cuda"
-        elif device == "mps":
-            return "-device mps"
-        else:  # cpu
-            return "-device cpu"
+                return "cpu"
+        return device
 
     @property
     def cmdline(self) -> str:
@@ -714,15 +701,17 @@ class BrainExtraction(CommandLine):
         cmd_parts: list[str] = []
 
         if tool == "hdbet":
-            device_flag = self._get_hdbet_device_flag()
+            device = self._get_hdbet_device()
 
             # Ensure output has .nii.gz extension (HD-BET requirement)
             if not out_file.endswith(".nii.gz"):
                 out_file = out_file + ".nii.gz"
 
-            hdbet_cmd = f"hd-bet -i {in_file} -o {out_file} --disable_tta"
-            if device_flag:
-                hdbet_cmd += f" {device_flag}"
+            hdbet_cmd = (
+                f"conda run -n hdbet-env "
+                f"hd-bet -i {in_file} -o {out_file} "
+                f"-device {device} --disable_tta"
+            )
             cmd_parts.append(hdbet_cmd)
 
             # Create mask by binarizing the brain output

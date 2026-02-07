@@ -152,8 +152,12 @@ def _hdbet_dsc_brain(dsc_mean_file):
 
     hdbet_succeeded = False
 
-    # Try HD-BET directly, then via conda env
-    for cmd_prefix in [[], ["conda", "run", "-n", "hdbet-env"]]:
+    # Detect device: MPS on macOS, CPU elsewhere
+    import platform
+    hdbet_device = "mps" if platform.system() == "Darwin" else "cpu"
+
+    # Try HD-BET via conda env first, then directly
+    for cmd_prefix in [["conda", "run", "-n", "hdbet-env"], []]:
         if hdbet_succeeded:
             break
         try:
@@ -161,8 +165,8 @@ def _hdbet_dsc_brain(dsc_mean_file):
                 "hd-bet",
                 "-i", dsc_mean_file,
                 "-o", dsc_brain_file,
+                "-device", hdbet_device,
                 "--disable_tta",
-                "-device", "cpu",
             ]
             subprocess.run(hdbet_cmd, check=True, capture_output=True)
             hdbet_succeeded = True
