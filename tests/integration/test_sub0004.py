@@ -89,17 +89,6 @@ DSC_OUTPUT_PATTERNS: Dict[str, List[str]] = {
     "k2": ["*desc-dscproc_k2.nii*", "*_k2.nii*"],
 }
 
-# Subject-specific DCE correlation thresholds
-# PMRIPrep: Bayesian MAP, 3 free params (Ktrans, ve, vp), no DSC CBV constraint
-# Perf-plus: NLLS, 2 free params (vp fixed from DSC CBV)
-# T1 maps differ (corr ~0.48), causing different concentration curves
-# These method differences mean 0.99 is unreachable; thresholds ensure positive correlation
-SUB0004_DCE_THRESHOLDS: Dict[str, float] = {
-    "Ktrans": 0.40,  # Measured: 0.49 (all voxels); priors dominate low-SNR brain
-    "ve": 0.60,      # Measured: 0.70; closest match, ve relatively robust
-    "vp": 0.55,      # Measured: 0.64; unconstrained vs fixed, still correlated
-    "kep": 0.10,     # Measured: 0.16; kep=Ktrans/ve, errors compound
-}
 
 # DCE output patterns - prefer model-specific with underscore separator
 # IMPORTANT: Patterns must match base parameter maps, not uncertainty variants (Std, CV, CI95)
@@ -318,16 +307,12 @@ class TestSub0004Ses0001:
             mask_path=None,  # Skip masking for DCE (different resolution)
         )
 
-        # Use subject-specific DCE thresholds (method differences prevent 0.99)
-        threshold = SUB0004_DCE_THRESHOLDS.get(
-            output_name, get_correlation_threshold(output_name, "dce")
-        )
+        threshold = get_correlation_threshold(output_name, "dce")
         passed = result.value >= threshold
 
         assert passed, (
             f"DCE {output_name} correlation {result.value:.4f} < "
-            f"threshold {threshold} "
-            f"(sub-0004: Bayesian MAP 3-param vs GT NLLS 2-param)"
+            f"threshold {threshold}"
         )
 
 

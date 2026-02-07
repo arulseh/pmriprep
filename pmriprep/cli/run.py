@@ -216,6 +216,15 @@ Examples:
         help="Enable absolute quantification for DSC (requires relaxivity).",
     )
     dsc_group.add_argument(
+        "--dsc-k2-method",
+        "--dsc_k2_method",
+        dest="dsc_k2_method",
+        choices=["integral", "exponential"],
+        default=None,
+        help="K2 leakage correction method: integral (physics-correct BSW) "
+        "or exponential (legacy perf-plus). Default: exponential.",
+    )
+    dsc_group.add_argument(
         "--dsc-use-gpu",
         "--dsc_use_gpu",
         dest="dsc_use_gpu",

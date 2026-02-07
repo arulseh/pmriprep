@@ -639,7 +639,7 @@ def estimate_k2_per_voxel(
 
         # OLS: [K1, K2] = (X^T X)^{-1} X^T y
         coeffs = np.linalg.solve(XtX, X.T @ c_post)
-        k2_estimate = coeffs[1]  # K2 is the second coefficient
+        k2_estimate = coeffs[0]  # K1 = AIF-integral coefficient (BSW leakage rate)
 
         # Clip to physical range [0, inf)
         # Negative K2 would mean tissue is absorbing contrast from blood
@@ -648,25 +648,24 @@ def estimate_k2_per_voxel(
     return k2_map
 
 
-def apply_k2_correction(
+def _apply_k2_integral(
     concentration: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
     tr: float = 1.5,
     k2_map: Optional[npt.NDArray[np.floating]] = None,
 ) -> K2CorrectionResult:
-    """Apply K2 leakage correction to DSC concentration curves.
+    """Apply K2 leakage correction using the integral BSW method.
 
     Implements the Boxerman-Schmainda-Weisskoff (BSW) leakage correction
     method for DSC-MRI perfusion imaging.
 
     The correction formula (Boxerman et al., AJNR 2006):
-        C_corrected(t) = C_tissue(t) - K2 × ∫₀ᵗ C_AIF(τ)dτ
+        C_corrected(t) = C_tissue(t) + K2 × ∫₀ᵗ C_AIF(τ)dτ
 
-    This removes the T1-shortening effect of leaked contrast agent,
-    which causes signal increase (reduced apparent concentration)
-    in regions with BBB disruption. The reference curve is the AIF,
-    not the tissue curve.
+    T1 leakage causes signal increase (reduced apparent ΔR2*),
+    so correction ADDS to restore the true susceptibility effect.
+    The reference curve is the AIF, not the tissue curve.
 
     Args:
         concentration: 4D concentration array (x, y, z, time).
@@ -677,19 +676,6 @@ def apply_k2_correction(
 
     Returns:
         K2CorrectionResult with corrected concentration and K2 map.
-
-    References:
-        Boxerman JL, Schmainda KM, Weisskoff RM.
-        Relative cerebral blood volume maps corrected for contrast agent
-        extravasation significantly correlate with glioma tumor grade.
-        AJNR Am J Neuroradiol. 2006;27(4):859-867.
-
-    Notes:
-        K2 interpretation:
-        - K2 ≈ 0: Intact BBB, minimal leakage
-        - K2 ~ 0.1-0.3: Mild BBB disruption
-        - K2 > 0.5: Significant BBB disruption
-        - High K2 regions often correspond to tumor or edema
     """
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
@@ -725,20 +711,22 @@ def apply_k2_correction(
     cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
     auc_tissue = cumsum_tissue[..., -1].copy()
 
-    # Apply correction: C_corrected(t) = C_tissue(t) - K2 × ∫₀ᵗ C_AIF(τ)dτ
+    # Apply correction: C_corrected(t) = C_tissue(t) + K2 × ∫₀ᵗ C_AIF(τ)dτ
+    # T1 leakage reduces apparent ΔR2*, so we ADD back the leaked component.
     # Broadcast AIF integral to 4D: (time,) → (1, 1, 1, time)
     cumsum_aif_4d = cumsum_aif[np.newaxis, np.newaxis, np.newaxis, :]
 
     # Expand K2 map to match time dimension for broadcasting
     k2_expanded = k2_map[..., np.newaxis]
 
-    concentration_corrected = concentration - k2_expanded * cumsum_aif_4d
+    concentration_corrected = concentration + k2_expanded * cumsum_aif_4d
 
     # Ensure non-negative concentration (clip at zero)
     concentration_corrected = np.maximum(concentration_corrected, 0.0)
 
     # Compute QC metrics
     qc_metrics = _compute_k2_qc_metrics(k2_map, brain_mask, auc_tissue)
+    qc_metrics["k2_method"] = "integral"
 
     return K2CorrectionResult(
         concentration_corrected=concentration_corrected,
@@ -807,6 +795,275 @@ def _compute_k2_qc_metrics(
         "n_brain_voxels": int(k2_values.size),
         "auc_mean": float(np.mean(auc_values)) if auc_values.size > 0 else 0.0,
     }
+
+
+def _exponential_decay(
+    t: npt.NDArray[np.floating],
+    k2: float,
+    c0: float,
+) -> npt.NDArray[np.floating]:
+    """Exponential decay model for post-peak K2 fitting.
+
+    Args:
+        t: Time points (seconds, zeroed at fit start).
+        k2: Decay rate constant (s⁻¹).
+        c0: Initial concentration at fit start.
+
+    Returns:
+        Modeled concentration at each time point.
+    """
+    return c0 * np.exp(-k2 * t)  # type: ignore[return-value]
+
+
+def _apply_k2_exponential(
+    concentration: npt.NDArray[np.floating],
+    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
+    tr: float = 1.5,
+    pre_bolus_frames: int = 5,
+    peak_offset: int = 2,
+) -> K2CorrectionResult:
+    """Apply K2 leakage correction using exponential tail fitting.
+
+    Legacy method matching perf-plus correct_leakage_k2(). For each voxel:
+    1. Find peak concentration after bolus arrival
+    2. Fit exponential decay C(t) = C0*exp(-K2*t) to post-peak tail
+    3. Apply multiplicative correction factor exp(K2*t) to entire curve
+    4. Rescale baseline to preserve original pre-bolus level
+
+    Args:
+        concentration: 4D concentration array (x, y, z, time).
+        brain_mask: Optional 3D brain mask.
+        tr: Repetition time in seconds.
+        pre_bolus_frames: Number of pre-bolus baseline frames.
+        peak_offset: Frames after peak to start exponential fit.
+
+    Returns:
+        K2CorrectionResult with corrected concentration and K2 map.
+
+    References:
+        Boxerman JL, Schmainda KM, Weisskoff RM. AJNR 2006;27(4):859-867.
+    """
+    from scipy.optimize import curve_fit  # type: ignore[import-untyped]
+
+    if concentration.ndim != 4:
+        raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
+
+    spatial_shape = concentration.shape[:3]
+    n_timepoints = concentration.shape[3]
+    dt = tr
+    time_points = np.arange(n_timepoints, dtype=np.float64) * dt
+
+    # Initialize outputs
+    corrected = concentration.copy()
+    k2_map = np.zeros(spatial_shape, dtype=np.float64)
+
+    # Pre-correction AUC for QC
+    auc_tissue = np.sum(concentration, axis=-1) * dt
+
+    # Create mask of valid voxels
+    if brain_mask is not None:
+        valid_mask = brain_mask
+    else:
+        max_conc = np.max(concentration, axis=-1)
+        valid_mask = max_conc > EPSILON_CONCENTRATION
+
+    valid_indices = np.where(valid_mask)
+    if len(valid_indices[0]) == 0:
+        qc = _compute_k2_qc_metrics(k2_map, brain_mask, auc_tissue)
+        return K2CorrectionResult(
+            concentration_corrected=corrected,
+            k2_map=k2_map,
+            auc_tissue=auc_tissue,
+            correction_applied=False,
+            qc_metrics=qc,
+        )
+
+    # K2 fitting parameters (match perf-plus)
+    K2_MAX = 0.2  # s⁻¹ — physiological maximum for severe leakage
+    K2_THRESHOLD = 1e-4  # s⁻¹ — minimum for correction
+    OVERFLOW_LIMIT = 50.0  # max exponent to prevent numerical overflow
+
+    # QC tracking
+    n_corrected = 0
+    failure_counts: dict[str, int] = {}
+
+    for i in range(len(valid_indices[0])):
+        x, y, z = (
+            int(valid_indices[0][i]),
+            int(valid_indices[1][i]),
+            int(valid_indices[2][i]),
+        )
+        tissue_curve = concentration[x, y, z, :]
+
+        # Check for flat or invalid input
+        if (
+            np.all(np.abs(tissue_curve) < EPSILON_SIGNAL)
+            or not np.any(tissue_curve[pre_bolus_frames:] > EPSILON_SIGNAL)
+        ):
+            failure_counts["flat_curve"] = failure_counts.get("flat_curve", 0) + 1
+            continue
+
+        if n_timepoints <= pre_bolus_frames:
+            failure_counts["too_short"] = failure_counts.get("too_short", 0) + 1
+            continue
+
+        # Find peak in post-bolus region
+        peak_idx = pre_bolus_frames + int(
+            np.argmax(tissue_curve[pre_bolus_frames:])
+        )
+        fit_start_idx = peak_idx + peak_offset
+
+        if fit_start_idx >= n_timepoints - 2:
+            failure_counts["insufficient_tail"] = (
+                failure_counts.get("insufficient_tail", 0) + 1
+            )
+            continue
+
+        # Extract tail for fitting
+        fit_time = time_points[fit_start_idx:] - time_points[fit_start_idx]
+        fit_conc = tissue_curve[fit_start_idx:]
+
+        # Skip if tail has non-positive values
+        if np.any(fit_conc <= EPSILON_SIGNAL):
+            failure_counts["negative_tail"] = (
+                failure_counts.get("negative_tail", 0) + 1
+            )
+            continue
+
+        # Fit exponential decay
+        try:
+            p0 = [0.01, float(fit_conc[0])]
+            bounds = ([0.0, 0.0], [K2_MAX, np.inf])
+            popt, _ = curve_fit(
+                _exponential_decay,
+                fit_time,
+                fit_conc,
+                p0=p0,
+                bounds=bounds,
+                maxfev=1000,
+            )
+            k2_estimated = float(popt[0])
+        except (RuntimeError, ValueError, np.linalg.LinAlgError):
+            failure_counts["fit_exception"] = (
+                failure_counts.get("fit_exception", 0) + 1
+            )
+            continue
+
+        if k2_estimated <= K2_THRESHOLD:
+            failure_counts["k2_below_threshold"] = (
+                failure_counts.get("k2_below_threshold", 0) + 1
+            )
+            k2_map[x, y, z] = k2_estimated
+            continue
+
+        # Overflow guard
+        max_exponent = k2_estimated * time_points[-1]
+        if max_exponent > OVERFLOW_LIMIT:
+            failure_counts["overflow_risk"] = (
+                failure_counts.get("overflow_risk", 0) + 1
+            )
+            k2_map[x, y, z] = k2_estimated
+            continue
+
+        # Apply multiplicative correction
+        correction_factor = np.exp(k2_estimated * time_points)
+        corrected_curve = tissue_curve * correction_factor
+
+        # Check for NaN/Inf
+        if not np.all(np.isfinite(corrected_curve)):
+            failure_counts["correction_nan"] = (
+                failure_counts.get("correction_nan", 0) + 1
+            )
+            k2_map[x, y, z] = k2_estimated
+            continue
+
+        # Rescale baseline
+        baseline_original = float(
+            np.mean(tissue_curve[:pre_bolus_frames])
+        ) if pre_bolus_frames > 0 else 0.0
+        baseline_corrected = float(
+            np.mean(corrected_curve[:pre_bolus_frames])
+        ) if pre_bolus_frames > 0 else 0.0
+
+        if not (np.isfinite(baseline_original) and np.isfinite(baseline_corrected)):
+            failure_counts["invalid_baseline"] = (
+                failure_counts.get("invalid_baseline", 0) + 1
+            )
+            k2_map[x, y, z] = k2_estimated
+            continue
+
+        corrected_curve = corrected_curve - (baseline_corrected - baseline_original)
+        corrected_curve = np.maximum(corrected_curve, 0.0)
+
+        corrected[x, y, z, :] = corrected_curve
+        k2_map[x, y, z] = k2_estimated
+        n_corrected += 1
+
+    # Compute QC metrics
+    qc_metrics = _compute_k2_qc_metrics(k2_map, brain_mask, auc_tissue)
+    qc_metrics["k2_method"] = "exponential"
+    qc_metrics["n_corrected"] = n_corrected
+    qc_metrics["n_valid_voxels"] = len(valid_indices[0])
+    qc_metrics["failure_counts"] = failure_counts
+
+    return K2CorrectionResult(
+        concentration_corrected=corrected,
+        k2_map=k2_map,
+        auc_tissue=auc_tissue,
+        correction_applied=n_corrected > 0,
+        qc_metrics=qc_metrics,
+    )
+
+
+def apply_k2_correction(
+    concentration: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
+    tr: float = 1.5,
+    k2_map: Optional[npt.NDArray[np.floating]] = None,
+    method: str = "exponential",
+    baseline_frames: int = 5,
+) -> K2CorrectionResult:
+    """Apply K2 leakage correction to DSC concentration curves.
+
+    Dispatches to the selected correction method:
+    - "integral": Physics-correct BSW integral method (additive correction)
+    - "exponential": Legacy perf-plus method (multiplicative exponential)
+
+    Args:
+        concentration: 4D concentration array (x, y, z, time).
+        aif: 1D arterial input function (time).
+        brain_mask: Optional 3D brain mask for voxel selection.
+        tr: Repetition time in seconds for integration.
+        k2_map: Pre-computed K2 map (only used by integral method).
+        method: K2 correction method: "integral" or "exponential".
+        baseline_frames: Number of pre-bolus frames (used by exponential method).
+
+    Returns:
+        K2CorrectionResult with corrected concentration and K2 map.
+
+    References:
+        Boxerman JL, Schmainda KM, Weisskoff RM. AJNR 2006;27(4):859-867.
+    """
+    if method == "integral":
+        return _apply_k2_integral(
+            concentration=concentration,
+            aif=aif,
+            brain_mask=brain_mask,
+            tr=tr,
+            k2_map=k2_map,
+        )
+    elif method == "exponential":
+        return _apply_k2_exponential(
+            concentration=concentration,
+            brain_mask=brain_mask,
+            tr=tr,
+            pre_bolus_frames=baseline_frames,
+        )
+    else:
+        raise ValueError(
+            f"Unknown K2 method '{method}'. Choose 'integral' or 'exponential'."
+        )
 
 
 def estimate_preload_correction_factor(

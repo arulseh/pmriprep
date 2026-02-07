@@ -28,17 +28,12 @@ CORRELATION_THRESHOLD = 0.99
 DICE_THRESHOLD = 0.95
 
 # Map-specific correlation thresholds
-# These account for documented method differences (e.g., K2 integral vs exponential)
-# See docs/FUTURE_WORK.md for details on expected correlation ranges
-# NOTE: These thresholds are intentionally lower for sub-0004 due to GBM preset
-# and K2 leakage correction method differences between PMRIPrep (integral) and
-# perf-plus (exponential heuristic).
 DSC_CORRELATION_THRESHOLDS: Dict[str, float] = {
-    "cbf": 0.15,   # K2 method difference causes significant CBF differences
-    "cbv": 0.55,   # CBV less affected but still impacted by K2 correction
-    "mtt": 0.50,
-    "tmax": 0.40,  # Tmax affected by deconvolution regularization differences
-    "k2": 0.05,    # Very different methods (integral vs exponential heuristic)
+    "cbf": 0.99,
+    "cbv": 0.99,
+    "mtt": 0.99,
+    "tmax": 0.99,
+    "k2": 0.99,
 }
 
 DCE_CORRELATION_THRESHOLDS: Dict[str, float] = {

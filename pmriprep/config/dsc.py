@@ -69,6 +69,8 @@ class DSCConfig:
         Save K2 leakage correction map.
     save_uncertainty : bool
         Save uncertainty maps from Bayesian inference.
+    k2_method : str
+        K2 leakage correction method: "integral" or "exponential".
     num_processes : int
         Number of parallel processes (0 = use system default).
     use_gpu : bool
@@ -116,6 +118,9 @@ class DSCConfig:
     pre_bolus: int = 12
     save_k2_map: bool = False
     save_uncertainty: bool = False
+
+    # K2 leakage correction
+    k2_method: str = "exponential"  # "integral" (physics-correct) or "exponential" (legacy perf-plus)
 
     # Resource settings
     num_processes: int = 0  # 0 = use system default
@@ -198,6 +203,7 @@ class DSCConfig:
             pre_bolus=10,
             save_k2_map=True,
             save_uncertainty=self.save_uncertainty,
+            k2_method=self.k2_method,
             num_processes=self.num_processes,
             use_gpu=self.use_gpu,
         )
