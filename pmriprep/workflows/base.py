@@ -884,6 +884,7 @@ def init_pmriprep_wf(
             (anat_writer, anat_report, [("qc_json", "qc_json")]),
             (anat_wf, anat_report, [
                 ("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip"),
+                ("outputnode.tissue_seg_filmstrip", "tissue_seg_filmstrip"),
             ]),
         ])
 

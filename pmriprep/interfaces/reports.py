@@ -40,6 +40,7 @@ class GenerateReportInputSpec(BaseInterfaceInputSpec):
 
     # Anatomical pipeline filmstrips
     brain_mask_filmstrip = traits.Str(desc="Brain mask QC filmstrip PNG path")
+    tissue_seg_filmstrip = traits.Str(desc="Tissue segmentation QC filmstrip PNG path")
     acpc_filmstrip = traits.Str(desc="ACPC alignment QC filmstrip PNG path")
     coreg_filmstrip_postcon = traits.Str(desc="T1w postcon coregistration filmstrip PNG path")
     coreg_filmstrip_t2w = traits.Str(desc="T2w coregistration filmstrip PNG path")
@@ -152,6 +153,11 @@ class GenerateReport(BaseInterface):
             if Path(self.inputs.brain_mask_filmstrip).exists():
                 brain_mask_filmstrip = self.inputs.brain_mask_filmstrip
 
+        tissue_seg_filmstrip = None
+        if isdefined(self.inputs.tissue_seg_filmstrip) and self.inputs.tissue_seg_filmstrip:
+            if Path(self.inputs.tissue_seg_filmstrip).exists():
+                tissue_seg_filmstrip = self.inputs.tissue_seg_filmstrip
+
         acpc_filmstrip = None
         if isdefined(self.inputs.acpc_filmstrip) and self.inputs.acpc_filmstrip:
             if Path(self.inputs.acpc_filmstrip).exists():
@@ -191,6 +197,7 @@ class GenerateReport(BaseInterface):
             b1_qc_plot=b1_qc_plot,
             t1_qc_plot=t1_qc_plot,
             brain_mask_filmstrip=brain_mask_filmstrip,
+            tissue_seg_filmstrip=tissue_seg_filmstrip,
             acpc_filmstrip=acpc_filmstrip,
             coreg_filmstrip_postcon=coreg_filmstrip_postcon,
             coreg_filmstrip_t2w=coreg_filmstrip_t2w,

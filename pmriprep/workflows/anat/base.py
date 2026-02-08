@@ -228,6 +228,66 @@ def _create_coreg_qc_filmstrip(coregistered_file, reference_file, brain_mask_fil
     return output_path
 
 
+def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf_probseg_file):
+    """Create tissue segmentation QC filmstrip showing WM/GM/CSF contours on T1w.
+
+    Thresholds each probability map at p>0.5 to create binary masks,
+    then overlays colored contour edges on brain-extracted T1w.
+
+    Parameters
+    ----------
+    t1w_file : str
+        Path to brain-extracted T1w image (background).
+    wm_probseg_file : str
+        Path to white matter probability map.
+    gm_probseg_file : str
+        Path to gray matter probability map.
+    csf_probseg_file : str
+        Path to CSF probability map.
+
+    Returns
+    -------
+    str
+        Path to output filmstrip PNG.
+    """
+    from pathlib import Path
+
+    import nibabel as nib
+    import numpy as np
+
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+
+    out_dir = Path.cwd()
+    output_path = str(out_dir / "tissue_seg_qc_filmstrip.png")
+
+    t1w_img = nib.load(t1w_file)
+    t1w_data = t1w_img.get_fdata()
+    voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])
+
+    # Threshold probability maps at 0.5 to get binary masks
+    wm_mask = (nib.load(wm_probseg_file).get_fdata() > 0.5).astype(np.float64)
+    gm_mask = (nib.load(gm_probseg_file).get_fdata() > 0.5).astype(np.float64)
+    csf_mask = (nib.load(csf_probseg_file).get_fdata() > 0.5).astype(np.float64)
+
+    # Paul Tol extended palette colors
+    label_masks = [
+        ("WM", wm_mask, "#4477AA"),
+        ("GM", gm_mask, "#EE6677"),
+        ("CSF", csf_mask, "#66CCEE"),
+    ]
+
+    plot_segmentation_qc_filmstrip(
+        background=t1w_data,
+        label_masks=label_masks,
+        output_path=output_path,
+        mask=(t1w_data > 0),
+        title="Tissue Segmentation QC",
+        voxel_sizes=voxel_sizes,
+    )
+
+    return output_path
+
+
 def _passthrough_if_undefined(in_file=None):
     """Return empty string if input is undefined or doesn't exist.
 
@@ -504,6 +564,7 @@ def init_anat_preproc_wf(
                 "coreg_filmstrip_t2w",
                 "coreg_filmstrip_flair",
                 "coreg_filmstrip_pdw",
+                "tissue_seg_filmstrip",
             ]
         ),
         name="outputnode",
@@ -855,6 +916,25 @@ def init_anat_preproc_wf(
         (brain_extract, brain_mask_filmstrip, [("out_mask", "brain_mask_file")]),
     ])
 
+    # Tissue segmentation filmstrip (only when FAST runs, i.e. not postcon-only)
+    tissue_seg_filmstrip_node = pe.Node(
+        niu.Function(
+            input_names=["t1w_file", "wm_probseg_file", "gm_probseg_file",
+                         "csf_probseg_file"],
+            output_names=["filmstrip_file"],
+            function=_create_tissue_seg_filmstrip,
+        ),
+        name="tissue_seg_filmstrip",
+    )
+    workflow.connect([
+        (brain_extract, tissue_seg_filmstrip_node, [("out_file", "t1w_file")]),
+        (tissue_segment, tissue_seg_filmstrip_node, [
+            ("wm_probseg", "wm_probseg_file"),
+            ("gm_probseg", "gm_probseg_file"),
+            ("csf_probseg", "csf_probseg_file"),
+        ]),
+    ])
+
     # ACPC alignment filmstrip (unless skip_acpc)
     acpc_filmstrip_node = None
     if not config.skip_acpc:
@@ -984,6 +1064,10 @@ def init_anat_preproc_wf(
         # Brain mask filmstrip (always present)
         (brain_mask_filmstrip, outputnode, [
             ("filmstrip_file", "brain_mask_filmstrip"),
+        ]),
+        # Tissue segmentation filmstrip (skipped in postcon-only mode via None inputs)
+        (tissue_seg_filmstrip_node, outputnode, [
+            ("filmstrip_file", "tissue_seg_filmstrip"),
         ]),
     ])
 

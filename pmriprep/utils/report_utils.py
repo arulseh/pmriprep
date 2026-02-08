@@ -41,6 +41,7 @@ def generate_qc_report(
     b1_qc_plot: Optional[str] = None,
     t1_qc_plot: Optional[str] = None,
     brain_mask_filmstrip: Optional[str] = None,
+    tissue_seg_filmstrip: Optional[str] = None,
     acpc_filmstrip: Optional[str] = None,
     coreg_filmstrip_postcon: Optional[str] = None,
     coreg_filmstrip_t2w: Optional[str] = None,
@@ -93,6 +94,7 @@ def generate_qc_report(
         ("b1", b1_qc_plot),
         ("t1", t1_qc_plot),
         ("brain_mask", brain_mask_filmstrip),
+        ("tissue_seg", tissue_seg_filmstrip),
         ("acpc", acpc_filmstrip),
         ("coreg_postcon", coreg_filmstrip_postcon),
         ("coreg_t2w", coreg_filmstrip_t2w),
@@ -214,6 +216,15 @@ def _generate_fallback_report(
         <div class="section">
             <h2>Brain Extraction QC</h2>
             <img src="data:image/png;base64,{images["brain_mask"]}" alt="Brain Mask QC">
+        </div>
+        ''')
+
+    if "tissue_seg" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>Tissue Segmentation</h2>
+            <p>WM (blue), GM (red), and CSF (cyan) boundary contours on brain-extracted T1w.</p>
+            <img src="data:image/png;base64,{images["tissue_seg"]}" alt="Tissue Segmentation QC">
         </div>
         ''')
 
