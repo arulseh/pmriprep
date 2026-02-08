@@ -32,6 +32,127 @@ from pmriprep.utils.dsc_constants import (
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_peak_height_legacy, compute_ttp_legacy
 
 
+# ---------------------------------------------------------------------------
+# Module-level worker for parallel parametric deconvolution
+# ---------------------------------------------------------------------------
+from typing import NamedTuple
+
+
+class _DSCVoxelInput(NamedTuple):
+    """Lightweight struct for a single voxel's data."""
+    x: int
+    y: int
+    z: int
+    tissue_curve: Any  # npt.NDArray
+
+
+_dsc_worker_ctx: dict[str, Any] = {}
+
+
+def _dsc_init_worker(
+    aif: Any,
+    time_points: Any,
+    method: str,
+    bayesian: str,
+    mcmc_samples: int,
+    cpi_control_points: int,
+    bolus_duration_frames: int,
+    dt: float,
+) -> None:
+    """Initialise shared state once per worker process."""
+    from pmriprep.models.dsc import (
+        VascularModel,
+        CPIModel,
+        select_n_control_points,
+    )
+
+    _dsc_worker_ctx["aif"] = aif
+    _dsc_worker_ctx["time_points"] = time_points
+    _dsc_worker_ctx["method"] = method
+    _dsc_worker_ctx["bayesian"] = bayesian
+    _dsc_worker_ctx["mcmc_samples"] = mcmc_samples
+    _dsc_worker_ctx["dt"] = dt
+
+    # Pre-build model template so each voxel can cheaply instantiate
+    if method == "vascular":
+        _dsc_worker_ctx["model_factory"] = lambda: VascularModel()
+    else:  # cpi
+        n_cp = cpi_control_points
+        if n_cp == 0:
+            n_cp = select_n_control_points(bolus_duration_frames, dt)
+        _dsc_worker_ctx["model_factory"] = lambda _ncp=n_cp: CPIModel(n_control_points=_ncp)
+
+
+def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
+    """Fit a single voxel — called from pool workers."""
+    from pmriprep.models.dsc import fit_dsc_model
+
+    x, y, z, tissue_curve = voxel_data
+
+    # Skip near-zero curves
+    if np.max(np.abs(tissue_curve)) < EPSILON_CONCENTRATION:
+        return {"coords": (x, y, z), "failed": True}
+
+    method = _dsc_worker_ctx["method"]
+    bayesian = _dsc_worker_ctx["bayesian"]
+    aif = _dsc_worker_ctx["aif"]
+    time_points = _dsc_worker_ctx["time_points"]
+    dt = _dsc_worker_ctx["dt"]
+
+    try:
+        model_instance = _dsc_worker_ctx["model_factory"]()
+
+        if bayesian == "none":
+            result = fit_dsc_model(
+                model=model_instance,
+                concentration=tissue_curve,
+                aif=aif,
+                time_points=time_points,
+                method="map",
+                compute_uncertainties=False,
+            )
+        else:
+            result = fit_dsc_model(
+                model=model_instance,
+                concentration=tissue_curve,
+                aif=aif,
+                time_points=time_points,
+                method=bayesian,
+                mcmc_samples=_dsc_worker_ctx["mcmc_samples"],
+                compute_uncertainties=False,
+            )
+
+        out: dict[str, Any] = {"coords": (x, y, z), "failed": False}
+        cbf_val = result.parameters.get("cbf", result.parameters.get("CBF", 0.0))
+        out["cbf"] = cbf_val
+
+        if method == "vascular":
+            alpha = result.parameters.get("alpha", 1.0)
+            beta = result.parameters.get("beta", 1.0)
+            mtt_val = alpha * beta
+            out["mtt"] = mtt_val
+            out["cbv"] = cbf_val * mtt_val / 60.0
+            out["tmax"] = result.parameters.get("delay", 0.0)
+        else:  # cpi
+            if result.fitted_residue is not None:
+                res = result.fitted_residue
+                cbv_val = float(np.sum(res) * dt)
+                out["cbv"] = cbv_val
+                out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
+                out["tmax"] = float(np.argmax(res)) * dt
+            else:
+                out["cbv"] = 0.0
+                out["mtt"] = 0.0
+                out["tmax"] = 0.0
+
+        out["r_squared"] = result.r_squared
+        out["converged"] = (bayesian != "none" and result.passes_convergence())
+        return out
+
+    except Exception:
+        return {"coords": (x, y, z), "failed": True}
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -153,6 +274,11 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     )
 
     # Processing options
+    n_procs = traits.Int(
+        1,
+        usedefault=True,
+        desc="Number of parallel processes for voxel fitting (1 = serial)",
+    )
     use_gpu = traits.Bool(
         False,
         usedefault=True,
@@ -637,15 +763,12 @@ class ComputeDSCMaps(BaseInterface):
         npt.NDArray[Any],  # tmax
         dict[str, Any],  # qc_metrics
     ]:
-        """Run parametric model deconvolution (vascular, CPI)."""
+        """Run parametric model deconvolution (vascular, CPI).
 
-        from pmriprep.models.dsc import (
-            VascularModel,
-            CPIModel,
-            fit_dsc_model,
-            select_n_control_points,
-            estimate_bolus_duration,
-        )
+        Uses multiprocessing.Pool when n_procs > 1 (matching perf-plus).
+        """
+
+        from pmriprep.models.dsc import estimate_bolus_duration
 
         spatial_shape = concentration_data.shape[:3]
         n_timepoints = concentration_data.shape[3]
@@ -666,89 +789,65 @@ class ComputeDSCMaps(BaseInterface):
         mask_coords = np.where(mask > 0)
         n_voxels = len(mask_coords[0])
 
-        # Track convergence for Bayesian
-        n_converged = 0
-        r_squared_list: list[float] = []
-
         # Estimate bolus duration once from AIF for CPI
         bolus_duration_frames = estimate_bolus_duration(aif)
 
-        # Process voxels
+        # Build voxel work items
+        voxel_data_list: list[_DSCVoxelInput] = []
         for i in range(n_voxels):
             x, y, z = (
                 int(mask_coords[0][i]),
                 int(mask_coords[1][i]),
                 int(mask_coords[2][i]),
             )
-            tissue_curve = concentration_data[x, y, z, :]
+            voxel_data_list.append(
+                _DSCVoxelInput(x, y, z, concentration_data[x, y, z, :])
+            )
 
-            # Skip if curve is mostly zeros
-            if np.max(np.abs(tissue_curve)) < EPSILON_CONCENTRATION:
+        # Worker initializer args
+        init_args = (
+            aif, time_points, method, bayesian, mcmc_samples,
+            cpi_control_points, bolus_duration_frames, dt,
+        )
+
+        n_procs = max(1, int(self.inputs.n_procs))
+
+        if n_procs > 1:
+            from concurrent.futures import ProcessPoolExecutor
+
+            chunk_size = max(1, n_voxels // (n_procs * 10))
+            with ProcessPoolExecutor(
+                max_workers=n_procs,
+                initializer=_dsc_init_worker,
+                initargs=init_args,
+            ) as executor:
+                results = list(executor.map(
+                    _dsc_fit_single_voxel, voxel_data_list,
+                    chunksize=chunk_size,
+                ))
+        else:
+            # Serial path: avoid multiprocessing overhead
+            _dsc_init_worker(*init_args)
+            results = [_dsc_fit_single_voxel(vd) for vd in voxel_data_list]
+            _dsc_worker_ctx.clear()
+
+        # Scatter results into output arrays
+        n_converged = 0
+        r_squared_list: list[float] = []
+
+        for res in results:
+            if res["failed"]:
                 continue
+            x, y, z = res["coords"]
+            cbf[x, y, z] = res.get("cbf", 0.0)
+            cbv[x, y, z] = res.get("cbv", 0.0)
+            mtt[x, y, z] = res.get("mtt", 0.0)
+            tmax[x, y, z] = res.get("tmax", 0.0)
 
-            try:
-                # Select model
-                model_instance: "VascularModel | CPIModel"
-                if method == "vascular":
-                    model_instance = VascularModel()
-                else:  # cpi
-                    n_cp = cpi_control_points
-                    if n_cp == 0:
-                        n_cp = select_n_control_points(
-                            bolus_duration_frames, dt
-                        )
-                    model_instance = CPIModel(n_control_points=n_cp)
-
-                # Fit model
-                if bayesian == "none":
-                    # Simple least squares via Bayesian MAP with flat priors
-                    result = fit_dsc_model(
-                        model=model_instance,
-                        concentration=tissue_curve,
-                        aif=aif,
-                        time_points=time_points,
-                        method="map",
-                    )
-                else:
-                    result = fit_dsc_model(
-                        model=model_instance,
-                        concentration=tissue_curve,
-                        aif=aif,
-                        time_points=time_points,
-                        method=bayesian,
-                        mcmc_samples=mcmc_samples,
-                    )
-
-                # Extract parameters
-                cbf[x, y, z] = result.parameters.get("cbf", result.parameters.get("CBF", 0.0))
-
-                # For vascular model, compute derived parameters
-                if method == "vascular":
-                    alpha = result.parameters.get("alpha", 1.0)
-                    beta = result.parameters.get("beta", 1.0)
-                    mtt_val = alpha * beta
-                    mtt[x, y, z] = mtt_val
-                    cbv[x, y, z] = cbf[x, y, z] * mtt_val / 60.0  # Convert to consistent units
-                    tmax[x, y, z] = result.parameters.get("delay", 0.0)
-                else:  # cpi
-                    # Extract from residue function
-                    if result.fitted_residue is not None:
-                        res = result.fitted_residue
-                        cbv[x, y, z] = float(np.sum(res) * dt)
-                        if cbf[x, y, z] > EPSILON_CONCENTRATION:
-                            mtt[x, y, z] = cbv[x, y, z] / cbf[x, y, z]
-                        tmax[x, y, z] = float(np.argmax(res)) * dt
-
-                # Track QC
-                if result.r_squared is not None:
-                    r_squared_list.append(result.r_squared)
-
-                if bayesian != "none" and result.passes_convergence():
-                    n_converged += 1
-
-            except Exception:
-                # Skip problematic voxels
-                continue
+            if res.get("r_squared") is not None:
+                r_squared_list.append(res["r_squared"])
+            if res.get("converged"):
+                n_converged += 1
 
         # Compile QC metrics
         if r_squared_list:

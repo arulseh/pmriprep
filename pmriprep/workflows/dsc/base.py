@@ -1495,6 +1495,7 @@ def init_dsc_preproc_wf(
             bayesian=config.bayesian,
             mcmc_samples=config.mcmc_samples,
             use_gpu=config.use_gpu,
+            n_procs=config.num_processes if config.num_processes > 0 else 1,
             baseline_frames=config.pre_bolus,
             tail_frames=5,  # Post-bolus frames for PSR (Cha et al. AJNR 2002)
             k2_method=config.k2_method,

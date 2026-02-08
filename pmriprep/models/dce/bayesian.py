@@ -489,6 +489,7 @@ class BayesianPKFitter:
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         max_iter: int = DEFAULT_MAP_MAX_ITER,
+        compute_uncertainties: bool = True,
     ) -> FitResult:
         """Fit model using MAP estimation with Laplace approximation.
 
@@ -501,6 +502,8 @@ class BayesianPKFitter:
             aif: Arterial input function (mM).
             time_points: Time points (minutes).
             max_iter: Maximum optimizer iterations.
+            compute_uncertainties: Whether to compute Laplace uncertainties.
+                Set to False to skip the expensive Hessian computation.
 
         Returns:
             FitResult with parameters, uncertainties, and credible intervals.
@@ -580,9 +583,13 @@ class BayesianPKFitter:
         )
 
         # Compute Laplace approximation uncertainties
-        uncertainties, credible_intervals = self._compute_laplace_uncertainties(
-            fitted_params, neg_log_posterior
-        )
+        if compute_uncertainties:
+            uncertainties, credible_intervals = self._compute_laplace_uncertainties(
+                fitted_params, neg_log_posterior
+            )
+        else:
+            uncertainties = {}
+            credible_intervals = {}
 
         # Compute fitted curve
         fitted_curve = self.model.evaluate(list(fitted_params), aif, time_points)
@@ -675,7 +682,8 @@ class BayesianPKFitter:
         # Initialize walkers near MAP estimate
         # First, get a rough MAP estimate
         map_result = self.fit_map(
-            tissue_curve, aif, time_points, max_iter=100
+            tissue_curve, aif, time_points, max_iter=100,
+            compute_uncertainties=False,
         )
         map_params_list = self.model.dict_to_params(
             {k: v for k, v in map_result.parameters.items() if k in param_names}

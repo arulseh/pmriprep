@@ -167,7 +167,10 @@ def _fit_single_voxel(
                 model, vp_prior_override=vp_prior
             )
             if bayesian == "map":
-                result = soft_fitter.fit_map(tissue_curve, aif, time_points)
+                result = soft_fitter.fit_map(
+                    tissue_curve, aif, time_points,
+                    compute_uncertainties=False,
+                )
             else:
                 result = soft_fitter.fit_mcmc(
                     tissue_curve, aif, time_points, n_samples=mcmc_samples
@@ -191,7 +194,10 @@ def _fit_single_voxel(
             if bayesian == "none":
                 result = model.fit(tissue_curve, aif, time_points)
             elif bayesian == "map" and fitter is not None:
-                result = fitter.fit_map(tissue_curve, aif, time_points)
+                result = fitter.fit_map(
+                    tissue_curve, aif, time_points,
+                    compute_uncertainties=False,
+                )
             elif bayesian == "mcmc" and fitter is not None:
                 result = fitter.fit_mcmc(
                     tissue_curve, aif, time_points,

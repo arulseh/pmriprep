@@ -296,13 +296,19 @@ class BayesianDSCFitter:
                 params_mm[j] -= epsilon
 
                 # Second derivative
-                f_pp = objective(params_pp)
-                f_pm = objective(params_pm)
-                f_mp = objective(params_mp)
-                f_mm = objective(params_mm)
+                with np.errstate(invalid="ignore"):
+                    f_pp = objective(params_pp)
+                    f_pm = objective(params_pm)
+                    f_mp = objective(params_mp)
+                    f_mm = objective(params_mm)
 
-                hessian[i, j] = (f_pp - f_pm - f_mp + f_mm) / (4 * epsilon**2)
-                hessian[j, i] = hessian[i, j]
+                    if all(np.isfinite([f_pp, f_pm, f_mp, f_mm])):
+                        hessian[i, j] = (
+                            (f_pp - f_pm - f_mp + f_mm) / (4 * epsilon**2)
+                        )
+                    else:
+                        hessian[i, j] = 0.0
+                    hessian[j, i] = hessian[i, j]
 
         return hessian
 
@@ -377,6 +383,7 @@ class BayesianDSCFitter:
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         max_iter: int = MAP_MAX_ITER,
+        compute_uncertainties: bool = True,
     ) -> DSCFitResult:
         """Fit model using MAP estimation with Laplace approximation.
 
@@ -389,6 +396,8 @@ class BayesianDSCFitter:
             aif: Arterial input function.
             time_points: Time points (seconds).
             max_iter: Maximum optimizer iterations.
+            compute_uncertainties: Whether to compute Laplace uncertainties.
+                Set to False to skip the expensive Hessian computation.
 
         Returns:
             DSCFitResult with parameters, uncertainties, and credible intervals.
@@ -430,9 +439,13 @@ class BayesianDSCFitter:
             fitted_params = x0
 
         # Compute Laplace approximation uncertainties
-        uncertainties, credible_intervals = self._compute_laplace_uncertainties(
-            fitted_params, neg_log_posterior
-        )
+        if compute_uncertainties:
+            uncertainties, credible_intervals = self._compute_laplace_uncertainties(
+                fitted_params, neg_log_posterior
+            )
+        else:
+            uncertainties = {}
+            credible_intervals = {}
 
         # Compute fitted curves
         fitted_residue = self.model.residue_function(fitted_params, time_points)
@@ -701,7 +714,8 @@ class BayesianDSCFitter:
         # Initialize walkers near MAP estimate
         # First, get a rough MAP estimate
         map_result = self.fit_map(
-            concentration, aif, time_points, max_iter=100
+            concentration, aif, time_points, max_iter=100,
+            compute_uncertainties=False,
         )
         map_params = self.model.dict_to_params(map_result.parameters)
         map_params = np.array(map_params, dtype=np.float64)
@@ -987,6 +1001,7 @@ def fit_dsc_model(
     method: str = "map",
     mcmc_samples: int = MCMC_SAMPLES,
     noise_std: Optional[float] = None,
+    compute_uncertainties: bool = True,
 ) -> DSCFitResult:
     """Convenience function to fit a DSC model using specified Bayesian method.
 
@@ -998,6 +1013,7 @@ def fit_dsc_model(
         method: Fitting method: 'map', 'vi', or 'mcmc'.
         mcmc_samples: Number of MCMC samples (for method='mcmc').
         noise_std: Optional noise standard deviation.
+        compute_uncertainties: Whether to compute Laplace uncertainties for MAP.
 
     Returns:
         DSCFitResult with fitted parameters and uncertainties.
@@ -1008,7 +1024,10 @@ def fit_dsc_model(
     fitter = BayesianDSCFitter(model, noise_std=noise_std)
 
     if method.lower() == "map":
-        return fitter.fit_map(concentration, aif, time_points)
+        return fitter.fit_map(
+            concentration, aif, time_points,
+            compute_uncertainties=compute_uncertainties,
+        )
     elif method.lower() == "vi":
         return fitter.fit_vi(concentration, aif, time_points)
     elif method.lower() == "mcmc":
