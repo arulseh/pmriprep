@@ -86,6 +86,7 @@ def _dsc_init_worker(
 def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
     """Fit a single voxel — called from pool workers."""
     from pmriprep.models.dsc import fit_dsc_model
+    from pmriprep.models.dsc.cpi import _fit_cpi_simple
 
     x, y, z, tissue_curve = voxel_data
 
@@ -102,7 +103,12 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
     try:
         model_instance = _dsc_worker_ctx["model_factory"]()
 
-        if bayesian == "none":
+        if bayesian == "none" and method == "cpi":
+            # Fast path: direct NLLS without Bayesian prior/noise overhead
+            result = _fit_cpi_simple(model_instance, tissue_curve, aif, time_points)
+            if result is None:
+                return {"coords": (x, y, z), "failed": True}
+        elif bayesian == "none":
             result = fit_dsc_model(
                 model=model_instance,
                 concentration=tissue_curve,

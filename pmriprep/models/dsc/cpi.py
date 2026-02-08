@@ -313,17 +313,8 @@ class CPIModel(DSCModel):
         # Compute residue function
         residue = self.residue_function(params, time_points)
 
-        # Convolution: C_tissue(t) = ∫₀ᵗ AIF(τ) × R(t-τ) dτ
-        tissue = np.zeros(n_times, dtype=np.float64)
-
-        for i in range(1, n_times):
-            # R(t_i - t_j) for j = 0..i
-            r_values = residue[:i+1][::-1]  # R[i], R[i-1], ..., R[0]
-            aif_values = aif[:i+1]  # AIF[0], AIF[1], ..., AIF[i]
-
-            # Trapezoidal rule
-            integrand = aif_values * r_values
-            tissue[i] = np.trapezoid(integrand, dx=dt)
+        # Convolution: C_tissue(t) = AIF(t) ⊗ R(t) via rectangular rule
+        tissue = np.convolve(aif, residue, mode='full')[:n_times] * dt
 
         return tissue
 
@@ -584,7 +575,7 @@ def _fit_cpi_simple(
             x0,
             method="L-BFGS-B",
             bounds=bounds,
-            options={"maxiter": 500},
+            options={"maxiter": 500, "ftol": 1e-6},
         )
 
         if result.success or result.fun < np.inf:

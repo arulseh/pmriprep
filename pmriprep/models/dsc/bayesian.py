@@ -424,7 +424,7 @@ class BayesianDSCFitter:
                 x0,
                 method="L-BFGS-B",
                 bounds=bounds,
-                options={"maxiter": max_iter, "disp": False},
+                options={"maxiter": max_iter, "disp": False, "ftol": 1e-6},
             )
             converged = result.success
             fitted_params = np.array(result.x, dtype=np.float64)
