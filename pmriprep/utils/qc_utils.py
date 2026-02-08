@@ -149,12 +149,13 @@ def plot_registration_qc_filmstrip(
 
     Generates a multi-slice filmstrip with three rows (axial, coronal,
     sagittal) showing the fixed image as grayscale background with
-    contours of the moving image overlaid. This follows the fMRIPrep-style
-    registration QC layout.
+    Sobel edge-detected boundaries of the moving image overlaid in color.
+    This matches the perf-plus approach (fslmaths -edge -bin) for clean
+    structural boundary visualization.
 
     Args:
-        fixed: 3D reference/background image array (e.g. T1w)
-        moving: 3D moving/contour overlay array (e.g. DSC/DCE mean)
+        fixed: 3D background image array (e.g. DSC/DCE mean)
+        moving: 3D image for edge overlay (e.g. T1w in functional space)
         output_path: Path to save the output PNG image
         mask: Optional 3D brain mask to restrict display region
         title: Optional title for the figure
@@ -169,8 +170,10 @@ def plot_registration_qc_filmstrip(
     Raises:
         ValueError: If image shapes don't match or arrays aren't 3D
     """
-    # Import matplotlib here to avoid import overhead when not needed
+    # Import matplotlib/scipy here to avoid import overhead when not needed
+    import matplotlib.colors as mcolors  # type: ignore[import-untyped]
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+    from scipy.ndimage import sobel
 
     fixed = np.asarray(fixed)
     moving = np.asarray(moving)
@@ -273,22 +276,22 @@ def plot_registration_qc_filmstrip(
                 aspect=aspect,
             )
 
-            # Overlay contours of the moving image
-            if np.any(moving_slice > 0):
-                low_pct = float(
-                    np.percentile(moving_slice[moving_slice > 0], 30),
+            # Overlay edge-detected boundaries of the moving image
+            # Sobel edge detection (Python equivalent of fslmaths -edge)
+            # produces clean structural boundaries instead of noisy contours
+            edges_x = sobel(moving_slice, axis=0)
+            edges_y = sobel(moving_slice, axis=1)
+            edge_mag = np.sqrt(edges_x**2 + edges_y**2)
+            if np.any(edge_mag > 0):
+                threshold = float(
+                    np.percentile(edge_mag[edge_mag > 0], 70),
                 )
-                high_pct = float(
-                    np.percentile(moving_slice[moving_slice > 0], 70),
-                )
-                contour_levels = np.linspace(low_pct, high_pct, 3)
-                ax.contour(
-                    moving_slice,
-                    levels=contour_levels,
-                    colors=[contour_color],
-                    linewidths=0.5,
-                    alpha=0.8,
-                )
+                edge_mask = edge_mag > threshold
+                # Create RGBA overlay: colored edges with transparency
+                overlay = np.zeros((*edge_mask.shape, 4))
+                rgba = mcolors.to_rgba(contour_color)
+                overlay[edge_mask] = (*rgba[:3], 0.8)
+                ax.imshow(overlay, aspect=aspect)
 
             ax.axis("off")
             ax.set_title(f"{coord_label}={slice_idx}", fontsize=7)

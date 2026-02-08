@@ -2462,11 +2462,11 @@ def _create_dce_registration_filmstrip(
         mask_img = nib.load(brain_mask_file)
         mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
-    # Generate filmstrip — T1w as background, DCE contours overlaid
+    # Generate filmstrip — DCE as background, T1w edges overlaid
     out_path = Path.cwd() / "registration_qc_filmstrip.png"
     plot_registration_qc_filmstrip(
-        fixed=t1w_data,
-        moving=dce_data,
+        fixed=dce_data,
+        moving=t1w_data,
         output_path=out_path,
         mask=mask,
         title="DCE-T1w Registration QC",

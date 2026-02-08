@@ -872,8 +872,8 @@ def _create_registration_filmstrip(
     voxel_sizes = tuple(dsc_img.header.get_zooms()[:3])
 
     plot_registration_qc_filmstrip(
-        fixed=t1w_data,
-        moving=dsc_data,
+        fixed=dsc_data,
+        moving=t1w_data,
         output_path=output_path,
         mask=mask_data,
         title="DSC-T1w Registration QC",
