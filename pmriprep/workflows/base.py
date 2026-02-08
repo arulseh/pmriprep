@@ -1021,6 +1021,30 @@ def init_pmriprep_wf(
             ]),
         ])
 
+        # -------------------------------------------------------------------
+        # HD-GLIO HTML Report Generation
+        # -------------------------------------------------------------------
+        from pmriprep.interfaces.reports import GenerateReport
+
+        hdglio_report = pe.Node(
+            GenerateReport(
+                subject_id=subject_id,
+                session_id=session_id or "",
+                pipeline="hdglio",
+                output_dir=str(output_dir),
+            ),
+            name="hdglio_report",
+        )
+
+        workflow.connect([
+            (hdglio_writer, hdglio_report, [("qc_json", "qc_json")]),
+            (hdglio_wf, hdglio_report, [
+                ("outputnode.seg_filmstrip_postcon", "seg_filmstrip_postcon"),
+                ("outputnode.seg_filmstrip_flair", "seg_filmstrip_flair"),
+                ("outputnode.nawm_filmstrip_flair", "nawm_filmstrip_flair"),
+            ]),
+        ])
+
     # -------------------------------------------------------------------
     # DSC perfusion workflow (requires anat, optional hdglio)
     # -------------------------------------------------------------------

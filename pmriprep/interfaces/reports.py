@@ -33,6 +33,11 @@ class GenerateReportInputSpec(BaseInterfaceInputSpec):
     b1_qc_plot = traits.Str(desc="B1+ mapping QC plot PNG path")
     t1_qc_plot = traits.Str(desc="VFA T1 mapping QC plot PNG path")
 
+    # HD-GLIO segmentation filmstrips
+    seg_filmstrip_postcon = traits.Str(desc="Tumor segmentation on T1w postcon filmstrip PNG path")
+    seg_filmstrip_flair = traits.Str(desc="Tumor segmentation on FLAIR filmstrip PNG path")
+    nawm_filmstrip_flair = traits.Str(desc="NAWM ROI on FLAIR filmstrip PNG path")
+
     # Anatomical pipeline filmstrips
     brain_mask_filmstrip = traits.Str(desc="Brain mask QC filmstrip PNG path")
     acpc_filmstrip = traits.Str(desc="ACPC alignment QC filmstrip PNG path")
@@ -125,6 +130,22 @@ class GenerateReport(BaseInterface):
             if Path(self.inputs.t1_qc_plot).exists():
                 t1_qc_plot = self.inputs.t1_qc_plot
 
+        # HD-GLIO filmstrips
+        seg_filmstrip_postcon = None
+        if isdefined(self.inputs.seg_filmstrip_postcon) and self.inputs.seg_filmstrip_postcon:
+            if Path(self.inputs.seg_filmstrip_postcon).exists():
+                seg_filmstrip_postcon = self.inputs.seg_filmstrip_postcon
+
+        seg_filmstrip_flair = None
+        if isdefined(self.inputs.seg_filmstrip_flair) and self.inputs.seg_filmstrip_flair:
+            if Path(self.inputs.seg_filmstrip_flair).exists():
+                seg_filmstrip_flair = self.inputs.seg_filmstrip_flair
+
+        nawm_filmstrip_flair = None
+        if isdefined(self.inputs.nawm_filmstrip_flair) and self.inputs.nawm_filmstrip_flair:
+            if Path(self.inputs.nawm_filmstrip_flair).exists():
+                nawm_filmstrip_flair = self.inputs.nawm_filmstrip_flair
+
         # Anatomical filmstrips
         brain_mask_filmstrip = None
         if isdefined(self.inputs.brain_mask_filmstrip) and self.inputs.brain_mask_filmstrip:
@@ -175,6 +196,9 @@ class GenerateReport(BaseInterface):
             coreg_filmstrip_t2w=coreg_filmstrip_t2w,
             coreg_filmstrip_flair=coreg_filmstrip_flair,
             coreg_filmstrip_pdw=coreg_filmstrip_pdw,
+            seg_filmstrip_postcon=seg_filmstrip_postcon,
+            seg_filmstrip_flair=seg_filmstrip_flair,
+            nawm_filmstrip_flair=nawm_filmstrip_flair,
         )
 
         return runtime

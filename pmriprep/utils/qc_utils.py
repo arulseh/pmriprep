@@ -18,6 +18,7 @@ import numpy.typing as npt
 
 from .qc_standards import (
     COLORBLIND_PALETTE,
+    EXTENDED_PALETTE,
     MOTION_FD_THRESHOLDS,
     get_qc_status,
     get_status_color,
@@ -306,6 +307,162 @@ def plot_registration_qc_filmstrip(
             bbox.x0 - 0.01, (bbox.y0 + bbox.y1) / 2, label,
             fontsize=9, fontweight="bold", rotation=90,
             ha="right", va="center",
+        )
+
+    # Add overall title if provided
+    if title:
+        fig.suptitle(title, fontsize=10, y=1.02)
+
+    # Save figure
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    return output_path
+
+
+def plot_segmentation_qc_filmstrip(
+    background: npt.NDArray[Any],
+    label_masks: list[tuple[str, npt.NDArray[Any], str]],
+    output_path: Union[str, Path],
+    mask: Optional[npt.NDArray[Any]] = None,
+    title: Optional[str] = None,
+    n_slices: int = 7,
+    voxel_sizes: Optional[tuple[float, float, float]] = None,
+) -> Path:
+    """Create a 3-row orthogonal filmstrip for segmentation QC.
+
+    Generates a multi-slice filmstrip with three rows (axial, coronal,
+    sagittal) showing the background image as grayscale with colored
+    contour outlines from one or more binary label masks overlaid.
+
+    Args:
+        background: 3D background image array (e.g. T1w post-contrast).
+        label_masks: List of (name, mask_3d, color) tuples. Each mask
+            is a binary 3D array; contour edges are drawn in the given color.
+        output_path: Path to save the output PNG image.
+        mask: Optional 3D brain mask to restrict display region.
+        title: Optional title for the figure.
+        n_slices: Number of slices per row (default 7).
+        voxel_sizes: Voxel dimensions (dx, dy, dz) in mm for correct aspect
+            ratios. If None, uses equal aspect.
+
+    Returns:
+        Path to the saved figure.
+    """
+    import matplotlib.colors as mcolors  # type: ignore[import-untyped]
+    import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+    from matplotlib.patches import Patch  # type: ignore[import-untyped]
+    from scipy.ndimage import binary_dilation
+
+    background = np.asarray(background)
+    if background.ndim != 3:
+        raise ValueError(f"Expected 3D background array, got {background.ndim}D")
+
+    # Row definitions: (label, axis)
+    row_defs: list[tuple[str, int]] = [
+        ("Axial", 2),
+        ("Coronal", 1),
+        ("Sagittal", 0),
+    ]
+
+    # Compute per-plane aspect ratios from voxel sizes
+    if voxel_sizes is not None:
+        dx, dy, dz = voxel_sizes
+        aspect_ratios = [dy / dx, dz / dx, dz / dy]
+    else:
+        aspect_ratios = [1.0, 1.0, 1.0]
+
+    # Determine intensity range from background image
+    if mask is not None:
+        mask = np.asarray(mask)
+        valid_voxels = background[mask > 0]
+    else:
+        valid_voxels = background[background > 0]
+
+    if len(valid_voxels) > 0:
+        vmin = float(np.percentile(valid_voxels, 1))
+        vmax = float(np.percentile(valid_voxels, 99))
+    else:
+        vmin, vmax = 0.0, 1.0
+
+    # Pre-compute edge masks for each label: binary_dilation - original
+    edge_data: list[tuple[str, npt.NDArray[np.bool_], str]] = []
+    for name, lmask, color in label_masks:
+        lmask = np.asarray(lmask, dtype=bool)
+        if lmask.shape != background.shape:
+            continue
+        if not np.any(lmask):
+            continue
+        edges = binary_dilation(lmask, iterations=1) & ~lmask
+        edge_data.append((name, edges, color))
+
+    # Create the figure: 3 rows x n_slices columns
+    fig, axes = plt.subplots(
+        3, n_slices, figsize=(n_slices * 2.2, 3 * 2.5),
+    )
+    if n_slices == 1:
+        axes = axes[:, np.newaxis]
+
+    for row_idx, (label, axis) in enumerate(row_defs):
+        aspect = aspect_ratios[row_idx]
+        n_total = background.shape[axis]
+        margin = int(n_total * 0.1)
+        slice_indices = np.linspace(
+            margin, n_total - margin - 1, n_slices, dtype=int,
+        )
+        axis_labels = {2: "z", 1: "y", 0: "x"}
+        coord_label = axis_labels[axis]
+
+        for col_idx, slice_idx in enumerate(slice_indices):
+            ax = axes[row_idx, col_idx]
+
+            bg_slice = get_radiological_slice(
+                background, axis=axis, slice_idx=int(slice_idx),
+            )
+            ax.imshow(bg_slice, cmap="gray", vmin=vmin, vmax=vmax, aspect=aspect)
+
+            # Overlay each label's edges
+            for _name, edges, color in edge_data:
+                edge_slice = get_radiological_slice(
+                    edges.astype(np.float64), axis=axis, slice_idx=int(slice_idx),
+                )
+                if np.any(edge_slice > 0):
+                    overlay = np.zeros((*edge_slice.shape, 4))
+                    rgba = mcolors.to_rgba(color)
+                    overlay[edge_slice > 0] = (*rgba[:3], 0.9)
+                    ax.imshow(overlay, aspect=aspect)
+
+            ax.axis("off")
+            ax.set_title(f"{coord_label}={slice_idx}", fontsize=7)
+
+    plt.tight_layout()
+
+    # Row labels
+    for row_idx, (label, _axis) in enumerate(row_defs):
+        bbox = axes[row_idx, 0].get_position()
+        fig.text(
+            bbox.x0 - 0.01, (bbox.y0 + bbox.y1) / 2, label,
+            fontsize=9, fontweight="bold", rotation=90,
+            ha="right", va="center",
+        )
+
+    # Color legend below the figure
+    if edge_data:
+        legend_handles = [
+            Patch(facecolor=color, edgecolor=color, label=name)
+            for name, _edges, color in edge_data
+        ]
+        fig.legend(
+            handles=legend_handles,
+            loc="lower center",
+            ncol=len(legend_handles),
+            fontsize=8,
+            frameon=True,
+            fancybox=True,
+            shadow=False,
+            bbox_to_anchor=(0.5, -0.02),
         )
 
     # Add overall title if provided

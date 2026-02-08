@@ -46,6 +46,9 @@ def generate_qc_report(
     coreg_filmstrip_t2w: Optional[str] = None,
     coreg_filmstrip_flair: Optional[str] = None,
     coreg_filmstrip_pdw: Optional[str] = None,
+    seg_filmstrip_postcon: Optional[str] = None,
+    seg_filmstrip_flair: Optional[str] = None,
+    nawm_filmstrip_flair: Optional[str] = None,
 ) -> str:
     """Generate self-contained HTML QC report with embedded images.
 
@@ -95,6 +98,9 @@ def generate_qc_report(
         ("coreg_t2w", coreg_filmstrip_t2w),
         ("coreg_flair", coreg_filmstrip_flair),
         ("coreg_pdw", coreg_filmstrip_pdw),
+        ("seg_postcon", seg_filmstrip_postcon),
+        ("seg_flair", seg_filmstrip_flair),
+        ("nawm_flair", nawm_filmstrip_flair),
     ]:
         if path and Path(path).exists():
             images[name] = image_to_base64(path)
@@ -232,6 +238,30 @@ def _generate_fallback_report(
             <img src="data:image/png;base64,{images[coreg_key]}" alt="{coreg_label} QC">
         </div>
             ''')
+
+    if "seg_postcon" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>Tumor Segmentation on T1w Post-Contrast</h2>
+            <img src="data:image/png;base64,{images["seg_postcon"]}" alt="Tumor on T1w PostCon">
+        </div>
+        ''')
+
+    if "seg_flair" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>Tumor Segmentation on FLAIR</h2>
+            <img src="data:image/png;base64,{images["seg_flair"]}" alt="Tumor on FLAIR">
+        </div>
+        ''')
+
+    if "nawm_flair" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>NAWM ROI on FLAIR</h2>
+            <img src="data:image/png;base64,{images["nawm_flair"]}" alt="NAWM on FLAIR">
+        </div>
+        ''')
 
     # Build recommendation section
     recommendation_html = ""

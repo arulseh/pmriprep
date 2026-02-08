@@ -151,6 +151,111 @@ def _create_nawm_node(
     )
 
 
+def _create_tumor_on_postcon_filmstrip(
+    t1w_postcon_file,
+    enhancing_mask_file,
+    non_enhancing_mask_file,
+    brain_mask_file,
+):
+    """Create tumor segmentation filmstrip on T1w post-contrast background."""
+    import nibabel as nib
+    import numpy as np
+    import os
+
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+
+    bg_img = nib.load(t1w_postcon_file)
+    bg_data = np.asarray(bg_img.dataobj)
+    brain_mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0
+    enh = np.asarray(nib.load(enhancing_mask_file).dataobj) > 0
+    non_enh = np.asarray(nib.load(non_enhancing_mask_file).dataobj) > 0
+    voxel_sizes = tuple(float(v) for v in bg_img.header.get_zooms()[:3])
+
+    output_path = os.path.join(os.getcwd(), "seg_filmstrip_postcon.png")
+    plot_segmentation_qc_filmstrip(
+        background=bg_data,
+        label_masks=[
+            ("Enhancing", enh, "#EE6677"),
+            ("Non-enhancing", non_enh, "#228833"),
+        ],
+        output_path=output_path,
+        mask=brain_mask,
+        title="Tumor Segmentation on T1w Post-Contrast",
+        voxel_sizes=voxel_sizes,
+    )
+    return output_path
+
+
+def _create_tumor_on_flair_filmstrip(
+    flair_file,
+    enhancing_mask_file,
+    non_enhancing_mask_file,
+    brain_mask_file,
+):
+    """Create tumor segmentation filmstrip on FLAIR background."""
+    import nibabel as nib
+    import numpy as np
+    import os
+
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+
+    bg_img = nib.load(flair_file)
+    bg_data = np.asarray(bg_img.dataobj)
+    brain_mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0
+    enh = np.asarray(nib.load(enhancing_mask_file).dataobj) > 0
+    non_enh = np.asarray(nib.load(non_enhancing_mask_file).dataobj) > 0
+    voxel_sizes = tuple(float(v) for v in bg_img.header.get_zooms()[:3])
+
+    output_path = os.path.join(os.getcwd(), "seg_filmstrip_flair.png")
+    plot_segmentation_qc_filmstrip(
+        background=bg_data,
+        label_masks=[
+            ("Enhancing", enh, "#EE6677"),
+            ("Non-enhancing", non_enh, "#228833"),
+        ],
+        output_path=output_path,
+        mask=brain_mask,
+        title="Tumor Segmentation on FLAIR",
+        voxel_sizes=voxel_sizes,
+    )
+    return output_path
+
+
+def _create_nawm_on_flair_filmstrip(
+    flair_file,
+    nawm_mask_file,
+    whole_tumor_mask_file,
+    brain_mask_file,
+):
+    """Create NAWM ROI filmstrip on FLAIR background."""
+    import nibabel as nib
+    import numpy as np
+    import os
+
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+
+    bg_img = nib.load(flair_file)
+    bg_data = np.asarray(bg_img.dataobj)
+    brain_mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0
+    nawm = np.asarray(nib.load(nawm_mask_file).dataobj) > 0
+    tumor = np.asarray(nib.load(whole_tumor_mask_file).dataobj) > 0
+    voxel_sizes = tuple(float(v) for v in bg_img.header.get_zooms()[:3])
+
+    output_path = os.path.join(os.getcwd(), "nawm_filmstrip_flair.png")
+    plot_segmentation_qc_filmstrip(
+        background=bg_data,
+        label_masks=[
+            ("NAWM", nawm, "#66CCEE"),
+            ("Whole Tumor", tumor, "#EE6677"),
+        ],
+        output_path=output_path,
+        mask=brain_mask,
+        title="NAWM ROI on FLAIR",
+        voxel_sizes=voxel_sizes,
+    )
+    return output_path
+
+
 def _generate_qc_metrics(prep_qc, segment_qc, nawm_analysis):
     """Combine QC metrics from all HD-GLIO processing steps.
 
@@ -298,6 +403,9 @@ def init_hdglio_wf(
                 "dilated_lesion_mask",
                 "nawm_mask",
                 "qc_metrics",
+                "seg_filmstrip_postcon",
+                "seg_filmstrip_flair",
+                "nawm_filmstrip_flair",
             ]
         ),
         name="outputnode",
@@ -526,6 +634,103 @@ def init_hdglio_wf(
         (hdglio_segment, combine_qc, [("qc_metrics", "segment_qc")]),
         (extract_nawm_analysis, combine_qc, [("analysis", "nawm_analysis")]),
         (combine_qc, outputnode, [("qc_metrics", "qc_metrics")]),
+    ])
+
+    # -------------------------------------------------------------------
+    # Step 7: QC Filmstrips
+    # -------------------------------------------------------------------
+
+    # Tumor on T1w post-contrast
+    tumor_postcon_filmstrip = pe.Node(
+        niu.Function(
+            input_names=[
+                "t1w_postcon_file",
+                "enhancing_mask_file",
+                "non_enhancing_mask_file",
+                "brain_mask_file",
+            ],
+            output_names=["filmstrip_path"],
+            function=_create_tumor_on_postcon_filmstrip,
+        ),
+        name="tumor_postcon_filmstrip",
+    )
+
+    workflow.connect([
+        (inputnode, tumor_postcon_filmstrip, [
+            ("t1w_postcon", "t1w_postcon_file"),
+            ("brain_mask", "brain_mask_file"),
+        ]),
+        (select_enhancing, tumor_postcon_filmstrip, [
+            ("mask_path", "enhancing_mask_file"),
+        ]),
+        (select_non_enhancing, tumor_postcon_filmstrip, [
+            ("mask_path", "non_enhancing_mask_file"),
+        ]),
+        (tumor_postcon_filmstrip, outputnode, [
+            ("filmstrip_path", "seg_filmstrip_postcon"),
+        ]),
+    ])
+
+    # Tumor on FLAIR
+    tumor_flair_filmstrip = pe.Node(
+        niu.Function(
+            input_names=[
+                "flair_file",
+                "enhancing_mask_file",
+                "non_enhancing_mask_file",
+                "brain_mask_file",
+            ],
+            output_names=["filmstrip_path"],
+            function=_create_tumor_on_flair_filmstrip,
+        ),
+        name="tumor_flair_filmstrip",
+    )
+
+    workflow.connect([
+        (inputnode, tumor_flair_filmstrip, [
+            ("flair", "flair_file"),
+            ("brain_mask", "brain_mask_file"),
+        ]),
+        (select_enhancing, tumor_flair_filmstrip, [
+            ("mask_path", "enhancing_mask_file"),
+        ]),
+        (select_non_enhancing, tumor_flair_filmstrip, [
+            ("mask_path", "non_enhancing_mask_file"),
+        ]),
+        (tumor_flair_filmstrip, outputnode, [
+            ("filmstrip_path", "seg_filmstrip_flair"),
+        ]),
+    ])
+
+    # NAWM on FLAIR
+    nawm_flair_filmstrip = pe.Node(
+        niu.Function(
+            input_names=[
+                "flair_file",
+                "nawm_mask_file",
+                "whole_tumor_mask_file",
+                "brain_mask_file",
+            ],
+            output_names=["filmstrip_path"],
+            function=_create_nawm_on_flair_filmstrip,
+        ),
+        name="nawm_flair_filmstrip",
+    )
+
+    workflow.connect([
+        (inputnode, nawm_flair_filmstrip, [
+            ("flair", "flair_file"),
+            ("brain_mask", "brain_mask_file"),
+        ]),
+        (extract_nawm_path, nawm_flair_filmstrip, [
+            ("nawm_mask", "nawm_mask_file"),
+        ]),
+        (select_whole_tumor, nawm_flair_filmstrip, [
+            ("mask_path", "whole_tumor_mask_file"),
+        ]),
+        (nawm_flair_filmstrip, outputnode, [
+            ("filmstrip_path", "nawm_filmstrip_flair"),
+        ]),
     ])
 
     return workflow

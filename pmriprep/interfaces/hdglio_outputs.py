@@ -59,6 +59,7 @@ class HDGLIODerivativeWriterOutputSpec(TraitedSpec):
     """Output specification for HDGLIODerivativeWriter."""
 
     out_dir = traits.Str(desc="Path to the hdglio_pipeline output session directory")
+    qc_json = traits.Str(desc="Path to the hdglio_qc.json QC metrics file")
 
 
 class HDGLIODerivativeWriter(BaseInterface):
@@ -260,15 +261,18 @@ class HDGLIODerivativeWriter(BaseInterface):
         # ---------------------------------------------------------------
         # 5. QC JSON
         # ---------------------------------------------------------------
+        qc_json_path = hdglio_qc_dir / "hdglio_qc.json"
         if isdefined(qc_metrics) and qc_metrics:
-            self._write_json(qc_metrics, hdglio_qc_dir / "hdglio_qc.json")
+            self._write_json(qc_metrics, qc_json_path)
 
         self._out_dir = str(hdglio_ses_dir)
+        self._qc_json = str(qc_json_path)
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:
         outputs = self.output_spec().get()  # type: ignore[misc]
         outputs["out_dir"] = getattr(self, "_out_dir", "")
+        outputs["qc_json"] = getattr(self, "_qc_json", "")
         return outputs
 
     # -------------------------------------------------------------------
