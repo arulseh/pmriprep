@@ -21,9 +21,13 @@ from tests.integration.test_ground_truth import (
     SubjectTestResult,
     compare_output_files,
     find_ground_truth_directory,
+    get_correlation_threshold,
     load_brain_mask,
     load_ground_truth_map,
 )
+
+# PMRIPrep test outputs directory
+PMRIPREP_TEST_OUTPUTS = Path(__file__).parent.parent.parent / "test_outputs"
 
 SUBJECT = "sub-0010"
 SESSION = "ses-0001"
@@ -54,6 +58,60 @@ DCE_CONFIG: Dict[str, Any] = {
 
 EXPECTED_DSC_OUTPUTS = ["cbf", "cbv", "mtt", "tmax"]
 EXPECTED_DCE_OUTPUTS = ["Ktrans", "ve", "kep"]
+
+# Specific file patterns for PMRIPrep outputs
+DSC_OUTPUT_PATTERNS: Dict[str, List[str]] = {
+    "cbf": ["*desc-rel_cbf.nii*", "*_cbf.nii*"],
+    "cbv": ["*desc-rel_cbv.nii*", "*_cbv.nii*"],
+    "mtt": ["*desc-dscproc_mtt.nii*", "*_mtt.nii*"],
+    "tmax": ["*desc-dscproc_tmax.nii*", "*_tmax.nii*"],
+}
+
+# DCE output patterns
+DCE_OUTPUT_PATTERNS: Dict[str, List[str]] = {
+    "Ktrans": ["*model-tofts_Ktrans.nii*"],
+    "ve": ["*model-tofts_ve.nii*"],
+    "kep": ["*model-tofts_kep.nii*"],
+}
+
+# Ground truth DCE patterns - use model-Tofts with desc-vpDSCmod
+DCE_GT_PATTERNS: Dict[str, List[str]] = {
+    "Ktrans": ["*model-Tofts_desc-vpDSCmod_Ktrans.nii*"],
+    "ve": ["*model-Tofts_desc-vpDSCmod_ve.nii*"],
+    "kep": ["*model-Tofts_desc-vpDSCmod_kep.nii*"],
+}
+
+
+def find_pmriprep_output(
+    output_dir: Path, output_name: str, patterns: Dict[str, List[str]]
+) -> Optional[Path]:
+    """Find PMRIPrep output file using specific patterns to avoid ambiguous matches."""
+    if output_name in patterns:
+        for pattern in patterns[output_name]:
+            matches = list(output_dir.glob(pattern))
+            if matches:
+                return matches[0]
+    # Fallback to generic pattern
+    generic_matches = list(output_dir.glob(f"*_{output_name}.nii*"))
+    if generic_matches:
+        return generic_matches[0]
+    return None
+
+
+def find_ground_truth_file_with_patterns(
+    gt_dir: Path, output_name: str, patterns: Dict[str, List[str]]
+) -> Optional[Path]:
+    """Find ground truth file using specific patterns to avoid ambiguous matches."""
+    perf_dir = gt_dir / "perf"
+    if not perf_dir.exists():
+        perf_dir = gt_dir
+
+    if output_name in patterns:
+        for pattern in patterns[output_name]:
+            matches = list(perf_dir.glob(pattern))
+            if matches:
+                return matches[0]
+    return None
 
 
 @pytest.fixture
@@ -98,8 +156,6 @@ class TestSub0010Ses0001:
         subject_brain_mask: Optional[Path],
     ) -> None:
         """Test DSC output against ground truth."""
-        import os
-
         if dsc_ground_truth_dir is None:
             pytest.skip(f"Ground truth not found for {SUBJECT}/{SESSION}")
 
@@ -109,39 +165,30 @@ class TestSub0010Ses0001:
         if gt_path is None:
             pytest.skip(f"Ground truth not found for DSC {output_name}")
 
-        work_dir = os.environ.get("PMRIPREP_WORK_DIR")
-        if work_dir is None:
+        pmriprep_output_dir = PMRIPREP_TEST_OUTPUTS / "dsc_pipeline" / SUBJECT / SESSION / "perf"
+
+        if not pmriprep_output_dir.exists():
             pytest.skip(
-                "PMRIPREP_WORK_DIR not set. Set to work directory path to enable "
-                "ground truth comparison."
+                f"PMRIPrep outputs not available for {SUBJECT}/{SESSION}"
             )
 
-        work_path = Path(work_dir)
-        subject_id = SUBJECT.replace("sub-", "")
-        pmriprep_output = (
-            work_path / f"pmriprep_sub{subject_id}_{SESSION}_wf" / "dsc_wf" / "compute_maps"
+        pmriprep_file = find_pmriprep_output(
+            pmriprep_output_dir, output_name, DSC_OUTPUT_PATTERNS
         )
-
-        if not pmriprep_output.exists():
-            pytest.skip(
-                f"PMRIPrep outputs not available for {SUBJECT}/{SESSION} in {pmriprep_output}. "
-                "Run PMRIPrep first."
-            )
-
-        if output_name in ("cbf", "cbv"):
-            pmriprep_files = list(pmriprep_output.glob(f"*_rel_{output_name}.nii*"))
-        else:
-            pmriprep_files = list(pmriprep_output.glob(f"*_{output_name}.nii*"))
-        if not pmriprep_files:
-            pytest.fail(f"PMRIPrep output not found for {output_name} in {pmriprep_output}")
+        if pmriprep_file is None:
+            pytest.fail(f"PMRIPrep output not found for {output_name} in {pmriprep_output_dir}")
 
         result = compare_output_files(
-            pmriprep_files[0], gt_path, f"dsc_{output_name}",
+            pmriprep_file, gt_path, f"dsc_{output_name}",
             is_mask=False, mask_path=subject_brain_mask,
         )
-        assert result.passed, (
+
+        threshold = get_correlation_threshold(output_name, "dsc")
+        passed = result.value >= threshold
+
+        assert passed, (
             f"DSC {output_name} correlation {result.value:.4f} < "
-            f"threshold {CORRELATION_THRESHOLD}"
+            f"threshold {threshold}"
         )
 
     @pytest.mark.parametrize("output_name", EXPECTED_DCE_OUTPUTS)
@@ -156,47 +203,45 @@ class TestSub0010Ses0001:
         match DCE native resolution (256x256x26). Correlation is computed
         over the full volume.
         """
-        import os
-
         if dce_ground_truth_dir is None:
             pytest.skip(f"Ground truth not found for {SUBJECT}/{SESSION}")
 
-        gt_data, gt_path = load_ground_truth_map(
-            SUBJECT, SESSION, output_name, "dce", PERF_PLUS_DERIVATIVES
+        # Use pattern-based GT file finding to avoid matching uncertainty/smoothed maps
+        gt_path = find_ground_truth_file_with_patterns(
+            dce_ground_truth_dir, output_name, DCE_GT_PATTERNS
         )
+        if gt_path is None:
+            # Fall back to generic load if specific patterns don't match
+            _, gt_path = load_ground_truth_map(
+                SUBJECT, SESSION, output_name, "dce", PERF_PLUS_DERIVATIVES
+            )
         if gt_path is None:
             pytest.skip(f"Ground truth not found for DCE {output_name}")
 
-        work_dir = os.environ.get("PMRIPREP_WORK_DIR")
-        if work_dir is None:
+        pmriprep_output_dir = PMRIPREP_TEST_OUTPUTS / "dce_pipeline" / SUBJECT / SESSION / "perf"
+
+        if not pmriprep_output_dir.exists():
             pytest.skip(
-                "PMRIPREP_WORK_DIR not set. Set to work directory path to enable "
-                "ground truth comparison."
+                f"PMRIPrep outputs not available for {SUBJECT}/{SESSION}"
             )
 
-        work_path = Path(work_dir)
-        subject_id = SUBJECT.replace("sub-", "")
-        pmriprep_output = (
-            work_path / f"pmriprep_sub{subject_id}_{SESSION}_wf" / "dce_wf" / "pk_modeling"
+        pmriprep_file = find_pmriprep_output(
+            pmriprep_output_dir, output_name, DCE_OUTPUT_PATTERNS
         )
-
-        if not pmriprep_output.exists():
-            pytest.skip(
-                f"PMRIPrep outputs not available for {SUBJECT}/{SESSION} in {pmriprep_output}. "
-                "Run PMRIPrep first."
-            )
-
-        pmriprep_files = list(pmriprep_output.glob(f"*_{output_name}.nii*"))
-        if not pmriprep_files:
-            pytest.fail(f"PMRIPrep output not found for {output_name} in {pmriprep_output}")
+        if pmriprep_file is None:
+            pytest.fail(f"PMRIPrep output not found for {output_name} in {pmriprep_output_dir}")
 
         result = compare_output_files(
-            pmriprep_files[0], gt_path, f"dce_{output_name}",
+            pmriprep_file, gt_path, f"dce_{output_name}",
             is_mask=False, mask_path=None,
         )
-        assert result.passed, (
+
+        threshold = get_correlation_threshold(output_name, "dce")
+        passed = result.value >= threshold
+
+        assert passed, (
             f"DCE {output_name} correlation {result.value:.4f} < "
-            f"threshold {CORRELATION_THRESHOLD}"
+            f"threshold {threshold}"
         )
 
 
