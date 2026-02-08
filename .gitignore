@@ -33,3 +33,5 @@ docs/
 scripts/
 plans/
 install/
+subject_options.sh
+auto_debug.sh
