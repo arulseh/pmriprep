@@ -28,6 +28,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy import linalg
 from scipy.integrate import trapezoid
+from scipy.optimize import minimize_scalar
 
 from pmriprep.utils.dsc_constants import (
     DEFAULT_LAMBDA_RANGE,
@@ -1223,12 +1224,12 @@ def _compute_gcv_score(
     """Compute Generalized Cross-Validation score for a given λ.
 
     The GCV function is defined as:
-        GCV(λ) = n × ||AR_λ - C||² / (tr(I - A × A_λ^†))²
+        GCV(λ) = ||AR_λ - C||² / (tr(I - A × A_λ^†))²
 
     where A_λ^† is the Tikhonov-regularized pseudoinverse.
 
     For SVD-based computation:
-        GCV(λ) = n × Σ[(u_i^T C)² × λ²/(s_i² + λ²)²] / [Σ(λ²/(s_i² + λ²))]²
+        GCV(λ) = Σ[(u_i^T C)² × λ²/(s_i² + λ²)²] / [Σ(λ²/(s_i² + λ²))]²
 
     Args:
         tissue_curve: Tissue concentration curve.
@@ -1259,9 +1260,9 @@ def _compute_gcv_score(
     # Denominator: (Σ(1 - f_i))² = (Σ(λ²/(s_i² + λ²)))²
     trace_term = float(np.sum(1 - filter_factors))
 
-    # GCV = n × residual_sum / trace_term²
+    # GCV = residual_sum / trace_term²
     if trace_term > 1e-12:
-        gcv = n * residual_sum / (trace_term ** 2)
+        gcv = residual_sum / (trace_term ** 2)
     else:
         gcv = float("inf")
 
@@ -1287,7 +1288,10 @@ def tikhonov_deconvolve(
 
     The optimal λ is selected using Generalized Cross-Validation (GCV), which
     minimizes the leave-one-out cross-validation error:
-        GCV(λ) = n × ||AR_λ - C||² / (tr(I - A × A_λ^†))²
+        GCV(λ) = ||AR_λ - C||² / (tr(I - A × A_λ^†))²
+
+    The GCV score is minimized over λ using bounded scalar optimization
+    in log10-space (scipy.optimize.minimize_scalar).
 
     Args:
         tissue_curve: Tissue concentration curve, shape (n_timepoints,).
@@ -1297,7 +1301,7 @@ def tikhonov_deconvolve(
             For absolute quantification, provide actual TR.
         lambda_min: Minimum λ value to consider. Default 1e-4.
         lambda_max: Maximum λ value to consider. Default 1.0.
-        n_lambda: Number of λ values to evaluate in log-space grid. Default 50.
+        n_lambda: Unused. Kept for API compatibility.
         apply_non_negativity: If True, apply non-negativity constraint to
             residue function by clipping negative values to zero.
             Default is True.
@@ -1352,25 +1356,28 @@ def tikhonov_deconvolve(
     # Perform SVD
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Create log-spaced grid of λ values
-    lambda_values = np.logspace(
-        np.log10(lambda_min),
-        np.log10(lambda_max),
-        n_lambda,
+    # Find optimal λ via continuous GCV minimization in log10-space
+    def gcv_objective(log_lambda: float) -> float:
+        lam = 10.0 ** log_lambda
+        gcv, _ = _compute_gcv_score(tissue_curve, u, s, vh, lam)
+        return gcv
+
+    try:
+        result = minimize_scalar(
+            gcv_objective,
+            bounds=(np.log10(lambda_min), np.log10(lambda_max)),
+            method="bounded",
+        )
+        if result.success and np.isfinite(result.x):
+            best_lambda = 10.0 ** result.x
+        else:
+            best_lambda = 0.1
+    except Exception:
+        best_lambda = 0.1
+
+    best_gcv, best_residue = _compute_gcv_score(
+        tissue_curve, u, s, vh, best_lambda
     )
-
-    # Evaluate GCV at each λ
-    best_gcv = float("inf")
-    best_lambda = lambda_values[0]
-    best_residue = np.zeros(n, dtype=np.float64)
-
-    for lam in lambda_values:
-        gcv, residue = _compute_gcv_score(tissue_curve, u, s, vh, lam)
-
-        if gcv < best_gcv:
-            best_gcv = gcv
-            best_lambda = lam
-            best_residue = residue
 
     # Apply non-negativity constraint
     if apply_non_negativity:
@@ -1437,7 +1444,7 @@ def tikhonov_deconvolve_batch(
         dt: Time step in seconds.
         lambda_min: Minimum λ value. Default 1e-4.
         lambda_max: Maximum λ value. Default 1.0.
-        n_lambda: Number of λ values in grid. Default 50.
+        n_lambda: Unused. Kept for API compatibility.
         apply_non_negativity: Apply non-negativity constraint on residue.
         mask: Optional boolean mask of voxels to process. If None, process all.
             Shape must match spatial dimensions of tissue_curves.

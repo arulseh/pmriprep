@@ -2032,10 +2032,10 @@ def _tortuosity_correction_node(
 
 
 def _dsc_dce_validation_node(
-    vp_file,
-    dsc_cbv_file,
-    brain_mask,
-    no_dsc_validation,
+    vp_file=None,
+    dsc_cbv_file=None,
+    brain_mask=None,
+    no_dsc_validation=False,
 ):
     """Function node for DSC-DCE cross-validation.
 
@@ -2594,7 +2594,7 @@ def _build_tortuosity_map_dict(ktrans_tortuosity_corrected):
     return d
 
 
-def _normalize_by_nawm(param_map, nawm_mask):
+def _normalize_by_nawm(param_map=None, nawm_mask=None):
     """Normalize parameter map by NAWM mean.
 
     Args:

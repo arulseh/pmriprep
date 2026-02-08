@@ -6,7 +6,7 @@ US-093: Test DSC + DCE pipeline with:
 - DCE: tofts model
 
 Config file: tests/fixtures/sub-0010_config.yaml
-Ground truth: ~/Developer/perf-plus/bidsroot/derivatives/sub-0010/ses-0001/
+Ground truth: ~/Developer/perf-plus/bidsroot/derivatives/{dsc,dce}_pipeline/sub-0010/ses-0001/
 """
 
 from pathlib import Path
@@ -57,13 +57,21 @@ EXPECTED_DCE_OUTPUTS = ["Ktrans", "ve", "kep"]
 
 
 @pytest.fixture
-def subject_ground_truth_dir() -> Optional[Path]:
-    return find_ground_truth_directory(SUBJECT, SESSION, PERF_PLUS_DERIVATIVES)
+def dsc_ground_truth_dir() -> Optional[Path]:
+    """Get the DSC ground truth directory for this subject."""
+    return find_ground_truth_directory(SUBJECT, SESSION, "dsc_pipeline", PERF_PLUS_DERIVATIVES)
 
 
 @pytest.fixture
-def subject_brain_mask(subject_ground_truth_dir: Optional[Path]) -> Optional[Path]:
-    if subject_ground_truth_dir is None:
+def dce_ground_truth_dir() -> Optional[Path]:
+    """Get the DCE ground truth directory for this subject."""
+    return find_ground_truth_directory(SUBJECT, SESSION, "dce_pipeline", PERF_PLUS_DERIVATIVES)
+
+
+@pytest.fixture
+def subject_brain_mask(dsc_ground_truth_dir: Optional[Path]) -> Optional[Path]:
+    """Get brain mask path for this subject."""
+    if dsc_ground_truth_dir is None:
         return None
     _, mask_path = load_brain_mask(SUBJECT, SESSION, PERF_PLUS_DERIVATIVES)
     return mask_path
@@ -73,20 +81,26 @@ def subject_brain_mask(subject_ground_truth_dir: Optional[Path]) -> Optional[Pat
 class TestSub0010Ses0001:
     """Integration tests for sub-0010/ses-0001."""
 
-    def test_ground_truth_exists(self, subject_ground_truth_dir: Optional[Path]) -> None:
-        if subject_ground_truth_dir is None:
+    def test_ground_truth_exists(self, dsc_ground_truth_dir: Optional[Path]) -> None:
+        """Verify ground truth data exists for this subject."""
+        if dsc_ground_truth_dir is None:
             pytest.skip(f"Ground truth not found for {SUBJECT}/{SESSION}")
-        assert subject_ground_truth_dir.exists()
+        assert dsc_ground_truth_dir.exists()
 
     def test_config_file_exists(self) -> None:
         assert CONFIG_FILE.exists(), f"Config file not found: {CONFIG_FILE}"
 
     @pytest.mark.parametrize("output_name", EXPECTED_DSC_OUTPUTS)
     def test_dsc_output_ground_truth(
-        self, output_name: str, subject_ground_truth_dir: Optional[Path],
-        subject_brain_mask: Optional[Path], tmp_path: Path,
+        self,
+        output_name: str,
+        dsc_ground_truth_dir: Optional[Path],
+        subject_brain_mask: Optional[Path],
     ) -> None:
-        if subject_ground_truth_dir is None:
+        """Test DSC output against ground truth."""
+        import os
+
+        if dsc_ground_truth_dir is None:
             pytest.skip(f"Ground truth not found for {SUBJECT}/{SESSION}")
 
         gt_data, gt_path = load_ground_truth_map(
@@ -95,26 +109,56 @@ class TestSub0010Ses0001:
         if gt_path is None:
             pytest.skip(f"Ground truth not found for DSC {output_name}")
 
-        pmriprep_output = tmp_path / "pmriprep" / SUBJECT / SESSION / "perf"
-        if not pmriprep_output.exists():
-            pytest.skip(f"PMRIPrep outputs not available for {SUBJECT}/{SESSION}")
+        work_dir = os.environ.get("PMRIPREP_WORK_DIR")
+        if work_dir is None:
+            pytest.skip(
+                "PMRIPREP_WORK_DIR not set. Set to work directory path to enable "
+                "ground truth comparison."
+            )
 
-        pmriprep_files = list(pmriprep_output.glob(f"*{output_name}*.nii*"))
+        work_path = Path(work_dir)
+        subject_id = SUBJECT.replace("sub-", "")
+        pmriprep_output = (
+            work_path / f"pmriprep_sub{subject_id}_{SESSION}_wf" / "dsc_wf" / "compute_maps"
+        )
+
+        if not pmriprep_output.exists():
+            pytest.skip(
+                f"PMRIPrep outputs not available for {SUBJECT}/{SESSION} in {pmriprep_output}. "
+                "Run PMRIPrep first."
+            )
+
+        if output_name in ("cbf", "cbv"):
+            pmriprep_files = list(pmriprep_output.glob(f"*_rel_{output_name}.nii*"))
+        else:
+            pmriprep_files = list(pmriprep_output.glob(f"*_{output_name}.nii*"))
         if not pmriprep_files:
-            pytest.fail(f"PMRIPrep output not found for {output_name}")
+            pytest.fail(f"PMRIPrep output not found for {output_name} in {pmriprep_output}")
 
         result = compare_output_files(
             pmriprep_files[0], gt_path, f"dsc_{output_name}",
             is_mask=False, mask_path=subject_brain_mask,
         )
-        assert result.passed, f"DSC {output_name} r={result.value:.4f} < {CORRELATION_THRESHOLD}"
+        assert result.passed, (
+            f"DSC {output_name} correlation {result.value:.4f} < "
+            f"threshold {CORRELATION_THRESHOLD}"
+        )
 
     @pytest.mark.parametrize("output_name", EXPECTED_DCE_OUTPUTS)
     def test_dce_output_ground_truth(
-        self, output_name: str, subject_ground_truth_dir: Optional[Path],
-        subject_brain_mask: Optional[Path], tmp_path: Path,
+        self,
+        output_name: str,
+        dce_ground_truth_dir: Optional[Path],
     ) -> None:
-        if subject_ground_truth_dir is None:
+        """Test DCE output against ground truth.
+
+        Note: No brain mask is used because DSC mask (128x128x19) doesn't
+        match DCE native resolution (256x256x26). Correlation is computed
+        over the full volume.
+        """
+        import os
+
+        if dce_ground_truth_dir is None:
             pytest.skip(f"Ground truth not found for {SUBJECT}/{SESSION}")
 
         gt_data, gt_path = load_ground_truth_map(
@@ -123,19 +167,37 @@ class TestSub0010Ses0001:
         if gt_path is None:
             pytest.skip(f"Ground truth not found for DCE {output_name}")
 
-        pmriprep_output = tmp_path / "pmriprep" / SUBJECT / SESSION / "perf"
-        if not pmriprep_output.exists():
-            pytest.skip(f"PMRIPrep outputs not available for {SUBJECT}/{SESSION}")
+        work_dir = os.environ.get("PMRIPREP_WORK_DIR")
+        if work_dir is None:
+            pytest.skip(
+                "PMRIPREP_WORK_DIR not set. Set to work directory path to enable "
+                "ground truth comparison."
+            )
 
-        pmriprep_files = list(pmriprep_output.glob(f"*{output_name}*.nii*"))
+        work_path = Path(work_dir)
+        subject_id = SUBJECT.replace("sub-", "")
+        pmriprep_output = (
+            work_path / f"pmriprep_sub{subject_id}_{SESSION}_wf" / "dce_wf" / "pk_modeling"
+        )
+
+        if not pmriprep_output.exists():
+            pytest.skip(
+                f"PMRIPrep outputs not available for {SUBJECT}/{SESSION} in {pmriprep_output}. "
+                "Run PMRIPrep first."
+            )
+
+        pmriprep_files = list(pmriprep_output.glob(f"*_{output_name}.nii*"))
         if not pmriprep_files:
-            pytest.fail(f"PMRIPrep output not found for {output_name}")
+            pytest.fail(f"PMRIPrep output not found for {output_name} in {pmriprep_output}")
 
         result = compare_output_files(
             pmriprep_files[0], gt_path, f"dce_{output_name}",
-            is_mask=False, mask_path=subject_brain_mask,
+            is_mask=False, mask_path=None,
         )
-        assert result.passed, f"DCE {output_name} r={result.value:.4f} < {CORRELATION_THRESHOLD}"
+        assert result.passed, (
+            f"DCE {output_name} correlation {result.value:.4f} < "
+            f"threshold {CORRELATION_THRESHOLD}"
+        )
 
 
 def get_expected_cli_command(bids_dir: Path, output_dir: Path, work_dir: Optional[Path] = None) -> List[str]:
