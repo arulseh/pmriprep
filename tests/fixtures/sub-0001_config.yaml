@@ -10,7 +10,7 @@ dsc:
   bayesian: none
   aif_criteria: strict
   n_aif_candidates: 10
-  save_k2_map: false
+  save_k2_map: true
   use_gpu: false
 
 # No DCE configuration (no DCE data for this subject)

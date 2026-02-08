@@ -10,7 +10,7 @@ dsc:
   mcmc_samples: 500
   aif_criteria: strict
   n_aif_candidates: 10
-  save_k2_map: false
+  save_k2_map: true
   save_uncertainty: true
   use_gpu: false
 

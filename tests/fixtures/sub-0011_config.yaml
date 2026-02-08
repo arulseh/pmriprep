@@ -10,7 +10,7 @@ dsc:
   aif_criteria: strict
   n_aif_candidates: 10
   cpi_control_points: 0  # Auto-select
-  save_k2_map: false
+  save_k2_map: true
   use_gpu: false
 
 # DCE configuration
