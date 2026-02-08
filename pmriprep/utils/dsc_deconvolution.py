@@ -1477,13 +1477,6 @@ def tikhonov_deconvolve_batch(
     matrix = build_toeplitz_matrix(aif, dt)
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Create log-spaced grid of λ values (shared across all voxels)
-    lambda_values = np.logspace(
-        np.log10(lambda_min),
-        np.log10(lambda_max),
-        n_lambda,
-    )
-
     # Initialize output arrays
     residues = np.zeros((n_voxels, n_timepoints), dtype=np.float64)
     cbf = np.zeros(n_voxels, dtype=np.float64)
@@ -1491,23 +1484,34 @@ def tikhonov_deconvolve_batch(
     mtt = np.zeros(n_voxels, dtype=np.float64)
     lambda_optimal = np.zeros(n_voxels, dtype=np.float64)
 
-    # Process each masked voxel with individual λ optimization
+    # Log10 bounds for minimize_scalar
+    log_lambda_min = np.log10(lambda_min)
+    log_lambda_max = np.log10(lambda_max)
+
+    # Process each masked voxel with individual λ optimization via minimize_scalar
     masked_indices = np.where(mask_flat)[0]
     for idx in masked_indices:
         tissue_curve = tissue_2d[idx, :]
 
-        # GCV optimization for this voxel
-        best_gcv = float("inf")
-        best_lambda = lambda_values[0]
-        best_residue = np.zeros(n_timepoints, dtype=np.float64)
+        def gcv_objective(log_lambda: float) -> float:
+            lam = 10.0 ** log_lambda
+            gcv, _ = _compute_gcv_score(tissue_curve, u, s, vh, lam)
+            return gcv
 
-        for lam in lambda_values:
-            gcv, residue = _compute_gcv_score(tissue_curve, u, s, vh, lam)
+        try:
+            result = minimize_scalar(
+                gcv_objective,
+                bounds=(log_lambda_min, log_lambda_max),
+                method="bounded",
+            )
+            if result.success and np.isfinite(result.x):
+                best_lambda = 10.0 ** result.x
+            else:
+                best_lambda = 0.1
+        except Exception:
+            best_lambda = 0.1
 
-            if gcv < best_gcv:
-                best_gcv = gcv
-                best_lambda = lam
-                best_residue = residue
+        _, best_residue = _compute_gcv_score(tissue_curve, u, s, vh, best_lambda)
 
         # Apply non-negativity
         if apply_non_negativity:
