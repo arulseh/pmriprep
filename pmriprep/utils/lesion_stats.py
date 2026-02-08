@@ -459,9 +459,9 @@ def compute_dce_derived_metrics(
 
 
 def combine_tumor_masks(
-    hdglio_segmentation_file,  # Optional[str] - type hint removed for Nipype Function
-    whole_tumor_mask_file,     # Optional[str] - type hint removed for Nipype Function
-    reference_file,            # str
+    hdglio_segmentation_file=None,  # Optional[str] - type hint removed for Nipype Function
+    whole_tumor_mask_file=None,     # Optional[str] - type hint removed for Nipype Function
+    reference_file=None,            # str
 ):  # -> Optional[str]
     """Select the best tumor mask for lesion statistics.
 

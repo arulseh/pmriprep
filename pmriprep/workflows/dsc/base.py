@@ -125,6 +125,57 @@ from pmriprep.interfaces.dsc_aif_qc import AIFQCPlot
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
 
+def _histogram_match_t1w_to_dsc(
+    t1w_file: str, dsc_brain_file: str, brain_mask_file: str,
+) -> str:
+    """Match T1w histogram to DSC for improved FLIRT convergence.
+
+    T1w and DSC have inverted contrasts (bright WM vs bright GM).
+    Without histogram matching, FLIRT's normcorr coarse-search stage
+    converges to a different local optimum. This matches perf-plus
+    registration_utils.py:161-208.
+
+    The T1w is brain-extracted via *brain_mask_file* before matching so
+    that skull/scalp/background voxels do not distort the histogram.
+    Perf-plus uses ``$T1W_BRAIN`` (brain-extracted) for this step.
+
+    Args:
+        t1w_file: Path to whole-head bias-corrected T1w image.
+        dsc_brain_file: Path to DSC brain-extracted image.
+        brain_mask_file: Path to T1w brain mask (binary).
+
+    Returns:
+        Path to histogram-matched T1w image.
+    """
+    import numpy as np
+    import nibabel as nib
+    from pathlib import Path
+    from skimage.exposure import match_histograms
+
+    src_nii = nib.load(t1w_file)
+    tpl_nii = nib.load(dsc_brain_file)
+    mask_nii = nib.load(brain_mask_file)
+    src_data = src_nii.get_fdata()
+    tpl_data = tpl_nii.get_fdata()
+    mask_data = mask_nii.get_fdata() > 0
+    src_brain = src_data * mask_data
+    src_mask = src_brain > 0
+    tpl_mask = tpl_data > 0
+
+    matched = np.zeros_like(src_data)
+    if src_mask.sum() > 0 and tpl_mask.sum() > 0:
+        matched[src_mask] = match_histograms(
+            src_brain[src_mask].reshape(-1, 1),
+            tpl_data[tpl_mask].reshape(-1, 1),
+            channel_axis=1,
+        ).flatten()
+
+    out_file = str(Path.cwd() / "t1w_brain_matched.nii.gz")
+    nib.save(nib.Nifti1Image(matched.astype(np.float32),
+                              src_nii.affine, src_nii.header), out_file)
+    return out_file
+
+
 def _hdbet_dsc_brain(dsc_mean_file):
     """Extract DSC brain using HD-BET for improved registration quality.
 
@@ -1328,6 +1379,21 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
+    # Node 1b2: Histogram Match T1w to DSC (for FLIRT convergence)
+    # T1w and DSC have inverted contrasts. Without histogram matching,
+    # FLIRT's normcorr coarse-search converges to a wrong local optimum.
+    # Matches perf-plus registration_utils.py:161-208.
+    # -------------------------------------------------------------------
+    hist_match_t1w = pe.Node(
+        niu.Function(
+            input_names=["t1w_file", "dsc_brain_file", "brain_mask_file"],
+            output_names=["matched_t1w_file"],
+            function=_histogram_match_t1w_to_dsc,
+        ),
+        name="hist_match_t1w",
+    )
+
+    # -------------------------------------------------------------------
     # Node 1c: Transform T1w Brain Mask to DSC Space
     # NOTE: T1w brain mask transform kept for future use. To reinstate,
     # uncomment and reconnect downstream consumers.
@@ -1482,8 +1548,10 @@ def init_dsc_preproc_wf(
         name="transform_atlas",
     )
     # Set the arterial atlas as input (bundled with pmriprep)
+    # Legacy: match perf-plus atlas for integration test validation
+    # TODO(post-integration): switch to get_arterial_atlas("2mm", "dil3")
     try:
-        transform_atlas.inputs.in_file = str(get_arterial_atlas("1mm", "dil3"))
+        transform_atlas.inputs.in_file = str(get_arterial_atlas("1mm", ""))
     except FileNotFoundError:
         import warnings
         warnings.warn(
@@ -1845,10 +1913,12 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (preload_correct, compute_maps, [
             ("corrected_concentration_file", "concentration_file"),
+            ("k2_map_file", "k2_map_input_file"),
         ]),
         (aif_detect, compute_maps, [
             ("out_aif_curve", "aif_file"),
             ("out_aif_mask", "aif_mask_file"),
+            ("out_aif_coord", "aif_best_coord"),
             ("detection_level", "aif_detection_level"),
         ]),
         (hdbet_dsc, compute_maps, [
@@ -1868,11 +1938,21 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
-    # DSC Map Computation to Registration
-    # Use brain-extracted DSC (from HD-BET) for better registration quality
+    # Histogram match T1w to DSC for registration convergence
+    # Brain mask applied to T1w before matching (perf-plus uses $T1W_BRAIN)
     workflow.connect([
-        (inputnode, register, [
+        (inputnode, hist_match_t1w, [
             ("t1w_reference", "t1w_file"),
+            ("brain_mask", "brain_mask_file"),
+        ]),
+        (hdbet_dsc, hist_match_t1w, [("dsc_brain_file", "dsc_brain_file")]),
+    ])
+
+    # DSC Map Computation to Registration
+    # Use brain-extracted DSC (from HD-BET) and histogram-matched T1w
+    workflow.connect([
+        (hist_match_t1w, register, [("matched_t1w_file", "t1w_file")]),
+        (inputnode, register, [
             ("lesion_mask", "lesion_mask"),
             ("brain_mask", "brain_mask"),
             ("wm_probseg", "wm_seg"),
@@ -2001,7 +2081,7 @@ def init_dsc_preproc_wf(
         ]),
         (normalize, lesion_stats, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, lesion_stats, [("ncbf_file", "ncbf_map")]),
-        (preload_correct, lesion_stats, [("k2_map_file", "k2_map")]),
+        (compute_maps, lesion_stats, [("out_k2", "k2_map")]),
     ])
     # Connect lesion stats outputs to outputnode
     workflow.connect([
@@ -2060,7 +2140,7 @@ def init_dsc_preproc_wf(
                 ("out_ph", "ph"),
                 ("out_auc_diff", "auc_diff"),
             ]),
-            (preload_correct, build_qi_dict, [("k2_map_file", "k2")]),
+            (compute_maps, build_qi_dict, [("out_k2", "k2")]),
             (build_qi_dict, smooth_quant_indep, [("map_dict", "map_files")]),
             (hdbet_dsc, smooth_quant_indep, [
                 ("dsc_brain_mask_file", "brain_mask_file"),
@@ -2189,8 +2269,8 @@ def init_dsc_preproc_wf(
             ("out_aif_mask", "aif_mask"),
             ("qc_metrics", "aif_qc"),
         ]),
-        # Leakage correction
-        (preload_correct, outputnode, [("k2_map_file", "k2_map")]),
+        # Leakage correction (use recomputed K2 from compute_maps when baseline differs)
+        (compute_maps, outputnode, [("out_k2", "k2_map")]),
         # Normalized CBV and CBF
         (normalize, outputnode, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, outputnode, [("ncbf_file", "ncbf_map")]),

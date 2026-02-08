@@ -70,6 +70,11 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="3D AIF mask NIfTI (for re-extracting AIF after S0 update)",
     )
+    aif_best_coord = traits.List(
+        traits.Int,
+        mandatory=False,
+        desc="Best AIF voxel coordinate [x, y, z] for re-extraction",
+    )
     field_strength = traits.Float(
         3.0,
         usedefault=True,
@@ -164,6 +169,10 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="K2 leakage correction method: exponential (legacy) or integral (BSW)",
     )
+    k2_map_input_file = File(
+        mandatory=False,
+        desc="K2 map from preload_correct (passed through when baseline not recomputed)",
+    )
 
     # Output files — quantification-independent
     out_mtt = File(genfile=True, desc="Output MTT map NIfTI")
@@ -226,6 +235,9 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     # Quality metrics
     out_snr = File(exists=True, desc="SNR map (baseline signal)")
     out_tsnr = File(exists=True, desc="tSNR map (temporal signal)")
+
+    # K2 leakage map (recomputed or pass-through)
+    out_k2 = File(desc="K2 leakage correction map (from recomputed or pass-through)")
 
     # Gating flag
     absolute_permitted = traits.Bool(desc="Whether absolute quantification gating passed")
@@ -429,11 +441,18 @@ class ComputeDSCMaps(BaseInterface):
                                 )
                                 return n_baseline, info
 
-            # Real AIF: call detect_bolus_arrival directly on the
-            # already-smoothed AIF (matches perf-plus line 1483).
-            # The AIF is pre-smoothed by AIFDetection._compute_roi_averaged_aif()
-            # (Savitzky-Golay window=5, polyorder=2) — no re-smoothing needed.
-            arrival_idx, n_baseline = detect_bolus_arrival(aif, baseline_frames=3)
+            # Real AIF: smooth then detect (matches perf-plus lines 1478-1483).
+            # Perf-plus applies savgol_filter before detect_bolus_arrival even
+            # though the AIF was already smoothed once during ROI averaging.
+            # Without re-smoothing, small noise spikes in the first few frames
+            # can produce a false-positive 3-sigma threshold crossing.
+            aif_smooth = savgol_filter(
+                aif,
+                window_length=min(5, len(aif)),
+                polyorder=min(2, len(aif) - 1),
+            )
+            aif_smooth[aif_smooth < 0] = 0
+            arrival_idx, n_baseline = detect_bolus_arrival(aif_smooth, baseline_frames=3)
 
             # Sanity: at least 2, at most half the acquisition
             if n_baseline < 2 or n_baseline > len(aif) // 2:
@@ -805,13 +824,24 @@ class ComputeDSCMaps(BaseInterface):
             recomputed_raw_conc = -np.log(signal_ratio) / te
 
             # Re-extract AIF from updated concentration
-            if isdefined(self.inputs.aif_mask_file):
+            # Match perf-plus: use stored best candidate coordinate (cost-function
+            # selected) rather than scanning mask for highest peak
+            aif_reextracted = False
+            if isdefined(self.inputs.aif_best_coord) and len(self.inputs.aif_best_coord) == 3:
+                cx, cy, cz = self.inputs.aif_best_coord
+                if (0 <= cx < recomputed_raw_conc.shape[0] and
+                        0 <= cy < recomputed_raw_conc.shape[1] and
+                        0 <= cz < recomputed_raw_conc.shape[2]):
+                    aif = recomputed_raw_conc[cx, cy, cz, :]
+                    aif_reextracted = True
+            if not aif_reextracted and isdefined(self.inputs.aif_mask_file):
                 aif_mask_img = nib.load(self.inputs.aif_mask_file)
                 aif_mask_data = aif_mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
                 if aif_mask_data.shape[:3] == recomputed_raw_conc.shape[:3]:
                     aif_voxels = recomputed_raw_conc[aif_mask_data]
                     if aif_voxels.ndim == 2 and aif_voxels.shape[0] > 0:
-                        aif = np.mean(aif_voxels, axis=0)
+                        peak_idx = int(np.argmax(np.max(aif_voxels, axis=1)))
+                        aif = aif_voxels[peak_idx, :]
 
             # Re-apply K2 correction to updated concentration
             from pmriprep.utils.dsc_preload import apply_k2_correction
@@ -828,8 +858,23 @@ class ComputeDSCMaps(BaseInterface):
 
             baseline_detection_info["s0_recomputed"] = True
             baseline_detection_info["s0_recomputed_frames"] = detected_baseline
+            baseline_detection_info["k2_recomputed"] = True
 
         spatial_shape = conc_data.shape[:3]
+
+        # Save K2 map: use recomputed K2 when baseline changed, else pass through
+        k2_map_out_path: Optional[str] = None
+        if detected_baseline != baseline_frames and recomputed_raw_conc is not None:
+            # K2 was recomputed with detected baseline — save it
+            k2_map_data = k2_result.k2_map  # type: ignore[possibly-undefined]
+            k2_map_out_path = self._gen_outfilename("_k2")
+            k2_img = nib.Nifti1Image(  # type: ignore[attr-defined]
+                k2_map_data.astype(np.float32), affine, header
+            )
+            nib.save(k2_img, k2_map_out_path)  # type: ignore[attr-defined]
+        elif isdefined(self.inputs.k2_map_input_file) and self.inputs.k2_map_input_file:
+            # No recomputation — pass through the preload_correct K2 map
+            k2_map_out_path = str(self.inputs.k2_map_input_file)
 
         # Run deconvolution based on method
         delay: Optional[npt.NDArray[Any]] = None
@@ -1078,6 +1123,10 @@ class ComputeDSCMaps(BaseInterface):
             "absolute_permitted": absolute_permitted,
             "qc_metrics": qc_metrics,
         }
+
+        # K2 map (recomputed or pass-through)
+        if k2_map_out_path is not None:
+            self._results["out_k2"] = k2_map_out_path
 
         # Absolute maps (only if gating passes)
         if absolute_permitted:

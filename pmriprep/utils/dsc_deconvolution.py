@@ -1072,7 +1072,7 @@ def svd_deconvolve_oscillation_batch(
         oi_target: Target oscillation index threshold. Default 0.065.
         threshold_min: Minimum SVD threshold. Default 0.01.
         threshold_max: Maximum SVD threshold. Default 0.50.
-        max_iterations: Maximum binary search iterations per voxel. Default 20.
+        max_iterations: Number of linear search steps per voxel. Default 20.
         apply_non_negativity: Apply non-negativity constraint on residue.
         mask: Optional boolean mask of voxels to process. If None, process all.
             Shape must match spatial dimensions of tissue_curves.
@@ -1115,55 +1115,36 @@ def svd_deconvolve_oscillation_batch(
 
     # Process each masked voxel with individual threshold optimization
     masked_indices = np.where(mask_flat)[0]
+
+    # Pre-compute linear threshold grid (shared across all voxels)
+    thresholds = np.linspace(threshold_min, threshold_max, max_iterations)
+
     for idx in masked_indices:
         tissue_curve = tissue_2d[idx, :]
 
-        # Binary search for this voxel
-        lo = threshold_min
-        hi = threshold_max
+        # Linear search: LOW→HIGH, stop at FIRST threshold where OI ≤ target
+        best_residue = None
+        best_oi = float("inf")
+        best_threshold = threshold_max
 
-        # Check bounds
-        residue_hi, oi_hi, n_ret_hi, cond_hi = _deconvolve_with_threshold(
-            tissue_curve, aif, dt, hi, matrix, u, s, vh, apply_non_negativity
-        )
-
-        if oi_hi > oi_target:
-            # Even max threshold doesn't achieve target
-            best_residue = residue_hi
-            best_oi = oi_hi
-            best_threshold = hi
-        else:
-            residue_lo, oi_lo, n_ret_lo, cond_lo = _deconvolve_with_threshold(
-                tissue_curve, aif, dt, lo, matrix, u, s, vh, apply_non_negativity
+        for thresh in thresholds:
+            residue, oi, n_ret, cond = _deconvolve_with_threshold(
+                tissue_curve, aif, dt, thresh, matrix, u, s, vh,
+                apply_non_negativity,
             )
+            if oi <= oi_target:
+                best_residue = residue
+                best_oi = oi
+                best_threshold = thresh
+                break
 
-            if oi_lo <= oi_target:
-                # Min threshold achieves target
-                best_residue = residue_lo
-                best_oi = oi_lo
-                best_threshold = lo
-            else:
-                # Binary search
-                best_residue = residue_hi
-                best_oi = oi_hi
-                best_threshold = hi
-
-                for _ in range(max_iterations):
-                    mid = (lo + hi) / 2.0
-                    residue_mid, oi_mid, _, _ = _deconvolve_with_threshold(
-                        tissue_curve, aif, dt, mid, matrix, u, s, vh, apply_non_negativity
-                    )
-
-                    if oi_mid <= oi_target:
-                        hi = mid
-                        best_residue = residue_mid
-                        best_oi = oi_mid
-                        best_threshold = mid
-                    else:
-                        lo = mid
-
-                    if hi - lo < 0.001:
-                        break
+        # If no threshold achieved target, use maximum regularization
+        if best_residue is None:
+            best_residue, best_oi, _, _ = _deconvolve_with_threshold(
+                tissue_curve, aif, dt, threshold_max, matrix, u, s, vh,
+                apply_non_negativity,
+            )
+            best_threshold = threshold_max
 
         # Store results for this voxel
         residues[idx, :] = best_residue

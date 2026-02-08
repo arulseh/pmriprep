@@ -295,6 +295,7 @@ class AIFDetectionOutputSpec(TraitedSpec):
 
     out_aif_curve = File(exists=True, desc="AIF curve as 1D text file")
     out_aif_mask = File(exists=True, desc="AIF voxel mask NIfTI")
+    out_aif_coord = traits.List(traits.Int, desc="Best AIF voxel coordinate [x, y, z]")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values")
     detection_level = traits.Str(desc="Detection level: 'atlas', 'relaxed', 'synthetic'")
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
@@ -1839,6 +1840,7 @@ class AIFDetection(BaseInterface):
         self._results = {
             "out_aif_curve": out_aif_curve,
             "out_aif_mask": out_aif_mask,
+            "out_aif_coord": qc_metrics.get("aif_voxel_coord", []),
             "aif_curve": [float(x) for x in aif_curve],
             "detection_level": detection_level,
             "quality_score": quality_score,
