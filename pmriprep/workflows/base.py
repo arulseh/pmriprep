@@ -865,6 +865,62 @@ def init_pmriprep_wf(
                 (inputnode, anat_writer, [("pdw", "source_pdw")]),
             ])
 
+        # -------------------------------------------------------------------
+        # Anat HTML Report Generation
+        # -------------------------------------------------------------------
+        from pmriprep.interfaces.reports import GenerateReport
+
+        anat_report = pe.Node(
+            GenerateReport(
+                subject_id=subject_id,
+                session_id=session_id or "",
+                pipeline="anat",
+                output_dir=str(output_dir),
+            ),
+            name="anat_report",
+        )
+
+        workflow.connect([
+            (anat_writer, anat_report, [("qc_json", "qc_json")]),
+            (anat_wf, anat_report, [
+                ("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip"),
+            ]),
+        ])
+
+        # Connect ACPC filmstrip if available
+        if not anat_config.skip_acpc:
+            workflow.connect([
+                (anat_wf, anat_report, [
+                    ("outputnode.acpc_filmstrip", "acpc_filmstrip"),
+                ]),
+            ])
+
+        # Connect cross-modal coregistration filmstrips
+        if session_data.modalities.t1w_ce_gad:
+            workflow.connect([
+                (anat_wf, anat_report, [
+                    ("outputnode.coreg_filmstrip_postcon", "coreg_filmstrip_postcon"),
+                ]),
+            ])
+        if session_data.modalities.t2w:
+            workflow.connect([
+                (anat_wf, anat_report, [
+                    ("outputnode.coreg_filmstrip_t2w", "coreg_filmstrip_t2w"),
+                ]),
+            ])
+        if session_data.modalities.flair:
+            workflow.connect([
+                (anat_wf, anat_report, [
+                    ("outputnode.coreg_filmstrip_flair", "coreg_filmstrip_flair"),
+                ]),
+            ])
+        if session_data.modalities.pdw:
+            workflow.connect([
+                (anat_wf, anat_report, [
+                    ("outputnode.coreg_filmstrip_pdw", "coreg_filmstrip_pdw"),
+                ]),
+            ])
+
     # -------------------------------------------------------------------
     # HD-GLIO tumor segmentation workflow (requires anat outputs)
     # -------------------------------------------------------------------

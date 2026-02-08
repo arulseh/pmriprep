@@ -76,6 +76,158 @@ def _determine_processing_mode(t1w_precon, t1w_postcon):
         raise ValueError("At least one T1w image (precon or postcon) is required")
 
 
+def _create_brain_mask_filmstrip(t1w_file, brain_mask_file):
+    """Create brain extraction QC filmstrip showing mask boundary on T1w.
+
+    Loads bias-corrected T1w as background and overlays the brain mask
+    edge (dilated mask minus original) to show whether the mask boundary
+    follows the cortical surface.
+
+    Parameters
+    ----------
+    t1w_file : str
+        Path to bias-corrected T1w image (pre-extraction).
+    brain_mask_file : str
+        Path to brain mask.
+
+    Returns
+    -------
+    str
+        Path to output filmstrip PNG.
+    """
+    from pathlib import Path
+
+    import nibabel as nib
+    import numpy as np
+    from scipy.ndimage import binary_dilation
+
+    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+
+    out_dir = Path.cwd()
+    output_path = str(out_dir / "brain_mask_qc_filmstrip.png")
+
+    t1w_img = nib.load(t1w_file)
+    t1w_data = t1w_img.get_fdata()
+    mask_data = nib.load(brain_mask_file).get_fdata().astype(bool)
+    voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])
+
+    # Create mask edge: dilate mask, subtract original -> boundary voxels
+    dilated = binary_dilation(mask_data, iterations=1)
+    edge = (dilated & ~mask_data).astype(np.float64)
+
+    plot_registration_qc_filmstrip(
+        fixed=t1w_data,
+        moving=edge,
+        output_path=output_path,
+        mask=(t1w_data > 0),
+        title="Brain Extraction QC",
+        voxel_sizes=voxel_sizes,
+    )
+
+    return output_path
+
+
+def _create_acpc_registration_filmstrip(t1w_acpc_file):
+    """Create ACPC-to-MNI registration QC filmstrip.
+
+    Shows ACPC-aligned T1w as background with MNI template edges overlaid
+    to assess the quality of the rigid alignment.
+
+    Parameters
+    ----------
+    t1w_acpc_file : str
+        Path to ACPC-aligned T1w (on MNI 1mm grid).
+
+    Returns
+    -------
+    str
+        Path to output filmstrip PNG.
+    """
+    import os
+    from pathlib import Path
+
+    import nibabel as nib
+
+    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+
+    out_dir = Path.cwd()
+    output_path = str(out_dir / "acpc_qc_filmstrip.png")
+
+    t1w_img = nib.load(t1w_acpc_file)
+    t1w_data = t1w_img.get_fdata()
+    voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])
+
+    # Load MNI152 template as the reference
+    fsldir = os.environ.get("FSLDIR", "/usr/local/fsl")
+    mni_path = os.path.join(fsldir, "data", "standard", "MNI152_T1_1mm_brain.nii.gz")
+    mni_data = nib.load(mni_path).get_fdata()
+
+    # Mask from the T1w data (already brain-extracted)
+    mask = t1w_data > 0
+
+    plot_registration_qc_filmstrip(
+        fixed=t1w_data,
+        moving=mni_data,
+        output_path=output_path,
+        mask=mask,
+        title="ACPC-MNI Alignment QC",
+        voxel_sizes=voxel_sizes,
+    )
+
+    return output_path
+
+
+def _create_coreg_qc_filmstrip(coregistered_file, reference_file, brain_mask_file, title):
+    """Create cross-modal coregistration QC filmstrip.
+
+    Shows masked coregistered image as background with brain-extracted T1w
+    structural edges overlaid for visual QC of cross-modal registration.
+
+    Parameters
+    ----------
+    coregistered_file : str
+        Path to coregistered and masked modality image (background).
+    reference_file : str
+        Path to brain-extracted T1w reference (edge overlay).
+    brain_mask_file : str
+        Path to brain mask.
+    title : str
+        Title for the filmstrip (e.g. "T1w PostCon-to-T1w").
+
+    Returns
+    -------
+    str
+        Path to output filmstrip PNG.
+    """
+    from pathlib import Path
+
+    import nibabel as nib
+
+    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+
+    # Use a sanitized title for the filename
+    safe_name = title.lower().replace(" ", "_").replace("-", "_")
+    out_dir = Path.cwd()
+    output_path = str(out_dir / f"coreg_qc_{safe_name}.png")
+
+    coreg_img = nib.load(coregistered_file)
+    coreg_data = coreg_img.get_fdata()
+    ref_data = nib.load(reference_file).get_fdata()
+    mask_data = nib.load(brain_mask_file).get_fdata()
+    voxel_sizes = tuple(coreg_img.header.get_zooms()[:3])
+
+    plot_registration_qc_filmstrip(
+        fixed=coreg_data,
+        moving=ref_data,
+        output_path=output_path,
+        mask=mask_data,
+        title=title,
+        voxel_sizes=voxel_sizes,
+    )
+
+    return output_path
+
+
 def _passthrough_if_undefined(in_file=None):
     """Return empty string if input is undefined or doesn't exist.
 
@@ -345,6 +497,13 @@ def init_anat_preproc_wf(
                 "is_postcon_only",
                 # QC
                 "qc_metrics",
+                # QC filmstrips
+                "brain_mask_filmstrip",
+                "acpc_filmstrip",
+                "coreg_filmstrip_postcon",
+                "coreg_filmstrip_t2w",
+                "coreg_filmstrip_flair",
+                "coreg_filmstrip_pdw",
             ]
         ),
         name="outputnode",
@@ -677,6 +836,124 @@ def init_anat_preproc_wf(
     ])
 
     # -------------------------------------------------------------------
+    # QC Filmstrips
+    # Generate visual QC overlays for brain extraction, ACPC alignment,
+    # and cross-modal coregistrations
+    # -------------------------------------------------------------------
+
+    # Brain mask filmstrip (always)
+    brain_mask_filmstrip = pe.Node(
+        niu.Function(
+            input_names=["t1w_file", "brain_mask_file"],
+            output_names=["filmstrip_file"],
+            function=_create_brain_mask_filmstrip,
+        ),
+        name="brain_mask_filmstrip",
+    )
+    workflow.connect([
+        (bias_correct, brain_mask_filmstrip, [("out_file", "t1w_file")]),
+        (brain_extract, brain_mask_filmstrip, [("out_mask", "brain_mask_file")]),
+    ])
+
+    # ACPC alignment filmstrip (unless skip_acpc)
+    acpc_filmstrip_node = None
+    if not config.skip_acpc:
+        acpc_filmstrip_node = pe.Node(
+            niu.Function(
+                input_names=["t1w_acpc_file"],
+                output_names=["filmstrip_file"],
+                function=_create_acpc_registration_filmstrip,
+            ),
+            name="acpc_filmstrip",
+        )
+        workflow.connect([
+            (acpc_align, acpc_filmstrip_node, [("out_file", "t1w_acpc_file")]),
+        ])
+
+    # Cross-modal coregistration filmstrips (one per available modality)
+    coreg_qc_postcon = None
+    coreg_qc_t2w = None
+    coreg_qc_flair = None
+    coreg_qc_pdw = None
+
+    if config.coregister_modalities:
+        if has_t1w_postcon and coreg_postcon is not None:
+            coreg_qc_postcon = pe.Node(
+                niu.Function(
+                    input_names=["coregistered_file", "reference_file",
+                                 "brain_mask_file", "title"],
+                    output_names=["filmstrip_file"],
+                    function=_create_coreg_qc_filmstrip,
+                ),
+                name="coreg_qc_postcon",
+            )
+            coreg_qc_postcon.inputs.title = "T1w PostCon to T1w"
+            workflow.connect([
+                (mask_postcon, coreg_qc_postcon, [("out_file", "coregistered_file")]),
+                (brain_extract, coreg_qc_postcon, [
+                    ("out_file", "reference_file"),
+                    ("out_mask", "brain_mask_file"),
+                ]),
+            ])
+
+        if has_t2w and coreg_t2w is not None:
+            coreg_qc_t2w = pe.Node(
+                niu.Function(
+                    input_names=["coregistered_file", "reference_file",
+                                 "brain_mask_file", "title"],
+                    output_names=["filmstrip_file"],
+                    function=_create_coreg_qc_filmstrip,
+                ),
+                name="coreg_qc_t2w",
+            )
+            coreg_qc_t2w.inputs.title = "T2w to T1w"
+            workflow.connect([
+                (mask_t2w, coreg_qc_t2w, [("out_file", "coregistered_file")]),
+                (brain_extract, coreg_qc_t2w, [
+                    ("out_file", "reference_file"),
+                    ("out_mask", "brain_mask_file"),
+                ]),
+            ])
+
+        if has_flair and coreg_flair is not None:
+            coreg_qc_flair = pe.Node(
+                niu.Function(
+                    input_names=["coregistered_file", "reference_file",
+                                 "brain_mask_file", "title"],
+                    output_names=["filmstrip_file"],
+                    function=_create_coreg_qc_filmstrip,
+                ),
+                name="coreg_qc_flair",
+            )
+            coreg_qc_flair.inputs.title = "FLAIR to T1w"
+            workflow.connect([
+                (mask_flair, coreg_qc_flair, [("out_file", "coregistered_file")]),
+                (brain_extract, coreg_qc_flair, [
+                    ("out_file", "reference_file"),
+                    ("out_mask", "brain_mask_file"),
+                ]),
+            ])
+
+        if has_pdw and coreg_pdw is not None:
+            coreg_qc_pdw = pe.Node(
+                niu.Function(
+                    input_names=["coregistered_file", "reference_file",
+                                 "brain_mask_file", "title"],
+                    output_names=["filmstrip_file"],
+                    function=_create_coreg_qc_filmstrip,
+                ),
+                name="coreg_qc_pdw",
+            )
+            coreg_qc_pdw.inputs.title = "PDw to T1w"
+            workflow.connect([
+                (mask_pdw, coreg_qc_pdw, [("out_file", "coregistered_file")]),
+                (brain_extract, coreg_qc_pdw, [
+                    ("out_file", "reference_file"),
+                    ("out_mask", "brain_mask_file"),
+                ]),
+            ])
+
+    # -------------------------------------------------------------------
     # Connect outputs to output node
     # -------------------------------------------------------------------
 
@@ -704,7 +981,45 @@ def init_anat_preproc_wf(
         (determine_mode, outputnode, [("is_postcon_only", "is_postcon_only")]),
         # QC metrics
         (merge_qc, outputnode, [("qc_metrics", "qc_metrics")]),
+        # Brain mask filmstrip (always present)
+        (brain_mask_filmstrip, outputnode, [
+            ("filmstrip_file", "brain_mask_filmstrip"),
+        ]),
     ])
+
+    # ACPC filmstrip
+    if acpc_filmstrip_node is not None:
+        workflow.connect([
+            (acpc_filmstrip_node, outputnode, [
+                ("filmstrip_file", "acpc_filmstrip"),
+            ]),
+        ])
+
+    # Cross-modal coregistration filmstrips
+    if coreg_qc_postcon is not None:
+        workflow.connect([
+            (coreg_qc_postcon, outputnode, [
+                ("filmstrip_file", "coreg_filmstrip_postcon"),
+            ]),
+        ])
+    if coreg_qc_t2w is not None:
+        workflow.connect([
+            (coreg_qc_t2w, outputnode, [
+                ("filmstrip_file", "coreg_filmstrip_t2w"),
+            ]),
+        ])
+    if coreg_qc_flair is not None:
+        workflow.connect([
+            (coreg_qc_flair, outputnode, [
+                ("filmstrip_file", "coreg_filmstrip_flair"),
+            ]),
+        ])
+    if coreg_qc_pdw is not None:
+        workflow.connect([
+            (coreg_qc_pdw, outputnode, [
+                ("filmstrip_file", "coreg_filmstrip_pdw"),
+            ]),
+        ])
 
     # Coregistered modalities and transforms (only for available modalities)
     if config.coregister_modalities:

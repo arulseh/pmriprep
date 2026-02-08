@@ -40,6 +40,12 @@ def generate_qc_report(
     registration_filmstrip: Optional[str] = None,
     b1_qc_plot: Optional[str] = None,
     t1_qc_plot: Optional[str] = None,
+    brain_mask_filmstrip: Optional[str] = None,
+    acpc_filmstrip: Optional[str] = None,
+    coreg_filmstrip_postcon: Optional[str] = None,
+    coreg_filmstrip_t2w: Optional[str] = None,
+    coreg_filmstrip_flair: Optional[str] = None,
+    coreg_filmstrip_pdw: Optional[str] = None,
 ) -> str:
     """Generate self-contained HTML QC report with embedded images.
 
@@ -83,6 +89,12 @@ def generate_qc_report(
         ("registration", registration_filmstrip),
         ("b1", b1_qc_plot),
         ("t1", t1_qc_plot),
+        ("brain_mask", brain_mask_filmstrip),
+        ("acpc", acpc_filmstrip),
+        ("coreg_postcon", coreg_filmstrip_postcon),
+        ("coreg_t2w", coreg_filmstrip_t2w),
+        ("coreg_flair", coreg_filmstrip_flair),
+        ("coreg_pdw", coreg_filmstrip_pdw),
     ]:
         if path and Path(path).exists():
             images[name] = image_to_base64(path)
@@ -190,6 +202,36 @@ def _generate_fallback_report(
             <img src="data:image/png;base64,{images["registration"]}" alt="Registration QC">
         </div>
         ''')
+
+    if "brain_mask" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>Brain Extraction QC</h2>
+            <img src="data:image/png;base64,{images["brain_mask"]}" alt="Brain Mask QC">
+        </div>
+        ''')
+
+    if "acpc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>ACPC-MNI Alignment QC</h2>
+            <img src="data:image/png;base64,{images["acpc"]}" alt="ACPC Alignment QC">
+        </div>
+        ''')
+
+    for coreg_key, coreg_label in [
+        ("coreg_postcon", "T1w Post-Contrast to T1w"),
+        ("coreg_t2w", "T2w to T1w"),
+        ("coreg_flair", "FLAIR to T1w"),
+        ("coreg_pdw", "PDw to T1w"),
+    ]:
+        if coreg_key in images:
+            image_sections.append(f'''
+        <div class="section">
+            <h2>Coregistration: {coreg_label}</h2>
+            <img src="data:image/png;base64,{images[coreg_key]}" alt="{coreg_label} QC">
+        </div>
+            ''')
 
     # Build recommendation section
     recommendation_html = ""

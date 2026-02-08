@@ -62,6 +62,7 @@ class AnatDerivativeWriterOutputSpec(TraitedSpec):
     """Output specification for AnatDerivativeWriter."""
 
     out_dir = traits.Str(desc="Path to the output session directory")
+    qc_json = traits.Str(desc="Path to the QC JSON file")
 
 
 class AnatDerivativeWriter(BaseInterface):
@@ -322,8 +323,11 @@ class AnatDerivativeWriter(BaseInterface):
         from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
         qc_metrics = self.inputs.qc_metrics
+        self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
-            self._write_json(qc_metrics, qc_dir / "brain_extraction_qc.json")
+            qc_json_path = qc_dir / "brain_extraction_qc.json"
+            self._write_json(qc_metrics, qc_json_path)
+            self._qc_json = str(qc_json_path)
 
         self._out_dir = str(ses_dir)
         return runtime
@@ -331,6 +335,7 @@ class AnatDerivativeWriter(BaseInterface):
     def _list_outputs(self) -> dict[str, Any]:
         outputs = self.output_spec().get()  # type: ignore[misc]
         outputs["out_dir"] = getattr(self, "_out_dir", "")
+        outputs["qc_json"] = getattr(self, "_qc_json", "")
         return outputs
 
     # -------------------------------------------------------------------

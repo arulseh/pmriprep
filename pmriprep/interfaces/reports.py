@@ -33,6 +33,14 @@ class GenerateReportInputSpec(BaseInterfaceInputSpec):
     b1_qc_plot = traits.Str(desc="B1+ mapping QC plot PNG path")
     t1_qc_plot = traits.Str(desc="VFA T1 mapping QC plot PNG path")
 
+    # Anatomical pipeline filmstrips
+    brain_mask_filmstrip = traits.Str(desc="Brain mask QC filmstrip PNG path")
+    acpc_filmstrip = traits.Str(desc="ACPC alignment QC filmstrip PNG path")
+    coreg_filmstrip_postcon = traits.Str(desc="T1w postcon coregistration filmstrip PNG path")
+    coreg_filmstrip_t2w = traits.Str(desc="T2w coregistration filmstrip PNG path")
+    coreg_filmstrip_flair = traits.Str(desc="FLAIR coregistration filmstrip PNG path")
+    coreg_filmstrip_pdw = traits.Str(desc="PDw coregistration filmstrip PNG path")
+
 
 class GenerateReportOutputSpec(TraitedSpec):
     """Output specification for GenerateReport."""
@@ -117,6 +125,37 @@ class GenerateReport(BaseInterface):
             if Path(self.inputs.t1_qc_plot).exists():
                 t1_qc_plot = self.inputs.t1_qc_plot
 
+        # Anatomical filmstrips
+        brain_mask_filmstrip = None
+        if isdefined(self.inputs.brain_mask_filmstrip) and self.inputs.brain_mask_filmstrip:
+            if Path(self.inputs.brain_mask_filmstrip).exists():
+                brain_mask_filmstrip = self.inputs.brain_mask_filmstrip
+
+        acpc_filmstrip = None
+        if isdefined(self.inputs.acpc_filmstrip) and self.inputs.acpc_filmstrip:
+            if Path(self.inputs.acpc_filmstrip).exists():
+                acpc_filmstrip = self.inputs.acpc_filmstrip
+
+        coreg_filmstrip_postcon = None
+        if isdefined(self.inputs.coreg_filmstrip_postcon) and self.inputs.coreg_filmstrip_postcon:
+            if Path(self.inputs.coreg_filmstrip_postcon).exists():
+                coreg_filmstrip_postcon = self.inputs.coreg_filmstrip_postcon
+
+        coreg_filmstrip_t2w = None
+        if isdefined(self.inputs.coreg_filmstrip_t2w) and self.inputs.coreg_filmstrip_t2w:
+            if Path(self.inputs.coreg_filmstrip_t2w).exists():
+                coreg_filmstrip_t2w = self.inputs.coreg_filmstrip_t2w
+
+        coreg_filmstrip_flair = None
+        if isdefined(self.inputs.coreg_filmstrip_flair) and self.inputs.coreg_filmstrip_flair:
+            if Path(self.inputs.coreg_filmstrip_flair).exists():
+                coreg_filmstrip_flair = self.inputs.coreg_filmstrip_flair
+
+        coreg_filmstrip_pdw = None
+        if isdefined(self.inputs.coreg_filmstrip_pdw) and self.inputs.coreg_filmstrip_pdw:
+            if Path(self.inputs.coreg_filmstrip_pdw).exists():
+                coreg_filmstrip_pdw = self.inputs.coreg_filmstrip_pdw
+
         # Generate the report
         self._report_file = generate_qc_report(
             subject_id=subject_id,
@@ -130,6 +169,12 @@ class GenerateReport(BaseInterface):
             registration_filmstrip=registration_filmstrip,
             b1_qc_plot=b1_qc_plot,
             t1_qc_plot=t1_qc_plot,
+            brain_mask_filmstrip=brain_mask_filmstrip,
+            acpc_filmstrip=acpc_filmstrip,
+            coreg_filmstrip_postcon=coreg_filmstrip_postcon,
+            coreg_filmstrip_t2w=coreg_filmstrip_t2w,
+            coreg_filmstrip_flair=coreg_filmstrip_flair,
+            coreg_filmstrip_pdw=coreg_filmstrip_pdw,
         )
 
         return runtime
