@@ -184,14 +184,14 @@ def svd_deconvolve_standard(
     truncation_threshold = threshold * s_max
 
     # Count retained singular values
-    n_retained = int(np.sum(s >= truncation_threshold))
+    n_retained = int(np.sum(s > truncation_threshold))
     if n_retained == 0:
         n_retained = 1  # Keep at least one singular value
 
     # Create truncated inverse singular values
     s_inv = np.zeros_like(s)
     for i in range(n_retained):
-        if s[i] >= truncation_threshold:
+        if s[i] > truncation_threshold:
             s_inv[i] = 1.0 / s[i]
 
     # Compute condition number of truncated matrix
@@ -289,12 +289,12 @@ def svd_deconvolve_standard_batch(
     # Truncate singular values
     s_max = s[0] if len(s) > 0 else 1.0
     truncation_threshold = threshold * s_max
-    n_retained = max(1, int(np.sum(s >= truncation_threshold)))
+    n_retained = max(1, int(np.sum(s > truncation_threshold)))
 
     # Create truncated inverse
     s_inv = np.zeros_like(s)
     for i in range(n_retained):
-        if s[i] >= truncation_threshold:
+        if s[i] > truncation_threshold:
             s_inv[i] = 1.0 / s[i]
 
     # Initialize output arrays
@@ -546,14 +546,14 @@ def svd_deconvolve_circulant(
     truncation_threshold = threshold * s_max
 
     # Count retained singular values
-    n_retained = int(np.sum(s >= truncation_threshold))
+    n_retained = int(np.sum(s > truncation_threshold))
     if n_retained == 0:
         n_retained = 1  # Keep at least one singular value
 
     # Create truncated inverse singular values
     s_inv = np.zeros_like(s)
     for i in range(n_retained):
-        if s[i] >= truncation_threshold:
+        if s[i] > truncation_threshold:
             s_inv[i] = 1.0 / s[i]
 
     # Compute condition number of truncated matrix
@@ -663,12 +663,12 @@ def svd_deconvolve_circulant_batch(
     # Truncate singular values
     s_max = s[0] if len(s) > 0 else 1.0
     truncation_threshold = threshold * s_max
-    n_retained = max(1, int(np.sum(s >= truncation_threshold)))
+    n_retained = max(1, int(np.sum(s > truncation_threshold)))
 
     # Create truncated inverse
     s_inv = np.zeros_like(s)
     for i in range(n_retained):
-        if s[i] >= truncation_threshold:
+        if s[i] > truncation_threshold:
             s_inv[i] = 1.0 / s[i]
 
     # Initialize output arrays
@@ -862,14 +862,14 @@ def _deconvolve_with_threshold(
     truncation_threshold = threshold * s_max
 
     # Count retained singular values
-    n_retained = int(np.sum(s >= truncation_threshold))
+    n_retained = int(np.sum(s > truncation_threshold))
     if n_retained == 0:
         n_retained = 1  # Keep at least one singular value
 
     # Create truncated inverse singular values
     s_inv = np.zeros_like(s)
     for i in range(n_retained):
-        if s[i] >= truncation_threshold:
+        if s[i] > truncation_threshold:
             s_inv[i] = 1.0 / s[i]
 
     # Compute condition number of truncated matrix
@@ -1703,12 +1703,12 @@ def _deconvolve_aif_with_vtf(
     # Truncate singular values
     s_max = s[0] if len(s) > 0 else 1.0
     truncation_threshold = threshold * s_max
-    n_retained = max(1, int(np.sum(s >= truncation_threshold)))
+    n_retained = max(1, int(np.sum(s > truncation_threshold)))
 
     # Create truncated inverse
     s_inv = np.zeros_like(s)
     for i in range(n_retained):
-        if s[i] >= truncation_threshold:
+        if s[i] > truncation_threshold:
             s_inv[i] = 1.0 / s[i]
 
     # Deconvolve: AIF_true = V @ S_inv @ U^T @ AIF_measured

@@ -932,25 +932,28 @@ class ComputeDSCMaps(BaseInterface):
             signal_ratio = np.clip(signal_ratio, EPSILON_SIGNAL, 1.0)
             recomputed_raw_conc = -np.log(signal_ratio) / te
 
-            # Re-extract AIF from updated concentration
-            # Match perf-plus: use stored best candidate coordinate (cost-function
-            # selected) rather than scanning mask for highest peak
-            aif_reextracted = False
-            if isdefined(self.inputs.aif_best_coord) and len(self.inputs.aif_best_coord) == 3:
-                cx, cy, cz = self.inputs.aif_best_coord
-                if (0 <= cx < recomputed_raw_conc.shape[0] and
-                        0 <= cy < recomputed_raw_conc.shape[1] and
-                        0 <= cz < recomputed_raw_conc.shape[2]):
-                    aif = recomputed_raw_conc[cx, cy, cz, :]
-                    aif_reextracted = True
-            if not aif_reextracted and isdefined(self.inputs.aif_mask_file):
+            # Re-extract AIF from updated concentration to maintain S0
+            # consistency (perf-plus dsc_compute_maps.py lines 5199-5205).
+            # Unlike perf-plus (single voxel), we re-extract from the full
+            # AIF ROI and re-smooth — matching the initial AIF quality while
+            # using the updated S0 baseline.
+            if (
+                isdefined(self.inputs.aif_mask_file)
+                and self.inputs.aif_mask_file
+            ):
                 aif_mask_img = nib.load(self.inputs.aif_mask_file)
-                aif_mask_data = aif_mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+                aif_mask_data = aif_mask_img.get_fdata() > 0.5
                 if aif_mask_data.shape[:3] == recomputed_raw_conc.shape[:3]:
-                    aif_voxels = recomputed_raw_conc[aif_mask_data]
-                    if aif_voxels.ndim == 2 and aif_voxels.shape[0] > 0:
-                        peak_idx = int(np.argmax(np.max(aif_voxels, axis=1)))
-                        aif = aif_voxels[peak_idx, :]
+                    roi_voxels = recomputed_raw_conc[aif_mask_data]
+                    if roi_voxels.ndim == 2 and roi_voxels.shape[0] > 0:
+                        aif = np.mean(roi_voxels, axis=0)
+                        if len(aif) >= 5:
+                            from scipy.signal import savgol_filter  # type: ignore[import-untyped]
+
+                            aif = savgol_filter(
+                                aif, window_length=5, polyorder=2
+                            )
+                        aif = np.clip(aif, 0.0, None)
 
             # Re-apply K2 correction to updated concentration
             from pmriprep.utils.dsc_preload import apply_k2_correction
@@ -1052,8 +1055,8 @@ class ComputeDSCMaps(BaseInterface):
         # For future absolute quantification, trapezoidal (O(dt^2)) can
         # be used instead:
         #   auc_corr = np.trapezoid(conc_data, dx=dt, axis=-1)
-        auc_corr = np.sum(conc_data, axis=-1) * dt
-        auc_raw = np.sum(raw_conc_data, axis=-1) * dt
+        auc_corr = np.clip(np.sum(conc_data, axis=-1) * dt, 0, 10000)
+        auc_raw = np.clip(np.sum(raw_conc_data, axis=-1) * dt, 0, 10000)
         auc_diff = auc_raw - auc_corr
 
         # CNR: peak concentration / baseline std per voxel (from raw conc)
@@ -1092,8 +1095,8 @@ class ComputeDSCMaps(BaseInterface):
         ph = np.clip(ph, 0.0, 100.0)
         tmax = np.clip(tmax, 0.0, 60.0)
         mtt = np.clip(mtt, 0.0, 30.0)
-        cbf = np.maximum(cbf, 0.0)
-        cbv = np.maximum(cbv, 0.0)
+        cbf = np.clip(cbf, 0.0, 100.0)
+        cbv = np.clip(cbv, 0.0, 10.0)
         cnr = np.clip(cnr, 0.0, 1000.0)
 
         # -----------------------------------------------------------
