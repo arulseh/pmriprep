@@ -25,7 +25,7 @@ class GenerateReportInputSpec(BaseInterfaceInputSpec):
     pipeline = traits.Str(mandatory=True, desc="Pipeline name ('dsc' or 'dce')")
     output_dir = traits.Str(mandatory=True, desc="Output directory for the report")
 
-    qc_json = File(exists=True, mandatory=True, desc="QC metrics JSON file")
+    qc_json = traits.Str(mandatory=True, desc="QC metrics JSON file path")
     motion_qc_plot = traits.Str(desc="Motion QC plot PNG path")
     aif_curve_plot = traits.Str(desc="AIF curve plot PNG path")
     aif_location_plot = traits.Str(desc="AIF location plot PNG path")
