@@ -783,7 +783,7 @@ class ComputeDCEMaps(BaseInterface):
 
         has_dsc_cbv = (
             isdefined(self.inputs.dsc_cbv_file)
-            and self._has_vp(model_name)
+            and model_name == "extended_tofts"
         )
 
         if has_dsc_cbv:

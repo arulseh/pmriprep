@@ -1519,15 +1519,25 @@ def init_pmriprep_wf(
                     _log.warning("DWI: failed to read b-value from %s: %s", bval_path, exc)
 
         # Connect DSC CBV for vp constraint in DCE PK modeling.
-        # Connect directly to internal nodes since these are optional inputs.
+        # Only extended_tofts uses DSC CBV as a fitting constraint (fixes vp).
+        # Other models with vp (patlak, 2cxm) fit freely, cross-validate post-hoc.
         if dsc_wf is not None:
-            workflow.connect([
-                (dsc_wf, dce_wf, [
-                    ("outputnode.rel_cbv_map", "pk_modeling.dsc_cbv_file"),
-                    ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc"),  # Dict input
-                    ("outputnode.rel_cbv_map", "dsc_dce_validation.dsc_cbv_file"),
-                ]),
-            ])
+            # Fitting constraint: only extended_tofts (or auto, which may resolve to it)
+            if dce_config.model in ("extended_tofts", "auto"):
+                workflow.connect([
+                    (dsc_wf, dce_wf, [
+                        ("outputnode.rel_cbv_map", "pk_modeling.dsc_cbv_file"),
+                        ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc"),
+                    ]),
+                ])
+
+            # Cross-validation: any model with vp (runs after both DSC and DCE complete)
+            if dce_config.model in ("extended_tofts", "patlak", "2cxm", "auto"):
+                workflow.connect([
+                    (dsc_wf, dce_wf, [
+                        ("outputnode.rel_cbv_map", "dsc_dce_validation.dsc_cbv_file"),
+                    ]),
+                ])
 
         # Connect DCE outputs to master outputnode
         workflow.connect([
