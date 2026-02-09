@@ -375,26 +375,8 @@ class TwoCompartmentExchangeModel(PKModel):
 
         # Tissue concentration is convolution of impulse response with AIF
         # C_t(t) = h(t) ⊗ Ca(t) = ∫₀ᵗ h(τ) × Ca(t-τ) dτ
-        c_tissue = np.zeros(n_times, dtype=np.float64)
-
-        for i in range(n_times):
-            if i == 0:
-                c_tissue[i] = 0.0
-                continue
-
-            # Convolution integral using trapezoidal rule
-            # ∫₀ᵗⁱ h(τ) × Ca(t_i - τ) dτ
-            # At time t_i, τ goes from 0 to t_i, so Ca(t_i - τ) uses AIF reversed
-
-            # h(τ) for τ = 0 to t_i
-            h_values = impulse_response[: i + 1]
-
-            # Ca(t_i - τ) = Ca reversed from index i to 0
-            aif_reversed = aif[i::-1][: i + 1]
-
-            # Trapezoidal integration
-            integrand = h_values * aif_reversed
-            c_tissue[i] = np.trapezoid(integrand, dx=dt)
+        # Vectorized rectangular-rule convolution (matches Tofts/Extended Tofts pattern)
+        c_tissue = np.convolve(aif, impulse_response, mode='full')[:n_times] * dt
 
         # Sanitize: replace non-finite values with 0
         c_tissue = np.where(np.isfinite(c_tissue), c_tissue, 0.0)
