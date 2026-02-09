@@ -36,3 +36,4 @@ install/
 subject_options.sh
 auto_debug.sh
 
+debug_logs/
