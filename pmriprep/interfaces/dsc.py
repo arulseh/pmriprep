@@ -183,9 +183,9 @@ class MotionCorrectionInputSpec(CommandLineInputSpec):
         desc="Sinc interpolation window width (default: 7)",
     )
     stages = traits.Int(
-        4,
+        3,
         usedefault=True,
-        desc="Number of search stages (default: 4)",
+        desc="Number of search stages (default: 3, matching MCFLIRT default)",
     )
     pre_bolus_frames = traits.Int(
         5,
@@ -352,7 +352,9 @@ class MotionCorrection(CommandLine):
         img = nib.load(in_file)
         data = img.get_fdata()  # type: ignore[attr-defined]
         n_timepoints = data.shape[-1]
-        n_frames = min(pre_bolus_frames, n_timepoints)
+        # Match perf-plus: use first 5 volumes for reference (fixed),
+        # regardless of configured pre_bolus_frames.
+        n_frames = min(5, n_timepoints)
         n_frames = max(1, n_frames)
 
         pre_bolus_mean = np.mean(data[..., :n_frames], axis=-1)

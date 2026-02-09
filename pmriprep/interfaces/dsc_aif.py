@@ -592,7 +592,7 @@ class AIFDetection(BaseInterface):
         conc_data: npt.NDArray[Any],
         search_mask: npt.NDArray[Any],
         baseline_frames: int,
-        min_candidates: int = 10,
+        min_candidates: int = 15,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
         """Find initial candidate voxels via adaptive percentile thresholding.
 

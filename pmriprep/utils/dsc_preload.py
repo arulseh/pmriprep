@@ -956,6 +956,14 @@ def _apply_k2_exponential(
             k2_map[x, y, z] = k2_estimated
             continue
 
+        # Skip if K2 hit the upper bound — unreliable fit
+        if k2_estimated >= K2_MAX - 1e-6:
+            failure_counts["k2_at_boundary"] = (
+                failure_counts.get("k2_at_boundary", 0) + 1
+            )
+            k2_map[x, y, z] = k2_estimated
+            continue
+
         # Overflow guard: skip if exp(K2 * t_final) would overflow
         max_exponent = k2_estimated * time_points[-1]
         if max_exponent > OVERFLOW_LIMIT:

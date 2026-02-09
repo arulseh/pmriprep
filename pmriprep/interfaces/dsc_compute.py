@@ -573,18 +573,22 @@ class ComputeDSCMaps(BaseInterface):
                                 )
                                 return n_baseline, info
 
-            # Real AIF: smooth then detect (matches perf-plus lines 1478-1483).
-            # Perf-plus applies savgol_filter before detect_bolus_arrival even
-            # though the AIF was already smoothed once during ROI averaging.
-            # Without re-smoothing, small noise spikes in the first few frames
-            # can produce a false-positive 3-sigma threshold crossing.
-            aif_smooth = savgol_filter(
-                aif,
-                window_length=min(5, len(aif)),
-                polyorder=min(2, len(aif) - 1),
+            # Real AIF: detect arrival directly on the loaded AIF.
+            # The AIF saved by AIFDetection is already savgol-smoothed
+            # (dsc_aif.py line 1237), so re-smoothing here would double-
+            # smooth and shift the detected arrival earlier.  Perf-plus
+            # smooths once during AIF detection and uses the auto-detected
+            # baseline for all subsequent processing (lines 5172-5223).
+            aif_clean = np.maximum(aif, 0.0)
+            # Match perf-plus: use baseline_frames=3 for z-score reference
+            # (perf-plus perfusion_utils.detect_bolus_arrival default=3).
+            # Using a small window avoids including early bolus rise in the
+            # baseline std, producing a tighter 3-sigma threshold that
+            # detects arrival earlier — matching perf-plus behaviour.
+            arrival_idx, n_baseline = detect_bolus_arrival(
+                aif_clean,
+                baseline_frames=3,
             )
-            aif_smooth[aif_smooth < 0] = 0
-            arrival_idx, n_baseline = detect_bolus_arrival(aif_smooth, baseline_frames=3)
 
             # Sanity: at least 2, at most half the acquisition
             if n_baseline < 2 or n_baseline > len(aif) // 2:
@@ -1088,17 +1092,9 @@ class ComputeDSCMaps(BaseInterface):
         ph = np.clip(ph, 0.0, 100.0)
         tmax = np.clip(tmax, 0.0, 60.0)
         mtt = np.clip(mtt, 0.0, 30.0)
-        cbf = np.clip(cbf, 0.0, 100.0)
-        cbv = np.clip(cbv, 0.0, 10.0)
+        cbf = np.maximum(cbf, 0.0)
+        cbv = np.maximum(cbv, 0.0)
         cnr = np.clip(cnr, 0.0, 1000.0)
-
-        # -----------------------------------------------------------
-        # Relative maps (always produced)
-        # -----------------------------------------------------------
-        rel_cbf = cbf
-        rel_cbv = cbv
-        rel_auc_raw = auc_raw
-        rel_auc_corr = auc_corr
 
         # -----------------------------------------------------------
         # Auto-absolute gating
@@ -1110,7 +1106,7 @@ class ComputeDSCMaps(BaseInterface):
         absolute_permitted = (
             field_strength > 0.0
             and aif_level != "synthetic"
-            and preload_class in ("none", "minimal")
+            and preload_class in ("none", "minimal", "user_specified_no_preload")
         )
 
         abs_cbf: Optional[npt.NDArray[Any]] = None
@@ -1118,15 +1114,34 @@ class ComputeDSCMaps(BaseInterface):
         abs_auc_raw: Optional[npt.NDArray[Any]] = None
         abs_auc_corr: Optional[npt.NDArray[Any]] = None
 
+        # -----------------------------------------------------------
+        # Relative and absolute maps
+        # Match perf-plus: compute absolute first (clip at 500/50),
+        # then derive relative by dividing out calibration factors.
+        # This ensures the effective relative clip matches perf-plus
+        # (500/K_H/vessel_cal ≈ 14.4 for CBF, 50/... ≈ 1.44 for CBV).
+        # -----------------------------------------------------------
         if absolute_permitted:
             k_h = calculate_k_h()
             vessel_cal = VESSEL_CALIBRATION_GRE_3T
             r2_star = get_r2_star(field_strength)
+            effective_cal = k_h * vessel_cal
 
-            abs_cbf = rel_cbf * k_h * vessel_cal * 60.0   # mL/100g/min
-            abs_cbv = rel_cbv * k_h * vessel_cal           # mL/100g
-            abs_auc_raw = auc_raw / r2_star                # mM·s
-            abs_auc_corr = auc_corr / r2_star              # mM·s
+            abs_cbf = np.clip(cbf * 60.0 * effective_cal, 0.0, 500.0)  # mL/100g/min
+            abs_cbv = np.clip(cbv * effective_cal, 0.0, 50.0)          # mL/100g
+            abs_auc_raw = auc_raw / r2_star                             # mM·s
+            abs_auc_corr = auc_corr / r2_star                           # mM·s
+
+            # Derive relative from absolute (matching perf-plus)
+            rel_cbf = abs_cbf / effective_cal
+            rel_cbv = abs_cbv / effective_cal
+        else:
+            # No absolute quantification — use dimensionless clips
+            rel_cbf = np.clip(cbf, 0.0, 100.0)             # dimensionless (s⁻¹)
+            rel_cbv = np.clip(cbv, 0.0, 10.0)             # dimensionless
+
+        rel_auc_raw = auc_raw
+        rel_auc_corr = auc_corr
 
         # -----------------------------------------------------------
         # Mask all outputs

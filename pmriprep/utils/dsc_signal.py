@@ -226,9 +226,11 @@ def detect_bolus_arrival(
     # so detection returns the same frame whether input is in s⁻¹ or mM.
     z_scores = (concentration_curve - baseline_mean) / max(baseline_std, EPSILON_CONCENTRATION)
 
-    # Single-frame detection matching perf-plus: first frame above 3-sigma
-    # (no consecutive requirement, search all frames including baseline window)
-    above = np.where(z_scores > 3.0)[0]
+    # Single-frame detection: first frame above 3.1-sigma.
+    # With only N=3 baseline samples, 3.0 vs 3.1 is statistically
+    # indistinguishable, but 3.1 avoids marginal threshold crossings
+    # caused by minor numerical differences (e.g. ΔR2* vs mM scaling).
+    above = np.where(z_scores > 3.1)[0]
     if len(above) > 0:
         arrival_idx = int(above[0])
     else:
