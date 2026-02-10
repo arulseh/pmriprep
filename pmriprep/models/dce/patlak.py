@@ -115,7 +115,7 @@ class PatlakModel(PKModel):
         return [
             ModelParameter(
                 name="Ktrans",
-                bounds=(KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
+                bounds=(0.0, 5.0),  # Match perf-plus Patlak bounds
                 typical_range=(0.01, 0.5),
                 log_transform=True,
                 description="Volume transfer constant (influx)",
@@ -123,8 +123,8 @@ class PatlakModel(PKModel):
             ),
             ModelParameter(
                 name="vp",
-                bounds=(VP_BOUNDS.min, VP_BOUNDS.max),
-                typical_range=(0.01, 0.1),
+                bounds=(0.0, 0.5),  # Match perf-plus Patlak bounds
+                typical_range=(0.01, 0.2),
                 log_transform=False,
                 description="Plasma volume fraction",
                 units="",
@@ -377,12 +377,12 @@ class PatlakModel(PKModel):
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         initial_guess: Optional[Sequence[float]] = None,
-        use_graphical: bool = True,
+        use_graphical: bool = False,
     ) -> FitResult:
         """Fit the Patlak model to observed tissue concentration data.
 
-        By default, uses the fast graphical (linear regression) method.
-        Can optionally use nonlinear least squares for comparison.
+        By default, uses nonlinear least squares (matching perf-plus).
+        Can optionally use graphical (linear regression) method.
 
         Args:
             tissue_curve: Observed tissue concentration values C_t(t) in mM.

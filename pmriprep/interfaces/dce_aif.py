@@ -2032,14 +2032,11 @@ class AIFDetection(BaseInterface):
             bat_shift = bat_result.bat_seconds
             t_shifted = t - bat_shift
 
-            # Apply relaxivity correction for non-standard agents
-            r1_arg: float | None = None
-            if r1_relaxivity > 0:
-                r1_arg = r1_relaxivity
-
-            # Generate Parker AIF with shifted time (use max(0) internally)
+            # DO NOT apply relaxivity correction to population AIF.
+            # Parker model outputs plasma concentration (mM), which depends on
+            # dose, not relaxivity. r1 only affects signal, not concentration.
             t_for_parker = np.maximum(t_shifted, 0.0)
-            aif_curve = parker_population_aif(t_for_parker, dose_factor, r1_actual=r1_arg)
+            aif_curve = parker_population_aif(t_for_parker, dose_factor)
 
             # Zero out pre-bolus values (where t_shifted < 0)
             # Use small positive value (1e-6) to avoid log(0) issues downstream
@@ -2056,7 +2053,7 @@ class AIFDetection(BaseInterface):
                 # BAT shift is wrong - regenerate without shift
                 t_unshifted = np.arange(n_timepoints) * tr
                 aif_curve = parker_population_aif(
-                    t_unshifted, dose_factor, r1_actual=r1_arg
+                    t_unshifted, dose_factor
                 )
                 bat_override = True
 

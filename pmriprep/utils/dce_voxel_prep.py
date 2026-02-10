@@ -72,8 +72,10 @@ def prepare_voxel_for_fitting(
             enhancement_max=enhancement_max,
         )
 
+    # Clip negative concentrations — physically concentration cannot be negative.
+    # Matches perf-plus behavior and prevents NLLS from fitting noise artifacts.
     return VoxelPrepResult(
-        concentration=tissue_curve,
+        concentration=np.maximum(tissue_curve, 0.0),
         is_valid=True,
         failure_reason="ok",
         baseline_mean=baseline_mean,
