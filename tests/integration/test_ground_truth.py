@@ -23,6 +23,9 @@ from numpy.typing import NDArray
 # Ground truth directory location
 PERF_PLUS_DERIVATIVES = Path("~/Developer/perf-plus/bidsroot/derivatives").expanduser()
 
+# PMRIPrep test outputs directory
+PMRIPREP_TEST_OUTPUTS = Path(__file__).parent.parent.parent / "test_outputs"
+
 # Acceptance thresholds
 CORRELATION_THRESHOLD = 0.99
 DICE_THRESHOLD = 0.95
@@ -723,7 +726,7 @@ def run_subject_comparison(
                 continue
 
             # Find PMRIPrep output
-            pmriprep_dir = pmriprep_derivatives / subject / session / "perf"
+            pmriprep_dir = pmriprep_derivatives / "dsc_pipeline" / subject / session / "perf"
             pmriprep_patterns = [
                 f"{subject}_{session}*{output_name}.nii.gz",
                 f"*{output_name}.nii.gz",
@@ -781,7 +784,7 @@ def run_subject_comparison(
                 continue
 
             # Find PMRIPrep output
-            pmriprep_dir = pmriprep_derivatives / subject / session / "perf"
+            pmriprep_dir = pmriprep_derivatives / "dce_pipeline" / subject / session / "perf"
             pmriprep_patterns = [
                 f"{subject}_{session}*{output_name}.nii.gz",
                 f"*{output_name}.nii.gz",
@@ -869,7 +872,6 @@ def get_test_subject_by_id(subject_session: str) -> Optional[Dict[str, Any]]:
 @pytest.mark.parametrize("subject_session", get_test_subject_ids())
 def test_ground_truth_comparison(
     subject_session: str,
-    tmp_path: Path,
 ) -> None:
     """Test PMRIPrep output against ground truth.
 
@@ -882,7 +884,6 @@ def test_ground_truth_comparison(
 
     Args:
         subject_session: Combined subject_session ID (e.g., 'sub-0001_ses-0002')
-        tmp_path: Pytest temporary directory
     """
     subject_config = get_test_subject_by_id(subject_session)
     assert subject_config is not None, f"Unknown subject: {subject_session}"
@@ -895,16 +896,19 @@ def test_ground_truth_comparison(
     if gt_dir is None:
         pytest.skip(f"Ground truth not found for {subject_session}")
 
-    # For now, skip if PMRIPrep hasn't been run
-    # In actual testing, this would point to real PMRIPrep outputs
-    pmriprep_derivatives = tmp_path / "pmriprep"
-    if not pmriprep_derivatives.exists():
+    # Skip if PMRIPrep hasn't been run for this subject
+    subject = subject_config["subject"]
+    session = subject_config["session"]
+    expected = subject_config.get("expected_outputs", {})
+    has_dsc = "dsc" in expected and (PMRIPREP_TEST_OUTPUTS / "dsc_pipeline" / subject / session).exists()
+    has_dce = "dce" in expected and (PMRIPREP_TEST_OUTPUTS / "dce_pipeline" / subject / session).exists()
+    if not has_dsc and not has_dce:
         pytest.skip(f"PMRIPrep outputs not available for {subject_session}")
 
     # Run comparison
     result = run_subject_comparison(
         subject_config,
-        pmriprep_derivatives,
+        PMRIPREP_TEST_OUTPUTS,
         PERF_PLUS_DERIVATIVES,
     )
 
