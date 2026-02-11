@@ -13,6 +13,7 @@ from typing import Sequence
 import numpy as np
 import numpy.typing as npt
 from scipy import special  # type: ignore[import-untyped]
+from scipy.signal import fftconvolve  # type: ignore[import-untyped]
 
 from pmriprep.models.dsc.base import (
     DSCModel,
@@ -100,23 +101,23 @@ class VascularModel(DSCModel):
             DSCModelParameter(
                 name="alpha",
                 bounds=(VASCULAR_ALPHA_BOUNDS.min, VASCULAR_ALPHA_BOUNDS.max),
-                typical_range=(1.0, 5.0),  # Most physiological values
-                log_transform=True,  # Spans orders of magnitude
+                typical_range=(1.5, 6.0),  # perf-plus: prior_mean=3.75
+                log_transform=False,  # perf-plus uses linear prior for alpha
                 description="Gamma shape parameter",
                 units="",
             ),
             DSCModelParameter(
                 name="beta",
                 bounds=(VASCULAR_BETA_BOUNDS.min, VASCULAR_BETA_BOUNDS.max),
-                typical_range=(0.5, 4.0),  # Typical range for brain tissue
-                log_transform=True,  # Better fitting in log space
+                typical_range=(0.5, 5.0),  # perf-plus: prior_mean=2.75
+                log_transform=True,  # Both pipelines agree on log-space for beta
                 description="Gamma scale parameter",
                 units="s",
             ),
             DSCModelParameter(
                 name="delay",
                 bounds=(VASCULAR_DELAY_BOUNDS.min, VASCULAR_DELAY_BOUNDS.max),
-                typical_range=(-1.0, 3.0),  # Most delays are positive and small
+                typical_range=(-1.0, 5.0),  # perf-plus: prior_mean=2.0
                 log_transform=False,  # Can be negative
                 description="Bolus arrival delay",
                 units="s",
@@ -130,6 +131,20 @@ class VascularModel(DSCModel):
             List: ['cbf', 'alpha', 'beta', 'delay']
         """
         return ["cbf", "alpha", "beta", "delay"]
+
+    def get_initial_guess(self) -> list[float]:
+        """Get initial parameter guess for optimization.
+
+        Uses perf-plus default values rather than prior means.  The prior
+        means (midpoints of typical_range) give MTT ≈ 10.3s which is too
+        broad; perf-plus starts at CBF=50, alpha=3, beta=2 (MTT=6s).
+        Delay is fixed at 0.0 because L-BFGS-B can't optimize the
+        step-function delay shift.
+
+        Returns:
+            List of initial parameter values [CBF, alpha, beta, delay].
+        """
+        return [50.0, 3.0, 2.0, 0.0]
 
     def residue_function(
         self,
@@ -187,7 +202,9 @@ class VascularModel(DSCModel):
 
         C_tissue(t) = AIF(t) ⊗ R(t)
 
-        Uses trapezoidal integration for the convolution.
+        Uses FFT convolution with post-hoc delay shift (matching perf-plus).
+        The residue is computed without delay, then the convolved result is
+        shifted by delay_samples to apply the arrival time offset.
 
         Args:
             params: [cbf, alpha, beta, delay] parameter values.
@@ -203,36 +220,33 @@ class VascularModel(DSCModel):
                 f"AIF length ({len(aif)}) must match time_points ({n_times})"
             )
 
-        # Get time step (assume uniform spacing)
         if n_times < 2:
             return np.zeros(n_times, dtype=np.float64)
 
+        cbf, alpha, beta, delay = params
         dt = float(time_points[1] - time_points[0])
 
-        # Compute residue function
-        residue = self.residue_function(params, time_points)
+        # Compute residue WITHOUT delay (perf-plus approach)
+        params_no_delay = [cbf, alpha, beta, 0.0]
+        R = self.residue_function(params_no_delay, time_points)
 
-        # Convolution: C_tissue(t) = dt * sum_{tau=0}^{t} AIF(tau) * R(t - tau)
-        # Using direct convolution (trapezoidal integration)
-        tissue = np.zeros(n_times, dtype=np.float64)
+        # FFT convolution (matches perf-plus fftconvolve)
+        conv = fftconvolve(aif, R, mode='full')[:n_times] * dt
 
-        for i in range(n_times):
-            # Integrate from 0 to t_i
-            # C(t_i) = integral_0^{t_i} AIF(tau) * R(t_i - tau) d_tau
-            # With discrete sum: sum_{j=0}^{i} AIF[j] * R[i-j] * dt
-            if i == 0:
-                tissue[i] = 0.0
+        # Apply delay as post-hoc shift
+        if delay != 0:
+            delay_samples = int(round(delay / dt))
+            C_t = np.zeros_like(conv)
+            if 0 < delay_samples < n_times:
+                C_t[delay_samples:] = conv[:-delay_samples]
+            elif -n_times < delay_samples < 0:
+                C_t[:delay_samples] = conv[-delay_samples:]
             else:
-                # Create arrays for convolution integral
-                # R(t_i - t_j) for j = 0..i
-                r_values = residue[:i+1][::-1]  # R[i], R[i-1], ..., R[0]
-                aif_values = aif[:i+1]  # AIF[0], AIF[1], ..., AIF[i]
+                C_t = conv
+        else:
+            C_t = conv
 
-                # Trapezoidal rule
-                integrand = aif_values * r_values
-                tissue[i] = np.trapezoid(integrand, dx=dt)
-
-        return tissue
+        return C_t
 
     def compute_derived_parameters(
         self, params: Sequence[float]

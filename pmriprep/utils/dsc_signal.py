@@ -236,7 +236,7 @@ def detect_bolus_arrival(
     else:
         arrival_idx = n_baseline
 
-    return arrival_idx, max(2, arrival_idx)
+    return arrival_idx, max(2, arrival_idx - 1)
 
 
 def compute_psr(

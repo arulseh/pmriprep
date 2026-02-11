@@ -34,16 +34,20 @@ class VoxelPrepResult:
 def prepare_voxel_for_fitting(
     tissue_curve: npt.NDArray[np.floating],
     baseline_frames: int = 5,
+    skip_variation_check: bool = False,
 ) -> VoxelPrepResult:
     """Validate and prepare a voxel's concentration time course for PK fitting.
 
     Checks performed in order:
-    1. Signal variation: std(curve) > MIN_SIGNAL_STD
+    1. Signal variation: std(curve) > MIN_SIGNAL_STD (skipped if skip_variation_check)
     2. Enhancement: max(curve) > MIN_ENHANCEMENT_MM
 
     Args:
         tissue_curve: Concentration time course for one voxel (1D array, mM).
         baseline_frames: Number of baseline frames for quality checks.
+        skip_variation_check: If True, skip concentration-based variation check.
+            Set True when raw signal variation filtering is done upstream
+            (matches perf-plus which checks raw signal std >= 1.0).
 
     Returns:
         VoxelPrepResult with validation outcome and prepared curve.
@@ -51,16 +55,19 @@ def prepare_voxel_for_fitting(
     baseline_mean = float(np.mean(tissue_curve[:baseline_frames]))
     enhancement_max = float(np.max(tissue_curve))
 
-    # Check 1: Signal variation
-    curve_std = float(np.std(tissue_curve))
-    if curve_std < MIN_SIGNAL_STD:
-        return VoxelPrepResult(
-            concentration=tissue_curve,
-            is_valid=False,
-            failure_reason="failed_no_variation",
-            baseline_mean=baseline_mean,
-            enhancement_max=enhancement_max,
-        )
+    # Check 1: Signal variation (on concentration)
+    # Skipped when raw signal variation is checked upstream in ComputeDCEMaps,
+    # matching perf-plus behavior (dce_pk_modeling.py:1576).
+    if not skip_variation_check:
+        curve_std = float(np.std(tissue_curve))
+        if curve_std < MIN_SIGNAL_STD:
+            return VoxelPrepResult(
+                concentration=tissue_curve,
+                is_valid=False,
+                failure_reason="failed_no_variation",
+                baseline_mean=baseline_mean,
+                enhancement_max=enhancement_max,
+            )
 
     # Check 2: Enhancement above threshold
     if enhancement_max < MIN_ENHANCEMENT_MM:

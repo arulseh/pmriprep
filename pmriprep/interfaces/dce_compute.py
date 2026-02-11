@@ -130,8 +130,11 @@ def _fit_single_voxel(
     constraint_vp_uncertainty = _worker_ctx["constraint_vp_uncertainty"]
     model_name = _worker_ctx["model_name"]
 
-    # Validate voxel
-    prep = prepare_voxel_for_fitting(tissue_curve, baseline_frames)
+    # Validate voxel (skip concentration-based variation check — raw signal
+    # variation is filtered upstream in ComputeDCEMaps, matching perf-plus)
+    prep = prepare_voxel_for_fitting(
+        tissue_curve, baseline_frames, skip_variation_check=True
+    )
     if not prep.is_valid:
         return {
             "coords": (x, y, z),
@@ -745,10 +748,13 @@ class ComputeDCEMaps(BaseInterface):
         # Always compute tSNR for QC (even if threshold is 0)
         # Use raw DCE signal for tSNR when available (matches perf-plus)
         tsnr_threshold = float(self.inputs.tsnr_threshold)
+        signal_std_map: Optional[npt.NDArray[Any]] = None
         if isdefined(self.inputs.dce_signal_file):
             signal_img = nib.load(self.inputs.dce_signal_file)
             signal_data = signal_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             tsnr_map = self._compute_tsnr(signal_data, mask, baseline_frames)
+            # Raw signal variation map (matches perf-plus dce_pk_modeling.py:1576)
+            signal_std_map = np.std(signal_data, axis=-1)
             del signal_data
         else:
             logger.warning(
@@ -763,6 +769,10 @@ class ComputeDCEMaps(BaseInterface):
             fitting_mask = mask_bool & (tsnr_map >= tsnr_threshold)
         else:
             fitting_mask = mask_bool
+
+        # Raw signal variation filter (perf-plus: std(S_voxel) >= 1.0)
+        if signal_std_map is not None:
+            fitting_mask = fitting_mask & (signal_std_map >= 1.0)
 
         # Parameters
         bayesian = str(self.inputs.bayesian)
@@ -861,11 +871,13 @@ class ComputeDCEMaps(BaseInterface):
         n_voxels = len(mask_coords[0])
 
         # QC tracking
+        n_brain = int(np.sum(mask_bool))
         qc_metrics: dict[str, Any] = {
             "model": model_name,
             "bayesian": bayesian,
-            "n_voxels_brain": int(np.sum(mask_bool)),
+            "n_voxels_brain": n_brain,
             "n_voxels_fitted": n_voxels,
+            "n_voxels_signal_filtered": n_brain - n_voxels,
             "tsnr_threshold": tsnr_threshold,
             "baseline_frames": baseline_frames,
             "selection_tr_seconds": selection_tr_seconds,  # TR used for model selection

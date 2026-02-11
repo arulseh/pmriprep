@@ -145,14 +145,19 @@ class BayesianDSCFitter:
         noise_std = float(np.std(baseline))
 
         # Minimum noise level for numerical stability
-        return max(noise_std, EPSILON_CONCENTRATION)
+        # perf-plus uses EPSILON_SIGNAL * 100 = 1e-7; the 1e-10 floor
+        # (EPSILON_CONCENTRATION) makes the likelihood overwhelm the prior
+        return max(noise_std, 1e-7)
 
     def _log_prior(
         self, params: npt.NDArray[np.floating]
     ) -> float:
         """Compute log prior probability.
 
-        Uses Gaussian priors for each parameter, optionally in log space.
+        Uses truncated normal priors matching perf-plus: simple Gaussian in
+        natural parameter space, hard-clipped to parameter bounds.  The
+        log_transform flag is NOT applied here (perf-plus ignores it in its
+        prior computation).
 
         Args:
             params: Parameter values.
@@ -163,21 +168,9 @@ class BayesianDSCFitter:
         log_p = 0.0
 
         for i, (p, prior) in enumerate(zip(params, self.priors)):
-            # Transform to log space if needed
-            if prior.log_transform:
-                if p <= 0:
-                    return float("-inf")
-                p_trans = np.log(p)
-                mean_trans = np.log(max(prior.mean, EPSILON_CONCENTRATION))
-                # Jacobian term for log transform
-                log_p -= np.log(p)
-            else:
-                p_trans = p
-                mean_trans = prior.mean
-
-            # Gaussian prior
+            # Truncated normal in natural parameter space (matches perf-plus)
             if prior.std > 0:
-                log_p -= 0.5 * ((p_trans - mean_trans) / prior.std) ** 2
+                log_p -= 0.5 * ((p - prior.mean) / prior.std) ** 2
 
         return log_p
 
@@ -413,9 +406,10 @@ class BayesianDSCFitter:
 
         # Objective: negative log posterior
         def neg_log_posterior(params: npt.NDArray[np.floating]) -> float:
-            return -self._log_posterior(
+            val = -self._log_posterior(
                 params, concentration, aif, time_points, noise_std
             )
+            return min(val, 1e20)
 
         # Optimize
         try:

@@ -1261,6 +1261,13 @@ def init_dsc_preproc_wf(
                 "cnr_map",
                 # AUC decomposition
                 "auc_diff_map",
+                # Vascular model parameters (optional)
+                "alpha_map",
+                "beta_map",
+                "cth_map",
+                # Bayesian uncertainty maps (optional)
+                "cbf_std_map",
+                "cbv_std_map",
                 # Relative maps (always produced)
                 "rel_cbf_map",
                 "rel_cbv_map",
@@ -2263,6 +2270,17 @@ def init_dsc_preproc_wf(
         (compute_maps, outputnode, [
             ("out_snr", "snr_map"),
             ("out_tsnr", "tsnr_map"),
+        ]),
+        # Vascular model parameters (optional — undefined for SVD methods)
+        (compute_maps, outputnode, [
+            ("out_alpha", "alpha_map"),
+            ("out_beta", "beta_map"),
+            ("out_cth", "cth_map"),
+        ]),
+        # Bayesian uncertainty maps (optional — undefined when bayesian=none)
+        (compute_maps, outputnode, [
+            ("out_cbf_std", "cbf_std_map"),
+            ("out_cbv_std", "cbv_std_map"),
         ]),
         # AIF outputs
         (aif_detect, outputnode, [

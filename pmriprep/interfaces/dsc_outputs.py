@@ -57,6 +57,15 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     ncbv_map = traits.Str(desc="Normalized CBV map path")
     ncbf_map = traits.Str(desc="Normalized CBF map path")
 
+    # Vascular model parameters (optional)
+    alpha_map = traits.Str(desc="Alpha parameter map path (vascular only)")
+    beta_map = traits.Str(desc="Beta parameter map path (vascular only)")
+    cth_map = traits.Str(desc="CTH (capillary transit time heterogeneity) map path (vascular only)")
+
+    # Bayesian uncertainty maps (optional)
+    cbf_std_map = traits.Str(desc="CBF uncertainty (std) map path (Bayesian only)")
+    cbv_std_map = traits.Str(desc="CBV uncertainty (std) map path (Bayesian only)")
+
     # Leakage correction (optional)
     k2_map = traits.Str(desc="K2 leakage correction map path")
 
@@ -260,6 +269,35 @@ class DSCDerivativeWriter(BaseInterface):
             self._copy_nifti(self.inputs.k2_map, perf_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "K2 leakage correction map"}
             self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 5b. Vascular model parameters (optional)
+        # -----------------------------------------------------------
+        for vmap, (attr, desc) in {
+            "alpha": ("alpha_map", "Vascular model alpha parameter"),
+            "beta": ("beta_map", "Vascular model beta parameter"),
+            "cth": ("cth_map", "Capillary transit time heterogeneity"),
+        }.items():
+            if self._has_input(attr):
+                src = getattr(self.inputs, attr)
+                fname = f"{prefix}_{spatial}_desc-dscproc_{vmap}"
+                self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+                sidecar = {**base_sidecar, "Description": desc}
+                self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 5c. Bayesian uncertainty maps (optional)
+        # -----------------------------------------------------------
+        for umap, (attr, desc) in {
+            "cbf_std": ("cbf_std_map", "CBF uncertainty (posterior std)"),
+            "cbv_std": ("cbv_std_map", "CBV uncertainty (posterior std)"),
+        }.items():
+            if self._has_input(attr):
+                src = getattr(self.inputs, attr)
+                fname = f"{prefix}_{spatial}_desc-dscproc_{umap}"
+                self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+                sidecar = {**base_sidecar, "Description": desc}
+                self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 6. Smoothed maps (if smooth_fwhm > 0)

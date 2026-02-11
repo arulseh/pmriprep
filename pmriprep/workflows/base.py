@@ -345,6 +345,7 @@ def _read_bids_sidecar(
         "flip_angle": None,
         "r1_relaxivity": None,
         "contrast_agent": None,
+        "agent_standard_dose": 0.1,  # Default standard dose (mmol/kg)
     }
 
     nifti = Path(nifti_path)
@@ -388,6 +389,11 @@ def _read_bids_sidecar(
     if r1_info["r1"] is not None:
         result["r1_relaxivity"] = r1_info["r1"]
         result["contrast_agent"] = r1_info["agent_name"]
+
+    # Look up agent-specific standard clinical dose
+    if r1_info["agent_name"] is not None:
+        from pmriprep.utils.contrast_agent import lookup_standard_dose
+        result["agent_standard_dose"] = lookup_standard_dose(r1_info["agent_name"])
 
     return result
 
@@ -1214,6 +1220,13 @@ def init_pmriprep_wf(
                 # Normalized maps
                 ("outputnode.ncbv_map", "ncbv_map"),
                 ("outputnode.ncbf_map", "ncbf_map"),
+                # Vascular model parameters
+                ("outputnode.alpha_map", "alpha_map"),
+                ("outputnode.beta_map", "beta_map"),
+                ("outputnode.cth_map", "cth_map"),
+                # Bayesian uncertainty maps
+                ("outputnode.cbf_std_map", "cbf_std_map"),
+                ("outputnode.cbv_std_map", "cbv_std_map"),
                 # Leakage correction
                 ("outputnode.k2_map", "k2_map"),
                 # Motion-corrected data
@@ -1330,6 +1343,9 @@ def init_pmriprep_wf(
             else:
                 # Default to 3T value (3.8 s^-1/mM)
                 dce_wf.inputs.inputnode.r1_relaxivity = 3.8
+
+            # Set agent-specific standard dose (e.g. 0.05 for Vueway)
+            dce_wf.inputs.inputnode.agent_standard_dose = dce_sidecar["agent_standard_dose"]
 
         # Connect anat outputs to DCE workflow
         if anat_wf is not None:

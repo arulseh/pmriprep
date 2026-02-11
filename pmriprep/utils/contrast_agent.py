@@ -74,6 +74,29 @@ DEFAULT_AGENT: Final[str] = "gd-dtpa"
 
 
 # =============================================================================
+# Standard Clinical Doses
+# =============================================================================
+
+#: Standard clinical doses per agent (mmol/kg).
+#: Most agents: 0.1 mmol/kg. High-relaxivity agents use lower doses.
+#: Keyed by generic name; brand names resolved via AGENT_ALIASES + _normalize_agent_name()
+AGENT_STANDARD_DOSES: Final[dict[str, float]] = {
+    "gd-dtpa": 0.1,
+    "gadopentetate": 0.1,
+    "gd-dtpa-bma": 0.1,
+    "gadoterate": 0.1,
+    "gd-dota": 0.1,
+    "gadoteridol": 0.1,
+    "gd-hp-do3a": 0.1,
+    "gadobutrol": 0.1,
+    "gadopiclenol": 0.05,    # Vueway/Elucirem — high relaxivity
+    "gadobenate": 0.1,
+    "gd-bopta": 0.1,
+    "gadoxetate": 0.025,     # Eovist/Primovist — hepatobiliary
+}
+
+
+# =============================================================================
 # Contrast Agent Concentrations
 # =============================================================================
 
@@ -336,6 +359,22 @@ def _normalize_agent_name(agent: str) -> str:
     if name in AGENT_ALIASES:
         return AGENT_ALIASES[name]
     return name
+
+
+def lookup_standard_dose(agent: str) -> float:
+    """Look up standard clinical dose for a contrast agent.
+
+    Uses _normalize_agent_name() to resolve brand names via AGENT_ALIASES.
+    E.g., "Vueway" -> "gadopiclenol" -> 0.05 mmol/kg
+
+    Args:
+        agent: Contrast agent name (brand name, generic, or abbreviation).
+
+    Returns:
+        Standard dose in mmol/kg (0.1 for most agents, 0.05 for Vueway, etc.).
+    """
+    name = _normalize_agent_name(agent)
+    return AGENT_STANDARD_DOSES.get(name, 0.1)
 
 
 def lookup_r1(

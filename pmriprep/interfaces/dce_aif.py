@@ -448,6 +448,12 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
             "relaxivity for non-standard agents (e.g. Vueway r1=11.6)."
         ),
     )
+    agent_standard_dose = traits.Float(
+        0.1,
+        usedefault=True,
+        desc="Standard clinical dose for this agent in mmol/kg "
+             "(0.1 for most agents, 0.05 for Vueway/gadopiclenol).",
+    )
 
     # Output files
     out_aif_curve = File(
@@ -599,13 +605,20 @@ class AIFDetection(BaseInterface):
         return str(Path.cwd() / f"{base}{suffix}")
 
     def _get_dose_factor(self) -> float:
-        """Get dose factor based on dose setting."""
+        """Get dose factor based on dose setting and agent standard dose.
+
+        dose_factor = (agent_standard_dose * multiplier) / 0.1
+
+        Examples:
+          - Standard agent, full dose:  (0.1 * 1.0) / 0.1 = 1.0
+          - Standard agent, half dose:  (0.1 * 0.5) / 0.1 = 0.5
+          - Vueway, half dose:          (0.05 * 0.5) / 0.1 = 0.25
+          - Vueway, full dose:          (0.05 * 1.0) / 0.1 = 0.5
+        """
+        std_dose = float(self.inputs.agent_standard_dose)
         dose = str(self.inputs.dose)
-        if dose == "half":
-            return 0.5
-        elif dose == "double":
-            return 2.0
-        return 1.0
+        multiplier = {"half": 0.5, "double": 2.0}.get(dose, 1.0)
+        return (std_dose * multiplier) / 0.1
 
     def _get_expected_peak_range(self) -> tuple[float, float]:
         """Get expected peak concentration range based on dose."""
@@ -2006,37 +2019,30 @@ class AIFDetection(BaseInterface):
 
         else:
             # Generate BAT-aligned Parker population AIF
-            from pmriprep.utils.dce_bat import detect_bolus_arrival_time
-
             dose_factor = self._get_dose_factor()
             t = np.arange(n_timepoints) * tr
 
-            # Detect BAT from global mean concentration curve
-            mask_bool = brain_mask > 0
-            global_curve = np.array([
-                float(np.mean(conc_data[..., tidx][mask_bool]))
-                for tidx in range(n_timepoints)
-            ])
-            # time_points in minutes for BAT detection
-            t_min = t / 60.0
-
-            # Use adaptive baseline (perf-plus style) for BAT detection
-            adaptive_baseline = min(baseline_frames, n_timepoints // 4)
-            adaptive_baseline = max(2, adaptive_baseline)
-
-            bat_result = detect_bolus_arrival_time(
-                global_curve, t_min, adaptive_baseline
-            )
-
-            # Time-shift Parker AIF to align with detected BAT
-            bat_shift = bat_result.bat_seconds
+            # For population AIF, use baseline_frames * TR as BAT (matches
+            # perf-plus dce_aif_detection.py:2618-2619). Data-driven BAT
+            # detection on mean brain concentration detects tissue transit
+            # delay, not arterial arrival.
+            bat_shift = baseline_frames * tr
             t_shifted = t - bat_shift
 
-            # DO NOT apply relaxivity correction to population AIF.
-            # Parker model outputs plasma concentration (mM), which depends on
-            # dose, not relaxivity. r1 only affects signal, not concentration.
+            # Apply r1 relaxivity correction for non-standard agents.
+            # Parker AIF was calibrated with Gd-DTPA (r1=4.1). Tissue
+            # concentrations use the actual agent's r1 (e.g. 11.6 for Vueway).
+            # The correction ensures AIF and tissue are in the same
+            # "relaxivity space" (perf-plus dce_aif_detection.py:2641-2649).
+            r1_arg: float | None = None
+            r1_relaxivity = float(self.inputs.r1_relaxivity)
+            if r1_relaxivity > 0:
+                r1_arg = r1_relaxivity
+
             t_for_parker = np.maximum(t_shifted, 0.0)
-            aif_curve = parker_population_aif(t_for_parker, dose_factor)
+            aif_curve = parker_population_aif(
+                t_for_parker, dose_factor, r1_actual=r1_arg
+            )
 
             # Zero out pre-bolus values (where t_shifted < 0)
             # Use small positive value (1e-6) to avoid log(0) issues downstream
@@ -2047,13 +2053,13 @@ class AIFDetection(BaseInterface):
             pop_peak = float(np.max(aif_curve))
             expected_min_peak = 2.5 * dose_factor  # ~2.5 mM minimum for full dose
             bat_override = False
-            original_bat_seconds = bat_result.bat_seconds
+            original_bat_seconds = bat_shift
 
             if pop_peak < expected_min_peak:
                 # BAT shift is wrong - regenerate without shift
                 t_unshifted = np.arange(n_timepoints) * tr
                 aif_curve = parker_population_aif(
-                    t_unshifted, dose_factor
+                    t_unshifted, dose_factor, r1_actual=r1_arg
                 )
                 bat_override = True
 
@@ -2064,9 +2070,8 @@ class AIFDetection(BaseInterface):
                 "population_aif": True,
                 "dose_factor": dose_factor,
                 "n_candidates": 0,
-                "bat_seconds": bat_result.bat_seconds,
-                "bat_method": bat_result.method,
-                "bat_confidence": bat_result.confidence,
+                "bat_seconds": bat_shift,
+                "bat_method": "baseline_frames",
             }
             if bat_override:
                 qc_metrics["bat_override"] = True
