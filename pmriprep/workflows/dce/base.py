@@ -456,7 +456,6 @@ def init_dce_preproc_wf(
             ("vfa_tr", "tr"),
             ("brain_mask", "brain_mask"),
             ("field_strength", "field_strength"),
-            ("csf_probseg", "csf_probseg"),
         ]),
         # Connect B1 map resampled to VFA space
         (transform_b1_to_vfa, t1_mapping, [
@@ -610,6 +609,28 @@ def init_dce_preproc_wf(
         (dce_registration, transform_brain_mask, [
             ("out_matrix", "transform_matrix"),
         ]),
+    ])
+
+    # ==========================================================================
+    # Node 4b1b: Transform CSF probseg to DCE space
+    # ==========================================================================
+    # CSF probability map needs trilinear interpolation (continuous values)
+    # and clipping to [0, 1] instead of binarization + hole-filling.
+    transform_csf_probseg = pe.Node(
+        niu.Function(
+            input_names=["probseg_file", "reference_file", "transform_matrix"],
+            output_names=["out_file"],
+            function=_transform_probseg_to_dce,
+        ),
+        name="transform_csf_probseg",
+    )
+
+    workflow.connect([
+        (inputnode, transform_csf_probseg, [("csf_probseg", "probseg_file")]),
+        (dce_preprocess, transform_csf_probseg, [("mean_img", "reference_file")]),
+        (dce_registration, transform_csf_probseg, [("out_matrix", "transform_matrix")]),
+        # Wire transformed CSF probseg to T1 mapping (must be in DCE/VFA space)
+        (transform_csf_probseg, t1_mapping, [("out_file", "csf_probseg")]),
     ])
 
     # ==========================================================================
@@ -782,7 +803,7 @@ def init_dce_preproc_wf(
             n_candidates=10,  # Default
             lesion_distance=config.lesion_distance,
             prefer_contralateral=config.prefer_contralateral,
-            baseline_frames=config.baseline_frames if config.baseline_frames > 0 else 5,
+            baseline_frames=config.baseline_frames,
             dose=config.dose,
         ),
         name="aif_detection",
@@ -809,6 +830,10 @@ def init_dce_preproc_wf(
             ("field_strength", "field_strength"),
             ("r1_relaxivity", "r1_relaxivity"),
             ("agent_standard_dose", "agent_standard_dose"),
+        ]),
+        # Wire auto-detected baseline_frames from dce_preprocess
+        (dce_preprocess, aif_detection, [
+            ("baseline_frames", "baseline_frames"),
         ]),
     ])
 
@@ -1649,6 +1674,90 @@ def _transform_mask_to_dce(
     return out_file
 
 
+def _transform_probseg_to_dce(
+    probseg_file=None,
+    reference_file=None,
+    transform_matrix=None,
+):
+    """Transform a probability segmentation map from T1w space to DCE space.
+
+    Uses FSL FLIRT with trilinear interpolation (appropriate for continuous
+    probability maps, unlike nearest-neighbour for binary masks). Clips output
+    to [0, 1] to correct slight over/undershoot from interpolation.
+
+    Args:
+        probseg_file: Path to probability map in T1w space (or None).
+        reference_file: Path to DCE reference image for output geometry.
+        transform_matrix: Path to T1w→DCE FLIRT matrix.
+
+    Returns:
+        Path to transformed probability map in DCE space, or None if no input.
+    """
+    from nipype.interfaces.base import isdefined
+
+    # Handle both None and Nipype Undefined
+    if not isdefined(probseg_file) or probseg_file is None:
+        return None
+    if not isdefined(reference_file) or reference_file is None:
+        return None
+    if not isdefined(transform_matrix) or transform_matrix is None:
+        return None
+
+    from pathlib import Path
+    import subprocess
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    probseg_path = Path(probseg_file)
+    if not probseg_path.exists():
+        return None
+
+    out_dir = Path.cwd()
+    out_file = str(out_dir / "csf_probseg_dce.nii.gz")
+
+    # Same-space shortcut: skip transform if already aligned
+    probseg_img = nib.load(probseg_file)
+    ref_img = nib.load(reference_file)
+    if probseg_img.shape[:3] == ref_img.shape[:3]:
+        affine_diff = float(np.abs(probseg_img.affine - ref_img.affine).max())
+        if affine_diff < 1e-4:
+            # Already in same space, just copy (clip to [0, 1])
+            data = probseg_img.get_fdata()  # type: ignore[attr-defined]
+            data = np.clip(data, 0.0, 1.0).astype(np.float32)
+            out_img = nib.Nifti1Image(data, ref_img.affine)
+            nib.save(out_img, out_file)
+            return out_file
+
+    # Transform with FLIRT using trilinear interpolation
+    tmp_file = str(out_dir / "_tmp_csf_probseg_dce.nii.gz")
+    cmd = [
+        "flirt",
+        "-in", str(probseg_file),
+        "-ref", str(reference_file),
+        "-out", tmp_file,
+        "-init", str(transform_matrix),
+        "-applyxfm",
+        "-interp", "trilinear",
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+    # Clip to [0, 1] — FLIRT trilinear can produce slight over/undershoot
+    tmp_img = nib.load(tmp_file)
+    data = tmp_img.get_fdata()  # type: ignore[attr-defined]
+    data = np.clip(data, 0.0, 1.0).astype(np.float32)
+    out_img = nib.Nifti1Image(data, tmp_img.affine)
+    nib.save(out_img, out_file)
+
+    # Clean up temp file
+    try:
+        Path(tmp_file).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return out_file
+
+
 def _transform_lesion_mask_to_dce(
     lesion_mask_file=None,
     reference_file=None,
@@ -1938,7 +2047,7 @@ def _signal_to_concentration_node(
         r1_relaxivity=r1_relaxivity,
         field_strength=field_strength,
         baseline_frames=baseline_frames if baseline_frames > 0 else 5,
-        convert_to_plasma=True,
+        convert_to_plasma=False,
     )
 
     # Save concentration file

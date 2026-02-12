@@ -145,7 +145,7 @@ def _find_previous_anat_outputs(
         session_id: BIDS session ID (without 'ses-' prefix), or None.
 
     Returns:
-        Dict with keys: t1w_preproc, brain_mask, wm_probseg, t1w_to_mni_xfm, flair_coreg.
+        Dict with keys: t1w_preproc, brain_mask, wm_probseg, csf_probseg, t1w_to_mni_xfm, flair_coreg.
         Values are file paths (str) or None if not found.
     """
     session_label = f"ses-{session_id}" if session_id else "no-session"
@@ -157,6 +157,7 @@ def _find_previous_anat_outputs(
         "t1w_postcon_coreg": None,
         "brain_mask": None,
         "wm_probseg": None,
+        "csf_probseg": None,
         "t1w_to_mni_xfm": None,
         "flair_coreg": None,
     }
@@ -184,6 +185,12 @@ def _find_previous_anat_outputs(
         candidates = sorted(seg_dir.glob("*_pve_2.nii.gz"))
         if candidates:
             outputs["wm_probseg"] = str(candidates[0])
+
+    # CSF probability segmentation (FAST pve_0 = CSF)
+    if seg_dir.exists():
+        candidates = sorted(seg_dir.glob("*_pve_0.nii.gz"))
+        if candidates:
+            outputs["csf_probseg"] = str(candidates[0])
 
     # ACPC alignment transform
     acpc_dir = anat_dir / "acpc_align"
@@ -1392,6 +1399,8 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.brain_mask = prev_anat["brain_mask"]
             if prev_anat["wm_probseg"]:
                 dce_wf.inputs.inputnode.wm_probseg = prev_anat["wm_probseg"]
+            if prev_anat["csf_probseg"]:
+                dce_wf.inputs.inputnode.csf_probseg = prev_anat["csf_probseg"]
             if prev_anat["t1w_to_mni_xfm"]:
                 dce_wf.inputs.inputnode.t1w_to_mni_xfm = prev_anat["t1w_to_mni_xfm"]
                 _log.info("skip-anat (DCE): loaded t1w_to_mni_xfm from %s", prev_anat["t1w_to_mni_xfm"])

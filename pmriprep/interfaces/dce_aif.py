@@ -1958,6 +1958,10 @@ class AIFDetection(BaseInterface):
             aif_curve, aif_mask = self._compute_weighted_roi_aif(
                 candidates, scores, conc_data, brain_mask
             )
+            # Convert measured AIF from blood to plasma concentration
+            # (tissue conc is in blood units; AIF must be in plasma units
+            #  for Tofts model: plasma = blood / (1 - Hct))
+            aif_curve = aif_curve / (1.0 - HEMATOCRIT)
             quality_score = float(np.mean(scores))
 
             # Aggregate QC metrics

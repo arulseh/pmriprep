@@ -35,6 +35,7 @@ from pmriprep.utils.dce_constants import (
     EPSILON_VP,
     FP_BOUNDS,
     MAX_EIGENVALUE_SLOW,
+    MAX_KEP,
     PS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
@@ -160,7 +161,7 @@ class TwoCompartmentExchangeModel(PKModel):
             ),
             ModelParameter(
                 name="ve",
-                bounds=(VE_BOUNDS.min, 0.8),  # Restricted to 0.8 for 2CXM
+                bounds=(0.01, 0.8),  # Restricted to 0.8 for 2CXM
                 typical_range=(0.1, 0.5),
                 log_transform=False,
                 description="Extravascular extracellular volume fraction",
@@ -668,6 +669,6 @@ class TwoCompartmentExchangeModel(PKModel):
         ktrans = e * fp
 
         # Efflux rate constant
-        kep = ktrans / ve
+        kep = min(ktrans / ve, MAX_KEP)
 
         return {"E": e, "Ktrans": ktrans, "kep": kep}
