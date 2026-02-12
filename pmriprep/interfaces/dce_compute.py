@@ -429,6 +429,10 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
     constraint_qc = traits.Dict(desc="DSC CBV constraint QC report")
 
+    # PK QC plots
+    pk_modeling_qc_plot = File(desc="PK modeling QC plot PNG path")
+    pk_param_maps_qc_plot = File(desc="PK parameter maps QC plot PNG path")
+
 
 class ComputeDCEMaps(BaseInterface):
     """Compute DCE pharmacokinetic parameter maps.
@@ -1238,6 +1242,52 @@ class ComputeDCEMaps(BaseInterface):
             fitted_img = nib.Nifti1Image(fitted_curves, affine)  # type: ignore[attr-defined]
             nib.save(fitted_img, out_fitted)  # type: ignore[attr-defined]
             self._results["out_fitted_curves"] = out_fitted
+
+        # Generate PK QC plots
+        try:
+            from pmriprep.utils.dce_pk_qc_plots import (
+                generate_pk_modeling_qc_plot,
+                generate_pk_parameter_maps_qc_plot,
+            )
+
+            # Reload signal data for QC voxel (if dce_signal_file provided)
+            signal_for_qc: Optional[npt.NDArray[Any]] = None
+            if isdefined(self.inputs.dce_signal_file):
+                signal_for_qc = nib.load(self.inputs.dce_signal_file).get_fdata()  # type: ignore[attr-defined]
+
+            pk_modeling_qc_path = generate_pk_modeling_qc_plot(
+                conc_data=conc_data,
+                signal_data=signal_for_qc,
+                aif=aif,
+                time_points_s=time_points * 60.0,  # min -> sec
+                ktrans=ktrans,
+                ve=ve,
+                vp=vp if self._has_vp(model_name) else None,
+                r2_map=r2_map,
+                brain_mask=mask_bool.astype(np.float64),
+                fitted_curves=fitted_curves,
+                model_name=model_name,
+                baseline_frames=baseline_frames,
+            )
+            if pk_modeling_qc_path:
+                self._results["pk_modeling_qc_plot"] = pk_modeling_qc_path
+
+            param_maps_dict: dict[str, npt.NDArray[Any]] = {
+                "Ktrans": ktrans,
+                "ve": ve,
+            }
+            if self._has_vp(model_name):
+                param_maps_dict["vp"] = vp
+
+            pk_param_maps_qc_path = generate_pk_parameter_maps_qc_plot(
+                param_maps=param_maps_dict,
+                brain_mask=mask_bool.astype(np.float64),
+            )
+            if pk_param_maps_qc_path:
+                self._results["pk_param_maps_qc_plot"] = pk_param_maps_qc_path
+
+        except Exception as e:
+            logger.warning("Failed to generate PK QC plots: %s", e, exc_info=True)
 
         return runtime
 

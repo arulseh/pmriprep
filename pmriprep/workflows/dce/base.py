@@ -327,6 +327,10 @@ def init_dce_preproc_wf(
                 "lesion_mask_dce",
                 # Motion QC
                 "motion_qc_plot",
+                # DCE QC plots
+                "preprocessing_qc_plot",
+                "pk_modeling_qc_plot",
+                "pk_param_maps_qc_plot",
                 # Anatomical masks in DCE space
                 "brain_mask",
                 "nawm_mask",
@@ -516,6 +520,41 @@ def init_dce_preproc_wf(
 
     workflow.connect([
         (dce_preprocess, dce_brain_extract, [("baseline_mean_img", "dce_mean")]),
+    ])
+
+    # ==========================================================================
+    # Node 3d: DCE Preprocessing QC Plot
+    # ==========================================================================
+    preprocessing_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "dce_file", "brain_mask_file", "fd_list", "outlier_frames",
+                "baseline_frames", "bolus_arrival_frame", "tr_ms",
+                "volume_tr_s", "subject_id", "session_id",
+            ],
+            output_names=["plot_file"],
+            function=_generate_preprocessing_qc,
+        ),
+        name="preprocessing_qc",
+    )
+    preprocessing_qc.inputs.subject_id = subject_id
+    preprocessing_qc.inputs.session_id = session_id or ""
+
+    workflow.connect([
+        (dce_preprocess, preprocessing_qc, [
+            ("out_file", "dce_file"),
+            ("fd", "fd_list"),
+            ("outlier_frames", "outlier_frames"),
+            ("baseline_frames", "baseline_frames"),
+            ("bolus_arrival_frame", "bolus_arrival_frame"),
+        ]),
+        (dce_brain_extract, preprocessing_qc, [
+            ("out_mask", "brain_mask_file"),
+        ]),
+        (inputnode, preprocessing_qc, [
+            ("tr", "tr_ms"),
+            ("volume_tr", "volume_tr_s"),
+        ]),
     ])
 
     # ==========================================================================
@@ -1453,6 +1492,14 @@ def init_dce_preproc_wf(
         # Motion QC plot
         (motion_qc_plot, outputnode, [
             ("plot_file", "motion_qc_plot"),
+        ]),
+        # DCE QC plots
+        (preprocessing_qc, outputnode, [
+            ("plot_file", "preprocessing_qc_plot"),
+        ]),
+        (pk_modeling, outputnode, [
+            ("pk_modeling_qc_plot", "pk_modeling_qc_plot"),
+            ("pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
         ]),
     ])
 
@@ -2415,6 +2462,66 @@ def _generate_dce_motion_qc_plot(motion_params_file, out_dir, tr):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plot_motion_qc(motion_params, out_path, tr=tr, title="DCE Motion QC")
     return str(out_path)
+
+
+def _generate_preprocessing_qc(
+    dce_file,
+    brain_mask_file,
+    fd_list,
+    outlier_frames,
+    baseline_frames,
+    bolus_arrival_frame,
+    tr_ms,
+    volume_tr_s,
+    subject_id="",
+    session_id="",
+):
+    """Generate DCE preprocessing QC plot.
+
+    Thin wrapper that loads NIfTI data and delegates to
+    generate_preprocessing_qc_plot().
+
+    Args:
+        dce_file: Path to 4D motion-corrected DCE NIfTI.
+        brain_mask_file: Path to brain mask NIfTI.
+        fd_list: Framewise displacement values.
+        outlier_frames: Outlier frame indices.
+        baseline_frames: Number of baseline frames.
+        bolus_arrival_frame: Bolus arrival frame index.
+        tr_ms: Pulse TR in milliseconds.
+        volume_tr_s: Volume TR in seconds.
+        subject_id: Subject identifier.
+        session_id: Session identifier.
+
+    Returns:
+        Path to the saved preprocessing QC plot PNG.
+    """
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
+
+    dce_data = nib.load(dce_file).get_fdata()
+    brain_mask = nib.load(brain_mask_file).get_fdata() > 0.5
+    n_volumes = dce_data.shape[3]
+
+    out_path = str(Path(dce_file).parent / "dce_preprocessing_qc.png")
+
+    return generate_preprocessing_qc_plot(
+        dce_signal_4d=dce_data,
+        brain_mask=brain_mask,
+        fd_list=fd_list,
+        outlier_frames=outlier_frames if outlier_frames is not None else [],
+        baseline_frames=baseline_frames,
+        bolus_arrival_frame=bolus_arrival_frame,
+        tr_ms=tr_ms if tr_ms is not None else 0.0,
+        volume_tr_s=volume_tr_s if volume_tr_s is not None else 1.0,
+        n_volumes=n_volumes,
+        subject_id=subject_id,
+        session_id=session_id,
+        output_path=out_path,
+    )
 
 
 def _create_dce_registration_filmstrip(

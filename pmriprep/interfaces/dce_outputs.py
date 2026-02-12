@@ -123,6 +123,9 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     motion_qc_plot = traits.Str(desc="Motion QC plot PNG path")
     b1_qc_plot = traits.Str(desc="B1+ mapping QC plot PNG path")
     t1_qc_plot = traits.Str(desc="VFA T1 mapping QC plot PNG path")
+    preprocessing_qc_plot = traits.Str(desc="DCE preprocessing QC plot PNG path")
+    pk_modeling_qc_plot = traits.Str(desc="PK modeling QC plot PNG path")
+    pk_param_maps_qc_plot = traits.Str(desc="PK parameter maps QC plot PNG path")
 
 
 class DCEDerivativeWriterOutputSpec(TraitedSpec):
@@ -634,6 +637,22 @@ class DCEDerivativeWriter(BaseInterface):
         if self._has_input("t1_qc_plot"):
             qc_dir.mkdir(parents=True, exist_ok=True)
             self._copy_file(self.inputs.t1_qc_plot, qc_dir / "vfa_t1_qc.png")
+
+        if self._has_input("preprocessing_qc_plot"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(
+                self.inputs.preprocessing_qc_plot, qc_dir / "dce_preprocessing_qc.png"
+            )
+        if self._has_input("pk_modeling_qc_plot"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(
+                self.inputs.pk_modeling_qc_plot, qc_dir / "pk_modeling_qc.png"
+            )
+        if self._has_input("pk_param_maps_qc_plot"):
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_file(
+                self.inputs.pk_param_maps_qc_plot, qc_dir / "pk_parameter_maps_qc.png"
+            )
 
         # -----------------------------------------------------------
         # 11. Dataset description
