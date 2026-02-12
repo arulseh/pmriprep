@@ -377,7 +377,7 @@ def generate_b1_qc_plot(
     # ---- Panel 6: B1+ histogram ----
     ax = axes[1, 2]
     b1_brain = b1_map[valid_mask]
-    b1_brain = b1_brain[(b1_brain > 0.2) & (b1_brain < 2.0)]
+    b1_brain = b1_brain[(b1_brain > 0.5) & (b1_brain < 2.0)]
 
     if len(b1_brain) > 0:
         ax.hist(

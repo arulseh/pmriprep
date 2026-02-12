@@ -684,7 +684,7 @@ class B1Mapping(SimpleInterface):
 
         # Remove outliers for robust statistics
         b1_clean = b1_in_roi[
-            (b1_in_roi > 0.5) & (b1_in_roi < 1.5)
+            (b1_in_roi > 0.5) & (b1_in_roi < 2.0)
         ]
 
         if len(b1_clean) > 0:
