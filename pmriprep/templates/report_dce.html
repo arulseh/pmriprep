@@ -69,6 +69,15 @@
     </div>
     {% endif %}
 
+    <!-- DCE Preprocessing QC -->
+    {% if images.preprocessing_qc %}
+    <div class="section">
+        <h2>DCE Preprocessing QC</h2>
+        <p>Signal quality, enhancement, tSNR, and motion summary.</p>
+        <img src="data:image/png;base64,{{ images.preprocessing_qc }}" alt="DCE Preprocessing QC">
+    </div>
+    {% endif %}
+
     <!-- T1 Mapping -->
     {% if qc_metrics.t1_mapping or images.t1 %}
     <div class="section">
@@ -204,6 +213,24 @@
             </div>
             {% endif %}
         </div>
+    </div>
+    {% endif %}
+
+    <!-- PK Modeling QC Plot -->
+    {% if images.pk_modeling_qc %}
+    <div class="section">
+        <h2>PK Model Fit QC</h2>
+        <p>Example voxel signal, concentration fit, AIF, and Ktrans map.</p>
+        <img src="data:image/png;base64,{{ images.pk_modeling_qc }}" alt="PK Modeling QC">
+    </div>
+    {% endif %}
+
+    <!-- PK Parameter Maps -->
+    {% if images.pk_param_maps_qc %}
+    <div class="section">
+        <h2>PK Parameter Maps</h2>
+        <p>Multi-slice axial views of pharmacokinetic parameter maps.</p>
+        <img src="data:image/png;base64,{{ images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
     </div>
     {% endif %}
 

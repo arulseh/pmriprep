@@ -852,8 +852,11 @@ def init_dce_preproc_wf(
             ("out_file", "t1_map_file"),
         ]),
         # Raw DCE signal for tSNR computation (matches perf-plus)
+        # Also wire baseline_frames so pk_modeling uses the same value
+        # as signal_to_concentration (avoids re-auto-detection mismatch)
         (dce_preprocess, pk_modeling, [
             ("out_file", "dce_signal_file"),
+            ("baseline_frames", "baseline_frames"),
         ]),
     ])
 

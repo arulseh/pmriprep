@@ -2315,7 +2315,7 @@ class DCEPreprocess(SimpleInterface):
 
         # Use first few frames to estimate baseline statistics
         # Start with a small initial window (3 frames minimum)
-        init_window = min(5, n_volumes // 4)
+        init_window = min(3, n_volumes // 4)
         baseline_mean = np.mean(signal[:init_window])
         baseline_std = np.std(signal[:init_window])
 

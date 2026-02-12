@@ -53,9 +53,8 @@ def prepare_voxel_for_fitting(
         VoxelPrepResult with validation outcome and prepared curve.
     """
     baseline_mean = float(np.mean(tissue_curve[:baseline_frames]))
-    enhancement_max = float(np.max(tissue_curve))
 
-    # Check 1: Signal variation (on concentration)
+    # Check 1: Signal variation (on raw concentration)
     # Skipped when raw signal variation is checked upstream in ComputeDCEMaps,
     # matching perf-plus behavior (dce_pk_modeling.py:1576).
     if not skip_variation_check:
@@ -66,23 +65,31 @@ def prepare_voxel_for_fitting(
                 is_valid=False,
                 failure_reason="failed_no_variation",
                 baseline_mean=baseline_mean,
-                enhancement_max=enhancement_max,
+                enhancement_max=0.0,
             )
 
-    # Check 2: Enhancement above threshold
+    # Subtract baseline concentration and clip to non-negative.
+    # Matches perf-plus (dce_pk_modeling.py:1586-1587): the baseline mean is
+    # removed so the pre-bolus timepoints sit at zero, preventing the bolus
+    # arrival spike from dominating R² when the model cannot capture it.
+    prepared = tissue_curve - baseline_mean
+    prepared = np.maximum(prepared, 0.0)
+
+    enhancement_max = float(np.max(prepared))
+
+    # Check 2: Enhancement above threshold (after baseline subtraction,
+    # matching perf-plus order: dce_pk_modeling.py:1590)
     if enhancement_max < MIN_ENHANCEMENT_MM:
         return VoxelPrepResult(
-            concentration=tissue_curve,
+            concentration=prepared,
             is_valid=False,
             failure_reason="failed_no_enhancement",
             baseline_mean=baseline_mean,
             enhancement_max=enhancement_max,
         )
 
-    # Clip negative concentrations — physically concentration cannot be negative.
-    # Matches perf-plus behavior and prevents NLLS from fitting noise artifacts.
     return VoxelPrepResult(
-        concentration=np.maximum(tissue_curve, 0.0),
+        concentration=prepared,
         is_valid=True,
         failure_reason="ok",
         baseline_mean=baseline_mean,

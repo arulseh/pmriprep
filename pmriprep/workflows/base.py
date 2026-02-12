@@ -1699,6 +1699,9 @@ def init_pmriprep_wf(
                 ("outputnode.registration_qc_filmstrip", "registration_filmstrip"),
                 ("outputnode.b1_qc_plot", "b1_qc_plot"),
                 ("outputnode.t1_qc_plot", "t1_qc_plot"),
+                ("outputnode.preprocessing_qc_plot", "preprocessing_qc_plot"),
+                ("outputnode.pk_modeling_qc_plot", "pk_modeling_qc_plot"),
+                ("outputnode.pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
             ]),
         ])
 

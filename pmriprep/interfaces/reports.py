@@ -33,6 +33,11 @@ class GenerateReportInputSpec(BaseInterfaceInputSpec):
     b1_qc_plot = traits.Str(desc="B1+ mapping QC plot PNG path")
     t1_qc_plot = traits.Str(desc="VFA T1 mapping QC plot PNG path")
 
+    # DCE QC plots
+    preprocessing_qc_plot = traits.Str(desc="DCE preprocessing QC plot PNG path")
+    pk_modeling_qc_plot = traits.Str(desc="PK modeling QC plot PNG path")
+    pk_param_maps_qc_plot = traits.Str(desc="PK parameter maps QC plot PNG path")
+
     # HD-GLIO segmentation filmstrips
     seg_filmstrip_postcon = traits.Str(desc="Tumor segmentation on T1w postcon filmstrip PNG path")
     seg_filmstrip_flair = traits.Str(desc="Tumor segmentation on FLAIR filmstrip PNG path")
@@ -131,6 +136,21 @@ class GenerateReport(BaseInterface):
             if Path(self.inputs.t1_qc_plot).exists():
                 t1_qc_plot = self.inputs.t1_qc_plot
 
+        preprocessing_qc_plot = None
+        if isdefined(self.inputs.preprocessing_qc_plot) and self.inputs.preprocessing_qc_plot:
+            if Path(self.inputs.preprocessing_qc_plot).exists():
+                preprocessing_qc_plot = self.inputs.preprocessing_qc_plot
+
+        pk_modeling_qc_plot = None
+        if isdefined(self.inputs.pk_modeling_qc_plot) and self.inputs.pk_modeling_qc_plot:
+            if Path(self.inputs.pk_modeling_qc_plot).exists():
+                pk_modeling_qc_plot = self.inputs.pk_modeling_qc_plot
+
+        pk_param_maps_qc_plot = None
+        if isdefined(self.inputs.pk_param_maps_qc_plot) and self.inputs.pk_param_maps_qc_plot:
+            if Path(self.inputs.pk_param_maps_qc_plot).exists():
+                pk_param_maps_qc_plot = self.inputs.pk_param_maps_qc_plot
+
         # HD-GLIO filmstrips
         seg_filmstrip_postcon = None
         if isdefined(self.inputs.seg_filmstrip_postcon) and self.inputs.seg_filmstrip_postcon:
@@ -206,11 +226,14 @@ class GenerateReport(BaseInterface):
             seg_filmstrip_postcon=seg_filmstrip_postcon,
             seg_filmstrip_flair=seg_filmstrip_flair,
             nawm_filmstrip_flair=nawm_filmstrip_flair,
+            preprocessing_qc_plot=preprocessing_qc_plot,
+            pk_modeling_qc_plot=pk_modeling_qc_plot,
+            pk_param_maps_qc_plot=pk_param_maps_qc_plot,
         )
 
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:
-        outputs = self.output_spec().get()
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
         outputs["report_file"] = self._report_file
         return outputs

@@ -142,6 +142,9 @@ def _fit_single_voxel(
             "failure_reason": prep.failure_reason,
         }
 
+    # Use baseline-subtracted, clipped concentration for fitting
+    prepared_curve = prep.concentration
+
     try:
         result = None
         constrained = False
@@ -153,7 +156,7 @@ def _fit_single_voxel(
             and hasattr(model, "fit_constrained")
         ):
             result = model.fit_constrained(
-                tissue_curve, aif, time_points, fixed_vp=voxel_vp
+                prepared_curve, aif, time_points, fixed_vp=voxel_vp
             )
             constrained = True
 
@@ -171,12 +174,12 @@ def _fit_single_voxel(
             )
             if bayesian == "map":
                 result = soft_fitter.fit_map(
-                    tissue_curve, aif, time_points,
+                    prepared_curve, aif, time_points,
                     compute_uncertainties=False,
                 )
             else:
                 result = soft_fitter.fit_mcmc(
-                    tissue_curve, aif, time_points, n_samples=mcmc_samples
+                    prepared_curve, aif, time_points, n_samples=mcmc_samples
                 )
             constrained = True
 
@@ -188,26 +191,26 @@ def _fit_single_voxel(
             and hasattr(model, "fit_constrained")
         ):
             result = model.fit_constrained(
-                tissue_curve, aif, time_points, fixed_vp=voxel_vp
+                prepared_curve, aif, time_points, fixed_vp=voxel_vp
             )
             constrained = True
 
         # Unconstrained fallback
         if result is None:
             if bayesian == "none":
-                result = model.fit(tissue_curve, aif, time_points)
+                result = model.fit(prepared_curve, aif, time_points)
             elif bayesian == "map" and fitter is not None:
                 result = fitter.fit_map(
-                    tissue_curve, aif, time_points,
+                    prepared_curve, aif, time_points,
                     compute_uncertainties=False,
                 )
             elif bayesian == "mcmc" and fitter is not None:
                 result = fitter.fit_mcmc(
-                    tissue_curve, aif, time_points,
+                    prepared_curve, aif, time_points,
                     n_samples=mcmc_samples,
                 )
             else:
-                result = model.fit(tissue_curve, aif, time_points)
+                result = model.fit(prepared_curve, aif, time_points)
 
         # Build output dict
         has_vp = model_name in ("extended_tofts", "patlak", "2cxm")
@@ -1268,6 +1271,7 @@ class ComputeDCEMaps(BaseInterface):
                 fitted_curves=fitted_curves,
                 model_name=model_name,
                 baseline_frames=baseline_frames,
+                qc_mask=qc_mask,
             )
             if pk_modeling_qc_path:
                 self._results["pk_modeling_qc_plot"] = pk_modeling_qc_path

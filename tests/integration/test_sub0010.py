@@ -74,11 +74,11 @@ DCE_OUTPUT_PATTERNS: Dict[str, List[str]] = {
     "kep": ["*model-tofts_kep.nii*"],
 }
 
-# Ground truth DCE patterns - use model-Tofts with desc-vpDSCmod
+# Ground truth DCE patterns - use model-Tofts with desc-vpFit
 DCE_GT_PATTERNS: Dict[str, List[str]] = {
-    "Ktrans": ["*model-Tofts_desc-vpDSCmod_Ktrans.nii*"],
-    "ve": ["*model-Tofts_desc-vpDSCmod_ve.nii*"],
-    "kep": ["*model-Tofts_desc-vpDSCmod_kep.nii*"],
+    "Ktrans": ["*model-Tofts_desc-vpFit_Ktrans.nii*"],
+    "ve": ["*model-Tofts_desc-vpFit_ve.nii*"],
+    "kep": ["*model-Tofts_desc-vpFit_kep.nii*"],
 }
 
 

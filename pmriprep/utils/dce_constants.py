@@ -339,10 +339,10 @@ class ParameterBounds(NamedTuple):
 
 
 #: Ktrans bounds in min^-1
-KTRANS_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 3.0)
+KTRANS_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 5.0)
 
 #: ve (extravascular extracellular volume) bounds (fraction)
-VE_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.01, 1.0)
+VE_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 0.9)
 
 #: vp (plasma volume fraction) bounds
 VP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.001, 0.3)

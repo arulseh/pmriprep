@@ -50,6 +50,9 @@ def generate_qc_report(
     seg_filmstrip_postcon: Optional[str] = None,
     seg_filmstrip_flair: Optional[str] = None,
     nawm_filmstrip_flair: Optional[str] = None,
+    preprocessing_qc_plot: Optional[str] = None,
+    pk_modeling_qc_plot: Optional[str] = None,
+    pk_param_maps_qc_plot: Optional[str] = None,
 ) -> str:
     """Generate self-contained HTML QC report with embedded images.
 
@@ -103,6 +106,9 @@ def generate_qc_report(
         ("seg_postcon", seg_filmstrip_postcon),
         ("seg_flair", seg_filmstrip_flair),
         ("nawm_flair", nawm_filmstrip_flair),
+        ("preprocessing_qc", preprocessing_qc_plot),
+        ("pk_modeling_qc", pk_modeling_qc_plot),
+        ("pk_param_maps_qc", pk_param_maps_qc_plot),
     ]:
         if path and Path(path).exists():
             images[name] = image_to_base64(path)
@@ -271,6 +277,30 @@ def _generate_fallback_report(
         <div class="section">
             <h2>NAWM ROI on FLAIR</h2>
             <img src="data:image/png;base64,{images["nawm_flair"]}" alt="NAWM on FLAIR">
+        </div>
+        ''')
+
+    if "preprocessing_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>DCE Preprocessing QC</h2>
+            <img src="data:image/png;base64,{images["preprocessing_qc"]}" alt="DCE Preprocessing QC">
+        </div>
+        ''')
+
+    if "pk_modeling_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>PK Modeling QC</h2>
+            <img src="data:image/png;base64,{images["pk_modeling_qc"]}" alt="PK Modeling QC">
+        </div>
+        ''')
+
+    if "pk_param_maps_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>PK Parameter Maps</h2>
+            <img src="data:image/png;base64,{images["pk_param_maps_qc"]}" alt="PK Parameter Maps QC">
         </div>
         ''')
 

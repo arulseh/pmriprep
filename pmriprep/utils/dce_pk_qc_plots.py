@@ -20,6 +20,79 @@ import numpy.typing as npt
 logger = logging.getLogger("nipype.interface")
 
 
+def _select_qc_voxel(
+    ktrans: npt.NDArray[Any],
+    brain_mask: npt.NDArray[np.bool_],
+    qc_mask: npt.NDArray[Any] | None,
+    binary_erosion: Any,
+) -> tuple[int, int, int]:
+    """Select an example voxel for PK modeling QC display.
+
+    Tiered selection to avoid mask edges and noisy voxels:
+        1. Eroded QC mask — top-25% Ktrans among good-fit voxels,
+           eroded to stay away from edges
+        2. QC mask (uneroded) — if erosion leaves nothing
+        3. Eroded brain mask with nonzero Ktrans
+        4. Brain mask center (ultimate fallback)
+
+    Args:
+        ktrans: 3D Ktrans map.
+        brain_mask: 3D boolean brain mask.
+        qc_mask: 3D QC mask (physiological + R² filtered). May be None.
+        binary_erosion: scipy.ndimage.binary_erosion function.
+
+    Returns:
+        (x, y, z) voxel coordinates.
+    """
+    def _argmax_top25(search_mask: npt.NDArray[np.bool_]) -> tuple[int, int, int] | None:
+        """Find argmax Ktrans within top-25% of search_mask voxels."""
+        vals = ktrans[search_mask]
+        if len(vals) == 0:
+            return None
+        threshold_75 = float(np.percentile(vals[vals > 0], 75)) if np.any(vals > 0) else 0.0
+        if threshold_75 <= 0:
+            return None
+        top_mask = search_mask & (ktrans >= threshold_75)
+        if not np.any(top_mask):
+            top_mask = search_mask & (ktrans > 0)
+        if not np.any(top_mask):
+            return None
+        candidate = ktrans.copy()
+        candidate[~top_mask] = 0.0
+        flat_idx = int(np.argmax(candidate))
+        idx = np.unravel_index(flat_idx, ktrans.shape)
+        return int(idx[0]), int(idx[1]), int(idx[2])
+
+    # Tier 1: Eroded QC mask (best — avoids edges, only good-fit voxels)
+    if qc_mask is not None:
+        qc_bool = qc_mask > 0.5
+        eroded_qc = binary_erosion(qc_bool, iterations=2)
+        if isinstance(eroded_qc, np.ndarray) and np.any(eroded_qc):
+            result = _argmax_top25(eroded_qc)
+            if result is not None:
+                return result
+
+        # Tier 2: Uneroded QC mask
+        if np.any(qc_bool):
+            result = _argmax_top25(qc_bool)
+            if result is not None:
+                return result
+
+    # Tier 3: Eroded brain mask with nonzero Ktrans
+    eroded_brain = binary_erosion(brain_mask, iterations=3)
+    if isinstance(eroded_brain, np.ndarray):
+        eroded_with_ktrans = eroded_brain & (ktrans > 0)
+        if np.any(eroded_with_ktrans):
+            result = _argmax_top25(eroded_with_ktrans)
+            if result is not None:
+                return result
+
+    # Tier 4: Fallback — center of brain mask
+    coords = np.where(brain_mask)
+    mid = len(coords[0]) // 2
+    return int(coords[0][mid]), int(coords[1][mid]), int(coords[2][mid])
+
+
 def generate_preprocessing_qc_plot(
     dce_signal_4d: npt.NDArray[Any],
     brain_mask: npt.NDArray[Any],
@@ -265,6 +338,7 @@ def generate_pk_modeling_qc_plot(
     fitted_curves: npt.NDArray[Any] | None,
     model_name: str,
     baseline_frames: int,
+    qc_mask: npt.NDArray[Any] | None = None,
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
@@ -277,8 +351,11 @@ def generate_pk_modeling_qc_plot(
         (1,0) Arterial Input Function (AIF)
         (1,1) Ktrans map with example voxel marker
 
-    An example voxel is selected as the argmax Ktrans voxel among the
-    top-25% Ktrans values within the brain mask.
+    Example voxel selection (tiered):
+        1. Enhancing voxels within eroded QC mask (top-25% Ktrans, good R²)
+        2. QC mask voxels (good fit, physiological values)
+        3. Eroded brain mask with nonzero Ktrans
+        4. Brain mask center (fallback)
 
     Args:
         conc_data: 4D concentration array (x, y, z, t).
@@ -293,6 +370,7 @@ def generate_pk_modeling_qc_plot(
         fitted_curves: 4D fitted curves (optional).
         model_name: Name of the PK model used.
         baseline_frames: Number of baseline frames.
+        qc_mask: 3D QC mask (physiological bounds + R² filter). Optional.
         subject_id: Subject identifier for title.
         session_id: Session identifier for title.
         output_path: Path to save PNG. If None, uses CWD.
@@ -301,33 +379,15 @@ def generate_pk_modeling_qc_plot(
         Path to the saved QC plot PNG.
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+    from scipy.ndimage import binary_erosion
 
     from pmriprep.utils.qc_standards import COLORBLIND_PALETTE
     from pmriprep.utils.qc_utils import get_radiological_slice
 
     mask_bool = brain_mask > 0.5
 
-    # --- Select example voxel ---
-    # Find nonzero Ktrans voxels, select argmax from top-25%
-    ktrans_masked = ktrans.copy()
-    ktrans_masked[~mask_bool] = 0.0
-    nonzero_mask = ktrans_masked > 0
-    if np.any(nonzero_mask):
-        threshold_75 = float(np.percentile(ktrans_masked[nonzero_mask], 75))
-        top_mask = nonzero_mask & (ktrans_masked >= threshold_75)
-        if not np.any(top_mask):
-            top_mask = nonzero_mask
-        # argmax within the top mask
-        top_vals = ktrans_masked.copy()
-        top_vals[~top_mask] = 0.0
-        flat_idx = int(np.argmax(top_vals))
-        idx = np.unravel_index(flat_idx, ktrans.shape)
-        vx, vy, vz = int(idx[0]), int(idx[1]), int(idx[2])
-    else:
-        # Fallback: center of brain mask
-        coords = np.where(mask_bool)
-        mid = len(coords[0]) // 2
-        vx, vy, vz = int(coords[0][mid]), int(coords[1][mid]), int(coords[2][mid])
+    # --- Select example voxel (tiered) ---
+    vx, vy, vz = _select_qc_voxel(ktrans, mask_bool, qc_mask, binary_erosion)
 
     # Extract voxel data
     voxel_conc = conc_data[vx, vy, vz, :]
