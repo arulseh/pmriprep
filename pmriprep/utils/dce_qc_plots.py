@@ -245,7 +245,7 @@ def generate_vfa_t1_qc_plot(
         fig.text(0.5, 0.01, correction_text, ha="center", fontsize=9,
                  style="italic", color="gray")
 
-    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+    plt.tight_layout(rect=(0, 0.03, 1, 0.96))
     fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
@@ -397,11 +397,12 @@ def generate_b1_qc_plot(
         # Reference lines
         ax.axvline(1.0, color="gray", linestyle="--", linewidth=1.0,
                    label="Nominal (1.0)")
-        ax.axvline(mean_b1, color=COLORBLIND_PALETTE.error, linestyle="-",
-                   linewidth=1.5, label=f"Mean: {mean_b1:.3f}")
-        median_b1 = float(np.median(b1_brain))
-        ax.axvline(median_b1, color=COLORBLIND_PALETTE.secondary, linestyle=":",
-                   linewidth=1.5, label=f"Median: {median_b1:.3f}")
+        hist_mean = float(np.mean(b1_brain))
+        hist_median = float(np.median(b1_brain))
+        ax.axvline(hist_mean, color=COLORBLIND_PALETTE.error, linestyle="-",
+                   linewidth=1.5, label=f"Mean: {hist_mean:.3f}")
+        ax.axvline(hist_median, color=COLORBLIND_PALETTE.secondary, linestyle=":",
+                   linewidth=1.5, label=f"Median: {hist_median:.3f}")
         ax.legend(fontsize=7, loc="upper right")
 
     ax.set_xlabel("B1+ Correction Factor")
@@ -411,7 +412,7 @@ def generate_b1_qc_plot(
         fontsize=10,
     )
 
-    plt.tight_layout(rect=[0, 0.02, 1, 0.96])
+    plt.tight_layout(rect=(0, 0.02, 1, 0.96))
     fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
