@@ -356,28 +356,35 @@ def find_ground_truth_file(
         # DCE outputs - prefer model-specific patterns with vpDSCmod or vpFit descriptor
         # IMPORTANT: Use specific patterns to avoid matching uncertainty maps (Std, CV, CI95)
         # Different models use different naming conventions:
-        # - ExtTofts/Tofts: model-ExtTofts_desc-vpDSCmod_* or model-Tofts_desc-vpDSCmod_*
+        # - ExtTofts/Tofts: desc-vpFit (preferred) or desc-vpDSCmod (some subjects)
         # - 2CXM: model-2CXM_desc-vpFit_*
         # - Patlak: model-Patlak_desc-vpFit_*
         "ktrans": [
-            f"*model-ExtTofts_desc-vpDSCmod_Ktrans.nii.gz",  # Extended Tofts
-            f"*model-Tofts_desc-vpDSCmod_Ktrans.nii.gz",  # Standard Tofts
+            f"*model-ExtTofts_desc-vpFit_Ktrans.nii.gz",  # Extended Tofts (vpFit)
+            f"*model-Tofts_desc-vpFit_Ktrans.nii.gz",  # Standard Tofts (vpFit)
+            f"*model-ExtTofts_desc-vpDSCmod_Ktrans.nii.gz",  # Extended Tofts (vpDSCmod)
+            f"*model-Tofts_desc-vpDSCmod_Ktrans.nii.gz",  # Standard Tofts (vpDSCmod)
             f"*model-2CXM_desc-vpFit_Ktrans.nii.gz",  # 2CXM model
             f"*model-Patlak_desc-vpFit_Ktrans.nii.gz",  # Patlak model
         ],
         "ve": [
-            f"*model-ExtTofts_desc-vpDSCmod_ve.nii.gz",  # Extended Tofts
-            f"*model-Tofts_desc-vpDSCmod_ve.nii.gz",  # Standard Tofts
+            f"*model-ExtTofts_desc-vpFit_ve.nii.gz",  # Extended Tofts (vpFit)
+            f"*model-Tofts_desc-vpFit_ve.nii.gz",  # Standard Tofts (vpFit)
+            f"*model-ExtTofts_desc-vpDSCmod_ve.nii.gz",  # Extended Tofts (vpDSCmod)
+            f"*model-Tofts_desc-vpDSCmod_ve.nii.gz",  # Standard Tofts (vpDSCmod)
             f"*model-2CXM_desc-vpFit_ve.nii.gz",  # 2CXM model
         ],
         "vp": [
-            f"*model-ExtTofts_desc-vpDSCmod_vp.nii.gz",  # Extended Tofts
+            f"*model-ExtTofts_desc-vpFit_vp.nii.gz",  # Extended Tofts (vpFit)
+            f"*model-ExtTofts_desc-vpDSCmod_vp.nii.gz",  # Extended Tofts (vpDSCmod)
             f"*model-2CXM_desc-vpFit_vp.nii.gz",  # 2CXM model
             f"*model-Patlak_desc-vpFit_vp.nii.gz",  # Patlak model
         ],
         "kep": [
-            f"*model-ExtTofts_desc-vpDSCmod_kep.nii.gz",  # Extended Tofts
-            f"*model-Tofts_desc-vpDSCmod_kep.nii.gz",  # Standard Tofts
+            f"*model-ExtTofts_desc-vpFit_kep.nii.gz",  # Extended Tofts (vpFit)
+            f"*model-Tofts_desc-vpFit_kep.nii.gz",  # Standard Tofts (vpFit)
+            f"*model-ExtTofts_desc-vpDSCmod_kep.nii.gz",  # Extended Tofts (vpDSCmod)
+            f"*model-Tofts_desc-vpDSCmod_kep.nii.gz",  # Standard Tofts (vpDSCmod)
         ],
         # 2CXM-specific parameters
         "fp": [

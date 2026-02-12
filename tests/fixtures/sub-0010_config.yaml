@@ -16,6 +16,7 @@ dsc:
 dce:
   model: tofts
   bayesian: none
+  dose: half
   aif_method: auto
   scale_aif: true
   no_b1: false

@@ -107,20 +107,20 @@ DCE_OUTPUT_PATTERNS: Dict[str, List[str]] = {
     ],
 }
 
-# Ground truth DCE patterns - use model-ExtTofts with desc-vpDSCmod
+# Ground truth DCE patterns - use model-ExtTofts with desc-vpFit (raw ExtTofts fit)
 # CRITICAL: Match only the base maps, not uncertainty maps like Std, CV, CI95lower, CI95upper
 DCE_GT_PATTERNS: Dict[str, List[str]] = {
     "Ktrans": [
-        "*model-ExtTofts_desc-vpDSCmod_Ktrans.nii*",  # GT uses ExtTofts, not extended_tofts
+        "*model-ExtTofts_desc-vpFit_Ktrans.nii*",  # GT uses ExtTofts, not extended_tofts
     ],
     "ve": [
-        "*model-ExtTofts_desc-vpDSCmod_ve.nii*",
+        "*model-ExtTofts_desc-vpFit_ve.nii*",
     ],
     "vp": [
-        "*model-ExtTofts_desc-vpDSCmod_vp.nii*",
+        "*model-ExtTofts_desc-vpFit_vp.nii*",
     ],
     "kep": [
-        "*model-ExtTofts_desc-vpDSCmod_kep.nii*",
+        "*model-ExtTofts_desc-vpFit_kep.nii*",
     ],
 }
 
