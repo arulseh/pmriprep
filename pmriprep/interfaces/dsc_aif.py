@@ -1357,6 +1357,7 @@ class AIFDetection(BaseInterface):
         tr: float,
         n_candidates_requested: int,
         n_available: int,
+        baseline_frames: int = 12,
     ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
         """Finalize AIF: detect bolus arrival and compute comprehensive QC.
 
@@ -1378,6 +1379,8 @@ class AIFDetection(BaseInterface):
             How many candidates were requested.
         n_available : int
             How many candidates passed scoring.
+        baseline_frames : int
+            Configured number of pre-bolus baseline frames.
 
         Returns
         -------
@@ -1386,8 +1389,13 @@ class AIFDetection(BaseInterface):
         from pmriprep.utils.dsc_signal import detect_bolus_arrival
 
         # Bolus arrival on the final AIF curve
+        baseline_window = min(
+            baseline_frames, max(2, len(aif_curve) // 3)
+        )
         arrival_idx, n_baseline_detected = detect_bolus_arrival(
-            aif_curve, baseline_frames=3
+            aif_curve,
+            baseline_frames=baseline_window,
+            n_consecutive=3,
         )
         arrival_time_s = arrival_idx * tr
         total_frames = len(aif_curve)
@@ -1698,8 +1706,13 @@ class AIFDetection(BaseInterface):
                 aif_mask_arr[coord[0], coord[1], coord[2]] = 1
 
             # Stage 2: re-detect baseline on final smoothed AIF curve
+            stage2_window = min(
+                baseline_frames, max(2, len(aif_curve) // 3)
+            )
             _, aif_detected_baseline = detect_bolus_arrival(
-                aif_curve, baseline_frames=3
+                aif_curve,
+                baseline_frames=stage2_window,
+                n_consecutive=3,
             )
             if aif_detected_baseline > baseline_frames:
                 baseline_frames = aif_detected_baseline
@@ -1712,6 +1725,7 @@ class AIFDetection(BaseInterface):
             aif_curve, finalized_qc = self._finalize_aif_metrics(
                 aif_curve, top_candidates, conc_data, brain_mask,
                 affine, tr, n_candidates, n_available,
+                baseline_frames=baseline_frames,
             )
             qc_metrics.update(finalized_qc)
             qc_metrics.update(filter_meta)

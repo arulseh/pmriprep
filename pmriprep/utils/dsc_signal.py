@@ -191,6 +191,7 @@ def find_bolus_arrival(
 def detect_bolus_arrival(
     concentration_curve: npt.NDArray[np.floating],
     baseline_frames: int = 3,
+    n_consecutive: int = 1,
 ) -> Tuple[int, int]:
     """Detect bolus arrival in a concentration curve.
 
@@ -209,6 +210,10 @@ def detect_bolus_arrival(
             indicate contrast arrival in concentration space).
         baseline_frames: Number of initial frames for baseline estimation.
             Default is 3 to avoid early bolus contamination.
+        n_consecutive: Number of consecutive frames that must all exceed
+            the 3.1-sigma threshold to count as bolus arrival. Using
+            n_consecutive >= 2 rejects isolated noise spikes common in
+            preloaded acquisitions with noisy elevated baselines.
 
     Returns:
         Tuple of (arrival_idx, n_baseline_frames):
@@ -226,15 +231,22 @@ def detect_bolus_arrival(
     # so detection returns the same frame whether input is in s⁻¹ or mM.
     z_scores = (concentration_curve - baseline_mean) / max(baseline_std, EPSILON_CONCENTRATION)
 
-    # Single-frame detection: first frame above 3.1-sigma.
-    # With only N=3 baseline samples, 3.0 vs 3.1 is statistically
-    # indistinguishable, but 3.1 avoids marginal threshold crossings
-    # caused by minor numerical differences (e.g. ΔR2* vs mM scaling).
-    above = np.where(z_scores > 3.1)[0]
-    if len(above) > 0:
-        arrival_idx = int(above[0])
+    n_consecutive = max(1, n_consecutive)
+    above_threshold = z_scores > 3.1
+
+    arrival_idx = n_baseline  # fallback
+    if n_consecutive == 1:
+        # Fast path: first single frame above 3.1-sigma
+        above = np.where(above_threshold)[0]
+        if len(above) > 0:
+            arrival_idx = int(above[0])
     else:
-        arrival_idx = n_baseline
+        # Require n_consecutive frames all above threshold to reject
+        # isolated noise spikes in preloaded acquisitions
+        for i in range(len(above_threshold) - n_consecutive + 1):
+            if all(above_threshold[i : i + n_consecutive]):
+                arrival_idx = i
+                break
 
     return arrival_idx, max(2, arrival_idx - 1)
 

@@ -626,14 +626,17 @@ class ComputeDSCMaps(BaseInterface):
             # smooths once during AIF detection and uses the auto-detected
             # baseline for all subsequent processing (lines 5172-5223).
             aif_clean = np.maximum(aif, 0.0)
-            # Match perf-plus: use baseline_frames=3 for z-score reference
-            # (perf-plus perfusion_utils.detect_bolus_arrival default=3).
-            # Using a small window avoids including early bolus rise in the
-            # baseline std, producing a tighter 3-sigma threshold that
-            # detects arrival earlier — matching perf-plus behaviour.
+            # Use configured baseline window (not hardcoded 3) for robust
+            # z-score estimation, and require 3 consecutive frames above
+            # threshold to reject isolated noise spikes in preloaded
+            # acquisitions with noisy elevated baselines.
+            baseline_window = min(
+                configured_baseline, max(2, len(aif_clean) // 3)
+            )
             arrival_idx, n_baseline = detect_bolus_arrival(
                 aif_clean,
-                baseline_frames=3,
+                baseline_frames=baseline_window,
+                n_consecutive=3,
             )
 
             # Sanity: at least 2, at most half the acquisition
