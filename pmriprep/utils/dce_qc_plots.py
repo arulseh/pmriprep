@@ -92,7 +92,11 @@ def generate_vfa_t1_qc_plot(
 
     # Create figure
     fig, axes = plt.subplots(3, 3, figsize=(15, 13))
-    fig.suptitle("VFA T1 Mapping QC", fontsize=14, fontweight="bold", y=0.98)
+    fa_str = ", ".join(f"{fa:.0f}\u00b0" for fa in flip_angles)
+    fig.suptitle(
+        f"VFA T1 Mapping QC ({n_fa} flip angles: {fa_str})",
+        fontsize=14, fontweight="bold", y=0.98,
+    )
 
     # ---- Row 1: VFA images and signal ratio ----
     # Show first two VFA images and their ratio

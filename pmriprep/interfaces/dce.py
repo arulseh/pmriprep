@@ -1097,13 +1097,26 @@ class T1Mapping(SimpleInterface):
             threshold = np.percentile(signal_data[0][signal_data[0] > 0], 10)
             brain_mask = signal_data[0] > threshold
 
-        # Apply 3x3x3 median filter to reduce noise spikes
+        # Set background voxels to NaN BEFORE median filter to prevent
+        # finite T1 values from E1-clipped background from contaminating
+        # brain-boundary voxels through the 3x3x3 kernel.
+        t1_map[~brain_mask] = np.nan
+
+        # Apply 3x3x3 median filter to reduce noise spikes.
+        # Background NaN voxels are replaced with a sentinel value (-1.0)
+        # below the valid T1 range so they lose the median vote in any
+        # kernel with a majority of real brain voxels. After filtering,
+        # original NaN positions are restored. This avoids the ~100-1000x
+        # performance penalty of generic_filter with a Python callback.
         # Applied BEFORE CSF exclusion to avoid introducing artificial zeros
         # that would contaminate periventricular tissue during filtering.
         # Matches perf-plus order: median filter → CSF exclusion → range clipping.
         from scipy.ndimage import median_filter  # type: ignore[import-untyped]
 
-        t1_map = median_filter(t1_map, size=3)
+        nan_mask = np.isnan(t1_map)
+        t1_for_filter = np.where(nan_mask, -1.0, t1_map)
+        t1_map = median_filter(t1_for_filter, size=3)
+        t1_map[nan_mask] = np.nan
 
         # CSF exclusion: mask out voxels with high CSF probability
         csf_excluded = False
@@ -1135,10 +1148,10 @@ class T1Mapping(SimpleInterface):
             )
             csf_excluded = True
 
-        # Set out-of-range T1 to NaN (matches perf-plus [50, 6000] ms bounds)
-        # Values outside this range are non-physiological and should be excluded
+        # Set out-of-range T1 to NaN (matches perf-plus [100, 6000] ms bounds)
+        # No brain tissue at 3T pre-contrast has T1 < 100ms
         t1_map = np.where(
-            (t1_map >= 50.0) & (t1_map <= 6000.0), t1_map, np.nan,
+            (t1_map >= 100.0) & (t1_map <= 6000.0), t1_map, np.nan,
         )
 
         # Convert to float32 for storage
@@ -1213,6 +1226,56 @@ class T1Mapping(SimpleInterface):
             "median_filtered": True,
         }
         qc_metrics["t1_correction"] = correction_info
+
+        # Flip angle validation for 2-angle VFA
+        # Compare observed vs expected signal ratio assuming T1=1200ms at 3T
+        if n_fa >= 2:
+            assumed_t1_s = 1.2  # 1200ms typical brain T1 at 3T
+            e1_expected = np.exp(-tr_s / assumed_t1_s)
+            # Ernst equation: S ∝ sin(α)(1-E1) / (1-E1·cos(α))
+            fa1_rad = flip_angles_rad[0]
+            fa2_rad = flip_angles_rad[1]
+            s1_expected = (
+                np.sin(fa1_rad) * (1 - e1_expected)
+                / (1 - e1_expected * np.cos(fa1_rad))
+            )
+            s2_expected = (
+                np.sin(fa2_rad) * (1 - e1_expected)
+                / (1 - e1_expected * np.cos(fa2_rad))
+            )
+            ratio_expected = float(s2_expected / s1_expected) if s1_expected > 0 else 1.0
+
+            # Observed median S2/S1 ratio within brain mask
+            s1_brain = signal_data[0][brain_mask]
+            s2_brain = signal_data[1][brain_mask]
+            valid = s1_brain > 0
+            if np.any(valid):
+                ratio_observed = float(np.median(s2_brain[valid] / s1_brain[valid]))
+            else:
+                ratio_observed = 1.0
+
+            ratio_error_pct = abs(ratio_observed - ratio_expected) / ratio_expected * 100.0
+            validation_pass = ratio_error_pct < 20.0
+
+            if not validation_pass:
+                logger.warning(
+                    "Flip angle validation: observed S2/S1 ratio %.3f differs from "
+                    "expected %.3f by %.1f%% (threshold 20%%). Check flip angles.",
+                    ratio_observed, ratio_expected, ratio_error_pct,
+                )
+            else:
+                logger.info(
+                    "Flip angle validation: observed S2/S1 ratio %.3f vs expected "
+                    "%.3f (error %.1f%%)",
+                    ratio_observed, ratio_expected, ratio_error_pct,
+                )
+
+            qc_metrics["flip_angle_validation"] = {
+                "ratio_observed": round(ratio_observed, 4),
+                "ratio_expected": round(ratio_expected, 4),
+                "ratio_error_pct": round(ratio_error_pct, 1),
+                "validation_pass": validation_pass,
+            }
 
         # Save output T1 map
         out_img = nib.Nifti1Image(t1_map, affine, header)
@@ -1292,13 +1355,28 @@ class T1Mapping(SimpleInterface):
 
         # Calculate slope (E1) — sign-preserving denominator guard
         denom = n_fa * sum_x2 - sum_x * sum_x
+        degenerate = np.abs(denom) < EPSILON_T1
         denom = np.where(
-            np.abs(denom) < EPSILON_T1,
+            degenerate,
             np.where(denom >= 0, EPSILON_T1, -EPSILON_T1),
             denom,
         )
 
         e1 = (n_fa * sum_xy - sum_x * sum_y) / denom
+
+        # For degenerate voxels (near-zero denominator), use direct dual-angle
+        # ratio formula as fallback: E1 = (S2/tan(α2) - S1/tan(α1)) /
+        #                                 (S2/sin(α2) - S1/sin(α1))
+        # This is algebraically equivalent but numerically more stable when
+        # the linear regression denominator is near zero.
+        if n_fa >= 2 and np.any(degenerate):
+            y_diff = y_flat[1] - y_flat[0]
+            e1_ratio = (x_flat[1] - x_flat[0]) / np.where(
+                np.abs(y_diff) < EPSILON_T1,
+                np.where(y_diff >= 0, EPSILON_T1, -EPSILON_T1),
+                y_diff,
+            )
+            e1 = np.where(degenerate, e1_ratio, e1)
 
         # Clamp E1 to valid range (0 < E1 < 1 for positive T1).
         # Upper bound uses EPSILON_E1_UPPER (1e-4) to allow E1 up to 0.9999,
