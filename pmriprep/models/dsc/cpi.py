@@ -41,6 +41,10 @@ CPI_N_MIN: int = 4
 CPI_N_MAX: int = 12
 CPI_DEFAULT_N: int = 6
 
+# Tolerance for monotonicity constraint (fraction of R0)
+# 5% matches perf-plus; allows small non-monotonicity from noise/recirculation
+CPI_MONOTONICITY_TOLERANCE: float = 0.05
+
 
 class CPIModel(DSCModel):
     """Control Point Interpolation model for non-parametric residue estimation.
@@ -133,18 +137,17 @@ class CPIModel(DSCModel):
 
         Returns:
             List of DSCModelParameter objects for each control point.
-            The first control point (r0) has the full CBF range.
-            Subsequent points have decreasing upper bounds to encourage
-            monotonicity.
+            r0 is absolute CBF (mL/100g/min).
+            r1..r_{N-1} are fractions of r0 (0-1), converted to absolute
+            values inside enforce_constraints().
         """
         params = []
 
         for i in range(self._n_control_points):
-            # Time at this control point
             t = self._control_point_times[i]
 
-            # First control point is CBF (full range)
             if i == 0:
+                # First control point is CBF (absolute, full range)
                 params.append(
                     DSCModelParameter(
                         name="r0",
@@ -156,21 +159,33 @@ class CPIModel(DSCModel):
                     )
                 )
             else:
-                # Subsequent control points
-                # Upper bound progressively decreases to encourage monotonicity
-                # but actual bounds allow full range for flexibility
+                # Subsequent control points as fractions of r0
                 params.append(
                     DSCModelParameter(
                         name=f"r{i}",
-                        bounds=(0.0, CBF_BOUNDS.max),
-                        typical_range=(0.0, 100.0 - i * (80.0 / self._n_control_points)),
+                        bounds=(0.0, 1.0),
+                        typical_range=(0.0, 1.0),
                         log_transform=False,
-                        description=f"Control point at t={t:.1f}s",
-                        units="mL/100g/min",
+                        description=f"Control point fraction at t={t:.1f}s",
+                        units="fraction",
                     )
                 )
 
         return params
+
+    def get_initial_guess(self) -> list[float]:
+        """Get initial parameter guess with exponential decay fractions.
+
+        Returns:
+            List: [50.0, exp(-1/τ), exp(-2/τ), ...] where τ = N/2.
+            Exponential decay matches cerebral physiology better than
+            the linear midpoint default from get_parameter_definitions().
+        """
+        x0: list[float] = [50.0]  # R0 default (perf-plus)
+        tau = self._n_control_points / 2.0
+        for i in range(1, self._n_control_points):
+            x0.append(float(np.exp(-i / tau)))
+        return x0
 
     def get_parameter_names(self) -> list[str]:
         """Get list of control point parameter names.
@@ -183,29 +198,39 @@ class CPIModel(DSCModel):
     def enforce_constraints(
         self, params: Sequence[float]
     ) -> npt.NDArray[np.floating]:
-        """Enforce monotonicity and non-negativity constraints on control points.
+        """Convert fraction parameterization to absolute values with monotonicity.
 
-        Constraints:
-            - Non-negativity: r[i] >= 0 for all i
-            - Monotonicity: r[i] <= r[i-1] for i > 0
+        Input params: [r0_absolute, frac1, frac2, ..., frac_{N-1}]
+        Output: [r0, r0*frac1, r0*frac2, ...] with monotonicity enforced.
+
+        Each fraction is clipped to [0, 1], multiplied by r0 to get absolute
+        value, then capped at the previous control point to enforce
+        monotonic non-increase.
 
         Args:
-            params: Control point values (may violate constraints).
+            params: [r0, frac1, frac2, ...] where r0 is absolute CBF
+                and frac_i are fractions of r0.
 
         Returns:
-            Constrained control point values.
+            Absolute control point values (mL/100g/min), monotonically
+            non-increasing.
         """
-        constrained = np.array(params, dtype=np.float64)
+        control_values = np.zeros(len(params), dtype=np.float64)
 
-        # Non-negativity
-        constrained = np.maximum(constrained, 0.0)
+        # r0 is absolute CBF
+        r0 = max(float(params[0]), 0.0)
+        control_values[0] = r0
 
-        # Monotonicity (cumulative minimum from start)
-        for i in range(1, len(constrained)):
-            if constrained[i] > constrained[i - 1]:
-                constrained[i] = constrained[i - 1]
+        # Convert fractions to absolute, enforce monotonicity
+        prev_r = r0
+        for i in range(1, len(params)):
+            frac = float(np.clip(params[i], 0.0, 1.0))
+            r_i = frac * r0
+            # Enforce monotonicity: r_i <= prev_r
+            control_values[i] = min(r_i, prev_r)
+            prev_r = control_values[i]
 
-        return constrained
+        return control_values
 
     def residue_function(
         self,
@@ -268,9 +293,9 @@ class CPIModel(DSCModel):
                     # Decay rate from last two points
                     if r_prev > EPSILON_CONCENTRATION and r_last > EPSILON_CONCENTRATION:
                         decay_rate = np.log(r_prev / max(r_last, EPSILON_CONCENTRATION)) / dt
-                        decay_rate = max(0.0, decay_rate)  # Ensure non-negative decay
+                        decay_rate = float(np.clip(decay_rate, 0.01, 1.0))
                     else:
-                        decay_rate = 0.5  # Default decay rate
+                        decay_rate = 0.1  # Default: 10s time constant
 
                     # Exponential extrapolation
                     t_excess = time_points[beyond_mask] - t_max
@@ -538,9 +563,11 @@ def _fit_cpi_simple(
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
 ) -> Optional[DSCFitResult]:
-    """Simple least-squares fit of CPI model for BIC calculation.
+    """Least-squares fit of CPI model using L-BFGS-B.
 
-    Uses scipy.optimize.minimize with L-BFGS-B for bounded optimization.
+    L-BFGS-B handles box bounds natively. Monotonicity is enforced via
+    enforce_constraints() inside the model's residue_function(), which
+    projects fractions to monotonically non-increasing absolute values.
 
     Args:
         model: CPIModel instance.
@@ -559,13 +586,8 @@ def _fit_cpi_simple(
 
     def objective(params: npt.NDArray[np.floating]) -> float:
         """Residual sum of squares objective."""
-        # Enforce constraints
-        constrained = model.enforce_constraints(params)
-
-        # Compute model prediction
-        predicted = model.tissue_curve(constrained, aif, time_points)
-
-        # Sum of squared residuals
+        # tissue_curve calls residue_function which calls enforce_constraints
+        predicted = model.tissue_curve(params, aif, time_points)
         residuals = concentration - predicted
         return float(np.sum(residuals**2))
 
@@ -579,8 +601,15 @@ def _fit_cpi_simple(
         )
 
         if result.success or result.fun < np.inf:
-            fitted_params = model.enforce_constraints(result.x)
-            fitted_tissue = model.tissue_curve(fitted_params, aif, time_points)
+            # Store optimizer-space params (r0 + fractions) in result
+            opt_params = np.array(result.x, dtype=np.float64)
+            # Clip fractions to [0,1]
+            opt_params[1:] = np.clip(opt_params[1:], 0.0, 1.0)
+            opt_params[0] = max(opt_params[0], 0.0)
+
+            # Get absolute values for residue/tissue curve evaluation
+            fitted_abs = model.enforce_constraints(opt_params)
+            fitted_tissue = model.tissue_curve(opt_params, aif, time_points)
 
             # Calculate R²
             ss_res = result.fun
@@ -588,7 +617,7 @@ def _fit_cpi_simple(
             r_squared = 1.0 - (ss_res / max(ss_tot, EPSILON_CONCENTRATION))
 
             return DSCFitResult(
-                parameters=model.params_to_dict(fitted_params),
+                parameters=model.params_to_dict(opt_params),
                 r_squared=r_squared,
                 residual_sum_squares=float(result.fun),
                 model_name=model.name,
@@ -596,7 +625,7 @@ def _fit_cpi_simple(
                 n_observations=len(concentration),
                 converged=result.success,
                 fitting_method="nlls",
-                fitted_residue=model.residue_function(fitted_params, time_points),
+                fitted_residue=model.residue_function(opt_params, time_points),
                 fitted_tissue_curve=fitted_tissue,
             )
 

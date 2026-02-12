@@ -80,7 +80,11 @@ def _dsc_init_worker(
         n_cp = cpi_control_points
         if n_cp == 0:
             n_cp = select_n_control_points(bolus_duration_frames, dt)
-        _dsc_worker_ctx["model_factory"] = lambda _ncp=n_cp: CPIModel(n_control_points=_ncp)
+        # Match perf-plus: control points span 90% of acquisition time
+        t_span = float(time_points[-1]) * 0.9 if len(time_points) > 1 else 30.0
+        _dsc_worker_ctx["model_factory"] = lambda _ncp=n_cp, _tr=(0.0, t_span): CPIModel(
+            n_control_points=_ncp, time_range=_tr
+        )
 
 
 def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
@@ -130,6 +134,10 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
 
         out: dict[str, Any] = {"coords": (x, y, z), "failed": False}
         cbf_val = result.parameters.get("cbf", result.parameters.get("CBF", 0.0))
+        # CPI model uses "r0", "r1", ... instead of "cbf" — extract from residue
+        if "cbf" not in result.parameters and "CBF" not in result.parameters:
+            if result.fitted_residue is not None and len(result.fitted_residue) > 0:
+                cbf_val = float(np.max(result.fitted_residue))
         out["cbf"] = cbf_val
 
         if method == "vascular":
@@ -1044,7 +1052,8 @@ class ComputeDSCMaps(BaseInterface):
                 and self.inputs.aif_mask_file
             ):
                 aif_mask_img = nib.load(self.inputs.aif_mask_file)
-                aif_mask_data = aif_mask_img.get_fdata() > 0.5
+                aif_mask_data = np.asarray(aif_mask_img.dataobj) > 0.5  # type: ignore[attr-defined]
+                assert recomputed_raw_conc is not None  # guaranteed by outer if
                 if aif_mask_data.shape[:3] == recomputed_raw_conc.shape[:3]:
                     roi_voxels = recomputed_raw_conc[aif_mask_data]
                     if roi_voxels.ndim == 2 and roi_voxels.shape[0] > 0:
@@ -1060,6 +1069,7 @@ class ComputeDSCMaps(BaseInterface):
             # Re-apply K2 correction to updated concentration
             from pmriprep.utils.dsc_preload import apply_k2_correction
 
+            assert recomputed_raw_conc is not None  # guaranteed by outer if
             k2_result = apply_k2_correction(
                 concentration=recomputed_raw_conc,
                 aif=aif,
@@ -1093,6 +1103,8 @@ class ComputeDSCMaps(BaseInterface):
         # Run deconvolution based on method
         delay: Optional[npt.NDArray[Any]] = None
         residues: Optional[npt.NDArray[Any]] = None
+        cbf_std_map: Optional[npt.NDArray[Any]] = None
+        cbv_std_map: Optional[npt.NDArray[Any]] = None
         qc_metrics: dict[str, Any] = {}
 
         if method in ("sSVD", "cSVD", "oSVD", "tikhonov"):
