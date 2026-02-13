@@ -448,6 +448,11 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
             "relaxivity for non-standard agents (e.g. Vueway r1=11.6)."
         ),
     )
+    agent_r1_known = traits.Bool(
+        False, usedefault=True,
+        desc="True when r1_relaxivity is from a confirmed agent lookup "
+             "(not generic field-strength default). Controls Parker AIF correction.",
+    )
     agent_standard_dose = traits.Float(
         0.1,
         usedefault=True,
@@ -2039,9 +2044,10 @@ class AIFDetection(BaseInterface):
             # The correction ensures AIF and tissue are in the same
             # "relaxivity space" (perf-plus dce_aif_detection.py:2641-2649).
             r1_arg: float | None = None
-            r1_relaxivity = float(self.inputs.r1_relaxivity)
-            if r1_relaxivity > 0:
-                r1_arg = r1_relaxivity
+            if bool(self.inputs.agent_r1_known):
+                r1_relaxivity = float(self.inputs.r1_relaxivity)
+                if r1_relaxivity > 0:
+                    r1_arg = r1_relaxivity
 
             t_for_parker = np.maximum(t_shifted, 0.0)
             aif_curve = parker_population_aif(
@@ -2112,6 +2118,7 @@ class AIFDetection(BaseInterface):
                 "scaling_factor": scaling_factor,
                 "detection_method": detection_method,
                 "quality_score": quality_score,
+                "baseline_frames": baseline_frames,
             }
         )
 

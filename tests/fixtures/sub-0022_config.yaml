@@ -1,0 +1,34 @@
+# PMRIPrep test configuration for sub-0022/ses-0001
+# US-0XX: oSVD (gbm), tofts
+
+# DSC configuration
+dsc:
+  preload_detected: true
+  dose: half
+  method: oSVD
+  bayesian: none
+  aif_criteria: relaxed
+  n_aif_candidates: 5
+  pre_bolus: 10
+  save_k2_map: true
+  use_gpu: false
+
+# DCE configuration
+dce:
+  model: tofts
+  bayesian: none
+  aif_method: auto
+  scale_aif: true
+  no_b1: false
+  no_t1: false
+  use_gpu: false
+
+  # Advanced settings from config file
+  registration:
+    skip_bbr: true
+
+  aif:
+    method: auto
+
+  processing:
+    tsnr_threshold: 0

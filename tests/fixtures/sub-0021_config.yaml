@@ -1,5 +1,5 @@
-# PMRIPrep test configuration for sub-0020/ses-0001
-# US-097: vascular bayesian_map, tofts
+# PMRIPrep test configuration for sub-0021/ses-0001
+# US-0XX: oSVD (gbm), tofts
 
 # DSC configuration
 dsc:

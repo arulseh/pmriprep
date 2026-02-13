@@ -1335,6 +1335,7 @@ def init_pmriprep_wf(
             # Agent-specific r1 (e.g., Gadovist=5.0 at 3T) improves AIF accuracy
             if dce_sidecar["r1_relaxivity"] is not None:
                 dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
+                dce_wf.inputs.inputnode.agent_r1_known = True
                 import logging
                 logger = logging.getLogger("pmriprep.workflows")
                 logger.info(

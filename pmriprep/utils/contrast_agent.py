@@ -171,6 +171,18 @@ def parse_contrast_agent_string(agent_string: str) -> dict[str, Any]:
 
         if agent_name:
             result["agent_name"] = agent_name
+    else:
+        # No "ml" suffix found. Try to separate agent name from trailing numbers.
+        # Handles European strings like "Vueway 3,5" or "Gadovist 7.5"
+        name_num_pattern = r"^([a-zA-Z][a-zA-Z\s\-]*?)\s+(\d+[,.]?\d*)$"
+        match2 = re.match(name_num_pattern, agent_string.strip())
+        if match2:
+            result["agent_name"] = match2.group(1).strip()
+            volume_str = match2.group(2).replace(",", ".")
+            try:
+                result["volume_ml"] = float(volume_str)
+            except ValueError:
+                pass
 
     return result
 
