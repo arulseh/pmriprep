@@ -1,0 +1,125 @@
+# PMRIPrep Configuration Template
+# All options shown with defaults. Remove or comment out lines to use defaults.
+
+# ==============================================================================
+# DSC (Dynamic Susceptibility Contrast) Perfusion
+# ==============================================================================
+dsc:
+  # --- Preload & Dose ---
+  preload_detected: false       # Whether contrast preload is detected/specified
+  dose: full                    # Contrast dose: half, full, double
+
+  # --- Deconvolution ---
+  method: sSVD                  # Deconvolution: sSVD, cSVD, oSVD, tikhonov, vascular, cpi
+  bayesian: none                # Bayesian inference: none, map, vi, mcmc
+  mcmc_samples: 500             # MCMC samples (if bayesian: mcmc)
+  cpi_control_points: 0         # CPI control points (0 = auto)
+
+  # --- AIF Detection ---
+  aif_method: auto              # AIF method: auto (data-driven), population
+  aif_criteria: strict          # AIF quality: strict, relaxed
+  n_aif_candidates: 10          # Number of AIF candidate voxels to average
+  gamma_fit: false              # Apply gamma-variate fitting to AIF
+  disable_aif_fallback: false   # Disable synthetic AIF fallback
+  lesion_distance: 15.0         # Min distance (mm) from lesion for AIF candidates
+  prefer_contralateral: true    # Prefer contralateral AIF candidates
+  # aif_mask_file:              # Path to custom AIF mask (optional)
+
+  # --- Registration ---
+  use_flirt: true               # Use FLIRT (true) or BBR (false)
+  allow_scaling: true           # Allow intensity scaling in registration
+  lesion_dilation: 15.0         # Lesion mask dilation radius (mm)
+  # lesion_mask:                # Path to lesion mask (optional)
+  # nawm_mask:                  # Path to NAWM mask for CBV normalization (optional)
+
+  # --- Quantification ---
+  absolute_quant: false         # Enable absolute quantification
+  # r2_star:                    # Relaxivity for absolute quant (optional, None = relative)
+
+  # --- Processing ---
+  pre_bolus: 12                 # Pre-bolus baseline frames
+  motion_thresh: 0.5            # Framewise displacement threshold (mm)
+  smooth_fwhm: 0.0             # Output smoothing FWHM (mm, 0 = none)
+  save_k2_map: false            # Save K2 leakage correction map
+  save_uncertainty: false       # Save uncertainty maps (Bayesian)
+  k2_method: exponential        # K2 leakage correction: exponential (legacy), integral (physics)
+
+  # --- Resources ---
+  num_processes: 0              # Parallel processes (0 = system default)
+  use_gpu: false                # GPU acceleration
+
+# ==============================================================================
+# DCE (Dynamic Contrast Enhanced) Perfusion
+# ==============================================================================
+dce:
+  # --- Model ---
+  model: auto                   # PK model: auto, tofts, extended_tofts, patlak, 2cxm
+  bayesian: none                # Bayesian inference: none, map, mcmc
+  mcmc_samples: 500             # MCMC samples (if bayesian: mcmc)
+
+  # --- Dose & Baseline ---
+  dose: full                    # Contrast dose: half, full, double
+  baseline_frames: 0            # Baseline frames (0 = auto-detect)
+
+  # --- AIF Detection ---
+  aif_method: auto              # AIF method: auto (data-driven), population
+  scale_aif: false              # Scale AIF amplitude to population reference
+  # target_peak:                # Target AIF peak (mM) for scaling (optional)
+  lesion_distance: 20.0         # Min distance (mm) from lesion for AIF candidates
+  prefer_contralateral: true    # Prefer contralateral AIF candidates
+  # aif_mask_file:              # Path to custom AIF mask (optional)
+
+  # --- T1 & B1 Mapping ---
+  no_b1: false                  # Skip B1+ correction (use nominal flip angles)
+  no_t1: false                  # Skip T1 mapping (use default T1=1200ms)
+  skip_flip_validation: false   # Skip flip angle validation in VFA
+  lenient_t1_qc: false          # Lenient T1 QC ranges (500-2500ms vs strict)
+  t1_correction: auto           # T1 correction: auto, none, offset, fallback
+
+  # --- Registration ---
+  reference: postcon            # Reference image for registration
+  skip_bbr: false               # Skip BBR (use FLIRT only)
+  lesion_dilation: 15.0         # Lesion mask dilation radius (mm)
+  # lesion_mask:                # Path to lesion mask (optional)
+
+  # --- Processing ---
+  tsnr_threshold: 0.0           # tSNR threshold for voxel inclusion (0 = none)
+  smooth: 0.0                   # Output smoothing FWHM (mm, 0 = none)
+  save_uncertainty: false       # Save uncertainty maps (Bayesian)
+  no_tortuosity: false          # Skip DWI-based tortuosity correction
+  no_dsc_validation: false      # Skip DSC-DCE cross-validation
+  leakage: none                 # Leakage correction: none, k2, patlak
+  cbv_source: dsc               # CBV source for DSC constraint: dsc, free
+  cbv_constraint_mode: auto     # CBV constraint: auto, hard, soft, skip
+  hematocrit: 0.40              # Blood hematocrit for CBV-to-vp conversion
+  # reference_roi:              # Path to ROI for reference analysis (optional)
+
+  # --- Resources ---
+  num_processes: 0              # Parallel processes (0 = system default)
+  use_gpu: false                # GPU acceleration
+  hdbet_device: auto            # HD-BET device: auto, cuda, mps, cpu
+
+# ==============================================================================
+# Anatomical Preprocessing
+# ==============================================================================
+anat:
+  tool: hdbet                   # Brain extraction: hdbet, ants
+  denoise: false                # ANTs denoising
+  skip_acpc: false              # Skip ACPC alignment
+  cost_function: normmi         # Registration cost function
+  use_lesion_mask: true         # Use lesion mask in registration
+  coregister_modalities: true   # Cross-modal coregistration
+  create_subtraction: true      # Create post-pre subtraction image
+  skip_fast_if_postcon_only: true  # Skip FAST when only T1 postcon available
+
+# ==============================================================================
+# HD-GLIO Tumor Segmentation
+# ==============================================================================
+hdglio:
+  device: cuda                  # Inference device: cuda, mps, cpu
+  # conda_env:                  # Conda env for HD-GLIO (optional, e.g., hdglio-mps)
+  lesion_dilation: 15.0         # Lesion mask dilation radius (mm)
+  nawm_erosion: 2               # NAWM mask erosion iterations (voxels)
+  nawm_min_voxels: 500          # Minimum NAWM ROI voxels
+  use_atlas_restriction: true   # Atlas-based NAWM region restriction
+  # atlases_dir:                # Path to MNI lobar atlas directory (optional)
