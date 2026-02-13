@@ -861,6 +861,7 @@ def init_dce_preproc_wf(
         ]),
         (aif_detection, pk_modeling, [
             ("out_aif_curve", "aif_file"),
+            ("detection_method", "aif_detection_method"),
         ]),
         # Use native DCE brain mask (from HD-BET) for PK modeling
         # This avoids registration-induced edge artifacts and ensures

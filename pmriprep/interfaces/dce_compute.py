@@ -365,6 +365,14 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="Save fitted concentration curves (large output)",
     )
 
+    # AIF detection method (for BAT correction logic)
+    aif_detection_method = traits.Str(
+        "population",
+        usedefault=True,
+        desc="AIF detection method: 'population', 'automatic', 'atlas'. "
+             "BAT correction is applied only for population AIFs.",
+    )
+
     # Output files
     out_ktrans = File(
         genfile=True,
@@ -781,12 +789,103 @@ class ComputeDCEMaps(BaseInterface):
         if signal_std_map is not None:
             fitting_mask = fitting_mask & (signal_std_map >= 1.0)
 
+        # Pre-fit enhancement screen: skip voxels with no meaningful
+        # contrast enhancement (these produce R2 < 0 fits on noise)
+        peak_enhancement = np.max(conc_data, axis=-1)
+        baseline_std = np.std(conc_data[..., :baseline_frames], axis=-1)
+        enhancement_mask = peak_enhancement > 3.0 * np.maximum(baseline_std, 1e-10)
+        fitting_mask = fitting_mask & enhancement_mask
+
         # Parameters
         bayesian = str(self.inputs.bayesian)
         mcmc_samples = int(self.inputs.mcmc_samples)
         use_gpu = bool(self.inputs.use_gpu)
         save_uncertainty = bool(self.inputs.save_uncertainty)
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
+
+        # =====================================================================
+        # BAT Correction for Population AIFs
+        # =====================================================================
+        aif_detection_method = str(self.inputs.aif_detection_method)
+        bat_correction: dict[str, Any] = {
+            "applied": False,
+            "reason": "not_population_aif",
+        }
+
+        if aif_detection_method == "population":
+            from pmriprep.utils.dce_bat_correction import (
+                apply_aif_time_shift,
+                detect_aif_bat,
+                detect_tissue_bat,
+            )
+
+            # Use raw DCE signal for tissue BAT detection (matches perf-plus)
+            if isdefined(self.inputs.dce_signal_file):
+                bat_signal_img = nib.load(self.inputs.dce_signal_file)
+                bat_signal_data = bat_signal_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            else:
+                # Fallback to concentration data
+                bat_signal_data = conc_data
+
+            # Time vector in seconds for BAT detection
+            time_vector_s = time_points * 60.0  # minutes -> seconds
+
+            tissue_bat = detect_tissue_bat(
+                bat_signal_data, mask, time_vector_s, baseline_frames
+            )
+            aif_bat = detect_aif_bat(aif, time_vector_s)
+
+            time_shift_s = tissue_bat["tissue_bat_s"] - aif_bat["aif_bat_s"]
+
+            logger.info(
+                "BAT correction: tissue BAT=%.1fs (frame %d), AIF BAT=%.1fs "
+                "(frame %d), shift=%.1fs",
+                tissue_bat["tissue_bat_s"],
+                tissue_bat["tissue_bat_frame"],
+                aif_bat["aif_bat_s"],
+                aif_bat["aif_bat_frame"],
+                time_shift_s,
+            )
+
+            if abs(time_shift_s) > 2.0:
+                aif = apply_aif_time_shift(aif, time_vector_s, time_shift_s)
+                new_peak_frame = int(np.argmax(aif))
+                new_peak_s = float(time_vector_s[new_peak_frame])
+                logger.info(
+                    "BAT correction applied: shifted AIF by +%.1fs "
+                    "(new peak at %.1fs, was %.1fs)",
+                    time_shift_s,
+                    new_peak_s,
+                    aif_bat["aif_peak_s"],
+                )
+                if abs(time_shift_s) > 60:
+                    logger.warning(
+                        "Large BAT shift (%.0fs > 60s) — check baseline "
+                        "frames or injection timing",
+                        time_shift_s,
+                    )
+                bat_correction = {
+                    "applied": True,
+                    "time_shift_s": time_shift_s,
+                    "tissue_bat_s": tissue_bat["tissue_bat_s"],
+                    "tissue_bat_frame": tissue_bat["tissue_bat_frame"],
+                    "aif_bat_s": aif_bat["aif_bat_s"],
+                    "aif_peak_s": aif_bat["aif_peak_s"],
+                    "corrected_aif_peak_s": new_peak_s,
+                    "detection_confidence": tissue_bat["confidence"],
+                    "detection_method": tissue_bat["method"],
+                }
+            else:
+                logger.info("BAT shift < 2s, no correction needed")
+                bat_correction = {
+                    "applied": False,
+                    "time_shift_s": time_shift_s,
+                    "reason": "shift_too_small",
+                }
+
+            # Clean up temporary signal data
+            if isdefined(self.inputs.dce_signal_file):
+                del bat_signal_data
 
         spatial_shape = conc_data.shape[:3]
 
@@ -889,6 +988,7 @@ class ComputeDCEMaps(BaseInterface):
             "baseline_frames": baseline_frames,
             "selection_tr_seconds": selection_tr_seconds,  # TR used for model selection
             "constraint_mode": constraint_mode.value,
+            "bat_correction": bat_correction,
         }
 
         n_converged = 0

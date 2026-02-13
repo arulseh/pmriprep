@@ -198,7 +198,8 @@ class TwoCompartmentExchangeModel(PKModel):
         """
         try:
             peak_idx = int(np.argmax(aif))
-            peak_time = time_points[peak_idx]
+            n = len(time_points)
+            dt = float(np.mean(np.diff(time_points)))
 
             # Estimate vp from peak ratio
             aif_peak = float(np.max(aif))
@@ -208,30 +209,35 @@ class TwoCompartmentExchangeModel(PKModel):
             else:
                 vp_init = 0.02
 
-            # Estimate Ktrans-like from early slope
-            early_mask = (time_points > peak_time + 0.5) & (time_points < peak_time + 2.0)
-            if np.sum(early_mask) >= 2:
-                coeffs = np.polyfit(time_points[early_mask], tissue_curve[early_mask], 1)
-                slope = coeffs[0]
-                mean_aif_early = float(np.mean(aif[early_mask]))
-                ktrans_est = max(slope / max(mean_aif_early, 1e-6), 0.001)
-            else:
-                ktrans_est = 0.1
+            # --- Ktrans via Patlak regression (post-bolus) ---
+            post_bolus = np.arange(peak_idx + 1, n)
+            cp_post = aif[post_bolus]
+            valid = cp_post > 0.05 * np.max(aif)
+            ktrans_est = 0.1  # fallback
+
+            if np.sum(valid) >= 4:
+                idx = post_bolus[valid]
+                cp = aif[idx]
+                ct = tissue_curve[idx]
+                cum_aif = np.cumsum(aif[: idx[-1] + 1]) * dt
+                X = cum_aif[idx] / cp
+                Y = ct / cp
+                ktrans_est = max(float(np.polyfit(X, Y, 1)[0]), 0.001)
 
             # For 2CXM: assume mixed regime, Fp ~ 2*Ktrans, PS ~ Ktrans
             fp_init = float(np.clip(ktrans_est * 120.0, FP_BOUNDS.min + 1e-3, FP_BOUNDS.max))
             ps_init = float(np.clip(ktrans_est * 60.0, PS_BOUNDS.min + 1e-3, PS_BOUNDS.max))
 
-            # Estimate ve from late-phase
-            late_mask = time_points > time_points[-1] * 0.6
-            if np.sum(late_mask) >= 3 and ktrans_est > 0.001:
-                late_t = time_points[late_mask]
-                late_c = tissue_curve[late_mask]
-                late_c_safe = np.maximum(late_c, 1e-10)
-                log_c = np.log(late_c_safe)
-                coeffs_late = np.polyfit(late_t, log_c, 1)
-                kep_est = max(-coeffs_late[0], 0.01)
-                ve_init = float(np.clip(ktrans_est / kep_est, 0.01, 0.8))
+            # --- ve via late-phase quasi-equilibrium ratio ---
+            late_start = min(peak_idx + 12, n - 5)
+            if late_start < n - 3:
+                ct_late = tissue_curve[late_start:]
+                cp_late = aif[late_start:]
+                mean_cp = float(np.mean(cp_late))
+                if mean_cp > 0.05 * np.max(aif):
+                    ve_init = float(np.clip(np.mean(ct_late) / mean_cp, 0.01, 0.8))
+                else:
+                    ve_init = 0.2
             else:
                 ve_init = 0.2
 
