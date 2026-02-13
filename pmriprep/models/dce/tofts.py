@@ -19,7 +19,6 @@ from typing import Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
-from scipy import optimize
 from scipy.optimize import curve_fit
 
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
@@ -200,9 +199,9 @@ class ToftsModel(PKModel):
     ) -> FitResult:
         """Fit the Standard Tofts model to observed tissue concentration data.
 
-        Uses scipy.optimize.curve_fit with TRF method (Trust Region Reflective)
-        as primary optimizer, with L-BFGS-B fallback. TRF natively returns
-        parameter covariance for uncertainty estimation.
+        Uses scipy.optimize.curve_fit with TRF method (Trust Region Reflective).
+        TRF natively returns parameter covariance for uncertainty estimation.
+        On TRF failure, parameters are zeroed (no fallback optimizer).
 
         Args:
             tissue_curve: Observed tissue concentration values C_t(t) in mM.
@@ -261,24 +260,8 @@ class ToftsModel(PKModel):
             param_names = self.get_parameter_names()
             uncertainties = dict(zip(param_names, perr.tolist()))
         except (RuntimeError, ValueError):
-            # Fallback: L-BFGS-B
-            try:
-                def objective(params: npt.NDArray[np.floating]) -> float:
-                    predicted = self.evaluate(params, aif, time_points)
-                    return float(np.sum((tissue_curve - predicted) ** 2))
-
-                result = optimize.minimize(
-                    objective,
-                    x0=x0,
-                    method="L-BFGS-B",
-                    bounds=list(zip(lower_bounds, upper_bounds)),
-                    options={"maxiter": 1000, "ftol": 1e-10},
-                )
-                converged = result.success
-                fitted_params = result.x.tolist()
-            except Exception:
-                converged = False
-                fitted_params = x0
+            converged = False
+            fitted_params = [0.0] * self.n_parameters
 
         # Clip parameters to bounds
         fitted_params = self.clip_params(fitted_params)

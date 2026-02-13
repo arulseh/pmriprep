@@ -421,7 +421,8 @@ class TwoCompartmentExchangeModel(PKModel):
     ) -> FitResult:
         """Fit the 2CXM model to observed tissue concentration data.
 
-        Uses scipy.optimize.curve_fit with TRF method, with L-BFGS-B fallback.
+        Uses scipy.optimize.curve_fit with TRF method.
+        On TRF failure, parameters are zeroed (no fallback optimizer).
         Enforces the constraint ve + vp <= 1.0 after fitting.
 
         Args:
@@ -475,25 +476,8 @@ class TwoCompartmentExchangeModel(PKModel):
             param_names = self.get_parameter_names()
             uncertainties = dict(zip(param_names, perr.tolist()))
         except (RuntimeError, ValueError):
-            # Fallback: L-BFGS-B
-            try:
-                def objective(params: npt.NDArray[np.floating]) -> float:
-                    fp, ps, ve, vp = self._apply_volume_constraint(params)
-                    predicted = self.evaluate([fp, ps, ve, vp], aif, time_points)
-                    return float(np.sum((tissue_curve - predicted) ** 2))
-
-                result = optimize.minimize(
-                    objective,
-                    x0=x0,
-                    method="L-BFGS-B",
-                    bounds=list(zip(lower_bounds, upper_bounds)),
-                    options={"maxiter": 1000, "ftol": 1e-10},
-                )
-                converged = result.success
-                fitted_params = result.x.tolist()
-            except Exception:
-                converged = False
-                fitted_params = x0
+            converged = False
+            fitted_params = [0.0] * self.n_parameters
 
         # Clip parameters to bounds and apply constraint
         fitted_params = self.clip_params(fitted_params)
