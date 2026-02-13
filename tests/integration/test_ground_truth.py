@@ -533,6 +533,8 @@ def compare_numerical_maps(
 ) -> ComparisonResult:
     """Compare two numerical maps using Pearson correlation.
 
+    Excludes voxels where either map is zero (unfitted/masked voxels).
+
     Args:
         pmriprep_data: PMRIPrep output data array
         ground_truth_data: Ground truth data array
@@ -542,17 +544,37 @@ def compare_numerical_maps(
     Returns:
         ComparisonResult with correlation value and pass/fail status
     """
-    from pmriprep.utils.registration import calculate_correlation
-
     try:
-        correlation = calculate_correlation(
-            pmriprep_data.astype(np.float64),
-            ground_truth_data.astype(np.float64),
-            mask=mask.astype(np.float64) if mask is not None else None,
-        )
+        flat_pmr = pmriprep_data.astype(np.float64).ravel()
+        flat_gt = ground_truth_data.astype(np.float64).ravel()
+
+        if mask is not None:
+            mask_bool = mask.ravel() > 0.5
+            flat_pmr = flat_pmr[mask_bool]
+            flat_gt = flat_gt[mask_bool]
+
+        # Exclude unfitted voxels (zero = masked out, not "parameter is zero")
+        valid = (np.isfinite(flat_pmr) & np.isfinite(flat_gt)
+                 & (flat_pmr != 0) & (flat_gt != 0))
+        flat_pmr = flat_pmr[valid]
+        flat_gt = flat_gt[valid]
+
+        if len(flat_pmr) < 2:
+            return ComparisonResult(
+                output_name="",
+                metric="correlation",
+                value=0.0,
+                threshold=threshold,
+                passed=False,
+                error="Too few valid voxels",
+            )
+
+        correlation = float(np.corrcoef(flat_pmr, flat_gt)[0, 1])
+        if not np.isfinite(correlation):
+            correlation = 0.0
 
         return ComparisonResult(
-            output_name="",  # To be set by caller
+            output_name="",
             metric="correlation",
             value=correlation,
             threshold=threshold,
@@ -707,9 +729,12 @@ def run_subject_comparison(
 
     comparisons: List[ComparisonResult] = []
 
-    # Load brain mask for numerical comparisons
-    mask_data, mask_path = load_brain_mask(
-        subject, session, perf_plus_derivatives
+    # Load brain masks per modality (DSC and DCE are in different spaces)
+    dsc_mask_data, dsc_mask_path = load_brain_mask(
+        subject, session, perf_plus_derivatives, pipeline="dsc_pipeline"
+    )
+    dce_mask_data, dce_mask_path = load_brain_mask(
+        subject, session, perf_plus_derivatives, pipeline="dce_pipeline"
     )
 
     # Compare DSC outputs
@@ -766,7 +791,7 @@ def run_subject_comparison(
                 gt_path,
                 f"dsc_{output_name}",
                 is_mask=False,
-                mask_path=mask_path,
+                mask_path=dsc_mask_path,
             )
             comparisons.append(result)
 
@@ -824,7 +849,7 @@ def run_subject_comparison(
                 gt_path,
                 f"dce_{output_name}",
                 is_mask=False,
-                mask_path=mask_path,
+                mask_path=dce_mask_path,
             )
             comparisons.append(result)
 
@@ -919,19 +944,21 @@ def test_ground_truth_comparison(
         PERF_PLUS_DERIVATIVES,
     )
 
-    # Report results
+    # Report results - collect all failures before asserting
+    failures = []
     for comparison in result.comparisons:
         if comparison.error:
-            pytest.fail(
+            failures.append(
                 f"{comparison.output_name}: {comparison.error}"
             )
         elif not comparison.passed:
-            pytest.fail(
+            failures.append(
                 f"{comparison.output_name}: {comparison.metric}={comparison.value:.4f} "
                 f"< threshold {comparison.threshold}"
             )
 
-    assert result.all_passed, f"Not all comparisons passed for {subject_session}"
+    if failures:
+        pytest.fail("\n".join(failures))
 
 
 # =============================================================================
