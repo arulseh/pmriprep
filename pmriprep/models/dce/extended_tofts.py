@@ -106,7 +106,7 @@ class ExtendedToftsModel(PKModel):
             ),
             ModelParameter(
                 name="ve",
-                bounds=(0.01, VE_BOUNDS.max),
+                bounds=(VE_BOUNDS.min, VE_BOUNDS.max),
                 typical_range=(0.01, 0.4),
                 log_transform=False,
                 description="Extravascular extracellular volume fraction",
@@ -463,7 +463,7 @@ class ExtendedToftsModel(PKModel):
         bic = float(n_obs * np.log(rss / n_obs) + n_free * np.log(n_obs)) if rss > 0 and n_obs > 0 else float("inf")
 
         # Derived parameters
-        kep = ktrans / max(ve, EPSILON_VE)
+        kep = min(ktrans / ve, MAX_KEP) if ve > EPSILON_VE else 0.0
 
         param_dict = {"Ktrans": ktrans, "ve": ve, "vp": fixed_vp, "kep": kep}
 
@@ -495,8 +495,11 @@ class ExtendedToftsModel(PKModel):
             Dictionary with 'kep' value.
         """
         ktrans = params[0]
-        ve = max(params[1], EPSILON_VE)
+        ve = params[1]
 
-        kep = min(ktrans / ve, MAX_KEP)
+        if ve > EPSILON_VE:
+            kep = min(ktrans / ve, MAX_KEP)
+        else:
+            kep = 0.0
 
         return {"kep": kep}

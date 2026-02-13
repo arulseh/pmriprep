@@ -87,7 +87,7 @@ class ToftsModel(PKModel):
             ),
             ModelParameter(
                 name="ve",
-                bounds=(0.01, VE_BOUNDS.max),
+                bounds=(VE_BOUNDS.min, VE_BOUNDS.max),
                 typical_range=(0.01, 0.4),
                 log_transform=False,
                 description="Extravascular extracellular volume fraction",
@@ -338,8 +338,11 @@ class ToftsModel(PKModel):
             Dictionary with 'kep' value.
         """
         ktrans = params[0]
-        ve = max(params[1], EPSILON_VE)
+        ve = params[1]
 
-        kep = min(ktrans / ve, MAX_KEP)
+        if ve > EPSILON_VE:
+            kep = min(ktrans / ve, MAX_KEP)
+        else:
+            kep = 0.0
 
         return {"kep": kep}
