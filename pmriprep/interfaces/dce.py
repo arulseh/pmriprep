@@ -492,6 +492,7 @@ class B1Mapping(SimpleInterface):
             B1_EXPECTED_MEAN,
             B1_MAX_STD,
             B1_MEAN_RANGE,
+            EPSILON_RATIO,
         )
 
         # Generate output filename
@@ -566,7 +567,7 @@ class B1Mapping(SimpleInterface):
         # Compute signal ratio r = S1/S2
         # -----------------------------------------------------------------
         r = np.ones(shape, dtype=np.float64)
-        r[signal_mask] = s1[signal_mask] / np.maximum(s2[signal_mask], 1e-10)
+        r[signal_mask] = s1[signal_mask] / np.maximum(s2[signal_mask], EPSILON_RATIO)
 
         # -----------------------------------------------------------------
         # Ratio validation + denominator stability (Gaps 1, 9).
@@ -578,15 +579,15 @@ class B1Mapping(SimpleInterface):
         valid = signal_mask & ratio_valid & denominator_stable
 
         # -----------------------------------------------------------------
-        # AFI equation (assuming TR2 >> T1, i.e., E2 ≈ 0):
-        #   cos(alpha) = (r*n - 1) / (n - r)
+        # Simplified Yarnykh (MRM 2007) equation, accurate to first order
+        # in TR1/T1:  cos(alpha) = (r*n - 1) / (n - r)
         # Compute only for valid voxels; set the rest to B1+=1.0.
         # -----------------------------------------------------------------
         b1_map = np.ones(shape, dtype=np.float64)
 
         numerator = r[valid] * n - 1.0
         denominator = n - r[valid]
-        cos_alpha = numerator / denominator
+        cos_alpha = numerator / (denominator + EPSILON_RATIO)
         cos_alpha = np.clip(cos_alpha, -1.0, 1.0)
         alpha_actual = np.degrees(np.arccos(cos_alpha))
         b1_map[valid] = alpha_actual / nominal_fa
@@ -620,27 +621,34 @@ class B1Mapping(SimpleInterface):
         smoothing_fwhm = self.inputs.smoothing_fwhm
         n_b1_outliers = 0
         if smoothing_fwhm > 0:
+            from scipy.ndimage import binary_erosion
+
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
-            MIN_SIGMA_VOXELS = 1.5  # Floor to ensure effective smoothing for coarse data
+            MIN_SIGMA_VOXELS = 1.5
             sigma_voxels = [
                 max(smoothing_fwhm / (2.355 * vs), MIN_SIGMA_VOXELS)
                 for vs in voxel_sizes
             ]
-            # Pass 1: smooth with wider kernel to get robust local B1+ estimate.
-            # 1.5× sigma ensures the kernel reaches past CSF clusters (ventricles
-            # span ~20mm) so the local estimate is tissue-dominated.
+            # Pass 1: robust local B1+ from interior voxels.
+            # Eroding by 2 voxels excludes partial-volume edges from the
+            # reference, so outlier detection at edges uses tissue-only neighbors.
             sigma_wide = [s * 1.5 for s in sigma_voxels]
-            mask_float = valid.astype(np.float64)
-            s_num = gaussian_filter(b1_map * mask_float, sigma=sigma_wide)
-            s_den = gaussian_filter(mask_float, sigma=sigma_wide)
-            s_den = np.maximum(s_den, 1e-6)
-            b1_local = np.where(mask_float > 0, s_num / s_den, 1.0)
+            interior = binary_erosion(valid, iterations=2)
+            interior_float = interior.astype(np.float64)
+            s_num = gaussian_filter(b1_map * interior_float, sigma=sigma_wide)
+            s_den = gaussian_filter(interior_float, sigma=sigma_wide)
 
-            # Exclude voxels deviating >0.25 from neighborhood (CSF, flow artifacts).
-            # B1+ varies on 30-50mm scales; max legitimate tissue deviation is ~0.15-0.20.
-            # CSF deviates by 0.45+ due to E2≈0.978 violating the AFI assumption.
-            B1_OUTLIER_THRESH = 0.25
-            outlier = valid & (np.abs(b1_map - b1_local) > B1_OUTLIER_THRESH)
+            # Only test where interior coverage is reliable (>= 10%).
+            # Unreliable locations (thin cortex, brain tips) are left untested.
+            MIN_COVERAGE = 0.10
+            has_coverage = s_den > MIN_COVERAGE
+            b1_local = np.where(has_coverage, s_num / s_den, 0.0)
+
+            # Flag voxels deviating >0.30 from interior reference.
+            # 0.30 allows for B1+ gradient from temporal lobe (~1.0) to center
+            # (~1.4) while catching CSF/edge artifacts (deviation 0.4+).
+            B1_OUTLIER_THRESH = 0.30
+            outlier = valid & has_coverage & (np.abs(b1_map - b1_local) > B1_OUTLIER_THRESH)
             n_b1_outliers = int(np.sum(outlier))
             if n_b1_outliers > 0:
                 logger.info(
@@ -656,7 +664,6 @@ class B1Mapping(SimpleInterface):
             smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
             smoothed_den = np.maximum(smoothed_den, 1e-6)
             b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 1.0)
-            # Defensive re-clip after smoothing to preserve physiological range
             b1_map = np.clip(b1_map, 0.2, 2.0)
 
         # Convert to float32 for storage

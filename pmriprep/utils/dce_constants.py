@@ -34,6 +34,9 @@ EPSILON_E1_UPPER: Final[float] = 1e-4
 #: Signal epsilon for baseline guard (matches perf-plus EPSILON_SIGNAL)
 EPSILON_SIGNAL: Final[float] = 1e-9
 
+#: Epsilon for signal ratio denominators (matches perf-plus EPSILON_RATIO)
+EPSILON_RATIO: Final[float] = 1e-10
+
 #: Minimum signal standard deviation for voxel to be considered valid
 #: Value is in mM (concentration units), not raw signal units
 #: Normal tissue concentration std is 0.01-0.5 mM; 0.01 filters noise-only voxels

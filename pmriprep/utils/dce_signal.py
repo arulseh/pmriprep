@@ -14,7 +14,6 @@ import numpy.typing as npt
 from pmriprep.utils.dce_constants import (
     DEFAULT_BASELINE_FRAMES,
     DEFAULT_T1_MS,
-    EPSILON_B1,
     EPSILON_E1_UPPER,
     EPSILON_SIGNAL,
     EPSILON_T1,
@@ -320,7 +319,7 @@ def signal_to_concentration(
     # Apply B1+ correction if provided
     if b1_map is not None:
         # B1+ map is relative: actual_flip = nominal_flip × B1+
-        b1_safe = np.maximum(b1_map, EPSILON_B1)
+        b1_safe = np.clip(b1_map, 0.5, 1.5)
         if signal.ndim == 4:
             # B1 map is 3D (spatial), same for all timepoints
             effective_flip_rad = flip_angle_rad * b1_safe
