@@ -28,6 +28,12 @@ import numpy.typing as npt
 
 logger = logging.getLogger("pmriprep.utils.dce_t1_validation")
 
+# Tissue-bias thresholds for auto-correction override (ms).
+# If |median - expected| exceeds this even within warn range, apply offset.
+TISSUE_BIAS_THRESHOLD_MS: float = 150.0
+# Lowered threshold when B1 QC has failed (residual B1 inhomogeneity likely).
+B1_FAIL_BIAS_THRESHOLD_MS: float = 100.0
+
 # ============================================================================
 # T1 Tissue Reference Values by Field Strength
 # ============================================================================
@@ -47,8 +53,8 @@ T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
         "t1_upper_bound": 5000,
         "reject_min": 450,
         "reject_max": 1500,
-        "warn_low": 550,
-        "warn_high": 1125,
+        "warn_low": 650,
+        "warn_high": 1000,
         "expected_median": 825,
     },
     3.0: {
@@ -65,8 +71,8 @@ T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
         "t1_upper_bound": 6000,
         "reject_min": 600,
         "reject_max": 1800,
-        "warn_low": 700,
-        "warn_high": 1400,
+        "warn_low": 850,
+        "warn_high": 1250,
         "expected_median": 1050,
     },
 }
@@ -282,6 +288,7 @@ def apply_t1_correction(
     correction_mode: str = "auto",
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
     has_lesion: bool = False,
+    b1_qc_pass: bool = True,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Apply T1 map correction based on median T1 validation.
 
@@ -304,6 +311,9 @@ def apply_t1_correction(
         Brain mask for calculating median T1.
     has_lesion : bool
         Whether a lesion mask is present (affects auto-mode thresholds).
+    b1_qc_pass : bool
+        B1 QC pass status. When False, lowers tissue-bias threshold
+        for auto correction (residual B1 inhomogeneity likely).
 
     Returns
     -------
@@ -368,7 +378,10 @@ def apply_t1_correction(
         return t1_corrected, result
 
     elif correction_mode == "auto":
-        return _auto_correct_t1(t1_map, t1_ref, valid_mask, median_t1, result)
+        return _auto_correct_t1(
+            t1_map, t1_ref, valid_mask, median_t1, result,
+            b1_qc_pass=b1_qc_pass,
+        )
 
     else:
         raise ValueError(
@@ -383,6 +396,7 @@ def _auto_correct_t1(
     valid_mask: npt.NDArray[np.bool_],
     median_t1: float,
     result: T1CorrectionResult,
+    b1_qc_pass: bool = True,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Auto-mode T1 correction logic.
 
@@ -422,39 +436,56 @@ def _auto_correct_t1(
         result.median_t1_corrected = t1_ref["default"]
         return t1_corrected, result
 
-    # Case 2: Within acceptable range - no correction
+    # Case 2: Within acceptable range
     elif t1_ref["warn_low"] <= median_t1 <= t1_ref["warn_high"]:
-        logger.info(
-            "Median T1 (%.0fms) within acceptable range (%.0f-%.0fms)",
-            median_t1, t1_ref["warn_low"], t1_ref["warn_high"],
+        # Secondary check: systematic bias despite acceptable median
+        bias_threshold = (
+            TISSUE_BIAS_THRESHOLD_MS if b1_qc_pass
+            else B1_FAIL_BIAS_THRESHOLD_MS
         )
-        result.correction_applied = "none"
-        result.reason = "Median T1 within acceptable range"
-        result.median_t1_corrected = median_t1
-        return t1_map, result
+        bias_from_expected = abs(median_t1 - expected_median)
+        if bias_from_expected > bias_threshold:
+            # Fall through to offset correction (Case 3)
+            logger.info(
+                "Median T1 (%.0fms) within warn range but biased "
+                "%.0fms from expected (%.0fms), threshold %.0fms%s "
+                "- applying offset correction",
+                median_t1, bias_from_expected, expected_median,
+                bias_threshold,
+                " (B1 QC failed)" if not b1_qc_pass else "",
+            )
+        else:
+            logger.info(
+                "Median T1 (%.0fms) within acceptable range (%.0f-%.0fms)",
+                median_t1, t1_ref["warn_low"], t1_ref["warn_high"],
+            )
+            result.correction_applied = "none"
+            result.reason = "Median T1 within acceptable range"
+            result.median_t1_corrected = median_t1
+            return t1_map, result
 
     # Case 3: Soft warn - apply offset correction
+    # (also reached via tissue-bias override from Case 2)
+    if median_t1 < expected_median:
+        deviation_type = "low"
     else:
-        if median_t1 < t1_ref["warn_low"]:
-            deviation_type = "low"
-        else:
-            deviation_type = "high"
+        deviation_type = "high"
 
-        offset = expected_median - median_t1
-        logger.info(
-            "Median T1 (%.0fms) %s deviation - applying offset correction: %+.0fms",
-            median_t1, deviation_type, offset,
-        )
+    offset = expected_median - median_t1
+    logger.info(
+        "Median T1 (%.0fms) %s deviation - applying offset correction: %+.0fms",
+        median_t1, deviation_type, offset,
+    )
 
-        t1_corrected = t1_map + offset
-        clamp_min = t1_ref["reject_min"] * 0.9
-        clamp_max = t1_ref["reject_max"] * 1.1
-        t1_corrected = np.clip(t1_corrected, clamp_min, clamp_max)
-        t1_corrected = np.where(np.isnan(t1_map), np.nan, t1_corrected)
+    t1_corrected = t1_map + offset
+    clamp_min = t1_ref["reject_min"] * 0.9
+    clamp_max = t1_ref["reject_max"] * 1.1
+    t1_corrected = np.clip(t1_corrected, clamp_min, clamp_max)
+    t1_corrected = np.where(np.isnan(t1_map), np.nan, t1_corrected)
 
-        result.correction_applied = "offset"
-        result.reason = f"Median T1 {deviation_type} - offset correction applied"
-        result.deviation_type = deviation_type
-        result.offset_ms = offset
-        result.median_t1_corrected = float(np.nanmedian(t1_corrected[valid_mask]))
-        return t1_corrected, result
+    result.correction_applied = "offset"
+    result.reason = f"Median T1 {deviation_type} - offset correction applied"
+    result.deviation_type = deviation_type
+    result.offset_ms = offset
+    result.median_t1_corrected = float(np.nanmedian(t1_corrected[valid_mask]))
+    return t1_corrected, result

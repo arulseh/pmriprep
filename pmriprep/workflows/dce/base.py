@@ -467,6 +467,10 @@ def init_dce_preproc_wf(
         (transform_b1_to_vfa, t1_mapping, [
             ("out_file", "b1_map"),
         ]),
+        # Wire B1 QC status to T1 correction threshold
+        (b1_mapping, t1_mapping, [
+            ("qc_pass", "b1_qc_pass"),
+        ]),
     ])
 
     # ==========================================================================

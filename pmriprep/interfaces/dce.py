@@ -892,6 +892,12 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="T1 correction mode: auto, none, offset, or fallback",
     )
+    b1_qc_pass = traits.Bool(
+        True,
+        usedefault=True,
+        desc="B1 QC pass status (from B1Mapping). When False, lowers "
+             "T1 correction threshold for auto mode.",
+    )
 
 
 class T1MappingOutputSpec(TraitedSpec):
@@ -1177,6 +1183,7 @@ class T1Mapping(SimpleInterface):
             field_strength=field_strength,
             correction_mode=correction_mode,
             brain_mask=brain_mask,
+            b1_qc_pass=self.inputs.b1_qc_pass,
         )
         t1_map = t1_map_arr.astype(np.float32)
         correction_info = correction_result.to_dict()
@@ -1257,6 +1264,7 @@ class T1Mapping(SimpleInterface):
             else:
                 t1_status = QCStatus.FAIL
         qc_metrics["t1_status"] = t1_status
+        qc_metrics["t1_usable"] = (t1_status != QCStatus.FAIL) or (corr_type != "none")
 
         # Flip angle validation for 2-angle VFA
         # Compare observed vs expected signal ratio assuming T1=1200ms at 3T
