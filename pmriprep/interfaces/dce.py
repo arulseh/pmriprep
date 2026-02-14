@@ -2300,40 +2300,40 @@ class DCEPreprocess(SimpleInterface):
     def _detect_bolus_arrival_from_signal(self, signal: np.ndarray) -> int:
         """Detect bolus arrival from global signal time course.
 
-        For DCE, signal INCREASES at bolus arrival (T1-shortening).
-        We look for the first significant increase above baseline.
-
-        Args:
-            signal: 1D global signal time course
-
-        Returns:
-            Bolus arrival frame index
+        Uses derivative-based onset detection: computes smoothed first
+        derivative and finds where rate-of-change first exceeds threshold.
+        Detects bolus ONSET (when contrast first arrives), not accumulated
+        effect (matching perf-plus dce_preprocess.py:216-236).
         """
+        from scipy.ndimage import gaussian_filter1d
         from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
 
         n_volumes = len(signal)
+        if n_volumes < 6:
+            return DEFAULT_BASELINE_FRAMES
 
-        # Use first few frames to estimate baseline statistics
-        # Start with a small initial window (3 frames minimum)
-        init_window = min(3, n_volumes // 4)
-        baseline_mean = np.mean(signal[:init_window])
-        baseline_std = np.std(signal[:init_window])
+        min_baseline = 3
+        n_baseline_noise = 5  # Frames for noise estimation (matches perf-plus)
 
-        # Threshold for detecting contrast arrival
-        # Signal must increase by contrast_threshold × baseline_std
-        # OR by contrast_threshold % of baseline mean (whichever is larger)
-        threshold_pct = self.inputs.contrast_threshold / 100.0
-        threshold = max(
-            baseline_mean * threshold_pct,
-            baseline_std * 2.0  # At least 2 std above baseline
-        )
+        # Compute first derivative and smooth (sigma=2 matches perf-plus)
+        signal_deriv = np.diff(signal)
+        signal_deriv_smooth = gaussian_filter1d(signal_deriv, sigma=2.0)
 
-        # Find first frame where signal exceeds threshold
-        for t in range(init_window, n_volumes):
-            if signal[t] > baseline_mean + threshold:
-                return t
+        # Threshold: 2x std of baseline derivative, with absolute floor
+        # to prevent false triggers when baseline is very quiet
+        baseline_end = min(n_baseline_noise, len(signal_deriv_smooth))
+        baseline_deriv = signal_deriv_smooth[:baseline_end]
+        noise_threshold = 2.0 * np.std(baseline_deriv)
+        abs_floor = 0.01 * np.mean(signal[:baseline_end + 1])
+        deriv_threshold = max(noise_threshold, abs_floor)
 
-        # If no bolus detected, return default
+        # Find first pair of consecutive above-threshold frames
+        # (single spikes are likely motion, not bolus onset)
+        above = signal_deriv_smooth > deriv_threshold
+        for i in range(len(above) - 1):
+            if above[i] and above[i + 1]:
+                return max(i, min_baseline)
+
         return DEFAULT_BASELINE_FRAMES
 
     def _calculate_fd(

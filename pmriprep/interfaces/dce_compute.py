@@ -24,6 +24,8 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 from pmriprep.utils.dce_constants import (
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
+    KTRANS_BOUNDS,
+    VE_BOUNDS,
 )
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
@@ -995,6 +997,7 @@ class ComputeDCEMaps(BaseInterface):
         n_failed = 0
         n_constrained = 0
         n_unconstrained_fallback = 0
+        n_rejected_postfit = 0
         r2_list: list[float] = []
         failure_reason_counts: dict[str, int] = {}
 
@@ -1059,10 +1062,31 @@ class ComputeDCEMaps(BaseInterface):
             x, y, z = res["coords"]
             params = res["params"]
 
-            ktrans[x, y, z] = params.get("Ktrans", 0.0)
-            ve[x, y, z] = params.get("ve", 0.0)
+            # Post-fit validation: reject degenerate fits (matching perf-plus)
+            # Voxels where parameters hit exact optimizer bounds or R² < 0
+            # are unreliable and should be zeroed.
+            ktrans_val = params.get("Ktrans", 0.0)
+            ve_val = params.get("ve", 0.0)
+            r2_val = res["r_squared"]
+            degenerate = (
+                ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
+                or ve_val <= 0 or ve_val >= VE_BOUNDS.max
+                or r2_val < 0
+            )
+            if degenerate:
+                ktrans[x, y, z] = 0.0
+                ve[x, y, z] = 0.0
+                kep[x, y, z] = 0.0
+                r2_map[x, y, z] = 0.0
+                if has_vp:
+                    vp[x, y, z] = 0.0
+                n_rejected_postfit += 1
+                continue
+
+            ktrans[x, y, z] = ktrans_val
+            ve[x, y, z] = ve_val
             kep[x, y, z] = params.get("kep", 0.0)
-            r2_map[x, y, z] = res["r_squared"]
+            r2_map[x, y, z] = r2_val
 
             if has_vp:
                 vp[x, y, z] = params.get("vp", 0.0)
@@ -1108,6 +1132,7 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["convergence_rate"] = n_converged / max(1, n_voxels)
         qc_metrics["n_constrained"] = n_constrained
         qc_metrics["n_unconstrained_fallback"] = n_unconstrained_fallback
+        qc_metrics["n_rejected_postfit"] = n_rejected_postfit
         qc_metrics["failure_reasons"] = failure_reason_counts
 
         # Quality flag breakdown
