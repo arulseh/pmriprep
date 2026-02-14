@@ -126,10 +126,10 @@ def solve_e1_from_signal_ratio(
     # E1 * (1 - R * cos_alpha) = 1 - R
     # E1 = (1 - R) / (1 - R * cos_alpha)
 
-    # Prevent division by zero in baseline_den
+    # Prevent division by zero in baseline_den (matches perf-plus EPSILON_SIGNAL)
     baseline_den_safe = np.where(
-        np.abs(baseline_den) < EPSILON_T1,
-        np.sign(baseline_den) * EPSILON_T1 + (baseline_den == 0) * EPSILON_T1,
+        np.abs(baseline_den) < EPSILON_SIGNAL,
+        np.where(baseline_den >= 0, EPSILON_SIGNAL, -EPSILON_SIGNAL),
         baseline_den,
     )
 
@@ -138,10 +138,10 @@ def solve_e1_from_signal_ratio(
     # Compute E1
     denominator = 1.0 - r * cos_alpha
 
-    # Prevent division by zero
+    # Prevent division by zero (matches perf-plus EPSILON_SIGNAL)
     denominator_safe = np.where(
-        np.abs(denominator) < EPSILON_T1,
-        np.sign(denominator) * EPSILON_T1 + (denominator == 0) * EPSILON_T1,
+        np.abs(denominator) < EPSILON_SIGNAL,
+        np.where(denominator >= 0, EPSILON_SIGNAL, -EPSILON_SIGNAL),
         denominator,
     )
 

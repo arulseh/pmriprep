@@ -448,6 +448,7 @@ def init_dce_preproc_wf(
             skip_t1=config.no_t1,
             lenient_qc=config.lenient_t1_qc,
             t1_correction_mode=config.t1_correction,
+            t1_method=config.t1_method,
         ),
         name="t1_mapping",
     )

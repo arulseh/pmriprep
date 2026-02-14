@@ -44,7 +44,7 @@ class DCEConfig:
     no_b1 : bool
         Skip B1+ mapping (use nominal flip angles).
     no_t1 : bool
-        Skip T1 mapping (use default T1=1200ms).
+        Skip T1 mapping (use field-strength-appropriate default T1).
     skip_flip_validation : bool
         Skip flip angle validation in VFA T1 mapping.
     lenient_t1_qc : bool
@@ -106,6 +106,7 @@ class DCEConfig:
     skip_flip_validation: bool = False
     lenient_t1_qc: bool = False
     t1_correction: Literal["auto", "none", "offset", "fallback"] = "auto"
+    t1_method: Literal["glls", "wlls"] = "wlls"
 
     # Processing settings
     no_tortuosity: bool = False

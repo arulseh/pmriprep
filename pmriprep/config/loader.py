@@ -135,6 +135,7 @@ def merge_cli_config(
         "dce_scale_aif": ("dce", "scale_aif"),
         "dce_no_b1": ("dce", "no_b1"),
         "dce_no_t1": ("dce", "no_t1"),
+        "dce_t1_method": ("dce", "t1_method"),
         "dce_use_gpu": ("dce", "use_gpu"),
         "dce_dose": ("dce", "dose"),
         "hdbet_device": ("dce", "hdbet_device"),

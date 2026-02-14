@@ -927,6 +927,13 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="T1 correction mode: auto, none, offset, or fallback",
     )
+    t1_method = traits.Enum(
+        "glls",
+        "wlls",
+        usedefault=True,
+        desc="VFA T1 fitting method: glls (standard DESPOT1) or wlls "
+             "(weighted least squares, eliminates noise bias)",
+    )
     b1_qc_pass = traits.Bool(
         True,
         usedefault=True,
@@ -1045,6 +1052,7 @@ class T1Mapping(SimpleInterface):
 
         from pmriprep.utils.dce_constants import (
             DEFAULT_T1_MS,
+            EPSILON_TRIG,
             LENIENT_T1_RANGE,
             get_tissue_t1_ranges,
         )
@@ -1060,8 +1068,17 @@ class T1Mapping(SimpleInterface):
 
         # Check if T1 mapping should be skipped
         if self.inputs.skip_t1:
-            # Create uniform T1 map with default value
-            t1_map = np.full(shape, DEFAULT_T1_MS, dtype=np.float32)
+            # Use field-strength-appropriate default T1
+            from pmriprep.utils.dce_t1_validation import (
+                T1_TISSUE_REFERENCE,
+                get_field_strength_key,
+            )
+
+            field_key = get_field_strength_key(self.inputs.field_strength)
+            default_t1 = T1_TISSUE_REFERENCE[field_key]["default"]
+
+            # Create uniform T1 map with field-strength default
+            t1_map = np.full(shape, default_t1, dtype=np.float32)
 
             # Save output
             out_img = nib.Nifti1Image(t1_map, affine)
@@ -1069,12 +1086,12 @@ class T1Mapping(SimpleInterface):
 
             # Set outputs for skipped case
             self._results["out_file"] = out_file
-            self._results["mean_t1_wm"] = DEFAULT_T1_MS
-            self._results["mean_t1_gm"] = DEFAULT_T1_MS
+            self._results["mean_t1_wm"] = default_t1
+            self._results["mean_t1_gm"] = default_t1
             self._results["qc_pass"] = True
             self._results["qc_metrics"] = {
-                "mean_t1_wm_ms": DEFAULT_T1_MS,
-                "mean_t1_gm_ms": DEFAULT_T1_MS,
+                "mean_t1_wm_ms": default_t1,
+                "mean_t1_gm_ms": default_t1,
                 "qc_pass": True,
                 "skipped": True,
             }
@@ -1114,10 +1131,9 @@ class T1Mapping(SimpleInterface):
         tan_fa = np.tan(corrected_fa_rad)
 
         # Prevent division by zero (use tight epsilon; B1+ floor of 0.5
-        # ensures corrected angles >= ~1° so sin/tan are well above 1e-6)
-        epsilon_trig = 1e-6
-        sin_fa = np.where(np.abs(sin_fa) < epsilon_trig, epsilon_trig, sin_fa)
-        tan_fa = np.where(np.abs(tan_fa) < epsilon_trig, epsilon_trig, tan_fa)
+        # ensures corrected angles >= ~1° so sin/tan are well above EPSILON_TRIG)
+        sin_fa = np.where(np.abs(sin_fa) < EPSILON_TRIG, EPSILON_TRIG, sin_fa)
+        tan_fa = np.where(np.abs(tan_fa) < EPSILON_TRIG, EPSILON_TRIG, tan_fa)
 
         # Calculate Y = S/sin(α) and X = S/tan(α) for DESPOT1 linearization
         y_data = signal_data / sin_fa  # Shape: (n_fa, x, y, z)
@@ -1126,7 +1142,13 @@ class T1Mapping(SimpleInterface):
         # Perform linear regression: Y = m × X + b
         # Using least squares for each voxel
         # m = E1, b = S0 × (1 - E1)
-        t1_map = self._fit_t1_linear(x_data, y_data, tr_s, shape)
+        if self.inputs.t1_method == "wlls":
+            cos_fa = np.cos(corrected_fa_rad)
+            t1_map = self._fit_t1_wlls(
+                x_data, y_data, sin_fa, cos_fa, tr_s, shape,
+            )
+        else:
+            t1_map = self._fit_t1_linear(x_data, y_data, tr_s, shape)
 
         # Convert T1 from seconds to milliseconds
         t1_map = t1_map * 1000.0
@@ -1302,9 +1324,15 @@ class T1Mapping(SimpleInterface):
         qc_metrics["t1_usable"] = (t1_status != QCStatus.FAIL) or (corr_type != "none")
 
         # Flip angle validation for 2-angle VFA
-        # Compare observed vs expected signal ratio assuming T1=1200ms at 3T
+        # Compare observed vs expected signal ratio using field-strength T1
         if n_fa >= 2:
-            assumed_t1_s = 1.2  # 1200ms typical brain T1 at 3T
+            from pmriprep.utils.dce_t1_validation import (
+                T1_TISSUE_REFERENCE,
+                get_field_strength_key,
+            )
+
+            field_key = get_field_strength_key(field_strength)
+            assumed_t1_s = T1_TISSUE_REFERENCE[field_key]["expected_median"] / 1000.0
             e1_expected = np.exp(-tr_s / assumed_t1_s)
             # Ernst equation: S ∝ sin(α)(1-E1) / (1-E1·cos(α))
             fa1_rad = flip_angles_rad[0]
@@ -1465,6 +1493,102 @@ class T1Mapping(SimpleInterface):
         t1_flat = -tr_s / np.log(e1)
 
         # Reshape back to 3D
+        t1_map: np.ndarray = t1_flat.reshape(shape)  # type: ignore[assignment]
+
+        return t1_map
+
+    def _fit_t1_wlls(
+        self,
+        x_data: np.ndarray,
+        y_data: np.ndarray,
+        sin_fa: np.ndarray,
+        cos_fa: np.ndarray,
+        tr_s: float,
+        shape: tuple[int, ...],
+        n_iterations: int = 3,
+    ) -> np.ndarray:
+        """Fit T1 using weighted linear least squares (WLLS) DESPOT1.
+
+        Iteratively reweighted least squares that eliminates 10-20% T1
+        overestimation bias inherent in standard GLLS at clinical SNR.
+
+        The weights account for heteroscedastic noise in the linearized
+        variables Y=S/sin(a) and X=S/tan(a), which share the same noisy
+        signal S. Without weighting, the correlated errors systematically
+        bias E1 (and thus T1) upward.
+
+        Args:
+            x_data: S/tan(a) data, shape (n_fa, x, y, z)
+            y_data: S/sin(a) data, shape (n_fa, x, y, z)
+            sin_fa: sin(corrected_fa), shape (n_fa, x, y, z)
+            cos_fa: cos(corrected_fa), shape (n_fa, x, y, z)
+            tr_s: TR in seconds
+            shape: Output shape (x, y, z)
+            n_iterations: Number of IRLS iterations (default: 3)
+
+        Returns:
+            T1 map in seconds
+
+        References:
+            Chang et al. (2008) PMC4196213, Eq. 5
+        """
+        from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1
+
+        n_fa = x_data.shape[0]
+        n_voxels = int(np.prod(shape))
+
+        # Reshape to (n_fa, n_voxels) for vectorized regression
+        x_flat = x_data.reshape(n_fa, n_voxels)
+        y_flat = y_data.reshape(n_fa, n_voxels)
+        sin_flat = sin_fa.reshape(n_fa, n_voxels)
+        cos_flat = cos_fa.reshape(n_fa, n_voxels)
+
+        # Iteration 0: unweighted GLLS to initialize E1
+        sum_x = np.sum(x_flat, axis=0)
+        sum_y = np.sum(y_flat, axis=0)
+        sum_xy = np.sum(x_flat * y_flat, axis=0)
+        sum_x2 = np.sum(x_flat * x_flat, axis=0)
+
+        denom = n_fa * sum_x2 - sum_x * sum_x
+        degenerate = np.abs(denom) < EPSILON_T1
+        denom = np.where(
+            degenerate,
+            np.where(denom >= 0, EPSILON_T1, -EPSILON_T1),
+            denom,
+        )
+        e1 = (n_fa * sum_xy - sum_x * sum_y) / denom
+        e1 = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
+
+        # Iterative reweighting (Chang et al. 2008, Eq. 5)
+        for _ in range(n_iterations):
+            # w_i = (sin(a_i) / (1 - E1 * cos(a_i)))^2
+            denom_w = 1.0 - e1[np.newaxis, :] * cos_flat  # (n_fa, n_voxels)
+            denom_w = np.where(
+                np.abs(denom_w) < EPSILON_T1,
+                np.where(denom_w >= 0, EPSILON_T1, -EPSILON_T1),
+                denom_w,
+            )
+            w = (sin_flat / denom_w) ** 2  # (n_fa, n_voxels)
+
+            # Weighted linear regression: Y = E1*X + b
+            sum_w = np.sum(w, axis=0)
+            sum_wx = np.sum(w * x_flat, axis=0)
+            sum_wy = np.sum(w * y_flat, axis=0)
+            sum_wxy = np.sum(w * x_flat * y_flat, axis=0)
+            sum_wx2 = np.sum(w * x_flat * x_flat, axis=0)
+
+            denom_reg = sum_w * sum_wx2 - sum_wx * sum_wx
+            degenerate_w = np.abs(denom_reg) < EPSILON_T1
+            denom_reg = np.where(
+                degenerate_w,
+                np.where(denom_reg >= 0, EPSILON_T1, -EPSILON_T1),
+                denom_reg,
+            )
+            e1 = (sum_w * sum_wxy - sum_wx * sum_wy) / denom_reg
+            e1 = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
+
+        # T1 = -TR / ln(E1)
+        t1_flat = -tr_s / np.log(e1)
         t1_map: np.ndarray = t1_flat.reshape(shape)  # type: ignore[assignment]
 
         return t1_map

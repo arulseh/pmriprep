@@ -31,6 +31,9 @@ EPSILON_B1: Final[float] = 1e-6
 #: perf-plus uses 1e-4 giving upper bound 0.9999 to avoid clipping long-T1 voxels
 EPSILON_E1_UPPER: Final[float] = 1e-4
 
+#: Minimum value for sin/tan of corrected flip angles to prevent division by zero
+EPSILON_TRIG: Final[float] = 1e-6
+
 #: Signal epsilon for baseline guard (matches perf-plus EPSILON_SIGNAL)
 EPSILON_SIGNAL: Final[float] = 1e-9
 

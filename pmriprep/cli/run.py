@@ -292,7 +292,16 @@ Examples:
         dest="dce_no_t1",
         action="store_true",
         default=False,
-        help="Skip T1 mapping (use default T1=1200ms).",
+        help="Skip T1 mapping (use field-strength-appropriate default T1).",
+    )
+    dce_group.add_argument(
+        "--dce-t1-method",
+        "--dce_t1_method",
+        dest="dce_t1_method",
+        choices=["glls", "wlls"],
+        default=None,
+        help="VFA T1 fitting method. wlls: weighted least squares (default, eliminates "
+             "10-20%% noise bias; Chang et al. 2008). glls: standard DESPOT1 (matches perf-plus).",
     )
     dce_group.add_argument(
         "--dce-use-gpu",
