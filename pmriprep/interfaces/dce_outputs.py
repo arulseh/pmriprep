@@ -770,14 +770,17 @@ class DCEDerivativeWriter(BaseInterface):
                 fit_rec = QCRecommendation(QCAction.EXCLUDE, f"PK fit residual high ({fit_residual:.3f})", 2)
             recommendations.append(fit_rec)
 
-        # Evaluate physiological plausibility of Ktrans
-        ktrans_median = pk_qc.get("ktrans_median")
-        if ktrans_median is not None:
+        # Evaluate physiological plausibility of Ktrans using mean (not median).
+        # Brain-wide median Ktrans is near-zero because most voxels have intact BBB.
+        # Mean is sensitive to the enhancing-tissue tail and better reflects whether
+        # the pipeline produced meaningful PK estimates.
+        ktrans_mean = pk_qc.get("ktrans_mean")
+        if ktrans_mean is not None:
             # Typical brain Ktrans: 0.001-0.01 min^-1 (healthy), up to 0.5 min^-1 (tumor)
-            if 0.0001 < ktrans_median < 1.0:
-                kt_rec = QCRecommendation(QCAction.INCLUDE, f"Ktrans physiologically plausible ({ktrans_median:.4f})", 0)
+            if 0.0001 < ktrans_mean < 1.0:
+                kt_rec = QCRecommendation(QCAction.INCLUDE, f"Ktrans physiologically plausible (mean={ktrans_mean:.4f})", 0)
             else:
-                kt_rec = QCRecommendation(QCAction.REVIEW, f"Ktrans outside typical range ({ktrans_median:.4f})", 1)
+                kt_rec = QCRecommendation(QCAction.REVIEW, f"Ktrans outside typical range (mean={ktrans_mean:.4f})", 1)
             recommendations.append(kt_rec)
 
         # Aggregate recommendations

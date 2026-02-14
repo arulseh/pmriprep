@@ -399,7 +399,7 @@ def generate_b1_qc_plot(
                    linewidth=1.5, label=f"Mean: {hist_mean:.3f}")
         ax.axvline(hist_median, color=COLORBLIND_PALETTE.secondary, linestyle=":",
                    linewidth=1.5, label=f"Median: {hist_median:.3f}")
-        ax.legend(fontsize=7, loc="upper right")
+        ax.legend(fontsize=7, loc="upper left")
 
     ax.set_xlabel("B1+ Correction Factor")
     ax.set_ylabel("Density")

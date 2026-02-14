@@ -29,8 +29,8 @@ def _select_qc_voxel(
     """Select an example voxel for PK modeling QC display.
 
     Tiered selection to avoid mask edges and noisy voxels:
-        1. Eroded QC mask — top-25% Ktrans among good-fit voxels,
-           eroded to stay away from edges
+        1. Eroded QC mask — voxel nearest median Ktrans among good-fit
+           voxels, eroded to stay away from edges
         2. QC mask (uneroded) — if erosion leaves nothing
         3. Eroded brain mask with nonzero Ktrans
         4. Brain mask center (ultimate fallback)
@@ -44,22 +44,16 @@ def _select_qc_voxel(
     Returns:
         (x, y, z) voxel coordinates.
     """
-    def _argmax_top25(search_mask: npt.NDArray[np.bool_]) -> tuple[int, int, int] | None:
-        """Find argmax Ktrans within top-25% of search_mask voxels."""
+    def _near_median(search_mask: npt.NDArray[np.bool_]) -> tuple[int, int, int] | None:
+        """Find voxel closest to median Ktrans within search_mask."""
         vals = ktrans[search_mask]
-        if len(vals) == 0:
+        if len(vals) == 0 or not np.any(vals > 0):
             return None
-        threshold_75 = float(np.percentile(vals[vals > 0], 75)) if np.any(vals > 0) else 0.0
-        if threshold_75 <= 0:
-            return None
-        top_mask = search_mask & (ktrans >= threshold_75)
-        if not np.any(top_mask):
-            top_mask = search_mask & (ktrans > 0)
-        if not np.any(top_mask):
-            return None
-        candidate = ktrans.copy()
-        candidate[~top_mask] = 0.0
-        flat_idx = int(np.argmax(candidate))
+        target = float(np.median(vals[vals > 0]))
+        candidate_mask = search_mask & (ktrans > 0)
+        diffs = np.full(ktrans.shape, np.inf)
+        diffs[candidate_mask] = np.abs(ktrans[candidate_mask] - target)
+        flat_idx = int(np.argmin(diffs))
         idx = np.unravel_index(flat_idx, ktrans.shape)
         return int(idx[0]), int(idx[1]), int(idx[2])
 
@@ -68,13 +62,13 @@ def _select_qc_voxel(
         qc_bool = qc_mask > 0.5
         eroded_qc = binary_erosion(qc_bool, iterations=2)
         if isinstance(eroded_qc, np.ndarray) and np.any(eroded_qc):
-            result = _argmax_top25(eroded_qc)
+            result = _near_median(eroded_qc)
             if result is not None:
                 return result
 
         # Tier 2: Uneroded QC mask
         if np.any(qc_bool):
-            result = _argmax_top25(qc_bool)
+            result = _near_median(qc_bool)
             if result is not None:
                 return result
 
@@ -83,7 +77,7 @@ def _select_qc_voxel(
     if isinstance(eroded_brain, np.ndarray):
         eroded_with_ktrans = eroded_brain & (ktrans > 0)
         if np.any(eroded_with_ktrans):
-            result = _argmax_top25(eroded_with_ktrans)
+            result = _near_median(eroded_with_ktrans)
             if result is not None:
                 return result
 
@@ -277,10 +271,13 @@ def generate_pk_modeling_qc_plot(
     model_name: str,
     baseline_frames: int,
     qc_mask: npt.NDArray[Any] | None = None,
+    qc_fitted_curve: npt.NDArray[Any] | None = None,
+    fp: npt.NDArray[Any] | None = None,
+    ps: npt.NDArray[Any] | None = None,
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     """Generate a 2x2 PK modeling QC plot.
 
     Panels:
@@ -309,12 +306,15 @@ def generate_pk_modeling_qc_plot(
         model_name: Name of the PK model used.
         baseline_frames: Number of baseline frames.
         qc_mask: 3D QC mask (physiological bounds + R² filter). Optional.
+        qc_fitted_curve: Pre-computed 1D fitted curve for QC voxel. Optional.
+        fp: 3D Fp map for 2CXM (optional).
+        ps: 3D PS map for 2CXM (optional).
         subject_id: Subject identifier for title.
         session_id: Session identifier for title.
         output_path: Path to save PNG. If None, uses CWD.
 
     Returns:
-        Path to the saved QC plot PNG.
+        Tuple of (path to saved QC plot PNG, voxel metrics dict).
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
     from scipy.ndimage import binary_erosion
@@ -336,7 +336,9 @@ def generate_pk_modeling_qc_plot(
 
     # Get fitted curve for the example voxel
     fitted_curve: Optional[npt.NDArray[Any]] = None
-    if fitted_curves is not None:
+    if qc_fitted_curve is not None and len(qc_fitted_curve) > 0:
+        fitted_curve = qc_fitted_curve
+    elif fitted_curves is not None:
         fitted_curve = fitted_curves[vx, vy, vz, :]
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -379,16 +381,6 @@ def generate_pk_modeling_qc_plot(
     ax.set_ylabel("Concentration (mM)")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
-    # R^2 badge
-    if voxel_r2 >= 0.9:
-        r2_color = COLORBLIND_PALETTE.secondary
-    elif voxel_r2 >= 0.7:
-        r2_color = "#AA3377"
-    else:
-        r2_color = COLORBLIND_PALETTE.error
-    ax.text(0.98, 0.95, f"R\u00b2 = {voxel_r2:.3f}", transform=ax.transAxes,
-            fontsize=10, fontweight="bold", va="top", ha="right", color=r2_color,
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.9))
 
     # --- (1,0) AIF ---
     ax = axes[1, 0]
@@ -432,18 +424,7 @@ def generate_pk_modeling_qc_plot(
     ax.plot(marker_col, marker_row, "*", color="cyan", markersize=12, markeredgecolor="black",
             markeredgewidth=0.5)
 
-    # Parameter text box
-    param_lines = [f"Ktrans = {voxel_ktrans:.4f} min\u207b\u00b9",
-                   f"ve     = {voxel_ve:.4f}"]
-    if voxel_vp is not None:
-        param_lines.append(f"vp     = {voxel_vp:.4f}")
-    param_lines.append(f"R\u00b2    = {voxel_r2:.4f}")
-    param_text = "\n".join(param_lines)
-    fig.text(0.02, 0.02, param_text, fontsize=9, fontfamily="monospace",
-             va="bottom", bbox=dict(boxstyle="round,pad=0.4", facecolor="#f7f7f7",
-                                    edgecolor="#cccccc", alpha=0.95))
-
-    fig.tight_layout(rect=(0, 0.08, 1, 0.96))
+    fig.tight_layout(rect=(0, 0.02, 1, 0.96))
 
     if output_path is None:
         output_path = str(Path.cwd() / "pk_modeling_qc.png")
@@ -452,7 +433,21 @@ def generate_pk_modeling_qc_plot(
     fig.savefig(out, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    return str(out)
+    # Build voxel metrics for HTML rendering
+    voxel_metrics: dict[str, Any] = {
+        "qc_voxel": f"({vx}, {vy}, {vz})",
+        "qc_voxel_ktrans": round(voxel_ktrans, 4),
+        "qc_voxel_ve": round(voxel_ve, 4),
+        "qc_voxel_fit_r2": round(voxel_r2, 4),
+    }
+    if voxel_vp is not None:
+        voxel_metrics["qc_voxel_vp"] = round(voxel_vp, 4)
+    if fp is not None:
+        voxel_metrics["qc_voxel_fp"] = round(float(fp[vx, vy, vz]), 4)
+    if ps is not None:
+        voxel_metrics["qc_voxel_ps"] = round(float(ps[vx, vy, vz]), 4)
+
+    return str(out), voxel_metrics
 
 
 def generate_pk_parameter_maps_qc_plot(
@@ -490,6 +485,8 @@ def generate_pk_parameter_maps_qc_plot(
         "Ktrans": ("hot", 0.0, "pct95", None, "min\u207b\u00b9"),
         "ve": ("viridis", 0.0, "fixed", 1.0, "fraction"),
         "vp": ("plasma", 0.0, "pct95", None, "fraction"),
+        "Fp": ("inferno", 0.0, "pct95", None, "mL/100g/min"),
+        "PS": ("magma", 0.0, "pct95", None, "mL/100g/min"),
     }
 
     # Filter to params that exist in the input
@@ -564,11 +561,11 @@ def generate_pk_parameter_maps_qc_plot(
         )
 
         # Per-row colorbar
-        cbar = fig.colorbar(im, ax=axes[row_idx, :].tolist(), fraction=0.02,
-                            pad=0.02, label=f"{name} ({unit_label})")
+        cbar = fig.colorbar(im, ax=axes[row_idx, :].tolist(), fraction=0.03,
+                            pad=0.06, label=f"{name} ({unit_label})")
         cbar.ax.tick_params(labelsize=8)
 
-    fig.tight_layout(rect=(0.05, 0, 0.95, 0.96))
+    fig.tight_layout(rect=(0.06, 0.02, 0.92, 0.96))
 
     if output_path is None:
         output_path = str(Path.cwd() / "pk_parameter_maps_qc.png")

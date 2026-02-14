@@ -291,7 +291,7 @@
     </div>
     {% endif %}
 
-    <!-- PK Modeling -->
+    <!-- Pharmacokinetic Modeling -->
     {% if qc_metrics.pk_modeling %}
     <div class="section">
         <h2>Pharmacokinetic Modeling</h2>
@@ -320,25 +320,82 @@
                 <div class="metric-value">{{ "%.3f"|format(qc_metrics.pk_modeling.vp_median) }}</div>
             </div>
             {% endif %}
+            {% if qc_metrics.pk_modeling.fp_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median Fp</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.pk_modeling.fp_median) }} mL/100g/min</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.pk_modeling.ps_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median PS</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.pk_modeling.ps_median) }} mL/100g/min</div>
+            </div>
+            {% endif %}
         </div>
-    </div>
-    {% endif %}
 
-    <!-- PK Modeling QC Plot -->
-    {% if images.pk_modeling_qc %}
-    <div class="section">
-        <h2>PK Model Fit QC</h2>
-        <p>Example voxel signal, concentration fit, AIF, and Ktrans map.</p>
-        <img src="data:image/png;base64,{{ images.pk_modeling_qc }}" alt="PK Modeling QC">
-    </div>
-    {% endif %}
+        {% if images.pk_param_maps_qc %}
+        <div style="margin-top: 20px;">
+            <h3>Parameter Maps</h3>
+            <img src="data:image/png;base64,{{ images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
+        </div>
+        {% endif %}
 
-    <!-- PK Parameter Maps -->
-    {% if images.pk_param_maps_qc %}
-    <div class="section">
-        <h2>PK Parameter Maps</h2>
-        <p>Multi-slice axial views of pharmacokinetic parameter maps.</p>
-        <img src="data:image/png;base64,{{ images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
+        {% if images.pk_modeling_qc %}
+        <div style="margin-top: 20px;">
+            <h3>Example Voxel Fit</h3>
+            {% if qc_metrics.pk_modeling.qc_voxel is defined %}
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-label">Voxel</div>
+                    <div class="metric-value">{{ qc_metrics.pk_modeling.qc_voxel }}</div>
+                </div>
+                {% if qc_metrics.pk_modeling.qc_voxel_ktrans is defined %}
+                <div class="metric">
+                    <div class="metric-label">Ktrans</div>
+                    <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_ktrans) }} min<sup>-1</sup></div>
+                </div>
+                {% endif %}
+                {% if qc_metrics.pk_modeling.qc_voxel_ve is defined %}
+                <div class="metric">
+                    <div class="metric-label">ve</div>
+                    <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_ve) }}</div>
+                </div>
+                {% endif %}
+                {% if qc_metrics.pk_modeling.qc_voxel_vp is defined %}
+                <div class="metric">
+                    <div class="metric-label">vp</div>
+                    <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_vp) }}</div>
+                </div>
+                {% endif %}
+                {% if qc_metrics.pk_modeling.qc_voxel_fp is defined %}
+                <div class="metric">
+                    <div class="metric-label">Fp</div>
+                    <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_fp) }} mL/100g/min</div>
+                </div>
+                {% endif %}
+                {% if qc_metrics.pk_modeling.qc_voxel_ps is defined %}
+                <div class="metric">
+                    <div class="metric-label">PS</div>
+                    <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_ps) }} mL/100g/min</div>
+                </div>
+                {% endif %}
+                {% if qc_metrics.pk_modeling.qc_voxel_fit_r2 is defined %}
+                <div class="metric">
+                    <div class="metric-label">Fit R&sup2;</div>
+                    <div class="metric-value
+                        {%- if qc_metrics.pk_modeling.qc_voxel_fit_r2 >= 0.9 %} pass
+                        {%- elif qc_metrics.pk_modeling.qc_voxel_fit_r2 >= 0.7 %} warn
+                        {%- else %} fail{% endif %}">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_fit_r2) }}</div>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+            <div style="margin-top: 10px;">
+                <img src="data:image/png;base64,{{ images.pk_modeling_qc }}" alt="PK Modeling QC">
+            </div>
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 

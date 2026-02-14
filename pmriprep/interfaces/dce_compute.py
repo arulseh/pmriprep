@@ -1153,6 +1153,10 @@ class ComputeDCEMaps(BaseInterface):
                 qc_metrics["vp_mean"] = float(np.mean(vp[fitted_mask]))
                 qc_metrics["vp_median"] = float(np.median(vp[fitted_mask]))
 
+            if model_name == "2cxm":
+                qc_metrics["fp_median"] = float(np.median(fp_map[fitted_mask]))
+                qc_metrics["ps_median"] = float(np.median(ps_map[fitted_mask]))
+
             # Histogram statistics for fitted parameters
             ktrans_vals = ktrans[fitted_mask]
             hist_counts, hist_edges = np.histogram(ktrans_vals, bins=50)
@@ -1369,6 +1373,7 @@ class ComputeDCEMaps(BaseInterface):
         # Generate PK QC plots
         try:
             from pmriprep.utils.dce_pk_qc_plots import (
+                _select_qc_voxel,
                 generate_pk_modeling_qc_plot,
                 generate_pk_parameter_maps_qc_plot,
             )
@@ -1378,7 +1383,43 @@ class ComputeDCEMaps(BaseInterface):
             if isdefined(self.inputs.dce_signal_file):
                 signal_for_qc = nib.load(self.inputs.dce_signal_file).get_fdata()  # type: ignore[attr-defined]
 
-            pk_modeling_qc_path = generate_pk_modeling_qc_plot(
+            # Compute single-voxel fitted curve for QC display
+            qc_fitted_curve_1d: Optional[npt.NDArray[Any]] = None
+            try:
+                from scipy.ndimage import binary_erosion as _be
+
+                from pmriprep.models.dce import (
+                    ExtendedToftsModel,
+                    PatlakModel,
+                    ToftsModel,
+                    TwoCompartmentExchangeModel,
+                )
+
+                qc_vx, qc_vy, qc_vz = _select_qc_voxel(
+                    ktrans, mask_bool, qc_mask, _be,
+                )
+                model_cls_map: dict[str, type] = {
+                    "tofts": ToftsModel,
+                    "extended_tofts": ExtendedToftsModel,
+                    "patlak": PatlakModel,
+                    "2cxm": TwoCompartmentExchangeModel,
+                }
+                qc_model = model_cls_map[model_name]()
+                qc_param_map: dict[str, npt.NDArray[Any]] = {
+                    "Ktrans": ktrans, "ve": ve, "vp": vp,
+                    "Fp": fp_map, "PS": ps_map,
+                }
+                qc_params = [
+                    float(qc_param_map[n][qc_vx, qc_vy, qc_vz])
+                    for n in qc_model.get_parameter_names()
+                ]
+                qc_fitted_curve_1d = qc_model.evaluate(
+                    qc_params, aif, time_points,
+                ).astype(np.float32)
+            except Exception as exc:
+                logger.debug("Could not compute QC fitted curve: %s", exc)
+
+            pk_modeling_qc_path, pk_voxel_metrics = generate_pk_modeling_qc_plot(
                 conc_data=conc_data,
                 signal_data=signal_for_qc,
                 aif=aif,
@@ -1392,9 +1433,13 @@ class ComputeDCEMaps(BaseInterface):
                 model_name=model_name,
                 baseline_frames=baseline_frames,
                 qc_mask=qc_mask,
+                qc_fitted_curve=qc_fitted_curve_1d,
+                fp=fp_map if model_name == "2cxm" else None,
+                ps=ps_map if model_name == "2cxm" else None,
             )
             if pk_modeling_qc_path:
                 self._results["pk_modeling_qc_plot"] = pk_modeling_qc_path
+            qc_metrics.update(pk_voxel_metrics)
 
             param_maps_dict: dict[str, npt.NDArray[Any]] = {
                 "Ktrans": ktrans,
@@ -1402,6 +1447,9 @@ class ComputeDCEMaps(BaseInterface):
             }
             if self._has_vp(model_name):
                 param_maps_dict["vp"] = vp
+            if model_name == "2cxm":
+                param_maps_dict["Fp"] = fp_map
+                param_maps_dict["PS"] = ps_map
 
             pk_param_maps_qc_path = generate_pk_parameter_maps_qc_plot(
                 param_maps=param_maps_dict,
