@@ -35,6 +35,8 @@ from pmriprep.utils.dce_constants import (
     AIF_FWHM_VENOUS_SCORE,
     AIF_FWHM_VENOUS_THRESHOLD_FRAMES,
     AIF_IDEAL_FWHM_FRAMES,
+    AIF_FWHM_MAX_RELAXED_SECONDS,
+    AIF_IDEAL_FWHM_SECONDS,
     AIF_PEAK_TIMING_FRACTION,
     AIF_THRESHOLDS_RELAXED,
     AIF_THRESHOLDS_STRICT,
@@ -51,8 +53,11 @@ from pmriprep.utils.dce_constants import (
     PARKER_R1_REFERENCE,
     SLAB_EDGE_EXCLUSION_MM,
     SUPERIOR_EXCLUSION_FRACTION,
+    compute_fwhm_threshold_frames,
+    compute_timing_margin_frames,
     get_aif_thresholds,
     get_blood_t1,
+    is_low_temporal_resolution,
 )
 
 logger = logging.getLogger(__name__)
@@ -735,11 +740,13 @@ class AIFDetection(BaseInterface):
         nt: int,
         percentile_threshold: float = 98.0,
         n_candidates: int = 100,
+        tr: float = 2.0,
     ) -> tuple[npt.NDArray[Any], float, int]:
-        """Apply arterial criteria with 7-tier fallback cascade (perf-plus exact).
+        """Apply arterial criteria with 7-tier fallback cascade.
 
-        This implements the exact logic from perf-plus dce_aif_detection.py
-        lines 636-722, using vectorized boolean operations.
+        TR-adaptive: at low temporal resolution (TR > 5s), timing-based
+        criteria are replaced with early_arrival (40% fraction) which is
+        TR-independent. FWHM thresholds are adapted to seconds-based limits.
 
         Args:
             chars: Signal characteristics dictionary from _compute_signal_characteristics.
@@ -747,6 +754,7 @@ class AIFDetection(BaseInterface):
             nt: Number of timepoints.
             percentile_threshold: Percentile for peak threshold (default 98).
             n_candidates: Target number of candidates.
+            tr: Temporal resolution in seconds (for TR-adaptive thresholds).
 
         Returns:
             (candidate_indices, tissue_ttp, tier_used) where:
@@ -755,13 +763,14 @@ class AIFDetection(BaseInterface):
             - tier_used: Which tier (1-7) produced the result
         """
         n_voxels = len(chars["peak_values"])
+        low_tr = is_low_temporal_resolution(tr)
+        timing_margin = compute_timing_margin_frames(tr)
 
         # 1. High peak enhancement (exclude spatially constrained voxels)
         peak_threshold = float(np.percentile(chars["peak_values"], percentile_threshold))
         high_peak = (chars["peak_values"] > peak_threshold) & (~spatial_exclude)
 
         # 2. Tissue reference timing (median TTP of 25th-75th percentile enhancement voxels)
-        # This approximates parenchymal tissue TTP
         enh_values = chars["enhancement"]
         p25 = float(np.percentile(enh_values, 25))
         p75 = float(np.percentile(enh_values, 75))
@@ -772,14 +781,13 @@ class AIFDetection(BaseInterface):
         else:
             tissue_ttp = float(np.median(chars["peak_indices"]))
 
-        # 3. Arterial timing: AIF should peak BEFORE tissue (by at least 2 frames)
-        arterial_timing = chars["peak_indices"] < (tissue_ttp - AIF_TIMING_BEFORE_TISSUE_FRAMES)
+        # 3. Arterial timing: AIF should peak BEFORE tissue (by timing margin)
+        arterial_timing = chars["peak_indices"] < (tissue_ttp - timing_margin)
 
         # 3b. Relaxed arterial timing: AIF must peak BEFORE tissue (no margin)
-        # Used in Tier 6-7 to prevent venous contamination (SSS peaks AFTER tissue)
         arterial_timing_relaxed = chars["peak_indices"] < tissue_ttp
 
-        # 4. Early arrival: peak in first 40% of acquisition
+        # 4. Early arrival: peak in first 40% of acquisition (TR-independent)
         early_arrival = chars["peak_indices"] < (nt * AIF_PEAK_TIMING_FRACTION)
 
         # 5. Rapid uptake (90th percentile enhancement)
@@ -789,8 +797,9 @@ class AIFDetection(BaseInterface):
         # 6. Washout criterion (20% strict)
         has_washout = chars["washout_fraction"] > AIF_WASHOUT_THRESHOLD_STRICT
 
-        # 7. FWHM criterion (5 frames strict)
-        narrow_bolus = chars["fwhm_frames"] < AIF_FWHM_MAX_STRICT_FRAMES
+        # 7. FWHM criterion (TR-adaptive: min of frame-based and seconds-based)
+        fwhm_strict = compute_fwhm_threshold_frames(tr, strict=True)
+        narrow_bolus = chars["fwhm_frames"] < fwhm_strict
 
         # 8. Upstroke criterion (top 25% of high-peak voxels)
         upstroke_high_peak = chars["upstroke_slope"][high_peak]
@@ -802,9 +811,13 @@ class AIFDetection(BaseInterface):
 
         min_candidates = n_candidates // 2
 
-        # TIER 1: Strict criteria (arterial timing)
+        # At low TR, use early_arrival instead of arterial_timing in Tiers 1-5
+        # because the timing margin (1 frame = 8s) exceeds physiological transit time
+        timing_gate = early_arrival if low_tr else arterial_timing
+
+        # TIER 1: Strict criteria
         candidates_mask = (
-            high_peak & arterial_timing & rapid_uptake &
+            high_peak & timing_gate & rapid_uptake &
             has_washout & narrow_bolus & steep_upstroke
         )
         candidate_indices = np.where(candidates_mask)[0]
@@ -836,9 +849,10 @@ class AIFDetection(BaseInterface):
             candidate_indices = np.where(candidates_mask)[0]
             tier_used = 4
 
-        # TIER 5: Relax FWHM to 8 frames
+        # TIER 5: Relax FWHM
         if len(candidate_indices) < min_candidates:
-            narrow_bolus_relaxed = chars["fwhm_frames"] < AIF_FWHM_MAX_RELAXED_FRAMES
+            fwhm_relaxed = compute_fwhm_threshold_frames(tr, strict=False)
+            narrow_bolus_relaxed = chars["fwhm_frames"] < fwhm_relaxed
             has_washout_relaxed = chars["washout_fraction"] > AIF_WASHOUT_THRESHOLD_RELAXED
             candidates_mask = (
                 high_peak & early_arrival & has_washout_relaxed & narrow_bolus_relaxed
@@ -846,19 +860,23 @@ class AIFDetection(BaseInterface):
             candidate_indices = np.where(candidates_mask)[0]
             tier_used = 5
 
-        # TIER 6: Peak + relaxed timing + FWHM (< 10 candidates)
-        # CRITICAL: Use arterial_timing_relaxed (peak before tissue TTP, no margin)
-        # NOT early_arrival, which ignores tissue TTP and allows SSS contamination
+        # TIER 6: At high TR, drop timing (use peak + FWHM only);
+        # at normal TR, use relaxed timing + FWHM
         if len(candidate_indices) < 10:
-            candidates_mask = high_peak & arterial_timing_relaxed & narrow_bolus
+            if low_tr:
+                candidates_mask = high_peak & narrow_bolus
+            else:
+                candidates_mask = high_peak & arterial_timing_relaxed & narrow_bolus
             candidate_indices = np.where(candidates_mask)[0]
             tier_used = 6
 
-        # TIER 7: Peak + relaxed timing (LAST RESORT)
-        # NEVER drop timing completely - always require peak before tissue TTP
-        # SSS peaks 3-8 frames AFTER tissue, so this filter excludes venous structures
+        # TIER 7: Last resort — at high TR, peak only (always produces candidates);
+        # at normal TR, peak + relaxed timing
         if len(candidate_indices) < 10:
-            candidates_mask = high_peak & arterial_timing_relaxed
+            if low_tr:
+                candidates_mask = high_peak
+            else:
+                candidates_mask = high_peak & arterial_timing_relaxed
             candidate_indices = np.where(candidates_mask)[0]
             tier_used = 7
 
@@ -1157,16 +1175,17 @@ class AIFDetection(BaseInterface):
                 [metrics_list[i] for i in non_venous_indices],
             )
 
-        # Not enough non-venous candidates - return EMPTY to trigger population AIF
-        # Returning venous-contaminated candidates is worse than using population AIF
-        # because venous AIF causes systematic errors in PK modeling
+        # Not enough non-venous candidates — keep all candidates rather than
+        # returning empty. A detected AIF with marginal timing is better than
+        # population AIF which introduces 25-40% patient-specific variability
+        # (Parker 2006). The venous flag is preserved in metrics for QC.
         logger.warning(
-            "VENOUS CONTAMINATION DETECTED: %d of %d candidates flagged as likely venous. "
+            "VENOUS CONTAMINATION WARNING: %d of %d candidates flagged as likely venous. "
             "Insufficient non-venous candidates (%d < %d). "
-            "Returning empty to trigger population AIF fallback.",
+            "Keeping all candidates (detected AIF preferred over population fallback).",
             n_venous, len(candidates), len(non_venous_indices), min_non_venous,
         )
-        return [], [], []
+        return candidates, scores, metrics_list
 
     # -----------------------------------------------------------------
     # Candidate Scoring (replaces old _score_dce_candidate)
@@ -1254,7 +1273,11 @@ class AIFDetection(BaseInterface):
             return 0.0, metrics
 
         # Compute composite score (all thresholds met)
-        # Weights: peak=0.20, CNR=0.15, washout=0.20, FWHM=0.15, upstroke=0.15, timing=0.15
+        # At low TR, timing weight reduced from 0.15 to 0.05; redistribute
+        # 0.05 each to FWHM and washout for better discrimination
+        low_tr = is_low_temporal_resolution(tr)
+        w_fwhm = 0.25 if low_tr else 0.15
+        w_washout = 0.25 if low_tr else 0.20
         score = 0.0
 
         # Peak contribution (0-0.20): closer to expected range is better
@@ -1267,35 +1290,46 @@ class AIFDetection(BaseInterface):
         cnr_score = min(1.0, cnr / 50.0)
         score += 0.15 * cnr_score
 
-        # Washout contribution (0-0.20): closer to 0.5 is ideal
+        # Washout contribution: closer to 0.5 is ideal
         washout_score = 1.0 - abs(washout - 0.5) / 0.5
-        score += 0.20 * max(0.0, washout_score)
+        score += w_washout * max(0.0, washout_score)
 
-        # FWHM contribution (0-0.15): closer to ~15s is ideal for DCE
+        # FWHM contribution: closer to ~15s is ideal for DCE
         ideal_fwhm = 15.0
         fwhm_range = thresholds.fwhm_max_seconds - thresholds.fwhm_min_seconds
         fwhm_score = 1.0 - abs(fwhm - ideal_fwhm) / max(fwhm_range / 2, 1.0)
-        score += 0.15 * max(0.0, fwhm_score)
+        score += w_fwhm * max(0.0, fwhm_score)
 
         # Upstroke slope contribution (0-0.15): steeper is better for arteries
         if upstroke > 0:
             upstroke_score = min(1.0, upstroke / (peak / max(tr * 3, EPSILON_T1)))
             score += 0.15 * upstroke_score
 
-        # Timing contribution (0-0.15): AIF should peak before tissue
-        # Score is 1.0 if peaks >= 2 frames before tissue, 0.0 otherwise
-        # This penalizes venous candidates that peak with or after tissue
+        # Timing contribution: AIF should peak before tissue
+        # At high TR, timing is less discriminative so reduce weight
         if tissue_ttp_frame is not None:
+            timing_margin = compute_timing_margin_frames(tr)
             frames_before_tissue = tissue_ttp_frame - peak_time_frame
-            if frames_before_tissue >= AIF_TIMING_BEFORE_TISSUE_FRAMES:
-                timing_score = 1.0
-            elif frames_before_tissue >= 0:
-                # Partial credit for marginal timing (0-2 frames before tissue)
-                timing_score = frames_before_tissue / AIF_TIMING_BEFORE_TISSUE_FRAMES
+            low_tr = is_low_temporal_resolution(tr)
+
+            if low_tr:
+                # At high TR: full credit if same frame or before tissue
+                if frames_before_tissue >= 0:
+                    timing_score = 1.0
+                else:
+                    timing_score = 0.0
+                # Reduced timing weight (0.05), redistribute to FWHM and washout
+                timing_weight = 0.05
             else:
-                # Zero score if AIF peaks AFTER tissue (venous)
-                timing_score = 0.0
-            score += 0.15 * timing_score
+                if frames_before_tissue >= timing_margin:
+                    timing_score = 1.0
+                elif frames_before_tissue >= 0:
+                    timing_score = frames_before_tissue / timing_margin
+                else:
+                    timing_score = 0.0
+                timing_weight = 0.15
+
+            score += timing_weight * timing_score
             metrics["timing_score"] = timing_score
 
         return min(1.0, score), metrics
@@ -1374,6 +1408,7 @@ class AIFDetection(BaseInterface):
         scores: list[float],
         metrics_list: list[dict[str, float]],
         brain_shape: tuple[int, ...],
+        tr: float = 2.0,
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
         """Score spatial clusters and select the best arterial cluster.
 
@@ -1385,6 +1420,7 @@ class AIFDetection(BaseInterface):
             scores: Per-candidate quality scores.
             metrics_list: Per-candidate metric dictionaries.
             brain_shape: Spatial dimensions (nx, ny, nz).
+            tr: Temporal resolution in seconds (for FWHM frame conversion).
 
         Returns:
             (candidates, scores, metrics) for the best cluster.
@@ -1423,25 +1459,29 @@ class AIFDetection(BaseInterface):
 
             cluster_size = len(cluster_indices)
 
-            # FWHM score: Gaussian centered on ideal ~3 frames (arterial)
-            # Uses fwhm_seconds and converts to frames assuming ~2s TR typical for DCE
+            # FWHM score: Gaussian centered on ideal arterial FWHM
+            # Convert fwhm_seconds to frames using actual TR
             fwhm_vals = [
                 metrics_list[i].get("fwhm_seconds", 30.0) for i in cluster_indices
             ]
             mean_fwhm = float(np.mean(fwhm_vals))
-            # Approximate conversion to frames (assume ~2s TR typical for DCE)
-            mean_fwhm_frames = mean_fwhm / 2.0
+            effective_tr = max(tr, 0.1)  # Guard against zero TR
+            mean_fwhm_frames = mean_fwhm / effective_tr
+
+            # TR-adaptive ideal FWHM and venous threshold in frames
+            ideal_fwhm_frames = AIF_IDEAL_FWHM_SECONDS / effective_tr
+            venous_threshold_frames = AIF_FWHM_MAX_RELAXED_SECONDS / effective_tr
 
             if mean_fwhm_frames < 0.5:
                 # Noise spike - too narrow
                 fwhm_score = AIF_FWHM_NOISE_SCORE
-            elif mean_fwhm_frames > AIF_FWHM_VENOUS_THRESHOLD_FRAMES:
+            elif mean_fwhm_frames > venous_threshold_frames:
                 # Venous - too broad
                 fwhm_score = AIF_FWHM_VENOUS_SCORE
             else:
                 # Gaussian scoring centered on ideal FWHM
                 deviation = (
-                    (mean_fwhm_frames - AIF_IDEAL_FWHM_FRAMES)
+                    (mean_fwhm_frames - ideal_fwhm_frames)
                     / AIF_FWHM_SCORING_WIDTH
                 )
                 fwhm_score = float(np.exp(-deviation**2))
@@ -1543,6 +1583,12 @@ class AIFDetection(BaseInterface):
             concentration_data[x, y, z, :]
             for x, y, z in mask_coords
         ])
+
+        # Cap at physiological maximum to reject resampling artifacts
+        # (max arterial peak ~15 mM for double dose; 20 mM provides margin)
+        MAX_PHYSIOLOGICAL_CONC_MM = 20.0
+        curves = np.minimum(curves, MAX_PHYSIOLOGICAL_CONC_MM)
+
         n_voxels = curves.shape[0]
 
         if n_voxels == 0:
@@ -1558,10 +1604,11 @@ class AIFDetection(BaseInterface):
             (z == 0 or z == nz - 1) for x, y, z in mask_coords
         ], dtype=bool)
 
-        # Apply 7-tier arterial criteria cascade (perf-plus exact)
+        # Apply 7-tier arterial criteria cascade (TR-adaptive)
         candidate_idx_in_masked, tissue_ttp_computed, tier_used = self._apply_arterial_criteria(
             chars, spatial_exclude, n_timepoints,
             percentile_threshold=98.0, n_candidates=n_candidates * 2,
+            tr=tr,
         )
 
         logger.debug(
@@ -1609,11 +1656,17 @@ class AIFDetection(BaseInterface):
             trapezoid_fn = getattr(np, "trapezoid", None) or getattr(np, "trapz")
             metrics["auc"] = float(trapezoid_fn(curve) * tr)
 
-            # Check timing against tissue TTP
+            # Check timing against tissue TTP (TR-adaptive)
             frames_before_tissue = tissue_ttp_computed - metrics["peak_time_frame"]
             metrics["frames_before_tissue"] = frames_before_tissue
-            if frames_before_tissue < AIF_TIMING_BEFORE_TISSUE_FRAMES:
-                metrics["is_likely_venous"] = True
+            timing_margin = compute_timing_margin_frames(tr)
+            if is_low_temporal_resolution(tr):
+                # At high TR, only flag venous if peak is >1 frame AFTER tissue
+                if frames_before_tissue < -1:
+                    metrics["is_likely_venous"] = True
+            else:
+                if frames_before_tissue < timing_margin:
+                    metrics["is_likely_venous"] = True
 
             all_metrics.append(metrics)
 
@@ -1657,7 +1710,7 @@ class AIFDetection(BaseInterface):
         # ----- Cluster-based selection -----
         if len(candidates) > n_candidates:
             candidates, scores, all_metrics = self._score_and_select_cluster(
-                candidates, scores, all_metrics, brain_shape
+                candidates, scores, all_metrics, brain_shape, tr=tr
             )
 
         # ----- Filter venous candidates (Fix 1: Enforce venous exclusion) -----
@@ -1943,13 +1996,8 @@ class AIFDetection(BaseInterface):
                     conc_data.shape[:3], affine, tumor_lat,
                 )
 
-            # ===== Fix 2: Apply venous filter UNCONDITIONALLY =====
-            # Previously venous filtering only happened inside _filter_candidates_by_hemisphere
-            # which was conditional on lesion_mask. Now we always filter venous candidates.
-            if candidates:
-                candidates, scores, metrics_list = self._filter_venous_candidates(
-                    candidates, scores, metrics_list, min_non_venous=3
-                )
+            # Venous filtering already applied inside _find_candidates_in_mask
+            # (after cluster selection). No need to duplicate here.
 
         # ===== Generate AIF curve =====
         aif_curve: npt.NDArray[Any]
@@ -1992,6 +2040,7 @@ class AIFDetection(BaseInterface):
                     ),
                     "n_candidates": len(candidates),
                     "arterial_cascade_tier": tier_used,
+                    "low_tr_mode": is_low_temporal_resolution(tr),
                 }
 
             # Venous contamination detection and warning
@@ -2007,23 +2056,30 @@ class AIFDetection(BaseInterface):
             if tissue_ttp_frame is not None:
                 aif_peak_frame = int(np.argmax(aif_curve))
                 timing_diff = tissue_ttp_frame - aif_peak_frame
+                qc_timing_margin = compute_timing_margin_frames(tr)
+                low_tr = is_low_temporal_resolution(tr)
                 qc_metrics["aif_ttp_frame"] = aif_peak_frame
                 qc_metrics["tissue_ttp_frame"] = tissue_ttp_frame
                 qc_metrics["aif_before_tissue_frames"] = timing_diff
-                qc_metrics["is_likely_venous"] = timing_diff < AIF_TIMING_BEFORE_TISSUE_FRAMES
 
-                if timing_diff < 0:
+                # At high TR, only flag as venous if peak is >1 frame after tissue
+                if low_tr:
+                    qc_metrics["is_likely_venous"] = timing_diff < -1
+                else:
+                    qc_metrics["is_likely_venous"] = timing_diff < qc_timing_margin
+
+                if timing_diff < -1:
                     logger.warning(
                         "VENOUS CONTAMINATION: AIF peaks %.0f frames AFTER tissue TTP. "
-                        "Likely SSS or venous structure. Consider population AIF fallback.",
+                        "Likely SSS or venous structure.",
                         abs(timing_diff),
                     )
-                elif timing_diff < AIF_TIMING_BEFORE_TISSUE_FRAMES:
+                elif not low_tr and timing_diff < qc_timing_margin:
                     logger.warning(
                         "MARGINAL AIF TIMING: AIF peaks only %.0f frames before tissue TTP "
                         "(expected >= %d). May have venous contamination.",
                         timing_diff,
-                        AIF_TIMING_BEFORE_TISSUE_FRAMES,
+                        qc_timing_margin,
                     )
 
         else:

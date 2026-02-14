@@ -2332,7 +2332,8 @@ class DCEPreprocess(SimpleInterface):
         above = signal_deriv_smooth > deriv_threshold
         for i in range(len(above) - 1):
             if above[i] and above[i + 1]:
-                return max(i, min_baseline)
+                # deriv[i] = signal[i+1] - signal[i], so bolus onset is frame i+1
+                return max(i + 1, min_baseline)
 
         return DEFAULT_BASELINE_FRAMES
 

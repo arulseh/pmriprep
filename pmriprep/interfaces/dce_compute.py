@@ -270,11 +270,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=True,
         desc="3D brain mask NIfTI",
     )
-    t1_map_file = File(
-        exists=True,
-        desc="Optional T1 map in milliseconds (for model initialization)",
-    )
-
     # Model selection
     model = traits.Enum(
         "auto",
@@ -484,8 +479,6 @@ class ComputeDCEMaps(BaseInterface):
         1D text file with AIF plasma concentration values (mM).
     brain_mask_file : str
         3D brain mask NIfTI.
-    t1_map_file : str, optional
-        T1 map for model initialization (not currently used).
     model : str
         PK model: auto, tofts, extended_tofts, patlak, or 2cxm. Default: 'auto'.
     tr : float, optional
@@ -791,8 +784,8 @@ class ComputeDCEMaps(BaseInterface):
         if signal_std_map is not None:
             fitting_mask = fitting_mask & (signal_std_map >= 1.0)
 
-        # Pre-fit enhancement screen: skip voxels with no meaningful
-        # contrast enhancement (these produce R2 < 0 fits on noise)
+        # Pre-fit enhancement screen: skip voxels with CNR < 3 where
+        # Ktrans estimation error exceeds 100% (Buckley, MRM 2002)
         peak_enhancement = np.max(conc_data, axis=-1)
         baseline_std = np.std(conc_data[..., :baseline_frames], axis=-1)
         enhancement_mask = peak_enhancement > 3.0 * np.maximum(baseline_std, 1e-10)
@@ -1062,22 +1055,24 @@ class ComputeDCEMaps(BaseInterface):
             x, y, z = res["coords"]
             params = res["params"]
 
-            # Post-fit validation: reject degenerate fits (matching perf-plus)
-            # Voxels where parameters hit exact optimizer bounds or R² < 0
-            # are unreliable and should be zeroed.
+            # Post-fit validation: reject bound-railing fits only.
+            # Parameters at exact optimizer bounds are degenerate (optimizer
+            # wanted to exceed the bound). R² is NOT used for rejection —
+            # low-R² voxels with valid params have uncertain but informative
+            # estimates. Zeroing them biases distributions upward and
+            # destroys information. R² quality gating belongs in the QC mask
+            # (line 1354: r2_map >= 0.5), separate from parameter estimation.
             ktrans_val = params.get("Ktrans", 0.0)
             ve_val = params.get("ve", 0.0)
-            r2_val = res["r_squared"]
             degenerate = (
                 ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
                 or ve_val <= 0 or ve_val >= VE_BOUNDS.max
-                or r2_val < 0
             )
             if degenerate:
                 ktrans[x, y, z] = 0.0
                 ve[x, y, z] = 0.0
                 kep[x, y, z] = 0.0
-                r2_map[x, y, z] = 0.0
+                r2_map[x, y, z] = res["r_squared"]
                 if has_vp:
                     vp[x, y, z] = 0.0
                 n_rejected_postfit += 1
@@ -1086,7 +1081,7 @@ class ComputeDCEMaps(BaseInterface):
             ktrans[x, y, z] = ktrans_val
             ve[x, y, z] = ve_val
             kep[x, y, z] = params.get("kep", 0.0)
-            r2_map[x, y, z] = r2_val
+            r2_map[x, y, z] = res["r_squared"]
 
             if has_vp:
                 vp[x, y, z] = params.get("vp", 0.0)

@@ -502,3 +502,83 @@ AIF_FWHM_VENOUS_SCORE: Final[float] = 0.2
 
 #: Score assigned to candidates with noise-like FWHM (< 0.5 frames).
 AIF_FWHM_NOISE_SCORE: Final[float] = 0.1
+
+
+# =============================================================================
+# TR-Adaptive AIF Detection
+# =============================================================================
+#: Constants and helpers for TR-adaptive AIF detection.
+#: At low temporal resolution (TR > 5s), frame-based thresholds become
+#: unphysiological (e.g., 2 frames at TR=8s = 16s, far beyond arterial-tissue
+#: transit time of 3-5s). These helpers adapt thresholds to work at any TR.
+
+#: Target arterial-tissue transit time in seconds (physiology-based).
+AIF_TIMING_TARGET_SECONDS: Final[float] = 4.0
+
+#: TR threshold above which timing-based discrimination is unreliable.
+AIF_LOW_TR_THRESHOLD: Final[float] = 5.0
+
+#: Strict arterial FWHM upper bound in seconds.
+AIF_FWHM_MAX_STRICT_SECONDS: Final[float] = 25.0
+
+#: Relaxed arterial FWHM upper bound in seconds.
+AIF_FWHM_MAX_RELAXED_SECONDS: Final[float] = 45.0
+
+#: Ideal arterial FWHM in seconds for scoring.
+AIF_IDEAL_FWHM_SECONDS: Final[float] = 12.0
+
+
+def compute_timing_margin_frames(tr: float) -> int:
+    """Compute TR-adaptive timing margin in frames.
+
+    At TR=2s, returns 2 frames (4s / 2s). At TR>=4s, returns 1 frame.
+    Ensures the timing margin is physiologically meaningful at any TR.
+
+    Args:
+        tr: Temporal resolution in seconds.
+
+    Returns:
+        Timing margin in frames (minimum 1).
+    """
+    if tr <= 0:
+        return 1
+    return max(1, round(AIF_TIMING_TARGET_SECONDS / tr))
+
+
+def compute_fwhm_threshold_frames(tr: float, strict: bool = True) -> float:
+    """Compute TR-adaptive FWHM threshold in frames.
+
+    Takes the minimum of the frame-based threshold (from perf-plus) and
+    a seconds-based threshold converted to frames. This ensures the
+    threshold is meaningful at any TR:
+    - At TR=2s: min(5, 25/2=12.5) = 5 frames (frame-based dominates)
+    - At TR=8s: min(5, 25/8=3.1) = 3.1 frames (seconds-based dominates)
+
+    Args:
+        tr: Temporal resolution in seconds.
+        strict: If True, use strict thresholds; otherwise relaxed.
+
+    Returns:
+        FWHM threshold in frames.
+    """
+    if tr <= 0:
+        return 5.0 if strict else 8.0
+    frame_based = 5.0 if strict else 8.0
+    sec_based = (AIF_FWHM_MAX_STRICT_SECONDS if strict
+                 else AIF_FWHM_MAX_RELAXED_SECONDS) / tr
+    return min(frame_based, sec_based)
+
+
+def is_low_temporal_resolution(tr: float) -> bool:
+    """Check if TR is too high for reliable timing-based AIF discrimination.
+
+    At TR > 5s, the 2-frame timing margin exceeds physiological
+    arterial-tissue transit time, making timing criteria unreliable.
+
+    Args:
+        tr: Temporal resolution in seconds.
+
+    Returns:
+        True if TR is above the low-TR threshold.
+    """
+    return tr > AIF_LOW_TR_THRESHOLD

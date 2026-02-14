@@ -37,7 +37,12 @@ def _get_atlas_from_bids(bids_dir: Union[str, Path], atlas_type: str = "auto") -
     Returns:
         Path to atlas file, or None if not found.
     """
-    atlas_dir = Path(bids_dir) / "sourcedata" / "atlases" / "mni_aif"
+    # Try bids_dir/sourcedata/ first (standard BIDS layout),
+    # then bids_dir.parent/sourcedata/ (when bids_dir = rawdata/)
+    bids_path = Path(bids_dir)
+    atlas_dir = bids_path / "sourcedata" / "atlases" / "mni_aif"
+    if not atlas_dir.exists():
+        atlas_dir = bids_path.parent / "sourcedata" / "atlases" / "mni_aif"
     if not atlas_dir.exists():
         return None
 
@@ -874,10 +879,6 @@ def init_dce_preproc_wf(
         (inputnode, pk_modeling, [
             ("tr", "tr"),
             ("volume_tr", "volume_tr"),  # For model auto-selection
-        ]),
-        # Use T1 map resampled to DCE space
-        (transform_t1_to_dce, pk_modeling, [
-            ("out_file", "t1_map_file"),
         ]),
         # Raw DCE signal for tSNR computation (matches perf-plus)
         # Also wire baseline_frames so pk_modeling uses the same value
@@ -2053,6 +2054,13 @@ def _signal_to_concentration_node(
         convert_to_plasma=False,
     )
 
+    # Zero out concentration for voxels with invalid T1 (NaN, sub-physiological).
+    # After resampling, out-of-FOV voxels may have T1=NaN which produces
+    # extreme concentration values that corrupt AIF detection thresholds.
+    if t1_map is not None:
+        invalid_t1 = ~np.isfinite(t1_map) | (t1_map < 100.0)  # T1 in ms
+        result.concentration[invalid_t1] = 0.0
+
     # Save concentration file
     out_file = str(Path.cwd() / "dce_concentration.nii.gz")
     conc_img = nib.Nifti1Image(result.concentration.astype(np.float32), affine, header)
@@ -2499,6 +2507,18 @@ def _transform_t1_to_dce(t1_map_file=None, reference_file=None):
     from nilearn.image import resample_to_img  # type: ignore[import-untyped]
 
     resampled = resample_to_img(t1_img, ref_img, interpolation="continuous")
+
+    # Restore NaN for voxels that were NaN before resampling.
+    # nilearn's continuous interpolation replaces NaN/out-of-FOV with 0,
+    # which downstream causes T1=0 → R1=inf → concentration artifacts.
+    data = resampled.get_fdata()
+    n_invalid = np.sum(data <= 0)
+    if n_invalid > 0:
+        data[data <= 0] = np.nan
+        resampled = nib.Nifti1Image(
+            data.astype(np.float32), resampled.affine, resampled.header,
+        )
+
     out_file = str(Path.cwd() / "t1_map_dce_space.nii.gz")
     nib.save(resampled, out_file)
     return out_file
