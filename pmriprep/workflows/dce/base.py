@@ -533,11 +533,11 @@ def init_dce_preproc_wf(
     preprocessing_qc = pe.Node(
         niu.Function(
             input_names=[
-                "dce_file", "brain_mask_file", "fd_list", "outlier_frames",
+                "dce_file", "brain_mask_file",
                 "baseline_frames", "bolus_arrival_frame", "tr_ms",
                 "volume_tr_s", "subject_id", "session_id",
             ],
-            output_names=["plot_file"],
+            output_names=["plot_file", "preproc_display_stats"],
             function=_generate_preprocessing_qc,
         ),
         name="preprocessing_qc",
@@ -548,8 +548,6 @@ def init_dce_preproc_wf(
     workflow.connect([
         (dce_preprocess, preprocessing_qc, [
             ("out_file", "dce_file"),
-            ("fd", "fd_list"),
-            ("outlier_frames", "outlier_frames"),
             ("baseline_frames", "baseline_frames"),
             ("bolus_arrival_frame", "bolus_arrival_frame"),
         ]),
@@ -1263,6 +1261,7 @@ def init_dce_preproc_wf(
                 "aif_qc",
                 "pk_qc",
                 "validation_result",
+                "preproc_display",
             ],
             output_names=["qc_metrics"],
             function=_collect_qc_metrics,
@@ -1291,6 +1290,9 @@ def init_dce_preproc_wf(
         ]),
         (dsc_dce_validation, collect_qc, [
             ("validation_result", "validation_result"),
+        ]),
+        (preprocessing_qc, collect_qc, [
+            ("preproc_display_stats", "preproc_display"),
         ]),
     ])
 
@@ -2246,6 +2248,7 @@ def _collect_qc_metrics(
     aif_qc,
     pk_qc,
     validation_result,
+    preproc_display=None,
 ):
     """Collect all QC metrics into a single dictionary."""
     qc_metrics = {}
@@ -2264,6 +2267,10 @@ def _collect_qc_metrics(
         qc_metrics["pk_modeling"] = pk_qc
     if validation_result is not None:
         qc_metrics["dsc_dce_validation"] = validation_result
+
+    # Merge display stats (TR, tSNR, peak enh) into preprocessing metrics
+    if preproc_display is not None:
+        qc_metrics.setdefault("preprocessing", {}).update(preproc_display)
 
     return qc_metrics
 
@@ -2602,8 +2609,6 @@ def _generate_dce_motion_qc_plot(motion_params_file, out_dir, tr):
 def _generate_preprocessing_qc(
     dce_file,
     brain_mask_file,
-    fd_list,
-    outlier_frames,
     baseline_frames,
     bolus_arrival_frame,
     tr_ms,
@@ -2619,17 +2624,15 @@ def _generate_preprocessing_qc(
     Args:
         dce_file: Path to 4D motion-corrected DCE NIfTI.
         brain_mask_file: Path to brain mask NIfTI.
-        fd_list: Framewise displacement values.
-        outlier_frames: Outlier frame indices.
         baseline_frames: Number of baseline frames.
         bolus_arrival_frame: Bolus arrival frame index.
-        tr_ms: Pulse TR in milliseconds.
+        tr_ms: Pulse TR in seconds (from inputnode ``tr``).
         volume_tr_s: Volume TR in seconds.
         subject_id: Subject identifier.
         session_id: Session identifier.
 
     Returns:
-        Path to the saved preprocessing QC plot PNG.
+        Tuple of (plot_file path, preproc_display_stats dict).
     """
     from pathlib import Path
 
@@ -2639,24 +2642,31 @@ def _generate_preprocessing_qc(
 
     dce_data = nib.load(dce_file).get_fdata()
     brain_mask = nib.load(brain_mask_file).get_fdata() > 0.5
-    n_volumes = dce_data.shape[3]
+
+    # Convert TR from seconds (inputnode) to milliseconds
+    tr_ms_val = tr_ms * 1000.0 if tr_ms is not None else 0.0
+    volume_tr_val = volume_tr_s if volume_tr_s is not None else 1.0
 
     out_path = str(Path(dce_file).parent / "dce_preprocessing_qc.png")
 
-    return generate_preprocessing_qc_plot(
+    plot_file, stats = generate_preprocessing_qc_plot(
         dce_signal_4d=dce_data,
         brain_mask=brain_mask,
-        fd_list=fd_list,
-        outlier_frames=outlier_frames if outlier_frames is not None else [],
         baseline_frames=baseline_frames,
         bolus_arrival_frame=bolus_arrival_frame,
-        tr_ms=tr_ms if tr_ms is not None else 0.0,
-        volume_tr_s=volume_tr_s if volume_tr_s is not None else 1.0,
-        n_volumes=n_volumes,
+        volume_tr_s=volume_tr_val,
         subject_id=subject_id,
         session_id=session_id,
         output_path=out_path,
     )
+
+    preproc_display_stats = {
+        "tr_ms": tr_ms_val,
+        "volume_tr_s": volume_tr_val,
+        "n_volumes": dce_data.shape[3],
+        **stats,
+    }
+    return plot_file, preproc_display_stats
 
 
 def _create_dce_registration_filmstrip(

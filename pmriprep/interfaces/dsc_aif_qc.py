@@ -193,7 +193,7 @@ class AIFQCPlot(BaseInterface):
 
             # Baseline region shading
             baseline_frames = qc.get("baseline_frames_used", qc.get("n_baseline_frames", 5))
-            baseline_end_t = baseline_frames * tr
+            baseline_end_t = (baseline_frames - 0.5) * tr
             ax.axvspan(0, baseline_end_t, alpha=0.08, color="gray", label=f"Baseline ({baseline_frames} fr)")
 
             ax.set_xlabel("Time (s)", fontsize=11)

@@ -2041,6 +2041,9 @@ class DCEPreprocess(SimpleInterface):
 
         # Ensure baseline is at least 3 frames and doesn't exceed available volumes
         baseline_frames = max(3, min(baseline_frames, n_volumes - 1))
+        # Clamp baseline to bolus arrival so baseline never extends into bolus.
+        if bolus_frame > 0 and baseline_frames > bolus_frame:
+            baseline_frames = bolus_frame
         baseline_indices = list(range(baseline_frames))
 
         # Determine reference volume for motion correction
@@ -2258,12 +2261,10 @@ class DCEPreprocess(SimpleInterface):
         # Detect bolus arrival
         bolus_frame = self._detect_bolus_arrival_from_signal(signal)
 
-        # Baseline is everything before bolus arrival
-        # Use at least 3 frames, default if detection fails
-        if bolus_frame <= 3:
-            baseline_frames = DEFAULT_BASELINE_FRAMES
-        else:
-            baseline_frames = bolus_frame
+        # Baseline is everything before bolus arrival.
+        # _detect_bolus_arrival_from_signal already returns DEFAULT_BASELINE_FRAMES
+        # on detection failure and enforces min_baseline=3, so trust its result.
+        baseline_frames = bolus_frame
 
         return baseline_frames, bolus_frame
 

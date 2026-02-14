@@ -1,7 +1,7 @@
 """DCE pharmacokinetic QC visualization plots.
 
 This module provides three QC plot functions for DCE perfusion processing:
-1. Preprocessing QC — signal quality, enhancement, tSNR, motion
+1. Preprocessing QC — signal quality, enhancement, tSNR, CV
 2. PK modeling QC — model fit at example voxel, AIF, Ktrans map
 3. PK parameter maps — multi-slice spatial parameter maps
 
@@ -96,58 +96,48 @@ def _select_qc_voxel(
 def generate_preprocessing_qc_plot(
     dce_signal_4d: npt.NDArray[Any],
     brain_mask: npt.NDArray[Any],
-    fd_list: list[float],
-    outlier_frames: list[int],
     baseline_frames: int,
     bolus_arrival_frame: int,
-    tr_ms: float,
     volume_tr_s: float,
-    n_volumes: int,
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
-) -> str:
-    """Generate a 4x2 preprocessing QC plot for DCE data.
+) -> tuple[str, dict[str, float]]:
+    """Generate a 2-row preprocessing QC plot for DCE data.
 
-    Panels:
-        (0,0) Global signal time course with baseline/bolus markers
-        (0,1) Peak signal axial slice
-        (1,0) Enhancement map (%)
-        (1,1) tSNR map
-        (2,0) CV map (temporal coefficient of variation)
-        (2,1) Signal intensity histogram (baseline vs peak)
-        (3,0) Framewise displacement with threshold
-        (3,1) DCE quality summary text box
+    Layout (GridSpec 2×4, graphs span 2 cols, images span 1):
+        Row 0: Global Signal Time Course (0-1) | Peak Signal (2) | Enhancement Map (3)
+        Row 1: Signal Intensity Histogram (0-1) | tSNR Map (2) | CV Map (3)
+
+    FD and summary text are omitted — FD is shown in the dedicated
+    motion_qc.png, and summary stats are rendered as HTML metric boxes.
 
     Args:
         dce_signal_4d: 4D raw DCE signal array (x, y, z, t).
         brain_mask: 3D boolean brain mask.
-        fd_list: Framewise displacement values per volume.
-        outlier_frames: Indices of motion outlier frames.
         baseline_frames: Number of baseline (pre-bolus) frames.
         bolus_arrival_frame: Frame index of bolus arrival.
-        tr_ms: Pulse repetition time in milliseconds.
         volume_tr_s: Temporal resolution between volumes in seconds.
-        n_volumes: Number of volumes in the 4D series.
         subject_id: Subject identifier for title.
         session_id: Session identifier for title.
         output_path: Path to save PNG. If None, uses CWD.
 
     Returns:
-        Path to the saved QC plot PNG.
+        Tuple of (path to saved QC plot PNG, stats dict with
+        ``peak_enh_pct`` and ``mean_tsnr``).
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+    from matplotlib.gridspec import GridSpec
 
-    from pmriprep.utils.qc_standards import (
-        COLORBLIND_PALETTE,
-        MOTION_FD_THRESHOLDS,
-        get_qc_status,
-    )
+    from pmriprep.utils.qc_standards import COLORBLIND_PALETTE
     from pmriprep.utils.qc_utils import get_radiological_slice
 
     mask_bool = brain_mask > 0.5
+    n_volumes = dce_signal_4d.shape[3]
 
-    fig, axes = plt.subplots(4, 2, figsize=(16, 16))
+    fig = plt.figure(figsize=(20, 8))
+    gs = GridSpec(2, 4, figure=fig, wspace=0.30, hspace=0.35)
+
     title = "DCE Preprocessing QC"
     if subject_id:
         title += f" — sub-{subject_id}"
@@ -155,8 +145,8 @@ def generate_preprocessing_qc_plot(
         title += f" ses-{session_id}"
     fig.suptitle(title, fontsize=13, fontweight="bold", y=0.98)
 
-    # --- (0,0) Global Signal Time Course ---
-    ax = axes[0, 0]
+    # --- (0, 0-1) Global Signal Time Course ---
+    ax = fig.add_subplot(gs[0, 0:2])
     global_signal = np.array([
         np.mean(dce_signal_4d[..., t][mask_bool])
         for t in range(n_volumes)
@@ -165,9 +155,9 @@ def generate_preprocessing_qc_plot(
     ax.plot(time_s, global_signal, color=COLORBLIND_PALETTE.primary, linewidth=1.2)
     # Baseline shading
     if baseline_frames > 0:
-        ax.axvspan(0, baseline_frames * volume_tr_s, alpha=0.15,
+        ax.axvspan(0, (baseline_frames - 0.5) * volume_tr_s, alpha=0.15,
                    color=COLORBLIND_PALETTE.success, label="Baseline")
-        ax.axvline(baseline_frames * volume_tr_s, color="gray",
+        ax.axvline((baseline_frames - 0.5) * volume_tr_s, color="gray",
                    linestyle="--", linewidth=0.8, label="Baseline end")
     # Bolus arrival
     if bolus_arrival_frame > 0:
@@ -185,22 +175,23 @@ def generate_preprocessing_qc_plot(
             transform=ax.transAxes, fontsize=8, va="top",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
 
-    # --- (0,1) Peak Signal Image ---
-    ax = axes[0, 1]
+    # --- (0, 2) Peak Signal Image ---
+    ax = fig.add_subplot(gs[0, 2])
     peak_frame = int(np.argmax(global_signal))
     peak_vol = dce_signal_4d[..., peak_frame]
     mid_slice = get_radiological_slice(peak_vol, axis=2)
-    ax.imshow(mid_slice, cmap="gray", aspect="equal")
+    brain_vals = peak_vol[mask_bool]
+    vmax = float(np.percentile(brain_vals, 99)) if brain_vals.size > 0 else 1.0
+    ax.imshow(mid_slice, cmap="gray", vmin=0, vmax=vmax, aspect="equal")
     ax.set_title(f"Peak Signal (frame {peak_frame})", fontsize=10)
-    # R/L markers
     ax.text(0.02, 0.5, "R", transform=ax.transAxes, fontsize=9,
             color="white", fontweight="bold", va="center")
     ax.text(0.98, 0.5, "L", transform=ax.transAxes, fontsize=9,
             color="white", fontweight="bold", va="center", ha="right")
     ax.axis("off")
 
-    # --- (1,0) Enhancement Map (%) ---
-    ax = axes[1, 0]
+    # --- (0, 3) Enhancement Map (%) ---
+    ax = fig.add_subplot(gs[0, 3])
     baseline_vol = np.mean(dce_signal_4d[..., :max(1, baseline_frames)], axis=3)
     with np.errstate(divide="ignore", invalid="ignore"):
         enhancement = np.where(
@@ -215,37 +206,10 @@ def generate_preprocessing_qc_plot(
     ax.axis("off")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="%")
 
-    # --- (1,1) tSNR Map ---
-    ax = axes[1, 1]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        temporal_mean = np.mean(dce_signal_4d, axis=3)
-        temporal_std = np.std(dce_signal_4d, axis=3)
-        tsnr = np.where(temporal_std > 1e-6, temporal_mean / temporal_std, 0.0)
-    tsnr[~mask_bool] = np.nan
-    mean_tsnr = float(np.nanmean(tsnr[mask_bool]))
-    tsnr_slice = get_radiological_slice(tsnr, axis=2)
-    tsnr_vmax = float(np.nanpercentile(tsnr[mask_bool], 95)) if np.any(mask_bool) else 50.0
-    im = ax.imshow(tsnr_slice, cmap="hot", vmin=0, vmax=tsnr_vmax, aspect="equal")
-    ax.set_title("tSNR Map", fontsize=10)
-    ax.axis("off")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="tSNR")
-
-    # --- (2,0) CV Map ---
-    ax = axes[2, 0]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        cv = np.where(temporal_mean > 1e-6, temporal_std / temporal_mean, 0.0)
-    cv[~mask_bool] = np.nan
-    cv_slice = get_radiological_slice(cv, axis=2)
-    im = ax.imshow(cv_slice, cmap="viridis", vmin=0, vmax=0.2, aspect="equal")
-    ax.set_title("Coefficient of Variation", fontsize=10)
-    ax.axis("off")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="CV")
-
-    # --- (2,1) Signal Intensity Histogram ---
-    ax = axes[2, 1]
+    # --- (1, 0-1) Signal Intensity Histogram ---
+    ax = fig.add_subplot(gs[1, 0:2])
     baseline_vals = dce_signal_4d[..., 0][mask_bool]
     peak_vals = dce_signal_4d[..., peak_frame][mask_bool]
-    # Determine common range
     all_vals = np.concatenate([baseline_vals, peak_vals])
     hist_min = float(np.percentile(all_vals, 1))
     hist_max = float(np.percentile(all_vals, 99))
@@ -259,61 +223,31 @@ def generate_preprocessing_qc_plot(
     ax.set_ylabel("Density")
     ax.legend(fontsize=8)
 
-    # --- (3,0) Framewise Displacement ---
-    ax = axes[3, 0]
-    fd = np.array(fd_list, dtype=np.float64)
-    fd_threshold = MOTION_FD_THRESHOLDS.warn_threshold
-    volumes = np.arange(len(fd))
-    ax.fill_between(volumes, fd, alpha=0.3, color=COLORBLIND_PALETTE.primary)
-    ax.plot(volumes, fd, color=COLORBLIND_PALETTE.primary, linewidth=1)
-    ax.axhline(y=fd_threshold, color=COLORBLIND_PALETTE.error, linestyle="--",
-               linewidth=1, label=f"Threshold ({fd_threshold} mm)")
-    # Shade outlier frames
-    for idx in outlier_frames:
-        if 0 <= idx < len(fd):
-            ax.axvspan(idx - 0.5, idx + 0.5, alpha=0.15, color=COLORBLIND_PALETTE.error)
-    mean_fd = float(np.mean(fd))
-    fd_status = get_qc_status(mean_fd, MOTION_FD_THRESHOLDS, higher_is_better=False)
-    max_fd = float(np.max(fd)) if len(fd) > 0 else 0.0
-    ax.set_ylim(0, max(max_fd * 1.1, fd_threshold * 1.5))
-    ax.set_title("Framewise Displacement", fontsize=10)
-    ax.set_xlabel("Volume")
-    ax.set_ylabel("FD (mm)")
-    ax.legend(fontsize=7, loc="upper right")
-    # Status badge
-    status_colors = {"PASS": COLORBLIND_PALETTE.success,
-                     "WARN": COLORBLIND_PALETTE.warning,
-                     "FAIL": COLORBLIND_PALETTE.error}
-    ax.text(0.98, 0.95, fd_status, transform=ax.transAxes, fontsize=10,
-            fontweight="bold", va="top", ha="right",
-            color=status_colors.get(fd_status, "gray"),
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.9))
-
-    # --- (3,1) Quality Summary Text Box ---
-    ax = axes[3, 1]
+    # --- (1, 2) tSNR Map ---
+    ax = fig.add_subplot(gs[1, 2])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        temporal_mean = np.mean(dce_signal_4d, axis=3)
+        temporal_std = np.std(dce_signal_4d, axis=3)
+        tsnr = np.where(temporal_std > 1e-6, temporal_mean / temporal_std, 0.0)
+    tsnr[~mask_bool] = np.nan
+    mean_tsnr = float(np.nanmean(tsnr[mask_bool]))
+    tsnr_slice = get_radiological_slice(tsnr, axis=2)
+    tsnr_vmax = float(np.nanpercentile(tsnr[mask_bool], 95)) if np.any(mask_bool) else 50.0
+    im = ax.imshow(tsnr_slice, cmap="hot", vmin=0, vmax=tsnr_vmax, aspect="equal")
+    ax.set_title("tSNR Map", fontsize=10)
     ax.axis("off")
-    summary_lines = [
-        f"TR (pulse):  {tr_ms:.1f} ms",
-        f"Volume TR:   {volume_tr_s:.2f} s",
-        f"Volumes:     {n_volumes}",
-        f"Baseline:    {baseline_frames} frames",
-        f"Bolus frame: {bolus_arrival_frame}",
-        f"Peak enh:    {peak_enh_pct:.1f}%",
-        "",
-        f"Mean FD:     {mean_fd:.3f} mm  [{fd_status}]",
-        f"Max FD:      {max_fd:.3f} mm",
-        f"Outliers:    {len(outlier_frames)}",
-        "",
-        f"Mean tSNR:   {mean_tsnr:.1f}",
-    ]
-    summary_text = "\n".join(summary_lines)
-    ax.text(0.1, 0.95, summary_text, transform=ax.transAxes,
-            fontsize=11, va="top", fontfamily="monospace",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor="#f7f7f7",
-                      edgecolor="#cccccc", alpha=0.95))
-    ax.set_title("DCE Quality Summary", fontsize=10)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="tSNR")
 
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    # --- (1, 3) CV Map ---
+    ax = fig.add_subplot(gs[1, 3])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cv = np.where(temporal_mean > 1e-6, temporal_std / temporal_mean, 0.0)
+    cv[~mask_bool] = np.nan
+    cv_slice = get_radiological_slice(cv, axis=2)
+    im = ax.imshow(cv_slice, cmap="viridis", vmin=0, vmax=0.2, aspect="equal")
+    ax.set_title("Coefficient of Variation", fontsize=10)
+    ax.axis("off")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="CV")
 
     if output_path is None:
         output_path = str(Path.cwd() / "dce_preprocessing_qc.png")
@@ -322,7 +256,11 @@ def generate_preprocessing_qc_plot(
     fig.savefig(out, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    return str(out)
+    stats = {
+        "peak_enh_pct": round(peak_enh_pct, 1),
+        "mean_tsnr": round(mean_tsnr, 1),
+    }
+    return str(out), stats
 
 
 def generate_pk_modeling_qc_plot(
