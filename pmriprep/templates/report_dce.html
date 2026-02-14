@@ -41,6 +41,12 @@
         <h2>Motion Quality Control</h2>
         {% if qc_metrics.preprocessing %}
         <div class="metrics">
+            {% if qc_metrics.preprocessing.motion_status is defined %}
+            <div class="metric">
+                <div class="metric-label">Motion Status</div>
+                <div class="metric-value {{ qc_metrics.preprocessing.motion_status | lower }}">{{ qc_metrics.preprocessing.motion_status }}</div>
+            </div>
+            {% endif %}
             {% if qc_metrics.preprocessing.fd_mean is defined %}
             <div class="metric">
                 <div class="metric-label">Mean FD</div>
@@ -51,6 +57,12 @@
             <div class="metric">
                 <div class="metric-label">Max FD</div>
                 <div class="metric-value">{{ "%.3f"|format(qc_metrics.preprocessing.fd_max) }} mm</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preprocessing.n_outliers is defined and qc_metrics.preprocessing.percent_outliers is defined %}
+            <div class="metric">
+                <div class="metric-label">Outlier Frames</div>
+                <div class="metric-value">{{ qc_metrics.preprocessing.n_outliers }} ({{ "%.1f"|format(qc_metrics.preprocessing.percent_outliers) }}%)</div>
             </div>
             {% endif %}
             {% if qc_metrics.preprocessing.baseline_frames is defined %}
@@ -79,7 +91,7 @@
             {% if qc_metrics.preprocessing.tr_ms is defined %}
             <div class="metric">
                 <div class="metric-label">TR (pulse)</div>
-                <div class="metric-value">{{ "%.1f"|format(qc_metrics.preprocessing.tr_ms) }} ms</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.preprocessing.tr_ms) }} ms</div>
             </div>
             {% endif %}
             {% if qc_metrics.preprocessing.volume_tr_s is defined %}
@@ -120,16 +132,28 @@
         <h2>T1 Mapping Quality</h2>
         {% if qc_metrics.t1_mapping %}
         <div class="metrics">
-            {% if qc_metrics.t1_mapping.t1_median is defined %}
+            {% if qc_metrics.t1_mapping.t1_status is defined %}
             <div class="metric">
-                <div class="metric-label">Median T1</div>
-                <div class="metric-value">{{ "%.0f"|format(qc_metrics.t1_mapping.t1_median) }} ms</div>
+                <div class="metric-label">T1 Status</div>
+                <div class="metric-value {{ qc_metrics.t1_mapping.t1_status | lower }}">{{ qc_metrics.t1_mapping.t1_status }}</div>
             </div>
             {% endif %}
-            {% if qc_metrics.t1_mapping.t1_iqr is defined %}
+            {% if qc_metrics.t1_mapping.median_t1_ms is defined %}
             <div class="metric">
-                <div class="metric-label">T1 IQR</div>
-                <div class="metric-value">{{ "%.0f"|format(qc_metrics.t1_mapping.t1_iqr) }} ms</div>
+                <div class="metric-label">Median T1</div>
+                <div class="metric-value">{{ "%.0f"|format(qc_metrics.t1_mapping.median_t1_ms) }} ms</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.t1_mapping.mean_t1_wm_ms is defined %}
+            <div class="metric">
+                <div class="metric-label">WM T1</div>
+                <div class="metric-value">{{ "%.0f"|format(qc_metrics.t1_mapping.mean_t1_wm_ms) }} ms</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.t1_mapping.mean_t1_gm_ms is defined %}
+            <div class="metric">
+                <div class="metric-label">GM T1</div>
+                <div class="metric-value">{{ "%.0f"|format(qc_metrics.t1_mapping.mean_t1_gm_ms) }} ms</div>
             </div>
             {% endif %}
             {% if qc_metrics.t1_mapping.fraction_valid is defined %}
@@ -154,22 +178,28 @@
         <h2>B1+ Mapping Quality</h2>
         {% if qc_metrics.b1_mapping %}
         <div class="metrics">
-            {% if qc_metrics.b1_mapping.b1_median is defined %}
+            {% if qc_metrics.b1_mapping.b1_status is defined %}
+            <div class="metric">
+                <div class="metric-label">B1 Status</div>
+                <div class="metric-value {{ qc_metrics.b1_mapping.b1_status | lower }}">{{ qc_metrics.b1_mapping.b1_status }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.b1_mapping.mean_b1 is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean B1+</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.mean_b1) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.b1_mapping.median_b1 is defined %}
             <div class="metric">
                 <div class="metric-label">Median B1+</div>
-                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.b1_median) }}</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.median_b1) }}</div>
             </div>
             {% endif %}
-            {% if qc_metrics.b1_mapping.b1_std is defined %}
+            {% if qc_metrics.b1_mapping.std_b1 is defined %}
             <div class="metric">
-                <div class="metric-label">B1+ Std</div>
-                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.b1_std) }}</div>
-            </div>
-            {% endif %}
-            {% if qc_metrics.b1_mapping.skipped is defined %}
-            <div class="metric">
-                <div class="metric-label">Status</div>
-                <div class="metric-value">{{ "Skipped" if qc_metrics.b1_mapping.skipped else "Computed" }}</div>
+                <div class="metric-label">Std B1+</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.std_b1) }}</div>
             </div>
             {% endif %}
         </div>
@@ -188,22 +218,64 @@
         <h2>Arterial Input Function (AIF) Detection</h2>
         {% if qc_metrics.aif_detection %}
         <div class="metrics">
+            {% if qc_metrics.aif_detection.aif_status is defined %}
+            <div class="metric">
+                <div class="metric-label">AIF Status</div>
+                <div class="metric-value {{ qc_metrics.aif_detection.aif_status | lower }}">{{ qc_metrics.aif_detection.aif_status }}</div>
+            </div>
+            {% endif %}
             {% if qc_metrics.aif_detection.quality_score is defined %}
             <div class="metric">
                 <div class="metric-label">Quality Score</div>
                 <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif_detection.quality_score) }}</div>
             </div>
             {% endif %}
-            {% if qc_metrics.aif_detection.peak_concentration is defined %}
-            <div class="metric">
-                <div class="metric-label">Peak Concentration</div>
-                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif_detection.peak_concentration) }} mM</div>
-            </div>
-            {% endif %}
-            {% if qc_metrics.aif_detection.aif_method is defined %}
+            {% if qc_metrics.aif_detection.detection_method is defined %}
             <div class="metric">
                 <div class="metric-label">Method</div>
-                <div class="metric-value">{{ qc_metrics.aif_detection.aif_method }}</div>
+                <div class="metric-value">{{ qc_metrics.aif_detection.detection_method }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.final_peak_mm is defined %}
+            <div class="metric">
+                <div class="metric-label">Peak Concentration</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif_detection.final_peak_mm) }} mM</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.final_fwhm_seconds is defined %}
+            <div class="metric">
+                <div class="metric-label">FWHM</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.aif_detection.final_fwhm_seconds) }} s</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.washout_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Washout</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif_detection.washout_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.cnr_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">CNR</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.aif_detection.cnr_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.final_auc is defined %}
+            <div class="metric">
+                <div class="metric-label">AUC</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.aif_detection.final_auc) }} mM·s</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.scaling_factor is defined and qc_metrics.aif_detection.scaling_factor != 1.0 %}
+            <div class="metric">
+                <div class="metric-label">Scale Factor</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif_detection.scaling_factor) }}x</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.n_candidates is defined %}
+            <div class="metric">
+                <div class="metric-label">Candidates</div>
+                <div class="metric-value">{{ qc_metrics.aif_detection.n_candidates }}</div>
             </div>
             {% endif %}
         </div>

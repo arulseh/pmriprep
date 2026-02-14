@@ -700,10 +700,19 @@ class B1Mapping(SimpleInterface):
             and std_b1 < B1_MAX_STD
         )
 
+        # Compute additional B1 metrics
+        median_b1 = float(np.median(b1_clean)) if len(b1_clean) > 0 else B1_EXPECTED_MEAN
+
+        # B1 QC status: PASS or WARN only (no FAIL for B1 quality)
+        from pmriprep.utils.qc_standards import QCStatus
+        b1_status = QCStatus.PASS if qc_pass else QCStatus.WARN
+
         # Build QC metrics dictionary
         qc_metrics = {
             "mean_b1": mean_b1,
             "std_b1": std_b1,
+            "median_b1": median_b1,
+            "b1_status": b1_status,
             "qc_pass": qc_pass,
             "skipped": False,
             "smoothing_fwhm_mm": smoothing_fwhm,
@@ -1205,11 +1214,17 @@ class T1Mapping(SimpleInterface):
         gm_pass = gm_range[0] <= gm_t1_estimate <= gm_range[1]
         qc_pass = wm_pass and gm_pass
 
+        # Compute additional metrics for QC report
+        median_t1 = float(np.median(valid_t1))
+        fraction_valid = float(len(valid_t1)) / max(1, int(np.sum(brain_mask)))
+
         # Build QC metrics dictionary
         has_b1 = isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map)
         qc_metrics: dict[str, Any] = {
             "mean_t1_wm_ms": wm_t1_estimate,
             "mean_t1_gm_ms": gm_t1_estimate,
+            "median_t1_ms": median_t1,
+            "fraction_valid": fraction_valid,
             "qc_pass": qc_pass,
             "wm_pass": wm_pass,
             "gm_pass": gm_pass,
@@ -1226,6 +1241,22 @@ class T1Mapping(SimpleInterface):
             "median_filtered": True,
         }
         qc_metrics["t1_correction"] = correction_info
+
+        # Derive hierarchical T1 QC status
+        from pmriprep.utils.qc_standards import QCStatus
+        corr_type = correction_info.get("correction_applied", "none")
+        if corr_type == "fallback":
+            t1_status = QCStatus.FAIL
+        elif corr_type == "offset":
+            t1_status = QCStatus.FAIL if (not wm_pass and not gm_pass) else QCStatus.WARN
+        else:  # "none"
+            if wm_pass and gm_pass:
+                t1_status = QCStatus.PASS
+            elif wm_pass or gm_pass:
+                t1_status = QCStatus.WARN
+            else:
+                t1_status = QCStatus.FAIL
+        qc_metrics["t1_status"] = t1_status
 
         # Flip angle validation for 2-angle VFA
         # Compare observed vs expected signal ratio assuming T1=1200ms at 3T
@@ -2144,9 +2175,18 @@ class DCEPreprocess(SimpleInterface):
             n_outliers = int(np.sum(outlier_mask))
             outlier_frames = [int(i) for i in np.where(outlier_mask)[0]]
 
+            from pmriprep.utils.qc_standards import (
+                MOTION_FD_THRESHOLDS,
+                get_qc_status,
+            )
+            motion_status = get_qc_status(
+                fd_mean, MOTION_FD_THRESHOLDS, higher_is_better=False,
+            )
+
             qc_metrics = {
                 "fd_mean": fd_mean,
                 "fd_max": fd_max,
+                "motion_status": motion_status,
                 "fd_list": fd_list,
                 "n_outliers": n_outliers,
                 "outlier_frames": outlier_frames,

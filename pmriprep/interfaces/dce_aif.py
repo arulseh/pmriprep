@@ -1545,6 +1545,7 @@ class AIFDetection(BaseInterface):
         baseline_frames: int,
         criteria: str,
         tissue_ttp_frame: float | None = None,
+        atlas_constrained: bool = False,
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
         """Find candidate AIF voxels using perf-plus 7-tier arterial cascade.
 
@@ -1708,7 +1709,12 @@ class AIFDetection(BaseInterface):
                 all_metrics = [all_metrics[i] for i in keep_idx_pt]
 
         # ----- Cluster-based selection -----
-        if len(candidates) > n_candidates:
+        # Skip clustering for atlas-constrained search: atlas + arterial
+        # cascade + venous filtering already eliminate false positives, and
+        # forcing candidates into one cluster discards valid bilateral ICA
+        # voxels.  Keep clustering for whole-brain search where spatial
+        # coherence discriminates true arterial clusters from scattered FPs.
+        if len(candidates) > n_candidates and not atlas_constrained:
             candidates, scores, all_metrics = self._score_and_select_cluster(
                 candidates, scores, all_metrics, brain_shape, tr=tr
             )
@@ -1964,6 +1970,7 @@ class AIFDetection(BaseInterface):
                         conc_data, combined_mask, n_candidates, tr,
                         baseline_frames, crit,
                         tissue_ttp_frame=tissue_ttp_frame,
+                        atlas_constrained=True,
                     )
                     if candidates:
                         detection_method = "atlas"
@@ -2039,6 +2046,8 @@ class AIFDetection(BaseInterface):
                         np.mean([m.get("upstroke_slope", 0.0) for m in metrics_list])
                     ),
                     "n_candidates": len(candidates),
+                    "candidate_coords": [list(c) for c in candidates],
+                    "candidate_scores": [float(s) for s in scores],
                     "arterial_cascade_tier": tier_used,
                     "low_tr_mode": is_low_temporal_resolution(tr),
                 }
@@ -2163,6 +2172,23 @@ class AIFDetection(BaseInterface):
         final_fwhm = compute_dce_aif_fwhm_seconds(aif_curve, tr, baseline_frames)
         final_auc = compute_dce_aif_auc(aif_curve, tr)
 
+        # Compute AIF status for HTML report
+        from pmriprep.utils.qc_standards import QCStatus
+        if not np.isnan(quality_score):
+            if quality_score >= 0.7:
+                aif_status = QCStatus.PASS
+            elif quality_score >= 0.4:
+                aif_status = QCStatus.WARN
+            else:
+                aif_status = QCStatus.FAIL
+        else:
+            method_to_status = {
+                "auto": QCStatus.PASS,
+                "population": QCStatus.WARN,
+                "fallback": QCStatus.FAIL,
+            }
+            aif_status = method_to_status.get(detection_method, QCStatus.WARN)
+
         # Add final metrics to QC dict
         qc_metrics.update(
             {
@@ -2175,6 +2201,7 @@ class AIFDetection(BaseInterface):
                 "detection_method": detection_method,
                 "quality_score": quality_score,
                 "baseline_frames": baseline_frames,
+                "aif_status": aif_status,
             }
         )
 

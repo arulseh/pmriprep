@@ -20,7 +20,6 @@ from .qc_standards import (
     COLORBLIND_PALETTE,
     EXTENDED_PALETTE,
     MOTION_FD_THRESHOLDS,
-    get_qc_status,
     get_status_color,
 )
 
@@ -593,24 +592,6 @@ def plot_motion_qc(
     ax3.legend(loc="upper right", fontsize=8)
     ax3.grid(True, alpha=0.3)
     ax3.set_title("Framewise Displacement")
-
-    # Metrics box (bottom-left)
-    mean_fd = float(np.mean(fd))
-    outlier_count = int(np.sum(outlier_mask))
-    qc_status = get_qc_status(
-        mean_fd, MOTION_FD_THRESHOLDS, higher_is_better=False,
-    )
-    stats_text = (
-        f"Status: {qc_status}\n"
-        f"Mean FD: {mean_fd:.3f} mm\n"
-        f"Max FD: {max_fd:.3f} mm\n"
-        f"Outliers (>{fd_threshold} mm): {outlier_count}"
-    )
-    ax3.text(
-        0.02, 0.05, stats_text, transform=ax3.transAxes,
-        fontsize=8, verticalalignment="bottom",
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.8),
-    )
 
     # Overall title
     if title:

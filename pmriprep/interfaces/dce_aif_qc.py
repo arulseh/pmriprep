@@ -197,7 +197,7 @@ class DCEAIFQCPlot(BaseInterface):
 
             # Baseline region shading
             baseline_frames = qc.get("baseline_frames", 5)
-            baseline_end_t = (baseline_frames - 0.5) * tr
+            baseline_end_t = (baseline_frames - 1) * tr
             ax.axvspan(0, baseline_end_t, alpha=0.08, color="gray", label=f"Baseline ({baseline_frames} fr)")
 
             ax.set_xlabel("Time (s)", fontsize=11)
@@ -209,79 +209,6 @@ class DCEAIFQCPlot(BaseInterface):
             sub_label = f"sub-{subject_id}" if subject_id else ""
             ses_label = f" | ses-{session_id}" if session_id else ""
             ax.set_title(f"{sub_label}{ses_label} | DCE AIF Quality", fontsize=12)
-
-            # Metrics text box - DCE-specific metrics
-            detection_method = qc.get("detection_method", "unknown")
-            quality_score = qc.get("quality_score", float("nan"))
-            peak_mm = qc.get("final_peak_mm", float(np.max(aif_curve)))
-            fwhm_s = qc.get("final_fwhm_seconds", float("nan"))
-            washout = qc.get("washout_mean", float("nan"))
-            cnr = qc.get("cnr_mean", float("nan"))
-            auc = qc.get("final_auc", float("nan"))
-            scaling = qc.get("scaling_factor", 1.0)
-
-            metrics_lines = [
-                f"Detection: {detection_method}",
-                f"Quality: {quality_score:.2f}",
-                f"Peak: {peak_mm:.2f} mM",
-            ]
-            if not np.isnan(fwhm_s):
-                metrics_lines.append(f"FWHM: {fwhm_s:.1f}s")
-            if not np.isnan(washout):
-                metrics_lines.append(f"Washout: {washout:.2f}")
-            if not np.isnan(cnr):
-                metrics_lines.append(f"CNR: {cnr:.1f}")
-            if not np.isnan(auc):
-                metrics_lines.append(f"AUC: {auc:.1f} mM·s")
-            if scaling != 1.0:
-                metrics_lines.append(f"Scale: {scaling:.2f}x")
-
-            metrics_text = "\n".join(metrics_lines)
-            props = dict(boxstyle="round,pad=0.4", facecolor="wheat", alpha=0.85)
-            ax.text(
-                0.02, 0.97, metrics_text,
-                transform=ax.transAxes, fontsize=8,
-                verticalalignment="top", fontfamily="monospace",
-                bbox=props,
-            )
-
-            # Recommendation badge (NiPreps-style)
-            # Determine action based on quality score and detection method
-            from pmriprep.utils.qc_standards import QCAction, get_status_color, QCStatus
-            if not np.isnan(quality_score):
-                if quality_score >= 0.7:
-                    status = QCStatus.PASS
-                    action = QCAction.INCLUDE
-                elif quality_score >= 0.4:
-                    status = QCStatus.WARN
-                    action = QCAction.REVIEW
-                else:
-                    status = QCStatus.FAIL
-                    action = QCAction.EXCLUDE
-            else:
-                # Fallback based on detection method
-                method_to_status = {
-                    "auto": QCStatus.PASS,
-                    "population": QCStatus.WARN,
-                    "fallback": QCStatus.FAIL,
-                }
-                method_to_action = {
-                    "auto": QCAction.INCLUDE,
-                    "population": QCAction.REVIEW,
-                    "fallback": QCAction.EXCLUDE,
-                }
-                status = method_to_status.get(detection_method, QCStatus.UNKNOWN)
-                action = method_to_action.get(detection_method, QCAction.REVIEW)
-
-            badge_color = get_status_color(status)
-            badge_text = f"[{action.upper()}]"
-            ax.text(
-                0.98, 0.97, badge_text,
-                transform=ax.transAxes, fontsize=10, fontweight="bold",
-                verticalalignment="top", horizontalalignment="right",
-                color="white",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor=badge_color, alpha=0.9),
-            )
 
             plt.tight_layout()
             fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -366,6 +293,34 @@ class DCEAIFQCPlot(BaseInterface):
                 if np.any(mask_slice > 0.5):
                     masked = np.ma.masked_where(mask_slice < 0.5, mask_slice)  # type: ignore[no-untyped-call]
                     ax_plt.imshow(masked, cmap="hot", alpha=0.4, aspect=aspect)
+
+                # Numbered candidate markers
+                cand_coords = qc.get("candidate_coords", [])
+                for rank, coord in enumerate(cand_coords):
+                    px, py, pz = int(coord[0]), int(coord[1]), int(coord[2])
+                    # Check if candidate is within ±1 voxel of displayed slice
+                    if axis_id == 2 and abs(pz - slice_idx) > 1:
+                        continue
+                    elif axis_id == 1 and abs(py - slice_idx) > 1:
+                        continue
+                    elif axis_id == 0 and abs(px - slice_idx) > 1:
+                        continue
+                    # Map 3D coord to 2D using same radiological transform
+                    h_c, w_c = bg_slice.shape
+                    if axis_id == 2:  # Axial
+                        mx = w_c - 1 - px
+                        my = h_c - 1 - py
+                    elif axis_id == 1:  # Coronal
+                        mx = w_c - 1 - px
+                        my = h_c - 1 - pz
+                    else:  # Sagittal
+                        mx = py
+                        my = h_c - 1 - pz
+                    color = "cyan" if rank == 0 else "yellow"
+                    ax_plt.plot(mx, my, "o", color=color, markersize=8,
+                                markeredgewidth=1.5, markerfacecolor="none")
+                    ax_plt.text(mx + 1.5, my - 1.5, str(rank + 1),
+                                color=color, fontsize=7, fontweight="bold")
 
                 # Crosshair at centroid
                 # Map 3D centroid to 2D slice position after radiological transform.
