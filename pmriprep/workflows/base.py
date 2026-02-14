@@ -1514,6 +1514,12 @@ def init_pmriprep_wf(
                         dce_wf.inputs.inputnode.afi_tr1 = afi_sidecar_1["tr"] * 1000
                         dce_wf.inputs.inputnode.afi_tr2 = afi_sidecar_2["tr"] * 1000
 
+            # Wire AFI nominal flip angle: CLI override > config > BIDS sidecar > default (60)
+            if dce_config.afi_flip_angle is not None:
+                dce_wf.inputs.inputnode.afi_flip_angle = dce_config.afi_flip_angle
+            elif session_data.modalities.afi_flip_angle is not None:
+                dce_wf.inputs.inputnode.afi_flip_angle = session_data.modalities.afi_flip_angle
+
         # Connect DWI for tortuosity if available
         if session_data.modalities.dwi:
             workflow.connect([

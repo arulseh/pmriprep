@@ -18,6 +18,7 @@ from pmriprep.utils.dce_constants import (
     EPSILON_SIGNAL,
     EPSILON_T1,
     HEMATOCRIT,
+    get_b1_thresholds,
     get_r1_relaxivity,
 )
 
@@ -319,7 +320,8 @@ def signal_to_concentration(
     # Apply B1+ correction if provided
     if b1_map is not None:
         # B1+ map is relative: actual_flip = nominal_flip × B1+
-        b1_safe = np.clip(b1_map, 0.5, 1.5)
+        b1_thresh = get_b1_thresholds(field_strength)
+        b1_safe = np.clip(b1_map, b1_thresh.dce_clip_low, b1_thresh.dce_clip_high)
         if signal.ndim == 4:
             # B1 map is 3D (spatial), same for all timepoints
             effective_flip_rad = flip_angle_rad * b1_safe

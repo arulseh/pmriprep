@@ -116,6 +116,11 @@ class B1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Skip B1+ mapping (return unity map)",
     )
+    field_strength = traits.Float(
+        3.0,
+        usedefault=True,
+        desc="Magnetic field strength in Tesla",
+    )
 
 
 class B1MappingOutputSpec(TraitedSpec):
@@ -489,10 +494,13 @@ class B1Mapping(SimpleInterface):
         from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
         from pmriprep.utils.dce_constants import (
+            B1_DENOMINATOR_THRESHOLD,
             B1_EXPECTED_MEAN,
-            B1_MAX_STD,
-            B1_MEAN_RANGE,
+            B1_MIN_COVERAGE,
+            B1_MIN_SIGMA_VOXELS,
+            B1_RATIO_VALID_RANGE,
             EPSILON_RATIO,
+            get_b1_thresholds,
         )
 
         # Generate output filename
@@ -500,8 +508,6 @@ class B1Mapping(SimpleInterface):
 
         # Check if B1 mapping should be skipped
         if self.inputs.skip_b1:
-            from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
-
             # Try to get shape/affine from AFI data; fall back to brain_mask
             try:
                 s1, s2, affine, header, tr1_ms, tr2_ms, _coreg_info = self._load_afi_data()
@@ -545,7 +551,17 @@ class B1Mapping(SimpleInterface):
 
         # Get TR ratio
         n = tr2_ms / tr1_ms
-        nominal_fa = self.inputs.nominal_flip_angle
+        # Guard against Undefined flowing through workflow connections
+        # when afi_flip_angle is not set on the inputnode.
+        if isdefined(self.inputs.nominal_flip_angle):
+            nominal_fa = float(self.inputs.nominal_flip_angle)
+        else:
+            nominal_fa = 60.0
+        if nominal_fa == 60.0:
+            logger.info(
+                "Using default AFI nominal flip angle = 60 deg. "
+                "Set FlipAngle in BIDS sidecar or use --dce-afi-flip-angle if different.",
+            )
 
         # -----------------------------------------------------------------
         # Signal masking: only compute B1+ where both signals are above
@@ -573,9 +589,10 @@ class B1Mapping(SimpleInterface):
         # Ratio validation + denominator stability (Gaps 1, 9).
         # perf-plus: ratio in (0.05, 1.5) and |n - r| > 0.1
         # -----------------------------------------------------------------
-        DENOMINATOR_THRESHOLD = 0.1
-        ratio_valid = (r > 0.05) & (r < 1.5)
-        denominator_stable = np.abs(n - r) > DENOMINATOR_THRESHOLD
+        ratio_valid = (
+            (r > B1_RATIO_VALID_RANGE[0]) & (r < B1_RATIO_VALID_RANGE[1])
+        )
+        denominator_stable = np.abs(n - r) > B1_DENOMINATOR_THRESHOLD
         valid = signal_mask & ratio_valid & denominator_stable
 
         # -----------------------------------------------------------------
@@ -593,24 +610,30 @@ class B1Mapping(SimpleInterface):
         b1_map[valid] = alpha_actual / nominal_fa
 
         # -----------------------------------------------------------------
-        # B1+ physiological clipping (Gap 2, matches perf-plus [0.2, 2.0])
+        # B1+ physiological clipping (Gap 2, field-strength-dependent)
         # -----------------------------------------------------------------
-        b1_map = np.clip(b1_map, 0.2, 2.0)
+        field_strength = self.inputs.field_strength
+        b1_thresh = get_b1_thresholds(field_strength)
+        b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
         b1_map[~signal_mask] = 1.0  # Background = nominal
 
         # Flag extreme values for QC
-        n_extreme_low = int(np.sum((b1_map < 0.5) & signal_mask))
-        n_extreme_high = int(np.sum((b1_map > 1.5) & signal_mask))
+        n_extreme_low = int(np.sum((b1_map < b1_thresh.extreme_low) & signal_mask))
+        n_extreme_high = int(np.sum((b1_map > b1_thresh.extreme_high) & signal_mask))
         n_signal = max(int(np.sum(signal_mask)), 1)
         if n_extreme_low > 0:
             logger.info(
-                "%.1f%% of brain has B1+ < 0.5 (expected in temporal lobes at 3T)",
+                "%.1f%% of brain has B1+ < %.2f (expected in temporal lobes at %.1fT)",
                 100.0 * n_extreme_low / n_signal,
+                b1_thresh.extreme_low,
+                field_strength,
             )
         if n_extreme_high > 0:
             logger.warning(
-                "%.1f%% of brain has B1+ > 1.5 (check for flow/dielectric artifacts)",
+                "%.1f%% of brain has B1+ > %.2f (check for dielectric effects at %.1fT)",
                 100.0 * n_extreme_high / n_signal,
+                b1_thresh.extreme_high,
+                field_strength,
             )
 
         # -----------------------------------------------------------------
@@ -624,9 +647,8 @@ class B1Mapping(SimpleInterface):
             from scipy.ndimage import binary_erosion
 
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
-            MIN_SIGMA_VOXELS = 1.5
             sigma_voxels = [
-                max(smoothing_fwhm / (2.355 * vs), MIN_SIGMA_VOXELS)
+                max(smoothing_fwhm / (2.355 * vs), B1_MIN_SIGMA_VOXELS)
                 for vs in voxel_sizes
             ]
             # Pass 1: robust local B1+ from interior voxels.
@@ -638,17 +660,16 @@ class B1Mapping(SimpleInterface):
             s_num = gaussian_filter(b1_map * interior_float, sigma=sigma_wide)
             s_den = gaussian_filter(interior_float, sigma=sigma_wide)
 
-            # Only test where interior coverage is reliable (>= 10%).
+            # Only test where interior coverage is reliable.
             # Unreliable locations (thin cortex, brain tips) are left untested.
-            MIN_COVERAGE = 0.10
-            has_coverage = s_den > MIN_COVERAGE
+            has_coverage = s_den > B1_MIN_COVERAGE
             b1_local = np.where(has_coverage, s_num / s_den, 0.0)
 
-            # Flag voxels deviating >0.30 from interior reference.
-            # 0.30 allows for B1+ gradient from temporal lobe (~1.0) to center
-            # (~1.4) while catching CSF/edge artifacts (deviation 0.4+).
-            B1_OUTLIER_THRESH = 0.30
-            outlier = valid & has_coverage & (np.abs(b1_map - b1_local) > B1_OUTLIER_THRESH)
+            # Flag voxels deviating beyond field-strength-dependent threshold
+            # from interior reference (catches CSF/edge artifacts).
+            outlier = valid & has_coverage & (
+                np.abs(b1_map - b1_local) > b1_thresh.outlier_deviation
+            )
             n_b1_outliers = int(np.sum(outlier))
             if n_b1_outliers > 0:
                 logger.info(
@@ -664,7 +685,7 @@ class B1Mapping(SimpleInterface):
             smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
             smoothed_den = np.maximum(smoothed_den, 1e-6)
             b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 1.0)
-            b1_map = np.clip(b1_map, 0.2, 2.0)
+            b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
 
         # Convert to float32 for storage
         b1_map = b1_map.astype(np.float32)
@@ -729,10 +750,10 @@ class B1Mapping(SimpleInterface):
             mean_b1 = B1_EXPECTED_MEAN
             std_b1 = 0.0
 
-        # QC pass/fail criteria
+        # QC pass/fail criteria (field-strength-dependent)
         qc_pass = (
-            B1_MEAN_RANGE[0] <= mean_b1 <= B1_MEAN_RANGE[1]
-            and std_b1 < B1_MAX_STD
+            b1_thresh.mean_range[0] <= mean_b1 <= b1_thresh.mean_range[1]
+            and std_b1 < b1_thresh.max_std
         )
 
         # Compute additional B1 metrics
@@ -755,8 +776,8 @@ class B1Mapping(SimpleInterface):
             "tr1_ms": tr1_ms,
             "tr2_ms": tr2_ms,
             "tr_ratio": n,
-            "b1_range_expected": B1_MEAN_RANGE,
-            "b1_max_std_expected": B1_MAX_STD,
+            "b1_range_expected": b1_thresh.mean_range,
+            "b1_max_std_expected": b1_thresh.max_std,
             "n_signal_voxels": n_signal,
             "n_valid_voxels": int(np.sum(valid)),
             "n_ratio_invalid": int(np.sum(signal_mask & ~ratio_valid)),
@@ -1054,6 +1075,7 @@ class T1Mapping(SimpleInterface):
             DEFAULT_T1_MS,
             EPSILON_TRIG,
             LENIENT_T1_RANGE,
+            get_b1_thresholds,
             get_tissue_t1_ranges,
         )
 
@@ -1112,12 +1134,13 @@ class T1Mapping(SimpleInterface):
             signal_data[i] = img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
 
         # Load B1+ map if provided, otherwise use unity
-        # Clip to VFA-appropriate range [0.5, 1.7] to allow dielectric
-        # resonance effects while preventing extreme corrections (Gap 8).
+        # Clip to VFA-appropriate range to allow dielectric resonance
+        # effects while preventing extreme corrections (Gap 8).
+        b1_thresh = get_b1_thresholds(self.inputs.field_strength)
         if isdefined(self.inputs.b1_map) and self.inputs.b1_map:
             b1_img = nib.load(self.inputs.b1_map)
             b1_map = b1_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-            b1_map = np.clip(b1_map, 0.5, 1.7)
+            b1_map = np.clip(b1_map, b1_thresh.vfa_clip_low, b1_thresh.vfa_clip_high)
         else:
             b1_map = np.ones(shape, dtype=np.float64)
 

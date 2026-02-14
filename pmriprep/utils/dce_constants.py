@@ -388,6 +388,138 @@ B1_MAX_STD: Final[float] = 0.3
 
 
 # =============================================================================
+# B1+ Field-Strength-Dependent Thresholds
+# =============================================================================
+
+
+class B1Thresholds(NamedTuple):
+    """Field-strength-dependent B1+ thresholds.
+
+    AFI B1+ inhomogeneity increases with field strength due to shorter RF
+    wavelength relative to head size.  At 7 T dielectric focusing can push
+    B1+ to 1.8 or higher in the brain centre while temporal lobes may drop
+    to 0.3 (Teeuwisse MRM 2012).  Thresholds must widen accordingly.
+
+    Attributes:
+        clip_low: AFI computation clipping lower bound.
+        clip_high: AFI computation clipping upper bound.
+        vfa_clip_low: VFA T1 mapping clipping lower bound.
+        vfa_clip_high: VFA T1 mapping clipping upper bound.
+        dce_clip_low: DCE signal conversion clipping lower bound.
+        dce_clip_high: DCE signal conversion clipping upper bound.
+        outlier_deviation: Local deviation threshold for outlier rejection.
+        max_std: QC max whole-brain B1+ standard deviation.
+        extreme_low: QC flagging threshold (low).
+        extreme_high: QC flagging threshold (high).
+        mean_range: QC acceptable mean range.
+    """
+
+    clip_low: float
+    clip_high: float
+    vfa_clip_low: float
+    vfa_clip_high: float
+    dce_clip_low: float
+    dce_clip_high: float
+    outlier_deviation: float
+    max_std: float
+    extreme_low: float
+    extreme_high: float
+    mean_range: tuple[float, float]
+
+
+#: B1+ threshold lookup by field strength (Tesla).
+#: References: Yarnykh MRM 2007, Teeuwisse MRM 2012, Nehrke & Bornert MRM 2014.
+B1_THRESHOLDS_BY_FIELD: Final[dict[float, B1Thresholds]] = {
+    1.5: B1Thresholds(
+        clip_low=0.4,
+        clip_high=1.6,
+        vfa_clip_low=0.6,
+        vfa_clip_high=1.4,
+        dce_clip_low=0.6,
+        dce_clip_high=1.4,
+        outlier_deviation=0.20,
+        max_std=0.15,
+        extreme_low=0.70,
+        extreme_high=1.30,
+        mean_range=(0.90, 1.10),
+    ),
+    3.0: B1Thresholds(
+        clip_low=0.2,
+        clip_high=2.0,
+        vfa_clip_low=0.5,
+        vfa_clip_high=1.7,
+        dce_clip_low=0.5,
+        dce_clip_high=1.5,
+        outlier_deviation=0.30,
+        max_std=0.25,
+        extreme_low=0.50,
+        extreme_high=1.50,
+        mean_range=(0.85, 1.15),
+    ),
+    7.0: B1Thresholds(
+        clip_low=0.2,
+        clip_high=2.5,
+        vfa_clip_low=0.3,
+        vfa_clip_high=2.0,
+        dce_clip_low=0.3,
+        dce_clip_high=2.0,
+        outlier_deviation=0.50,
+        max_std=0.45,
+        extreme_low=0.30,
+        extreme_high=1.80,
+        mean_range=(0.75, 1.25),
+    ),
+}
+
+
+def get_b1_thresholds(field_strength: float) -> B1Thresholds:
+    """Get B1+ thresholds for the nearest known field strength.
+
+    Uses the same nearest-field-strength lookup pattern as
+    :func:`get_tissue_t1_ranges`.  No interpolation — thresholds are
+    inherently discrete (literature-validated per field strength).
+
+    Args:
+        field_strength: Magnetic field strength in Tesla.
+
+    Returns:
+        B1Thresholds for the closest catalogued field strength.
+    """
+    fields = sorted(B1_THRESHOLDS_BY_FIELD.keys())
+
+    if field_strength <= fields[0]:
+        return B1_THRESHOLDS_BY_FIELD[fields[0]]
+    if field_strength >= fields[-1]:
+        return B1_THRESHOLDS_BY_FIELD[fields[-1]]
+
+    for i, f in enumerate(fields[:-1]):
+        if f <= field_strength < fields[i + 1]:
+            if (field_strength - f) < (fields[i + 1] - field_strength):
+                return B1_THRESHOLDS_BY_FIELD[f]
+            else:
+                return B1_THRESHOLDS_BY_FIELD[fields[i + 1]]
+
+    return B1_THRESHOLDS_BY_FIELD[3.0]
+
+
+# =============================================================================
+# B1+ Math-Derived Constants (not field-dependent)
+# =============================================================================
+
+#: Signal ratio validity range for AFI: r = S1/S2 in (low, high) for stable arccos.
+B1_RATIO_VALID_RANGE: Final[tuple[float, float]] = (0.05, 1.5)
+
+#: Minimum |n - r| for denominator stability in AFI equation.
+B1_DENOMINATOR_THRESHOLD: Final[float] = 0.1
+
+#: Minimum normalized convolution coverage for reliable local B1+ estimate.
+B1_MIN_COVERAGE: Final[float] = 0.10
+
+#: Minimum smoothing sigma in voxels.
+B1_MIN_SIGMA_VOXELS: Final[float] = 1.5
+
+
+# =============================================================================
 # T1 Mapping Defaults
 # =============================================================================
 

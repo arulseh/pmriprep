@@ -103,6 +103,7 @@ class DCEConfig:
     # T1 mapping settings
     no_b1: bool = False
     no_t1: bool = False
+    afi_flip_angle: Optional[float] = None  # None = from BIDS sidecar, fallback 60
     skip_flip_validation: bool = False
     lenient_t1_qc: bool = False
     t1_correction: Literal["auto", "none", "offset", "fallback"] = "auto"
@@ -157,9 +158,14 @@ class DCEConfig:
         except (ValueError, TypeError) as e:
             raise TypeError(f"DCEConfig float field has invalid type: {e}") from e
 
-        # Handle Optional[float] field
+        # Handle Optional[float] fields
         if self.target_peak is not None:
             try:
                 self.target_peak = float(self.target_peak)
             except (ValueError, TypeError) as e:
                 raise TypeError(f"DCEConfig.target_peak has invalid type: {e}") from e
+        if self.afi_flip_angle is not None:
+            try:
+                self.afi_flip_angle = float(self.afi_flip_angle)
+            except (ValueError, TypeError) as e:
+                raise TypeError(f"DCEConfig.afi_flip_angle has invalid type: {e}") from e

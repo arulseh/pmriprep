@@ -43,6 +43,7 @@ class ModalityAvailability:
     afi_4d_file: Optional[Path] = None  # Set when afi_mode="4d"
     afi_tr1_ms: Optional[float] = None  # TR1 in ms (from sidecar)
     afi_tr2_ms: Optional[float] = None  # TR2 in ms (from sidecar)
+    afi_flip_angle: Optional[float] = None  # Nominal flip angle in degrees (from sidecar)
 
 
 @dataclass
@@ -426,6 +427,7 @@ def _classify_afi_data(
         "afi_4d_file": None,
         "afi_tr1_ms": None,
         "afi_tr2_ms": None,
+        "afi_flip_angle": None,
     }
 
     if not afi_files:
@@ -467,6 +469,13 @@ def _classify_afi_data(
                             result["afi_tr1_ms"] = trs[0]
                             result["afi_tr2_ms"] = trs[1]
 
+                    # Extract nominal flip angle from sidecar
+                    if "FlipAngle" in metadata:
+                        fa = metadata["FlipAngle"]
+                        if isinstance(fa, list):
+                            fa = fa[0]
+                        result["afi_flip_angle"] = float(fa)
+
                 return result
         except Exception:
             continue
@@ -493,6 +502,12 @@ def _classify_afi_data(
                         result["afi_tr1_ms"] = tr_ms
                     else:
                         result["afi_tr2_ms"] = tr_ms
+                # Extract nominal flip angle from first sidecar
+                if idx == 0 and "FlipAngle" in meta:
+                    fa = meta["FlipAngle"]
+                    if isinstance(fa, list):
+                        fa = fa[0]
+                    result["afi_flip_angle"] = float(fa)
 
     return result
 
@@ -639,6 +654,8 @@ def discover_session_data(
             modalities.afi_tr1_ms = float(afi_info["afi_tr1_ms"])
         if afi_info["afi_tr2_ms"] is not None:
             modalities.afi_tr2_ms = float(afi_info["afi_tr2_ms"])
+        if afi_info.get("afi_flip_angle") is not None:
+            modalities.afi_flip_angle = float(afi_info["afi_flip_angle"])
 
     # Find DWI
     modalities.dwi = _find_dwi(bids_path, subject, session)

@@ -136,6 +136,7 @@ def merge_cli_config(
         "dce_no_b1": ("dce", "no_b1"),
         "dce_no_t1": ("dce", "no_t1"),
         "dce_t1_method": ("dce", "t1_method"),
+        "dce_afi_flip_angle": ("dce", "afi_flip_angle"),
         "dce_use_gpu": ("dce", "use_gpu"),
         "dce_dose": ("dce", "dose"),
         "hdbet_device": ("dce", "hdbet_device"),
@@ -256,6 +257,7 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     _coerce_float(dce_dict, "tsnr_threshold")
     _coerce_float(dce_dict, "hematocrit")
     _coerce_float(dce_dict, "target_peak")
+    _coerce_float(dce_dict, "afi_flip_angle")
 
     # Filter to only valid DCEConfig fields
     valid_fields = {f.name for f in DCEConfig.__dataclass_fields__.values()}

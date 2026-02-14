@@ -228,6 +228,7 @@ def init_dce_preproc_wf(
                 "afi_4d_file",
                 "afi_tr1",
                 "afi_tr2",
+                "afi_flip_angle",
                 # DSC integration inputs
                 "dsc_cbv_file",
                 "dsc_aif_qc_file",
@@ -395,6 +396,8 @@ def init_dce_preproc_wf(
             ("afi_tr1", "tr1"),
             ("afi_tr2", "tr2"),
             ("brain_mask", "brain_mask"),
+            ("field_strength", "field_strength"),
+            ("afi_flip_angle", "nominal_flip_angle"),
         ]),
     ])
 
@@ -2032,15 +2035,18 @@ def _signal_to_concentration_node(
                 "Failed to load T1 map (%s) — using default T1", exc,
             )
 
-    # Load B1 map — clip to DCE-appropriate range [0.5, 1.5] (Gap 8).
+    # Load B1 map — clip to DCE-appropriate field-strength-dependent range.
     # Tighter than VFA T1 mapping range because signal-to-concentration
     # conversion is more sensitive to B1+ errors.
+    from pmriprep.utils.dce_constants import get_b1_thresholds
+
+    b1_thresh = get_b1_thresholds(field_strength)
     b1_map = None
     if b1_map_file:
         try:
             b1_img = nib.load(b1_map_file)
             b1_map = b1_img.get_fdata()  # type: ignore[attr-defined]
-            b1_map = np.clip(b1_map, 0.5, 1.5)
+            b1_map = np.clip(b1_map, b1_thresh.dce_clip_low, b1_thresh.dce_clip_high)
         except Exception as exc:
             import logging as _logging
 

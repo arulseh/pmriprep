@@ -304,6 +304,14 @@ Examples:
              "10-20%% noise bias; Chang et al. 2008). glls: standard DESPOT1 (matches perf-plus).",
     )
     dce_group.add_argument(
+        "--dce-afi-flip-angle",
+        "--dce_afi_flip_angle",
+        dest="dce_afi_flip_angle",
+        type=float,
+        default=None,
+        help="AFI nominal flip angle in degrees (default: from BIDS sidecar, fallback 60).",
+    )
+    dce_group.add_argument(
         "--dce-use-gpu",
         "--dce_use_gpu",
         dest="dce_use_gpu",
