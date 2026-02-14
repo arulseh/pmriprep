@@ -747,7 +747,7 @@ class DCEDerivativeWriter(BaseInterface):
         enhanced = dict(qc_metrics)
 
         # Evaluate AIF quality if available
-        aif_qc = qc_metrics.get("aif", {})
+        aif_qc = qc_metrics.get("aif_detection", {})
         quality_score = aif_qc.get("quality_score")
         if quality_score is not None:
             if quality_score >= 0.7:

@@ -24,8 +24,11 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 from pmriprep.utils.dce_constants import (
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
+    FP_BOUNDS,
     KTRANS_BOUNDS,
+    PS_BOUNDS,
     VE_BOUNDS,
+    VP_BOUNDS,
 )
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
@@ -1064,10 +1067,32 @@ class ComputeDCEMaps(BaseInterface):
             # (line 1354: r2_map >= 0.5), separate from parameter estimation.
             ktrans_val = params.get("Ktrans", 0.0)
             ve_val = params.get("ve", 0.0)
-            degenerate = (
-                ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
-                or ve_val <= 0 or ve_val >= VE_BOUNDS.max
-            )
+            vp_val = params.get("vp", 0.0)
+            if model_name == "2cxm":
+                fp_val = params.get("Fp", 0.0)
+                ps_val = params.get("PS", 0.0)
+                degenerate = (
+                    fp_val <= 0 or fp_val >= FP_BOUNDS.max
+                    or ps_val < 0 or ps_val >= PS_BOUNDS.max
+                    or ve_val <= 0 or ve_val >= VE_BOUNDS.max
+                    or vp_val <= 0 or vp_val >= VP_BOUNDS.max
+                )
+            elif model_name == "patlak":
+                degenerate = (
+                    ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
+                    or vp_val <= 0 or vp_val >= VP_BOUNDS.max
+                )
+            elif model_name == "extended_tofts":
+                degenerate = (
+                    ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
+                    or ve_val <= 0 or ve_val >= VE_BOUNDS.max
+                    or vp_val <= 0 or vp_val >= VP_BOUNDS.max
+                )
+            else:  # tofts
+                degenerate = (
+                    ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
+                    or ve_val <= 0 or ve_val >= VE_BOUNDS.max
+                )
             if degenerate:
                 ktrans[x, y, z] = 0.0
                 ve[x, y, z] = 0.0
