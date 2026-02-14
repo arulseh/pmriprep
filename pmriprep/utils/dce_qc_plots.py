@@ -263,7 +263,6 @@ def generate_b1_qc_plot(
     valid_mask: npt.NDArray[np.bool_],
     mean_b1: float = 1.0,
     std_b1: float = 0.0,
-    qc_pass: bool = True,
     output_path: Optional[str] = None,
 ) -> str:
     """Generate a 6-panel QC plot for AFI B1+ mapping.
@@ -292,8 +291,6 @@ def generate_b1_qc_plot(
         Mean B1+ value in brain.
     std_b1 : float
         Standard deviation of B1+ in brain.
-    qc_pass : bool
-        Whether B1+ map passed QC.
     output_path : str, optional
         Output path for the PNG file. If None, uses cwd.
 
@@ -317,11 +314,9 @@ def generate_b1_qc_plot(
     mid_slice = b1_map.shape[2] // 2
 
     fig, axes = plt.subplots(2, 3, figsize=(15, 9))
-    qc_color = COLORBLIND_PALETTE.success if qc_pass else COLORBLIND_PALETTE.error
-    qc_label = "PASS" if qc_pass else "WARN"
     fig.suptitle(
-        f"AFI B1+ Mapping QC  [{qc_label}]",
-        fontsize=14, fontweight="bold", y=0.98, color=qc_color,
+        "AFI B1+ Mapping QC",
+        fontsize=14, fontweight="bold", y=0.98,
     )
 
     # ---- Panel 1: TR1 image ----
@@ -355,7 +350,8 @@ def generate_b1_qc_plot(
     # ---- Panel 4: B1+ map ----
     ax = axes[1, 0]
     b1_sl = get_radiological_slice(b1_map, axis=2, slice_idx=mid_slice)
-    b1_display = np.where(mask_sl > 0.5, b1_sl, np.nan)
+    valid_sl = get_radiological_slice(valid_mask.astype(float), axis=2, slice_idx=mid_slice)
+    b1_display = np.where(valid_sl > 0.5, b1_sl, np.nan)
     im = ax.imshow(
         b1_display, cmap="plasma", vmin=0.5, vmax=1.5, origin="upper",
     )
@@ -367,7 +363,7 @@ def generate_b1_qc_plot(
     ax = axes[1, 1]
     fa_map = b1_map * nominal_flip_angle
     fa_sl = get_radiological_slice(fa_map, axis=2, slice_idx=mid_slice)
-    fa_display = np.where(mask_sl > 0.5, fa_sl, np.nan)
+    fa_display = np.where(valid_sl > 0.5, fa_sl, np.nan)
     expected_fa = nominal_flip_angle
     im = ax.imshow(
         fa_display, cmap="jet",

@@ -618,11 +618,39 @@ class B1Mapping(SimpleInterface):
         # voxels and avoids bias at brain edges.
         # -----------------------------------------------------------------
         smoothing_fwhm = self.inputs.smoothing_fwhm
+        n_b1_outliers = 0
         if smoothing_fwhm > 0:
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
+            MIN_SIGMA_VOXELS = 1.5  # Floor to ensure effective smoothing for coarse data
             sigma_voxels = [
-                smoothing_fwhm / (2.355 * vs) for vs in voxel_sizes
+                max(smoothing_fwhm / (2.355 * vs), MIN_SIGMA_VOXELS)
+                for vs in voxel_sizes
             ]
+            # Pass 1: smooth with wider kernel to get robust local B1+ estimate.
+            # 1.5× sigma ensures the kernel reaches past CSF clusters (ventricles
+            # span ~20mm) so the local estimate is tissue-dominated.
+            sigma_wide = [s * 1.5 for s in sigma_voxels]
+            mask_float = valid.astype(np.float64)
+            s_num = gaussian_filter(b1_map * mask_float, sigma=sigma_wide)
+            s_den = gaussian_filter(mask_float, sigma=sigma_wide)
+            s_den = np.maximum(s_den, 1e-6)
+            b1_local = np.where(mask_float > 0, s_num / s_den, 1.0)
+
+            # Exclude voxels deviating >0.25 from neighborhood (CSF, flow artifacts).
+            # B1+ varies on 30-50mm scales; max legitimate tissue deviation is ~0.15-0.20.
+            # CSF deviates by 0.45+ due to E2≈0.978 violating the AFI assumption.
+            B1_OUTLIER_THRESH = 0.25
+            outlier = valid & (np.abs(b1_map - b1_local) > B1_OUTLIER_THRESH)
+            n_b1_outliers = int(np.sum(outlier))
+            if n_b1_outliers > 0:
+                logger.info(
+                    "B1+ outlier rejection: excluded %d voxels (%.1f%% of valid)",
+                    n_b1_outliers, 100.0 * n_b1_outliers / max(int(np.sum(valid)), 1),
+                )
+            valid = valid & ~outlier
+            b1_map[outlier] = 1.0
+
+            # Pass 2: re-smooth with cleaned mask (standard sigma)
             mask_float = valid.astype(np.float64)
             smoothed_num = gaussian_filter(b1_map * mask_float, sigma=sigma_voxels)
             smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
@@ -728,6 +756,7 @@ class B1Mapping(SimpleInterface):
             "n_denominator_unstable": int(np.sum(signal_mask & ~denominator_stable)),
             "n_extreme_low_b1": n_extreme_low,
             "n_extreme_high_b1": n_extreme_high,
+            "n_b1_outliers_rejected": n_b1_outliers,
             "uniform_detected": uniform_detected,
         }
 
@@ -750,7 +779,6 @@ class B1Mapping(SimpleInterface):
                 valid_mask=valid,
                 mean_b1=mean_b1,
                 std_b1=std_b1,
-                qc_pass=qc_pass,
             )
         except Exception as e:
             logger.warning("Failed to generate B1+ QC plot: %s", e, exc_info=True)
