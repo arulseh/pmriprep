@@ -349,6 +349,11 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="K2 map from preload_correct (passed through when baseline not recomputed)",
     )
+    enhancing_mask_file = File(
+        exists=True,
+        mandatory=False,
+        desc="Enhancing tumor mask (any space, resampled internally to DSC)",
+    )
 
     # Output files — quantification-independent
     out_mtt = File(genfile=True, desc="Output MTT map NIfTI")
@@ -1020,6 +1025,7 @@ class ComputeDSCMaps(BaseInterface):
             cpi_control_points: Number of CPI control points (0=auto).
         """
         import json
+        import nibabel as nib  # type: ignore[import-untyped]
         from scipy.ndimage import binary_erosion  # type: ignore[import-untyped]
         from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
         from pmriprep.models.dsc import (
@@ -1031,7 +1037,36 @@ class ComputeDSCMaps(BaseInterface):
         )
 
         try:
-            qc_voxel = _select_dsc_qc_voxel(cbf_map, mask_bool, binary_erosion)
+            # Load and resample enhancing mask if available
+            enhancing_mask_data: npt.NDArray[Any] | None = None
+            if (
+                isdefined(self.inputs.enhancing_mask_file)
+                and self.inputs.enhancing_mask_file
+            ):
+                enh_img = nib.load(self.inputs.enhancing_mask_file)
+                conc_img = nib.load(self.inputs.concentration_file)
+                enh_data = enh_img.get_fdata()  # type: ignore[attr-defined]
+                needs_resample = (
+                    enh_data.shape[:3] != conc_data.shape[:3]
+                    or not np.allclose(
+                        enh_img.affine, conc_img.affine, atol=1e-3  # type: ignore[attr-defined]
+                    )
+                )
+                if needs_resample:
+                    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+                    resampled = resample_to_img(
+                        enh_img, conc_img, interpolation="nearest"
+                    )
+                    enhancing_mask_data = (
+                        resampled.get_fdata() > 0.5  # type: ignore[attr-defined]
+                    ).astype(np.float64)
+                else:
+                    enhancing_mask_data = enh_data
+
+            qc_voxel = _select_dsc_qc_voxel(
+                cbf_map, mask_bool, binary_erosion,
+                enhancing_mask=enhancing_mask_data,
+            )
             x, y, z = qc_voxel
             tissue_curve = conc_data[x, y, z, :].astype(np.float64)
 

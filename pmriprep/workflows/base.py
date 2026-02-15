@@ -1431,6 +1431,7 @@ def init_pmriprep_wf(
                 (hdglio_wf, dce_wf, [
                     ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
                     ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
+                    ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
                     ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
                     ("outputnode.nawm_mask", "inputnode.nawm_mask"),  # For nKtrans, nvp, nIAUC60
                 ]),
@@ -1448,6 +1449,9 @@ def init_pmriprep_wf(
             if prev_hdglio["whole_tumor_mask"]:
                 dce_wf.inputs.inputnode.whole_tumor_mask = prev_hdglio["whole_tumor_mask"]
                 _log.info("skip-tumor-seg (DCE): loaded whole_tumor_mask from %s", prev_hdglio["whole_tumor_mask"])
+            if prev_hdglio.get("enhancing_mask"):
+                dce_wf.inputs.inputnode.enhancing_mask = prev_hdglio["enhancing_mask"]
+                _log.info("skip-tumor-seg (DCE): loaded enhancing_mask from %s", prev_hdglio["enhancing_mask"])
             if prev_hdglio["segmentation"]:
                 dce_wf.inputs.inputnode.hdglio_segmentation = prev_hdglio["segmentation"]
                 _log.info("skip-tumor-seg (DCE): loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])

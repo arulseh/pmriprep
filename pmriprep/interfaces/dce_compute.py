@@ -323,6 +323,13 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="Number of baseline frames for tSNR calculation (0 = auto-detect)",
     )
 
+    # Enhancing tumor mask for QC voxel selection
+    enhancing_mask_file = File(
+        exists=True,
+        mandatory=False,
+        desc="Enhancing tumor mask (any space, resampled internally to DCE)",
+    )
+
     # DSC CBV constraint options
     dsc_cbv_file = File(
         desc="DSC-derived CBV map for vp constraint (optional)",
@@ -1453,6 +1460,37 @@ class ComputeDCEMaps(BaseInterface):
             if isdefined(self.inputs.dce_signal_file):
                 signal_for_qc = nib.load(self.inputs.dce_signal_file).get_fdata()  # type: ignore[attr-defined]
 
+            # Load enhancing mask for QC voxel selection (optional)
+            enhancing_mask_data: Optional[npt.NDArray[Any]] = None
+            if (
+                isdefined(self.inputs.enhancing_mask_file)
+                and self.inputs.enhancing_mask_file
+            ):
+                try:
+                    enh_img = nib.load(self.inputs.enhancing_mask_file)
+                    conc_img_qc = nib.load(self.inputs.concentration_file)
+                    enh_data = enh_img.get_fdata()  # type: ignore[attr-defined]
+                    needs_resample = (
+                        enh_data.shape[:3] != conc_data.shape[:3]
+                        or not np.allclose(
+                            enh_img.affine,  # type: ignore[attr-defined]
+                            conc_img_qc.affine,  # type: ignore[attr-defined]
+                            atol=1e-3,
+                        )
+                    )
+                    if needs_resample:
+                        from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+                        resampled = resample_to_img(
+                            enh_img, conc_img_qc, interpolation="nearest"
+                        )
+                        enhancing_mask_data = (
+                            resampled.get_fdata() > 0.5  # type: ignore[attr-defined]
+                        ).astype(np.float64)
+                    else:
+                        enhancing_mask_data = enh_data
+                except Exception as exc:
+                    logger.debug("Could not load enhancing mask for QC: %s", exc)
+
             # Compute single-voxel fitted curve for QC display
             qc_fitted_curve_1d: Optional[npt.NDArray[Any]] = None
             try:
@@ -1467,6 +1505,7 @@ class ComputeDCEMaps(BaseInterface):
 
                 qc_vx, qc_vy, qc_vz = _select_qc_voxel(
                     ktrans, mask_bool, qc_mask, _be,
+                    enhancing_mask=enhancing_mask_data,
                 )
                 model_cls_map: dict[str, type] = {
                     "tofts": ToftsModel,
@@ -1506,6 +1545,7 @@ class ComputeDCEMaps(BaseInterface):
                 qc_fitted_curve=qc_fitted_curve_1d,
                 fp=fp_map if model_name == "2cxm" else None,
                 ps=ps_map if model_name == "2cxm" else None,
+                enhancing_mask=enhancing_mask_data,
             )
             if pk_modeling_qc_path:
                 self._results["pk_modeling_qc_plot"] = pk_modeling_qc_path

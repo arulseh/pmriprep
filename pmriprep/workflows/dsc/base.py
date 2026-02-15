@@ -2279,6 +2279,7 @@ def init_dsc_preproc_wf(
             ("tr", "tr"),
             ("te", "te"),
             ("field_strength", "field_strength"),
+            ("enhancing_mask", "enhancing_mask_file"),
         ]),
         (signal_to_conc, compute_maps, [
             ("signal_file", "signal_file"),

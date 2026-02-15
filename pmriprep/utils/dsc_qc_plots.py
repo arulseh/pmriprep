@@ -25,17 +25,22 @@ def _select_dsc_qc_voxel(
     cbf: npt.NDArray[Any],
     brain_mask: npt.NDArray[np.bool_],
     binary_erosion: Any,
+    enhancing_mask: npt.NDArray[Any] | None = None,
 ) -> tuple[int, int, int]:
     """Select an example voxel for DSC fit QC display.
 
     Tiered selection (adapted from DCE _select_qc_voxel for CBF):
-        1. Eroded brain mask with nonzero CBF — voxel nearest median CBF
-        2. Brain mask center (fallback)
+        1. Enhancing tumor mask — clinically most relevant region
+        2. Eroded brain mask with nonzero CBF — voxel nearest median CBF
+        3. Brain mask center (fallback)
 
     Args:
         cbf: 3D CBF map.
         brain_mask: 3D boolean brain mask.
         binary_erosion: scipy.ndimage.binary_erosion function.
+        enhancing_mask: 3D enhancing tumor mask (optional). In native
+            DSC space. When available, voxel selection strongly prefers
+            the enhancing region.
 
     Returns:
         (x, y, z) voxel coordinates.
@@ -52,7 +57,16 @@ def _select_dsc_qc_voxel(
         idx = np.unravel_index(flat_idx, cbf.shape)
         return int(idx[0]), int(idx[1]), int(idx[2])
 
-    # Tier 1: Eroded brain mask with nonzero CBF
+    # Tier 1: Enhancing tumor with nonzero CBF
+    if enhancing_mask is not None:
+        enh_bool = enhancing_mask > 0.5
+        enh_with_cbf = enh_bool & (cbf > 0)
+        if np.any(enh_with_cbf):
+            result = _near_median(enh_with_cbf)
+            if result is not None:
+                return result
+
+    # Tier 2: Eroded brain mask with nonzero CBF
     eroded_brain = binary_erosion(brain_mask, iterations=3)
     if isinstance(eroded_brain, np.ndarray):
         eroded_with_cbf = eroded_brain & (cbf > 0)
@@ -61,7 +75,7 @@ def _select_dsc_qc_voxel(
             if result is not None:
                 return result
 
-    # Tier 2: Fallback — center of brain mask
+    # Tier 3: Fallback — center of brain mask
     coords = np.where(brain_mask)
     mid = len(coords[0]) // 2
     return int(coords[0][mid]), int(coords[1][mid]), int(coords[2][mid])

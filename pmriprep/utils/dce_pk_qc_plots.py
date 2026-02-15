@@ -25,21 +25,26 @@ def _select_qc_voxel(
     brain_mask: npt.NDArray[np.bool_],
     qc_mask: npt.NDArray[Any] | None,
     binary_erosion: Any,
+    enhancing_mask: npt.NDArray[Any] | None = None,
 ) -> tuple[int, int, int]:
     """Select an example voxel for PK modeling QC display.
 
     Tiered selection to avoid mask edges and noisy voxels:
-        1. Eroded QC mask — voxel nearest median Ktrans among good-fit
-           voxels, eroded to stay away from edges
-        2. QC mask (uneroded) — if erosion leaves nothing
-        3. Eroded brain mask with nonzero Ktrans
-        4. Brain mask center (ultimate fallback)
+        1. Enhancing tumor mask — clinically most relevant region
+        2. Enhancing tumor ∩ QC mask — good fit within tumor
+        3. Eroded QC mask — good-fit voxels, away from edges
+        4. QC mask (uneroded) — if erosion leaves nothing
+        5. Eroded brain mask with nonzero Ktrans
+        6. Brain mask center (ultimate fallback)
 
     Args:
         ktrans: 3D Ktrans map.
         brain_mask: 3D boolean brain mask.
         qc_mask: 3D QC mask (physiological + R² filtered). May be None.
         binary_erosion: scipy.ndimage.binary_erosion function.
+        enhancing_mask: 3D enhancing tumor mask (optional). In native
+            perfusion space. When available, voxel selection strongly
+            prefers the enhancing region.
 
     Returns:
         (x, y, z) voxel coordinates.
@@ -57,7 +62,24 @@ def _select_qc_voxel(
         idx = np.unravel_index(flat_idx, ktrans.shape)
         return int(idx[0]), int(idx[1]), int(idx[2])
 
-    # Tier 1: Eroded QC mask (best — avoids edges, only good-fit voxels)
+    # Tier 1: Enhancing tumor with nonzero Ktrans
+    if enhancing_mask is not None:
+        enh_bool = enhancing_mask > 0.5
+        enh_with_ktrans = enh_bool & (ktrans > 0)
+        if np.any(enh_with_ktrans):
+            # Prefer enhancing voxels that also pass QC filter
+            if qc_mask is not None:
+                enh_qc = enh_with_ktrans & (qc_mask > 0.5)
+                if np.any(enh_qc):
+                    result = _near_median(enh_qc)
+                    if result is not None:
+                        return result
+            # Fall through to all enhancing voxels with nonzero Ktrans
+            result = _near_median(enh_with_ktrans)
+            if result is not None:
+                return result
+
+    # Tier 2: Eroded QC mask (best non-tumor — avoids edges, only good-fit voxels)
     if qc_mask is not None:
         qc_bool = qc_mask > 0.5
         eroded_qc = binary_erosion(qc_bool, iterations=2)
@@ -66,13 +88,13 @@ def _select_qc_voxel(
             if result is not None:
                 return result
 
-        # Tier 2: Uneroded QC mask
+        # Tier 3: Uneroded QC mask
         if np.any(qc_bool):
             result = _near_median(qc_bool)
             if result is not None:
                 return result
 
-    # Tier 3: Eroded brain mask with nonzero Ktrans
+    # Tier 4: Eroded brain mask with nonzero Ktrans
     eroded_brain = binary_erosion(brain_mask, iterations=3)
     if isinstance(eroded_brain, np.ndarray):
         eroded_with_ktrans = eroded_brain & (ktrans > 0)
@@ -81,7 +103,7 @@ def _select_qc_voxel(
             if result is not None:
                 return result
 
-    # Tier 4: Fallback — center of brain mask
+    # Tier 5: Fallback — center of brain mask
     coords = np.where(brain_mask)
     mid = len(coords[0]) // 2
     return int(coords[0][mid]), int(coords[1][mid]), int(coords[2][mid])
@@ -274,6 +296,7 @@ def generate_pk_modeling_qc_plot(
     qc_fitted_curve: npt.NDArray[Any] | None = None,
     fp: npt.NDArray[Any] | None = None,
     ps: npt.NDArray[Any] | None = None,
+    enhancing_mask: npt.NDArray[Any] | None = None,
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
@@ -287,10 +310,11 @@ def generate_pk_modeling_qc_plot(
         (1,1) Ktrans map with example voxel marker
 
     Example voxel selection (tiered):
-        1. Enhancing voxels within eroded QC mask (top-25% Ktrans, good R²)
-        2. QC mask voxels (good fit, physiological values)
-        3. Eroded brain mask with nonzero Ktrans
-        4. Brain mask center (fallback)
+        1. Enhancing tumor mask (clinically most relevant)
+        2. Eroded QC mask (good-fit voxels, away from edges)
+        3. Uneroded QC mask
+        4. Eroded brain mask with nonzero Ktrans
+        5. Brain mask center (fallback)
 
     Args:
         conc_data: 4D concentration array (x, y, z, t).
@@ -325,7 +349,10 @@ def generate_pk_modeling_qc_plot(
     mask_bool = brain_mask > 0.5
 
     # --- Select example voxel (tiered) ---
-    vx, vy, vz = _select_qc_voxel(ktrans, mask_bool, qc_mask, binary_erosion)
+    vx, vy, vz = _select_qc_voxel(
+        ktrans, mask_bool, qc_mask, binary_erosion,
+        enhancing_mask=enhancing_mask,
+    )
 
     # Extract voxel data
     voxel_conc = conc_data[vx, vy, vz, :]

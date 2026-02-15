@@ -216,6 +216,7 @@ def init_dce_preproc_wf(
                 "lesion_mask",
                 # Tumor mask inputs for lesion statistics
                 "whole_tumor_mask",  # Undilated whole-tumor mask (fallback for lesion stats)
+                "enhancing_mask",  # Enhancing tumor mask for QC voxel selection (optional)
                 "hdglio_segmentation",  # HD-GLIO multi-label segmentation for lesion stats (optional)
                 # VFA T1 mapping inputs
                 "vfa_files",
@@ -884,6 +885,7 @@ def init_dce_preproc_wf(
         (inputnode, pk_modeling, [
             ("tr", "tr"),
             ("volume_tr", "volume_tr"),  # For model auto-selection
+            ("enhancing_mask", "enhancing_mask_file"),
         ]),
         # Raw DCE signal for tSNR computation (matches perf-plus)
         # Also wire baseline_frames so pk_modeling uses the same value
