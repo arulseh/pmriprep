@@ -18,40 +18,35 @@ References:
     NeuroImage 45(1):S173-S186.
 """
 
-from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable
 
 import numpy as np
 import numpy.typing as npt
 from scipy import optimize  # type: ignore[import-untyped]
 
+from pmriprep.models.bayesian_utils import (
+    BayesianPrior,
+    build_priors_from_params,
+    compute_goodness_of_fit,
+    compute_log_prior,
+    compute_per_walker_ess,
+    compute_split_rhat,
+    run_ensemble_sampler,
+    validate_bayesian_inputs,
+)
 from pmriprep.models.dsc.base import (
     DSCFitResult,
     DSCModel,
-    DSCModelParameter,
 )
 from pmriprep.utils.dsc_constants import (
-    EPSILON_CONCENTRATION,
     MAP_MAX_ITER,
     MCMC_SAMPLES,
     QC_ESS_MIN,
     QC_RHAT_MAX,
 )
 
-
-@dataclass
-class BayesianPrior:
-    """Gaussian prior specification for a model parameter.
-
-    Attributes:
-        mean: Prior mean.
-        std: Prior standard deviation.
-        log_transform: Whether parameter is fit in log space.
-    """
-
-    mean: float
-    std: float
-    log_transform: bool = False
+# Re-export BayesianPrior for backward compatibility
+__all__ = ["BayesianDSCFitter", "BayesianPrior", "fit_dsc_model"]
 
 
 class BayesianDSCFitter:
@@ -94,7 +89,7 @@ class BayesianDSCFitter:
         self.noise_std = noise_std
 
         # Build priors from model parameter definitions
-        self.priors = self._build_priors(model.get_parameter_definitions())
+        self.priors = build_priors_from_params(model.get_parameter_definitions())
 
     @staticmethod
     def _validate_inputs(
@@ -112,43 +107,11 @@ class BayesianDSCFitter:
         Raises:
             ValueError: If inputs contain NaN/Inf or lengths don't match.
         """
-        for name, arr in [
+        validate_bayesian_inputs(
             ("concentration", concentration),
             ("aif", aif),
             ("time_points", time_points),
-        ]:
-            if not np.all(np.isfinite(arr)):
-                raise ValueError(f"{name} contains NaN or Inf values")
-        if len(concentration) != len(time_points) or len(aif) != len(time_points):
-            raise ValueError(
-                f"Input array lengths must match: concentration={len(concentration)}, "
-                f"aif={len(aif)}, time_points={len(time_points)}"
-            )
-
-    def _build_priors(
-        self, param_defs: Sequence[DSCModelParameter]
-    ) -> list[BayesianPrior]:
-        """Build Gaussian priors from parameter definitions.
-
-        Prior mean is the center of typical_range.
-        Prior std is (typical_range[1] - typical_range[0]) / 4.0,
-        which places 95% of prior mass within the typical range.
-
-        Args:
-            param_defs: List of DSCModelParameter objects.
-
-        Returns:
-            List of BayesianPrior objects.
-        """
-        priors = []
-        for param in param_defs:
-            prior = BayesianPrior(
-                mean=param.get_prior_mean(),
-                std=param.get_prior_sigma(),
-                log_transform=param.log_transform,
-            )
-            priors.append(prior)
-        return priors
+        )
 
     def _estimate_noise_std(
         self,
@@ -194,14 +157,7 @@ class BayesianDSCFitter:
         Returns:
             Log prior probability (unnormalized).
         """
-        log_p = 0.0
-
-        for i, (p, prior) in enumerate(zip(params, self.priors)):
-            # Truncated normal in natural parameter space (matches perf-plus)
-            if prior.std > 0:
-                log_p -= 0.5 * ((p - prior.mean) / prior.std) ** 2
-
-        return log_p
+        return compute_log_prior(params, self.priors)
 
     def _log_likelihood(
         self,
@@ -397,7 +353,7 @@ class BayesianDSCFitter:
 
         return uncertainties, credible_intervals
 
-    def _compute_goodness_of_fit(
+    def _compute_gof(
         self,
         concentration: npt.NDArray[np.floating],
         fitted_tissue: npt.NDArray[np.floating],
@@ -411,26 +367,9 @@ class BayesianDSCFitter:
         Returns:
             Dictionary with r_squared, rss, aic, bic.
         """
-        residuals = concentration - fitted_tissue
-        rss = float(np.sum(residuals**2))
-        ss_tot = float(np.sum((concentration - np.mean(concentration)) ** 2))
-        r_squared = 1.0 - (rss / max(ss_tot, EPSILON_CONCENTRATION))
-
-        n = len(concentration)
-        k = self.model.n_parameters
-        if rss > 0:
-            aic = n * np.log(max(rss / n, 1e-300)) + 2 * k
-            bic = n * np.log(max(rss / n, 1e-300)) + k * np.log(n)
-        else:
-            aic = float("-inf")
-            bic = float("-inf")
-
-        return {
-            "r_squared": r_squared,
-            "rss": rss,
-            "aic": float(aic),
-            "bic": float(bic),
-        }
+        return compute_goodness_of_fit(
+            concentration, fitted_tissue, self.model.n_parameters
+        )
 
     def fit_map(
         self,
@@ -509,7 +448,7 @@ class BayesianDSCFitter:
         fitted_residue = self.model.residue_function(fitted_params, time_points)
         fitted_tissue = self.model.tissue_curve(fitted_params, aif, time_points)
 
-        gof = self._compute_goodness_of_fit(concentration, fitted_tissue)
+        gof = self._compute_gof(concentration, fitted_tissue)
 
         return DSCFitResult(
             parameters=self.model.params_to_dict(fitted_params),
@@ -747,7 +686,7 @@ class BayesianDSCFitter:
         fitted_residue = self.model.residue_function(fitted_params, time_points)
         fitted_tissue = self.model.tissue_curve(fitted_params, aif, time_points)
 
-        gof = self._compute_goodness_of_fit(concentration, fitted_tissue)
+        gof = self._compute_gof(concentration, fitted_tissue)
 
         return DSCFitResult(
             parameters=self.model.params_to_dict(fitted_params),
@@ -873,8 +812,8 @@ class BayesianDSCFitter:
                 log_sigma_init + 0.1 * np.random.randn()
             )
 
-        # Run ensemble sampler
-        samples = self._run_ensemble_sampler(
+        # Run ensemble sampler (shared utility)
+        samples = run_ensemble_sampler(
             log_prob_with_sigma, init_positions, n_total, sampler_bounds
         )
 
@@ -911,9 +850,9 @@ class BayesianDSCFitter:
             float(np.percentile(sigma_samples, 97.5)),
         )
 
-        # Convergence diagnostics (all dimensions including log_sigma)
-        rhat = self._compute_rhat(samples)
-        ess = self._compute_ess(samples)
+        # Convergence diagnostics (shared utilities)
+        rhat = compute_split_rhat(samples)
+        ess = compute_per_walker_ess(samples)
 
         rhat_dict: dict[str, float] = {}
         ess_dict: dict[str, int] = {}
@@ -930,7 +869,7 @@ class BayesianDSCFitter:
         fitted_residue = self.model.residue_function(posterior_mean, time_points)
         fitted_tissue = self.model.tissue_curve(posterior_mean, aif, time_points)
 
-        gof = self._compute_goodness_of_fit(concentration, fitted_tissue)
+        gof = self._compute_gof(concentration, fitted_tissue)
 
         return DSCFitResult(
             parameters=parameters,
@@ -950,183 +889,6 @@ class BayesianDSCFitter:
             fitted_residue=fitted_residue,
             fitted_tissue_curve=fitted_tissue,
         )
-
-    def _run_ensemble_sampler(
-        self,
-        log_prob: Callable[[npt.NDArray[np.floating]], float],
-        init_positions: npt.NDArray[np.floating],
-        n_iterations: int,
-        bounds: list[tuple[float, float]],
-        a: float = 2.0,
-    ) -> npt.NDArray[np.floating]:
-        """Run affine-invariant ensemble sampler.
-
-        Implements the stretch move from Goodman & Weare (2010).
-
-        Args:
-            log_prob: Log posterior function.
-            init_positions: Initial walker positions (n_walkers x n_params).
-            n_iterations: Number of iterations.
-            bounds: Parameter bounds.
-            a: Stretch move scale parameter (default 2.0).
-
-        Returns:
-            Samples array (n_iterations x n_walkers x n_params).
-        """
-        n_walkers, n_params = init_positions.shape
-
-        # Storage for samples
-        samples = np.zeros((n_iterations, n_walkers, n_params))
-        samples[0] = init_positions
-
-        # Current positions and log probs
-        current_pos = init_positions.copy()
-        current_lp = np.array([log_prob(current_pos[j]) for j in range(n_walkers)])
-
-        for iteration in range(1, n_iterations):
-            # Update each walker
-            for j in range(n_walkers):
-                # Select random walker from complementary ensemble
-                others = np.concatenate([np.arange(j), np.arange(j + 1, n_walkers)])
-                k = np.random.choice(others)
-
-                # Stretch move
-                # z ~ 1/sqrt(z) on [1/a, a]
-                u = np.random.rand()
-                z = ((a - 1.0) * u + 1.0) ** 2 / a
-
-                # Proposal
-                proposal = current_pos[k] + z * (current_pos[j] - current_pos[k])
-
-                # Check bounds
-                in_bounds = True
-                for i in range(n_params):
-                    if proposal[i] < bounds[i][0] or proposal[i] > bounds[i][1]:
-                        in_bounds = False
-                        break
-
-                if in_bounds:
-                    # Compute log prob of proposal
-                    proposal_lp = log_prob(proposal)
-
-                    # Acceptance probability
-                    log_ratio = (n_params - 1) * np.log(z) + proposal_lp - current_lp[j]
-
-                    # Accept/reject
-                    if np.log(np.random.rand()) < log_ratio:
-                        current_pos[j] = proposal
-                        current_lp[j] = proposal_lp
-
-            samples[iteration] = current_pos
-
-        return samples
-
-    @staticmethod
-    def _compute_rhat(
-        samples: npt.NDArray[np.floating],
-    ) -> npt.NDArray[np.floating]:
-        """Compute split-R-hat diagnostic for ensemble samplers.
-
-        For affine-invariant ensemble samplers, walkers are coupled through
-        the complementary ensemble and are NOT independent chains.
-        Standard per-walker R-hat is inappropriate.
-
-        Instead, concatenate all walkers into a single chain and split
-        in half, then compute R-hat between the two halves (recommended
-        by emcee documentation and Vehtari et al. 2021).
-
-        Args:
-            samples: MCMC samples (n_samples x n_walkers x n_params).
-
-        Returns:
-            Split R-hat values for each parameter.
-        """
-        _, _, n_params = samples.shape
-
-        rhat = np.zeros(n_params)
-
-        for p in range(n_params):
-            # Concatenate all walkers into one long chain
-            full_chain = samples[:, :, p].flatten()
-
-            # Split in half → two "chains"
-            mid = len(full_chain) // 2
-            chains = np.array([full_chain[:mid], full_chain[mid:2 * mid]])
-
-            n = chains.shape[1]  # length of each half
-
-            chain_means = np.mean(chains, axis=1)
-
-            B = n * np.var(chain_means, ddof=1)
-            W = np.mean(np.var(chains, axis=1, ddof=1))
-
-            var_plus = ((n - 1) / n) * W + (1 / n) * B
-
-            if W > 0:
-                rhat[p] = np.sqrt(var_plus / W)
-            else:
-                rhat[p] = 1.0
-
-        return rhat
-
-    @staticmethod
-    def _compute_ess(
-        samples: npt.NDArray[np.floating],
-    ) -> npt.NDArray[np.integer]:
-        """Compute effective sample size (ESS) per-walker then sum.
-
-        For ensemble samplers, computing ESS per-walker and summing
-        avoids underestimating autocorrelation that occurs when
-        correlated walkers are flattened into a single sequence.
-
-        Args:
-            samples: MCMC samples (n_samples x n_walkers x n_params).
-
-        Returns:
-            ESS values for each parameter.
-        """
-        _, n_walkers, n_params = samples.shape
-
-        ess = np.zeros(n_params, dtype=np.int64)
-
-        for p in range(n_params):
-            ess_total = 0
-
-            for w in range(n_walkers):
-                chain = samples[:, w, p]
-                n = len(chain)
-
-                if n < 2:
-                    ess_total += n
-                    continue
-
-                x = chain - np.mean(chain)
-                var = float(np.var(x))
-
-                if var < EPSILON_CONCENTRATION:
-                    ess_total += n
-                    continue
-
-                # Autocorrelation up to max lag
-                max_lag = min(n // 2, 500)
-                acf = np.zeros(max_lag)
-                for k in range(max_lag):
-                    acf[k] = float(np.mean(x[: n - k] * x[k:])) / var
-
-                # Integrated autocorrelation time (initial positive sequence)
-                tau_int = 1.0
-                for k in range(1, max_lag - 1, 2):
-                    pair_sum = acf[k] + acf[k + 1]
-                    if pair_sum > 0:
-                        tau_int += pair_sum
-                    else:
-                        break
-
-                ess_total += max(1, int(n / (2 * tau_int)))
-
-            ess[p] = max(1, ess_total)
-
-        return ess
 
 
 def fit_dsc_model(

@@ -2,6 +2,7 @@
 
 Provides Bayesian fitting methods for DCE models including:
 - MAP (Maximum A Posteriori) estimation with Laplace approximation
+- VI (Variational Inference) with FABBER-style linearized VB
 - MCMC (Markov Chain Monte Carlo) with ensemble sampling
 
 The BayesianPKFitter class works with any model implementing the PKModel
@@ -20,24 +21,41 @@ References:
     Goodman J, Weare J. (2010).
     "Ensemble samplers with affine invariance."
     Comm App Math Comp Sci 5(1):65-80.
+
+    Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
+    "Variational Bayesian Inference for a Nonlinear Forward Model."
+    IEEE Trans Med Imaging 28(1):94-104.
 """
 
-from dataclasses import dataclass
-from typing import Callable, Optional, Sequence
+from typing import Callable
 
 import numpy as np
 import numpy.typing as npt
 from scipy import optimize  # type: ignore[import-untyped]
 from scipy.optimize import Bounds  # type: ignore[import-untyped]
 
+from pmriprep.models.bayesian_utils import (
+    BayesianPrior,
+    build_priors_from_params,
+    compute_goodness_of_fit,
+    compute_log_prior,
+    compute_per_walker_ess,
+    compute_split_rhat,
+    run_ensemble_sampler,
+    validate_bayesian_inputs,
+)
 from pmriprep.models.dce.base import (
     FitResult,
-    ModelParameter,
     PKModel,
 )
-from pmriprep.utils.dce_constants import (
-    EPSILON_VE,
-)
+
+# Re-export BayesianPrior for backward compatibility
+__all__ = [
+    "BayesianPKFitter",
+    "BayesianPrior",
+    "create_vp_prior_from_dsc",
+    "fit_pk_model",
+]
 
 
 # =============================================================================
@@ -63,26 +81,12 @@ QC_ESS_MIN: int = 100
 EPSILON_SIGMA_CONCENTRATION: float = 0.001
 
 
-@dataclass
-class BayesianPrior:
-    """Gaussian prior specification for a model parameter.
-
-    Attributes:
-        mean: Prior mean.
-        std: Prior standard deviation.
-        log_transform: Whether parameter is fit in log space.
-    """
-
-    mean: float
-    std: float
-    log_transform: bool = False
-
-
 class BayesianPKFitter:
     """Bayesian inference for DCE pharmacokinetic models.
 
-    Provides two fitting methods:
+    Provides three fitting methods:
     - fit_map(): MAP estimation with Laplace approximation for uncertainties
+    - fit_vi(): FABBER-style linearized Variational Bayes
     - fit_mcmc(): Full MCMC sampling with ensemble sampler
 
     The fitter constructs Gaussian priors from the model's parameter definitions,
@@ -107,8 +111,8 @@ class BayesianPKFitter:
     def __init__(
         self,
         model: PKModel,
-        noise_std: Optional[float] = None,
-        vp_prior_override: Optional[BayesianPrior] = None,
+        noise_std: float | None = None,
+        vp_prior_override: BayesianPrior | None = None,
     ) -> None:
         """Initialize the Bayesian fitter.
 
@@ -124,7 +128,7 @@ class BayesianPKFitter:
         self.noise_std = noise_std
 
         # Build priors from model parameter definitions
-        self.priors = self._build_priors(model.get_parameter_definitions())
+        self.priors = build_priors_from_params(model.get_parameter_definitions())
 
         # Check if model has both ve and vp (needs volume constraint)
         param_names = model.get_parameter_names()
@@ -136,30 +140,27 @@ class BayesianPKFitter:
         if vp_prior_override is not None and self._vp_index >= 0:
             self.priors[self._vp_index] = vp_prior_override
 
-    def _build_priors(
-        self, param_defs: Sequence[ModelParameter]
-    ) -> list[BayesianPrior]:
-        """Build Gaussian priors from parameter definitions.
-
-        Prior mean is the center of typical_range.
-        Prior std is (typical_range[1] - typical_range[0]) / 4.0,
-        which places 95% of prior mass within the typical range.
+    @staticmethod
+    def _validate_inputs(
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+    ) -> None:
+        """Validate input arrays for NaN/Inf values and length consistency.
 
         Args:
-            param_defs: List of ModelParameter objects.
+            tissue_curve: Measured tissue concentration time course.
+            aif: Arterial input function.
+            time_points: Time points (minutes).
 
-        Returns:
-            List of BayesianPrior objects.
+        Raises:
+            ValueError: If inputs contain NaN/Inf or lengths don't match.
         """
-        priors = []
-        for param in param_defs:
-            prior = BayesianPrior(
-                mean=param.get_prior_mean(),
-                std=param.get_prior_sigma(),
-                log_transform=param.log_transform,
-            )
-            priors.append(prior)
-        return priors
+        validate_bayesian_inputs(
+            ("tissue_curve", tissue_curve),
+            ("aif", aif),
+            ("time_points", time_points),
+        )
 
     def _estimate_noise_std(
         self,
@@ -185,7 +186,7 @@ class BayesianPKFitter:
         noise_std = float(np.std(baseline))
 
         # Minimum noise level for numerical stability
-        return max(noise_std, EPSILON_VE)
+        return max(noise_std, EPSILON_SIGMA_CONCENTRATION)
 
     def _log_prior(
         self, params: npt.NDArray[np.floating]
@@ -201,14 +202,7 @@ class BayesianPKFitter:
         Returns:
             Log prior probability (unnormalized).
         """
-        log_p = 0.0
-
-        for i, (p, prior) in enumerate(zip(params, self.priors)):
-            # Simple Gaussian prior (no log transform) - matches perf-plus
-            if prior.std > 0:
-                log_p -= 0.5 * ((p - prior.mean) / prior.std) ** 2
-
-        return log_p
+        return compute_log_prior(params, self.priors)
 
     def _check_volume_constraint(
         self, params: npt.NDArray[np.floating]
@@ -313,6 +307,45 @@ class BayesianPKFitter:
         # Gaussian log likelihood
         n = len(tissue_curve)
         log_lik = -n * np.log(sigma) - 0.5 * np.sum((residuals / sigma) ** 2)
+
+        return float(log_lik)
+
+    def _log_likelihood_with_sigma(
+        self,
+        params: npt.NDArray[np.floating],
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+        sigma: float,
+    ) -> float:
+        """Compute log likelihood with explicit noise sigma (for MCMC).
+
+        Unlike _log_likelihood which uses profile likelihood, this method
+        uses the provided sigma directly, suitable for MCMC where sigma
+        is sampled as a free parameter.
+
+        Args:
+            params: Parameter values.
+            tissue_curve: Measured tissue concentration.
+            aif: Arterial input function.
+            time_points: Time points (minutes).
+            sigma: Noise standard deviation.
+
+        Returns:
+            Log likelihood (unnormalized).
+        """
+        try:
+            predicted = self.model.evaluate(list(params), aif, time_points)
+        except (ValueError, RuntimeError):
+            return float("-inf")
+
+        if not np.all(np.isfinite(predicted)):
+            return float("-inf")
+
+        residuals = tissue_curve - predicted
+        n = len(tissue_curve)
+        log_lik = -0.5 * n * np.log(2 * np.pi * sigma**2)
+        log_lik -= 0.5 * np.sum(residuals**2) / (sigma**2)
 
         return float(log_lik)
 
@@ -539,6 +572,8 @@ class BayesianPKFitter:
         Returns:
             FitResult with parameters, uncertainties, and credible intervals.
         """
+        self._validate_inputs(tissue_curve, aif, time_points)
+
         noise_std = 1.0  # Unused; profile likelihood estimates from residuals
 
         bounds = self.model.get_bounds()
@@ -574,7 +609,7 @@ class BayesianPKFitter:
                      for i, p in enumerate(param_names)],
                     dtype=np.float64,
                 )
-        except Exception:
+        except (ValueError, RuntimeError, np.linalg.LinAlgError):
             pass
 
         # Build scipy Bounds for Nelder-Mead (supported since scipy 1.7)
@@ -660,19 +695,251 @@ class BayesianPKFitter:
             fitted_curve=fitted_curve,
         )
 
+    def fit_vi(
+        self,
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+        n_iterations: int = 20,
+        noise_prior: tuple[float, float] | None = None,
+    ) -> FitResult:
+        """Fit model using FABBER-style linearized Variational Bayes.
+
+        Implements the linearized VB algorithm from Chappell et al. (2009,
+        IEEE TMI 28(1):94-104). At each iteration the forward model is
+        linearized around the current posterior mean, enabling analytic
+        Gaussian posterior updates. Noise precision is treated as a conjugate
+        Gamma random variable.
+
+        Args:
+            tissue_curve: Measured tissue concentration curve (mM).
+            aif: Arterial input function (mM).
+            time_points: Time points (minutes).
+            n_iterations: Maximum VB iterations (default 20).
+            noise_prior: Optional (c0, s0) Gamma prior on noise precision
+                tau = 1/sigma^2. If None, uses non-informative prior.
+                If noise_std was provided to the constructor, uses an
+                informative prior centered on that value.
+
+        Returns:
+            FitResult with parameters, uncertainties, and credible intervals.
+
+        References:
+            Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
+            "Variational Bayesian Inference for a Nonlinear Forward Model."
+            IEEE Trans Med Imaging 28(1):94-104.
+        """
+        self._validate_inputs(tissue_curve, aif, time_points)
+
+        n_params = self.model.n_parameters
+        n_obs = len(tissue_curve)
+        bounds = self.model.get_bounds()
+        param_names = self.model.get_parameter_names()
+        y = np.asarray(tissue_curve, dtype=np.float64)
+
+        # Prior precision matrix (diagonal, from prior stds)
+        prior_means = np.array([p.mean for p in self.priors], dtype=np.float64)
+        prior_stds = np.array([p.std for p in self.priors], dtype=np.float64)
+        prior_prec = np.diag(1.0 / (prior_stds**2))  # Λ₀
+
+        # Noise precision prior: Gamma(c0, s0)
+        # Following FABBER convention: Gamma parameterized so E[tau] = c/s
+        if noise_prior is not None:
+            c0, s0 = noise_prior
+        elif self.noise_std is not None:
+            tau_prior = 1.0 / (self.noise_std**2)
+            c0 = 10.0
+            s0 = c0 / tau_prior
+        else:
+            c0 = 1e-3
+            s0 = 1e3
+
+        # Initialize posterior mean at prior mean, clipped to bounds
+        m = prior_means.copy()
+        for i in range(n_params):
+            m[i] = np.clip(m[i], bounds[i][0], bounds[i][1])
+
+        # Initialize noise posterior
+        c = c0
+        s = s0
+        tau_exp = c / s
+
+        # Best free energy tracking for trial mode
+        best_free_energy = float("-inf")
+        best_m = m.copy()
+        best_cov = np.diag(prior_stds**2)
+        best_c = c
+        best_s = s
+        n_trials = 0
+        max_trials = 10
+
+        converged = False
+
+        for iteration in range(n_iterations):
+            # 1. Evaluate forward model at current mean
+            try:
+                g_m = self.model.evaluate(list(m), aif, time_points)
+            except (ValueError, RuntimeError):
+                break
+            g_m = np.asarray(g_m, dtype=np.float64)
+
+            # 2. Compute Jacobian via central finite differences
+            J = np.zeros((n_obs, n_params), dtype=np.float64)
+            for j in range(n_params):
+                delta = max(abs(m[j]) * 1e-5, 1e-10)
+                m_plus = m.copy()
+                m_minus = m.copy()
+                m_plus[j] += delta
+                m_minus[j] -= delta
+                m_plus[j] = np.clip(m_plus[j], bounds[j][0], bounds[j][1])
+                m_minus[j] = np.clip(m_minus[j], bounds[j][0], bounds[j][1])
+                actual_delta = m_plus[j] - m_minus[j]
+                if actual_delta < 1e-15:
+                    continue
+                try:
+                    g_plus = self.model.evaluate(list(m_plus), aif, time_points)
+                    g_minus = self.model.evaluate(list(m_minus), aif, time_points)
+                except (ValueError, RuntimeError):
+                    continue
+                J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / actual_delta
+
+            # Residual
+            k_res = y - g_m
+
+            # 3. Update posterior precision: Λ = Λ₀ + <τ> J^T J
+            JtJ = J.T @ J
+            post_prec = prior_prec + tau_exp * JtJ
+
+            # 4. Update posterior covariance
+            try:
+                post_cov = np.linalg.inv(post_prec)
+            except np.linalg.LinAlgError:
+                post_prec += 1e-6 * np.eye(n_params)
+                post_cov = np.linalg.inv(post_prec)
+
+            # 5. Update posterior mean
+            rhs = prior_prec @ prior_means + tau_exp * J.T @ (k_res + J @ m)
+            m_new = post_cov @ rhs
+
+            # Clip to bounds
+            for i in range(n_params):
+                m_new[i] = np.clip(m_new[i], bounds[i][0], bounds[i][1])
+
+            # Apply volume constraint after mean update
+            m_new = self._apply_volume_constraint(m_new)
+
+            # 6. Update noise precision posterior
+            c = c0 + n_obs / 2.0
+            try:
+                g_new = self.model.evaluate(list(m_new), aif, time_points)
+            except (ValueError, RuntimeError):
+                g_new = g_m
+            k_new = y - np.asarray(g_new, dtype=np.float64)
+            trace_term = float(np.trace(post_cov @ JtJ))
+            s = 1.0 / (1.0 / s0 + 0.5 * (float(k_new @ k_new) + trace_term))
+            tau_exp = c * s
+
+            # 7. Compute free energy (analytic ELBO)
+            dm = m_new - prior_means
+            sign_cov, logdet_cov = np.linalg.slogdet(post_cov)
+            sign_prior, logdet_prior_cov = np.linalg.slogdet(
+                np.diag(prior_stds**2)
+            )
+
+            free_energy = (
+                0.5 * n_obs * (np.log(tau_exp) - np.log(2 * np.pi))
+                - 0.5 * tau_exp * (float(k_new @ k_new) + trace_term)
+                - 0.5 * float(dm @ prior_prec @ dm)
+                - 0.5 * float(np.trace(prior_prec @ post_cov))
+                + 0.5 * logdet_cov * sign_cov
+                - 0.5 * logdet_prior_cov * sign_prior
+                + 0.5 * n_params
+            )
+
+            # Trial mode: revert if free energy decreased
+            if free_energy > best_free_energy:
+                best_free_energy = free_energy
+                best_m = m_new.copy()
+                best_cov = post_cov.copy()
+                best_c = c
+                best_s = s
+                n_trials = 0
+            else:
+                n_trials += 1
+                if n_trials >= max_trials:
+                    break
+
+            # Convergence check
+            if iteration > 0:
+                param_change = float(np.max(np.abs(m_new - m)))
+                if param_change < 1e-6:
+                    converged = True
+                    m = m_new
+                    break
+
+            m = m_new
+
+        # Use best parameters found
+        fitted_params = best_m
+        fitted_stds = np.sqrt(np.maximum(np.diag(best_cov), 0.0))
+        noise_std_posterior = 1.0 / np.sqrt(max(best_c * best_s, 1e-300))
+
+        # Build uncertainties and credible intervals
+        uncertainties: dict[str, float] = {}
+        credible_intervals: dict[str, tuple[float, float]] = {}
+
+        for i, name in enumerate(param_names):
+            std = float(fitted_stds[i])
+            uncertainties[name] = std
+            ci_low = max(float(fitted_params[i] - 1.96 * std), bounds[i][0])
+            ci_high = min(float(fitted_params[i] + 1.96 * std), bounds[i][1])
+            credible_intervals[name] = (ci_low, ci_high)
+
+        uncertainties["noise_std"] = noise_std_posterior
+
+        # Compute fitted curve
+        fitted_curve = self.model.evaluate(list(fitted_params), aif, time_points)
+
+        # Compute goodness of fit
+        gof = compute_goodness_of_fit(
+            tissue_curve, fitted_curve, self.model.n_parameters
+        )
+
+        # Compute derived parameters
+        param_dict = self.model.params_to_dict(list(fitted_params))
+        derived = self.model.compute_derived_parameters(list(fitted_params))
+        param_dict.update(derived)
+
+        return FitResult(
+            parameters=param_dict,
+            uncertainties=uncertainties,
+            credible_intervals=credible_intervals,
+            r_squared=gof["r_squared"],
+            residual_sum_squares=gof["rss"],
+            aic=gof["aic"],
+            bic=gof["bic"],
+            model_name=self.model.name,
+            n_parameters=self.model.n_parameters,
+            n_observations=n_obs,
+            converged=converged or n_trials < max_trials,
+            fitting_method="vi",
+            fitted_curve=fitted_curve,
+        )
+
     def fit_mcmc(
         self,
         tissue_curve: npt.NDArray[np.floating],
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         n_samples: int = DEFAULT_MCMC_SAMPLES,
-        n_walkers: Optional[int] = None,
-        n_burnin: Optional[int] = None,
+        n_walkers: int | None = None,
+        n_burnin: int | None = None,
     ) -> FitResult:
         """Fit model using MCMC with ensemble sampler.
 
         Uses an affine-invariant ensemble sampler (similar to emcee).
-        Provides full posterior samples and convergence diagnostics.
+        Noise sigma is sampled as a free parameter (log_sigma) with a
+        HalfNormal prior, following Gelman et al. (BDA3, Ch. 3).
 
         The constraint ve + vp <= 1.0 is enforced during sampling for
         models with both ve and vp parameters.
@@ -682,39 +949,73 @@ class BayesianPKFitter:
             aif: Arterial input function (mM).
             time_points: Time points (minutes).
             n_samples: Number of samples to draw (after burn-in).
-            n_walkers: Number of ensemble walkers (default: 2 * n_params + 2).
+            n_walkers: Number of ensemble walkers (default: 2 * n_dims + 2).
             n_burnin: Number of burn-in samples (default: n_samples // 2).
 
         Returns:
             FitResult with parameters, uncertainties, credible intervals,
             and MCMC diagnostics (R-hat, ESS).
         """
-        # Estimate noise if not provided
-        noise_std = self.noise_std
-        if noise_std is None:
-            noise_std = self._estimate_noise_std(tissue_curve)
+        self._validate_inputs(tissue_curve, aif, time_points)
 
-        n_params = self.model.n_parameters
+        # Estimate baseline noise for walker initialization and prior scale
+        noise_std_baseline = self.noise_std
+        if noise_std_baseline is None:
+            noise_std_baseline = self._estimate_noise_std(tissue_curve)
+
+        n_model_params = self.model.n_parameters
+        # Total sampled dimensions: model params + log_sigma
+        n_dims = n_model_params + 1
         bounds = self.model.get_bounds()
         param_names = self.model.get_parameter_names()
 
         # Set defaults
         if n_walkers is None:
-            n_walkers = max(2 * n_params + 2, 10)
+            n_walkers = max(2 * n_dims + 2, 10)
         if n_burnin is None:
             n_burnin = n_samples // 2
 
-        # Total iterations
         n_total = n_samples + n_burnin
 
-        # Log posterior function
-        def log_prob(params: npt.NDArray[np.floating]) -> float:
-            return self._log_posterior(
-                params, tissue_curve, aif, time_points, noise_std
+        # Log posterior including sampled sigma
+        # State vector: [model_params..., log_sigma]
+        def log_prob_with_sigma(
+            state: npt.NDArray[np.floating],
+        ) -> float:
+            model_params = state[:n_model_params]
+            log_sigma = state[n_model_params]
+            sigma = np.exp(log_sigma)
+
+            # Check model parameter bounds
+            if not self.model.validate_params(model_params):
+                return float("-inf")
+
+            # Check volume constraint
+            if not self._check_volume_constraint(model_params):
+                return float("-inf")
+
+            # sigma must be positive (guaranteed by exp) but guard extremes
+            if sigma < 1e-15 or sigma > 1e6:
+                return float("-inf")
+
+            # Prior on model parameters
+            log_p = self._log_prior(model_params)
+            if not np.isfinite(log_p):
+                return float("-inf")
+
+            # HalfNormal prior on sigma: p(sigma) ∝ exp(-sigma^2 / (2*scale^2))
+            # Plus Jacobian for log_sigma: p(log_sigma) = p(sigma) * sigma
+            log_p -= (sigma**2) / (2.0 * noise_std_baseline**2)
+            log_p += log_sigma  # Jacobian |d(sigma)/d(log_sigma)| = sigma
+
+            # Likelihood with sampled sigma (not profile)
+            log_lik = self._log_likelihood_with_sigma(
+                model_params, tissue_curve, aif, time_points, sigma
             )
 
+            return log_p + log_lik
+
         # Initialize walkers near MAP estimate
-        # First, get a rough MAP estimate
         map_result = self.fit_map(
             tissue_curve, aif, time_points, max_iter=100,
             compute_uncertainties=False,
@@ -724,41 +1025,50 @@ class BayesianPKFitter:
         )
         map_params = np.array(map_params_list, dtype=np.float64)
 
+        # Bounds for sampler: model bounds + log_sigma bounds
+        sampler_bounds = bounds + [(-15.0, 15.0)]  # log_sigma
+
         # Initialize walkers with small perturbations around MAP
-        init_positions = np.zeros((n_walkers, n_params))
+        init_positions = np.zeros((n_walkers, n_dims))
+        log_sigma_init = np.log(noise_std_baseline)
         for i in range(n_walkers):
-            for j in range(n_params):
-                # Small Gaussian perturbation
+            for j in range(n_model_params):
                 scale = self.priors[j].std * 0.1
                 perturbed = map_params[j] + scale * np.random.randn()
-                # Clip to bounds
                 perturbed = np.clip(perturbed, bounds[j][0], bounds[j][1])
                 init_positions[i, j] = perturbed
+            # log_sigma: small perturbation around baseline estimate
+            init_positions[i, n_model_params] = (
+                log_sigma_init + 0.1 * np.random.randn()
+            )
 
             # Apply volume constraint to initialization
             if self._has_volume_constraint:
-                init_positions[i] = self._apply_volume_constraint(init_positions[i])
+                init_positions[i, :n_model_params] = self._apply_volume_constraint(
+                    init_positions[i, :n_model_params]
+                )
 
-        # Run ensemble sampler
-        samples = self._run_ensemble_sampler(
-            log_prob, init_positions, n_total, bounds
+        # Run ensemble sampler (shared utility)
+        samples = run_ensemble_sampler(
+            log_prob_with_sigma, init_positions, n_total, sampler_bounds
         )
 
         # Discard burn-in
-        samples = samples[n_burnin:, :, :]  # Shape: (n_samples, n_walkers, n_params)
+        samples = samples[n_burnin:, :, :]  # (n_samples, n_walkers, n_dims)
 
         # Flatten chains for analysis
-        flat_samples = samples.reshape(-1, n_params)
+        flat_samples = samples.reshape(-1, n_dims)
 
-        # Compute posterior mean and std
-        posterior_mean = np.mean(flat_samples, axis=0)
-        posterior_std = np.std(flat_samples, axis=0)
+        # Separate model params and sigma
+        model_samples = flat_samples[:, :n_model_params]
+        sigma_samples = np.exp(flat_samples[:, n_model_params])
 
-        # Compute credible intervals (2.5th and 97.5th percentiles)
-        ci_low = np.percentile(flat_samples, 2.5, axis=0)
-        ci_high = np.percentile(flat_samples, 97.5, axis=0)
+        # Posterior summaries for model parameters
+        posterior_mean = np.mean(model_samples, axis=0)
+        posterior_std = np.std(model_samples, axis=0)
+        ci_low = np.percentile(model_samples, 2.5, axis=0)
+        ci_high = np.percentile(model_samples, 97.5, axis=0)
 
-        # Build dictionaries
         parameters: dict[str, float] = {}
         uncertainties: dict[str, float] = {}
         credible_intervals: dict[str, tuple[float, float]] = {}
@@ -768,18 +1078,25 @@ class BayesianPKFitter:
             uncertainties[name] = float(posterior_std[i])
             credible_intervals[name] = (float(ci_low[i]), float(ci_high[i]))
 
-        # Compute convergence diagnostics
-        rhat = self._compute_rhat(samples)
-        ess = self._compute_ess(samples)
+        # Add sigma posterior summary
+        parameters["noise_std"] = float(np.mean(sigma_samples))
+        uncertainties["noise_std"] = float(np.std(sigma_samples))
+        credible_intervals["noise_std"] = (
+            float(np.percentile(sigma_samples, 2.5)),
+            float(np.percentile(sigma_samples, 97.5)),
+        )
 
-        # Build diagnostic dicts
+        # Convergence diagnostics (shared utilities: split R-hat, per-walker ESS)
+        rhat = compute_split_rhat(samples)
+        ess = compute_per_walker_ess(samples)
+
         rhat_dict: dict[str, float] = {}
         ess_dict: dict[str, int] = {}
-        for i, name in enumerate(param_names):
+        all_names = param_names + ["log_sigma"]
+        for i, name in enumerate(all_names):
             rhat_dict[name] = float(rhat[i])
             ess_dict[name] = int(ess[i])
 
-        # Check convergence
         all_rhat_ok = all(r < QC_RHAT_MAX for r in rhat)
         all_ess_ok = all(e > QC_ESS_MIN for e in ess)
         converged = all_rhat_ok and all_ess_ok
@@ -789,15 +1106,9 @@ class BayesianPKFitter:
         fitted_curve = self.model.evaluate(list(fitted_params), aif, time_points)
 
         # Compute goodness of fit
-        residuals = tissue_curve - fitted_curve
-        rss = float(np.sum(residuals**2))
-        r_squared = self.model.compute_r_squared(tissue_curve, fitted_curve)
-
-        # Information criteria (using posterior mean)
-        n = len(tissue_curve)
-        k = self.model.n_parameters
-        aic = self.model.compute_aic(rss, n)
-        bic = self.model.compute_bic(rss, n)
+        gof = compute_goodness_of_fit(
+            tissue_curve, fitted_curve, self.model.n_parameters
+        )
 
         # Compute derived parameters
         derived = self.model.compute_derived_parameters(list(fitted_params))
@@ -807,199 +1118,19 @@ class BayesianPKFitter:
             parameters=parameters,
             uncertainties=uncertainties,
             credible_intervals=credible_intervals,
-            r_squared=r_squared,
-            residual_sum_squares=rss,
-            aic=aic,
-            bic=bic,
+            r_squared=gof["r_squared"],
+            residual_sum_squares=gof["rss"],
+            aic=gof["aic"],
+            bic=gof["bic"],
             rhat=rhat_dict,
             ess=ess_dict,
             model_name=self.model.name,
-            n_parameters=k,
-            n_observations=n,
+            n_parameters=self.model.n_parameters,
+            n_observations=len(tissue_curve),
             converged=converged,
             fitting_method="mcmc",
             fitted_curve=fitted_curve,
         )
-
-    def _run_ensemble_sampler(
-        self,
-        log_prob: Callable[[npt.NDArray[np.floating]], float],
-        init_positions: npt.NDArray[np.floating],
-        n_iterations: int,
-        bounds: list[tuple[float, float]],
-        a: float = 2.0,
-    ) -> npt.NDArray[np.floating]:
-        """Run affine-invariant ensemble sampler.
-
-        Implements the stretch move from Goodman & Weare (2010).
-
-        The ve + vp <= 1.0 constraint is enforced by rejecting
-        proposals that violate it.
-
-        Args:
-            log_prob: Log posterior function.
-            init_positions: Initial walker positions (n_walkers x n_params).
-            n_iterations: Number of iterations.
-            bounds: Parameter bounds.
-            a: Stretch move scale parameter (default 2.0).
-
-        Returns:
-            Samples array (n_iterations x n_walkers x n_params).
-        """
-        n_walkers, n_params = init_positions.shape
-
-        # Storage for samples
-        samples = np.zeros((n_iterations, n_walkers, n_params))
-        samples[0] = init_positions
-
-        # Current positions and log probs
-        current_pos = init_positions.copy()
-        current_lp = np.array([log_prob(current_pos[j]) for j in range(n_walkers)])
-
-        for iteration in range(1, n_iterations):
-            # Update each walker
-            for j in range(n_walkers):
-                # Select random walker from complementary ensemble
-                others = np.concatenate([np.arange(j), np.arange(j + 1, n_walkers)])
-                k = np.random.choice(others)
-
-                # Stretch move
-                # z ~ 1/sqrt(z) on [1/a, a]
-                u = np.random.rand()
-                z = ((a - 1.0) * u + 1.0) ** 2 / a
-
-                # Proposal
-                proposal = current_pos[k] + z * (current_pos[j] - current_pos[k])
-
-                # Check bounds
-                in_bounds = True
-                for i in range(n_params):
-                    if proposal[i] < bounds[i][0] or proposal[i] > bounds[i][1]:
-                        in_bounds = False
-                        break
-
-                # Check volume constraint
-                if in_bounds and self._has_volume_constraint:
-                    if not self._check_volume_constraint(proposal):
-                        in_bounds = False
-
-                if in_bounds:
-                    # Compute log prob of proposal
-                    proposal_lp = log_prob(proposal)
-
-                    # Acceptance probability
-                    log_ratio = (n_params - 1) * np.log(z) + proposal_lp - current_lp[j]
-
-                    # Accept/reject
-                    if np.log(np.random.rand()) < log_ratio:
-                        current_pos[j] = proposal
-                        current_lp[j] = proposal_lp
-
-            samples[iteration] = current_pos
-
-        return samples
-
-    def _compute_rhat(
-        self, samples: npt.NDArray[np.floating]
-    ) -> npt.NDArray[np.floating]:
-        """Compute Gelman-Rubin R-hat diagnostic.
-
-        R-hat compares within-chain and between-chain variance.
-        Values < 1.1 indicate convergence.
-
-        Args:
-            samples: MCMC samples (n_samples x n_walkers x n_params).
-
-        Returns:
-            R-hat values for each parameter.
-        """
-        n_samples, n_walkers, n_params = samples.shape
-
-        rhat = np.zeros(n_params)
-
-        for p in range(n_params):
-            # Treat each walker as a separate chain
-            chains = samples[:, :, p].T  # (n_walkers, n_samples)
-
-            n = n_samples
-            m = n_walkers
-
-            # Chain means
-            chain_means = np.mean(chains, axis=1)  # (n_walkers,)
-
-            # Between-chain variance
-            B = n * np.var(chain_means, ddof=1)
-
-            # Within-chain variance
-            W = np.mean(np.var(chains, axis=1, ddof=1))
-
-            # Posterior variance estimate
-            var_plus = ((n - 1) / n) * W + (1 / n) * B
-
-            # R-hat
-            if W > 0:
-                rhat[p] = np.sqrt(var_plus / W)
-            else:
-                rhat[p] = 1.0
-
-        return rhat
-
-    def _compute_ess(
-        self, samples: npt.NDArray[np.floating]
-    ) -> npt.NDArray[np.integer]:
-        """Compute effective sample size (ESS).
-
-        ESS accounts for autocorrelation in the chains.
-
-        Args:
-            samples: MCMC samples (n_samples x n_walkers x n_params).
-
-        Returns:
-            ESS values for each parameter.
-        """
-        n_samples, n_walkers, n_params = samples.shape
-
-        ess = np.zeros(n_params, dtype=np.int64)
-
-        for p in range(n_params):
-            # Flatten all chains for this parameter
-            flat = samples[:, :, p].flatten()
-
-            # Compute autocorrelation
-            n = len(flat)
-            if n < 2:
-                ess[p] = n
-                continue
-
-            # Normalize
-            x = flat - np.mean(flat)
-            var = np.var(x)
-
-            if var < EPSILON_VE:
-                ess[p] = n
-                continue
-
-            # Compute autocorrelation up to max lag
-            max_lag = min(n // 2, 1000)
-            acf = np.zeros(max_lag)
-
-            for k in range(max_lag):
-                acf[k] = np.mean(x[: n - k] * x[k:]) / var
-
-            # Integrated autocorrelation time using initial positive sequence
-            # Sum pairs of consecutive autocorrelations until they go negative
-            tau_int = 1.0
-            for k in range(1, max_lag - 1, 2):
-                pair_sum = acf[k] + acf[k + 1]
-                if pair_sum > 0:
-                    tau_int += pair_sum
-                else:
-                    break
-
-            # ESS = n / (2 * tau_int)
-            ess[p] = max(1, int(n / (2 * tau_int)))
-
-        return ess
 
 
 def create_vp_prior_from_dsc(
@@ -1036,7 +1167,7 @@ def fit_pk_model(
     time_points: npt.NDArray[np.floating],
     method: str = "map",
     mcmc_samples: int = DEFAULT_MCMC_SAMPLES,
-    noise_std: Optional[float] = None,
+    noise_std: float | None = None,
 ) -> FitResult:
     """Convenience function to fit a PK model using specified Bayesian method.
 
@@ -1045,7 +1176,7 @@ def fit_pk_model(
         tissue_curve: Measured tissue concentration (mM).
         aif: Arterial input function (mM).
         time_points: Time points (minutes).
-        method: Fitting method: 'map' or 'mcmc'.
+        method: Fitting method: 'map', 'vi', or 'mcmc'.
         mcmc_samples: Number of MCMC samples (for method='mcmc').
         noise_std: Optional noise standard deviation.
 
@@ -1059,11 +1190,13 @@ def fit_pk_model(
 
     if method.lower() == "map":
         return fitter.fit_map(tissue_curve, aif, time_points)
+    elif method.lower() == "vi":
+        return fitter.fit_vi(tissue_curve, aif, time_points)
     elif method.lower() == "mcmc":
         return fitter.fit_mcmc(
             tissue_curve, aif, time_points, n_samples=mcmc_samples
         )
     else:
         raise ValueError(
-            f"Unknown fitting method: {method}. Use 'map' or 'mcmc'."
+            f"Unknown fitting method: {method}. Use 'map', 'vi', or 'mcmc'."
         )
