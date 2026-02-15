@@ -762,7 +762,8 @@ class ComputeDCEMaps(BaseInterface):
 
         # Select model
         model_name = str(self.inputs.model)
-        if model_name == "auto":
+        was_auto = model_name == "auto"
+        if was_auto:
             model_name = self._select_model(selection_tr_seconds)
 
         # Baseline frames for tSNR
@@ -909,7 +910,7 @@ class ComputeDCEMaps(BaseInterface):
 
         has_dsc_cbv = (
             isdefined(self.inputs.dsc_cbv_file)
-            and model_name in ("extended_tofts", "2cxm")
+            and (model_name in ("extended_tofts", "2cxm") or was_auto)
         )
 
         if has_dsc_cbv:
@@ -947,6 +948,12 @@ class ComputeDCEMaps(BaseInterface):
                     "constraint_mode": "skip",
                     "reason": f"Failed to load DSC CBV constraint: {exc}",
                 }
+
+            # Auto-upgrade: if auto selected tofts but DSC CBV passed quality,
+            # upgrade to extended_tofts with constrained vp (same 2 free params,
+            # but correctly accounts for intravascular contribution)
+            if was_auto and model_name == "tofts" and constraint_mode != ConstraintMode.SKIP:
+                model_name = "extended_tofts"
 
         # =====================================================================
         # Compute model-free maps (vectorized, fast, before PK fitting loop)
