@@ -10,6 +10,7 @@ from pmriprep.models.dsc.base import (
     DSCFitResult,
     DSCModel,
     DSCModelParameter,
+    ParamsLike,
 )
 from pmriprep.models.dsc.bayesian import (
     BayesianDSCFitter,
@@ -38,6 +39,7 @@ __all__ = [
     "DSCFitResult",
     "DSCModel",
     "DSCModelParameter",
+    "ParamsLike",
     "GPUDeconvolutionResult",
     "VascularModel",
     "batched_svd_deconvolve",

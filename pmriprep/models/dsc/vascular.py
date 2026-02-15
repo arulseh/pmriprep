@@ -18,6 +18,7 @@ from scipy.signal import fftconvolve  # type: ignore[import-untyped]
 from pmriprep.models.dsc.base import (
     DSCModel,
     DSCModelParameter,
+    ParamsLike,
 )
 from pmriprep.utils.dsc_constants import (
     CBF_BOUNDS,
@@ -110,7 +111,7 @@ class VascularModel(DSCModel):
                 name="beta",
                 bounds=(VASCULAR_BETA_BOUNDS.min, VASCULAR_BETA_BOUNDS.max),
                 typical_range=(0.5, 5.0),  # perf-plus: prior_mean=2.75
-                log_transform=True,  # Both pipelines agree on log-space for beta
+                log_transform=False,  # log_transform ignored in _log_prior
                 description="Gamma scale parameter",
                 units="s",
             ),
@@ -138,8 +139,6 @@ class VascularModel(DSCModel):
         Uses perf-plus default values rather than prior means.  The prior
         means (midpoints of typical_range) give MTT ≈ 10.3s which is too
         broad; perf-plus starts at CBF=50, alpha=3, beta=2 (MTT=6s).
-        Delay is fixed at 0.0 because L-BFGS-B can't optimize the
-        step-function delay shift.
 
         Returns:
             List of initial parameter values [CBF, alpha, beta, delay].
@@ -148,7 +147,7 @@ class VascularModel(DSCModel):
 
     def residue_function(
         self,
-        params: Sequence[float],
+        params: ParamsLike,
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
         """Compute the residue function R(t) from vascular model parameters.
@@ -198,7 +197,7 @@ class VascularModel(DSCModel):
 
     def tissue_curve(
         self,
-        params: Sequence[float],
+        params: ParamsLike,
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
@@ -237,23 +236,29 @@ class VascularModel(DSCModel):
         # FFT convolution (matches perf-plus fftconvolve)
         conv = fftconvolve(aif, R, mode='full')[:n_times] * dt
 
-        # Apply delay as post-hoc shift
-        delay_samples = int(round(delay / dt))
-        if delay_samples == 0:
-            C_t = conv
-        elif 0 < delay_samples < n_times:
-            C_t = np.zeros_like(conv)
-            C_t[delay_samples:] = conv[:-delay_samples]
-        elif -n_times < delay_samples < 0:
-            C_t = np.zeros_like(conv)
-            C_t[:delay_samples] = conv[-delay_samples:]
-        else:
-            C_t = np.zeros_like(conv)  # shifted entirely out of view
+        # Apply delay as post-hoc shift with linear interpolation
+        # (smooth, differentiable w.r.t. delay for MAP/VB Jacobian)
+        delay_frac = delay / dt
+        n_shift = int(np.floor(delay_frac))
+        f_shift = delay_frac - n_shift  # fractional part in [0, 1)
 
-        return np.asarray(C_t, dtype=np.float64)
+        # Vectorized: build index arrays for the two interpolation sources
+        src_indices = np.arange(n_times) - n_shift  # integer-shifted source
+        C_t = np.zeros(n_times, dtype=np.float64)
+
+        # Integer-shift contribution: (1 - f) * conv[i - n_shift]
+        valid_lo = (src_indices >= 0) & (src_indices < n_times)
+        C_t[valid_lo] = (1.0 - f_shift) * conv[src_indices[valid_lo]]
+
+        # Fractional contribution: f * conv[i - n_shift - 1]
+        src_hi = src_indices - 1
+        valid_hi = valid_lo & (src_hi >= 0) & (src_hi < n_times)
+        C_t[valid_hi] += f_shift * conv[src_hi[valid_hi]]
+
+        return C_t
 
     def compute_derived_parameters(
-        self, params: Sequence[float]
+        self, params: ParamsLike
     ) -> dict[str, float]:
         """Compute derived physiological parameters from model parameters.
 

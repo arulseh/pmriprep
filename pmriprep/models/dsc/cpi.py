@@ -8,6 +8,11 @@ maintaining physiological constraints.
 The CPI model is particularly useful when the underlying transit time
 distribution is unknown or doesn't follow a standard parametric form.
 
+The parameterization follows Mehndiratta et al. (2013) / Quantiphyse:
+- R(t) is **dimensionless** (0-1), with R(0) = 1.0 fixed
+- CBF is a **separate** scaling parameter
+- C_tissue(t) = CBF × [A_trap @ R_norm]
+
 References:
     Mouridsen K, Christensen S, Gyldensted L, Østergaard L. (2006).
     "Automatic selection of arterial input function using cluster analysis."
@@ -19,7 +24,7 @@ References:
     NeuroImage 64:560-570.
 """
 
-from typing import Optional, Sequence
+from typing import Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -29,9 +34,9 @@ from pmriprep.models.dsc.base import (
     DSCFitResult,
     DSCModel,
     DSCModelParameter,
+    ParamsLike,
 )
 from pmriprep.utils.dsc_constants import (
-    CBF_BOUNDS,
     EPSILON_CONCENTRATION,
 )
 
@@ -41,10 +46,6 @@ CPI_N_MIN: int = 4
 CPI_N_MAX: int = 12
 CPI_DEFAULT_N: int = 6
 
-# Tolerance for monotonicity constraint (fraction of R0)
-# 5% matches perf-plus; allows small non-monotonicity from noise/recirculation
-CPI_MONOTONICITY_TOLERANCE: float = 0.05
-
 
 class CPIModel(DSCModel):
     """Control Point Interpolation model for non-parametric residue estimation.
@@ -53,8 +54,13 @@ class CPIModel(DSCModel):
     points. Control points are evenly spaced in time (or optimally placed),
     and the spline interpolation ensures a smooth residue curve.
 
+    Following Mehndiratta et al. (2013) / Quantiphyse parameterization:
+        - R(t) is dimensionless (0-1), with R(0) = 1.0 fixed
+        - CBF is a separate scaling parameter (relative units, s⁻¹)
+        - C(t) = CBF × [A_trap @ R_norm]
+
     Constraints:
-        - R(0) = CBF: The first control point determines CBF
+        - R(0) = 1.0: Fixed (not a free parameter)
         - Monotonicity: R(t) is monotonically decreasing (or non-increasing)
         - Non-negativity: R(t) >= 0 for all t
 
@@ -66,14 +72,15 @@ class CPIModel(DSCModel):
         time_range: Time range (t_min, t_max) for control point placement.
 
     Parameters:
-        - r0: First control point = CBF (mL/100g/min)
-        - r1, r2, ..., r(N-1): Subsequent control points (mL/100g/min)
+        - cbf: CBF scaling parameter (relative units, s⁻¹)
+        - r1, r2, ..., r(N-1): Control point fractions (0-1) of R(0)=1.0
           These are constrained to be <= previous point (monotonicity)
 
     Example:
         For N=6 control points:
-        - Parameters: [r0, r1, r2, r3, r4, r5]
-        - r0 = CBF (maximum of residue function)
+        - Parameters: [cbf, r1, r2, r3, r4, r5]
+        - cbf = flow scaling (max of unnormalized residue)
+        - R(0) = 1.0 (fixed, not a parameter)
         - Control point times: evenly spaced from 0 to t_max
 
     References:
@@ -85,12 +92,14 @@ class CPIModel(DSCModel):
     def __init__(
         self,
         n_control_points: int = CPI_DEFAULT_N,
-        time_range: Optional[tuple[float, float]] = None,
+        time_range: tuple[float, float] | None = None,
     ) -> None:
         """Initialize the CPI model.
 
         Args:
             n_control_points: Number of control points (4-12, default 6).
+                This controls the shape of R(t). The total number of free
+                parameters is n_control_points: 1 for CBF + (N-1) fractions.
             time_range: Optional (t_min, t_max) for control point placement.
                         If None, defaults to (0, 30) seconds.
         """
@@ -107,6 +116,10 @@ class CPIModel(DSCModel):
             self._n_control_points,
         )
 
+        # Cache for the Toeplitz matrix (built on first use)
+        self._toeplitz_cache: npt.NDArray[np.floating] | None = None
+        self._toeplitz_aif_id: int | None = None
+
     @property
     def name(self) -> str:
         """Model name for identification."""
@@ -114,7 +127,7 @@ class CPIModel(DSCModel):
 
     @property
     def n_parameters(self) -> int:
-        """Number of free parameters (N control points)."""
+        """Number of free parameters (CBF + N-1 fractions)."""
         return self._n_control_points
 
     @property
@@ -133,43 +146,40 @@ class CPIModel(DSCModel):
         return self._time_range
 
     def get_parameter_definitions(self) -> list[DSCModelParameter]:
-        """Get parameter definitions for CPI control points.
+        """Get parameter definitions for CPI model.
 
         Returns:
-            List of DSCModelParameter objects for each control point.
-            r0 is absolute CBF (mL/100g/min).
-            r1..r_{N-1} are fractions of r0 (0-1), converted to absolute
-            values inside enforce_constraints().
+            List of DSCModelParameter objects:
+            - cbf: CBF scaling (relative s⁻¹ units)
+            - r1..r_{N-1}: Fractions of R(0)=1.0 at each control point
         """
         params = []
 
-        for i in range(self._n_control_points):
-            t = self._control_point_times[i]
+        # CBF scaling parameter (relative units, s⁻¹)
+        # Bounds are data-scale appropriate for ΔR2* concentration
+        params.append(
+            DSCModelParameter(
+                name="cbf",
+                bounds=(0.0, 1.0),
+                typical_range=(0.0, 0.5),
+                log_transform=False,
+                description="CBF scaling (relative)",
+                units="s⁻¹",
+            )
+        )
 
-            if i == 0:
-                # First control point is CBF (absolute, full range)
-                params.append(
-                    DSCModelParameter(
-                        name="r0",
-                        bounds=(0.0, CBF_BOUNDS.max),
-                        typical_range=(10.0, 100.0),
-                        log_transform=False,
-                        description=f"Control point at t={t:.1f}s (CBF)",
-                        units="mL/100g/min",
-                    )
+        for i in range(1, self._n_control_points):
+            t = self._control_point_times[i]
+            params.append(
+                DSCModelParameter(
+                    name=f"r{i}",
+                    bounds=(0.0, 1.0),
+                    typical_range=(0.0, 1.0),
+                    log_transform=False,
+                    description=f"Control point fraction at t={t:.1f}s",
+                    units="fraction",
                 )
-            else:
-                # Subsequent control points as fractions of r0
-                params.append(
-                    DSCModelParameter(
-                        name=f"r{i}",
-                        bounds=(0.0, 1.0),
-                        typical_range=(0.0, 1.0),
-                        log_transform=False,
-                        description=f"Control point fraction at t={t:.1f}s",
-                        units="fraction",
-                    )
-                )
+            )
 
         return params
 
@@ -177,79 +187,82 @@ class CPIModel(DSCModel):
         """Get initial parameter guess with exponential decay fractions.
 
         Returns:
-            List: [50.0, exp(-1/τ), exp(-2/τ), ...] where τ = N/2.
-            Exponential decay matches cerebral physiology better than
-            the linear midpoint default from get_parameter_definitions().
+            List: [cbf_init, exp(-1/τ), exp(-2/τ), ...] where τ = N/2.
+            CBF initial guess is set to a small value appropriate for
+            relative ΔR2* units. Exponential decay matches cerebral
+            physiology better than the linear midpoint default.
         """
-        x0: list[float] = [50.0]  # R0 default (perf-plus)
+        x0: list[float] = [0.1]  # CBF initial guess (relative s⁻¹)
         tau = self._n_control_points / 2.0
         for i in range(1, self._n_control_points):
             x0.append(float(np.exp(-i / tau)))
         return x0
 
     def get_parameter_names(self) -> list[str]:
-        """Get list of control point parameter names.
+        """Get list of parameter names.
 
         Returns:
-            List: ['r0', 'r1', 'r2', ..., 'r(N-1)']
+            List: ['cbf', 'r1', 'r2', ..., 'r(N-1)']
         """
-        return [f"r{i}" for i in range(self._n_control_points)]
+        return ["cbf"] + [f"r{i}" for i in range(1, self._n_control_points)]
 
     def enforce_constraints(
-        self, params: Sequence[float]
+        self, params: ParamsLike
     ) -> npt.NDArray[np.floating]:
-        """Convert fraction parameterization to absolute values with monotonicity.
+        """Convert fraction parameterization to dimensionless R(t) values.
 
-        Input params: [r0_absolute, frac1, frac2, ..., frac_{N-1}]
-        Output: [r0, r0*frac1, r0*frac2, ...] with monotonicity enforced.
+        Input params: [cbf, frac1, frac2, ..., frac_{N-1}]
+        Output: [1.0, frac1, frac2, ...] with monotonicity enforced
+        (dimensionless control point values with R(0)=1.0).
 
-        Each fraction is clipped to [0, 1], multiplied by r0 to get absolute
-        value, then capped at the previous control point to enforce
-        monotonic non-increase.
+        CBF is NOT included in the output — it is a separate scaling
+        parameter applied in tissue_curve().
+
+        Each fraction is clipped to [0, 1], then capped at the previous
+        control point to enforce monotonic non-increase.
 
         Args:
-            params: [r0, frac1, frac2, ...] where r0 is absolute CBF
-                and frac_i are fractions of r0.
+            params: [cbf, frac1, frac2, ...] where cbf is the scaling
+                parameter and frac_i are fractions of R(0)=1.0.
 
         Returns:
-            Absolute control point values (mL/100g/min), monotonically
-            non-increasing.
+            Dimensionless control point values (R(0)=1.0, monotonically
+            non-increasing), length = n_control_points.
         """
-        control_values = np.zeros(len(params), dtype=np.float64)
+        control_values = np.zeros(self._n_control_points, dtype=np.float64)
 
-        # r0 is absolute CBF
-        r0 = max(float(params[0]), 0.0)
-        control_values[0] = r0
+        # R(0) = 1.0 (fixed, dimensionless)
+        control_values[0] = 1.0
 
-        # Convert fractions to absolute, enforce monotonicity
-        prev_r = r0
-        for i in range(1, len(params)):
+        # Convert fractions to dimensionless values, enforce monotonicity
+        prev_r = 1.0
+        for i in range(1, self._n_control_points):
             frac = float(np.clip(params[i], 0.0, 1.0))
-            r_i = frac * r0
             # Enforce monotonicity: r_i <= prev_r
-            control_values[i] = min(r_i, prev_r)
+            control_values[i] = min(frac, prev_r)
             prev_r = control_values[i]
 
         return control_values
 
     def residue_function(
         self,
-        params: Sequence[float],
+        params: ParamsLike,
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
-        """Compute the residue function R(t) using PCHIP interpolation.
+        """Compute the dimensionless residue function R(t) using PCHIP.
 
         The residue is a smooth spline through the control points,
         constrained to be monotonically decreasing and non-negative.
+        R(0) = 1.0 and all values are in [0, 1].
 
         Args:
-            params: Control point values [r0, r1, ..., r(N-1)].
+            params: Parameter values [cbf, r1, ..., r(N-1)].
             time_points: Time points (seconds) at which to evaluate R(t).
 
         Returns:
-            Residue function values R(t) at each time point.
+            Dimensionless residue function values R(t) at each time point.
         """
-        # Enforce constraints
+        # Enforce constraints (returns dimensionless values with R(0)=1.0)
         control_values = self.enforce_constraints(params)
 
         # Create PCHIP interpolant
@@ -263,7 +276,9 @@ class CPIModel(DSCModel):
             )
 
             # Evaluate at requested time points
-            residue = pchip(time_points)
+            residue: npt.NDArray[np.floating] = np.asarray(
+                pchip(time_points), dtype=np.float64
+            )
         except ValueError:
             # Fallback: linear interpolation if PCHIP fails
             residue = np.interp(
@@ -277,7 +292,7 @@ class CPIModel(DSCModel):
 
         # Handle extrapolation beyond control point range
         # For t > t_max: extrapolate towards zero
-        # For t < t_min: use r0 (CBF)
+        # For t < t_min: use R(0) = 1.0
         if len(time_points) > 0:
             t_max = self._time_range[1]
             beyond_mask = time_points > t_max
@@ -291,6 +306,8 @@ class CPIModel(DSCModel):
                     dt = self._control_point_times[-1] - self._control_point_times[-2]
 
                     # Decay rate from last two points
+                    # The clip on line below serves as a secondary safety net,
+                    # bounding extreme log ratios from near-zero control points.
                     if r_prev > EPSILON_CONCENTRATION and r_last > EPSILON_CONCENTRATION:
                         decay_rate = np.log(r_prev / max(r_last, EPSILON_CONCENTRATION)) / dt
                         decay_rate = float(np.clip(decay_rate, 0.01, 1.0))
@@ -305,18 +322,19 @@ class CPIModel(DSCModel):
 
     def tissue_curve(
         self,
-        params: Sequence[float],
+        params: ParamsLike,
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
         """Compute tissue concentration curve by convolving AIF with residue.
 
-        C_tissue(t) = AIF(t) ⊗ R(t)
+        C_tissue(t) = CBF × [A_trap @ R_norm]
 
-        Uses trapezoidal integration for the convolution.
+        Uses trapezoidal Toeplitz matrix for convolution, consistent with
+        the SVD deconvolution path (Sourbron & Luypaert PMB 2007).
 
         Args:
-            params: Control point values [r0, r1, ..., r(N-1)].
+            params: Parameter values [cbf, r1, ..., r(N-1)].
             aif: Arterial input function concentration values.
             time_points: Time points (seconds) at which to evaluate C(t).
 
@@ -332,44 +350,57 @@ class CPIModel(DSCModel):
         if n_times < 2:
             return np.zeros(n_times, dtype=np.float64)
 
-        # Get time step (assume uniform spacing)
-        dt = float(time_points[1] - time_points[0])
+        # Extract CBF scaling
+        cbf = max(float(params[0]), 0.0)
 
-        # Compute residue function
+        # Compute dimensionless residue function R(t) with R(0)=1.0
         residue = self.residue_function(params, time_points)
 
-        # Convolution: C_tissue(t) = AIF(t) ⊗ R(t) via rectangular rule
-        tissue = np.convolve(aif, residue, mode='full')[:n_times] * dt
+        # Build or reuse Toeplitz matrix (includes dt in its elements)
+        aif_id = id(aif)
+        if self._toeplitz_cache is None or self._toeplitz_aif_id != aif_id:
+            from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+            dt = float(time_points[1] - time_points[0])
+            self._toeplitz_cache = build_toeplitz_matrix(aif, dt)
+            self._toeplitz_aif_id = aif_id
+
+        # C(t) = CBF × (A_trap @ R_norm)
+        # Toeplitz already includes dt, so no additional multiplication
+        tissue = cbf * (self._toeplitz_cache @ residue)
 
         return tissue
 
-    def get_cbf(self, params: Sequence[float]) -> float:
-        """Get CBF from the first control point.
+    def get_cbf(self, params: ParamsLike) -> float:
+        """Get CBF from the scaling parameter.
 
         Args:
-            params: Control point values.
+            params: Parameter values [cbf, r1, ..., r(N-1)].
 
         Returns:
-            CBF value (mL/100g/min).
+            CBF value (relative, s⁻¹).
         """
         return float(params[0]) if len(params) > 0 else 0.0
 
     def get_cbv(
         self,
-        params: Sequence[float],
-        time_points: Optional[npt.NDArray[np.floating]] = None,
+        params: ParamsLike,
+        time_points: npt.NDArray[np.floating] | None = None,
     ) -> float:
-        """Compute CBV by integrating the residue function.
+        """Compute CBV by integrating the unnormalized residue function.
 
-        CBV = ∫₀^∞ R(t) dt ≈ ∫₀^t_max R(t) dt
+        CBV = ∫₀^∞ CBF × R_norm(t) dt = CBF × ∫R_norm(t) dt
+
+        Since CBF is in relative s⁻¹ units, CBV = CBF × ∫R_norm dt
+        has units of (dimensionless), matching the SVD path where
+        CBV = trapezoid(residue, dx=dt).
 
         Args:
-            params: Control point values.
+            params: Parameter values [cbf, r1, ..., r(N-1)].
             time_points: Optional time points for integration.
                         If None, uses control point times extended.
 
         Returns:
-            CBV value (mL/100g).
+            CBV value (relative, dimensionless).
         """
         if time_points is None:
             # Use fine-grained time points for accurate integration
@@ -379,27 +410,26 @@ class CPIModel(DSCModel):
                 200,
             )
 
-        residue = self.residue_function(params, time_points)
+        cbf = self.get_cbf(params)
+        residue_norm = self.residue_function(params, time_points)
         dt = float(time_points[1] - time_points[0])
 
-        # Integrate: CBV = ∫R(t)dt
-        # Units: (mL/100g/min) × s = mL/100g × (s/min)
-        # Divide by 60 to convert min to s
-        cbv = float(np.trapezoid(residue, dx=dt)) / 60.0
+        # CBV = CBF × ∫R_norm(t) dt (no /60 — relative units)
+        cbv = cbf * float(np.trapezoid(residue_norm, dx=dt))
 
         return cbv
 
     def get_mtt(
         self,
-        params: Sequence[float],
-        time_points: Optional[npt.NDArray[np.floating]] = None,
+        params: ParamsLike,
+        time_points: npt.NDArray[np.floating] | None = None,
     ) -> float:
         """Compute MTT from central volume theorem.
 
-        MTT = CBV / CBF
+        MTT = CBV / CBF = ∫R_norm(t) dt  (seconds)
 
         Args:
-            params: Control point values.
+            params: Parameter values [cbf, r1, ..., r(N-1)].
             time_points: Optional time points for CBV integration.
 
         Returns:
@@ -409,13 +439,18 @@ class CPIModel(DSCModel):
         if cbf < EPSILON_CONCENTRATION:
             return 0.0
 
-        cbv = self.get_cbv(params, time_points)
+        if time_points is None:
+            time_points = np.linspace(
+                self._time_range[0],
+                self._time_range[1] * 1.5,
+                200,
+            )
 
-        # MTT = CBV / CBF
-        # CBV in mL/100g, CBF in mL/100g/min
-        # MTT = (mL/100g) / (mL/100g/min) = min
-        # Multiply by 60 to get seconds
-        mtt = (cbv / cbf) * 60.0
+        residue_norm = self.residue_function(params, time_points)
+        dt = float(time_points[1] - time_points[0])
+
+        # MTT = CBV / CBF = ∫R_norm dt (seconds, no /60 conversion)
+        mtt = float(np.trapezoid(residue_norm, dx=dt))
 
         return mtt
 
@@ -441,9 +476,6 @@ def select_n_control_points(
     Returns:
         Recommended number of control points.
     """
-    # Calculate bolus duration in seconds
-    bolus_duration_seconds = bolus_duration_frames * tr_seconds
-
     # N ≈ bolus_duration / (2 × TR) + 2
     # This gives roughly one control point per 2 TR during the bolus,
     # plus 2 extra for the tail
@@ -493,7 +525,7 @@ def select_n_by_bic(
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     n_candidates: Sequence[int] = (4, 5, 6, 7, 8, 9, 10),
-    noise_std: Optional[float] = None,
+    noise_std: float | None = None,
 ) -> tuple[int, list[tuple[int, float, float]]]:
     """Select optimal number of control points using BIC.
 
@@ -562,12 +594,16 @@ def _fit_cpi_simple(
     concentration: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
-) -> Optional[DSCFitResult]:
+) -> DSCFitResult | None:
     """Least-squares fit of CPI model using L-BFGS-B.
 
     L-BFGS-B handles box bounds natively. Monotonicity is enforced via
     enforce_constraints() inside the model's residue_function(), which
-    projects fractions to monotonically non-increasing absolute values.
+    projects fractions to monotonically non-increasing values.
+
+    The CBF upper bound is set adaptively based on the data scale
+    (10 × max tissue concentration) to ensure the optimizer can reach
+    the correct solution regardless of input units.
 
     Args:
         model: CPIModel instance.
@@ -577,16 +613,33 @@ def _fit_cpi_simple(
 
     Returns:
         DSCFitResult with fitted parameters, or None if fitting failed.
+        fitted_residue contains the unnormalized residue (CBF × R_norm)
+        so downstream code can extract CBF = max(residue) and
+        CBV = trapezoid(residue, dx=dt).
     """
     from scipy import optimize  # type: ignore[import-untyped]
 
     n_params = model.n_parameters
     bounds = model.get_bounds()
+
+    # Adaptive CBF upper bound: 10× max observed concentration
+    max_conc = float(np.max(np.abs(concentration)))
+    cbf_upper = max(10.0 * max_conc, 1.0)
+    bounds[0] = (0.0, cbf_upper)
+
+    # Data-driven CBF initial guess: max(concentration) / max(AIF) is a
+    # rough estimate of CBF (ratio of tissue to arterial peak)
+    max_aif = float(np.max(np.abs(aif)))
+    if max_aif > EPSILON_CONCENTRATION:
+        cbf_init = max_conc / max_aif
+    else:
+        cbf_init = 0.1
+
     x0 = model.get_initial_guess()
+    x0[0] = cbf_init
 
     def objective(params: npt.NDArray[np.floating]) -> float:
         """Residual sum of squares objective."""
-        # tissue_curve calls residue_function which calls enforce_constraints
         predicted = model.tissue_curve(params, aif, time_points)
         residuals = concentration - predicted
         return float(np.sum(residuals**2))
@@ -601,15 +654,20 @@ def _fit_cpi_simple(
         )
 
         if result.success or result.fun < np.inf:
-            # Store optimizer-space params (r0 + fractions) in result
+            # Store optimizer-space params
             opt_params = np.array(result.x, dtype=np.float64)
             # Clip fractions to [0,1]
             opt_params[1:] = np.clip(opt_params[1:], 0.0, 1.0)
             opt_params[0] = max(opt_params[0], 0.0)
 
-            # Get absolute values for residue/tissue curve evaluation
-            fitted_abs = model.enforce_constraints(opt_params)
+            # Compute fitted tissue curve for R²
             fitted_tissue = model.tissue_curve(opt_params, aif, time_points)
+
+            # Compute unnormalized residue (CBF × R_norm) for downstream
+            # compatibility: CBF = max(residue), CBV = trapezoid(residue)
+            cbf_fitted = float(opt_params[0])
+            residue_norm = model.residue_function(opt_params, time_points)
+            fitted_residue = cbf_fitted * residue_norm
 
             # Calculate R²
             ss_res = result.fun
@@ -625,7 +683,7 @@ def _fit_cpi_simple(
                 n_observations=len(concentration),
                 converged=result.success,
                 fitting_method="nlls",
-                fitted_residue=model.residue_function(opt_params, time_points),
+                fitted_residue=fitted_residue,
                 fitted_tissue_curve=fitted_tissue,
             )
 

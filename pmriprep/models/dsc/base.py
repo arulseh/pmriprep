@@ -6,10 +6,14 @@ definitions, fit results, and abstract model interface.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Sequence, Union
 
 import numpy as np
 import numpy.typing as npt
+
+#: Type alias for model parameter vectors — accepts both Python sequences
+#: and numpy arrays (scipy optimizers return ndarrays).
+ParamsLike = Union[Sequence[float], npt.NDArray[np.floating]]
 
 
 @dataclass
@@ -277,7 +281,7 @@ class DSCModel(ABC):
     @abstractmethod
     def residue_function(
         self,
-        params: Sequence[float],
+        params: ParamsLike,
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
         """Compute the residue function R(t) from model parameters.
@@ -297,7 +301,7 @@ class DSCModel(ABC):
     @abstractmethod
     def tissue_curve(
         self,
-        params: Sequence[float],
+        params: ParamsLike,
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
     ) -> npt.NDArray[np.floating]:
@@ -331,7 +335,7 @@ class DSCModel(ABC):
         """
         return [p.get_prior_mean() for p in self.get_parameter_definitions()]
 
-    def validate_params(self, params: Sequence[float]) -> bool:
+    def validate_params(self, params: ParamsLike) -> bool:
         """Check if parameters are within bounds.
 
         Args:
@@ -345,7 +349,7 @@ class DSCModel(ABC):
             return False
         return all(d.is_valid(p) for d, p in zip(definitions, params))
 
-    def clip_params(self, params: Sequence[float]) -> list[float]:
+    def clip_params(self, params: ParamsLike) -> list[float]:
         """Clip parameters to bounds.
 
         Args:
@@ -357,7 +361,7 @@ class DSCModel(ABC):
         definitions = self.get_parameter_definitions()
         return [d.clip_to_bounds(p) for d, p in zip(definitions, params)]
 
-    def params_to_dict(self, params: Sequence[float]) -> dict[str, float]:
+    def params_to_dict(self, params: ParamsLike) -> dict[str, float]:
         """Convert parameter array to named dictionary.
 
         Args:

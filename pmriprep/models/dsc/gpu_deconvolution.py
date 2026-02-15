@@ -27,7 +27,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -73,8 +73,8 @@ class GPUDeconvolutionResult:
     cbv: npt.NDArray[np.floating]
     mtt: npt.NDArray[np.floating]
     tmax: npt.NDArray[np.floating]
-    residues: Optional[npt.NDArray[np.floating]]
-    delay: Optional[npt.NDArray[np.floating]]
+    residues: npt.NDArray[np.floating] | None
+    delay: npt.NDArray[np.floating] | None
     n_voxels_processed: int
     used_gpu: bool
     threshold_used: float
@@ -212,10 +212,10 @@ def batched_svd_deconvolve(
     threshold: float = DEFAULT_SVD_THRESHOLD,
     method: Literal["standard", "circulant"] = "standard",
     apply_non_negativity: bool = True,
-    mask: Optional[npt.NDArray[np.bool_]] = None,
+    mask: npt.NDArray[np.bool_] | None = None,
     use_gpu: bool = True,
     return_residues: bool = False,
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
 ) -> GPUDeconvolutionResult:
     """GPU-accelerated batched SVD deconvolution.
 
@@ -520,10 +520,10 @@ def batched_svd_deconvolve_standard(
     dt: float = 1.0,
     threshold: float = DEFAULT_SVD_THRESHOLD,
     apply_non_negativity: bool = True,
-    mask: Optional[npt.NDArray[np.bool_]] = None,
+    mask: npt.NDArray[np.bool_] | None = None,
     use_gpu: bool = True,
     return_residues: bool = False,
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
 ) -> GPUDeconvolutionResult:
     """GPU-accelerated standard SVD (sSVD) deconvolution.
 
@@ -570,10 +570,10 @@ def batched_svd_deconvolve_circulant(
     dt: float = 1.0,
     threshold: float = DEFAULT_SVD_THRESHOLD,
     apply_non_negativity: bool = True,
-    mask: Optional[npt.NDArray[np.bool_]] = None,
+    mask: npt.NDArray[np.bool_] | None = None,
     use_gpu: bool = True,
     return_residues: bool = False,
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
 ) -> GPUDeconvolutionResult:
     """GPU-accelerated circulant SVD (cSVD) deconvolution.
 

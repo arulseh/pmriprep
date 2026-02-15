@@ -1162,9 +1162,13 @@ class ComputeDSCMaps(BaseInterface):
             if result is None:
                 return
 
-            # Compute model prediction: convolve fitted residue with AIF
+            # Use the model's fitted tissue curve directly (matches the
+            # actual forward model, whether rectangular or trapezoidal)
             model_prediction: npt.NDArray[Any]
-            if result.fitted_residue is not None:
+            if result.fitted_tissue_curve is not None:
+                model_prediction = result.fitted_tissue_curve
+            elif result.fitted_residue is not None:
+                # Fallback: reconstruct from residue via rectangular convolution
                 model_prediction = np.convolve(
                     aif, result.fitted_residue, mode="full"
                 )[:n_timepoints] * dt
