@@ -17,12 +17,11 @@ dsc:
 # DCE configuration
 dce:
   model: 2cxm
-  bayesian: map
+  bayesian: none
   aif_method: auto
   scale_aif: true
   no_b1: false
   no_t1: false
-  save_uncertainty: true
   use_gpu: false
 
   # Advanced settings from config file
