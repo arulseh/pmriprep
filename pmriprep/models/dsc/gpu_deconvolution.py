@@ -99,15 +99,19 @@ def _build_toeplitz_matrix_gpu(
     n = len(aif)
     matrix = xp.zeros((n, n), dtype=xp.float64)
 
-    # Build lower triangular Toeplitz matrix with trapezoidal weighting
-    for i in range(n):
-        for j in range(i + 1):
-            # Trapezoidal rule weighting
-            if j == 0 or j == i:
-                weight = 0.5
-            else:
-                weight = 1.0
-            matrix[i, j] = aif[i - j] * weight * dt
+    # Build lower triangular Toeplitz matrix with trapezoidal weighting.
+    # Fill each column j with shifted AIF values scaled by dt.
+    for j in range(n):
+        matrix[j:, j] = aif[: n - j] * dt
+
+    # Apply trapezoidal half-weights at endpoints of each row's interval:
+    # j==0 (first point) and j==i (last point, i.e. diagonal).
+    # The diagonal element at row 0 (matrix[0,0]) satisfies both conditions
+    # but the weight is still 0.5 (not 0.25), so handle it separately.
+    matrix[1:, 0] *= 0.5          # column 0, rows 1..n-1
+    di = xp.arange(1, n)
+    matrix[di, di] *= 0.5         # diagonal, rows 1..n-1
+    matrix[0, 0] *= 0.5           # row 0: only element, half-weight
 
     return matrix
 

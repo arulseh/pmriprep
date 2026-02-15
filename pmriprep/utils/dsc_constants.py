@@ -109,51 +109,84 @@ QC_CNR_THRESHOLD: Final[float] = 4.0
 # Field-Strength Dependent Constants
 # =============================================================================
 
-#: r2* relaxivity by field strength (T) in s^-1 per mM
-R2_STAR_BY_FIELD: Final[dict[float, float]] = {
-    1.5: 5.5,
-    3.0: 12.0,
-    7.0: 30.0,
+#: In-vivo tissue transverse relaxivity r2* by field strength (T) in s^-1 per mM.
+#: Based on van Osch MJP, et al. "Quantitative cerebral perfusion MRI and
+#: CO2 reactivity measurements in patients with symptomatic internal carotid
+#: artery occlusion." J Cereb Blood Flow Metab. 2013;33(6):921-927 (PMC3672249).
+#:
+#: The r2* relationship is approximately linear with field strength:
+#:   r2* ≈ 28.9 ± 0.48 s^-1 T^-1 mM^-1
+#:
+#: Note: This is a linear approximation; the true r2*-concentration
+#: relationship is non-linear and depends on vascular geometry, contrast
+#: agent compartmentalization, and pulse sequence parameters. These values
+#: are used only for AUC → mM·s conversion and preload residual estimation.
+R2_STAR_TISSUE_LINEAR_BY_FIELD: Final[dict[float, float]] = {
+    1.5: 43.4,   # 28.9 * 1.5 s^-1/mM
+    3.0: 86.7,   # 28.9 * 3.0 s^-1/mM
+    7.0: 202.3,  # 28.9 * 7.0 s^-1/mM
 }
 
+#: Legacy alias for backwards compatibility
+R2_STAR_BY_FIELD = R2_STAR_TISSUE_LINEAR_BY_FIELD
 
-def get_r2_star(field_strength: float) -> float:
-    """Get r2* relaxivity for a given field strength.
 
-    Uses linear interpolation between known values.
+def get_r2_star_tissue(field_strength: float) -> float:
+    """Get in-vivo tissue transverse relaxivity r2* for a given field strength.
+
+    Uses linear interpolation between known values from van Osch et al.
+    (2013, PMC3672249): r2* ≈ 28.9 s^-1 T^-1 mM^-1.
+
+    Note: This is a linear approximation of a non-linear relationship.
+    The true r2* depends on vascular geometry, contrast agent
+    compartmentalization, and pulse sequence parameters.
 
     Args:
-        field_strength: Magnetic field strength in Tesla
+        field_strength: Magnetic field strength in Tesla.
 
     Returns:
-        r2* relaxivity in s^-1 per mM
+        Tissue r2* relaxivity in s^-1 per mM.
     """
     # Direct lookup for known field strengths
-    if field_strength in R2_STAR_BY_FIELD:
-        return R2_STAR_BY_FIELD[field_strength]
+    if field_strength in R2_STAR_TISSUE_LINEAR_BY_FIELD:
+        return R2_STAR_TISSUE_LINEAR_BY_FIELD[field_strength]
 
     # Linear interpolation for intermediate field strengths
-    fields = sorted(R2_STAR_BY_FIELD.keys())
+    fields = sorted(R2_STAR_TISSUE_LINEAR_BY_FIELD.keys())
 
     # Clamp to valid range
     if field_strength <= fields[0]:
-        return R2_STAR_BY_FIELD[fields[0]]
+        return R2_STAR_TISSUE_LINEAR_BY_FIELD[fields[0]]
     if field_strength >= fields[-1]:
-        return R2_STAR_BY_FIELD[fields[-1]]
+        return R2_STAR_TISSUE_LINEAR_BY_FIELD[fields[-1]]
 
     # Find surrounding known field strengths
     for i, f in enumerate(fields[:-1]):
         if f <= field_strength < fields[i + 1]:
             f_low, f_high = f, fields[i + 1]
-            r2_low = R2_STAR_BY_FIELD[f_low]
-            r2_high = R2_STAR_BY_FIELD[f_high]
+            r2_low = R2_STAR_TISSUE_LINEAR_BY_FIELD[f_low]
+            r2_high = R2_STAR_TISSUE_LINEAR_BY_FIELD[f_high]
 
             # Linear interpolation
             fraction = (field_strength - f_low) / (f_high - f_low)
             return r2_low + fraction * (r2_high - r2_low)
 
     # Fallback (should not reach here)
-    return R2_STAR_BY_FIELD[3.0]
+    return R2_STAR_TISSUE_LINEAR_BY_FIELD[3.0]
+
+
+def get_r2_star(field_strength: float) -> float:
+    """Get in-vivo tissue r2* relaxivity (legacy alias).
+
+    See get_r2_star_tissue() for details.
+
+    Args:
+        field_strength: Magnetic field strength in Tesla.
+
+    Returns:
+        Tissue r2* relaxivity in s^-1 per mM.
+    """
+    return get_r2_star_tissue(field_strength)
 
 
 # =============================================================================
@@ -180,7 +213,10 @@ def calculate_k_h(
 ) -> float:
     """K_H calibration factor for absolute quantification (Østergaard 1996).
 
-    K_H = (rho_brain / rho_blood) * (1 / hematocrit) * 100
+    K_H = (rho_brain / rho_blood) * (1 / (1 - hematocrit)) * 100
+
+    The (1 - hematocrit) term accounts for Gd distributing in plasma
+    (fraction = 1 - Hct), not whole blood.
 
     Args:
         hematocrit: Large vessel hematocrit fraction.
@@ -189,5 +225,10 @@ def calculate_k_h(
 
     Returns:
         K_H calibration factor (dimensionless scaling).
+
+    References:
+        Østergaard L, et al. Magn Reson Med. 1996;36(5):715-725, Eq. 1.
+        Rempp KA, et al. Radiology. 1994;193(3):637-641.
+        Calamante F, et al. Magn Reson Med. 1999;41(1):95-103.
     """
-    return (rho_brain / rho_blood) * (1.0 / hematocrit) * 100.0
+    return (rho_brain / rho_blood) * (1.0 / (1.0 - hematocrit)) * 100.0

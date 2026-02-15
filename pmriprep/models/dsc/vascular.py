@@ -169,6 +169,10 @@ class VascularModel(DSCModel):
         """
         cbf, alpha, beta, delay = params
 
+        # Guard against degenerate shape/scale parameters
+        alpha = max(float(alpha), 1e-10)
+        beta = max(float(beta), 1e-10)
+
         # Shift time by delay
         t_shifted = time_points - delay
 
@@ -234,19 +238,19 @@ class VascularModel(DSCModel):
         conv = fftconvolve(aif, R, mode='full')[:n_times] * dt
 
         # Apply delay as post-hoc shift
-        if delay != 0:
-            delay_samples = int(round(delay / dt))
-            C_t = np.zeros_like(conv)
-            if 0 < delay_samples < n_times:
-                C_t[delay_samples:] = conv[:-delay_samples]
-            elif -n_times < delay_samples < 0:
-                C_t[:delay_samples] = conv[-delay_samples:]
-            else:
-                C_t = conv
-        else:
+        delay_samples = int(round(delay / dt))
+        if delay_samples == 0:
             C_t = conv
+        elif 0 < delay_samples < n_times:
+            C_t = np.zeros_like(conv)
+            C_t[delay_samples:] = conv[:-delay_samples]
+        elif -n_times < delay_samples < 0:
+            C_t = np.zeros_like(conv)
+            C_t[:delay_samples] = conv[-delay_samples:]
+        else:
+            C_t = np.zeros_like(conv)  # shifted entirely out of view
 
-        return C_t
+        return np.asarray(C_t, dtype=np.float64)
 
     def compute_derived_parameters(
         self, params: Sequence[float]
@@ -269,6 +273,10 @@ class VascularModel(DSCModel):
             Dictionary with derived parameter values.
         """
         cbf, alpha, beta, _ = params
+
+        # Guard against degenerate parameters
+        alpha = max(float(alpha), 1e-10)
+        beta = max(float(beta), 1e-10)
 
         # Mean transit time from gamma distribution: MTT = α × β
         mtt = alpha * beta
@@ -339,4 +347,5 @@ class VascularModel(DSCModel):
         Returns:
             Relative CTH (dimensionless).
         """
-        return float(1.0 / np.sqrt(alpha))
+        alpha_safe = max(float(alpha), 1e-10)
+        return float(1.0 / np.sqrt(alpha_safe))

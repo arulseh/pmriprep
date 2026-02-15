@@ -6,7 +6,7 @@ definitions, fit results, and abstract model interface.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from typing import Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -148,8 +148,8 @@ class DSCFitResult:
     fitting_method: str = ""
 
     # Fitted curves
-    fitted_residue: Optional[npt.NDArray[np.floating]] = None
-    fitted_tissue_curve: Optional[npt.NDArray[np.floating]] = None
+    fitted_residue: npt.NDArray[np.floating] | None = None
+    fitted_tissue_curve: npt.NDArray[np.floating] | None = None
 
     def has_uncertainty(self) -> bool:
         """Check if uncertainty estimates are available.

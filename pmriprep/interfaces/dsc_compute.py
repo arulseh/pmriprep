@@ -163,7 +163,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         else:  # cpi
             if result.fitted_residue is not None:
                 res = result.fitted_residue
-                cbv_val = float(np.sum(res) * dt)
+                cbv_val = float(np.trapezoid(res, dx=dt))
                 out["cbv"] = cbv_val
                 out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
                 out["tmax"] = float(np.argmax(res)) * dt
