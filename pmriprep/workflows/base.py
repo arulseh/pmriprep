@@ -7,6 +7,7 @@ user-specified skip flags.
 
 from dataclasses import dataclass
 from pathlib import Path
+import logging
 from typing import Any, Optional, Union
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
@@ -1333,11 +1334,10 @@ def init_pmriprep_wf(
 
             # Set r1 relaxivity from contrast agent lookup or default
             # Agent-specific r1 (e.g., Gadovist=5.0 at 3T) improves AIF accuracy
+            logger = logging.getLogger("pmriprep.workflows")
             if dce_sidecar["r1_relaxivity"] is not None:
                 dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
                 dce_wf.inputs.inputnode.agent_r1_known = True
-                import logging
-                logger = logging.getLogger("pmriprep.workflows")
                 logger.info(
                     f"Using r1={dce_sidecar['r1_relaxivity']:.1f} s^-1/mM "
                     f"for contrast agent: {dce_sidecar['contrast_agent']}"
@@ -1345,12 +1345,24 @@ def init_pmriprep_wf(
             elif dce_sidecar["field_strength"] is not None:
                 # Fallback to generic Gd-DTPA r1 for field strength
                 from pmriprep.utils.dce_constants import get_r1_relaxivity
-                dce_wf.inputs.inputnode.r1_relaxivity = get_r1_relaxivity(
-                    dce_sidecar["field_strength"]
+                fallback_r1 = get_r1_relaxivity(dce_sidecar["field_strength"])
+                dce_wf.inputs.inputnode.r1_relaxivity = fallback_r1
+                logger.warning(
+                    "ContrastBolusAgent not found in BIDS JSON or unknown agent. "
+                    f"Using default Gd-DTPA r1={fallback_r1:.1f} s^-1/mM "
+                    f"at {dce_sidecar['field_strength']:.1f}T. "
+                    "Provide ContrastBolusAgent in JSON sidecar for "
+                    "agent-specific accuracy."
                 )
             else:
                 # Default to 3T value (3.8 s^-1/mM)
                 dce_wf.inputs.inputnode.r1_relaxivity = 3.8
+                logger.warning(
+                    "ContrastBolusAgent and field strength not found in BIDS JSON. "
+                    "Using default Gd-DTPA r1=3.8 s^-1/mM at 3.0T. "
+                    "Provide ContrastBolusAgent in JSON sidecar for "
+                    "agent-specific accuracy."
+                )
 
             # Set agent-specific standard dose (e.g. 0.05 for Vueway)
             dce_wf.inputs.inputnode.agent_standard_dose = dce_sidecar["agent_standard_dose"]

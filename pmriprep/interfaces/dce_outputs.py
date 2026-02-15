@@ -28,10 +28,10 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
     bids_dir = traits.Str(mandatory=True, desc="BIDS dataset root directory")
 
-    # Core pharmacokinetic parameter maps (mandatory)
+    # Core pharmacokinetic parameter maps
     ktrans_map = File(exists=True, mandatory=True, desc="Ktrans (volume transfer constant) map")
-    ve_map = File(exists=True, mandatory=True, desc="ve (EES volume fraction) map")
-    kep_map = File(exists=True, mandatory=True, desc="kep (rate constant) map")
+    ve_map = traits.Str(desc="ve (EES volume fraction) map path")
+    kep_map = traits.Str(desc="kep (rate constant) map path")
 
     # Optional PK parameter (only for extended Tofts/2CXM)
     vp_map = traits.Str(desc="vp (plasma volume fraction) map path")
@@ -215,18 +215,25 @@ class DCEDerivativeWriter(BaseInterface):
         base_sidecar = self._build_base_sidecar(bids_dir)
 
         # -----------------------------------------------------------
-        # 1. Core PK parameter maps (mandatory)
+        # 1. Core PK parameter maps
         # -----------------------------------------------------------
-        core_maps = {
-            "Ktrans": ("ktrans_map", "Volume transfer constant (min⁻¹)"),
-            "ve": ("ve_map", "Extravascular extracellular space volume fraction"),
-            "kep": ("kep_map", "Efflux rate constant (min⁻¹)"),
-        }
-        for map_name, (attr, description) in core_maps.items():
-            src = getattr(self.inputs, attr)
-            fname = f"{prefix}_{spatial}_{model_entity}_{map_name}"
-            self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": description}
+        # Ktrans is always produced
+        fname = f"{prefix}_{spatial}_{model_entity}_Ktrans"
+        self._copy_nifti(self.inputs.ktrans_map, perf_dir / f"{fname}.nii.gz")
+        sidecar = {**base_sidecar, "Description": "Volume transfer constant (min⁻¹)"}
+        self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # ve and kep are not produced by Patlak
+        if self._has_input("ve_map"):
+            fname = f"{prefix}_{spatial}_{model_entity}_ve"
+            self._copy_nifti(self.inputs.ve_map, perf_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "Extravascular extracellular space volume fraction"}
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        if self._has_input("kep_map"):
+            fname = f"{prefix}_{spatial}_{model_entity}_kep"
+            self._copy_nifti(self.inputs.kep_map, perf_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "Efflux rate constant (min⁻¹)"}
             self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

@@ -222,7 +222,8 @@ def _fit_single_voxel(
         uncertainties = {}
         if result.has_uncertainty():
             uncertainties["Ktrans"] = result.get_uncertainty("Ktrans", 0.0)
-            uncertainties["ve"] = result.get_uncertainty("ve", 0.0)
+            if model_name not in ("patlak",):
+                uncertainties["ve"] = result.get_uncertainty("ve", 0.0)
             if has_vp:
                 uncertainties["vp"] = result.get_uncertainty("vp", 0.0)
 
@@ -396,9 +397,9 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     """Output specification for ComputeDCEMaps interface."""
 
     out_ktrans = File(exists=True, desc="Ktrans map (volume transfer constant, min^-1)")
-    out_ve = File(exists=True, desc="ve map (extravascular extracellular volume fraction)")
+    out_ve = File(desc="ve map (extravascular extracellular volume fraction, if applicable)")
     out_vp = File(desc="vp map (plasma volume fraction, if applicable)")
-    out_kep = File(exists=True, desc="kep map (efflux rate constant, min^-1)")
+    out_kep = File(desc="kep map (efflux rate constant, if applicable)")
 
     # 2CXM-specific outputs
     out_fp = File(desc="Fp map (plasma flow rate, mL/min/100mL, 2cxm only)")
@@ -696,6 +697,17 @@ class ComputeDCEMaps(BaseInterface):
             True if model outputs vp.
         """
         return model_name in ("extended_tofts", "patlak", "2cxm")
+
+    def _has_ve(self, model_name: str) -> bool:
+        """Check if model has ve parameter.
+
+        Args:
+            model_name: Model name.
+
+        Returns:
+            True if model outputs ve.
+        """
+        return model_name in ("tofts", "extended_tofts", "2cxm")
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE map computation."""
@@ -1104,8 +1116,9 @@ class ComputeDCEMaps(BaseInterface):
                 continue
 
             ktrans[x, y, z] = ktrans_val
-            ve[x, y, z] = ve_val
-            kep[x, y, z] = params.get("kep", 0.0)
+            if self._has_ve(model_name):
+                ve[x, y, z] = ve_val
+                kep[x, y, z] = params.get("kep", 0.0)
             r2_map[x, y, z] = res["r_squared"]
 
             if has_vp:
@@ -1120,7 +1133,8 @@ class ComputeDCEMaps(BaseInterface):
             # Uncertainty (Bayesian only)
             if save_uncertainty and res["uncertainties"]:
                 ktrans_std[x, y, z] = res["uncertainties"].get("Ktrans", 0.0)
-                ve_std[x, y, z] = res["uncertainties"].get("ve", 0.0)
+                if self._has_ve(model_name):
+                    ve_std[x, y, z] = res["uncertainties"].get("ve", 0.0)
                 if has_vp:
                     vp_std[x, y, z] = res["uncertainties"].get("vp", 0.0)
 
@@ -1171,8 +1185,9 @@ class ComputeDCEMaps(BaseInterface):
         if np.any(fitted_mask):
             qc_metrics["ktrans_mean"] = float(np.mean(ktrans[fitted_mask]))
             qc_metrics["ktrans_median"] = float(np.median(ktrans[fitted_mask]))
-            qc_metrics["ve_mean"] = float(np.mean(ve[fitted_mask]))
-            qc_metrics["ve_median"] = float(np.median(ve[fitted_mask]))
+            if self._has_ve(model_name):
+                qc_metrics["ve_mean"] = float(np.mean(ve[fitted_mask]))
+                qc_metrics["ve_median"] = float(np.median(ve[fitted_mask]))
 
             if self._has_vp(model_name):
                 qc_metrics["vp_mean"] = float(np.mean(vp[fitted_mask]))
@@ -1188,26 +1203,28 @@ class ComputeDCEMaps(BaseInterface):
             qc_metrics["ktrans_histogram"] = hist_counts.tolist()
             qc_metrics["ktrans_histogram_edges"] = hist_edges.tolist()
 
-            ve_vals = ve[fitted_mask]
-            hist_counts_ve, hist_edges_ve = np.histogram(ve_vals, bins=50)
-            qc_metrics["ve_histogram"] = hist_counts_ve.tolist()
-            qc_metrics["ve_histogram_edges"] = hist_edges_ve.tolist()
+            if self._has_ve(model_name):
+                ve_vals = ve[fitted_mask]
+                hist_counts_ve, hist_edges_ve = np.histogram(ve_vals, bins=50)
+                qc_metrics["ve_histogram"] = hist_counts_ve.tolist()
+                qc_metrics["ve_histogram_edges"] = hist_edges_ve.tolist()
 
         # Generate output filenames
         out_ktrans = self._gen_outfilename("_Ktrans")
-        out_ve = self._gen_outfilename("_ve")
-        out_kep = self._gen_outfilename("_kep")
         out_r2 = self._gen_outfilename("_R2")
 
         # Save main outputs
         ktrans_img = nib.Nifti1Image(ktrans.astype(np.float32), affine, header)  # type: ignore[attr-defined]
         nib.save(ktrans_img, out_ktrans)  # type: ignore[attr-defined]
 
-        ve_img = nib.Nifti1Image(ve.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(ve_img, out_ve)  # type: ignore[attr-defined]
+        if self._has_ve(model_name):
+            out_ve = self._gen_outfilename("_ve")
+            ve_img = nib.Nifti1Image(ve.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+            nib.save(ve_img, out_ve)  # type: ignore[attr-defined]
 
-        kep_img = nib.Nifti1Image(kep.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(kep_img, out_kep)  # type: ignore[attr-defined]
+            out_kep = self._gen_outfilename("_kep")
+            kep_img = nib.Nifti1Image(kep.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+            nib.save(kep_img, out_kep)  # type: ignore[attr-defined]
 
         r2_img = nib.Nifti1Image(r2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
         nib.save(r2_img, out_r2)  # type: ignore[attr-defined]
@@ -1239,8 +1256,6 @@ class ComputeDCEMaps(BaseInterface):
         # Initialize results
         self._results: dict[str, Any] = {
             "out_ktrans": out_ktrans,
-            "out_ve": out_ve,
-            "out_kep": out_kep,
             "out_r2": out_r2,
             "out_quality_flag": out_quality_flag,
             "out_iauc60": out_iauc60_path,
@@ -1252,6 +1267,10 @@ class ComputeDCEMaps(BaseInterface):
             "qc_metrics": qc_metrics,
             "constraint_qc": constraint_qc,
         }
+
+        if self._has_ve(model_name):
+            self._results["out_ve"] = out_ve
+            self._results["out_kep"] = out_kep
 
         # Save vp if applicable
         if self._has_vp(model_name):
@@ -1282,16 +1301,17 @@ class ComputeDCEMaps(BaseInterface):
         # Save uncertainty maps
         if save_uncertainty and bayesian != "none":
             out_ktrans_std = self._gen_outfilename("_Ktrans_std")
-            out_ve_std = self._gen_outfilename("_ve_std")
 
             ktrans_std_img = nib.Nifti1Image(ktrans_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
             nib.save(ktrans_std_img, out_ktrans_std)  # type: ignore[attr-defined]
 
-            ve_std_img = nib.Nifti1Image(ve_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(ve_std_img, out_ve_std)  # type: ignore[attr-defined]
-
             self._results["out_ktrans_std"] = out_ktrans_std
-            self._results["out_ve_std"] = out_ve_std
+
+            if self._has_ve(model_name):
+                out_ve_std = self._gen_outfilename("_ve_std")
+                ve_std_img = nib.Nifti1Image(ve_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+                nib.save(ve_std_img, out_ve_std)  # type: ignore[attr-defined]
+                self._results["out_ve_std"] = out_ve_std
 
             if self._has_vp(model_name):
                 out_vp_std = self._gen_outfilename("_vp_std")
@@ -1305,18 +1325,19 @@ class ComputeDCEMaps(BaseInterface):
                 ktrans_cv = np.where(
                     ktrans > EPSILON_VE, ktrans_std / ktrans, 0.0
                 ).astype(np.float32)
-                ve_cv = np.where(
-                    ve > EPSILON_VE, ve_std / ve, 0.0
-                ).astype(np.float32)
 
             out_ktrans_cv = self._gen_outfilename("_Ktrans_cv")
-            out_ve_cv = self._gen_outfilename("_ve_cv")
-
             nib.save(nib.Nifti1Image(ktrans_cv, affine, header), out_ktrans_cv)  # type: ignore[attr-defined]
-            nib.save(nib.Nifti1Image(ve_cv, affine, header), out_ve_cv)  # type: ignore[attr-defined]
-
             self._results["out_ktrans_cv"] = out_ktrans_cv
-            self._results["out_ve_cv"] = out_ve_cv
+
+            if self._has_ve(model_name):
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    ve_cv = np.where(
+                        ve > EPSILON_VE, ve_std / ve, 0.0
+                    ).astype(np.float32)
+                out_ve_cv = self._gen_outfilename("_ve_cv")
+                nib.save(nib.Nifti1Image(ve_cv, affine, header), out_ve_cv)  # type: ignore[attr-defined]
+                self._results["out_ve_cv"] = out_ve_cv
 
             if self._has_vp(model_name):
                 with np.errstate(divide="ignore", invalid="ignore"):
@@ -1331,23 +1352,28 @@ class ComputeDCEMaps(BaseInterface):
             # Assuming approximately normal posterior (valid for MAP/MLE)
             ktrans_ci95_lower = np.maximum(ktrans - 1.96 * ktrans_std, 0.0).astype(np.float32)
             ktrans_ci95_upper = (ktrans + 1.96 * ktrans_std).astype(np.float32)
-            ve_ci95_lower = np.clip(ve - 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
-            ve_ci95_upper = np.clip(ve + 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
 
             out_ktrans_ci95_lower = self._gen_outfilename("_Ktrans_ci95lower")
             out_ktrans_ci95_upper = self._gen_outfilename("_Ktrans_ci95upper")
-            out_ve_ci95_lower = self._gen_outfilename("_ve_ci95lower")
-            out_ve_ci95_upper = self._gen_outfilename("_ve_ci95upper")
 
             nib.save(nib.Nifti1Image(ktrans_ci95_lower, affine, header), out_ktrans_ci95_lower)  # type: ignore[attr-defined]
             nib.save(nib.Nifti1Image(ktrans_ci95_upper, affine, header), out_ktrans_ci95_upper)  # type: ignore[attr-defined]
-            nib.save(nib.Nifti1Image(ve_ci95_lower, affine, header), out_ve_ci95_lower)  # type: ignore[attr-defined]
-            nib.save(nib.Nifti1Image(ve_ci95_upper, affine, header), out_ve_ci95_upper)  # type: ignore[attr-defined]
 
             self._results["out_ktrans_ci95_lower"] = out_ktrans_ci95_lower
             self._results["out_ktrans_ci95_upper"] = out_ktrans_ci95_upper
-            self._results["out_ve_ci95_lower"] = out_ve_ci95_lower
-            self._results["out_ve_ci95_upper"] = out_ve_ci95_upper
+
+            if self._has_ve(model_name):
+                ve_ci95_lower = np.clip(ve - 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
+                ve_ci95_upper = np.clip(ve + 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
+
+                out_ve_ci95_lower = self._gen_outfilename("_ve_ci95lower")
+                out_ve_ci95_upper = self._gen_outfilename("_ve_ci95upper")
+
+                nib.save(nib.Nifti1Image(ve_ci95_lower, affine, header), out_ve_ci95_lower)  # type: ignore[attr-defined]
+                nib.save(nib.Nifti1Image(ve_ci95_upper, affine, header), out_ve_ci95_upper)  # type: ignore[attr-defined]
+
+                self._results["out_ve_ci95_lower"] = out_ve_ci95_lower
+                self._results["out_ve_ci95_upper"] = out_ve_ci95_upper
 
             if self._has_vp(model_name):
                 vp_ci95_lower = np.clip(vp - 1.96 * vp_std, 0.0, 1.0).astype(np.float32)
@@ -1380,7 +1406,8 @@ class ComputeDCEMaps(BaseInterface):
         # Model-specific constraints
         if model_name in ["extended_tofts", "2cxm"]:
             qc_mask &= ((ve + vp) < 0.95)  # Volume fraction constraint
-        qc_mask &= (kep > 0.001)  # Non-zero efflux rate
+        if model_name != "patlak":
+            qc_mask &= (kep > 0.001)  # Non-zero efflux rate
 
         qc_mask = qc_mask.astype(np.uint8)
         out_qc_mask = self._gen_outfilename("_qc_mask")

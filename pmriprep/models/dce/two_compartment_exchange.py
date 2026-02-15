@@ -26,7 +26,6 @@ from typing import Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
-from scipy import optimize
 from scipy.optimize import curve_fit
 
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
@@ -529,104 +528,6 @@ class TwoCompartmentExchangeModel(PKModel):
             fitting_method="nlls",
             fitted_curve=fitted_curve,
             quality_flag=quality_flag,
-        )
-
-    def fit_constrained(
-        self,
-        tissue_curve: npt.NDArray[np.floating],
-        aif: npt.NDArray[np.floating],
-        time_points: npt.NDArray[np.floating],
-        fixed_vp: float,
-        initial_guess: Optional[Sequence[float]] = None,
-    ) -> FitResult:
-        """Fit 2CXM with vp fixed from DSC CBV.
-
-        Only Fp, PS, and ve are free parameters. The ve upper bound is
-        adjusted so that ve + fixed_vp <= 1.0.
-
-        Args:
-            tissue_curve: Observed tissue concentration values C_t(t) in mM.
-            aif: Arterial input function plasma concentration values Ca(t) in mM.
-            time_points: Time points (minutes) corresponding to measurements.
-            fixed_vp: Fixed plasma volume fraction from DSC CBV.
-            initial_guess: Optional initial values [Fp, PS, ve].
-                If None, uses default initial guess.
-
-        Returns:
-            FitResult with n_parameters=3 and fitting_method='nlls_constrained_vp'.
-        """
-        n_obs = len(tissue_curve)
-
-        # Clamp fixed_vp
-        fixed_vp = float(np.clip(fixed_vp, VP_BOUNDS.min, VP_BOUNDS.max))
-
-        # Set initial guess for [Fp, PS, ve]
-        if initial_guess is None:
-            defs = self.get_parameter_definitions()
-            x0 = [defs[0].get_prior_mean(), defs[1].get_prior_mean(), defs[2].get_prior_mean()]
-        else:
-            x0 = list(initial_guess[:3])
-
-        # Bounds: ve upper bound clamped so ve + vp <= 1.0
-        ve_upper = min(0.8, 1.0 - fixed_vp)
-        ve_upper = max(ve_upper, EPSILON_VE)
-        bounds_lo = [FP_BOUNDS.min, PS_BOUNDS.min, VE_BOUNDS.min]
-        bounds_hi = [FP_BOUNDS.max, PS_BOUNDS.max, ve_upper]
-
-        # Objective: evaluate with [Fp, PS, ve, fixed_vp]
-        def objective(params: npt.NDArray[np.floating]) -> float:
-            full_params = [params[0], params[1], params[2], fixed_vp]
-            predicted = self.evaluate(full_params, aif, time_points)
-            return float(np.sum((tissue_curve - predicted) ** 2))
-
-        try:
-            result = optimize.minimize(
-                objective,
-                x0=x0,
-                method="L-BFGS-B",
-                bounds=list(zip(bounds_lo, bounds_hi)),
-                options={"maxiter": 1000, "ftol": 1e-10},
-            )
-            converged = result.success
-            fitted_3p = result.x.tolist()
-        except Exception:
-            converged = False
-            fitted_3p = x0
-
-        # Clip to bounds
-        fp = float(np.clip(fitted_3p[0], FP_BOUNDS.min, FP_BOUNDS.max))
-        ps = float(np.clip(fitted_3p[1], PS_BOUNDS.min, PS_BOUNDS.max))
-        ve = float(np.clip(fitted_3p[2], VE_BOUNDS.min, ve_upper))
-
-        fitted_params = [fp, ps, ve, fixed_vp]
-
-        # Compute fitted curve and goodness-of-fit
-        fitted_curve = self.evaluate(fitted_params, aif, time_points)
-        rss = float(np.sum((tissue_curve - fitted_curve) ** 2))
-        r_squared = self.compute_r_squared(tissue_curve, fitted_curve)
-
-        n_free = 3
-        aic = float(n_obs * np.log(rss / n_obs) + 2 * n_free) if rss > 0 and n_obs > 0 else float("inf")
-        bic = float(n_obs * np.log(rss / n_obs) + n_free * np.log(n_obs)) if rss > 0 and n_obs > 0 else float("inf")
-
-        # Derived parameters
-        derived = self.compute_derived_parameters(fitted_params)
-
-        param_dict = {"Fp": fp, "PS": ps, "ve": ve, "vp": fixed_vp}
-        param_dict.update(derived)
-
-        return FitResult(
-            parameters=param_dict,
-            r_squared=r_squared,
-            residual_sum_squares=rss,
-            aic=aic,
-            bic=bic,
-            model_name=self.name,
-            n_parameters=n_free,
-            n_observations=n_obs,
-            converged=converged,
-            fitting_method="nlls_constrained_vp",
-            fitted_curve=fitted_curve,
         )
 
     def compute_derived_parameters(

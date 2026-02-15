@@ -156,12 +156,13 @@ def init_dce_preproc_wf(
         Path to T1 map from VFA acquisition.
     ktrans_map : str
         Path to Ktrans (transfer constant) map.
-    ve_map : str
+    ve_map : str, optional
         Path to ve (extravascular extracellular volume fraction) map.
+        Not produced by Patlak model.
     vp_map : str, optional
         Path to vp (plasma volume fraction) map (extended Tofts/2CXM).
-    kep_map : str
-        Path to kep (rate constant) map.
+    kep_map : str, optional
+        Path to kep (rate constant) map. Not produced by Patlak model.
     aif_curve : str
         Path to AIF curve text file.
     aif_mask : str
@@ -2789,7 +2790,11 @@ def _build_pk_map_dict(ktrans, ve, vp, kep):
     """Build dictionary of PK maps for smoothing."""
     from nipype.interfaces.base import isdefined
 
-    d = {"ktrans": ktrans, "ve": ve, "kep": kep}
+    d = {"ktrans": ktrans}
+    if ve and isdefined(ve):
+        d["ve"] = ve
+    if kep and isdefined(kep):
+        d["kep"] = kep
     if vp and isdefined(vp):
         d["vp"] = vp
     return d

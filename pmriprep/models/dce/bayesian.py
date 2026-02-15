@@ -36,7 +36,6 @@ from pmriprep.models.dce.base import (
     PKModel,
 )
 from pmriprep.utils.dce_constants import (
-    EPSILON_SIGNAL,
     EPSILON_VE,
 )
 
@@ -56,6 +55,12 @@ QC_RHAT_MAX: float = 1.1
 
 #: Minimum acceptable effective sample size
 QC_ESS_MIN: int = 100
+
+#: Physiological noise floor for DCE concentration (~0.001 mM at tSNR=50).
+#: Prevents profile likelihood sigma from collapsing to near-zero when
+#: the model fits data very well, which would make log-likelihood overwhelm
+#: the prior and reduce MAP to unconstrained MLE.
+EPSILON_SIGMA_CONCENTRATION: float = 0.001
 
 
 @dataclass
@@ -303,7 +308,7 @@ class BayesianPKFitter:
         sigma_val = float(np.std(residuals))
         if not np.isfinite(sigma_val):
             return float("-inf")
-        sigma = max(sigma_val, EPSILON_SIGNAL)
+        sigma = max(sigma_val, EPSILON_SIGMA_CONCENTRATION)
 
         # Gaussian log likelihood
         n = len(tissue_curve)
@@ -356,24 +361,34 @@ class BayesianPKFitter:
         self,
         params: npt.NDArray[np.floating],
         objective: Callable[[npt.NDArray[np.floating]], float],
-        epsilon: float = 1e-5,
+        relative_epsilon: float = 1e-5,
     ) -> npt.NDArray[np.floating]:
         """Compute Hessian matrix using finite differences.
 
-        Uses central differences for second derivatives. When perturbations
-        push parameters into invalid regions (causing non-finite objective
-        values), falls back to using prior curvature for those entries.
+        Uses central differences for second derivatives with adaptive
+        per-parameter step sizes that scale with parameter magnitude.
+        When perturbations push parameters into invalid regions (causing
+        non-finite objective values), falls back to using prior curvature
+        for those entries.
 
         Args:
             params: Parameter values at which to evaluate Hessian.
             objective: Negative log posterior function.
-            epsilon: Step size for finite differences.
+            relative_epsilon: Relative step size for finite differences.
+                Actual step for parameter i is max(relative_epsilon,
+                relative_epsilon * |params[i]|).
 
         Returns:
             Hessian matrix (n_params x n_params).
         """
         n = len(params)
         hessian = np.zeros((n, n), dtype=np.float64)
+
+        # Compute per-parameter step sizes
+        eps = np.array([
+            max(relative_epsilon, relative_epsilon * abs(params[i]))
+            for i in range(n)
+        ])
 
         for i in range(n):
             for j in range(i, n):
@@ -383,14 +398,14 @@ class BayesianPKFitter:
                 params_mp = params.copy()
                 params_mm = params.copy()
 
-                params_pp[i] += epsilon
-                params_pp[j] += epsilon
-                params_pm[i] += epsilon
-                params_pm[j] -= epsilon
-                params_mp[i] -= epsilon
-                params_mp[j] += epsilon
-                params_mm[i] -= epsilon
-                params_mm[j] -= epsilon
+                params_pp[i] += eps[i]
+                params_pp[j] += eps[j]
+                params_pm[i] += eps[i]
+                params_pm[j] -= eps[j]
+                params_mp[i] -= eps[i]
+                params_mp[j] += eps[j]
+                params_mm[i] -= eps[i]
+                params_mm[j] -= eps[j]
 
                 # Second derivative
                 f_pp = objective(params_pp)
@@ -402,7 +417,23 @@ class BayesianPKFitter:
                 # This handles cases where perturbations violate constraints
                 # (e.g., ve + vp > 1.0) causing objective to return inf
                 if all(np.isfinite([f_pp, f_pm, f_mp, f_mm])):
-                    hessian[i, j] = (f_pp - f_pm - f_mp + f_mm) / (4 * epsilon**2)
+                    h_ij = (f_pp - f_pm - f_mp + f_mm) / (4 * eps[i] * eps[j])
+                    # Reject extreme Hessian entries that would make
+                    # covariance near-singular, producing unreliable
+                    # Laplace approximation uncertainties.
+                    # With profile-likelihood objectives (30-120 time points,
+                    # sigma ~ 0.001-0.01), individual entries are typically
+                    # O(10^3-10^6). The 1e8 threshold provides ~100x headroom
+                    # above expected maxima.
+                    if abs(h_ij) < 1e8:
+                        hessian[i, j] = h_ij
+                    elif i == j:
+                        prior_std = self.priors[i].std
+                        if prior_std > 0:
+                            hessian[i, j] = 1.0 / (prior_std**2)
+                        else:
+                            hessian[i, j] = 1.0
+                    # Off-diagonal remains 0 (assumes independent parameters)
                 else:
                     # Fall back to prior curvature when perturbations hit invalid region
                     # Use 1/prior_variance as diagonal Hessian approximation
@@ -571,7 +602,10 @@ class BayesianPKFitter:
                 )
                 if result.fun < best_fun:
                     best_fun = result.fun
-                    converged = result.success
+                    # Reject spurious convergence: if all objective
+                    # evaluations hit the 1e30 cap, result.success may
+                    # be True but the fit is meaningless
+                    converged = result.success and result.fun < 1e20
                     fitted_params = np.array(result.x, dtype=np.float64)
             except (ValueError, RuntimeError):
                 continue

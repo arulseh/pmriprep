@@ -305,7 +305,7 @@
             {% if qc_metrics.pk_modeling.ktrans_median is defined %}
             <div class="metric">
                 <div class="metric-label">Median Ktrans</div>
-                <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.ktrans_median) }} min<sup>-1</sup></div>
+                <div class="metric-value">{% if qc_metrics.pk_modeling.ktrans_median < 0.001 %}{{ "%.2e"|format(qc_metrics.pk_modeling.ktrans_median) }}{% else %}{{ "%.4f"|format(qc_metrics.pk_modeling.ktrans_median) }}{% endif %} min<sup>-1</sup></div>
             </div>
             {% endif %}
             {% if qc_metrics.pk_modeling.ve_median is defined %}

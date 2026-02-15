@@ -22,6 +22,7 @@ import numpy.typing as npt
 from scipy.optimize import curve_fit
 
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
+from pmriprep.models.dce.initialization import estimate_ktrans_patlak, estimate_ve_late_phase
 from pmriprep.utils.dce_constants import EPSILON_VE, KTRANS_BOUNDS, MAX_KEP, VE_BOUNDS
 
 
@@ -115,36 +116,9 @@ class ToftsModel(PKModel):
         """
         try:
             peak_idx = int(np.argmax(aif))
-            n = len(time_points)
-            dt = float(np.mean(np.diff(time_points)))
 
-            # --- Ktrans via Patlak regression (post-bolus) ---
-            post_bolus = np.arange(peak_idx + 1, n)
-            cp_post = aif[post_bolus]
-            valid = cp_post > 0.05 * np.max(aif)
-            ktrans_init = 0.1  # fallback
-
-            if np.sum(valid) >= 4:
-                idx = post_bolus[valid]
-                cp = aif[idx]
-                ct = tissue_curve[idx]
-                cum_aif = np.cumsum(aif[: idx[-1] + 1]) * dt
-                X = cum_aif[idx] / cp
-                Y = ct / cp
-                ktrans_init = max(float(np.polyfit(X, Y, 1)[0]), 0.001)
-
-            # --- ve via late-phase quasi-equilibrium ratio ---
-            late_start = min(peak_idx + 12, n - 5)
-            if late_start < n - 3:
-                ct_late = tissue_curve[late_start:]
-                cp_late = aif[late_start:]
-                mean_cp = float(np.mean(cp_late))
-                if mean_cp > 0.05 * np.max(aif):
-                    ve_init = float(np.clip(np.mean(ct_late) / mean_cp, 0.01, 0.8))
-                else:
-                    ve_init = 0.2
-            else:
-                ve_init = 0.2
+            ktrans_init = estimate_ktrans_patlak(tissue_curve, aif, time_points, peak_idx)
+            ve_init = estimate_ve_late_phase(tissue_curve, aif, peak_idx)
 
             ktrans_init = float(np.clip(ktrans_init, KTRANS_BOUNDS.min + 1e-6, KTRANS_BOUNDS.max))
             ve_init = float(np.clip(ve_init, VE_BOUNDS.min, VE_BOUNDS.max))
@@ -162,8 +136,8 @@ class ToftsModel(PKModel):
 
         Computes C_t(t) = Ktrans × [Cp ⊗ exp(-kep×t)]
 
-        The convolution is implemented using the trapezoidal rule for
-        numerical integration.
+        The convolution is implemented using the rectangular rule
+        (left Riemann sum via np.convolve).
 
         Args:
             params: Parameter values [Ktrans, ve].
