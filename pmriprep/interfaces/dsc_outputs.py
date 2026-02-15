@@ -354,7 +354,11 @@ class DSCDerivativeWriter(BaseInterface):
                         fname = f"{prefix}_{spatial}_desc-{desc_prefix}_{map_suffix}"
                         self._copy_nifti(filepath, perf_dir / f"{fname}.nii.gz")
                         sidecar = {**base_sidecar, "Description": desc_text,
-                                   "SmoothingFWHM": fwhm}
+                                   "SmoothingFWHM": fwhm,
+                                   "SmoothingType": "Gaussian",
+                                   "SmoothingMasked": True,
+                                   "IntendedFor": "visualization",
+                                   "Note": "Use non-smoothed maps for quantitative ROI analysis"}
                         self._write_json(sidecar, perf_dir / f"{fname}.json")
 
             # Smoothed AUC corrected maps (CBV surrogate)
@@ -371,7 +375,11 @@ class DSCDerivativeWriter(BaseInterface):
                         fname = f"{prefix}_{spatial}_desc-{desc_prefix}_auc_corr"
                         self._copy_nifti(filepath, perf_dir / f"{fname}.nii.gz")
                         sidecar = {**base_sidecar, "Description": desc_text,
-                                   "SmoothingFWHM": fwhm}
+                                   "SmoothingFWHM": fwhm,
+                                   "SmoothingType": "Gaussian",
+                                   "SmoothingMasked": True,
+                                   "IntendedFor": "visualization",
+                                   "Note": "Use non-smoothed maps for quantitative ROI analysis"}
                         self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -509,7 +517,7 @@ class DSCDerivativeWriter(BaseInterface):
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:
-        outputs = self.output_spec().get()  # type: ignore[misc]
+        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
         outputs["out_dir"] = getattr(self, "_out_dir", "")
         outputs["qc_json"] = getattr(self, "_qc_json", "")
         return outputs
@@ -567,7 +575,11 @@ class DSCDerivativeWriter(BaseInterface):
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src), str(dst))
 
-    _copy_nifti = _copy_file
+    @staticmethod
+    def _copy_nifti(src: str, dst: Path) -> None:
+        """Copy a NIfTI file to the destination path."""
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src), str(dst))
 
     @staticmethod
     def _write_json(data: dict, path: Path) -> None:
