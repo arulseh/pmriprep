@@ -1235,6 +1235,12 @@ def init_pmriprep_wf(
                 # Bayesian uncertainty maps
                 ("outputnode.cbf_std_map", "cbf_std_map"),
                 ("outputnode.cbv_std_map", "cbv_std_map"),
+                ("outputnode.cbf_cv_map", "cbf_cv_map"),
+                ("outputnode.cbv_cv_map", "cbv_cv_map"),
+                ("outputnode.cbf_ci95_lower_map", "cbf_ci95_lower_map"),
+                ("outputnode.cbf_ci95_upper_map", "cbf_ci95_upper_map"),
+                ("outputnode.cbv_ci95_lower_map", "cbv_ci95_lower_map"),
+                ("outputnode.cbv_ci95_upper_map", "cbv_ci95_upper_map"),
                 # Leakage correction
                 ("outputnode.k2_map", "k2_map"),
                 # Motion-corrected data
@@ -1269,9 +1275,8 @@ def init_pmriprep_wf(
         if dsc_config.smooth_fwhm > 0:
             workflow.connect([
                 (dsc_wf, dsc_writer, [
-                    ("outputnode.smooth_quant_indep", "smooth_quant_indep"),
-                    ("outputnode.smooth_rel", "smooth_rel"),
-                    ("outputnode.smooth_abs", "smooth_abs"),
+                    ("outputnode.smooth_hemodynamic", "smooth_hemodynamic"),
+                    ("outputnode.smooth_auc", "smooth_auc"),
                 ]),
             ])
 

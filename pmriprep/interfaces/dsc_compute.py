@@ -190,6 +190,26 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
             else:
                 out["cbv_std"] = 0.0
 
+        # Extract credible intervals (available for all Bayesian methods)
+        if result.credible_intervals:
+            cbf_ci = result.credible_intervals.get("cbf", (0.0, 0.0))
+            out["cbf_ci95_lower"] = cbf_ci[0]
+            out["cbf_ci95_upper"] = cbf_ci[1]
+            # Propagate CBV CI from alpha/beta CIs (vascular) or set zero (SVD)
+            if method == "vascular":
+                alpha_ci = result.credible_intervals.get("alpha", (0.0, 0.0))
+                beta_ci = result.credible_intervals.get("beta", (0.0, 0.0))
+                alpha_val = result.parameters.get("alpha", 1.0)
+                beta_val = result.parameters.get("beta", 1.0)
+                # Conservative: use extreme combinations for CI bounds
+                cbv_ci_lower = alpha_ci[0] * beta_ci[0]
+                cbv_ci_upper = alpha_ci[1] * beta_ci[1]
+                out["cbv_ci95_lower"] = cbv_ci_lower
+                out["cbv_ci95_upper"] = cbv_ci_upper
+            else:
+                out["cbv_ci95_lower"] = 0.0
+                out["cbv_ci95_upper"] = 0.0
+
         out["r_squared"] = result.r_squared
         out["converged"] = (bayesian != "none" and result.passes_convergence())
 
@@ -428,6 +448,12 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_cth = File(desc="CTH map — capillary transit time heterogeneity (vascular only)")
     out_cbf_std = File(desc="CBF uncertainty (std) map (Bayesian only)")
     out_cbv_std = File(desc="CBV uncertainty (std) map (Bayesian only)")
+    out_cbf_cv = File(desc="CBF coefficient of variation (Bayesian only)")
+    out_cbv_cv = File(desc="CBV coefficient of variation (Bayesian only)")
+    out_cbf_ci95_lower = File(desc="CBF 95% CI lower bound (VI/MCMC only)")
+    out_cbf_ci95_upper = File(desc="CBF 95% CI upper bound (VI/MCMC only)")
+    out_cbv_ci95_lower = File(desc="CBV 95% CI lower bound (VI/MCMC only)")
+    out_cbv_ci95_upper = File(desc="CBV 95% CI upper bound (VI/MCMC only)")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
 
@@ -831,6 +857,10 @@ class ComputeDSCMaps(BaseInterface):
         Optional[npt.NDArray[Any]],  # cth_map (vascular only)
         Optional[npt.NDArray[Any]],  # cbf_std_map (bayesian only)
         Optional[npt.NDArray[Any]],  # cbv_std_map (bayesian only)
+        Optional[npt.NDArray[Any]],  # cbf_ci_lower_map (vi/mcmc only)
+        Optional[npt.NDArray[Any]],  # cbf_ci_upper_map (vi/mcmc only)
+        Optional[npt.NDArray[Any]],  # cbv_ci_lower_map (vi/mcmc only)
+        Optional[npt.NDArray[Any]],  # cbv_ci_upper_map (vi/mcmc only)
     ]:
         """Run parametric model deconvolution (vascular, CPI).
 
@@ -853,6 +883,11 @@ class ComputeDSCMaps(BaseInterface):
         cth_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cbf_std_map = np.zeros(spatial_shape, dtype=np.float64) if bayesian != "none" else None
         cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if bayesian != "none" else None
+        has_ci = bayesian in ("vi", "mcmc")
+        cbf_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
+        cbf_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
+        cbv_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
+        cbv_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
 
         qc_metrics: dict[str, Any] = {
             "method": method,
@@ -928,6 +963,14 @@ class ComputeDSCMaps(BaseInterface):
                 cbf_std_map[x, y, z] = res["cbf_std"]
             if cbv_std_map is not None and "cbv_std" in res:
                 cbv_std_map[x, y, z] = res["cbv_std"]
+            if cbf_ci_lower_map is not None and "cbf_ci95_lower" in res:
+                cbf_ci_lower_map[x, y, z] = res["cbf_ci95_lower"]
+            if cbf_ci_upper_map is not None and "cbf_ci95_upper" in res:
+                cbf_ci_upper_map[x, y, z] = res["cbf_ci95_upper"]
+            if cbv_ci_lower_map is not None and "cbv_ci95_lower" in res:
+                cbv_ci_lower_map[x, y, z] = res["cbv_ci95_lower"]
+            if cbv_ci_upper_map is not None and "cbv_ci95_upper" in res:
+                cbv_ci_upper_map[x, y, z] = res["cbv_ci95_upper"]
 
             if res.get("r_squared") is not None:
                 r_squared_list.append(res["r_squared"])
@@ -971,6 +1014,14 @@ class ComputeDSCMaps(BaseInterface):
                     cbf_std_map[x, y, z] = 0.0
                 if cbv_std_map is not None:
                     cbv_std_map[x, y, z] = 0.0
+                if cbf_ci_lower_map is not None:
+                    cbf_ci_lower_map[x, y, z] = 0.0
+                if cbf_ci_upper_map is not None:
+                    cbf_ci_upper_map[x, y, z] = 0.0
+                if cbv_ci_lower_map is not None:
+                    cbv_ci_lower_map[x, y, z] = 0.0
+                if cbv_ci_upper_map is not None:
+                    cbv_ci_upper_map[x, y, z] = 0.0
                 n_fallback += 1
             except Exception:
                 pass  # leave as parametric result or zeros
@@ -986,7 +1037,9 @@ class ComputeDSCMaps(BaseInterface):
 
         qc_metrics["n_fallback_osvd"] = n_fallback
 
-        return cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map, cbf_std_map, cbv_std_map
+        return (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map,
+                cbf_std_map, cbv_std_map,
+                cbf_ci_lower_map, cbf_ci_upper_map, cbv_ci_lower_map, cbv_ci_upper_map)
 
     def _save_qc_fit_data(
         self,
@@ -1264,6 +1317,10 @@ class ComputeDSCMaps(BaseInterface):
         residues: Optional[npt.NDArray[Any]] = None
         cbf_std_map: Optional[npt.NDArray[Any]] = None
         cbv_std_map: Optional[npt.NDArray[Any]] = None
+        cbf_ci_lower_map: Optional[npt.NDArray[Any]] = None
+        cbf_ci_upper_map: Optional[npt.NDArray[Any]] = None
+        cbv_ci_lower_map: Optional[npt.NDArray[Any]] = None
+        cbv_ci_upper_map: Optional[npt.NDArray[Any]] = None
         qc_metrics: dict[str, Any] = {}
 
         if method in ("sSVD", "cSVD", "oSVD", "tikhonov"):
@@ -1272,7 +1329,9 @@ class ComputeDSCMaps(BaseInterface):
             )
         else:  # vascular or cpi
             (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map,
-             cth_map, cbf_std_map, cbv_std_map) = self._deconvolve_parametric(
+             cth_map, cbf_std_map, cbv_std_map,
+             cbf_ci_lower_map, cbf_ci_upper_map,
+             cbv_ci_lower_map, cbv_ci_upper_map) = self._deconvolve_parametric(
                 conc_data, aif, mask, method, dt, bayesian, mcmc_samples, cpi_control_points,
             )
 
@@ -1563,6 +1622,41 @@ class ComputeDSCMaps(BaseInterface):
             if cbv_std_map is not None:  # type: ignore[possibly-undefined]
                 cbv_std_map = np.where(mask_bool, cbv_std_map, 0.0)
                 self._results["out_cbv_std"] = _save_map(cbv_std_map, "_cbv_std")
+
+            # Compute CV = std / |mean|, guarded for near-zero denominators
+            if cbf_std_map is not None:  # type: ignore[possibly-undefined]
+                cbf_cv = np.where(
+                    np.abs(rel_cbf) > EPSILON_CONCENTRATION,
+                    cbf_std_map / np.abs(rel_cbf), 0.0,
+                )
+                cbf_cv = np.where(mask_bool, cbf_cv, 0.0)
+                self._results["out_cbf_cv"] = _save_map(cbf_cv, "_cbf_cv")
+            if cbv_std_map is not None:  # type: ignore[possibly-undefined]
+                cbv_cv = np.where(
+                    np.abs(rel_cbv) > EPSILON_CONCENTRATION,
+                    cbv_std_map / np.abs(rel_cbv), 0.0,
+                )
+                cbv_cv = np.where(mask_bool, cbv_cv, 0.0)
+                self._results["out_cbv_cv"] = _save_map(cbv_cv, "_cbv_cv")
+
+            # Save CI maps only for VI/MCMC (MAP Laplace CI is approximate)
+            if bayesian in ("vi", "mcmc"):
+                if cbf_ci_lower_map is not None:  # type: ignore[possibly-undefined]
+                    cbf_ci_lower_map = np.where(mask_bool, cbf_ci_lower_map, 0.0)
+                    self._results["out_cbf_ci95_lower"] = _save_map(
+                        cbf_ci_lower_map, "_cbf_ci95_lower")
+                if cbf_ci_upper_map is not None:  # type: ignore[possibly-undefined]
+                    cbf_ci_upper_map = np.where(mask_bool, cbf_ci_upper_map, 0.0)
+                    self._results["out_cbf_ci95_upper"] = _save_map(
+                        cbf_ci_upper_map, "_cbf_ci95_upper")
+                if cbv_ci_lower_map is not None:  # type: ignore[possibly-undefined]
+                    cbv_ci_lower_map = np.where(mask_bool, cbv_ci_lower_map, 0.0)
+                    self._results["out_cbv_ci95_lower"] = _save_map(
+                        cbv_ci_lower_map, "_cbv_ci95_lower")
+                if cbv_ci_upper_map is not None:  # type: ignore[possibly-undefined]
+                    cbv_ci_upper_map = np.where(mask_bool, cbv_ci_upper_map, 0.0)
+                    self._results["out_cbv_ci95_upper"] = _save_map(
+                        cbv_ci_upper_map, "_cbv_ci95_upper")
 
         # Save residues if requested
         if residues is not None and self.inputs.save_residue:

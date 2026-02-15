@@ -65,6 +65,12 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Bayesian uncertainty maps (optional)
     cbf_std_map = traits.Str(desc="CBF uncertainty (std) map path (Bayesian only)")
     cbv_std_map = traits.Str(desc="CBV uncertainty (std) map path (Bayesian only)")
+    cbf_cv_map = traits.Str(desc="CBF coefficient of variation path (Bayesian only)")
+    cbv_cv_map = traits.Str(desc="CBV coefficient of variation path (Bayesian only)")
+    cbf_ci95_lower_map = traits.Str(desc="CBF 95% CI lower bound path (VI/MCMC only)")
+    cbf_ci95_upper_map = traits.Str(desc="CBF 95% CI upper bound path (VI/MCMC only)")
+    cbv_ci95_lower_map = traits.Str(desc="CBV 95% CI lower bound path (VI/MCMC only)")
+    cbv_ci95_upper_map = traits.Str(desc="CBV 95% CI upper bound path (VI/MCMC only)")
 
     # Leakage correction (optional)
     k2_map = traits.Str(desc="K2 leakage correction map path")
@@ -91,9 +97,8 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     config_dict = traits.Dict(desc="DSC processing config as dictionary")
 
     # Smoothed map dicts (optional — each is a dict of name→filepath)
-    smooth_quant_indep = traits.Dict(desc="Smoothed quant-independent map dict")
-    smooth_rel = traits.Dict(desc="Smoothed relative AUC map dict")
-    smooth_abs = traits.Dict(desc="Smoothed absolute AUC map dict")
+    smooth_hemodynamic = traits.Dict(desc="Smoothed hemodynamic maps (CBF, CBV, MTT, nCBF, nCBV)")
+    smooth_auc = traits.Dict(desc="Smoothed AUC corrected maps (rel + abs)")
     smooth_fwhm = traits.Float(0.0, usedefault=True, desc="Smoothing FWHM in mm")
 
     # Structural underlays (registered to DSC space)
@@ -288,15 +293,37 @@ class DSCDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # 5c. Bayesian uncertainty maps (optional)
         # -----------------------------------------------------------
-        for umap, (attr, desc) in {
+        bayesian_uncertainty_maps = {
             "cbf_std": ("cbf_std_map", "CBF uncertainty (posterior std)"),
             "cbv_std": ("cbv_std_map", "CBV uncertainty (posterior std)"),
-        }.items():
+            "cbfCV": ("cbf_cv_map", "CBF coefficient of variation"),
+            "cbvCV": ("cbv_cv_map", "CBV coefficient of variation"),
+            "cbfCI95lower": ("cbf_ci95_lower_map", "CBF 95% credible interval lower bound"),
+            "cbfCI95upper": ("cbf_ci95_upper_map", "CBF 95% credible interval upper bound"),
+            "cbvCI95lower": ("cbv_ci95_lower_map", "CBV 95% credible interval lower bound"),
+            "cbvCI95upper": ("cbv_ci95_upper_map", "CBV 95% credible interval upper bound"),
+        }
+        for umap, (attr, desc) in bayesian_uncertainty_maps.items():
             if self._has_input(attr):
                 src = getattr(self.inputs, attr)
                 fname = f"{prefix}_{spatial}_desc-dscproc_{umap}"
                 self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
-                sidecar = {**base_sidecar, "Description": desc}
+                # Determine estimation method from config
+                est_method = "unknown"
+                cfg = self.inputs.config_dict
+                if isdefined(cfg) and cfg:
+                    est_method = cfg.get("bayesian", "unknown")
+                uncertainty_type = "std"
+                if "CV" in umap:
+                    uncertainty_type = "coefficient_of_variation"
+                elif "CI95" in umap:
+                    uncertainty_type = "95pct_credible_interval"
+                sidecar = {
+                    **base_sidecar,
+                    "Description": desc,
+                    "EstimationMethod": est_method,
+                    "UncertaintyMethod": uncertainty_type,
+                }
                 self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -306,48 +333,44 @@ class DSCDerivativeWriter(BaseInterface):
         if fwhm > 0:
             fwhm_label = f"fwhm{int(fwhm)}"
 
-            # Smoothed quant-independent: desc-fwhm{X}_{map}
-            smooth_qi = self.inputs.smooth_quant_indep
-            if isdefined(smooth_qi) and smooth_qi:
-                qi_descriptions = {
-                    "mtt": "Mean transit time (smoothed)",
-                    "ttp": "Time to peak (smoothed)",
-                    "tmax": "Time to maximum (smoothed)",
-                    "psr": "Percent signal recovery (smoothed)",
-                    "ph": "Peak height (smoothed)",
-                    "k2": "K2 leakage correction (smoothed)",
-                    "auc_diff": "Leakage contribution (smoothed)",
+            # Smoothed hemodynamic maps: CBF, CBV, MTT, nCBF, nCBV
+            smooth_hemo = self.inputs.smooth_hemodynamic
+            if isdefined(smooth_hemo) and smooth_hemo:
+                hemo_descriptions = {
+                    "mtt": ("Mean transit time (smoothed)", f"{fwhm_label}"),
+                    "rel_cbf": ("Cerebral blood flow, relative (smoothed)", f"rel{fwhm_label.capitalize()}"),
+                    "rel_cbv": ("Cerebral blood volume, relative (smoothed)", f"rel{fwhm_label.capitalize()}"),
+                    "abs_cbf": ("Cerebral blood flow, mL/100g/min (smoothed)", f"abs{fwhm_label.capitalize()}"),
+                    "abs_cbv": ("Cerebral blood volume, mL/100g (smoothed)", f"abs{fwhm_label.capitalize()}"),
+                    "ncbf": ("Normalized CBF (smoothed)", f"{fwhm_label}"),
+                    "ncbv": ("Normalized CBV (smoothed)", f"{fwhm_label}"),
                 }
-                for name, filepath in smooth_qi.items():
+                for name, filepath in smooth_hemo.items():
                     if filepath and Path(filepath).exists():
-                        desc = qi_descriptions.get(name, f"{name} (smoothed)")
-                        fname = f"{prefix}_{spatial}_desc-{fwhm_label}_{name}"
+                        desc_text, desc_prefix = hemo_descriptions.get(
+                            name, (f"{name} (smoothed)", fwhm_label))
+                        # Strip quantification prefix from map suffix for BIDS naming
+                        map_suffix = name.replace("rel_", "").replace("abs_", "")
+                        fname = f"{prefix}_{spatial}_desc-{desc_prefix}_{map_suffix}"
                         self._copy_nifti(filepath, perf_dir / f"{fname}.nii.gz")
-                        sidecar = {**base_sidecar, "Description": desc,
+                        sidecar = {**base_sidecar, "Description": desc_text,
                                    "SmoothingFWHM": fwhm}
                         self._write_json(sidecar, perf_dir / f"{fname}.json")
 
-            # Smoothed relative AUC: desc-relFwhm{X}_{map}
-            smooth_r = self.inputs.smooth_rel
-            if isdefined(smooth_r) and smooth_r:
-                for name, filepath in smooth_r.items():
-                    if filepath and Path(filepath).exists():
-                        fname = f"{prefix}_{spatial}_desc-rel{fwhm_label.capitalize()}_{name}"
-                        self._copy_nifti(filepath, perf_dir / f"{fname}.nii.gz")
-                        sidecar = {**base_sidecar,
-                                   "Description": f"Relative {name} (smoothed)",
-                                   "SmoothingFWHM": fwhm}
-                        self._write_json(sidecar, perf_dir / f"{fname}.json")
-
-            # Smoothed absolute AUC: desc-absFwhm{X}_{map}
-            smooth_a = self.inputs.smooth_abs
+            # Smoothed AUC corrected maps (CBV surrogate)
+            smooth_a = self.inputs.smooth_auc
             if isdefined(smooth_a) and smooth_a:
+                auc_descriptions = {
+                    "rel_auc_corr": ("Relative AUC corrected (smoothed)", f"rel{fwhm_label.capitalize()}"),
+                    "abs_auc_corr": ("Absolute AUC corrected, mM·s (smoothed)", f"abs{fwhm_label.capitalize()}"),
+                }
                 for name, filepath in smooth_a.items():
                     if filepath and Path(filepath).exists():
-                        fname = f"{prefix}_{spatial}_desc-abs{fwhm_label.capitalize()}_{name}"
+                        desc_text, desc_prefix = auc_descriptions.get(
+                            name, (f"{name} (smoothed)", fwhm_label))
+                        fname = f"{prefix}_{spatial}_desc-{desc_prefix}_auc_corr"
                         self._copy_nifti(filepath, perf_dir / f"{fname}.nii.gz")
-                        sidecar = {**base_sidecar,
-                                   "Description": f"Absolute {name} (smoothed, mM·s)",
+                        sidecar = {**base_sidecar, "Description": desc_text,
                                    "SmoothingFWHM": fwhm}
                         self._write_json(sidecar, perf_dir / f"{fname}.json")
 
