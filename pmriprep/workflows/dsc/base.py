@@ -408,7 +408,6 @@ def _detect_and_correct_preload(
     save_k2_map,
     signal_file=None,
     baseline_frames=5,
-    k2_method="exponential",
 ):
     """Detect preload and apply K2 correction if needed.
 
@@ -423,7 +422,6 @@ def _detect_and_correct_preload(
         tr: Repetition time in seconds.
         preload_detected: User-specified preload flag (True/False/None for auto).
         save_k2_map: Whether to save the K2 leakage map.
-        k2_method: K2 correction method: "integral" or "exponential".
 
     Returns:
         Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
@@ -505,8 +503,6 @@ def _detect_and_correct_preload(
         aif=aif,
         brain_mask=brain_mask,
         tr=tr,
-        method=k2_method,
-        baseline_frames=baseline_frames,
     )
 
     corrected_conc = correction_result.concentration_corrected
@@ -1730,7 +1726,6 @@ def init_dsc_preproc_wf(
                 "save_k2_map",
                 "signal_file",
                 "baseline_frames",
-                "k2_method",
             ],
             output_names=["corrected_concentration_file", "k2_map_file", "qc_dict"],
             function=_detect_and_correct_preload,
@@ -1740,7 +1735,6 @@ def init_dsc_preproc_wf(
     preload_correct.inputs.preload_detected = config.preload_detected if config.preload_detected is not None else None
     preload_correct.inputs.save_k2_map = config.save_k2_map
     preload_correct.inputs.baseline_frames = config.pre_bolus
-    preload_correct.inputs.k2_method = config.k2_method
 
     # -------------------------------------------------------------------
     # Node 4b: Extract preload classification from QC dict
@@ -1769,7 +1763,6 @@ def init_dsc_preproc_wf(
             n_procs=config.num_processes if config.num_processes > 0 else 1,
             baseline_frames=config.pre_bolus,
             tail_frames=5,  # Post-bolus frames for PSR (Cha et al. AJNR 2002)
-            k2_method=config.k2_method,
         ),
         name="compute_maps",
     )

@@ -42,8 +42,6 @@ dsc:
   smooth_fwhm: 0.0             # Output smoothing FWHM (mm, 0 = none)
   save_k2_map: false            # Save K2 leakage correction map
   save_uncertainty: false       # Save uncertainty maps (Bayesian)
-  k2_method: exponential        # K2 leakage correction: exponential (legacy), integral (physics)
-
   # --- Resources ---
   num_processes: 0              # Parallel processes (0 = system default)
   use_gpu: false                # GPU acceleration

@@ -126,7 +126,6 @@ def merge_cli_config(
         "dsc_dose": ("dsc", "dose"),
         "dsc_aif_method": ("dsc", "aif_method"),
         "dsc_absolute_quant": ("dsc", "absolute_quant"),
-        "dsc_k2_method": ("dsc", "k2_method"),
         "dsc_use_gpu": ("dsc", "use_gpu"),
         # DCE options
         "dce_model": ("dce", "model"),

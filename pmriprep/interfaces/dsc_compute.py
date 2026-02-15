@@ -339,12 +339,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Save residue functions (large output)",
     )
-    k2_method = traits.Enum(
-        "exponential",
-        "integral",
-        usedefault=True,
-        desc="K2 leakage correction method: exponential (legacy) or integral (BSW)",
-    )
     k2_map_input_file = File(
         mandatory=False,
         desc="K2 map from preload_correct (passed through when baseline not recomputed)",
@@ -1242,8 +1236,6 @@ class ComputeDSCMaps(BaseInterface):
                 aif=aif,
                 brain_mask=mask.astype(bool),
                 tr=dt,
-                method=str(self.inputs.k2_method),
-                baseline_frames=detected_baseline,
             )
             conc_data = k2_result.concentration_corrected
 
