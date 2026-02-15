@@ -582,45 +582,6 @@ def compute_ttp_legacy(
     return np.clip(ttp, 0.0, 60.0)
 
 
-def compute_ttp(
-    concentration: npt.NDArray[np.floating],
-    pre_bolus_frames: int,
-    dt: float,
-    sigma: float = 1.0,
-) -> npt.NDArray[np.floating]:
-    """Compute TTP using Gaussian-smoothed post-bolus argmax (ideal method).
-
-    Applies Gaussian smoothing (sigma=1 sample, FWHM ~3.5s) to suppress
-    single-frame noise spikes before finding peak. NaN for out-of-range values.
-
-    Args:
-        concentration: Concentration array (4D: x,y,z,time or 1D: time).
-        pre_bolus_frames: Number of pre-bolus baseline frames to skip.
-        dt: Time step in seconds (TR).
-        sigma: Gaussian smoothing sigma in samples (default 1.0).
-
-    Returns:
-        TTP map in seconds. Out-of-range values set to NaN.
-    """
-    from scipy.ndimage import gaussian_filter1d
-
-    conc_smooth = gaussian_filter1d(concentration, sigma=sigma, axis=-1)
-    if conc_smooth.ndim == 4:
-        conc_post = conc_smooth[..., pre_bolus_frames:]
-        peak_idx = np.argmax(conc_post, axis=-1)
-        ttp = (pre_bolus_frames + peak_idx).astype(np.float64) * dt
-    elif conc_smooth.ndim == 1:
-        conc_post = conc_smooth[pre_bolus_frames:]
-        peak_idx = int(np.argmax(conc_post))
-        ttp = np.float64((pre_bolus_frames + peak_idx) * dt)
-    else:
-        raise ValueError(f"Concentration must be 1D or 4D, got {concentration.ndim}D")
-    # NaN for out-of-range (preserves data quality info)
-    ttp_arr = np.asarray(ttp, dtype=np.float64)
-    ttp_arr[(ttp_arr < pre_bolus_frames * dt) | (ttp_arr > 60.0)] = np.nan
-    return ttp_arr
-
-
 def find_nawm_mask(
     derivatives_dir: Union[str, Path],
     subject: str,

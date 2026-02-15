@@ -592,7 +592,7 @@ class AIFDetection(BaseInterface):
         conc_data: npt.NDArray[Any],
         search_mask: npt.NDArray[Any],
         baseline_frames: int,
-        min_candidates: int = 15,
+        min_candidates: int = 20,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
         """Find initial candidate voxels via adaptive percentile thresholding.
 
@@ -627,7 +627,7 @@ class AIFDetection(BaseInterface):
         if len(valid_peaks) == 0:
             return np.empty((0, 3), dtype=int), peak_conc_map
 
-        percentiles = [99.5, 99.0, 98.5, 98.0, 97.0, 95.0]
+        percentiles = [98.0, 97.0, 95.0, 93.0, 90.0]
         candidates: Optional[npt.NDArray[Any]] = None
 
         for pct in percentiles:
