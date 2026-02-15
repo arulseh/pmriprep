@@ -1456,10 +1456,9 @@ class ComputeDSCMaps(BaseInterface):
 
         # -----------------------------------------------------------
         # Relative and absolute maps
-        # Match perf-plus: compute absolute first (clip at 500/50),
-        # then derive relative by dividing out calibration factors.
-        # This ensures the effective relative clip matches perf-plus
-        # (500/K_H/vessel_cal ≈ 14.4 for CBF, 50/... ≈ 1.44 for CBV).
+        # Both paths apply ×60 to CBF (s⁻¹ → min⁻¹) for consistent
+        # units. Absolute path additionally applies calibration
+        # factors (K_H × vessel_cal) and clips at 500/50.
         # -----------------------------------------------------------
         if absolute_permitted:
             k_h = calculate_k_h()
@@ -1472,13 +1471,13 @@ class ComputeDSCMaps(BaseInterface):
             abs_auc_raw = auc_raw / r2_star                             # mM·s
             abs_auc_corr = auc_corr / r2_star                           # mM·s
 
-            # Derive relative from absolute (matching perf-plus)
-            rel_cbf = abs_cbf / effective_cal
+            # Derive relative from absolute
+            rel_cbf = abs_cbf / effective_cal  # min⁻¹
             rel_cbv = abs_cbv / effective_cal
         else:
-            # No absolute quantification — use dimensionless clips
-            rel_cbf = np.clip(cbf, 0.0, 100.0)             # dimensionless (s⁻¹)
-            rel_cbv = np.clip(cbv, 0.0, 10.0)             # dimensionless
+            # No absolute quantification — apply ×60 for min⁻¹ units
+            rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)     # min⁻¹
+            rel_cbv = np.clip(cbv, 0.0, 10.0)              # dimensionless
 
         rel_auc_raw = auc_raw
         rel_auc_corr = auc_corr

@@ -194,12 +194,15 @@ class DSCDerivativeWriter(BaseInterface):
             "auc_raw": ("rel_auc_raw_map", "AUC raw concentration (relative)"),
             "auc_corr": ("rel_auc_corr_map", "AUC corrected concentration (relative)"),
         }
+        rel_units = {"cbf": "1/min", "cbv": "arbitrary"}
         for map_name, (attr, description) in rel_maps.items():
             if self._has_input(attr):
                 src = getattr(self.inputs, attr)
                 fname = f"{prefix}_{spatial}_desc-rel_{map_name}"
                 self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": description}
+                if map_name in rel_units:
+                    sidecar["Units"] = rel_units[map_name]
                 self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -211,12 +214,15 @@ class DSCDerivativeWriter(BaseInterface):
             "auc_raw": ("abs_auc_raw_map", "AUC raw concentration (mM·s)"),
             "auc_corr": ("abs_auc_corr_map", "AUC corrected concentration (mM·s)"),
         }
+        abs_units = {"cbf": "mL/100g/min", "cbv": "mL/100g", "auc_raw": "mM*s", "auc_corr": "mM*s"}
         for map_name, (attr, description) in abs_maps.items():
             if self._has_input(attr):
                 src = getattr(self.inputs, attr)
                 fname = f"{prefix}_{spatial}_desc-abs_{map_name}"
                 self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": description}
+                if map_name in abs_units:
+                    sidecar["Units"] = abs_units[map_name]
                 self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
