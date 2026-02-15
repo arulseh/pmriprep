@@ -26,13 +26,15 @@ from pmriprep.interfaces.dce_compute import ComputeDCEMaps
 
 
 def _get_atlas_from_bids(bids_dir: Union[str, Path], atlas_type: str = "auto") -> Optional[Path]:
-    """Get arterial atlas from BIDS sourcedata with tiered fallback.
+    """Get arterial atlas from BIDS sourcedata.
 
-    Fallback order: MCA_ACA_dil3 → CoW_dil3 → full_dil3
+    Uses the dilated full arterial mask for maximum search coverage.
+    The arterial criteria cascade (timing gates, washout checks, FWHM
+    limits, venous filtering) handles rejection of non-arterial voxels.
 
     Args:
         bids_dir: Path to BIDS dataset root.
-        atlas_type: 'auto' for tiered fallback, or specific type.
+        atlas_type: 'auto' for full_mask_dil3, or specific type.
 
     Returns:
         Path to atlas file, or None if not found.
@@ -46,13 +48,9 @@ def _get_atlas_from_bids(bids_dir: Union[str, Path], atlas_type: str = "auto") -
     if not atlas_dir.exists():
         return None
 
-    # Tiered fallback order (most specific → most general)
     if atlas_type == "auto":
         candidates = [
-            "MNI_2mm_MRA_arterial_MCA_ACA_dil3.nii.gz",
-            "MNI_2mm_MRA_arterial_CoW_mask_dil3.nii.gz",
             "MNI_2mm_MRA_arterial_full_mask_dil3.nii.gz",
-            "MNI_2mm_MRA_arterial_full_mask.nii.gz",
         ]
     else:
         candidates = [f"MNI_2mm_MRA_arterial_{atlas_type}.nii.gz"]

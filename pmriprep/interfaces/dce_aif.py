@@ -1688,7 +1688,7 @@ class AIFDetection(BaseInterface):
             if score <= 0:
                 # Fallback score based on tier (higher tier = less strict = lower score)
                 # Venous candidates (is_likely_venous=True) get additional penalty
-                base_score = max(0.1, 1.0 - (tier_used - 1) * 0.1)
+                base_score = max(0.1, round(1.0 - (tier_used - 1) * 0.1, 2))
                 if all_metrics[idx].get("is_likely_venous", False):
                     # Significant penalty for venous candidates
                     score = base_score * 0.3
@@ -1942,6 +1942,7 @@ class AIFDetection(BaseInterface):
         scores: list[float] = []
         metrics_list: list[dict[str, float]] = []
         tissue_ttp_frame: float | None = None
+        _detection_attempt: dict[str, Any] | None = None
 
         # Skip auto detection if population method requested
         if aif_method == "population":
@@ -2005,6 +2006,33 @@ class AIFDetection(BaseInterface):
 
             # Venous filtering already applied inside _find_candidates_in_mask
             # (after cluster selection). No need to duplicate here.
+
+            # ===== Quality gate: population fallback for poor detections =====
+            # Tier 6-7 candidates (score <= 0.5) lack key arterial
+            # characteristics (timing, washout, FWHM). Fall back to Parker
+            # population AIF rather than using a degraded/last-resort curve.
+            _POPULATION_FALLBACK_THRESHOLD = 0.5
+            if candidates and aif_method != "population":
+                best_score = max(scores) if scores else 0.0
+                if best_score < _POPULATION_FALLBACK_THRESHOLD:
+                    _detection_attempt = {
+                        "auto_detection_attempted": True,
+                        "auto_best_score": float(best_score),
+                        "auto_n_candidates": len(candidates),
+                        "auto_fallback_reason": (
+                            f"best quality score {best_score:.2f} < "
+                            f"{_POPULATION_FALLBACK_THRESHOLD}"
+                        ),
+                    }
+                    logger.warning(
+                        "AIF quality gate: best score %.2f < %.2f, "
+                        "falling back to Parker population AIF.",
+                        best_score,
+                        _POPULATION_FALLBACK_THRESHOLD,
+                    )
+                    candidates = []
+                    scores = []
+                    metrics_list = []
 
         # ===== Generate AIF curve =====
         aif_curve: npt.NDArray[Any]
@@ -2151,6 +2179,8 @@ class AIFDetection(BaseInterface):
             if bat_override:
                 qc_metrics["bat_override"] = True
                 qc_metrics["original_bat_seconds"] = original_bat_seconds
+            if _detection_attempt is not None:
+                qc_metrics.update(_detection_attempt)
 
         # Apply AIF scaling if requested
         if scale_aif and detection_method != "population":
