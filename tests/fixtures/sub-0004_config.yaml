@@ -11,6 +11,7 @@ dsc:
   bayesian: none
   aif_criteria: relaxed
   n_aif_candidates: 5
+  gamma_fit: true
   pre_bolus: 10
   save_k2_map: true
   use_gpu: false

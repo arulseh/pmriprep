@@ -161,7 +161,7 @@ class DSCConfig:
         - pre_bolus=10 frames
         - relaxed AIF criteria
         - n_aif_candidates=5
-        - gamma_fit=False (perf-plus GBM preset does not enable gamma-fit)
+        - gamma_fit=True (gamma-variate AIF fitting for cleaner deconvolution)
         - save_k2_map=True
 
         Returns
@@ -182,7 +182,7 @@ class DSCConfig:
             prefer_contralateral=self.prefer_contralateral,
             aif_criteria="relaxed",
             n_aif_candidates=5,
-            gamma_fit=False,
+            gamma_fit=True,
             disable_aif_fallback=self.disable_aif_fallback,
             aif_method=self.aif_method,
             lesion_mask=self.lesion_mask,
