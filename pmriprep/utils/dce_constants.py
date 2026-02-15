@@ -543,8 +543,8 @@ LENIENT_T1_RANGE: Final[tuple[float, float]] = (500.0, 2500.0)
 #: Default number of baseline frames for pre-contrast calculation
 DEFAULT_BASELINE_FRAMES: Final[int] = 5
 
-#: Default tSNR threshold for voxel inclusion
-DEFAULT_TSNR_THRESHOLD: Final[float] = 3.0
+#: Default tSNR threshold for voxel inclusion (0 = fit all brain voxels)
+DEFAULT_TSNR_THRESHOLD: Final[float] = 0.0
 
 #: Tissue density in g/mL (for unit conversions)
 TISSUE_DENSITY: Final[float] = 1.04

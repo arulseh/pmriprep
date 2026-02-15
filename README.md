@@ -180,7 +180,7 @@ dce:
     target_peak: 6.0
 
   processing:
-    tsnr_threshold: 5.0
+    tsnr_threshold: 0.0
     baseline_frames: 10
 
 # Anatomical configuration
