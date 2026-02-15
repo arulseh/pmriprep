@@ -23,44 +23,7 @@ from pmriprep.interfaces.dce import (
 from pmriprep.interfaces.dce_aif import AIFDetection
 from pmriprep.interfaces.dce_aif_qc import DCEAIFQCPlot
 from pmriprep.interfaces.dce_compute import ComputeDCEMaps
-
-
-def _get_atlas_from_bids(bids_dir: Union[str, Path], atlas_type: str = "auto") -> Optional[Path]:
-    """Get arterial atlas from BIDS sourcedata.
-
-    Uses the dilated full arterial mask for maximum search coverage.
-    The arterial criteria cascade (timing gates, washout checks, FWHM
-    limits, venous filtering) handles rejection of non-arterial voxels.
-
-    Args:
-        bids_dir: Path to BIDS dataset root.
-        atlas_type: 'auto' for full_mask_dil3, or specific type.
-
-    Returns:
-        Path to atlas file, or None if not found.
-    """
-    # Try bids_dir/sourcedata/ first (standard BIDS layout),
-    # then bids_dir.parent/sourcedata/ (when bids_dir = rawdata/)
-    bids_path = Path(bids_dir)
-    atlas_dir = bids_path / "sourcedata" / "atlases" / "mni_aif"
-    if not atlas_dir.exists():
-        atlas_dir = bids_path.parent / "sourcedata" / "atlases" / "mni_aif"
-    if not atlas_dir.exists():
-        return None
-
-    if atlas_type == "auto":
-        candidates = [
-            "MNI_2mm_MRA_arterial_full_mask_dil3.nii.gz",
-        ]
-    else:
-        candidates = [f"MNI_2mm_MRA_arterial_{atlas_type}.nii.gz"]
-
-    for candidate in candidates:
-        atlas_path = atlas_dir / candidate
-        if atlas_path.exists():
-            return atlas_path
-
-    return None
+from pmriprep.data import get_arterial_atlas
 
 
 def init_dce_preproc_wf(
@@ -694,16 +657,13 @@ def init_dce_preproc_wf(
         name="transform_atlas_to_dce",
     )
 
-    # Load arterial atlas from BIDS sourcedata with tiered fallback
-    # (like perf-plus: MCA_ACA → CoW → full)
-    atlas_file = _get_atlas_from_bids(bids_dir, "auto")
-    if atlas_file is not None:
-        transform_atlas_to_dce.inputs.atlas_file = str(atlas_file)
-    else:
+    # Load arterial atlas (bundled with pmriprep, FSL MNI152 space)
+    try:
+        transform_atlas_to_dce.inputs.atlas_file = str(get_arterial_atlas("2mm", "dil3"))
+    except FileNotFoundError:
         import warnings
         warnings.warn(
-            f"No arterial atlas found in {bids_dir}/sourcedata/atlases/mni_aif/. "
-            "AIF detection will use whole-brain search."
+            "Arterial atlas not found. AIF detection will use whole-brain search."
         )
 
     workflow.connect([

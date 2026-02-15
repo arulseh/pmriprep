@@ -211,7 +211,7 @@ def detect_bolus_arrival(
         baseline_frames: Number of initial frames for baseline estimation.
             Default is 3 to avoid early bolus contamination.
         n_consecutive: Number of consecutive frames that must all exceed
-            the 3.1-sigma threshold to count as bolus arrival. Using
+            the 3-sigma threshold to count as bolus arrival. Using
             n_consecutive >= 2 rejects isolated noise spikes common in
             preloaded acquisitions with noisy elevated baselines.
 
@@ -232,11 +232,11 @@ def detect_bolus_arrival(
     z_scores = (concentration_curve - baseline_mean) / max(baseline_std, EPSILON_CONCENTRATION)
 
     n_consecutive = max(1, n_consecutive)
-    above_threshold = z_scores > 3.1
+    above_threshold = z_scores > 3.0
 
     arrival_idx = n_baseline  # fallback
     if n_consecutive == 1:
-        # Fast path: first single frame above 3.1-sigma
+        # Fast path: first single frame above 3-sigma
         above = np.where(above_threshold)[0]
         if len(above) > 0:
             arrival_idx = int(above[0])
