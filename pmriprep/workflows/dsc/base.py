@@ -900,7 +900,7 @@ def _extract_preload_class(qc_dict):
 def _generate_motion_qc_plot(motion_params_file, out_dir, tr):
     """Generate motion QC plot from motion parameters.
 
-    Creates a two-panel figure showing raw motion parameters and
+    Creates a three-panel figure showing raw motion parameters and
     framewise displacement over time.
 
     Args:
@@ -909,7 +909,7 @@ def _generate_motion_qc_plot(motion_params_file, out_dir, tr):
         tr: Repetition time in seconds.
 
     Returns:
-        Path to the generated motion QC plot PNG.
+        Tuple of (plot_file path, motion_summary dict).
     """
     import numpy as np
     from pathlib import Path
@@ -918,8 +918,249 @@ def _generate_motion_qc_plot(motion_params_file, out_dir, tr):
     motion_params = np.loadtxt(motion_params_file)
     out_path = Path(out_dir) / "motion_qc.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plot_motion_qc(motion_params, out_path, tr=tr)
-    return str(out_path)
+    _, motion_summary = plot_motion_qc(motion_params, out_path, tr=tr)
+    return str(out_path), motion_summary
+
+
+def _generate_dsc_preprocessing_qc(
+    dsc_signal_file,
+    brain_mask_file,
+    baseline_frames,
+    bolus_arrival_frame,
+    tr,
+    subject_id="",
+    session_id="",
+):
+    """Generate DSC preprocessing QC plot.
+
+    Args:
+        dsc_signal_file: Path to motion-corrected 4D DSC signal NIfTI.
+        brain_mask_file: Path to brain mask NIfTI.
+        baseline_frames: Number of pre-bolus baseline frames.
+        bolus_arrival_frame: Frame index of bolus arrival.
+        tr: Repetition time in seconds.
+        subject_id: Subject identifier.
+        session_id: Session identifier.
+
+    Returns:
+        Tuple of (plot_file path, stats dict).
+    """
+    import nibabel as nib
+    from pmriprep.utils.dsc_qc_plots import generate_dsc_preprocessing_qc_plot
+
+    signal_img = nib.load(dsc_signal_file)
+    signal_4d = signal_img.get_fdata()
+    mask_data = nib.load(brain_mask_file).get_fdata()
+
+    plot_path, stats = generate_dsc_preprocessing_qc_plot(
+        dsc_signal_4d=signal_4d,
+        brain_mask=mask_data,
+        baseline_frames=baseline_frames,
+        bolus_arrival_frame=bolus_arrival_frame,
+        volume_tr_s=tr,
+        subject_id=subject_id,
+        session_id=session_id,
+    )
+    return plot_path, stats
+
+
+def _generate_dsc_param_maps_qc(
+    rel_cbf_file,
+    rel_cbv_file,
+    mtt_file,
+    tmax_file,
+    psr_file,
+    ttp_file,
+    brain_mask_file,
+    subject_id="",
+    session_id="",
+):
+    """Generate DSC parameter maps QC plot.
+
+    Args:
+        rel_cbf_file: Path to relative CBF map NIfTI.
+        rel_cbv_file: Path to relative CBV map NIfTI.
+        mtt_file: Path to MTT map NIfTI.
+        tmax_file: Path to Tmax map NIfTI.
+        psr_file: Path to PSR map NIfTI.
+        ttp_file: Path to TTP map NIfTI.
+        brain_mask_file: Path to brain mask NIfTI.
+        subject_id: Subject identifier.
+        session_id: Session identifier.
+
+    Returns:
+        Path to the generated QC plot PNG.
+    """
+    import nibabel as nib
+    from pmriprep.utils.dsc_qc_plots import generate_dsc_parameter_maps_qc_plot
+
+    mask_data = nib.load(brain_mask_file).get_fdata()
+
+    param_maps = {}
+    for name, filepath in [
+        ("rCBF", rel_cbf_file),
+        ("rCBV", rel_cbv_file),
+        ("MTT", mtt_file),
+        ("Tmax", tmax_file),
+        ("PSR", psr_file),
+        ("TTP", ttp_file),
+    ]:
+        if filepath:
+            from pathlib import Path as _P
+            if _P(filepath).exists():
+                param_maps[name] = nib.load(filepath).get_fdata()
+
+    plot_path = generate_dsc_parameter_maps_qc_plot(
+        param_maps=param_maps,
+        brain_mask=mask_data,
+        subject_id=subject_id,
+        session_id=session_id,
+    )
+    return plot_path
+
+
+def _generate_dsc_leakage_qc(
+    k2_map_file,
+    auc_raw_file,
+    auc_corr_file,
+    auc_diff_file,
+    brain_mask_file,
+    concentration_file=None,
+    corrected_concentration_file=None,
+    psr_file=None,
+    tr=1.5,
+    subject_id="",
+    session_id="",
+):
+    """Generate DSC leakage correction QC plot.
+
+    Args:
+        k2_map_file: Path to K2 map NIfTI.
+        auc_raw_file: Path to AUC raw map NIfTI.
+        auc_corr_file: Path to AUC corrected map NIfTI.
+        auc_diff_file: Path to AUC diff map NIfTI.
+        brain_mask_file: Path to brain mask NIfTI.
+        concentration_file: Path to pre-K2 4D concentration NIfTI (optional).
+        corrected_concentration_file: Path to post-K2 4D concentration NIfTI (optional).
+        psr_file: Path to PSR map NIfTI (optional).
+        tr: Repetition time in seconds.
+        subject_id: Subject identifier.
+        session_id: Session identifier.
+
+    Returns:
+        Path to the generated QC plot PNG, or empty string if K2 unavailable.
+    """
+    from pathlib import Path as _P
+
+    # Skip if no K2 map
+    if not k2_map_file or not _P(k2_map_file).exists():
+        return ""
+
+    import nibabel as nib
+    from pmriprep.utils.dsc_qc_plots import generate_dsc_leakage_qc_plot
+
+    k2_data = nib.load(k2_map_file).get_fdata()
+    auc_raw_data = nib.load(auc_raw_file).get_fdata()
+    auc_corr_data = nib.load(auc_corr_file).get_fdata()
+    auc_diff_data = nib.load(auc_diff_file).get_fdata()
+    mask_data = nib.load(brain_mask_file).get_fdata()
+
+    conc_raw_4d = None
+    if concentration_file and _P(concentration_file).exists():
+        conc_raw_4d = nib.load(concentration_file).get_fdata()
+
+    conc_corr_4d = None
+    if corrected_concentration_file and _P(corrected_concentration_file).exists():
+        conc_corr_4d = nib.load(corrected_concentration_file).get_fdata()
+
+    psr_data = None
+    if psr_file and _P(psr_file).exists():
+        psr_data = nib.load(psr_file).get_fdata()
+
+    plot_path = generate_dsc_leakage_qc_plot(
+        k2_map=k2_data,
+        auc_raw=auc_raw_data,
+        auc_corr=auc_corr_data,
+        auc_diff=auc_diff_data,
+        brain_mask=mask_data,
+        conc_raw_4d=conc_raw_4d,
+        conc_corr_4d=conc_corr_4d,
+        psr=psr_data,
+        tr=tr,
+        subject_id=subject_id,
+        session_id=session_id,
+    )
+    return plot_path
+
+
+def _generate_dsc_fit_qc(
+    qc_fit_data_file: str,
+    brain_mask_file: str,
+    cbf_file: str,
+    subject_id: str,
+    session_id: str,
+) -> str:
+    """Generate DSC fit QC plot from saved QC fit data JSON.
+
+    Args:
+        qc_fit_data_file: Path to QC fit data JSON from ComputeDSCMaps.
+        brain_mask_file: Path to brain mask NIfTI.
+        cbf_file: Path to relative CBF map NIfTI.
+        subject_id: Subject identifier.
+        session_id: Session identifier.
+
+    Returns:
+        Path to the generated QC plot PNG, or "" if unavailable.
+    """
+    import json
+    from pathlib import Path
+
+    import nibabel as nib
+    import numpy as np
+
+    if not qc_fit_data_file or not Path(qc_fit_data_file).exists():
+        return ""
+
+    with open(qc_fit_data_file) as f:
+        fit_data = json.load(f)
+
+    tissue_conc = np.array(fit_data["tissue_concentration"])
+    model_pred = np.array(fit_data["model_prediction"])
+    aif_curve = np.array(fit_data["aif"])
+    time_points = np.array(fit_data["time_points"])
+    voxel = tuple(fit_data["voxel"])
+    voxel_cbf = fit_data["voxel_cbf"]
+    r_squared = fit_data.get("r_squared", 0.0)
+
+    # Load CBF map for spatial context panel
+    cbf_img = nib.load(cbf_file)
+    cbf_data = cbf_img.get_fdata()
+    mask_img = nib.load(brain_mask_file)
+    mask_data = mask_img.get_fdata() > 0
+
+    out_dir = Path.cwd() / "qc"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = str(
+        out_dir / f"sub-{subject_id}_ses-{session_id}_dsc_fit_qc.png"
+    )
+
+    from pmriprep.utils.dsc_qc_plots import generate_dsc_fit_qc_plot
+
+    plot_path, _ = generate_dsc_fit_qc_plot(
+        tissue_concentration=tissue_conc,
+        model_prediction=model_pred,
+        aif=aif_curve,
+        time_points=time_points,
+        cbf_map=cbf_data,
+        brain_mask=mask_data,
+        qc_voxel=voxel,
+        qc_voxel_cbf=voxel_cbf,
+        r_squared=r_squared,
+        output_path=out_path,
+        subject_id=subject_id,
+        session_id=session_id,
+    )
+    return plot_path
 
 
 def _smooth_maps(map_files, brain_mask_file, fwhm):
@@ -962,6 +1203,9 @@ def _merge_qc_metrics(
     deconv_qc,
     registration_qc,
     normalization_factor,
+    motion_summary=None,
+    aif_metrics=None,
+    preprocessing_stats=None,
 ):
     """Merge all QC metrics into a single dictionary.
 
@@ -972,18 +1216,33 @@ def _merge_qc_metrics(
         deconv_qc: Deconvolution QC metrics.
         registration_qc: Registration QC metrics.
         normalization_factor: CBV normalization factor.
+        motion_summary: Motion summary dict from plot_motion_qc (optional).
+        aif_metrics: AIF metrics dict from AIFQCPlot (optional).
+        preprocessing_stats: Preprocessing stats dict (optional).
 
     Returns:
         Combined QC metrics dictionary.
     """
+    motion_data = motion_qc if motion_qc else {}
+    if motion_summary:
+        motion_data = dict(motion_data) if motion_data else {}
+        motion_data["motion_summary"] = motion_summary
+
+    aif_data = aif_qc if aif_qc else {}
+    if aif_metrics:
+        aif_data = dict(aif_data) if aif_data else {}
+        aif_data["aif_metrics"] = aif_metrics
+
     merged = {
-        "motion": motion_qc if motion_qc else {},
+        "motion": motion_data,
         "preload": preload_qc if preload_qc else {},
-        "aif": aif_qc if aif_qc else {},
+        "aif": aif_data,
         "deconvolution": deconv_qc if deconv_qc else {},
         "registration": registration_qc if registration_qc else {},
         "normalization_factor": normalization_factor,
     }
+    if preprocessing_stats:
+        merged["preprocessing"] = preprocessing_stats
     return merged
 
 
@@ -1312,6 +1571,11 @@ def init_dsc_preproc_wf(
                 "lesion_mask_dsc",
                 # Motion QC
                 "motion_qc_plot",
+                # DSC QC plots
+                "dsc_preprocessing_qc_plot",
+                "dsc_param_maps_qc_plot",
+                "dsc_fit_qc_plot",
+                "dsc_leakage_qc_plot",
             ]
         ),
         name="outputnode",
@@ -1347,7 +1611,7 @@ def init_dsc_preproc_wf(
     motion_qc_plot = pe.Node(
         niu.Function(
             input_names=["motion_params_file", "out_dir", "tr"],
-            output_names=["plot_file"],
+            output_names=["plot_file", "motion_summary"],
             function=_generate_motion_qc_plot,
         ),
         name="motion_qc_plot",
@@ -1720,6 +1984,9 @@ def init_dsc_preproc_wf(
                 "deconv_qc",
                 "registration_qc",
                 "normalization_factor",
+                "motion_summary",
+                "aif_metrics",
+                "preprocessing_stats",
             ],
             output_names=["merged_qc"],
             function=_merge_qc_metrics,
@@ -1751,7 +2018,83 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 9c: Transform structural underlays to DSC Space
+    # Node 9c: DSC Preprocessing QC Plot
+    # -------------------------------------------------------------------
+    dsc_preproc_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "dsc_signal_file", "brain_mask_file",
+                "baseline_frames", "bolus_arrival_frame",
+                "tr", "subject_id", "session_id",
+            ],
+            output_names=["plot_file", "stats"],
+            function=_generate_dsc_preprocessing_qc,
+        ),
+        name="dsc_preproc_qc",
+    )
+    dsc_preproc_qc.inputs.baseline_frames = config.pre_bolus
+    dsc_preproc_qc.inputs.bolus_arrival_frame = config.pre_bolus  # default, may be overridden
+    dsc_preproc_qc.inputs.subject_id = subject_id
+    dsc_preproc_qc.inputs.session_id = session_id or ""
+
+    # -------------------------------------------------------------------
+    # Node 9d: DSC Parameter Maps QC Plot
+    # -------------------------------------------------------------------
+    dsc_param_maps_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "rel_cbf_file", "rel_cbv_file", "mtt_file",
+                "tmax_file", "psr_file", "ttp_file",
+                "brain_mask_file", "subject_id", "session_id",
+            ],
+            output_names=["plot_file"],
+            function=_generate_dsc_param_maps_qc,
+        ),
+        name="dsc_param_maps_qc",
+    )
+    dsc_param_maps_qc.inputs.subject_id = subject_id
+    dsc_param_maps_qc.inputs.session_id = session_id or ""
+
+    # -------------------------------------------------------------------
+    # Node 9e: DSC Leakage Correction QC Plot (conditional on K2)
+    # -------------------------------------------------------------------
+    dsc_leakage_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "k2_map_file", "auc_raw_file", "auc_corr_file",
+                "auc_diff_file", "brain_mask_file",
+                "concentration_file", "corrected_concentration_file",
+                "psr_file", "tr", "subject_id", "session_id",
+            ],
+            output_names=["plot_file"],
+            function=_generate_dsc_leakage_qc,
+        ),
+        name="dsc_leakage_qc",
+    )
+    dsc_leakage_qc.inputs.subject_id = subject_id
+    dsc_leakage_qc.inputs.session_id = session_id or ""
+
+    # -------------------------------------------------------------------
+    # Node 9e2: DSC Fit QC Plot (parametric methods only)
+    # -------------------------------------------------------------------
+    dsc_fit_qc = None
+    if config.method in ("vascular", "cpi"):
+        dsc_fit_qc = pe.Node(
+            niu.Function(
+                input_names=[
+                    "qc_fit_data_file", "brain_mask_file", "cbf_file",
+                    "subject_id", "session_id",
+                ],
+                output_names=["plot_file"],
+                function=_generate_dsc_fit_qc,
+            ),
+            name="dsc_fit_qc",
+        )
+        dsc_fit_qc.inputs.subject_id = subject_id
+        dsc_fit_qc.inputs.session_id = session_id or ""
+
+    # -------------------------------------------------------------------
+    # Node 9f: Transform structural underlays to DSC Space
     # register.out_matrix is T1w→DSC, so we use it directly.
     # Underlays are conditional based on config.underlays list.
     # Uses Function interface to handle undefined inputs gracefully.
@@ -2050,6 +2393,51 @@ def init_dsc_preproc_wf(
         (inputnode, aif_qc_plot, [("tr", "tr")]),
     ])
 
+    # DSC Preprocessing QC
+    workflow.connect([
+        (motion_correct, dsc_preproc_qc, [("out_file", "dsc_signal_file")]),
+        (hdbet_dsc, dsc_preproc_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
+        (inputnode, dsc_preproc_qc, [("tr", "tr")]),
+    ])
+
+    # DSC Parameter Maps QC
+    workflow.connect([
+        (compute_maps, dsc_param_maps_qc, [
+            ("out_rel_cbf", "rel_cbf_file"),
+            ("out_rel_cbv", "rel_cbv_file"),
+            ("out_mtt", "mtt_file"),
+            ("out_tmax", "tmax_file"),
+            ("out_psr", "psr_file"),
+            ("out_ttp", "ttp_file"),
+        ]),
+        (hdbet_dsc, dsc_param_maps_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
+    ])
+
+    # DSC Leakage Correction QC
+    workflow.connect([
+        (compute_maps, dsc_leakage_qc, [
+            ("out_k2", "k2_map_file"),
+            ("out_auc_raw", "auc_raw_file"),
+            ("out_auc_corr", "auc_corr_file"),
+            ("out_auc_diff", "auc_diff_file"),
+            ("out_psr", "psr_file"),
+        ]),
+        (hdbet_dsc, dsc_leakage_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
+        (signal_to_conc, dsc_leakage_qc, [("concentration_file", "concentration_file")]),
+        (preload_correct, dsc_leakage_qc, [("corrected_concentration_file", "corrected_concentration_file")]),
+        (inputnode, dsc_leakage_qc, [("tr", "tr")]),
+    ])
+
+    # DSC Fit QC (parametric methods only)
+    if dsc_fit_qc is not None:
+        workflow.connect([
+            (compute_maps, dsc_fit_qc, [
+                ("out_qc_fit_data", "qc_fit_data_file"),
+                ("out_rel_cbf", "cbf_file"),
+            ]),
+            (hdbet_dsc, dsc_fit_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
+        ])
+
     # -------------------------------------------------------------------
     # Lesion mask selection and transform (conditional)
     # -------------------------------------------------------------------
@@ -2218,6 +2606,9 @@ def init_dsc_preproc_wf(
         (compute_maps, merge_qc, [("qc_metrics", "deconv_qc")]),
         (register, merge_qc, [("qc_metrics", "registration_qc")]),
         (normalize, merge_qc, [("normalization_factor", "normalization_factor")]),
+        (motion_qc_plot, merge_qc, [("motion_summary", "motion_summary")]),
+        (aif_qc_plot, merge_qc, [("out_aif_metrics", "aif_metrics")]),
+        (dsc_preproc_qc, merge_qc, [("stats", "preprocessing_stats")]),
     ])
 
     # Provenance logging
@@ -2318,6 +2709,18 @@ def init_dsc_preproc_wf(
         ]),
         # Motion QC plot
         (motion_qc_plot, outputnode, [("plot_file", "motion_qc_plot")]),
+        # DSC QC plots
+        (dsc_preproc_qc, outputnode, [("plot_file", "dsc_preprocessing_qc_plot")]),
+        (dsc_param_maps_qc, outputnode, [("plot_file", "dsc_param_maps_qc_plot")]),
+        (dsc_leakage_qc, outputnode, [("plot_file", "dsc_leakage_qc_plot")]),
+    ])
+
+    if dsc_fit_qc is not None:
+        workflow.connect([
+            (dsc_fit_qc, outputnode, [("plot_file", "dsc_fit_qc_plot")]),
+        ])
+
+    workflow.connect([
         # QC metrics
         (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
     ])

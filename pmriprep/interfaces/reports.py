@@ -38,6 +38,12 @@ class GenerateReportInputSpec(BaseInterfaceInputSpec):
     pk_modeling_qc_plot = traits.Str(desc="PK modeling QC plot PNG path")
     pk_param_maps_qc_plot = traits.Str(desc="PK parameter maps QC plot PNG path")
 
+    # DSC QC plots
+    dsc_preprocessing_qc_plot = traits.Str(desc="DSC preprocessing QC plot PNG path")
+    dsc_param_maps_qc_plot = traits.Str(desc="DSC parameter maps QC plot PNG path")
+    dsc_fit_qc_plot = traits.Str(desc="DSC fit QC plot PNG path (parametric methods only)")
+    dsc_leakage_qc_plot = traits.Str(desc="DSC leakage correction QC plot PNG path")
+
     # HD-GLIO segmentation filmstrips
     seg_filmstrip_postcon = traits.Str(desc="Tumor segmentation on T1w postcon filmstrip PNG path")
     seg_filmstrip_flair = traits.Str(desc="Tumor segmentation on FLAIR filmstrip PNG path")
@@ -151,6 +157,26 @@ class GenerateReport(BaseInterface):
             if Path(self.inputs.pk_param_maps_qc_plot).exists():
                 pk_param_maps_qc_plot = self.inputs.pk_param_maps_qc_plot
 
+        dsc_preprocessing_qc_plot = None
+        if isdefined(self.inputs.dsc_preprocessing_qc_plot) and self.inputs.dsc_preprocessing_qc_plot:
+            if Path(self.inputs.dsc_preprocessing_qc_plot).exists():
+                dsc_preprocessing_qc_plot = self.inputs.dsc_preprocessing_qc_plot
+
+        dsc_param_maps_qc_plot = None
+        if isdefined(self.inputs.dsc_param_maps_qc_plot) and self.inputs.dsc_param_maps_qc_plot:
+            if Path(self.inputs.dsc_param_maps_qc_plot).exists():
+                dsc_param_maps_qc_plot = self.inputs.dsc_param_maps_qc_plot
+
+        dsc_fit_qc_plot = None
+        if isdefined(self.inputs.dsc_fit_qc_plot) and self.inputs.dsc_fit_qc_plot:
+            if Path(self.inputs.dsc_fit_qc_plot).exists():
+                dsc_fit_qc_plot = self.inputs.dsc_fit_qc_plot
+
+        dsc_leakage_qc_plot = None
+        if isdefined(self.inputs.dsc_leakage_qc_plot) and self.inputs.dsc_leakage_qc_plot:
+            if Path(self.inputs.dsc_leakage_qc_plot).exists():
+                dsc_leakage_qc_plot = self.inputs.dsc_leakage_qc_plot
+
         # HD-GLIO filmstrips
         seg_filmstrip_postcon = None
         if isdefined(self.inputs.seg_filmstrip_postcon) and self.inputs.seg_filmstrip_postcon:
@@ -229,6 +255,10 @@ class GenerateReport(BaseInterface):
             preprocessing_qc_plot=preprocessing_qc_plot,
             pk_modeling_qc_plot=pk_modeling_qc_plot,
             pk_param_maps_qc_plot=pk_param_maps_qc_plot,
+            dsc_preprocessing_qc_plot=dsc_preprocessing_qc_plot,
+            dsc_param_maps_qc_plot=dsc_param_maps_qc_plot,
+            dsc_fit_qc_plot=dsc_fit_qc_plot,
+            dsc_leakage_qc_plot=dsc_leakage_qc_plot,
         )
 
         return runtime

@@ -53,6 +53,10 @@ def generate_qc_report(
     preprocessing_qc_plot: Optional[str] = None,
     pk_modeling_qc_plot: Optional[str] = None,
     pk_param_maps_qc_plot: Optional[str] = None,
+    dsc_preprocessing_qc_plot: Optional[str] = None,
+    dsc_param_maps_qc_plot: Optional[str] = None,
+    dsc_fit_qc_plot: Optional[str] = None,
+    dsc_leakage_qc_plot: Optional[str] = None,
 ) -> str:
     """Generate self-contained HTML QC report with embedded images.
 
@@ -109,6 +113,10 @@ def generate_qc_report(
         ("preprocessing_qc", preprocessing_qc_plot),
         ("pk_modeling_qc", pk_modeling_qc_plot),
         ("pk_param_maps_qc", pk_param_maps_qc_plot),
+        ("dsc_preprocessing_qc", dsc_preprocessing_qc_plot),
+        ("dsc_param_maps_qc", dsc_param_maps_qc_plot),
+        ("dsc_fit_qc", dsc_fit_qc_plot),
+        ("dsc_leakage_qc", dsc_leakage_qc_plot),
     ]:
         if path and Path(path).exists():
             images[name] = image_to_base64(path)
@@ -177,15 +185,68 @@ def _generate_fallback_report(
     image_sections = []
 
     if "motion" in images:
+        motion_metrics_html = ""
+        motion_data = qc_metrics.get("motion", {})
+        if isinstance(motion_data, dict):
+            motion_summary = motion_data.get("motion_summary", {})
+            if isinstance(motion_summary, dict) and motion_summary:
+                boxes = []
+                for label, key, fmt in [
+                    ("Mean FD", "fd_mean", "{:.3f} mm"),
+                    ("Max FD", "fd_max", "{:.3f} mm"),
+                    ("Outlier %", "pct_outliers", "{:.1f}%"),
+                ]:
+                    val = motion_summary.get(key)
+                    if val is not None:
+                        boxes.append(
+                            f'<div class="metric"><div class="metric-label">{label}</div>'
+                            f'<div class="metric-value">{fmt.format(val)}</div></div>'
+                        )
+                if boxes:
+                    motion_metrics_html = f'<div class="metrics">{"".join(boxes)}</div>'
         image_sections.append(f'''
         <div class="section">
             <h2>Motion Quality Control</h2>
+            {motion_metrics_html}
             <img src="data:image/png;base64,{images["motion"]}" alt="Motion QC">
         </div>
         ''')
 
     if "aif_curve" in images or "aif_location" in images:
-        aif_html = '<div class="section"><h2>Arterial Input Function (AIF) Detection</h2><div class="plot-grid">'
+        # AIF metrics boxes
+        aif_metrics_html = ""
+        aif_data = qc_metrics.get("aif", {})
+        if isinstance(aif_data, dict):
+            aif_metrics = aif_data.get("aif_metrics", {})
+            if isinstance(aif_metrics, dict) and aif_metrics:
+                boxes = []
+                detection = aif_metrics.get("detection_level", "")
+                if detection:
+                    # Color-coded detection badge
+                    det_colors = {"atlas": "#228833", "relaxed": "#CCBB44", "synthetic": "#EE6677"}
+                    det_color = det_colors.get(detection, "#999999")
+                    boxes.append(
+                        f'<div class="metric" style="border-left: 4px solid {det_color};">'
+                        f'<div class="metric-label">Detection</div>'
+                        f'<div class="metric-value">{detection}</div></div>'
+                    )
+                for label, key, fmt in [
+                    ("Peak Conc", "peak_conc", "{:.2f}"),
+                    ("TTP", "ttp", "{:.1f} s"),
+                    ("FWHM", "fwhm", "{:.1f} s"),
+                    ("BRR", "brr", "{:.1f}%"),
+                    ("PSR", "psr", "{:.1f}%"),
+                ]:
+                    val = aif_metrics.get(key)
+                    if val is not None:
+                        boxes.append(
+                            f'<div class="metric"><div class="metric-label">{label}</div>'
+                            f'<div class="metric-value">{fmt.format(val)}</div></div>'
+                        )
+                if boxes:
+                    aif_metrics_html = f'<div class="metrics">{"".join(boxes)}</div>'
+
+        aif_html = f'<div class="section"><h2>Arterial Input Function (AIF) Detection</h2>{aif_metrics_html}<div class="plot-grid">'
         if "aif_curve" in images:
             aif_html += f'<div><img src="data:image/png;base64,{images["aif_curve"]}" alt="AIF Curve"></div>'
         if "aif_location" in images:
@@ -301,6 +362,38 @@ def _generate_fallback_report(
         <div class="section">
             <h2>PK Parameter Maps</h2>
             <img src="data:image/png;base64,{images["pk_param_maps_qc"]}" alt="PK Parameter Maps QC">
+        </div>
+        ''')
+
+    if "dsc_preprocessing_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>DSC Preprocessing QC</h2>
+            <img src="data:image/png;base64,{images["dsc_preprocessing_qc"]}" alt="DSC Preprocessing QC">
+        </div>
+        ''')
+
+    if "dsc_param_maps_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>DSC Parameter Maps</h2>
+            <img src="data:image/png;base64,{images["dsc_param_maps_qc"]}" alt="DSC Parameter Maps QC">
+        </div>
+        ''')
+
+    if "dsc_fit_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>Deconvolution Fit QC</h2>
+            <img src="data:image/png;base64,{images["dsc_fit_qc"]}" alt="DSC Fit QC">
+        </div>
+        ''')
+
+    if "dsc_leakage_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>Leakage Correction QC</h2>
+            <img src="data:image/png;base64,{images["dsc_leakage_qc"]}" alt="DSC Leakage QC">
         </div>
         ''')
 

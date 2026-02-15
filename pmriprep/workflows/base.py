@@ -1297,6 +1297,10 @@ def init_pmriprep_wf(
                 ("outputnode.aif_curve_plot", "aif_curve_plot"),
                 ("outputnode.aif_location_plot", "aif_location_plot"),
                 ("outputnode.registration_filmstrip", "registration_filmstrip"),
+                ("outputnode.dsc_preprocessing_qc_plot", "dsc_preprocessing_qc_plot"),
+                ("outputnode.dsc_param_maps_qc_plot", "dsc_param_maps_qc_plot"),
+                ("outputnode.dsc_fit_qc_plot", "dsc_fit_qc_plot"),
+                ("outputnode.dsc_leakage_qc_plot", "dsc_leakage_qc_plot"),
             ]),
         ])
 

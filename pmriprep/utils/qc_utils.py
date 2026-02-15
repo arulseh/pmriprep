@@ -483,7 +483,7 @@ def plot_motion_qc(
     tr: float = 1.0,
     title: Optional[str] = None,
     radius: float = 50.0,
-) -> Path:
+) -> tuple[Path, dict[str, Any]]:
     """Create a 3-panel motion QC plot matching perf-plus layout.
 
     Generates a three-panel figure showing:
@@ -502,7 +502,9 @@ def plot_motion_qc(
         radius: Head radius in mm for FD calculation (default 50.0)
 
     Returns:
-        Path to the saved figure
+        Tuple of (path to saved figure, motion metrics dict with
+        ``fd_mean``, ``fd_max``, ``n_outliers``, ``pct_outliers``,
+        ``fd_threshold``).
 
     Raises:
         ValueError: If motion_params has wrong shape
@@ -605,4 +607,14 @@ def plot_motion_qc(
     fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    return output_path
+    # Build motion metrics dict
+    n_outliers = int(np.sum(outlier_mask))
+    motion_metrics: dict[str, Any] = {
+        "fd_mean": round(float(np.mean(fd)), 3),
+        "fd_max": round(max_fd, 3),
+        "n_outliers": n_outliers,
+        "pct_outliers": round(100.0 * n_outliers / n_frames, 1),
+        "fd_threshold": fd_threshold,
+    }
+
+    return output_path, motion_metrics

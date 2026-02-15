@@ -5,8 +5,11 @@ perfusion parameter maps (CBF, CBV, MTT, Tmax, PSR, PH) from
 concentration curves and AIF using various deconvolution methods.
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Literal, Optional
+
+logger = logging.getLogger("nipype.interface")
 
 import numpy as np
 import numpy.typing as npt
@@ -414,6 +417,9 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
 
     # Gating flag
     absolute_permitted = traits.Bool(desc="Whether absolute quantification gating passed")
+
+    # QC fit data (parametric methods only)
+    out_qc_fit_data = File(desc="JSON with QC voxel fit data for fit QC plot")
 
     # Optional extras
     out_delay = File(desc="Delay map (only for cSVD method)")
@@ -983,6 +989,129 @@ class ComputeDSCMaps(BaseInterface):
 
         return cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map, cbf_std_map, cbv_std_map
 
+    def _save_qc_fit_data(
+        self,
+        cbf_map: npt.NDArray[Any],
+        conc_data: npt.NDArray[Any],
+        aif: npt.NDArray[Any],
+        mask_bool: npt.NDArray[np.bool_],
+        dt: float,
+        method: str,
+        bayesian: str,
+        mcmc_samples: int,
+        cpi_control_points: int,
+    ) -> None:
+        """Select a QC voxel and save its fit data as JSON.
+
+        The QC voxel is chosen near the median CBF in the eroded brain mask.
+        Its tissue curve is re-fit to produce the model prediction, which
+        is saved alongside the measured concentration and AIF for the
+        fit QC plot.
+
+        Args:
+            cbf_map: 3D relative CBF map (masked).
+            conc_data: 4D concentration data.
+            aif: 1D AIF concentration curve.
+            mask_bool: 3D boolean brain mask.
+            dt: Temporal resolution in seconds.
+            method: Deconvolution method ('vascular' or 'cpi').
+            bayesian: Bayesian method ('none', 'map', 'vi', 'mcmc').
+            mcmc_samples: Number of MCMC samples.
+            cpi_control_points: Number of CPI control points (0=auto).
+        """
+        import json
+        from scipy.ndimage import binary_erosion  # type: ignore[import-untyped]
+        from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
+        from pmriprep.models.dsc import (
+            VascularModel,
+            CPIModel,
+            fit_dsc_model,
+            estimate_bolus_duration,
+            select_n_control_points,
+        )
+
+        try:
+            qc_voxel = _select_dsc_qc_voxel(cbf_map, mask_bool, binary_erosion)
+            x, y, z = qc_voxel
+            tissue_curve = conc_data[x, y, z, :].astype(np.float64)
+
+            if np.max(np.abs(tissue_curve)) < EPSILON_CONCENTRATION:
+                return
+
+            n_timepoints = conc_data.shape[3]
+            time_points = np.arange(n_timepoints, dtype=np.float64) * dt
+
+            # Build model instance
+            model_instance: Any
+            if method == "vascular":
+                model_instance = VascularModel()
+            else:
+                bolus_duration_frames = estimate_bolus_duration(aif)
+                n_cp = cpi_control_points
+                if n_cp == 0:
+                    n_cp = select_n_control_points(bolus_duration_frames, dt)
+                t_span = float(time_points[-1]) * 0.9 if len(time_points) > 1 else 30.0
+                model_instance = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+
+            # Fit the QC voxel
+            if bayesian == "none" and method == "cpi":
+                from pmriprep.models.dsc.cpi import _fit_cpi_simple
+                result = _fit_cpi_simple(model_instance, tissue_curve, aif, time_points)
+            elif bayesian == "none":
+                result = fit_dsc_model(
+                    model=model_instance,
+                    concentration=tissue_curve,
+                    aif=aif,
+                    time_points=time_points,
+                    method="map",
+                    compute_uncertainties=False,
+                )
+            else:
+                result = fit_dsc_model(
+                    model=model_instance,
+                    concentration=tissue_curve,
+                    aif=aif,
+                    time_points=time_points,
+                    method=bayesian,
+                    mcmc_samples=mcmc_samples,
+                    compute_uncertainties=False,
+                )
+
+            if result is None:
+                return
+
+            # Compute model prediction: convolve fitted residue with AIF
+            model_prediction: npt.NDArray[Any]
+            if result.fitted_residue is not None:
+                model_prediction = np.convolve(
+                    aif, result.fitted_residue, mode="full"
+                )[:n_timepoints] * dt
+            else:
+                return
+
+            # Save as JSON
+            base_path = self._gen_outfilename("_qc_fit_data")
+            # _gen_outfilename appends .nii.gz; replace with .json
+            qc_fit_path = base_path.replace(".nii.gz", ".json")
+            qc_fit_dict = {
+                "voxel": [x, y, z],
+                "voxel_cbf": float(cbf_map[x, y, z]),
+                "r_squared": float(result.r_squared) if result.r_squared else 0.0,
+                "method": method,
+                "tissue_concentration": tissue_curve.tolist(),
+                "model_prediction": model_prediction.tolist(),
+                "aif": aif.tolist(),
+                "time_points": time_points.tolist(),
+            }
+
+            with open(qc_fit_path, "w") as f:
+                json.dump(qc_fit_dict, f, indent=2)
+
+            self._results["out_qc_fit_data"] = qc_fit_path
+
+        except Exception as e:
+            logger.warning(f"Failed to generate QC fit data: {e}")
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DSC map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
@@ -1391,6 +1520,13 @@ class ComputeDSCMaps(BaseInterface):
             if cth_map is not None:  # type: ignore[possibly-undefined]
                 cth_map = np.where(mask_bool, cth_map, 0.0)
                 self._results["out_cth"] = _save_map(cth_map, "_cth")
+
+        # Save QC fit data for parametric methods (vascular/cpi)
+        if method in ("vascular", "cpi"):
+            self._save_qc_fit_data(
+                rel_cbf, conc_data, aif, mask_bool, dt, method,
+                bayesian, mcmc_samples, cpi_control_points,
+            )
 
         # Save Bayesian uncertainty maps
         if bayesian != "none":

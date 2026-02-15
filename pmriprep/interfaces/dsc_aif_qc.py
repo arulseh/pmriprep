@@ -71,6 +71,7 @@ class AIFQCPlotOutputSpec(TraitedSpec):
 
     out_aif_plot = File(exists=True, desc="AIF curve QC plot PNG")
     out_aif_location = File(exists=True, desc="AIF location overlay PNG")
+    out_aif_metrics = traits.Dict(desc="AIF quality metrics for HTML report")
 
 
 class AIFQCPlot(BaseInterface):
@@ -119,9 +120,34 @@ class AIFQCPlot(BaseInterface):
             qc, sub, ses, aif_location_path,
         )
 
+        # Build AIF metrics dict for HTML report
+        detection_level = qc.get("detection_level", "unknown")
+        peak_conc = float(np.max(aif_curve))
+        ttp_s = qc.get("best_ttp", None)
+        fwhm = qc.get("best_fwhm", float("nan"))
+        arrival_s = qc.get("arrival_time_seconds", None)
+        brr = qc.get("best_brr", float("nan"))
+        psr_val = qc.get("best_psr", float("nan"))
+
+        aif_metrics: dict[str, Any] = {
+            "detection_level": detection_level,
+            "peak_conc": round(peak_conc, 2),
+        }
+        if ttp_s is not None:
+            aif_metrics["ttp"] = round(ttp_s, 1)
+        if not np.isnan(fwhm):
+            aif_metrics["fwhm"] = round(fwhm, 1)
+        if arrival_s is not None:
+            aif_metrics["arrival"] = round(arrival_s, 1)
+        if not np.isnan(brr):
+            aif_metrics["brr"] = round(brr, 1)
+        if not np.isnan(psr_val):
+            aif_metrics["psr"] = round(psr_val, 1)
+
         self._results = {
             "out_aif_plot": aif_plot_path,
             "out_aif_location": aif_location_path,
+            "out_aif_metrics": aif_metrics,
         }
 
         return runtime
@@ -205,64 +231,6 @@ class AIFQCPlot(BaseInterface):
             sub_label = f"sub-{subject_id}" if subject_id else ""
             ses_label = f" | ses-{session_id}" if session_id else ""
             ax.set_title(f"{sub_label}{ses_label} | DSC AIF Quality", fontsize=12)
-
-            # Metrics text box
-            detection_level = qc.get("detection_level", "unknown")
-            peak_conc = float(np.max(aif_curve))
-            fwhm = qc.get("best_fwhm", float("nan"))
-            brr = qc.get("best_brr", float("nan"))
-            psr = qc.get("best_psr", float("nan"))
-
-            metrics_lines = [
-                f"Detection: {detection_level}",
-                f"Peak conc: {peak_conc:.2f}",
-            ]
-            if ttp_s is not None:
-                metrics_lines.append(f"TTP: {ttp_s:.1f}s")
-            if not np.isnan(fwhm):
-                metrics_lines.append(f"FWHM: {fwhm:.1f}s")
-            if arrival_s is not None:
-                metrics_lines.append(f"Arrival: {arrival_s:.1f}s")
-            if not np.isnan(brr):
-                metrics_lines.append(f"BRR: {brr:.1f}%")
-            if not np.isnan(psr):
-                metrics_lines.append(f"PSR: {psr:.1f}%")
-
-            metrics_text = "\n".join(metrics_lines)
-            props = dict(boxstyle="round,pad=0.4", facecolor="wheat", alpha=0.85)
-            ax.text(
-                0.02, 0.97, metrics_text,
-                transform=ax.transAxes, fontsize=8,
-                verticalalignment="top", fontfamily="monospace",
-                bbox=props,
-            )
-
-            # Recommendation badge (NiPreps-style)
-            # Map detection level to recommendation action
-            from pmriprep.utils.qc_standards import QCAction, get_status_color, QCStatus
-            level_to_status = {
-                "atlas": QCStatus.PASS,
-                "relaxed": QCStatus.WARN,
-                "synthetic": QCStatus.FAIL,
-                "unknown": QCStatus.UNKNOWN,
-            }
-            level_to_action = {
-                "atlas": QCAction.INCLUDE,
-                "relaxed": QCAction.REVIEW,
-                "synthetic": QCAction.EXCLUDE,
-                "unknown": QCAction.REVIEW,
-            }
-            status = level_to_status.get(detection_level, QCStatus.UNKNOWN)
-            action = level_to_action.get(detection_level, QCAction.REVIEW)
-            badge_color = get_status_color(status)
-            badge_text = f"[{action.upper()}]"
-            ax.text(
-                0.98, 0.97, badge_text,
-                transform=ax.transAxes, fontsize=10, fontweight="bold",
-                verticalalignment="top", horizontalalignment="right",
-                color="white",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor=badge_color, alpha=0.9),
-            )
 
             plt.tight_layout()
             fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
