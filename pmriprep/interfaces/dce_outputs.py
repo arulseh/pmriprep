@@ -56,6 +56,8 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     ktrans_uncertainty = traits.Str(desc="Ktrans uncertainty map path")
     ve_uncertainty = traits.Str(desc="ve uncertainty map path")
     vp_uncertainty = traits.Str(desc="vp uncertainty map path")
+    fp_uncertainty = traits.Str(desc="Fp uncertainty map path (2CXM only)")
+    ps_uncertainty = traits.Str(desc="PS uncertainty map path (2CXM only)")
 
     # Bayesian CV and CI outputs (optional)
     ktrans_cv = traits.Str(desc="Ktrans coefficient of variation map path")
@@ -93,7 +95,7 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Smoothed maps (optional, dict of name->path)
     smooth_pk_maps = traits.Dict(desc="Smoothed PK maps dict")
     smooth_model_free_maps = traits.Dict(desc="Smoothed model-free maps dict")
-    smooth_uncertainty_maps = traits.Dict(desc="Smoothed uncertainty maps dict (Std, CV, CI95)")
+    smooth_uncertainty_maps = traits.Dict(desc="Smoothed uncertainty std maps dict")
     smooth_tortuosity_maps = traits.Dict(desc="Smoothed tortuosity-corrected maps dict")
 
     # QC metrics (optional)
@@ -252,6 +254,8 @@ class DCEDerivativeWriter(BaseInterface):
             "Ktrans": ("ktrans_uncertainty", "Ktrans uncertainty (posterior std)"),
             "ve": ("ve_uncertainty", "ve uncertainty (posterior std)"),
             "vp": ("vp_uncertainty", "vp uncertainty (posterior std)"),
+            "Fp": ("fp_uncertainty", "Fp uncertainty (posterior std, 2CXM only)"),
+            "PS": ("ps_uncertainty", "PS uncertainty (posterior std, 2CXM only)"),
         }
         for map_name, (attr, description) in uncertainty_maps.items():
             if self._has_input(attr):
@@ -398,72 +402,69 @@ class DCEDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # 3g. Smoothed maps (conditional on smoothing being applied)
         # -----------------------------------------------------------
+        import re
+
+        def _smoothing_sidecar(
+            description: str, fwhm_mm: str, extra: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            """Build JSON sidecar for a smoothed map with QIBA-recommended fields."""
+            s: dict[str, Any] = {
+                **base_sidecar,
+                "Description": description,
+                "SmoothingFWHM": float(fwhm_mm) if fwhm_mm.replace(".", "").isdigit() else fwhm_mm,
+                "SmoothingType": "Gaussian",
+                "SmoothingMasked": True,
+                "IntendedFor": "visualization",
+                "Note": "Use non-smoothed maps for quantitative ROI analysis",
+            }
+            if extra:
+                s.update(extra)
+            return s
+
+        def _extract_fwhm(src_path: str) -> tuple[str, str]:
+            """Extract FWHM string and numeric value from smoothed filename."""
+            m = re.search(r"_fwhm(\d+(?:\.\d+)?)", str(src_path))
+            if m:
+                return f"fwhm{m.group(1)}", m.group(1)
+            return "fwhmN", "N"
+
         smooth_pk = self.inputs.smooth_pk_maps
         if isdefined(smooth_pk) and smooth_pk:
             for map_name, src_path in smooth_pk.items():
                 if src_path and Path(src_path).exists():
-                    # Extract FWHM from filename (e.g., "_fwhm3.nii.gz")
-                    import re
-                    fwhm_match = re.search(r"_fwhm(\d+)", str(src_path))
-                    fwhm_str = f"fwhm{fwhm_match.group(1)}" if fwhm_match else "fwhmN"
+                    fwhm_str, fwhm_mm = _extract_fwhm(src_path)
                     fname = f"{prefix}_{spatial}_{model_entity}_desc-{fwhm_str}_{map_name}"
                     self._copy_nifti(src_path, perf_dir / f"{fname}.nii.gz")
-                    sidecar = {
-                        **base_sidecar,
-                        "Description": f"Smoothed {map_name} map",
-                    }
+                    sidecar = _smoothing_sidecar(f"Smoothed {map_name} map", fwhm_mm)
                     self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         smooth_mf = self.inputs.smooth_model_free_maps
         if isdefined(smooth_mf) and smooth_mf:
             for map_name, src_path in smooth_mf.items():
                 if src_path and Path(src_path).exists():
-                    import re
-                    fwhm_match = re.search(r"_fwhm(\d+)", str(src_path))
-                    fwhm_str = f"fwhm{fwhm_match.group(1)}" if fwhm_match else "fwhmN"
+                    fwhm_str, fwhm_mm = _extract_fwhm(src_path)
                     fname = f"{prefix}_{spatial}_desc-{fwhm_str}-modelfree_{map_name}"
                     self._copy_nifti(src_path, perf_dir / f"{fname}.nii.gz")
-                    sidecar = {
-                        **base_sidecar,
-                        "Description": f"Smoothed model-free {map_name} map",
-                    }
+                    sidecar = _smoothing_sidecar(
+                        f"Smoothed model-free {map_name} map", fwhm_mm,
+                    )
                     self._write_json(sidecar, perf_dir / f"{fname}.json")
 
-        # Smoothed uncertainty maps (Bayesian std, CV, CI95)
+        # Smoothed uncertainty maps (Bayesian posterior std only)
         smooth_uncertainty = self.inputs.smooth_uncertainty_maps
         if isdefined(smooth_uncertainty) and smooth_uncertainty:
             for map_name, src_path in smooth_uncertainty.items():
                 if src_path and Path(src_path).exists():
-                    import re
-                    fwhm_match = re.search(r"_fwhm(\d+)", str(src_path))
-                    fwhm_str = f"fwhm{fwhm_match.group(1)}" if fwhm_match else "fwhmN"
-                    # Map names like "Ktrans_std" -> "Std_Ktrans", "Ktrans_cv" -> "CV_Ktrans"
-                    # "Ktrans_ci95lower" -> "CI95lower_Ktrans"
-                    if "_std" in map_name:
-                        param = map_name.replace("_std", "")
-                        desc_part = f"{model_entity}Std"
-                        out_name = param
-                    elif "_cv" in map_name:
-                        param = map_name.replace("_cv", "")
-                        desc_part = f"{model_entity}CV"
-                        out_name = param
-                    elif "_ci95lower" in map_name:
-                        param = map_name.replace("_ci95lower", "")
-                        desc_part = f"{model_entity}CI95lower"
-                        out_name = param
-                    elif "_ci95upper" in map_name:
-                        param = map_name.replace("_ci95upper", "")
-                        desc_part = f"{model_entity}CI95upper"
-                        out_name = param
-                    else:
-                        desc_part = model_entity
-                        out_name = map_name
+                    fwhm_str, fwhm_mm = _extract_fwhm(src_path)
+                    # Map names are always "*_std" (CV/CI95 excluded from smoothing)
+                    param = map_name.replace("_std", "")
+                    desc_part = f"{model_entity}Std"
+                    out_name = param
                     fname = f"{prefix}_{spatial}_desc-{fwhm_str}-{desc_part}_{out_name}"
                     self._copy_nifti(src_path, perf_dir / f"{fname}.nii.gz")
-                    sidecar = {
-                        **base_sidecar,
-                        "Description": f"Smoothed {map_name} uncertainty map",
-                    }
+                    sidecar = _smoothing_sidecar(
+                        f"Smoothed {map_name} uncertainty map", fwhm_mm,
+                    )
                     self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # Smoothed tortuosity-corrected maps
@@ -471,16 +472,12 @@ class DCEDerivativeWriter(BaseInterface):
         if isdefined(smooth_tort) and smooth_tort:
             for map_name, src_path in smooth_tort.items():
                 if src_path and Path(src_path).exists():
-                    import re
-                    fwhm_match = re.search(r"_fwhm(\d+)", str(src_path))
-                    fwhm_str = f"fwhm{fwhm_match.group(1)}" if fwhm_match else "fwhmN"
-                    # map_name is "Ktrans_tortuositycorr"
+                    fwhm_str, fwhm_mm = _extract_fwhm(src_path)
                     fname = f"{prefix}_{spatial}_desc-{fwhm_str}-tortuositycorr_Ktrans"
                     self._copy_nifti(src_path, perf_dir / f"{fname}.nii.gz")
-                    sidecar = {
-                        **base_sidecar,
-                        "Description": "Smoothed Ktrans corrected for tissue tortuosity",
-                    }
+                    sidecar = _smoothing_sidecar(
+                        "Smoothed Ktrans corrected for tissue tortuosity", fwhm_mm,
+                    )
                     self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

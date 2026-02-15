@@ -226,6 +226,10 @@ def _fit_single_voxel(
                 uncertainties["ve"] = result.get_uncertainty("ve", 0.0)
             if has_vp:
                 uncertainties["vp"] = result.get_uncertainty("vp", 0.0)
+            # 2CXM-specific: Fp and PS uncertainties
+            if model_name == "2cxm":
+                uncertainties["Fp"] = result.get_uncertainty("Fp", 0.0)
+                uncertainties["PS"] = result.get_uncertainty("PS", 0.0)
 
         fitted_curve = None
         if _worker_ctx.get("save_fitted_curves") and result.fitted_curve is not None:
@@ -417,6 +421,8 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_ktrans_std = File(desc="Ktrans standard deviation map (Bayesian)")
     out_ve_std = File(desc="ve standard deviation map (Bayesian)")
     out_vp_std = File(desc="vp standard deviation map (Bayesian)")
+    out_fp_std = File(desc="Fp standard deviation map (Bayesian, 2CXM only)")
+    out_ps_std = File(desc="PS standard deviation map (Bayesian, 2CXM only)")
 
     # Coefficient of Variation maps (Bayesian only)
     out_ktrans_cv = File(desc="Ktrans coefficient of variation (std/mean, Bayesian)")
@@ -697,6 +703,9 @@ class ComputeDCEMaps(BaseInterface):
     def _has_vp(self, model_name: str) -> bool:
         """Check if model has vp parameter.
 
+        vp is estimated by extended_tofts, patlak, and 2cxm.
+        Standard Tofts assumes vp=0 and does not estimate it.
+
         Args:
             model_name: Model name.
 
@@ -707,6 +716,9 @@ class ComputeDCEMaps(BaseInterface):
 
     def _has_ve(self, model_name: str) -> bool:
         """Check if model has ve parameter.
+
+        ve (and derived kep = Ktrans/ve) is estimated by tofts,
+        extended_tofts, and 2cxm. Patlak does not estimate ve.
 
         Args:
             model_name: Model name.
@@ -1001,6 +1013,8 @@ class ComputeDCEMaps(BaseInterface):
         ktrans_std = np.zeros(spatial_shape, dtype=np.float64)
         ve_std = np.zeros(spatial_shape, dtype=np.float64)
         vp_std = np.zeros(spatial_shape, dtype=np.float64)
+        fp_std = np.zeros(spatial_shape, dtype=np.float64)
+        ps_std = np.zeros(spatial_shape, dtype=np.float64)
 
         # Fitted curves
         fitted_curves: Optional[npt.NDArray[Any]] = None
@@ -1162,6 +1176,10 @@ class ComputeDCEMaps(BaseInterface):
                     ve_std[x, y, z] = res["uncertainties"].get("ve", 0.0)
                 if has_vp:
                     vp_std[x, y, z] = res["uncertainties"].get("vp", 0.0)
+                # 2CXM-specific: Fp and PS uncertainties
+                if model_name == "2cxm":
+                    fp_std[x, y, z] = res["uncertainties"].get("Fp", 0.0)
+                    ps_std[x, y, z] = res["uncertainties"].get("PS", 0.0)
 
             # Fitted curve
             if save_fitted_curves and fitted_curves is not None:
@@ -1242,6 +1260,8 @@ class ComputeDCEMaps(BaseInterface):
         ktrans_img = nib.Nifti1Image(ktrans.astype(np.float32), affine, header)  # type: ignore[attr-defined]
         nib.save(ktrans_img, out_ktrans)  # type: ignore[attr-defined]
 
+        # ve and kep are model-dependent: produced by Tofts, ExtTofts, 2CXM
+        # but NOT by Patlak (which only estimates Ktrans and vp).
         if self._has_ve(model_name):
             out_ve = self._gen_outfilename("_ve")
             ve_img = nib.Nifti1Image(ve.astype(np.float32), affine, header)  # type: ignore[attr-defined]
@@ -1343,6 +1363,18 @@ class ComputeDCEMaps(BaseInterface):
                 vp_std_img = nib.Nifti1Image(vp_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
                 nib.save(vp_std_img, out_vp_std)  # type: ignore[attr-defined]
                 self._results["out_vp_std"] = out_vp_std
+
+            # 2CXM-specific: save Fp and PS uncertainty maps
+            if model_name == "2cxm":
+                out_fp_std_file = self._gen_outfilename("_Fp_std")
+                fp_std_img = nib.Nifti1Image(fp_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+                nib.save(fp_std_img, out_fp_std_file)  # type: ignore[attr-defined]
+                self._results["out_fp_std"] = out_fp_std_file
+
+                out_ps_std_file = self._gen_outfilename("_PS_std")
+                ps_std_img = nib.Nifti1Image(ps_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+                nib.save(ps_std_img, out_ps_std_file)  # type: ignore[attr-defined]
+                self._results["out_ps_std"] = out_ps_std_file
 
             # Compute and save Coefficient of Variation (CV = std / mean)
             # Use safe division to avoid divide-by-zero

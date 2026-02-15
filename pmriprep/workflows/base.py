@@ -1667,6 +1667,8 @@ def init_pmriprep_wf(
                 ("outputnode.ktrans_uncertainty", "ktrans_uncertainty"),
                 ("outputnode.ve_uncertainty", "ve_uncertainty"),
                 ("outputnode.vp_uncertainty", "vp_uncertainty"),
+                ("outputnode.fp_uncertainty", "fp_uncertainty"),
+                ("outputnode.ps_uncertainty", "ps_uncertainty"),
                 # Bayesian CV maps
                 ("outputnode.ktrans_cv", "ktrans_cv"),
                 ("outputnode.ve_cv", "ve_cv"),

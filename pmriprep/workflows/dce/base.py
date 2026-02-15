@@ -294,6 +294,8 @@ def init_dce_preproc_wf(
                 "ktrans_uncertainty",
                 "ve_uncertainty",
                 "vp_uncertainty",
+                "fp_uncertainty",
+                "ps_uncertainty",
                 # Bayesian CV and CI outputs
                 "ktrans_cv",
                 "ve_cv",
@@ -1136,15 +1138,13 @@ def init_dce_preproc_wf(
             (dce_brain_extract, smooth_model_free, [("out_mask", "brain_mask_file")]),
         ])
 
-        # Build dict of uncertainty maps for smoothing (Bayesian outputs)
+        # Build dict of uncertainty std maps for smoothing (Bayesian outputs)
+        # Only std maps are smoothed; CV and CI95 are excluded (see docstring)
         build_uncertainty_dict = pe.Node(
             niu.Function(
                 input_names=[
                     "ktrans_std", "ve_std", "vp_std",
-                    "ktrans_cv", "ve_cv", "vp_cv",
-                    "ktrans_ci95_lower", "ktrans_ci95_upper",
-                    "ve_ci95_lower", "ve_ci95_upper",
-                    "vp_ci95_lower", "vp_ci95_upper",
+                    "fp_std", "ps_std",
                 ],
                 output_names=["map_dict"],
                 function=_build_uncertainty_map_dict,
@@ -1157,15 +1157,8 @@ def init_dce_preproc_wf(
                 ("out_ktrans_std", "ktrans_std"),
                 ("out_ve_std", "ve_std"),
                 ("out_vp_std", "vp_std"),
-                ("out_ktrans_cv", "ktrans_cv"),
-                ("out_ve_cv", "ve_cv"),
-                ("out_vp_cv", "vp_cv"),
-                ("out_ktrans_ci95_lower", "ktrans_ci95_lower"),
-                ("out_ktrans_ci95_upper", "ktrans_ci95_upper"),
-                ("out_ve_ci95_lower", "ve_ci95_lower"),
-                ("out_ve_ci95_upper", "ve_ci95_upper"),
-                ("out_vp_ci95_lower", "vp_ci95_lower"),
-                ("out_vp_ci95_upper", "vp_ci95_upper"),
+                ("out_fp_std", "fp_std"),
+                ("out_ps_std", "ps_std"),
             ]),
         ])
 
@@ -1480,6 +1473,8 @@ def init_dce_preproc_wf(
             ("out_ktrans_std", "ktrans_uncertainty"),
             ("out_ve_std", "ve_uncertainty"),
             ("out_vp_std", "vp_uncertainty"),
+            ("out_fp_std", "fp_uncertainty"),
+            ("out_ps_std", "ps_uncertainty"),
         ]),
         # Bayesian CV and CI maps (if Bayesian)
         (pk_modeling, outputnode, [
@@ -2801,56 +2796,44 @@ def _build_pk_map_dict(ktrans, ve, vp, kep):
 
 
 def _build_model_free_map_dict(iauc60, iauc90, iauc120, peak, ttp, ser):
-    """Build dictionary of model-free maps for smoothing."""
+    """Build dictionary of model-free maps for smoothing.
+
+    Note: TTP is excluded from smoothing because it is a discrete timing
+    parameter (quantized to TR). Smoothing creates non-physical intermediate
+    time values. The ttp parameter is accepted but not included in the dict.
+    """
     return {
         "iauc60": iauc60,
         "iauc90": iauc90,
         "iauc120": iauc120,
         "peak_enhancement": peak,
-        "time_to_peak": ttp,
         "ser": ser,
     }
 
 
 def _build_uncertainty_map_dict(
-    ktrans_std, ve_std, vp_std,
-    ktrans_cv, ve_cv, vp_cv,
-    ktrans_ci95_lower, ktrans_ci95_upper,
-    ve_ci95_lower, ve_ci95_upper,
-    vp_ci95_lower, vp_ci95_upper,
+    ktrans_std, ve_std, vp_std, fp_std, ps_std,
 ):
-    """Build dictionary of uncertainty maps for smoothing."""
+    """Build dictionary of uncertainty std maps for smoothing.
+
+    Only posterior std maps are smoothed. CV (std/mean ratio) and CI95 bounds
+    are excluded because smoothing a ratio or derived statistic is physically
+    incorrect -- it conflates spatial averaging with statistical inference.
+    """
     from nipype.interfaces.base import isdefined
 
     d = {}
-    # Std maps
     if ktrans_std and isdefined(ktrans_std):
         d["Ktrans_std"] = ktrans_std
     if ve_std and isdefined(ve_std):
         d["ve_std"] = ve_std
     if vp_std and isdefined(vp_std):
         d["vp_std"] = vp_std
-    # CV maps
-    if ktrans_cv and isdefined(ktrans_cv):
-        d["Ktrans_cv"] = ktrans_cv
-    if ve_cv and isdefined(ve_cv):
-        d["ve_cv"] = ve_cv
-    if vp_cv and isdefined(vp_cv):
-        d["vp_cv"] = vp_cv
-    # CI95 lower bounds
-    if ktrans_ci95_lower and isdefined(ktrans_ci95_lower):
-        d["Ktrans_ci95lower"] = ktrans_ci95_lower
-    if ve_ci95_lower and isdefined(ve_ci95_lower):
-        d["ve_ci95lower"] = ve_ci95_lower
-    if vp_ci95_lower and isdefined(vp_ci95_lower):
-        d["vp_ci95lower"] = vp_ci95_lower
-    # CI95 upper bounds
-    if ktrans_ci95_upper and isdefined(ktrans_ci95_upper):
-        d["Ktrans_ci95upper"] = ktrans_ci95_upper
-    if ve_ci95_upper and isdefined(ve_ci95_upper):
-        d["ve_ci95upper"] = ve_ci95_upper
-    if vp_ci95_upper and isdefined(vp_ci95_upper):
-        d["vp_ci95upper"] = vp_ci95_upper
+    # 2CXM-specific uncertainty maps
+    if fp_std and isdefined(fp_std):
+        d["Fp_std"] = fp_std
+    if ps_std and isdefined(ps_std):
+        d["PS_std"] = ps_std
     return d
 
 
