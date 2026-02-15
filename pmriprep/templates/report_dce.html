@@ -350,31 +350,31 @@
                     <div class="metric-label">Voxel</div>
                     <div class="metric-value">{{ qc_metrics.pk_modeling.qc_voxel }}</div>
                 </div>
-                {% if qc_metrics.pk_modeling.qc_voxel_ktrans is defined %}
+                {% if qc_metrics.pk_modeling.qc_voxel_ktrans is defined and qc_metrics.pk_modeling.qc_voxel_ktrans is not none %}
                 <div class="metric">
                     <div class="metric-label">Ktrans</div>
                     <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_ktrans) }} min<sup>-1</sup></div>
                 </div>
                 {% endif %}
-                {% if qc_metrics.pk_modeling.qc_voxel_ve is defined %}
+                {% if qc_metrics.pk_modeling.qc_voxel_ve is defined and qc_metrics.pk_modeling.qc_voxel_ve is not none %}
                 <div class="metric">
                     <div class="metric-label">ve</div>
                     <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_ve) }}</div>
                 </div>
                 {% endif %}
-                {% if qc_metrics.pk_modeling.qc_voxel_vp is defined %}
+                {% if qc_metrics.pk_modeling.qc_voxel_vp is defined and qc_metrics.pk_modeling.qc_voxel_vp is not none %}
                 <div class="metric">
                     <div class="metric-label">vp</div>
                     <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_vp) }}</div>
                 </div>
                 {% endif %}
-                {% if qc_metrics.pk_modeling.qc_voxel_fp is defined %}
+                {% if qc_metrics.pk_modeling.qc_voxel_fp is defined and qc_metrics.pk_modeling.qc_voxel_fp is not none %}
                 <div class="metric">
                     <div class="metric-label">Fp</div>
                     <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_fp) }} mL/100g/min</div>
                 </div>
                 {% endif %}
-                {% if qc_metrics.pk_modeling.qc_voxel_ps is defined %}
+                {% if qc_metrics.pk_modeling.qc_voxel_ps is defined and qc_metrics.pk_modeling.qc_voxel_ps is not none %}
                 <div class="metric">
                     <div class="metric-label">PS</div>
                     <div class="metric-value">{{ "%.4f"|format(qc_metrics.pk_modeling.qc_voxel_ps) }} mL/100g/min</div>

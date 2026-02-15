@@ -1488,7 +1488,7 @@ class ComputeDCEMaps(BaseInterface):
                 aif=aif,
                 time_points_s=time_points * 60.0,  # min -> sec
                 ktrans=ktrans,
-                ve=ve,
+                ve=ve if self._has_ve(model_name) else None,
                 vp=vp if self._has_vp(model_name) else None,
                 r2_map=r2_map,
                 brain_mask=mask_bool.astype(np.float64),
@@ -1506,8 +1506,9 @@ class ComputeDCEMaps(BaseInterface):
 
             param_maps_dict: dict[str, npt.NDArray[Any]] = {
                 "Ktrans": ktrans,
-                "ve": ve,
             }
+            if self._has_ve(model_name):
+                param_maps_dict["ve"] = ve
             if self._has_vp(model_name):
                 param_maps_dict["vp"] = vp
             if model_name == "2cxm":

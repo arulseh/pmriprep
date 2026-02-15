@@ -263,7 +263,7 @@ def generate_pk_modeling_qc_plot(
     aif: npt.NDArray[Any],
     time_points_s: npt.NDArray[Any],
     ktrans: npt.NDArray[Any],
-    ve: npt.NDArray[Any],
+    ve: npt.NDArray[Any] | None,
     vp: npt.NDArray[Any] | None,
     r2_map: npt.NDArray[Any],
     brain_mask: npt.NDArray[Any],
@@ -331,7 +331,7 @@ def generate_pk_modeling_qc_plot(
     voxel_conc = conc_data[vx, vy, vz, :]
     voxel_r2 = float(r2_map[vx, vy, vz])
     voxel_ktrans = float(ktrans[vx, vy, vz])
-    voxel_ve = float(ve[vx, vy, vz])
+    voxel_ve = float(ve[vx, vy, vz]) if ve is not None else None
     voxel_vp = float(vp[vx, vy, vz]) if vp is not None else None
 
     # Get fitted curve for the example voxel
@@ -437,9 +437,10 @@ def generate_pk_modeling_qc_plot(
     voxel_metrics: dict[str, Any] = {
         "qc_voxel": f"({vx}, {vy}, {vz})",
         "qc_voxel_ktrans": round(voxel_ktrans, 4),
-        "qc_voxel_ve": round(voxel_ve, 4),
         "qc_voxel_fit_r2": round(voxel_r2, 4),
     }
+    if voxel_ve is not None:
+        voxel_metrics["qc_voxel_ve"] = round(voxel_ve, 4)
     if voxel_vp is not None:
         voxel_metrics["qc_voxel_vp"] = round(voxel_vp, 4)
     if fp is not None:
