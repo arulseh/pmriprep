@@ -1211,6 +1211,8 @@ def init_pmriprep_wf(
                 ("outputnode.psr_map", "psr_map"),
                 ("outputnode.ph_map", "ph_map"),
                 ("outputnode.ttp_map", "ttp_map"),
+                ("outputnode.ttp_corrected_map", "ttp_corrected_map"),
+                ("outputnode.rttp_map", "rttp_map"),
                 ("outputnode.cnr_map", "cnr_map"),
                 ("outputnode.auc_diff_map", "auc_diff_map"),
                 ("outputnode.snr_map", "snr_map"),

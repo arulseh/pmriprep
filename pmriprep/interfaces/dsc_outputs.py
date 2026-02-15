@@ -36,6 +36,8 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
 
     # Additional quantification-independent (optional — use Str for safe handling)
     ttp_map = traits.Str(desc="TTP map path")
+    ttp_corrected_map = traits.Str(desc="AIF-corrected TTP map path")
+    rttp_map = traits.Str(desc="NAWM-relative TTP map path")
     cnr_map = traits.Str(desc="CNR map path")
     auc_diff_map = traits.Str(desc="AUC diff (leakage contribution) map path")
     snr_map = traits.Str(desc="SNR (baseline) map path")
@@ -244,10 +246,18 @@ class DSCDerivativeWriter(BaseInterface):
         # Additional desc-dscproc maps (optional)
         optional_dscproc = {
             "ttp": ("ttp_map", "Time to peak concentration"),
+            "ttpCorrected": ("ttp_corrected_map", "Time to peak, corrected for AIF bolus arrival delay. Comparable across patients and centers."),
+            "rttp": ("rttp_map", "Time to peak relative to contralateral NAWM median. Positive values indicate delayed perfusion."),
             "cnr": ("cnr_map", "Contrast-to-noise ratio"),
             "auc_diff": ("auc_diff_map", "Leakage contribution (AUC_raw - AUC_corr)"),
             "snr": ("snr_map", "Signal-to-noise ratio (baseline)"),
             "tsnr": ("tsnr_map", "Temporal signal-to-noise ratio"),
+        }
+        # Units and reference points for timing maps
+        timing_sidecars: dict[str, dict[str, str]] = {
+            "ttp": {"Units": "seconds", "ReferencePoint": "start of acquisition (volume 0)"},
+            "ttpCorrected": {"Units": "seconds", "ReferencePoint": "AIF bolus arrival time"},
+            "rttp": {"Units": "seconds", "ReferencePoint": "contralateral NAWM median TTP"},
         }
         for map_name, (attr, description) in optional_dscproc.items():
             if self._has_input(attr):
@@ -255,6 +265,8 @@ class DSCDerivativeWriter(BaseInterface):
                 fname = f"{prefix}_{spatial}_desc-dscproc_{map_name}"
                 self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": description}
+                if map_name in timing_sidecars:
+                    sidecar.update(timing_sidecars[map_name])
                 self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

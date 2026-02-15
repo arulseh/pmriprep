@@ -1513,6 +1513,8 @@ def init_dsc_preproc_wf(
                 "psr_map",
                 "ph_map",
                 "ttp_map",
+                "ttp_corrected_map",
+                "rttp_map",
                 "cnr_map",
                 # AUC decomposition
                 "auc_diff_map",
@@ -1817,11 +1819,9 @@ def init_dsc_preproc_wf(
         ),
         name="transform_atlas",
     )
-    # Set the arterial atlas as input (bundled with pmriprep)
-    # Legacy: match perf-plus atlas for integration test validation
-    # TODO(post-integration): switch to get_arterial_atlas("2mm", "dil3")
+    # Set the arterial atlas as input (bundled with pmriprep, FSL MNI152 space)
     try:
-        transform_atlas.inputs.in_file = str(get_arterial_atlas("1mm", ""))
+        transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm", "dil3"))
     except FileNotFoundError:
         import warnings
         warnings.warn(
@@ -2336,6 +2336,13 @@ def init_dsc_preproc_wf(
         (register, transform_nawm, [("out_matrix", "transform_matrix")]),
     ])
 
+    # Wire NAWM mask to compute_maps for rTTP normalization
+    workflow.connect([
+        (transform_nawm, compute_maps, [
+            ("nawm_mask_dsc_file", "nawm_mask_file"),
+        ]),
+    ])
+
     # DSC Map Computation to CBV Normalization (uses relative CBV)
     # Use DSC-space brain mask for fallback normalization
     workflow.connect([
@@ -2614,6 +2621,8 @@ def init_dsc_preproc_wf(
             ("out_psr", "psr_map"),
             ("out_ph", "ph_map"),
             ("out_ttp", "ttp_map"),
+            ("out_ttp_corrected", "ttp_corrected_map"),
+            ("out_rttp", "rttp_map"),
             ("out_cnr", "cnr_map"),
             ("out_auc_diff", "auc_diff_map"),
         ]),

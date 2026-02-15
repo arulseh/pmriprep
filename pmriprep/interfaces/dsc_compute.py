@@ -368,6 +368,11 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="Enhancing tumor mask (any space, resampled internally to DSC)",
     )
+    nawm_mask_file = File(
+        exists=True,
+        mandatory=False,
+        desc="NAWM mask in DSC space for rTTP normalization",
+    )
 
     # Output files — quantification-independent
     out_mtt = File(genfile=True, desc="Output MTT map NIfTI")
@@ -408,6 +413,8 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_psr = File(exists=True, desc="PSR map (percent signal recovery)")
     out_ph = File(exists=True, desc="PH map (peak height)")
     out_ttp = File(exists=True, desc="TTP map (time to peak concentration)")
+    out_ttp_corrected = File(desc="AIF-corrected TTP map (BAT subtracted)")
+    out_rttp = File(desc="NAWM-relative TTP map")
     out_cnr = File(exists=True, desc="CNR map (contrast-to-noise ratio)")
 
     # AUC decomposition (always produced)
@@ -1383,6 +1390,23 @@ class ComputeDSCMaps(BaseInterface):
         # Compute TTP from raw concentration (post-bolus argmax)
         ttp = compute_ttp_legacy(raw_conc_data, detected_baseline, dt)
 
+        # AIF-corrected TTP: subtract AIF bolus arrival time
+        aif_bat_frames = baseline_detection_info.get("arrival_index", detected_baseline)
+        aif_bat_seconds = float(aif_bat_frames) * dt
+        ttp_corrected = ttp - aif_bat_seconds
+        ttp_corrected = np.where(np.isnan(ttp), np.nan, ttp_corrected)
+
+        # NAWM-relative TTP
+        rttp: Optional[npt.NDArray[Any]] = None
+        if isdefined(self.inputs.nawm_mask_file):
+            nawm_img = nib.load(self.inputs.nawm_mask_file)
+            nawm_mask = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
+            nawm_ttp = ttp[nawm_mask]
+            nawm_ttp = nawm_ttp[np.isfinite(nawm_ttp)]
+            if len(nawm_ttp) > 100:
+                rttp = ttp - np.median(nawm_ttp)
+                rttp = np.where(np.isnan(ttp), np.nan, rttp)
+
         # -----------------------------------------------------------
         # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
         # -----------------------------------------------------------
@@ -1521,6 +1545,7 @@ class ComputeDSCMaps(BaseInterface):
             "preload_classification": preload_class,
         })
         qc_metrics.update(baseline_detection_info)
+        qc_metrics["aif_bat_seconds"] = aif_bat_seconds
 
         # -----------------------------------------------------------
         # Helper to save a 3D array as NIfTI
@@ -1540,6 +1565,7 @@ class ComputeDSCMaps(BaseInterface):
         out_psr = _save_map(psr, "_psr")
         out_ph = _save_map(ph, "_ph")
         out_ttp = _save_map(ttp, "_ttp")
+        out_ttp_corrected = _save_map(ttp_corrected, "_ttp_corrected")
         out_cnr = _save_map(cnr, "_cnr")
 
         # AUC decomposition
@@ -1565,6 +1591,7 @@ class ComputeDSCMaps(BaseInterface):
             "out_psr": out_psr,
             "out_ph": out_ph,
             "out_ttp": out_ttp,
+            "out_ttp_corrected": out_ttp_corrected,
             "out_cnr": out_cnr,
             # AUC decomposition
             "out_auc_raw": out_auc_raw,
@@ -1582,6 +1609,10 @@ class ComputeDSCMaps(BaseInterface):
             "absolute_permitted": absolute_permitted,
             "qc_metrics": qc_metrics,
         }
+
+        # NAWM-relative TTP (conditional on NAWM mask availability)
+        if rttp is not None:
+            self._results["out_rttp"] = _save_map(rttp, "_rttp")
 
         # K2 map (recomputed or pass-through)
         if k2_map_out_path is not None:
