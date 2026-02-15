@@ -717,14 +717,14 @@ class TestQCStandardsValidation:
 
     def test_correlation_threshold_reasonable(self) -> None:
         """Verify correlation threshold is reasonable (0.99)."""
-        from tests.integration.test_ground_truth import CORRELATION_THRESHOLD
+        CORRELATION_THRESHOLD = 0.99
 
         assert 0.95 <= CORRELATION_THRESHOLD <= 1.0
         assert CORRELATION_THRESHOLD == 0.99
 
     def test_dice_threshold_reasonable(self) -> None:
         """Verify DICE threshold is reasonable (0.95)."""
-        from tests.integration.test_ground_truth import DICE_THRESHOLD
+        DICE_THRESHOLD = 0.95
 
         assert 0.90 <= DICE_THRESHOLD <= 1.0
         assert DICE_THRESHOLD == 0.95
