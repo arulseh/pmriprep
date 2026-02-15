@@ -909,7 +909,7 @@ class ComputeDCEMaps(BaseInterface):
 
         has_dsc_cbv = (
             isdefined(self.inputs.dsc_cbv_file)
-            and model_name == "extended_tofts"
+            and model_name in ("extended_tofts", "2cxm")
         )
 
         if has_dsc_cbv:
@@ -931,6 +931,17 @@ class ComputeDCEMaps(BaseInterface):
                 constraint_mode = vp_result.config.mode
                 constraint_vp_uncertainty = vp_result.config.vp_uncertainty
                 constraint_qc = vp_result.qc_report
+
+                # 2CXM: vp enters nonlinearly (eigenvalues, coefficients).
+                # Hard-fixing vp propagates DSC CBV error into Fp and PS
+                # via k_out=Fp/vp and k_pe=PS/vp. Default to SOFT.
+                if (
+                    model_name == "2cxm"
+                    and constraint_mode == ConstraintMode.HARD
+                    and str(self.inputs.constraint_mode) == "auto"
+                ):
+                    constraint_mode = ConstraintMode.SOFT
+                    constraint_vp_uncertainty = 0.2
             except Exception as exc:
                 constraint_qc = {
                     "constraint_mode": "skip",

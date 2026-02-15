@@ -48,6 +48,12 @@ MIN_SIGNAL_STD: Final[float] = 0.01
 #: Minimum enhancement in mM for voxel to be considered valid
 MIN_ENHANCEMENT_MM: Final[float] = 1e-8
 
+#: Minimum flow rate to prevent division by zero in 2CXM eigenvalue calculations
+EPSILON_FLOW: Final[float] = 1e-9
+
+#: Minimum eigenvalue separation for 2CXM partial fraction decomposition
+EPSILON_EIGENVALUE: Final[float] = 1e-10
+
 
 # =============================================================================
 # Field-Strength Dependent R1 Relaxivity

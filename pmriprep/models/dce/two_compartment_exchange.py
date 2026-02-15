@@ -26,10 +26,13 @@ from typing import Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
+from scipy import optimize
 from scipy.optimize import curve_fit
 
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.utils.dce_constants import (
+    EPSILON_EIGENVALUE,
+    EPSILON_FLOW,
     EPSILON_VE,
     EPSILON_VP,
     FP_BOUNDS,
@@ -39,11 +42,6 @@ from pmriprep.utils.dce_constants import (
     VE_BOUNDS,
     VP_BOUNDS,
 )
-
-
-# Small epsilon to prevent division by zero in eigenvalue calculations
-EPSILON_FLOW: float = 1e-9
-EPSILON_EIGENVALUE: float = 1e-10
 
 
 class TwoCompartmentExchangeModel(PKModel):
@@ -146,7 +144,7 @@ class TwoCompartmentExchangeModel(PKModel):
                 name="Fp",
                 bounds=(FP_BOUNDS.min, FP_BOUNDS.max),
                 typical_range=(20.0, 100.0),
-                log_transform=True,
+                log_transform=False,
                 description="Plasma flow rate",
                 units="mL/min/100mL",
             ),
@@ -154,7 +152,7 @@ class TwoCompartmentExchangeModel(PKModel):
                 name="PS",
                 bounds=(PS_BOUNDS.min, PS_BOUNDS.max),
                 typical_range=(5.0, 50.0),
-                log_transform=True,
+                log_transform=False,
                 description="Permeability-surface area product",
                 units="mL/min/100mL",
             ),
@@ -275,13 +273,17 @@ class TwoCompartmentExchangeModel(PKModel):
         ve = max(ve, EPSILON_VE)
         fp = max(fp, EPSILON_FLOW)
 
+        # Convert from mL/min/100mL to min^-1 (fractional rate)
+        fp_rate = fp / 100.0
+        ps_rate = ps / 100.0
+
         # System matrix elements (after normalizing by volume fractions)
         # Matrix A = [-(Fp + PS)/vp, PS/vp; PS/ve, -PS/ve]
 
         # Rate constants
-        k_pe = ps / vp  # Transfer rate from plasma to EES
-        k_ep = ps / ve  # Transfer rate from EES to plasma
-        k_out = fp / vp  # Outflow rate from plasma
+        k_pe = ps_rate / vp  # Transfer rate from plasma to EES
+        k_ep = ps_rate / ve  # Transfer rate from EES to plasma
+        k_out = fp_rate / vp  # Outflow rate from plasma
 
         # Trace and determinant of the system matrix
         # A = [-k_out - k_pe, k_pe; k_ep, -k_ep]
@@ -319,20 +321,19 @@ class TwoCompartmentExchangeModel(PKModel):
         # This can be rewritten as:
         # h(t) = A1 × exp(-K1×t) + A2 × exp(-K2×t)
         #
-        # where the total integral ∫h(t)dt = (vp + ve), giving:
-        # A1 + A2 = (vp + ve) × Fp / vp = Fp × (1 + ve/vp)
+        # where A1 + A2 = Fp_rate (partial fractions sum to input rate)
 
         # Avoid division by zero in degenerate case
         if abs(k1 - k2) < EPSILON_EIGENVALUE:
             # Degenerate case: single exponential
-            a1 = fp * (1 + ve / vp)
+            a1 = fp_rate
             a2 = 0.0
             k2 = k1
         else:
             # Standard two-exponential case
             # Coefficients derived from partial fraction expansion
-            a1 = fp * (k1 - k_ep) / (k1 - k2)
-            a2 = fp * (k_ep - k2) / (k1 - k2)
+            a1 = fp_rate * (k1 - k_ep) / (k1 - k2)
+            a2 = fp_rate * (k_ep - k2) / (k1 - k2)
 
         return k1, k2, a1, a2
 
@@ -530,6 +531,107 @@ class TwoCompartmentExchangeModel(PKModel):
             quality_flag=quality_flag,
         )
 
+    def fit_constrained(
+        self,
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+        fixed_vp: float,
+        initial_guess: Optional[Sequence[float]] = None,
+    ) -> FitResult:
+        """Fit 2CXM with vp fixed from DSC CBV.
+
+        Free parameters are [Fp, PS, ve] with vp held constant.
+        The ve upper bound is adjusted so that ve + fixed_vp <= 1.0.
+
+        Args:
+            tissue_curve: Observed tissue concentration values C_t(t) in mM.
+            aif: Arterial input function plasma concentration values Cp(t) in mM.
+            time_points: Time points (minutes) corresponding to measurements.
+            fixed_vp: Fixed plasma volume fraction from DSC CBV.
+            initial_guess: Optional initial values [Fp, PS, ve].
+                If None, uses parameter definition prior means.
+
+        Returns:
+            FitResult with n_parameters=3 and fitting_method='nlls_constrained_vp'.
+        """
+        n_obs = len(tissue_curve)
+
+        # Clamp fixed_vp to valid range
+        fixed_vp = float(np.clip(fixed_vp, VP_BOUNDS.min, VP_BOUNDS.max))
+
+        # Set initial guess for [Fp, PS, ve]
+        if initial_guess is None:
+            defs = self.get_parameter_definitions()
+            x0 = [defs[0].get_prior_mean(), defs[1].get_prior_mean(),
+                   defs[2].get_prior_mean()]
+        else:
+            x0 = list(initial_guess[:3])
+
+        # Bounds: ve upper bound clamped so ve + vp <= 1.0
+        ve_upper = min(0.8, 1.0 - fixed_vp)
+        ve_upper = max(ve_upper, EPSILON_VE)
+        bounds_lo = [FP_BOUNDS.min, PS_BOUNDS.min, VE_BOUNDS.min]
+        bounds_hi = [FP_BOUNDS.max, PS_BOUNDS.max, ve_upper]
+
+        # Objective: evaluate with [Fp, PS, ve, fixed_vp]
+        def objective(params: npt.NDArray[np.floating]) -> float:
+            full_params = [params[0], params[1], params[2], fixed_vp]
+            predicted = self.evaluate(full_params, aif, time_points)
+            return float(np.sum((tissue_curve - predicted) ** 2))
+
+        try:
+            result = optimize.minimize(
+                objective,
+                x0=x0,
+                method="L-BFGS-B",
+                bounds=list(zip(bounds_lo, bounds_hi)),
+                options={"maxiter": 1000, "ftol": 1e-10},
+            )
+            converged = result.success
+            fitted_3p = result.x.tolist()
+        except Exception:
+            converged = False
+            fitted_3p = x0
+
+        # Clip to bounds
+        fp_fit = float(np.clip(fitted_3p[0], FP_BOUNDS.min, FP_BOUNDS.max))
+        ps_fit = float(np.clip(fitted_3p[1], PS_BOUNDS.min, PS_BOUNDS.max))
+        ve_fit = float(np.clip(fitted_3p[2], VE_BOUNDS.min, ve_upper))
+
+        fitted_params = [fp_fit, ps_fit, ve_fit, fixed_vp]
+
+        # Compute fitted curve and goodness-of-fit
+        fitted_curve = self.evaluate(fitted_params, aif, time_points)
+        rss = float(np.sum((tissue_curve - fitted_curve) ** 2))
+        r_squared = self.compute_r_squared(tissue_curve, fitted_curve)
+        # Use 3 free parameters for AIC/BIC
+        n_free = 3
+        aic = float(n_obs * np.log(rss / n_obs) + 2 * n_free) if rss > 0 and n_obs > 0 else float("inf")
+        bic = float(n_obs * np.log(rss / n_obs) + n_free * np.log(n_obs)) if rss > 0 and n_obs > 0 else float("inf")
+
+        # Derived parameters
+        derived = self.compute_derived_parameters(fitted_params)
+
+        param_dict = {
+            "Fp": fp_fit, "PS": ps_fit, "ve": ve_fit, "vp": fixed_vp,
+        }
+        param_dict.update(derived)
+
+        return FitResult(
+            parameters=param_dict,
+            r_squared=r_squared,
+            residual_sum_squares=rss,
+            aic=aic,
+            bic=bic,
+            model_name=self.name,
+            n_parameters=n_free,
+            n_observations=n_obs,
+            converged=converged,
+            fitting_method="nlls_constrained_vp",
+            fitted_curve=fitted_curve,
+        )
+
     def compute_derived_parameters(
         self, params: ParamsType
     ) -> dict[str, float]:
@@ -556,8 +658,8 @@ class TwoCompartmentExchangeModel(PKModel):
         # Extraction fraction
         e = ps / fp_plus_ps
 
-        # Volume transfer constant (equivalent to Tofts Ktrans)
-        ktrans = e * fp
+        # Volume transfer constant (equivalent to Tofts Ktrans, min^-1)
+        ktrans = e * fp / 100.0
 
         # Efflux rate constant
         kep = min(ktrans / ve, MAX_KEP)
