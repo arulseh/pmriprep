@@ -23,6 +23,7 @@ from pmriprep.utils.dce_constants import (
     AIF_THRESHOLDS_RELAXED,
     AIF_THRESHOLDS_STRICT,
     DCE_AIF_EXPECTED_FULL_DOSE,
+    EPSILON_CONCENTRATION,
     EPSILON_T1,
     get_aif_thresholds,
 )
@@ -328,8 +329,8 @@ def compute_dce_cnr(
 
     baseline_std = compute_dce_baseline_std(aif_curve, baseline_frames)
 
-    if baseline_std < EPSILON_T1:
-        # Perfect baseline, return high CNR
+    if baseline_std < EPSILON_CONCENTRATION:
+        # Near-zero baseline noise, return high CNR
         return 100.0
 
     peak = float(np.max(aif_curve))

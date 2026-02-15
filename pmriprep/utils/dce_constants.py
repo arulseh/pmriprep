@@ -40,6 +40,10 @@ EPSILON_SIGNAL: Final[float] = 1e-9
 #: Epsilon for signal ratio denominators (matches perf-plus EPSILON_RATIO)
 EPSILON_RATIO: Final[float] = 1e-10
 
+#: Minimum baseline concentration noise for CNR computation (mM)
+#: Below this, baseline is effectively noiseless — return max CNR
+EPSILON_CONCENTRATION: Final[float] = 1e-6
+
 #: Minimum signal standard deviation for voxel to be considered valid
 #: Value is in mM (concentration units), not raw signal units
 #: Normal tissue concentration std is 0.01-0.5 mM; 0.01 filters noise-only voxels

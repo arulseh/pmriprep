@@ -46,6 +46,7 @@ from pmriprep.utils.dce_constants import (
     BRAIN_EROSION_ITERATIONS,
     BRAIN_EROSION_MIN_VOXELS,
     DCE_AIF_EXPECTED_FULL_DOSE,
+    EPSILON_CONCENTRATION,
     EPSILON_T1,
     HEMATOCRIT,
     LESION_EXCLUSION_DISTANCE_MM,
@@ -325,8 +326,8 @@ def compute_dce_aif_cnr(
     baseline = aif_curve[:baseline_frames]
     baseline_std = float(np.std(baseline))
 
-    if baseline_std < EPSILON_T1:
-        # Perfect baseline, return high CNR
+    if baseline_std < EPSILON_CONCENTRATION:
+        # Near-zero baseline noise, return high CNR
         return 100.0
 
     peak = float(np.max(aif_curve))
@@ -1647,7 +1648,7 @@ class AIFDetection(BaseInterface):
             curve = curves[idx]
             if baseline_frames > 0:
                 baseline_std = float(np.std(curve[:baseline_frames]))
-                if baseline_std > EPSILON_T1:
+                if baseline_std > EPSILON_CONCENTRATION:
                     metrics["cnr"] = metrics["peak_mm"] / baseline_std
                     metrics["baseline_std"] = baseline_std
                 else:
