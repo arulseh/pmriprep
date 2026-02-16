@@ -78,7 +78,7 @@
         {% endif %}
         {% if images.motion %}
         <div style="margin-top: 20px;">
-            <img src="data:image/png;base64,{{ images.motion }}" alt="Motion QC">
+            <img src="{{ images.motion }}" alt="Motion QC">
         </div>
         {% endif %}
     </div>
@@ -157,10 +157,10 @@
         {% endif %}
         <div class="plot-grid" style="margin-top: 20px;">
             {% if images.aif_curve %}
-            <div><img src="data:image/png;base64,{{ images.aif_curve }}" alt="AIF Curve"></div>
+            <div><img src="{{ images.aif_curve }}" alt="AIF Curve"></div>
             {% endif %}
             {% if images.aif_location %}
-            <div><img src="data:image/png;base64,{{ images.aif_location }}" alt="AIF Location"></div>
+            <div><img src="{{ images.aif_location }}" alt="AIF Location"></div>
             {% endif %}
         </div>
     </div>
@@ -350,7 +350,7 @@
         {% endif %}
         {% if images.dsc_preprocessing_qc %}
         <div style="margin-top: 20px;">
-            <img src="data:image/png;base64,{{ images.dsc_preprocessing_qc }}" alt="DSC Preprocessing QC">
+            <img src="{{ images.dsc_preprocessing_qc }}" alt="DSC Preprocessing QC">
         </div>
         {% endif %}
     </div>
@@ -397,7 +397,7 @@
         {% if images.dsc_param_maps_qc %}
         <div style="margin-top: 20px;">
             <p>Multi-slice overlays of perfusion parameter maps (rCBF, rCBV, MTT, Tmax, PSR, TTP).</p>
-            <img src="data:image/png;base64,{{ images.dsc_param_maps_qc }}" alt="DSC Parameter Maps QC">
+            <img src="{{ images.dsc_param_maps_qc }}" alt="DSC Parameter Maps QC">
         </div>
         {% endif %}
     </div>
@@ -434,7 +434,7 @@
         {% endif %}
         <div style="margin-top: 20px;">
             <p>Tissue concentration fit, model residuals, AIF curve, and derived CBF map.</p>
-            <img src="data:image/png;base64,{{ images.dsc_fit_qc }}" alt="DSC Fit QC">
+            <img src="{{ images.dsc_fit_qc }}" alt="DSC Fit QC">
         </div>
     </div>
     {% endif %}
@@ -483,7 +483,7 @@
         {% if images.dsc_leakage_qc %}
         <div style="margin-top: 20px;">
             <p>K2 map, AUC comparison (raw vs corrected), example voxel curves, and scatter plot.</p>
-            <img src="data:image/png;base64,{{ images.dsc_leakage_qc }}" alt="DSC Leakage Correction QC">
+            <img src="{{ images.dsc_leakage_qc }}" alt="DSC Leakage Correction QC">
         </div>
         {% endif %}
     </div>
@@ -494,7 +494,7 @@
     <div class="section">
         <h2>Registration Quality</h2>
         <p>Multi-slice overlay showing {{ pipeline }} to T1w registration.</p>
-        <img src="data:image/png;base64,{{ images.registration }}" alt="Registration QC">
+        <img src="{{ images.registration }}" alt="Registration QC">
     </div>
     {% endif %}
 

@@ -75,7 +75,7 @@
         {% endif %}
         {% if images.motion %}
         <div style="margin-top: 20px;">
-            <img src="data:image/png;base64,{{ images.motion }}" alt="Motion QC">
+            <img src="{{ images.motion }}" alt="Motion QC">
         </div>
         {% endif %}
     </div>
@@ -121,7 +121,7 @@
         </div>
         {% endif %}
         <div style="margin-top: 20px;">
-            <img src="data:image/png;base64,{{ images.preprocessing_qc }}" alt="DCE Preprocessing QC">
+            <img src="{{ images.preprocessing_qc }}" alt="DCE Preprocessing QC">
         </div>
     </div>
     {% endif %}
@@ -166,7 +166,7 @@
         {% endif %}
         {% if images.t1 %}
         <div style="margin-top: 20px;">
-            <img src="data:image/png;base64,{{ images.t1 }}" alt="T1 Mapping QC">
+            <img src="{{ images.t1 }}" alt="T1 Mapping QC">
         </div>
         {% endif %}
     </div>
@@ -206,7 +206,7 @@
         {% endif %}
         {% if images.b1 %}
         <div style="margin-top: 20px;">
-            <img src="data:image/png;base64,{{ images.b1 }}" alt="B1+ Mapping QC">
+            <img src="{{ images.b1 }}" alt="B1+ Mapping QC">
         </div>
         {% endif %}
     </div>
@@ -282,10 +282,10 @@
         {% endif %}
         <div class="plot-grid" style="margin-top: 20px;">
             {% if images.aif_curve %}
-            <div><img src="data:image/png;base64,{{ images.aif_curve }}" alt="AIF Curve"></div>
+            <div><img src="{{ images.aif_curve }}" alt="AIF Curve"></div>
             {% endif %}
             {% if images.aif_location %}
-            <div><img src="data:image/png;base64,{{ images.aif_location }}" alt="AIF Location"></div>
+            <div><img src="{{ images.aif_location }}" alt="AIF Location"></div>
             {% endif %}
         </div>
     </div>
@@ -337,7 +337,7 @@
         {% if images.pk_param_maps_qc %}
         <div style="margin-top: 20px;">
             <h3>Parameter Maps</h3>
-            <img src="data:image/png;base64,{{ images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
+            <img src="{{ images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
         </div>
         {% endif %}
 
@@ -392,7 +392,7 @@
             </div>
             {% endif %}
             <div style="margin-top: 10px;">
-                <img src="data:image/png;base64,{{ images.pk_modeling_qc }}" alt="PK Modeling QC">
+                <img src="{{ images.pk_modeling_qc }}" alt="PK Modeling QC">
             </div>
         </div>
         {% endif %}
@@ -425,7 +425,7 @@
     <div class="section">
         <h2>Registration Quality</h2>
         <p>Multi-slice overlay showing {{ pipeline }} to T1w registration.</p>
-        <img src="data:image/png;base64,{{ images.registration }}" alt="Registration QC">
+        <img src="{{ images.registration }}" alt="Registration QC">
     </div>
     {% endif %}
 

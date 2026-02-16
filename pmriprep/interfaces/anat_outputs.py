@@ -54,6 +54,15 @@ class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     source_flair = File(desc="Original FLAIR source path")
     source_pdw = File(desc="Original PDw source path")
 
+    # QC filmstrips (optional)
+    brain_mask_filmstrip = traits.Str(desc="Brain mask QC filmstrip PNG path")
+    tissue_seg_filmstrip = traits.Str(desc="Tissue segmentation QC filmstrip PNG path")
+    acpc_filmstrip = traits.Str(desc="ACPC alignment QC filmstrip PNG path")
+    coreg_filmstrip_postcon = traits.Str(desc="T1w postcon coregistration filmstrip PNG path")
+    coreg_filmstrip_t2w = traits.Str(desc="T2w coregistration filmstrip PNG path")
+    coreg_filmstrip_flair = traits.Str(desc="FLAIR coregistration filmstrip PNG path")
+    coreg_filmstrip_pdw = traits.Str(desc="PDw coregistration filmstrip PNG path")
+
     # QC metrics
     qc_metrics = traits.Dict(desc="QC metrics dictionary from brain extraction")
 
@@ -328,6 +337,28 @@ class AnatDerivativeWriter(BaseInterface):
             qc_json_path = qc_dir / "brain_extraction_qc.json"
             self._write_json(qc_metrics, qc_json_path)
             self._qc_json = str(qc_json_path)
+
+        # ---------------------------------------------------------------
+        # 6. QC figures → figures/ with BIDS names
+        # ---------------------------------------------------------------
+        from pmriprep.utils.report_utils import figure_filename
+
+        figures_dir = ses_dir / "figures"
+
+        _fig_inputs = {
+            "brain_mask": "brain_mask_filmstrip",
+            "tissue_seg": "tissue_seg_filmstrip",
+            "acpc": "acpc_filmstrip",
+            "coreg_postcon": "coreg_filmstrip_postcon",
+            "coreg_t2w": "coreg_filmstrip_t2w",
+            "coreg_flair": "coreg_filmstrip_flair",
+            "coreg_pdw": "coreg_filmstrip_pdw",
+        }
+        for fig_key, attr in _fig_inputs.items():
+            if self._has_input(attr):
+                figures_dir.mkdir(parents=True, exist_ok=True)
+                fname = figure_filename(subject, session, fig_key, "anat")
+                self._copy_file(getattr(self.inputs, attr), figures_dir / fname)
 
         self._out_dir = str(ses_dir)
         return runtime

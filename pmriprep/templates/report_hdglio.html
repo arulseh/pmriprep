@@ -60,7 +60,7 @@
     <div class="section">
         <h2>Tumor Segmentation on T1w Post-Contrast</h2>
         <p>Enhancing (red) and non-enhancing (green) tumor contour outlines on T1w post-contrast.</p>
-        <img src="data:image/png;base64,{{ images.seg_postcon }}" alt="Tumor on T1w PostCon">
+        <img src="{{ images.seg_postcon }}" alt="Tumor on T1w PostCon">
     </div>
     {% endif %}
 
@@ -69,7 +69,7 @@
     <div class="section">
         <h2>Tumor Segmentation on FLAIR</h2>
         <p>Enhancing (red) and non-enhancing (green) tumor contour outlines on FLAIR.</p>
-        <img src="data:image/png;base64,{{ images.seg_flair }}" alt="Tumor on FLAIR">
+        <img src="{{ images.seg_flair }}" alt="Tumor on FLAIR">
     </div>
     {% endif %}
 
@@ -114,7 +114,7 @@
         {% if images.nawm_flair %}
         <div style="margin-top: 20px;">
             <p>NAWM ROI (cyan) and whole tumor (red) contour outlines on FLAIR.</p>
-            <img src="data:image/png;base64,{{ images.nawm_flair }}" alt="NAWM on FLAIR">
+            <img src="{{ images.nawm_flair }}" alt="NAWM on FLAIR">
         </div>
         {% endif %}
     </div>

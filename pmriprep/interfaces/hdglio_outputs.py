@@ -51,6 +51,11 @@ class HDGLIODerivativeWriterInputSpec(BaseInterfaceInputSpec):
         exists=True, mandatory=True, desc="Contralateral NAWM mask for CBV normalization"
     )
 
+    # QC filmstrips (optional)
+    seg_filmstrip_postcon = traits.Str(desc="Tumor segmentation on T1w postcon filmstrip PNG path")
+    seg_filmstrip_flair = traits.Str(desc="Tumor segmentation on FLAIR filmstrip PNG path")
+    nawm_filmstrip_flair = traits.Str(desc="NAWM ROI on FLAIR filmstrip PNG path")
+
     # QC metrics
     qc_metrics = traits.Dict(desc="Combined QC metrics from all HD-GLIO steps")
 
@@ -257,6 +262,25 @@ class HDGLIODerivativeWriter(BaseInterface):
         # 4. Dataset description
         # ---------------------------------------------------------------
         self._write_dataset_description(hdglio_dir)
+
+        # ---------------------------------------------------------------
+        # 4b. QC figures → figures/ with BIDS names
+        # ---------------------------------------------------------------
+        from pmriprep.utils.report_utils import figure_filename
+
+        figures_dir = hdglio_ses_dir / "figures"
+
+        _fig_inputs = {
+            "seg_postcon": "seg_filmstrip_postcon",
+            "seg_flair": "seg_filmstrip_flair",
+            "nawm_flair": "nawm_filmstrip_flair",
+        }
+        for fig_key, attr in _fig_inputs.items():
+            val = getattr(self.inputs, attr, None)
+            if val is not None and isdefined(val) and val and Path(val).exists():
+                figures_dir.mkdir(parents=True, exist_ok=True)
+                fname = figure_filename(subject, session, fig_key, "hdglio")
+                shutil.copy2(str(val), str(figures_dir / fname))
 
         # ---------------------------------------------------------------
         # 5. QC JSON

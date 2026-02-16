@@ -616,47 +616,27 @@ class DCEDerivativeWriter(BaseInterface):
             self._write_json(enhanced_qc, qc_json_path)
             self._qc_json = str(qc_json_path)
 
-        # Copy QC plots
-        if self._has_input("aif_curve_plot"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(self.inputs.aif_curve_plot, qc_dir / "aif_curve_qc.png")
-        if self._has_input("aif_location_plot"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(self.inputs.aif_location_plot, qc_dir / "aif_location_qc.png")
-        if self._has_input("registration_filmstrip"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(
-                self.inputs.registration_filmstrip, qc_dir / "registration_qc_filmstrip.png"
-            )
+        # Copy QC figures → figures/ with BIDS names
+        from pmriprep.utils.report_utils import figure_filename
 
-        if self._has_input("motion_qc_plot"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(
-                self.inputs.motion_qc_plot, qc_dir / "motion_qc.png"
-            )
+        figures_dir = ses_dir / "figures"
+        figures_dir.mkdir(parents=True, exist_ok=True)
 
-        if self._has_input("b1_qc_plot"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(self.inputs.b1_qc_plot, qc_dir / "b1_qc.png")
-        if self._has_input("t1_qc_plot"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(self.inputs.t1_qc_plot, qc_dir / "vfa_t1_qc.png")
-
-        if self._has_input("preprocessing_qc_plot"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(
-                self.inputs.preprocessing_qc_plot, qc_dir / "dce_preprocessing_qc.png"
-            )
-        if self._has_input("pk_modeling_qc_plot"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(
-                self.inputs.pk_modeling_qc_plot, qc_dir / "pk_modeling_qc.png"
-            )
-        if self._has_input("pk_param_maps_qc_plot"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(
-                self.inputs.pk_param_maps_qc_plot, qc_dir / "pk_parameter_maps_qc.png"
-            )
+        _fig_inputs = {
+            "motion": "motion_qc_plot",
+            "aif_curve": "aif_curve_plot",
+            "aif_location": "aif_location_plot",
+            "registration": "registration_filmstrip",
+            "b1": "b1_qc_plot",
+            "t1": "t1_qc_plot",
+            "preprocessing_qc": "preprocessing_qc_plot",
+            "pk_modeling_qc": "pk_modeling_qc_plot",
+            "pk_param_maps_qc": "pk_param_maps_qc_plot",
+        }
+        for fig_key, attr in _fig_inputs.items():
+            if self._has_input(attr):
+                fname = figure_filename(subject, session, fig_key, "dce")
+                self._copy_file(getattr(self.inputs, attr), figures_dir / fname)
 
         # -----------------------------------------------------------
         # 11. Dataset description

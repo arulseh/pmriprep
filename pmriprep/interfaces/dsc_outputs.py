@@ -115,6 +115,12 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Motion QC plot
     motion_qc_plot = traits.Str(desc="Motion QC plot PNG path")
 
+    # DSC QC plots
+    dsc_preprocessing_qc_plot = traits.Str(desc="DSC preprocessing QC plot PNG path")
+    dsc_param_maps_qc_plot = traits.Str(desc="DSC parameter maps QC plot PNG path")
+    dsc_fit_qc_plot = traits.Str(desc="DSC fit QC plot PNG path (parametric methods only)")
+    dsc_leakage_qc_plot = traits.Str(desc="DSC leakage correction QC plot PNG path")
+
     # Lesion statistics
     lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
     lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
@@ -441,12 +447,6 @@ class DSCDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # 10. QC outputs
         # -----------------------------------------------------------
-        if self._has_input("registration_filmstrip"):
-            self._copy_file(
-                self.inputs.registration_filmstrip,
-                qc_dir / "registration_qc_filmstrip.png",
-            )
-
         qc_metrics = self.inputs.qc_metrics
         self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
@@ -457,25 +457,27 @@ class DSCDerivativeWriter(BaseInterface):
             self._qc_json = str(qc_json_path)
 
         # -----------------------------------------------------------
-        # 10b. AIF QC plots
+        # 10b. QC figures → figures/ with BIDS names
         # -----------------------------------------------------------
-        if self._has_input("aif_curve_plot"):
-            self._copy_file(
-                self.inputs.aif_curve_plot,
-                qc_dir / "aif_curve_qc.png",
-            )
-        if self._has_input("aif_location_plot"):
-            self._copy_file(
-                self.inputs.aif_location_plot,
-                qc_dir / "aif_location_qc.png",
-            )
+        from pmriprep.utils.report_utils import figure_filename
 
-        if self._has_input("motion_qc_plot"):
-            qc_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(
-                self.inputs.motion_qc_plot,
-                qc_dir / "motion_qc.png",
-            )
+        figures_dir = ses_dir / "figures"
+        figures_dir.mkdir(parents=True, exist_ok=True)
+
+        _fig_inputs = {
+            "motion": "motion_qc_plot",
+            "aif_curve": "aif_curve_plot",
+            "aif_location": "aif_location_plot",
+            "registration": "registration_filmstrip",
+            "dsc_preprocessing_qc": "dsc_preprocessing_qc_plot",
+            "dsc_param_maps_qc": "dsc_param_maps_qc_plot",
+            "dsc_fit_qc": "dsc_fit_qc_plot",
+            "dsc_leakage_qc": "dsc_leakage_qc_plot",
+        }
+        for fig_key, attr in _fig_inputs.items():
+            if self._has_input(attr):
+                fname = figure_filename(subject, session, fig_key, "dsc")
+                self._copy_file(getattr(self.inputs, attr), figures_dir / fname)
 
         # -----------------------------------------------------------
         # 10c. Structural underlays (in DSC space)

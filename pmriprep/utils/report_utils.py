@@ -1,31 +1,90 @@
 """HTML report generation utilities for NiPreps-style QC reports.
 
-This module provides utilities for generating self-contained HTML QC reports
-with embedded images, following NiPreps conventions for visual quality control.
+This module provides utilities for generating HTML QC reports with
+external figure files, following NiPreps conventions for visual
+quality control.
 """
 
-import base64
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from jinja2 import Environment, PackageLoader, TemplateNotFound
 
 
-def image_to_base64(image_path: str) -> str:
-    """Convert PNG image to base64 string for HTML embedding.
+# Mapping: internal image key -> (desc_label, default_suffix)
+# The suffix is the BIDS modality suffix (dsc, dce, T1w, FLAIR).
+# For keys shared between DSC and DCE (motion, aif_curve, aif_location,
+# registration), the pipeline argument overrides the suffix.
+FIGURE_NAME_MAP: dict[str, tuple[str, str]] = {
+    # DSC
+    "motion": ("motion", "dsc"),
+    "aif_curve": ("aifcurve", "dsc"),
+    "aif_location": ("aiflocation", "dsc"),
+    "registration": ("registration", "dsc"),
+    "dsc_preprocessing_qc": ("preprocessing", "dsc"),
+    "dsc_param_maps_qc": ("parammaps", "dsc"),
+    "dsc_fit_qc": ("deconvfit", "dsc"),
+    "dsc_leakage_qc": ("leakage", "dsc"),
+    # DCE
+    "b1": ("b1map", "dce"),
+    "t1": ("t1map", "dce"),
+    "preprocessing_qc": ("preprocessing", "dce"),
+    "pk_modeling_qc": ("pkfit", "dce"),
+    "pk_param_maps_qc": ("pkparammaps", "dce"),
+    # Anatomical
+    "brain_mask": ("brainmask", "T1w"),
+    "tissue_seg": ("tissueseg", "T1w"),
+    "acpc": ("acpc", "T1w"),
+    "coreg_postcon": ("coregpostcon", "T1w"),
+    "coreg_t2w": ("coregt2w", "T1w"),
+    "coreg_flair": ("coregflair", "T1w"),
+    "coreg_pdw": ("coregpdw", "T1w"),
+    # HD-GLIO
+    "seg_postcon": ("segpostcon", "T1w"),
+    "seg_flair": ("segflair", "FLAIR"),
+    "nawm_flair": ("nawm", "FLAIR"),
+}
+
+# Keys that are shared between DSC and DCE pipelines.
+# For these, the suffix is determined by the pipeline argument.
+_SHARED_KEYS = {"motion", "aif_curve", "aif_location", "registration"}
+
+
+def figure_filename(
+    subject_id: str,
+    session_id: str,
+    key: str,
+    pipeline: str = "",
+) -> str:
+    """Build a BIDS-compliant figure filename for the given image key.
 
     Args:
-        image_path: Path to the PNG image file.
+        subject_id: BIDS subject ID (without ``sub-`` prefix).
+        session_id: BIDS session ID (without ``ses-`` prefix).
+        key: Internal image key (must be in ``FIGURE_NAME_MAP``).
+        pipeline: Pipeline name (``'dsc'`` or ``'dce'``).  Used to
+            disambiguate shared keys.
 
     Returns:
-        Base64-encoded string of the image data.
+        Filename string, e.g.
+        ``sub-0011_ses-0001_desc-motion_dsc.png``.
 
     Raises:
-        FileNotFoundError: If the image file does not exist.
+        KeyError: If *key* is not in ``FIGURE_NAME_MAP``.
     """
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
+    desc_label, suffix = FIGURE_NAME_MAP[key]
+
+    # For shared keys, override suffix with pipeline
+    if key in _SHARED_KEYS and pipeline:
+        suffix = pipeline
+
+    parts = [f"sub-{subject_id}"]
+    if session_id:
+        parts.append(f"ses-{session_id}")
+    parts.append(f"desc-{desc_label}_{suffix}.png")
+
+    return "_".join(parts)
 
 
 def generate_qc_report(
@@ -34,51 +93,22 @@ def generate_qc_report(
     pipeline: str,
     qc_json_path: str,
     output_path: str,
-    motion_qc_plot: Optional[str] = None,
-    aif_curve_plot: Optional[str] = None,
-    aif_location_plot: Optional[str] = None,
-    registration_filmstrip: Optional[str] = None,
-    b1_qc_plot: Optional[str] = None,
-    t1_qc_plot: Optional[str] = None,
-    brain_mask_filmstrip: Optional[str] = None,
-    tissue_seg_filmstrip: Optional[str] = None,
-    acpc_filmstrip: Optional[str] = None,
-    coreg_filmstrip_postcon: Optional[str] = None,
-    coreg_filmstrip_t2w: Optional[str] = None,
-    coreg_filmstrip_flair: Optional[str] = None,
-    coreg_filmstrip_pdw: Optional[str] = None,
-    seg_filmstrip_postcon: Optional[str] = None,
-    seg_filmstrip_flair: Optional[str] = None,
-    nawm_filmstrip_flair: Optional[str] = None,
-    preprocessing_qc_plot: Optional[str] = None,
-    pk_modeling_qc_plot: Optional[str] = None,
-    pk_param_maps_qc_plot: Optional[str] = None,
-    dsc_preprocessing_qc_plot: Optional[str] = None,
-    dsc_param_maps_qc_plot: Optional[str] = None,
-    dsc_fit_qc_plot: Optional[str] = None,
-    dsc_leakage_qc_plot: Optional[str] = None,
+    figures_dir: str,
 ) -> str:
-    """Generate self-contained HTML QC report with embedded images.
+    """Generate HTML QC report referencing external figure files.
 
-    Creates a NiPreps-style HTML report that includes:
-    - QC metrics and recommendations
-    - Motion quality control visualization
-    - AIF detection quality plots
-    - Registration quality filmstrip
-
-    All images are embedded as base64 to create a self-contained HTML file
-    that can be viewed without external dependencies.
+    Creates a NiPreps-style HTML report that references figures via
+    relative paths (``figures/<filename>``).  Figures are expected to
+    already exist in *figures_dir* with BIDS-compliant names built by
+    :func:`figure_filename`.
 
     Args:
         subject_id: BIDS subject ID (without sub- prefix).
         session_id: BIDS session ID (without ses- prefix).
-        pipeline: Pipeline name ('dsc' or 'dce').
+        pipeline: Pipeline name ('dsc', 'dce', 'anat', or 'hdglio').
         qc_json_path: Path to QC metrics JSON file.
         output_path: Output HTML file path.
-        motion_qc_plot: Path to motion QC plot PNG (optional).
-        aif_curve_plot: Path to AIF curve plot PNG (optional).
-        aif_location_plot: Path to AIF location plot PNG (optional).
-        registration_filmstrip: Path to registration filmstrip PNG (optional).
+        figures_dir: Directory containing figure PNG files.
 
     Returns:
         Path to generated HTML report.
@@ -91,35 +121,13 @@ def generate_qc_report(
     with open(qc_json_path) as f:
         qc_metrics = json.load(f)
 
-    # Convert images to base64
+    # Scan figures_dir for matching files and build relative paths
     images: dict[str, str] = {}
-    for name, path in [
-        ("motion", motion_qc_plot),
-        ("aif_curve", aif_curve_plot),
-        ("aif_location", aif_location_plot),
-        ("registration", registration_filmstrip),
-        ("b1", b1_qc_plot),
-        ("t1", t1_qc_plot),
-        ("brain_mask", brain_mask_filmstrip),
-        ("tissue_seg", tissue_seg_filmstrip),
-        ("acpc", acpc_filmstrip),
-        ("coreg_postcon", coreg_filmstrip_postcon),
-        ("coreg_t2w", coreg_filmstrip_t2w),
-        ("coreg_flair", coreg_filmstrip_flair),
-        ("coreg_pdw", coreg_filmstrip_pdw),
-        ("seg_postcon", seg_filmstrip_postcon),
-        ("seg_flair", seg_filmstrip_flair),
-        ("nawm_flair", nawm_filmstrip_flair),
-        ("preprocessing_qc", preprocessing_qc_plot),
-        ("pk_modeling_qc", pk_modeling_qc_plot),
-        ("pk_param_maps_qc", pk_param_maps_qc_plot),
-        ("dsc_preprocessing_qc", dsc_preprocessing_qc_plot),
-        ("dsc_param_maps_qc", dsc_param_maps_qc_plot),
-        ("dsc_fit_qc", dsc_fit_qc_plot),
-        ("dsc_leakage_qc", dsc_leakage_qc_plot),
-    ]:
-        if path and Path(path).exists():
-            images[name] = image_to_base64(path)
+    fig_path = Path(figures_dir)
+    for key in FIGURE_NAME_MAP:
+        fname = figure_filename(subject_id, session_id, key, pipeline)
+        if (fig_path / fname).exists():
+            images[key] = f"figures/{fname}"
 
     # Load and render template
     try:
@@ -169,14 +177,15 @@ def _generate_fallback_report(
     """Generate a fallback HTML report when templates are not available.
 
     This function creates a basic but functional HTML report without
-    requiring Jinja2 templates.
+    requiring Jinja2 templates.  Image values are relative paths
+    (e.g. ``figures/sub-XX_ses-YY_desc-motion_dsc.png``).
 
     Args:
         subject_id: BIDS subject ID.
         session_id: BIDS session ID.
         pipeline: Pipeline name.
         qc_metrics: QC metrics dictionary.
-        images: Dictionary of base64-encoded images.
+        images: Dictionary of relative image paths.
 
     Returns:
         HTML string for the report.
@@ -208,7 +217,7 @@ def _generate_fallback_report(
         <div class="section">
             <h2>Motion Quality Control</h2>
             {motion_metrics_html}
-            <img src="data:image/png;base64,{images["motion"]}" alt="Motion QC">
+            <img src="{images["motion"]}" alt="Motion QC">
         </div>
         ''')
 
@@ -248,9 +257,9 @@ def _generate_fallback_report(
 
         aif_html = f'<div class="section"><h2>Arterial Input Function (AIF) Detection</h2>{aif_metrics_html}<div class="plot-grid">'
         if "aif_curve" in images:
-            aif_html += f'<div><img src="data:image/png;base64,{images["aif_curve"]}" alt="AIF Curve"></div>'
+            aif_html += f'<div><img src="{images["aif_curve"]}" alt="AIF Curve"></div>'
         if "aif_location" in images:
-            aif_html += f'<div><img src="data:image/png;base64,{images["aif_location"]}" alt="AIF Location"></div>'
+            aif_html += f'<div><img src="{images["aif_location"]}" alt="AIF Location"></div>'
         aif_html += '</div></div>'
         image_sections.append(aif_html)
 
@@ -258,7 +267,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>B1+ Mapping QC</h2>
-            <img src="data:image/png;base64,{images["b1"]}" alt="B1+ Mapping QC">
+            <img src="{images["b1"]}" alt="B1+ Mapping QC">
         </div>
         ''')
 
@@ -266,7 +275,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>T1 Mapping QC</h2>
-            <img src="data:image/png;base64,{images["t1"]}" alt="T1 Mapping QC">
+            <img src="{images["t1"]}" alt="T1 Mapping QC">
         </div>
         ''')
 
@@ -274,7 +283,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>Registration Quality</h2>
-            <img src="data:image/png;base64,{images["registration"]}" alt="Registration QC">
+            <img src="{images["registration"]}" alt="Registration QC">
         </div>
         ''')
 
@@ -282,7 +291,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>Brain Extraction QC</h2>
-            <img src="data:image/png;base64,{images["brain_mask"]}" alt="Brain Mask QC">
+            <img src="{images["brain_mask"]}" alt="Brain Mask QC">
         </div>
         ''')
 
@@ -291,7 +300,7 @@ def _generate_fallback_report(
         <div class="section">
             <h2>Tissue Segmentation</h2>
             <p>WM (blue), GM (red), and CSF (cyan) boundary contours on brain-extracted T1w.</p>
-            <img src="data:image/png;base64,{images["tissue_seg"]}" alt="Tissue Segmentation QC">
+            <img src="{images["tissue_seg"]}" alt="Tissue Segmentation QC">
         </div>
         ''')
 
@@ -299,7 +308,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>ACPC-MNI Alignment QC</h2>
-            <img src="data:image/png;base64,{images["acpc"]}" alt="ACPC Alignment QC">
+            <img src="{images["acpc"]}" alt="ACPC Alignment QC">
         </div>
         ''')
 
@@ -313,7 +322,7 @@ def _generate_fallback_report(
             image_sections.append(f'''
         <div class="section">
             <h2>Coregistration: {coreg_label}</h2>
-            <img src="data:image/png;base64,{images[coreg_key]}" alt="{coreg_label} QC">
+            <img src="{images[coreg_key]}" alt="{coreg_label} QC">
         </div>
             ''')
 
@@ -321,7 +330,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>Tumor Segmentation on T1w Post-Contrast</h2>
-            <img src="data:image/png;base64,{images["seg_postcon"]}" alt="Tumor on T1w PostCon">
+            <img src="{images["seg_postcon"]}" alt="Tumor on T1w PostCon">
         </div>
         ''')
 
@@ -329,7 +338,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>Tumor Segmentation on FLAIR</h2>
-            <img src="data:image/png;base64,{images["seg_flair"]}" alt="Tumor on FLAIR">
+            <img src="{images["seg_flair"]}" alt="Tumor on FLAIR">
         </div>
         ''')
 
@@ -337,7 +346,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>NAWM ROI on FLAIR</h2>
-            <img src="data:image/png;base64,{images["nawm_flair"]}" alt="NAWM on FLAIR">
+            <img src="{images["nawm_flair"]}" alt="NAWM on FLAIR">
         </div>
         ''')
 
@@ -345,7 +354,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>DCE Preprocessing QC</h2>
-            <img src="data:image/png;base64,{images["preprocessing_qc"]}" alt="DCE Preprocessing QC">
+            <img src="{images["preprocessing_qc"]}" alt="DCE Preprocessing QC">
         </div>
         ''')
 
@@ -353,7 +362,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>PK Modeling QC</h2>
-            <img src="data:image/png;base64,{images["pk_modeling_qc"]}" alt="PK Modeling QC">
+            <img src="{images["pk_modeling_qc"]}" alt="PK Modeling QC">
         </div>
         ''')
 
@@ -361,7 +370,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>PK Parameter Maps</h2>
-            <img src="data:image/png;base64,{images["pk_param_maps_qc"]}" alt="PK Parameter Maps QC">
+            <img src="{images["pk_param_maps_qc"]}" alt="PK Parameter Maps QC">
         </div>
         ''')
 
@@ -369,7 +378,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>DSC Preprocessing QC</h2>
-            <img src="data:image/png;base64,{images["dsc_preprocessing_qc"]}" alt="DSC Preprocessing QC">
+            <img src="{images["dsc_preprocessing_qc"]}" alt="DSC Preprocessing QC">
         </div>
         ''')
 
@@ -377,7 +386,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>DSC Parameter Maps</h2>
-            <img src="data:image/png;base64,{images["dsc_param_maps_qc"]}" alt="DSC Parameter Maps QC">
+            <img src="{images["dsc_param_maps_qc"]}" alt="DSC Parameter Maps QC">
         </div>
         ''')
 
@@ -385,7 +394,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>Deconvolution Fit QC</h2>
-            <img src="data:image/png;base64,{images["dsc_fit_qc"]}" alt="DSC Fit QC">
+            <img src="{images["dsc_fit_qc"]}" alt="DSC Fit QC">
         </div>
         ''')
 
@@ -393,7 +402,7 @@ def _generate_fallback_report(
         image_sections.append(f'''
         <div class="section">
             <h2>Leakage Correction QC</h2>
-            <img src="data:image/png;base64,{images["dsc_leakage_qc"]}" alt="DSC Leakage QC">
+            <img src="{images["dsc_leakage_qc"]}" alt="DSC Leakage QC">
         </div>
         ''')
 

@@ -894,44 +894,47 @@ def init_pmriprep_wf(
             name="anat_report",
         )
 
+        # Connect qc_json (enforces writer-before-report ordering)
         workflow.connect([
             (anat_writer, anat_report, [("qc_json", "qc_json")]),
-            (anat_wf, anat_report, [
+        ])
+
+        # Connect filmstrips to writer (writer saves to figures/ dir)
+        workflow.connect([
+            (anat_wf, anat_writer, [
                 ("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip"),
                 ("outputnode.tissue_seg_filmstrip", "tissue_seg_filmstrip"),
             ]),
         ])
 
-        # Connect ACPC filmstrip if available
         if not anat_config.skip_acpc:
             workflow.connect([
-                (anat_wf, anat_report, [
+                (anat_wf, anat_writer, [
                     ("outputnode.acpc_filmstrip", "acpc_filmstrip"),
                 ]),
             ])
 
-        # Connect cross-modal coregistration filmstrips
         if session_data.modalities.t1w_ce_gad:
             workflow.connect([
-                (anat_wf, anat_report, [
+                (anat_wf, anat_writer, [
                     ("outputnode.coreg_filmstrip_postcon", "coreg_filmstrip_postcon"),
                 ]),
             ])
         if session_data.modalities.t2w:
             workflow.connect([
-                (anat_wf, anat_report, [
+                (anat_wf, anat_writer, [
                     ("outputnode.coreg_filmstrip_t2w", "coreg_filmstrip_t2w"),
                 ]),
             ])
         if session_data.modalities.flair:
             workflow.connect([
-                (anat_wf, anat_report, [
+                (anat_wf, anat_writer, [
                     ("outputnode.coreg_filmstrip_flair", "coreg_filmstrip_flair"),
                 ]),
             ])
         if session_data.modalities.pdw:
             workflow.connect([
-                (anat_wf, anat_report, [
+                (anat_wf, anat_writer, [
                     ("outputnode.coreg_filmstrip_pdw", "coreg_filmstrip_pdw"),
                 ]),
             ])
@@ -1051,9 +1054,14 @@ def init_pmriprep_wf(
             name="hdglio_report",
         )
 
+        # Connect qc_json (enforces writer-before-report ordering)
         workflow.connect([
             (hdglio_writer, hdglio_report, [("qc_json", "qc_json")]),
-            (hdglio_wf, hdglio_report, [
+        ])
+
+        # Connect filmstrips to writer (writer saves to figures/ dir)
+        workflow.connect([
+            (hdglio_wf, hdglio_writer, [
                 ("outputnode.seg_filmstrip_postcon", "seg_filmstrip_postcon"),
                 ("outputnode.seg_filmstrip_flair", "seg_filmstrip_flair"),
                 ("outputnode.nawm_filmstrip_flair", "nawm_filmstrip_flair"),
@@ -1297,13 +1305,14 @@ def init_pmriprep_wf(
             name="dsc_report",
         )
 
+        # Connect qc_json (enforces writer-before-report ordering)
         workflow.connect([
             (dsc_writer, dsc_report, [("qc_json", "qc_json")]),
-            (dsc_wf, dsc_report, [
-                ("outputnode.motion_qc_plot", "motion_qc_plot"),
-                ("outputnode.aif_curve_plot", "aif_curve_plot"),
-                ("outputnode.aif_location_plot", "aif_location_plot"),
-                ("outputnode.registration_filmstrip", "registration_filmstrip"),
+        ])
+
+        # Connect DSC QC plots to writer (writer saves to figures/ dir)
+        workflow.connect([
+            (dsc_wf, dsc_writer, [
                 ("outputnode.dsc_preprocessing_qc_plot", "dsc_preprocessing_qc_plot"),
                 ("outputnode.dsc_param_maps_qc_plot", "dsc_param_maps_qc_plot"),
                 ("outputnode.dsc_fit_qc_plot", "dsc_fit_qc_plot"),
@@ -1742,19 +1751,9 @@ def init_pmriprep_wf(
             name="dce_report",
         )
 
+        # Connect qc_json (enforces writer-before-report ordering)
         workflow.connect([
             (dce_writer, dce_report, [("qc_json", "qc_json")]),
-            (dce_wf, dce_report, [
-                ("outputnode.motion_qc_plot", "motion_qc_plot"),
-                ("outputnode.aif_curve_qc_plot", "aif_curve_plot"),
-                ("outputnode.aif_location_qc_plot", "aif_location_plot"),
-                ("outputnode.registration_qc_filmstrip", "registration_filmstrip"),
-                ("outputnode.b1_qc_plot", "b1_qc_plot"),
-                ("outputnode.t1_qc_plot", "t1_qc_plot"),
-                ("outputnode.preprocessing_qc_plot", "preprocessing_qc_plot"),
-                ("outputnode.pk_modeling_qc_plot", "pk_modeling_qc_plot"),
-                ("outputnode.pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
-            ]),
         ])
 
     return workflow

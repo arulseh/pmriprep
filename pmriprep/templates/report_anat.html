@@ -62,7 +62,7 @@
         {% if images.brain_mask %}
         <div style="margin-top: 20px;">
             <p>Mask boundary (edge overlay) on bias-corrected T1w.</p>
-            <img src="data:image/png;base64,{{ images.brain_mask }}" alt="Brain Mask QC">
+            <img src="{{ images.brain_mask }}" alt="Brain Mask QC">
         </div>
         {% endif %}
     </div>
@@ -73,7 +73,7 @@
     <div class="section">
         <h2>Tissue Segmentation</h2>
         <p>WM (blue), GM (red), and CSF (cyan) boundary contours on brain-extracted T1w.</p>
-        <img src="data:image/png;base64,{{ images.tissue_seg }}" alt="Tissue Segmentation QC">
+        <img src="{{ images.tissue_seg }}" alt="Tissue Segmentation QC">
     </div>
     {% endif %}
 
@@ -82,7 +82,7 @@
     <div class="section">
         <h2>ACPC-MNI Alignment</h2>
         <p>MNI template edges overlaid on ACPC-aligned T1w.</p>
-        <img src="data:image/png;base64,{{ images.acpc }}" alt="ACPC Alignment QC">
+        <img src="{{ images.acpc }}" alt="ACPC Alignment QC">
     </div>
     {% endif %}
 
@@ -91,7 +91,7 @@
     <div class="section">
         <h2>Coregistration: T1w Post-Contrast to T1w</h2>
         <p>T1w structural edges overlaid on coregistered post-contrast T1w.</p>
-        <img src="data:image/png;base64,{{ images.coreg_postcon }}" alt="T1w PostCon Coreg QC">
+        <img src="{{ images.coreg_postcon }}" alt="T1w PostCon Coreg QC">
     </div>
     {% endif %}
 
@@ -99,7 +99,7 @@
     <div class="section">
         <h2>Coregistration: T2w to T1w</h2>
         <p>T1w structural edges overlaid on coregistered T2w.</p>
-        <img src="data:image/png;base64,{{ images.coreg_t2w }}" alt="T2w Coreg QC">
+        <img src="{{ images.coreg_t2w }}" alt="T2w Coreg QC">
     </div>
     {% endif %}
 
@@ -107,7 +107,7 @@
     <div class="section">
         <h2>Coregistration: FLAIR to T1w</h2>
         <p>T1w structural edges overlaid on coregistered FLAIR.</p>
-        <img src="data:image/png;base64,{{ images.coreg_flair }}" alt="FLAIR Coreg QC">
+        <img src="{{ images.coreg_flair }}" alt="FLAIR Coreg QC">
     </div>
     {% endif %}
 
@@ -115,7 +115,7 @@
     <div class="section">
         <h2>Coregistration: PDw to T1w</h2>
         <p>T1w structural edges overlaid on coregistered PDw.</p>
-        <img src="data:image/png;base64,{{ images.coreg_pdw }}" alt="PDw Coreg QC">
+        <img src="{{ images.coreg_pdw }}" alt="PDw Coreg QC">
     </div>
     {% endif %}
 
