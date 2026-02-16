@@ -549,6 +549,67 @@ def _find_previous_hdglio_outputs(
     return outputs
 
 
+def _find_previous_dsc_outputs(
+    output_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+) -> dict[str, Optional[str]]:
+    """Find previously-computed DSC outputs in the derivatives directory.
+
+    When --skip-dsc is used, the DCE workflow may still need DSC CBV and
+    the DSC→T1w transform for vp constraint and cross-validation.
+
+    Args:
+        output_dir: Path to output derivatives directory.
+        subject_id: BIDS subject ID (without 'sub-' prefix).
+        session_id: BIDS session ID (without 'ses-' prefix), or None.
+
+    Returns:
+        Dict with keys: rel_cbv_map, dsc_to_t1w_xfm, aif_qc.
+        Values are file paths (str) or None if not found.
+    """
+    outputs: dict[str, Optional[str]] = {
+        "rel_cbv_map": None,
+        "dsc_to_t1w_xfm": None,
+        "aif_qc": None,
+    }
+
+    ses_label = f"ses-{session_id}" if session_id else ""
+    dsc_dir = output_dir / "dsc_pipeline" / f"sub-{subject_id}"
+    if ses_label:
+        dsc_dir = dsc_dir / ses_label
+
+    if not dsc_dir.exists():
+        return outputs
+
+    # Relative CBV map
+    perf_dir = dsc_dir / "perf"
+    if perf_dir.exists():
+        for f in perf_dir.glob("*desc-rel_cbv.nii.gz"):
+            outputs["rel_cbv_map"] = str(f)
+
+    # DSC→T1w transform
+    xfm_dir = dsc_dir / "xfm"
+    if xfm_dir.exists():
+        for f in xfm_dir.glob("*from-DSC_to-T1w*_xfm.mat"):
+            outputs["dsc_to_t1w_xfm"] = str(f)
+
+    # AIF QC from dsc_qc.json
+    qc_dir = dsc_dir / "qc"
+    qc_json = qc_dir / "dsc_qc.json"
+    if qc_json.exists():
+        try:
+            import json
+            with open(qc_json) as f:
+                qc_data = json.load(f)
+            if "aif" in qc_data:
+                outputs["aif_qc"] = qc_data["aif"]
+        except Exception:
+            pass
+
+    return outputs
+
+
 def init_pmriprep_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1613,6 +1674,31 @@ def init_pmriprep_wf(
                         ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                     ]),
                 ])
+
+        elif dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):
+            # DSC skipped but DCE needs CBV: look for previous DSC outputs
+            prev_dsc = _find_previous_dsc_outputs(
+                Path(output_dir), subject_id, session_id,
+            )
+            if prev_dsc["rel_cbv_map"] and prev_dsc["dsc_to_t1w_xfm"]:
+                dce_wf.inputs.inputnode.dsc_cbv_file = prev_dsc["rel_cbv_map"]
+                dce_wf.inputs.inputnode.dsc_to_t1w_xfm = prev_dsc["dsc_to_t1w_xfm"]
+                _log.info(
+                    "skip-dsc: loaded DSC CBV from %s", prev_dsc["rel_cbv_map"]
+                )
+                if prev_dsc["aif_qc"]:
+                    dce_wf.inputs.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
+                else:
+                    _log.warning(
+                        "skip-dsc: AIF QC not found in previous DSC outputs; "
+                        "constraint quality assessment will use defaults"
+                    )
+            else:
+                _log.warning(
+                    "skip-dsc: no previous DSC CBV/transform found in %s; "
+                    "DCE vp constraint will be skipped",
+                    output_dir,
+                )
 
         # Connect DCE outputs to master outputnode
         workflow.connect([

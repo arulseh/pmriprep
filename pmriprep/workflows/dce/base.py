@@ -2244,7 +2244,7 @@ def _dsc_dce_validation_node(
     from pmriprep.utils.dce_dsc_validation import validate_vp_cbv_from_files
 
     # If skipping validation or missing data, return empty result
-    if no_dsc_validation or vp_file is None or dsc_cbv_file is None:
+    if no_dsc_validation or not vp_file or not dsc_cbv_file:
         return {
             "skipped": True,
             "status": "skipped",
@@ -2398,21 +2398,23 @@ def _resample_dsc_cbv_to_dce(
         dce_reference: Path to DCE reference image for output geometry.
 
     Returns:
-        Path to CBV map resampled to DCE space, or None if inputs are missing.
+        Path to CBV map resampled to DCE space, or empty string if inputs
+        are missing (empty string avoids nipype File trait validation errors
+        when None flows through workflow connections).
     """
     import logging
     import os
 
     _log = logging.getLogger("pmriprep.workflows.dce")
 
-    if dsc_cbv_file is None or not os.path.isfile(str(dsc_cbv_file)):
-        return None
-    if dsc_to_t1w_xfm is None or not os.path.isfile(str(dsc_to_t1w_xfm)):
-        return None
-    if t1w_to_dce_xfm is None or not os.path.isfile(str(t1w_to_dce_xfm)):
-        return None
-    if dce_reference is None or not os.path.isfile(str(dce_reference)):
-        return None
+    if not dsc_cbv_file or not os.path.isfile(str(dsc_cbv_file)):
+        return ""
+    if not dsc_to_t1w_xfm or not os.path.isfile(str(dsc_to_t1w_xfm)):
+        return ""
+    if not t1w_to_dce_xfm or not os.path.isfile(str(t1w_to_dce_xfm)):
+        return ""
+    if not dce_reference or not os.path.isfile(str(dce_reference)):
+        return ""
 
     import subprocess
 
@@ -2434,7 +2436,7 @@ def _resample_dsc_cbv_to_dce(
         _log.warning(
             "convert_xfm failed (rc=%d): %s", result.returncode, result.stderr
         )
-        return None
+        return ""
 
     # Apply combined transform with trilinear interpolation
     result = subprocess.run(
@@ -2455,7 +2457,7 @@ def _resample_dsc_cbv_to_dce(
             "FLIRT resampling of DSC CBV failed (rc=%d): %s",
             result.returncode, result.stderr,
         )
-        return None
+        return ""
 
     return cbv_in_dce
 

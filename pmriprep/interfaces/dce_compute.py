@@ -391,8 +391,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
 
     # DSC CBV constraint options
-    dsc_cbv_file = File(
-        desc="DSC-derived CBV map for vp constraint (optional)",
+    # Use traits.Str instead of File: when DSC is unavailable, the upstream
+    # resample node returns "" which nipype File trait cannot validate.
+    dsc_cbv_file = traits.Str(
+        desc="DSC-derived CBV map for vp constraint (optional, empty when unavailable)",
     )
     dsc_aif_qc = traits.Dict(
         desc="DSC AIF QC metrics dict for CBV quality assessment (optional)",
@@ -994,6 +996,7 @@ class ComputeDCEMaps(BaseInterface):
 
         has_dsc_cbv = (
             isdefined(self.inputs.dsc_cbv_file)
+            and self.inputs.dsc_cbv_file  # non-empty string
             and (model_name in ("extended_tofts", "2cxm") or was_auto)
         )
 
