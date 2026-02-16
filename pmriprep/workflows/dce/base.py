@@ -2367,11 +2367,11 @@ def _transform_b1_to_dce(b1_map_file=None, reference_file=None):
 
 
 def _resample_dsc_cbv_to_dce(
-    dsc_cbv_file: Optional[str] = None,
-    dsc_to_t1w_xfm: Optional[str] = None,
-    t1w_to_dce_xfm: Optional[str] = None,
-    dce_reference: Optional[str] = None,
-) -> Optional[str]:
+    dsc_cbv_file: str | None = None,
+    dsc_to_t1w_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    dce_reference: str | None = None,
+) -> str | None:
     """Resample DSC CBV map to DCE native space.
 
     Chains two existing transforms: DSC→T1w + T1w→DCE = DSC→DCE,
