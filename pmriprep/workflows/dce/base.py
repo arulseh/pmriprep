@@ -85,7 +85,10 @@ def init_dce_preproc_wf(
     afi_tr2 : float, optional
         TR2 value (ms) for AFI B1+ mapping.
     dsc_cbv_file : str, optional
-        Path to DSC-derived CBV map for vp constraint.
+        Path to DSC-derived CBV map for vp constraint (DSC native space).
+        Will be resampled to DCE space via dsc_to_t1w_xfm + t1w_to_dce_xfm.
+    dsc_to_t1w_xfm : str, optional
+        Path to DSC→T1w FLIRT transform matrix (for CBV resampling).
     dsc_aif_qc_file : str, optional
         Path to DSC AIF QC JSON for CBV quality assessment.
     dwi_file : str, optional
@@ -194,6 +197,7 @@ def init_dce_preproc_wf(
                 "afi_flip_angle",
                 # DSC integration inputs
                 "dsc_cbv_file",
+                "dsc_to_t1w_xfm",
                 "dsc_aif_qc_file",
                 # DWI tortuosity inputs
                 "dwi_file",
@@ -219,6 +223,10 @@ def init_dce_preproc_wf(
         ),
         name="inputnode",
     )
+
+    # Default DSC inputs to None (overridden when DSC workflow is connected)
+    inputnode.inputs.dsc_cbv_file = None
+    inputnode.inputs.dsc_to_t1w_xfm = None
 
     # Define output node with all possible outputs
     outputnode = pe.Node(
@@ -892,6 +900,44 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
+    # Node 7c: Resample DSC CBV to DCE space (for vp constraint)
+    # ==========================================================================
+    # DSC CBV (128x128x19, 1.88mm) is in DSC native space, but DCE processing
+    # operates in DCE native space (256x256x26, 0.94mm). Resample DSC CBV
+    # via: DSC → T1w (existing xfm) → DCE (existing xfm), matching perf-plus.
+    resample_dsc_cbv = pe.Node(
+        niu.Function(
+            input_names=[
+                "dsc_cbv_file",
+                "dsc_to_t1w_xfm",
+                "t1w_to_dce_xfm",
+                "dce_reference",
+            ],
+            output_names=["cbv_in_dce"],
+            function=_resample_dsc_cbv_to_dce,
+        ),
+        name="resample_dsc_cbv",
+    )
+
+    workflow.connect([
+        (inputnode, resample_dsc_cbv, [
+            ("dsc_cbv_file", "dsc_cbv_file"),
+            ("dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
+        ]),
+        (dce_registration, resample_dsc_cbv, [
+            ("out_matrix", "t1w_to_dce_xfm"),
+        ]),
+        (dce_preprocess, resample_dsc_cbv, [
+            ("mean_img", "dce_reference"),
+        ]),
+        # Feed resampled CBV to PK modeling (vp constraint)
+        (resample_dsc_cbv, pk_modeling, [
+            ("cbv_in_dce", "dsc_cbv_file"),
+        ]),
+    ])
+    # Note: resample_dsc_cbv → dsc_dce_validation connected after Node 9 creation
+
+    # ==========================================================================
     # Node 8: Tortuosity Correction (optional - skip if config.no_tortuosity=True)
     # ==========================================================================
     # Tortuosity correction requires DWI data
@@ -1005,8 +1051,7 @@ def init_dce_preproc_wf(
     )
 
     dsc_dce_validation.inputs.no_dsc_validation = config.no_dsc_validation
-    # Default to None - will be overridden by parent workflow connection when DSC is available
-    dsc_dce_validation.inputs.dsc_cbv_file = None
+    # dsc_cbv_file is provided by resample_dsc_cbv node (None when DSC unavailable)
 
     workflow.connect([
         (pk_modeling, dsc_dce_validation, [
@@ -1014,6 +1059,10 @@ def init_dce_preproc_wf(
         ]),
         (transform_brain_mask, dsc_dce_validation, [
             ("out_file", "brain_mask"),
+        ]),
+        # Feed resampled DSC CBV (deferred from Node 7c)
+        (resample_dsc_cbv, dsc_dce_validation, [
+            ("cbv_in_dce", "dsc_cbv_file"),
         ]),
     ])
 
@@ -2315,6 +2364,90 @@ def _transform_b1_to_dce(b1_map_file=None, reference_file=None):
     out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
     nib.save(resampled, out_file)
     return out_file
+
+
+def _resample_dsc_cbv_to_dce(
+    dsc_cbv_file: Optional[str] = None,
+    dsc_to_t1w_xfm: Optional[str] = None,
+    t1w_to_dce_xfm: Optional[str] = None,
+    dce_reference: Optional[str] = None,
+) -> Optional[str]:
+    """Resample DSC CBV map to DCE native space.
+
+    Chains two existing transforms: DSC→T1w + T1w→DCE = DSC→DCE,
+    then applies the combined transform with trilinear interpolation
+    (not spline, to avoid negative CBV values).
+
+    This matches the perf-plus approach (dce_pipeline.sh:2664-2688).
+
+    Args:
+        dsc_cbv_file: Path to DSC-derived relative CBV map (DSC native space).
+        dsc_to_t1w_xfm: Path to DSC→T1w FLIRT transform matrix.
+        t1w_to_dce_xfm: Path to T1w→DCE FLIRT transform matrix
+            (from DCE registration step).
+        dce_reference: Path to DCE reference image for output geometry.
+
+    Returns:
+        Path to CBV map resampled to DCE space, or None if inputs are missing.
+    """
+    import logging
+    import os
+
+    _log = logging.getLogger("pmriprep.workflows.dce")
+
+    if dsc_cbv_file is None or not os.path.isfile(str(dsc_cbv_file)):
+        return None
+    if dsc_to_t1w_xfm is None or not os.path.isfile(str(dsc_to_t1w_xfm)):
+        return None
+    if t1w_to_dce_xfm is None or not os.path.isfile(str(t1w_to_dce_xfm)):
+        return None
+    if dce_reference is None or not os.path.isfile(str(dce_reference)):
+        return None
+
+    import subprocess
+
+    out_dir = os.getcwd()
+    dsc_to_dce_xfm = os.path.join(out_dir, "dsc_to_dce.mat")
+    cbv_in_dce = os.path.join(out_dir, "dsc_cbv_in_dce.nii.gz")
+
+    # Chain: DSC→T1w + T1w→DCE = DSC→DCE
+    result = subprocess.run(
+        [
+            "convert_xfm",
+            "-omat", dsc_to_dce_xfm,
+            "-concat", str(t1w_to_dce_xfm), str(dsc_to_t1w_xfm),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _log.warning(
+            "convert_xfm failed (rc=%d): %s", result.returncode, result.stderr
+        )
+        return None
+
+    # Apply combined transform with trilinear interpolation
+    result = subprocess.run(
+        [
+            "flirt",
+            "-in", str(dsc_cbv_file),
+            "-ref", str(dce_reference),
+            "-out", cbv_in_dce,
+            "-init", dsc_to_dce_xfm,
+            "-applyxfm",
+            "-interp", "trilinear",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _log.warning(
+            "FLIRT resampling of DSC CBV failed (rc=%d): %s",
+            result.returncode, result.stderr,
+        )
+        return None
+
+    return cbv_in_dce
 
 
 def _register_dwi_to_dce(

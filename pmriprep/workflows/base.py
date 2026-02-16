@@ -1585,16 +1585,23 @@ def init_pmriprep_wf(
             if dce_config.model in ("extended_tofts", "2cxm", "auto"):
                 workflow.connect([
                     (dsc_wf, dce_wf, [
-                        ("outputnode.rel_cbv_map", "pk_modeling.dsc_cbv_file"),
+                        # Route CBV through DCE inputnode → resample_dsc_cbv node
+                        # (DSC native 128x128 must be resampled to DCE native 256x256)
+                        ("outputnode.rel_cbv_map", "inputnode.dsc_cbv_file"),
+                        ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
+                        # AIF QC is a JSON file, no spatial resampling needed
                         ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc"),
                     ]),
                 ])
 
-            # Cross-validation: any model with vp (runs after both DSC and DCE complete)
-            if dce_config.model in ("extended_tofts", "patlak", "2cxm", "auto"):
+            # Cross-validation: Patlak fits vp freely and cross-validates post-hoc.
+            # CBV is resampled inside DCE workflow via resample_dsc_cbv node.
+            # Only need to connect if not already connected by the constraint block above.
+            if dce_config.model == "patlak":
                 workflow.connect([
                     (dsc_wf, dce_wf, [
-                        ("outputnode.rel_cbv_map", "dsc_dce_validation.dsc_cbv_file"),
+                        ("outputnode.rel_cbv_map", "inputnode.dsc_cbv_file"),
+                        ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                     ]),
                 ])
 
