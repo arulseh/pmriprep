@@ -41,6 +41,12 @@
         <h2>Motion Quality Control</h2>
         {% if qc_metrics.motion %}
         <div class="metrics">
+            {% if qc_metrics.motion.n_volumes is defined %}
+            <div class="metric">
+                <div class="metric-label">Total Volumes</div>
+                <div class="metric-value">{{ qc_metrics.motion.n_volumes }}</div>
+            </div>
+            {% endif %}
             {% if qc_metrics.motion.fd_mean is defined %}
             <div class="metric">
                 <div class="metric-label">Mean FD</div>
@@ -53,10 +59,19 @@
                 <div class="metric-value">{{ "%.3f"|format(qc_metrics.motion.fd_max) }} mm</div>
             </div>
             {% endif %}
-            {% if qc_metrics.motion.outlier_count is defined and qc_metrics.motion.outlier_fraction is defined %}
+            {% if qc_metrics.motion.motion_thresh is defined %}
+            <div class="metric">
+                <div class="metric-label">FD Threshold</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.motion.motion_thresh) }} mm</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.motion.n_outliers is defined and qc_metrics.motion.percent_outliers is defined %}
             <div class="metric">
                 <div class="metric-label">Outlier Frames</div>
-                <div class="metric-value">{{ qc_metrics.motion.outlier_count }} ({{ "%.1f"|format(qc_metrics.motion.outlier_fraction * 100) }}%)</div>
+                <div class="metric-value
+                    {%- if qc_metrics.motion.percent_outliers < 5 %} pass
+                    {%- elif qc_metrics.motion.percent_outliers < 10 %} warn
+                    {%- else %} fail{% endif %}">{{ qc_metrics.motion.n_outliers }} ({{ "%.1f"|format(qc_metrics.motion.percent_outliers) }}%)</div>
             </div>
             {% endif %}
         </div>
@@ -78,19 +93,64 @@
             {% if qc_metrics.aif.detection_level is defined %}
             <div class="metric">
                 <div class="metric-label">Detection Level</div>
-                <div class="metric-value">{{ qc_metrics.aif.detection_level }}</div>
+                <div class="metric-value
+                    {%- if qc_metrics.aif.detection_level in ['atlas', 'atlas_strict'] %} pass
+                    {%- elif qc_metrics.aif.detection_level in ['atlas_relaxed'] %} warn
+                    {%- else %} fail{% endif %}">{{ qc_metrics.aif.detection_level }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif.best_ph is defined %}
+            <div class="metric">
+                <div class="metric-label">Peak Concentration</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif.best_ph) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif.best_ttp is defined %}
+            <div class="metric">
+                <div class="metric-label">TTP</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.aif.best_ttp) }} s</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif.best_fwhm is defined %}
+            <div class="metric">
+                <div class="metric-label">FWHM</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.aif.best_fwhm) }} s</div>
             </div>
             {% endif %}
             {% if qc_metrics.aif.best_psr is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Signal Ratio</div>
-                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif.best_psr) }}</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.aif.best_psr) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif.best_brr is defined %}
+            <div class="metric">
+                <div class="metric-label">Bolus Return Ratio</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.aif.best_brr) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif.n_aif_candidates_used is defined and qc_metrics.aif.n_aif_candidates_available is defined %}
+            <div class="metric">
+                <div class="metric-label">Candidates (used / available)</div>
+                <div class="metric-value">{{ qc_metrics.aif.n_aif_candidates_used }} / {{ qc_metrics.aif.n_aif_candidates_available }}</div>
             </div>
             {% endif %}
             {% if qc_metrics.aif.aif_hemisphere is defined %}
             <div class="metric">
                 <div class="metric-label">Hemisphere</div>
                 <div class="metric-value">{{ qc_metrics.aif.aif_hemisphere }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif.n_baseline_frames is defined %}
+            <div class="metric">
+                <div class="metric-label">Baseline Frames</div>
+                <div class="metric-value">{{ qc_metrics.aif.n_baseline_frames }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif.arrival_time_seconds is defined %}
+            <div class="metric">
+                <div class="metric-label">Arrival Time</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.aif.arrival_time_seconds) }} s</div>
             </div>
             {% endif %}
         </div>
@@ -123,10 +183,55 @@
                 <div class="metric-value">{{ "Applied" if qc_metrics.preload.preload_correction_applied else "Not Applied" }}</div>
             </div>
             {% endif %}
+            {% if qc_metrics.preload.k2_method is defined %}
+            <div class="metric">
+                <div class="metric-label">K2 Method</div>
+                <div class="metric-value">{{ qc_metrics.preload.k2_method }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.k2_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">K2 Mean</div>
+                <div class="metric-value">{{ "%.4f"|format(qc_metrics.preload.k2_mean) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.k2_median is defined %}
+            <div class="metric">
+                <div class="metric-label">K2 Median</div>
+                <div class="metric-value">{{ "%.4f"|format(qc_metrics.preload.k2_median) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.percent_leaky_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Leaky Voxels</div>
+                <div class="metric-value
+                    {%- if qc_metrics.preload.percent_leaky_voxels < 5 %} pass
+                    {%- elif qc_metrics.preload.percent_leaky_voxels < 20 %} warn
+                    {%- else %} fail{% endif %}">{{ "%.1f"|format(qc_metrics.preload.percent_leaky_voxels) }}%</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.percent_severe_leakage is defined %}
+            <div class="metric">
+                <div class="metric-label">Severe Leakage</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.preload.percent_severe_leakage) }}%</div>
+            </div>
+            {% endif %}
             {% if qc_metrics.preload.baseline_delta_r2 is defined %}
             <div class="metric">
                 <div class="metric-label">Baseline Delta R2*</div>
                 <div class="metric-value">{{ "%.3f"|format(qc_metrics.preload.baseline_delta_r2) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.auc_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean AUC</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.preload.auc_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.n_brain_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Brain Voxels</div>
+                <div class="metric-value">{{ "{:,}".format(qc_metrics.preload.n_brain_voxels) }}</div>
             </div>
             {% endif %}
         </div>
@@ -150,10 +255,67 @@
                 <div class="metric-value">{{ qc_metrics.deconvolution.bayesian }}</div>
             </div>
             {% endif %}
+            {% if qc_metrics.deconvolution.cbf_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean rCBF</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.deconvolution.cbf_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.cbv_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean rCBV</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.deconvolution.cbv_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.mtt_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean MTT</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.deconvolution.mtt_mean) }} s</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.tmax_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean Tmax</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.deconvolution.tmax_mean) }} s</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.n_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Voxels Fitted</div>
+                <div class="metric-value">{{ "{:,}".format(qc_metrics.deconvolution.n_voxels) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.oi_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">OI Mean (oSVD)</div>
+                <div class="metric-value">{{ "%.4f"|format(qc_metrics.deconvolution.oi_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.threshold_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Threshold Mean (oSVD)</div>
+                <div class="metric-value">{{ "%.4f"|format(qc_metrics.deconvolution.threshold_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.convergence_rate is defined %}
+            <div class="metric">
+                <div class="metric-label">Convergence Rate</div>
+                <div class="metric-value
+                    {%- if qc_metrics.deconvolution.convergence_rate >= 0.9 %} pass
+                    {%- elif qc_metrics.deconvolution.convergence_rate >= 0.7 %} warn
+                    {%- else %} fail{% endif %}">{{ "%.1f"|format(qc_metrics.deconvolution.convergence_rate * 100) }}%</div>
+            </div>
+            {% endif %}
             {% if qc_metrics.deconvolution.abs_gating_passed is defined %}
             <div class="metric">
                 <div class="metric-label">Absolute Gating</div>
-                <div class="metric-value">{{ "Passed" if qc_metrics.deconvolution.abs_gating_passed else "Failed" }}</div>
+                <div class="metric-value {{ "pass" if qc_metrics.deconvolution.abs_gating_passed else "fail" }}">{{ "Passed" if qc_metrics.deconvolution.abs_gating_passed else "Failed" }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.absolute_permitted is defined %}
+            <div class="metric">
+                <div class="metric-label">Absolute Quantification</div>
+                <div class="metric-value">{{ "Permitted" if qc_metrics.deconvolution.absolute_permitted else "Relative only" }}</div>
             </div>
             {% endif %}
         </div>
@@ -195,11 +357,49 @@
     {% endif %}
 
     <!-- DSC Parameter Maps QC -->
-    {% if images.dsc_param_maps_qc %}
+    {% if images.dsc_param_maps_qc or qc_metrics.deconvolution %}
     <div class="section">
         <h2>DSC Parameter Maps</h2>
-        <p>Multi-slice overlays of perfusion parameter maps (rCBF, rCBV, MTT, Tmax, PSR, TTP).</p>
-        <img src="data:image/png;base64,{{ images.dsc_param_maps_qc }}" alt="DSC Parameter Maps QC">
+        {% if qc_metrics.deconvolution %}
+        <div class="metrics">
+            {% if qc_metrics.deconvolution.cbf_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean rCBF</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.deconvolution.cbf_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.cbv_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean rCBV</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.deconvolution.cbv_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.mtt_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean MTT</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.deconvolution.mtt_mean) }} s</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.tmax_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean Tmax</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.deconvolution.tmax_mean) }} s</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.n_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Voxels</div>
+                <div class="metric-value">{{ "{:,}".format(qc_metrics.deconvolution.n_voxels) }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if images.dsc_param_maps_qc %}
+        <div style="margin-top: 20px;">
+            <p>Multi-slice overlays of perfusion parameter maps (rCBF, rCBV, MTT, Tmax, PSR, TTP).</p>
+            <img src="data:image/png;base64,{{ images.dsc_param_maps_qc }}" alt="DSC Parameter Maps QC">
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -207,17 +407,85 @@
     {% if images.dsc_fit_qc %}
     <div class="section">
         <h2>Deconvolution Fit Quality</h2>
-        <p>Tissue concentration fit, model residuals, AIF curve, and derived CBF map.</p>
-        <img src="data:image/png;base64,{{ images.dsc_fit_qc }}" alt="DSC Fit QC">
+        {% if qc_metrics.deconvolution %}
+        <div class="metrics">
+            {% if qc_metrics.deconvolution.method is defined %}
+            <div class="metric">
+                <div class="metric-label">Method</div>
+                <div class="metric-value">{{ qc_metrics.deconvolution.method }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.n_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Voxels Fitted</div>
+                <div class="metric-value">{{ "{:,}".format(qc_metrics.deconvolution.n_voxels) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.convergence_rate is defined %}
+            <div class="metric">
+                <div class="metric-label">Convergence Rate</div>
+                <div class="metric-value
+                    {%- if qc_metrics.deconvolution.convergence_rate >= 0.9 %} pass
+                    {%- elif qc_metrics.deconvolution.convergence_rate >= 0.7 %} warn
+                    {%- else %} fail{% endif %}">{{ "%.1f"|format(qc_metrics.deconvolution.convergence_rate * 100) }}%</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        <div style="margin-top: 20px;">
+            <p>Tissue concentration fit, model residuals, AIF curve, and derived CBF map.</p>
+            <img src="data:image/png;base64,{{ images.dsc_fit_qc }}" alt="DSC Fit QC">
+        </div>
     </div>
     {% endif %}
 
     <!-- DSC Leakage Correction QC -->
-    {% if images.dsc_leakage_qc %}
+    {% if images.dsc_leakage_qc or (qc_metrics.preload and qc_metrics.preload.preload_correction_applied) %}
     <div class="section">
         <h2>Leakage Correction Quality</h2>
-        <p>K2 map, AUC comparison (raw vs corrected), example voxel curves, and scatter plot.</p>
-        <img src="data:image/png;base64,{{ images.dsc_leakage_qc }}" alt="DSC Leakage Correction QC">
+        {% if qc_metrics.preload %}
+        <div class="metrics">
+            {% if qc_metrics.preload.k2_method is defined %}
+            <div class="metric">
+                <div class="metric-label">K2 Method</div>
+                <div class="metric-value">{{ qc_metrics.preload.k2_method }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.k2_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">K2 Mean</div>
+                <div class="metric-value">{{ "%.4f"|format(qc_metrics.preload.k2_mean) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.k2_median is defined %}
+            <div class="metric">
+                <div class="metric-label">K2 Median</div>
+                <div class="metric-value">{{ "%.4f"|format(qc_metrics.preload.k2_median) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.percent_leaky_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Leaky Voxels</div>
+                <div class="metric-value
+                    {%- if qc_metrics.preload.percent_leaky_voxels < 5 %} pass
+                    {%- elif qc_metrics.preload.percent_leaky_voxels < 20 %} warn
+                    {%- else %} fail{% endif %}">{{ "%.1f"|format(qc_metrics.preload.percent_leaky_voxels) }}%</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preload.percent_severe_leakage is defined %}
+            <div class="metric">
+                <div class="metric-label">Severe Leakage</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.preload.percent_severe_leakage) }}%</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if images.dsc_leakage_qc %}
+        <div style="margin-top: 20px;">
+            <p>K2 map, AUC comparison (raw vs corrected), example voxel curves, and scatter plot.</p>
+            <img src="data:image/png;base64,{{ images.dsc_leakage_qc }}" alt="DSC Leakage Correction QC">
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
