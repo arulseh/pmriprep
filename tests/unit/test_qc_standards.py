@@ -1,0 +1,195 @@
+"""Unit tests for QC standards and colorblind-safe visualization palette."""
+
+import pytest
+
+from pmriprep.utils.qc_standards import (
+    COLORBLIND_PALETTE,
+    DICE_THRESHOLDS,
+    DICE_THRESHOLDS_STRICT,
+    MOTION_FD_THRESHOLDS,
+    ColorPalette,
+    QCRecommendation,
+    QCThresholds,
+    aggregate_qc_recommendations,
+    build_qc_summary,
+    get_qc_recommendation,
+    get_qc_status,
+    get_status_color,
+)
+
+
+class TestGetQCStatus:
+    """Tests for get_qc_status()."""
+
+    def test_higher_is_better_pass(self) -> None:
+        """DICE = 0.9 with DICE_THRESHOLDS (pass=0.85) returns PASS."""
+        status = get_qc_status(0.9, DICE_THRESHOLDS, higher_is_better=True)
+        assert status == "PASS"
+
+    def test_higher_is_better_warn(self) -> None:
+        """DICE = 0.8 with DICE_THRESHOLDS (pass=0.85, warn=0.75) returns WARN."""
+        status = get_qc_status(0.8, DICE_THRESHOLDS, higher_is_better=True)
+        assert status == "WARN"
+
+    def test_higher_is_better_fail(self) -> None:
+        """DICE = 0.6 with DICE_THRESHOLDS (warn=0.75) returns FAIL."""
+        status = get_qc_status(0.6, DICE_THRESHOLDS, higher_is_better=True)
+        assert status == "FAIL"
+
+    def test_lower_is_better_pass(self) -> None:
+        """FD = 0.2 with MOTION_FD_THRESHOLDS (pass=0.3) returns PASS."""
+        status = get_qc_status(0.2, MOTION_FD_THRESHOLDS, higher_is_better=False)
+        assert status == "PASS"
+
+    def test_lower_is_better_warn(self) -> None:
+        """FD = 0.4 with MOTION_FD_THRESHOLDS (pass=0.3, warn=0.5) returns WARN."""
+        status = get_qc_status(0.4, MOTION_FD_THRESHOLDS, higher_is_better=False)
+        assert status == "WARN"
+
+    def test_lower_is_better_fail(self) -> None:
+        """FD = 0.6 with MOTION_FD_THRESHOLDS (warn=0.5) returns FAIL."""
+        status = get_qc_status(0.6, MOTION_FD_THRESHOLDS, higher_is_better=False)
+        assert status == "FAIL"
+
+
+class TestGetStatusColor:
+    """Tests for get_status_color()."""
+
+    def test_pass_returns_success_color(self) -> None:
+        """PASS status returns the success hex color."""
+        assert get_status_color("PASS") == COLORBLIND_PALETTE.success
+
+    def test_warn_returns_warning_color(self) -> None:
+        """WARN status returns the warning hex color."""
+        assert get_status_color("WARN") == COLORBLIND_PALETTE.warning
+
+    def test_fail_returns_error_color(self) -> None:
+        """FAIL status returns the error hex color."""
+        assert get_status_color("FAIL") == COLORBLIND_PALETTE.error
+
+    def test_unknown_returns_secondary_color(self) -> None:
+        """UNKNOWN status returns the secondary hex color."""
+        assert get_status_color("UNKNOWN") == COLORBLIND_PALETTE.secondary
+
+
+class TestGetQCRecommendation:
+    """Tests for get_qc_recommendation()."""
+
+    def test_pass_recommendation(self) -> None:
+        """PASS status yields action=include, severity=0."""
+        rec = get_qc_recommendation(
+            "PASS", "DICE", 0.9, DICE_THRESHOLDS, higher_is_better=True
+        )
+        assert rec.action == "include"
+        assert rec.severity == 0
+
+    def test_warn_recommendation(self) -> None:
+        """WARN status yields action=review, severity=1."""
+        rec = get_qc_recommendation(
+            "WARN", "DICE", 0.8, DICE_THRESHOLDS, higher_is_better=True
+        )
+        assert rec.action == "review"
+        assert rec.severity == 1
+
+    def test_fail_higher_is_better(self) -> None:
+        """FAIL with higher_is_better yields action=exclude, reason contains 'below'."""
+        rec = get_qc_recommendation(
+            "FAIL", "DICE", 0.6, DICE_THRESHOLDS, higher_is_better=True
+        )
+        assert rec.action == "exclude"
+        assert "below" in rec.reason
+        assert rec.severity == 3
+
+    def test_fail_lower_is_better(self) -> None:
+        """FAIL with lower_is_better yields reason containing 'above'."""
+        rec = get_qc_recommendation(
+            "FAIL", "FD mean", 0.6, MOTION_FD_THRESHOLDS, higher_is_better=False
+        )
+        assert rec.action == "exclude"
+        assert "above" in rec.reason
+
+
+class TestAggregateQCRecommendations:
+    """Tests for aggregate_qc_recommendations()."""
+
+    def test_all_pass(self) -> None:
+        """All passing recommendations yield action=include, severity=0."""
+        recs = [
+            QCRecommendation(action="include", reason="OK", severity=0),
+            QCRecommendation(action="include", reason="OK", severity=0),
+        ]
+        agg = aggregate_qc_recommendations(recs)
+        assert agg.action == "include"
+        assert agg.severity == 0
+        assert agg.reason == "All QC metrics passed"
+
+    def test_mixed_severity(self) -> None:
+        """Mixed severities: action from worst; reasons joined with ';'."""
+        recs = [
+            QCRecommendation(action="include", reason="DICE OK", severity=0),
+            QCRecommendation(action="review", reason="FD marginal (0.4)", severity=1),
+            QCRecommendation(
+                action="exclude", reason="NMI below threshold (0.1)", severity=3
+            ),
+        ]
+        agg = aggregate_qc_recommendations(recs)
+        assert agg.action == "exclude"
+        assert agg.severity == 3
+        assert "FD marginal" in agg.reason
+        assert "NMI below threshold" in agg.reason
+        assert ";" in agg.reason
+
+    def test_empty_list(self) -> None:
+        """Empty recommendation list yields action=include."""
+        agg = aggregate_qc_recommendations([])
+        assert agg.action == "include"
+
+
+class TestBuildQCSummary:
+    """Tests for build_qc_summary()."""
+
+    def test_summary_structure(self) -> None:
+        """Returns dict with overall_status, recommendation, and metrics keys."""
+        rec = QCRecommendation(action="include", reason="All good", severity=0)
+        metrics = {"DICE": (0.92, "PASS"), "FD": (0.15, "PASS")}
+
+        summary = build_qc_summary(metrics, "PASS", rec)
+
+        assert summary["overall_status"] == "PASS"
+        assert "recommendation" in summary
+        assert summary["recommendation"]["action"] == "include"
+        assert summary["recommendation"]["reason"] == "All good"
+        assert summary["recommendation"]["severity"] == 0
+        assert "metrics" in summary
+        assert summary["metrics"]["DICE"]["value"] == pytest.approx(0.92)
+        assert summary["metrics"]["DICE"]["status"] == "PASS"
+        assert summary["metrics"]["FD"]["value"] == pytest.approx(0.15)
+
+
+class TestConstants:
+    """Tests for QC standard constants."""
+
+    def test_motion_fd_thresholds(self) -> None:
+        """MOTION_FD_THRESHOLDS has expected pass=0.3 and warn=0.5."""
+        assert MOTION_FD_THRESHOLDS.pass_threshold == 0.3
+        assert MOTION_FD_THRESHOLDS.warn_threshold == 0.5
+
+    def test_dice_thresholds_ordering(self) -> None:
+        """DICE_THRESHOLDS pass > warn (stricter pass)."""
+        assert DICE_THRESHOLDS.pass_threshold > DICE_THRESHOLDS.warn_threshold
+
+    def test_dice_strict_vs_regular(self) -> None:
+        """DICE_THRESHOLDS_STRICT pass > regular DICE pass."""
+        assert DICE_THRESHOLDS_STRICT.pass_threshold > DICE_THRESHOLDS.pass_threshold
+
+
+class TestColorPalette:
+    """Tests for ColorPalette fields."""
+
+    def test_palette_fields_are_hex(self) -> None:
+        """All ColorPalette fields are hex color strings starting with '#'."""
+        for field_name in ("primary", "secondary", "success", "warning", "error"):
+            value = getattr(COLORBLIND_PALETTE, field_name)
+            assert isinstance(value, str)
+            assert value.startswith("#"), f"{field_name} should start with '#'"
+            assert len(value) == 7, f"{field_name} should be 7-char hex (e.g. #AABBCC)"
