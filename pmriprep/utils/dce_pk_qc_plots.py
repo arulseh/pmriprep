@@ -154,12 +154,11 @@ def generate_preprocessing_qc_plot(
     fig = plt.figure(figsize=(20, 8))
     gs = GridSpec(2, 4, figure=fig, wspace=0.30, hspace=0.35)
 
-    title = "DCE Preprocessing QC"
-    if subject_id:
-        title += f" — sub-{subject_id}"
-    if session_id:
-        title += f" ses-{session_id}"
-    fig.suptitle(title, fontsize=13, fontweight="bold", y=0.98)
+    from pmriprep.utils.qc_utils import qc_figure_title
+    fig.suptitle(
+        qc_figure_title(subject_id, session_id, "DCE Preprocessing QC"),
+        fontsize=13, fontweight="bold", y=0.98,
+    )
 
     # --- (0, 0-1) Global Signal Time Course ---
     ax = fig.add_subplot(gs[0, 0:2])
@@ -369,12 +368,11 @@ def generate_pk_modeling_qc_plot(
         fitted_curve = fitted_curves[vx, vy, vz, :]
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    title = f"PK Modeling QC — {model_name}"
-    if subject_id:
-        title += f" — sub-{subject_id}"
-    if session_id:
-        title += f" ses-{session_id}"
-    fig.suptitle(title, fontsize=13, fontweight="bold", y=0.98)
+    from pmriprep.utils.qc_utils import qc_figure_title
+    fig.suptitle(
+        qc_figure_title(subject_id, session_id, f"PK Modeling ({model_name})"),
+        fontsize=13, fontweight="bold", y=0.98,
+    )
 
     # --- (0,0) Signal Time Course ---
     ax = axes[0, 0]
@@ -540,12 +538,11 @@ def generate_pk_parameter_maps_qc_plot(
     if n_params == 1:
         axes = axes[np.newaxis, :]
 
-    title = "PK Parameter Maps"
-    if subject_id:
-        title += f" — sub-{subject_id}"
-    if session_id:
-        title += f" ses-{session_id}"
-    fig.suptitle(title, fontsize=13, fontweight="bold", y=0.99)
+    from pmriprep.utils.qc_utils import qc_figure_title
+    fig.suptitle(
+        qc_figure_title(subject_id, session_id, "PK Parameter Maps"),
+        fontsize=13, fontweight="bold", y=0.99,
+    )
 
     for row_idx, (name, data) in enumerate(params_to_plot):
         cmap, vmin, vmax_mode, vmax_fixed, unit_label = param_config[name]

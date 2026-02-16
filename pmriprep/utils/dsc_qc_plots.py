@@ -87,6 +87,7 @@ def generate_dsc_preprocessing_qc_plot(
     baseline_frames: int,
     bolus_arrival_frame: int,
     volume_tr_s: float,
+    te_s: float | None = None,
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
@@ -129,12 +130,11 @@ def generate_dsc_preprocessing_qc_plot(
     fig = plt.figure(figsize=(20, 8))
     gs = GridSpec(2, 4, figure=fig, wspace=0.30, hspace=0.35)
 
-    title = "DSC Preprocessing QC"
-    if subject_id:
-        title += f" — sub-{subject_id}"
-    if session_id:
-        title += f" ses-{session_id}"
-    fig.suptitle(title, fontsize=13, fontweight="bold", y=0.98)
+    from pmriprep.utils.qc_utils import qc_figure_title
+    fig.suptitle(
+        qc_figure_title(subject_id, session_id, "DSC Preprocessing QC"),
+        fontsize=13, fontweight="bold", y=0.98,
+    )
 
     # --- (0, 0-1) Global Signal Time Course (signal DROP) ---
     ax = fig.add_subplot(gs[0, 0:2])
@@ -251,10 +251,13 @@ def generate_dsc_preprocessing_qc_plot(
     fig.savefig(out, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    stats = {
+    stats: dict[str, float | int | None] = {
         "peak_drop_pct": round(peak_drop_pct, 1),
         "mean_tsnr": round(mean_tsnr, 1),
         "mean_cnr": round(mean_cnr, 1),
+        "tr_ms": round(volume_tr_s * 1000, 2),
+        "te_ms": round(te_s * 1000, 2) if te_s is not None else None,
+        "n_volumes": n_volumes,
     }
     return str(out), stats
 
@@ -321,12 +324,11 @@ def generate_dsc_parameter_maps_qc_plot(
     if n_params == 1:
         axes = axes[np.newaxis, :]
 
-    title = "DSC Parameter Maps"
-    if subject_id:
-        title += f" — sub-{subject_id}"
-    if session_id:
-        title += f" ses-{session_id}"
-    fig.suptitle(title, fontsize=13, fontweight="bold", y=0.99)
+    from pmriprep.utils.qc_utils import qc_figure_title
+    fig.suptitle(
+        qc_figure_title(subject_id, session_id, "DSC Perfusion Maps"),
+        fontsize=13, fontweight="bold", y=0.99,
+    )
 
     for row_idx, (name, data) in enumerate(params_to_plot):
         cmap, vmin, vmax_mode, vmax_fixed, unit_label = param_config[name]
@@ -454,12 +456,11 @@ def generate_dsc_fit_qc_plot(
     fitted_curve = model_prediction
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    title = f"DSC Fit QC — {method}"
-    if subject_id:
-        title += f" — sub-{subject_id}"
-    if session_id:
-        title += f" ses-{session_id}"
-    fig.suptitle(title, fontsize=13, fontweight="bold", y=0.98)
+    from pmriprep.utils.qc_utils import qc_figure_title
+    fig.suptitle(
+        qc_figure_title(subject_id, session_id, f"DSC Fit QC ({method})"),
+        fontsize=13, fontweight="bold", y=0.98,
+    )
 
     # --- (0,0) Tissue Concentration ---
     ax = axes[0, 0]
@@ -595,12 +596,11 @@ def generate_dsc_leakage_qc_plot(
     mask_bool = brain_mask > 0.5
 
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    title = "DSC Leakage Correction QC"
-    if subject_id:
-        title += f" — sub-{subject_id}"
-    if session_id:
-        title += f" ses-{session_id}"
-    fig.suptitle(title, fontsize=13, fontweight="bold", y=0.98)
+    from pmriprep.utils.qc_utils import qc_figure_title
+    fig.suptitle(
+        qc_figure_title(subject_id, session_id, "DSC Leakage QC"),
+        fontsize=13, fontweight="bold", y=0.98,
+    )
 
     # --- (0,0) K2 Map ---
     ax = axes[0, 0]

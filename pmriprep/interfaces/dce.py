@@ -121,6 +121,16 @@ class B1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Magnetic field strength in Tesla",
     )
+    subject_id = traits.Str(
+        "",
+        usedefault=True,
+        desc="Subject ID for QC figure title",
+    )
+    session_id = traits.Str(
+        "",
+        usedefault=True,
+        desc="Session ID for QC figure title",
+    )
 
 
 class B1MappingOutputSpec(TraitedSpec):
@@ -807,6 +817,8 @@ class B1Mapping(SimpleInterface):
                 valid_mask=valid,
                 mean_b1=mean_b1,
                 std_b1=std_b1,
+                subject_id=self.inputs.subject_id,
+                session_id=self.inputs.session_id,
             )
         except Exception as e:
             logger.warning("Failed to generate B1+ QC plot: %s", e, exc_info=True)
@@ -960,6 +972,16 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="B1 QC pass status (from B1Mapping). When False, lowers "
              "T1 correction threshold for auto mode.",
+    )
+    subject_id = traits.Str(
+        "",
+        usedefault=True,
+        desc="Subject ID for QC figure title",
+    )
+    session_id = traits.Str(
+        "",
+        usedefault=True,
+        desc="Session ID for QC figure title",
     )
 
 
@@ -1419,6 +1441,8 @@ class T1Mapping(SimpleInterface):
                 brain_mask=brain_mask,
                 field_strength=field_strength,
                 correction_info=correction_info,
+                subject_id=self.inputs.subject_id,
+                session_id=self.inputs.session_id,
             )
         except Exception as e:
             logger.warning("Failed to generate VFA T1 QC plot: %s", e, exc_info=True)

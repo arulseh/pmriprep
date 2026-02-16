@@ -21,6 +21,15 @@
         img { max-width: 100%; height: auto; border-radius: 4px; }
         .plot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         @media (max-width: 800px) { .plot-grid { grid-template-columns: 1fr; } }
+        .figure-container { position: relative; display: inline-block; width: 100%; }
+        .figure-download {
+            position: absolute; top: 8px; right: 8px;
+            background: rgba(255,255,255,0.85); border-radius: 4px;
+            padding: 4px 8px; font-size: 0.8em; text-decoration: none;
+            color: #4477AA; border: 1px solid #ddd; opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .figure-container:hover .figure-download { opacity: 1; }
     </style>
 </head>
 <body>
@@ -74,8 +83,9 @@
         </div>
         {% endif %}
         {% if images.motion %}
-        <div style="margin-top: 20px;">
+        <div class="figure-container" style="margin-top: 20px;">
             <img src="{{ images.motion }}" alt="Motion QC">
+            <a href="{{ images.motion }}" download class="figure-download">Save</a>
         </div>
         {% endif %}
     </div>
@@ -120,9 +130,51 @@
             {% endif %}
         </div>
         {% endif %}
-        <div style="margin-top: 20px;">
+        <div class="figure-container" style="margin-top: 20px;">
             <img src="{{ images.preprocessing_qc }}" alt="DCE Preprocessing QC">
+            <a href="{{ images.preprocessing_qc }}" download class="figure-download">Save</a>
         </div>
+    </div>
+    {% endif %}
+
+    <!-- B1+ Mapping (before T1 — logical prerequisite order) -->
+    {% if qc_metrics.b1_mapping or images.b1 %}
+    <div class="section">
+        <h2>B1+ Mapping Quality</h2>
+        {% if qc_metrics.b1_mapping %}
+        <div class="metrics">
+            {% if qc_metrics.b1_mapping.b1_status is defined %}
+            <div class="metric">
+                <div class="metric-label">B1 Status</div>
+                <div class="metric-value {{ qc_metrics.b1_mapping.b1_status | lower }}">{{ qc_metrics.b1_mapping.b1_status }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.b1_mapping.mean_b1 is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean B1+</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.mean_b1) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.b1_mapping.median_b1 is defined %}
+            <div class="metric">
+                <div class="metric-label">Median B1+</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.median_b1) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.b1_mapping.std_b1 is defined %}
+            <div class="metric">
+                <div class="metric-label">Std B1+</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.std_b1) }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if images.b1 %}
+        <div class="figure-container" style="margin-top: 20px;">
+            <img src="{{ images.b1 }}" alt="B1+ Mapping QC">
+            <a href="{{ images.b1 }}" download class="figure-download">Save</a>
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -165,48 +217,9 @@
         </div>
         {% endif %}
         {% if images.t1 %}
-        <div style="margin-top: 20px;">
+        <div class="figure-container" style="margin-top: 20px;">
             <img src="{{ images.t1 }}" alt="T1 Mapping QC">
-        </div>
-        {% endif %}
-    </div>
-    {% endif %}
-
-    <!-- B1 Mapping -->
-    {% if qc_metrics.b1_mapping or images.b1 %}
-    <div class="section">
-        <h2>B1+ Mapping Quality</h2>
-        {% if qc_metrics.b1_mapping %}
-        <div class="metrics">
-            {% if qc_metrics.b1_mapping.b1_status is defined %}
-            <div class="metric">
-                <div class="metric-label">B1 Status</div>
-                <div class="metric-value {{ qc_metrics.b1_mapping.b1_status | lower }}">{{ qc_metrics.b1_mapping.b1_status }}</div>
-            </div>
-            {% endif %}
-            {% if qc_metrics.b1_mapping.mean_b1 is defined %}
-            <div class="metric">
-                <div class="metric-label">Mean B1+</div>
-                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.mean_b1) }}</div>
-            </div>
-            {% endif %}
-            {% if qc_metrics.b1_mapping.median_b1 is defined %}
-            <div class="metric">
-                <div class="metric-label">Median B1+</div>
-                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.median_b1) }}</div>
-            </div>
-            {% endif %}
-            {% if qc_metrics.b1_mapping.std_b1 is defined %}
-            <div class="metric">
-                <div class="metric-label">Std B1+</div>
-                <div class="metric-value">{{ "%.2f"|format(qc_metrics.b1_mapping.std_b1) }}</div>
-            </div>
-            {% endif %}
-        </div>
-        {% endif %}
-        {% if images.b1 %}
-        <div style="margin-top: 20px;">
-            <img src="{{ images.b1 }}" alt="B1+ Mapping QC">
+            <a href="{{ images.t1 }}" download class="figure-download">Save</a>
         </div>
         {% endif %}
     </div>
@@ -224,18 +237,6 @@
                 <div class="metric-value {{ qc_metrics.aif_detection.aif_status | lower }}">{{ qc_metrics.aif_detection.aif_status }}</div>
             </div>
             {% endif %}
-            {% if qc_metrics.aif_detection.quality_score is defined %}
-            <div class="metric">
-                <div class="metric-label">Quality Score</div>
-                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif_detection.quality_score) }}</div>
-            </div>
-            {% endif %}
-            {% if qc_metrics.aif_detection.detection_method is defined %}
-            <div class="metric">
-                <div class="metric-label">Method</div>
-                <div class="metric-value">{{ qc_metrics.aif_detection.detection_method }}</div>
-            </div>
-            {% endif %}
             {% if qc_metrics.aif_detection.final_peak_mm is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Concentration</div>
@@ -246,6 +247,18 @@
             <div class="metric">
                 <div class="metric-label">FWHM</div>
                 <div class="metric-value">{{ "%.1f"|format(qc_metrics.aif_detection.final_fwhm_seconds) }} s</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.quality_score is defined %}
+            <div class="metric">
+                <div class="metric-label">Quality Score</div>
+                <div class="metric-value">{{ "%.2f"|format(qc_metrics.aif_detection.quality_score) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.aif_detection.detection_method is defined %}
+            <div class="metric">
+                <div class="metric-label">Method</div>
+                <div class="metric-value">{{ qc_metrics.aif_detection.detection_method }}</div>
             </div>
             {% endif %}
             {% if qc_metrics.aif_detection.washout_mean is defined %}
@@ -282,10 +295,16 @@
         {% endif %}
         <div class="plot-grid" style="margin-top: 20px;">
             {% if images.aif_curve %}
-            <div><img src="{{ images.aif_curve }}" alt="AIF Curve"></div>
+            <div class="figure-container">
+                <img src="{{ images.aif_curve }}" alt="AIF Curve">
+                <a href="{{ images.aif_curve }}" download class="figure-download">Save</a>
+            </div>
             {% endif %}
             {% if images.aif_location %}
-            <div><img src="{{ images.aif_location }}" alt="AIF Location"></div>
+            <div class="figure-container">
+                <img src="{{ images.aif_location }}" alt="AIF Location">
+                <a href="{{ images.aif_location }}" download class="figure-download">Save</a>
+            </div>
             {% endif %}
         </div>
     </div>
@@ -337,7 +356,10 @@
         {% if images.pk_param_maps_qc %}
         <div style="margin-top: 20px;">
             <h3>Parameter Maps</h3>
-            <img src="{{ images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
+            <div class="figure-container">
+                <img src="{{ images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
+                <a href="{{ images.pk_param_maps_qc }}" download class="figure-download">Save</a>
+            </div>
         </div>
         {% endif %}
 
@@ -391,8 +413,9 @@
                 {% endif %}
             </div>
             {% endif %}
-            <div style="margin-top: 10px;">
+            <div class="figure-container" style="margin-top: 10px;">
                 <img src="{{ images.pk_modeling_qc }}" alt="PK Modeling QC">
+                <a href="{{ images.pk_modeling_qc }}" download class="figure-download">Save</a>
             </div>
         </div>
         {% endif %}
@@ -425,7 +448,10 @@
     <div class="section">
         <h2>Registration Quality</h2>
         <p>Multi-slice overlay showing {{ pipeline }} to T1w registration.</p>
-        <img src="{{ images.registration }}" alt="Registration QC">
+        <div class="figure-container">
+            <img src="{{ images.registration }}" alt="Registration QC">
+            <a href="{{ images.registration }}" download class="figure-download">Save</a>
+        </div>
     </div>
     {% endif %}
 

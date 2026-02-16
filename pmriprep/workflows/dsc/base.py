@@ -840,6 +840,8 @@ def _create_registration_filmstrip(
     dsc_mean_file,
     registered_t1w_file,
     brain_mask_file,
+    subject_id="",
+    session_id="",
 ):
     """Create a registration QC filmstrip PNG.
 
@@ -850,13 +852,15 @@ def _create_registration_filmstrip(
         dsc_mean_file: Path to mean DSC image (reference).
         registered_t1w_file: Path to registered T1w in DSC space.
         brain_mask_file: Path to DSC brain mask.
+        subject_id: Subject ID for QC figure title.
+        session_id: Session ID for QC figure title.
 
     Returns:
         Path to the registration filmstrip PNG file.
     """
     import nibabel as nib
     from pathlib import Path
-    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip, qc_figure_title
 
     out_dir = Path.cwd()
     output_path = str(out_dir / "registration_qc_filmstrip.png")
@@ -872,7 +876,7 @@ def _create_registration_filmstrip(
         moving=t1w_data,
         output_path=output_path,
         mask=mask_data,
-        title="DSC-T1w Registration QC",
+        title=qc_figure_title(subject_id, session_id, "DSC-T1w Registration"),
         voxel_sizes=voxel_sizes,
     )
 
@@ -893,7 +897,7 @@ def _extract_preload_class(qc_dict):
     return qc_dict.get("preload_classification", "none")
 
 
-def _generate_motion_qc_plot(motion_params_file, out_dir, tr):
+def _generate_motion_qc_plot(motion_params_file, out_dir, tr, subject_id="", session_id=""):
     """Generate motion QC plot from motion parameters.
 
     Creates a three-panel figure showing raw motion parameters and
@@ -903,6 +907,8 @@ def _generate_motion_qc_plot(motion_params_file, out_dir, tr):
         motion_params_file: Path to motion parameters text file.
         out_dir: Output directory for the plot.
         tr: Repetition time in seconds.
+        subject_id: Subject ID for QC figure title.
+        session_id: Session ID for QC figure title.
 
     Returns:
         Tuple of (plot_file path, motion_summary dict).
@@ -914,7 +920,10 @@ def _generate_motion_qc_plot(motion_params_file, out_dir, tr):
     motion_params = np.loadtxt(motion_params_file)
     out_path = Path(out_dir) / "motion_qc.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    _, motion_summary = plot_motion_qc(motion_params, out_path, tr=tr)
+    _, motion_summary = plot_motion_qc(
+        motion_params, out_path, tr=tr,
+        subject_id=subject_id, session_id=session_id,
+    )
     return str(out_path), motion_summary
 
 
@@ -924,6 +933,7 @@ def _generate_dsc_preprocessing_qc(
     baseline_frames,
     bolus_arrival_frame,
     tr,
+    te=None,
     subject_id="",
     session_id="",
 ):
@@ -954,6 +964,7 @@ def _generate_dsc_preprocessing_qc(
         baseline_frames=baseline_frames,
         bolus_arrival_frame=bolus_arrival_frame,
         volume_tr_s=tr,
+        te_s=te,
         subject_id=subject_id,
         session_id=session_id,
     )
@@ -1613,13 +1624,15 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     motion_qc_plot = pe.Node(
         niu.Function(
-            input_names=["motion_params_file", "out_dir", "tr"],
+            input_names=["motion_params_file", "out_dir", "tr", "subject_id", "session_id"],
             output_names=["plot_file", "motion_summary"],
             function=_generate_motion_qc_plot,
         ),
         name="motion_qc_plot",
     )
     motion_qc_plot.inputs.out_dir = str(bids_dir / "derivatives" / "dsc_pipeline")
+    motion_qc_plot.inputs.subject_id = subject_id
+    motion_qc_plot.inputs.session_id = session_id or ""
 
     # -------------------------------------------------------------------
     # Node 1b: Pre-Bolus Mean Reference
@@ -1987,12 +2000,15 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     reg_filmstrip = pe.Node(
         niu.Function(
-            input_names=["dsc_mean_file", "registered_t1w_file", "brain_mask_file"],
+            input_names=["dsc_mean_file", "registered_t1w_file", "brain_mask_file",
+                         "subject_id", "session_id"],
             output_names=["filmstrip_file"],
             function=_create_registration_filmstrip,
         ),
         name="reg_filmstrip",
     )
+    reg_filmstrip.inputs.subject_id = subject_id
+    reg_filmstrip.inputs.session_id = session_id or ""
 
     # -------------------------------------------------------------------
     # Node 9b: AIF QC Plots
@@ -2013,7 +2029,7 @@ def init_dsc_preproc_wf(
             input_names=[
                 "dsc_signal_file", "brain_mask_file",
                 "baseline_frames", "bolus_arrival_frame",
-                "tr", "subject_id", "session_id",
+                "tr", "te", "subject_id", "session_id",
             ],
             output_names=["plot_file", "stats"],
             function=_generate_dsc_preprocessing_qc,
@@ -2393,7 +2409,7 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (motion_correct, dsc_preproc_qc, [("out_file", "dsc_signal_file")]),
         (hdbet_dsc, dsc_preproc_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
-        (inputnode, dsc_preproc_qc, [("tr", "tr")]),
+        (inputnode, dsc_preproc_qc, [("tr", "tr"), ("te", "te")]),
     ])
 
     # DSC Parameter Maps QC

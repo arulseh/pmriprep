@@ -450,6 +450,11 @@ def init_dce_preproc_wf(
         ]),
     ])
 
+    b1_mapping.inputs.subject_id = subject_id
+    b1_mapping.inputs.session_id = session_id or ""
+    t1_mapping.inputs.subject_id = subject_id
+    t1_mapping.inputs.session_id = session_id or ""
+
     # ==========================================================================
     # Node 3: DCE Preprocessing (motion correction + baseline detection)
     # ==========================================================================
@@ -1224,12 +1229,15 @@ def init_dce_preproc_wf(
     # ==========================================================================
     reg_filmstrip = pe.Node(
         niu.Function(
-            input_names=["dce_mean_file", "registered_t1w_file", "brain_mask_file"],
+            input_names=["dce_mean_file", "registered_t1w_file", "brain_mask_file",
+                         "subject_id", "session_id"],
             output_names=["filmstrip_file"],
             function=_create_dce_registration_filmstrip,
         ),
         name="reg_filmstrip",
     )
+    reg_filmstrip.inputs.subject_id = subject_id
+    reg_filmstrip.inputs.session_id = session_id or ""
 
     workflow.connect([
         (dce_preprocess, reg_filmstrip, [("mean_img", "dce_mean_file")]),
@@ -2773,6 +2781,8 @@ def _create_dce_registration_filmstrip(
     dce_mean_file=None,
     registered_t1w_file=None,
     brain_mask_file=None,
+    subject_id="",
+    session_id="",
 ):
     """Create registration QC filmstrip for DCE-T1w registration.
 
@@ -2792,7 +2802,7 @@ def _create_dce_registration_filmstrip(
 
     import nibabel as nib  # type: ignore[import-untyped]
 
-    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip, qc_figure_title
 
     if dce_mean_file is None or registered_t1w_file is None:
         return None
@@ -2823,7 +2833,7 @@ def _create_dce_registration_filmstrip(
         moving=t1w_data,
         output_path=out_path,
         mask=mask,
-        title="DCE-T1w Registration QC",
+        title=qc_figure_title(subject_id, session_id, "DCE-T1w Registration"),
         voxel_sizes=voxel_sizes,
     )
 

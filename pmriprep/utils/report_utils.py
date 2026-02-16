@@ -221,6 +221,15 @@ def _generate_fallback_report(
         </div>
         ''')
 
+    # DSC Preprocessing (before AIF for DSC)
+    if "dsc_preprocessing_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>DSC Preprocessing QC</h2>
+            <img src="{images["dsc_preprocessing_qc"]}" alt="DSC Preprocessing QC">
+        </div>
+        ''')
+
     if "aif_curve" in images or "aif_location" in images:
         # AIF metrics boxes
         aif_metrics_html = ""
@@ -263,6 +272,33 @@ def _generate_fallback_report(
         aif_html += '</div></div>'
         image_sections.append(aif_html)
 
+    # DSC Leakage (after AIF)
+    if "dsc_leakage_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>Leakage Correction QC</h2>
+            <img src="{images["dsc_leakage_qc"]}" alt="DSC Leakage QC">
+        </div>
+        ''')
+
+    # DSC Perfusion Maps
+    if "dsc_param_maps_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>DSC Perfusion Maps</h2>
+            <img src="{images["dsc_param_maps_qc"]}" alt="DSC Parameter Maps QC">
+        </div>
+        ''')
+
+    if "dsc_fit_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>Deconvolution Fit QC</h2>
+            <img src="{images["dsc_fit_qc"]}" alt="DSC Fit QC">
+        </div>
+        ''')
+
+    # DCE sections: B1 before T1
     if "b1" in images:
         image_sections.append(f'''
         <div class="section">
@@ -279,14 +315,31 @@ def _generate_fallback_report(
         </div>
         ''')
 
-    if "registration" in images:
+    if "preprocessing_qc" in images:
         image_sections.append(f'''
         <div class="section">
-            <h2>Registration Quality</h2>
-            <img src="{images["registration"]}" alt="Registration QC">
+            <h2>DCE Preprocessing QC</h2>
+            <img src="{images["preprocessing_qc"]}" alt="DCE Preprocessing QC">
         </div>
         ''')
 
+    if "pk_modeling_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>PK Modeling QC</h2>
+            <img src="{images["pk_modeling_qc"]}" alt="PK Modeling QC">
+        </div>
+        ''')
+
+    if "pk_param_maps_qc" in images:
+        image_sections.append(f'''
+        <div class="section">
+            <h2>PK Parameter Maps</h2>
+            <img src="{images["pk_param_maps_qc"]}" alt="PK Parameter Maps QC">
+        </div>
+        ''')
+
+    # Anatomical sections
     if "brain_mask" in images:
         image_sections.append(f'''
         <div class="section">
@@ -350,59 +403,12 @@ def _generate_fallback_report(
         </div>
         ''')
 
-    if "preprocessing_qc" in images:
+    # Registration always last
+    if "registration" in images:
         image_sections.append(f'''
         <div class="section">
-            <h2>DCE Preprocessing QC</h2>
-            <img src="{images["preprocessing_qc"]}" alt="DCE Preprocessing QC">
-        </div>
-        ''')
-
-    if "pk_modeling_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>PK Modeling QC</h2>
-            <img src="{images["pk_modeling_qc"]}" alt="PK Modeling QC">
-        </div>
-        ''')
-
-    if "pk_param_maps_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>PK Parameter Maps</h2>
-            <img src="{images["pk_param_maps_qc"]}" alt="PK Parameter Maps QC">
-        </div>
-        ''')
-
-    if "dsc_preprocessing_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>DSC Preprocessing QC</h2>
-            <img src="{images["dsc_preprocessing_qc"]}" alt="DSC Preprocessing QC">
-        </div>
-        ''')
-
-    if "dsc_param_maps_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>DSC Parameter Maps</h2>
-            <img src="{images["dsc_param_maps_qc"]}" alt="DSC Parameter Maps QC">
-        </div>
-        ''')
-
-    if "dsc_fit_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Deconvolution Fit QC</h2>
-            <img src="{images["dsc_fit_qc"]}" alt="DSC Fit QC">
-        </div>
-        ''')
-
-    if "dsc_leakage_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Leakage Correction QC</h2>
-            <img src="{images["dsc_leakage_qc"]}" alt="DSC Leakage QC">
+            <h2>Registration Quality</h2>
+            <img src="{images["registration"]}" alt="Registration QC">
         </div>
         ''')
 

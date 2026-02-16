@@ -30,6 +30,8 @@ def generate_vfa_t1_qc_plot(
     field_strength: float = 3.0,
     output_path: Optional[str] = None,
     correction_info: Optional[Dict[str, Any]] = None,
+    subject_id: str = "",
+    session_id: str = "",
 ) -> str:
     """Generate a 3x3 QC plot for VFA T1 mapping.
 
@@ -92,9 +94,9 @@ def generate_vfa_t1_qc_plot(
 
     # Create figure
     fig, axes = plt.subplots(3, 3, figsize=(15, 13))
-    fa_str = ", ".join(f"{fa:.0f}\u00b0" for fa in flip_angles)
+    from pmriprep.utils.qc_utils import qc_figure_title
     fig.suptitle(
-        f"VFA T1 Mapping QC ({n_fa} flip angles: {fa_str})",
+        qc_figure_title(subject_id, session_id, "VFA T1 Mapping QC"),
         fontsize=14, fontweight="bold", y=0.98,
     )
 
@@ -264,6 +266,8 @@ def generate_b1_qc_plot(
     mean_b1: float = 1.0,
     std_b1: float = 0.0,
     output_path: Optional[str] = None,
+    subject_id: str = "",
+    session_id: str = "",
 ) -> str:
     """Generate a 6-panel QC plot for AFI B1+ mapping.
 
@@ -314,8 +318,9 @@ def generate_b1_qc_plot(
     mid_slice = b1_map.shape[2] // 2
 
     fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+    from pmriprep.utils.qc_utils import qc_figure_title
     fig.suptitle(
-        "AFI B1+ Mapping QC",
+        qc_figure_title(subject_id, session_id, "AFI B1+ Mapping QC"),
         fontsize=14, fontweight="bold", y=0.98,
     )
 

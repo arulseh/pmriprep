@@ -24,6 +24,26 @@ from .qc_standards import (
 )
 
 
+def qc_figure_title(subject_id: str, session_id: str, title: str) -> str:
+    """Build a standardized QC figure title.
+
+    Args:
+        subject_id: Subject ID (without 'sub-' prefix).
+        session_id: Session ID (without 'ses-' prefix).
+        title: The main title text.
+
+    Returns:
+        Formatted title like "sub-X | ses-Y | Title".
+    """
+    parts = []
+    if subject_id:
+        parts.append(f"sub-{subject_id}")
+    if session_id:
+        parts.append(f"ses-{session_id}")
+    parts.append(title)
+    return " | ".join(parts)
+
+
 def get_radiological_slice(
     data: npt.NDArray[Any],
     axis: int = 2,
@@ -483,6 +503,8 @@ def plot_motion_qc(
     tr: float = 1.0,
     title: Optional[str] = None,
     radius: float = 50.0,
+    subject_id: str = "",
+    session_id: str = "",
 ) -> tuple[Path, dict[str, Any]]:
     """Create a 3-panel motion QC plot matching perf-plus layout.
 
@@ -598,6 +620,8 @@ def plot_motion_qc(
     # Overall title
     if title:
         fig.suptitle(title, fontsize=11)
+    elif subject_id or session_id:
+        fig.suptitle(qc_figure_title(subject_id, session_id, "Motion QC"), fontsize=11)
 
     fig.tight_layout(rect=[0, 0.12, 1, 0.985])
 
