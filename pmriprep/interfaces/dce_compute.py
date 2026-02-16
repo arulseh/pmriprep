@@ -925,7 +925,7 @@ class ComputeDCEMaps(BaseInterface):
         vp_constraint_map: Optional[npt.NDArray[Any]] = None
         constraint_mode = ConstraintMode.SKIP
         constraint_vp_uncertainty: float = 0.2
-        constraint_qc: dict[str, Any] = {"constraint_mode": "skip", "reason": "No DSC CBV provided"}
+        constraint_qc: dict[str, Any] = {"mode": "skip", "reason": "No DSC CBV provided"}
 
         has_dsc_cbv = (
             isdefined(self.inputs.dsc_cbv_file)
@@ -964,7 +964,7 @@ class ComputeDCEMaps(BaseInterface):
                     constraint_vp_uncertainty = 0.2
             except Exception as exc:
                 constraint_qc = {
-                    "constraint_mode": "skip",
+                    "mode": "skip",
                     "reason": f"Failed to load DSC CBV constraint: {exc}",
                 }
 
@@ -1036,7 +1036,7 @@ class ComputeDCEMaps(BaseInterface):
             "tsnr_threshold": tsnr_threshold,
             "baseline_frames": baseline_frames,
             "selection_tr_seconds": selection_tr_seconds,  # TR used for model selection
-            "constraint_mode": constraint_mode.value,
+            "dsc_cbv_constraint": constraint_qc,
             "bat_correction": bat_correction,
         }
 

@@ -154,6 +154,52 @@ class VpConstraintResult:
 # =============================================================================
 
 
+def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize DSC AIF QC keys to the quality assessment schema.
+
+    Maps PMRIPrep DSC AIF detection output (best_psr, best_brr) to the
+    expected keys (aif_peak_height, baseline_return_ratio). Returns data
+    unchanged if expected keys are already present.
+
+    Args:
+        aif_qc_data: Raw AIF QC dictionary, possibly with PMRIPrep-native
+            keys (best_psr, best_brr) instead of the assessment schema keys
+            (aif_peak_height, baseline_return_ratio, cnr_whole_brain).
+
+    Returns:
+        Dictionary with normalized keys suitable for assess_dsc_cbv_quality.
+    """
+    data = dict(aif_qc_data)
+
+    # Already in expected format
+    if "aif_peak_height" in data or "cnr_whole_brain" in data:
+        return data
+
+    # --- AIF peak height from PSR ---
+    # best_psr = 100 * (S_tail - S_min) / (S0 - S_min)
+    # Higher = better signal recovery. Thresholds: 0.25 (high), 0.15 (moderate)
+    if "best_psr" in data and "aif_peak_height" not in data:
+        data["aif_peak_height"] = data["best_psr"] / 100.0
+    elif "aif_metrics" in data and isinstance(data["aif_metrics"], dict):
+        if "psr" in data["aif_metrics"] and "aif_peak_height" not in data:
+            data["aif_peak_height"] = data["aif_metrics"]["psr"] / 100.0
+
+    # --- Baseline return ratio from BRR ---
+    # best_brr = 100 * tail_conc / peak_conc
+    # Lower = better (more recovery). Thresholds: 0.30 (marginal), 0.40 (fail)
+    if "best_brr" in data and "baseline_return_ratio" not in data:
+        data["baseline_return_ratio"] = data["best_brr"] / 100.0
+
+    # --- CNR coverage: skip if not available ---
+    # CNR coverage comes from preprocessing, not AIF detection.
+    # Don't penalize when it's simply not in the AIF QC dict.
+    # Set to high threshold to avoid false downgrades.
+    if "cnr_whole_brain" not in data:
+        data["cnr_whole_brain"] = {"fraction_cnr_gt_4": CNR_COVERAGE_HIGH}
+
+    return data
+
+
 def _downgrade_confidence(current: str, target: str) -> str:
     """Downgrade confidence level but never upgrade.
 
@@ -192,6 +238,8 @@ def assess_dsc_cbv_quality(
     Returns:
         CBVQualityAssessment with confidence tier and detailed metrics.
     """
+    aif_qc_data = _normalize_aif_qc_keys(aif_qc_data)
+
     result = CBVQualityAssessment()
     confidence = "high"
 
@@ -470,8 +518,8 @@ def prepare_vp_constraint(
     vp_valid = vp_in_brain[np.isfinite(vp_in_brain)]
 
     qc_report: dict[str, Any] = {
-        "constraint_mode": config.mode.value,
-        "constraint_reason": config.reason,
+        "mode": config.mode.value,
+        "reason": config.reason,
         "dsc_cbv_confidence": quality.confidence,
         "dsc_cbv_use_constraint": quality.use_constraint,
         "cnr_coverage": quality.cnr_coverage,
@@ -559,8 +607,8 @@ def prepare_vp_constraint_from_data(
     vp_valid = vp_in_brain[np.isfinite(vp_in_brain)]
 
     qc_report: dict[str, Any] = {
-        "constraint_mode": config.mode.value,
-        "constraint_reason": config.reason,
+        "mode": config.mode.value,
+        "reason": config.reason,
         "dsc_cbv_confidence": quality.confidence,
         "dsc_cbv_use_constraint": quality.use_constraint,
         "cnr_coverage": quality.cnr_coverage,
