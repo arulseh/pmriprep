@@ -121,6 +121,14 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     dsc_fit_qc_plot = traits.Str(desc="DSC fit QC plot PNG path (parametric methods only)")
     dsc_leakage_qc_plot = traits.Str(desc="DSC leakage correction QC plot PNG path")
 
+    # Masks in DSC space
+    brain_mask_dsc = traits.Str(desc="Brain mask in DSC space")
+    nawm_mask_dsc = traits.Str(desc="NAWM mask in DSC space")
+
+    # Structural underlay labeling
+    has_postcon_t1w = traits.Bool(False, usedefault=True,
+                                  desc="Whether t1w_in_dsc is post-contrast CE-T1w")
+
     # Lesion statistics
     lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
     lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
@@ -436,6 +444,21 @@ class DSCDerivativeWriter(BaseInterface):
             )
 
         # -----------------------------------------------------------
+        # 8b. DSC-space masks
+        # -----------------------------------------------------------
+        if self._has_input("brain_mask_dsc"):
+            fname = f"{prefix}_{spatial}_desc-brain_mask"
+            self._copy_nifti(self.inputs.brain_mask_dsc, perf_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "Brain mask in DSC space"}
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        if self._has_input("nawm_mask_dsc"):
+            fname = f"{prefix}_{spatial}_desc-nawm_mask"
+            self._copy_nifti(self.inputs.nawm_mask_dsc, perf_dir / f"{fname}.nii.gz")
+            sidecar = {**base_sidecar, "Description": "Normal-appearing white matter mask in DSC space"}
+            self._write_json(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
         # 9. Registration transform
         # -----------------------------------------------------------
         if self._has_input("dsc_to_t1w_xfm"):
@@ -485,9 +508,15 @@ class DSCDerivativeWriter(BaseInterface):
         anat_dir = ses_dir / "anat"
         if self._has_input("t1w_in_dsc"):
             anat_dir.mkdir(parents=True, exist_ok=True)
-            fname = f"{prefix}_{spatial}_ce-GAD_T1w"
+            if self.inputs.has_postcon_t1w:
+                label = "ce-GAD_T1w"
+                description = "CE-T1w registered to DSC space"
+            else:
+                label = "T1w"
+                description = "T1w registered to DSC space"
+            fname = f"{prefix}_{spatial}_{label}"
             self._copy_nifti(self.inputs.t1w_in_dsc, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "CE-T1w registered to DSC space"}
+            sidecar = {**base_sidecar, "Description": description}
             self._write_json(sidecar, anat_dir / f"{fname}.json")
 
         if self._has_input("flair_in_dsc"):

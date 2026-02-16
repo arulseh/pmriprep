@@ -1156,6 +1156,9 @@ def init_pmriprep_wf(
             (inputnode, dsc_wf, [("dsc_file", "inputnode.dsc_file")]),
         ])
 
+        # Track whether DSC underlay is actually post-contrast T1w
+        dsc_underlay_is_postcon = False
+
         # Connect anat outputs to DSC workflow
         if anat_wf is not None:
             workflow.connect([
@@ -1166,6 +1169,16 @@ def init_pmriprep_wf(
                     ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
                 ]),
             ])
+            # Connect T1w underlay: CE-T1w if available, otherwise native T1w
+            if session_data.modalities.t1w_ce_gad:
+                workflow.connect([
+                    (anat_wf, dsc_wf, [("outputnode.t1w_postcon_coreg", "inputnode.t1w_underlay")]),
+                ])
+                dsc_underlay_is_postcon = True
+            else:
+                workflow.connect([
+                    (anat_wf, dsc_wf, [("outputnode.t1w_preproc", "inputnode.t1w_underlay")]),
+                ])
             # Connect FLAIR underlay if available
             if session_data.modalities.flair:
                 workflow.connect([
@@ -1181,6 +1194,14 @@ def init_pmriprep_wf(
             if prev_anat["t1w_preproc"]:
                 dsc_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_preproc"]
                 _log.info("skip-anat: loaded t1w_reference from %s", prev_anat["t1w_preproc"])
+            # Set t1w_underlay: prefer postcon if available
+            if session_data.modalities.t1w_ce_gad and prev_anat["t1w_postcon_coreg"]:
+                dsc_wf.inputs.inputnode.t1w_underlay = prev_anat["t1w_postcon_coreg"]
+                dsc_underlay_is_postcon = True
+                _log.info("skip-anat (DSC): loaded t1w_underlay from %s", prev_anat["t1w_postcon_coreg"])
+            elif prev_anat["t1w_preproc"]:
+                dsc_wf.inputs.inputnode.t1w_underlay = prev_anat["t1w_preproc"]
+                _log.info("skip-anat (DSC): loaded t1w_underlay from %s", prev_anat["t1w_preproc"])
             if prev_anat["brain_mask"]:
                 dsc_wf.inputs.inputnode.brain_mask = prev_anat["brain_mask"]
                 _log.info("skip-anat: loaded brain_mask from %s", prev_anat["brain_mask"])
@@ -1267,6 +1288,7 @@ def init_pmriprep_wf(
                 bids_dir=str(bids_dir),
                 config_dict=dsc_config_dict,
                 smooth_fwhm=dsc_config.smooth_fwhm,
+                has_postcon_t1w=dsc_underlay_is_postcon,
             ),
             name="dsc_writer",
         )
@@ -1334,6 +1356,9 @@ def init_pmriprep_wf(
                 ("outputnode.motion_qc_plot", "motion_qc_plot"),
                 # QC metrics
                 ("outputnode.qc_metrics", "qc_metrics"),
+                # DSC-space masks
+                ("outputnode.brain_mask_dsc", "brain_mask_dsc"),
+                ("outputnode.nawm_mask_dsc", "nawm_mask_dsc"),
                 # Lesion statistics
                 ("outputnode.lesion_stats_json", "lesion_stats_json"),
                 ("outputnode.lesion_stats_txt", "lesion_stats_txt"),

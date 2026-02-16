@@ -1394,6 +1394,9 @@ def init_dsc_preproc_wf(
         Path to raw 4D DSC perfusion image.
     inputnode.t1w_reference : str
         Path to T1-weighted reference image for registration.
+    inputnode.t1w_underlay : str
+        T1w image to transform to DSC space as anatomical underlay.
+        CE-T1w if post-contrast available, otherwise native T1w.
     inputnode.brain_mask : str
         Path to brain mask in T1w space.
     inputnode.wm_probseg : str, optional
@@ -1485,6 +1488,7 @@ def init_dsc_preproc_wf(
             fields=[
                 "dsc_file",  # Raw 4D DSC perfusion image
                 "t1w_reference",  # T1w reference for registration
+                "t1w_underlay",  # T1w underlay for DSC-space visualization (CE-T1w if available, else native)
                 "brain_mask",  # Brain mask in T1w space
                 "wm_probseg",  # White matter probability map (optional)
                 "lesion_mask",  # Dilated lesion mask for registration (optional)
@@ -1579,6 +1583,9 @@ def init_dsc_preproc_wf(
                 "smooth_auc",
                 # QC metrics
                 "qc_metrics",
+                # Masks in DSC space
+                "brain_mask_dsc",
+                "nawm_mask_dsc",
                 # Lesion statistics (conditional on lesion mask)
                 "lesion_stats_json",
                 "lesion_stats_txt",
@@ -2505,12 +2512,18 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
+    # Expose DSC-space masks on outputnode
+    workflow.connect([
+        (hdbet_dsc, outputnode, [("dsc_brain_mask_file", "brain_mask_dsc")]),
+        (transform_nawm, outputnode, [("nawm_mask_dsc_file", "nawm_mask_dsc")]),
+    ])
+
     # Transform structural underlays to DSC space (conditional)
     # register.out_matrix is T1w→DSC
     # Use prebolus_mean (full FOV) as reference for complete DSC geometry
     if transform_t1_to_dsc is not None:
         workflow.connect([
-            (inputnode, transform_t1_to_dsc, [("t1w_reference", "structural_file")]),
+            (inputnode, transform_t1_to_dsc, [("t1w_underlay", "structural_file")]),
             (prebolus_mean, transform_t1_to_dsc, [("prebolus_mean_file", "reference_file")]),
             (register, transform_t1_to_dsc, [("out_matrix", "transform_matrix")]),
         ])
