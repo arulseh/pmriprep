@@ -3,7 +3,7 @@
 This module provides QC plot functions for DSC perfusion processing:
 1. Preprocessing QC — signal quality, signal drop, tSNR, CNR
 2. Parameter maps QC — multi-slice spatial parameter maps
-3. Fit QC — model fit at example voxel (parametric methods only)
+3. Fit QC — model fit at example voxel (all deconvolution methods)
 4. Leakage correction QC — K2, AUC decomposition, correction effect
 
 All visualizations use the colorblind-safe palette from qc_standards.py.
@@ -276,7 +276,7 @@ def generate_dsc_parameter_maps_qc_plot(
 
     Args:
         param_maps: Dict mapping parameter name to 3D array.
-            Expected keys: "rCBF", "rCBV", "MTT", "Tmax", "PSR", "TTP".
+            Expected keys: "rCBF", "rCBV", "MTT", "Tmax", "PSR", "TTPᶜ".
         brain_mask: 3D boolean brain mask.
         subject_id: Subject identifier for title.
         session_id: Session identifier for title.
@@ -298,7 +298,7 @@ def generate_dsc_parameter_maps_qc_plot(
         "MTT": ("viridis", 0.0, "fixed", 30.0, "seconds"),
         "Tmax": ("plasma", 0.0, "fixed", 30.0, "seconds"),
         "PSR": ("coolwarm", 0.0, "fixed", 200.0, "%"),
-        "TTP": ("viridis", 0.0, "fixed", 30.0, "seconds"),
+        "TTP\u1d9c": ("viridis", 0.0, "fixed", 20.0, "seconds"),
     }
 
     # Filter to params that exist in the input
@@ -413,10 +413,11 @@ def generate_dsc_fit_qc_plot(
     session_id: str = "",
     output_path: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Generate a 2x2 fit QC plot for parametric DSC methods.
+    """Generate a 2x2 fit QC plot for DSC deconvolution methods.
 
-    Only generated for vascular or CPI methods (parametric with per-voxel fits).
-    SVD methods don't have "fits" in the same sense.
+    For parametric methods (vascular, CPI), shows the per-voxel model fit.
+    For SVD methods (sSVD, cSVD, oSVD, tikhonov), shows the reconstructed
+    concentration from AIF convolved with the recovered residue function.
 
     Panels:
         (0,0) Tissue concentration at example voxel (circles)

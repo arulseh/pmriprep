@@ -1010,7 +1010,7 @@ def _generate_dsc_param_maps_qc(
         ("MTT", mtt_file),
         ("Tmax", tmax_file),
         ("PSR", psr_file),
-        ("TTP", ttp_file),
+        ("TTP\u1d9c", ttp_file),
     ]:
         if filepath:
             from pathlib import Path as _P
@@ -1138,6 +1138,7 @@ def _generate_dsc_fit_qc(
     voxel = tuple(fit_data["voxel"])
     voxel_cbf = fit_data["voxel_cbf"]
     r_squared = fit_data.get("r_squared", 0.0)
+    method = fit_data.get("method", "")
 
     # Load CBF map for spatial context panel
     cbf_img = nib.load(cbf_file)
@@ -1163,6 +1164,7 @@ def _generate_dsc_fit_qc(
         qc_voxel=voxel,
         qc_voxel_cbf=voxel_cbf,
         r_squared=r_squared,
+        method=method,
         output_path=out_path,
         subject_id=subject_id,
         session_id=session_id,
@@ -2086,23 +2088,21 @@ def init_dsc_preproc_wf(
     dsc_leakage_qc.inputs.session_id = session_id or ""
 
     # -------------------------------------------------------------------
-    # Node 9e2: DSC Fit QC Plot (parametric methods only)
+    # Node 9e2: DSC Fit QC Plot (all deconvolution methods)
     # -------------------------------------------------------------------
-    dsc_fit_qc = None
-    if config.method in ("vascular", "cpi"):
-        dsc_fit_qc = pe.Node(
-            niu.Function(
-                input_names=[
-                    "qc_fit_data_file", "brain_mask_file", "cbf_file",
-                    "subject_id", "session_id",
-                ],
-                output_names=["plot_file"],
-                function=_generate_dsc_fit_qc,
-            ),
-            name="dsc_fit_qc",
-        )
-        dsc_fit_qc.inputs.subject_id = subject_id
-        dsc_fit_qc.inputs.session_id = session_id or ""
+    dsc_fit_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "qc_fit_data_file", "brain_mask_file", "cbf_file",
+                "subject_id", "session_id",
+            ],
+            output_names=["plot_file"],
+            function=_generate_dsc_fit_qc,
+        ),
+        name="dsc_fit_qc",
+    )
+    dsc_fit_qc.inputs.subject_id = subject_id
+    dsc_fit_qc.inputs.session_id = session_id or ""
 
     # -------------------------------------------------------------------
     # Node 9f: Transform structural underlays to DSC Space
@@ -2432,7 +2432,7 @@ def init_dsc_preproc_wf(
             ("out_mtt", "mtt_file"),
             ("out_tmax", "tmax_file"),
             ("out_psr", "psr_file"),
-            ("out_ttp", "ttp_file"),
+            ("out_ttp_corrected", "ttp_file"),
         ]),
         (hdbet_dsc, dsc_param_maps_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
     ])
@@ -2452,15 +2452,14 @@ def init_dsc_preproc_wf(
         (inputnode, dsc_leakage_qc, [("tr", "tr")]),
     ])
 
-    # DSC Fit QC (parametric methods only)
-    if dsc_fit_qc is not None:
-        workflow.connect([
-            (compute_maps, dsc_fit_qc, [
-                ("out_qc_fit_data", "qc_fit_data_file"),
-                ("out_rel_cbf", "cbf_file"),
-            ]),
-            (hdbet_dsc, dsc_fit_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
-        ])
+    # DSC Fit QC (all deconvolution methods)
+    workflow.connect([
+        (compute_maps, dsc_fit_qc, [
+            ("out_qc_fit_data", "qc_fit_data_file"),
+            ("out_rel_cbf", "cbf_file"),
+        ]),
+        (hdbet_dsc, dsc_fit_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
+    ])
 
     # -------------------------------------------------------------------
     # Lesion mask selection and transform (conditional)
@@ -2738,10 +2737,9 @@ def init_dsc_preproc_wf(
         (dsc_leakage_qc, outputnode, [("plot_file", "dsc_leakage_qc_plot")]),
     ])
 
-    if dsc_fit_qc is not None:
-        workflow.connect([
-            (dsc_fit_qc, outputnode, [("plot_file", "dsc_fit_qc_plot")]),
-        ])
+    workflow.connect([
+        (dsc_fit_qc, outputnode, [("plot_file", "dsc_fit_qc_plot")]),
+    ])
 
     workflow.connect([
         # QC metrics

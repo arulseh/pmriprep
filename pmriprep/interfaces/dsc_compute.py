@@ -504,7 +504,7 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     # Gating flag
     absolute_permitted = traits.Bool(desc="Whether absolute quantification gating passed")
 
-    # QC fit data (parametric methods only)
+    # QC fit data (all deconvolution methods)
     out_qc_fit_data = File(desc="JSON with QC voxel fit data for fit QC plot")
 
     # Optional extras
@@ -1267,6 +1267,140 @@ class ComputeDSCMaps(BaseInterface):
         except Exception as e:
             logger.warning(f"Failed to generate QC fit data: {e}")
 
+    def _save_qc_fit_data_svd(
+        self,
+        cbf_map: npt.NDArray[Any],
+        conc_data: npt.NDArray[Any],
+        aif: npt.NDArray[Any],
+        mask_bool: npt.NDArray[np.bool_],
+        dt: float,
+        method: str,
+        threshold: float,
+        oi_threshold: float,
+    ) -> None:
+        """Select a QC voxel and save SVD deconvolution fit data as JSON.
+
+        For SVD methods, the "fit" is the reconstruction of concentration
+        from the recovered residue function: C_recon = AIF * R(t) * dt.
+        The R² between measured and reconstructed concentration serves as
+        a QC metric for deconvolution quality.
+
+        Args:
+            cbf_map: 3D relative CBF map (masked).
+            conc_data: 4D concentration data.
+            aif: 1D AIF concentration curve.
+            mask_bool: 3D boolean brain mask.
+            dt: Temporal resolution in seconds.
+            method: Deconvolution method ('sSVD', 'cSVD', 'oSVD', 'tikhonov').
+            threshold: SVD truncation threshold (for sSVD/cSVD).
+            oi_threshold: Oscillation index target (for oSVD).
+        """
+        import json
+        import nibabel as nib  # type: ignore[import-untyped]
+        from scipy.ndimage import binary_erosion  # type: ignore[import-untyped]
+        from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
+        from pmriprep.utils.dsc_deconvolution import (
+            svd_deconvolve_standard,
+            svd_deconvolve_circulant,
+            svd_deconvolve_oscillation,
+            tikhonov_deconvolve,
+            build_block_circulant_matrix,
+        )
+
+        try:
+            # Load and resample enhancing mask if available
+            enhancing_mask_data: npt.NDArray[Any] | None = None
+            if (
+                isdefined(self.inputs.enhancing_mask_file)
+                and self.inputs.enhancing_mask_file
+            ):
+                enh_img = nib.load(self.inputs.enhancing_mask_file)
+                conc_img = nib.load(self.inputs.concentration_file)
+                enh_data = enh_img.get_fdata()  # type: ignore[attr-defined]
+                needs_resample = (
+                    enh_data.shape[:3] != conc_data.shape[:3]
+                    or not np.allclose(
+                        enh_img.affine, conc_img.affine, atol=1e-3  # type: ignore[attr-defined]
+                    )
+                )
+                if needs_resample:
+                    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+                    resampled = resample_to_img(
+                        enh_img, conc_img, interpolation="nearest"
+                    )
+                    enhancing_mask_data = (
+                        resampled.get_fdata() > 0.5  # type: ignore[attr-defined]
+                    ).astype(np.float64)
+                else:
+                    enhancing_mask_data = enh_data
+
+            qc_voxel = _select_dsc_qc_voxel(
+                cbf_map, mask_bool, binary_erosion,
+                enhancing_mask=enhancing_mask_data,
+            )
+            x, y, z = qc_voxel
+            tissue_curve = conc_data[x, y, z, :].astype(np.float64)
+
+            if np.max(np.abs(tissue_curve)) < EPSILON_CONCENTRATION:
+                return
+
+            n_timepoints = conc_data.shape[3]
+            time_points = np.arange(n_timepoints, dtype=np.float64) * dt
+
+            # Deconvolve the single QC voxel and reconstruct concentration
+            c_recon: npt.NDArray[Any]
+            if method == "sSVD":
+                residue = svd_deconvolve_standard(
+                    tissue_curve, aif, dt=dt, threshold=threshold,
+                ).residue
+                c_recon = np.convolve(aif, residue, mode="full")[:n_timepoints] * dt
+            elif method == "cSVD":
+                # cSVD uses block-circulant matrix; reconstruct via matrix multiply
+                full_residue = svd_deconvolve_circulant(
+                    tissue_curve, aif, dt=dt, threshold=threshold,
+                ).residue
+                matrix = build_block_circulant_matrix(aif, dt)
+                c_recon = (matrix @ full_residue)[:n_timepoints]
+            elif method == "oSVD":
+                residue = svd_deconvolve_oscillation(
+                    tissue_curve, aif, dt=dt, oi_target=oi_threshold,
+                ).residue
+                c_recon = np.convolve(aif, residue, mode="full")[:n_timepoints] * dt
+            elif method == "tikhonov":
+                residue = tikhonov_deconvolve(
+                    tissue_curve, aif, dt=dt,
+                ).residue
+                c_recon = np.convolve(aif, residue, mode="full")[:n_timepoints] * dt
+            else:
+                return
+
+            # Compute R²
+            ss_res = np.sum((tissue_curve - c_recon) ** 2)
+            ss_tot = np.sum((tissue_curve - np.mean(tissue_curve)) ** 2)
+            r_squared = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+            # Save as JSON (same format as parametric)
+            base_path = self._gen_outfilename("_qc_fit_data")
+            qc_fit_path = base_path.replace(".nii.gz", ".json")
+            qc_fit_dict = {
+                "voxel": [x, y, z],
+                "voxel_cbf": float(cbf_map[x, y, z]),
+                "r_squared": r_squared,
+                "method": method,
+                "tissue_concentration": tissue_curve.tolist(),
+                "model_prediction": c_recon.tolist(),
+                "aif": aif.tolist(),
+                "time_points": time_points.tolist(),
+            }
+
+            with open(qc_fit_path, "w") as f:
+                json.dump(qc_fit_dict, f, indent=2)
+
+            self._results["out_qc_fit_data"] = qc_fit_path
+
+        except Exception as e:
+            logger.warning(f"Failed to generate SVD QC fit data: {e}")
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DSC map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
@@ -1744,11 +1878,16 @@ class ComputeDSCMaps(BaseInterface):
                 cth_map = np.where(mask_bool, cth_map, 0.0)
                 self._results["out_cth"] = _save_map(cth_map, "_cth")
 
-        # Save QC fit data for parametric methods (vascular/cpi)
+        # Save QC fit data for all deconvolution methods
         if method in ("vascular", "cpi"):
             self._save_qc_fit_data(
                 rel_cbf, conc_data, aif, mask_bool, dt, method,
                 bayesian, mcmc_samples, cpi_control_points,
+            )
+        else:
+            self._save_qc_fit_data_svd(
+                rel_cbf, conc_data, aif, mask_bool, dt, method,
+                threshold, oi_threshold,
             )
 
         # Save Bayesian uncertainty maps
