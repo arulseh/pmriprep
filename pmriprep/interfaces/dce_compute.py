@@ -962,6 +962,19 @@ class ComputeDCEMaps(BaseInterface):
                 ):
                     constraint_mode = ConstraintMode.SOFT
                     constraint_vp_uncertainty = 0.2
+
+                # Bayesian (MAP/MCMC): hard constraint bypasses the
+                # Bayesian fitter and uses L-BFGS-B, which converges
+                # non-enhancing voxels to exact bounds (Ktrans=0.0)
+                # triggering mass post-fit rejection. SOFT uses the
+                # Bayesian fitter with an informative DSC prior on vp.
+                if (
+                    str(self.inputs.bayesian) != "none"
+                    and constraint_mode == ConstraintMode.HARD
+                    and str(self.inputs.constraint_mode) == "auto"
+                ):
+                    constraint_mode = ConstraintMode.SOFT
+                    constraint_vp_uncertainty = 0.2
             except Exception as exc:
                 constraint_qc = {
                     "mode": "skip",
@@ -1119,6 +1132,12 @@ class ComputeDCEMaps(BaseInterface):
             ktrans_val = params.get("Ktrans", 0.0)
             ve_val = params.get("ve", 0.0)
             vp_val = params.get("vp", 0.0)
+            is_constrained = res.get("constrained", False)
+            # For constrained fits (vp fixed from DSC-CBV), Ktrans=0 is
+            # the correct physical answer for non-enhancing tissue —
+            # only reject strictly negative (numerical error). vp checks
+            # are skipped because vp was fixed and guaranteed positive.
+            ktrans_lo = ktrans_val < 0 if is_constrained else ktrans_val <= 0
             if model_name == "2cxm":
                 fp_val = params.get("Fp", 0.0)
                 ps_val = params.get("PS", 0.0)
@@ -1130,14 +1149,14 @@ class ComputeDCEMaps(BaseInterface):
                 )
             elif model_name == "patlak":
                 degenerate = (
-                    ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
-                    or vp_val <= 0 or vp_val >= VP_BOUNDS.max
+                    ktrans_lo or ktrans_val >= KTRANS_BOUNDS.max
+                    or (not is_constrained and (vp_val <= 0 or vp_val >= VP_BOUNDS.max))
                 )
             elif model_name == "extended_tofts":
                 degenerate = (
-                    ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
+                    ktrans_lo or ktrans_val >= KTRANS_BOUNDS.max
                     or ve_val <= 0 or ve_val >= VE_BOUNDS.max
-                    or vp_val <= 0 or vp_val >= VP_BOUNDS.max
+                    or (not is_constrained and (vp_val <= 0 or vp_val >= VP_BOUNDS.max))
                 )
             else:  # tofts
                 degenerate = (
