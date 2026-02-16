@@ -134,19 +134,15 @@ def merge_cli_config(
         "dce_scale_aif": ("dce", "scale_aif"),
         "dce_no_b1": ("dce", "no_b1"),
         "dce_no_t1": ("dce", "no_t1"),
-        "dce_t1_method": ("dce", "t1_method"),
-        "dce_afi_flip_angle": ("dce", "afi_flip_angle"),
         "dce_use_gpu": ("dce", "use_gpu"),
         "dce_dose": ("dce", "dose"),
         "hdbet_device": ("dce", "hdbet_device"),
         # Anatomical options
         "brain_extraction_tool": ("anat", "tool"),
         "denoise": ("anat", "denoise"),
-        "skip_acpc": ("anat", "skip_acpc"),
         # HD-GLIO options
         "hdglio_conda_env": ("hdglio", "conda_env"),
         "hdglio_device": ("hdglio", "device"),
-        "atlases_dir": ("hdglio", "atlases_dir"),
     }
 
     for cli_key, (section, config_key) in cli_to_config.items():

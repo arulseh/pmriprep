@@ -11,6 +11,7 @@ from nipype.interfaces import utility as niu  # type: ignore[import-untyped]
 from nipype.pipeline import engine as pe  # type: ignore[import-untyped]
 
 from pmriprep.config.hdglio import HDGLIOConfig
+from pmriprep.data import get_lobar_atlas_dir
 from pmriprep.interfaces.hdglio import HDGLIOPrep, HDGLIOSegment
 
 
@@ -577,7 +578,7 @@ def init_hdglio_wf(
     )
     create_nawm.inputs.nawm_erosion = config.nawm_erosion
     create_nawm.inputs.nawm_min_voxels = config.nawm_min_voxels
-    create_nawm.inputs.atlases_dir = config.atlases_dir or ""
+    create_nawm.inputs.atlases_dir = str(get_lobar_atlas_dir())
 
     # Connect whole tumor mask and WM probseg to NAWM creation
     # Also connect MNI transform and T1w reference for atlas-based restriction

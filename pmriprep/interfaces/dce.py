@@ -570,7 +570,7 @@ class B1Mapping(SimpleInterface):
         if nominal_fa == 60.0:
             logger.info(
                 "Using default AFI nominal flip angle = 60 deg. "
-                "Set FlipAngle in BIDS sidecar or use --dce-afi-flip-angle if different.",
+                "Set FlipAngle in BIDS sidecar or afi_flip_angle in config file if different.",
             )
 
         # -----------------------------------------------------------------
@@ -960,13 +960,6 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="T1 correction mode: auto, none, offset, or fallback",
     )
-    t1_method = traits.Enum(
-        "glls",
-        "wlls",
-        usedefault=True,
-        desc="VFA T1 fitting method: glls (standard DESPOT1) or wlls "
-             "(weighted least squares, eliminates noise bias)",
-    )
     b1_qc_pass = traits.Bool(
         True,
         usedefault=True,
@@ -1187,13 +1180,10 @@ class T1Mapping(SimpleInterface):
         # Perform linear regression: Y = m × X + b
         # Using least squares for each voxel
         # m = E1, b = S0 × (1 - E1)
-        if self.inputs.t1_method == "wlls":
-            cos_fa = np.cos(corrected_fa_rad)
-            t1_map = self._fit_t1_wlls(
-                x_data, y_data, sin_fa, cos_fa, tr_s, shape,
-            )
-        else:
-            t1_map = self._fit_t1_linear(x_data, y_data, tr_s, shape)
+        cos_fa = np.cos(corrected_fa_rad)
+        t1_map = self._fit_t1_wlls(
+            x_data, y_data, sin_fa, cos_fa, tr_s, shape,
+        )
 
         # Convert T1 from seconds to milliseconds
         t1_map = t1_map * 1000.0
@@ -1457,92 +1447,6 @@ class T1Mapping(SimpleInterface):
             self._results["qc_plot"] = qc_plot_path
 
         return runtime
-
-    def _fit_t1_linear(
-        self,
-        x_data: np.ndarray,
-        y_data: np.ndarray,
-        tr_s: float,
-        shape: tuple[int, ...],
-    ) -> np.ndarray:
-        """Fit T1 using linearized DESPOT1 approach.
-
-        Y = E1 × X + S0 × (1 - E1)
-
-        Where:
-            - Y = S/sin(α)
-            - X = S/tan(α)
-            - m = E1 = exp(-TR/T1)
-            - b = S0 × (1 - E1)
-
-        Args:
-            x_data: S/tan(α) data, shape (n_fa, x, y, z)
-            y_data: S/sin(α) data, shape (n_fa, x, y, z)
-            tr_s: TR in seconds
-            shape: Output shape (x, y, z)
-
-        Returns:
-            T1 map in seconds
-        """
-        from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1
-
-        n_fa = x_data.shape[0]
-        n_voxels = np.prod(shape)
-
-        # Reshape to (n_fa, n_voxels) for vectorized regression
-        x_flat = x_data.reshape(n_fa, n_voxels)
-        y_flat = y_data.reshape(n_fa, n_voxels)
-
-        # Linear regression: Y = m × X + b
-        # Using the formula: m = (n*sum(XY) - sum(X)*sum(Y)) / (n*sum(X²) - sum(X)²)
-
-        # Calculate sums
-        sum_x = np.sum(x_flat, axis=0)
-        sum_y = np.sum(y_flat, axis=0)
-        sum_xy = np.sum(x_flat * y_flat, axis=0)
-        sum_x2 = np.sum(x_flat * x_flat, axis=0)
-
-        # Calculate slope (E1) — sign-preserving denominator guard
-        denom = n_fa * sum_x2 - sum_x * sum_x
-        degenerate = np.abs(denom) < EPSILON_T1
-        denom = np.where(
-            degenerate,
-            np.where(denom >= 0, EPSILON_T1, -EPSILON_T1),
-            denom,
-        )
-
-        e1 = (n_fa * sum_xy - sum_x * sum_y) / denom
-
-        # For degenerate voxels (near-zero denominator), use direct dual-angle
-        # ratio formula as fallback: E1 = (S2/tan(α2) - S1/tan(α1)) /
-        #                                 (S2/sin(α2) - S1/sin(α1))
-        # This is algebraically equivalent but numerically more stable when
-        # the linear regression denominator is near zero.
-        if n_fa >= 2 and np.any(degenerate):
-            y_diff = y_flat[1] - y_flat[0]
-            e1_ratio = (x_flat[1] - x_flat[0]) / np.where(
-                np.abs(y_diff) < EPSILON_T1,
-                np.where(y_diff >= 0, EPSILON_T1, -EPSILON_T1),
-                y_diff,
-            )
-            e1 = np.where(degenerate, e1_ratio, e1)
-
-        # Clamp E1 to valid range (0 < E1 < 1 for positive T1).
-        # Upper bound uses EPSILON_E1_UPPER (1e-4) to allow E1 up to 0.9999,
-        # which is needed for short-TR VFA (TR~4ms, T1~1000ms → E1≈0.996).
-        # Using EPSILON_T1 (0.01) would cap E1 at 0.99 → T1 ≤ 397ms.
-        e1 = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
-
-        # Calculate T1 from E1
-        # E1 = exp(-TR/T1)
-        # -TR/T1 = ln(E1)
-        # T1 = -TR / ln(E1)
-        t1_flat = -tr_s / np.log(e1)
-
-        # Reshape back to 3D
-        t1_map: np.ndarray = t1_flat.reshape(shape)  # type: ignore[assignment]
-
-        return t1_map
 
     def _fit_t1_wlls(
         self,

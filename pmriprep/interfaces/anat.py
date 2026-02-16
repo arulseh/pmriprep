@@ -1595,11 +1595,6 @@ class ACPCAlignmentInputSpec(CommandLineInputSpec):
         exists=True,
         desc="MNI T1w template for ACPC alignment target",
     )
-    skip_acpc = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Skip ACPC alignment (pass through input unchanged)",
-    )
     dof = traits.Int(
         6,
         usedefault=True,
@@ -1619,9 +1614,8 @@ class ACPCAlignmentInputSpec(CommandLineInputSpec):
 class ACPCAlignmentOutputSpec(TraitedSpec):
     """Output specification for ACPCAlignment interface."""
 
-    out_file = File(exists=True, desc="ACPC-aligned image (or input if skipped)")
-    out_matrix = File(exists=True, desc="Affine transformation matrix (identity if skipped)")
-    was_skipped = traits.Bool(desc="Whether ACPC alignment was skipped")
+    out_file = File(exists=True, desc="ACPC-aligned image")
+    out_matrix = File(exists=True, desc="Affine transformation matrix")
 
 
 class ACPCAlignment(CommandLine):
@@ -1642,8 +1636,6 @@ class ACPCAlignment(CommandLine):
         Input brain-extracted T1w image
     mni_template : str, optional
         MNI T1w template (default: uses FSL's MNI152 template)
-    skip_acpc : bool
-        If True, skip alignment and pass through input unchanged
     dof : int
         Degrees of freedom (default: 6 for rigid body)
     cost : str
@@ -1655,13 +1647,6 @@ class ACPCAlignment(CommandLine):
 
     >>> acpc = ACPCAlignment()
     >>> acpc.inputs.in_file = 'T1w_brain.nii.gz'
-    >>> result = acpc.run()  # doctest: +SKIP
-
-    Skip ACPC alignment (pass-through mode):
-
-    >>> acpc = ACPCAlignment()
-    >>> acpc.inputs.in_file = 'T1w_brain.nii.gz'
-    >>> acpc.inputs.skip_acpc = True
     >>> result = acpc.run()  # doctest: +SKIP
 
     With custom MNI template:
@@ -1681,10 +1666,6 @@ class ACPCAlignment(CommandLine):
     The transformation is 6-DOF (translation + rotation), preserving the
     native brain shape while aligning to the AC-PC line as approximated
     by the MNI template orientation.
-
-    When skip_acpc=True, the interface copies the input file to the output
-    location and creates an identity transformation matrix, allowing
-    downstream workflows to proceed without modification.
 
     Requires FSL to be installed and available in PATH.
 
@@ -1777,31 +1758,21 @@ class ACPCAlignment(CommandLine):
         in_file = str(self.inputs.in_file)
         out_file = self._gen_outfilename()
         out_matrix = self._gen_matfilename()
-        skip_acpc = self.inputs.skip_acpc
         dof = self.inputs.dof
         cost = self.inputs.cost
+        mni_template = self._get_mni_template()
 
-        if skip_acpc:
-            # Skip mode: copy input and create identity matrix
-            identity_matrix = "1 0 0 0\\n0 1 0 0\\n0 0 1 0\\n0 0 0 1"
-            return (
-                f"bash -c 'cp {in_file} {out_file} && "
-                f"echo -e \"{identity_matrix}\" > {out_matrix}'"
-            )
-        else:
-            mni_template = self._get_mni_template()
-            return (
-                f"flirt -in {in_file} -ref {mni_template} "
-                f"-out {out_file} -omat {out_matrix} "
-                f"-dof {dof} -cost {cost}"
-            )
+        return (
+            f"flirt -in {in_file} -ref {mni_template} "
+            f"-out {out_file} -omat {out_matrix} "
+            f"-dof {dof} -cost {cost}"
+        )
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
         outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
         outputs["out_file"] = self._gen_outfilename()
         outputs["out_matrix"] = self._gen_matfilename()
-        outputs["was_skipped"] = self.inputs.skip_acpc
         return outputs
 
     def _gen_filename(self, name: str) -> Optional[str]:

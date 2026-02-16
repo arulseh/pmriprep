@@ -52,7 +52,6 @@ TEST_SUBJECT_CLI_CONFIGS: List[Dict[str, Any]] = [
         "id": "sub-0001_ses-0002",
         "user_story": "US-091",
         "cli_args": [
-            "--dsc-no-preload",
             "--dsc-dose", "full",
             # sSVD is default, no need to specify
         ],
@@ -321,7 +320,6 @@ class TestConfigurationBuilding:
         config = AnatConfig()
         assert config.tool == "hdbet"
         assert config.denoise is False
-        assert config.skip_acpc is False
 
     def test_hdglio_config_defaults(self) -> None:
         """Verify HDGLIOConfig has expected defaults."""

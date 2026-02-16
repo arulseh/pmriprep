@@ -18,8 +18,6 @@ class AnatConfig:
         Brain extraction tool: hdbet (HD-BET) or ants (ANTs).
     denoise : bool
         Apply ANTs denoising to anatomical images.
-    skip_acpc : bool
-        Skip ACPC alignment to MNI template.
     cost_function : str
         Cost function for registration (default: normmi).
     use_lesion_mask : bool
@@ -31,7 +29,6 @@ class AnatConfig:
 
     # Processing settings
     denoise: bool = False
-    skip_acpc: bool = False
 
     # Registration settings
     cost_function: str = "normmi"

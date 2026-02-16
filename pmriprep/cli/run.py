@@ -16,13 +16,22 @@ def _build_parser() -> argparse.ArgumentParser:
     """Build and return the argument parser for pmriprep."""
     parser = argparse.ArgumentParser(
         prog="pmriprep",
-        description="PMRIPrep: Perfusion MRI Preprocessing Pipeline",
+        usage="%(prog)s bids_dir output_dir {participant} [options]",
+        description=(
+            "PMRIPrep: Perfusion MRI Preprocessing Pipeline\n\n"
+            "Automated preprocessing and quantification of DSC and DCE\n"
+            "perfusion MRI data. Reads BIDS-formatted input and produces\n"
+            "BIDS-Derivatives compliant output with QC reports."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
-  pmriprep /data/bids /data/derivatives participant
-  pmriprep /data/bids /data/derivatives participant --participant-label sub-01 sub-02
-  pmriprep /data/bids /data/derivatives participant -w /tmp/work --nprocs 8
+  pmriprep /data/bids /data/out participant
+  pmriprep /data/bids /data/out participant --participant-label 01 02
+  pmriprep /data/bids /data/out participant -w /tmp/work --nprocs 8
+
+  # Use a config file for advanced options:
+  pmriprep /data/bids /data/out participant --config-file my_config.yaml
 """,
     )
 
@@ -31,6 +40,13 @@ Examples:
         "--version",
         action="version",
         version=f"pmriprep {__version__}",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Enable verbose (DEBUG-level) logging.",
     )
 
     # Positional arguments (BIDS-App standard)
@@ -53,8 +69,6 @@ Examples:
     # Standard BIDS-App arguments
     parser.add_argument(
         "--participant-label",
-        "--participant_label",
-        dest="participant_label",
         nargs="+",
         metavar="LABEL",
         help="A space-separated list of participant labels to process "
@@ -62,8 +76,6 @@ Examples:
     )
     parser.add_argument(
         "--session-label",
-        "--session_label",
-        dest="session_label",
         nargs="+",
         metavar="LABEL",
         help="A space-separated list of session labels to process "
@@ -80,8 +92,6 @@ Examples:
     )
     parser.add_argument(
         "--mem-gb",
-        "--mem_gb",
-        dest="mem_gb",
         type=float,
         metavar="GB",
         help="Upper bound memory limit in gigabytes.",
@@ -89,8 +99,6 @@ Examples:
     parser.add_argument(
         "-w",
         "--work-dir",
-        "--work_dir",
-        dest="work_dir",
         type=Path,
         metavar="PATH",
         help="Path to the working directory for intermediate files.",
@@ -99,8 +107,6 @@ Examples:
     # Configuration file
     parser.add_argument(
         "--config-file",
-        "--config_file",
-        dest="config_file",
         type=Path,
         metavar="PATH",
         help="Path to a YAML or JSON configuration file for advanced options.",
@@ -113,35 +119,40 @@ Examples:
     )
     skip_group.add_argument(
         "--skip-anat",
-        "--skip_anat",
-        dest="skip_anat",
         action="store_true",
         default=False,
         help="Skip anatomical preprocessing pipeline.",
     )
     skip_group.add_argument(
         "--skip-tumor-seg",
-        "--skip_tumor_seg",
-        dest="skip_tumor_seg",
         action="store_true",
         default=False,
         help="Skip HD-GLIO tumor segmentation.",
     )
     skip_group.add_argument(
         "--skip-dsc",
-        "--skip_dsc",
-        dest="skip_dsc",
         action="store_true",
         default=False,
         help="Skip DSC (Dynamic Susceptibility Contrast) perfusion pipeline.",
     )
     skip_group.add_argument(
         "--skip-dce",
-        "--skip_dce",
-        dest="skip_dce",
         action="store_true",
         default=False,
         help="Skip DCE (Dynamic Contrast Enhanced) perfusion pipeline.",
+    )
+
+    # Device options
+    device_group = parser.add_argument_group(
+        "Device options",
+        "Hardware device selection for neural network tools.",
+    )
+    device_group.add_argument(
+        "--hdbet-device",
+        choices=["auto", "cuda", "mps", "cpu"],
+        default="auto",
+        help="Device for HD-BET brain extraction (default: auto). "
+        "Use 'mps' for Mac GPU, 'cuda' for NVIDIA GPU, 'cpu' for CPU-only.",
     )
 
     # DSC options
@@ -151,49 +162,30 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-deconv-method",
-        "--dsc_deconv_method",
-        dest="dsc_deconv_method",
         choices=["sSVD", "cSVD", "oSVD", "tikhonov", "vascular", "cpi"],
         default="sSVD",
         help="Deconvolution method for DSC (default: sSVD).",
     )
     dsc_group.add_argument(
         "--dsc-bayesian",
-        "--dsc_bayesian",
-        dest="dsc_bayesian",
         choices=["none", "map", "vi", "mcmc"],
         default="none",
         help="Bayesian inference method for DSC (default: none).",
     )
-    # Mutually exclusive preload flags
-    preload_group = dsc_group.add_mutually_exclusive_group()
-    preload_group.add_argument(
+    dsc_group.add_argument(
         "--dsc-preload",
-        "--dsc_preload",
-        dest="dsc_preload",
         action="store_true",
-        default=None,
-        help="Indicate contrast preload is present.",
-    )
-    preload_group.add_argument(
-        "--dsc-no-preload",
-        "--dsc_no_preload",
-        dest="dsc_preload",
-        action="store_false",
-        help="Indicate no contrast preload is present.",
+        default=False,
+        help="Indicate contrast preload is present (e.g., prior DCE injection).",
     )
     dsc_group.add_argument(
         "--dsc-dose",
-        "--dsc_dose",
-        dest="dsc_dose",
         choices=["half", "full", "double"],
         default="full",
         help="Contrast agent dose for DSC (default: full).",
     )
     dsc_group.add_argument(
         "--dsc-gbm-preset",
-        "--dsc_gbm_preset",
-        dest="dsc_gbm_preset",
         action="store_true",
         default=False,
         help="Apply GBM preset: oSVD method, aif_criteria=relaxed, "
@@ -201,24 +193,18 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-aif-method",
-        "--dsc_aif_method",
-        dest="dsc_aif_method",
         choices=["auto", "population"],
         default="auto",
         help="AIF detection method for DSC (default: auto).",
     )
     dsc_group.add_argument(
         "--dsc-absolute-quant",
-        "--dsc_absolute_quant",
-        dest="dsc_absolute_quant",
         action="store_true",
         default=False,
         help="Enable absolute quantification for DSC (requires relaxivity).",
     )
     dsc_group.add_argument(
         "--dsc-use-gpu",
-        "--dsc_use_gpu",
-        dest="dsc_use_gpu",
         action="store_true",
         default=False,
         help="Enable GPU acceleration for DSC processing.",
@@ -231,93 +217,51 @@ Examples:
     )
     dce_group.add_argument(
         "--dce-model",
-        "--dce_model",
-        dest="dce_model",
         choices=["auto", "tofts", "extended_tofts", "patlak", "2cxm"],
         default="auto",
         help="Pharmacokinetic model for DCE (default: auto).",
     )
     dce_group.add_argument(
         "--dce-bayesian",
-        "--dce_bayesian",
-        dest="dce_bayesian",
-        choices=["none", "map", "mcmc"],
+        choices=["none", "map", "vi", "mcmc"],
         default="none",
         help="Bayesian inference method for DCE (default: none).",
     )
     dce_group.add_argument(
         "--dce-aif-method",
-        "--dce_aif_method",
-        dest="dce_aif_method",
         choices=["auto", "population"],
         default="auto",
         help="AIF detection method for DCE (default: auto).",
     )
     dce_group.add_argument(
         "--dce-dose",
-        "--dce_dose",
-        dest="dce_dose",
         choices=["half", "full", "double"],
         default="full",
         help="Contrast agent dose for DCE (default: full).",
     )
     dce_group.add_argument(
         "--dce-scale-aif",
-        "--dce_scale_aif",
-        dest="dce_scale_aif",
         action="store_true",
         default=False,
         help="Scale AIF amplitude to population reference.",
     )
     dce_group.add_argument(
         "--dce-no-b1",
-        "--dce_no_b1",
-        dest="dce_no_b1",
         action="store_true",
         default=False,
         help="Skip B1+ mapping (use nominal flip angles).",
     )
     dce_group.add_argument(
         "--dce-no-t1",
-        "--dce_no_t1",
-        dest="dce_no_t1",
         action="store_true",
         default=False,
         help="Skip T1 mapping (use field-strength-appropriate default T1).",
     )
     dce_group.add_argument(
-        "--dce-t1-method",
-        "--dce_t1_method",
-        dest="dce_t1_method",
-        choices=["glls", "wlls"],
-        default=None,
-        help="VFA T1 fitting method. wlls: weighted least squares (default, eliminates "
-             "10-20%% noise bias; Chang et al. 2008). glls: standard DESPOT1 (matches perf-plus).",
-    )
-    dce_group.add_argument(
-        "--dce-afi-flip-angle",
-        "--dce_afi_flip_angle",
-        dest="dce_afi_flip_angle",
-        type=float,
-        default=None,
-        help="AFI nominal flip angle in degrees (default: from BIDS sidecar, fallback 60).",
-    )
-    dce_group.add_argument(
         "--dce-use-gpu",
-        "--dce_use_gpu",
-        dest="dce_use_gpu",
         action="store_true",
         default=False,
         help="Enable GPU acceleration for DCE processing.",
-    )
-    dce_group.add_argument(
-        "--hdbet-device",
-        "--hdbet_device",
-        dest="hdbet_device",
-        choices=["auto", "cuda", "mps", "cpu"],
-        default="auto",
-        help="Device for HD-BET brain extraction (default: auto). "
-        "Use 'mps' for Mac GPU, 'cuda' for NVIDIA GPU, 'cpu' for CPU-only.",
     )
 
     # Anatomical options
@@ -327,8 +271,6 @@ Examples:
     )
     anat_group.add_argument(
         "--brain-extraction-tool",
-        "--brain_extraction_tool",
-        dest="brain_extraction_tool",
         choices=["hdbet", "ants"],
         default="hdbet",
         help="Tool for brain extraction (default: hdbet).",
@@ -339,15 +281,6 @@ Examples:
         default=False,
         help="Apply ANTs denoising to anatomical images.",
     )
-    anat_group.add_argument(
-        "--skip-acpc",
-        "--skip_acpc",
-        dest="skip_acpc",
-        action="store_true",
-        default=False,
-        help="Skip ACPC alignment to MNI template.",
-    )
-
     # HD-GLIO options
     hdglio_group = parser.add_argument_group(
         "HD-GLIO options",
@@ -355,8 +288,6 @@ Examples:
     )
     hdglio_group.add_argument(
         "--hdglio-conda-env",
-        "--hdglio_conda_env",
-        dest="hdglio_conda_env",
         type=str,
         default=None,
         help=(
@@ -367,24 +298,10 @@ Examples:
     )
     hdglio_group.add_argument(
         "--hdglio-device",
-        "--hdglio_device",
-        dest="hdglio_device",
         choices=["cuda", "mps", "cpu"],
         default=None,
         help="Device for HD-GLIO inference (default: cuda).",
     )
-    hdglio_group.add_argument(
-        "--atlases-dir",
-        "--atlases_dir",
-        dest="atlases_dir",
-        type=str,
-        default=None,
-        help=(
-            "Path to MNI lobar atlas directory for NAWM region restriction. "
-            "Enables atlas-based NAWM selection instead of hemisphere-only."
-        ),
-    )
-
     return parser
 
 
@@ -717,7 +634,8 @@ def _configure_nipype(args: argparse.Namespace) -> None:
         log_dir.mkdir(parents=True, exist_ok=True)
 
     # Configure execution settings
-    nipype_config.enable_debug_mode()
+    if getattr(args, "verbose", False):
+        nipype_config.enable_debug_mode()
     nipype_config.update_config(
         {
             "execution": {

@@ -865,13 +865,11 @@ def init_anat_preproc_wf(
             ])
 
     # -------------------------------------------------------------------
-    # Step 9: ACPC Alignment (optional)
+    # Step 9: ACPC Alignment
     # Rigid alignment to MNI template for standardized orientation
     # -------------------------------------------------------------------
     acpc_align = pe.Node(
-        ACPCAlignment(
-            skip_acpc=config.skip_acpc,
-        ),
+        ACPCAlignment(),
         name="acpc_align",
     )
 
@@ -935,20 +933,18 @@ def init_anat_preproc_wf(
         ]),
     ])
 
-    # ACPC alignment filmstrip (unless skip_acpc)
-    acpc_filmstrip_node = None
-    if not config.skip_acpc:
-        acpc_filmstrip_node = pe.Node(
-            niu.Function(
-                input_names=["t1w_acpc_file"],
-                output_names=["filmstrip_file"],
-                function=_create_acpc_registration_filmstrip,
-            ),
-            name="acpc_filmstrip",
-        )
-        workflow.connect([
-            (acpc_align, acpc_filmstrip_node, [("out_file", "t1w_acpc_file")]),
-        ])
+    # ACPC alignment filmstrip
+    acpc_filmstrip_node = pe.Node(
+        niu.Function(
+            input_names=["t1w_acpc_file"],
+            output_names=["filmstrip_file"],
+            function=_create_acpc_registration_filmstrip,
+        ),
+        name="acpc_filmstrip",
+    )
+    workflow.connect([
+        (acpc_align, acpc_filmstrip_node, [("out_file", "t1w_acpc_file")]),
+    ])
 
     # Cross-modal coregistration filmstrips (one per available modality)
     coreg_qc_postcon = None

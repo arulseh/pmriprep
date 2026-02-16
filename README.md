@@ -188,7 +188,6 @@ anat:
   brain_extraction:
     tool: hdbet
   denoise: true
-  skip_acpc: false
 
 # HD-GLIO configuration
 hdglio:

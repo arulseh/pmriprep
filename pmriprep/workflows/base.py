@@ -968,12 +968,11 @@ def init_pmriprep_wf(
             ]),
         ])
 
-        if not anat_config.skip_acpc:
-            workflow.connect([
-                (anat_wf, anat_writer, [
-                    ("outputnode.acpc_filmstrip", "acpc_filmstrip"),
-                ]),
-            ])
+        workflow.connect([
+            (anat_wf, anat_writer, [
+                ("outputnode.acpc_filmstrip", "acpc_filmstrip"),
+            ]),
+        ])
 
         if session_data.modalities.t1w_ce_gad:
             workflow.connect([
