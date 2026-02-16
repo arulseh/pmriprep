@@ -158,7 +158,6 @@ class DSCConfig:
 
         Returns a new DSCConfig with GBM-optimized settings:
         - oSVD deconvolution method
-        - pre_bolus=10 frames
         - relaxed AIF criteria
         - n_aif_candidates=5
         - gamma_fit=True (gamma-variate AIF fitting for cleaner deconvolution)
@@ -195,7 +194,7 @@ class DSCConfig:
             smooth_fwhm=self.smooth_fwhm,
             underlays=self.underlays,
             motion_thresh=self.motion_thresh,
-            pre_bolus=10,
+            pre_bolus=self.pre_bolus,
             save_k2_map=True,
             save_uncertainty=self.save_uncertainty,
             num_processes=self.num_processes,

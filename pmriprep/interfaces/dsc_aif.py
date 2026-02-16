@@ -875,13 +875,13 @@ class AIFDetection(BaseInterface):
 
         # 5. PMI
         pmi = metrics.get("post_peak_monotonicity", float("nan"))
-        pmi_thresh = {"strict": 60, "relaxed": 50, "permissive": 40, "degraded": 30}
+        pmi_thresh = {"strict": 60, "relaxed": 55, "permissive": 40, "degraded": 30}
         if not np.isnan(pmi) and pmi < pmi_thresh.get(criteria, 30):
             return float("inf")
 
         # 5b. FWHM max
         fwhm = metrics.get("fwhm", float("nan"))
-        fwhm_max = {"strict": 10.0, "relaxed": 15.0, "permissive": 25.0, "degraded": 40.0}
+        fwhm_max = {"strict": 10.0, "relaxed": 12.0, "permissive": 25.0, "degraded": 40.0}
         if not np.isnan(fwhm) and fwhm > fwhm_max.get(criteria, 40.0):
             return float("inf")
 
@@ -895,7 +895,7 @@ class AIFDetection(BaseInterface):
         # 7. TTP window
         ttp_ranges: dict[str, tuple[float, float]] = {
             "strict": (5.0, 40.0),
-            "relaxed": (3.0, 50.0),
+            "relaxed": (3.0, 40.0),
             "permissive": (2.0, 60.0),
             "degraded": (1.0, 70.0),
         }

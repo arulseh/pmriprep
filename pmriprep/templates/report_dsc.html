@@ -160,6 +160,67 @@
     </div>
     {% endif %}
 
+    <!-- DSC Preprocessing QC -->
+    {% if images.dsc_preprocessing_qc or qc_metrics.preprocessing %}
+    <div class="section">
+        <h2>DSC Preprocessing Quality</h2>
+        {% if qc_metrics.preprocessing %}
+        <div class="metrics">
+            {% if qc_metrics.preprocessing.peak_drop_pct is defined %}
+            <div class="metric">
+                <div class="metric-label">Peak Signal Drop</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.preprocessing.peak_drop_pct) }}%</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preprocessing.mean_tsnr is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean tSNR</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.preprocessing.mean_tsnr) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.preprocessing.mean_cnr is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean CNR</div>
+                <div class="metric-value">{{ "%.1f"|format(qc_metrics.preprocessing.mean_cnr) }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if images.dsc_preprocessing_qc %}
+        <div style="margin-top: 20px;">
+            <img src="data:image/png;base64,{{ images.dsc_preprocessing_qc }}" alt="DSC Preprocessing QC">
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- DSC Parameter Maps QC -->
+    {% if images.dsc_param_maps_qc %}
+    <div class="section">
+        <h2>DSC Parameter Maps</h2>
+        <p>Multi-slice overlays of perfusion parameter maps (rCBF, rCBV, MTT, Tmax, PSR, TTP).</p>
+        <img src="data:image/png;base64,{{ images.dsc_param_maps_qc }}" alt="DSC Parameter Maps QC">
+    </div>
+    {% endif %}
+
+    <!-- DSC Fit QC (parametric methods only) -->
+    {% if images.dsc_fit_qc %}
+    <div class="section">
+        <h2>Deconvolution Fit Quality</h2>
+        <p>Tissue concentration fit, model residuals, AIF curve, and derived CBF map.</p>
+        <img src="data:image/png;base64,{{ images.dsc_fit_qc }}" alt="DSC Fit QC">
+    </div>
+    {% endif %}
+
+    <!-- DSC Leakage Correction QC -->
+    {% if images.dsc_leakage_qc %}
+    <div class="section">
+        <h2>Leakage Correction Quality</h2>
+        <p>K2 map, AUC comparison (raw vs corrected), example voxel curves, and scatter plot.</p>
+        <img src="data:image/png;base64,{{ images.dsc_leakage_qc }}" alt="DSC Leakage Correction QC">
+    </div>
+    {% endif %}
+
     <!-- Registration -->
     {% if images.registration %}
     <div class="section">

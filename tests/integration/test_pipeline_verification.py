@@ -117,20 +117,21 @@ TEST_SUBJECT_CLI_CONFIGS: List[Dict[str, Any]] = [
         "cli_args": [
             "--dsc-preload",
             "--dsc-dose", "half",
-            "--dsc-deconv-method", "cpi",
-            "--dce-model", "extended_tofts",
+            "--dsc-gbm-preset",
+            "--dce-model", "auto",
+            "--dce-bayesian", "map",
             "--dce-scale-aif",
         ],
         "config_file": "tests/fixtures/sub-0011_config.yaml",
         "expected_dsc_config": {
             "preload_detected": True,
             "dose": "half",
-            "method": "cpi",
+            "method": "oSVD",  # GBM preset sets oSVD
             "bayesian": "none",
         },
         "expected_dce_config": {
-            "model": "extended_tofts",
-            "bayesian": "none",
+            "model": "auto",
+            "bayesian": "map",
             "scale_aif": True,
         },
     },
@@ -334,7 +335,7 @@ class TestConfigurationBuilding:
         preset_config = config.apply_gbm_preset()
 
         assert preset_config.method == "oSVD"
-        assert preset_config.pre_bolus == 10
+        assert preset_config.pre_bolus == 12  # inherits default, no longer overridden
         assert preset_config.aif_criteria == "relaxed"
         assert preset_config.n_aif_candidates == 5
         assert preset_config.save_k2_map is True

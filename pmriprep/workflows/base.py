@@ -1578,11 +1578,11 @@ def init_pmriprep_wf(
                     _log.warning("DWI: failed to read b-value from %s: %s", bval_path, exc)
 
         # Connect DSC CBV for vp constraint in DCE PK modeling.
-        # Only extended_tofts uses DSC CBV as a fitting constraint (fixes vp).
-        # Other models with vp (patlak, 2cxm) fit freely, cross-validate post-hoc.
+        # Models with vp (extended_tofts, 2cxm) use DSC CBV as a fitting constraint.
+        # Other models with vp (patlak) fit freely, cross-validate post-hoc.
         if dsc_wf is not None:
-            # Fitting constraint: only extended_tofts (or auto, which may resolve to it)
-            if dce_config.model in ("extended_tofts", "auto"):
+            # Fitting constraint: models with vp parameter (or auto, which may resolve to one)
+            if dce_config.model in ("extended_tofts", "2cxm", "auto"):
                 workflow.connect([
                     (dsc_wf, dce_wf, [
                         ("outputnode.rel_cbv_map", "pk_modeling.dsc_cbv_file"),

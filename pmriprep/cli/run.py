@@ -196,8 +196,8 @@ Examples:
         dest="dsc_gbm_preset",
         action="store_true",
         default=False,
-        help="Apply GBM preset: oSVD method, pre_bolus=10, aif_criteria=relaxed, "
-        "n_aif_candidates=5, save_k2_map=true.",
+        help="Apply GBM preset: oSVD method, aif_criteria=relaxed, "
+        "n_aif_candidates=5, gamma_fit=true, save_k2_map=true.",
     )
     dsc_group.add_argument(
         "--dsc-aif-method",
