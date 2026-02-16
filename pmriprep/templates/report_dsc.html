@@ -47,6 +47,12 @@
                 <div class="metric-value">{{ qc_metrics.motion.n_volumes }}</div>
             </div>
             {% endif %}
+            {% if qc_metrics.motion.motion_status is defined %}
+            <div class="metric">
+                <div class="metric-label">Motion Status</div>
+                <div class="metric-value {{ qc_metrics.motion.motion_status | lower }}">{{ qc_metrics.motion.motion_status }}</div>
+            </div>
+            {% endif %}
             {% if qc_metrics.motion.fd_mean is defined %}
             <div class="metric">
                 <div class="metric-label">Mean FD</div>
