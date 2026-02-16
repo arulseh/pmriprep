@@ -2400,6 +2400,8 @@ def init_dsc_preproc_wf(
             ("out_aif_curve", "aif_curve_file"),
             ("out_aif_mask", "aif_mask_file"),
             ("qc_metrics", "qc_metrics"),
+            ("out_raw_aif_curve", "raw_aif_curve_file"),
+            ("gamma_fit_applied", "gamma_fit_applied"),
         ]),
         (motion_correct, aif_qc_plot, [("out_file", "dsc_file")]),
         (hdbet_dsc, aif_qc_plot, [

@@ -295,6 +295,9 @@ class AIFDetectionOutputSpec(TraitedSpec):
 
     out_aif_curve = File(exists=True, desc="AIF curve as 1D text file")
     out_aif_mask = File(exists=True, desc="AIF voxel mask NIfTI")
+    out_raw_aif_curve = traits.Str(
+        desc="Pre-gamma-fit raw AIF curve text file (empty if no gamma fit)",
+    )
     out_aif_coord = traits.List(traits.Int, desc="Best AIF voxel coordinate [x, y, z]")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values")
     detection_level = traits.Str(desc="Detection level: 'atlas', 'relaxed', 'synthetic'")
@@ -1820,10 +1823,12 @@ class AIFDetection(BaseInterface):
 
         # Gamma-variate fitting
         gamma_fit_applied = False
+        raw_aif_curve = None
         if gamma_fit and detection_level != "synthetic":
             try:
                 from pmriprep.utils.dsc_aif import fit_gamma_variate
 
+                raw_aif_curve = aif_curve.copy()
                 fit_result = fit_gamma_variate(
                     aif_curve=aif_curve,
                     baseline_frames=baseline_frames,
@@ -1834,17 +1839,34 @@ class AIFDetection(BaseInterface):
                 if fit_result.fit_converged and fit_result.r_squared > 0.5:
                     aif_curve = fit_result.fitted_curve
                     gamma_fit_applied = True
+                    qc_metrics["gamma_fit_applied"] = True
                     qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
                     qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
                     qc_metrics["gamma_recirculation_removed"] = (
                         fit_result.recirculation_removed
                     )
+                else:
+                    qc_metrics["gamma_fit_applied"] = False
+                    qc_metrics["gamma_fit_rejected_reason"] = (
+                        "no_convergence" if not fit_result.fit_converged
+                        else f"low_r_squared_{fit_result.r_squared:.3f}"
+                    )
             except Exception:
-                pass
+                raw_aif_curve = None
+                qc_metrics["gamma_fit_applied"] = False
+                qc_metrics["gamma_fit_rejected_reason"] = "exception"
+        elif gamma_fit and detection_level == "synthetic":
+            qc_metrics["gamma_fit_applied"] = False
+            qc_metrics["gamma_fit_rejected_reason"] = "synthetic_aif"
 
         # Save outputs
         out_aif_curve = self._gen_outfilename("_aif_curve.txt")
         np.savetxt(out_aif_curve, aif_curve)
+
+        out_raw_aif = ""
+        if raw_aif_curve is not None and gamma_fit_applied:
+            out_raw_aif = self._gen_outfilename("_raw_aif_curve.txt")
+            np.savetxt(out_raw_aif, raw_aif_curve)
 
         out_aif_mask = self._gen_outfilename("_aif_mask.nii.gz")
         mask_img = nib.Nifti1Image(aif_mask_arr, affine)  # type: ignore[attr-defined]
@@ -1854,6 +1876,7 @@ class AIFDetection(BaseInterface):
         self._results = {
             "out_aif_curve": out_aif_curve,
             "out_aif_mask": out_aif_mask,
+            "out_raw_aif_curve": out_raw_aif,
             "out_aif_coord": qc_metrics.get("aif_voxel_coord", []),
             "aif_curve": [float(x) for x in aif_curve],
             "detection_level": detection_level,

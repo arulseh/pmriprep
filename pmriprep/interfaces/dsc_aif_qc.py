@@ -64,6 +64,16 @@ class AIFQCPlotInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Session ID for plot title",
     )
+    raw_aif_curve_file = traits.Str(
+        "",
+        usedefault=True,
+        desc="Pre-gamma-fit raw AIF curve text file (empty if no gamma fit)",
+    )
+    gamma_fit_applied = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Whether gamma-variate fitting was applied to the AIF",
+    )
 
 
 class AIFQCPlotOutputSpec(TraitedSpec):
@@ -106,12 +116,21 @@ class AIFQCPlot(BaseInterface):
         sub = self.inputs.subject_id or ""
         ses = self.inputs.session_id or ""
 
+        # Load raw AIF for gamma fit overlay
+        raw_aif_curve = None
+        raw_aif_file = self.inputs.raw_aif_curve_file
+        if raw_aif_file and Path(raw_aif_file).exists():
+            raw_aif_curve = np.loadtxt(raw_aif_file)
+        gamma_applied = self.inputs.gamma_fit_applied
+
         # Generate plots
         out_dir = Path.cwd()
 
         aif_plot_path = str(out_dir / "aif_curve_qc.png")
         self._plot_aif_curve(
             aif_curve, tr, qc, sub, ses, aif_plot_path,
+            raw_aif_curve=raw_aif_curve,
+            gamma_fit_applied=gamma_applied,
         )
 
         aif_location_path = str(out_dir / "aif_location_qc.png")
@@ -144,6 +163,15 @@ class AIFQCPlot(BaseInterface):
         if not np.isnan(psr_val):
             aif_metrics["psr"] = round(psr_val, 1)
 
+        if gamma_applied:
+            aif_metrics["gamma_fit"] = True
+            r_sq = qc.get("gamma_fit_r_squared")
+            if r_sq is not None:
+                aif_metrics["gamma_r_squared"] = round(r_sq, 3)
+            auc_ratio = qc.get("gamma_fit_auc_ratio")
+            if auc_ratio is not None:
+                aif_metrics["gamma_auc_ratio"] = round(auc_ratio, 3)
+
         self._results = {
             "out_aif_plot": aif_plot_path,
             "out_aif_location": aif_location_path,
@@ -170,10 +198,14 @@ class AIFQCPlot(BaseInterface):
         subject_id: str,
         session_id: str,
         output_path: str,
+        raw_aif_curve: Optional[npt.NDArray[Any]] = None,
+        gamma_fit_applied: bool = False,
     ) -> None:
         """Plot AIF concentration curve with quality annotations.
 
-        Matches perf-plus ``plot_aif`` output style.
+        When gamma-variate fitting was applied, overlays the raw AIF behind
+        the fitted curve for visual comparison (similar to perf-plus
+        ``_gammafit.png``).
         """
         import matplotlib.pyplot as plt  # type: ignore[import-untyped]
         from pmriprep.utils.qc_standards import COLORBLIND_PALETTE
@@ -183,15 +215,30 @@ class AIFQCPlot(BaseInterface):
 
         fig, ax = plt.subplots(figsize=(10, 6))
         try:
-            # Plot AIF curve with dot markers
-            ax.plot(
-                time, aif_curve,
-                color=COLORBLIND_PALETTE.primary,
-                linewidth=1.5,
-                marker="o",
-                markersize=3,
-                label="AIF",
-            )
+            # Plot AIF curve(s)
+            if raw_aif_curve is not None and gamma_fit_applied:
+                # Raw AIF behind (translucent)
+                ax.plot(
+                    time, raw_aif_curve,
+                    color=COLORBLIND_PALETTE.primary,
+                    linewidth=1, marker=".", markersize=3,
+                    alpha=0.5, label="Raw AIF",
+                )
+                # Gamma-fitted AIF on top
+                ax.plot(
+                    time, aif_curve,
+                    color=COLORBLIND_PALETTE.error,
+                    linewidth=2, label="Gamma-variate fit",
+                )
+            else:
+                ax.plot(
+                    time, aif_curve,
+                    color=COLORBLIND_PALETTE.primary,
+                    linewidth=1.5,
+                    marker="o",
+                    markersize=3,
+                    label="AIF",
+                )
 
             # Peak marker
             peak_idx = int(np.argmax(aif_curve))
@@ -227,10 +274,18 @@ class AIFQCPlot(BaseInterface):
             ax.legend(loc="upper right", fontsize=9)
             ax.grid(True, alpha=0.3)
 
-            # Title
+            # Title with gamma fit status
             sub_label = f"sub-{subject_id}" if subject_id else ""
             ses_label = f" | ses-{session_id}" if session_id else ""
-            ax.set_title(f"{sub_label}{ses_label} | DSC AIF Quality", fontsize=12)
+            r_sq = qc.get("gamma_fit_r_squared")
+            if gamma_fit_applied and r_sq is not None:
+                title_suffix = f" | Gamma fit (R\u00b2={r_sq:.3f})"
+            else:
+                title_suffix = ""
+            ax.set_title(
+                f"{sub_label}{ses_label} | DSC AIF Quality{title_suffix}",
+                fontsize=12,
+            )
 
             plt.tight_layout()
             fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
