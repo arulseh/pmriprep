@@ -155,6 +155,57 @@ def calculate_framewise_displacement(
     return fd
 
 
+def _compute_brain_slice_indices(
+    data: npt.NDArray[Any],
+    axis: int,
+    n_slices: int,
+    mask: Optional[npt.NDArray[Any]] = None,
+) -> npt.NDArray[np.intp]:
+    """Compute evenly-spaced slice indices within the brain extent.
+
+    Projects the mask (or nonzero data) onto the given axis to find the
+    range of slices containing brain, then returns ``n_slices`` evenly
+    spaced indices within that range.  Follows the niworkflows
+    ``cuts_from_bbox()`` convention of excluding the very edge slices.
+
+    Args:
+        data: 3D volume used as fallback when *mask* is None.
+        axis: Projection axis (0=sagittal, 1=coronal, 2=axial).
+        n_slices: Number of slice indices to return.
+        mask: Optional binary brain mask.  When provided, the extent is
+            derived from the mask; otherwise from ``data > 0``.
+
+    Returns:
+        1-D integer array of slice indices (length *n_slices*).
+    """
+    if mask is not None:
+        binary = np.asarray(mask) > 0
+    else:
+        binary = np.asarray(data) > 0
+
+    # Sum over all axes *except* the target axis → 1-D profile
+    sum_axes = tuple(i for i in range(3) if i != axis)
+    projection = np.sum(binary, axis=sum_axes)
+
+    # Threshold at 5 % of peak to exclude noisy edge voxels
+    threshold = 0.05 * float(np.max(projection)) if np.any(projection) else 0.0
+    (indices,) = np.where(projection > threshold)
+
+    if len(indices) >= 2:
+        smin = int(indices[0])
+        smax = int(indices[-1])
+    else:
+        # Fallback: full range with 10 % margin
+        n_total = data.shape[axis]
+        margin = int(n_total * 0.1)
+        smin = margin
+        smax = n_total - margin - 1
+
+    # linspace with +2 then trim edges (niworkflows convention)
+    slices = np.linspace(smin, smax, n_slices + 2)[1:-1].astype(np.intp)
+    return slices
+
+
 def plot_registration_qc_filmstrip(
     fixed: npt.NDArray[Any],
     moving: npt.NDArray[Any],
@@ -169,9 +220,9 @@ def plot_registration_qc_filmstrip(
 
     Generates a multi-slice filmstrip with three rows (axial, coronal,
     sagittal) showing the fixed image as grayscale background with
-    Sobel edge-detected boundaries of the moving image overlaid in color.
-    This matches the perf-plus approach (fslmaths -edge -bin) for clean
-    structural boundary visualization.
+    contour lines of the moving image overlaid in color on a dark
+    background.  Follows the fmriprep ``add_contours(linewidths=0.5)``
+    convention for thin, clean structural boundary visualization.
 
     Args:
         fixed: 3D background image array (e.g. DSC/DCE mean)
@@ -190,10 +241,8 @@ def plot_registration_qc_filmstrip(
     Raises:
         ValueError: If image shapes don't match or arrays aren't 3D
     """
-    # Import matplotlib/scipy here to avoid import overhead when not needed
-    import matplotlib.colors as mcolors  # type: ignore[import-untyped]
+    # Import matplotlib here to avoid import overhead when not needed
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
-    from scipy.ndimage import sobel
 
     fixed = np.asarray(fixed)
     moving = np.asarray(moving)
@@ -216,9 +265,9 @@ def plot_registration_qc_filmstrip(
         moving = moving.copy()
         moving[mask == 0] = 0
 
-    # Use colorblind-safe palette color for contours
+    # Use colorblind-safe palette color for contours (cyan on dark bg)
     if contour_color is None:
-        contour_color = COLORBLIND_PALETTE.error
+        contour_color = COLORBLIND_PALETTE.secondary
 
     # Row definitions: (label, axis, aspect_ratio)
     # Aspect ratios account for anisotropic voxels in each view plane
@@ -253,9 +302,10 @@ def plot_registration_qc_filmstrip(
     else:
         vmin, vmax = 0.0, 1.0
 
-    # Create the figure: 3 rows x n_slices columns
+    # Create the figure: 3 rows x n_slices columns (dark background)
     fig, axes = plt.subplots(
         3, n_slices, figsize=(n_slices * 2.2, 3 * 2.5),
+        facecolor="black",
     )
 
     # Handle single slice case (axes would be 1D)
@@ -265,11 +315,9 @@ def plot_registration_qc_filmstrip(
     for row_idx, (label, axis) in enumerate(row_defs):
         aspect = aspect_ratios[row_idx]
 
-        # Calculate slice positions (evenly spaced, 10% margin each side)
-        n_total = fixed.shape[axis]
-        margin = int(n_total * 0.1)
-        slice_indices = np.linspace(
-            margin, n_total - margin - 1, n_slices, dtype=int,
+        # Data-driven slice selection within brain extent
+        slice_indices = _compute_brain_slice_indices(
+            fixed, axis=axis, n_slices=n_slices, mask=mask,
         )
 
         # Axis label mapping for slice coordinate labels
@@ -278,6 +326,7 @@ def plot_registration_qc_filmstrip(
 
         for col_idx, slice_idx in enumerate(slice_indices):
             ax = axes[row_idx, col_idx]
+            ax.set_facecolor("black")
 
             # Get slices in radiological orientation
             fixed_slice = get_radiological_slice(
@@ -296,25 +345,30 @@ def plot_registration_qc_filmstrip(
                 aspect=aspect,
             )
 
-            # Overlay edge-detected boundaries of the moving image
-            # Sobel edge detection (Python equivalent of fslmaths -edge)
-            # produces clean structural boundaries instead of noisy contours
-            edges_x = sobel(moving_slice, axis=0)
-            edges_y = sobel(moving_slice, axis=1)
-            edge_mag = np.sqrt(edges_x**2 + edges_y**2)
-            if np.any(edge_mag > 0):
-                threshold = float(
-                    np.percentile(edge_mag[edge_mag > 0], 70),
-                )
-                edge_mask = edge_mag > threshold
-                # Create RGBA overlay: colored edges with transparency
-                overlay = np.zeros((*edge_mask.shape, 4))
-                rgba = mcolors.to_rgba(contour_color)
-                overlay[edge_mask] = (*rgba[:3], 0.8)
-                ax.imshow(overlay, aspect=aspect)
+            # Overlay contour lines of the moving image
+            # matplotlib contour() gives consistent thin lines matching
+            # fmriprep's add_contours(linewidths=0.5)
+            if np.any(moving_slice > 0):
+                moving_valid = moving_slice[moving_slice > 0]
+                if len(moving_valid) > 0:
+                    val_range = float(np.ptp(moving_valid))
+                    if val_range < 1e-6:
+                        # Binary / edge image: single level at midpoint
+                        levels = [float(np.max(moving_valid)) * 0.5]
+                    else:
+                        # Continuous image: 3 levels at tissue boundaries
+                        p30 = float(np.percentile(moving_valid, 30))
+                        p70 = float(np.percentile(moving_valid, 70))
+                        levels = list(np.linspace(p30, p70, 3))
+                    ax.contour(
+                        moving_slice, levels=levels,
+                        colors=[contour_color], linewidths=0.5,
+                    )
 
             ax.axis("off")
-            ax.set_title(f"{coord_label}={slice_idx}", fontsize=7)
+            ax.set_title(
+                f"{coord_label}={slice_idx}", fontsize=7, color="white",
+            )
 
     plt.tight_layout()
 
@@ -325,17 +379,17 @@ def plot_registration_qc_filmstrip(
         fig.text(
             bbox.x0 - 0.01, (bbox.y0 + bbox.y1) / 2, label,
             fontsize=9, fontweight="bold", rotation=90,
-            ha="right", va="center",
+            ha="right", va="center", color="white",
         )
 
     # Add overall title if provided
     if title:
-        fig.suptitle(title, fontsize=10, y=1.02)
+        fig.suptitle(title, fontsize=10, y=1.02, color="white")
 
     # Save figure
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="black")
     plt.close(fig)
 
     return output_path
@@ -417,25 +471,28 @@ def plot_segmentation_qc_filmstrip(
         edges = binary_dilation(lmask, iterations=1) & ~lmask
         edge_data.append((name, edges, color))
 
-    # Create the figure: 3 rows x n_slices columns
+    # Create the figure: 3 rows x n_slices columns (dark background)
     fig, axes = plt.subplots(
         3, n_slices, figsize=(n_slices * 2.2, 3 * 2.5),
+        facecolor="black",
     )
     if n_slices == 1:
         axes = axes[:, np.newaxis]
 
     for row_idx, (label, axis) in enumerate(row_defs):
         aspect = aspect_ratios[row_idx]
-        n_total = background.shape[axis]
-        margin = int(n_total * 0.1)
-        slice_indices = np.linspace(
-            margin, n_total - margin - 1, n_slices, dtype=int,
+
+        # Data-driven slice selection within brain extent
+        slice_indices = _compute_brain_slice_indices(
+            background, axis=axis, n_slices=n_slices, mask=mask,
         )
+
         axis_labels = {2: "z", 1: "y", 0: "x"}
         coord_label = axis_labels[axis]
 
         for col_idx, slice_idx in enumerate(slice_indices):
             ax = axes[row_idx, col_idx]
+            ax.set_facecolor("black")
 
             bg_slice = get_radiological_slice(
                 background, axis=axis, slice_idx=int(slice_idx),
@@ -454,7 +511,9 @@ def plot_segmentation_qc_filmstrip(
                     ax.imshow(overlay, aspect=aspect)
 
             ax.axis("off")
-            ax.set_title(f"{coord_label}={slice_idx}", fontsize=7)
+            ax.set_title(
+                f"{coord_label}={slice_idx}", fontsize=7, color="white",
+            )
 
     plt.tight_layout()
 
@@ -464,7 +523,7 @@ def plot_segmentation_qc_filmstrip(
         fig.text(
             bbox.x0 - 0.01, (bbox.y0 + bbox.y1) / 2, label,
             fontsize=9, fontweight="bold", rotation=90,
-            ha="right", va="center",
+            ha="right", va="center", color="white",
         )
 
     # Color legend below the figure
@@ -482,16 +541,19 @@ def plot_segmentation_qc_filmstrip(
             fancybox=True,
             shadow=False,
             bbox_to_anchor=(0.5, -0.02),
+            labelcolor="white",
+            facecolor="black",
+            edgecolor="gray",
         )
 
     # Add overall title if provided
     if title:
-        fig.suptitle(title, fontsize=10, y=1.02)
+        fig.suptitle(title, fontsize=10, y=1.02, color="white")
 
     # Save figure
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="black")
     plt.close(fig)
 
     return output_path

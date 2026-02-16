@@ -51,6 +51,49 @@ class VoxelInput(NamedTuple):
 _worker_ctx: dict[str, Any] = {}
 
 
+def _compute_motion_weights(
+    fd_values: list[float],
+    bolus_frame: int,
+    n_frames: int,
+    min_voxel_dim: float,
+) -> npt.NDArray[np.floating]:
+    """Compute per-frame motion weights using phase-adaptive FD thresholds.
+
+    Weight function: w_i = (threshold / FD_i)^2 for FD_i > threshold, else 1.0
+    Wash-in frames (bolus ± 4) use 2x stricter threshold.
+    Threshold = min(voxel_dims) * 0.25 (scales with acquisition resolution).
+
+    Args:
+        fd_values: Framewise displacement per volume (mm).
+        bolus_frame: Bolus arrival frame index.
+        n_frames: Number of time frames.
+        min_voxel_dim: Minimum voxel dimension (mm) for threshold scaling.
+
+    Returns:
+        Per-frame weight array (1.0 = full weight, <1.0 = downweighted).
+
+    References:
+        Melbourne A, et al. MRM 2007.
+        Buckley DL. MRM 2002.
+        Ortiz-Ramon R, et al. Eur Radiol 2017.
+    """
+    weights = np.ones(n_frames, dtype=np.float64)
+    fd_arr = np.array(fd_values[:n_frames], dtype=np.float64)
+    base_threshold = max(min_voxel_dim * 0.25, 0.1)  # floor at 0.1mm
+    washin_end = min(bolus_frame + 4, n_frames - 1)
+
+    for i in range(n_frames):
+        if bolus_frame <= i <= washin_end:
+            eff_thresh = base_threshold * 0.5  # 2x stricter during wash-in
+        else:
+            eff_thresh = base_threshold
+
+        if fd_arr[i] > eff_thresh:
+            weights[i] = (eff_thresh / fd_arr[i]) ** 2
+
+    return weights
+
+
 def _init_worker(
     aif: "np.ndarray[Any, Any]",
     time_points: "np.ndarray[Any, Any]",
@@ -61,6 +104,7 @@ def _init_worker(
     constraint_mode_str: str,
     constraint_vp_uncertainty: float,
     save_fitted_curves: bool = False,
+    motion_weights: Optional[npt.NDArray[np.floating]] = None,
 ) -> None:
     """Initialize per-worker model and fitter objects (called once per process)."""
     import warnings
@@ -101,6 +145,7 @@ def _init_worker(
     _worker_ctx["constraint_mode_str"] = constraint_mode_str
     _worker_ctx["constraint_vp_uncertainty"] = constraint_vp_uncertainty
     _worker_ctx["save_fitted_curves"] = save_fitted_curves
+    _worker_ctx["motion_weights"] = motion_weights
     _worker_ctx["BayesianPKFitter"] = BayesianPKFitter
     _worker_ctx["create_vp_prior_from_dsc"] = create_vp_prior_from_dsc
     _worker_ctx["ConstraintMode"] = ConstraintMode
@@ -134,6 +179,7 @@ def _fit_single_voxel(
     constraint_mode = ConstraintMode(_worker_ctx["constraint_mode_str"])
     constraint_vp_uncertainty = _worker_ctx["constraint_vp_uncertainty"]
     model_name = _worker_ctx["model_name"]
+    motion_weights = _worker_ctx["motion_weights"]
 
     # Validate voxel (skip concentration-based variation check — raw signal
     # variation is filtered upstream in ComputeDCEMaps, matching perf-plus)
@@ -161,7 +207,8 @@ def _fit_single_voxel(
             and hasattr(model, "fit_constrained")
         ):
             result = model.fit_constrained(
-                prepared_curve, aif, time_points, fixed_vp=voxel_vp
+                prepared_curve, aif, time_points, fixed_vp=voxel_vp,
+                weights=motion_weights,
             )
             constrained = True
 
@@ -181,6 +228,7 @@ def _fit_single_voxel(
                 result = soft_fitter.fit_map(
                     prepared_curve, aif, time_points,
                     compute_uncertainties=False,
+                    weights=motion_weights,
                 )
             else:
                 result = soft_fitter.fit_mcmc(
@@ -196,18 +244,23 @@ def _fit_single_voxel(
             and hasattr(model, "fit_constrained")
         ):
             result = model.fit_constrained(
-                prepared_curve, aif, time_points, fixed_vp=voxel_vp
+                prepared_curve, aif, time_points, fixed_vp=voxel_vp,
+                weights=motion_weights,
             )
             constrained = True
 
         # Unconstrained fallback
         if result is None:
             if bayesian == "none":
-                result = model.fit(prepared_curve, aif, time_points)
+                result = model.fit(
+                    prepared_curve, aif, time_points,
+                    weights=motion_weights,
+                )
             elif bayesian == "map" and fitter is not None:
                 result = fitter.fit_map(
                     prepared_curve, aif, time_points,
                     compute_uncertainties=False,
+                    weights=motion_weights,
                 )
             elif bayesian == "mcmc" and fitter is not None:
                 result = fitter.fit_mcmc(
@@ -215,7 +268,10 @@ def _fit_single_voxel(
                     n_samples=mcmc_samples,
                 )
             else:
-                result = model.fit(prepared_curve, aif, time_points)
+                result = model.fit(
+                    prepared_curve, aif, time_points,
+                    weights=motion_weights,
+                )
 
         # Build output dict
         has_vp = model_name in ("extended_tofts", "patlak", "2cxm")
@@ -375,6 +431,15 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         False,
         usedefault=True,
         desc="Save fitted concentration curves (large output)",
+    )
+
+    # Motion weighting inputs (from dce_preprocess)
+    fd_values = traits.List(
+        traits.Float,
+        desc="Framewise displacement per volume (mm) from motion correction",
+    )
+    bolus_arrival_frame = traits.Int(
+        desc="Bolus arrival frame index for phase-adaptive weighting",
     )
 
     # AIF detection method (for BAT correction logic)
@@ -1061,6 +1126,37 @@ class ComputeDCEMaps(BaseInterface):
         r2_list: list[float] = []
         failure_reason_counts: dict[str, int] = {}
 
+        # Compute motion weights from framewise displacement (if available)
+        motion_weights: Optional[npt.NDArray[np.floating]] = None
+        if (
+            isdefined(self.inputs.fd_values)
+            and self.inputs.fd_values
+            and isdefined(self.inputs.bolus_arrival_frame)
+        ):
+            voxel_dims = header.get_zooms()[:3]
+            min_voxel_dim = float(min(voxel_dims))
+            motion_weights = _compute_motion_weights(
+                fd_values=self.inputs.fd_values,
+                bolus_frame=int(self.inputs.bolus_arrival_frame),
+                n_frames=n_timepoints,
+                min_voxel_dim=min_voxel_dim,
+            )
+            n_downweighted = int(np.sum(motion_weights < 0.95))
+            bolus_frame = int(self.inputs.bolus_arrival_frame)
+            washin_end = min(bolus_frame + 4, n_timepoints - 1)
+            qc_metrics["motion_weighting"] = {
+                "applied": True,
+                "n_downweighted_frames": n_downweighted,
+                "min_weight": float(np.min(motion_weights)),
+                "washin_weights": motion_weights[bolus_frame:washin_end + 1].tolist(),
+            }
+            logger.info(
+                "Motion weighting: %d/%d frames downweighted (min weight=%.3f)",
+                n_downweighted, n_timepoints, float(np.min(motion_weights)),
+            )
+        else:
+            qc_metrics["motion_weighting"] = {"applied": False}
+
         # Build voxel data list for parallel/serial processing
         voxel_data_list: list[VoxelInput] = []
         for i in range(n_voxels):
@@ -1081,7 +1177,7 @@ class ComputeDCEMaps(BaseInterface):
         init_args = (
             aif, time_points, model_name, bayesian, mcmc_samples,
             baseline_frames, constraint_mode.value, constraint_vp_uncertainty,
-            save_fitted_curves,
+            save_fitted_curves, motion_weights,
         )
 
         n_procs = max(1, int(self.inputs.n_procs))

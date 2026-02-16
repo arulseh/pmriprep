@@ -372,6 +372,7 @@ class PatlakModel(PKModel):
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         initial_guess: Optional[Sequence[float]] = None,
+        weights: Optional[npt.NDArray[np.floating]] = None,
         use_graphical: bool = False,
     ) -> FitResult:
         """Fit the Patlak model to observed tissue concentration data.
@@ -385,6 +386,7 @@ class PatlakModel(PKModel):
             time_points: Time points (minutes) corresponding to measurements.
             initial_guess: Optional initial parameter values [Ktrans, vp].
                 Used only for nonlinear fitting (use_graphical=False).
+            weights: Optional per-frame weights for motion-weighted fitting.
             use_graphical: If True (default), use fast graphical analysis.
                 If False, use nonlinear least squares optimization.
 
@@ -420,6 +422,11 @@ class PatlakModel(PKModel):
         fitted_params = x0
         uncertainties: dict[str, float] = {}
 
+        # Convert weights to sigma for curve_fit: sigma = 1/sqrt(weight)
+        sigma_arr = None
+        if weights is not None:
+            sigma_arr = 1.0 / np.sqrt(np.maximum(weights, 1e-10))
+
         # Primary: curve_fit with TRF
         try:
             popt, pcov = curve_fit(
@@ -430,6 +437,8 @@ class PatlakModel(PKModel):
                 bounds=(lower_bounds, upper_bounds),
                 method="trf",
                 maxfev=2000,
+                sigma=sigma_arr,
+                absolute_sigma=False,
             )
             converged = True
             fitted_params = popt.tolist()

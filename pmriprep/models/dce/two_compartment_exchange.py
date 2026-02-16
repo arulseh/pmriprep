@@ -424,6 +424,7 @@ class TwoCompartmentExchangeModel(PKModel):
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         initial_guess: Optional[Sequence[float]] = None,
+        weights: Optional[npt.NDArray[np.floating]] = None,
     ) -> FitResult:
         """Fit the 2CXM model to observed tissue concentration data.
 
@@ -437,6 +438,7 @@ class TwoCompartmentExchangeModel(PKModel):
             time_points: Time points (minutes) corresponding to measurements.
             initial_guess: Optional initial parameter values [Fp, PS, ve, vp].
                 If None, uses data-driven estimate or default.
+            weights: Optional per-frame weights for motion-weighted fitting.
 
         Returns:
             FitResult containing fitted parameters, uncertainties, and quality flag.
@@ -465,6 +467,11 @@ class TwoCompartmentExchangeModel(PKModel):
         fitted_params = x0
         uncertainties: dict[str, float] = {}
 
+        # Convert weights to sigma for curve_fit: sigma = 1/sqrt(weight)
+        sigma_arr = None
+        if weights is not None:
+            sigma_arr = 1.0 / np.sqrt(np.maximum(weights, 1e-10))
+
         # Primary: curve_fit with TRF
         try:
             popt, pcov = curve_fit(
@@ -475,6 +482,8 @@ class TwoCompartmentExchangeModel(PKModel):
                 bounds=(lower_bounds, upper_bounds),
                 method="trf",
                 maxfev=2000,
+                sigma=sigma_arr,
+                absolute_sigma=False,
             )
             converged = True
             fitted_params = popt.tolist()
@@ -538,6 +547,7 @@ class TwoCompartmentExchangeModel(PKModel):
         time_points: npt.NDArray[np.floating],
         fixed_vp: float,
         initial_guess: Optional[Sequence[float]] = None,
+        weights: Optional[npt.NDArray[np.floating]] = None,
     ) -> FitResult:
         """Fit 2CXM with vp fixed from DSC CBV.
 
@@ -551,6 +561,7 @@ class TwoCompartmentExchangeModel(PKModel):
             fixed_vp: Fixed plasma volume fraction from DSC CBV.
             initial_guess: Optional initial values [Fp, PS, ve].
                 If None, uses parameter definition prior means.
+            weights: Optional per-frame weights for motion-weighted fitting.
 
         Returns:
             FitResult with n_parameters=3 and fitting_method='nlls_constrained_vp'.
@@ -578,7 +589,10 @@ class TwoCompartmentExchangeModel(PKModel):
         def objective(params: npt.NDArray[np.floating]) -> float:
             full_params = [params[0], params[1], params[2], fixed_vp]
             predicted = self.evaluate(full_params, aif, time_points)
-            return float(np.sum((tissue_curve - predicted) ** 2))
+            residuals = tissue_curve - predicted
+            if weights is not None:
+                return float(np.sum(weights * residuals**2))
+            return float(np.sum(residuals**2))
 
         try:
             result = optimize.minimize(

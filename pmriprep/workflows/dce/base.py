@@ -868,6 +868,8 @@ def init_dce_preproc_wf(
         (dce_preprocess, pk_modeling, [
             ("out_file", "dce_signal_file"),
             ("baseline_frames", "baseline_frames"),
+            ("fd", "fd_values"),
+            ("bolus_arrival_frame", "bolus_arrival_frame"),
         ]),
     ])
 

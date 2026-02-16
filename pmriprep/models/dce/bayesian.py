@@ -260,6 +260,7 @@ class BayesianPKFitter:
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         noise_std: float,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> float:
         """Compute log likelihood using profile likelihood noise estimation.
 
@@ -267,6 +268,10 @@ class BayesianPKFitter:
         evaluation (profile likelihood), matching perf-plus behavior.
         This self-tunes as the model approaches the data, giving a
         balanced likelihood-prior tradeoff.
+
+        When weights are provided, the profile likelihood uses weighted
+        residuals to estimate noise variance, and the effective sample size
+        is sum(weights) instead of n. This downweights high-motion frames.
 
         Note: With profile likelihood, the log-likelihood reduces to
         -n * log(std(residuals)) + const, equivalent to penalized least
@@ -281,6 +286,8 @@ class BayesianPKFitter:
             aif: Arterial input function.
             time_points: Time points (minutes).
             noise_std: Unused (kept for API compatibility).
+            weights: Optional per-frame weights in [0, 1]. If provided,
+                inflates noise variance for high-FD frames.
 
         Returns:
             Log likelihood (unnormalized).
@@ -298,15 +305,26 @@ class BayesianPKFitter:
         # Residuals
         residuals = tissue_curve - predicted
 
-        # Profile likelihood: estimate noise from residuals (matches perf-plus)
-        sigma_val = float(np.std(residuals))
+        if weights is not None:
+            # Weighted profile likelihood: inflate noise variance for high-FD frames
+            sigma_val = float(np.sqrt(np.mean(weights * residuals**2)))
+            n_eff = float(np.sum(weights))
+        else:
+            sigma_val = float(np.std(residuals))
+            n_eff = float(len(tissue_curve))
+
         if not np.isfinite(sigma_val):
             return float("-inf")
         sigma = max(sigma_val, EPSILON_SIGMA_CONCENTRATION)
 
         # Gaussian log likelihood
-        n = len(tissue_curve)
-        log_lik = -n * np.log(sigma) - 0.5 * np.sum((residuals / sigma) ** 2)
+        if weights is not None:
+            log_lik = -n_eff * np.log(sigma) - 0.5 * np.sum(
+                weights * (residuals / sigma) ** 2
+            )
+        else:
+            n = len(tissue_curve)
+            log_lik = -n * np.log(sigma) - 0.5 * np.sum((residuals / sigma) ** 2)
 
         return float(log_lik)
 
@@ -356,6 +374,7 @@ class BayesianPKFitter:
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         noise_std: float,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> float:
         """Compute log posterior probability.
 
@@ -367,6 +386,7 @@ class BayesianPKFitter:
             aif: Arterial input function.
             time_points: Time points (minutes).
             noise_std: Noise standard deviation.
+            weights: Optional per-frame weights for motion-weighted fitting.
 
         Returns:
             Log posterior probability (unnormalized).
@@ -384,7 +404,8 @@ class BayesianPKFitter:
             return float("-inf")
 
         log_lik = self._log_likelihood(
-            params, tissue_curve, aif, time_points, noise_std
+            params, tissue_curve, aif, time_points, noise_std,
+            weights=weights,
         )
 
         posterior = log_prior + log_lik
@@ -554,6 +575,7 @@ class BayesianPKFitter:
         time_points: npt.NDArray[np.floating],
         max_iter: int = DEFAULT_MAP_MAX_ITER,
         compute_uncertainties: bool = True,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> FitResult:
         """Fit model using MAP estimation with Laplace approximation.
 
@@ -568,6 +590,8 @@ class BayesianPKFitter:
             max_iter: Maximum optimizer iterations.
             compute_uncertainties: Whether to compute Laplace uncertainties.
                 Set to False to skip the expensive Hessian computation.
+            weights: Optional per-frame weights for motion-weighted fitting.
+                Values in [0, 1] where 1.0 = full weight.
 
         Returns:
             FitResult with parameters, uncertainties, and credible intervals.
@@ -583,7 +607,8 @@ class BayesianPKFitter:
         # convergence check (fsim[0] - fsim[1:]) never computes inf - inf = NaN
         def neg_log_posterior(params: npt.NDArray[np.floating]) -> float:
             lp = self._log_posterior(
-                params, tissue_curve, aif, time_points, noise_std
+                params, tissue_curve, aif, time_points, noise_std,
+                weights=weights,
             )
             if not np.isfinite(lp):
                 return 1e30
@@ -601,7 +626,9 @@ class BayesianPKFitter:
         # NLLS warm-start: use model.fit() (curve_fit TRF) as third start point
         x0_nlls = x0_prior.copy()  # fallback if NLLS fails
         try:
-            nlls_result = self.model.fit(tissue_curve, aif, time_points)
+            nlls_result = self.model.fit(
+                tissue_curve, aif, time_points, weights=weights,
+            )
             if nlls_result.converged:
                 param_names = self.model.get_parameter_names()
                 x0_nlls = np.array(

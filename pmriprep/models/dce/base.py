@@ -328,6 +328,7 @@ class PKModel(ABC):
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         initial_guess: Optional[Sequence[float]] = None,
+        weights: Optional[npt.NDArray[np.floating]] = None,
     ) -> FitResult:
         """Fit the model to observed tissue concentration data.
 
@@ -337,6 +338,9 @@ class PKModel(ABC):
             time_points: Time points (minutes) corresponding to measurements.
             initial_guess: Optional initial parameter values. If None, uses
                 default initial guess from get_initial_guess().
+            weights: Optional per-frame weights for motion-weighted fitting.
+                Values in [0, 1] where 1.0 = full weight. If None, uniform
+                weighting is used.
 
         Returns:
             FitResult containing fitted parameters and diagnostics.
