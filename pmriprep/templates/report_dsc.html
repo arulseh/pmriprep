@@ -410,19 +410,42 @@
         </div>
         {% endif %}
 
+        {% if images.dsc_fit_qc %}
+        <h3>Deconvolution Fit</h3>
+        {% if qc_metrics.deconvolution.qc_voxel is defined %}
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-label">Voxel</div>
+                <div class="metric-value">{{ qc_metrics.deconvolution.qc_voxel }}</div>
+            </div>
+            {% if qc_metrics.deconvolution.qc_voxel_cbv is defined and qc_metrics.deconvolution.qc_voxel_cbv is not none %}
+            <div class="metric">
+                <div class="metric-label">rCBV</div>
+                <div class="metric-value">{{ "%.4f"|format(qc_metrics.deconvolution.qc_voxel_cbv) }}</div>
+            </div>
+            {% endif %}
+            {% if qc_metrics.deconvolution.qc_voxel_r2 is defined %}
+            <div class="metric">
+                <div class="metric-label">Fit R&sup2;</div>
+                <div class="metric-value
+                    {%- if qc_metrics.deconvolution.qc_voxel_r2 >= 0.9 %} pass
+                    {%- elif qc_metrics.deconvolution.qc_voxel_r2 >= 0.7 %} warn
+                    {%- else %} fail{% endif %}">{{ "%.4f"|format(qc_metrics.deconvolution.qc_voxel_r2) }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        <div class="figure-container" style="margin-top: 10px;">
+            <img src="{{ images.dsc_fit_qc }}" alt="DSC Fit QC">
+            <a href="{{ images.dsc_fit_qc }}" download class="figure-download">Save</a>
+        </div>
+        {% endif %}
+
         {% if images.dsc_param_maps_qc %}
         <h3>Parameter Maps</h3>
         <div class="figure-container" style="margin-top: 10px;">
             <img src="{{ images.dsc_param_maps_qc }}" alt="DSC Parameter Maps QC">
             <a href="{{ images.dsc_param_maps_qc }}" download class="figure-download">Save</a>
-        </div>
-        {% endif %}
-
-        {% if images.dsc_fit_qc %}
-        <h3>Deconvolution Fit</h3>
-        <div class="figure-container" style="margin-top: 10px;">
-            <img src="{{ images.dsc_fit_qc }}" alt="DSC Fit QC">
-            <a href="{{ images.dsc_fit_qc }}" download class="figure-download">Save</a>
         </div>
         {% endif %}
     </div>

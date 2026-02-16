@@ -5,6 +5,7 @@ perfusion parameter maps (CBF, CBV, MTT, Tmax, PSR, PH) from
 concentration curves and AIF using various deconvolution methods.
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -1889,6 +1890,15 @@ class ComputeDSCMaps(BaseInterface):
                 rel_cbf, conc_data, aif, mask_bool, dt, method,
                 threshold, oi_threshold,
             )
+
+        # Add fit voxel data to QC metrics (for HTML report)
+        if "out_qc_fit_data" in self._results:
+            with open(self._results["out_qc_fit_data"]) as _f:
+                _fit = json.load(_f)
+            vx, vy, vz = _fit["voxel"]
+            qc_metrics["qc_voxel"] = f"({vx}, {vy}, {vz})"
+            qc_metrics["qc_voxel_cbv"] = round(float(rel_cbv[vx, vy, vz]), 4)
+            qc_metrics["qc_voxel_r2"] = round(_fit.get("r_squared", 0.0), 4)
 
         # Save Bayesian uncertainty maps
         if bayesian != "none":
