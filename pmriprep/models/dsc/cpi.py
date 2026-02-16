@@ -594,6 +594,7 @@ def _fit_cpi_simple(
     concentration: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
+    weights: npt.NDArray[np.floating] | None = None,
 ) -> DSCFitResult | None:
     """Least-squares fit of CPI model using L-BFGS-B.
 
@@ -610,6 +611,7 @@ def _fit_cpi_simple(
         concentration: Measured tissue concentration.
         aif: Arterial input function.
         time_points: Time points (seconds).
+        weights: Optional per-frame motion weights (1.0 = full weight).
 
     Returns:
         DSCFitResult with fitted parameters, or None if fitting failed.
@@ -639,9 +641,11 @@ def _fit_cpi_simple(
     x0[0] = cbf_init
 
     def objective(params: npt.NDArray[np.floating]) -> float:
-        """Residual sum of squares objective."""
+        """Weighted residual sum of squares objective."""
         predicted = model.tissue_curve(params, aif, time_points)
         residuals = concentration - predicted
+        if weights is not None:
+            return float(np.sum(weights * residuals**2))
         return float(np.sum(residuals**2))
 
     try:

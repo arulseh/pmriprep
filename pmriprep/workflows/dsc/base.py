@@ -2285,6 +2285,9 @@ def init_dsc_preproc_wf(
             ("field_strength", "field_strength"),
             ("enhancing_mask", "enhancing_mask_file"),
         ]),
+        (motion_correct, compute_maps, [
+            ("fd", "fd_values"),
+        ]),
         (signal_to_conc, compute_maps, [
             ("signal_file", "signal_file"),
             ("concentration_file", "raw_concentration_file"),

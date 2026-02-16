@@ -166,10 +166,12 @@ class BayesianDSCFitter:
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         noise_std: float,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> float:
         """Compute log likelihood.
 
-        Assumes independent Gaussian noise on each time point.
+        Assumes independent Gaussian noise on each time point, optionally
+        weighted by per-frame motion weights.
 
         Args:
             params: Parameter values.
@@ -177,6 +179,7 @@ class BayesianDSCFitter:
             aif: Arterial input function.
             time_points: Time points (seconds).
             noise_std: Noise standard deviation.
+            weights: Optional per-frame weights (1.0 = full, <1.0 = downweighted).
 
         Returns:
             Log likelihood (unnormalized).
@@ -190,10 +193,13 @@ class BayesianDSCFitter:
         # Residuals
         residuals = concentration - predicted
 
-        # Gaussian log likelihood
+        # Gaussian log likelihood (weighted if motion weights provided)
         n = len(concentration)
         log_lik = -0.5 * n * np.log(2 * np.pi * noise_std**2)
-        log_lik -= 0.5 * np.sum(residuals**2) / (noise_std**2)
+        if weights is not None:
+            log_lik -= 0.5 * np.sum(weights * residuals**2) / (noise_std**2)
+        else:
+            log_lik -= 0.5 * np.sum(residuals**2) / (noise_std**2)
 
         return float(log_lik)
 
@@ -204,6 +210,7 @@ class BayesianDSCFitter:
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         noise_std: float,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> float:
         """Compute log posterior probability.
 
@@ -215,6 +222,7 @@ class BayesianDSCFitter:
             aif: Arterial input function.
             time_points: Time points (seconds).
             noise_std: Noise standard deviation.
+            weights: Optional per-frame motion weights.
 
         Returns:
             Log posterior probability (unnormalized).
@@ -228,7 +236,8 @@ class BayesianDSCFitter:
             return float("-inf")
 
         log_lik = self._log_likelihood(
-            params, concentration, aif, time_points, noise_std
+            params, concentration, aif, time_points, noise_std,
+            weights=weights,
         )
 
         return log_prior + log_lik
@@ -378,6 +387,7 @@ class BayesianDSCFitter:
         time_points: npt.NDArray[np.floating],
         max_iter: int = MAP_MAX_ITER,
         compute_uncertainties: bool = True,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> DSCFitResult:
         """Fit model using MAP estimation with Laplace approximation.
 
@@ -392,6 +402,7 @@ class BayesianDSCFitter:
             max_iter: Maximum optimizer iterations.
             compute_uncertainties: Whether to compute Laplace uncertainties.
                 Set to False to skip the expensive Hessian computation.
+            weights: Optional per-frame motion weights (1.0 = full weight).
 
         Returns:
             DSCFitResult with parameters, uncertainties, and credible intervals.
@@ -410,7 +421,8 @@ class BayesianDSCFitter:
         # Objective: negative log posterior
         def neg_log_posterior(params: npt.NDArray[np.floating]) -> float:
             val = -self._log_posterior(
-                params, concentration, aif, time_points, noise_std
+                params, concentration, aif, time_points, noise_std,
+                weights=weights,
             )
             return min(val, 1e20)
 
@@ -474,6 +486,7 @@ class BayesianDSCFitter:
         time_points: npt.NDArray[np.floating],
         n_iterations: int = 20,
         noise_prior: tuple[float, float] | None = None,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> DSCFitResult:
         """Fit model using FABBER-style linearized Variational Bayes.
 
@@ -495,6 +508,7 @@ class BayesianDSCFitter:
                 tau = 1/sigma^2. If None, uses non-informative prior.
                 If noise_std was provided to the constructor, uses an
                 informative prior centered on that value.
+            weights: Optional per-frame motion weights (1.0 = full weight).
 
         Returns:
             DSCFitResult with parameters, uncertainties, and credible intervals.
@@ -584,9 +598,12 @@ class BayesianDSCFitter:
             # Residual
             k_res = y - g_m  # k = y - g(m)
 
-            # 3. Update posterior precision: Λ = Λ₀ + <τ> J^T J
-            JtJ = J.T @ J
-            post_prec = prior_prec + tau_exp * JtJ
+            # 3. Update posterior precision: Λ = Λ₀ + <τ> J^T W J
+            if weights is not None:
+                JtWJ = J.T @ (weights[:, np.newaxis] * J)
+            else:
+                JtWJ = J.T @ J
+            post_prec = prior_prec + tau_exp * JtWJ
 
             # 4. Update posterior covariance
             try:
@@ -597,8 +614,11 @@ class BayesianDSCFitter:
                 post_cov = np.linalg.inv(post_prec)
 
             # 5. Update posterior mean:
-            # m_new = Σ (Λ₀ m₀ + <τ> J^T (k + J m))
-            rhs = prior_prec @ prior_means + tau_exp * J.T @ (k_res + J @ m)
+            # m_new = Σ (Λ₀ m₀ + <τ> J^T W (k + J m))
+            if weights is not None:
+                rhs = prior_prec @ prior_means + tau_exp * J.T @ (weights * (k_res + J @ m))
+            else:
+                rhs = prior_prec @ prior_means + tau_exp * J.T @ (k_res + J @ m)
             m_new = post_cov @ rhs
 
             # Clip to bounds
@@ -614,9 +634,13 @@ class BayesianDSCFitter:
             except (ValueError, RuntimeError):
                 g_new = g_m
             k_new = y - np.asarray(g_new, dtype=np.float64)
-            # 1/s = 1/s₀ + 0.5 * (k^T k + tr(Σ J^T J))
-            trace_term = float(np.trace(post_cov @ JtJ))
-            s = 1.0 / (1.0 / s0 + 0.5 * (float(k_new @ k_new) + trace_term))
+            # 1/s = 1/s₀ + 0.5 * (k^T W k + tr(Σ J^T W J))
+            trace_term = float(np.trace(post_cov @ JtWJ))
+            if weights is not None:
+                weighted_kk = float(k_new @ (weights * k_new))
+            else:
+                weighted_kk = float(k_new @ k_new)
+            s = 1.0 / (1.0 / s0 + 0.5 * (weighted_kk + trace_term))
             tau_exp = c * s  # E[tau] for Gamma with this parameterization
 
             # 7. Compute free energy (analytic ELBO) for convergence
@@ -632,7 +656,7 @@ class BayesianDSCFitter:
 
             free_energy = (
                 0.5 * n_obs * (np.log(tau_exp) - np.log(2 * np.pi))
-                - 0.5 * tau_exp * (float(k_new @ k_new) + trace_term)
+                - 0.5 * tau_exp * (weighted_kk + trace_term)
                 - 0.5 * float(dm @ prior_prec @ dm)
                 - 0.5 * float(np.trace(prior_prec @ post_cov))
                 + 0.5 * logdet_cov * sign_cov
@@ -713,6 +737,7 @@ class BayesianDSCFitter:
         n_samples: int = MCMC_SAMPLES,
         n_walkers: int | None = None,
         n_burnin: int | None = None,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> DSCFitResult:
         """Fit model using MCMC with ensemble sampler.
 
@@ -727,6 +752,7 @@ class BayesianDSCFitter:
             n_samples: Number of samples to draw (after burn-in).
             n_walkers: Number of ensemble walkers (default: 2 * n_dims + 2).
             n_burnin: Number of burn-in samples (default: n_samples // 2).
+            weights: Optional per-frame motion weights (1.0 = full weight).
 
         Returns:
             DSCFitResult with parameters, uncertainties, credible intervals,
@@ -782,7 +808,8 @@ class BayesianDSCFitter:
 
             # Likelihood with sampled sigma
             log_lik = self._log_likelihood(
-                model_params, concentration, aif, time_points, sigma
+                model_params, concentration, aif, time_points, sigma,
+                weights=weights,
             )
 
             return log_p + log_lik
@@ -790,7 +817,7 @@ class BayesianDSCFitter:
         # Initialize walkers near MAP estimate
         map_result = self.fit_map(
             concentration, aif, time_points, max_iter=100,
-            compute_uncertainties=False,
+            compute_uncertainties=False, weights=weights,
         )
         map_params_list = self.model.dict_to_params(map_result.parameters)
         map_params = np.array(map_params_list, dtype=np.float64)
@@ -900,6 +927,7 @@ def fit_dsc_model(
     mcmc_samples: int = MCMC_SAMPLES,
     noise_std: float | None = None,
     compute_uncertainties: bool = True,
+    weights: npt.NDArray[np.floating] | None = None,
 ) -> DSCFitResult:
     """Convenience function to fit a DSC model using specified Bayesian method.
 
@@ -912,6 +940,7 @@ def fit_dsc_model(
         mcmc_samples: Number of MCMC samples (for method='mcmc').
         noise_std: Optional noise standard deviation.
         compute_uncertainties: Whether to compute Laplace uncertainties for MAP.
+        weights: Optional per-frame motion weights (1.0 = full weight).
 
     Returns:
         DSCFitResult with fitted parameters and uncertainties.
@@ -925,12 +954,16 @@ def fit_dsc_model(
         return fitter.fit_map(
             concentration, aif, time_points,
             compute_uncertainties=compute_uncertainties,
+            weights=weights,
         )
     elif method.lower() == "vi":
-        return fitter.fit_vi(concentration, aif, time_points)
+        return fitter.fit_vi(
+            concentration, aif, time_points, weights=weights,
+        )
     elif method.lower() == "mcmc":
         return fitter.fit_mcmc(
-            concentration, aif, time_points, n_samples=mcmc_samples
+            concentration, aif, time_points, n_samples=mcmc_samples,
+            weights=weights,
         )
     else:
         raise ValueError(

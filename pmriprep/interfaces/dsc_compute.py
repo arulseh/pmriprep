@@ -52,6 +52,52 @@ class _DSCVoxelInput(NamedTuple):
 _dsc_worker_ctx: dict[str, Any] = {}
 
 
+def _compute_dsc_motion_weights(
+    fd_values: list[float],
+    bolus_frame: int,
+    n_frames: int,
+    min_voxel_dim: float,
+    tr: float,
+) -> npt.NDArray[np.floating]:
+    """Compute per-frame motion weights for DSC parametric fitting.
+
+    Same weight function as DCE: w_i = (threshold / FD_i)^2 for FD > threshold.
+    DSC-specific: critical window = entire first-pass (~15s), not just bolus ± 4.
+
+    Args:
+        fd_values: Framewise displacement per volume (mm).
+        bolus_frame: Bolus arrival frame index.
+        n_frames: Number of time frames.
+        min_voxel_dim: Minimum voxel dimension (mm) for threshold scaling.
+        tr: Repetition time (seconds) for first-pass duration calculation.
+
+    Returns:
+        Per-frame weight array (1.0 = full weight, <1.0 = downweighted).
+
+    References:
+        Melbourne A, et al. MRM 2007.
+        Buckley DL. MRM 2002.
+    """
+    weights = np.ones(n_frames, dtype=np.float64)
+    fd_arr = np.array(fd_values[:n_frames], dtype=np.float64)
+    base_threshold = max(min_voxel_dim * 0.25, 0.1)  # floor at 0.1mm
+
+    # DSC: entire first-pass is critical (typically 5-10 frames at 1.5-2s TR)
+    first_pass_frames = int(np.ceil(15.0 / max(tr, 0.5)))
+    first_pass_end = min(bolus_frame + first_pass_frames, n_frames - 1)
+
+    for i in range(n_frames):
+        if bolus_frame <= i <= first_pass_end:
+            eff_thresh = base_threshold * 0.5  # 2x stricter during first-pass
+        else:
+            eff_thresh = base_threshold
+
+        if fd_arr[i] > eff_thresh:
+            weights[i] = (eff_thresh / fd_arr[i]) ** 2
+
+    return weights
+
+
 def _dsc_init_worker(
     aif: Any,
     time_points: Any,
@@ -61,6 +107,7 @@ def _dsc_init_worker(
     cpi_control_points: int,
     bolus_duration_frames: int,
     dt: float,
+    motion_weights: Any = None,
 ) -> None:
     """Initialise shared state once per worker process."""
     from pmriprep.models.dsc import (
@@ -75,6 +122,7 @@ def _dsc_init_worker(
     _dsc_worker_ctx["bayesian"] = bayesian
     _dsc_worker_ctx["mcmc_samples"] = mcmc_samples
     _dsc_worker_ctx["dt"] = dt
+    _dsc_worker_ctx["motion_weights"] = motion_weights
 
     # Pre-build model template so each voxel can cheaply instantiate
     if method == "vascular":
@@ -106,13 +154,17 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
     aif = _dsc_worker_ctx["aif"]
     time_points = _dsc_worker_ctx["time_points"]
     dt = _dsc_worker_ctx["dt"]
+    motion_weights = _dsc_worker_ctx.get("motion_weights")
 
     try:
         model_instance = _dsc_worker_ctx["model_factory"]()
 
         if bayesian == "none" and method == "cpi":
             # Fast path: direct NLLS without Bayesian prior/noise overhead
-            result = _fit_cpi_simple(model_instance, tissue_curve, aif, time_points)
+            result = _fit_cpi_simple(
+                model_instance, tissue_curve, aif, time_points,
+                weights=motion_weights,
+            )
             if result is None:
                 return {"coords": (x, y, z), "failed": True}
         elif bayesian == "none":
@@ -123,6 +175,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 time_points=time_points,
                 method="map",
                 compute_uncertainties=False,
+                weights=motion_weights,
             )
         else:
             result = fit_dsc_model(
@@ -133,6 +186,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 method=bayesian,
                 mcmc_samples=_dsc_worker_ctx["mcmc_samples"],
                 compute_uncertainties=True,
+                weights=motion_weights,
             )
 
         out: dict[str, Any] = {"coords": (x, y, z), "failed": False}
@@ -359,6 +413,12 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Save residue functions (large output)",
     )
+    # Motion weighting inputs (from motion_correct)
+    fd_values = traits.List(
+        traits.Float,
+        desc="Framewise displacement per volume (mm) from motion correction",
+    )
+
     k2_map_input_file = File(
         mandatory=False,
         desc="K2 map from preload_correct (passed through when baseline not recomputed)",
@@ -853,6 +913,7 @@ class ComputeDSCMaps(BaseInterface):
         bayesian: str,
         mcmc_samples: int,
         cpi_control_points: int,
+        motion_weights: Optional[npt.NDArray[np.floating]] = None,
     ) -> tuple[
         npt.NDArray[Any],  # cbf
         npt.NDArray[Any],  # cbv
@@ -924,6 +985,7 @@ class ComputeDSCMaps(BaseInterface):
         init_args = (
             aif, time_points, method, bayesian, mcmc_samples,
             cpi_control_points, bolus_duration_frames, dt,
+            motion_weights,
         )
 
         n_procs = max(1, int(self.inputs.n_procs))
@@ -1334,6 +1396,37 @@ class ComputeDSCMaps(BaseInterface):
         cbv_ci_upper_map: Optional[npt.NDArray[Any]] = None
         qc_metrics: dict[str, Any] = {}
 
+        # Compute motion weights for parametric fitting (vascular/CPI only)
+        motion_weights: Optional[npt.NDArray[np.floating]] = None
+        if (
+            method in ("vascular", "cpi")
+            and isdefined(self.inputs.fd_values)
+            and self.inputs.fd_values
+        ):
+            voxel_dims = header.get_zooms()[:3]
+            min_voxel_dim = float(min(voxel_dims))
+            bolus_frame = int(self.inputs.baseline_frames)
+            motion_weights = _compute_dsc_motion_weights(
+                fd_values=self.inputs.fd_values,
+                bolus_frame=bolus_frame,
+                n_frames=conc_data.shape[3],
+                min_voxel_dim=min_voxel_dim,
+                tr=dt,
+            )
+            first_pass_frames = int(np.ceil(15.0 / max(dt, 0.5)))
+            first_pass_end = min(bolus_frame + first_pass_frames, conc_data.shape[3] - 1)
+            n_downweighted = int(np.sum(motion_weights < 0.95))
+            motion_weighting_qc = {
+                "applied": True,
+                "n_downweighted_frames": n_downweighted,
+                "min_weight": float(np.min(motion_weights)),
+                "first_pass_weights": motion_weights[bolus_frame:first_pass_end + 1].tolist(),
+            }
+            logger.info(
+                "DSC motion weighting: %d/%d frames downweighted (min weight=%.3f)",
+                n_downweighted, conc_data.shape[3], float(np.min(motion_weights)),
+            )
+
         if method in ("sSVD", "cSVD", "oSVD", "tikhonov"):
             cbf, cbv, mtt, tmax, delay, residues, qc_metrics = self._deconvolve_svd(
                 conc_data, aif, mask, method, dt, threshold, oi_threshold, use_gpu
@@ -1344,7 +1437,13 @@ class ComputeDSCMaps(BaseInterface):
              cbf_ci_lower_map, cbf_ci_upper_map,
              cbv_ci_lower_map, cbv_ci_upper_map) = self._deconvolve_parametric(
                 conc_data, aif, mask, method, dt, bayesian, mcmc_samples, cpi_control_points,
+                motion_weights=motion_weights,
             )
+            # Merge motion weighting QC into parametric QC dict
+            if motion_weights is not None:
+                qc_metrics["motion_weighting"] = motion_weighting_qc
+            else:
+                qc_metrics["motion_weighting"] = {"applied": False}
 
         # Compute PSR and PH
         psr: npt.NDArray[Any]
