@@ -380,6 +380,11 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         None,
         desc="Optional 3D arterial atlas mask in DCE space",
     )
+    aif_mask_file = File(
+        exists=True,
+        mandatory=False,
+        desc="Optional user-supplied AIF search mask (overrides atlas mask)",
+    )
     lesion_mask_file = File(
         exists=True,
         mandatory=False,
@@ -1899,9 +1904,12 @@ class AIFDetection(BaseInterface):
         brain_img = nib.load(self.inputs.brain_mask_file)
         brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
 
-        # Optional atlas mask (validated at runtime since exists=True removed from trait)
+        # Optional atlas mask (user-supplied aif_mask_file takes priority)
         atlas_mask: Optional[npt.NDArray[Any]] = None
-        if (
+        if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
+            atlas_img = nib.load(self.inputs.aif_mask_file)
+            atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
+        elif (
             isdefined(self.inputs.atlas_mask_file)
             and self.inputs.atlas_mask_file is not None
             and str(self.inputs.atlas_mask_file) != "None"

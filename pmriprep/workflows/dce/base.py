@@ -798,6 +798,10 @@ def init_dce_preproc_wf(
     if config.target_peak is not None:
         aif_detection.inputs.target_peak = config.target_peak
 
+    # Wire user-supplied AIF mask if provided (overrides atlas mask)
+    if config.aif_mask_file is not None:
+        aif_detection.inputs.aif_mask_file = str(config.aif_mask_file)
+
     workflow.connect([
         (signal_to_conc, aif_detection, [
             ("concentration_file", "concentration_file"),

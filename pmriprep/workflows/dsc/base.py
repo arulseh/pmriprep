@@ -1732,6 +1732,10 @@ def init_dsc_preproc_wf(
         name="aif_detect",
     )
 
+    # Wire user-supplied AIF mask if provided (overrides atlas mask)
+    if config.aif_mask_file is not None:
+        aif_detect.inputs.aif_mask_file = str(config.aif_mask_file)
+
     # -------------------------------------------------------------------
     # Node 4: Preload Detection and K2 Correction
     # K2 correction needs the AIF, so runs after AIF detection

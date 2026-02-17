@@ -27,8 +27,6 @@ class DSCConfig:
         Number of MCMC samples for Bayesian inference.
     cpi_control_points : int
         Number of control points for CPI model (0 = auto-select).
-    mni_atlas : str
-        MNI atlas name for AIF detection.
     aif_mask_file : Optional[Path]
         Path to custom AIF mask file.
     lesion_distance : float
@@ -45,14 +43,10 @@ class DSCConfig:
         Disable synthetic AIF fallback when detection fails.
     lesion_mask : Optional[Path]
         Path to lesion mask for registration weighting.
-    lesion_dilation : float
-        Dilation radius (mm) for lesion mask in registration.
     nawm_mask : Optional[Path]
         Path to NAWM mask for CBV normalization.
     use_flirt : bool
         Use FLIRT instead of BBR for registration.
-    allow_scaling : bool
-        Allow intensity scaling in registration.
     smooth_fwhm : float
         Smoothing kernel FWHM (mm) for output maps.
     underlays : List[str]
@@ -63,8 +57,6 @@ class DSCConfig:
         Number of pre-bolus baseline frames.
     save_k2_map : bool
         Save K2 leakage correction map.
-    save_uncertainty : bool
-        Save uncertainty maps from Bayesian inference.
     num_processes : int
         Number of parallel processes (0 = use system default).
     use_gpu : bool
@@ -84,7 +76,6 @@ class DSCConfig:
     cpi_control_points: int = 0  # 0 = auto-select
 
     # AIF detection settings
-    mni_atlas: str = "MNI152NLin2009cAsym"
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
     prefer_contralateral: bool = True
@@ -96,10 +87,8 @@ class DSCConfig:
 
     # Registration settings
     lesion_mask: Optional[Path] = None
-    lesion_dilation: float = 15.0
     nawm_mask: Optional[Path] = None
     use_flirt: bool = True
-    allow_scaling: bool = True
 
     # Processing settings
     smooth_fwhm: float = 0.0  # No smoothing by default
@@ -107,7 +96,6 @@ class DSCConfig:
     motion_thresh: float = 0.5
     pre_bolus: int = 12
     save_k2_map: bool = False
-    save_uncertainty: bool = False
 
     # Resource settings
     num_processes: int = 0  # 0 = use system default
@@ -133,7 +121,6 @@ class DSCConfig:
         try:
             self.smooth_fwhm = float(self.smooth_fwhm)
             self.lesion_distance = float(self.lesion_distance)
-            self.lesion_dilation = float(self.lesion_dilation)
             self.motion_thresh = float(self.motion_thresh)
         except (ValueError, TypeError) as e:
             raise TypeError(f"DSCConfig float field has invalid type: {e}") from e
@@ -160,7 +147,6 @@ class DSCConfig:
             bayesian=self.bayesian,
             mcmc_samples=self.mcmc_samples,
             cpi_control_points=self.cpi_control_points,
-            mni_atlas=self.mni_atlas,
             aif_mask_file=self.aif_mask_file,
             lesion_distance=self.lesion_distance,
             prefer_contralateral=self.prefer_contralateral,
@@ -170,16 +156,13 @@ class DSCConfig:
             disable_aif_fallback=self.disable_aif_fallback,
             aif_method=self.aif_method,
             lesion_mask=self.lesion_mask,
-            lesion_dilation=self.lesion_dilation,
             nawm_mask=self.nawm_mask,
             use_flirt=self.use_flirt,
-            allow_scaling=self.allow_scaling,
             smooth_fwhm=self.smooth_fwhm,
             underlays=self.underlays,
             motion_thresh=self.motion_thresh,
             pre_bolus=self.pre_bolus,
             save_k2_map=True,
-            save_uncertainty=self.save_uncertainty,
             num_processes=self.num_processes,
             use_gpu=self.use_gpu,
         )

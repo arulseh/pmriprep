@@ -204,7 +204,6 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     _coerce_int(dsc_dict, "num_processes")
     _coerce_float(dsc_dict, "smooth_fwhm")
     _coerce_float(dsc_dict, "lesion_distance")
-    _coerce_float(dsc_dict, "lesion_dilation")
     _coerce_float(dsc_dict, "motion_thresh")
 
     # Filter to only valid DSCConfig fields
@@ -238,7 +237,7 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
                     dce_dict[k] = v
 
     # Convert path strings to Path objects
-    for path_key in ("lesion_mask", "aif_mask_file", "reference_roi"):
+    for path_key in ("lesion_mask", "aif_mask_file"):
         _dict_to_path(dce_dict, path_key)
 
     # Type coerce numeric fields
@@ -251,7 +250,6 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     _coerce_float(dce_dict, "tsnr_threshold")
     _coerce_float(dce_dict, "hematocrit")
     _coerce_float(dce_dict, "target_peak")
-    _coerce_float(dce_dict, "afi_flip_angle")
 
     # Filter to only valid DCEConfig fields
     valid_fields = {f.name for f in DCEConfig.__dataclass_fields__.values()}

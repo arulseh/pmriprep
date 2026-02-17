@@ -639,13 +639,17 @@ def init_anat_preproc_wf(
             coreg_postcon = pe.Node(
                 Coregistration(modality="T1_postcon", dof=6), name="coreg_postcon"
             )
-            workflow.connect([
+            coreg_postcon_conns = [
                 (inputnode, reorient_postcon, [("t1w_postcon", "in_file")]),
                 (reorient_postcon, bias_correct_postcon, [("out_file", "in_file")]),
                 (bias_correct_postcon, coreg_postcon, [("out_file", "in_file")]),
                 (bias_correct, coreg_postcon, [("out_file", "reference")]),
-                (inputnode, coreg_postcon, [("lesion_mask", "lesion_mask")]),
-            ])
+            ]
+            if config.use_lesion_mask:
+                coreg_postcon_conns.append(
+                    (inputnode, coreg_postcon, [("lesion_mask", "lesion_mask")])
+                )
+            workflow.connect(coreg_postcon_conns)
 
         # T2w preprocessing and coregistration
         if has_t2w:
@@ -656,13 +660,17 @@ def init_anat_preproc_wf(
             coreg_t2w = pe.Node(
                 Coregistration(modality="T2w", dof=6), name="coreg_t2w"
             )
-            workflow.connect([
+            coreg_t2w_conns = [
                 (inputnode, reorient_t2w, [("t2w", "in_file")]),
                 (reorient_t2w, bias_correct_t2w, [("out_file", "in_file")]),
                 (bias_correct_t2w, coreg_t2w, [("out_file", "in_file")]),
                 (bias_correct, coreg_t2w, [("out_file", "reference")]),
-                (inputnode, coreg_t2w, [("lesion_mask", "lesion_mask")]),
-            ])
+            ]
+            if config.use_lesion_mask:
+                coreg_t2w_conns.append(
+                    (inputnode, coreg_t2w, [("lesion_mask", "lesion_mask")])
+                )
+            workflow.connect(coreg_t2w_conns)
 
         # FLAIR preprocessing and coregistration
         if has_flair:
@@ -673,13 +681,17 @@ def init_anat_preproc_wf(
             coreg_flair = pe.Node(
                 Coregistration(modality="FLAIR", dof=6), name="coreg_flair"
             )
-            workflow.connect([
+            coreg_flair_conns = [
                 (inputnode, reorient_flair, [("flair", "in_file")]),
                 (reorient_flair, bias_correct_flair, [("out_file", "in_file")]),
                 (bias_correct_flair, coreg_flair, [("out_file", "in_file")]),
                 (bias_correct, coreg_flair, [("out_file", "reference")]),
-                (inputnode, coreg_flair, [("lesion_mask", "lesion_mask")]),
-            ])
+            ]
+            if config.use_lesion_mask:
+                coreg_flair_conns.append(
+                    (inputnode, coreg_flair, [("lesion_mask", "lesion_mask")])
+                )
+            workflow.connect(coreg_flair_conns)
 
         # PDw preprocessing and coregistration
         if has_pdw:
@@ -690,13 +702,17 @@ def init_anat_preproc_wf(
             coreg_pdw = pe.Node(
                 Coregistration(modality="PDw", dof=6), name="coreg_pdw"
             )
-            workflow.connect([
+            coreg_pdw_conns = [
                 (inputnode, reorient_pdw, [("pdw", "in_file")]),
                 (reorient_pdw, bias_correct_pdw, [("out_file", "in_file")]),
                 (bias_correct_pdw, coreg_pdw, [("out_file", "in_file")]),
                 (bias_correct, coreg_pdw, [("out_file", "reference")]),
-                (inputnode, coreg_pdw, [("lesion_mask", "lesion_mask")]),
-            ])
+            ]
+            if config.use_lesion_mask:
+                coreg_pdw_conns.append(
+                    (inputnode, coreg_pdw, [("lesion_mask", "lesion_mask")])
+                )
+            workflow.connect(coreg_pdw_conns)
 
     # -------------------------------------------------------------------
     # Step 5: Brain Extraction

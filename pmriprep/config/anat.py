@@ -18,10 +18,10 @@ class AnatConfig:
         Brain extraction tool: hdbet (HD-BET) or ants (ANTs).
     denoise : bool
         Apply ANTs denoising to anatomical images.
-    cost_function : str
-        Cost function for registration (default: normmi).
     use_lesion_mask : bool
         Use lesion mask for registration cost function weighting.
+        Default False: 6-DOF FLIRT is robust to focal lesions.
+        Enable for large (>3cm) enhancing tumors, resection cavities, or BBR.
     """
 
     # Brain extraction settings
@@ -31,8 +31,7 @@ class AnatConfig:
     denoise: bool = False
 
     # Registration settings
-    cost_function: str = "normmi"
-    use_lesion_mask: bool = True
+    use_lesion_mask: bool = False
 
     # Cross-modal coregistration settings
     coregister_modalities: bool = True  # Enable cross-modal coregistration
@@ -40,5 +39,3 @@ class AnatConfig:
     # Subtraction image settings
     create_subtraction: bool = True  # Create post-pre subtraction image
 
-    # Postcon-only mode handling
-    skip_fast_if_postcon_only: bool = True  # Skip FAST when only T1 postcon available

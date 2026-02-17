@@ -29,8 +29,6 @@ class DCEConfig:
         Scale AIF amplitude to population reference.
     target_peak : Optional[float]
         Target AIF peak concentration (mM) for scaling.
-    mni_atlas : str
-        MNI atlas name for AIF detection.
     aif_mask_file : Optional[Path]
         Path to custom AIF mask file.
     lesion_distance : float
@@ -39,8 +37,6 @@ class DCEConfig:
         Prefer contralateral AIF candidates when lesion present.
     underlays : List[str]
         List of underlay images for QC visualizations.
-    reference_roi : Optional[Path]
-        Path to ROI for reference-based analysis.
     no_b1 : bool
         Skip B1+ mapping (use nominal flip angles).
     no_t1 : bool
@@ -57,10 +53,6 @@ class DCEConfig:
         Smoothing kernel FWHM (mm) for output maps.
     save_uncertainty : bool
         Save uncertainty maps from Bayesian inference.
-    leakage : str
-        Leakage correction method (none, k2, patlak).
-    cbv_source : str
-        CBV source for DSC constraint (dsc, free).
     baseline_frames : int
         Number of baseline frames (0 = auto-detect).
     dose : Literal["half", "full", "double"]
@@ -91,19 +83,16 @@ class DCEConfig:
     aif_method: Literal["auto", "population"] = "auto"
     scale_aif: bool = False
     target_peak: Optional[float] = None  # None = use field-strength default
-    mni_atlas: str = "MNI152NLin2009cAsym"
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 20.0
     prefer_contralateral: bool = True
 
     # Structural settings
     underlays: List[str] = field(default_factory=lambda: ["t1w", "flair"])
-    reference_roi: Optional[Path] = None
 
     # T1 mapping settings
     no_b1: bool = False
     no_t1: bool = False
-    afi_flip_angle: Optional[float] = None  # None = from BIDS sidecar, fallback 60
     skip_flip_validation: bool = False
     lenient_t1_qc: bool = False
     t1_correction: Literal["auto", "none", "offset", "fallback"] = "auto"
@@ -112,8 +101,6 @@ class DCEConfig:
     no_dsc_validation: bool = False
     smooth: float = 0.0  # No smoothing by default
     save_uncertainty: bool = False
-    leakage: str = "none"
-    cbv_source: str = "dsc"  # Use DSC CBV when available
     baseline_frames: int = 0  # 0 = auto-detect
     dose: Literal["half", "full", "double"] = "full"
     tsnr_threshold: float = 0.0  # 0 = no threshold
@@ -162,8 +149,3 @@ class DCEConfig:
                 self.target_peak = float(self.target_peak)
             except (ValueError, TypeError) as e:
                 raise TypeError(f"DCEConfig.target_peak has invalid type: {e}") from e
-        if self.afi_flip_angle is not None:
-            try:
-                self.afi_flip_angle = float(self.afi_flip_angle)
-            except (ValueError, TypeError) as e:
-                raise TypeError(f"DCEConfig.afi_flip_angle has invalid type: {e}") from e
