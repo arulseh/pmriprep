@@ -1529,7 +1529,7 @@ def init_pmriprep_wf(
                     ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                     ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
                     ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
-                    ("outputnode.nawm_mask", "inputnode.nawm_mask"),  # For nKtrans, nvp, nIAUC60
+                    ("outputnode.nawm_mask", "inputnode.nawm_mask"),  # For nKtrans, nIAUC60
                 ]),
             ])
         elif work_dir is not None and not decision.run_hdglio:
@@ -1807,7 +1807,6 @@ def init_pmriprep_wf(
                 ("outputnode.ktrans_tortuosity_corrected", "ktrans_tortuosity_corrected"),
                 # Normalized maps (NAWM-normalized)
                 ("outputnode.nktrans_map", "nktrans_map"),
-                ("outputnode.nvp_map", "nvp_map"),
                 ("outputnode.niauc60_map", "niauc60_map"),
                 # Smoothed maps
                 ("outputnode.smooth_pk_maps", "smooth_pk_maps"),

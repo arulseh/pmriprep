@@ -89,7 +89,6 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
 
     # Normalized maps (optional, requires NAWM mask)
     nktrans_map = traits.Either(traits.Str, None, desc="nKtrans (NAWM-normalized Ktrans) map path")
-    nvp_map = traits.Either(traits.Str, None, desc="nvp (NAWM-normalized vp) map path")
     niauc60_map = traits.Either(traits.Str, None, desc="nIAUC60 (NAWM-normalized IAUC at 60s) map path")
 
     # Smoothed maps (optional, dict of name->path)
@@ -370,7 +369,7 @@ class DCEDerivativeWriter(BaseInterface):
             self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
-        # 3f2. Normalized maps (nKtrans, nvp, nIAUC60) - requires NAWM mask
+        # 3f2. Normalized maps (nKtrans, nIAUC60) - requires NAWM mask
         # -----------------------------------------------------------
         if self._has_input("nktrans_map"):
             fname = f"{prefix}_{spatial}_{model_entity}_nKtrans"
@@ -378,15 +377,6 @@ class DCEDerivativeWriter(BaseInterface):
             sidecar = {
                 **base_sidecar,
                 "Description": "Ktrans normalized by NAWM (normal-appearing white matter) mean",
-            }
-            self._write_json(sidecar, perf_dir / f"{fname}.json")
-
-        if self._has_input("nvp_map"):
-            fname = f"{prefix}_{spatial}_{model_entity}_nvp"
-            self._copy_nifti(self.inputs.nvp_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {
-                **base_sidecar,
-                "Description": "vp normalized by NAWM (normal-appearing white matter) mean",
             }
             self._write_json(sidecar, perf_dir / f"{fname}.json")
 

@@ -218,7 +218,7 @@ def init_dce_preproc_wf(
                 # Structural underlay inputs
                 "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
                 # NAWM mask input (from hdglio, for normalization)
-                "nawm_mask",  # NAWM mask in T1w space for nKtrans, nvp, nIAUC60
+                "nawm_mask",  # NAWM mask in T1w space for nKtrans, nIAUC60
             ]
         ),
         name="inputnode",
@@ -286,7 +286,6 @@ def init_dce_preproc_wf(
                 "smooth_tortuosity_maps",
                 # Normalized maps (requires NAWM mask)
                 "nktrans_map",
-                "nvp_map",
                 "niauc60_map",
                 # QC metrics
                 "qc_metrics",
@@ -1001,7 +1000,7 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
-    # Node 8c: NAWM Normalization (nKtrans, nvp, nIAUC60)
+    # Node 8c: NAWM Normalization (nKtrans, nIAUC60)
     # ==========================================================================
     normalize_ktrans = pe.Node(
         niu.Function(
@@ -1010,15 +1009,6 @@ def init_dce_preproc_wf(
             function=_normalize_by_nawm,
         ),
         name="normalize_ktrans",
-    )
-
-    normalize_vp = pe.Node(
-        niu.Function(
-            input_names=["param_map", "nawm_mask"],
-            output_names=["out_file"],
-            function=_normalize_by_nawm,
-        ),
-        name="normalize_vp",
     )
 
     normalize_iauc60 = pe.Node(
@@ -1033,8 +1023,6 @@ def init_dce_preproc_wf(
     workflow.connect([
         (pk_modeling, normalize_ktrans, [("out_ktrans", "param_map")]),
         (transform_nawm_mask, normalize_ktrans, [("out_file", "nawm_mask")]),
-        (pk_modeling, normalize_vp, [("out_vp", "param_map")]),
-        (transform_nawm_mask, normalize_vp, [("out_file", "nawm_mask")]),
         (pk_modeling, normalize_iauc60, [("out_iauc60", "param_map")]),
         (transform_nawm_mask, normalize_iauc60, [("out_file", "nawm_mask")]),
     ])
@@ -1396,12 +1384,18 @@ def init_dce_preproc_wf(
 
     workflow.connect([
         (transform_stats_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),
+        (transform_nawm_mask, lesion_stats, [("out_file", "nawm_mask")]),
         (pk_modeling, lesion_stats, [
             ("out_ktrans", "ktrans_map"),
             ("out_ve", "ve_map"),
             ("out_vp", "vp_map"),
             ("out_kep", "kep_map"),
+            ("out_iauc60", "iauc60_map"),
+            ("out_peak_enhancement", "peak_enhancement_map"),
+            ("out_time_to_peak", "ttp_map"),
         ]),
+        (normalize_ktrans, lesion_stats, [("out_file", "nktrans_map")]),
+        (normalize_iauc60, lesion_stats, [("out_file", "niauc60_map")]),
     ])
 
     # ==========================================================================
@@ -1592,7 +1586,6 @@ def init_dce_preproc_wf(
     # Normalized map output connections (requires NAWM mask from hdglio)
     workflow.connect([
         (normalize_ktrans, outputnode, [("out_file", "nktrans_map")]),
-        (normalize_vp, outputnode, [("out_file", "nvp_map")]),
         (normalize_iauc60, outputnode, [("out_file", "niauc60_map")]),
     ])
 

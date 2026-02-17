@@ -37,10 +37,10 @@ from pmriprep.utils.lesion_stats import (
 )
 
 
-# Region label definitions (HD-GLIO convention)
+# Region label definitions (HD-GLIO convention, enhancing first for clinical priority)
 HDGLIO_LABELS = {
-    1: "non_enhancing_tumor",
     2: "contrast_enhancing_tumor",
+    1: "non_enhancing_tumor",
 }
 
 
@@ -74,7 +74,8 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     psr_map = traits.Either(traits.Str, None, desc="PSR map path")
     ph_map = traits.Either(traits.Str, None, desc="PH map path")
     k2_map = traits.Either(traits.Str, None, desc="K2 leakage correction map path")
-    ttp_map = traits.Either(traits.Str, None, desc="TTP map path")
+    ttp_corrected_map = traits.Either(traits.Str, None, desc="AIF-corrected TTP map path")
+    rttp_map = traits.Either(traits.Str, None, desc="NAWM-relative TTP map path")
 
 
 class DSCLesionStatsOutputSpec(TraitedSpec):
@@ -92,7 +93,6 @@ class DSCLesionStats(BaseInterface):
 
     - Multi-label masks (HD-GLIO: label 1 = non-enhancing, label 2 = enhancing)
     - Binary tumor masks
-    - Whole-tumor statistics (combined regions)
     - NAWM reference values for normalization context
     - Clinical interpretation thresholds (nCBV > 1.75 = high-grade)
 
@@ -118,8 +118,8 @@ class DSCLesionStats(BaseInterface):
 
         # Load lesion mask
         lesion_img = nib.load(self.inputs.lesion_mask)
-        lesion_data = np.asarray(lesion_img.dataobj)
-        voxel_sizes: Tuple[float, float, float] = lesion_img.header.get_zooms()[:3]
+        lesion_data = np.asarray(lesion_img.dataobj)  # type: ignore[attr-defined]
+        voxel_sizes: Tuple[float, float, float] = lesion_img.header.get_zooms()[:3]  # type: ignore[attr-defined]
 
         # Detect mask type
         mask_type, max_label = detect_mask_type(lesion_data)
@@ -153,13 +153,6 @@ class DSCLesionStats(BaseInterface):
                 if region_stats is not None:
                     result.regions[region_name] = region_stats
 
-            # Also compute whole-tumor statistics (all labels combined)
-            whole_mask = lesion_data > 0
-            whole_stats = self._compute_region_stats(
-                "whole_tumor", whole_mask, maps, voxel_sizes
-            )
-            if whole_stats is not None:
-                result.regions["whole_tumor"] = whole_stats
         else:
             # Binary mask - single region
             binary_mask = lesion_data > 0
@@ -172,7 +165,7 @@ class DSCLesionStats(BaseInterface):
         # Compute NAWM reference if mask provided
         if self._has_input("nawm_mask"):
             nawm_img = nib.load(self.inputs.nawm_mask)
-            nawm_data = np.asarray(nawm_img.dataobj) > 0
+            nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
             nawm_maps = {
                 k: v for k, v in maps.items()
                 if k in ["cbv", "cbf", "ncbv", "ncbf", "mtt"]
@@ -239,7 +232,8 @@ class DSCLesionStats(BaseInterface):
             ("psr_map", "psr"),
             ("ph_map", "ph"),
             ("k2_map", "k2"),
-            ("ttp_map", "ttp"),
+            ("ttp_corrected_map", "ttp_corrected"),
+            ("rttp_map", "rttp"),
         ]
 
         for attr, name in map_attrs:
@@ -247,7 +241,7 @@ class DSCLesionStats(BaseInterface):
                 path = getattr(self.inputs, attr)
                 if Path(path).exists():
                     img = nib.load(path)
-                    maps[name] = np.asarray(img.dataobj)
+                    maps[name] = np.asarray(img.dataobj)  # type: ignore[attr-defined]
 
         return maps
 
