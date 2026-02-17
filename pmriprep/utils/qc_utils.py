@@ -424,10 +424,8 @@ def plot_segmentation_qc_filmstrip(
     Returns:
         Path to the saved figure.
     """
-    import matplotlib.colors as mcolors  # type: ignore[import-untyped]
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
     from matplotlib.patches import Patch  # type: ignore[import-untyped]
-    from scipy.ndimage import binary_dilation
 
     background = np.asarray(background)
     if background.ndim != 3:
@@ -460,16 +458,15 @@ def plot_segmentation_qc_filmstrip(
     else:
         vmin, vmax = 0.0, 1.0
 
-    # Pre-compute edge masks for each label: binary_dilation - original
-    edge_data: list[tuple[str, npt.NDArray[np.bool_], str]] = []
+    # Validate and collect label masks for contour overlay
+    mask_data: list[tuple[str, npt.NDArray[np.bool_], str]] = []
     for name, lmask, color in label_masks:
         lmask = np.asarray(lmask, dtype=bool)
         if lmask.shape != background.shape:
             continue
         if not np.any(lmask):
             continue
-        edges = binary_dilation(lmask, iterations=1) & ~lmask
-        edge_data.append((name, edges, color))
+        mask_data.append((name, lmask, color))
 
     # Create the figure: 3 rows x n_slices columns (dark background)
     fig, axes = plt.subplots(
@@ -499,16 +496,15 @@ def plot_segmentation_qc_filmstrip(
             )
             ax.imshow(bg_slice, cmap="gray", vmin=vmin, vmax=vmax, aspect=aspect)
 
-            # Overlay each label's edges
-            for _name, edges, color in edge_data:
-                edge_slice = get_radiological_slice(
-                    edges.astype(np.float64), axis=axis, slice_idx=int(slice_idx),
+            # Overlay each label's contour
+            for _name, lmask, color in mask_data:
+                mask_slice = get_radiological_slice(
+                    lmask.astype(np.float64), axis=axis, slice_idx=int(slice_idx),
                 )
-                if np.any(edge_slice > 0):
-                    overlay = np.zeros((*edge_slice.shape, 4))
-                    rgba = mcolors.to_rgba(color)
-                    overlay[edge_slice > 0] = (*rgba[:3], 0.9)
-                    ax.imshow(overlay, aspect=aspect)
+                if np.any(mask_slice > 0):
+                    ax.contour(
+                        mask_slice, levels=[0.5], colors=[color], linewidths=1.5,
+                    )
 
             ax.axis("off")
             ax.set_title(
@@ -527,10 +523,10 @@ def plot_segmentation_qc_filmstrip(
         )
 
     # Color legend below the figure
-    if edge_data:
+    if mask_data:
         legend_handles = [
             Patch(facecolor=color, edgecolor=color, label=name)
-            for name, _edges, color in edge_data
+            for name, _lmask, color in mask_data
         ]
         fig.legend(
             handles=legend_handles,

@@ -176,8 +176,8 @@ def _create_tumor_on_postcon_filmstrip(
     plot_segmentation_qc_filmstrip(
         background=bg_data,
         label_masks=[
-            ("Enhancing", enh, "#EE6677"),
             ("Non-enhancing", non_enh, "#228833"),
+            ("Enhancing", enh, "#EE6677"),
         ],
         output_path=output_path,
         mask=brain_mask,
@@ -211,8 +211,8 @@ def _create_tumor_on_flair_filmstrip(
     plot_segmentation_qc_filmstrip(
         background=bg_data,
         label_masks=[
-            ("Enhancing", enh, "#EE6677"),
             ("Non-enhancing", non_enh, "#228833"),
+            ("Enhancing", enh, "#EE6677"),
         ],
         output_path=output_path,
         mask=brain_mask,

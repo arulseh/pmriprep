@@ -319,11 +319,11 @@ def generate_dsc_parameter_maps_qc_plot(
 
     from matplotlib.gridspec import GridSpec
 
-    fig = plt.figure(figsize=(16, 3.5 * n_params))
+    fig = plt.figure(figsize=(10, 2.8 * n_params))
     gs = GridSpec(
         n_params, 8, figure=fig,
-        width_ratios=[0.8, 1, 1, 1, 1, 1, 1, 0.12],
-        wspace=0.05, hspace=0.3,
+        width_ratios=[0.4, 1, 1, 1, 1, 1, 1, 0.06],
+        wspace=0.05, hspace=0.15,
     )
 
     from pmriprep.utils.qc_utils import qc_figure_title
@@ -397,8 +397,9 @@ def generate_dsc_parameter_maps_qc_plot(
         # Colorbar axis (col 7)
         assert im is not None  # always set by z_positions loop
         cax = fig.add_subplot(gs[row_idx, 7])
-        cbar = fig.colorbar(im, cax=cax, label=f"{name} ({unit_label})")
-        cbar.ax.tick_params(labelsize=8)
+        cbar = fig.colorbar(im, cax=cax)
+        cbar.set_label(f"{name} ({unit_label})", fontsize=7)
+        cbar.ax.tick_params(labelsize=6)
 
     if output_path is None:
         output_path = str(Path.cwd() / "dsc_parameter_maps_qc.png")
