@@ -153,14 +153,14 @@ def _create_acpc_registration_filmstrip(t1w_acpc_file):
     out_dir = Path.cwd()
     output_path = str(out_dir / "acpc_qc_filmstrip.png")
 
-    t1w_img = nib.load(t1w_acpc_file)
+    t1w_img = nib.as_closest_canonical(nib.load(t1w_acpc_file))
     t1w_data = t1w_img.get_fdata()
     voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])
 
     # Load MNI152 template as the reference
     fsldir = os.environ.get("FSLDIR", "/usr/local/fsl")
     mni_path = os.path.join(fsldir, "data", "standard", "MNI152_T1_1mm_brain.nii.gz")
-    mni_data = nib.load(mni_path).get_fdata()
+    mni_data = nib.as_closest_canonical(nib.load(mni_path)).get_fdata()
 
     # Mask from the T1w data (already brain-extracted)
     mask = t1w_data > 0

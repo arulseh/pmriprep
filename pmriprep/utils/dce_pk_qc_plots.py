@@ -228,7 +228,7 @@ def generate_preprocessing_qc_plot(
     all_vals = np.concatenate([baseline_vals, peak_vals])
     hist_min = float(np.percentile(all_vals, 1))
     hist_max = float(np.percentile(all_vals, 99))
-    bins = np.linspace(hist_min, hist_max, 80)
+    bins = np.linspace(hist_min, hist_max, 80).tolist()
     ax.hist(baseline_vals, bins=bins, alpha=0.5, density=True,
             color=COLORBLIND_PALETTE.primary, label="Baseline (frame 0)")
     ax.hist(peak_vals, bins=bins, alpha=0.5, density=True,
@@ -531,12 +531,14 @@ def generate_pk_parameter_maps_qc_plot(
         z_min, z_max = int(z_coords.min()), int(z_coords.max())
     z_positions = np.linspace(z_min, z_max, 5, dtype=int)[1:4]  # 25%, 50%, 75%
 
-    n_cols = 3
-    fig, axes = plt.subplots(n_params, n_cols, figsize=(4.5 * n_cols, 4 * n_params))
+    from matplotlib.gridspec import GridSpec
 
-    # Handle single-row case
-    if n_params == 1:
-        axes = axes[np.newaxis, :]
+    fig = plt.figure(figsize=(16, 3.5 * n_params))
+    gs = GridSpec(
+        n_params, 8, figure=fig,
+        width_ratios=[0.8, 1, 1, 1, 1, 1, 1, 0.12],
+        wspace=0.05, hspace=0.3,
+    )
 
     from pmriprep.utils.qc_utils import qc_figure_title
     fig.suptitle(
@@ -567,8 +569,23 @@ def generate_pk_parameter_maps_qc_plot(
         display = data.copy().astype(float)
         display[~mask_bool] = np.nan
 
-        for col_idx, z_idx in enumerate(z_positions):
-            ax = axes[row_idx, col_idx]
+        # Row label axis (col 0)
+        label_ax = fig.add_subplot(gs[row_idx, 0])
+        label_ax.axis("off")
+        label_ax.text(
+            0.5, 0.5, f"{name}\n(\u03bc={mu:.4f}, \u03c3={sigma:.4f})",
+            transform=label_ax.transAxes,
+            fontsize=9, fontweight="bold", rotation=90,
+            ha="center", va="center",
+        )
+
+        # Image axes (3 pairs of merged columns)
+        im = None
+        slice_spans = [(1, 3), (3, 5), (5, 7)]
+        for col_idx, (z_idx, (c_start, c_end)) in enumerate(
+            zip(z_positions, slice_spans)
+        ):
+            ax = fig.add_subplot(gs[row_idx, c_start:c_end])
             slc = get_radiological_slice(display, axis=2, slice_idx=int(z_idx))
             im = ax.imshow(slc, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
             ax.axis("off")
@@ -577,20 +594,11 @@ def generate_pk_parameter_maps_qc_plot(
             if row_idx == 0:
                 ax.set_title(f"z = {z_idx}", fontsize=9)
 
-        # Row label on left
-        axes[row_idx, 0].text(
-            -0.08, 0.5, f"{name}\n(\u03bc={mu:.4f}, \u03c3={sigma:.4f})",
-            transform=axes[row_idx, 0].transAxes,
-            fontsize=9, fontweight="bold", rotation=90,
-            ha="right", va="center",
-        )
-
-        # Per-row colorbar
-        cbar = fig.colorbar(im, ax=axes[row_idx, :].tolist(), fraction=0.03,
-                            pad=0.06, label=f"{name} ({unit_label})")
+        # Colorbar axis (col 7)
+        assert im is not None  # always set by z_positions loop
+        cax = fig.add_subplot(gs[row_idx, 7])
+        cbar = fig.colorbar(im, cax=cax, label=f"{name} ({unit_label})")
         cbar.ax.tick_params(labelsize=8)
-
-    fig.tight_layout(rect=(0.06, 0.02, 0.92, 0.96))
 
     if output_path is None:
         output_path = str(Path.cwd() / "pk_parameter_maps_qc.png")
