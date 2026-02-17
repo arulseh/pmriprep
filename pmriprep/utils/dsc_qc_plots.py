@@ -293,8 +293,8 @@ def generate_dsc_parameter_maps_qc_plot(
 
     # Parameter display config: (colormap, vmin, vmax_mode, vmax_fixed, unit_label)
     param_config: dict[str, tuple[str, float, str, float | None, str]] = {
-        "rCBF": ("hot", 0.0, "pct95", None, "s\u207b\u00b9"),
-        "rCBV": ("hot", 0.0, "pct95", None, "dimensionless"),
+        "rCBF": ("hot", 0.0, "pct98", None, "s\u207b\u00b9"),
+        "rCBV": ("hot", 0.0, "pct98", None, "dimensionless"),
         "MTT": ("viridis", 0.0, "fixed", 30.0, "seconds"),
         "Tmax": ("plasma", 0.0, "fixed", 30.0, "seconds"),
         "PSR": ("coolwarm", 0.0, "fixed", 200.0, "%"),
@@ -335,8 +335,9 @@ def generate_dsc_parameter_maps_qc_plot(
 
         # Determine vmax
         data_masked = data[mask_bool & (data > 0)]
-        if vmax_mode == "pct95" and len(data_masked) > 0:
-            vmax = float(np.percentile(data_masked, 95))
+        if vmax_mode.startswith("pct") and len(data_masked) > 0:
+            pct = int(vmax_mode[3:])
+            vmax = float(np.percentile(data_masked, pct))
         elif vmax_fixed is not None:
             vmax = vmax_fixed
         else:
@@ -412,6 +413,7 @@ def generate_dsc_fit_qc_plot(
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
+    raw_signal: npt.NDArray[Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Generate a 2x2 fit QC plot for DSC deconvolution methods.
 
@@ -420,7 +422,7 @@ def generate_dsc_fit_qc_plot(
     concentration from AIF convolved with the recovered residue function.
 
     Panels:
-        (0,0) Tissue concentration at example voxel (circles)
+        (0,0) Raw signal intensity at example voxel (shows bolus signal drop)
         (0,1) Model fit curve overlaid on tissue concentration + R^2 badge
         (1,0) AIF concentration curve
         (1,1) CBF map at voxel slice with marker
@@ -439,6 +441,7 @@ def generate_dsc_fit_qc_plot(
         subject_id: Subject identifier for title.
         session_id: Session identifier for title.
         output_path: Path to save PNG. If None, uses CWD.
+        raw_signal: 1D raw signal intensity at QC voxel (optional).
 
     Returns:
         Tuple of (path to saved QC plot PNG, voxel metrics dict).
@@ -463,14 +466,21 @@ def generate_dsc_fit_qc_plot(
         fontsize=13, fontweight="bold", y=0.98,
     )
 
-    # --- (0,0) Tissue Concentration ---
+    # --- (0,0) Signal Intensity (or fallback to Concentration) ---
     ax = axes[0, 0]
-    ax.plot(time_points_s, voxel_conc, "o", color=COLORBLIND_PALETTE.primary,
-            markersize=4, label="Measured", alpha=0.7)
-    ax.set_title(f"Tissue Concentration — Voxel ({vx}, {vy}, {vz})", fontsize=10)
+    if raw_signal is not None and len(raw_signal) > 0:
+        ax.plot(time_points_s[:len(raw_signal)], raw_signal, "-o",
+                color=COLORBLIND_PALETTE.primary, markersize=3, linewidth=1,
+                alpha=0.7)
+        ax.set_title(f"Signal Intensity \u2014 Voxel ({vx}, {vy}, {vz})", fontsize=10)
+        ax.set_ylabel("Signal (a.u.)")
+    else:
+        ax.plot(time_points_s, voxel_conc, "o", color=COLORBLIND_PALETTE.primary,
+                markersize=4, label="Measured", alpha=0.7)
+        ax.set_title(f"Tissue Concentration \u2014 Voxel ({vx}, {vy}, {vz})", fontsize=10)
+        ax.set_ylabel("Concentration (a.u.)")
+        ax.legend(fontsize=8)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Concentration (a.u.)")
-    ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
     # --- (0,1) Model Fit ---

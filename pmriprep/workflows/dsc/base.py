@@ -1139,6 +1139,8 @@ def _generate_dsc_fit_qc(
     voxel_cbf = fit_data["voxel_cbf"]
     r_squared = fit_data.get("r_squared", 0.0)
     method = fit_data.get("method", "")
+    raw_signal_data = fit_data.get("raw_signal")
+    raw_signal = np.array(raw_signal_data) if raw_signal_data is not None else None
 
     # Load CBF map for spatial context panel
     cbf_img = nib.load(cbf_file)
@@ -1168,6 +1170,7 @@ def _generate_dsc_fit_qc(
         output_path=out_path,
         subject_id=subject_id,
         session_id=session_id,
+        raw_signal=raw_signal,
     )
     return plot_path
 

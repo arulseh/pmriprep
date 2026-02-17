@@ -1122,6 +1122,7 @@ class ComputeDSCMaps(BaseInterface):
         bayesian: str,
         mcmc_samples: int,
         cpi_control_points: int,
+        signal_data: npt.NDArray[Any] | None = None,
     ) -> None:
         """Select a QC voxel and save its fit data as JSON.
 
@@ -1140,6 +1141,7 @@ class ComputeDSCMaps(BaseInterface):
             bayesian: Bayesian method ('none', 'map', 'vi', 'mcmc').
             mcmc_samples: Number of MCMC samples.
             cpi_control_points: Number of CPI control points (0=auto).
+            signal_data: 4D raw signal data (optional, for QC plot).
         """
         import json
         import nibabel as nib  # type: ignore[import-untyped]
@@ -1245,6 +1247,11 @@ class ComputeDSCMaps(BaseInterface):
             else:
                 return
 
+            # Extract raw signal at QC voxel (for signal intensity panel)
+            raw_signal: list[float] | None = None
+            if signal_data is not None and signal_data.ndim == 4:
+                raw_signal = signal_data[x, y, z, :].tolist()
+
             # Save as JSON
             base_path = self._gen_outfilename("_qc_fit_data")
             # _gen_outfilename appends .nii.gz; replace with .json
@@ -1258,6 +1265,7 @@ class ComputeDSCMaps(BaseInterface):
                 "model_prediction": model_prediction.tolist(),
                 "aif": aif.tolist(),
                 "time_points": time_points.tolist(),
+                "raw_signal": raw_signal,
             }
 
             with open(qc_fit_path, "w") as f:
@@ -1278,6 +1286,7 @@ class ComputeDSCMaps(BaseInterface):
         method: str,
         threshold: float,
         oi_threshold: float,
+        signal_data: npt.NDArray[Any] | None = None,
     ) -> None:
         """Select a QC voxel and save SVD deconvolution fit data as JSON.
 
@@ -1295,6 +1304,7 @@ class ComputeDSCMaps(BaseInterface):
             method: Deconvolution method ('sSVD', 'cSVD', 'oSVD', 'tikhonov').
             threshold: SVD truncation threshold (for sSVD/cSVD).
             oi_threshold: Oscillation index target (for oSVD).
+            signal_data: 4D raw signal data (optional, for QC plot).
         """
         import json
         import nibabel as nib  # type: ignore[import-untyped]
@@ -1380,6 +1390,11 @@ class ComputeDSCMaps(BaseInterface):
             ss_tot = np.sum((tissue_curve - np.mean(tissue_curve)) ** 2)
             r_squared = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
 
+            # Extract raw signal at QC voxel (for signal intensity panel)
+            raw_signal: list[float] | None = None
+            if signal_data is not None and signal_data.ndim == 4:
+                raw_signal = signal_data[x, y, z, :].tolist()
+
             # Save as JSON (same format as parametric)
             base_path = self._gen_outfilename("_qc_fit_data")
             qc_fit_path = base_path.replace(".nii.gz", ".json")
@@ -1392,6 +1407,7 @@ class ComputeDSCMaps(BaseInterface):
                 "model_prediction": c_recon.tolist(),
                 "aif": aif.tolist(),
                 "time_points": time_points.tolist(),
+                "raw_signal": raw_signal,
             }
 
             with open(qc_fit_path, "w") as f:
@@ -1884,11 +1900,13 @@ class ComputeDSCMaps(BaseInterface):
             self._save_qc_fit_data(
                 rel_cbf, conc_data, aif, mask_bool, dt, method,
                 bayesian, mcmc_samples, cpi_control_points,
+                signal_data=signal_data,
             )
         else:
             self._save_qc_fit_data_svd(
                 rel_cbf, conc_data, aif, mask_bool, dt, method,
                 threshold, oi_threshold,
+                signal_data=signal_data,
             )
 
         # Add fit voxel data to QC metrics (for HTML report)
