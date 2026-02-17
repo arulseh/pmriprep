@@ -198,12 +198,6 @@ Examples:
         help="AIF detection method for DSC (default: auto).",
     )
     dsc_group.add_argument(
-        "--dsc-absolute-quant",
-        action="store_true",
-        default=False,
-        help="Enable absolute quantification for DSC (requires relaxivity).",
-    )
-    dsc_group.add_argument(
         "--dsc-use-gpu",
         action="store_true",
         default=False,

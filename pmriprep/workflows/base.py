@@ -1312,11 +1312,6 @@ def init_pmriprep_wf(
                 ("outputnode.rel_cbv_map", "rel_cbv_map"),
                 ("outputnode.rel_auc_raw_map", "rel_auc_raw_map"),
                 ("outputnode.rel_auc_corr_map", "rel_auc_corr_map"),
-                # Absolute maps (may be undefined if gating failed)
-                ("outputnode.abs_cbf_map", "abs_cbf_map"),
-                ("outputnode.abs_cbv_map", "abs_cbv_map"),
-                ("outputnode.abs_auc_raw_map", "abs_auc_raw_map"),
-                ("outputnode.abs_auc_corr_map", "abs_auc_corr_map"),
                 # Normalized maps
                 ("outputnode.ncbv_map", "ncbv_map"),
                 ("outputnode.ncbf_map", "ncbf_map"),

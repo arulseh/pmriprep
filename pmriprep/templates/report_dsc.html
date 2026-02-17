@@ -429,18 +429,6 @@
                     {%- else %} fail{% endif %}">{{ "%.1f"|format(qc_metrics.deconvolution.convergence_rate * 100) }}%</div>
             </div>
             {% endif %}
-            {% if qc_metrics.deconvolution.abs_gating_passed is defined %}
-            <div class="metric">
-                <div class="metric-label">Absolute Gating</div>
-                <div class="metric-value {{ "pass" if qc_metrics.deconvolution.abs_gating_passed else "fail" }}">{{ "Passed" if qc_metrics.deconvolution.abs_gating_passed else "Failed" }}</div>
-            </div>
-            {% endif %}
-            {% if qc_metrics.deconvolution.absolute_permitted is defined %}
-            <div class="metric">
-                <div class="metric-label">Absolute Quantification</div>
-                <div class="metric-value">{{ "Permitted" if qc_metrics.deconvolution.absolute_permitted else "Relative only" }}</div>
-            </div>
-            {% endif %}
         </div>
         {% endif %}
 

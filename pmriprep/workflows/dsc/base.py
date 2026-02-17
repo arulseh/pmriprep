@@ -1429,10 +1429,6 @@ def init_dsc_preproc_wf(
         Relative cerebral blood flow/volume maps (always produced).
     outputnode.rel_auc_raw_map, outputnode.rel_auc_corr_map : str
         Relative AUC maps (always produced).
-    outputnode.abs_cbf_map, outputnode.abs_cbv_map : str, optional
-        Absolute CBF/CBV maps (only when gating passes).
-    outputnode.abs_auc_raw_map, outputnode.abs_auc_corr_map : str, optional
-        Absolute AUC maps (only when gating passes).
     outputnode.mtt_map, outputnode.tmax_map : str
         Mean transit time and time-to-maximum maps.
     outputnode.psr_map, outputnode.ph_map : str
@@ -1556,11 +1552,6 @@ def init_dsc_preproc_wf(
                 "rel_cbv_map",
                 "rel_auc_raw_map",
                 "rel_auc_corr_map",
-                # Absolute maps (conditional on gating)
-                "abs_cbf_map",
-                "abs_cbv_map",
-                "abs_auc_raw_map",
-                "abs_auc_corr_map",
                 # Quality metrics
                 "snr_map",
                 "tsnr_map",
@@ -2546,12 +2537,11 @@ def init_dsc_preproc_wf(
         # Physics-approved: intensive quantities that vary smoothly across tissue.
         # NOT smoothed: Tmax, TTP, delay (timing), PSR, PH, K2, auc_diff (BBB/leakage)
         def _build_hemodynamic_dict(
-            mtt, rel_cbf, rel_cbv, abs_cbf, abs_cbv, ncbf, ncbv,
+            mtt, rel_cbf, rel_cbv, ncbf, ncbv,
         ):
             from pathlib import Path as _P
             d = {"mtt": mtt, "rel_cbf": rel_cbf, "rel_cbv": rel_cbv}
             for name, val in [
-                ("abs_cbf", abs_cbf), ("abs_cbv", abs_cbv),
                 ("ncbf", ncbf), ("ncbv", ncbv),
             ]:
                 if isinstance(val, str) and val not in ("", "None") and _P(val).exists():
@@ -2562,7 +2552,7 @@ def init_dsc_preproc_wf(
             niu.Function(
                 input_names=[
                     "mtt", "rel_cbf", "rel_cbv",
-                    "abs_cbf", "abs_cbv", "ncbf", "ncbv",
+                    "ncbf", "ncbv",
                 ],
                 output_names=["map_dict"],
                 function=_build_hemodynamic_dict,
@@ -2574,8 +2564,6 @@ def init_dsc_preproc_wf(
                 ("out_mtt", "mtt"),
                 ("out_rel_cbf", "rel_cbf"),
                 ("out_rel_cbv", "rel_cbv"),
-                ("out_abs_cbf", "abs_cbf"),
-                ("out_abs_cbv", "abs_cbv"),
             ]),
             (normalize_cbf, build_hemo_dict, [("ncbf_file", "ncbf")]),
             (normalize, build_hemo_dict, [("ncbv_file", "ncbv")]),
@@ -2587,18 +2575,12 @@ def init_dsc_preproc_wf(
 
         # Build dict of leakage-corrected AUC maps for smoothing (CBV surrogate).
         # Only auc_corr is smoothed; auc_raw contains leakage artifact.
-        def _build_auc_corr_dict(rel_auc_corr, abs_auc_corr):
-            from pathlib import Path as _P
-            d = {"rel_auc_corr": rel_auc_corr}
-            if (isinstance(abs_auc_corr, str)
-                    and abs_auc_corr not in ("", "None")
-                    and _P(abs_auc_corr).exists()):
-                d["abs_auc_corr"] = abs_auc_corr
-            return d
+        def _build_auc_corr_dict(rel_auc_corr):
+            return {"rel_auc_corr": rel_auc_corr}
 
         build_auc_dict = pe.Node(
             niu.Function(
-                input_names=["rel_auc_corr", "abs_auc_corr"],
+                input_names=["rel_auc_corr"],
                 output_names=["map_dict"],
                 function=_build_auc_corr_dict,
             ),
@@ -2607,7 +2589,6 @@ def init_dsc_preproc_wf(
         workflow.connect([
             (compute_maps, build_auc_dict, [
                 ("out_rel_auc_corr", "rel_auc_corr"),
-                ("out_abs_auc_corr", "abs_auc_corr"),
             ]),
             (build_auc_dict, smooth_auc, [("map_dict", "map_files")]),
             (hdbet_dsc, smooth_auc, [
@@ -2668,13 +2649,6 @@ def init_dsc_preproc_wf(
             ("out_rel_cbv", "rel_cbv_map"),
             ("out_rel_auc_raw", "rel_auc_raw_map"),
             ("out_rel_auc_corr", "rel_auc_corr_map"),
-        ]),
-        # Absolute maps (may be undefined if gating failed)
-        (compute_maps, outputnode, [
-            ("out_abs_cbf", "abs_cbf_map"),
-            ("out_abs_cbv", "abs_cbv_map"),
-            ("out_abs_auc_raw", "abs_auc_raw_map"),
-            ("out_abs_auc_corr", "abs_auc_corr_map"),
         ]),
         # Quality metrics
         (compute_maps, outputnode, [

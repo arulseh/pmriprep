@@ -49,12 +49,6 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     rel_auc_raw_map = traits.Str(desc="Relative AUC raw map path")
     rel_auc_corr_map = traits.Str(desc="Relative AUC corrected map path")
 
-    # Absolute maps (conditional on gating — may be empty)
-    abs_cbf_map = traits.Str(desc="Absolute CBF map path")
-    abs_cbv_map = traits.Str(desc="Absolute CBV map path")
-    abs_auc_raw_map = traits.Str(desc="Absolute AUC raw map path")
-    abs_auc_corr_map = traits.Str(desc="Absolute AUC corrected map path")
-
     # Normalized maps (optional)
     ncbv_map = traits.Str(desc="Normalized CBV map path")
     ncbf_map = traits.Str(desc="Normalized CBF map path")
@@ -100,7 +94,7 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
 
     # Smoothed map dicts (optional — each is a dict of name→filepath)
     smooth_hemodynamic = traits.Dict(desc="Smoothed hemodynamic maps (CBF, CBV, MTT, nCBF, nCBV)")
-    smooth_auc = traits.Dict(desc="Smoothed AUC corrected maps (rel + abs)")
+    smooth_auc = traits.Dict(desc="Smoothed AUC corrected maps (relative)")
     smooth_fwhm = traits.Float(0.0, usedefault=True, desc="Smoothing FWHM in mm")
 
     # Structural underlays (registered to DSC space)
@@ -222,27 +216,7 @@ class DSCDerivativeWriter(BaseInterface):
                 self._write_json(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
-        # 2. Absolute maps (CONDITIONAL — only if gating passed)
-        # -----------------------------------------------------------
-        abs_maps = {
-            "cbf": ("abs_cbf_map", "Cerebral blood flow (mL/100g/min)"),
-            "cbv": ("abs_cbv_map", "Cerebral blood volume (mL/100g)"),
-            "auc_raw": ("abs_auc_raw_map", "AUC raw concentration (mM·s)"),
-            "auc_corr": ("abs_auc_corr_map", "AUC corrected concentration (mM·s)"),
-        }
-        abs_units = {"cbf": "mL/100g/min", "cbv": "mL/100g", "auc_raw": "mM*s", "auc_corr": "mM*s"}
-        for map_name, (attr, description) in abs_maps.items():
-            if self._has_input(attr):
-                src = getattr(self.inputs, attr)
-                fname = f"{prefix}_{spatial}_desc-abs_{map_name}"
-                self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
-                sidecar = {**base_sidecar, "Description": description}
-                if map_name in abs_units:
-                    sidecar["Units"] = abs_units[map_name]
-                self._write_json(sidecar, perf_dir / f"{fname}.json")
-
-        # -----------------------------------------------------------
-        # 3. Quantification-independent maps (desc-dscproc)
+        # 2. Quantification-independent maps (desc-dscproc)
         # -----------------------------------------------------------
         core_maps = {
             "mtt": ("mtt_map", "Mean transit time"),
@@ -372,8 +346,6 @@ class DSCDerivativeWriter(BaseInterface):
                     "mtt": ("Mean transit time (smoothed)", f"{fwhm_label}"),
                     "rel_cbf": ("Cerebral blood flow, relative (smoothed)", f"rel{fwhm_label.capitalize()}"),
                     "rel_cbv": ("Cerebral blood volume, relative (smoothed)", f"rel{fwhm_label.capitalize()}"),
-                    "abs_cbf": ("Cerebral blood flow, mL/100g/min (smoothed)", f"abs{fwhm_label.capitalize()}"),
-                    "abs_cbv": ("Cerebral blood volume, mL/100g (smoothed)", f"abs{fwhm_label.capitalize()}"),
                     "ncbf": ("Normalized CBF (smoothed)", f"{fwhm_label}"),
                     "ncbv": ("Normalized CBV (smoothed)", f"{fwhm_label}"),
                 }
@@ -398,7 +370,6 @@ class DSCDerivativeWriter(BaseInterface):
             if isdefined(smooth_a) and smooth_a:
                 auc_descriptions = {
                     "rel_auc_corr": ("Relative AUC corrected (smoothed)", f"rel{fwhm_label.capitalize()}"),
-                    "abs_auc_corr": ("Absolute AUC corrected, mM·s (smoothed)", f"abs{fwhm_label.capitalize()}"),
                 }
                 for name, filepath in smooth_a.items():
                     if filepath and Path(filepath).exists():

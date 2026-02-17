@@ -29,9 +29,6 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_SIGNAL,
     DEFAULT_SVD_THRESHOLD,
     DEFAULT_OI_THRESHOLD,
-    calculate_k_h,
-    VESSEL_CALIBRATION_GRE_3T,
-    get_r2_star,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_peak_height_legacy, compute_ttp_legacy
 
@@ -454,12 +451,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     out_rel_auc_raw = File(genfile=True, desc="Output relative AUC raw map NIfTI")
     out_rel_auc_corr = File(genfile=True, desc="Output relative AUC corrected map NIfTI")
 
-    # Output files — absolute maps (conditional on gating)
-    out_abs_cbf = File(genfile=True, desc="Output absolute CBF map NIfTI")
-    out_abs_cbv = File(genfile=True, desc="Output absolute CBV map NIfTI")
-    out_abs_auc_raw = File(genfile=True, desc="Output absolute AUC raw map NIfTI")
-    out_abs_auc_corr = File(genfile=True, desc="Output absolute AUC corrected map NIfTI")
-
     # Output files — quality metrics
     out_snr = File(genfile=True, desc="Output SNR (baseline) map NIfTI")
     out_tsnr = File(genfile=True, desc="Output tSNR (temporal) map NIfTI")
@@ -489,21 +480,12 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_rel_auc_raw = File(exists=True, desc="Relative AUC raw map")
     out_rel_auc_corr = File(exists=True, desc="Relative AUC corrected map")
 
-    # Absolute maps (conditional — only when gating passes)
-    out_abs_cbf = File(desc="Absolute CBF map (mL/100g/min)")
-    out_abs_cbv = File(desc="Absolute CBV map (mL/100g)")
-    out_abs_auc_raw = File(desc="Absolute AUC raw map (mM·s)")
-    out_abs_auc_corr = File(desc="Absolute AUC corrected map (mM·s)")
-
     # Quality metrics
     out_snr = File(exists=True, desc="SNR map (baseline signal)")
     out_tsnr = File(exists=True, desc="tSNR map (temporal signal)")
 
     # K2 leakage map (recomputed or pass-through)
     out_k2 = File(desc="K2 leakage correction map (from recomputed or pass-through)")
-
-    # Gating flag
-    absolute_permitted = traits.Bool(desc="Whether absolute quantification gating passed")
 
     # QC fit data (all deconvolution methods)
     out_qc_fit_data = File(desc="JSON with QC voxel fit data for fit QC plot")
@@ -585,16 +567,12 @@ class ComputeDSCMaps(BaseInterface):
     -------
     out_rel_cbf, out_rel_cbv, out_rel_auc_raw, out_rel_auc_corr : str
         Paths to relative perfusion maps (always produced).
-    out_abs_cbf, out_abs_cbv, out_abs_auc_raw, out_abs_auc_corr : str, optional
-        Paths to absolute perfusion maps (only when gating passes).
     out_mtt, out_tmax, out_psr, out_ph, out_ttp, out_cnr : str
         Paths to quantification-independent maps.
     out_auc_raw, out_auc_corr, out_auc_diff : str
         Paths to AUC decomposition maps.
     out_snr, out_tsnr : str
         Paths to SNR and tSNR quality metric maps.
-    absolute_permitted : bool
-        Whether absolute quantification gating passed.
     out_delay : str, optional
         Path to delay map (cSVD only).
     out_residues : str, optional
@@ -1711,48 +1689,13 @@ class ComputeDSCMaps(BaseInterface):
         cnr = np.clip(cnr, 0.0, 1000.0)
 
         # -----------------------------------------------------------
-        # Auto-absolute gating
+        # Relative maps — apply ×60 to CBF (s⁻¹ → min⁻¹)
         # -----------------------------------------------------------
-        field_strength = float(self.inputs.field_strength) if self.inputs.field_strength else 0.0
         aif_level = str(self.inputs.aif_detection_level)
         preload_class = str(self.inputs.preload_classification)
 
-        absolute_permitted = (
-            field_strength > 0.0
-            and aif_level != "synthetic"
-            and preload_class in ("none", "minimal", "user_specified_no_preload")
-        )
-
-        abs_cbf: Optional[npt.NDArray[Any]] = None
-        abs_cbv: Optional[npt.NDArray[Any]] = None
-        abs_auc_raw: Optional[npt.NDArray[Any]] = None
-        abs_auc_corr: Optional[npt.NDArray[Any]] = None
-
-        # -----------------------------------------------------------
-        # Relative and absolute maps
-        # Both paths apply ×60 to CBF (s⁻¹ → min⁻¹) for consistent
-        # units. Absolute path additionally applies calibration
-        # factors (K_H × vessel_cal) and clips at 500/50.
-        # -----------------------------------------------------------
-        if absolute_permitted:
-            k_h = calculate_k_h()
-            vessel_cal = VESSEL_CALIBRATION_GRE_3T
-            r2_star = get_r2_star(field_strength)
-            effective_cal = k_h * vessel_cal
-
-            abs_cbf = np.clip(cbf * 60.0 * effective_cal, 0.0, 500.0)  # mL/100g/min
-            abs_cbv = np.clip(cbv * effective_cal, 0.0, 50.0)          # mL/100g
-            abs_auc_raw = auc_raw / r2_star                             # mM·s
-            abs_auc_corr = auc_corr / r2_star                           # mM·s
-
-            # Derive relative from absolute
-            rel_cbf = abs_cbf / effective_cal  # min⁻¹
-            rel_cbv = abs_cbv / effective_cal
-        else:
-            # No absolute quantification — apply ×60 for min⁻¹ units
-            rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)     # min⁻¹
-            rel_cbv = np.clip(cbv, 0.0, 10.0)              # dimensionless
-
+        rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)     # min⁻¹
+        rel_cbv = np.clip(cbv, 0.0, 10.0)              # dimensionless
         rel_auc_raw = auc_raw
         rel_auc_corr = auc_corr
 
@@ -1776,12 +1719,6 @@ class ComputeDSCMaps(BaseInterface):
         psr = np.where(mask_bool, psr, 0.0)
         ph = np.where(mask_bool, ph, 0.0)
 
-        if absolute_permitted:
-            abs_cbf = np.where(mask_bool, abs_cbf, 0.0)  # type: ignore[arg-type]
-            abs_cbv = np.where(mask_bool, abs_cbv, 0.0)  # type: ignore[arg-type]
-            abs_auc_raw = np.where(mask_bool, abs_auc_raw, 0.0)  # type: ignore[arg-type]
-            abs_auc_corr = np.where(mask_bool, abs_auc_corr, 0.0)  # type: ignore[arg-type]
-
         # Add general QC metrics
         qc_metrics.update({
             "cbf_mean": float(np.mean(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
@@ -1794,7 +1731,6 @@ class ComputeDSCMaps(BaseInterface):
             "mtt_median": float(np.median(mtt[mask_bool])) if np.any(mask_bool) else 0.0,
             "tmax_median": float(np.median(tmax[mask_bool])) if np.any(mask_bool) else 0.0,
             "n_voxels": int(np.sum(mask_bool)),
-            "absolute_permitted": absolute_permitted,
             "aif_detection_level": aif_level,
             "preload_classification": preload_class,
         })
@@ -1859,8 +1795,6 @@ class ComputeDSCMaps(BaseInterface):
             # Quality metrics
             "out_snr": out_snr,
             "out_tsnr": out_tsnr,
-            # Gating
-            "absolute_permitted": absolute_permitted,
             "qc_metrics": qc_metrics,
         }
 
@@ -1871,13 +1805,6 @@ class ComputeDSCMaps(BaseInterface):
         # K2 map (recomputed or pass-through)
         if k2_map_out_path is not None:
             self._results["out_k2"] = k2_map_out_path
-
-        # Absolute maps (only if gating passes)
-        if absolute_permitted:
-            self._results["out_abs_cbf"] = _save_map(abs_cbf, "_abs_cbf")  # type: ignore[arg-type]
-            self._results["out_abs_cbv"] = _save_map(abs_cbv, "_abs_cbv")  # type: ignore[arg-type]
-            self._results["out_abs_auc_raw"] = _save_map(abs_auc_raw, "_abs_auc_raw")  # type: ignore[arg-type]
-            self._results["out_abs_auc_corr"] = _save_map(abs_auc_corr, "_abs_auc_corr")  # type: ignore[arg-type]
 
         # Save delay map if cSVD
         if delay is not None:

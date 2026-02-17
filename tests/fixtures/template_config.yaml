@@ -32,10 +32,6 @@ dsc:
   # lesion_mask:                # Path to lesion mask (optional)
   # nawm_mask:                  # Path to NAWM mask for CBV normalization (optional)
 
-  # --- Quantification ---
-  absolute_quant: false         # Enable absolute quantification
-  # r2_star:                    # Relaxivity for absolute quant (optional, None = relative)
-
   # --- Processing ---
   pre_bolus: 12                 # Pre-bolus baseline frames
   motion_thresh: 0.5            # Framewise displacement threshold (mm)

@@ -53,10 +53,6 @@ class DSCConfig:
         Use FLIRT instead of BBR for registration.
     allow_scaling : bool
         Allow intensity scaling in registration.
-    r2_star : Optional[float]
-        Relaxivity value for absolute quantification (None = relative).
-    absolute_quant : bool
-        Enable absolute quantification.
     smooth_fwhm : float
         Smoothing kernel FWHM (mm) for output maps.
     underlays : List[str]
@@ -105,10 +101,6 @@ class DSCConfig:
     use_flirt: bool = True
     allow_scaling: bool = True
 
-    # Quantification settings
-    r2_star: Optional[float] = None
-    absolute_quant: bool = False
-
     # Processing settings
     smooth_fwhm: float = 0.0  # No smoothing by default
     underlays: List[str] = field(default_factory=lambda: ["t1w", "flair"])
@@ -146,13 +138,6 @@ class DSCConfig:
         except (ValueError, TypeError) as e:
             raise TypeError(f"DSCConfig float field has invalid type: {e}") from e
 
-        # Handle Optional[float] field
-        if self.r2_star is not None:
-            try:
-                self.r2_star = float(self.r2_star)
-            except (ValueError, TypeError) as e:
-                raise TypeError(f"DSCConfig.r2_star has invalid type: {e}") from e
-
     def apply_gbm_preset(self) -> "DSCConfig":
         """Apply GBM clinical preset settings.
 
@@ -189,8 +174,6 @@ class DSCConfig:
             nawm_mask=self.nawm_mask,
             use_flirt=self.use_flirt,
             allow_scaling=self.allow_scaling,
-            r2_star=self.r2_star,
-            absolute_quant=self.absolute_quant,
             smooth_fwhm=self.smooth_fwhm,
             underlays=self.underlays,
             motion_thresh=self.motion_thresh,
