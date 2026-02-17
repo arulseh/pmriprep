@@ -1043,6 +1043,57 @@ class ComputeDCEMaps(BaseInterface):
                 ):
                     constraint_mode = ConstraintMode.SOFT
                     constraint_vp_uncertainty = 0.2
+
+                # Scale mismatch check: if vp*Cp overshoots tissue
+                # concentration in many voxels, the hard constraint is
+                # incompatible (e.g., DSC/DCE AIF scale differences,
+                # partial volume, half-dose acquisitions).
+                if (
+                    constraint_mode == ConstraintMode.HARD
+                    and str(self.inputs.constraint_mode) == "auto"
+                    and vp_constraint_map is not None
+                ):
+                    aif_peak = float(np.max(aif))
+                    if aif_peak > 0:
+                        valid_constrained = (
+                            fitting_mask
+                            & np.isfinite(vp_constraint_map)
+                            & (vp_constraint_map > 0)
+                        )
+                        n_valid = int(np.sum(valid_constrained))
+                        if n_valid > 100:
+                            vp_cp_peak = (
+                                vp_constraint_map[valid_constrained] * aif_peak
+                            )
+                            ct_peak = np.max(
+                                conc_data[valid_constrained], axis=-1
+                            )
+                            overshoot_frac = float(
+                                np.mean(vp_cp_peak > ct_peak)
+                            )
+                            if overshoot_frac > 0.3:
+                                median_vp = float(
+                                    np.nanmedian(
+                                        vp_constraint_map[valid_constrained]
+                                    )
+                                )
+                                logger.warning(
+                                    "DSC CBV hard constraint incompatible: "
+                                    "vp*Cp_peak exceeds tissue peak in "
+                                    "%.0f%% of voxels (AIF peak=%.3f mM, "
+                                    "median vp=%.4f). Downgrading to "
+                                    "unconstrained fitting.",
+                                    overshoot_frac * 100,
+                                    aif_peak,
+                                    median_vp,
+                                )
+                                constraint_mode = ConstraintMode.SKIP
+                                constraint_qc["scale_mismatch"] = {
+                                    "overshoot_fraction": overshoot_frac,
+                                    "aif_peak_mM": aif_peak,
+                                    "median_vp": median_vp,
+                                    "action": "downgrade_to_skip",
+                                }
             except Exception as exc:
                 constraint_qc = {
                     "mode": "skip",
