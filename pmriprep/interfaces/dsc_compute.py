@@ -1522,7 +1522,11 @@ class ComputeDSCMaps(BaseInterface):
                 k2_map_data.astype(np.float32), affine, header
             )
             nib.save(k2_img, k2_map_out_path)  # type: ignore[attr-defined]
-        elif isdefined(self.inputs.k2_map_input_file) and self.inputs.k2_map_input_file:
+        elif (
+            isdefined(self.inputs.k2_map_input_file)
+            and self.inputs.k2_map_input_file
+            and Path(str(self.inputs.k2_map_input_file)).is_file()
+        ):
             # No recomputation — pass through the preload_correct K2 map
             k2_map_out_path = str(self.inputs.k2_map_input_file)
 
@@ -1911,10 +1915,12 @@ class ComputeDSCMaps(BaseInterface):
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
-        """List interface outputs."""
-        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
+        """List interface outputs.
 
+        Returns only explicitly set results from _run_interface, avoiding
+        stale defaults from output_spec().get() (which returns '.' for
+        optional File traits without exists=True).
+        """
         if hasattr(self, "_results"):
-            outputs.update(self._results)
-
-        return outputs
+            return dict(self._results)
+        return self.output_spec().get()  # type: ignore[misc]

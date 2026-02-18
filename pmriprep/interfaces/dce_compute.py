@@ -1776,10 +1776,12 @@ class ComputeDCEMaps(BaseInterface):
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
-        """List interface outputs."""
-        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
+        """List interface outputs.
 
+        Returns only explicitly set results from _run_interface, avoiding
+        stale defaults from output_spec().get() (which returns '.' for
+        optional File traits without exists=True).
+        """
         if hasattr(self, "_results"):
-            outputs.update(self._results)
-
-        return outputs
+            return dict(self._results)
+        return self.output_spec().get()  # type: ignore[misc]

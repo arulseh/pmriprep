@@ -239,7 +239,7 @@ class DSCLesionStats(BaseInterface):
         for attr, name in map_attrs:
             if self._has_input(attr):
                 path = getattr(self.inputs, attr)
-                if Path(path).exists():
+                if Path(path).is_file():
                     img = nib.load(path)
                     maps[name] = np.asarray(img.dataobj)  # type: ignore[attr-defined]
 

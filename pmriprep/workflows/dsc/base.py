@@ -1059,8 +1059,8 @@ def _generate_dsc_leakage_qc(
     """
     from pathlib import Path as _P
 
-    # Skip if no K2 map
-    if not k2_map_file or not _P(k2_map_file).exists():
+    # Skip if no K2 map (guard against "." or directory paths from unset outputs)
+    if not k2_map_file or not _P(k2_map_file).is_file():
         return ""
 
     import nibabel as nib
