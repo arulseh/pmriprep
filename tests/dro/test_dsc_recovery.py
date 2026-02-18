@@ -10,7 +10,9 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pmriprep.models.dsc.bayesian import fit_dsc_model
 from pmriprep.models.dsc.cpi import CPIModel, _fit_cpi_simple
+from pmriprep.models.dsc.vascular import VascularModel
 from pmriprep.utils.dsc_deconvolution import (
     svd_deconvolve_circulant,
     svd_deconvolve_oscillation,
@@ -311,6 +313,151 @@ class TestCPIRecovery:
 
         _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
         _assert_param_recovery(recovered_mtt, mtt, mtt_tol, param_name="MTT")
+
+
+# =============================================================================
+# Vascular Model Recovery
+# =============================================================================
+
+# (cbf, alpha, beta, delay)
+VASCULAR_PARAMS = [
+    pytest.param(60.0, 3.0, 1.5, 0.0, id="normal_gm"),
+    pytest.param(25.0, 4.0, 1.5, 0.0, id="normal_wm"),
+    pytest.param(100.0, 2.0, 3.0, 0.0, id="tumor"),
+    pytest.param(15.0, 3.5, 2.0, 0.0, id="low_flow"),
+    pytest.param(60.0, 3.0, 1.5, 3.0, id="delayed"),
+]
+
+# (noise_fraction, cbf_tol, mtt_tol)
+# CBF and MTT tolerances (relative). MAP uses informative priors, so
+# at high noise the prior (CBF mean ~55) pulls low-flow estimates upward.
+# The low_flow combo (CBF=15) is xfailed at high noise because the prior
+# overwhelms the data — that tests prior behavior, not fitting quality.
+# High-noise tolerances cover normal_wm (CBF=25, ~25-35% error).
+VASCULAR_NOISE_LEVELS = [
+    pytest.param(0.0, 0.05, 0.05, id="zero"),
+    pytest.param(0.02, 0.15, 0.20, id="low"),
+    pytest.param(0.05, 0.25, 0.35, id="medium"),
+    pytest.param(0.10, 0.40, 0.45, id="high"),
+]
+
+
+def _make_vascular_test_data(
+    cbf: float,
+    alpha: float,
+    beta: float,
+    delay: float,
+    noise_frac: float = 0.0,
+    n_timepoints: int = 60,
+    dt_sec: float = 1.5,
+    baseline_frames: int = 10,
+    seed: int = 42,
+) -> Tuple[
+    npt.NDArray[np.floating],
+    npt.NDArray[np.floating],
+    npt.NDArray[np.floating],
+]:
+    """Generate vascular model test data with known parameters.
+
+    Uses VascularModel.tissue_curve() for data generation (FFT convolution),
+    ensuring a true round-trip test with the MAP fitter.
+
+    Args:
+        cbf: Cerebral blood flow (mL/100g/min).
+        alpha: Gamma shape parameter.
+        beta: Gamma scale parameter (seconds).
+        delay: Bolus arrival delay (seconds).
+        noise_frac: Noise as fraction of peak concentration.
+        n_timepoints: Number of time points.
+        dt_sec: Time step in seconds.
+        baseline_frames: Number of pre-bolus baseline frames.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        Tuple of (tissue_concentration, aif, time_sec).
+    """
+    aif, time_sec = generate_dsc_aif_dro(
+        n_timepoints=n_timepoints,
+        dt_sec=dt_sec,
+        baseline_frames=baseline_frames,
+        peak_delta_r2=40.0,
+    )
+
+    model = VascularModel()
+    tissue = model.tissue_curve([cbf, alpha, beta, delay], aif, time_sec)
+
+    if noise_frac > 0:
+        peak = float(np.max(np.abs(tissue)))
+        if peak > 0:
+            tissue = add_gaussian_noise(tissue, noise_frac * peak, seed=seed)
+
+    return tissue, aif, time_sec
+
+
+class TestVascularRecovery:
+    """Test vascular (gamma-variate) model parameter recovery via MAP.
+
+    The vascular model uses a gamma distribution of transit times
+    (Mouridsen et al., 2006). We test recovery of CBF and MTT (= alpha * beta).
+    Alpha and beta are coupled and NOT asserted separately.
+
+    For the delayed parameter combination, we also check delay recovery.
+    """
+
+    @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", VASCULAR_NOISE_LEVELS)
+    @pytest.mark.parametrize("cbf,alpha,beta,delay", VASCULAR_PARAMS)
+    def test_vascular(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        delay: float,
+        noise_frac: float,
+        cbf_tol: float,
+        mtt_tol: float,
+    ) -> None:
+        """Test vascular model recovery of CBF and MTT."""
+        # CBF=15 is near the 2.5th percentile of the prior N(55, 22.5^2),
+        # so at 10% noise the prior overwhelms the data — tests prior
+        # behavior, not fitting quality.
+        if cbf < 20 and noise_frac >= 0.10:
+            pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
+
+        tissue, aif, time_sec = _make_vascular_test_data(
+            cbf, alpha, beta, delay, noise_frac
+        )
+
+        model = VascularModel()
+        # Provide noise_std to avoid zero-noise baseline estimation (std=0
+        # gets clamped to 1e-7, making the likelihood overwhelm gradients).
+        # Use 1% of peak as a reasonable noise floor for the optimizer.
+        peak = float(np.max(np.abs(tissue)))
+        noise_std = max(noise_frac * peak, 0.01 * peak) if peak > 0 else 1.0
+        result = fit_dsc_model(
+            model, tissue, aif, time_sec, method="map",
+            compute_uncertainties=False, noise_std=noise_std,
+        )
+        assert result is not None, "Vascular MAP fit returned None"
+
+        # Extract CBF directly from result
+        recovered_cbf = result.parameters["cbf"]
+        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
+
+        # Derive MTT from fitted alpha and beta
+        fitted_params = model.dict_to_params(result.parameters)
+        derived = model.compute_derived_parameters(fitted_params)
+        recovered_mtt = derived["mtt"]
+        true_mtt = alpha * beta
+        _assert_param_recovery(recovered_mtt, true_mtt, mtt_tol, param_name="MTT")
+
+        # For delayed combo, also check delay recovery
+        if delay > 0:
+            dt = float(time_sec[1] - time_sec[0])
+            recovered_delay = result.parameters["delay"]
+            assert abs(recovered_delay - delay) < 1.5 * dt, (
+                f"Delay: |{recovered_delay:.3f} - {delay:.3f}| = "
+                f"{abs(recovered_delay - delay):.3f} >= {1.5 * dt:.3f}"
+            )
 
 
 # =============================================================================
