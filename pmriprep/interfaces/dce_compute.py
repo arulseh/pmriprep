@@ -1031,19 +1031,6 @@ class ComputeDCEMaps(BaseInterface):
                     constraint_mode = ConstraintMode.SOFT
                     constraint_vp_uncertainty = 0.2
 
-                # Bayesian (MAP/MCMC): hard constraint bypasses the
-                # Bayesian fitter and uses L-BFGS-B, which converges
-                # non-enhancing voxels to exact bounds (Ktrans=0.0)
-                # triggering mass post-fit rejection. SOFT uses the
-                # Bayesian fitter with an informative DSC prior on vp.
-                if (
-                    str(self.inputs.bayesian) != "none"
-                    and constraint_mode == ConstraintMode.HARD
-                    and str(self.inputs.constraint_mode) == "auto"
-                ):
-                    constraint_mode = ConstraintMode.SOFT
-                    constraint_vp_uncertainty = 0.2
-
                 # Scale mismatch check: if vp*Cp overshoots tissue
                 # concentration in many voxels, the hard constraint is
                 # incompatible (e.g., DSC/DCE AIF scale differences,
@@ -1094,6 +1081,19 @@ class ComputeDCEMaps(BaseInterface):
                                     "median_vp": median_vp,
                                     "action": "downgrade_to_skip",
                                 }
+
+                # Bayesian (MAP/MCMC): hard constraint bypasses the
+                # Bayesian fitter and uses L-BFGS-B, which converges
+                # non-enhancing voxels to exact bounds (Ktrans=0.0)
+                # triggering mass post-fit rejection. SOFT uses the
+                # Bayesian fitter with an informative DSC prior on vp.
+                if (
+                    str(self.inputs.bayesian) != "none"
+                    and constraint_mode == ConstraintMode.HARD
+                    and str(self.inputs.constraint_mode) == "auto"
+                ):
+                    constraint_mode = ConstraintMode.SOFT
+                    constraint_vp_uncertainty = 0.2
             except Exception as exc:
                 constraint_qc = {
                     "mode": "skip",

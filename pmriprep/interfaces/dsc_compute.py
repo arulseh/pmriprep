@@ -1436,6 +1436,18 @@ class ComputeDSCMaps(BaseInterface):
         bayesian = str(self.inputs.bayesian)
         mcmc_samples = int(self.inputs.mcmc_samples)
         use_gpu = bool(self.inputs.use_gpu)
+
+        # SVD methods are direct matrix decompositions — bayesian inference
+        # only applies to parametric fitting (cpi, vascular).
+        if method in ("sSVD", "cSVD", "oSVD", "tikhonov") and bayesian != "none":
+            logger.warning(
+                "bayesian='%s' has no effect with SVD-based method '%s'. "
+                "Bayesian inference is only supported for parametric methods "
+                "(cpi, vascular). Proceeding with standard %s deconvolution.",
+                bayesian, method, method,
+            )
+            bayesian = "none"
+
         baseline_frames = int(self.inputs.baseline_frames)
         tail_frames = int(self.inputs.tail_frames)
 

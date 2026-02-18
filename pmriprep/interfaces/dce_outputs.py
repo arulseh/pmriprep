@@ -5,6 +5,7 @@ outputs with BIDS-compliant filenames, JSON sidecars, and QC files.
 """
 
 import json
+import logging
 import shutil
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
     isdefined,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
@@ -211,6 +214,13 @@ class DCEDerivativeWriter(BaseInterface):
         stats_dir = ses_dir / "stats"
 
         perf_dir.mkdir(parents=True, exist_ok=True)
+
+        # Remove stale model-specific files from previous runs
+        # (model=auto may resolve to a different model across runs)
+        for stale in perf_dir.glob("*_model-*"):
+            if f"_{model_entity}_" not in stale.name:
+                logger.info("Removing stale output: %s", stale.name)
+                stale.unlink()
 
         # Build base sidecar from config
         base_sidecar = self._build_base_sidecar(bids_dir)
