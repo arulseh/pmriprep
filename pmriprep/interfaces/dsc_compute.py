@@ -1818,9 +1818,16 @@ class ComputeDSCMaps(BaseInterface):
         if rttp is not None:
             self._results["out_rttp"] = _save_map(rttp, "_rttp")
 
-        # K2 map (recomputed or pass-through)
+        # K2 map (recomputed or pass-through) — always set
         if k2_map_out_path is not None:
             self._results["out_k2"] = k2_map_out_path
+        else:
+            # No K2 available — save a zeros map so downstream nodes always get a file
+            k2_zeros = np.zeros(spatial_shape, dtype=np.float32)
+            k2_fallback_path = self._gen_outfilename("_k2")
+            k2_fallback_img = nib.Nifti1Image(k2_zeros, affine, header)  # type: ignore[attr-defined]
+            nib.save(k2_fallback_img, k2_fallback_path)  # type: ignore[attr-defined]
+            self._results["out_k2"] = k2_fallback_path
 
         # Save delay map if cSVD
         if delay is not None:

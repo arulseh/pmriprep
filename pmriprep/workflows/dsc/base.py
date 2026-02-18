@@ -405,7 +405,6 @@ def _detect_and_correct_preload(
     field_strength,
     tr,
     preload_detected,
-    save_k2_map,
     signal_file=None,
     baseline_frames=5,
 ):
@@ -421,7 +420,6 @@ def _detect_and_correct_preload(
         field_strength: Magnetic field strength in Tesla.
         tr: Repetition time in seconds.
         preload_detected: User-specified preload flag (True/False/None for auto).
-        save_k2_map: Whether to save the K2 leakage map.
 
     Returns:
         Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
@@ -524,8 +522,8 @@ def _detect_and_correct_preload(
     corrected_img = nib.Nifti1Image(corrected_conc.astype(np.float32), affine, header)  # type: ignore[attr-defined]
     nib.save(corrected_img, corrected_file)  # type: ignore[attr-defined]
 
-    # Save K2 map if requested
-    if save_k2_map and k2_map is not None:
+    # Always save K2 map (needed for leakage QC and downstream nodes)
+    if k2_map is not None:
         k2_map_file = str(out_dir / f"{base}_k2map.nii.gz")
         k2_img = nib.Nifti1Image(k2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
         nib.save(k2_img, k2_map_file)  # type: ignore[attr-defined]
@@ -1443,8 +1441,8 @@ def init_dsc_preproc_wf(
         Path to detected/used AIF curve.
     outputnode.aif_mask : str
         Path to AIF detection mask.
-    outputnode.k2_map : str, optional
-        Path to K2 leakage correction map (if save_k2_map=True).
+    outputnode.k2_map : str
+        Path to K2 leakage correction map.
     outputnode.ncbv_map, outputnode.ncbf_map : str, optional
         Normalized CBV/CBF maps (if NAWM mask available).
     outputnode.smooth_quant_indep, outputnode.smooth_rel, outputnode.smooth_abs : dict, optional
@@ -1750,7 +1748,6 @@ def init_dsc_preproc_wf(
                 "field_strength",
                 "tr",
                 "preload_detected",
-                "save_k2_map",
                 "signal_file",
                 "baseline_frames",
             ],
@@ -1760,7 +1757,6 @@ def init_dsc_preproc_wf(
         name="preload_correct",
     )
     preload_correct.inputs.preload_detected = config.preload_detected if config.preload_detected is not None else None
-    preload_correct.inputs.save_k2_map = config.save_k2_map
     preload_correct.inputs.baseline_frames = config.pre_bolus
 
     # -------------------------------------------------------------------
@@ -1841,7 +1837,7 @@ def init_dsc_preproc_wf(
     )
     # Set the arterial atlas as input (bundled with pmriprep, FSL MNI152 space)
     try:
-        transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm", "dil3"))
+        transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm", "dil2"))
     except FileNotFoundError:
         import warnings
         warnings.warn(

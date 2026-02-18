@@ -966,6 +966,7 @@ class AIFDetection(BaseInterface):
         criteria: str,
         tissue_ttp_frame: float,
         n_top: int = 10,
+        atlas_mask: Optional[npt.NDArray[Any]] = None,
     ) -> tuple[list[tuple[float, tuple[int, int, int], dict[str, Any]]], int]:
         """Score pre-filtered candidates and return top N.
 
@@ -1020,6 +1021,14 @@ class AIFDetection(BaseInterface):
                     cost += 10.0  # Peaks 0-2 frames after tissue
                 elif frames_before_tissue < 2:
                     cost += 2.0  # Mild penalty: close to tissue
+
+            # Atlas-preference penalty — prefer known arterial territories
+            if (
+                np.isfinite(cost)
+                and atlas_mask is not None
+                and not atlas_mask[ix[0], ix[1], ix[2]]
+            ):
+                cost += 10.0
 
             if np.isfinite(cost):
                 scored.append((cost, ix, m))
@@ -1658,6 +1667,7 @@ class AIFDetection(BaseInterface):
                     cands, conc_data, signal_data, peak_map,
                     brain_mask, tr, baseline_frames, crit,
                     tissue_ttp, n_top=n_candidates,
+                    atlas_mask=atlas_mask if roi is None else None,
                 )
                 if not scored:
                     continue

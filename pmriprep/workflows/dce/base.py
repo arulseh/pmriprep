@@ -670,7 +670,7 @@ def init_dce_preproc_wf(
 
     # Load arterial atlas (bundled with pmriprep, FSL MNI152 space)
     try:
-        transform_atlas_to_dce.inputs.atlas_file = str(get_arterial_atlas("2mm", "dil3"))
+        transform_atlas_to_dce.inputs.atlas_file = str(get_arterial_atlas("2mm", "dil2"))
     except FileNotFoundError:
         import warnings
         warnings.warn(
