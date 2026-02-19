@@ -152,7 +152,7 @@ def calculate_framewise_displacement(
     # Prepend 0 for the first frame (no previous frame to compare)
     fd = np.concatenate([[0.0], fd])
 
-    return fd
+    return fd  # type: ignore[no-any-return]
 
 
 def _compute_brain_slice_indices(
@@ -681,7 +681,7 @@ def plot_motion_qc(
     elif subject_id or session_id:
         fig.suptitle(qc_figure_title(subject_id, session_id, "Motion QC"), fontsize=11)
 
-    fig.tight_layout(rect=[0, 0.12, 1, 0.985])
+    fig.tight_layout(rect=(0, 0.12, 1, 0.985))
 
     # Save figure
     output_path = Path(output_path)

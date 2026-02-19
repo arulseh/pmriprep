@@ -1548,7 +1548,7 @@ class ComputeDSCMaps(BaseInterface):
             and isdefined(self.inputs.fd_values)
             and self.inputs.fd_values
         ):
-            voxel_dims = header.get_zooms()[:3]
+            voxel_dims = header.get_zooms()[:3]  # type: ignore[attr-defined]
             min_voxel_dim = float(min(voxel_dims))
             bolus_frame = int(self.inputs.baseline_frames)
             motion_weights = _compute_dsc_motion_weights(
@@ -1649,7 +1649,7 @@ class ComputeDSCMaps(BaseInterface):
             nawm_ttp = nawm_ttp[np.isfinite(nawm_ttp)]
             if len(nawm_ttp) > 100:
                 rttp = ttp - np.median(nawm_ttp)
-                rttp = np.where(np.isnan(ttp), np.nan, rttp)
+                rttp = np.where(np.isnan(ttp), np.nan, rttp)  # type: ignore[arg-type]
 
         # -----------------------------------------------------------
         # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
@@ -1930,4 +1930,4 @@ class ComputeDSCMaps(BaseInterface):
         """
         if hasattr(self, "_results"):
             return dict(self._results)
-        return self.output_spec().get()  # type: ignore[misc]
+        return self.output_spec().get()  # type: ignore[misc,no-any-return]

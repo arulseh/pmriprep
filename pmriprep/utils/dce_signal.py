@@ -83,7 +83,7 @@ def ernst_signal_model(
 
     signal = s0 * sin_alpha * (1.0 - e1) / (1.0 - cos_alpha * e1)
 
-    return signal
+    return signal  # type: ignore[no-any-return]
 
 
 def solve_e1_from_signal_ratio(
@@ -153,7 +153,7 @@ def solve_e1_from_signal_ratio(
     # Use EPSILON_E1_UPPER (1e-4) for upper bound to preserve long-T1 voxels
     e1_clipped = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
 
-    return e1_clipped
+    return e1_clipped  # type: ignore[no-any-return]
 
 
 def e1_to_r1(
@@ -181,7 +181,7 @@ def e1_to_r1(
 
     r1 = -np.log(e1_safe) / tr
 
-    return r1
+    return r1  # type: ignore[no-any-return]
 
 
 def signal_to_concentration(
@@ -337,7 +337,7 @@ def signal_to_concentration(
         t1_seconds = t1_map / 1000.0
     else:
         # Use default T1 value
-        t1_seconds = t1_default_ms / 1000.0
+        t1_seconds = t1_default_ms / 1000.0  # type: ignore[assignment]
 
     # Ensure T1 is positive
     if isinstance(t1_seconds, np.ndarray):

@@ -98,7 +98,7 @@ def signal_to_concentration(
     # Note: negative of log because signal decreases with contrast
     delta_r2_star = -np.log(signal_ratio_clipped) / te
 
-    return delta_r2_star
+    return delta_r2_star  # type: ignore[no-any-return]
 
 
 def signal_to_delta_r2_star(
@@ -142,7 +142,7 @@ def get_baseline_signal(
     if signal.ndim == 1:
         return float(np.mean(signal[:baseline_frames]))
     elif signal.ndim == 4:
-        return np.mean(signal[..., :baseline_frames], axis=-1)
+        return np.mean(signal[..., :baseline_frames], axis=-1)  # type: ignore[no-any-return]
     else:
         raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
 
@@ -350,7 +350,7 @@ def compute_psr(
     if signal.ndim == 1:
         return float(psr)
     else:
-        return psr
+        return psr  # type: ignore[no-any-return]
 
 
 def compute_psr_legacy(
@@ -391,7 +391,7 @@ def compute_psr_legacy(
         s1 = np.mean(signal[..., -tail_frames:], axis=-1)
         denom = s0 - s_min
         denom_safe = np.maximum(np.abs(denom), EPSILON_SIGNAL)
-        denom_safe = np.where(denom >= 0, denom_safe, -denom_safe)
+        denom_safe = np.where(denom >= 0, denom_safe, -denom_safe)  # type: ignore[assignment]
         return 100.0 * (s1 - s_min) / denom_safe
     else:
         raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
@@ -483,7 +483,7 @@ def compute_peak_height(
     if signal.ndim == 1:
         return float(ph)
     else:
-        return ph
+        return ph  # type: ignore[no-any-return]
 
 
 def compute_peak_height_legacy(
@@ -519,7 +519,7 @@ def compute_peak_height_legacy(
         s0 = np.mean(signal[..., :baseline_frames], axis=-1)
         s_min = np.min(signal[..., baseline_frames:], axis=-1)
         s0_safe = np.maximum(np.abs(s0), EPSILON_SIGNAL)
-        s0_safe = np.where(s0 >= 0, s0_safe, -s0_safe)
+        s0_safe = np.where(s0 >= 0, s0_safe, -s0_safe)  # type: ignore[assignment]
         return 100.0 * (s0 - s_min) / s0_safe
     else:
         raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
@@ -548,7 +548,7 @@ def compute_peak_height_conc(
     s_ratio = np.clip(signal / s0_safe, EPSILON_SIGNAL, None)
     delta_r2star = -np.log(s_ratio) / te_seconds
     ph = np.max(delta_r2star, axis=-1)
-    return np.clip(ph, 0.0, None)
+    return np.clip(ph, 0.0, None)  # type: ignore[no-any-return]
 
 
 def compute_ttp_legacy(
@@ -579,7 +579,7 @@ def compute_ttp_legacy(
         ttp = np.float64((pre_bolus_frames + peak_idx) * dt)
     else:
         raise ValueError(f"Concentration must be 1D or 4D, got {concentration.ndim}D")
-    return np.clip(ttp, 0.0, 60.0)
+    return np.clip(ttp, 0.0, 60.0)  # type: ignore[no-any-return]
 
 
 def find_nawm_mask(

@@ -276,7 +276,7 @@ def extract_label_mask(
     Returns:
         Boolean 3D array where mask_data == label.
     """
-    return mask_data == label
+    return mask_data == label  # type: ignore[no-any-return]
 
 
 def compute_region_volume(

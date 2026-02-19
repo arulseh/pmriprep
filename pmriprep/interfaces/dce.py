@@ -447,11 +447,11 @@ class B1Mapping(SimpleInterface):
 
             # Coregister TR2 → TR1 if affines differ (Gap 5, matches perf-plus).
             # Separate 3D AFI acquisitions may have slight inter-scan motion.
-            coreg_info: dict[str, Any] = {"coregistered": False}
+            coreg_info: dict[str, Any] = {"coregistered": False}  # type: ignore[no-redef]
             s1_original = s1.copy()
             s2_original = s2.copy()
 
-            affine_diff = float(np.abs(tr1_img.affine - tr2_img.affine).max())
+            affine_diff = float(np.abs(tr1_img.affine - tr2_img.affine).max())  # type: ignore[attr-defined]
             if affine_diff > 1e-4:
                 import subprocess as _sp
 
@@ -471,7 +471,7 @@ class B1Mapping(SimpleInterface):
                 ]
                 try:
                     _sp.run(cmd, check=True, capture_output=True)
-                    s2 = nib.load(coreg_out).get_fdata().astype(np.float64)
+                    s2 = nib.load(coreg_out).get_fdata().astype(np.float64)  # type: ignore[attr-defined]
                     logger.info(
                         "Coregistered AFI TR2 → TR1 (affine diff=%.4f)", affine_diff,
                     )
@@ -1192,7 +1192,7 @@ class T1Mapping(SimpleInterface):
         if isdefined(self.inputs.brain_mask) and self.inputs.brain_mask:
             mask_img = nib.load(self.inputs.brain_mask)
             # Resample mask to VFA space if dimensions differ (e.g. T1w MPRAGE vs VFA VIBE)
-            if mask_img.shape[:3] != shape:
+            if mask_img.shape[:3] != shape:  # type: ignore[attr-defined]
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
 
                 mask_img = resample_to_img(
@@ -1230,7 +1230,7 @@ class T1Mapping(SimpleInterface):
         if isdefined(self.inputs.csf_probseg) and self.inputs.csf_probseg:
             csf_img = nib.load(self.inputs.csf_probseg)
             # Resample CSF probseg to VFA space if needed
-            if csf_img.shape[:3] != shape:
+            if csf_img.shape[:3] != shape:  # type: ignore[attr-defined]
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
 
                 csf_img = resample_to_img(
@@ -2822,9 +2822,9 @@ class DCEBrainExtract(SimpleInterface):
             # Derive mask by binarizing the brain-extracted output
             import nibabel as nib
             brain_img = nib.load(out_brain)
-            brain_data = brain_img.get_fdata()
+            brain_data = brain_img.get_fdata()  # type: ignore[attr-defined]
             mask_data = (brain_data > 0).astype(np.uint8)
-            mask_img = nib.Nifti1Image(mask_data, brain_img.affine, brain_img.header)
+            mask_img = nib.Nifti1Image(mask_data, brain_img.affine, brain_img.header)  # type: ignore[attr-defined]
             nib.save(mask_img, out_mask)
 
             return True
@@ -3399,7 +3399,7 @@ class DCERegistration(SimpleInterface):
                 # Calculate kernel radius in voxels
                 lesion_img = nib.load(self.inputs.lesion_mask)
                 header = lesion_img.header
-                voxel_sizes = header.get_zooms()[:3]
+                voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
                 mean_vox_size = float(np.mean(voxel_sizes))
                 kernel_radius = max(1.0, lesion_dilation / mean_vox_size)
 
@@ -3799,8 +3799,8 @@ class DCERegistration(SimpleInterface):
             reg_img = nib.load(registered_file)
             ref_img = nib.load(reference_file)
 
-            reg_data = reg_img.get_fdata()
-            ref_data = ref_img.get_fdata()
+            reg_data = reg_img.get_fdata()  # type: ignore[attr-defined]
+            ref_data = ref_img.get_fdata()  # type: ignore[attr-defined]
 
             # Create masks by thresholding at percentile of positive values
             reg_nonzero = reg_data[reg_data > 0]
@@ -3898,7 +3898,7 @@ class DCERegistration(SimpleInterface):
                 try:
                     # Create a rough brain mask from registered T1w by thresholding
                     reg_img = nib.load(registered_t1w)
-                    reg_data = reg_img.get_fdata()
+                    reg_data = reg_img.get_fdata()  # type: ignore[attr-defined]
 
                     # Threshold at percentile of positive values
                     reg_positive = reg_data[reg_data > 0]
@@ -3910,7 +3910,7 @@ class DCERegistration(SimpleInterface):
 
                         # Load the provided brain mask
                         mask_img = nib.load(mask_path)
-                        ref_mask = mask_img.get_fdata() > 0.5
+                        ref_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
                         # Compute DICE between the two masks
                         dice = calculate_dice(

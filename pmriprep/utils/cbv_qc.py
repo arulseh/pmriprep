@@ -358,14 +358,14 @@ def assess_cbv_for_dce(
         if cbv_path is None:
             raise ValueError("Either cbv_path or cbv_data must be provided")
         cbv_img = nib.load(cbv_path)
-        cbv_data = np.asarray(cbv_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+        cbv_data = np.asarray(cbv_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined,arg-type]
 
     # Load brain mask if path provided
     if brain_mask is None:
         if brain_mask_path is None:
             raise ValueError("Either brain_mask_path or brain_mask must be provided")
         mask_img = nib.load(brain_mask_path)
-        brain_mask = np.asarray(mask_img.get_fdata(), dtype=bool)  # type: ignore[attr-defined]
+        brain_mask = np.asarray(mask_img.get_fdata(), dtype=np.bool_)  # type: ignore[attr-defined]
 
     # Read CNR if path provided
     if cnr_fraction is None:

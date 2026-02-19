@@ -651,11 +651,11 @@ def discover_session_data(
         if afi_info["afi_4d_file"] is not None:
             modalities.afi_4d_file = Path(str(afi_info["afi_4d_file"]))
         if afi_info["afi_tr1_ms"] is not None:
-            modalities.afi_tr1_ms = float(afi_info["afi_tr1_ms"])
+            modalities.afi_tr1_ms = float(afi_info["afi_tr1_ms"])  # type: ignore[arg-type]
         if afi_info["afi_tr2_ms"] is not None:
-            modalities.afi_tr2_ms = float(afi_info["afi_tr2_ms"])
+            modalities.afi_tr2_ms = float(afi_info["afi_tr2_ms"])  # type: ignore[arg-type]
         if afi_info.get("afi_flip_angle") is not None:
-            modalities.afi_flip_angle = float(afi_info["afi_flip_angle"])
+            modalities.afi_flip_angle = float(afi_info["afi_flip_angle"])  # type: ignore[arg-type]
 
     # Find DWI
     modalities.dwi = _find_dwi(bids_path, subject, session)

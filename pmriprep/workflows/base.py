@@ -600,8 +600,8 @@ def _find_previous_dsc_outputs(
     if qc_json.exists():
         try:
             import json
-            with open(qc_json) as f:
-                qc_data = json.load(f)
+            with open(qc_json) as fh:
+                qc_data = json.load(fh)
             if "aif" in qc_data:
                 outputs["aif_qc"] = qc_data["aif"]
         except Exception:

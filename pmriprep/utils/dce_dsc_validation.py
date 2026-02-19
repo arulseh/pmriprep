@@ -180,7 +180,7 @@ def calculate_vp_cbv_ratio(
     # Avoid division by zero
     cbv_safe = np.maximum(cbv, MIN_CBV_FOR_VALIDATION)
     ratio = (vp * 100.0) / cbv_safe
-    return ratio
+    return ratio  # type: ignore[no-any-return]
 
 
 def get_expected_ratio(
@@ -428,11 +428,11 @@ def validate_vp_cbv_from_files(
 
     vp_data = np.asarray(vp_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
     cbv_data = np.asarray(cbv_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
-    mask = np.asarray(mask_img.get_fdata(), dtype=bool)  # type: ignore[attr-defined]
+    mask = np.asarray(mask_img.get_fdata(), dtype=np.bool_)  # type: ignore[attr-defined]
 
     return validate_vp_cbv(
-        vp_data=vp_data,
-        cbv_data=cbv_data,
+        vp_data=vp_data,  # type: ignore[arg-type]
+        cbv_data=cbv_data,  # type: ignore[arg-type]
         mask=mask,
         hematocrit=hematocrit,
         tissue_density=tissue_density,

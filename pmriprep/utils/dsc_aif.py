@@ -834,7 +834,7 @@ def compute_distance_map(
     # Compute distance with voxel spacing
     distance = ndimage.distance_transform_edt(inverted, sampling=voxel_sizes)
 
-    return distance
+    return distance  # type: ignore[no-any-return]
 
 
 def exclude_near_lesion(
@@ -1383,7 +1383,7 @@ def _gamma_variate_residual(
     if weights is not None:
         residuals = residuals * weights
 
-    return residuals
+    return residuals  # type: ignore[no-any-return]
 
 
 def _estimate_initial_params(

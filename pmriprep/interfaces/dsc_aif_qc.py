@@ -184,7 +184,7 @@ class AIFQCPlot(BaseInterface):
         outputs = self.output_spec().get()  # type: ignore[misc]
         if hasattr(self, "_results"):
             outputs.update(self._results)
-        return outputs
+        return outputs  # type: ignore[no-any-return]
 
     # -----------------------------------------------------------------
     # Plot 1: AIF Curve

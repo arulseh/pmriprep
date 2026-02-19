@@ -407,7 +407,7 @@ class AIFDetection(BaseInterface):
             if not np.any(search):
                 search = pre_lesion
 
-        return search
+        return search  # type: ignore[no-any-return]
 
     # -----------------------------------------------------------------
     # Step 2b: World-coordinate hemisphere methods

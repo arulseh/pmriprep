@@ -688,7 +688,7 @@ class BrainExtraction(CommandLine):
             else:
                 # Linux - let HD-BET auto-detect CUDA
                 return "cpu"
-        return device
+        return device  # type: ignore[no-any-return]
 
     @property
     def cmdline(self) -> str:

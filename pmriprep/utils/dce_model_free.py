@@ -36,7 +36,7 @@ def compute_iauc(
 
     # Trapezoidal integration along last axis
     iauc = np.trapezoid(c_valid, x=t_valid, axis=-1)
-    return np.maximum(iauc, 0.0)
+    return np.maximum(iauc, 0.0)  # type: ignore[no-any-return]
 
 
 def compute_peak_enhancement(
@@ -60,7 +60,7 @@ def compute_peak_enhancement(
     baseline_safe = np.maximum(np.abs(baseline_mean), 1e-9)
     enhancement = (peak - baseline_mean) / baseline_safe * 100.0
 
-    return np.maximum(enhancement, 0.0)
+    return np.maximum(enhancement, 0.0)  # type: ignore[no-any-return]
 
 
 def compute_time_to_peak(
@@ -78,7 +78,7 @@ def compute_time_to_peak(
     """
     peak_indices = np.argmax(concentration, axis=-1)
     ttp_minutes = time_points[peak_indices]
-    return ttp_minutes * 60.0
+    return ttp_minutes * 60.0  # type: ignore[no-any-return]
 
 
 def compute_signal_enhancement_ratio(
@@ -114,4 +114,4 @@ def compute_signal_enhancement_ratio(
     late_safe = np.maximum(np.abs(late_mean), 1e-9)
     ser = early_mean / late_safe
 
-    return ser
+    return ser  # type: ignore[no-any-return]

@@ -233,7 +233,7 @@ def calculate_adc(
     # Clip negative values (can occur from noise)
     adc = np.maximum(adc, EPSILON_ADC)
 
-    return adc
+    return adc  # type: ignore[no-any-return]
 
 
 def calculate_tortuosity(

@@ -155,9 +155,9 @@ def _histogram_match_t1w_to_dsc(
     src_nii = nib.load(t1w_file)
     tpl_nii = nib.load(dsc_brain_file)
     mask_nii = nib.load(brain_mask_file)
-    src_data = src_nii.get_fdata()
-    tpl_data = tpl_nii.get_fdata()
-    mask_data = mask_nii.get_fdata() > 0
+    src_data = src_nii.get_fdata()  # type: ignore[attr-defined]
+    tpl_data = tpl_nii.get_fdata()  # type: ignore[attr-defined]
+    mask_data = mask_nii.get_fdata() > 0  # type: ignore[attr-defined]
     src_brain = src_data * mask_data
     src_mask = src_brain > 0
     tpl_mask = tpl_data > 0
@@ -172,7 +172,7 @@ def _histogram_match_t1w_to_dsc(
 
     out_file = str(Path.cwd() / "t1w_brain_matched.nii.gz")
     nib.save(nib.Nifti1Image(matched.astype(np.float32),
-                              src_nii.affine, src_nii.header), out_file)
+                              src_nii.affine, src_nii.header), out_file)  # type: ignore[attr-defined]
     return out_file
 
 
@@ -1142,9 +1142,9 @@ def _generate_dsc_fit_qc(
 
     # Load CBF map for spatial context panel
     cbf_img = nib.load(cbf_file)
-    cbf_data = cbf_img.get_fdata()
+    cbf_data = cbf_img.get_fdata()  # type: ignore[attr-defined]
     mask_img = nib.load(brain_mask_file)
-    mask_data = mask_img.get_fdata() > 0
+    mask_data = mask_img.get_fdata() > 0  # type: ignore[attr-defined]
 
     out_dir = Path.cwd() / "qc"
     out_dir.mkdir(parents=True, exist_ok=True)

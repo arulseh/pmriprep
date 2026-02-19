@@ -1187,7 +1187,7 @@ class ComputeDCEMaps(BaseInterface):
             and self.inputs.fd_values
             and isdefined(self.inputs.bolus_arrival_frame)
         ):
-            voxel_dims = header.get_zooms()[:3]
+            voxel_dims = header.get_zooms()[:3]  # type: ignore[attr-defined]
             min_voxel_dim = float(min(voxel_dims))
             motion_weights = _compute_motion_weights(
                 fd_values=self.inputs.fd_values,
@@ -1784,4 +1784,4 @@ class ComputeDCEMaps(BaseInterface):
         """
         if hasattr(self, "_results"):
             return dict(self._results)
-        return self.output_spec().get()  # type: ignore[misc]
+        return self.output_spec().get()  # type: ignore[misc,no-any-return]

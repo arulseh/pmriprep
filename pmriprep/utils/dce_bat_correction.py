@@ -176,4 +176,4 @@ def apply_aif_time_shift(
     # Ensure non-negative
     aif_shifted = np.maximum(aif_shifted, 0.0)
 
-    return aif_shifted
+    return aif_shifted  # type: ignore[no-any-return]

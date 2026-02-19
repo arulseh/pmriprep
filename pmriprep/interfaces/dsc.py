@@ -124,7 +124,7 @@ def calculate_rms_displacement(
     all_disp = np.hstack([rot_disp, trans])  # (N, 6)
     rms = np.sqrt(np.mean(all_disp ** 2, axis=1))
 
-    return rms
+    return rms  # type: ignore[no-any-return]
 
 
 class MotionCorrectionInputSpec(CommandLineInputSpec):

@@ -143,7 +143,7 @@ class AnatDerivativeWriter(BaseInterface):
         # ---------------------------------------------------------------
 
         # T1w preprocessed
-        self._copy_nifti(
+        self._copy_nifti(  # type: ignore[call-arg]
             self.inputs.t1w_preproc,
             anat_dir / f"{prefix}_space-T1w_desc-preproc_T1w.nii.gz",
         )
@@ -160,7 +160,7 @@ class AnatDerivativeWriter(BaseInterface):
             )
 
         # Brain mask
-        self._copy_nifti(
+        self._copy_nifti(  # type: ignore[call-arg]
             self.inputs.brain_mask,
             anat_dir / f"{prefix}_space-T1w_desc-brain_mask.nii.gz",
         )
@@ -182,7 +182,7 @@ class AnatDerivativeWriter(BaseInterface):
             "WM": self.inputs.wm_probseg,
         }
         for tissue_type, probseg_path in tissue_map.items():
-            self._copy_nifti(
+            self._copy_nifti(  # type: ignore[call-arg]
                 probseg_path,
                 anat_dir / f"{prefix}_space-T1w_label-{tissue_type}_probseg.nii.gz",
             )
@@ -203,7 +203,7 @@ class AnatDerivativeWriter(BaseInterface):
 
         # Post-contrast T1w
         if self._has_input("t1w_postcon_coreg"):
-            self._copy_nifti(
+            self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.t1w_postcon_coreg,
                 anat_dir / f"{prefix}_ce-GAD_space-T1w_desc-preproc_T1w.nii.gz",
             )
@@ -222,7 +222,7 @@ class AnatDerivativeWriter(BaseInterface):
 
         # T2w
         if self._has_input("t2w_coreg"):
-            self._copy_nifti(
+            self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.t2w_coreg,
                 anat_dir / f"{prefix}_space-T1w_desc-preproc_T2w.nii.gz",
             )
@@ -241,7 +241,7 @@ class AnatDerivativeWriter(BaseInterface):
 
         # FLAIR
         if self._has_input("flair_coreg"):
-            self._copy_nifti(
+            self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.flair_coreg,
                 anat_dir / f"{prefix}_space-T1w_desc-preproc_FLAIR.nii.gz",
             )
@@ -260,7 +260,7 @@ class AnatDerivativeWriter(BaseInterface):
 
         # PDw
         if self._has_input("pdw_coreg"):
-            self._copy_nifti(
+            self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.pdw_coreg,
                 anat_dir / f"{prefix}_space-T1w_desc-preproc_PDw.nii.gz",
             )
@@ -279,7 +279,7 @@ class AnatDerivativeWriter(BaseInterface):
 
         # T1w subtraction
         if self._has_input("t1w_subtraction"):
-            self._copy_nifti(
+            self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.t1w_subtraction,
                 anat_dir / f"{prefix}_space-T1w_desc-subtraction_T1w.nii.gz",
             )
@@ -367,7 +367,7 @@ class AnatDerivativeWriter(BaseInterface):
         outputs = self.output_spec().get()  # type: ignore[misc]
         outputs["out_dir"] = getattr(self, "_out_dir", "")
         outputs["qc_json"] = getattr(self, "_qc_json", "")
-        return outputs
+        return outputs  # type: ignore[no-any-return]
 
     # -------------------------------------------------------------------
     # Helper methods
