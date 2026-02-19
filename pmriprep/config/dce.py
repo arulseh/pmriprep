@@ -51,8 +51,6 @@ class DCEConfig:
         Skip DSC-DCE cross-validation.
     smooth : float
         Smoothing kernel FWHM (mm) for output maps.
-    save_uncertainty : bool
-        Save uncertainty maps from Bayesian inference.
     baseline_frames : int
         Number of baseline frames (0 = auto-detect).
     dose : Literal["half", "full", "double"]
@@ -100,7 +98,6 @@ class DCEConfig:
     no_tortuosity: bool = False
     no_dsc_validation: bool = False
     smooth: float = 0.0  # No smoothing by default
-    save_uncertainty: bool = False
     baseline_frames: int = 0  # 0 = auto-detect
     dose: Literal["half", "full", "double"] = "full"
     tsnr_threshold: float = 0.0  # 0 = no threshold

@@ -157,7 +157,6 @@ dsc:
   n_aif_candidates: 10
   pre_bolus: 5
   save_k2_map: true
-  save_uncertainty: true
   use_gpu: false
 
 # DCE configuration
@@ -168,7 +167,6 @@ dce:
   scale_aif: true
   no_b1: false
   no_t1: false
-  save_uncertainty: true
   use_gpu: false
 
   # Advanced settings
@@ -212,7 +210,6 @@ hdglio:
 | `n_aif_candidates` | int | 10 | Number of AIF candidates |
 | `pre_bolus` | int | 5 | Pre-bolus baseline frames |
 | `save_k2_map` | bool | false | Save K2 leakage map |
-| `save_uncertainty` | bool | false | Save uncertainty maps |
 | `use_gpu` | bool | false | Use GPU acceleration |
 
 #### DCE Options
@@ -225,7 +222,6 @@ hdglio:
 | `scale_aif` | bool | false | Scale AIF to population reference |
 | `no_b1` | bool | false | Skip B1+ mapping |
 | `no_t1` | bool | false | Skip T1 mapping |
-| `save_uncertainty` | bool | false | Save uncertainty maps |
 | `use_gpu` | bool | false | Use GPU acceleration |
 
 ## BIDS Input Requirements

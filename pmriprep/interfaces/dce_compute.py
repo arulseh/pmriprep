@@ -424,11 +424,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Use GPU acceleration when available",
     )
-    save_uncertainty = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Save uncertainty maps from Bayesian inference",
-    )
     save_fitted_curves = traits.Bool(
         False,
         usedefault=True,
@@ -579,8 +574,6 @@ class ComputeDCEMaps(BaseInterface):
         Baseline frames for tSNR calculation (0 = auto-detect). Default: 0.
     use_gpu : bool
         Use GPU acceleration. Default: False.
-    save_uncertainty : bool
-        Save uncertainty maps (Bayesian only). Default: False.
     save_fitted_curves : bool
         Save fitted curves. Default: False.
 
@@ -632,8 +625,8 @@ class ComputeDCEMaps(BaseInterface):
     - Ktrans and kep are in min⁻¹
     - Concentration is in mM (millimolar)
 
-    For Bayesian methods (map, mcmc), uncertainty maps are also generated
-    when save_uncertainty=True.
+    For Bayesian methods (map, mcmc), uncertainty maps are automatically
+    generated.
 
     The tSNR threshold can exclude noisy voxels from fitting. tSNR is
     computed as mean(baseline) / std(baseline). A typical threshold is 4.0.
@@ -897,7 +890,6 @@ class ComputeDCEMaps(BaseInterface):
         bayesian = str(self.inputs.bayesian)
         mcmc_samples = int(self.inputs.mcmc_samples)
         use_gpu = bool(self.inputs.use_gpu)
-        save_uncertainty = bool(self.inputs.save_uncertainty)
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
 
         # =====================================================================
@@ -1339,7 +1331,7 @@ class ComputeDCEMaps(BaseInterface):
                 e_map[x, y, z] = params.get("E", 0.0)
 
             # Uncertainty (Bayesian only)
-            if save_uncertainty and res["uncertainties"]:
+            if bayesian != "none" and res["uncertainties"]:
                 ktrans_std[x, y, z] = res["uncertainties"].get("Ktrans", 0.0)
                 if self._has_ve(model_name):
                     ve_std[x, y, z] = res["uncertainties"].get("ve", 0.0)
@@ -1513,7 +1505,7 @@ class ComputeDCEMaps(BaseInterface):
             self._results["out_e"] = out_e
 
         # Save uncertainty maps
-        if save_uncertainty and bayesian != "none":
+        if bayesian != "none":
             out_ktrans_std = self._gen_outfilename("_Ktrans_std")
 
             ktrans_std_img = nib.Nifti1Image(ktrans_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
