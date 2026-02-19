@@ -2883,11 +2883,13 @@ def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
     return results
 
 
-def _build_pk_map_dict(ktrans, ve, vp, kep):
+def _build_pk_map_dict(ktrans=None, ve=None, vp=None, kep=None):
     """Build dictionary of PK maps for smoothing."""
     from nipype.interfaces.base import isdefined
 
-    d = {"ktrans": ktrans}
+    d = {}
+    if ktrans and isdefined(ktrans):
+        d["ktrans"] = ktrans
     if ve and isdefined(ve):
         d["ve"] = ve
     if kep and isdefined(kep):
@@ -2897,24 +2899,33 @@ def _build_pk_map_dict(ktrans, ve, vp, kep):
     return d
 
 
-def _build_model_free_map_dict(iauc60, iauc90, iauc120, peak, ttp, ser):
+def _build_model_free_map_dict(
+    iauc60=None, iauc90=None, iauc120=None, peak=None, ttp=None, ser=None,
+):
     """Build dictionary of model-free maps for smoothing.
 
     Note: TTP is excluded from smoothing because it is a discrete timing
     parameter (quantized to TR). Smoothing creates non-physical intermediate
     time values. The ttp parameter is accepted but not included in the dict.
     """
-    return {
-        "iauc60": iauc60,
-        "iauc90": iauc90,
-        "iauc120": iauc120,
-        "peak_enhancement": peak,
-        "ser": ser,
-    }
+    from nipype.interfaces.base import isdefined
+
+    d = {}
+    if iauc60 and isdefined(iauc60):
+        d["iauc60"] = iauc60
+    if iauc90 and isdefined(iauc90):
+        d["iauc90"] = iauc90
+    if iauc120 and isdefined(iauc120):
+        d["iauc120"] = iauc120
+    if peak and isdefined(peak):
+        d["peak_enhancement"] = peak
+    if ser and isdefined(ser):
+        d["ser"] = ser
+    return d
 
 
 def _build_uncertainty_map_dict(
-    ktrans_std, ve_std, vp_std, fp_std, ps_std,
+    ktrans_std=None, ve_std=None, vp_std=None, fp_std=None, ps_std=None,
 ):
     """Build dictionary of uncertainty std maps for smoothing.
 
@@ -2939,7 +2950,7 @@ def _build_uncertainty_map_dict(
     return d
 
 
-def _build_tortuosity_map_dict(ktrans_tortuosity_corrected):
+def _build_tortuosity_map_dict(ktrans_tortuosity_corrected=None):
     """Build dictionary for tortuosity-corrected Ktrans for smoothing."""
     from nipype.interfaces.base import isdefined
 
