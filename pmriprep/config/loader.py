@@ -243,6 +243,7 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     # Type coerce numeric fields
     _coerce_int(dce_dict, "baseline_frames")
     _coerce_int(dce_dict, "mcmc_samples")
+    _coerce_int(dce_dict, "n_aif_candidates")
     _coerce_int(dce_dict, "num_processes")
     _coerce_float(dce_dict, "smooth")
     _coerce_float(dce_dict, "lesion_distance")

@@ -254,11 +254,6 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
     )
-    prefer_contralateral = traits.Bool(
-        True,
-        usedefault=True,
-        desc="Prefer contralateral AIF candidates when lesion present",
-    )
     gamma_fit = traits.Bool(
         False,
         usedefault=True,
@@ -472,18 +467,17 @@ class AIFDetection(BaseInterface):
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         affine: npt.NDArray[Any],
         tumor_laterality: str,
-        prefer_contralateral: bool = True,
     ) -> tuple[
         list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         str,
         int,
         int,
     ]:
-        """Filter scored candidates by hemisphere preference.
+        """Apply soft cost penalty to ipsilateral candidates.
 
-        For non-bilateral tumors, prefers contralateral hemisphere
-        candidates.  Falls back to ipsilateral if no contralateral
-        candidates are available.
+        For non-bilateral tumors, adds a cost penalty to ipsilateral
+        candidates rather than hard-filtering them. This preserves
+        bilateral representation while preferring contralateral voxels.
 
         Parameters
         ----------
@@ -493,31 +487,29 @@ class AIFDetection(BaseInterface):
             4x4 affine transformation matrix (voxel -> RAS world).
         tumor_laterality : str
             ``'left'``, ``'right'``, or ``'bilateral'``.
-        prefer_contralateral : bool
-            Whether to prefer contralateral candidates.
 
         Returns
         -------
         tuple of (filtered, hemisphere_used, n_contra, n_ipsi)
-            filtered : candidates restricted to preferred hemisphere.
-            hemisphere_used : ``'contralateral'``, ``'ipsilateral'``,
-                or ``'both'``.
+            filtered : all candidates with ipsilateral cost penalty,
+                sorted by adjusted cost.
+            hemisphere_used : ``'bilateral'`` or ``'both'``.
             n_contra : count of contralateral candidates.
             n_ipsi : count of ipsilateral candidates.
         """
-        if (
-            tumor_laterality == "bilateral"
-            or not prefer_contralateral
-        ):
+        if tumor_laterality == "bilateral":
             return top_candidates, "both", 0, 0
 
         contra_side = "right" if tumor_laterality == "left" else "left"
 
+        # Soft penalty for ipsilateral candidates (cost range ~2-15)
+        IPSILATERAL_PENALTY = 3.0
+
         contra: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
-        ipsi: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        adjusted_ipsi: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
 
         for entry in top_candidates:
-            _, coord, _ = entry
+            cost, coord, metrics = entry
             coord_homog = np.array(
                 [coord[0], coord[1], coord[2], 1.0]
             )
@@ -527,17 +519,79 @@ class AIFDetection(BaseInterface):
             if cand_side == contra_side:
                 contra.append(entry)
             else:
-                ipsi.append(entry)
+                adjusted_ipsi.append(
+                    (cost + IPSILATERAL_PENALTY, coord, metrics)
+                )
 
         n_contra = len(contra)
-        n_ipsi = len(ipsi)
+        n_ipsi = len(adjusted_ipsi)
 
-        if n_contra >= 1:
-            return contra, "contralateral", n_contra, n_ipsi
+        combined = contra + adjusted_ipsi
+        combined.sort(key=lambda x: x[0])
+        return combined, "bilateral", n_contra, n_ipsi
 
-        # No contralateral candidates — fall back to ipsilateral
-        filtered = ipsi if n_ipsi > 0 else top_candidates
-        return filtered, "ipsilateral", n_contra, n_ipsi
+    # -----------------------------------------------------------------
+    # Step 2c: Bilateral balance (ensures both hemispheres represented)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _ensure_bilateral_balance(
+        scored: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        affine: npt.NDArray[Any],
+        n_select: int,
+    ) -> list[tuple[float, tuple[int, int, int], dict[str, Any]]]:
+        """Ensure bilateral AIF representation.
+
+        Guarantees at least ``min_per_hemisphere`` candidates from each
+        hemisphere (world-space x=0 as midline). Remaining slots filled
+        by cost ranking.
+
+        ``min_per_hemisphere`` is adaptive: ``max(1, min(2, n_select // 4))``
+          - n_select=10 -> 2 per hemisphere
+          - n_select=5 (GBM) -> 1 per hemisphere
+
+        Parameters
+        ----------
+        scored : list
+            List of ``(cost, (x,y,z), metrics)`` tuples, sorted by cost.
+        affine : ndarray
+            4x4 affine transformation matrix (voxel -> RAS world).
+        n_select : int
+            Number of candidates to select.
+
+        Returns
+        -------
+        list
+            Selected candidates with bilateral guarantee, sorted by cost.
+        """
+        min_per_hemisphere = max(1, min(2, n_select // 4))
+
+        if len(scored) <= n_select or min_per_hemisphere <= 0:
+            return scored[:n_select]
+
+        # Split by world-space x (RAS: x<0 = left)
+        left: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        right: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        for entry in scored:
+            _, coord, _ = entry
+            world_x = float(
+                affine[0, :3] @ np.array(coord, dtype=float) + affine[0, 3]
+            )
+            (left if world_x < 0 else right).append(entry)
+
+        # Graceful fallthrough: if one hemisphere is empty, just return by cost
+        if not left or not right:
+            return scored[:n_select]
+
+        # Reserve minimum from each, fill rest by cost
+        min_l = min(min_per_hemisphere, len(left))
+        min_r = min(min_per_hemisphere, len(right))
+        selected = left[:min_l] + right[:min_r]
+        used = {id(e) for e in selected}
+        remaining = [e for e in scored if id(e) not in used]
+        selected.extend(remaining[: n_select - len(selected)])
+        selected.sort(key=lambda x: x[0])
+        return selected
 
     # -----------------------------------------------------------------
     # Step 3: Spatial exclusions  (perf-plus _apply_spatial_exclusions)
@@ -965,15 +1019,19 @@ class AIFDetection(BaseInterface):
         baseline_frames: int,
         criteria: str,
         tissue_ttp_frame: float,
-        n_top: int = 10,
         atlas_mask: Optional[npt.NDArray[Any]] = None,
     ) -> tuple[list[tuple[float, tuple[int, int, int], dict[str, Any]]], int]:
-        """Score pre-filtered candidates and return top N.
+        """Score pre-filtered candidates and return ALL that pass.
+
+        Post-scoring filters (distance, contralateral penalty, bilateral
+        balance) run after this method, so all passing candidates are
+        returned for downstream selection.
 
         Returns
         -------
-        tuple of (top_candidates, n_available)
-            top_candidates : list of (cost, (x,y,z), metrics) sorted ascending.
+        tuple of (scored_candidates, n_available)
+            scored_candidates : list of (cost, (x,y,z), metrics) sorted
+                ascending by cost.
             n_available : total number of candidates that passed scoring.
         """
         # Median S0 for partial volume detection
@@ -1036,7 +1094,7 @@ class AIFDetection(BaseInterface):
         # Sort by cost ascending (lower = better)
         scored.sort(key=lambda x: x[0])
         n_available = len(scored)
-        return scored[:n_top], n_available
+        return scored, n_available
 
     # -----------------------------------------------------------------
     # Step 8b: Post-scoring filters (distance + contralateral)
@@ -1050,15 +1108,16 @@ class AIFDetection(BaseInterface):
         affine: npt.NDArray[Any],
         voxel_sizes: tuple[float, ...],
         lesion_min_distance_mm: float = 15.0,
-        prefer_contralateral: bool = True,
         enhancing_mask: Optional[npt.NDArray[Any]] = None,
     ) -> tuple[
         list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         dict[str, Any],
     ]:
-        """Apply distance and hemisphere filters after scoring.
+        """Apply distance and soft contralateral filters after scoring.
 
-        Matches perf-plus steps 4.5 (distance) and 4.6 (contralateral).
+        Step 4.5: Distance-based lesion exclusion.
+        Step 4.6: Soft contralateral penalty (always applied when a
+        lesion mask is present; no hard filter).
 
         Parameters
         ----------
@@ -1072,8 +1131,6 @@ class AIFDetection(BaseInterface):
             Voxel dimensions in mm ``(dx, dy, dz)``.
         lesion_min_distance_mm : float
             Minimum Euclidean distance from lesion in mm.
-        prefer_contralateral : bool
-            Whether to prefer contralateral hemisphere candidates.
         enhancing_mask : ndarray or None
             3D enhancing tumor mask for laterality determination.
             Uses this instead of ``lesion_mask`` for laterality to
@@ -1127,10 +1184,10 @@ class AIFDetection(BaseInterface):
                 for _, _, m in top_candidates:
                     m["lesion_distance_warning"] = True
 
-        # --- Step 4.6: Contralateral hemisphere preference ---
-        # Use enhancing_mask for laterality if provided (avoids bilateral
-        # misclassification from dilated whole-tumor masks crossing midline).
-        # Fall back to lesion_mask if enhancing_mask is not available.
+        # --- Step 4.6: Soft contralateral hemisphere penalty ---
+        # Always applied when a lesion mask is present. Uses enhancing_mask
+        # for laterality if provided (avoids bilateral misclassification
+        # from dilated whole-tumor masks crossing midline).
         tumor_laterality: Optional[str] = None
         hemisphere_used = "both"
         n_contra = 0
@@ -1142,7 +1199,6 @@ class AIFDetection(BaseInterface):
 
         if (
             laterality_mask is not None
-            and prefer_contralateral
             and np.any(laterality_mask > 0.5)
         ):
             tumor_laterality = self._determine_tumor_laterality(
@@ -1156,7 +1212,6 @@ class AIFDetection(BaseInterface):
                     n_ipsi,
                 ) = self._filter_candidates_by_hemisphere(
                     top_candidates, affine, tumor_laterality,
-                    prefer_contralateral=prefer_contralateral,
                 )
             elif tumor_laterality == "bilateral":
                 hemisphere_used = "both"
@@ -1581,7 +1636,6 @@ class AIFDetection(BaseInterface):
         gamma_fit = bool(self.inputs.gamma_fit)
         disable_fallback = bool(self.inputs.disable_fallback)
         lesion_distance = float(self.inputs.lesion_distance)
-        prefer_contralateral = bool(self.inputs.prefer_contralateral)
         n_timepoints = conc_data.shape[3]
 
         # Voxel sizes for distance-based lesion exclusion and TR detection
@@ -1611,7 +1665,6 @@ class AIFDetection(BaseInterface):
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
         n_available = 0
         filter_meta: dict[str, Any] = {}
-        contralateral_search_exhausted = False
 
         if aif_method == "population":
             pass  # Go directly to synthetic
@@ -1642,15 +1695,6 @@ class AIFDetection(BaseInterface):
                 if criteria_order.index(crit) >= start_idx
             ]
 
-            ipsi_fallback: Optional[
-                tuple[
-                    list[tuple[float, tuple[int, int, int], dict[str, Any]]],
-                    int,
-                    str,
-                    dict[str, Any],
-                ]
-            ] = None
-
             for crit, roi, level_name in attempts:
                 search = self._prepare_search_mask(
                     brain_mask, roi, lesion_mask
@@ -1666,49 +1710,31 @@ class AIFDetection(BaseInterface):
                 scored, n_avail = self._score_and_select_candidates(
                     cands, conc_data, signal_data, peak_map,
                     brain_mask, tr, baseline_frames, crit,
-                    tissue_ttp, n_top=n_candidates,
+                    tissue_ttp,
                     atlas_mask=atlas_mask if roi is None else None,
                 )
                 if not scored:
                     continue
 
-                # Post-scoring filters (distance + contralateral)
+                # Post-scoring filters (distance + soft contralateral)
                 scored, f_meta = self._apply_post_scoring_filters(
                     scored, lesion_mask, affine, voxel_sizes,
                     lesion_min_distance_mm=lesion_distance,
-                    prefer_contralateral=prefer_contralateral,
                     enhancing_mask=enhancing_mask,
                 )
                 if not scored:
                     continue
 
-                # When contralateral is preferred but only ipsilateral
-                # candidates were found, save as fallback and keep
-                # searching (e.g. brain-wide) for contralateral.
-                if (
-                    prefer_contralateral
-                    and f_meta.get("hemisphere_used") == "ipsilateral"
-                ):
-                    if ipsi_fallback is None:
-                        ipsi_fallback = (scored, n_avail, level_name, f_meta)
-                    continue
+                # Bilateral balance (always applied)
+                scored = self._ensure_bilateral_balance(
+                    scored, affine, n_candidates,
+                )
 
-                # Contralateral or "both" — accept and stop
                 top_candidates = scored
                 n_available = n_avail
                 detection_level = level_name
                 filter_meta = f_meta
                 break
-            else:
-                # All attempts exhausted without contralateral candidates.
-                contralateral_search_exhausted = True
-                if ipsi_fallback is not None:
-                    (
-                        top_candidates,
-                        n_available,
-                        detection_level,
-                        filter_meta,
-                    ) = ipsi_fallback
 
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
@@ -1751,7 +1777,6 @@ class AIFDetection(BaseInterface):
             )
             qc_metrics.update(finalized_qc)
             qc_metrics.update(filter_meta)
-            qc_metrics["contralateral_search_exhausted"] = contralateral_search_exhausted
 
         elif not disable_fallback:
             # Compute tissue max ΔR2* for amplitude scaling

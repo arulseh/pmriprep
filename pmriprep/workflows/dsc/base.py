@@ -1722,7 +1722,6 @@ def init_dsc_preproc_wf(
             criteria=config.aif_criteria,
             n_candidates=config.n_aif_candidates,
             lesion_distance=config.lesion_distance,
-            prefer_contralateral=config.prefer_contralateral,
             gamma_fit=config.gamma_fit,
             disable_fallback=config.disable_aif_fallback,
             baseline_frames=config.pre_bolus,

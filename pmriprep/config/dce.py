@@ -33,8 +33,8 @@ class DCEConfig:
         Path to custom AIF mask file.
     lesion_distance : float
         Minimum distance (mm) from lesion for AIF candidates.
-    prefer_contralateral : bool
-        Prefer contralateral AIF candidates when lesion present.
+    n_aif_candidates : int
+        Number of AIF candidate voxels to average.
     underlays : List[str]
         List of underlay images for QC visualizations.
     no_b1 : bool
@@ -85,7 +85,7 @@ class DCEConfig:
     target_peak: Optional[float] = None  # None = use field-strength default
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 20.0
-    prefer_contralateral: bool = True
+    n_aif_candidates: int = 10
 
     # Structural settings
     underlays: List[str] = field(default_factory=lambda: ["t1w", "flair"])
@@ -129,6 +129,7 @@ class DCEConfig:
         try:
             self.baseline_frames = int(self.baseline_frames)
             self.mcmc_samples = int(self.mcmc_samples)
+            self.n_aif_candidates = int(self.n_aif_candidates)
             self.num_processes = int(self.num_processes)
         except (ValueError, TypeError) as e:
             raise TypeError(f"DCEConfig integer field has invalid type: {e}") from e

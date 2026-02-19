@@ -31,8 +31,6 @@ class DSCConfig:
         Path to custom AIF mask file.
     lesion_distance : float
         Minimum distance (mm) from lesion for AIF candidates.
-    prefer_contralateral : bool
-        Prefer contralateral AIF candidates when lesion present.
     aif_criteria : Literal["strict", "relaxed"]
         AIF quality criteria threshold.
     n_aif_candidates : int
@@ -78,7 +76,6 @@ class DSCConfig:
     # AIF detection settings
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
-    prefer_contralateral: bool = True
     aif_criteria: Literal["strict", "relaxed"] = "strict"
     n_aif_candidates: int = 10
     gamma_fit: bool = False
@@ -149,7 +146,6 @@ class DSCConfig:
             cpi_control_points=self.cpi_control_points,
             aif_mask_file=self.aif_mask_file,
             lesion_distance=self.lesion_distance,
-            prefer_contralateral=self.prefer_contralateral,
             aif_criteria="relaxed",
             n_aif_candidates=5,
             gamma_fit=True,

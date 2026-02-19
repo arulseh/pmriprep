@@ -931,7 +931,6 @@ def atlas_based_aif_search(
     n_candidates: int = 10,
     baseline_frames: int = 5,
     lesion_distance_mm: float = 20.0,
-    prefer_contralateral: bool = True,
 ) -> AIFSearchResult:
     """Perform atlas-constrained AIF search.
 
@@ -961,8 +960,6 @@ def atlas_based_aif_search(
         Number of pre-bolus baseline frames.
     lesion_distance_mm : float
         Minimum distance (mm) from lesion for candidates.
-    prefer_contralateral : bool
-        Prefer contralateral hemisphere when lesion present.
 
     Returns
     -------
@@ -978,17 +975,9 @@ def atlas_based_aif_search(
             search_mask, lesion_mask, voxel_sizes, lesion_distance_mm
         ).astype(np.uint8)
 
-        # Optionally prefer contralateral
-        if prefer_contralateral:
-            contra_mask = get_contralateral_mask(brain_mask, lesion_mask)
-            # Weight contralateral voxels higher (done during candidate selection)
-            # For now, just ensure contralateral is included
-            search_mask = search_mask * contra_mask.astype(np.uint8)
-            # If no voxels remain in contralateral, use full search mask
-            if np.sum(search_mask) == 0:
-                search_mask = exclude_near_lesion(
-                    brain_mask.copy(), lesion_mask, voxel_sizes, lesion_distance_mm
-                ).astype(np.uint8)
+        # Note: contralateral preference is now handled via soft penalty
+        # in the main AIF detection interface (_filter_candidates_by_hemisphere)
+        # rather than hard-filtering the search mask here.
 
     # Define search levels
     # Each level is (name, mask, criteria_level)
@@ -1180,7 +1169,6 @@ def atlas_based_aif_search_from_files(
     n_candidates: int = 10,
     baseline_frames: int = 5,
     lesion_distance_mm: float = 20.0,
-    prefer_contralateral: bool = True,
 ) -> AIFSearchResult:
     """Perform atlas-based AIF search from NIfTI files.
 
@@ -1204,8 +1192,6 @@ def atlas_based_aif_search_from_files(
         Number of pre-bolus baseline frames.
     lesion_distance_mm : float
         Minimum distance (mm) from lesion.
-    prefer_contralateral : bool
-        Prefer contralateral hemisphere when lesion present.
 
     Returns
     -------
@@ -1253,7 +1239,6 @@ def atlas_based_aif_search_from_files(
         n_candidates=n_candidates,
         baseline_frames=baseline_frames,
         lesion_distance_mm=lesion_distance_mm,
-        prefer_contralateral=prefer_contralateral,
     )
 
 

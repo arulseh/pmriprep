@@ -785,9 +785,8 @@ def init_dce_preproc_wf(
         AIFDetection(
             aif_method=config.aif_method,
             scale_aif=config.scale_aif,
-            n_candidates=10,  # Default
+            n_candidates=config.n_aif_candidates,
             lesion_distance=config.lesion_distance,
-            prefer_contralateral=config.prefer_contralateral,
             baseline_frames=config.baseline_frames,
             dose=config.dose,
         ),

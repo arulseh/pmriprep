@@ -414,11 +414,6 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
     )
-    prefer_contralateral = traits.Bool(
-        True,
-        usedefault=True,
-        desc="Prefer contralateral AIF candidates when lesion present",
-    )
     scale_aif = traits.Bool(
         False,
         usedefault=True,
@@ -1067,68 +1062,120 @@ class AIFDetection(BaseInterface):
         affine: npt.NDArray[Any],
         tumor_laterality: str | None,
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
-        """Prefer contralateral hemisphere candidates when lesion is lateralized.
+        """Apply soft score penalty to ipsilateral candidates.
+
+        For non-bilateral tumors, subtracts a score penalty from
+        ipsilateral candidates rather than hard-filtering them. This
+        preserves bilateral representation while preferring contralateral
+        voxels.
 
         Args:
             candidates: Candidate voxel coordinates.
-            scores: Candidate scores.
+            scores: Candidate scores (higher is better).
             metrics_list: Candidate metrics.
             brain_shape: Spatial dimensions.
             affine: Affine matrix.
             tumor_laterality: 'left', 'right', 'bilateral', or None.
 
         Returns:
-            Filtered (candidates, scores, metrics).
+            All (candidates, scores, metrics) with ipsilateral scores
+            penalized. Not sorted (caller handles sorting).
         """
         if not candidates or tumor_laterality is None or tumor_laterality == "bilateral":
             return candidates, scores, metrics_list
 
-        # Determine contralateral side in voxel coordinates
-        # In RAS: x < 0 is left, x > 0 is right
-        # Preferred side is opposite to tumor
-        contra: list[int] = []
-        ipsi: list[int] = []
+        # Soft penalty for ipsilateral candidates
+        # DCE scores are 0-1, proportional to DSC 3.0/~15.0
+        IPSILATERAL_PENALTY_SCORE = 0.12
+
+        adjusted_scores = list(scores)
         for i, (x, y, z) in enumerate(candidates):
             voxel = np.array([x, y, z], dtype=float)
             world = affine[:3, :3] @ voxel + affine[:3, 3]
             x_ras = world[0]
 
-            if tumor_laterality == "left":
-                # Tumor is left (x<0), prefer right (x>0)
-                if x_ras > 0:
-                    contra.append(i)
-                else:
-                    ipsi.append(i)
-            else:
-                # Tumor is right (x>0), prefer left (x<0)
-                if x_ras < 0:
-                    contra.append(i)
-                else:
-                    ipsi.append(i)
+            is_ipsilateral = (
+                (tumor_laterality == "left" and x_ras < 0)
+                or (tumor_laterality == "right" and x_ras > 0)
+            )
+            if is_ipsilateral:
+                adjusted_scores[i] = max(0.01, adjusted_scores[i] - IPSILATERAL_PENALTY_SCORE)
 
-        # Use contralateral if we have enough candidates (at least 3)
-        if len(contra) >= 3:
+        return candidates, adjusted_scores, metrics_list
+
+    @staticmethod
+    def _ensure_bilateral_balance(
+        candidates: list[tuple[int, int, int]],
+        scores: list[float],
+        metrics_list: list[dict[str, float]],
+        affine: npt.NDArray[Any],
+        n_select: int,
+    ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
+        """Ensure bilateral AIF representation.
+
+        Guarantees at least ``min_per_hemisphere`` candidates from each
+        hemisphere (world-space x=0 as midline). Remaining slots filled
+        by score ranking (higher is better).
+
+        ``min_per_hemisphere`` is adaptive: ``max(1, min(2, n_select // 4))``
+
+        Args:
+            candidates: Candidate voxel coordinates.
+            scores: Candidate scores (higher is better).
+            metrics_list: Candidate metrics.
+            affine: 4x4 affine matrix (voxel -> RAS world).
+            n_select: Number of candidates to select.
+
+        Returns:
+            Selected (candidates, scores, metrics) with bilateral guarantee,
+            sorted by score descending.
+        """
+        if not candidates or len(candidates) <= n_select:
+            return candidates, scores, metrics_list
+
+        min_per_hemisphere = max(1, min(2, n_select // 4))
+
+        # Sort by score descending first
+        sorted_idx = sorted(
+            range(len(candidates)), key=lambda i: scores[i], reverse=True
+        )
+
+        # Split by world-space x (RAS: x<0 = left)
+        left_idx: list[int] = []
+        right_idx: list[int] = []
+        for i in sorted_idx:
+            x, y, z = candidates[i]
+            voxel = np.array([x, y, z], dtype=float)
+            world_x = float(affine[0, :3] @ voxel + affine[0, 3])
+            (left_idx if world_x < 0 else right_idx).append(i)
+
+        # Graceful fallthrough: if one hemisphere is empty, just return top N
+        if not left_idx or not right_idx:
+            top = sorted_idx[:n_select]
             return (
-                [candidates[i] for i in contra],
-                [scores[i] for i in contra],
-                [metrics_list[i] for i in contra],
+                [candidates[i] for i in top],
+                [scores[i] for i in top],
+                [metrics_list[i] for i in top],
             )
 
-        # Fallback: filter out any flagged as likely venous before returning all
-        # This ensures marginal venous candidates don't contaminate the AIF
-        # when falling back to ipsilateral hemisphere
-        non_venous = [
-            i for i, m in enumerate(metrics_list)
-            if not m.get("is_likely_venous", False)
-        ]
-        if len(non_venous) >= 3:
-            return (
-                [candidates[i] for i in non_venous],
-                [scores[i] for i in non_venous],
-                [metrics_list[i] for i in non_venous],
-            )
+        # Reserve minimum from each, fill rest by score
+        min_l = min(min_per_hemisphere, len(left_idx))
+        min_r = min(min_per_hemisphere, len(right_idx))
+        selected = set(left_idx[:min_l] + right_idx[:min_r])
 
-        return candidates, scores, metrics_list
+        # Fill remaining slots from sorted order
+        for i in sorted_idx:
+            if len(selected) >= n_select:
+                break
+            selected.add(i)
+
+        # Sort final selection by score descending
+        final = sorted(selected, key=lambda i: scores[i], reverse=True)
+        return (
+            [candidates[i] for i in final],
+            [scores[i] for i in final],
+            [metrics_list[i] for i in final],
+        )
 
     @staticmethod
     def _filter_venous_candidates(
@@ -1732,12 +1779,12 @@ class AIFDetection(BaseInterface):
                 candidates, scores, all_metrics, min_non_venous=3
             )
 
-        # ----- Sort by score descending and take top N -----
+        # ----- Sort by score descending (return ALL for downstream filtering) -----
         if candidates:
             sorted_indices = np.argsort(scores)[::-1]
-            candidates = [candidates[int(i)] for i in sorted_indices[:n_candidates]]
-            scores = [scores[int(i)] for i in sorted_indices[:n_candidates]]
-            all_metrics = [all_metrics[int(i)] for i in sorted_indices[:n_candidates]]
+            candidates = [candidates[int(i)] for i in sorted_indices]
+            scores = [scores[int(i)] for i in sorted_indices]
+            all_metrics = [all_metrics[int(i)] for i in sorted_indices]
 
         return candidates, scores, all_metrics
 
@@ -1934,7 +1981,6 @@ class AIFDetection(BaseInterface):
         scale_aif = bool(self.inputs.scale_aif)
         target_peak = float(self.inputs.target_peak)
         lesion_distance = float(self.inputs.lesion_distance)
-        prefer_contralateral = bool(self.inputs.prefer_contralateral)
         r1_relaxivity = float(self.inputs.r1_relaxivity)
 
         n_timepoints = conc_data.shape[3]
@@ -2005,13 +2051,29 @@ class AIFDetection(BaseInterface):
                     conc_data, brain_mask, baseline_frames,
                 )
 
-            # ===== Phase 6: Contralateral hemisphere preference =====
-            if candidates and lesion_mask is not None and prefer_contralateral:
+            # ===== Phase 6: Soft contralateral penalty =====
+            if candidates and lesion_mask is not None:
                 tumor_lat = self._determine_tumor_laterality(lesion_mask, affine)
                 candidates, scores, metrics_list = self._filter_candidates_by_hemisphere(
                     candidates, scores, metrics_list,
                     conc_data.shape[:3], affine, tumor_lat,
                 )
+
+            # ===== Bilateral balance (always applied) =====
+            if candidates:
+                candidates, scores, metrics_list = self._ensure_bilateral_balance(
+                    candidates, scores, metrics_list,
+                    affine, n_candidates,
+                )
+
+            # ===== Take top N =====
+            if candidates and len(candidates) > n_candidates:
+                sorted_idx = sorted(
+                    range(len(candidates)), key=lambda i: scores[i], reverse=True
+                )[:n_candidates]
+                candidates = [candidates[i] for i in sorted_idx]
+                scores = [scores[i] for i in sorted_idx]
+                metrics_list = [metrics_list[i] for i in sorted_idx]
 
             # Venous filtering already applied inside _find_candidates_in_mask
             # (after cluster selection). No need to duplicate here.
