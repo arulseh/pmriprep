@@ -23,7 +23,7 @@ from pmriprep.interfaces.dce import (
 from pmriprep.interfaces.dce_aif import AIFDetection
 from pmriprep.interfaces.dce_aif_qc import DCEAIFQCPlot
 from pmriprep.interfaces.dce_compute import ComputeDCEMaps
-from pmriprep.data import get_arterial_atlas
+from pmriprep.data import get_arterial_atlas, get_arterial_atlas_cascade
 
 
 def init_dce_preproc_wf(
@@ -650,41 +650,43 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
-    # Node 4b3: Transform MNI atlas to DCE space (Gap 6) - optional
+    # Node 4b3: Transform MNI atlas cascade to DCE space (Gap 6) - optional
     # ==========================================================================
-    # Atlas-guided AIF search (MCA/ACA territories) for improved AIF detection
-    # Only runs if atlas_mask_file and t1w_to_mni_xfm are provided
-    transform_atlas_to_dce = pe.Node(
+    # Atlas-guided AIF search with tiered cascade (MCA_ACA → CoW → full)
+    # for reduced tissue contamination compared to a single broad mask.
+    # Only runs if atlas files and t1w_to_mni_xfm are provided.
+    transform_atlas_cascade = pe.Node(
         niu.Function(
             input_names=[
-                "atlas_file",
+                "atlas_files",
                 "t1w_to_mni_xfm",
                 "t1w_to_dce_xfm",
                 "reference_file",
             ],
-            output_names=["out_file"],
-            function=_transform_atlas_to_dce,
+            output_names=["out_files"],
+            function=_transform_atlas_cascade_to_dce,
         ),
-        name="transform_atlas_to_dce",
+        name="transform_atlas_cascade",
     )
 
-    # Load arterial atlas (bundled with pmriprep, FSL MNI152 space)
-    try:
-        transform_atlas_to_dce.inputs.atlas_file = str(get_arterial_atlas("2mm", "dil2"))
-    except FileNotFoundError:
+    # Load tiered arterial atlas cascade (tightest → broadest)
+    atlas_cascade = get_arterial_atlas_cascade("2mm")
+    if atlas_cascade:
+        transform_atlas_cascade.inputs.atlas_files = [str(p) for p in atlas_cascade]
+    else:
         import warnings
         warnings.warn(
-            "Arterial atlas not found. AIF detection will use whole-brain search."
+            "No arterial atlases found. AIF detection will use whole-brain search."
         )
 
     workflow.connect([
-        (inputnode, transform_atlas_to_dce, [
+        (inputnode, transform_atlas_cascade, [
             ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
         ]),
-        (dce_registration, transform_atlas_to_dce, [
+        (dce_registration, transform_atlas_cascade, [
             ("out_matrix", "t1w_to_dce_xfm"),
         ]),
-        (dce_preprocess, transform_atlas_to_dce, [
+        (dce_preprocess, transform_atlas_cascade, [
             ("mean_img", "reference_file"),
         ]),
     ])
@@ -809,9 +811,9 @@ def init_dce_preproc_wf(
         (create_aif_mask, aif_detection, [
             ("out_file", "brain_mask_file"),
         ]),
-        # Connect atlas mask for atlas-guided AIF search (Gap 6)
-        (transform_atlas_to_dce, aif_detection, [
-            ("out_file", "atlas_mask_file"),
+        # Connect atlas cascade for tiered AIF search (Gap 6)
+        (transform_atlas_cascade, aif_detection, [
+            ("out_files", "atlas_mask_files"),
         ]),
         (inputnode, aif_detection, [
             ("volume_tr", "tr"),  # Use volume TR for time array, not pulse TR
@@ -1939,9 +1941,11 @@ def _transform_atlas_to_dce(
         return None
 
     out_dir = Path.cwd()
+    # Use atlas-specific temp filenames to avoid collisions in cascade mode
+    atlas_stem = atlas_path.name.replace(".nii.gz", "").replace(".nii", "")
 
     # Step 1: Invert T1w→MNI to get MNI→T1w
-    mni_to_t1w_xfm = str(out_dir / "_tmp_mni_to_t1w.mat")
+    mni_to_t1w_xfm = str(out_dir / f"_tmp_{atlas_stem}_mni_to_t1w.mat")
     invert_cmd = [
         "convert_xfm", "-omat", mni_to_t1w_xfm,
         "-inverse", str(t1w_to_mni_xfm),
@@ -1951,7 +1955,7 @@ def _transform_atlas_to_dce(
         return None
 
     # Step 2: Concatenate MNI→T1w + T1w→DCE = MNI→DCE
-    mni_to_dce_xfm = str(out_dir / "_tmp_mni_to_dce.mat")
+    mni_to_dce_xfm = str(out_dir / f"_tmp_{atlas_stem}_mni_to_dce.mat")
     concat_cmd = [
         "convert_xfm", "-omat", mni_to_dce_xfm,
         "-concat", str(t1w_to_dce_xfm), mni_to_t1w_xfm,
@@ -1963,7 +1967,7 @@ def _transform_atlas_to_dce(
         return None
 
     # Step 3: Apply transform with nearest-neighbour interpolation
-    tmp_atlas = str(out_dir / "_tmp_atlas_dce.nii.gz")
+    tmp_atlas = str(out_dir / f"_tmp_{atlas_stem}_dce_raw.nii.gz")
     flirt_cmd = [
         "flirt",
         "-in", str(atlas_file),
@@ -1982,7 +1986,9 @@ def _transform_atlas_to_dce(
 
     # Step 4: Morphological refinement - dilate-dilate-erode (1mm sphere)
     # This cleans up edges after interpolation artifacts
-    out_file = str(out_dir / "atlas_mask_dce.nii.gz")
+    # Derive unique output name from atlas filename to support cascade transforms
+    atlas_stem = Path(atlas_file).name.replace(".nii.gz", "").replace(".nii", "")
+    out_file = str(out_dir / f"{atlas_stem}_dce.nii.gz")
     morph_cmd = [
         "fslmaths", tmp_atlas,
         "-kernel", "sphere", "1",
@@ -2000,6 +2006,111 @@ def _transform_atlas_to_dce(
         return None
 
     return out_file
+
+
+def _transform_atlas_cascade_to_dce(
+    atlas_files=None,
+    t1w_to_mni_xfm=None,
+    t1w_to_dce_xfm=None,
+    reference_file=None,
+):
+    """Transform a list of MNI atlas masks to DCE space via T1w.
+
+    Computes the MNI→DCE composite transform once, then applies it to each
+    atlas in the cascade, preserving ordering (tightest → broadest).
+
+    Note: This function is self-contained because Nipype Function nodes
+    serialize and execute functions in isolation — calls to sibling
+    functions in the same module are not in scope at runtime.
+
+    Args:
+        atlas_files: List of MNI-space atlas mask paths (ordered tightest first).
+        t1w_to_mni_xfm: Path to T1w→MNI FLIRT matrix.
+        t1w_to_dce_xfm: Path to T1w→DCE FLIRT matrix.
+        reference_file: Path to DCE reference image for output geometry.
+
+    Returns:
+        List of atlas mask paths in DCE space. Empty if inputs are missing
+        or all transforms fail.
+    """
+    from pathlib import Path
+    import subprocess
+
+    from nipype.interfaces.base import isdefined
+
+    if not atlas_files:
+        return []
+
+    # Validate shared inputs
+    for inp in (t1w_to_mni_xfm, t1w_to_dce_xfm, reference_file):
+        if not isdefined(inp) or inp is None:
+            return []
+
+    out_dir = Path.cwd()
+
+    # Step 1: Compute composite MNI→DCE transform once (shared across atlases)
+    mni_to_t1w_xfm = str(out_dir / "_tmp_cascade_mni_to_t1w.mat")
+    invert_cmd = [
+        "convert_xfm", "-omat", mni_to_t1w_xfm,
+        "-inverse", str(t1w_to_mni_xfm),
+    ]
+    result = subprocess.run(invert_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return []
+
+    mni_to_dce_xfm = str(out_dir / "_tmp_cascade_mni_to_dce.mat")
+    concat_cmd = [
+        "convert_xfm", "-omat", mni_to_dce_xfm,
+        "-concat", str(t1w_to_dce_xfm), mni_to_t1w_xfm,
+    ]
+    result = subprocess.run(concat_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        Path(mni_to_t1w_xfm).unlink(missing_ok=True)
+        return []
+
+    # Step 2: Apply the composite transform to each atlas
+    out_files = []
+    for atlas_file in atlas_files:
+        atlas_path = Path(atlas_file)
+        if not atlas_path.exists():
+            continue
+
+        atlas_stem = atlas_path.name.replace(".nii.gz", "").replace(".nii", "")
+        tmp_atlas = str(out_dir / f"_tmp_{atlas_stem}_dce_raw.nii.gz")
+
+        flirt_cmd = [
+            "flirt",
+            "-in", str(atlas_file),
+            "-ref", str(reference_file),
+            "-out", tmp_atlas,
+            "-init", mni_to_dce_xfm,
+            "-applyxfm",
+            "-interp", "nearestneighbour",
+        ]
+        result = subprocess.run(flirt_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            Path(tmp_atlas).unlink(missing_ok=True)
+            continue
+
+        # Morphological refinement: dilate-dilate-erode (1mm sphere)
+        out_file = str(out_dir / f"{atlas_stem}_dce.nii.gz")
+        morph_cmd = [
+            "fslmaths", tmp_atlas,
+            "-kernel", "sphere", "1",
+            "-dilM", "-dilM", "-ero",
+            "-bin", out_file,
+        ]
+        result = subprocess.run(morph_cmd, capture_output=True, text=True)
+        Path(tmp_atlas).unlink(missing_ok=True)
+
+        if result.returncode == 0:
+            out_files.append(out_file)
+
+    # Clean up shared temp files
+    Path(mni_to_t1w_xfm).unlink(missing_ok=True)
+    Path(mni_to_dce_xfm).unlink(missing_ok=True)
+
+    return out_files
 
 
 def _signal_to_concentration_node(

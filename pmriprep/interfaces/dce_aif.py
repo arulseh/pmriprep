@@ -378,7 +378,15 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
     atlas_mask_file = traits.Either(
         traits.Str,
         None,
-        desc="Optional 3D arterial atlas mask in DCE space",
+        desc="Optional 3D arterial atlas mask in DCE space (broadest)",
+    )
+    atlas_mask_files = traits.Either(
+        traits.List(traits.Str),
+        None,
+        desc=(
+            "Optional list of atlas masks in DCE space, ordered tightest to "
+            "broadest. Enables tiered atlas cascade: MCA_ACA → CoW → full."
+        ),
     )
     aif_mask_file = File(
         exists=True,
@@ -515,7 +523,7 @@ class AIFDetection(BaseInterface):
     - Tissue TTP cross-validation to reject venous voxels
     - Upstroke slope metric for arterial/venous discrimination
     - Cluster-based spatial selection (26-connectivity)
-    - Inverse-cost weighted + 3x3x3 ROI averaging
+    - Inverse-score weighted averaging (single-voxel default, optional ROI expansion)
     - Savitzky-Golay smoothing
     - Contralateral hemisphere preference and distance-based lesion filtering
 
@@ -1798,16 +1806,23 @@ class AIFDetection(BaseInterface):
         scores: list[float],
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
-        roi_size: int = 3,
+        roi_size: int = 1,
+        tr: float = 1.0,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
-        """Compute inverse-cost weighted AIF with 3x3x3 ROI averaging and smoothing.
+        """Compute inverse-score weighted AIF with optional ROI averaging and smoothing.
+
+        When ``roi_size=1`` (default), each candidate contributes only its own
+        voxel curve — no spatial expansion into neighboring tissue.  This
+        matches perf-plus behavior and avoids tissue contamination that
+        broadens the AIF at high spatial resolution.
 
         Args:
             candidates: Candidate voxel coordinates.
             scores: Quality scores (higher is better).
             conc_data: 4D concentration data.
             brain_mask: 3D brain mask.
-            roi_size: Side length of cubic ROI.
+            roi_size: Side length of cubic ROI (1 = single voxel).
+            tr: Temporal resolution in seconds (for adaptive smoothing).
 
         Returns:
             (aif_curve, aif_mask) — smoothed 1D AIF and 3D boolean mask.
@@ -1819,7 +1834,7 @@ class AIFDetection(BaseInterface):
 
         if len(candidates) == 1:
             x, y, z = candidates[0]
-            # 3x3x3 ROI around single candidate
+            # Cubic ROI of roi_size^3 around single candidate
             slices = []
             for dim, coord_val in enumerate((x, y, z)):
                 s = max(0, coord_val - roi_size // 2)
@@ -1861,14 +1876,182 @@ class AIFDetection(BaseInterface):
 
             aif_curve = weighted_aif
 
-        # Savitzky-Golay smoothing (window=5, polyorder=2)
-        if len(aif_curve) >= 5:
-            aif_curve = savgol_filter(aif_curve, window_length=5, polyorder=2)
+        # Savitzky-Golay smoothing for noise reduction (standard TR only).
+        # At TR > 5s, the acquisition itself low-pass filters the signal
+        # and the first-pass peak spans only 1-3 frames. SG would
+        # destructively broaden the peak (e.g., 44% attenuation at TR=7.6s).
+        # Perf-plus does NOT smooth DCE AIF by default.
+        if len(aif_curve) >= 5 and tr <= 5.0:
+            sg_window = min(5, len(aif_curve))
+            sg_poly = 2
+            if sg_window >= 3:
+                aif_curve = savgol_filter(
+                    aif_curve, window_length=sg_window, polyorder=sg_poly,
+                )
 
         # Clip negative to zero
         aif_curve = np.maximum(aif_curve, 0.0)
 
         return aif_curve, aif_mask
+
+    # -----------------------------------------------------------------
+    # Post-Averaging FWHM Validation with Retry Cascade
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _validate_dce_averaged_aif(
+        aif_curve: npt.NDArray[Any],
+        candidates: list[tuple[int, int, int]],
+        scores: list[float],
+        metrics_list: list[dict[str, float]],
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        tr: float,
+        baseline_frames: int,
+    ) -> tuple[npt.NDArray[Any], npt.NDArray[Any], dict[str, Any]]:
+        """Validate averaged AIF FWHM and retry with fewer candidates if degraded.
+
+        Tissue contamination from ROI expansion or heterogeneous candidates can
+        broaden the averaged AIF well beyond the individual candidate FWHM.
+        This method detects such broadening and retries with progressively
+        fewer candidates until the FWHM is acceptable.
+
+        Ported from DSC ``_validate_averaged_aif`` (dsc_aif.py:1333) with
+        DCE-specific criteria (FWHM ratio instead of SPR).
+
+        Args:
+            aif_curve: 1D averaged AIF from ``_compute_weighted_roi_aif``.
+            candidates: Candidate voxel coordinates.
+            scores: Candidate quality scores.
+            metrics_list: Per-candidate metric dicts (must contain ``fwhm_seconds``).
+            conc_data: 4D concentration data.
+            brain_mask: 3D brain mask.
+            tr: Temporal resolution in seconds.
+            baseline_frames: Number of pre-bolus baseline frames.
+
+        Returns:
+            (aif_curve, aif_mask, validation_qc) — validated AIF, mask, and QC dict.
+        """
+        validation_qc: dict[str, Any] = {}
+
+        # Compute final FWHM of the averaged curve
+        final_fwhm = compute_dce_aif_fwhm_seconds(aif_curve, tr, baseline_frames)
+        final_peak = float(np.max(aif_curve))
+
+        # Compute mean candidate FWHM and peak
+        candidate_fwhms = [
+            m.get("fwhm_seconds", 0.0) for m in metrics_list if m.get("fwhm_seconds", 0.0) > 0
+        ]
+        candidate_peaks = [m.get("peak_mm", 0.0) for m in metrics_list if m.get("peak_mm", 0.0) > 0]
+
+        if not candidate_fwhms or not candidate_peaks:
+            # No valid candidate metrics — can't validate, accept as-is
+            aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+            for x, y, z in candidates:
+                aif_mask[x, y, z] = 1
+            validation_qc["aif_validation_skipped"] = True
+            return aif_curve, aif_mask, validation_qc
+
+        mean_cand_fwhm = float(np.mean(candidate_fwhms))
+        mean_cand_peak = float(np.mean(candidate_peaks))
+
+        validation_qc["averaged_fwhm_seconds"] = round(final_fwhm, 1)
+        validation_qc["candidate_fwhm_mean_seconds"] = round(mean_cand_fwhm, 1)
+        validation_qc["averaged_peak_mm"] = round(final_peak, 3)
+        validation_qc["candidate_peak_mean_mm"] = round(mean_cand_peak, 3)
+
+        # Check for broadening / attenuation
+        fwhm_ratio = final_fwhm / max(mean_cand_fwhm, 0.1)
+        peak_ratio = final_peak / max(mean_cand_peak, EPSILON_CONCENTRATION)
+
+        needs_retry = fwhm_ratio > 2.0 or peak_ratio < 0.3
+        validation_qc["fwhm_ratio"] = round(fwhm_ratio, 2)
+        validation_qc["peak_ratio"] = round(peak_ratio, 2)
+
+        if not needs_retry:
+            validation_qc["aif_validation_retries"] = 0
+            aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+            for x, y, z in candidates:
+                aif_mask[x, y, z] = 1
+            return aif_curve, aif_mask, validation_qc
+
+        # --- Retry 1: roi_size=1 with top 3 candidates ---
+        retry_reason = []
+        if fwhm_ratio > 2.0:
+            retry_reason.append(f"fwhm_ratio={fwhm_ratio:.1f}")
+        if peak_ratio < 0.3:
+            retry_reason.append(f"peak_ratio={peak_ratio:.2f}")
+        validation_qc["aif_validation_retry_reason"] = ", ".join(retry_reason)
+
+        logger.warning(
+            "AIF FWHM validation: averaged FWHM %.1fs vs candidate mean %.1fs "
+            "(ratio %.1f). Retrying with top 3 candidates, roi_size=1.",
+            final_fwhm, mean_cand_fwhm, fwhm_ratio,
+        )
+
+        top_n = min(3, len(candidates))
+        retry1_cands = candidates[:top_n]
+        retry1_scores = scores[:top_n]
+        retry1_curve, retry1_mask = AIFDetection._compute_weighted_roi_aif(
+            retry1_cands, retry1_scores, conc_data, brain_mask,
+            roi_size=1, tr=tr,
+        )
+        retry1_fwhm = compute_dce_aif_fwhm_seconds(retry1_curve, tr, baseline_frames)
+        retry1_peak = float(np.max(retry1_curve))
+        validation_qc["retry1_fwhm_seconds"] = round(retry1_fwhm, 1)
+        validation_qc["retry1_peak_mm"] = round(retry1_peak, 3)
+
+        retry1_fwhm_ratio = retry1_fwhm / max(mean_cand_fwhm, 0.1)
+        if retry1_fwhm_ratio <= 2.0 and retry1_peak / max(mean_cand_peak, EPSILON_CONCENTRATION) >= 0.3:
+            validation_qc["aif_validation_retries"] = 1
+            validation_qc["aif_validation_final_roi_size"] = 1
+            return retry1_curve, retry1_mask, validation_qc
+
+        # --- Retry 2: single best candidate, no averaging ---
+        logger.warning(
+            "AIF FWHM validation retry 1 still degraded (FWHM %.1fs). "
+            "Using single best candidate.",
+            retry1_fwhm,
+        )
+
+        best_cand = [candidates[0]]
+        best_score = [scores[0]]
+        retry2_curve, retry2_mask = AIFDetection._compute_weighted_roi_aif(
+            best_cand, best_score, conc_data, brain_mask,
+            roi_size=1, tr=tr,
+        )
+        retry2_fwhm = compute_dce_aif_fwhm_seconds(retry2_curve, tr, baseline_frames)
+        validation_qc["retry2_fwhm_seconds"] = round(retry2_fwhm, 1)
+        validation_qc["retry2_peak_mm"] = round(float(np.max(retry2_curve)), 3)
+
+        # Pick the best result across all attempts
+        attempts = [
+            (aif_curve, fwhm_ratio, 0),
+            (retry1_curve, retry1_fwhm_ratio, 1),
+            (retry2_curve, retry2_fwhm / max(mean_cand_fwhm, 0.1), 2),
+        ]
+        # Prefer the attempt closest to candidate FWHM (ratio closest to 1.0)
+        best_attempt = min(attempts, key=lambda a: abs(a[1] - 1.0))
+        best_curve = best_attempt[0]
+        best_retry_idx = best_attempt[2]
+
+        if best_retry_idx == 0:
+            best_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+            for x, y, z in candidates:
+                best_mask[x, y, z] = 1
+        elif best_retry_idx == 1:
+            best_mask = retry1_mask
+        else:
+            best_mask = retry2_mask
+
+        validation_qc["aif_validation_retries"] = 2
+        validation_qc["aif_validation_best_attempt"] = best_retry_idx
+        validation_qc["aif_validation_final_roi_size"] = 1
+        if best_attempt[1] > 2.0:
+            validation_qc["aif_fwhm_warning"] = True
+            validation_qc["aif_confidence"] = "reduced"
+
+        return best_curve, best_mask, validation_qc
 
     # -----------------------------------------------------------------
     # S0-based Partial Volume Rejection (Phase 5)
@@ -1951,19 +2134,35 @@ class AIFDetection(BaseInterface):
         brain_img = nib.load(self.inputs.brain_mask_file)
         brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
 
-        # Optional atlas mask (user-supplied aif_mask_file takes priority)
-        atlas_mask: Optional[npt.NDArray[Any]] = None
+        # Optional atlas masks — build ordered list (tightest → broadest)
+        # User-supplied aif_mask_file overrides all atlas masks.
+        atlas_masks: list[npt.NDArray[Any]] = []
         if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
             atlas_img = nib.load(self.inputs.aif_mask_file)
-            atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
-        elif (
-            isdefined(self.inputs.atlas_mask_file)
-            and self.inputs.atlas_mask_file is not None
-            and str(self.inputs.atlas_mask_file) != "None"
-            and Path(self.inputs.atlas_mask_file).exists()
-        ):
-            atlas_img = nib.load(self.inputs.atlas_mask_file)
-            atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
+            atlas_masks = [atlas_img.get_fdata()]  # type: ignore[attr-defined]
+        else:
+            # Load tiered atlas cascade (atlas_mask_files, tightest first)
+            if (
+                isdefined(self.inputs.atlas_mask_files)
+                and self.inputs.atlas_mask_files is not None
+            ):
+                for af in self.inputs.atlas_mask_files:
+                    af_path = Path(str(af))
+                    if af_path.exists() and str(af) not in ("", "None"):
+                        atlas_masks.append(
+                            nib.load(str(af_path)).get_fdata()  # type: ignore[attr-defined]
+                        )
+            # Backward compat: single atlas_mask_file appended if not already loaded
+            if (
+                not atlas_masks
+                and isdefined(self.inputs.atlas_mask_file)
+                and self.inputs.atlas_mask_file is not None
+                and str(self.inputs.atlas_mask_file) != "None"
+                and Path(self.inputs.atlas_mask_file).exists()
+            ):
+                atlas_masks = [
+                    nib.load(self.inputs.atlas_mask_file).get_fdata()  # type: ignore[attr-defined]
+                ]
 
         # Optional lesion mask
         lesion_mask: Optional[npt.NDArray[Any]] = None
@@ -1998,6 +2197,8 @@ class AIFDetection(BaseInterface):
         metrics_list: list[dict[str, float]] = []
         tissue_ttp_frame: float | None = None
         _detection_attempt: dict[str, Any] | None = None
+        atlas_tier_used: str | None = None
+        validation_qc: dict[str, Any] = {}
 
         # Skip auto detection if population method requested
         if aif_method == "population":
@@ -2017,19 +2218,25 @@ class AIFDetection(BaseInterface):
             )
 
             # ===== Multi-level detection cascade =====
-            # Atlas attempts: strict → relaxed → permissive
-            if atlas_mask is not None:
-                for crit in ("strict", "relaxed", "permissive"):
-                    combined_mask = (search_mask > 0.5) & (atlas_mask > 0.5)
-                    combined_mask = combined_mask.astype(search_mask.dtype)
-                    candidates, scores, metrics_list = self._find_candidates_in_mask(
-                        conc_data, combined_mask, n_candidates, tr,
-                        baseline_frames, crit,
-                        tissue_ttp_frame=tissue_ttp_frame,
-                        atlas_constrained=True,
-                    )
+            # Atlas cascade: tightest → broadest, each with strict → permissive.
+            # Trying the tightest atlas first (MCA_ACA) minimizes tissue
+            # contamination; broader atlases serve as fallback.
+            if atlas_masks:
+                for atlas_idx, atlas_mask in enumerate(atlas_masks):
+                    for crit in ("strict", "relaxed", "permissive"):
+                        combined_mask = (search_mask > 0.5) & (atlas_mask > 0.5)
+                        combined_mask = combined_mask.astype(search_mask.dtype)
+                        candidates, scores, metrics_list = self._find_candidates_in_mask(
+                            conc_data, combined_mask, n_candidates, tr,
+                            baseline_frames, crit,
+                            tissue_ttp_frame=tissue_ttp_frame,
+                            atlas_constrained=True,
+                        )
+                        if candidates:
+                            detection_method = "atlas"
+                            atlas_tier_used = f"atlas_{atlas_idx}_{crit}"
+                            break
                     if candidates:
-                        detection_method = "atlas"
                         break
 
             # Whole-brain attempts: relaxed → permissive → degraded
@@ -2115,8 +2322,15 @@ class AIFDetection(BaseInterface):
         if candidates:
             # Phase 5: Weighted ROI averaging + smoothing
             aif_curve, aif_mask = self._compute_weighted_roi_aif(
-                candidates, scores, conc_data, brain_mask
+                candidates, scores, conc_data, brain_mask, tr=tr,
             )
+
+            # Phase 5b: Validate averaged AIF FWHM against candidate FWHM
+            aif_curve, aif_mask, validation_qc = self._validate_dce_averaged_aif(
+                aif_curve, candidates, scores, metrics_list,
+                conc_data, brain_mask, tr, baseline_frames,
+            )
+
             # Convert measured AIF from blood to plasma concentration
             # (tissue conc is in blood units; AIF must be in plasma units
             #  for Tofts model: plasma = blood / (1 - Hct))
@@ -2150,6 +2364,31 @@ class AIFDetection(BaseInterface):
                     "arterial_cascade_tier": tier_used,
                     "low_tr_mode": is_low_temporal_resolution(tr),
                 }
+                if atlas_tier_used is not None:
+                    qc_metrics["atlas_tier_used"] = atlas_tier_used
+
+            # Merge FWHM validation QC
+            if validation_qc:
+                qc_metrics.update(validation_qc)
+
+            # Hemisphere coverage: classify candidates as left/right via RAS x-coord
+            if candidates:
+                n_left = 0
+                n_right = 0
+                for cx, cy, cz in candidates:
+                    world = affine[:3, :3] @ np.array([cx, cy, cz]) + affine[:3, 3]
+                    if world[0] < 0:
+                        n_left += 1
+                    else:
+                        n_right += 1
+                qc_metrics["n_left_candidates"] = n_left
+                qc_metrics["n_right_candidates"] = n_right
+                if n_left > 0 and n_right > 0:
+                    qc_metrics["hemisphere_coverage"] = "bilateral"
+                elif n_left > 0:
+                    qc_metrics["hemisphere_coverage"] = "unilateral_left"
+                else:
+                    qc_metrics["hemisphere_coverage"] = "unilateral_right"
 
             # Venous contamination detection and warning
             # Check if any candidates were flagged as likely venous
@@ -2272,6 +2511,7 @@ class AIFDetection(BaseInterface):
         final_peak = compute_dce_aif_peak_concentration(aif_curve)
         final_fwhm = compute_dce_aif_fwhm_seconds(aif_curve, tr, baseline_frames)
         final_auc = compute_dce_aif_auc(aif_curve, tr)
+        final_washout = compute_dce_aif_washout(aif_curve, baseline_frames)
 
         # Compute AIF status for HTML report
         from pmriprep.utils.qc_standards import QCStatus
@@ -2296,6 +2536,7 @@ class AIFDetection(BaseInterface):
                 "final_peak_mm": final_peak,
                 "final_fwhm_seconds": final_fwhm,
                 "final_auc": final_auc,
+                "final_washout": final_washout,
                 "blood_t1_seconds": blood_t1,
                 "field_strength_t": field_strength,
                 "scaling_factor": scaling_factor,
