@@ -2294,11 +2294,11 @@ class DCEPreprocess(SimpleInterface):
             outlier_frames = [int(i) for i in np.where(outlier_mask)[0]]
 
             from pmriprep.utils.qc_standards import (
-                MOTION_FD_THRESHOLDS,
-                get_qc_status,
+                get_composite_motion_status,
             )
-            motion_status = get_qc_status(
-                fd_mean, MOTION_FD_THRESHOLDS, higher_is_better=False,
+            pct_outliers = 100.0 * n_outliers / max(1, n_volumes)
+            motion_status = get_composite_motion_status(
+                fd_mean, fd_max, pct_outliers,
             )
 
             qc_metrics = {

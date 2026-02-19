@@ -108,6 +108,26 @@ MOTION_RMS_THRESHOLDS: Final[QCThresholds] = QCThresholds(
 #: Maximum fraction of outlier frames (FD > 0.5mm) allowed
 MOTION_OUTLIER_FRACTION_MAX: Final[float] = 0.20
 
+#: Percent outlier frames thresholds
+#: Pass: <5% outlier frames (minimal motion artifacts)
+#: Warn: 5-20% (some motion-corrupted volumes)
+#: Fail: >=20% (excessive motion corruption)
+#: References: Power et al. (2012), Satterthwaite et al. (2013)
+MOTION_OUTLIER_PCT_THRESHOLDS: Final[QCThresholds] = QCThresholds(
+    pass_threshold=5.0,
+    warn_threshold=20.0,
+)
+
+#: Maximum framewise displacement thresholds in mm
+#: Pass: max FD <1mm (no large motion spikes)
+#: Warn: 1-2mm (transient spike, may affect bolus tracking)
+#: Fail: >=2mm (large spike, likely corrupts perfusion estimates)
+#: References: Power et al. (2012), Boxerman et al. (2020)
+MOTION_FD_MAX_THRESHOLDS: Final[QCThresholds] = QCThresholds(
+    pass_threshold=1.0,
+    warn_threshold=2.0,
+)
+
 
 # =============================================================================
 # DICE Coefficient Thresholds
@@ -232,6 +252,48 @@ def get_qc_status(value: float, thresholds: QCThresholds, higher_is_better: bool
             return QCStatus.WARN
         else:
             return QCStatus.FAIL
+
+
+def get_composite_motion_status(
+    fd_mean: float,
+    fd_max: float,
+    pct_outliers: float,
+) -> str:
+    """Determine composite motion QC status from multiple criteria.
+
+    Uses the worst (most severe) status across mean FD, max FD, and
+    percent outlier frames. Mean FD alone is insufficient for perfusion
+    MRI where even single large spikes can corrupt bolus-tracking.
+
+    Args:
+        fd_mean: Mean framewise displacement in mm (excluding first frame).
+        fd_max: Maximum framewise displacement in mm.
+        pct_outliers: Percentage of frames exceeding the motion threshold.
+
+    Returns:
+        QC status string: "PASS", "WARN", or "FAIL".
+
+    References:
+        Power et al. (2012). doi:10.1016/j.neuroimage.2011.10.018
+        Satterthwaite et al. (2013). doi:10.1016/j.neuroimage.2012.08.052
+        Boxerman et al. (2020). doi:10.3174/ajnr.A6365
+    """
+    status_mean = get_qc_status(
+        fd_mean, MOTION_FD_THRESHOLDS, higher_is_better=False,
+    )
+    status_max = get_qc_status(
+        fd_max, MOTION_FD_MAX_THRESHOLDS, higher_is_better=False,
+    )
+    status_pct = get_qc_status(
+        pct_outliers, MOTION_OUTLIER_PCT_THRESHOLDS, higher_is_better=False,
+    )
+
+    severity = {QCStatus.FAIL: 2, QCStatus.WARN: 1, QCStatus.PASS: 0}
+    worst = max(
+        [status_mean, status_max, status_pct],
+        key=lambda s: severity.get(s, 0),
+    )
+    return worst
 
 
 def get_status_color(status: str) -> str:

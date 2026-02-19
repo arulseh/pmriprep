@@ -489,11 +489,11 @@ class MotionCorrection(CommandLine):
                 outputs["outlier_frames"] = outlier_frames
 
                 from pmriprep.utils.qc_standards import (
-                    MOTION_FD_THRESHOLDS,
-                    get_qc_status,
+                    get_composite_motion_status,
                 )
-                motion_status = get_qc_status(
-                    fd_mean, MOTION_FD_THRESHOLDS, higher_is_better=False,
+                pct_outliers = 100.0 * n_outliers / max(1, len(fd_list))
+                motion_status = get_composite_motion_status(
+                    fd_mean, fd_max, pct_outliers,
                 )
 
                 # QC metrics dict

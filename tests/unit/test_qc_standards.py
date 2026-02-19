@@ -6,12 +6,15 @@ from pmriprep.utils.qc_standards import (
     COLORBLIND_PALETTE,
     DICE_THRESHOLDS,
     DICE_THRESHOLDS_STRICT,
+    MOTION_FD_MAX_THRESHOLDS,
     MOTION_FD_THRESHOLDS,
+    MOTION_OUTLIER_PCT_THRESHOLDS,
     ColorPalette,
     QCRecommendation,
     QCThresholds,
     aggregate_qc_recommendations,
     build_qc_summary,
+    get_composite_motion_status,
     get_qc_recommendation,
     get_qc_status,
     get_status_color,
@@ -181,6 +184,49 @@ class TestConstants:
     def test_dice_strict_vs_regular(self) -> None:
         """DICE_THRESHOLDS_STRICT pass > regular DICE pass."""
         assert DICE_THRESHOLDS_STRICT.pass_threshold > DICE_THRESHOLDS.pass_threshold
+
+
+class TestCompositeMotionStatus:
+    """Tests for get_composite_motion_status()."""
+
+    def test_all_pass(self) -> None:
+        """Low FD, low max, low outliers -> PASS."""
+        assert get_composite_motion_status(0.1, 0.5, 2.0) == "PASS"
+
+    def test_mean_fd_warns(self) -> None:
+        """fd_mean=0.35 triggers WARN even with good max and outliers."""
+        assert get_composite_motion_status(0.35, 0.5, 2.0) == "WARN"
+
+    def test_pct_outliers_warns(self) -> None:
+        """12% outliers triggers WARN even with good FD values."""
+        assert get_composite_motion_status(0.1, 0.5, 12.0) == "WARN"
+
+    def test_max_fd_warns(self) -> None:
+        """fd_max=1.5 triggers WARN even with good mean and outliers."""
+        assert get_composite_motion_status(0.1, 1.5, 2.0) == "WARN"
+
+    def test_worst_wins(self) -> None:
+        """fd_mean PASS + outliers WARN + fd_max FAIL -> FAIL."""
+        assert get_composite_motion_status(0.1, 2.5, 12.0) == "FAIL"
+
+    def test_sub0005_scenario(self) -> None:
+        """Sub-0005: fd_mean=0.297, fd_max=1.015, pct=11.7 -> WARN."""
+        status = get_composite_motion_status(0.297, 1.015, 11.7)
+        assert status == "WARN"
+
+
+class TestNewMotionThresholds:
+    """Tests for new motion threshold constants."""
+
+    def test_outlier_pct_thresholds(self) -> None:
+        """MOTION_OUTLIER_PCT_THRESHOLDS has expected values."""
+        assert MOTION_OUTLIER_PCT_THRESHOLDS.pass_threshold == 5.0
+        assert MOTION_OUTLIER_PCT_THRESHOLDS.warn_threshold == 20.0
+
+    def test_fd_max_thresholds(self) -> None:
+        """MOTION_FD_MAX_THRESHOLDS has expected values."""
+        assert MOTION_FD_MAX_THRESHOLDS.pass_threshold == 1.0
+        assert MOTION_FD_MAX_THRESHOLDS.warn_threshold == 2.0
 
 
 class TestColorPalette:
