@@ -32,6 +32,12 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_SIGNAL,
 )
 
+# Seconds after baseline end before first-pass window begins.
+# 3 s is short enough to capture early peaks in fast-TR acquisitions while
+# candidates with spurious noise peaks are already rejected by the TTP
+# minimum check in ``_score_candidate_cost`` (strict ≥ 5 s, relaxed ≥ 3 s).
+_FP_GAP_SECONDS: float = 3.0
+
 
 # ---------------------------------------------------------------------------
 # Top-level helper functions (backward-compatible with utils/dsc_aif.py)
@@ -779,8 +785,8 @@ class AIFDetection(BaseInterface):
         baseline_end_time = (baseline_frames - 1) * tr if baseline_frames > 0 else 0.0
         baseline_conc = float(np.mean(conc_curve[:baseline_frames]))
 
-        # First-pass window: 10-40 s after baseline
-        fp_start = baseline_frames + max(1, int(10.0 / tr))
+        # First-pass window: _FP_GAP_SECONDS-40 s after baseline
+        fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
         fp_end = min(baseline_frames + int(40.0 / tr), n_time)
         if fp_start >= n_time or fp_end <= fp_start:
             return None
@@ -976,6 +982,11 @@ class AIFDetection(BaseInterface):
         psr = metrics.get("psr", float("nan"))
         psr_max = {"strict": 110, "relaxed": 120, "permissive": 130, "degraded": 150}
         if not np.isnan(psr) and psr > psr_max.get(criteria, 150):
+            return float("inf")
+
+        # 9b. PSR min (signal never recovers → venous/leakage contamination)
+        psr_min = {"strict": 40, "relaxed": 30, "permissive": 20, "degraded": 10}
+        if not np.isnan(psr) and psr < psr_min.get(criteria, 10):
             return float("inf")
 
         # --- Continuous scoring ---
@@ -1313,6 +1324,160 @@ class AIFDetection(BaseInterface):
         aif_curve = np.clip(aif_curve, 0.0, None)
 
         return aif_curve, aif_mask
+
+    # -----------------------------------------------------------------
+    # Post-averaging AIF validation
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _validate_averaged_aif(
+        aif_curve: npt.NDArray[Any],
+        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        tr: float,
+        baseline_frames: int,
+    ) -> tuple[
+        npt.NDArray[Any],
+        npt.NDArray[Any],
+        list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        dict[str, Any],
+    ]:
+        """Validate averaged AIF and retry with smaller ROI if needed.
+
+        Checks whether recirculation exceeds the first-pass peak in the
+        ROI-averaged AIF.  If so, re-averages with ``roi_size=1`` and,
+        as a last resort, uses the single best candidate voxel.
+
+        Parameters
+        ----------
+        aif_curve : ndarray
+            1D AIF time course from ``_compute_roi_averaged_aif``.
+        top_candidates : list
+            List of ``(cost, (x,y,z), metrics)`` tuples.
+        conc_data : ndarray
+            4D concentration data.
+        brain_mask : ndarray
+            3D brain mask.
+        tr : float
+            Repetition time in seconds.
+        baseline_frames : int
+            Number of pre-bolus baseline frames.
+
+        Returns
+        -------
+        aif_curve : ndarray
+            Validated (possibly re-computed) AIF time course.
+        aif_mask : ndarray
+            3D boolean mask of voxels used.
+        top_candidates : list
+            Candidates actually used (may be truncated to 1).
+        validation_qc : dict
+            Validation metadata for QC reporting.
+        """
+        n_time = len(aif_curve)
+
+        def _compute_spr(curve: npt.NDArray[Any]) -> tuple[float, int, float]:
+            """Return (SPR%, first-pass peak frame, first-pass peak value)."""
+            fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
+            fp_end = min(baseline_frames + int(40.0 / tr), n_time)
+            if fp_start >= n_time or fp_end <= fp_start:
+                return 0.0, -1, 0.0
+
+            fp_window = curve[fp_start:fp_end]
+            fp_peak_rel = int(np.argmax(fp_window))
+            fp_peak_abs = fp_start + fp_peak_rel
+            fp_peak_val = float(fp_window[fp_peak_rel])
+
+            baseline = float(np.mean(curve[:baseline_frames]))
+            fp_height = fp_peak_val - baseline
+            if fp_height < EPSILON_SIGNAL:
+                return 0.0, fp_peak_abs, fp_peak_val
+
+            # Recirculation window: 15 s buffer after first-pass window
+            recirc_start = fp_end + max(1, int(15.0 / tr))
+            if recirc_start >= n_time:
+                return 0.0, fp_peak_abs, fp_peak_val
+
+            post_recirc = curve[recirc_start:]
+            spr = (float(np.max(post_recirc)) - baseline) / fp_height * 100.0
+            return spr, fp_peak_abs, fp_peak_val
+
+        def _global_max_in_fp(curve: npt.NDArray[Any]) -> bool:
+            """True if global maximum falls within the first-pass window."""
+            fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
+            fp_end = min(baseline_frames + int(40.0 / tr), n_time)
+            global_max_frame = int(np.argmax(curve))
+            return fp_start <= global_max_frame < fp_end
+
+        validation_qc: dict[str, Any] = {}
+        spr, fp_peak_frame, fp_peak_val = _compute_spr(aif_curve)
+        validation_qc["averaged_aif_spr"] = round(spr, 1)
+        validation_qc["averaged_aif_fp_peak_frame"] = fp_peak_frame
+
+        spr_bad = spr > 100.0
+        gmax_bad = not _global_max_in_fp(aif_curve)
+        needs_retry = spr_bad or gmax_bad
+
+        if needs_retry:
+            if spr_bad and gmax_bad:
+                validation_qc["averaged_aif_retry_reason"] = "both"
+            elif spr_bad:
+                validation_qc["averaged_aif_retry_reason"] = "spr"
+            else:
+                validation_qc["averaged_aif_retry_reason"] = "global_max_outside_fp"
+
+        if not needs_retry:
+            # Original curve is acceptable
+            aif_mask = np.zeros(conc_data.shape[:3], dtype=bool)
+            # Reconstruct mask from candidates with default roi_size=3
+            for _, coord, _ in top_candidates:
+                slices = tuple(
+                    slice(
+                        max(0, coord[d] - 1),
+                        min(conc_data.shape[d], coord[d] + 2),
+                    )
+                    for d in range(3)
+                )
+                roi = np.zeros(conc_data.shape[:3], dtype=bool)
+                roi[slices] = True
+                aif_mask |= roi & (brain_mask > 0.5)
+
+            validation_qc["averaged_aif_validation_retries"] = 0
+            validation_qc["averaged_aif_final_roi_size"] = 3
+            return aif_curve, aif_mask, top_candidates, validation_qc
+
+        # Retry 1: re-average with roi_size=1 (no neighborhood)
+        retry_curve, retry_mask = AIFDetection._compute_roi_averaged_aif(
+            top_candidates, conc_data, brain_mask, roi_size=1,
+        )
+        spr_r1, _, _ = _compute_spr(retry_curve)
+        validation_qc["averaged_aif_spr_retry1"] = round(spr_r1, 1)
+
+        if spr_r1 <= 100.0 and _global_max_in_fp(retry_curve):
+            validation_qc["averaged_aif_validation_retries"] = 1
+            validation_qc["averaged_aif_final_roi_size"] = 1
+            return retry_curve, retry_mask, top_candidates, validation_qc
+
+        # Retry 2: single best candidate only, roi_size=1
+        best_only = [top_candidates[0]]
+        retry2_curve, retry2_mask = AIFDetection._compute_roi_averaged_aif(
+            best_only, conc_data, brain_mask, roi_size=1,
+        )
+        spr_r2, _, _ = _compute_spr(retry2_curve)
+        validation_qc["averaged_aif_spr_retry2"] = round(spr_r2, 1)
+
+        if spr_r2 <= 100.0 and _global_max_in_fp(retry2_curve):
+            validation_qc["averaged_aif_validation_retries"] = 2
+            validation_qc["averaged_aif_final_roi_size"] = 1
+            return retry2_curve, retry2_mask, best_only, validation_qc
+
+        # Final: accept best single-voxel result with warning
+        validation_qc["averaged_aif_validation_retries"] = 2
+        validation_qc["averaged_aif_final_roi_size"] = 1
+        validation_qc["aif_recirculation_warning"] = True
+        validation_qc["aif_confidence"] = "reduced"
+        return retry2_curve, retry2_mask, best_only, validation_qc
 
     # -----------------------------------------------------------------
     # Synthetic AIF (perf-plus calibrated gamma-variate)
@@ -1749,6 +1914,14 @@ class AIFDetection(BaseInterface):
             aif_curve, aif_bool_mask = self._compute_roi_averaged_aif(
                 top_candidates, conc_data, brain_mask
             )
+
+            # Validate averaged AIF (retry with smaller ROI if needed)
+            aif_curve, aif_bool_mask, top_candidates, validation_qc = (
+                self._validate_averaged_aif(
+                    aif_curve, top_candidates, conc_data, brain_mask,
+                    tr, baseline_frames,
+                )
+            )
             aif_mask_arr[aif_bool_mask] = 1
             for _, coord, _ in top_candidates:
                 aif_mask_arr[coord[0], coord[1], coord[2]] = 1
@@ -1777,6 +1950,7 @@ class AIFDetection(BaseInterface):
             )
             qc_metrics.update(finalized_qc)
             qc_metrics.update(filter_meta)
+            qc_metrics.update(validation_qc)
 
         elif not disable_fallback:
             # Compute tissue max ΔR2* for amplitude scaling
