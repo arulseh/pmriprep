@@ -336,7 +336,6 @@ class TestConfigurationBuilding:
         assert preset_config.pre_bolus == 12  # inherits default, no longer overridden
         assert preset_config.aif_criteria == "relaxed"
         assert preset_config.n_aif_candidates == 5
-        assert preset_config.save_k2_map is True
 
     @pytest.mark.parametrize("config", TEST_SUBJECT_CLI_CONFIGS)
     def test_config_file_loading(self, config: Dict[str, Any]) -> None:

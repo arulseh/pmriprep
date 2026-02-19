@@ -156,7 +156,6 @@ dsc:
   aif_criteria: relaxed
   n_aif_candidates: 10
   pre_bolus: 5
-  save_k2_map: true
   use_gpu: false
 
 # DCE configuration
@@ -209,7 +208,6 @@ hdglio:
 | `aif_criteria` | str | "strict" | AIF selection: strict, relaxed |
 | `n_aif_candidates` | int | 10 | Number of AIF candidates |
 | `pre_bolus` | int | 5 | Pre-bolus baseline frames |
-| `save_k2_map` | bool | false | Save K2 leakage map |
 | `use_gpu` | bool | false | Use GPU acceleration |
 
 #### DCE Options

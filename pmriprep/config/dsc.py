@@ -53,8 +53,6 @@ class DSCConfig:
         Framewise displacement threshold (mm) for motion outliers.
     pre_bolus : int
         Number of pre-bolus baseline frames.
-    save_k2_map : bool
-        Deprecated, ignored. K2 map is always saved.
     num_processes : int
         Number of parallel processes (0 = use system default).
     use_gpu : bool
@@ -92,7 +90,6 @@ class DSCConfig:
     underlays: List[str] = field(default_factory=lambda: ["t1w", "flair"])
     motion_thresh: float = 0.5
     pre_bolus: int = 12
-    save_k2_map: bool = True  # Deprecated: K2 map is always saved
 
     # Resource settings
     num_processes: int = 0  # 0 = use system default
@@ -130,8 +127,6 @@ class DSCConfig:
         - relaxed AIF criteria
         - n_aif_candidates=5
         - gamma_fit=True (gamma-variate AIF fitting for cleaner deconvolution)
-        - K2 map always saved
-
         Returns
         -------
         DSCConfig
@@ -158,7 +153,6 @@ class DSCConfig:
             underlays=self.underlays,
             motion_thresh=self.motion_thresh,
             pre_bolus=self.pre_bolus,
-            save_k2_map=True,  # Always saved, kept for compat
             num_processes=self.num_processes,
             use_gpu=self.use_gpu,
         )
