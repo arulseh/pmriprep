@@ -1499,6 +1499,30 @@ def init_pmriprep_wf(
     # DCE perfusion workflow (requires anat, uses DSC CBV if available)
     # -------------------------------------------------------------------
     if decision.run_dce:
+        import logging as _logging
+
+        _log = _logging.getLogger("pmriprep.workflows")
+
+        # Auto-skip T1 mapping when no VFA data is available
+        # (B1 mapping is also unnecessary without VFA)
+        if not session_data.modalities.vfa and not dce_config.no_t1:
+            _log.warning(
+                "No VFA data found for sub-%s ses-%s; "
+                "disabling T1 mapping (using field-strength default T1)",
+                subject_id, session_id,
+            )
+            dce_config.no_t1 = True
+            dce_config.no_b1 = True
+
+        # Auto-skip B1 when no AFI data (VFA may still exist)
+        if not session_data.modalities.afi and not dce_config.no_b1:
+            _log.warning(
+                "No AFI/B1+ data found for sub-%s ses-%s; "
+                "disabling B1+ correction (using nominal flip angles)",
+                subject_id, session_id,
+            )
+            dce_config.no_b1 = True
+
         dce_wf = init_dce_preproc_wf(
             bids_dir=bids_dir,
             subject_id=subject_id,

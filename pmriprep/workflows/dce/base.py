@@ -331,127 +331,123 @@ def init_dce_preproc_wf(
         (inputnode, dce_reorient, [("dce_file", "in_file")]),
     ])
 
-    # VFA images (list of 3D) - optional, use Function node to handle None
-    vfa_reorient = pe.Node(
-        niu.Function(
-            input_names=["in_files"],
-            output_names=["out_file"],
-            function=reorient_list_to_ras,
-        ),
-        name="vfa_reorient",
-    )
-
-    workflow.connect([
-        (inputnode, vfa_reorient, [("vfa_files", "in_files")]),
-    ])
-
     # NOTE: AFI and DWI reorientation is handled inside their respective
     # processing functions (B1Mapping, _register_dwi_to_dce) to avoid
     # issues with nipype passing None to interfaces that expect files.
 
     # ==========================================================================
-    # Node 1: B1+ Mapping (optional - skip if config.no_b1=True)
+    # Nodes 1-2: VFA/B1/T1 pipeline (conditional — skipped when no_t1=True)
     # ==========================================================================
-    b1_mapping = pe.Node(
-        B1Mapping(
-            skip_b1=config.no_b1,
-        ),
-        name="b1_mapping",
-    )
+    # When no VFA data is available (no_t1=True), the entire VFA→B1→T1 chain
+    # is skipped. signal_to_concentration uses field-strength default T1 and
+    # nominal flip angles, producing semi-quantitative results per QIBA
+    # DCE-MRI profile (Tofts et al., 1999; QIBA v2.0, 2019).
+    if not config.no_t1:
+        # VFA images (list of 3D) - reorient to RAS
+        vfa_reorient = pe.Node(
+            niu.Function(
+                input_names=["in_files"],
+                output_names=["out_file"],
+                function=reorient_list_to_ras,
+            ),
+            name="vfa_reorient",
+        )
 
-    # Connect B1 mapping inputs (direct from inputnode - reorientation handled internally)
-    workflow.connect([
-        (inputnode, b1_mapping, [
-            ("afi_tr1_file", "tr1_file"),
-            ("afi_tr2_file", "tr2_file"),
-            ("afi_4d_file", "afi_4d_file"),
-            ("afi_tr1", "tr1"),
-            ("afi_tr2", "tr2"),
-            ("brain_mask", "brain_mask"),
-            ("field_strength", "field_strength"),
-            ("afi_flip_angle", "nominal_flip_angle"),
-        ]),
-    ])
+        workflow.connect([
+            (inputnode, vfa_reorient, [("vfa_files", "in_files")]),
+        ])
 
-    # ==========================================================================
-    # Node 1b: VFA Preprocessing (coregistration + quality assessment)
-    # ==========================================================================
-    vfa_preprocess = pe.Node(
-        VFAPreprocess(
-            skip_coregistration=False,
-            skip_flip_validation=config.skip_flip_validation,
-        ),
-        name="vfa_preprocess",
-    )
+        # Node 1: B1+ Mapping (optional — skip_b1 disables correction)
+        b1_mapping = pe.Node(
+            B1Mapping(
+                skip_b1=config.no_b1,
+            ),
+            name="b1_mapping",
+        )
 
-    # Connect VFA preprocessing inputs (using reoriented VFA files)
-    workflow.connect([
-        (vfa_reorient, vfa_preprocess, [("out_file", "vfa_files")]),
-        (inputnode, vfa_preprocess, [
-            ("vfa_flip_angles", "flip_angles"),
-            ("vfa_tr", "tr"),
-            ("field_strength", "field_strength"),
-        ]),
-    ])
+        workflow.connect([
+            (inputnode, b1_mapping, [
+                ("afi_tr1_file", "tr1_file"),
+                ("afi_tr2_file", "tr2_file"),
+                ("afi_4d_file", "afi_4d_file"),
+                ("afi_tr1", "tr1"),
+                ("afi_tr2", "tr2"),
+                ("brain_mask", "brain_mask"),
+                ("field_strength", "field_strength"),
+                ("afi_flip_angle", "nominal_flip_angle"),
+            ]),
+        ])
 
-    # ==========================================================================
-    # Node 1c: Transform B1+ map to VFA space (for T1 fitting)
-    # ==========================================================================
-    transform_b1_to_vfa = pe.Node(
-        niu.Function(
-            input_names=["b1_map_file", "vfa_ref_file"],
-            output_names=["out_file"],
-            function=_transform_b1_to_vfa,
-        ),
-        name="transform_b1_to_vfa",
-    )
+        b1_mapping.inputs.subject_id = subject_id
+        b1_mapping.inputs.session_id = session_id or ""
 
-    workflow.connect([
-        (b1_mapping, transform_b1_to_vfa, [
-            ("out_file", "b1_map_file"),
-        ]),
-        (vfa_preprocess, transform_b1_to_vfa, [
-            ("reference_file", "vfa_ref_file"),
-        ]),
-    ])
+        # Node 1b: VFA Preprocessing (coregistration + quality assessment)
+        vfa_preprocess = pe.Node(
+            VFAPreprocess(
+                skip_coregistration=False,
+                skip_flip_validation=config.skip_flip_validation,
+            ),
+            name="vfa_preprocess",
+        )
 
-    # ==========================================================================
-    # Node 2: T1 Mapping (optional - skip if config.no_t1=True)
-    # ==========================================================================
-    t1_mapping = pe.Node(
-        T1Mapping(
-            skip_t1=config.no_t1,
-            lenient_qc=config.lenient_t1_qc,
-            t1_correction_mode=config.t1_correction,
-        ),
-        name="t1_mapping",
-    )
+        workflow.connect([
+            (vfa_reorient, vfa_preprocess, [("out_file", "vfa_files")]),
+            (inputnode, vfa_preprocess, [
+                ("vfa_flip_angles", "flip_angles"),
+                ("vfa_tr", "tr"),
+                ("field_strength", "field_strength"),
+            ]),
+        ])
 
-    # Connect T1 mapping inputs — use coregistered VFA and resampled B1
-    workflow.connect([
-        (vfa_preprocess, t1_mapping, [
-            ("out_files", "vfa_files"),
-        ]),
-        (inputnode, t1_mapping, [
-            ("vfa_flip_angles", "flip_angles"),
-            ("vfa_tr", "tr"),
-            ("brain_mask", "brain_mask"),
-            ("field_strength", "field_strength"),
-        ]),
-        # Connect B1 map resampled to VFA space
-        (transform_b1_to_vfa, t1_mapping, [
-            ("out_file", "b1_map"),
-        ]),
-        # Wire B1 QC status to T1 correction threshold
-        (b1_mapping, t1_mapping, [
-            ("qc_pass", "b1_qc_pass"),
-        ]),
-    ])
+        # Node 1c: Transform B1+ map to VFA space (for T1 fitting)
+        transform_b1_to_vfa = pe.Node(
+            niu.Function(
+                input_names=["b1_map_file", "vfa_ref_file"],
+                output_names=["out_file"],
+                function=_transform_b1_to_vfa,
+            ),
+            name="transform_b1_to_vfa",
+        )
 
-    b1_mapping.inputs.subject_id = subject_id
-    b1_mapping.inputs.session_id = session_id or ""
-    t1_mapping.inputs.subject_id = subject_id
-    t1_mapping.inputs.session_id = session_id or ""
+        workflow.connect([
+            (b1_mapping, transform_b1_to_vfa, [
+                ("out_file", "b1_map_file"),
+            ]),
+            (vfa_preprocess, transform_b1_to_vfa, [
+                ("reference_file", "vfa_ref_file"),
+            ]),
+        ])
+
+        # Node 2: T1 Mapping
+        t1_mapping = pe.Node(
+            T1Mapping(
+                skip_t1=False,
+                lenient_qc=config.lenient_t1_qc,
+                t1_correction_mode=config.t1_correction,
+            ),
+            name="t1_mapping",
+        )
+
+        workflow.connect([
+            (vfa_preprocess, t1_mapping, [
+                ("out_files", "vfa_files"),
+            ]),
+            (inputnode, t1_mapping, [
+                ("vfa_flip_angles", "flip_angles"),
+                ("vfa_tr", "tr"),
+                ("brain_mask", "brain_mask"),
+                ("field_strength", "field_strength"),
+            ]),
+            (transform_b1_to_vfa, t1_mapping, [
+                ("out_file", "b1_map"),
+            ]),
+            (b1_mapping, t1_mapping, [
+                ("qc_pass", "b1_qc_pass"),
+            ]),
+        ])
+
+        t1_mapping.inputs.subject_id = subject_id
+        t1_mapping.inputs.session_id = session_id or ""
 
     # ==========================================================================
     # Node 3: DCE Preprocessing (motion correction + baseline detection)
@@ -614,9 +610,13 @@ def init_dce_preproc_wf(
         (inputnode, transform_csf_probseg, [("csf_probseg", "probseg_file")]),
         (dce_preprocess, transform_csf_probseg, [("mean_img", "reference_file")]),
         (dce_registration, transform_csf_probseg, [("out_matrix", "transform_matrix")]),
-        # Wire transformed CSF probseg to T1 mapping (must be in DCE/VFA space)
-        (transform_csf_probseg, t1_mapping, [("out_file", "csf_probseg")]),
     ])
+
+    # Wire transformed CSF probseg to T1 mapping only when active
+    if not config.no_t1:
+        workflow.connect([
+            (transform_csf_probseg, t1_mapping, [("out_file", "csf_probseg")]),
+        ])
 
     # ==========================================================================
     # Node 4b2: Create conservative AIF search mask (Gap 5)
@@ -689,46 +689,44 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
-    # Node 4c: Transform T1 map to DCE space
+    # Nodes 4c-4d: Transform T1/B1 maps to DCE space (conditional)
     # ==========================================================================
-    transform_t1_to_dce = pe.Node(
-        niu.Function(
-            input_names=["t1_map_file", "reference_file"],
-            output_names=["out_file"],
-            function=_transform_t1_to_dce,
-        ),
-        name="transform_t1_to_dce",
-    )
+    if not config.no_t1:
+        transform_t1_to_dce = pe.Node(
+            niu.Function(
+                input_names=["t1_map_file", "reference_file"],
+                output_names=["out_file"],
+                function=_transform_t1_to_dce,
+            ),
+            name="transform_t1_to_dce",
+        )
 
-    workflow.connect([
-        (t1_mapping, transform_t1_to_dce, [
-            ("out_file", "t1_map_file"),
-        ]),
-        (dce_preprocess, transform_t1_to_dce, [
-            ("mean_img", "reference_file"),
-        ]),
-    ])
+        workflow.connect([
+            (t1_mapping, transform_t1_to_dce, [
+                ("out_file", "t1_map_file"),
+            ]),
+            (dce_preprocess, transform_t1_to_dce, [
+                ("mean_img", "reference_file"),
+            ]),
+        ])
 
-    # ==========================================================================
-    # Node 4d: Transform B1+ map to DCE space (for signal_to_concentration)
-    # ==========================================================================
-    transform_b1_to_dce = pe.Node(
-        niu.Function(
-            input_names=["b1_map_file", "reference_file"],
-            output_names=["out_file"],
-            function=_transform_b1_to_dce,
-        ),
-        name="transform_b1_to_dce",
-    )
+        transform_b1_to_dce = pe.Node(
+            niu.Function(
+                input_names=["b1_map_file", "reference_file"],
+                output_names=["out_file"],
+                function=_transform_b1_to_dce,
+            ),
+            name="transform_b1_to_dce",
+        )
 
-    workflow.connect([
-        (b1_mapping, transform_b1_to_dce, [
-            ("out_file", "b1_map_file"),
-        ]),
-        (dce_preprocess, transform_b1_to_dce, [
-            ("mean_img", "reference_file"),
-        ]),
-    ])
+        workflow.connect([
+            (b1_mapping, transform_b1_to_dce, [
+                ("out_file", "b1_map_file"),
+            ]),
+            (dce_preprocess, transform_b1_to_dce, [
+                ("mean_img", "reference_file"),
+            ]),
+        ])
 
     # ==========================================================================
     # Node 5: Signal to Concentration Conversion
@@ -763,12 +761,6 @@ def init_dce_preproc_wf(
             ("out_file", "dce_file"),
             ("baseline_frames", "baseline_frames"),
         ]),
-        (transform_t1_to_dce, signal_to_conc, [
-            ("out_file", "t1_map_file"),
-        ]),
-        (transform_b1_to_dce, signal_to_conc, [
-            ("out_file", "b1_map_file"),
-        ]),
         (inputnode, signal_to_conc, [
             ("flip_angle", "flip_angle"),
             ("tr", "tr"),
@@ -776,6 +768,19 @@ def init_dce_preproc_wf(
             ("r1_relaxivity", "r1_relaxivity"),
         ]),
     ])
+
+    if not config.no_t1:
+        workflow.connect([
+            (transform_t1_to_dce, signal_to_conc, [
+                ("out_file", "t1_map_file"),
+            ]),
+            (transform_b1_to_dce, signal_to_conc, [
+                ("out_file", "b1_map_file"),
+            ]),
+        ])
+    else:
+        signal_to_conc.inputs.t1_map_file = None
+        signal_to_conc.inputs.b1_map_file = None
 
     # ==========================================================================
     # Node 6: AIF Detection
@@ -1278,13 +1283,20 @@ def init_dce_preproc_wf(
         name="collect_qc_metrics",
     )
 
+    if not config.no_t1:
+        workflow.connect([
+            (b1_mapping, collect_qc, [
+                ("qc_metrics", "b1_qc"),
+            ]),
+            (t1_mapping, collect_qc, [
+                ("qc_metrics", "t1_qc"),
+            ]),
+        ])
+    else:
+        collect_qc.inputs.b1_qc = None
+        collect_qc.inputs.t1_qc = None
+
     workflow.connect([
-        (b1_mapping, collect_qc, [
-            ("qc_metrics", "b1_qc"),
-        ]),
-        (t1_mapping, collect_qc, [
-            ("qc_metrics", "t1_qc"),
-        ]),
         (dce_preprocess, collect_qc, [
             ("qc_metrics", "preprocess_qc"),
         ]),
@@ -1451,13 +1463,6 @@ def init_dce_preproc_wf(
             ("mean_img", "dce_mean"),
             ("out_params", "motion_params"),
         ]),
-        # T1/B1 mapping outputs
-        (b1_mapping, outputnode, [
-            ("out_file", "b1_map"),
-        ]),
-        (t1_mapping, outputnode, [
-            ("out_file", "t1_map"),
-        ]),
         # Pharmacokinetic parameter maps
         (pk_modeling, outputnode, [
             ("out_ktrans", "ktrans_map"),
@@ -1527,19 +1532,6 @@ def init_dce_preproc_wf(
             ("out_aif_plot", "aif_curve_qc_plot"),
             ("out_aif_location", "aif_location_qc_plot"),
         ]),
-        # QC plots - VFA registration (optional, only if VFA coregistration occurred)
-        (vfa_preprocess, outputnode, [
-            ("registration_qc_plot", "vfa_registration_qc_plot"),
-        ]),
-        # QC plots - AFI registration (optional, only if AFI coregistration occurred)
-        (b1_mapping, outputnode, [
-            ("registration_qc_plot", "afi_registration_qc_plot"),
-            ("qc_plot", "b1_qc_plot"),
-        ]),
-        # QC plots - VFA T1 mapping
-        (t1_mapping, outputnode, [
-            ("qc_plot", "t1_qc_plot"),
-        ]),
         # Motion QC plot
         (motion_qc_plot, outputnode, [
             ("plot_file", "motion_qc_plot"),
@@ -1553,6 +1545,30 @@ def init_dce_preproc_wf(
             ("pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
         ]),
     ])
+
+    # T1/B1/VFA output connections (conditional on T1 mapping being active)
+    if not config.no_t1:
+        workflow.connect([
+            (b1_mapping, outputnode, [
+                ("out_file", "b1_map"),
+            ]),
+            (t1_mapping, outputnode, [
+                ("out_file", "t1_map"),
+            ]),
+            # QC plots - VFA registration
+            (vfa_preprocess, outputnode, [
+                ("registration_qc_plot", "vfa_registration_qc_plot"),
+            ]),
+            # QC plots - AFI registration and B1
+            (b1_mapping, outputnode, [
+                ("registration_qc_plot", "afi_registration_qc_plot"),
+                ("qc_plot", "b1_qc_plot"),
+            ]),
+            # QC plots - VFA T1 mapping
+            (t1_mapping, outputnode, [
+                ("qc_plot", "t1_qc_plot"),
+            ]),
+        ])
 
     # Structural underlay output connections (conditional)
     if transform_t1w_underlay is not None:
