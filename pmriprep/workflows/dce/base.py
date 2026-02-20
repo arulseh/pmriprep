@@ -279,7 +279,7 @@ def init_dce_preproc_wf(
                 "vp_ci95_upper",
                 # Tortuosity-corrected output
                 "ktrans_tortuosity_corrected",
-                # Smoothed maps (populated only if config.smooth > 0)
+                # Smoothed maps (populated only if config.smooth_fwhm > 0)
                 "smooth_pk_maps",
                 "smooth_model_free_maps",
                 "smooth_uncertainty_maps",
@@ -550,7 +550,6 @@ def init_dce_preproc_wf(
     dce_registration = pe.Node(
         DCERegistration(
             skip_bbr=config.skip_bbr,
-            lesion_dilation=config.lesion_dilation,
             reference_type=config.reference,  # "postcon" or "precon"
         ),
         name="dce_registration",
@@ -1065,14 +1064,14 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
-    # Node 9b: Smoothing (conditional on config.smooth > 0)
+    # Node 9b: Smoothing (conditional on config.smooth_fwhm > 0)
     # ==========================================================================
     smooth_pk = None
     smooth_model_free = None
     smooth_uncertainty = None
     smooth_tortuosity = None
 
-    if config.smooth > 0:
+    if config.smooth_fwhm > 0:
         # Build dict of PK maps for smoothing
         build_pk_dict = pe.Node(
             niu.Function(
@@ -1101,7 +1100,7 @@ def init_dce_preproc_wf(
             ),
             name="smooth_pk_maps",
         )
-        smooth_pk.inputs.fwhm = config.smooth
+        smooth_pk.inputs.fwhm = config.smooth_fwhm
 
         workflow.connect([
             (build_pk_dict, smooth_pk, [("map_dict", "map_files")]),
@@ -1138,7 +1137,7 @@ def init_dce_preproc_wf(
             ),
             name="smooth_model_free_maps",
         )
-        smooth_model_free.inputs.fwhm = config.smooth
+        smooth_model_free.inputs.fwhm = config.smooth_fwhm
 
         workflow.connect([
             (build_mf_dict, smooth_model_free, [("map_dict", "map_files")]),
@@ -1178,7 +1177,7 @@ def init_dce_preproc_wf(
             ),
             name="smooth_uncertainty_maps",
         )
-        smooth_uncertainty.inputs.fwhm = config.smooth
+        smooth_uncertainty.inputs.fwhm = config.smooth_fwhm
 
         workflow.connect([
             (build_uncertainty_dict, smooth_uncertainty, [("map_dict", "map_files")]),
@@ -1210,7 +1209,7 @@ def init_dce_preproc_wf(
             ),
             name="smooth_tortuosity_maps",
         )
-        smooth_tortuosity.inputs.fwhm = config.smooth
+        smooth_tortuosity.inputs.fwhm = config.smooth_fwhm
 
         workflow.connect([
             (build_tortuosity_dict, smooth_tortuosity, [("map_dict", "map_files")]),
@@ -1578,7 +1577,7 @@ def init_dce_preproc_wf(
         ]),
     ])
 
-    # Smoothing output connections (only if config.smooth > 0)
+    # Smoothing output connections (only if config.smooth_fwhm > 0)
     if smooth_pk is not None:
         workflow.connect([
             (smooth_pk, outputnode, [("smoothed_files", "smooth_pk_maps")]),

@@ -19,8 +19,6 @@ class DCEConfig:
         Reference image for registration (default: postcon T1w).
     lesion_mask : Optional[Path]
         Path to lesion mask for registration weighting.
-    lesion_dilation : float
-        Dilation radius (mm) for lesion mask in registration.
     skip_bbr : bool
         Skip boundary-based registration (use FLIRT only).
     aif_method : Literal["auto", "population"]
@@ -49,7 +47,7 @@ class DCEConfig:
         Skip DWI-based tortuosity correction.
     no_dsc_validation : bool
         Skip DSC-DCE cross-validation.
-    smooth : float
+    smooth_fwhm : float
         Smoothing kernel FWHM (mm) for output maps.
     baseline_frames : int
         Number of baseline frames (0 = auto-detect).
@@ -74,15 +72,14 @@ class DCEConfig:
     # Registration settings
     reference: str = "postcon"
     lesion_mask: Optional[Path] = None
-    lesion_dilation: float = 15.0
     skip_bbr: bool = False
 
     # AIF detection settings
     aif_method: Literal["auto", "population"] = "auto"
-    scale_aif: bool = False
+    scale_aif: bool = True
     target_peak: Optional[float] = None  # None = use field-strength default
     aif_mask_file: Optional[Path] = None
-    lesion_distance: float = 20.0
+    lesion_distance: float = 15.0
     n_aif_candidates: int = 10
 
     # Structural settings
@@ -97,7 +94,7 @@ class DCEConfig:
     # Processing settings
     no_tortuosity: bool = False
     no_dsc_validation: bool = False
-    smooth: float = 0.0  # No smoothing by default
+    smooth_fwhm: float = 0.0  # No smoothing by default
     baseline_frames: int = 0  # 0 = auto-detect
     dose: Literal["half", "full", "double"] = "full"
     tsnr_threshold: float = 0.0  # 0 = no threshold
@@ -133,9 +130,8 @@ class DCEConfig:
 
         # Coerce float fields (these have non-None defaults)
         try:
-            self.smooth = float(self.smooth)
+            self.smooth_fwhm = float(self.smooth_fwhm)
             self.lesion_distance = float(self.lesion_distance)
-            self.lesion_dilation = float(self.lesion_dilation)
             self.tsnr_threshold = float(self.tsnr_threshold)
             self.hematocrit = float(self.hematocrit)
         except (ValueError, TypeError) as e:

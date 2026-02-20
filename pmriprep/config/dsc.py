@@ -15,8 +15,8 @@ class DSCConfig:
 
     Attributes
     ----------
-    preload_detected : bool
-        Whether contrast preload is detected/specified.
+    preload_present : bool
+        Whether contrast preload is present (e.g., prior DCE injection).
     dose : Literal["half", "full", "double"]
         Contrast agent dose level.
     method : str
@@ -57,12 +57,14 @@ class DSCConfig:
         Number of parallel processes (0 = use system default).
     use_gpu : bool
         Enable GPU acceleration.
+    hdbet_device : Literal["auto", "cuda", "mps", "cpu"]
+        Device for HD-BET brain extraction: auto, cuda, mps, or cpu.
     aif_method : Literal["auto", "population"]
         AIF detection method: auto or population.
     """
 
     # Preload settings
-    preload_detected: bool = False
+    preload_present: bool = False
     dose: Literal["half", "full", "double"] = "full"
 
     # Deconvolution settings
@@ -94,6 +96,7 @@ class DSCConfig:
     # Resource settings
     num_processes: int = 0  # 0 = use system default
     use_gpu: bool = False
+    hdbet_device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
 
     def __post_init__(self):
         """Ensure numeric fields have correct types after initialization.
@@ -133,7 +136,7 @@ class DSCConfig:
             New config with GBM preset applied.
         """
         return DSCConfig(
-            preload_detected=self.preload_detected,
+            preload_present=self.preload_present,
             dose=self.dose,
             method="oSVD",
             bayesian=self.bayesian,

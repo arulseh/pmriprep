@@ -122,20 +122,16 @@ def merge_cli_config(
         # DSC options
         "dsc_deconv_method": ("dsc", "method"),
         "dsc_bayesian": ("dsc", "bayesian"),
-        "dsc_preload": ("dsc", "preload_detected"),
+        "dsc_preload": ("dsc", "preload_present"),
         "dsc_dose": ("dsc", "dose"),
         "dsc_aif_method": ("dsc", "aif_method"),
-        "dsc_use_gpu": ("dsc", "use_gpu"),
         # DCE options
         "dce_model": ("dce", "model"),
         "dce_bayesian": ("dce", "bayesian"),
         "dce_aif_method": ("dce", "aif_method"),
-        "dce_scale_aif": ("dce", "scale_aif"),
         "dce_no_b1": ("dce", "no_b1"),
         "dce_no_t1": ("dce", "no_t1"),
-        "dce_use_gpu": ("dce", "use_gpu"),
         "dce_dose": ("dce", "dose"),
-        "hdbet_device": ("dce", "hdbet_device"),
         # Anatomical options
         "brain_extraction_tool": ("anat", "tool"),
         "denoise": ("anat", "denoise"),
@@ -149,6 +145,16 @@ def merge_cli_config(
             if section not in result:
                 result[section] = {}
             result[section][config_key] = cli_args[cli_key]
+
+    # --use-gpu sets use_gpu on both DSC and DCE configs
+    if cli_args.get("use_gpu"):
+        result.setdefault("dsc", {})["use_gpu"] = True
+        result.setdefault("dce", {})["use_gpu"] = True
+
+    # --hdbet-device sets hdbet_device on both DSC and DCE configs
+    if cli_args.get("hdbet_device") is not None:
+        result.setdefault("dsc", {})["hdbet_device"] = cli_args["hdbet_device"]
+        result.setdefault("dce", {})["hdbet_device"] = cli_args["hdbet_device"]
 
     return result
 
@@ -245,9 +251,8 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     _coerce_int(dce_dict, "mcmc_samples")
     _coerce_int(dce_dict, "n_aif_candidates")
     _coerce_int(dce_dict, "num_processes")
-    _coerce_float(dce_dict, "smooth")
+    _coerce_float(dce_dict, "smooth_fwhm")
     _coerce_float(dce_dict, "lesion_distance")
-    _coerce_float(dce_dict, "lesion_dilation")
     _coerce_float(dce_dict, "tsnr_threshold")
     _coerce_float(dce_dict, "hematocrit")
     _coerce_float(dce_dict, "target_peak")

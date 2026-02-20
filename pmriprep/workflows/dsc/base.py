@@ -176,7 +176,7 @@ def _histogram_match_t1w_to_dsc(
     return out_file
 
 
-def _hdbet_dsc_brain(dsc_mean_file):
+def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto"):
     """Extract DSC brain using HD-BET for improved registration quality.
 
     HD-BET produces a brain-extracted DSC image that yields better
@@ -203,9 +203,18 @@ def _hdbet_dsc_brain(dsc_mean_file):
 
     hdbet_succeeded = False
 
-    # Detect device: MPS on macOS, CPU elsewhere
-    import platform
-    hdbet_device = "mps" if platform.system() == "Darwin" else "cpu"
+    # Resolve HD-BET device
+    if hdbet_device == "auto":
+        try:
+            import torch
+            if torch.cuda.is_available():
+                hdbet_device = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                hdbet_device = "mps"
+            else:
+                hdbet_device = "cpu"
+        except ImportError:
+            hdbet_device = "cpu"
 
     # Try HD-BET via conda env first, then directly
     for cmd_prefix in [["conda", "run", "-n", "hdbet-env"], []]:
@@ -404,7 +413,7 @@ def _detect_and_correct_preload(
     te,
     field_strength,
     tr,
-    preload_detected,
+    preload_present,
     signal_file=None,
     baseline_frames=5,
 ):
@@ -419,7 +428,7 @@ def _detect_and_correct_preload(
         te: Echo time in seconds.
         field_strength: Magnetic field strength in Tesla.
         tr: Repetition time in seconds.
-        preload_detected: User-specified preload flag (True/False/None for auto).
+        preload_present: User-specified preload flag (True/False/None for auto).
 
     Returns:
         Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
@@ -458,10 +467,10 @@ def _detect_and_correct_preload(
     k2_map_file: str = ""
 
     # Detect preload for QC classification (does not gate K2 correction)
-    if preload_detected is True:
+    if preload_present is True:
         qc_metrics["preload_user_specified"] = True
         qc_metrics["preload_classification"] = "user_specified_preload"
-    elif preload_detected is False:
+    elif preload_present is False:
         qc_metrics["preload_user_specified"] = True
         qc_metrics["preload_classification"] = "user_specified_no_preload"
     else:
@@ -1659,12 +1668,13 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     hdbet_dsc = pe.Node(
         niu.Function(
-            input_names=["dsc_mean_file"],
+            input_names=["dsc_mean_file", "hdbet_device"],
             output_names=["dsc_brain_file", "dsc_brain_mask_file"],
             function=_hdbet_dsc_brain,
         ),
         name="hdbet_dsc",
     )
+    hdbet_dsc.inputs.hdbet_device = config.hdbet_device
 
     # -------------------------------------------------------------------
     # Node 1b2: Histogram Match T1w to DSC (for FLIRT convergence)
@@ -1746,7 +1756,7 @@ def init_dsc_preproc_wf(
                 "te",
                 "field_strength",
                 "tr",
-                "preload_detected",
+                "preload_present",
                 "signal_file",
                 "baseline_frames",
             ],
@@ -1755,7 +1765,7 @@ def init_dsc_preproc_wf(
         ),
         name="preload_correct",
     )
-    preload_correct.inputs.preload_detected = config.preload_detected if config.preload_detected is not None else None
+    preload_correct.inputs.preload_present = config.preload_present if config.preload_present is not None else None
     preload_correct.inputs.baseline_frames = config.pre_bolus
 
     # -------------------------------------------------------------------

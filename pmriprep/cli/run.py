@@ -154,6 +154,12 @@ Examples:
         help="Device for HD-BET brain extraction (default: auto). "
         "Use 'mps' for Mac GPU, 'cuda' for NVIDIA GPU, 'cpu' for CPU-only.",
     )
+    device_group.add_argument(
+        "--use-gpu",
+        action="store_true",
+        default=False,
+        help="Enable GPU acceleration for DSC and DCE processing.",
+    )
 
     # DSC options
     dsc_group = parser.add_argument_group(
@@ -197,12 +203,6 @@ Examples:
         default="auto",
         help="AIF detection method for DSC (default: auto).",
     )
-    dsc_group.add_argument(
-        "--dsc-use-gpu",
-        action="store_true",
-        default=False,
-        help="Enable GPU acceleration for DSC processing.",
-    )
 
     # DCE options
     dce_group = parser.add_argument_group(
@@ -234,12 +234,6 @@ Examples:
         help="Contrast agent dose for DCE (default: full).",
     )
     dce_group.add_argument(
-        "--dce-scale-aif",
-        action="store_true",
-        default=False,
-        help="Scale AIF amplitude to population reference.",
-    )
-    dce_group.add_argument(
         "--dce-no-b1",
         action="store_true",
         default=False,
@@ -250,12 +244,6 @@ Examples:
         action="store_true",
         default=False,
         help="Skip T1 mapping (use field-strength-appropriate default T1).",
-    )
-    dce_group.add_argument(
-        "--dce-use-gpu",
-        action="store_true",
-        default=False,
-        help="Enable GPU acceleration for DCE processing.",
     )
 
     # Anatomical options

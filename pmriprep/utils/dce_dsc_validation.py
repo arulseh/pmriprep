@@ -136,14 +136,14 @@ class ValidationResult:
 
     Attributes:
         status: Overall validation status (PASS/WARN/FAIL).
-        preload_detected: Whether preload effect is suspected.
+        preload_present: Whether preload effect is suspected.
         correction_factor: Suggested correction factor to align vp with CBV.
         metrics: Detailed validation metrics.
         interpretation: Human-readable interpretation of results.
     """
 
     status: str = QCStatus.UNKNOWN
-    preload_detected: bool = False
+    preload_present: bool = False
     correction_factor: float = 1.0
     metrics: ValidationMetrics = field(default_factory=ValidationMetrics)
     interpretation: str = ""
@@ -152,7 +152,7 @@ class ValidationResult:
         """Convert result to dictionary for JSON serialization."""
         return {
             "status": self.status,
-            "preload_detected": self.preload_detected,
+            "preload_present": self.preload_present,
             "correction_factor": self.correction_factor,
             "metrics": self.metrics.to_dict(),
             "interpretation": self.interpretation,
@@ -329,7 +329,7 @@ def validate_vp_cbv(
     if metrics.median_ratio < RATIO_PRELOAD_THRESHOLD:
         # Ratio much lower than expected - suggests preload
         result.status = QCStatus.WARN
-        result.preload_detected = True
+        result.preload_present = True
         interpretations.append(
             f"Low vp/CBV ratio ({metrics.median_ratio:.3f}) suggests preload effect"
         )
@@ -343,7 +343,7 @@ def validate_vp_cbv(
     elif metrics.median_ratio > RATIO_HIGH_THRESHOLD:
         # Ratio much higher than expected - suggests DCE overestimation
         result.status = QCStatus.WARN
-        result.preload_detected = False
+        result.preload_present = False
         interpretations.append(
             f"High vp/CBV ratio ({metrics.median_ratio:.3f}) suggests DCE vp overestimation"
         )
@@ -357,7 +357,7 @@ def validate_vp_cbv(
     else:
         # Ratio within acceptable range
         result.status = QCStatus.PASS
-        result.preload_detected = False
+        result.preload_present = False
         interpretations.append(
             f"vp/CBV ratio ({metrics.median_ratio:.3f}) within expected range"
         )
@@ -378,7 +378,7 @@ def validate_vp_cbv(
 
     logger.info(
         f"DSC-DCE Validation: status={result.status}, "
-        f"preload_detected={result.preload_detected}, "
+        f"preload_present={result.preload_present}, "
         f"median_ratio={metrics.median_ratio:.3f}, "
         f"correlation={metrics.correlation:.3f}"
     )
