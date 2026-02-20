@@ -902,14 +902,14 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         File(exists=True),
         mandatory=True,
         minlen=2,
-        maxlen=5,
-        desc="List of VFA images (2-5 images) at different flip angles",
+        maxlen=20,
+        desc="List of VFA images at different flip angles",
     )
     flip_angles = traits.List(
         traits.Float,
         mandatory=True,
         minlen=2,
-        maxlen=5,
+        maxlen=20,
         desc="List of flip angles in degrees corresponding to vfa_files",
     )
     tr = traits.Float(
@@ -1575,14 +1575,14 @@ class VFAPreprocessInputSpec(BaseInterfaceInputSpec):
         File(exists=True),
         mandatory=True,
         minlen=2,
-        maxlen=5,
+        maxlen=20,
         desc="List of VFA images at different flip angles",
     )
     flip_angles = traits.List(
         traits.Float,
         mandatory=True,
         minlen=2,
-        maxlen=5,
+        maxlen=20,
         desc="Flip angles in degrees corresponding to vfa_files",
     )
     skip_coregistration = traits.Bool(
