@@ -11,10 +11,13 @@ import numpy as np
 import numpy.typing as npt
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
+    BaseInterfaceInputSpec,
     CommandLine,
     CommandLineInputSpec,
     File,
+    SimpleInterface,
     TraitedSpec,
+    isdefined,
     traits,
 )
 
@@ -527,7 +530,7 @@ class MotionCorrection(CommandLine):
         return None
 
 
-class DSCRegistrationInputSpec(CommandLineInputSpec):
+class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
     """Input specification for DSCRegistration interface."""
 
     t1w_file = File(
@@ -556,10 +559,15 @@ class DSCRegistrationInputSpec(CommandLineInputSpec):
         exists=True,
         desc="Brain mask for QC metric calculation (optional)",
     )
-    use_flirt = traits.Bool(
-        True,
+    registration = traits.Enum(
+        "auto",
+        "flirt",
+        "bbr",
         usedefault=True,
-        desc="Use two-stage FLIRT registration (default: True). Set False for BBR with FLIRT init",
+        desc=(
+            "Registration method: 'auto' runs both FLIRT and BBR then selects best, "
+            "'flirt' uses two-stage FLIRT only, 'bbr' uses FLIRT-initialized BBR"
+        ),
     )
     dof = traits.Int(
         6,
@@ -577,7 +585,7 @@ class DSCRegistrationInputSpec(CommandLineInputSpec):
     )
     wm_seg = File(
         exists=True,
-        desc="White matter segmentation (required for BBR mode)",
+        desc="White matter segmentation (required for BBR and auto modes)",
     )
     reference_type = traits.Enum(
         "precon",
@@ -585,6 +593,11 @@ class DSCRegistrationInputSpec(CommandLineInputSpec):
         "any",
         usedefault=True,
         desc="Expected T1w type for provenance/QC metadata: precon (default), postcon, or any",
+    )
+    displacement_threshold = traits.Float(
+        10.0,
+        usedefault=True,
+        desc="Max displacement (mm) between FLIRT and BBR to accept BBR in auto mode",
     )
 
 
@@ -599,113 +612,89 @@ class DSCRegistrationOutputSpec(TraitedSpec):
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
 
-class DSCRegistration(CommandLine):
-    """DSC to T1w structural registration for perfusion map overlays.
+class DSCRegistration(SimpleInterface):
+    """DSC to T1w structural registration with auto-selection.
 
-    This interface wraps FSL FLIRT (and optionally BBR) to register a T1-weighted
-    structural image to DSC space. The registration enables overlay of perfusion
-    maps on anatomical images for clinical interpretation.
+    Registers a T1-weighted structural image to DSC EPI space using FSL FLIRT,
+    with optional BBR refinement. In auto mode, both methods are run and the
+    better result is selected based on transform displacement and NMI.
 
-    Two-stage registration is used in both modes:
+    Three modes are available:
+
+    1. **auto** (default): Runs two-stage FLIRT, then BBR initialized from
+       the FLIRT result. Compares transform displacement between the two;
+       BBR is accepted only if displacement < threshold AND NMI improves.
+       Falls back to FLIRT if no WM segmentation is available.
+
+    2. **flirt**: Two-stage FLIRT only (coarse global search + refined).
+
+    3. **bbr**: FLIRT-initialized BBR, no fallback. Requires wm_seg.
+
+    Two-stage FLIRT in all modes:
       Stage 1: Coarse global search (normcorr, -180 to 180 deg, coarsesearch 30)
       Stage 2: Refined (normmi, -30 to 30 deg, init from stage 1)
 
-    Two modes are available:
+    Lesion mask cost function weighting is supported in all modes.
 
-    1. **FLIRT mode** (default, use_flirt=True): Uses two-stage FSL FLIRT rigid
-       registration. Recommended for most cases.
+    Args:
+        t1w_file: T1-weighted image to register to DSC space.
+        dsc_mean: Mean DSC image (target space).
+        lesion_mask: Binary lesion mask for cost function weighting.
+        brain_mask: Brain mask for computing QC metrics.
+        registration: Method: 'auto', 'flirt', or 'bbr'.
+        dof: Degrees of freedom (default: 6 for rigid body).
+        cost: Cost function for FLIRT (default: normmi).
+        wm_seg: White matter segmentation (required for BBR/auto).
+        displacement_threshold: Max displacement (mm) for BBR acceptance
+            in auto mode (default: 10mm).
 
-    2. **BBR mode** (use_flirt=False): Uses two-stage FLIRT initialization followed
-       by boundary-based registration with white matter segmentation. Requires wm_seg.
-       May not be appropriate when T1w and DSC have different contrast states.
+    Returns:
+        out_file: Registered T1w in DSC space.
+        out_matrix: FSL FLIRT transformation matrix.
+        dice: DICE coefficient of brain masks (if brain_mask provided).
+        correlation: Correlation coefficient within brain mask.
+        nmi: Normalized mutual information.
+        qc_metrics: Complete QC metrics dictionary including selection metadata.
 
-    Both modes support lesion mask cost function weighting, where the lesion
-    region is excluded from the cost function to prevent tumors from biasing
-    the registration.
+    Example:
+        Auto mode (recommended)::
 
-    Parameters
-    ----------
-    t1w_file : str
-        T1-weighted image to register to DSC space
-    dsc_mean : str
-        Mean DSC image (target space)
-    lesion_mask : str, optional
-        Binary lesion mask - lesion voxels will have reduced weight
-    brain_mask : str, optional
-        Brain mask for computing QC metrics
-    use_flirt : bool
-        If True, use FLIRT only; if False (default), use BBR with FLIRT init
-    dof : int
-        Degrees of freedom (default: 6 for rigid body)
-    cost : str
-        Cost function for FLIRT: normmi, normcorr, corratio (default: normmi)
-    wm_seg : str
-        White matter segmentation (required for BBR mode)
+            >>> reg = DSCRegistration()
+            >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
+            >>> reg.inputs.dsc_mean = 'dsc_mean.nii.gz'
+            >>> reg.inputs.wm_seg = 'T1w_wm_probseg.nii.gz'
+            >>> result = reg.run()  # doctest: +SKIP
 
-    Returns
-    -------
-    out_file : str
-        Registered T1w in DSC space
-    out_matrix : str
-        FSL FLIRT transformation matrix
-    dice : float
-        DICE coefficient of brain masks (if brain_mask provided)
-    correlation : float
-        Correlation coefficient within brain mask
-    nmi : float
-        Normalized mutual information
-    qc_metrics : dict
-        Complete QC metrics dictionary
+        FLIRT-only mode with lesion mask::
 
-    Examples
-    --------
-    Using BBR mode (recommended):
+            >>> reg = DSCRegistration()
+            >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
+            >>> reg.inputs.dsc_mean = 'dsc_mean.nii.gz'
+            >>> reg.inputs.registration = 'flirt'
+            >>> reg.inputs.lesion_mask = 'lesion.nii.gz'
+            >>> result = reg.run()  # doctest: +SKIP
 
-    >>> reg = DSCRegistration()
-    >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
-    >>> reg.inputs.dsc_mean = 'dsc_mean.nii.gz'
-    >>> reg.inputs.wm_seg = 'T1w_wm_probseg.nii.gz'
-    >>> result = reg.run()  # doctest: +SKIP
+    Note:
+        BBR (Boundary-Based Registration) uses white matter segmentation to
+        drive registration based on WM/GM boundary contrast. For DSC (EPI),
+        this can fail due to susceptibility distortion, contrast agent effects,
+        and tumor enhancement disrupting boundaries.
 
-    Using FLIRT mode with lesion mask:
+        In auto mode, BBR must demonstrably improve on FLIRT to be accepted:
+        transform displacement must be < threshold AND NMI must improve.
+        This provides a bias toward the more robust FLIRT result.
 
-    >>> reg = DSCRegistration()
-    >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
-    >>> reg.inputs.dsc_mean = 'dsc_mean.nii.gz'
-    >>> reg.inputs.use_flirt = True
-    >>> reg.inputs.lesion_mask = 'lesion.nii.gz'
-    >>> result = reg.run()  # doctest: +SKIP
-
-    Notes
-    -----
-    BBR (Boundary-Based Registration) uses the white matter segmentation to
-    drive the registration based on the boundary between white matter and
-    gray matter, which is visible in both T1w and EPI-based images.
-
-    Lesion mask weighting creates a cost function weight image where:
-    weight = 1.0 - lesion_mask (i.e., lesion voxels have weight 0)
-
-    QC metrics computed:
-    - DICE: Overlap of brain masks (requires brain_mask input)
-    - Correlation: Pearson correlation within brain mask
-    - NMI: Normalized mutual information (intensity correspondence)
-
-    Requires FSL to be installed and available in PATH.
-
-    See Also
-    --------
-    FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
-    FSL BBR: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT_BBR
+    See Also:
+        - FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
+        - FSL BBR: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT_BBR
     """
 
     input_spec = DSCRegistrationInputSpec
     output_spec = DSCRegistrationOutputSpec
 
-    _cmd = "flirt"
-
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""
-        if self.inputs.out_file:
+        if isdefined(self.inputs.out_file) and self.inputs.out_file:
             return str(self.inputs.out_file)
 
         t1w_file = Path(self.inputs.t1w_file)
@@ -723,7 +712,7 @@ class DSCRegistration(CommandLine):
 
     def _gen_matfilename(self) -> str:
         """Generate output matrix filename if not specified."""
-        if self.inputs.out_matrix:
+        if isdefined(self.inputs.out_matrix) and self.inputs.out_matrix:
             return str(self.inputs.out_matrix)
 
         out_file = Path(self._gen_outfilename())
@@ -736,231 +725,407 @@ class DSCRegistration(CommandLine):
 
         return str(out_file.parent / f"{base}.mat")
 
-    @property
-    def cmdline(self) -> str:
-        """Build the two-stage FLIRT registration command.
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DSC to T1w registration with auto-selection.
 
-        Implements two-stage FLIRT registration:
-          Stage 1: Coarse global search (normcorr, wide search range)
-          Stage 2: Refined (normmi, narrow search, init from stage 1)
+        Args:
+            runtime: Nipype runtime object.
 
-        For BBR mode (use_flirt=False), the two-stage FLIRT serves as
-        initialization before the BBR refinement step.
+        Returns:
+            Updated runtime object.
         """
-        t1w_file = str(self.inputs.t1w_file)
-        dsc_mean = str(self.inputs.dsc_mean)
+        import logging
+        import shutil
+        import subprocess
+        import tempfile
+
+        logger = logging.getLogger("pmriprep.interfaces.dsc")
+
         out_file = self._gen_outfilename()
         out_matrix = self._gen_matfilename()
-        use_flirt = self.inputs.use_flirt
+        t1w_file = str(self.inputs.t1w_file)
+        dsc_mean = str(self.inputs.dsc_mean)
+        registration = self.inputs.registration
         dof = self.inputs.dof
         cost = self.inputs.cost
 
-        cmd_parts: list[str] = []
-
-        # Determine file extension for temp files
-        out_path = Path(out_file)
-        ext = ".nii.gz" if out_path.name.endswith(".nii.gz") else ".nii"
-
-        # Check if we have a lesion mask for cost function weighting
-        lesion_mask = getattr(self.inputs, "lesion_mask", None)
-        weight_file: Optional[str] = None
-        if lesion_mask and Path(lesion_mask).exists():
-            weight_file = str(out_path.parent / f"_tmp_weight{ext}")
-            invert_cmd = f"fslmaths {lesion_mask} -mul -1 -add 1 {weight_file}"
-            cmd_parts.append(invert_cmd)
-
-        # Temporary matrix for stage 1 coarse registration
-        stage1_matrix = str(out_path.parent / "_tmp_stage1.mat")
-
-        # Weight flags string (reused across stages)
-        # Lesion weight is in T1w space (same as -in), so only use -inweight.
-        weight_flags = ""
-        if weight_file:
-            weight_flags = f" -inweight {weight_file}"
-
-        # --- Stage 1: Coarse global search ---
-        stage1_cmd = (
-            f"flirt -in {t1w_file} -ref {dsc_mean} "
-            f"-omat {stage1_matrix} "
-            f"-dof {dof} -cost normcorr "
-            f"-searchrx -180 180 -searchry -180 180 -searchrz -180 180 "
-            f"-coarsesearch 30 -finesearch 10"
+        has_wm_seg = (
+            isdefined(self.inputs.wm_seg)
+            and Path(self.inputs.wm_seg).exists()
         )
-        stage1_cmd += weight_flags
-        cmd_parts.append(stage1_cmd)
 
-        if use_flirt:
-            # --- Stage 2: Refined registration ---
-            stage2_cmd = (
-                f"flirt -in {t1w_file} -ref {dsc_mean} "
-                f"-out {out_file} -omat {out_matrix} "
-                f"-dof {dof} -cost {cost} "
-                f"-init {stage1_matrix} "
-                f"-searchrx -30 30 -searchry -30 30 -searchrz -30 30"
-            )
-            stage2_cmd += weight_flags
-            cmd_parts.append(stage2_cmd)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            ext = ".nii.gz"
 
-            cmd_parts.append(f"rm -f {stage1_matrix}")
-        else:
-            # BBR mode: two-stage FLIRT as initialization for BBR
-            import warnings
-            warnings.warn(
-                "BBR registration requested. BBR assumes similar contrast "
-                "states between T1w and DSC. If DSC was acquired after "
-                "contrast injection, BBR may be suboptimal. Consider FLIRT "
-                "mode (use_flirt=True)."
-            )
-            wm_seg = getattr(self.inputs, "wm_seg", None)
+            # Create weight file from lesion mask
+            weight_file = self._create_weight_file(temp_path, ext)
 
-            stage2_matrix = str(out_path.parent / "_tmp_stage2.mat")
-            stage2_cmd = (
-                f"flirt -in {t1w_file} -ref {dsc_mean} "
-                f"-omat {stage2_matrix} "
-                f"-dof {dof} -cost {cost} "
-                f"-init {stage1_matrix} "
-                f"-searchrx -30 30 -searchry -30 30 -searchrz -30 30"
-            )
-            stage2_cmd += weight_flags
-            cmd_parts.append(stage2_cmd)
+            # Weight args for FLIRT commands (lesion in T1w space → -inweight)
+            weight_args: list[str] = []
+            if weight_file:
+                weight_args = ["-inweight", weight_file]
 
-            cmd_parts.append(f"rm -f {stage1_matrix}")
+            # --- Two-stage FLIRT (always run first) ---
+            stage1_matrix = str(temp_path / "stage1.mat")
+            flirt_matrix = str(temp_path / "flirt.mat")
+            flirt_out = str(temp_path / f"flirt_out{ext}")
 
-            if wm_seg and Path(wm_seg).exists():
-                wm_thresh = str(out_path.parent / f"_tmp_wm_thresh{ext}")
-                cmd_parts.append(
-                    f"fslmaths {wm_seg} -thr 0.5 -bin {wm_thresh}"
+            # Stage 1: Coarse global search
+            stage1_cmd = [
+                "flirt", "-in", t1w_file, "-ref", dsc_mean,
+                "-omat", stage1_matrix,
+                "-dof", str(dof), "-cost", "normcorr",
+                "-searchrx", "-180", "180",
+                "-searchry", "-180", "180",
+                "-searchrz", "-180", "180",
+                "-coarsesearch", "30", "-finesearch", "10",
+            ] + weight_args
+            subprocess.run(stage1_cmd, check=True)
+
+            # Stage 2: Refined registration
+            stage2_cmd = [
+                "flirt", "-in", t1w_file, "-ref", dsc_mean,
+                "-out", flirt_out, "-omat", flirt_matrix,
+                "-dof", str(dof), "-cost", cost,
+                "-init", stage1_matrix,
+                "-searchrx", "-30", "30",
+                "-searchry", "-30", "30",
+                "-searchrz", "-30", "30",
+            ] + weight_args
+            subprocess.run(stage2_cmd, check=True)
+
+            # Selection metadata for QC
+            selection_meta: dict[str, Any] = {
+                "registration_mode": registration,
+                "bbr_attempted": False,
+            }
+
+            # Determine effective method
+            if registration == "flirt":
+                # FLIRT only — done
+                shutil.copy(flirt_out, out_file)
+                shutil.copy(flirt_matrix, out_matrix)
+                selection_meta["registration_method"] = "flirt"
+                selection_meta["selection_reason"] = "flirt_only_requested"
+
+            elif registration == "bbr":
+                # BBR always, no fallback
+                if not has_wm_seg:
+                    raise RuntimeError(
+                        "BBR registration requires wm_seg input but none provided"
+                    )
+                bbr_matrix = str(temp_path / "bbr.mat")
+                bbr_out = str(temp_path / f"bbr_out{ext}")
+                self._run_bbr(
+                    t1w_file, dsc_mean, flirt_matrix,
+                    bbr_out, bbr_matrix,
+                    dof, weight_args, temp_path, ext,
                 )
+                shutil.copy(bbr_out, out_file)
+                shutil.copy(bbr_matrix, out_matrix)
+                selection_meta["registration_method"] = "bbr"
+                selection_meta["bbr_attempted"] = True
+                selection_meta["selection_reason"] = "bbr_only_requested"
 
-                bbr_cmd = (
-                    f"flirt -in {t1w_file} -ref {dsc_mean} "
-                    f"-out {out_file} -omat {out_matrix} "
-                    f"-dof {dof} -cost bbr "
-                    f"-init {stage2_matrix} "
-                    f"-wmseg {wm_thresh}"
-                )
-                if weight_file:
-                    bbr_cmd += f" -inweight {weight_file}"
-
-                cmd_parts.append(bbr_cmd)
-                cmd_parts.append(f"rm -f {stage2_matrix} {wm_thresh}")
             else:
-                apply_cmd = (
-                    f"flirt -in {t1w_file} -ref {dsc_mean} "
-                    f"-out {out_file} -init {stage2_matrix} -applyxfm"
-                )
-                cmd_parts.append(apply_cmd)
-                cmd_parts.append(f"cp {stage2_matrix} {out_matrix}")
-                cmd_parts.append(f"rm -f {stage2_matrix}")
-
-        # Clean up weight file if created
-        if weight_file:
-            cmd_parts.append(f"rm -f {weight_file}")
-
-        return "bash -c '" + " && ".join(cmd_parts) + "'"
-
-    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
-        """List expected outputs and compute QC metrics."""
-        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
-        outputs["out_file"] = self._gen_outfilename()
-        outputs["out_matrix"] = self._gen_matfilename()
-
-        # Compute QC metrics after registration
-        qc_metrics: dict[str, Any] = {}
-
-        out_file = self._gen_outfilename()
-        dsc_mean = str(self.inputs.dsc_mean)
-
-        # Only compute metrics if output file exists
-        if Path(out_file).exists():
-            try:
-                # Import here to avoid circular imports
-                from pmriprep.utils.registration import (
-                    calculate_correlation_from_files,
-                    calculate_nmi_from_files,
-                    calculate_dice_from_files,
-                    calculate_dice,
-                )
-
-                # Get optional brain mask
-                brain_mask = getattr(self.inputs, "brain_mask", None)
-                mask_path: Optional[str] = None
-                if brain_mask and Path(brain_mask).exists():
-                    mask_path = str(brain_mask)
-
-                # Calculate NMI (always possible)
-                try:
-                    nmi = calculate_nmi_from_files(
-                        out_file, dsc_mean, mask_path=mask_path
+                # Auto mode: run both, compare, select best
+                if not has_wm_seg:
+                    # No WM seg — fall back to FLIRT silently
+                    logger.info(
+                        "Auto registration: no WM segmentation available, "
+                        "using FLIRT only"
                     )
-                    outputs["nmi"] = nmi
-                    qc_metrics["nmi"] = nmi
-                except Exception:
-                    pass
+                    shutil.copy(flirt_out, out_file)
+                    shutil.copy(flirt_matrix, out_matrix)
+                    selection_meta["registration_method"] = "flirt"
+                    selection_meta["selection_reason"] = "no_wm_seg_available"
+                else:
+                    # Run BBR
+                    bbr_matrix = str(temp_path / "bbr.mat")
+                    bbr_out = str(temp_path / f"bbr_out{ext}")
 
-                # Calculate correlation within brain mask
-                try:
-                    corr = calculate_correlation_from_files(
-                        out_file, dsc_mean, mask_path=mask_path
-                    )
-                    outputs["correlation"] = corr
-                    qc_metrics["correlation"] = corr
-                except Exception:
-                    pass
-
-                # Calculate DICE if brain mask provided
-                # Threshold registered T1w to create pseudo brain mask, compare
-                # with the DSC brain mask
-                if mask_path:
-                    import nibabel as nib
-
+                    bbr_succeeded = False
                     try:
-                        # Load registered T1w and threshold to create pseudo mask
-                        reg_img = nib.load(out_file)
-                        reg_data = reg_img.get_fdata()  # type: ignore[attr-defined]
-                        nonzero = reg_data[reg_data > 0]
-                        if len(nonzero) > 100:
-                            thresh = np.percentile(nonzero, 15)
-                            reg_mask = (reg_data > thresh).astype(np.float64)
-                        else:
-                            reg_mask = (reg_data > 0).astype(np.float64)
+                        self._run_bbr(
+                            t1w_file, dsc_mean, flirt_matrix,
+                            bbr_out, bbr_matrix,
+                            dof, weight_args, temp_path, ext,
+                        )
+                        bbr_succeeded = True
+                    except Exception as exc:
+                        logger.warning("BBR failed, using FLIRT: %s", exc)
 
-                        # Load DSC brain mask
-                        dsc_mask_data = nib.load(mask_path).get_fdata()  # type: ignore[attr-defined]
+                    selection_meta["bbr_attempted"] = True
 
-                        # Compute DICE
-                        dice = calculate_dice(reg_mask, dsc_mask_data, threshold=0.5)
-                        outputs["dice"] = dice
-                        qc_metrics["dice"] = dice
-                        qc_metrics["brain_mask_used"] = True
+                    if not bbr_succeeded:
+                        shutil.copy(flirt_out, out_file)
+                        shutil.copy(flirt_matrix, out_matrix)
+                        selection_meta["registration_method"] = "flirt"
+                        selection_meta["selection_reason"] = "bbr_failed"
+                    else:
+                        # Compare transforms
+                        from pmriprep.utils.registration import (
+                            compare_transforms,
+                            calculate_nmi_from_files,
+                        )
 
-                        if dice < 0.8:
-                            import warnings
-                            warnings.warn(
-                                f"Registration DICE coefficient is low ({dice:.3f} < 0.8). "
-                                "Check registration quality."
+                        flirt_mat = np.loadtxt(flirt_matrix)
+                        bbr_mat = np.loadtxt(bbr_matrix)
+                        displacement = compare_transforms(flirt_mat, bbr_mat)
+                        selection_meta["transform_displacement_mm"] = round(
+                            displacement, 2
+                        )
+
+                        threshold = float(self.inputs.displacement_threshold)
+
+                        if displacement >= threshold:
+                            # BBR deviated too far — reject
+                            shutil.copy(flirt_out, out_file)
+                            shutil.copy(flirt_matrix, out_matrix)
+                            selection_meta["registration_method"] = "flirt"
+                            selection_meta["selection_reason"] = (
+                                "displacement_exceeded_threshold"
                             )
-                    except Exception:
-                        qc_metrics["brain_mask_used"] = True
-                        qc_metrics["dice_computation_failed"] = True
+                            logger.info(
+                                "Auto: BBR rejected — displacement %.1fmm "
+                                ">= %.1fmm threshold",
+                                displacement,
+                                threshold,
+                            )
+                        else:
+                            # Displacement acceptable — compare NMI
+                            brain_mask = None
+                            if (
+                                isdefined(self.inputs.brain_mask)
+                                and Path(self.inputs.brain_mask).exists()
+                            ):
+                                brain_mask = str(self.inputs.brain_mask)
 
-            except Exception:
-                # If QC computation fails, continue without metrics
-                pass
+                            try:
+                                nmi_flirt = calculate_nmi_from_files(
+                                    flirt_out, dsc_mean, mask_path=brain_mask
+                                )
+                                nmi_bbr = calculate_nmi_from_files(
+                                    bbr_out, dsc_mean, mask_path=brain_mask
+                                )
+                            except Exception:
+                                nmi_flirt = 0.0
+                                nmi_bbr = 0.0
 
-        # Add registration metadata for provenance
+                            selection_meta["nmi_flirt"] = round(nmi_flirt, 4)
+                            selection_meta["nmi_bbr"] = round(nmi_bbr, 4)
+
+                            if nmi_bbr > nmi_flirt:
+                                # BBR improves NMI — accept
+                                shutil.copy(bbr_out, out_file)
+                                shutil.copy(bbr_matrix, out_matrix)
+                                selection_meta["registration_method"] = "bbr"
+                                selection_meta["selection_reason"] = (
+                                    "bbr_improved_nmi"
+                                )
+                                logger.info(
+                                    "Auto: BBR selected — displacement %.1fmm, "
+                                    "NMI improved %.4f → %.4f",
+                                    displacement,
+                                    nmi_flirt,
+                                    nmi_bbr,
+                                )
+                            else:
+                                # BBR did not improve — keep FLIRT
+                                shutil.copy(flirt_out, out_file)
+                                shutil.copy(flirt_matrix, out_matrix)
+                                selection_meta["registration_method"] = "flirt"
+                                selection_meta["selection_reason"] = (
+                                    "bbr_no_nmi_improvement"
+                                )
+                                logger.info(
+                                    "Auto: FLIRT kept — displacement %.1fmm, "
+                                    "NMI no improvement (%.4f vs %.4f)",
+                                    displacement,
+                                    nmi_flirt,
+                                    nmi_bbr,
+                                )
+
+        # Compute QC metrics on the final selected output
+        qc_metrics = self._compute_qc_metrics(out_file, dsc_mean)
+        qc_metrics.update(selection_meta)
         qc_metrics["reference_type"] = self.inputs.reference_type
-        qc_metrics["use_flirt"] = self.inputs.use_flirt
         qc_metrics["dof"] = self.inputs.dof
         qc_metrics["cost_function"] = self.inputs.cost
 
-        outputs["qc_metrics"] = qc_metrics
-        return outputs
+        # Set outputs
+        self._results["out_file"] = out_file
+        self._results["out_matrix"] = out_matrix
+        self._results["qc_metrics"] = qc_metrics
 
-    def _gen_filename(self, name: str) -> Optional[str]:
-        """Generate filename for outputs."""
-        if name == "out_file":
-            return self._gen_outfilename()
-        if name == "out_matrix":
-            return self._gen_matfilename()
-        return None
+        if "dice" in qc_metrics:
+            self._results["dice"] = qc_metrics["dice"]
+        if "correlation" in qc_metrics:
+            self._results["correlation"] = qc_metrics["correlation"]
+        if "nmi" in qc_metrics:
+            self._results["nmi"] = qc_metrics["nmi"]
+
+        return runtime
+
+    def _create_weight_file(
+        self, temp_path: Path, ext: str
+    ) -> Optional[str]:
+        """Create inverted lesion mask as cost function weight file.
+
+        Args:
+            temp_path: Temporary directory for output.
+            ext: File extension.
+
+        Returns:
+            Path to weight file, or None if no lesion mask.
+        """
+        import subprocess
+
+        if not isdefined(self.inputs.lesion_mask):
+            return None
+        if not Path(self.inputs.lesion_mask).exists():
+            return None
+
+        weight_file = str(temp_path / f"weight{ext}")
+        try:
+            subprocess.run(
+                ["fslmaths", str(self.inputs.lesion_mask),
+                 "-mul", "-1", "-add", "1", weight_file],
+                check=True,
+            )
+            return weight_file
+        except Exception:
+            return None
+
+    def _run_bbr(
+        self,
+        t1w_file: str,
+        dsc_mean: str,
+        init_matrix: str,
+        out_file: str,
+        out_matrix: str,
+        dof: int,
+        weight_args: list[str],
+        temp_path: Path,
+        ext: str,
+    ) -> None:
+        """Run BBR registration initialized from FLIRT matrix.
+
+        Args:
+            t1w_file: T1w input image.
+            dsc_mean: DSC reference image.
+            init_matrix: FLIRT initialization matrix.
+            out_file: Output registered image.
+            out_matrix: Output BBR matrix.
+            dof: Degrees of freedom.
+            weight_args: Lesion weight arguments list (e.g. ["-inweight", path]).
+            temp_path: Temporary directory.
+            ext: File extension.
+
+        Raises:
+            RuntimeError: If WM thresholding or BBR fails.
+        """
+        import subprocess
+
+        wm_seg = str(self.inputs.wm_seg)
+        wm_thresh = str(temp_path / f"wm_thresh{ext}")
+
+        # Threshold WM segmentation
+        subprocess.run(
+            ["fslmaths", wm_seg, "-thr", "0.5", "-bin", wm_thresh],
+            check=True,
+        )
+
+        # Run BBR
+        bbr_cmd = [
+            "flirt", "-in", t1w_file, "-ref", dsc_mean,
+            "-out", out_file, "-omat", out_matrix,
+            "-dof", str(dof), "-cost", "bbr",
+            "-init", init_matrix,
+            "-wmseg", wm_thresh,
+        ] + weight_args
+        subprocess.run(bbr_cmd, check=True)
+
+    def _compute_qc_metrics(
+        self, out_file: str, dsc_mean: str
+    ) -> dict[str, Any]:
+        """Compute registration QC metrics.
+
+        Args:
+            out_file: Registered T1w image path.
+            dsc_mean: DSC reference image path.
+
+        Returns:
+            Dictionary of QC metrics.
+        """
+        import nibabel as nib
+
+        qc_metrics: dict[str, Any] = {}
+
+        if not Path(out_file).exists():
+            return qc_metrics
+
+        try:
+            from pmriprep.utils.registration import (
+                calculate_correlation_from_files,
+                calculate_nmi_from_files,
+                calculate_dice,
+            )
+
+            brain_mask = None
+            if (
+                isdefined(self.inputs.brain_mask)
+                and Path(self.inputs.brain_mask).exists()
+            ):
+                brain_mask = str(self.inputs.brain_mask)
+
+            # NMI
+            try:
+                nmi = calculate_nmi_from_files(
+                    out_file, dsc_mean, mask_path=brain_mask
+                )
+                qc_metrics["nmi"] = nmi
+            except Exception:
+                pass
+
+            # Correlation
+            try:
+                corr = calculate_correlation_from_files(
+                    out_file, dsc_mean, mask_path=brain_mask
+                )
+                qc_metrics["correlation"] = corr
+            except Exception:
+                pass
+
+            # DICE
+            if brain_mask:
+                try:
+                    reg_img = nib.load(out_file)
+                    reg_data = reg_img.get_fdata()  # type: ignore[attr-defined]
+                    nonzero = reg_data[reg_data > 0]
+                    if len(nonzero) > 100:
+                        thresh = np.percentile(nonzero, 15)
+                        reg_mask = (reg_data > thresh).astype(np.float64)
+                    else:
+                        reg_mask = (reg_data > 0).astype(np.float64)
+
+                    dsc_mask_data = nib.load(brain_mask).get_fdata()  # type: ignore[attr-defined]
+                    dice = calculate_dice(reg_mask, dsc_mask_data, threshold=0.5)
+                    qc_metrics["dice"] = dice
+                    qc_metrics["brain_mask_used"] = True
+
+                    if dice < 0.8:
+                        import warnings
+                        warnings.warn(
+                            f"Registration DICE coefficient is low "
+                            f"({dice:.3f} < 0.8). Check registration quality."
+                        )
+                except Exception:
+                    qc_metrics["brain_mask_used"] = True
+                    qc_metrics["dice_computation_failed"] = True
+
+        except Exception:
+            pass
+
+        return qc_metrics

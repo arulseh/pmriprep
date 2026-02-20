@@ -43,8 +43,8 @@ class DSCConfig:
         Path to lesion mask for registration weighting.
     nawm_mask : Optional[Path]
         Path to NAWM mask for CBV normalization.
-    use_flirt : bool
-        Use FLIRT instead of BBR for registration.
+    registration : Literal["auto", "flirt", "bbr"]
+        Registration method: auto (try both, pick best), flirt, or bbr.
     smooth_fwhm : float
         Smoothing kernel FWHM (mm) for output maps.
     underlays : List[str]
@@ -85,7 +85,7 @@ class DSCConfig:
     # Registration settings
     lesion_mask: Optional[Path] = None
     nawm_mask: Optional[Path] = None
-    use_flirt: bool = True
+    registration: Literal["auto", "flirt", "bbr"] = "auto"
 
     # Processing settings
     smooth_fwhm: float = 0.0  # No smoothing by default
@@ -151,11 +151,12 @@ class DSCConfig:
             aif_method=self.aif_method,
             lesion_mask=self.lesion_mask,
             nawm_mask=self.nawm_mask,
-            use_flirt=self.use_flirt,
+            registration=self.registration,
             smooth_fwhm=self.smooth_fwhm,
             underlays=self.underlays,
             motion_thresh=self.motion_thresh,
             pre_bolus=self.pre_bolus,
             num_processes=self.num_processes,
             use_gpu=self.use_gpu,
+            hdbet_device=self.hdbet_device,
         )

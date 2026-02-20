@@ -12,6 +12,93 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+def compare_transforms(
+    mat1: NDArray[np.floating],
+    mat2: NDArray[np.floating],
+    radius: float = 70.0,
+) -> float:
+    """Compute maximum displacement between two FSL affine transforms.
+
+    Evaluates both transforms at six test points (cube face midpoints at
+    distance ``radius`` from the origin) and returns the maximum Euclidean
+    distance between the transformed positions.
+
+    Adapted from niworkflows ``compare_xforms()`` (Esteban et al., 2019).
+
+    Args:
+        mat1: First 4x4 affine matrix (FSL format).
+        mat2: Second 4x4 affine matrix (FSL format).
+        radius: Distance (mm) of test points from the origin.
+            Default 70mm approximates the brain radius.
+
+    Returns:
+        Maximum displacement in mm across all test points.
+
+    Raises:
+        ValueError: If matrices are not 4x4.
+    """
+    if mat1.shape != (4, 4) or mat2.shape != (4, 4):
+        raise ValueError(
+            f"Affine matrices must be 4x4, got {mat1.shape} and {mat2.shape}"
+        )
+
+    # Cube face midpoints at distance `radius` from origin
+    points = np.array([
+        [radius, 0.0, 0.0],
+        [-radius, 0.0, 0.0],
+        [0.0, radius, 0.0],
+        [0.0, -radius, 0.0],
+        [0.0, 0.0, radius],
+        [0.0, 0.0, -radius],
+    ])
+
+    # Apply both transforms to all test points
+    # Homogeneous coordinates: append ones column
+    ones = np.ones((points.shape[0], 1))
+    pts_h = np.hstack([points, ones])  # (6, 4)
+
+    # Transform: (4x4) @ (4xN) → (4xN)
+    transformed1 = (mat1 @ pts_h.T).T[:, :3]  # (6, 3)
+    transformed2 = (mat2 @ pts_h.T).T[:, :3]  # (6, 3)
+
+    # Euclidean distance at each test point
+    displacements = np.sqrt(np.sum((transformed1 - transformed2) ** 2, axis=1))
+
+    return float(np.max(displacements))
+
+
+def compare_transforms_from_files(
+    mat1_path: Union[str, Path],
+    mat2_path: Union[str, Path],
+    radius: float = 70.0,
+) -> float:
+    """Compute maximum displacement between two FSL affine matrix files.
+
+    Args:
+        mat1_path: Path to first FSL .mat file.
+        mat2_path: Path to second FSL .mat file.
+        radius: Distance (mm) of test points from origin (default: 70mm).
+
+    Returns:
+        Maximum displacement in mm.
+
+    Raises:
+        FileNotFoundError: If either file does not exist.
+    """
+    mat1_path = Path(mat1_path)
+    mat2_path = Path(mat2_path)
+
+    if not mat1_path.exists():
+        raise FileNotFoundError(f"Matrix file not found: {mat1_path}")
+    if not mat2_path.exists():
+        raise FileNotFoundError(f"Matrix file not found: {mat2_path}")
+
+    mat1 = np.loadtxt(mat1_path)
+    mat2 = np.loadtxt(mat2_path)
+
+    return compare_transforms(mat1, mat2, radius=radius)
+
+
 def calculate_dice(
     mask1: NDArray[np.floating],
     mask2: NDArray[np.floating],

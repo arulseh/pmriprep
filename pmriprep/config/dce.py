@@ -19,8 +19,6 @@ class DCEConfig:
         Reference image for registration (default: postcon T1w).
     lesion_mask : Optional[Path]
         Path to lesion mask for registration weighting.
-    skip_bbr : bool
-        Skip boundary-based registration (use FLIRT only).
     aif_method : Literal["auto", "population"]
         AIF detection method: auto or population.
     scale_aif : bool
@@ -72,7 +70,6 @@ class DCEConfig:
     # Registration settings
     reference: str = "postcon"
     lesion_mask: Optional[Path] = None
-    skip_bbr: bool = False
 
     # AIF detection settings
     aif_method: Literal["auto", "population"] = "auto"

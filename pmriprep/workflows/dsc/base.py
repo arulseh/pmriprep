@@ -1804,7 +1804,7 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     register = pe.Node(
         DSCRegistration(
-            use_flirt=config.use_flirt,
+            registration=config.registration,
             dof=6,  # Rigid body
             cost="normmi",
         ),

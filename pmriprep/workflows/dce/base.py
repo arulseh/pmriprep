@@ -549,7 +549,6 @@ def init_dce_preproc_wf(
     # ==========================================================================
     dce_registration = pe.Node(
         DCERegistration(
-            skip_bbr=config.skip_bbr,
             reference_type=config.reference,  # "postcon" or "precon"
         ),
         name="dce_registration",
@@ -561,7 +560,6 @@ def init_dce_preproc_wf(
             ("t1w_reference", "t1w_file"),
             ("lesion_mask", "lesion_mask"),
             ("brain_mask", "brain_mask"),
-            ("wm_probseg", "wm_seg"),  # For BBR mode
         ]),
         (dce_brain_extract, dce_registration, [
             ("out_brain", "dce_mean"),  # Brain-extracted baseline mean

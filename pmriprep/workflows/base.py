@@ -1567,7 +1567,6 @@ def init_pmriprep_wf(
         # Determine DCE structural reference from confidence-scored selection
         dce_ref_output = "outputnode.t1w_preproc"  # default
         dce_ref_is_postcon = False
-        dce_skip_bbr = False
         if dce_ref_selection:
             dce_ref_output = _map_selection_to_anat_output(
                 dce_ref_selection.candidate.image_type,
@@ -1575,9 +1574,8 @@ def init_pmriprep_wf(
             dce_ref_is_postcon = (
                 dce_ref_selection.candidate.image_type == ImageType.T1W_POSTCON
             )
-            dce_skip_bbr = not dce_ref_selection.bbr_eligible
 
-            # Override DCE registration parameters from confidence-scored selection
+            # Override DCE registration reference type from selection
             ref_type_map = {
                 ImageType.T1W_POSTCON: "postcon",
                 ImageType.T1W_PRECON: "precon",
@@ -1586,10 +1584,9 @@ def init_pmriprep_wf(
                 dce_ref_selection.candidate.image_type, "any",
             )
             dce_wf.inputs.dce_registration.reference_type = dce_reg_ref_type
-            dce_wf.inputs.dce_registration.skip_bbr = dce_skip_bbr
             _ref_logger.info(
-                "DCE registration: reference_type=%s, skip_bbr=%s (from selection)",
-                dce_reg_ref_type, dce_skip_bbr,
+                "DCE registration: reference_type=%s (from selection)",
+                dce_reg_ref_type,
             )
 
         # Connect anat outputs to DCE workflow

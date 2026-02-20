@@ -169,9 +169,6 @@ dce:
   use_gpu: false
 
   # Advanced settings
-  registration:
-    skip_bbr: true
-
   aif:
     method: auto
     target_peak: 6.0

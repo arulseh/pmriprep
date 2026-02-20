@@ -960,7 +960,6 @@ def sample_dce_config() -> Dict[str, Any]:
         "scale_aif": False,
         "no_b1": False,
         "no_t1": False,
-        "skip_bbr": True,
         "tsnr_threshold": 0.0,
         "use_gpu": False,
     }
