@@ -45,7 +45,7 @@ def _merge_qc_metrics(brain_qc):
     return merged
 
 
-def _determine_processing_mode(t1w_precon, t1w_postcon):
+def _determine_processing_mode(t1w_precon=None, t1w_postcon=None):
     """Determine reference T1w and processing mode using confidence scoring.
 
     Uses _determine_processing_mode_v2 from structural_reference module for
@@ -423,8 +423,8 @@ def init_anat_preproc_wf(
 
     Workflow Inputs
     ---------------
-    inputnode.t1w : str
-        Path to native T1-weighted pre-contrast image.
+    inputnode.t1w_precon : str, optional
+        Path to T1-weighted pre-contrast image.
     inputnode.t1w_postcon : str, optional
         Path to post-contrast T1-weighted image.
     inputnode.t2w : str, optional
@@ -514,7 +514,7 @@ def init_anat_preproc_wf(
     inputnode = pe.Node(
         niu.IdentityInterface(
             fields=[
-                "t1w",
+                "t1w_precon",
                 "t1w_postcon",
                 "t2w",
                 "flair",
@@ -587,7 +587,7 @@ def init_anat_preproc_wf(
 
     workflow.connect([
         (inputnode, determine_mode, [
-            ("t1w", "t1w_precon"),
+            ("t1w_precon", "t1w_precon"),
             ("t1w_postcon", "t1w_postcon"),
         ]),
     ])
@@ -831,7 +831,7 @@ def init_anat_preproc_wf(
     # Node to route FAST input: handles normal, hybrid, and skip modes.
     # In hybrid mode (postcon reference + acceptable precon), FAST runs
     # on a coregistered precon image prepared by a parallel path below.
-    def _route_fast_input(in_file, t1w_precon, t1w_postcon, is_postcon_ref):
+    def _route_fast_input(in_file, t1w_precon=None, t1w_postcon=None, is_postcon_ref=False):
         """Route FAST input based on processing mode and precon quality.
 
         Normal mode: FAST on brain-extracted precon (in_file).
@@ -911,7 +911,7 @@ def init_anat_preproc_wf(
     workflow.connect([
         (brain_extract, check_fast_mode, [("out_file", "in_file")]),
         (inputnode, check_fast_mode, [
-            ("t1w", "t1w_precon"),
+            ("t1w_precon", "t1w_precon"),
             ("t1w_postcon", "t1w_postcon"),
         ]),
         (determine_mode, check_fast_mode, [("is_postcon_ref", "is_postcon_ref")]),
@@ -927,8 +927,8 @@ def init_anat_preproc_wf(
     # -------------------------------------------------------------------
 
     def _run_hybrid_fast_chain(
-        t1w_precon, t1w_postcon, is_postcon_ref, reference_file, brain_mask,
-        denoise,
+        t1w_precon=None, t1w_postcon=None, is_postcon_ref=False,
+        reference_file=None, brain_mask=None, denoise=True,
     ):
         """Run full hybrid FAST preprocessing chain or return None.
 
@@ -980,7 +980,7 @@ def init_anat_preproc_wf(
 
     workflow.connect([
         (inputnode, hybrid_fast_chain, [
-            ("t1w", "t1w_precon"),
+            ("t1w_precon", "t1w_precon"),
             ("t1w_postcon", "t1w_postcon"),
         ]),
         (determine_mode, hybrid_fast_chain, [

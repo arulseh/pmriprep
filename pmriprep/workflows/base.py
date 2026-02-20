@@ -879,7 +879,10 @@ def init_pmriprep_wf(
             subject_id=subject_id,
             session_id=session_id,
             config=anat_config,
-            has_t1w_postcon=session_data.modalities.t1w_ce_gad is not None,
+            has_t1w_postcon=(
+                session_data.modalities.t1w_pre is not None
+                and session_data.modalities.t1w_ce_gad is not None
+            ),
             has_t2w=session_data.modalities.t2w is not None,
             has_flair=session_data.modalities.flair is not None,
             has_pdw=session_data.modalities.pdw is not None,
@@ -887,19 +890,14 @@ def init_pmriprep_wf(
         )
 
         # Connect inputs to anat workflow
-        # Use t1w_pre if available, otherwise t1w_postcon (will be handled by anat workflow)
+        # Route each image to its semantic field; determine_mode picks the reference.
         if session_data.modalities.t1w_pre:
             workflow.connect([
-                (inputnode, anat_wf, [("t1w_pre", "inputnode.t1w")]),
+                (inputnode, anat_wf, [("t1w_pre", "inputnode.t1w_precon")]),
             ])
-            if session_data.modalities.t1w_ce_gad:
-                workflow.connect([
-                    (inputnode, anat_wf, [("t1w_postcon", "inputnode.t1w_postcon")]),
-                ])
-        elif session_data.modalities.t1w_ce_gad:
-            # Only post-contrast T1w available
+        if session_data.modalities.t1w_ce_gad:
             workflow.connect([
-                (inputnode, anat_wf, [("t1w_postcon", "inputnode.t1w")]),
+                (inputnode, anat_wf, [("t1w_postcon", "inputnode.t1w_postcon")]),
             ])
 
         # Connect additional modalities if available
