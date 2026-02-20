@@ -20,7 +20,7 @@ def get_anat_filename(
         session: Session ID (without 'ses-' prefix), optional.
         suffix: BIDS suffix (e.g., 'T1w', 'T2w', 'FLAIR').
         desc: Description entity (e.g., 'preproc', 'brain').
-        space: Space entity (e.g., 'MNI152NLin2009cAsym', 'native').
+        space: Space entity (e.g., 'MNI152NLin2009cAsym', 'anat').
         extension: File extension (default: '.nii.gz').
         **entities: Additional BIDS entities as key-value pairs.
 
@@ -75,7 +75,7 @@ def get_dsc_filename(
         session: Session ID (without 'ses-' prefix), optional.
         suffix: BIDS suffix (e.g., 'dseg', 'cbf', 'cbv', 'mtt').
         desc: Description entity (e.g., 'preproc', 'leakcorr').
-        space: Space entity (e.g., 'orig', 'T1w').
+        space: Space entity (e.g., 'orig', 'anat').
         map_type: Map type for perfusion outputs.
         extension: File extension (default: '.nii.gz').
         **entities: Additional BIDS entities.
@@ -134,7 +134,7 @@ def get_dce_filename(
         session: Session ID (without 'ses-' prefix), optional.
         suffix: BIDS suffix (e.g., 'dseg', 'Ktrans', 've', 'vp').
         desc: Description entity (e.g., 'tofts', 'patlak').
-        space: Space entity (e.g., 'orig', 'T1w').
+        space: Space entity (e.g., 'orig', 'anat').
         model: PK model used (e.g., 'tofts', 'etofts', 'patlak', '2cxm').
         extension: File extension (default: '.nii.gz').
         **entities: Additional BIDS entities.
@@ -347,7 +347,7 @@ def find_brain_mask(
         derivatives_dir: Path to the derivatives directory.
         subject: Subject ID (without 'sub-' prefix).
         session: Session ID (without 'ses-' prefix), optional.
-        space: Space to look for (e.g., 'T1w', 'MNI152NLin2009cAsym').
+        space: Space to look for (e.g., 'anat', 'MNI152NLin2009cAsym').
 
     Returns:
         Path to the brain mask, or None if not found.
@@ -402,7 +402,7 @@ def find_lesion_mask(
         derivatives_dir: Path to the derivatives directory.
         subject: Subject ID (without 'sub-' prefix).
         session: Session ID (without 'ses-' prefix), optional.
-        space: Space to look for (e.g., 'T1w', 'native').
+        space: Space to look for (e.g., 'anat', 'native').
 
     Returns:
         Path to the lesion mask, or None if not found.

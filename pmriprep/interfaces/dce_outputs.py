@@ -155,7 +155,7 @@ class DCEDerivativeWriter(BaseInterface):
                     sub-XX_ses-XX_space-DCE_res-X.XXxX.XX_T1map.nii.gz
                     ...
                 xfm/
-                    sub-XX_ses-XX_from-DCE_to-T1w_mode-image_xfm.mat
+                    sub-XX_ses-XX_from-DCE_to-anat_mode-image_xfm.mat
                 qc/
                     dce_qc.json
                 stats/
@@ -558,7 +558,7 @@ class DCEDerivativeWriter(BaseInterface):
             xfm_dir.mkdir(parents=True, exist_ok=True)
             self._copy_file(
                 self.inputs.dce_to_t1w_xfm,
-                xfm_dir / f"{prefix}_from-DCE_to-T1w_mode-image_xfm.mat",
+                xfm_dir / f"{prefix}_from-DCE_to-anat_mode-image_xfm.mat",
             )
 
         # -----------------------------------------------------------

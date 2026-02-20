@@ -149,7 +149,7 @@ class DSCDerivativeWriter(BaseInterface):
                     sub-XX_ses-XX_space-DSC_res-X.XXxX.XX_desc-{desc}_{map}.json
                     ...
                 xfm/
-                    sub-XX_ses-XX_from-DSC_to-T1w_mode-image_xfm.mat
+                    sub-XX_ses-XX_from-DSC_to-anat_mode-image_xfm.mat
                 qc/
                     dsc_qc.json
                     registration_qc_filmstrip.png
@@ -435,7 +435,7 @@ class DSCDerivativeWriter(BaseInterface):
         if self._has_input("dsc_to_t1w_xfm"):
             self._copy_file(
                 self.inputs.dsc_to_t1w_xfm,
-                xfm_dir / f"{prefix}_from-DSC_to-T1w_mode-image_xfm.mat",
+                xfm_dir / f"{prefix}_from-DSC_to-anat_mode-image_xfm.mat",
             )
 
         # -----------------------------------------------------------
@@ -525,7 +525,7 @@ class DSCDerivativeWriter(BaseInterface):
         if self._has_input("t1w_to_dsc_xfm"):
             self._copy_file(
                 self.inputs.t1w_to_dsc_xfm,
-                xfm_dir / f"{prefix}_from-T1w_to-DSC_mode-image_xfm.mat",
+                xfm_dir / f"{prefix}_from-anat_to-DSC_mode-image_xfm.mat",
             )
 
         # -----------------------------------------------------------

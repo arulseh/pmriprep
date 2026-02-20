@@ -87,11 +87,11 @@ class HDGLIODerivativeWriter(BaseInterface):
             dataset_description.json
             sub-{subject}/ses-{session}/
                 anat/
-                    sub-XX_ses-XX_space-T1w_desc-hdglio_dseg.nii.gz
-                    sub-XX_ses-XX_space-T1w_desc-hdglio_dseg.json
-                    sub-XX_ses-XX_space-T1w_desc-enhancing_mask.nii.gz
-                    sub-XX_ses-XX_space-T1w_desc-nonenhancing_mask.nii.gz
-                    sub-XX_ses-XX_space-T1w_desc-wholetumor_mask.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-hdglio_dseg.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-hdglio_dseg.json
+                    sub-XX_ses-XX_space-anat_desc-enhancing_mask.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-nonenhancing_mask.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-wholetumor_mask.nii.gz
                     sub-XX_ses-XX_desc-hdglio_volumes.txt
                 qc/
                     hdglio_qc.json
@@ -99,9 +99,9 @@ class HDGLIODerivativeWriter(BaseInterface):
         {output_dir}/anat_pipeline/
             sub-{subject}/ses-{session}/
                 anat/
-                    sub-XX_ses-XX_space-T1w_desc-lesion_mask.nii.gz
-                    sub-XX_ses-XX_space-T1w_desc-lesiondilated15mm_mask.nii.gz
-                    sub-XX_ses-XX_space-T1w_desc-nawm_mask.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-lesion_mask.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-lesiondilated15mm_mask.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-nawm_mask.nii.gz
     """
 
     input_spec = HDGLIODerivativeWriterInputSpec
@@ -142,7 +142,7 @@ class HDGLIODerivativeWriter(BaseInterface):
         # Segmentation label map (dseg)
         self._copy_nifti(
             self.inputs.segmentation,
-            hdglio_anat_dir / f"{prefix}_space-T1w_desc-hdglio_dseg.nii.gz",
+            hdglio_anat_dir / f"{prefix}_space-anat_desc-hdglio_dseg.nii.gz",
         )
         self._write_json(
             {
@@ -155,13 +155,13 @@ class HDGLIODerivativeWriter(BaseInterface):
                 },
                 "Method": "HD-GLIO (Isensee et al.)",
             },
-            hdglio_anat_dir / f"{prefix}_space-T1w_desc-hdglio_dseg.json",
+            hdglio_anat_dir / f"{prefix}_space-anat_desc-hdglio_dseg.json",
         )
 
         # Enhancing tumor mask
         self._copy_nifti(
             self.inputs.enhancing_mask,
-            hdglio_anat_dir / f"{prefix}_space-T1w_desc-enhancing_mask.nii.gz",
+            hdglio_anat_dir / f"{prefix}_space-anat_desc-enhancing_mask.nii.gz",
         )
         self._write_json(
             {
@@ -169,13 +169,13 @@ class HDGLIODerivativeWriter(BaseInterface):
                 "Type": "Brain",
                 "Method": "Derived from HD-GLIO segmentation",
             },
-            hdglio_anat_dir / f"{prefix}_space-T1w_desc-enhancing_mask.json",
+            hdglio_anat_dir / f"{prefix}_space-anat_desc-enhancing_mask.json",
         )
 
         # Non-enhancing tumor mask
         self._copy_nifti(
             self.inputs.non_enhancing_mask,
-            hdglio_anat_dir / f"{prefix}_space-T1w_desc-nonenhancing_mask.nii.gz",
+            hdglio_anat_dir / f"{prefix}_space-anat_desc-nonenhancing_mask.nii.gz",
         )
         self._write_json(
             {
@@ -183,13 +183,13 @@ class HDGLIODerivativeWriter(BaseInterface):
                 "Type": "Brain",
                 "Method": "Derived from HD-GLIO segmentation",
             },
-            hdglio_anat_dir / f"{prefix}_space-T1w_desc-nonenhancing_mask.json",
+            hdglio_anat_dir / f"{prefix}_space-anat_desc-nonenhancing_mask.json",
         )
 
         # Whole tumor mask
         self._copy_nifti(
             self.inputs.whole_tumor_mask,
-            hdglio_anat_dir / f"{prefix}_space-T1w_desc-wholetumor_mask.nii.gz",
+            hdglio_anat_dir / f"{prefix}_space-anat_desc-wholetumor_mask.nii.gz",
         )
         self._write_json(
             {
@@ -197,7 +197,7 @@ class HDGLIODerivativeWriter(BaseInterface):
                 "Type": "Brain",
                 "Method": "Derived from HD-GLIO segmentation",
             },
-            hdglio_anat_dir / f"{prefix}_space-T1w_desc-wholetumor_mask.json",
+            hdglio_anat_dir / f"{prefix}_space-anat_desc-wholetumor_mask.json",
         )
 
         # ---------------------------------------------------------------
@@ -207,7 +207,7 @@ class HDGLIODerivativeWriter(BaseInterface):
         # Lesion mask (copy of whole tumor mask for downstream use)
         self._copy_nifti(
             self.inputs.whole_tumor_mask,
-            anat_anat_dir / f"{prefix}_space-T1w_desc-lesion_mask.nii.gz",
+            anat_anat_dir / f"{prefix}_space-anat_desc-lesion_mask.nii.gz",
         )
         self._write_json(
             {
@@ -215,13 +215,13 @@ class HDGLIODerivativeWriter(BaseInterface):
                 "Type": "Brain",
                 "Method": "HD-GLIO segmentation (labels 1+2)",
             },
-            anat_anat_dir / f"{prefix}_space-T1w_desc-lesion_mask.json",
+            anat_anat_dir / f"{prefix}_space-anat_desc-lesion_mask.json",
         )
 
         # Dilated lesion mask
         self._copy_nifti(
             self.inputs.dilated_lesion_mask,
-            anat_anat_dir / f"{prefix}_space-T1w_desc-lesiondilated15mm_mask.nii.gz",
+            anat_anat_dir / f"{prefix}_space-anat_desc-lesiondilated15mm_mask.nii.gz",
         )
         self._write_json(
             {
@@ -230,13 +230,13 @@ class HDGLIODerivativeWriter(BaseInterface):
                 "Method": "Spherical dilation of HD-GLIO whole tumor mask",
                 "DilationRadiusMM": 15.0,
             },
-            anat_anat_dir / f"{prefix}_space-T1w_desc-lesiondilated15mm_mask.json",
+            anat_anat_dir / f"{prefix}_space-anat_desc-lesiondilated15mm_mask.json",
         )
 
         # NAWM mask
         self._copy_nifti(
             self.inputs.nawm_mask,
-            anat_anat_dir / f"{prefix}_space-T1w_desc-nawm_mask.nii.gz",
+            anat_anat_dir / f"{prefix}_space-anat_desc-nawm_mask.nii.gz",
         )
         self._write_json(
             {
@@ -244,7 +244,7 @@ class HDGLIODerivativeWriter(BaseInterface):
                 "Type": "Brain",
                 "Method": "Contralateral WM thresholded at p>=0.9, excluding tumor margin",
             },
-            anat_anat_dir / f"{prefix}_space-T1w_desc-nawm_mask.json",
+            anat_anat_dir / f"{prefix}_space-anat_desc-nawm_mask.json",
         )
 
         # ---------------------------------------------------------------
@@ -265,7 +265,7 @@ class HDGLIODerivativeWriter(BaseInterface):
         stats_dir = hdglio_ses_dir / "stats"
         stats_dir.mkdir(parents=True, exist_ok=True)
         lesion_stats_path = (
-            stats_dir / f"{prefix}_space-T1w_lesion-stats.json"
+            stats_dir / f"{prefix}_space-anat_lesion-stats.json"
         )
         self._write_lesion_stats_json(
             segmentation_file=self.inputs.segmentation,

@@ -591,7 +591,7 @@ def _find_previous_dsc_outputs(
     # DSC→T1w transform
     xfm_dir = dsc_dir / "xfm"
     if xfm_dir.exists():
-        for f in xfm_dir.glob("*from-DSC_to-T1w*_xfm.mat"):
+        for f in xfm_dir.glob("*from-DSC_to-anat*_xfm.mat"):
             outputs["dsc_to_t1w_xfm"] = str(f)
 
     # AIF QC from dsc_qc.json
@@ -1509,22 +1509,6 @@ def init_pmriprep_wf(
             name="dce_wf",
         )
 
-        # Override DCE registration parameters from confidence-scored selection
-        if dce_ref_selection:
-            ref_type_map = {
-                ImageType.T1W_POSTCON: "postcon",
-                ImageType.T1W_PRECON: "precon",
-            }
-            dce_reg_ref_type = ref_type_map.get(
-                dce_ref_selection.candidate.image_type, "any",
-            )
-            dce_wf.inputs.dce_registration.reference_type = dce_reg_ref_type
-            dce_wf.inputs.dce_registration.skip_bbr = dce_skip_bbr
-            _ref_logger.info(
-                "DCE registration: reference_type=%s, skip_bbr=%s (from selection)",
-                dce_reg_ref_type, dce_skip_bbr,
-            )
-
         # Connect DCE file from inputnode
         workflow.connect([
             (inputnode, dce_wf, [("dce_file", "inputnode.dce_file")]),
@@ -1592,6 +1576,21 @@ def init_pmriprep_wf(
                 dce_ref_selection.candidate.image_type == ImageType.T1W_POSTCON
             )
             dce_skip_bbr = not dce_ref_selection.bbr_eligible
+
+            # Override DCE registration parameters from confidence-scored selection
+            ref_type_map = {
+                ImageType.T1W_POSTCON: "postcon",
+                ImageType.T1W_PRECON: "precon",
+            }
+            dce_reg_ref_type = ref_type_map.get(
+                dce_ref_selection.candidate.image_type, "any",
+            )
+            dce_wf.inputs.dce_registration.reference_type = dce_reg_ref_type
+            dce_wf.inputs.dce_registration.skip_bbr = dce_skip_bbr
+            _ref_logger.info(
+                "DCE registration: reference_type=%s, skip_bbr=%s (from selection)",
+                dce_reg_ref_type, dce_skip_bbr,
+            )
 
         # Connect anat outputs to DCE workflow
         if anat_wf is not None:

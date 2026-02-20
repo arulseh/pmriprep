@@ -177,14 +177,14 @@ def build_preproc_sidecar(
     return {
         "Description": description,
         "SkullStripped": skull_stripped,
-        "SpatialReference": "T1w",
+        "SpatialReference": "anat",
         "Sources": [source_uri],
         "OriginalResolution": resolution,
         "ProcessingSteps": [
             "Reorientation to RAS",
             "Robust FOV cropping",
             "N4 bias field correction",
-            "Coregistration to native T1w space",
+            "Coregistration to native anat space",
             "HD-BET brain extraction",
         ],
         "SoftwareVersions": get_imaging_software_versions(),
@@ -261,14 +261,14 @@ def build_mask_sidecar(
     return {
         "Description": description,
         "SkullStripped": False,
-        "SpatialReference": "T1w",
+        "SpatialReference": "anat",
         "Sources": [source_uri],
         "OriginalResolution": resolution,
         "ProcessingSteps": [
             "Reorientation to RAS",
             "Robust FOV cropping",
             "N4 bias field correction",
-            "Coregistration to native T1w space",
+            "Coregistration to native anat space",
             "HD-BET brain extraction",
         ],
         "SoftwareVersions": get_imaging_software_versions(),
@@ -290,9 +290,9 @@ def get_xfm_filename(
     session : str
         Session ID (without 'ses-' prefix).
     from_space : str
-        Source space (e.g., "T1wPostCon", "T2w", "FLAIR").
+        Source space (e.g., "T1wCE", "T2w", "FLAIR").
     to_space : str
-        Target space (e.g., "T1w", "ACPC").
+        Target space (e.g., "anat", "ACPC").
 
     Returns
     -------

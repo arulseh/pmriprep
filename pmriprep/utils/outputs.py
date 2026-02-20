@@ -31,7 +31,7 @@ class DerivativeMetadata:
         units: Measurement units (e.g., "mL/100g/min" for CBF).
         parameter_name: Name of the parameter if this is a map (e.g., "CBF", "Ktrans").
         model: Model used for computation (e.g., "sSVD", "extended_tofts").
-        space: Coordinate space (e.g., "native", "T1w", "MNI152NLin2009cAsym").
+        space: Coordinate space (e.g., "native", "anat", "MNI152NLin2009cAsym").
         resolution: Resolution description (e.g., "1mm", "native").
         additional: Additional key-value pairs to include in the sidecar.
     """

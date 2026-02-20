@@ -33,15 +33,15 @@ FIGURE_NAME_MAP: dict[str, tuple[str, str]] = {
     "pk_modeling_qc": ("pkfit", "dce"),
     "pk_param_maps_qc": ("pkparammaps", "dce"),
     # Anatomical
-    "brain_mask": ("brainmask", "T1w"),
-    "tissue_seg": ("tissueseg", "T1w"),
-    "acpc": ("acpc", "T1w"),
-    "coreg_postcon": ("coregpostcon", "T1w"),
-    "coreg_t2w": ("coregt2w", "T1w"),
-    "coreg_flair": ("coregflair", "T1w"),
-    "coreg_pdw": ("coregpdw", "T1w"),
+    "brain_mask": ("brainmask", "anat"),
+    "tissue_seg": ("tissueseg", "anat"),
+    "acpc": ("acpc", "anat"),
+    "coreg_postcon": ("coregpostcon", "anat"),
+    "coreg_t2w": ("coregt2w", "anat"),
+    "coreg_flair": ("coregflair", "anat"),
+    "coreg_pdw": ("coregpdw", "anat"),
     # HD-GLIO
-    "seg_postcon": ("segpostcon", "T1w"),
+    "seg_postcon": ("segpostcon", "anat"),
     "seg_flair": ("segflair", "FLAIR"),
     "nawm_flair": ("nawm", "FLAIR"),
 }

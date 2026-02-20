@@ -79,7 +79,7 @@ class AnatDerivativeWriter(BaseInterface):
 
     This interface replaces Nipype DataSink for anatomical outputs,
     producing:
-    - BIDS-compliant filenames (e.g., sub-XX_ses-XX_space-T1w_desc-preproc_T1w.nii.gz)
+    - BIDS-compliant filenames (e.g., sub-XX_ses-XX_space-anat_desc-preproc_T1w.nii.gz)
     - JSON sidecars paired with every NIfTI file
     - dataset_description.json at the pipeline root
     - QC JSON files in a qc/ subdirectory
@@ -90,12 +90,12 @@ class AnatDerivativeWriter(BaseInterface):
             dataset_description.json
             sub-{subject}/ses-{session}/
                 anat/
-                    sub-XX_ses-XX_space-T1w_desc-preproc_T1w.nii.gz
-                    sub-XX_ses-XX_space-T1w_desc-preproc_T1w.json
-                    sub-XX_ses-XX_space-T1w_desc-brain_mask.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-preproc_T1w.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-preproc_T1w.json
+                    sub-XX_ses-XX_space-anat_desc-brain_mask.nii.gz
                     ...
                 xfm/
-                    from-T1w_to-ACPC_mode-image_xfm.mat
+                    from-anat_to-ACPC_mode-image_xfm.mat
                     ...
                 qc/
                     brain_extraction_qc.json
@@ -145,7 +145,7 @@ class AnatDerivativeWriter(BaseInterface):
         # T1w preprocessed
         self._copy_nifti(  # type: ignore[call-arg]
             self.inputs.t1w_preproc,
-            anat_dir / f"{prefix}_space-T1w_desc-preproc_T1w.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-preproc_T1w.nii.gz",
         )
         if source_t1w:
             sidecar = build_preproc_sidecar(
@@ -156,23 +156,23 @@ class AnatDerivativeWriter(BaseInterface):
             )
             self._write_json(
                 sidecar,
-                anat_dir / f"{prefix}_space-T1w_desc-preproc_T1w.json",
+                anat_dir / f"{prefix}_space-anat_desc-preproc_T1w.json",
             )
 
         # Brain mask
         self._copy_nifti(  # type: ignore[call-arg]
             self.inputs.brain_mask,
-            anat_dir / f"{prefix}_space-T1w_desc-brain_mask.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-brain_mask.nii.gz",
         )
         if source_t1w:
             sidecar = build_mask_sidecar(
-                description="Brain mask from HD-BET in native T1w space",
+                description="Brain mask from HD-BET in native anat space",
                 source_path=source_t1w,
                 bids_dir=bids_dir,
             )
             self._write_json(
                 sidecar,
-                anat_dir / f"{prefix}_space-T1w_desc-brain_mask.json",
+                anat_dir / f"{prefix}_space-anat_desc-brain_mask.json",
             )
 
         # Tissue probability maps
@@ -184,7 +184,7 @@ class AnatDerivativeWriter(BaseInterface):
         for tissue_type, probseg_path in tissue_map.items():
             self._copy_nifti(  # type: ignore[call-arg]
                 probseg_path,
-                anat_dir / f"{prefix}_space-T1w_label-{tissue_type}_probseg.nii.gz",
+                anat_dir / f"{prefix}_space-anat_label-{tissue_type}_probseg.nii.gz",
             )
             if source_t1w:
                 sidecar = build_probseg_sidecar(
@@ -194,7 +194,7 @@ class AnatDerivativeWriter(BaseInterface):
                 )
                 self._write_json(
                     sidecar,
-                    anat_dir / f"{prefix}_space-T1w_label-{tissue_type}_probseg.json",
+                    anat_dir / f"{prefix}_space-anat_label-{tissue_type}_probseg.json",
                 )
 
         # ---------------------------------------------------------------
@@ -205,7 +205,7 @@ class AnatDerivativeWriter(BaseInterface):
         if self._has_input("t1w_postcon_coreg"):
             self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.t1w_postcon_coreg,
-                anat_dir / f"{prefix}_ce-GAD_space-T1w_desc-preproc_T1w.nii.gz",
+                anat_dir / f"{prefix}_ce-GAD_space-anat_desc-preproc_T1w.nii.gz",
             )
             source_postcon = self._get_source_path("source_t1w_postcon")
             if source_postcon:
@@ -217,71 +217,71 @@ class AnatDerivativeWriter(BaseInterface):
                 )
                 self._write_json(
                     sidecar,
-                    anat_dir / f"{prefix}_ce-GAD_space-T1w_desc-preproc_T1w.json",
+                    anat_dir / f"{prefix}_ce-GAD_space-anat_desc-preproc_T1w.json",
                 )
 
         # T2w
         if self._has_input("t2w_coreg"):
             self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.t2w_coreg,
-                anat_dir / f"{prefix}_space-T1w_desc-preproc_T2w.nii.gz",
+                anat_dir / f"{prefix}_space-anat_desc-preproc_T2w.nii.gz",
             )
             source_t2w = self._get_source_path("source_t2w")
             if source_t2w:
                 sidecar = build_preproc_sidecar(
-                    description="Preprocessed and brain-extracted T2w image in native T1w space",
+                    description="Preprocessed and brain-extracted T2w image in native anat space",
                     source_path=source_t2w,
                     bids_dir=bids_dir,
                     skull_stripped=True,
                 )
                 self._write_json(
                     sidecar,
-                    anat_dir / f"{prefix}_space-T1w_desc-preproc_T2w.json",
+                    anat_dir / f"{prefix}_space-anat_desc-preproc_T2w.json",
                 )
 
         # FLAIR
         if self._has_input("flair_coreg"):
             self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.flair_coreg,
-                anat_dir / f"{prefix}_space-T1w_desc-preproc_FLAIR.nii.gz",
+                anat_dir / f"{prefix}_space-anat_desc-preproc_FLAIR.nii.gz",
             )
             source_flair = self._get_source_path("source_flair")
             if source_flair:
                 sidecar = build_preproc_sidecar(
-                    description="Preprocessed and brain-extracted FLAIR image in native T1w space",
+                    description="Preprocessed and brain-extracted FLAIR image in native anat space",
                     source_path=source_flair,
                     bids_dir=bids_dir,
                     skull_stripped=True,
                 )
                 self._write_json(
                     sidecar,
-                    anat_dir / f"{prefix}_space-T1w_desc-preproc_FLAIR.json",
+                    anat_dir / f"{prefix}_space-anat_desc-preproc_FLAIR.json",
                 )
 
         # PDw
         if self._has_input("pdw_coreg"):
             self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.pdw_coreg,
-                anat_dir / f"{prefix}_space-T1w_desc-preproc_PDw.nii.gz",
+                anat_dir / f"{prefix}_space-anat_desc-preproc_PDw.nii.gz",
             )
             source_pdw = self._get_source_path("source_pdw")
             if source_pdw:
                 sidecar = build_preproc_sidecar(
-                    description="Preprocessed and brain-extracted proton density weighted image in native T1w space",
+                    description="Preprocessed and brain-extracted proton density weighted image in native anat space",
                     source_path=source_pdw,
                     bids_dir=bids_dir,
                     skull_stripped=True,
                 )
                 self._write_json(
                     sidecar,
-                    anat_dir / f"{prefix}_space-T1w_desc-preproc_PDw.json",
+                    anat_dir / f"{prefix}_space-anat_desc-preproc_PDw.json",
                 )
 
         # T1w subtraction
         if self._has_input("t1w_subtraction"):
             self._copy_nifti(  # type: ignore[call-arg]
                 self.inputs.t1w_subtraction,
-                anat_dir / f"{prefix}_space-T1w_desc-subtraction_T1w.nii.gz",
+                anat_dir / f"{prefix}_space-anat_desc-subtraction_T1w.nii.gz",
             )
             source_postcon = self._get_source_path("source_t1w_postcon")
             if source_postcon:
@@ -293,7 +293,7 @@ class AnatDerivativeWriter(BaseInterface):
                 )
                 self._write_json(
                     sidecar,
-                    anat_dir / f"{prefix}_space-T1w_desc-subtraction_T1w.json",
+                    anat_dir / f"{prefix}_space-anat_desc-subtraction_T1w.json",
                 )
 
         # ---------------------------------------------------------------
@@ -301,24 +301,24 @@ class AnatDerivativeWriter(BaseInterface):
         # ---------------------------------------------------------------
 
         # ACPC transform (always present)
-        acpc_fname = get_xfm_filename(subject, session, "T1w", "ACPC")
+        acpc_fname = get_xfm_filename(subject, session, "anat", "ACPC")
         self._copy_file(self.inputs.acpc_xfm, xfm_dir / acpc_fname)
 
         # Optional transforms
         if self._has_input("t1w_postcon_to_t1w_xfm"):
-            fname = get_xfm_filename(subject, session, "T1wPostCon", "T1w")
+            fname = get_xfm_filename(subject, session, "T1wCE", "anat")
             self._copy_file(self.inputs.t1w_postcon_to_t1w_xfm, xfm_dir / fname)
 
         if self._has_input("t2w_to_t1w_xfm"):
-            fname = get_xfm_filename(subject, session, "T2w", "T1w")
+            fname = get_xfm_filename(subject, session, "T2w", "anat")
             self._copy_file(self.inputs.t2w_to_t1w_xfm, xfm_dir / fname)
 
         if self._has_input("flair_to_t1w_xfm"):
-            fname = get_xfm_filename(subject, session, "FLAIR", "T1w")
+            fname = get_xfm_filename(subject, session, "FLAIR", "anat")
             self._copy_file(self.inputs.flair_to_t1w_xfm, xfm_dir / fname)
 
         if self._has_input("pdw_to_t1w_xfm"):
-            fname = get_xfm_filename(subject, session, "PDw", "T1w")
+            fname = get_xfm_filename(subject, session, "PDw", "anat")
             self._copy_file(self.inputs.pdw_to_t1w_xfm, xfm_dir / fname)
 
         # ---------------------------------------------------------------
