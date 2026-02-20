@@ -20,7 +20,6 @@ from pmriprep.interfaces.anat import (
     Coregistration,
     ReorientAndCrop,
     T1wSubtraction,
-    TissueSegmentation,
 )
 
 
@@ -51,7 +50,7 @@ def _determine_processing_mode(t1w_precon, t1w_postcon):
 
     Uses _determine_processing_mode_v2 from structural_reference module for
     physics-validated confidence-based selection. Returns backward-compatible
-    2-tuple (reference_t1w, is_postcon_only) for the workflow node interface.
+    2-tuple (reference_t1w, is_postcon_ref) for the workflow node interface.
 
     Parameters
     ----------
@@ -64,7 +63,7 @@ def _determine_processing_mode(t1w_precon, t1w_postcon):
     -------
     reference_t1w : str
         Path to T1w image to use as reference.
-    is_postcon_only : bool
+    is_postcon_ref : bool
         True if post-contrast T1w is the reference.
     """
     from pmriprep.utils.structural_reference import _determine_processing_mode_v2
@@ -237,18 +236,21 @@ def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf
     ----------
     t1w_file : str
         Path to brain-extracted T1w image (background).
-    wm_probseg_file : str
+    wm_probseg_file : str or None
         Path to white matter probability map.
-    gm_probseg_file : str
+    gm_probseg_file : str or None
         Path to gray matter probability map.
-    csf_probseg_file : str
+    csf_probseg_file : str or None
         Path to CSF probability map.
 
     Returns
     -------
-    str
-        Path to output filmstrip PNG.
+    str or None
+        Path to output filmstrip PNG, or None if tissue maps are unavailable.
     """
+    if wm_probseg_file is None:
+        return None
+
     from pathlib import Path
 
     import nibabel as nib
@@ -441,11 +443,11 @@ def init_anat_preproc_wf(
     outputnode.brain_mask : str
         Path to brain mask in T1w space.
     outputnode.wm_probseg : str
-        Path to white matter probability map (None if postcon-only mode).
+        Path to white matter probability map (None if postcon is reference).
     outputnode.gm_probseg : str
-        Path to gray matter probability map (None if postcon-only mode).
+        Path to gray matter probability map (None if postcon is reference).
     outputnode.csf_probseg : str
-        Path to CSF probability map (None if postcon-only mode).
+        Path to CSF probability map (None if postcon is reference).
     outputnode.t1w_acpc : str, optional
         Path to ACPC-aligned T1w (if not skipped).
     outputnode.acpc_xfm : str, optional
@@ -470,8 +472,8 @@ def init_anat_preproc_wf(
         PDw to T1w transform.
     outputnode.t1w_subtraction : str, optional
         T1w subtraction image (post - pre).
-    outputnode.is_postcon_only : bool
-        Flag indicating postcon-only mode.
+    outputnode.is_postcon_ref : bool
+        Flag indicating postcon is the structural reference.
     outputnode.qc_metrics : dict
         Dictionary of QC metrics from preprocessing steps.
 
@@ -491,9 +493,10 @@ def init_anat_preproc_wf(
     10. T1w subtraction (when both pre and post available)
     11. Optional ACPC alignment (rigid to MNI)
 
-    In postcon-only mode:
-    - T1w post-contrast is used as the reference
-    - FAST segmentation is SKIPPED (gadolinium disrupts WM/GM boundaries)
+    When postcon is the reference:
+    - T1w post-contrast is used as the structural reference
+    - Hybrid FAST: if precon meets quality gate, it is coregistered to
+      postcon space for tissue segmentation; otherwise FAST is skipped
     - T1w subtraction is SKIPPED (requires both pre and post)
     - A warning is logged about reduced accuracy
     """
@@ -553,7 +556,7 @@ def init_anat_preproc_wf(
                 "hdglio_t2w",
                 "hdglio_flair",
                 # Processing mode flag
-                "is_postcon_only",
+                "is_postcon_ref",
                 # QC
                 "qc_metrics",
                 # QC filmstrips
@@ -576,7 +579,7 @@ def init_anat_preproc_wf(
     determine_mode = pe.Node(
         niu.Function(
             input_names=["t1w_precon", "t1w_postcon"],
-            output_names=["reference_t1w", "is_postcon_only"],
+            output_names=["reference_t1w", "is_postcon_ref"],
             function=_determine_processing_mode,
         ),
         name="determine_mode",
@@ -828,7 +831,7 @@ def init_anat_preproc_wf(
     # Node to route FAST input: handles normal, hybrid, and skip modes.
     # In hybrid mode (postcon reference + acceptable precon), FAST runs
     # on a coregistered precon image prepared by a parallel path below.
-    def _route_fast_input(in_file, t1w_precon, t1w_postcon, is_postcon_only):
+    def _route_fast_input(in_file, t1w_precon, t1w_postcon, is_postcon_ref):
         """Route FAST input based on processing mode and precon quality.
 
         Normal mode: FAST on brain-extracted precon (in_file).
@@ -840,7 +843,7 @@ def init_anat_preproc_wf(
 
         _log = logging.getLogger("pmriprep.workflows.anat")
 
-        if not is_postcon_only:
+        if not is_postcon_ref:
             # Normal mode: FAST on brain-extracted precon (passed as in_file)
             return in_file
 
@@ -871,15 +874,37 @@ def init_anat_preproc_wf(
 
     check_fast_mode = pe.Node(
         niu.Function(
-            input_names=["in_file", "t1w_precon", "t1w_postcon", "is_postcon_only"],
+            input_names=["in_file", "t1w_precon", "t1w_postcon", "is_postcon_ref"],
             output_names=["out_file"],
             function=_route_fast_input,
         ),
         name="check_fast_mode",
     )
 
+    def _guarded_tissue_segment(in_file):
+        """Run FAST tissue segmentation, or return None triplet if skipped.
+
+        Returns (None, None, None) when in_file is None (Case 4: postcon
+        reference and precon fails quality gate). Otherwise runs
+        TissueSegmentation and returns (wm, gm, csf) probability maps.
+        """
+        if in_file is None:
+            return None, None, None
+        from pmriprep.interfaces.anat import TissueSegmentation
+
+        result = TissueSegmentation(in_file=in_file).run()
+        return (
+            result.outputs.wm_probseg,
+            result.outputs.gm_probseg,
+            result.outputs.csf_probseg,
+        )
+
     tissue_segment = pe.Node(
-        TissueSegmentation(),
+        niu.Function(
+            input_names=["in_file"],
+            output_names=["wm_probseg", "gm_probseg", "csf_probseg"],
+            function=_guarded_tissue_segment,
+        ),
         name="tissue_segment",
     )
 
@@ -889,60 +914,80 @@ def init_anat_preproc_wf(
             ("t1w", "t1w_precon"),
             ("t1w_postcon", "t1w_postcon"),
         ]),
-        (determine_mode, check_fast_mode, [("is_postcon_only", "is_postcon_only")]),
+        (determine_mode, check_fast_mode, [("is_postcon_ref", "is_postcon_ref")]),
     ])
 
     # -------------------------------------------------------------------
     # Step 7b: Hybrid FAST path (postcon reference + acceptable precon)
-    # When postcon wins as reference, this parallel path prepares the
-    # precon T1w for FAST: reorient → bias correct → coreg to postcon
-    # → apply postcon brain mask → FAST.
+    # When postcon wins as reference, this single Function node prepares
+    # the precon T1w for FAST: reorient → bias correct → coreg to postcon
+    # → apply postcon brain mask.  Returns None immediately when the
+    # hybrid path should not run (no postcon ref, or precon fails gate),
+    # avoiding File(exists=True) crashes on CommandLine nodes.
     # -------------------------------------------------------------------
 
-    # Determine hybrid FAST eligibility at graph build time
-    def _get_hybrid_fast_t1w(t1w_precon, t1w_postcon, is_postcon_only):
-        """Return precon path if hybrid FAST should run, else None."""
-        if not is_postcon_only:
-            return None
-        from pmriprep.utils.structural_reference import _determine_processing_mode_v2
-        _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
-        return fast_t1w
+    def _run_hybrid_fast_chain(
+        t1w_precon, t1w_postcon, is_postcon_ref, reference_file, brain_mask,
+        denoise,
+    ):
+        """Run full hybrid FAST preprocessing chain or return None.
 
-    get_hybrid_fast = pe.Node(
+        When postcon is reference and precon passes the quality gate,
+        run: reorient → bias correct → coregister to postcon → mask.
+        Otherwise return None immediately (no CommandLine nodes touched).
+        """
+        if not is_postcon_ref:
+            return None
+
+        from pmriprep.utils.structural_reference import _determine_processing_mode_v2
+
+        _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
+        if fast_t1w is None:
+            return None
+
+        from pmriprep.interfaces.anat import (
+            ApplyMask,
+            BiasCorrection,
+            Coregistration,
+            ReorientAndCrop,
+        )
+
+        reoriented = ReorientAndCrop(in_file=fast_t1w).run().outputs.out_file
+        bias_corrected = BiasCorrection(
+            in_file=reoriented, denoise=denoise,
+        ).run().outputs.out_file
+        coregistered = Coregistration(
+            in_file=bias_corrected, reference=reference_file,
+            modality="T1w", dof=6,
+        ).run().outputs.out_file
+        masked = ApplyMask(
+            in_file=coregistered, mask_file=brain_mask,
+        ).run().outputs.out_file
+        return masked
+
+    hybrid_fast_chain = pe.Node(
         niu.Function(
-            input_names=["t1w_precon", "t1w_postcon", "is_postcon_only"],
-            output_names=["fast_t1w"],
-            function=_get_hybrid_fast_t1w,
+            input_names=[
+                "t1w_precon", "t1w_postcon", "is_postcon_ref",
+                "reference_file", "brain_mask", "denoise",
+            ],
+            output_names=["out_file"],
+            function=_run_hybrid_fast_chain,
         ),
-        name="get_hybrid_fast",
+        name="hybrid_fast_chain",
     )
+    hybrid_fast_chain.inputs.denoise = config.denoise
 
     workflow.connect([
-        (inputnode, get_hybrid_fast, [
+        (inputnode, hybrid_fast_chain, [
             ("t1w", "t1w_precon"),
             ("t1w_postcon", "t1w_postcon"),
         ]),
-        (determine_mode, get_hybrid_fast, [("is_postcon_only", "is_postcon_only")]),
-    ])
-
-    # Hybrid FAST preprocessing nodes (always created; will be skipped
-    # at runtime if get_hybrid_fast returns None)
-    reorient_fast = pe.Node(ReorientAndCrop(), name="reorient_fast")
-    bias_correct_fast = pe.Node(
-        BiasCorrection(denoise=config.denoise), name="bias_correct_fast"
-    )
-    coreg_fast_to_ref = pe.Node(
-        Coregistration(modality="T1w", dof=6), name="coreg_fast_to_ref"
-    )
-    mask_fast = pe.Node(ApplyMask(), name="mask_fast")
-
-    workflow.connect([
-        (get_hybrid_fast, reorient_fast, [("fast_t1w", "in_file")]),
-        (reorient_fast, bias_correct_fast, [("out_file", "in_file")]),
-        (bias_correct_fast, coreg_fast_to_ref, [("out_file", "in_file")]),
-        (bias_correct, coreg_fast_to_ref, [("out_file", "reference")]),
-        (coreg_fast_to_ref, mask_fast, [("out_file", "in_file")]),
-        (brain_extract, mask_fast, [("out_mask", "mask_file")]),
+        (determine_mode, hybrid_fast_chain, [
+            ("is_postcon_ref", "is_postcon_ref"),
+        ]),
+        (bias_correct, hybrid_fast_chain, [("out_file", "reference_file")]),
+        (brain_extract, hybrid_fast_chain, [("out_mask", "brain_mask")]),
     ])
 
     # Merge: pick normal FAST input or hybrid FAST input
@@ -963,7 +1008,7 @@ def init_anat_preproc_wf(
 
     workflow.connect([
         (check_fast_mode, merge_fast, [("out_file", "normal_input")]),
-        (mask_fast, merge_fast, [("out_file", "hybrid_input")]),
+        (hybrid_fast_chain, merge_fast, [("out_file", "hybrid_input")]),
         (merge_fast, tissue_segment, [("out_file", "in_file")]),
     ])
 
@@ -1175,7 +1220,7 @@ def init_anat_preproc_wf(
             ("out_matrix", "t1w_to_mni_xfm"),
         ]),
         # Processing mode flag
-        (determine_mode, outputnode, [("is_postcon_only", "is_postcon_only")]),
+        (determine_mode, outputnode, [("is_postcon_ref", "is_postcon_ref")]),
         # QC metrics
         (merge_qc, outputnode, [("qc_metrics", "qc_metrics")]),
         # Brain mask filmstrip (always present)

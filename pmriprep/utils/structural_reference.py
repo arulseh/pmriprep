@@ -491,6 +491,10 @@ _MAX_VOXEL_DIM_CUTOFF = 4.0
 _ISOTROPY_BONUS_THRESHOLD = 1.2   # Nearly isotropic → +5%
 _ISOTROPY_PENALTY_THRESHOLD = 2.5  # Highly anisotropic → -10%
 
+# FAST quality gate thresholds (hybrid FAST path)
+_FAST_GATE_RESOLUTION = 2.0   # Max geometric mean (mm) for FAST viability
+_FAST_GATE_ISOTROPY = 2.5     # Max isotropy ratio for FAST viability
+
 # Physics-validated base confidence table
 # (image_type, is_high_res) -> base confidence
 _BASE_CONFIDENCE_TABLE: Dict[Tuple[ImageType, bool], float] = {
@@ -1068,8 +1072,8 @@ def _determine_processing_mode_v2(
     if postcon_wins:
         # Determine if precon is good enough for hybrid FAST
         precon_meets_fast_gate = (
-            precon_info.geometric_mean <= 2.0
-            and precon_info.isotropy_ratio <= 3.0
+            precon_info.geometric_mean <= _FAST_GATE_RESOLUTION
+            and precon_info.isotropy_ratio <= _FAST_GATE_ISOTROPY
         )
         fast_t1w = str(t1w_precon) if precon_meets_fast_gate else None
 
