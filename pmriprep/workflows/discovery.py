@@ -87,11 +87,21 @@ class SessionData:
 
 
 def _find_t1w_precontrast(anat_dir: Path) -> Optional[Path]:
-    """Find pre-contrast T1w image.
+    """Find pre-contrast T1w image with acquisition preference.
 
     Pre-contrast T1w is identified by:
     - Having suffix _T1w
     - NOT having 'ce-' entity (contrast enhancement)
+
+    Preference order for acquisition type:
+    1. MPRAGE (3D GRE with inversion recovery) - best for registration
+    2. IR/MP2RAGE (other inversion recovery sequences)
+    3. SPGR/GRE (3D gradient echo)
+    4. Any non-SE acquisition
+    5. SE (spin echo) - 2D with thick slices, worst for registration
+
+    This ordering ensures the best-quality precon T1w is returned when
+    multiple exist (e.g., both SE T1w and MPRAGE).
 
     Args:
         anat_dir: Path to the anatomical directory.
@@ -101,13 +111,44 @@ def _find_t1w_precontrast(anat_dir: Path) -> Optional[Path]:
     """
     t1w_files = list(anat_dir.glob("*_T1w.nii.gz")) + list(anat_dir.glob("*_T1w.nii"))
 
-    for f in t1w_files:
-        fname = f.name.lower()
-        # Exclude contrast-enhanced images
-        if "ce-" not in fname and "ce_" not in fname:
-            return f
+    # Filter to non-contrast images only
+    precon_files = [
+        f for f in t1w_files
+        if "ce-" not in f.name.lower() and "ce_" not in f.name.lower()
+    ]
 
-    return None
+    if not precon_files:
+        return None
+
+    if len(precon_files) == 1:
+        return precon_files[0]
+
+    # Multiple precon T1w found — apply acquisition preference
+    # Priority: MPRAGE > other 3D IR sequences > SPGR/GRE > any non-SE > SE
+    preferred_acq = ["mprage", "ir", "mp2rage", "spgr", "gre"]
+    for acq_pref in preferred_acq:
+        for f in precon_files:
+            if acq_pref in f.name.lower():
+                logger.info(
+                    "Selected precon T1w (preferred acq=%s): %s",
+                    acq_pref, f.name
+                )
+                return f
+
+    # Avoid SE if possible (2D, thick slices, poor for registration)
+    non_se = [f for f in precon_files if "acq-se" not in f.name.lower()]
+    if non_se:
+        logger.info(
+            "Selected precon T1w (non-SE fallback): %s", non_se[0].name
+        )
+        return non_se[0]
+
+    # Last resort: return first match (may be SE)
+    logger.warning(
+        "Only SE T1w available for precon; registration may be suboptimal: %s",
+        precon_files[0].name
+    )
+    return precon_files[0]
 
 
 def _find_t1w_ce_gad(anat_dir: Path) -> Optional[Path]:

@@ -762,6 +762,68 @@ def init_pmriprep_wf(
     if session_data.modalities.dwi:
         inputnode.inputs.dwi_file = str(session_data.modalities.dwi)
 
+    # -------------------------------------------------------------------
+    # Structural reference selection (confidence-scored)
+    # Determine which anat output to use for DSC and DCE registration,
+    # plus BBR eligibility and provenance metadata.
+    # -------------------------------------------------------------------
+    from pmriprep.utils.structural_reference import (
+        ImageType,
+        build_candidates_from_session,
+        select_structural_reference_v2,
+        _map_selection_to_anat_output,
+    )
+
+    _ref_logger = logging.getLogger("pmriprep.workflows")
+
+    # Determine if a lesion mask will be available at perfusion registration
+    has_lesion_mask = (
+        (dsc_config is not None and dsc_config.lesion_mask is not None)
+        or (dce_config is not None and dce_config.lesion_mask is not None)
+        or session_data.pipelines.hdglio
+    )
+
+    # Build candidates from discovered modalities
+    ref_candidates = build_candidates_from_session(
+        session_data.modalities, has_lesion_mask=has_lesion_mask,
+    )
+
+    # Select for DSC registration
+    dsc_ref_selection = None
+    if decision.run_dsc:
+        dsc_ref_selection = select_structural_reference_v2(
+            ref_candidates,
+            application="dsc_registration",
+            perfusion_path=(
+                str(session_data.modalities.dsc) if session_data.modalities.dsc else None
+            ),
+        )
+        if dsc_ref_selection:
+            _ref_logger.info(
+                "DSC structural reference: %s (confidence=%.2f, bbr=%s)",
+                dsc_ref_selection.candidate.image_type.value,
+                dsc_ref_selection.confidence,
+                dsc_ref_selection.bbr_eligible,
+            )
+
+    # Select for DCE registration
+    dce_ref_selection = None
+    if decision.run_dce:
+        dce_ref_selection = select_structural_reference_v2(
+            ref_candidates,
+            application="dce_registration",
+            perfusion_path=(
+                str(session_data.modalities.dce) if session_data.modalities.dce else None
+            ),
+        )
+        if dce_ref_selection:
+            _ref_logger.info(
+                "DCE structural reference: %s (confidence=%.2f, bbr=%s)",
+                dce_ref_selection.candidate.image_type.value,
+                dce_ref_selection.confidence,
+                dce_ref_selection.bbr_eligible,
+            )
+
     # Define master output node
     outputnode = pe.Node(
         niu.IdentityInterface(
@@ -1155,11 +1217,32 @@ def init_pmriprep_wf(
             (inputnode, dsc_wf, [("dsc_file", "inputnode.dsc_file")]),
         ])
 
-        # Track whether DSC underlay is actually post-contrast T1w
+        # Set DSC registration reference_type from confidence-scored selection
+        if dsc_ref_selection:
+            dsc_reg_ref_type = {
+                ImageType.T1W_POSTCON: "postcon",
+                ImageType.T1W_PRECON: "precon",
+            }.get(dsc_ref_selection.candidate.image_type, "any")
+            dsc_wf.inputs.register.reference_type = dsc_reg_ref_type
+            _ref_logger.info(
+                "DSC registration: reference_type=%s (from selection)",
+                dsc_reg_ref_type,
+            )
+
+        # Determine DSC structural reference from confidence-scored selection
         dsc_underlay_is_postcon = False
+        dsc_ref_output = "outputnode.t1w_preproc"  # default
+        if dsc_ref_selection:
+            dsc_ref_output = _map_selection_to_anat_output(
+                dsc_ref_selection.candidate.image_type,
+            )
+            dsc_underlay_is_postcon = (
+                dsc_ref_selection.candidate.image_type == ImageType.T1W_POSTCON
+            )
 
         # Connect anat outputs to DSC workflow
         if anat_wf is not None:
+            # t1w_reference: always precon (for registration coordinate frame)
             workflow.connect([
                 (anat_wf, dsc_wf, [
                     ("outputnode.t1w_preproc", "inputnode.t1w_reference"),
@@ -1168,16 +1251,22 @@ def init_pmriprep_wf(
                     ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
                 ]),
             ])
-            # Connect T1w underlay: CE-T1w if available, otherwise native T1w
-            if session_data.modalities.t1w_ce_gad:
+            # T1w underlay: use confidence-scored selection
+            if dsc_ref_selection and dsc_ref_output != "outputnode.t1w_preproc":
                 workflow.connect([
-                    (anat_wf, dsc_wf, [("outputnode.t1w_postcon_coreg", "inputnode.t1w_underlay")]),
+                    (anat_wf, dsc_wf, [(dsc_ref_output, "inputnode.t1w_underlay")]),
                 ])
-                dsc_underlay_is_postcon = True
             else:
-                workflow.connect([
-                    (anat_wf, dsc_wf, [("outputnode.t1w_preproc", "inputnode.t1w_underlay")]),
-                ])
+                # Fallback: postcon if available, else precon
+                if session_data.modalities.t1w_ce_gad:
+                    workflow.connect([
+                        (anat_wf, dsc_wf, [("outputnode.t1w_postcon_coreg", "inputnode.t1w_underlay")]),
+                    ])
+                    dsc_underlay_is_postcon = True
+                else:
+                    workflow.connect([
+                        (anat_wf, dsc_wf, [("outputnode.t1w_preproc", "inputnode.t1w_underlay")]),
+                    ])
             # Connect FLAIR underlay if available
             if session_data.modalities.flair:
                 workflow.connect([
@@ -1193,8 +1282,16 @@ def init_pmriprep_wf(
             if prev_anat["t1w_preproc"]:
                 dsc_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_preproc"]
                 _log.info("skip-anat: loaded t1w_reference from %s", prev_anat["t1w_preproc"])
-            # Set t1w_underlay: prefer postcon if available
-            if session_data.modalities.t1w_ce_gad and prev_anat["t1w_postcon_coreg"]:
+            # Set t1w_underlay: use confidence-scored selection when possible
+            if dsc_ref_selection and dsc_ref_selection.candidate.image_type == ImageType.T1W_POSTCON:
+                if prev_anat["t1w_postcon_coreg"]:
+                    dsc_wf.inputs.inputnode.t1w_underlay = prev_anat["t1w_postcon_coreg"]
+                    dsc_underlay_is_postcon = True
+                    _log.info("skip-anat (DSC): loaded t1w_underlay from %s", prev_anat["t1w_postcon_coreg"])
+                elif prev_anat["t1w_preproc"]:
+                    dsc_wf.inputs.inputnode.t1w_underlay = prev_anat["t1w_preproc"]
+                    _log.info("skip-anat (DSC): loaded t1w_underlay from %s", prev_anat["t1w_preproc"])
+            elif session_data.modalities.t1w_ce_gad and prev_anat["t1w_postcon_coreg"]:
                 dsc_wf.inputs.inputnode.t1w_underlay = prev_anat["t1w_postcon_coreg"]
                 dsc_underlay_is_postcon = True
                 _log.info("skip-anat (DSC): loaded t1w_underlay from %s", prev_anat["t1w_postcon_coreg"])
@@ -1412,6 +1509,22 @@ def init_pmriprep_wf(
             name="dce_wf",
         )
 
+        # Override DCE registration parameters from confidence-scored selection
+        if dce_ref_selection:
+            ref_type_map = {
+                ImageType.T1W_POSTCON: "postcon",
+                ImageType.T1W_PRECON: "precon",
+            }
+            dce_reg_ref_type = ref_type_map.get(
+                dce_ref_selection.candidate.image_type, "any",
+            )
+            dce_wf.inputs.dce_registration.reference_type = dce_reg_ref_type
+            dce_wf.inputs.dce_registration.skip_bbr = dce_skip_bbr
+            _ref_logger.info(
+                "DCE registration: reference_type=%s, skip_bbr=%s (from selection)",
+                dce_reg_ref_type, dce_skip_bbr,
+            )
+
         # Connect DCE file from inputnode
         workflow.connect([
             (inputnode, dce_wf, [("dce_file", "inputnode.dce_file")]),
@@ -1467,19 +1580,27 @@ def init_pmriprep_wf(
             # Set agent-specific standard dose (e.g. 0.05 for Vueway)
             dce_wf.inputs.inputnode.agent_standard_dose = dce_sidecar["agent_standard_dose"]
 
+        # Determine DCE structural reference from confidence-scored selection
+        dce_ref_output = "outputnode.t1w_preproc"  # default
+        dce_ref_is_postcon = False
+        dce_skip_bbr = False
+        if dce_ref_selection:
+            dce_ref_output = _map_selection_to_anat_output(
+                dce_ref_selection.candidate.image_type,
+            )
+            dce_ref_is_postcon = (
+                dce_ref_selection.candidate.image_type == ImageType.T1W_POSTCON
+            )
+            dce_skip_bbr = not dce_ref_selection.bbr_eligible
+
         # Connect anat outputs to DCE workflow
         if anat_wf is not None:
-            # Use post-contrast T1w as reference if available, otherwise preprocessed T1w
+            # Use confidence-scored reference for DCE registration
             # IMPORTANT: Always use anat pipeline's preprocessed outputs (RAS-reoriented,
             # bias-corrected) rather than raw BIDS inputs for proper orientation alignment
-            if session_data.modalities.t1w_ce_gad:
-                workflow.connect([
-                    (anat_wf, dce_wf, [("outputnode.t1w_postcon_coreg", "inputnode.t1w_reference")]),
-                ])
-            else:
-                workflow.connect([
-                    (anat_wf, dce_wf, [("outputnode.t1w_preproc", "inputnode.t1w_reference")]),
-                ])
+            workflow.connect([
+                (anat_wf, dce_wf, [(dce_ref_output, "inputnode.t1w_reference")]),
+            ])
             workflow.connect([
                 (anat_wf, dce_wf, [
                     ("outputnode.brain_mask", "inputnode.brain_mask"),
@@ -1501,8 +1622,12 @@ def init_pmriprep_wf(
             prev_anat = _find_previous_anat_outputs(
                 Path(work_dir), subject_id, session_id,
             )
-            if session_data.modalities.t1w_ce_gad and prev_anat["t1w_postcon_coreg"]:
-                # Use preprocessed postcon T1w (RAS-reoriented, bias-corrected, masked)
+            # Use confidence-scored selection when skip-anat
+            if dce_ref_selection and dce_ref_is_postcon and prev_anat["t1w_postcon_coreg"]:
+                dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_postcon_coreg"]
+                _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_postcon_coreg"])
+            elif session_data.modalities.t1w_ce_gad and prev_anat["t1w_postcon_coreg"]:
+                # Fallback: use postcon if available
                 dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_postcon_coreg"]
                 _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_postcon_coreg"])
             elif prev_anat["t1w_preproc"]:

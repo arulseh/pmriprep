@@ -579,6 +579,13 @@ class DSCRegistrationInputSpec(CommandLineInputSpec):
         exists=True,
         desc="White matter segmentation (required for BBR mode)",
     )
+    reference_type = traits.Enum(
+        "precon",
+        "postcon",
+        "any",
+        usedefault=True,
+        desc="Expected T1w type for provenance/QC metadata: precon (default), postcon, or any",
+    )
 
 
 class DSCRegistrationOutputSpec(TraitedSpec):
@@ -940,6 +947,12 @@ class DSCRegistration(CommandLine):
             except Exception:
                 # If QC computation fails, continue without metrics
                 pass
+
+        # Add registration metadata for provenance
+        qc_metrics["reference_type"] = self.inputs.reference_type
+        qc_metrics["use_flirt"] = self.inputs.use_flirt
+        qc_metrics["dof"] = self.inputs.dof
+        qc_metrics["cost_function"] = self.inputs.cost
 
         outputs["qc_metrics"] = qc_metrics
         return outputs

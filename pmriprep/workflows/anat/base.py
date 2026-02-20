@@ -47,7 +47,11 @@ def _merge_qc_metrics(brain_qc):
 
 
 def _determine_processing_mode(t1w_precon, t1w_postcon):
-    """Determine reference T1w and processing mode.
+    """Determine reference T1w and processing mode using confidence scoring.
+
+    Uses _determine_processing_mode_v2 from structural_reference module for
+    physics-validated confidence-based selection. Returns backward-compatible
+    2-tuple (reference_t1w, is_postcon_only) for the workflow node interface.
 
     Parameters
     ----------
@@ -61,19 +65,14 @@ def _determine_processing_mode(t1w_precon, t1w_postcon):
     reference_t1w : str
         Path to T1w image to use as reference.
     is_postcon_only : bool
-        True if only post-contrast T1w is available.
+        True if post-contrast T1w is the reference.
     """
-    from pathlib import Path
+    from pmriprep.utils.structural_reference import _determine_processing_mode_v2
 
-    has_precon = t1w_precon is not None and Path(t1w_precon).exists()
-    has_postcon = t1w_postcon is not None and Path(t1w_postcon).exists()
-
-    if has_precon:
-        return t1w_precon, False  # Use precon as reference, normal mode
-    elif has_postcon:
-        return t1w_postcon, True  # Use postcon, flag postcon-only mode
-    else:
-        raise ValueError("At least one T1w image (precon or postcon) is required")
+    reference_t1w, is_postcon_ref, _fast_t1w = _determine_processing_mode_v2(
+        t1w_precon, t1w_postcon,
+    )
+    return reference_t1w, is_postcon_ref
 
 
 def _create_brain_mask_filmstrip(t1w_file, brain_mask_file):
@@ -826,27 +825,55 @@ def init_anat_preproc_wf(
     # SKIPPED in postcon-only mode (gadolinium disrupts tissue boundaries)
     # -------------------------------------------------------------------
 
-    # Node to conditionally run FAST based on processing mode
-    def _run_fast_if_normal_mode(in_file, is_postcon_only):
-        """Run FAST only if we have precon (not postcon-only mode).
+    # Node to route FAST input: handles normal, hybrid, and skip modes.
+    # In hybrid mode (postcon reference + acceptable precon), FAST runs
+    # on a coregistered precon image prepared by a parallel path below.
+    def _route_fast_input(in_file, t1w_precon, t1w_postcon, is_postcon_only):
+        """Route FAST input based on processing mode and precon quality.
 
-        Returns input file if normal mode, None if postcon-only.
+        Normal mode: FAST on brain-extracted precon (in_file).
+        Hybrid mode: returns None here — hybrid path wired separately.
+        Skip mode: returns None (no acceptable precon for FAST).
         """
-        if is_postcon_only:
-            import warnings
+        import logging
+        import warnings
+
+        _log = logging.getLogger("pmriprep.workflows.anat")
+
+        if not is_postcon_only:
+            # Normal mode: FAST on brain-extracted precon (passed as in_file)
+            return in_file
+
+        # Postcon-only mode: check if precon is available for hybrid FAST
+        from pmriprep.utils.structural_reference import _determine_processing_mode_v2
+
+        _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
+
+        if fast_t1w is None:
             warnings.warn(
-                "Postcon-only mode: Skipping FAST segmentation. "
-                "Gadolinium contrast disrupts WM/GM intensity boundaries, "
-                "making tissue segmentation unreliable."
+                "FAST segmentation skipped — no acceptable pre-contrast T1w. "
+                "Tissue probability maps unavailable. Downstream features "
+                "requiring WM/GM/CSF segmentation (BBR registration, NAWM "
+                "normalization, CSF exclusion) will be limited.",
+                stacklevel=2,
             )
             return None
-        return in_file
+
+        # Hybrid mode: return None here.
+        # The hybrid path (coreg precon → mask → FAST) is wired separately.
+        # This signals the tissue_segment node to expect input from the
+        # hybrid path via the merge node below.
+        _log.info(
+            "Hybrid FAST mode: postcon is reference, FAST will run on "
+            "coregistered precon."
+        )
+        return None
 
     check_fast_mode = pe.Node(
         niu.Function(
-            input_names=["in_file", "is_postcon_only"],
+            input_names=["in_file", "t1w_precon", "t1w_postcon", "is_postcon_only"],
             output_names=["out_file"],
-            function=_run_fast_if_normal_mode,
+            function=_route_fast_input,
         ),
         name="check_fast_mode",
     )
@@ -858,8 +885,86 @@ def init_anat_preproc_wf(
 
     workflow.connect([
         (brain_extract, check_fast_mode, [("out_file", "in_file")]),
+        (inputnode, check_fast_mode, [
+            ("t1w", "t1w_precon"),
+            ("t1w_postcon", "t1w_postcon"),
+        ]),
         (determine_mode, check_fast_mode, [("is_postcon_only", "is_postcon_only")]),
-        (check_fast_mode, tissue_segment, [("out_file", "in_file")]),
+    ])
+
+    # -------------------------------------------------------------------
+    # Step 7b: Hybrid FAST path (postcon reference + acceptable precon)
+    # When postcon wins as reference, this parallel path prepares the
+    # precon T1w for FAST: reorient → bias correct → coreg to postcon
+    # → apply postcon brain mask → FAST.
+    # -------------------------------------------------------------------
+
+    # Determine hybrid FAST eligibility at graph build time
+    def _get_hybrid_fast_t1w(t1w_precon, t1w_postcon, is_postcon_only):
+        """Return precon path if hybrid FAST should run, else None."""
+        if not is_postcon_only:
+            return None
+        from pmriprep.utils.structural_reference import _determine_processing_mode_v2
+        _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
+        return fast_t1w
+
+    get_hybrid_fast = pe.Node(
+        niu.Function(
+            input_names=["t1w_precon", "t1w_postcon", "is_postcon_only"],
+            output_names=["fast_t1w"],
+            function=_get_hybrid_fast_t1w,
+        ),
+        name="get_hybrid_fast",
+    )
+
+    workflow.connect([
+        (inputnode, get_hybrid_fast, [
+            ("t1w", "t1w_precon"),
+            ("t1w_postcon", "t1w_postcon"),
+        ]),
+        (determine_mode, get_hybrid_fast, [("is_postcon_only", "is_postcon_only")]),
+    ])
+
+    # Hybrid FAST preprocessing nodes (always created; will be skipped
+    # at runtime if get_hybrid_fast returns None)
+    reorient_fast = pe.Node(ReorientAndCrop(), name="reorient_fast")
+    bias_correct_fast = pe.Node(
+        BiasCorrection(denoise=config.denoise), name="bias_correct_fast"
+    )
+    coreg_fast_to_ref = pe.Node(
+        Coregistration(modality="T1w", dof=6), name="coreg_fast_to_ref"
+    )
+    mask_fast = pe.Node(ApplyMask(), name="mask_fast")
+
+    workflow.connect([
+        (get_hybrid_fast, reorient_fast, [("fast_t1w", "in_file")]),
+        (reorient_fast, bias_correct_fast, [("out_file", "in_file")]),
+        (bias_correct_fast, coreg_fast_to_ref, [("out_file", "in_file")]),
+        (bias_correct, coreg_fast_to_ref, [("out_file", "reference")]),
+        (coreg_fast_to_ref, mask_fast, [("out_file", "in_file")]),
+        (brain_extract, mask_fast, [("out_mask", "mask_file")]),
+    ])
+
+    # Merge: pick normal FAST input or hybrid FAST input
+    def _merge_fast_inputs(normal_input, hybrid_input):
+        """Select whichever FAST input is available."""
+        if normal_input is not None:
+            return normal_input
+        return hybrid_input
+
+    merge_fast = pe.Node(
+        niu.Function(
+            input_names=["normal_input", "hybrid_input"],
+            output_names=["out_file"],
+            function=_merge_fast_inputs,
+        ),
+        name="merge_fast",
+    )
+
+    workflow.connect([
+        (check_fast_mode, merge_fast, [("out_file", "normal_input")]),
+        (mask_fast, merge_fast, [("out_file", "hybrid_input")]),
+        (merge_fast, tissue_segment, [("out_file", "in_file")]),
     ])
 
     # -------------------------------------------------------------------
