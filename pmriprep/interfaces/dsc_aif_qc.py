@@ -32,8 +32,8 @@ class AIFQCPlotInputSpec(BaseInterfaceInputSpec):
     )
     aif_mask_file = File(
         exists=True,
-        mandatory=True,
-        desc="3D AIF voxel mask NIfTI",
+        mandatory=False,
+        desc="3D AIF voxel mask NIfTI (not provided for synthetic AIF)",
     )
     dsc_file = File(
         exists=True,
@@ -80,7 +80,7 @@ class AIFQCPlotOutputSpec(TraitedSpec):
     """Output specification for AIFQCPlot interface."""
 
     out_aif_plot = File(exists=True, desc="AIF curve QC plot PNG")
-    out_aif_location = File(exists=True, desc="AIF location overlay PNG")
+    out_aif_location = File(desc="AIF location overlay PNG (None for synthetic AIF)")
     out_aif_metrics = traits.Dict(desc="AIF quality metrics for HTML report")
 
 
@@ -100,8 +100,6 @@ class AIFQCPlot(BaseInterface):
 
         # Load data
         aif_curve = np.loadtxt(self.inputs.aif_curve_file)
-        aif_mask_img = nib.load(self.inputs.aif_mask_file)
-        aif_mask = aif_mask_img.get_fdata()  # type: ignore[attr-defined]
 
         dsc_img = nib.load(self.inputs.dsc_file)
         dsc_data = dsc_img.get_fdata()  # type: ignore[attr-defined]
@@ -115,6 +113,7 @@ class AIFQCPlot(BaseInterface):
         qc = self.inputs.qc_metrics if isdefined(self.inputs.qc_metrics) else {}
         sub = self.inputs.subject_id or ""
         ses = self.inputs.session_id or ""
+        detection_level = qc.get("detection_level", "unknown")
 
         # Load raw AIF for gamma fit overlay
         raw_aif_curve = None
@@ -133,14 +132,19 @@ class AIFQCPlot(BaseInterface):
             gamma_fit_applied=gamma_applied,
         )
 
-        aif_location_path = str(out_dir / "aif_location_qc.png")
-        self._plot_aif_location(
-            dsc_data, aif_mask, brain_mask, voxel_sizes,
-            qc, sub, ses, aif_location_path,
-        )
+        # Only generate location plot if voxel-based detection was used
+        aif_location_path: str | None = None
+        if detection_level != "synthetic" and isdefined(self.inputs.aif_mask_file):
+            aif_mask_img = nib.load(self.inputs.aif_mask_file)
+            aif_mask = aif_mask_img.get_fdata()  # type: ignore[attr-defined]
+
+            aif_location_path = str(out_dir / "aif_location_qc.png")
+            self._plot_aif_location(
+                dsc_data, aif_mask, brain_mask, voxel_sizes,
+                qc, sub, ses, aif_location_path,
+            )
 
         # Build AIF metrics dict for HTML report
-        detection_level = qc.get("detection_level", "unknown")
         peak_conc = float(np.max(aif_curve))
         ttp_s = qc.get("best_ttp", None)
         fwhm = qc.get("best_fwhm", float("nan"))
@@ -172,11 +176,13 @@ class AIFQCPlot(BaseInterface):
             if auc_ratio is not None:
                 aif_metrics["gamma_auc_ratio"] = round(auc_ratio, 3)
 
-        self._results = {
+        self._results: dict[str, Any] = {
             "out_aif_plot": aif_plot_path,
-            "out_aif_location": aif_location_path,
             "out_aif_metrics": aif_metrics,
         }
+        # Only include location plot if it was generated (not for synthetic AIF)
+        if aif_location_path is not None:
+            self._results["out_aif_location"] = aif_location_path
 
         return runtime
 
