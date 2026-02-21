@@ -102,6 +102,10 @@ class B1MappingInputSpec(BaseInterfaceInputSpec):
         exists=True,
         desc="Brain mask for constraining B1+ calculation",
     )
+    reference_file = File(
+        exists=True,
+        desc="Reference NIfTI for output shape/affine when skip_b1=True and no AFI or brain_mask",
+    )
     out_file = File(
         genfile=True,
         desc="Output B1+ correction factor map",
@@ -528,10 +532,14 @@ class B1Mapping(SimpleInterface):
                     mask_img = nib.load(self.inputs.brain_mask)
                     shape = mask_img.shape[:3]  # type: ignore[attr-defined]
                     affine = mask_img.affine  # type: ignore[attr-defined]
+                elif isdefined(self.inputs.reference_file) and self.inputs.reference_file:
+                    ref_img = nib.load(self.inputs.reference_file)
+                    shape = ref_img.shape[:3]  # type: ignore[attr-defined]
+                    affine = ref_img.affine  # type: ignore[attr-defined]
                 else:
                     raise ValueError(
-                        "skip_b1=True but no AFI data or brain_mask provided "
-                        "to determine output shape"
+                        "skip_b1=True but no AFI data, brain_mask, or reference_file "
+                        "provided to determine output shape"
                     )
 
             # Create unity B1+ map

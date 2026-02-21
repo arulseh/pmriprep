@@ -379,6 +379,7 @@ def init_dce_preproc_wf(
                 ("brain_mask", "brain_mask"),
                 ("field_strength", "field_strength"),
                 ("afi_flip_angle", "nominal_flip_angle"),
+                ("dce_file", "reference_file"),
             ]),
         ])
 
