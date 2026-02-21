@@ -1,0 +1,655 @@
+"""Shared fixtures for OSIPI validation tests.
+
+Provides path constants, NIfTI loaders, inter-session registration,
+perf-plus reference value loading, and DRO ground truth loading.
+"""
+
+import json
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
+import numpy as np
+import pytest
+from numpy.typing import NDArray
+
+# ---------------------------------------------------------------------------
+# Path constants
+# ---------------------------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+OUTPUT_ROOT = PROJECT_ROOT / "test_outputs" / "dce_pipeline"
+ANAT_OUTPUT_ROOT = PROJECT_ROOT / "test_outputs" / "anat_pipeline"
+
+PERFPLUS_REFERENCE_JSON = (
+    Path.home()
+    / "Developer"
+    / "perf-plus"
+    / "osi_stuff"
+    / "clinical_test_retest_analysis.json"
+)
+
+# DRO ground truth paths
+OSIPI_GT_ROOT = Path.home() / "Developer" / "perf-plus" / "OSIPI"
+
+PERFPLUS_DRO_JSON = (
+    Path.home()
+    / "Developer"
+    / "perf-plus"
+    / "osi_stuff"
+    / "osipi_validation.json"
+)
+
+PERFPLUS_DRO_BAYESIAN_JSON = (
+    Path.home()
+    / "Developer"
+    / "perf-plus"
+    / "osi_stuff"
+    / "osipi_validation_bayesian.json"
+)
+
+# GT Ktrans stored in mM/min × 1000; multiply by this to get min⁻¹
+GT_SCALE = 0.001
+
+# Mapping from (subject, session) to OSIPI synthetic DRO file names
+DRO_SESSION_MAP: Dict[Tuple[str, str], Tuple[str, str]] = {
+    ("sub-0091", "ses-0001"): ("Synthetic_P1_Visit1", "sub-0091_ses-0001"),
+    ("sub-0091", "ses-0002"): ("Synthetic_P1_Visit2", "sub-0091_ses-0002"),
+    ("sub-0092", "ses-0001"): ("Synthetic_P2_Visit1", "sub-0092_ses-0001"),
+    ("sub-0092", "ses-0002"): ("Synthetic_P2_Visit2", "sub-0092_ses-0002"),
+}
+
+DRO_SESSIONS = list(DRO_SESSION_MAP.keys())
+
+# File name patterns (space entity varies by subject resolution)
+SPACE_ENTITY = "space-DCE_res-1.00x1.00x5.00"
+
+# Map suffix patterns
+MAP_SUFFIXES = {
+    "Ktrans": f"model-extended_tofts_Ktrans",
+    "ve": f"model-extended_tofts_ve",
+    "vp": f"model-extended_tofts_vp",
+    "kep": f"model-extended_tofts_kep",
+    "R2": f"model-extended_tofts_desc-R2_perfmap",
+    "IAUC60": f"desc-modelfree_IAUC60",
+    "IAUC90": f"desc-modelfree_IAUC90",
+    "IAUC120": f"desc-modelfree_IAUC120",
+    "SER": f"desc-modelfree_SER",
+    "TTP": f"desc-modelfree_TTP",
+    "tSNR": f"desc-tSNR_perfmap",
+}
+
+
+# ---------------------------------------------------------------------------
+# NIfTI loading
+# ---------------------------------------------------------------------------
+
+
+def load_map(
+    subject: str,
+    session: str,
+    suffix: str,
+) -> Optional[NDArray[np.floating]]:
+    """Load a parameter map NIfTI file.
+
+    Args:
+        subject: Subject ID (e.g., "sub-0081").
+        session: Session ID (e.g., "ses-0001").
+        suffix: Map suffix key from MAP_SUFFIXES.
+
+    Returns:
+        3D numpy array of map data, or None if file not found.
+    """
+    import nibabel as nib
+
+    map_suffix = MAP_SUFFIXES.get(suffix, suffix)
+    fname = f"{subject}_{session}_{SPACE_ENTITY}_{map_suffix}.nii.gz"
+    fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+
+    if not fpath.exists():
+        return None
+
+    img = nib.load(fpath)
+    return np.asarray(img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+
+
+def load_mask(
+    subject: str,
+    session: str,
+    mask_type: str = "brain",
+) -> Optional[NDArray[np.floating]]:
+    """Load a mask NIfTI file.
+
+    Args:
+        subject: Subject ID (e.g., "sub-0081").
+        session: Session ID (e.g., "ses-0001").
+        mask_type: One of "brain", "qc", "aif".
+
+    Returns:
+        3D numpy array of mask data, or None if file not found.
+    """
+    import nibabel as nib
+
+    if mask_type == "brain":
+        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-brain_mask.nii.gz"
+        fpath = OUTPUT_ROOT / subject / session / "anat" / fname
+    elif mask_type == "qc":
+        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-qc_mask.nii.gz"
+        fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+    elif mask_type == "aif":
+        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-aif_mask.nii.gz"
+        fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+    else:
+        raise ValueError(f"Unknown mask type: {mask_type}")
+
+    if not fpath.exists():
+        return None
+
+    img = nib.load(fpath)
+    return np.asarray(img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+
+
+def load_ref_dce(
+    subject: str,
+    session: str,
+) -> Optional[NDArray[np.floating]]:
+    """Load the DCE reference image for registration.
+
+    Args:
+        subject: Subject ID.
+        session: Session ID.
+
+    Returns:
+        3D numpy array, or None if not found.
+    """
+    import nibabel as nib
+
+    fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-ref_dce.nii.gz"
+    fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+
+    if not fpath.exists():
+        return None
+
+    img = nib.load(fpath)
+    return np.asarray(img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+
+
+def get_ref_dce_path(subject: str, session: str) -> Path:
+    """Get path to DCE reference image."""
+    fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-ref_dce.nii.gz"
+    return OUTPUT_ROOT / subject / session / "perf" / fname
+
+
+def get_map_path(subject: str, session: str, suffix: str) -> Path:
+    """Get path to a parameter map file."""
+    map_suffix = MAP_SUFFIXES.get(suffix, suffix)
+    fname = f"{subject}_{session}_{SPACE_ENTITY}_{map_suffix}.nii.gz"
+    return OUTPUT_ROOT / subject / session / "perf" / fname
+
+
+def get_mask_path(subject: str, session: str, mask_type: str) -> Path:
+    """Get path to a mask file."""
+    if mask_type == "brain":
+        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-brain_mask.nii.gz"
+        return OUTPUT_ROOT / subject / session / "anat" / fname
+    elif mask_type == "qc":
+        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-qc_mask.nii.gz"
+        return OUTPUT_ROOT / subject / session / "perf" / fname
+    else:
+        raise ValueError(f"Unknown mask type: {mask_type}")
+
+
+# ---------------------------------------------------------------------------
+# Perf-plus reference loading
+# ---------------------------------------------------------------------------
+
+
+def load_perfplus_reference() -> Optional[Dict]:
+    """Load perf-plus clinical test-retest analysis JSON.
+
+    Returns:
+        Parsed JSON dict, or None if file not found.
+    """
+    if not PERFPLUS_REFERENCE_JSON.exists():
+        return None
+
+    with open(PERFPLUS_REFERENCE_JSON) as f:
+        return json.load(f)
+
+
+def get_perfplus_test_retest(subject: str) -> Optional[Dict]:
+    """Get perf-plus test-retest metrics for a subject.
+
+    Args:
+        subject: Subject ID (e.g., "sub-0081").
+
+    Returns:
+        Dict with ses1_median, ses2_median, percent_difference,
+        coefficient_of_variation. None if unavailable.
+    """
+    ref = load_perfplus_reference()
+    if ref is None:
+        return None
+
+    return ref.get("test_retest", {}).get(subject)
+
+
+def get_perfplus_session_stats(
+    subject: str,
+    session: str,
+    parameter: str,
+) -> Optional[Dict]:
+    """Get perf-plus summary statistics for a subject/session/parameter.
+
+    Args:
+        subject: Subject ID (e.g., "sub-0081").
+        session: Session ID (e.g., "ses-0001").
+        parameter: Parameter name (e.g., "Ktrans").
+
+    Returns:
+        Dict with p5/p25/p50/p75/p95/mean/std/n_voxels. None if unavailable.
+    """
+    ref = load_perfplus_reference()
+    if ref is None:
+        return None
+
+    return ref.get("subjects", {}).get(subject, {}).get(session, {}).get(parameter)
+
+
+# ---------------------------------------------------------------------------
+# Inter-session registration (Tier 2)
+# ---------------------------------------------------------------------------
+
+# Cache for registration results
+_registration_cache: Dict[str, Tuple[str, str]] = {}
+
+
+def has_fsl() -> bool:
+    """Check if FSL FLIRT is available on the system."""
+    return shutil.which("flirt") is not None
+
+
+def register_sessions(
+    subject: str,
+    ses_ref: str = "ses-0001",
+    ses_mov: str = "ses-0002",
+) -> Optional[Tuple[str, str]]:
+    """Register ses_mov to ses_ref using FLIRT 6-DOF rigid.
+
+    Creates a temporary directory with the transform matrix and registered
+    reference image. Results are cached per subject.
+
+    Args:
+        subject: Subject ID (e.g., "sub-0081").
+        ses_ref: Reference session ID.
+        ses_mov: Moving session ID.
+
+    Returns:
+        Tuple of (transform_mat_path, output_dir) or None if registration
+        fails or FSL is unavailable.
+    """
+    cache_key = f"{subject}_{ses_ref}_{ses_mov}"
+    if cache_key in _registration_cache:
+        return _registration_cache[cache_key]
+
+    if not has_fsl():
+        return None
+
+    ref_path = get_ref_dce_path(subject, ses_ref)
+    mov_path = get_ref_dce_path(subject, ses_mov)
+
+    if not ref_path.exists() or not mov_path.exists():
+        return None
+
+    # Create output directory under test_outputs
+    out_dir = (
+        PROJECT_ROOT / "test_outputs" / "dce_pipeline" / subject
+        / "test_retest_qc"
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    mat_path = out_dir / f"{ses_mov}_to_{ses_ref}.mat"
+    reg_ref_path = out_dir / f"{subject}_{ses_mov}_reg_to_{ses_ref}_ref.nii.gz"
+
+    # Run FLIRT
+    cmd = [
+        "flirt",
+        "-in", str(mov_path),
+        "-ref", str(ref_path),
+        "-omat", str(mat_path),
+        "-out", str(reg_ref_path),
+        "-dof", "6",
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+    if not mat_path.exists():
+        return None
+
+    result = (str(mat_path), str(out_dir))
+    _registration_cache[cache_key] = result
+    return result
+
+
+def apply_transform(
+    in_file: Path,
+    ref_file: Path,
+    mat_file: str,
+    out_file: Path,
+    interp: str = "trilinear",
+) -> Optional[Path]:
+    """Apply a FLIRT transform to a NIfTI file.
+
+    Args:
+        in_file: Path to input image.
+        ref_file: Path to reference image (defines output grid).
+        mat_file: Path to FLIRT .mat transform.
+        out_file: Path for output image.
+        interp: Interpolation method ("trilinear" or "nearestneighbour").
+
+    Returns:
+        Path to output file, or None if transform fails.
+    """
+    if not in_file.exists():
+        return None
+
+    cmd = [
+        "flirt",
+        "-in", str(in_file),
+        "-ref", str(ref_file),
+        "-applyxfm",
+        "-init", str(mat_file),
+        "-out", str(out_file),
+        "-interp", interp,
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+    return out_file if out_file.exists() else None
+
+
+def compute_joint_mask(
+    subject: str,
+    mat_file: str,
+    ses_ref: str = "ses-0001",
+    ses_mov: str = "ses-0002",
+    min_voxels: int = 500,
+) -> Optional[NDArray[np.bool_]]:
+    """Compute joint QC mask across registered sessions.
+
+    Joint mask = brain1 AND brain2_reg AND qc1 AND qc2_reg.
+
+    Args:
+        subject: Subject ID.
+        mat_file: Path to FLIRT transform (ses_mov → ses_ref).
+        ses_ref: Reference session.
+        ses_mov: Moving session.
+        min_voxels: Minimum required voxels in joint mask.
+
+    Returns:
+        Boolean 3D array, or None if insufficient voxels or files missing.
+    """
+    import nibabel as nib
+
+    # Load reference session masks
+    brain1 = load_mask(subject, ses_ref, "brain")
+    qc1 = load_mask(subject, ses_ref, "qc")
+
+    if brain1 is None or qc1 is None:
+        return None
+
+    # Register moving session masks
+    ref_path = get_ref_dce_path(subject, ses_ref)
+    out_dir = Path(mat_file).parent
+
+    # Brain mask (nearest-neighbor)
+    brain2_in = get_mask_path(subject, ses_mov, "brain")
+    brain2_out = out_dir / f"{subject}_{ses_mov}_brain_mask_reg.nii.gz"
+    result = apply_transform(brain2_in, ref_path, mat_file, brain2_out, "nearestneighbour")
+    if result is None:
+        return None
+    brain2_img = nib.load(brain2_out)
+    brain2 = np.asarray(brain2_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+
+    # QC mask (nearest-neighbor)
+    qc2_in = get_mask_path(subject, ses_mov, "qc")
+    qc2_out = out_dir / f"{subject}_{ses_mov}_qc_mask_reg.nii.gz"
+    result = apply_transform(qc2_in, ref_path, mat_file, qc2_out, "nearestneighbour")
+    if result is None:
+        return None
+    qc2_img = nib.load(qc2_out)
+    qc2 = np.asarray(qc2_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+
+    # Compute intersection
+    joint = (brain1 > 0.5) & (brain2 > 0.5) & (qc1 > 0.5) & (qc2 > 0.5)
+
+    if int(np.sum(joint)) < min_voxels:
+        return None
+
+    return joint
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+SUBJECT_0081 = "sub-0081"
+SES1 = "ses-0001"
+SES2 = "ses-0002"
+
+
+def _outputs_exist(subject: str, session: str) -> bool:
+    """Check if pmriprep outputs exist for a subject/session."""
+    ktrans_path = get_map_path(subject, session, "Ktrans")
+    return ktrans_path.exists()
+
+
+skip_no_outputs = pytest.mark.skipif(
+    not (_outputs_exist(SUBJECT_0081, SES1) and _outputs_exist(SUBJECT_0081, SES2)),
+    reason="PMRIPrep outputs not found for sub-0081 ses-0001 and ses-0002",
+)
+
+skip_no_fsl = pytest.mark.skipif(
+    not has_fsl(),
+    reason="FSL FLIRT not available",
+)
+
+skip_no_perfplus = pytest.mark.skipif(
+    not PERFPLUS_REFERENCE_JSON.exists(),
+    reason="Perf-plus reference JSON not found",
+)
+
+
+# ---------------------------------------------------------------------------
+# DRO ground truth loading
+# ---------------------------------------------------------------------------
+
+
+def load_ground_truth_ktrans(
+    subject: str,
+    session: str,
+) -> Optional[NDArray[np.floating]]:
+    """Load DRO ground truth Ktrans, resampled to pmriprep output space.
+
+    The GT mask may have a different affine (e.g., LAS vs RAS). This
+    function resamples the GT Ktrans to match the pmriprep output grid
+    and applies GT_SCALE to convert to min⁻¹.
+
+    Args:
+        subject: Subject ID (e.g., "sub-0091").
+        session: Session ID (e.g., "ses-0001").
+
+    Returns:
+        3D numpy array of Ktrans in min⁻¹, or None if files not found.
+    """
+    import nibabel as nib
+
+    key = (subject, session)
+    if key not in DRO_SESSION_MAP:
+        return None
+
+    dro_prefix, gt_dir_name = DRO_SESSION_MAP[key]
+    gt_dir = OSIPI_GT_ROOT / gt_dir_name
+    gt_path = gt_dir / f"{dro_prefix}_Ktrans_aligned_from_dicom.nii"
+
+    if not gt_path.exists():
+        return None
+
+    gt_img = nib.load(gt_path)
+    gt_data = np.asarray(gt_img.get_fdata(), dtype=np.float64) * GT_SCALE  # type: ignore[attr-defined]
+
+    return gt_data
+
+
+def load_tumor_mask(
+    subject: str,
+    session: str,
+) -> Optional[NDArray[np.bool_]]:
+    """Load DRO tumor mask using direct voxel indexing.
+
+    The GT tumor mask NIfTI has a different affine (LAS) than the GT
+    Ktrans and pmriprep outputs (RAS), but shares the same voxel grid.
+    Since both originate from the same synthetic DRO, direct voxel
+    indexing is correct — the affine difference is an artifact of the
+    DICOM conversion, not a real spatial offset.
+
+    Args:
+        subject: Subject ID (e.g., "sub-0091").
+        session: Session ID (e.g., "ses-0001").
+
+    Returns:
+        Boolean 3D array, or None if files not found.
+    """
+    import nibabel as nib
+
+    key = (subject, session)
+    if key not in DRO_SESSION_MAP:
+        return None
+
+    dro_prefix, gt_dir_name = DRO_SESSION_MAP[key]
+    gt_dir = OSIPI_GT_ROOT / gt_dir_name
+    mask_path = gt_dir / f"{dro_prefix}_TumorMask.nii"
+
+    if not mask_path.exists():
+        return None
+
+    mask_img = nib.load(mask_path)
+    mask_data = np.asarray(mask_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+
+    return mask_data > 0.5
+
+
+def load_perfplus_dro_reference() -> Optional[Dict]:
+    """Load perf-plus DRO validation JSON (non-Bayesian).
+
+    Returns:
+        Parsed JSON dict, or None if file not found.
+    """
+    if not PERFPLUS_DRO_JSON.exists():
+        return None
+
+    with open(PERFPLUS_DRO_JSON) as f:
+        return json.load(f)
+
+
+def load_perfplus_dro_bayesian() -> Optional[Dict]:
+    """Load perf-plus DRO Bayesian validation JSON.
+
+    Returns:
+        Parsed JSON dict, or None if file not found.
+    """
+    if not PERFPLUS_DRO_BAYESIAN_JSON.exists():
+        return None
+
+    with open(PERFPLUS_DRO_BAYESIAN_JSON) as f:
+        return json.load(f)
+
+
+def get_perfplus_dro_session(
+    subject: str,
+    session: str,
+    bayesian: bool = False,
+) -> Optional[Dict]:
+    """Get perf-plus DRO stats for a specific session.
+
+    Args:
+        subject: Subject ID (e.g., "sub-0091").
+        session: Session ID (e.g., "ses-0001").
+        bayesian: If True, load from Bayesian JSON.
+
+    Returns:
+        Dict with ground_truth, calculated, comparison dicts.
+        None if unavailable.
+    """
+    ref = load_perfplus_dro_bayesian() if bayesian else load_perfplus_dro_reference()
+    if ref is None:
+        return None
+
+    session_key = f"{subject}_{session}"
+    return ref.get("subjects", {}).get(session_key)
+
+
+def load_ci_map(
+    subject: str,
+    session: str,
+    bound: str,
+    parameter: str = "Ktrans",
+) -> Optional[NDArray[np.floating]]:
+    """Load a Bayesian confidence interval bound map.
+
+    Args:
+        subject: Subject ID.
+        session: Session ID.
+        bound: "lower" or "upper".
+        parameter: Parameter name (e.g., "Ktrans").
+
+    Returns:
+        3D numpy array, or None if file not found.
+    """
+    import nibabel as nib
+
+    suffix = f"model-extended_tofts_desc-ci95{bound}_{parameter}"
+    fname = f"{subject}_{session}_{SPACE_ENTITY}_{suffix}.nii.gz"
+    fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+
+    if not fpath.exists():
+        return None
+
+    img = nib.load(fpath)
+    return np.asarray(img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+
+
+# DRO skip markers
+
+def _dro_outputs_exist() -> bool:
+    """Check if at least one DRO session has pmriprep outputs."""
+    return _outputs_exist("sub-0091", "ses-0001")
+
+
+def _dro_gt_exists() -> bool:
+    """Check if DRO ground truth directory exists."""
+    return OSIPI_GT_ROOT.exists() and (OSIPI_GT_ROOT / "sub-0091_ses-0001").exists()
+
+
+skip_no_dro_outputs = pytest.mark.skipif(
+    not _dro_outputs_exist(),
+    reason="PMRIPrep DRO outputs not found for sub-0091 ses-0001",
+)
+
+skip_no_dro_gt = pytest.mark.skipif(
+    not _dro_gt_exists(),
+    reason="OSIPI DRO ground truth directory not found",
+)
+
+skip_no_perfplus_dro = pytest.mark.skipif(
+    not PERFPLUS_DRO_JSON.exists(),
+    reason="Perf-plus DRO validation JSON not found",
+)
