@@ -571,31 +571,38 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     for subject_id in subjects:
         sessions = _find_sessions(args.bids_dir, subject_id, args.session_label)
 
-        # Per-subject log directory (NiPreps convention: no session in path)
-        log_dir = (
-            args.output_dir / "pmriprep" / f"sub-{subject_id}" / "log" / run_uuid
-        )
-
-        # Re-initialize loggers with per-subject FileHandler + nipype config
-        plogger.init(log_level=log_level, log_dir=log_dir)
-        _configure_nipype(args, log_dir=log_dir)
-
-        # Save config TOML snapshot (sanitize Path→str, drop None values)
-        config_snapshot = _sanitize_for_toml({
-            "pmriprep": {"version": __version__, "run_uuid": run_uuid},
-            "execution": {
-                "nprocs": args.nprocs,
-                "mem_gb": args.mem_gb,
-            },
-            "dsc": asdict(dsc_config),
-            "dce": asdict(dce_config),
-            "anat": asdict(anat_config),
-            "hdglio": asdict(hdglio_config),
-        })
-        (log_dir / "pmriprep.toml").write_text(toml.dumps(config_snapshot))
-
         for session_id in sessions:
             session_str = f"ses-{session_id}" if session_id else "no-session"
+
+            # Per-session log directory
+            log_dir = (
+                args.output_dir
+                / "pmriprep"
+                / f"sub-{subject_id}"
+                / "log"
+                / run_uuid
+            )
+            if session_id:
+                log_dir = log_dir / f"ses-{session_id}"
+
+            # Re-initialize loggers with per-session FileHandler + nipype config
+            plogger.init(log_level=log_level, log_dir=log_dir)
+            _configure_nipype(args, log_dir=log_dir)
+
+            # Save config TOML snapshot (sanitize Path→str, drop None values)
+            config_snapshot = _sanitize_for_toml({
+                "pmriprep": {"version": __version__, "run_uuid": run_uuid},
+                "execution": {
+                    "nprocs": args.nprocs,
+                    "mem_gb": args.mem_gb,
+                },
+                "dsc": asdict(dsc_config),
+                "dce": asdict(dce_config),
+                "anat": asdict(anat_config),
+                "hdglio": asdict(hdglio_config),
+            })
+            (log_dir / "pmriprep.toml").write_text(toml.dumps(config_snapshot))
+
             logger.log(IMPORTANT, f"Processing sub-{subject_id}/{session_str}")
 
             try:
@@ -652,19 +659,23 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     raise
                 continue
 
-        # Post-run crash file reporting for this subject
-        crashfiles = list(log_dir.glob("crash-*.txt"))
-        if crashfiles:
-            logger.error("Crash files found for sub-%s:", subject_id)
-            for cf in crashfiles:
-                logger.error("  %s", cf.name)
-                try:
-                    content = cf.read_text()
-                    lines = content.splitlines()[:50]
-                    for line in lines:
-                        logger.error("    %s", line)
-                except Exception:
-                    logger.error("    (could not read crash file)")
+            # Post-run crash file reporting for this session
+            crashfiles = list(log_dir.glob("crash-*.txt"))
+            if crashfiles:
+                logger.error(
+                    "Crash files found for sub-%s/%s:",
+                    subject_id,
+                    session_str,
+                )
+                for cf in crashfiles:
+                    logger.error("  %s", cf.name)
+                    try:
+                        content = cf.read_text()
+                        lines = content.splitlines()[:50]
+                        for line in lines:
+                            logger.error("    %s", line)
+                    except Exception:
+                        logger.error("    (could not read crash file)")
 
     logger.log(IMPORTANT, "PMRIPrep processing complete")
 
