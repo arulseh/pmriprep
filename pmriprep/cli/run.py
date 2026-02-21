@@ -150,7 +150,7 @@ Examples:
     device_group.add_argument(
         "--hdbet-device",
         choices=["auto", "cuda", "mps", "cpu"],
-        default="auto",
+        default=None,
         help="Device for HD-BET brain extraction (default: auto). "
         "Use 'mps' for Mac GPU, 'cuda' for NVIDIA GPU, 'cpu' for CPU-only.",
     )
@@ -169,25 +169,26 @@ Examples:
     dsc_group.add_argument(
         "--dsc-deconv-method",
         choices=["sSVD", "cSVD", "oSVD", "tikhonov", "vascular", "cpi"],
-        default="sSVD",
+        default=None,
         help="Deconvolution method for DSC (default: sSVD).",
     )
     dsc_group.add_argument(
         "--dsc-bayesian",
         choices=["none", "map", "vi", "mcmc"],
-        default="none",
+        default=None,
         help="Bayesian inference method for DSC (default: none).",
     )
     dsc_group.add_argument(
         "--dsc-preload",
-        action="store_true",
-        default=False,
+        action="store_const",
+        const=True,
+        default=None,
         help="Indicate contrast preload is present (e.g., prior DCE injection).",
     )
     dsc_group.add_argument(
         "--dsc-dose",
         choices=["half", "full", "double"],
-        default="full",
+        default=None,
         help="Contrast agent dose for DSC (default: full).",
     )
     dsc_group.add_argument(
@@ -200,7 +201,7 @@ Examples:
     dsc_group.add_argument(
         "--dsc-aif-method",
         choices=["auto", "population"],
-        default="auto",
+        default=None,
         help="AIF detection method for DSC (default: auto).",
     )
 
@@ -212,37 +213,39 @@ Examples:
     dce_group.add_argument(
         "--dce-model",
         choices=["auto", "tofts", "extended_tofts", "patlak", "2cxm"],
-        default="auto",
+        default=None,
         help="Pharmacokinetic model for DCE (default: auto).",
     )
     dce_group.add_argument(
         "--dce-bayesian",
         choices=["none", "map", "vi", "mcmc"],
-        default="none",
+        default=None,
         help="Bayesian inference method for DCE (default: none).",
     )
     dce_group.add_argument(
         "--dce-aif-method",
         choices=["auto", "population"],
-        default="auto",
+        default=None,
         help="AIF detection method for DCE (default: auto).",
     )
     dce_group.add_argument(
         "--dce-dose",
         choices=["half", "full", "double"],
-        default="full",
+        default=None,
         help="Contrast agent dose for DCE (default: full).",
     )
     dce_group.add_argument(
         "--dce-no-b1",
-        action="store_true",
-        default=False,
+        action="store_const",
+        const=True,
+        default=None,
         help="Skip B1+ mapping (use nominal flip angles).",
     )
     dce_group.add_argument(
         "--dce-no-t1",
-        action="store_true",
-        default=False,
+        action="store_const",
+        const=True,
+        default=None,
         help="Skip T1 mapping (use field-strength-appropriate default T1).",
     )
 
@@ -254,13 +257,14 @@ Examples:
     anat_group.add_argument(
         "--brain-extraction-tool",
         choices=["hdbet", "ants"],
-        default="hdbet",
+        default=None,
         help="Tool for brain extraction (default: hdbet).",
     )
     anat_group.add_argument(
         "--denoise",
-        action="store_true",
-        default=False,
+        action="store_const",
+        const=True,
+        default=None,
         help="Apply ANTs denoising to anatomical images.",
     )
     # HD-GLIO options
