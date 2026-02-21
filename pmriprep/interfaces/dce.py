@@ -804,6 +804,14 @@ class B1Mapping(SimpleInterface):
             "n_extreme_high_b1": n_extreme_high,
             "n_b1_outliers_rejected": n_b1_outliers,
             "uniform_detected": uniform_detected,
+            "pct_correction_gt_10": (
+                float(100.0 * np.sum(np.abs(b1_clean - 1.0) > 0.1) / len(b1_clean))
+                if len(b1_clean) > 0 else 0.0
+            ),
+            "pct_correction_gt_20": (
+                float(100.0 * np.sum(np.abs(b1_clean - 1.0) > 0.2) / len(b1_clean))
+                if len(b1_clean) > 0 else 0.0
+            ),
         }
 
         # Save output B1+ map

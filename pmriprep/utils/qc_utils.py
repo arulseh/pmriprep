@@ -356,10 +356,9 @@ def plot_registration_qc_filmstrip(
                         # Binary / edge image: single level at midpoint
                         levels = [float(np.max(moving_valid)) * 0.5]
                     else:
-                        # Continuous image: 3 levels at tissue boundaries
-                        p30 = float(np.percentile(moving_valid, 30))
-                        p70 = float(np.percentile(moving_valid, 70))
-                        levels = list(np.linspace(p30, p70, 3))
+                        # Continuous image: single level at median for
+                        # clean tissue boundary visualization
+                        levels = [float(np.percentile(moving_valid, 50))]
                     ax.contour(
                         moving_slice, levels=levels,
                         colors=[contour_color], linewidths=0.5,
@@ -503,7 +502,7 @@ def plot_segmentation_qc_filmstrip(
                 )
                 if np.any(mask_slice > 0):
                     ax.contour(
-                        mask_slice, levels=[0.5], colors=[color], linewidths=1.5,
+                        mask_slice, levels=[0.5], colors=[color], linewidths=0.5,
                     )
 
             ax.axis("off")

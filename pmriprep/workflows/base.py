@@ -873,6 +873,45 @@ def init_pmriprep_wf(
     dce_wf = None
 
     # -------------------------------------------------------------------
+    # Unified report barrier + node (collects completion from all writers)
+    # -------------------------------------------------------------------
+    from pmriprep.interfaces.reports import GenerateUnifiedReport
+
+    report_barrier = pe.Node(
+        niu.IdentityInterface(
+            fields=["anat_done", "hdglio_done", "dsc_done", "dce_done"],
+        ),
+        name="report_barrier",
+    )
+    # Defaults for pipelines that don't run
+    report_barrier.inputs.anat_done = ""
+    report_barrier.inputs.hdglio_done = ""
+    report_barrier.inputs.dsc_done = ""
+    report_barrier.inputs.dce_done = ""
+
+    unified_report = pe.Node(
+        GenerateUnifiedReport(
+            subject_id=subject_id,
+            session_id=session_id or "",
+            output_dir=str(output_dir),
+            ran_anat=decision.run_anat,
+            ran_hdglio=decision.run_hdglio,
+            ran_dsc=decision.run_dsc,
+            ran_dce=decision.run_dce,
+        ),
+        name="unified_report",
+    )
+
+    workflow.connect([
+        (report_barrier, unified_report, [
+            ("anat_done", "anat_done"),
+            ("hdglio_done", "hdglio_done"),
+            ("dsc_done", "dsc_done"),
+            ("dce_done", "dce_done"),
+        ]),
+    ])
+
+    # -------------------------------------------------------------------
     # Anatomical preprocessing workflow (runs first)
     # -------------------------------------------------------------------
     if decision.run_anat:
@@ -1021,23 +1060,10 @@ def init_pmriprep_wf(
             ])
 
         # -------------------------------------------------------------------
-        # Anat HTML Report Generation
+        # Anat: connect writer to unified report barrier
         # -------------------------------------------------------------------
-        from pmriprep.interfaces.reports import GenerateReport
-
-        anat_report = pe.Node(
-            GenerateReport(
-                subject_id=subject_id,
-                session_id=session_id or "",
-                pipeline="anat",
-                output_dir=str(output_dir),
-            ),
-            name="anat_report",
-        )
-
-        # Connect qc_json (enforces writer-before-report ordering)
         workflow.connect([
-            (anat_writer, anat_report, [("qc_json", "qc_json")]),
+            (anat_writer, report_barrier, [("qc_json", "anat_done")]),
         ])
 
         # Connect filmstrips to writer (writer saves to figures/ dir)
@@ -1187,23 +1213,10 @@ def init_pmriprep_wf(
         ])
 
         # -------------------------------------------------------------------
-        # HD-GLIO HTML Report Generation
+        # HD-GLIO: connect writer to unified report barrier
         # -------------------------------------------------------------------
-        from pmriprep.interfaces.reports import GenerateReport
-
-        hdglio_report = pe.Node(
-            GenerateReport(
-                subject_id=subject_id,
-                session_id=session_id or "",
-                pipeline="hdglio",
-                output_dir=str(output_dir),
-            ),
-            name="hdglio_report",
-        )
-
-        # Connect qc_json (enforces writer-before-report ordering)
         workflow.connect([
-            (hdglio_writer, hdglio_report, [("qc_json", "qc_json")]),
+            (hdglio_writer, report_barrier, [("qc_json", "hdglio_done")]),
         ])
 
         # Connect filmstrips to writer (writer saves to figures/ dir)
@@ -1506,28 +1519,16 @@ def init_pmriprep_wf(
             ])
 
         # -------------------------------------------------------------------
-        # DSC HTML Report Generation
+        # DSC: connect writer to unified report barrier
         # -------------------------------------------------------------------
-        from pmriprep.interfaces.reports import GenerateReport
-
-        dsc_report = pe.Node(
-            GenerateReport(
-                subject_id=subject_id,
-                session_id=session_id or "",
-                pipeline="dsc",
-                output_dir=str(output_dir),
-            ),
-            name="dsc_report",
-        )
-
-        # Connect qc_json (enforces writer-before-report ordering)
         workflow.connect([
-            (dsc_writer, dsc_report, [("qc_json", "qc_json")]),
+            (dsc_writer, report_barrier, [("qc_json", "dsc_done")]),
         ])
 
         # Connect DSC QC plots to writer (writer saves to figures/ dir)
         workflow.connect([
             (dsc_wf, dsc_writer, [
+                ("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip"),
                 ("outputnode.dsc_preprocessing_qc_plot", "dsc_preprocessing_qc_plot"),
                 ("outputnode.dsc_param_maps_qc_plot", "dsc_param_maps_qc_plot"),
                 ("outputnode.dsc_fit_qc_plot", "dsc_fit_qc_plot"),
@@ -2011,6 +2012,8 @@ def init_pmriprep_wf(
                 ("outputnode.aif_location_qc_plot", "aif_location_plot"),
                 ("outputnode.registration_qc_filmstrip", "registration_filmstrip"),
                 ("outputnode.motion_qc_plot", "motion_qc_plot"),
+                # Brain mask filmstrip
+                ("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip"),
                 # DCE QC plots
                 ("outputnode.preprocessing_qc_plot", "preprocessing_qc_plot"),
                 ("outputnode.pk_modeling_qc_plot", "pk_modeling_qc_plot"),
@@ -2032,23 +2035,10 @@ def init_pmriprep_wf(
         ])
 
         # -------------------------------------------------------------------
-        # DCE HTML Report Generation
+        # DCE: connect writer to unified report barrier
         # -------------------------------------------------------------------
-        from pmriprep.interfaces.reports import GenerateReport
-
-        dce_report = pe.Node(
-            GenerateReport(
-                subject_id=subject_id,
-                session_id=session_id or "",
-                pipeline="dce",
-                output_dir=str(output_dir),
-            ),
-            name="dce_report",
-        )
-
-        # Connect qc_json (enforces writer-before-report ordering)
         workflow.connect([
-            (dce_writer, dce_report, [("qc_json", "qc_json")]),
+            (dce_writer, report_barrier, [("qc_json", "dce_done")]),
         ])
 
     return workflow

@@ -1,0 +1,52 @@
+<!-- Summary Section: aggregate recommendations and warnings from all pipelines -->
+<section id="summary">
+    <h2>Summary</h2>
+
+    <!-- Overall QC Recommendation (worst across all pipelines) -->
+    {% if overall_recommendation %}
+    <div class="section {{ overall_recommendation.action }}">
+        <h3>QC Recommendation: {{ overall_recommendation.action | upper }}</h3>
+        <p>{{ overall_recommendation.reason }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Pipelines that ran -->
+    <div class="section">
+        <h3>Pipelines</h3>
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-label">Anatomical</div>
+                <div class="metric-value {% if ran_pipelines.anat %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.anat else "Skipped" }}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">HD-GLIO</div>
+                <div class="metric-value {% if ran_pipelines.hdglio %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.hdglio else "Skipped" }}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">DSC Perfusion</div>
+                <div class="metric-value {% if ran_pipelines.dsc %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.dsc else "Skipped" }}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">DCE Perfusion</div>
+                <div class="metric-value {% if ran_pipelines.dce %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.dce else "Skipped" }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- All warnings, grouped by pipeline -->
+    {% if all_warnings %}
+    <div class="section review">
+        <h3>Processing Notes</h3>
+        {% for pipeline_name, warnings in all_warnings.items() %}
+        {% if warnings %}
+        <h4>{{ pipeline_name }}</h4>
+        <ul>
+            {% for warning in warnings %}
+            <li>{{ warning }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>

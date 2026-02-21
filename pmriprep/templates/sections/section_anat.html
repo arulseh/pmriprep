@@ -1,0 +1,100 @@
+<!-- Anatomical Preprocessing Section -->
+<section id="anat">
+    <h2>Anatomical Preprocessing</h2>
+
+    <!-- Per-pipeline recommendation -->
+    {% if anat.qc_metrics.recommendation %}
+    <div class="section {{ anat.qc_metrics.recommendation.action }}">
+        <h3>QC Recommendation: {{ anat.qc_metrics.recommendation.action | upper }}</h3>
+        <p>{{ anat.qc_metrics.recommendation.reason }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Brain Extraction QC -->
+    {% if anat.images.brain_mask or anat.qc_metrics.brain_extraction %}
+    <div class="section">
+        <h3>Brain Extraction</h3>
+        {% if anat.qc_metrics.brain_extraction %}
+        <div class="metrics">
+            {% if anat.qc_metrics.brain_extraction.qc_status is defined %}
+            <div class="metric">
+                <div class="metric-label">Status</div>
+                <div class="metric-value {% if anat.qc_metrics.brain_extraction.qc_status == 'PASS' %}pass{% elif anat.qc_metrics.brain_extraction.qc_status == 'WARN' %}warn{% else %}fail{% endif %}">
+                    {{ anat.qc_metrics.brain_extraction.qc_status }}
+                </div>
+            </div>
+            {% endif %}
+            {% if anat.qc_metrics.brain_extraction.brain_volume_ml is defined %}
+            <div class="metric">
+                <div class="metric-label">Brain Volume</div>
+                <div class="metric-value">{{ "%.0f"|format(anat.qc_metrics.brain_extraction.brain_volume_ml) }} mL</div>
+            </div>
+            {% endif %}
+            {% if anat.qc_metrics.brain_extraction.dice_vs_mni is defined %}
+            <div class="metric">
+                <div class="metric-label">DICE vs MNI</div>
+                <div class="metric-value">{{ "%.3f"|format(anat.qc_metrics.brain_extraction.dice_vs_mni) }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if anat.images.brain_mask %}
+        <div style="margin-top: 20px;">
+            <p>Brain mask contour (red) on bias-corrected T1w.</p>
+            <img src="{{ anat.images.brain_mask }}" alt="Brain Mask QC">
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Tissue Segmentation -->
+    {% if anat.images.tissue_seg %}
+    <div class="section">
+        <h3>Tissue Segmentation</h3>
+        <p>WM boundary (blue) and CSF boundary (red) contours on brain-extracted T1w. GM is the region between the two boundaries.</p>
+        <img src="{{ anat.images.tissue_seg }}" alt="Tissue Segmentation QC">
+    </div>
+    {% endif %}
+
+    <!-- ACPC-MNI Alignment -->
+    {% if anat.images.acpc %}
+    <div class="section">
+        <h3>ACPC-MNI Linear Alignment</h3>
+        <p>MNI template edges overlaid on ACPC-aligned T1w.</p>
+        <img src="{{ anat.images.acpc }}" alt="ACPC Alignment QC">
+    </div>
+    {% endif %}
+
+    <!-- Cross-Modal Coregistration -->
+    {% if anat.images.coreg_postcon %}
+    <div class="section">
+        <h3>Coregistration: T1w Post-Contrast to T1w</h3>
+        <p>T1w structural edges overlaid on coregistered post-contrast T1w.</p>
+        <img src="{{ anat.images.coreg_postcon }}" alt="T1w PostCon Coreg QC">
+    </div>
+    {% endif %}
+
+    {% if anat.images.coreg_t2w %}
+    <div class="section">
+        <h3>Coregistration: T2w to T1w</h3>
+        <p>T1w structural edges overlaid on coregistered T2w.</p>
+        <img src="{{ anat.images.coreg_t2w }}" alt="T2w Coreg QC">
+    </div>
+    {% endif %}
+
+    {% if anat.images.coreg_flair %}
+    <div class="section">
+        <h3>Coregistration: FLAIR to T1w</h3>
+        <p>T1w structural edges overlaid on coregistered FLAIR.</p>
+        <img src="{{ anat.images.coreg_flair }}" alt="FLAIR Coreg QC">
+    </div>
+    {% endif %}
+
+    {% if anat.images.coreg_pdw %}
+    <div class="section">
+        <h3>Coregistration: PDw to T1w</h3>
+        <p>T1w structural edges overlaid on coregistered PDw.</p>
+        <img src="{{ anat.images.coreg_pdw }}" alt="PDw Coreg QC">
+    </div>
+    {% endif %}
+</section>

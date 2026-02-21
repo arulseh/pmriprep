@@ -176,6 +176,55 @@ def _histogram_match_t1w_to_dsc(
     return out_file
 
 
+def _create_perfusion_brain_mask_filmstrip(mean_file, brain_mask_file):
+    """Create brain extraction QC filmstrip for DSC or DCE perfusion data.
+
+    Overlays the brain mask contour (solid red line) on the mean perfusion
+    image to verify brain extraction quality.
+
+    Parameters
+    ----------
+    mean_file : str
+        Path to mean perfusion image (pre-bolus mean for DSC, baseline
+        mean for DCE).
+    brain_mask_file : str
+        Path to brain mask NIfTI file.
+
+    Returns
+    -------
+    str
+        Path to output filmstrip PNG.
+    """
+    from pathlib import Path
+
+    import nibabel as nib
+    import numpy as np
+
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+
+    out_dir = Path.cwd()
+    output_path = str(out_dir / "brain_mask_qc_filmstrip.png")
+
+    mean_img = nib.load(mean_file)
+    mean_data = mean_img.get_fdata()
+    mask_data = nib.load(brain_mask_file).get_fdata().astype(bool)
+    voxel_sizes = tuple(mean_img.header.get_zooms()[:3])
+
+    # Pass full binary mask — contour at level=0.5 gives solid line
+    label_masks = [("Brain mask", mask_data.astype(np.float64), "#EE6677")]
+
+    plot_segmentation_qc_filmstrip(
+        background=mean_data,
+        label_masks=label_masks,
+        output_path=output_path,
+        mask=mask_data,
+        title="Brain Extraction QC",
+        voxel_sizes=voxel_sizes,
+    )
+
+    return output_path
+
+
 def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto"):
     """Extract DSC brain using HD-BET for improved registration quality.
 
@@ -1600,6 +1649,8 @@ def init_dsc_preproc_wf(
                 "dsc_param_maps_qc_plot",
                 "dsc_fit_qc_plot",
                 "dsc_leakage_qc_plot",
+                # Brain mask filmstrip
+                "brain_mask_filmstrip",
             ]
         ),
         name="outputnode",
@@ -2214,6 +2265,24 @@ def init_dsc_preproc_wf(
         (prebolus_mean, hdbet_dsc, [("prebolus_mean_file", "dsc_mean_file")]),
     ])
 
+    # Brain mask filmstrip QC (after HD-BET)
+    dsc_brain_mask_qc = pe.Node(
+        niu.Function(
+            input_names=["mean_file", "brain_mask_file"],
+            output_names=["out_file"],
+            function=_create_perfusion_brain_mask_filmstrip,
+        ),
+        name="dsc_brain_mask_qc",
+    )
+    workflow.connect([
+        (prebolus_mean, dsc_brain_mask_qc, [
+            ("prebolus_mean_file", "mean_file"),
+        ]),
+        (hdbet_dsc, dsc_brain_mask_qc, [
+            ("dsc_brain_mask_file", "brain_mask_file"),
+        ]),
+    ])
+
     # NOTE: transform_brain_mask disconnected — using HD-BET mask directly.
     # To reinstate T1w-transformed mask, uncomment the node definition
     # above and restore these connections:
@@ -2722,6 +2791,8 @@ def init_dsc_preproc_wf(
         (dsc_preproc_qc, outputnode, [("plot_file", "dsc_preprocessing_qc_plot")]),
         (dsc_param_maps_qc, outputnode, [("plot_file", "dsc_param_maps_qc_plot")]),
         (dsc_leakage_qc, outputnode, [("plot_file", "dsc_leakage_qc_plot")]),
+        # Brain mask filmstrip
+        (dsc_brain_mask_qc, outputnode, [("out_file", "brain_mask_filmstrip")]),
     ])
 
     workflow.connect([

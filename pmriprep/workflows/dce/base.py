@@ -314,6 +314,8 @@ def init_dce_preproc_wf(
                 "preprocessing_qc_plot",
                 "pk_modeling_qc_plot",
                 "pk_param_maps_qc_plot",
+                # Brain mask filmstrip
+                "brain_mask_filmstrip",
                 # Anatomical masks in DCE space
                 "brain_mask",
                 "nawm_mask",
@@ -510,6 +512,26 @@ def init_dce_preproc_wf(
 
     workflow.connect([
         (dce_preprocess, dce_brain_extract, [("baseline_mean_img", "dce_mean")]),
+    ])
+
+    # Brain mask filmstrip QC (after brain extraction)
+    from pmriprep.workflows.dsc.base import _create_perfusion_brain_mask_filmstrip
+
+    dce_brain_mask_qc = pe.Node(
+        niu.Function(
+            input_names=["mean_file", "brain_mask_file"],
+            output_names=["out_file"],
+            function=_create_perfusion_brain_mask_filmstrip,
+        ),
+        name="dce_brain_mask_qc",
+    )
+    workflow.connect([
+        (dce_preprocess, dce_brain_mask_qc, [
+            ("baseline_mean_img", "mean_file"),
+        ]),
+        (dce_brain_extract, dce_brain_mask_qc, [
+            ("out_mask", "brain_mask_file"),
+        ]),
     ])
 
     # ==========================================================================
@@ -1542,6 +1564,10 @@ def init_dce_preproc_wf(
         # Motion QC plot
         (motion_qc_plot, outputnode, [
             ("plot_file", "motion_qc_plot"),
+        ]),
+        # Brain mask filmstrip
+        (dce_brain_mask_qc, outputnode, [
+            ("out_file", "brain_mask_filmstrip"),
         ]),
         # DCE QC plots
         (preprocessing_qc, outputnode, [

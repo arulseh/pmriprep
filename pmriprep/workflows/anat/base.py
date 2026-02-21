@@ -78,8 +78,10 @@ def _create_brain_mask_filmstrip(t1w_file, brain_mask_file):
     """Create brain extraction QC filmstrip showing mask boundary on T1w.
 
     Loads bias-corrected T1w as background and overlays the brain mask
-    edge (dilated mask minus original) to show whether the mask boundary
-    follows the cortical surface.
+    contour (solid red line at level=0.5) to show whether the mask boundary
+    follows the cortical surface. Uses the full binary mask with
+    ``plot_segmentation_qc_filmstrip`` for a clean solid contour matching
+    fMRIPrep style.
 
     Parameters
     ----------
@@ -97,9 +99,8 @@ def _create_brain_mask_filmstrip(t1w_file, brain_mask_file):
 
     import nibabel as nib
     import numpy as np
-    from scipy.ndimage import binary_dilation
 
-    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
 
     out_dir = Path.cwd()
     output_path = str(out_dir / "brain_mask_qc_filmstrip.png")
@@ -109,15 +110,14 @@ def _create_brain_mask_filmstrip(t1w_file, brain_mask_file):
     mask_data = nib.load(brain_mask_file).get_fdata().astype(bool)
     voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])
 
-    # Create mask edge: dilate mask, subtract original -> boundary voxels
-    dilated = binary_dilation(mask_data, iterations=1)
-    edge = (dilated & ~mask_data).astype(np.float64)
+    # Pass full binary mask — contour at level=0.5 gives solid line
+    label_masks = [("Brain mask", mask_data.astype(np.float64), "#EE6677")]
 
-    plot_registration_qc_filmstrip(
-        fixed=t1w_data,
-        moving=edge,
+    plot_segmentation_qc_filmstrip(
+        background=t1w_data,
+        label_masks=label_masks,
         output_path=output_path,
-        mask=(t1w_data > 0),
+        mask=mask_data,
         title="Brain Extraction QC",
         voxel_sizes=voxel_sizes,
     )
@@ -267,14 +267,14 @@ def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf
 
     # Threshold probability maps at 0.5 to get binary masks
     wm_mask = (nib.load(wm_probseg_file).get_fdata() > 0.5).astype(np.float64)
-    gm_mask = (nib.load(gm_probseg_file).get_fdata() > 0.5).astype(np.float64)
     csf_mask = (nib.load(csf_probseg_file).get_fdata() > 0.5).astype(np.float64)
 
-    # Paul Tol extended palette colors
+    # Two boundary lines separate three compartments:
+    # WM contour = WM/GM interface, CSF contour = GM/CSF interface.
+    # GM is implicit (region between the two boundaries).
     label_masks = [
         ("WM", wm_mask, "#4477AA"),
-        ("GM", gm_mask, "#EE6677"),
-        ("CSF", csf_mask, "#66CCEE"),
+        ("CSF", csf_mask, "#EE6677"),
     ]
 
     plot_segmentation_qc_filmstrip(

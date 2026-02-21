@@ -1,7 +1,8 @@
-"""Nipype interface for HTML report generation.
+"""Nipype interface for unified HTML report generation.
 
-This module provides a Nipype interface for generating NiPreps-style
-HTML QC reports that reference external figure files via relative paths.
+This module provides a Nipype interface for generating a single unified
+NiPreps-style HTML QC report per session, combining all pipeline sections
+(anat, hdglio, dsc, dce) into one document.
 """
 
 from pathlib import Path
@@ -16,80 +17,90 @@ from nipype.interfaces.base import (
 )
 
 
-class GenerateReportInputSpec(BaseInterfaceInputSpec):
-    """Input specification for GenerateReport."""
+class GenerateUnifiedReportInputSpec(BaseInterfaceInputSpec):
+    """Input specification for GenerateUnifiedReport."""
 
     subject_id = traits.Str(mandatory=True, desc="Subject ID (without sub- prefix)")
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
-    pipeline = traits.Str(mandatory=True, desc="Pipeline name ('dsc', 'dce', 'anat', or 'hdglio')")
-    output_dir = traits.Str(mandatory=True, desc="Output directory for the report")
+    output_dir = traits.Str(mandatory=True, desc="Output directory (BIDS derivatives root)")
 
-    # qc_json enforces execution order (writer runs before report)
-    qc_json = traits.Str(mandatory=True, desc="QC metrics JSON file path")
+    # Which pipelines ran (controls which sections appear)
+    ran_anat = traits.Bool(False, usedefault=True, desc="Whether anat pipeline ran")
+    ran_hdglio = traits.Bool(False, usedefault=True, desc="Whether hdglio pipeline ran")
+    ran_dsc = traits.Bool(False, usedefault=True, desc="Whether dsc pipeline ran")
+    ran_dce = traits.Bool(False, usedefault=True, desc="Whether dce pipeline ran")
+
+    # Barrier strings: connected from writers to enforce execution ordering.
+    # Each carries the qc_json path from its writer, ensuring the writer
+    # finishes before the report node runs.
+    anat_done = traits.Str("", usedefault=True, desc="Barrier from anat writer")
+    hdglio_done = traits.Str("", usedefault=True, desc="Barrier from hdglio writer")
+    dsc_done = traits.Str("", usedefault=True, desc="Barrier from dsc writer")
+    dce_done = traits.Str("", usedefault=True, desc="Barrier from dce writer")
 
 
-class GenerateReportOutputSpec(TraitedSpec):
-    """Output specification for GenerateReport."""
+class GenerateUnifiedReportOutputSpec(TraitedSpec):
+    """Output specification for GenerateUnifiedReport."""
 
-    report_file = File(desc="Generated HTML report path")
+    report_file = File(desc="Generated unified HTML report path")
 
 
-class GenerateReport(BaseInterface):
-    """Generate NiPreps-style HTML QC report with external figure files.
+class GenerateUnifiedReport(BaseInterface):
+    """Generate a single unified HTML QC report for all pipelines in a session.
 
-    This interface creates an HTML report that references figure PNGs
-    via relative paths (``figures/<bids-name>.png``).  Figures are
-    expected to already exist in the ``figures/`` subdirectory of the
-    pipeline session output directory, written there by the
-    corresponding derivative writer.
+    This interface creates one HTML report that combines QC sections for
+    all pipelines that ran (anat, hdglio, dsc, dce), with a navigation
+    bar and summary section. The report lives inside the session directory
+    so figure paths are simply ``figures/<filename>``.
 
-    The ``qc_json`` input enforces execution order so the writer
-    (which creates both the QC JSON and the figures) always runs
-    before this report node.
+    Barrier inputs (``anat_done``, ``hdglio_done``, etc.) carry the
+    ``qc_json`` path from each writer, enforcing execution order without
+    needing explicit data dependencies.
     """
 
-    input_spec = GenerateReportInputSpec
-    output_spec = GenerateReportOutputSpec
+    input_spec = GenerateUnifiedReportInputSpec
+    output_spec = GenerateUnifiedReportOutputSpec
 
     def _run_interface(self, runtime: Any) -> Any:
-        from pmriprep.utils.report_utils import generate_qc_report
+        from pmriprep.utils.report_utils import generate_unified_report
 
-        # Build output path following BIDS conventions
         output_dir = Path(self.inputs.output_dir)
-        pipeline = self.inputs.pipeline
         subject_id = self.inputs.subject_id
         session_id = self.inputs.session_id
 
-        # Build BIDS-compliant output path
-        report_dir = output_dir / "pmriprep"
-        if session_id:
-            report_name = f"sub-{subject_id}_ses-{session_id}_{pipeline}.html"
-        else:
-            report_name = f"sub-{subject_id}_{pipeline}.html"
-
-        output_path = report_dir / report_name
-
-        # NOTE: figures_dir must match the path used by the derivative writers.
-        # report_utils.py computes a relative path from the report location
-        # (derivative root) to this directory using os.path.relpath().
+        # Build session directory path
         ses_dir = output_dir / "pmriprep" / f"sub-{subject_id}"
         if session_id:
             ses_dir = ses_dir / f"ses-{session_id}"
+
         figures_dir = str(ses_dir / "figures")
 
-        # Generate the report
-        self._report_file = generate_qc_report(
+        # Build report output path
+        if session_id:
+            report_name = f"sub-{subject_id}_ses-{session_id}.html"
+        else:
+            report_name = f"sub-{subject_id}.html"
+        output_path = str(ses_dir / report_name)
+
+        ran_pipelines = {
+            "anat": self.inputs.ran_anat,
+            "hdglio": self.inputs.ran_hdglio,
+            "dsc": self.inputs.ran_dsc,
+            "dce": self.inputs.ran_dce,
+        }
+
+        self._report_file = generate_unified_report(
             subject_id=subject_id,
             session_id=session_id,
-            pipeline=pipeline,
-            qc_json_path=self.inputs.qc_json,
-            output_path=str(output_path),
+            output_path=output_path,
+            ses_dir=str(ses_dir),
             figures_dir=figures_dir,
+            ran_pipelines=ran_pipelines,
         )
 
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:
         outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
-        outputs["report_file"] = self._report_file
+        outputs["report_file"] = getattr(self, "_report_file", "")
         return outputs

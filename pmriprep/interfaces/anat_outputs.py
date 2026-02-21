@@ -336,13 +336,19 @@ class AnatDerivativeWriter(BaseInterface):
         # 5. QC JSON
         # ---------------------------------------------------------------
         # Collect processing warnings for missing data-dependent inputs
-        _data_dependent_inputs = {
+        _data_dependent_inputs: dict[str, str] = {
             "wm_probseg": "Tissue segmentation (WM/GM/CSF probability maps)",
-            "t1w_postcon_coreg": "Post-contrast T1w",
             "flair_coreg": "FLAIR",
             "t2w_coreg": "T2w",
             "pdw_coreg": "PDw",
         }
+        # Only warn about missing postcon coreg when both pre and post T1w
+        # are available. In postcon-only mode the postcon IS the reference,
+        # so no coregistration is expected.
+        if has_input(self.inputs, "source_t1w") and has_input(
+            self.inputs, "source_t1w_postcon"
+        ):
+            _data_dependent_inputs["t1w_postcon_coreg"] = "Post-contrast T1w"
         warnings: list[str] = []
         for attr, label in _data_dependent_inputs.items():
             if not has_input(self.inputs, attr):

@@ -128,6 +128,7 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     config_dict = traits.Dict(desc="DCE processing config as dictionary")
 
     # QC plots (optional)
+    brain_mask_filmstrip = traits.Str(desc="Brain mask QC filmstrip PNG path")
     aif_curve_plot = traits.Str(desc="AIF curve QC plot PNG path")
     aif_location_plot = traits.Str(desc="AIF location overlay PNG path")
     registration_filmstrip = traits.Str(desc="Registration QC filmstrip PNG path")
@@ -624,6 +625,7 @@ class DCEDerivativeWriter(BaseInterface):
         figures_dir.mkdir(parents=True, exist_ok=True)
 
         _fig_inputs = {
+            "dce_brain_mask": "brain_mask_filmstrip",
             "motion": "motion_qc_plot",
             "aif_curve": "aif_curve_plot",
             "aif_location": "aif_location_plot",

@@ -1,17 +1,20 @@
 """HTML report generation utilities for NiPreps-style QC reports.
 
-This module provides utilities for generating HTML QC reports with
-external figure files, following NiPreps conventions for visual
+This module provides utilities for generating a unified HTML QC report
+with external figure files, following NiPreps conventions for visual
 quality control.
 """
 
 import json
-import os
+import logging
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
-from jinja2 import Environment, PackageLoader, TemplateNotFound
+from jinja2 import Environment, PackageLoader
 
+
+logger = logging.getLogger(__name__)
 
 # Mapping: internal image key -> (desc_label, default_suffix)
 # The suffix is the BIDS modality suffix (dsc, dce, T1w, FLAIR).
@@ -27,6 +30,10 @@ FIGURE_NAME_MAP: dict[str, tuple[str, str]] = {
     "dsc_param_maps_qc": ("parammaps", "dsc"),
     "dsc_fit_qc": ("deconvfit", "dsc"),
     "dsc_leakage_qc": ("leakage", "dsc"),
+    # DSC brain mask
+    "dsc_brain_mask": ("brainmask", "dsc"),
+    # DCE brain mask
+    "dce_brain_mask": ("brainmask", "dce"),
     # DCE
     "b1": ("b1map", "dce"),
     "t1": ("t1map", "dce"),
@@ -50,6 +57,33 @@ FIGURE_NAME_MAP: dict[str, tuple[str, str]] = {
 # Keys that are shared between DSC and DCE pipelines.
 # For these, the suffix is determined by the pipeline argument.
 _SHARED_KEYS = {"motion", "aif_curve", "aif_location", "registration"}
+
+# Which figure keys belong to each pipeline
+_PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
+    "anat": [
+        "brain_mask", "tissue_seg", "acpc",
+        "coreg_postcon", "coreg_t2w", "coreg_flair", "coreg_pdw",
+    ],
+    "hdglio": ["seg_postcon", "seg_flair", "nawm_flair"],
+    "dsc": [
+        "dsc_brain_mask", "motion", "dsc_preprocessing_qc", "aif_curve",
+        "aif_location", "dsc_leakage_qc", "dsc_param_maps_qc", "dsc_fit_qc",
+        "registration",
+    ],
+    "dce": [
+        "dce_brain_mask", "motion", "b1", "t1", "preprocessing_qc",
+        "aif_curve", "aif_location", "pk_modeling_qc", "pk_param_maps_qc",
+        "registration",
+    ],
+}
+
+# QC JSON file desc suffixes per pipeline
+_PIPELINE_QC_SUFFIXES: dict[str, str] = {
+    "anat": "anatQC",
+    "hdglio": "hdglioQC",
+    "dsc": "dscQC",
+    "dce": "dceQC",
+}
 
 
 def figure_filename(
@@ -88,416 +122,209 @@ def figure_filename(
     return "_".join(parts)
 
 
-def generate_qc_report(
+def _collect_pipeline_images(
     subject_id: str,
     session_id: str,
     pipeline: str,
-    qc_json_path: str,
-    output_path: str,
-    figures_dir: str,
-) -> str:
-    """Generate HTML QC report referencing external figure files.
+    figures_dir: Path,
+) -> dict[str, str]:
+    """Collect figure paths for a single pipeline.
 
-    Creates a NiPreps-style HTML report that references figures via
-    relative paths (``figures/<filename>``).  Figures are expected to
-    already exist in *figures_dir* with BIDS-compliant names built by
-    :func:`figure_filename`.
+    Scans figures_dir for matching files and returns relative paths
+    (``figures/<filename>``).
+
+    Args:
+        subject_id: BIDS subject ID.
+        session_id: BIDS session ID.
+        pipeline: Pipeline name.
+        figures_dir: Absolute path to figures directory.
+
+    Returns:
+        Dict mapping image key to relative path string.
+    """
+    images: dict[str, str] = {}
+    for key in _PIPELINE_FIGURE_KEYS.get(pipeline, []):
+        fname = figure_filename(subject_id, session_id, key, pipeline)
+        if (figures_dir / fname).exists():
+            images[key] = f"figures/{fname}"
+    return images
+
+
+def _load_qc_json(ses_dir: Path, prefix: str, pipeline: str) -> dict[str, Any]:
+    """Load QC metrics JSON for a pipeline.
+
+    Args:
+        ses_dir: Session directory path.
+        prefix: BIDS prefix (e.g. ``sub-0001_ses-0002``).
+        pipeline: Pipeline name.
+
+    Returns:
+        QC metrics dict, or empty dict if file not found.
+    """
+    suffix = _PIPELINE_QC_SUFFIXES.get(pipeline)
+    if not suffix:
+        return {}
+    qc_path = ses_dir / f"{prefix}_desc-{suffix}_quality.json"
+    if qc_path.exists():
+        try:
+            with open(qc_path) as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            logger.warning("Malformed QC JSON, skipping: %s", qc_path)
+    return {}
+
+
+def _compute_overall_recommendation(
+    pipeline_data: dict[str, Optional[dict[str, Any]]],
+) -> Optional[dict[str, str]]:
+    """Compute the worst-case recommendation across all pipelines.
+
+    Args:
+        pipeline_data: Dict of pipeline name to data dict (or None).
+
+    Returns:
+        Overall recommendation dict, or None if no recommendations exist.
+    """
+    severity = {"include": 0, "review": 1, "exclude": 2}
+    worst_action = "include"
+    reasons: list[str] = []
+
+    for name, data in pipeline_data.items():
+        if data is None:
+            continue
+        rec = data.get("qc_metrics", {}).get("recommendation")
+        if rec:
+            action = rec.get("action", "review")
+            if severity.get(action, 1) > severity.get(worst_action, 0):
+                worst_action = action
+            reasons.append(f"{name.upper()}: {rec.get('reason', '')}")
+
+    if not reasons:
+        return None
+    return {"action": worst_action, "reason": "; ".join(reasons)}
+
+
+def _collect_all_warnings(
+    pipeline_data: dict[str, Optional[dict[str, Any]]],
+) -> dict[str, list[str]]:
+    """Collect warnings from all pipelines, grouped by pipeline name.
+
+    Args:
+        pipeline_data: Dict of pipeline name to data dict (or None).
+
+    Returns:
+        Dict mapping pipeline display name to list of warning strings.
+    """
+    all_warnings: dict[str, list[str]] = {}
+    display_names = {
+        "anat": "Anatomical",
+        "hdglio": "HD-GLIO",
+        "dsc": "DSC Perfusion",
+        "dce": "DCE Perfusion",
+    }
+    for name, data in pipeline_data.items():
+        if data is None:
+            continue
+        warnings = data.get("qc_metrics", {}).get("warnings", [])
+        if warnings:
+            all_warnings[display_names.get(name, name)] = warnings
+    return all_warnings
+
+
+def generate_unified_report(
+    subject_id: str,
+    session_id: str,
+    output_path: str,
+    ses_dir: str,
+    figures_dir: str,
+    ran_pipelines: dict[str, bool],
+) -> str:
+    """Generate a unified HTML QC report for all pipelines in a session.
+
+    Creates a single HTML report with navigation and conditional sections
+    for each pipeline that ran. Figures are referenced via relative paths
+    (``figures/<filename>``).
 
     Args:
         subject_id: BIDS subject ID (without sub- prefix).
         session_id: BIDS session ID (without ses- prefix).
-        pipeline: Pipeline name ('dsc', 'dce', 'anat', or 'hdglio').
-        qc_json_path: Path to QC metrics JSON file.
         output_path: Output HTML file path.
+        ses_dir: Session directory path (contains QC JSONs and figures/).
         figures_dir: Directory containing figure PNG files.
+        ran_pipelines: Dict mapping pipeline name to whether it ran.
 
     Returns:
         Path to generated HTML report.
-
-    Raises:
-        FileNotFoundError: If qc_json_path does not exist.
-        TemplateNotFound: If the report template is not found.
     """
-    # Load QC metrics
-    with open(qc_json_path) as f:
-        qc_metrics = json.load(f)
+    import pmriprep
 
-    # Scan figures_dir for matching files and build relative paths
-    images: dict[str, str] = {}
+    ses_path = Path(ses_dir)
     fig_path = Path(figures_dir)
-    rel_figures = os.path.relpath(figures_dir, Path(output_path).parent)
-    for key in FIGURE_NAME_MAP:
-        fname = figure_filename(subject_id, session_id, key, pipeline)
-        if (fig_path / fname).exists():
-            images[key] = f"{rel_figures}/{fname}"
 
-    # Load and render template
-    try:
-        env = Environment(loader=PackageLoader("pmriprep", "templates"))
-        template = env.get_template(f"report_{pipeline}.html")
-    except TemplateNotFound:
-        # Fall back to generic template if pipeline-specific one doesn't exist
-        try:
-            template = env.get_template("report_generic.html")
-        except TemplateNotFound:
-            # If no templates exist, create a basic report
-            html = _generate_fallback_report(
-                subject_id=subject_id,
-                session_id=session_id,
-                pipeline=pipeline,
-                qc_metrics=qc_metrics,
-                images=images,
-            )
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, "w") as f:
-                f.write(html)
-            return output_path
+    # Build BIDS prefix
+    prefix = f"sub-{subject_id}"
+    if session_id:
+        prefix += f"_ses-{session_id}"
 
-    html = template.render(
-        subject_id=subject_id,
-        session_id=session_id,
-        pipeline=pipeline.upper(),
-        qc_metrics=qc_metrics,
-        images=images,
-    )
+    # Collect data for each pipeline that ran
+    pipeline_data: dict[str, Optional[dict[str, Any]]] = {}
+    for pipeline_name, did_run in ran_pipelines.items():
+        if not did_run:
+            pipeline_data[pipeline_name] = None
+            continue
+
+        qc_metrics = _load_qc_json(ses_path, prefix, pipeline_name)
+        images = _collect_pipeline_images(
+            subject_id, session_id, pipeline_name, fig_path,
+        )
+        pipeline_data[pipeline_name] = {
+            "qc_metrics": qc_metrics,
+            "images": images,
+        }
+
+    # Build template context
+    overall_rec = _compute_overall_recommendation(pipeline_data)
+    all_warnings = _collect_all_warnings(pipeline_data)
+
+    context: dict[str, Any] = {
+        "subject_id": subject_id,
+        "session_id": session_id,
+        "version": pmriprep.__version__,
+        "processing_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        # Pipeline data (None if not run)
+        "anat": pipeline_data.get("anat"),
+        "hdglio": pipeline_data.get("hdglio"),
+        "dsc": pipeline_data.get("dsc"),
+        "dce": pipeline_data.get("dce"),
+        # Summary context
+        "ran_pipelines": ran_pipelines,
+        "overall_recommendation": overall_rec,
+        "all_warnings": all_warnings,
+    }
+
+    # Render template
+    env = Environment(loader=PackageLoader("pmriprep", "templates"))
+    template = env.get_template("report_unified.html")
+    html = template.render(**context)
 
     # Write report
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         f.write(html)
 
+    # Clean up legacy per-pipeline HTML reports at the derivatives root
+    if session_id:
+        legacy_dir = ses_path.parent.parent  # sub-XX -> pmriprep/
+    else:
+        legacy_dir = ses_path.parent  # pmriprep/
+    for pipeline_name in ["anat", "dsc", "dce", "hdglio"]:
+        if session_id:
+            legacy_name = f"sub-{subject_id}_ses-{session_id}_{pipeline_name}.html"
+        else:
+            legacy_name = f"sub-{subject_id}_{pipeline_name}.html"
+        legacy_path = legacy_dir / legacy_name
+        if legacy_path.exists():
+            legacy_path.unlink()
+            logger.info("Removed legacy report: %s", legacy_path)
+
     return output_path
-
-
-def _generate_fallback_report(
-    subject_id: str,
-    session_id: str,
-    pipeline: str,
-    qc_metrics: dict[str, Any],
-    images: dict[str, str],
-) -> str:
-    """Generate a fallback HTML report when templates are not available.
-
-    This function creates a basic but functional HTML report without
-    requiring Jinja2 templates.  Image values are relative paths
-    (e.g. ``figures/sub-XX_ses-YY_desc-motion_dsc.png``).
-
-    Args:
-        subject_id: BIDS subject ID.
-        session_id: BIDS session ID.
-        pipeline: Pipeline name.
-        qc_metrics: QC metrics dictionary.
-        images: Dictionary of relative image paths.
-
-    Returns:
-        HTML string for the report.
-    """
-    # Build image sections
-    image_sections = []
-
-    if "motion" in images:
-        motion_metrics_html = ""
-        motion_data = qc_metrics.get("motion", {})
-        if isinstance(motion_data, dict):
-            motion_summary = motion_data.get("motion_summary", {})
-            if isinstance(motion_summary, dict) and motion_summary:
-                boxes = []
-                for label, key, fmt in [
-                    ("Mean FD", "fd_mean", "{:.3f} mm"),
-                    ("Max FD", "fd_max", "{:.3f} mm"),
-                    ("Outlier %", "pct_outliers", "{:.1f}%"),
-                ]:
-                    val = motion_summary.get(key)
-                    if val is not None:
-                        boxes.append(
-                            f'<div class="metric"><div class="metric-label">{label}</div>'
-                            f'<div class="metric-value">{fmt.format(val)}</div></div>'
-                        )
-                if boxes:
-                    motion_metrics_html = f'<div class="metrics">{"".join(boxes)}</div>'
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Motion Quality Control</h2>
-            {motion_metrics_html}
-            <img src="{images["motion"]}" alt="Motion QC">
-        </div>
-        ''')
-
-    # DSC Preprocessing (before AIF for DSC)
-    if "dsc_preprocessing_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>DSC Preprocessing QC</h2>
-            <img src="{images["dsc_preprocessing_qc"]}" alt="DSC Preprocessing QC">
-        </div>
-        ''')
-
-    if "aif_curve" in images or "aif_location" in images:
-        # AIF metrics boxes
-        aif_metrics_html = ""
-        aif_data = qc_metrics.get("aif", {})
-        if isinstance(aif_data, dict):
-            aif_metrics = aif_data.get("aif_metrics", {})
-            if isinstance(aif_metrics, dict) and aif_metrics:
-                boxes = []
-                detection = aif_metrics.get("detection_level", "")
-                if detection:
-                    # Color-coded detection badge
-                    det_colors = {"atlas": "#228833", "relaxed": "#CCBB44", "synthetic": "#EE6677"}
-                    det_color = det_colors.get(detection, "#999999")
-                    boxes.append(
-                        f'<div class="metric" style="border-left: 4px solid {det_color};">'
-                        f'<div class="metric-label">Detection</div>'
-                        f'<div class="metric-value">{detection}</div></div>'
-                    )
-                for label, key, fmt in [
-                    ("Peak Conc", "peak_conc", "{:.2f}"),
-                    ("TTP", "ttp", "{:.1f} s"),
-                    ("FWHM", "fwhm", "{:.1f} s"),
-                    ("BRR", "brr", "{:.1f}%"),
-                    ("PSR", "psr", "{:.1f}%"),
-                ]:
-                    val = aif_metrics.get(key)
-                    if val is not None:
-                        boxes.append(
-                            f'<div class="metric"><div class="metric-label">{label}</div>'
-                            f'<div class="metric-value">{fmt.format(val)}</div></div>'
-                        )
-                if boxes:
-                    aif_metrics_html = f'<div class="metrics">{"".join(boxes)}</div>'
-
-        aif_html = f'<div class="section"><h2>Arterial Input Function (AIF) Detection</h2>{aif_metrics_html}<div class="plot-grid">'
-        if "aif_curve" in images:
-            aif_html += f'<div><img src="{images["aif_curve"]}" alt="AIF Curve"></div>'
-        if "aif_location" in images:
-            aif_html += f'<div><img src="{images["aif_location"]}" alt="AIF Location"></div>'
-        aif_html += '</div></div>'
-        image_sections.append(aif_html)
-
-    # DSC Leakage (after AIF)
-    if "dsc_leakage_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Leakage Correction QC</h2>
-            <img src="{images["dsc_leakage_qc"]}" alt="DSC Leakage QC">
-        </div>
-        ''')
-
-    # DSC Perfusion Maps
-    if "dsc_param_maps_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>DSC Perfusion Maps</h2>
-            <img src="{images["dsc_param_maps_qc"]}" alt="DSC Parameter Maps QC">
-        </div>
-        ''')
-
-    if "dsc_fit_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Deconvolution Fit QC</h2>
-            <img src="{images["dsc_fit_qc"]}" alt="DSC Fit QC">
-        </div>
-        ''')
-
-    # DCE sections: B1 before T1
-    if "b1" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>B1+ Mapping QC</h2>
-            <img src="{images["b1"]}" alt="B1+ Mapping QC">
-        </div>
-        ''')
-
-    if "t1" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>T1 Mapping QC</h2>
-            <img src="{images["t1"]}" alt="T1 Mapping QC">
-        </div>
-        ''')
-
-    if "preprocessing_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>DCE Preprocessing QC</h2>
-            <img src="{images["preprocessing_qc"]}" alt="DCE Preprocessing QC">
-        </div>
-        ''')
-
-    if "pk_modeling_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>PK Modeling QC</h2>
-            <img src="{images["pk_modeling_qc"]}" alt="PK Modeling QC">
-        </div>
-        ''')
-
-    if "pk_param_maps_qc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>PK Parameter Maps</h2>
-            <img src="{images["pk_param_maps_qc"]}" alt="PK Parameter Maps QC">
-        </div>
-        ''')
-
-    # Anatomical sections
-    if "brain_mask" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Brain Extraction QC</h2>
-            <img src="{images["brain_mask"]}" alt="Brain Mask QC">
-        </div>
-        ''')
-
-    if "tissue_seg" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Tissue Segmentation</h2>
-            <p>WM (blue), GM (red), and CSF (cyan) boundary contours on brain-extracted T1w.</p>
-            <img src="{images["tissue_seg"]}" alt="Tissue Segmentation QC">
-        </div>
-        ''')
-
-    if "acpc" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>ACPC-MNI Alignment QC</h2>
-            <img src="{images["acpc"]}" alt="ACPC Alignment QC">
-        </div>
-        ''')
-
-    for coreg_key, coreg_label in [
-        ("coreg_postcon", "T1w Post-Contrast to T1w"),
-        ("coreg_t2w", "T2w to T1w"),
-        ("coreg_flair", "FLAIR to T1w"),
-        ("coreg_pdw", "PDw to T1w"),
-    ]:
-        if coreg_key in images:
-            image_sections.append(f'''
-        <div class="section">
-            <h2>Coregistration: {coreg_label}</h2>
-            <img src="{images[coreg_key]}" alt="{coreg_label} QC">
-        </div>
-            ''')
-
-    if "seg_postcon" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Tumor Segmentation on T1w Post-Contrast</h2>
-            <img src="{images["seg_postcon"]}" alt="Tumor on T1w PostCon">
-        </div>
-        ''')
-
-    if "seg_flair" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Tumor Segmentation on FLAIR</h2>
-            <img src="{images["seg_flair"]}" alt="Tumor on FLAIR">
-        </div>
-        ''')
-
-    if "nawm_flair" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>NAWM ROI on FLAIR</h2>
-            <img src="{images["nawm_flair"]}" alt="NAWM on FLAIR">
-        </div>
-        ''')
-
-    # Registration always last
-    if "registration" in images:
-        image_sections.append(f'''
-        <div class="section">
-            <h2>Registration Quality</h2>
-            <img src="{images["registration"]}" alt="Registration QC">
-        </div>
-        ''')
-
-    # Build recommendation section
-    recommendation_html = ""
-    if "recommendation" in qc_metrics:
-        rec = qc_metrics["recommendation"]
-        action = rec.get("action", "review")
-        reason = rec.get("reason", "No reason provided")
-        action_class = action.lower() if action.lower() in ["include", "review", "exclude"] else "review"
-        recommendation_html = f'''
-        <div class="section {action_class}">
-            <h2>QC Recommendation: {action.upper()}</h2>
-            <p>{reason}</p>
-        </div>
-        '''
-
-    # Build warnings section
-    warnings_html = ""
-    warnings = qc_metrics.get("warnings", [])
-    if warnings:
-        items = "".join(f"<li>{w}</li>" for w in warnings)
-        warnings_html = f'''
-        <div class="section review">
-            <h2>Processing Notes</h2>
-            <ul>{items}</ul>
-        </div>
-        '''
-
-    # Build metrics section
-    metrics_html = ""
-    if qc_metrics:
-        metrics_items = []
-        for key, value in qc_metrics.items():
-            if key != "recommendation" and isinstance(value, dict):
-                for sub_key, sub_value in value.items():
-                    if isinstance(sub_value, (int, float, str)):
-                        if isinstance(sub_value, float):
-                            metrics_items.append(f'<div class="metric"><div class="metric-label">{sub_key}</div><div class="metric-value">{sub_value:.3f}</div></div>')
-                        else:
-                            metrics_items.append(f'<div class="metric"><div class="metric-label">{sub_key}</div><div class="metric-value">{sub_value}</div></div>')
-        if metrics_items:
-            metrics_html = f'''
-            <div class="section">
-                <h2>QC Metrics</h2>
-                <div class="metrics">
-                    {"".join(metrics_items[:12])}
-                </div>
-            </div>
-            '''
-
-    images_html = "\n".join(image_sections)
-
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>PMRIPrep {pipeline.upper()} Report - sub-{subject_id}</title>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }}
-        h1 {{ color: #4477AA; border-bottom: 2px solid #4477AA; }}
-        .section {{ background: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }}
-        .section h2 {{ color: #333; margin-top: 0; }}
-        .metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }}
-        .metric {{ background: white; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-        .metric-label {{ font-size: 0.85em; color: #666; }}
-        .metric-value {{ font-size: 1.4em; font-weight: bold; }}
-        .include {{ background: #e8f5e9; border-left: 4px solid #228833; }}
-        .review {{ background: #fff8e1; border-left: 4px solid #CCBB44; }}
-        .exclude {{ background: #ffebee; border-left: 4px solid #EE6677; }}
-        img {{ max-width: 100%; height: auto; border-radius: 4px; }}
-        .plot-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
-        @media (max-width: 800px) {{ .plot-grid {{ grid-template-columns: 1fr; }} }}
-    </style>
-</head>
-<body>
-    <h1>PMRIPrep {pipeline.upper()} Processing Report</h1>
-    <p><strong>Subject:</strong> sub-{subject_id} | <strong>Session:</strong> ses-{session_id}</p>
-
-    {recommendation_html}
-    {warnings_html}
-    {metrics_html}
-    {images_html}
-
-    <footer style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 0.85em;">
-        Generated by PMRIPrep | <a href="https://github.com/arulseh/pmriprep">GitHub</a>
-    </footer>
-</body>
-</html>
-'''

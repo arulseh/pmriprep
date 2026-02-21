@@ -75,4 +75,4 @@ where = ["."]
 include = ["pmriprep*"]
 
 [tool.setuptools.package-data]
-pmriprep = ["templates/*.html", "data/atlases/**/*.nii.gz"]
+pmriprep = ["templates/**/*.html", "data/atlases/**/*.nii.gz"]
