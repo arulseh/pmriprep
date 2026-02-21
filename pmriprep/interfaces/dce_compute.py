@@ -227,7 +227,7 @@ def _fit_single_voxel(
             if bayesian == "map":
                 result = soft_fitter.fit_map(
                     prepared_curve, aif, time_points,
-                    compute_uncertainties=False,
+                    compute_uncertainties=True,
                     weights=motion_weights,
                 )
             else:
@@ -259,7 +259,7 @@ def _fit_single_voxel(
             elif bayesian == "map" and fitter is not None:
                 result = fitter.fit_map(
                     prepared_curve, aif, time_points,
-                    compute_uncertainties=False,
+                    compute_uncertainties=True,
                     weights=motion_weights,
                 )
             elif bayesian == "mcmc" and fitter is not None:
