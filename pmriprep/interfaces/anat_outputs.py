@@ -5,6 +5,7 @@ for writing anatomical pipeline outputs with BIDS-compliant filenames,
 JSON sidecars, and QC files.
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,10 +14,13 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterfaceInputSpec,
     File,
     TraitedSpec,
+    isdefined,
     traits,
 )
 
 from pmriprep.utils.outputs import copy_derivative, has_input, write_json_sidecar
+
+logger = logging.getLogger(__name__)
 
 
 class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
@@ -331,11 +335,27 @@ class AnatDerivativeWriter(BaseInterface):
         # ---------------------------------------------------------------
         # 5. QC JSON
         # ---------------------------------------------------------------
-        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+        # Collect processing warnings for missing data-dependent inputs
+        _data_dependent_inputs = {
+            "wm_probseg": "Tissue segmentation (WM/GM/CSF probability maps)",
+            "t1w_postcon_coreg": "Post-contrast T1w",
+            "flair_coreg": "FLAIR",
+            "t2w_coreg": "T2w",
+            "pdw_coreg": "PDw",
+        }
+        warnings: list[str] = []
+        for attr, label in _data_dependent_inputs.items():
+            if not has_input(self.inputs, attr):
+                msg = f"{label} not available"
+                logger.warning(msg)
+                warnings.append(msg)
 
         qc_metrics = self.inputs.qc_metrics
         self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
+            if warnings:
+                qc_metrics = dict(qc_metrics)
+                qc_metrics["warnings"] = warnings
             qc_json_path = ses_dir / f"{prefix}_desc-anatQC_quality.json"
             write_json_sidecar(qc_metrics, qc_json_path)
             self._qc_json = str(qc_json_path)

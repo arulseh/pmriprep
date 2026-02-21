@@ -428,6 +428,18 @@ def _generate_fallback_report(
         </div>
         '''
 
+    # Build warnings section
+    warnings_html = ""
+    warnings = qc_metrics.get("warnings", [])
+    if warnings:
+        items = "".join(f"<li>{w}</li>" for w in warnings)
+        warnings_html = f'''
+        <div class="section review">
+            <h2>Processing Notes</h2>
+            <ul>{items}</ul>
+        </div>
+        '''
+
     # Build metrics section
     metrics_html = ""
     if qc_metrics:
@@ -479,6 +491,7 @@ def _generate_fallback_report(
     <p><strong>Subject:</strong> sub-{subject_id} | <strong>Session:</strong> ses-{session_id}</p>
 
     {recommendation_html}
+    {warnings_html}
     {metrics_html}
     {images_html}
 

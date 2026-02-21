@@ -655,9 +655,16 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         # Post-run crash file reporting for this subject
         crashfiles = list(log_dir.glob("crash-*.txt"))
         if crashfiles:
-            logger.log(IMPORTANT, "Crash files found for sub-%s:", subject_id)
+            logger.error("Crash files found for sub-%s:", subject_id)
             for cf in crashfiles:
-                logger.log(IMPORTANT, "  %s", cf.name)
+                logger.error("  %s", cf.name)
+                try:
+                    content = cf.read_text()
+                    lines = content.splitlines()[:50]
+                    for line in lines:
+                        logger.error("    %s", line)
+                except Exception:
+                    logger.error("    (could not read crash file)")
 
     logger.log(IMPORTANT, "PMRIPrep processing complete")
 

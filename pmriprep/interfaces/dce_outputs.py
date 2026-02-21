@@ -111,8 +111,8 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     qc_metrics = traits.Dict(desc="Merged QC metrics dictionary")
 
     # Structural underlays (registered to DCE space, optional)
-    t1w_in_dce = traits.Str(desc="CE-T1w registered to DCE space NIfTI path")
-    flair_in_dce = traits.Str(desc="FLAIR registered to DCE space NIfTI path")
+    t1w_in_dce = traits.Either(traits.Str, None, desc="CE-T1w registered to DCE space NIfTI path")
+    flair_in_dce = traits.Either(traits.Str, None, desc="FLAIR registered to DCE space NIfTI path")
 
     # Lesion statistics (conditional on lesion mask, optional)
     lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
@@ -588,9 +588,30 @@ class DCEDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # 10. QC outputs (written to session root)
         # -----------------------------------------------------------
+        # Collect processing warnings for missing data-dependent inputs
+        _data_dependent_inputs = {
+            "t1w_in_dce": "CE-T1w structural underlay",
+            "flair_in_dce": "FLAIR structural underlay",
+            "b1_map": "B1+ transmit field map",
+            "t1_map": "T1 relaxation time map",
+            "brain_mask": "Brain mask in DCE space",
+            "nawm_mask": "NAWM mask in DCE space",
+            "lesion_mask_dce": "Lesion mask in DCE space",
+            "dce_to_t1w_xfm": "DCE to T1w registration transform",
+        }
+        warnings: list[str] = []
+        for attr, label in _data_dependent_inputs.items():
+            if not has_input(self.inputs, attr):
+                msg = f"{label} not available"
+                logger.warning(msg)
+                warnings.append(msg)
+
         qc_metrics = self.inputs.qc_metrics
         self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
+            if warnings:
+                qc_metrics = dict(qc_metrics)
+                qc_metrics["warnings"] = warnings
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
             qc_json_path = ses_dir / f"{prefix}_desc-dceQC_quality.json"
             write_json_sidecar(enhanced_qc, qc_json_path)

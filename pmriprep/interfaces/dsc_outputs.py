@@ -4,6 +4,7 @@ This module implements a custom Nipype interface for writing DSC pipeline
 outputs with BIDS-compliant filenames, JSON sidecars, and QC files.
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.outputs import copy_derivative, has_input, write_json_sidecar
+
+logger = logging.getLogger(__name__)
 
 
 class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
@@ -98,8 +101,8 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     smooth_fwhm = traits.Float(0.0, usedefault=True, desc="Smoothing FWHM in mm")
 
     # Structural underlays (registered to DSC space)
-    t1w_in_dsc = traits.Str(desc="CE-T1w registered to DSC space NIfTI path")
-    flair_in_dsc = traits.Str(desc="FLAIR registered to DSC space NIfTI path")
+    t1w_in_dsc = traits.Either(traits.Str, None, desc="CE-T1w registered to DSC space NIfTI path")
+    flair_in_dsc = traits.Either(traits.Str, None, desc="FLAIR registered to DSC space NIfTI path")
     t1w_to_dsc_xfm = traits.Str(desc="T1w-to-DSC transform matrix path")
 
     # AIF QC plots
@@ -480,9 +483,28 @@ class DSCDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # 10. QC outputs (written to session root)
         # -----------------------------------------------------------
+        # Collect processing warnings for missing data-dependent inputs
+        _data_dependent_inputs = {
+            "t1w_in_dsc": "T1w structural underlay",
+            "flair_in_dsc": "FLAIR structural underlay",
+            "brain_mask_dsc": "Brain mask in DSC space",
+            "nawm_mask_dsc": "NAWM mask in DSC space",
+            "lesion_mask_dsc": "Lesion mask in DSC space",
+            "dsc_to_t1w_xfm": "DSC to T1w registration transform",
+        }
+        warnings: list[str] = []
+        for attr, label in _data_dependent_inputs.items():
+            if not has_input(self.inputs, attr):
+                msg = f"{label} not available"
+                logger.warning(msg)
+                warnings.append(msg)
+
         qc_metrics = self.inputs.qc_metrics
         self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
+            if warnings:
+                qc_metrics = dict(qc_metrics)
+                qc_metrics["warnings"] = warnings
             # Add NiPreps-style recommendation to QC metrics
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
             qc_json_path = ses_dir / f"{prefix}_desc-dscQC_quality.json"

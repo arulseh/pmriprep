@@ -33,6 +33,17 @@
     </div>
     {% endif %}
 
+    {% if qc_metrics.warnings %}
+    <div class="section review">
+        <h2>Processing Notes</h2>
+        <ul>
+        {% for warning in qc_metrics.warnings %}
+            <li>{{ warning }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
     <!-- Brain Extraction QC -->
     {% if images.brain_mask or qc_metrics.brain_extraction %}
     <div class="section">
