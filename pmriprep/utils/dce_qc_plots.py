@@ -400,15 +400,20 @@ def generate_b1_qc_plot(
                    label="Nominal (1.0)")
         hist_mean = float(np.mean(b1_brain))
         hist_median = float(np.median(b1_brain))
+        hist_std = float(np.std(b1_brain))
         ax.axvline(hist_mean, color=COLORBLIND_PALETTE.error, linestyle="-",
                    linewidth=1.5, label=f"Mean: {hist_mean:.3f}")
         ax.axvline(hist_median, color=COLORBLIND_PALETTE.secondary, linestyle=":",
                    linewidth=1.5, label=f"Median: {hist_median:.3f}")
         ax.legend(fontsize=7, loc="upper left")
+    else:
+        hist_mean = mean_b1
+        hist_std = std_b1
+        ax.text(0.5, 0.5, "No valid B1+ voxels\nin brain mask",
+                transform=ax.transAxes, ha="center", va="center", fontsize=11)
 
     ax.set_xlabel("B1+ Correction Factor")
     ax.set_ylabel("Density")
-    hist_std = float(np.std(b1_brain)) if len(b1_brain) > 0 else std_b1
     ax.set_title(
         f"B1+ Distribution (mean={hist_mean:.3f}, std={hist_std:.3f})",
         fontsize=10,

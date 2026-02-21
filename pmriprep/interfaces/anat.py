@@ -29,6 +29,13 @@ class ReorientAndCropInputSpec(CommandLineInputSpec):
         genfile=True,
         desc="Output reoriented and cropped image",
     )
+    crop_fov = traits.Bool(
+        True,
+        usedefault=True,
+        desc="Apply robustfov cropping after reorientation. Set to False for "
+        "non-T1w modalities (FLAIR, T2w, PDw) where robustfov may "
+        "incorrectly crop the FOV.",
+    )
 
 
 class ReorientAndCropOutputSpec(TraitedSpec):
@@ -91,9 +98,13 @@ class ReorientAndCrop(CommandLine):
 
     @property
     def cmdline(self) -> str:
-        """Build the fslreorient2std + robustfov command chain."""
+        """Build the fslreorient2std (+ optional robustfov) command chain."""
         in_file = str(self.inputs.in_file)
         out_file = self._gen_outfilename()
+
+        if not self.inputs.crop_fov:
+            # Reorient only — no robustfov cropping
+            return f"fslreorient2std {in_file} {out_file}"
 
         # Create intermediate filename for reorient step
         in_path = Path(in_file)

@@ -655,7 +655,9 @@ def init_anat_preproc_wf(
 
         # T2w preprocessing and coregistration
         if has_t2w:
-            reorient_t2w = pe.Node(ReorientAndCrop(), name="reorient_t2w")
+            reorient_t2w = pe.Node(
+                ReorientAndCrop(crop_fov=False), name="reorient_t2w"
+            )
             bias_correct_t2w = pe.Node(
                 BiasCorrection(denoise=config.denoise), name="bias_correct_t2w"
             )
@@ -676,7 +678,9 @@ def init_anat_preproc_wf(
 
         # FLAIR preprocessing and coregistration
         if has_flair:
-            reorient_flair = pe.Node(ReorientAndCrop(), name="reorient_flair")
+            reorient_flair = pe.Node(
+                ReorientAndCrop(crop_fov=False), name="reorient_flair"
+            )
             bias_correct_flair = pe.Node(
                 BiasCorrection(denoise=config.denoise), name="bias_correct_flair"
             )
@@ -697,7 +701,9 @@ def init_anat_preproc_wf(
 
         # PDw preprocessing and coregistration
         if has_pdw:
-            reorient_pdw = pe.Node(ReorientAndCrop(), name="reorient_pdw")
+            reorient_pdw = pe.Node(
+                ReorientAndCrop(crop_fov=False), name="reorient_pdw"
+            )
             bias_correct_pdw = pe.Node(
                 BiasCorrection(denoise=config.denoise), name="bias_correct_pdw"
             )
