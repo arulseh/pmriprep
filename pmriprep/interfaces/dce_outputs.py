@@ -110,7 +110,7 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Lesion statistics (conditional on lesion mask, optional)
     lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
     lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
-    lesion_mask_dce = traits.Str(desc="Lesion mask in DCE space path")
+    lesion_mask_dce = traits.Either(traits.Str, None, desc="Lesion mask in DCE space path")
 
     # Anatomical masks in DCE space (optional)
     brain_mask = traits.Str(desc="Brain mask in DCE space path")

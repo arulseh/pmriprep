@@ -919,12 +919,17 @@ def init_pmriprep_wf(
             (anat_wf, outputnode, [
                 ("outputnode.t1w_preproc", "t1w_preproc"),
                 ("outputnode.brain_mask", "brain_mask"),
-                ("outputnode.wm_probseg", "wm_probseg"),
-                ("outputnode.gm_probseg", "gm_probseg"),
-                ("outputnode.csf_probseg", "csf_probseg"),
                 ("outputnode.qc_metrics", "anat_qc"),
             ]),
         ])
+        if session_data.modalities.t1w_pre:
+            workflow.connect([
+                (anat_wf, outputnode, [
+                    ("outputnode.wm_probseg", "wm_probseg"),
+                    ("outputnode.gm_probseg", "gm_probseg"),
+                    ("outputnode.csf_probseg", "csf_probseg"),
+                ]),
+            ])
 
         # -------------------------------------------------------------------
         # AnatDerivativeWriter: Write BIDS-compliant anat outputs
@@ -946,13 +951,22 @@ def init_pmriprep_wf(
             (anat_wf, anat_writer, [
                 ("outputnode.t1w_preproc", "t1w_preproc"),
                 ("outputnode.brain_mask", "brain_mask"),
-                ("outputnode.wm_probseg", "wm_probseg"),
-                ("outputnode.gm_probseg", "gm_probseg"),
-                ("outputnode.csf_probseg", "csf_probseg"),
                 ("outputnode.t1w_to_mni_xfm", "acpc_xfm"),
                 ("outputnode.qc_metrics", "qc_metrics"),
             ]),
         ])
+
+        # Tissue probability maps: only available when precon T1w exists
+        # (FAST segmentation is skipped in postcon-only mode because
+        # gadolinium disrupts tissue boundaries)
+        if session_data.modalities.t1w_pre:
+            workflow.connect([
+                (anat_wf, anat_writer, [
+                    ("outputnode.wm_probseg", "wm_probseg"),
+                    ("outputnode.gm_probseg", "gm_probseg"),
+                    ("outputnode.csf_probseg", "csf_probseg"),
+                ]),
+            ])
 
         # Connect source paths for JSON sidecar Sources field
         if session_data.modalities.t1w_pre:
@@ -961,7 +975,8 @@ def init_pmriprep_wf(
             ])
 
         # Connect optional modalities
-        if session_data.modalities.t1w_ce_gad:
+        # Postcon coreg/xfm outputs only exist when both pre and postcon are available
+        if session_data.modalities.t1w_ce_gad and session_data.modalities.t1w_pre:
             writer_connections = [
                 ("outputnode.t1w_postcon_coreg", "t1w_postcon_coreg"),
                 ("outputnode.t1w_postcon_to_t1w_xfm", "t1w_postcon_to_t1w_xfm"),
@@ -973,6 +988,9 @@ def init_pmriprep_wf(
                 )
             workflow.connect([
                 (anat_wf, anat_writer, writer_connections),
+            ])
+        if session_data.modalities.t1w_ce_gad:
+            workflow.connect([
                 (inputnode, anat_writer, [("t1w_postcon", "source_t1w_postcon")]),
             ])
         if session_data.modalities.t2w:
@@ -1024,9 +1042,16 @@ def init_pmriprep_wf(
         workflow.connect([
             (anat_wf, anat_writer, [
                 ("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip"),
-                ("outputnode.tissue_seg_filmstrip", "tissue_seg_filmstrip"),
             ]),
         ])
+        # Tissue segmentation filmstrip: unavailable in postcon-only mode
+        # (FAST skipped because gadolinium disrupts tissue boundaries)
+        if session_data.modalities.t1w_pre:
+            workflow.connect([
+                (anat_wf, anat_writer, [
+                    ("outputnode.tissue_seg_filmstrip", "tissue_seg_filmstrip"),
+                ]),
+            ])
 
         workflow.connect([
             (anat_wf, anat_writer, [
@@ -1237,6 +1262,9 @@ def init_pmriprep_wf(
             dsc_underlay_is_postcon = (
                 dsc_ref_selection.candidate.image_type == ImageType.T1W_POSTCON
             )
+            # Postcon-only override: t1w_postcon_coreg requires both pre and postcon
+            if dsc_underlay_is_postcon and not session_data.modalities.t1w_pre:
+                dsc_ref_output = "outputnode.t1w_preproc"
 
         # Connect anat outputs to DSC workflow
         if anat_wf is not None:
@@ -1245,23 +1273,33 @@ def init_pmriprep_wf(
                 (anat_wf, dsc_wf, [
                     ("outputnode.t1w_preproc", "inputnode.t1w_reference"),
                     ("outputnode.brain_mask", "inputnode.brain_mask"),
-                    ("outputnode.wm_probseg", "inputnode.wm_probseg"),
                     ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
                 ]),
             ])
+            # WM probseg for BBR registration (unavailable in postcon-only mode)
+            if session_data.modalities.t1w_pre:
+                workflow.connect([
+                    (anat_wf, dsc_wf, [
+                        ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+                    ]),
+                ])
             # T1w underlay: use confidence-scored selection
             if dsc_ref_selection and dsc_ref_output != "outputnode.t1w_preproc":
                 workflow.connect([
                     (anat_wf, dsc_wf, [(dsc_ref_output, "inputnode.t1w_underlay")]),
                 ])
             else:
-                # Fallback: postcon if available, else precon
-                if session_data.modalities.t1w_ce_gad:
+                # Fallback: postcon if available (and precon exists for coreg), else precon
+                if (session_data.modalities.t1w_ce_gad
+                        and session_data.modalities.t1w_pre):
                     workflow.connect([
                         (anat_wf, dsc_wf, [("outputnode.t1w_postcon_coreg", "inputnode.t1w_underlay")]),
                     ])
                     dsc_underlay_is_postcon = True
                 else:
+                    # In postcon-only mode, t1w_preproc IS the postcon
+                    if session_data.modalities.t1w_ce_gad:
+                        dsc_underlay_is_postcon = True
                     workflow.connect([
                         (anat_wf, dsc_wf, [("outputnode.t1w_preproc", "inputnode.t1w_underlay")]),
                     ])
@@ -1528,6 +1566,7 @@ def init_pmriprep_wf(
             subject_id=subject_id,
             session_id=session_id,
             config=dce_config,
+            has_tissue_seg=bool(session_data.modalities.t1w_pre),
             name="dce_wf",
         )
 
@@ -1596,6 +1635,9 @@ def init_pmriprep_wf(
             dce_ref_is_postcon = (
                 dce_ref_selection.candidate.image_type == ImageType.T1W_POSTCON
             )
+            # Postcon-only override: t1w_postcon_coreg requires both pre and postcon
+            if dce_ref_is_postcon and not session_data.modalities.t1w_pre:
+                dce_ref_output = "outputnode.t1w_preproc"
 
             # Override DCE registration reference type from selection
             ref_type_map = {
@@ -1622,12 +1664,18 @@ def init_pmriprep_wf(
             workflow.connect([
                 (anat_wf, dce_wf, [
                     ("outputnode.brain_mask", "inputnode.brain_mask"),
-                    ("outputnode.wm_probseg", "inputnode.wm_probseg"),
-                    ("outputnode.csf_probseg", "inputnode.csf_probseg"),
                     # Pass T1w→MNI transform for atlas-guided AIF (Gap 6)
                     ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
                 ]),
             ])
+            # Tissue probseg maps (unavailable in postcon-only mode)
+            if session_data.modalities.t1w_pre:
+                workflow.connect([
+                    (anat_wf, dce_wf, [
+                        ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+                        ("outputnode.csf_probseg", "inputnode.csf_probseg"),
+                    ]),
+                ])
             # Connect FLAIR underlay if available
             if session_data.modalities.flair:
                 workflow.connect([

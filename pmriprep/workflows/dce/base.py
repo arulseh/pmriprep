@@ -31,6 +31,7 @@ def init_dce_preproc_wf(
     subject_id: str,
     session_id: Optional[str] = None,
     config: Optional[DCEConfig] = None,
+    has_tissue_seg: bool = True,
     name: str = "dce_preproc_wf",
 ) -> pe.Workflow:
     """Initialize the DCE (Dynamic Contrast Enhanced) preprocessing workflow.
@@ -52,6 +53,9 @@ def init_dce_preproc_wf(
         Session identifier (without "ses-" prefix).
     config : DCEConfig, optional
         Configuration for DCE processing. If None, default configuration is used.
+    has_tissue_seg : bool
+        Whether tissue segmentation maps (CSF/WM probseg) are available.
+        False in postcon-only mode where FAST is skipped. Default: True.
     name : str
         Name of the workflow (default: "dce_preproc_wf").
 
@@ -597,26 +601,28 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # CSF probability map needs trilinear interpolation (continuous values)
     # and clipping to [0, 1] instead of binarization + hole-filling.
-    transform_csf_probseg = pe.Node(
-        niu.Function(
-            input_names=["probseg_file", "reference_file", "transform_matrix"],
-            output_names=["out_file"],
-            function=_transform_probseg_to_dce,
-        ),
-        name="transform_csf_probseg",
-    )
+    # Skip entirely in postcon-only mode where FAST segmentation is unavailable.
+    if has_tissue_seg:
+        transform_csf_probseg = pe.Node(
+            niu.Function(
+                input_names=["probseg_file", "reference_file", "transform_matrix"],
+                output_names=["out_file"],
+                function=_transform_probseg_to_dce,
+            ),
+            name="transform_csf_probseg",
+        )
 
-    workflow.connect([
-        (inputnode, transform_csf_probseg, [("csf_probseg", "probseg_file")]),
-        (dce_preprocess, transform_csf_probseg, [("mean_img", "reference_file")]),
-        (dce_registration, transform_csf_probseg, [("out_matrix", "transform_matrix")]),
-    ])
-
-    # Wire transformed CSF probseg to T1 mapping only when active
-    if not config.no_t1:
         workflow.connect([
-            (transform_csf_probseg, t1_mapping, [("out_file", "csf_probseg")]),
+            (inputnode, transform_csf_probseg, [("csf_probseg", "probseg_file")]),
+            (dce_preprocess, transform_csf_probseg, [("mean_img", "reference_file")]),
+            (dce_registration, transform_csf_probseg, [("out_matrix", "transform_matrix")]),
         ])
+
+        # Wire transformed CSF probseg to T1 mapping only when active
+        if not config.no_t1:
+            workflow.connect([
+                (transform_csf_probseg, t1_mapping, [("out_file", "csf_probseg")]),
+            ])
 
     # ==========================================================================
     # Node 4b2: Create conservative AIF search mask (Gap 5)
@@ -2218,9 +2224,9 @@ def _signal_to_concentration_node(
 def _tortuosity_correction_node(
     ktrans_file,
     dwi_file,
-    dwi_bval,
-    brain_mask,
-    no_tortuosity,
+    dwi_bval=None,
+    brain_mask=None,
+    no_tortuosity=False,
 ):
     """Function node for tortuosity correction.
 

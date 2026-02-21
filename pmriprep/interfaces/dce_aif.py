@@ -393,9 +393,9 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="Optional user-supplied AIF search mask (overrides atlas mask)",
     )
-    lesion_mask_file = File(
-        exists=True,
-        mandatory=False,
+    lesion_mask_file = traits.Either(
+        File(exists=True),
+        None,
         desc="Optional 3D lesion mask for exclusion",
     )
 

@@ -31,10 +31,13 @@ class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Core anatomical outputs (mandatory)
     t1w_preproc = File(exists=True, mandatory=True, desc="Preprocessed T1w image")
     brain_mask = File(exists=True, mandatory=True, desc="Brain mask")
-    wm_probseg = File(exists=True, mandatory=True, desc="WM probability map")
-    gm_probseg = File(exists=True, mandatory=True, desc="GM probability map")
-    csf_probseg = File(exists=True, mandatory=True, desc="CSF probability map")
     acpc_xfm = File(exists=True, mandatory=True, desc="ACPC alignment transform")
+
+    # Tissue probability maps (optional — unavailable in postcon-only mode
+    # where FAST segmentation is skipped due to gadolinium contamination)
+    wm_probseg = File(desc="WM probability map")
+    gm_probseg = File(desc="GM probability map")
+    csf_probseg = File(desc="CSF probability map")
 
     # Optional coregistered images
     t1w_postcon_coreg = File(desc="Post-contrast T1w coregistered to precon")
@@ -175,13 +178,16 @@ class AnatDerivativeWriter(BaseInterface):
                 anat_dir / f"{prefix}_space-anat_desc-brain_mask.json",
             )
 
-        # Tissue probability maps
+        # Tissue probability maps (optional — skipped in postcon-only mode)
         tissue_map = {
-            "CSF": self.inputs.csf_probseg,
-            "GM": self.inputs.gm_probseg,
-            "WM": self.inputs.wm_probseg,
+            "CSF": "csf_probseg",
+            "GM": "gm_probseg",
+            "WM": "wm_probseg",
         }
-        for tissue_type, probseg_path in tissue_map.items():
+        for tissue_type, input_name in tissue_map.items():
+            if not self._has_input(input_name):
+                continue
+            probseg_path = getattr(self.inputs, input_name)
             self._copy_nifti(  # type: ignore[call-arg]
                 probseg_path,
                 anat_dir / f"{prefix}_space-anat_label-{tissue_type}_probseg.nii.gz",
