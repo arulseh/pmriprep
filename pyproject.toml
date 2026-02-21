@@ -34,6 +34,7 @@ dependencies = [
     "templateflow>=23.0.0",
     # Config dependencies
     "pyyaml>=6.0",
+    "toml>=0.10.0",
     # Report generation
     "jinja2>=3.0",
 ]

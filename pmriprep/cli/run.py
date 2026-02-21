@@ -3,13 +3,32 @@
 import argparse
 import logging
 import sys
+from dataclasses import asdict
 from pathlib import Path
+from time import strftime
 from typing import Any, Dict, List, Optional, Sequence
+from uuid import uuid4
+
+import toml  # type: ignore[import-untyped]
 
 from pmriprep import __version__
+from pmriprep.cli import logging as plogger
+from pmriprep.cli.logging import IMPORTANT
 
-# Set up module-level logger
-logger = logging.getLogger("pmriprep")
+# Module-level logger — uses the centralized ``cli`` logger for top-level
+# messages that should be IMPORTANT-level by default.
+logger = plogger.cli
+
+
+def _sanitize_for_toml(obj: Any) -> Any:
+    """Convert Path objects to strings and drop None values for TOML."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_toml(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_toml(item) for item in obj]
+    if isinstance(obj, Path):
+        return str(obj)
+    return obj
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -44,9 +63,10 @@ Examples:
     parser.add_argument(
         "-v",
         "--verbose",
-        action="store_true",
-        default=False,
-        help="Enable verbose (DEBUG-level) logging.",
+        dest="verbose_count",
+        action="count",
+        default=0,
+        help="Increases log verbosity for each occurrence, debug level is -vvv.",
     )
 
     # Positional arguments (BIDS-App standard)
@@ -288,6 +308,31 @@ Examples:
         default=None,
         help="Device for HD-GLIO inference (default: cuda).",
     )
+
+    # Other options (NiPreps parity)
+    g_other = parser.add_argument_group(
+        "Other options",
+        "Additional workflow control options.",
+    )
+    g_other.add_argument(
+        "--stop-on-first-crash",
+        action="store_true",
+        default=False,
+        help="Force stopping on first crash, even if a work directory was specified.",
+    )
+    g_other.add_argument(
+        "--write-graph",
+        action="store_true",
+        default=False,
+        help="Write workflow graph.",
+    )
+    g_other.add_argument(
+        "--resource-monitor",
+        action="store_true",
+        default=False,
+        help="Enable Nipype's resource monitoring to keep track of memory and CPU usage.",
+    )
+
     return parser
 
 
@@ -319,22 +364,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     # Run the workflow
     run_pmriprep_wf(args)
-
-
-def setup_logging(verbose: bool = False) -> None:
-    """Set up logging for PMRIPrep.
-
-    Parameters
-    ----------
-    verbose : bool
-        If True, set logging level to DEBUG; otherwise INFO.
-    """
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
 
 
 def _args_to_dict(args: argparse.Namespace) -> Dict[str, Any]:
@@ -464,7 +493,6 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     args : argparse.Namespace
         Parsed command line arguments.
     """
-    from pmriprep.config.dsc import DSCConfig
     from pmriprep.config.loader import (
         build_anat_config,
         build_dce_config,
@@ -479,12 +507,18 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         init_pmriprep_wf,
     )
 
-    # Set up logging
-    setup_logging(verbose=getattr(args, "verbose", False))
+    # Compute log level from -v count: (none)=25, -v=20, -vv=15, -vvv=10
+    log_level = int(max(IMPORTANT - 5 * args.verbose_count, logging.DEBUG))
 
-    logger.info(f"PMRIPrep version {__version__}")
-    logger.info(f"BIDS directory: {args.bids_dir}")
-    logger.info(f"Output directory: {args.output_dir}")
+    # Generate run UUID once per invocation (all subjects share it)
+    run_uuid = f"{strftime('%Y%m%d-%H%M%S')}_{uuid4()}"
+
+    # Console-only logging before per-subject FileHandler is set up
+    plogger.init(log_level=log_level)
+
+    logger.log(IMPORTANT, f"PMRIPrep version {__version__}")
+    logger.log(IMPORTANT, f"BIDS directory: {args.bids_dir}")
+    logger.log(IMPORTANT, f"Output directory: {args.output_dir}")
 
     # Convert args to dict for config merging
     cli_args = _args_to_dict(args)
@@ -531,21 +565,38 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         logger.error("No subjects found to process")
         sys.exit(1)
 
-    logger.info(f"Found {len(subjects)} subject(s) to process")
+    logger.log(IMPORTANT, f"Found {len(subjects)} subject(s) to process")
 
-    # Configure Nipype
-    _configure_nipype(args)
-
-    # Import nipype after configuration
-    import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
-
-    # Process each subject/session
+    # Process each subject
     for subject_id in subjects:
         sessions = _find_sessions(args.bids_dir, subject_id, args.session_label)
 
+        # Per-subject log directory (NiPreps convention: no session in path)
+        log_dir = (
+            args.output_dir / "pmriprep" / f"sub-{subject_id}" / "log" / run_uuid
+        )
+
+        # Re-initialize loggers with per-subject FileHandler + nipype config
+        plogger.init(log_level=log_level, log_dir=log_dir)
+        _configure_nipype(args, log_dir=log_dir)
+
+        # Save config TOML snapshot (sanitize Path→str, drop None values)
+        config_snapshot = _sanitize_for_toml({
+            "pmriprep": {"version": __version__, "run_uuid": run_uuid},
+            "execution": {
+                "nprocs": args.nprocs,
+                "mem_gb": args.mem_gb,
+            },
+            "dsc": asdict(dsc_config),
+            "dce": asdict(dce_config),
+            "anat": asdict(anat_config),
+            "hdglio": asdict(hdglio_config),
+        })
+        (log_dir / "pmriprep.toml").write_text(toml.dumps(config_snapshot))
+
         for session_id in sessions:
             session_str = f"ses-{session_id}" if session_id else "no-session"
-            logger.info(f"Processing sub-{subject_id}/{session_str}")
+            logger.log(IMPORTANT, f"Processing sub-{subject_id}/{session_str}")
 
             try:
                 # Initialize the master workflow
@@ -563,6 +614,12 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     name=f"pmriprep_sub{subject_id}_{session_str}_wf",
                 )
 
+                # Write workflow graph if requested
+                if args.write_graph:
+                    workflow.write_graph(
+                        graph2use="colored", dotfilename="graph"
+                    )
+
                 # Log pipeline summary
                 summary = get_pipeline_summary(workflow)
                 for line in summary.split("\n"):
@@ -575,10 +632,15 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     workflow.base_dir = str(args.output_dir / "work")
 
                 # Run the workflow
-                logger.info(f"Starting workflow execution for sub-{subject_id}")
+                logger.log(
+                    IMPORTANT,
+                    f"Starting workflow execution for sub-{subject_id}",
+                )
                 _run_workflow(workflow, args)
-                logger.info(
-                    f"Successfully completed processing for sub-{subject_id}/{session_str}"
+                logger.log(
+                    IMPORTANT,
+                    f"Successfully completed processing for "
+                    f"sub-{subject_id}/{session_str}",
                 )
 
             except Exception as e:
@@ -586,23 +648,31 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     f"Error processing sub-{subject_id}/{session_str}: {e}"
                 )
                 # Continue to next subject/session instead of failing completely
-                if getattr(args, "stop_on_error", False):
+                if args.stop_on_first_crash:
                     raise
                 continue
 
-    logger.info("PMRIPrep processing complete")
+        # Post-run crash file reporting for this subject
+        crashfiles = list(log_dir.glob("crash-*.txt"))
+        if crashfiles:
+            logger.log(IMPORTANT, "Crash files found for sub-%s:", subject_id)
+            for cf in crashfiles:
+                logger.log(IMPORTANT, "  %s", cf.name)
+
+    logger.log(IMPORTANT, "PMRIPrep processing complete")
 
 
-def _configure_nipype(args: argparse.Namespace) -> None:
+def _configure_nipype(
+    args: argparse.Namespace, *, log_dir: Path
+) -> None:
     """Configure Nipype execution settings.
 
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed command line arguments containing:
-        - nprocs: Number of processors
-        - mem_gb: Memory limit in GB
-        - work_dir: Working directory
+        Parsed command line arguments.
+    log_dir : Path
+        Per-subject log directory for crash dumps and Nipype logs.
     """
     import os
 
@@ -614,31 +684,26 @@ def _configure_nipype(args: argparse.Namespace) -> None:
         os.environ["FSLOUTPUTTYPE"] = "NIFTI_GZ"
         logger.debug("Set FSLOUTPUTTYPE=NIFTI_GZ")
 
-    # Create output and log directories if they don't exist
-    if args.output_dir:
-        log_dir = args.output_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Configure execution settings
-    if getattr(args, "verbose", False):
-        nipype_config.enable_debug_mode()
     nipype_config.update_config(
         {
             "execution": {
-                "stop_on_first_crash": False,
-                "remove_unnecessary_outputs": True,
+                "crashdump_dir": str(log_dir),
                 "crashfile_format": "txt",
+                "stop_on_first_crash": args.stop_on_first_crash,
+                "remove_unnecessary_outputs": True,
                 "keep_inputs": False,
                 "hash_method": "content",
             },
             "logging": {
-                "log_directory": str(args.output_dir / "logs")
-                if args.output_dir
-                else "",
+                "log_directory": str(log_dir),
                 "log_to_file": True,
             },
         }
     )
+
+    # Enable resource monitoring if requested
+    if args.resource_monitor:
+        nipype_config.enable_resource_monitor()
 
     # Set up nipype logging
     nipype_logging.update_logging(nipype_config)
