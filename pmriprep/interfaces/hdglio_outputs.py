@@ -2,12 +2,10 @@
 
 This module implements a custom Nipype interface that writes HD-GLIO
 tumor segmentation outputs with BIDS-compliant filenames, JSON sidecars,
-and QC files. Outputs are split between hdglio_pipeline/ (segmentation
-outputs) and anat_pipeline/ (lesion and NAWM masks for downstream use).
+and QC files. All outputs go to the unified pmriprep/ derivative root.
 """
 
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +16,8 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     TraitedSpec,
     traits,
 )
+
+from pmriprep.utils.outputs import copy_derivative, write_json_sidecar
 
 
 class HDGLIODerivativeWriterInputSpec(BaseInterfaceInputSpec):
@@ -76,14 +76,14 @@ class HDGLIODerivativeWriter(BaseInterface):
 
     - BIDS-compliant filenames for segmentation maps and binary masks
     - JSON sidecars paired with every NIfTI file
-    - Lesion and NAWM masks written to anat_pipeline/ for downstream use
+    - Lesion and NAWM masks for downstream use
     - Volume statistics text file
-    - dataset_description.json at the pipeline root
-    - QC JSON files in a qc/ subdirectory
+    - dataset_description.json at the derivative root
+    - QC JSON and lesion stats in the session directory
 
     The output directory structure follows::
 
-        {output_dir}/hdglio_pipeline/
+        {output_dir}/pmriprep/
             dataset_description.json
             sub-{subject}/ses-{session}/
                 anat/
@@ -93,15 +93,13 @@ class HDGLIODerivativeWriter(BaseInterface):
                     sub-XX_ses-XX_space-anat_desc-nonenhancing_mask.nii.gz
                     sub-XX_ses-XX_space-anat_desc-wholetumor_mask.nii.gz
                     sub-XX_ses-XX_desc-hdglio_volumes.txt
-                qc/
-                    hdglio_qc.json
-
-        {output_dir}/anat_pipeline/
-            sub-{subject}/ses-{session}/
-                anat/
                     sub-XX_ses-XX_space-anat_desc-lesion_mask.nii.gz
                     sub-XX_ses-XX_space-anat_desc-lesiondilated15mm_mask.nii.gz
                     sub-XX_ses-XX_space-anat_desc-nawm_mask.nii.gz
+                sub-XX_ses-XX_desc-hdglioQC_quality.json
+                sub-XX_ses-XX_space-anat_desc-lesionStats.json
+                figures/
+                    ...
     """
 
     input_spec = HDGLIODerivativeWriterInputSpec
@@ -118,33 +116,25 @@ class HDGLIODerivativeWriter(BaseInterface):
             prefix += f"_ses-{session}"
 
         # --- Create directory structure ---
-        hdglio_dir = output_dir / "hdglio_pipeline"
-        hdglio_ses_dir = hdglio_dir / f"sub-{subject}"
+        # All outputs go under the unified pmriprep/ derivative root
+        pipeline_dir = output_dir / "pmriprep"
+        ses_dir = pipeline_dir / f"sub-{subject}"
         if session:
-            hdglio_ses_dir = hdglio_ses_dir / f"ses-{session}"
-        hdglio_anat_dir = hdglio_ses_dir / "anat"
-        hdglio_qc_dir = hdglio_ses_dir / "qc"
+            ses_dir = ses_dir / f"ses-{session}"
+        anat_dir = ses_dir / "anat"
 
-        anat_dir = output_dir / "anat_pipeline"
-        anat_ses_dir = anat_dir / f"sub-{subject}"
-        if session:
-            anat_ses_dir = anat_ses_dir / f"ses-{session}"
-        anat_anat_dir = anat_ses_dir / "anat"
-
-        hdglio_anat_dir.mkdir(parents=True, exist_ok=True)
-        hdglio_qc_dir.mkdir(parents=True, exist_ok=True)
-        anat_anat_dir.mkdir(parents=True, exist_ok=True)
+        anat_dir.mkdir(parents=True, exist_ok=True)
 
         # ---------------------------------------------------------------
-        # 1. HD-GLIO segmentation outputs → hdglio_pipeline/
+        # 1. HD-GLIO segmentation outputs
         # ---------------------------------------------------------------
 
         # Segmentation label map (dseg)
-        self._copy_nifti(
+        copy_derivative(
             self.inputs.segmentation,
-            hdglio_anat_dir / f"{prefix}_space-anat_desc-hdglio_dseg.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-hdglio_dseg.nii.gz",
         )
-        self._write_json(
+        write_json_sidecar(
             {
                 "Description": "HD-GLIO deep learning tumor segmentation",
                 "Manual": False,
@@ -155,96 +145,96 @@ class HDGLIODerivativeWriter(BaseInterface):
                 },
                 "Method": "HD-GLIO (Isensee et al.)",
             },
-            hdglio_anat_dir / f"{prefix}_space-anat_desc-hdglio_dseg.json",
+            anat_dir / f"{prefix}_space-anat_desc-hdglio_dseg.json",
         )
 
         # Enhancing tumor mask
-        self._copy_nifti(
+        copy_derivative(
             self.inputs.enhancing_mask,
-            hdglio_anat_dir / f"{prefix}_space-anat_desc-enhancing_mask.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-enhancing_mask.nii.gz",
         )
-        self._write_json(
+        write_json_sidecar(
             {
                 "Description": "Binary mask of enhancing tumor (HD-GLIO label 2)",
                 "Type": "Brain",
                 "Method": "Derived from HD-GLIO segmentation",
             },
-            hdglio_anat_dir / f"{prefix}_space-anat_desc-enhancing_mask.json",
+            anat_dir / f"{prefix}_space-anat_desc-enhancing_mask.json",
         )
 
         # Non-enhancing tumor mask
-        self._copy_nifti(
+        copy_derivative(
             self.inputs.non_enhancing_mask,
-            hdglio_anat_dir / f"{prefix}_space-anat_desc-nonenhancing_mask.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-nonenhancing_mask.nii.gz",
         )
-        self._write_json(
+        write_json_sidecar(
             {
                 "Description": "Binary mask of non-enhancing tumor (HD-GLIO label 1)",
                 "Type": "Brain",
                 "Method": "Derived from HD-GLIO segmentation",
             },
-            hdglio_anat_dir / f"{prefix}_space-anat_desc-nonenhancing_mask.json",
+            anat_dir / f"{prefix}_space-anat_desc-nonenhancing_mask.json",
         )
 
         # Whole tumor mask
-        self._copy_nifti(
+        copy_derivative(
             self.inputs.whole_tumor_mask,
-            hdglio_anat_dir / f"{prefix}_space-anat_desc-wholetumor_mask.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-wholetumor_mask.nii.gz",
         )
-        self._write_json(
+        write_json_sidecar(
             {
                 "Description": "Binary mask of whole tumor (HD-GLIO labels 1+2)",
                 "Type": "Brain",
                 "Method": "Derived from HD-GLIO segmentation",
             },
-            hdglio_anat_dir / f"{prefix}_space-anat_desc-wholetumor_mask.json",
+            anat_dir / f"{prefix}_space-anat_desc-wholetumor_mask.json",
         )
 
         # ---------------------------------------------------------------
-        # 2. Downstream masks → anat_pipeline/
+        # 2. Downstream masks (lesion, dilated lesion, NAWM)
         # ---------------------------------------------------------------
 
         # Lesion mask (copy of whole tumor mask for downstream use)
-        self._copy_nifti(
+        copy_derivative(
             self.inputs.whole_tumor_mask,
-            anat_anat_dir / f"{prefix}_space-anat_desc-lesion_mask.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-lesion_mask.nii.gz",
         )
-        self._write_json(
+        write_json_sidecar(
             {
                 "Description": "Lesion mask from HD-GLIO whole tumor segmentation",
                 "Type": "Brain",
                 "Method": "HD-GLIO segmentation (labels 1+2)",
             },
-            anat_anat_dir / f"{prefix}_space-anat_desc-lesion_mask.json",
+            anat_dir / f"{prefix}_space-anat_desc-lesion_mask.json",
         )
 
         # Dilated lesion mask
-        self._copy_nifti(
+        copy_derivative(
             self.inputs.dilated_lesion_mask,
-            anat_anat_dir / f"{prefix}_space-anat_desc-lesiondilated15mm_mask.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-lesiondilated15mm_mask.nii.gz",
         )
-        self._write_json(
+        write_json_sidecar(
             {
                 "Description": "Lesion mask dilated by 15mm for registration cost function weighting",
                 "Type": "Brain",
                 "Method": "Spherical dilation of HD-GLIO whole tumor mask",
                 "DilationRadiusMM": 15.0,
             },
-            anat_anat_dir / f"{prefix}_space-anat_desc-lesiondilated15mm_mask.json",
+            anat_dir / f"{prefix}_space-anat_desc-lesiondilated15mm_mask.json",
         )
 
         # NAWM mask
-        self._copy_nifti(
+        copy_derivative(
             self.inputs.nawm_mask,
-            anat_anat_dir / f"{prefix}_space-anat_desc-nawm_mask.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-nawm_mask.nii.gz",
         )
-        self._write_json(
+        write_json_sidecar(
             {
                 "Description": "Contralateral normal-appearing white matter mask for CBV normalization",
                 "Type": "Brain",
                 "Method": "Contralateral WM thresholded at p>=0.9, excluding tumor margin",
             },
-            anat_anat_dir / f"{prefix}_space-anat_desc-nawm_mask.json",
+            anat_dir / f"{prefix}_space-anat_desc-nawm_mask.json",
         )
 
         # ---------------------------------------------------------------
@@ -255,17 +245,15 @@ class HDGLIODerivativeWriter(BaseInterface):
         qc_metrics = self.inputs.qc_metrics
         if isdefined(qc_metrics) and qc_metrics:
             volumes_path = (
-                hdglio_anat_dir / f"{prefix}_desc-hdglio_volumes.txt"
+                anat_dir / f"{prefix}_desc-hdglio_volumes.txt"
             )
             self._write_volumes_txt(qc_metrics, volumes_path)
 
         # ---------------------------------------------------------------
         # 3b. Lesion statistics JSON
         # ---------------------------------------------------------------
-        stats_dir = hdglio_ses_dir / "stats"
-        stats_dir.mkdir(parents=True, exist_ok=True)
         lesion_stats_path = (
-            stats_dir / f"{prefix}_space-anat_lesion-stats.json"
+            ses_dir / f"{prefix}_space-anat_desc-lesionStats.json"
         )
         self._write_lesion_stats_json(
             segmentation_file=self.inputs.segmentation,
@@ -278,14 +266,15 @@ class HDGLIODerivativeWriter(BaseInterface):
         # ---------------------------------------------------------------
         # 4. Dataset description
         # ---------------------------------------------------------------
-        self._write_dataset_description(hdglio_dir)
+        from pmriprep.utils.outputs import write_dataset_description
+        write_dataset_description(pipeline_dir, self.inputs.bids_dir)
 
         # ---------------------------------------------------------------
         # 4b. QC figures → figures/ with BIDS names
         # ---------------------------------------------------------------
         from pmriprep.utils.report_utils import figure_filename
 
-        figures_dir = hdglio_ses_dir / "figures"
+        figures_dir = ses_dir / "figures"
 
         _fig_inputs = {
             "seg_postcon": "seg_filmstrip_postcon",
@@ -295,19 +284,18 @@ class HDGLIODerivativeWriter(BaseInterface):
         for fig_key, attr in _fig_inputs.items():
             val = getattr(self.inputs, attr, None)
             if val is not None and isdefined(val) and val and Path(val).exists():
-                figures_dir.mkdir(parents=True, exist_ok=True)
                 fname = figure_filename(subject, session, fig_key, "hdglio")
-                shutil.copy2(str(val), str(figures_dir / fname))
+                copy_derivative(str(val), figures_dir / fname)
 
         # ---------------------------------------------------------------
         # 5. QC JSON
         # ---------------------------------------------------------------
-        qc_json_path = hdglio_qc_dir / "hdglio_qc.json"
+        qc_json_path = ses_dir / f"{prefix}_desc-hdglioQC_quality.json"
         if isdefined(qc_metrics) and qc_metrics:
-            self._write_json(qc_metrics, qc_json_path)
+            write_json_sidecar(qc_metrics, qc_json_path)
 
-        self._out_dir = str(hdglio_ses_dir)
-        self._qc_json = str(qc_json_path)
+        self._out_dir = str(ses_dir)
+        self._qc_json = str(qc_json_path) if qc_json_path.exists() else ""
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:
@@ -320,52 +308,6 @@ class HDGLIODerivativeWriter(BaseInterface):
     # -------------------------------------------------------------------
     # Helper methods
     # -------------------------------------------------------------------
-
-    @staticmethod
-    def _copy_nifti(src: str, dst: Path) -> None:
-        """Copy a NIfTI file to the destination path."""
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(dst))
-
-    @staticmethod
-    def _write_json(data: dict, path: Path) -> None:
-        """Write a dictionary as a JSON file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2, default=str)
-
-    @staticmethod
-    def _write_dataset_description(pipeline_dir: Path) -> None:
-        """Write dataset_description.json at the hdglio_pipeline root."""
-        import pmriprep
-
-        desc_path = pipeline_dir / "dataset_description.json"
-        if desc_path.exists():
-            return
-
-        pipeline_dir.mkdir(parents=True, exist_ok=True)
-        description = {
-            "Name": "PMRIPrep - HD-GLIO Tumor Segmentation Pipeline",
-            "BIDSVersion": "1.8.0",
-            "DatasetType": "derivative",
-            "GeneratedBy": [
-                {
-                    "Name": "pmriprep",
-                    "Version": pmriprep.__version__,
-                    "Description": (
-                        "HD-GLIO deep learning tumor segmentation "
-                        "with mask extraction and NAWM ROI creation"
-                    ),
-                }
-            ],
-            "HowToAcknowledge": (
-                f"Please cite pmriprep (version {pmriprep.__version__}) "
-                "and HD-GLIO (Isensee et al.) when using these outputs."
-            ),
-            "License": "CC-BY-4.0",
-        }
-        with open(desc_path, "w") as f:
-            json.dump(description, f, indent=2)
 
     @staticmethod
     def _write_volumes_txt(qc_metrics: dict, path: Path) -> None:

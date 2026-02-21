@@ -482,7 +482,7 @@ def init_dce_preproc_wf(
         ),
         name="motion_qc_plot",
     )
-    motion_qc_plot.inputs.out_dir = str(Path(bids_dir) / "derivatives" / "dce_pipeline")
+    motion_qc_plot.inputs.out_dir = str(Path(bids_dir) / "derivatives" / "pmriprep")
 
     # Connect motion QC plot
     workflow.connect([
@@ -1400,7 +1400,7 @@ def init_dce_preproc_wf(
     )
     lesion_stats.inputs.subject_id = subject_id
     lesion_stats.inputs.session_id = session_id
-    lesion_stats.inputs.output_dir = str(Path(bids_dir) / "derivatives" / "dce_pipeline")
+    lesion_stats.inputs.output_dir = str(Path(bids_dir) / "derivatives" / "pmriprep")
 
     workflow.connect([
         (transform_stats_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),

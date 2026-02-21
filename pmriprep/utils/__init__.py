@@ -22,14 +22,13 @@ from pmriprep.utils.qc_standards import (
 )
 from pmriprep.utils.outputs import (
     DerivativeMetadata,
-    PERFUSION_SUFFIXES,
     PIPELINE_DESCRIPTIONS,
+    copy_derivative,
     create_dataset_description,
     ensure_dataset_description,
-    get_derivative_filename,
-    get_derivative_path,
+    has_input,
     write_derivative,
-    write_perfusion_map,
+    write_json_sidecar,
     write_qc_json,
 )
 from pmriprep.utils.dce_aif import (
@@ -113,14 +112,13 @@ __all__ = [
     "get_status_color",
     # outputs
     "DerivativeMetadata",
-    "PERFUSION_SUFFIXES",
     "PIPELINE_DESCRIPTIONS",
+    "copy_derivative",
     "create_dataset_description",
     "ensure_dataset_description",
-    "get_derivative_filename",
-    "get_derivative_path",
+    "has_input",
     "write_derivative",
-    "write_perfusion_map",
+    "write_json_sidecar",
     "write_qc_json",
     # dce_aif
     "DCEAIFQualityMetrics",

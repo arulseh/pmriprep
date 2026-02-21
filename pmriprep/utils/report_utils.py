@@ -6,6 +6,7 @@ quality control.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -124,10 +125,11 @@ def generate_qc_report(
     # Scan figures_dir for matching files and build relative paths
     images: dict[str, str] = {}
     fig_path = Path(figures_dir)
+    rel_figures = os.path.relpath(figures_dir, Path(output_path).parent)
     for key in FIGURE_NAME_MAP:
         fname = figure_filename(subject_id, session_id, key, pipeline)
         if (fig_path / fname).exists():
-            images[key] = f"figures/{fname}"
+            images[key] = f"{rel_figures}/{fname}"
 
     # Load and render template
     try:

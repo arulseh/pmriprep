@@ -1640,7 +1640,7 @@ def init_dsc_preproc_wf(
         ),
         name="motion_qc_plot",
     )
-    motion_qc_plot.inputs.out_dir = str(bids_dir / "derivatives" / "dsc_pipeline")
+    motion_qc_plot.inputs.out_dir = str(bids_dir / "derivatives" / "pmriprep")
     motion_qc_plot.inputs.subject_id = subject_id
     motion_qc_plot.inputs.session_id = session_id or ""
 
@@ -1908,7 +1908,7 @@ def init_dsc_preproc_wf(
     )
     lesion_stats.inputs.subject_id = subject_id
     lesion_stats.inputs.session_id = session_id
-    lesion_stats.inputs.output_dir = str(bids_dir / "derivatives" / "dsc_pipeline")
+    lesion_stats.inputs.output_dir = str(bids_dir / "derivatives" / "pmriprep")
 
     # -------------------------------------------------------------------
     # Node 7: CBV Normalization

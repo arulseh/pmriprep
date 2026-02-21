@@ -4,8 +4,6 @@ This module implements a custom Nipype interface for writing DSC pipeline
 outputs with BIDS-compliant filenames, JSON sidecars, and QC files.
 """
 
-import json
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +15,8 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
     isdefined,
 )
+
+from pmriprep.utils.outputs import copy_derivative, has_input, write_json_sidecar
 
 
 class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
@@ -92,7 +92,7 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Processing config for sidecar
     config_dict = traits.Dict(desc="DSC processing config as dictionary")
 
-    # Smoothed map dicts (optional — each is a dict of name→filepath)
+    # Smoothed map dicts (optional — each is a dict of name->filepath)
     smooth_hemodynamic = traits.Dict(desc="Smoothed hemodynamic maps (CBF, CBV, MTT, nCBF, nCBV)")
     smooth_auc = traits.Dict(desc="Smoothed AUC corrected maps (relative)")
     smooth_fwhm = traits.Float(0.0, usedefault=True, desc="Smoothing FWHM in mm")
@@ -141,18 +141,21 @@ class DSCDerivativeWriter(BaseInterface):
 
     Output directory structure::
 
-        {output_dir}/dsc_pipeline/
+        {output_dir}/pmriprep/
             dataset_description.json
             sub-{subject}/ses-{session}/
                 perf/
-                    sub-XX_ses-XX_space-DSC_res-X.XXxX.XX_desc-{desc}_{map}.nii.gz
-                    sub-XX_ses-XX_space-DSC_res-X.XXxX.XX_desc-{desc}_{map}.json
+                    sub-XX_ses-XX_space-DSC_desc-{desc}_{suffix}.nii.gz
+                    sub-XX_ses-XX_space-DSC_desc-{desc}_{suffix}.json
                     ...
-                xfm/
-                    sub-XX_ses-XX_from-DSC_to-anat_mode-image_xfm.mat
-                qc/
-                    dsc_qc.json
-                    registration_qc_filmstrip.png
+                anat/
+                    sub-XX_ses-XX_space-DSC_{T1w|FLAIR}.nii.gz
+                    sub-XX_ses-XX_from-{src}_to-{dst}_mode-image_xfm.mat
+                    sub-XX_ses-XX_space-DSC_desc-lesion_mask.nii.gz
+                figures/
+                    {BIDS figure files}
+                sub-XX_ses-XX_desc-dscQC_quality.json
+                sub-XX_ses-XX_space-DSC_desc-lesionStats.json
     """
 
     input_spec = DSCDerivativeWriterInputSpec
@@ -171,52 +174,51 @@ class DSCDerivativeWriter(BaseInterface):
         if session:
             prefix += f"_ses-{session}"
 
-        # Build resolution string from MTT map header (always present)
+        # Load reference image for voxel size metadata (always present)
         ref_img = nib.load(self.inputs.mtt_map)
         voxel_sizes = ref_img.header.get_zooms()[:3]  # type: ignore[attr-defined]
-        res_str = "x".join(f"{v:.2f}" for v in voxel_sizes)
 
-        # Build spatial entity string
-        spatial = f"space-DSC_res-{res_str}"
+        # Build spatial entity string (no res- entity)
+        spatial = "space-DSC"
 
-        # Create directory structure
-        pipeline_dir = output_dir / "dsc_pipeline"
+        # Create directory structure (unified output dir)
+        pipeline_dir = output_dir / "pmriprep"
         ses_dir = pipeline_dir / f"sub-{subject}"
         if session:
             ses_dir = ses_dir / f"ses-{session}"
         perf_dir = ses_dir / "perf"
-        xfm_dir = ses_dir / "xfm"
-        qc_dir = ses_dir / "qc"
+        anat_dir = ses_dir / "anat"
 
         perf_dir.mkdir(parents=True, exist_ok=True)
-        xfm_dir.mkdir(parents=True, exist_ok=True)
-        qc_dir.mkdir(parents=True, exist_ok=True)
+        anat_dir.mkdir(parents=True, exist_ok=True)
 
         # Build base sidecar from config
-        base_sidecar = self._build_base_sidecar(bids_dir)
+        base_sidecar = self._build_base_sidecar(bids_dir, voxel_sizes)
 
         # -----------------------------------------------------------
         # 1. Relative maps (ALWAYS produced)
         # -----------------------------------------------------------
         rel_maps = {
-            "cbf": ("rel_cbf_map", "Cerebral blood flow (relative)"),
-            "cbv": ("rel_cbv_map", "Cerebral blood volume (relative)"),
-            "auc_raw": ("rel_auc_raw_map", "AUC raw concentration (relative)"),
-            "auc_corr": ("rel_auc_corr_map", "AUC corrected concentration (relative)"),
+            "cbf": ("rel_cbf_map", "Cerebral blood flow (relative)", "dscRel"),
+            "cbv": ("rel_cbv_map", "Cerebral blood volume (relative)", "dscRel"),
+            "auc": ("rel_auc_raw_map", "AUC raw concentration (relative)", "dscRel"),
+            "auc_corr": ("rel_auc_corr_map", "AUC corrected concentration (relative)", "dscRelCorrected"),
         }
         rel_units = {"cbf": "1/min", "cbv": "arbitrary"}
-        for map_name, (attr, description) in rel_maps.items():
-            if self._has_input(attr):
+        for map_suffix, (attr, description, desc_val) in rel_maps.items():
+            if has_input(self.inputs,attr):
                 src = getattr(self.inputs, attr)
-                fname = f"{prefix}_{spatial}_desc-rel_{map_name}"
-                self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+                # For auc_corr, the BIDS suffix is just "auc"
+                bids_suffix = "auc" if map_suffix == "auc_corr" else map_suffix
+                fname = f"{prefix}_{spatial}_desc-{desc_val}_{bids_suffix}"
+                copy_derivative(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": description}
-                if map_name in rel_units:
-                    sidecar["Units"] = rel_units[map_name]
-                self._write_json(sidecar, perf_dir / f"{fname}.json")
+                if bids_suffix in rel_units:
+                    sidecar["Units"] = rel_units[bids_suffix]
+                write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
-        # 2. Quantification-independent maps (desc-dscproc)
+        # 2. Core maps (desc-dsc)
         # -----------------------------------------------------------
         core_maps = {
             "mtt": ("mtt_map", "Mean transit time"),
@@ -226,20 +228,28 @@ class DSCDerivativeWriter(BaseInterface):
         }
         for map_name, (attr, description) in core_maps.items():
             src = getattr(self.inputs, attr)
-            fname = f"{prefix}_{spatial}_desc-dscproc_{map_name}"
-            self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+            fname = f"{prefix}_{spatial}_desc-dsc_{map_name}"
+            copy_derivative(src, perf_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": description}
-            self._write_json(sidecar, perf_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
-        # Additional desc-dscproc maps (optional)
-        optional_dscproc = {
-            "ttp": ("ttp_map", "Time to peak concentration"),
-            "ttpCorrected": ("ttp_corrected_map", "Time to peak, corrected for AIF bolus arrival delay. Comparable across patients and centers."),
-            "rttp": ("rttp_map", "Time to peak relative to contralateral NAWM median. Positive values indicate delayed perfusion."),
-            "cnr": ("cnr_map", "Contrast-to-noise ratio"),
-            "auc_diff": ("auc_diff_map", "Leakage contribution (AUC_raw - AUC_corr)"),
-            "snr": ("snr_map", "Signal-to-noise ratio (baseline)"),
-            "tsnr": ("tsnr_map", "Temporal signal-to-noise ratio"),
+        # Additional optional maps with per-map desc values
+        optional_maps: dict[str, tuple[str, str, str, str]] = {
+            # key: (attr, description, desc_value, bids_suffix)
+            "ttp": ("ttp_map", "Time to peak concentration", "dsc", "ttp"),
+            "ttpCorrected": ("ttp_corrected_map",
+                             "Time to peak, corrected for AIF bolus arrival delay. "
+                             "Comparable across patients and centers.",
+                             "dscAifCorrected", "ttp"),
+            "rttp": ("rttp_map",
+                     "Time to peak relative to contralateral NAWM median. "
+                     "Positive values indicate delayed perfusion.",
+                     "dscNawmRel", "ttp"),
+            "cnr": ("cnr_map", "Contrast-to-noise ratio", "dsc", "cnr"),
+            "auc_diff": ("auc_diff_map", "Leakage contribution (AUC_raw - AUC_corr)",
+                         "dscLeakage", "auc"),
+            "snr": ("snr_map", "Signal-to-noise ratio (baseline)", "dsc", "snr"),
+            "tsnr": ("tsnr_map", "Temporal signal-to-noise ratio", "dsc", "tsnr"),
         }
         # Units and reference points for timing maps
         timing_sidecars: dict[str, dict[str, str]] = {
@@ -247,39 +257,39 @@ class DSCDerivativeWriter(BaseInterface):
             "ttpCorrected": {"Units": "seconds", "ReferencePoint": "AIF bolus arrival time"},
             "rttp": {"Units": "seconds", "ReferencePoint": "contralateral NAWM median TTP"},
         }
-        for map_name, (attr, description) in optional_dscproc.items():
-            if self._has_input(attr):
+        for map_key, (attr, description, desc_val, bids_suffix) in optional_maps.items():
+            if has_input(self.inputs,attr):
                 src = getattr(self.inputs, attr)
-                fname = f"{prefix}_{spatial}_desc-dscproc_{map_name}"
-                self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+                fname = f"{prefix}_{spatial}_desc-{desc_val}_{bids_suffix}"
+                copy_derivative(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": description}
-                if map_name in timing_sidecars:
-                    sidecar.update(timing_sidecars[map_name])
-                self._write_json(sidecar, perf_dir / f"{fname}.json")
+                if map_key in timing_sidecars:
+                    sidecar.update(timing_sidecars[map_key])
+                write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 4. Normalized maps (optional)
         # -----------------------------------------------------------
-        if self._has_input("ncbv_map"):
-            fname = f"{prefix}_{spatial}_desc-dscproc_ncbv"
-            self._copy_nifti(self.inputs.ncbv_map, perf_dir / f"{fname}.nii.gz")
+        if has_input(self.inputs,"ncbv_map"):
+            fname = f"{prefix}_{spatial}_desc-dscNawmNorm_cbv"
+            copy_derivative(self.inputs.ncbv_map, perf_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "Normalized CBV (NAWM-normalized)"}
-            self._write_json(sidecar, perf_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
-        if self._has_input("ncbf_map"):
-            fname = f"{prefix}_{spatial}_desc-dscproc_ncbf"
-            self._copy_nifti(self.inputs.ncbf_map, perf_dir / f"{fname}.nii.gz")
+        if has_input(self.inputs,"ncbf_map"):
+            fname = f"{prefix}_{spatial}_desc-dscNawmNorm_cbf"
+            copy_derivative(self.inputs.ncbf_map, perf_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "Normalized CBF (NAWM-normalized)"}
-            self._write_json(sidecar, perf_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 5. Leakage correction map (optional)
         # -----------------------------------------------------------
-        if self._has_input("k2_map"):
-            fname = f"{prefix}_{spatial}_desc-dscproc_k2"
-            self._copy_nifti(self.inputs.k2_map, perf_dir / f"{fname}.nii.gz")
+        if has_input(self.inputs,"k2_map"):
+            fname = f"{prefix}_{spatial}_desc-dsc_k2"
+            copy_derivative(self.inputs.k2_map, perf_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "K2 leakage correction map"}
-            self._write_json(sidecar, perf_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 5b. Vascular model parameters (optional)
@@ -289,40 +299,49 @@ class DSCDerivativeWriter(BaseInterface):
             "beta": ("beta_map", "Vascular model beta parameter"),
             "cth": ("cth_map", "Capillary transit time heterogeneity"),
         }.items():
-            if self._has_input(attr):
+            if has_input(self.inputs,attr):
                 src = getattr(self.inputs, attr)
-                fname = f"{prefix}_{spatial}_desc-dscproc_{vmap}"
-                self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+                fname = f"{prefix}_{spatial}_desc-dsc_{vmap}"
+                copy_derivative(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": desc}
-                self._write_json(sidecar, perf_dir / f"{fname}.json")
+                write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 5c. Bayesian uncertainty maps (optional)
         # -----------------------------------------------------------
-        bayesian_uncertainty_maps = {
-            "cbf_std": ("cbf_std_map", "CBF uncertainty (posterior std)"),
-            "cbv_std": ("cbv_std_map", "CBV uncertainty (posterior std)"),
-            "cbfCV": ("cbf_cv_map", "CBF coefficient of variation"),
-            "cbvCV": ("cbv_cv_map", "CBV coefficient of variation"),
-            "cbfCI95lower": ("cbf_ci95_lower_map", "CBF 95% credible interval lower bound"),
-            "cbfCI95upper": ("cbf_ci95_upper_map", "CBF 95% credible interval upper bound"),
-            "cbvCI95lower": ("cbv_ci95_lower_map", "CBV 95% credible interval lower bound"),
-            "cbvCI95upper": ("cbv_ci95_upper_map", "CBV 95% credible interval upper bound"),
+        bayesian_uncertainty_maps: dict[str, tuple[str, str, str, str]] = {
+            # key: (attr, description, desc_value, bids_suffix)
+            "cbf_std": ("cbf_std_map", "CBF uncertainty (posterior std)",
+                        "dscUncertainty", "cbf"),
+            "cbv_std": ("cbv_std_map", "CBV uncertainty (posterior std)",
+                        "dscUncertainty", "cbv"),
+            "cbfCV": ("cbf_cv_map", "CBF coefficient of variation",
+                      "dscCV", "cbf"),
+            "cbvCV": ("cbv_cv_map", "CBV coefficient of variation",
+                      "dscCV", "cbv"),
+            "cbfCI95lower": ("cbf_ci95_lower_map", "CBF 95% credible interval lower bound",
+                             "dscCI95lower", "cbf"),
+            "cbfCI95upper": ("cbf_ci95_upper_map", "CBF 95% credible interval upper bound",
+                             "dscCI95upper", "cbf"),
+            "cbvCI95lower": ("cbv_ci95_lower_map", "CBV 95% credible interval lower bound",
+                             "dscCI95lower", "cbv"),
+            "cbvCI95upper": ("cbv_ci95_upper_map", "CBV 95% credible interval upper bound",
+                             "dscCI95upper", "cbv"),
         }
-        for umap, (attr, desc) in bayesian_uncertainty_maps.items():
-            if self._has_input(attr):
+        for umap_key, (attr, desc, desc_val, bids_suffix) in bayesian_uncertainty_maps.items():
+            if has_input(self.inputs,attr):
                 src = getattr(self.inputs, attr)
-                fname = f"{prefix}_{spatial}_desc-dscproc_{umap}"
-                self._copy_nifti(src, perf_dir / f"{fname}.nii.gz")
+                fname = f"{prefix}_{spatial}_desc-{desc_val}_{bids_suffix}"
+                copy_derivative(src, perf_dir / f"{fname}.nii.gz")
                 # Determine estimation method from config
                 est_method = "unknown"
                 cfg = self.inputs.config_dict
                 if isdefined(cfg) and cfg:
                     est_method = cfg.get("bayesian", "unknown")
                 uncertainty_type = "std"
-                if "CV" in umap:
+                if "CV" in umap_key:
                     uncertainty_type = "coefficient_of_variation"
-                elif "CI95" in umap:
+                elif "CI95" in umap_key:
                     uncertainty_type = "95pct_credible_interval"
                 sidecar = {
                     **base_sidecar,
@@ -330,128 +349,148 @@ class DSCDerivativeWriter(BaseInterface):
                     "EstimationMethod": est_method,
                     "UncertaintyMethod": uncertainty_type,
                 }
-                self._write_json(sidecar, perf_dir / f"{fname}.json")
+                write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 6. Smoothed maps (if smooth_fwhm > 0)
         # -----------------------------------------------------------
         fwhm = float(self.inputs.smooth_fwhm)
         if fwhm > 0:
-            fwhm_label = f"fwhm{int(fwhm)}"
+            sm_label = f"Sm{int(fwhm)}"
 
             # Smoothed hemodynamic maps: CBF, CBV, MTT, nCBF, nCBV
             smooth_hemo = self.inputs.smooth_hemodynamic
             if isdefined(smooth_hemo) and smooth_hemo:
-                hemo_descriptions = {
-                    "mtt": ("Mean transit time (smoothed)", f"{fwhm_label}"),
-                    "rel_cbf": ("Cerebral blood flow, relative (smoothed)", f"rel{fwhm_label.capitalize()}"),
-                    "rel_cbv": ("Cerebral blood volume, relative (smoothed)", f"rel{fwhm_label.capitalize()}"),
-                    "ncbf": ("Normalized CBF (smoothed)", f"{fwhm_label}"),
-                    "ncbv": ("Normalized CBV (smoothed)", f"{fwhm_label}"),
+                hemo_descriptions: dict[str, tuple[str, str, str]] = {
+                    # key: (description, desc_prefix, bids_suffix)
+                    "mtt": ("Mean transit time (smoothed)",
+                            f"dsc{sm_label}", "mtt"),
+                    "rel_cbf": ("Cerebral blood flow, relative (smoothed)",
+                                f"dscRel{sm_label}", "cbf"),
+                    "rel_cbv": ("Cerebral blood volume, relative (smoothed)",
+                                f"dscRel{sm_label}", "cbv"),
+                    "ncbf": ("Normalized CBF (smoothed)",
+                             f"dscNawmNorm{sm_label}", "cbf"),
+                    "ncbv": ("Normalized CBV (smoothed)",
+                             f"dscNawmNorm{sm_label}", "cbv"),
                 }
                 for name, filepath in smooth_hemo.items():
                     if filepath and Path(filepath).exists():
-                        desc_text, desc_prefix = hemo_descriptions.get(
-                            name, (f"{name} (smoothed)", fwhm_label))
-                        # Strip quantification prefix from map suffix for BIDS naming
-                        map_suffix = name.replace("rel_", "").replace("abs_", "")
+                        if name in hemo_descriptions:
+                            desc_text, desc_prefix, map_suffix = hemo_descriptions[name]
+                        else:
+                            desc_text = f"{name} (smoothed)"
+                            desc_prefix = f"dsc{sm_label}"
+                            # Strip quantification prefix for BIDS suffix
+                            map_suffix = name.replace("rel_", "").replace("abs_", "")
                         fname = f"{prefix}_{spatial}_desc-{desc_prefix}_{map_suffix}"
-                        self._copy_nifti(filepath, perf_dir / f"{fname}.nii.gz")
+                        copy_derivative(filepath, perf_dir / f"{fname}.nii.gz")
                         sidecar = {**base_sidecar, "Description": desc_text,
                                    "SmoothingFWHM": fwhm,
                                    "SmoothingType": "Gaussian",
                                    "SmoothingMasked": True,
                                    "IntendedFor": "visualization",
                                    "Note": "Use non-smoothed maps for quantitative ROI analysis"}
-                        self._write_json(sidecar, perf_dir / f"{fname}.json")
+                        write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
             # Smoothed AUC corrected maps (CBV surrogate)
             smooth_a = self.inputs.smooth_auc
             if isdefined(smooth_a) and smooth_a:
-                auc_descriptions = {
-                    "rel_auc_corr": ("Relative AUC corrected (smoothed)", f"rel{fwhm_label.capitalize()}"),
+                auc_descriptions: dict[str, tuple[str, str]] = {
+                    # key: (description, desc_prefix)
+                    "rel_auc_corr": ("Relative AUC corrected (smoothed)",
+                                     f"dscRelCorrected{sm_label}"),
                 }
                 for name, filepath in smooth_a.items():
                     if filepath and Path(filepath).exists():
-                        desc_text, desc_prefix = auc_descriptions.get(
-                            name, (f"{name} (smoothed)", fwhm_label))
-                        fname = f"{prefix}_{spatial}_desc-{desc_prefix}_auc_corr"
-                        self._copy_nifti(filepath, perf_dir / f"{fname}.nii.gz")
+                        if name in auc_descriptions:
+                            desc_text, desc_prefix = auc_descriptions[name]
+                        else:
+                            desc_text = f"{name} (smoothed)"
+                            desc_prefix = f"dsc{sm_label}"
+                        fname = f"{prefix}_{spatial}_desc-{desc_prefix}_auc"
+                        copy_derivative(filepath, perf_dir / f"{fname}.nii.gz")
                         sidecar = {**base_sidecar, "Description": desc_text,
                                    "SmoothingFWHM": fwhm,
                                    "SmoothingType": "Gaussian",
                                    "SmoothingMasked": True,
                                    "IntendedFor": "visualization",
                                    "Note": "Use non-smoothed maps for quantitative ROI analysis"}
-                        self._write_json(sidecar, perf_dir / f"{fname}.json")
+                        write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 7. Motion-corrected DSC and reference
         # -----------------------------------------------------------
-        if self._has_input("dsc_moco"):
-            fname = f"{prefix}_{spatial}_desc-mc_dsc"
-            self._copy_nifti(self.inputs.dsc_moco, perf_dir / f"{fname}.nii.gz")
+        if has_input(self.inputs,"dsc_moco"):
+            fname = f"{prefix}_{spatial}_desc-dscPreproc_dsc"
+            copy_derivative(self.inputs.dsc_moco, perf_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "Motion-corrected 4D DSC time series"}
-            self._write_json(sidecar, perf_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
-        if self._has_input("dsc_mean"):
-            fname = f"{prefix}_{spatial}_desc-ref_dsc"
-            self._copy_nifti(self.inputs.dsc_mean, perf_dir / f"{fname}.nii.gz")
+        if has_input(self.inputs,"dsc_mean"):
+            fname = f"{prefix}_{spatial}_desc-dscMean_ref"
+            copy_derivative(self.inputs.dsc_mean, perf_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "Mean DSC reference image"}
-            self._write_json(sidecar, perf_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 8. AIF outputs
         # -----------------------------------------------------------
-        if self._has_input("aif_curve"):
-            self._copy_file(
+        if has_input(self.inputs,"aif_curve"):
+            copy_derivative(
                 self.inputs.aif_curve,
-                perf_dir / f"{prefix}_desc-aif_timeseries.txt",
+                perf_dir / f"{prefix}_desc-dscAif_timeseries.txt",
             )
-        if self._has_input("aif_mask"):
-            self._copy_nifti(
+        if has_input(self.inputs,"aif_mask"):
+            copy_derivative(
                 self.inputs.aif_mask,
-                perf_dir / f"{prefix}_{spatial}_desc-aif_mask.nii.gz",
+                perf_dir / f"{prefix}_{spatial}_desc-dscAif_mask.nii.gz",
             )
 
         # -----------------------------------------------------------
-        # 8b. DSC-space masks
+        # 8b. DSC-space masks (written to anat/)
         # -----------------------------------------------------------
-        if self._has_input("brain_mask_dsc"):
+        if has_input(self.inputs,"brain_mask_dsc"):
             fname = f"{prefix}_{spatial}_desc-brain_mask"
-            self._copy_nifti(self.inputs.brain_mask_dsc, perf_dir / f"{fname}.nii.gz")
+            copy_derivative(self.inputs.brain_mask_dsc, anat_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "Brain mask in DSC space"}
-            self._write_json(sidecar, perf_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
-        if self._has_input("nawm_mask_dsc"):
+        if has_input(self.inputs,"nawm_mask_dsc"):
             fname = f"{prefix}_{spatial}_desc-nawm_mask"
-            self._copy_nifti(self.inputs.nawm_mask_dsc, perf_dir / f"{fname}.nii.gz")
+            copy_derivative(self.inputs.nawm_mask_dsc, anat_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "Normal-appearing white matter mask in DSC space"}
-            self._write_json(sidecar, perf_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
-        # 9. Registration transform
+        # 9. Registration transforms (written to anat/)
         # -----------------------------------------------------------
-        if self._has_input("dsc_to_t1w_xfm"):
-            self._copy_file(
+        if has_input(self.inputs,"dsc_to_t1w_xfm"):
+            copy_derivative(
                 self.inputs.dsc_to_t1w_xfm,
-                xfm_dir / f"{prefix}_from-DSC_to-anat_mode-image_xfm.mat",
+                anat_dir / f"{prefix}_from-DSC_to-anat_mode-image_xfm.mat",
+            )
+
+        if has_input(self.inputs,"t1w_to_dsc_xfm"):
+            copy_derivative(
+                self.inputs.t1w_to_dsc_xfm,
+                anat_dir / f"{prefix}_from-anat_to-DSC_mode-image_xfm.mat",
             )
 
         # -----------------------------------------------------------
-        # 10. QC outputs
+        # 10. QC outputs (written to session root)
         # -----------------------------------------------------------
         qc_metrics = self.inputs.qc_metrics
         self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
             # Add NiPreps-style recommendation to QC metrics
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
-            qc_json_path = qc_dir / "dsc_qc.json"
-            self._write_json(enhanced_qc, qc_json_path)
+            qc_json_path = ses_dir / f"{prefix}_desc-dscQC_quality.json"
+            write_json_sidecar(enhanced_qc, qc_json_path)
             self._qc_json = str(qc_json_path)
 
         # -----------------------------------------------------------
-        # 10b. QC figures → figures/ with BIDS names
+        # 10b. QC figures -> figures/ with BIDS names
         # -----------------------------------------------------------
         from pmriprep.utils.report_utils import figure_filename
 
@@ -469,16 +508,14 @@ class DSCDerivativeWriter(BaseInterface):
             "dsc_leakage_qc": "dsc_leakage_qc_plot",
         }
         for fig_key, attr in _fig_inputs.items():
-            if self._has_input(attr):
+            if has_input(self.inputs,attr):
                 fname = figure_filename(subject, session, fig_key, "dsc")
-                self._copy_file(getattr(self.inputs, attr), figures_dir / fname)
+                copy_derivative(getattr(self.inputs, attr), figures_dir / fname)
 
         # -----------------------------------------------------------
-        # 10c. Structural underlays (in DSC space)
+        # 10c. Structural underlays (in DSC space, written to anat/)
         # -----------------------------------------------------------
-        anat_dir = ses_dir / "anat"
-        if self._has_input("t1w_in_dsc"):
-            anat_dir.mkdir(parents=True, exist_ok=True)
+        if has_input(self.inputs,"t1w_in_dsc"):
             if self.inputs.has_postcon_t1w:
                 label = "ce-GAD_T1w"
                 description = "CE-T1w registered to DSC space"
@@ -486,52 +523,37 @@ class DSCDerivativeWriter(BaseInterface):
                 label = "T1w"
                 description = "T1w registered to DSC space"
             fname = f"{prefix}_{spatial}_{label}"
-            self._copy_nifti(self.inputs.t1w_in_dsc, anat_dir / f"{fname}.nii.gz")
+            copy_derivative(self.inputs.t1w_in_dsc, anat_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": description}
-            self._write_json(sidecar, anat_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
-        if self._has_input("flair_in_dsc"):
-            anat_dir.mkdir(parents=True, exist_ok=True)
+        if has_input(self.inputs,"flair_in_dsc"):
             fname = f"{prefix}_{spatial}_FLAIR"
-            self._copy_nifti(self.inputs.flair_in_dsc, anat_dir / f"{fname}.nii.gz")
+            copy_derivative(self.inputs.flair_in_dsc, anat_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "FLAIR registered to DSC space"}
-            self._write_json(sidecar, anat_dir / f"{fname}.json")
+            write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
-        # 10d. Lesion statistics (conditional)
+        # 10d. Lesion outputs (written to session root / anat)
         # -----------------------------------------------------------
-        if self._has_input("lesion_stats_json"):
-            stats_dir = ses_dir / "stats"
-            stats_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(
+        if has_input(self.inputs,"lesion_stats_json"):
+            copy_derivative(
                 self.inputs.lesion_stats_json,
-                stats_dir / f"{prefix}_{spatial}_lesion-stats.json",
+                ses_dir / f"{prefix}_space-DSC_desc-lesionStats.json",
             )
-        if self._has_input("lesion_stats_txt"):
-            stats_dir = ses_dir / "stats"
-            stats_dir.mkdir(parents=True, exist_ok=True)
-            self._copy_file(
-                self.inputs.lesion_stats_txt,
-                stats_dir / f"{prefix}_{spatial}_lesion-stats.txt",
-            )
-        if self._has_input("lesion_mask_dsc"):
-            roi_dir = ses_dir / "roi"
-            roi_dir.mkdir(parents=True, exist_ok=True)
+
+        if has_input(self.inputs,"lesion_mask_dsc"):
             fname = f"{prefix}_{spatial}_desc-lesion_mask"
-            self._copy_nifti(self.inputs.lesion_mask_dsc, roi_dir / f"{fname}.nii.gz")
+            copy_derivative(self.inputs.lesion_mask_dsc, anat_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "Lesion mask registered to DSC space"}
-            self._write_json(sidecar, roi_dir / f"{fname}.json")
-
-        if self._has_input("t1w_to_dsc_xfm"):
-            self._copy_file(
-                self.inputs.t1w_to_dsc_xfm,
-                xfm_dir / f"{prefix}_from-anat_to-DSC_mode-image_xfm.mat",
-            )
+            write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
-        # 11. Dataset description
+        # 11. Dataset description (shared utility)
         # -----------------------------------------------------------
-        self._write_dataset_description(pipeline_dir)
+        from pmriprep.utils.outputs import write_dataset_description
+
+        write_dataset_description(pipeline_dir, bids_dir)
 
         self._out_dir = str(ses_dir)
         return runtime
@@ -546,24 +568,20 @@ class DSCDerivativeWriter(BaseInterface):
     # Helper methods
     # -------------------------------------------------------------------
 
-    def _has_input(self, name: str) -> bool:
-        """Check if an optional input is defined and points to an existing file."""
-        val = getattr(self.inputs, name, None)
-        if val is None:
-            return False
-        if not isdefined(val):
-            return False
-        if isinstance(val, str):
-            if val in ("", "None", "."):
-                return False
-            return Path(val).exists()
-        return False
+    def _build_base_sidecar(self, bids_dir: str, voxel_sizes: tuple) -> dict[str, Any]:
+        """Build base JSON sidecar with processing metadata.
 
-    def _build_base_sidecar(self, bids_dir: str) -> dict[str, Any]:
-        """Build base JSON sidecar with processing metadata."""
+        Args:
+            bids_dir: Path to the BIDS dataset root.
+            voxel_sizes: Voxel dimensions from the reference image header.
+
+        Returns:
+            Base sidecar dictionary with common metadata fields.
+        """
         sidecar: dict[str, Any] = {
             "Pipeline": "PMRIPrep DSC",
             "Space": "DSC (native perfusion space)",
+            "Resolution": [float(v) for v in voxel_sizes],
         }
 
         # Add source file reference
@@ -588,25 +606,6 @@ class DSCDerivativeWriter(BaseInterface):
             sidecar["PreBolus"] = config_dict.get("pre_bolus", 5)
 
         return sidecar
-
-    @staticmethod
-    def _copy_file(src: str, dst: Path) -> None:
-        """Copy a file to the destination path."""
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(dst))
-
-    @staticmethod
-    def _copy_nifti(src: str, dst: Path) -> None:
-        """Copy a NIfTI file to the destination path."""
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(dst))
-
-    @staticmethod
-    def _write_json(data: dict, path: Path) -> None:
-        """Write a dictionary as a JSON file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2, default=str)
 
     @staticmethod
     def _add_qc_recommendation(qc_metrics: dict[str, Any]) -> dict[str, Any]:
@@ -678,29 +677,3 @@ class DSCDerivativeWriter(BaseInterface):
         }
 
         return enhanced
-
-    @staticmethod
-    def _write_dataset_description(pipeline_dir: Path) -> None:
-        """Write dataset_description.json at the pipeline root."""
-        import pmriprep
-
-        desc_path = pipeline_dir / "dataset_description.json"
-        if desc_path.exists():
-            return
-
-        pipeline_dir.mkdir(parents=True, exist_ok=True)
-        description = {
-            "Name": "PMRIPrep - DSC Perfusion Pipeline",
-            "BIDSVersion": "1.8.0",
-            "DatasetType": "derivative",
-            "GeneratedBy": [
-                {
-                    "Name": "pmriprep",
-                    "Version": pmriprep.__version__,
-                    "Description": "DSC perfusion processing including deconvolution and parameter extraction",
-                }
-            ],
-            "License": "CC-BY-4.0",
-        }
-        with open(desc_path, "w") as f:
-            json.dump(description, f, indent=2)

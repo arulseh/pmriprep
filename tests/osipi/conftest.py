@@ -20,8 +20,8 @@ from numpy.typing import NDArray
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_ROOT = PROJECT_ROOT / "test_outputs" / "dce_pipeline"
-ANAT_OUTPUT_ROOT = PROJECT_ROOT / "test_outputs" / "anat_pipeline"
+OUTPUT_ROOT = PROJECT_ROOT / "test_outputs" / "pmriprep"
+ANAT_OUTPUT_ROOT = PROJECT_ROOT / "test_outputs" / "pmriprep"
 
 PERFPLUS_REFERENCE_JSON = (
     Path.home()
@@ -63,22 +63,22 @@ DRO_SESSION_MAP: Dict[Tuple[str, str], Tuple[str, str]] = {
 
 DRO_SESSIONS = list(DRO_SESSION_MAP.keys())
 
-# File name patterns (space entity varies by subject resolution)
-SPACE_ENTITY = "space-DCE_res-1.00x1.00x5.00"
+# File name patterns (no res- entity in new BIDS naming)
+SPACE_ENTITY = "space-DCE"
 
 # Map suffix patterns
 MAP_SUFFIXES = {
-    "Ktrans": f"model-extended_tofts_Ktrans",
-    "ve": f"model-extended_tofts_ve",
-    "vp": f"model-extended_tofts_vp",
-    "kep": f"model-extended_tofts_kep",
-    "R2": f"model-extended_tofts_desc-R2_perfmap",
-    "IAUC60": f"desc-modelfree_IAUC60",
-    "IAUC90": f"desc-modelfree_IAUC90",
-    "IAUC120": f"desc-modelfree_IAUC120",
-    "SER": f"desc-modelfree_SER",
-    "TTP": f"desc-modelfree_TTP",
-    "tSNR": f"desc-tSNR_perfmap",
+    "Ktrans": "model-extendedTofts_desc-dce_Ktrans",
+    "ve": "model-extendedTofts_desc-dce_ve",
+    "vp": "model-extendedTofts_desc-dce_vp",
+    "kep": "model-extendedTofts_desc-dce_kep",
+    "R2": "model-extendedTofts_desc-dce_R2",
+    "IAUC60": "desc-dce_IAUC60",
+    "IAUC90": "desc-dce_IAUC90",
+    "IAUC120": "desc-dce_IAUC120",
+    "SER": "desc-dce_SER",
+    "TTP": "desc-dce_ttp",
+    "tSNR": "desc-dce_tsnr",
 }
 
 
@@ -136,10 +136,10 @@ def load_mask(
         fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-brain_mask.nii.gz"
         fpath = OUTPUT_ROOT / subject / session / "anat" / fname
     elif mask_type == "qc":
-        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-qc_mask.nii.gz"
+        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceQc_mask.nii.gz"
         fpath = OUTPUT_ROOT / subject / session / "perf" / fname
     elif mask_type == "aif":
-        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-aif_mask.nii.gz"
+        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceAif_mask.nii.gz"
         fpath = OUTPUT_ROOT / subject / session / "perf" / fname
     else:
         raise ValueError(f"Unknown mask type: {mask_type}")
@@ -166,7 +166,7 @@ def load_ref_dce(
     """
     import nibabel as nib
 
-    fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-ref_dce.nii.gz"
+    fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceMean_ref.nii.gz"
     fpath = OUTPUT_ROOT / subject / session / "perf" / fname
 
     if not fpath.exists():
@@ -178,7 +178,7 @@ def load_ref_dce(
 
 def get_ref_dce_path(subject: str, session: str) -> Path:
     """Get path to DCE reference image."""
-    fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-ref_dce.nii.gz"
+    fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceMean_ref.nii.gz"
     return OUTPUT_ROOT / subject / session / "perf" / fname
 
 
@@ -195,7 +195,7 @@ def get_mask_path(subject: str, session: str, mask_type: str) -> Path:
         fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-brain_mask.nii.gz"
         return OUTPUT_ROOT / subject / session / "anat" / fname
     elif mask_type == "qc":
-        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-qc_mask.nii.gz"
+        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceQc_mask.nii.gz"
         return OUTPUT_ROOT / subject / session / "perf" / fname
     else:
         raise ValueError(f"Unknown mask type: {mask_type}")
@@ -305,7 +305,7 @@ def register_sessions(
 
     # Create output directory under test_outputs
     out_dir = (
-        PROJECT_ROOT / "test_outputs" / "dce_pipeline" / subject
+        PROJECT_ROOT / "test_outputs" / "pmriprep" / subject
         / "test_retest_qc"
     )
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -616,7 +616,7 @@ def load_ci_map(
     """
     import nibabel as nib
 
-    suffix = f"model-extended_tofts_desc-ci95{bound}_{parameter}"
+    suffix = f"model-extendedTofts_desc-dceCI95{bound}_{parameter}"
     fname = f"{subject}_{session}_{SPACE_ENTITY}_{suffix}.nii.gz"
     fpath = OUTPUT_ROOT / subject / session / "perf" / fname
 

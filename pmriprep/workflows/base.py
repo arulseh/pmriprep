@@ -575,7 +575,7 @@ def _find_previous_dsc_outputs(
     }
 
     ses_label = f"ses-{session_id}" if session_id else ""
-    dsc_dir = output_dir / "dsc_pipeline" / f"sub-{subject_id}"
+    dsc_dir = output_dir / "pmriprep" / f"sub-{subject_id}"
     if ses_label:
         dsc_dir = dsc_dir / ses_label
 
@@ -585,18 +585,20 @@ def _find_previous_dsc_outputs(
     # Relative CBV map
     perf_dir = dsc_dir / "perf"
     if perf_dir.exists():
-        for f in perf_dir.glob("*desc-rel_cbv.nii.gz"):
+        for f in perf_dir.glob("*desc-dscRel_cbv.nii.gz"):
             outputs["rel_cbv_map"] = str(f)
 
-    # DSC→T1w transform
-    xfm_dir = dsc_dir / "xfm"
-    if xfm_dir.exists():
-        for f in xfm_dir.glob("*from-DSC_to-anat*_xfm.mat"):
+    # DSC→T1w transform (now in anat/ instead of xfm/)
+    anat_dir = dsc_dir / "anat"
+    if anat_dir.exists():
+        for f in anat_dir.glob("*from-DSC_to-anat*_xfm.mat"):
             outputs["dsc_to_t1w_xfm"] = str(f)
 
-    # AIF QC from dsc_qc.json
-    qc_dir = dsc_dir / "qc"
-    qc_json = qc_dir / "dsc_qc.json"
+    # AIF QC from BIDS-named QC JSON in session root
+    prefix = f"sub-{subject_id}"
+    if ses_label:
+        prefix += f"_{ses_label}"
+    qc_json = dsc_dir / f"{prefix}_desc-dscQC_quality.json"
     if qc_json.exists():
         try:
             import json

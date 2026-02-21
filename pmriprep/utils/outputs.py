@@ -2,10 +2,14 @@
 
 This module provides utilities for writing NIfTI outputs with BIDS-compliant
 naming and JSON sidecars following the BIDS-Derivatives specification.
+
+It also provides shared helper functions used by all four derivative writer
+interfaces (anat, DSC, DCE, HD-GLIO).
 """
 
 import json
-from dataclasses import asdict, dataclass
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -46,40 +50,6 @@ class DerivativeMetadata:
     resolution: Optional[str] = None
     additional: Optional[Dict[str, Any]] = None
 
-
-# Standard suffixes for perfusion outputs following ASLPrep patterns
-PERFUSION_SUFFIXES: Dict[str, Dict[str, str]] = {
-    # DSC perfusion maps
-    "cbf": {"suffix": "cbf", "units": "mL/100g/min", "description": "Cerebral blood flow"},
-    "cbv": {"suffix": "cbv", "units": "mL/100g", "description": "Cerebral blood volume"},
-    "mtt": {"suffix": "mtt", "units": "s", "description": "Mean transit time"},
-    "tmax": {"suffix": "tmax", "units": "s", "description": "Time to maximum"},
-    "ttp": {"suffix": "ttp", "units": "s", "description": "Time to peak"},
-    "psr": {"suffix": "psr", "units": "percent", "description": "Percent signal recovery"},
-    "ph": {"suffix": "ph", "units": "percent", "description": "Peak height"},
-    "k2": {"suffix": "k2", "units": "1/s", "description": "Leakage correction factor K2"},
-    "ncbv": {"suffix": "ncbv", "units": "ratio", "description": "Normalized CBV (relative to NAWM)"},
-    # DCE pharmacokinetic maps
-    "ktrans": {"suffix": "Ktrans", "units": "1/min", "description": "Volume transfer constant"},
-    "ve": {"suffix": "ve", "units": "fraction", "description": "Extravascular extracellular volume fraction"},
-    "vp": {"suffix": "vp", "units": "fraction", "description": "Plasma volume fraction"},
-    "kep": {"suffix": "kep", "units": "1/min", "description": "Rate constant (Ktrans/ve)"},
-    "fp": {"suffix": "Fp", "units": "mL/min/100mL", "description": "Plasma flow (2CXM)"},
-    "ps": {"suffix": "PS", "units": "mL/min/100mL", "description": "Permeability-surface area product"},
-    # Mapping outputs
-    "t1": {"suffix": "T1map", "units": "ms", "description": "T1 relaxation time map"},
-    "b1": {"suffix": "B1plusmap", "units": "ratio", "description": "B1+ transmit field map"},
-    # Masks and segmentations
-    "brain_mask": {"suffix": "mask", "description": "Brain mask"},
-    "lesion_mask": {"suffix": "mask", "description": "Lesion/tumor mask"},
-    "aif_mask": {"suffix": "mask", "description": "Arterial input function ROI mask"},
-    "nawm_mask": {"suffix": "mask", "description": "Normal-appearing white matter mask"},
-    "tumor_seg": {"suffix": "dseg", "description": "Tumor segmentation (HD-GLIO labels)"},
-    # Tissue segmentations
-    "wm_probseg": {"suffix": "probseg", "description": "White matter probability map"},
-    "gm_probseg": {"suffix": "probseg", "description": "Gray matter probability map"},
-    "csf_probseg": {"suffix": "probseg", "description": "CSF probability map"},
-}
 
 # Pipeline names for dataset_description.json
 PIPELINE_DESCRIPTIONS: Dict[str, str] = {
@@ -144,11 +114,7 @@ def write_derivative(
     if ref_header is not None:
         # Create new header based on reference
         new_header = ref_header.copy()
-        # Update data shape if different
-        if data.ndim == 3:
-            new_header.set_data_shape(data.shape)  # type: ignore[attr-defined]
-        elif data.ndim == 4:
-            new_header.set_data_shape(data.shape)  # type: ignore[attr-defined]
+        new_header.set_data_shape(data.shape)  # type: ignore[attr-defined]
         img = nib.Nifti1Image(data.astype(np.float32), ref_affine, header=new_header)
     else:
         img = nib.Nifti1Image(data.astype(np.float32), ref_affine)
@@ -288,7 +254,7 @@ def create_dataset_description(
             {
                 "Name": pipeline_name,
                 "Version": pmriprep.__version__,
-                "CodeURL": "https://github.com/your-org/pmriprep",
+                "CodeURL": "https://github.com/your-org/pmriprep",  # TODO: update with real URL
             }
         ]
 
@@ -320,193 +286,6 @@ def create_dataset_description(
         json.dump(description, f, indent=2)
 
     return desc_path
-
-
-def get_derivative_filename(
-    subject: str,
-    suffix: str,
-    session: Optional[str] = None,
-    space: Optional[str] = None,
-    desc: Optional[str] = None,
-    extension: str = ".nii.gz",
-    **entities: str,
-) -> str:
-    """Generate a BIDS-Derivatives compliant filename.
-
-    Args:
-        subject: Subject ID (without 'sub-' prefix).
-        suffix: BIDS suffix (e.g., 'cbf', 'T1w', 'mask').
-        session: Session ID (without 'ses-' prefix), optional.
-        space: Space entity (e.g., 'native', 'T1w', 'MNI152NLin2009cAsym').
-        desc: Description entity (e.g., 'preproc', 'brain').
-        extension: File extension (default: '.nii.gz').
-        **entities: Additional BIDS entities as key-value pairs.
-
-    Returns:
-        BIDS-compliant filename string.
-    """
-    parts: List[str] = [f"sub-{subject}"]
-
-    if session:
-        parts.append(f"ses-{session}")
-
-    # Standard entity order for derivatives
-    entity_order = ["task", "acq", "ce", "rec", "run", "echo", "part", "space", "res", "label", "desc"]
-
-    all_entities: Dict[str, str] = dict(entities)
-    if space:
-        all_entities["space"] = space
-    if desc:
-        all_entities["desc"] = desc
-
-    for key in entity_order:
-        if key in all_entities:
-            parts.append(f"{key}-{all_entities[key]}")
-
-    # Add any remaining entities not in standard order
-    for key, value in all_entities.items():
-        if key not in entity_order:
-            parts.append(f"{key}-{value}")
-
-    filename = "_".join(parts) + f"_{suffix}{extension}"
-    return filename
-
-
-def get_derivative_path(
-    derivatives_dir: Union[str, Path],
-    subject: str,
-    pipeline: str,
-    datatype: str,
-    filename: str,
-    session: Optional[str] = None,
-) -> Path:
-    """Build the full path for a derivative file.
-
-    Follows BIDS-Derivatives structure:
-    derivatives/<pipeline>/sub-<subject>/[ses-<session>/]<datatype>/<filename>
-
-    Args:
-        derivatives_dir: Root derivatives directory.
-        subject: Subject ID (without 'sub-' prefix).
-        pipeline: Pipeline name (e.g., 'pmriprep').
-        datatype: Data type directory (e.g., 'anat', 'perf').
-        filename: BIDS-compliant filename.
-        session: Session ID (without 'ses-' prefix), optional.
-
-    Returns:
-        Complete path to the derivative file.
-    """
-    path = Path(derivatives_dir) / pipeline / f"sub-{subject}"
-
-    if session:
-        path = path / f"ses-{session}"
-
-    path = path / datatype / filename
-
-    return path
-
-
-def write_perfusion_map(
-    data: NDArray[np.floating[Any]],
-    output_dir: Union[str, Path],
-    subject: str,
-    map_type: str,
-    reference_image: Union[str, Path],
-    session: Optional[str] = None,
-    space: str = "native",
-    desc: Optional[str] = None,
-    model: Optional[str] = None,
-    sources: Optional[List[Union[str, Path]]] = None,
-    config_used: Optional[Dict[str, Any]] = None,
-    pipeline: str = "pmriprep",
-    **additional_metadata: Any,
-) -> Path:
-    """Convenience function to write a perfusion parameter map.
-
-    This handles the common case of writing CBF, CBV, Ktrans, etc. maps
-    with appropriate BIDS naming and metadata.
-
-    Args:
-        data: NumPy array containing the map data.
-        output_dir: Derivatives directory.
-        subject: Subject ID (without 'sub-' prefix).
-        map_type: Map type key (e.g., 'cbf', 'ktrans'). Must be in PERFUSION_SUFFIXES.
-        reference_image: Reference NIfTI for affine and header.
-        session: Session ID (without 'ses-' prefix), optional.
-        space: Coordinate space (default: 'native').
-        desc: Description entity (e.g., 'leakcorr', 'uncorrected').
-        model: Model used (e.g., 'sSVD', 'tofts').
-        sources: Source files used to generate this output.
-        config_used: Configuration dictionary.
-        pipeline: Pipeline name (default: 'pmriprep').
-        **additional_metadata: Additional metadata for JSON sidecar.
-
-    Returns:
-        Path to the written file.
-
-    Raises:
-        ValueError: If map_type is not recognized.
-    """
-    map_type_lower = map_type.lower()
-    if map_type_lower not in PERFUSION_SUFFIXES:
-        raise ValueError(
-            f"Unknown map type: {map_type}. "
-            f"Valid types: {list(PERFUSION_SUFFIXES.keys())}"
-        )
-
-    map_info = PERFUSION_SUFFIXES[map_type_lower]
-    suffix = map_info["suffix"]
-    units = map_info.get("units")
-    map_description = map_info.get("description", "")
-
-    # Determine datatype based on map
-    if map_type_lower in ["t1", "b1"]:
-        datatype = "anat"
-    elif map_type_lower in ["brain_mask", "lesion_mask", "tumor_seg", "wm_probseg", "gm_probseg", "csf_probseg"]:
-        datatype = "anat"
-    else:
-        datatype = "perf"
-
-    # Generate filename
-    filename = get_derivative_filename(
-        subject=subject,
-        suffix=suffix,
-        session=session,
-        space=space,
-        desc=desc,
-    )
-
-    # Build output path
-    output_path = get_derivative_path(
-        derivatives_dir=output_dir,
-        subject=subject,
-        pipeline=pipeline,
-        datatype=datatype,
-        filename=filename,
-        session=session,
-    )
-
-    # Build metadata
-    metadata = DerivativeMetadata(
-        description=map_description,
-        sources=sources,
-        processing_description=f"Generated by pmriprep {model or ''} pipeline",
-        units=units,
-        parameter_name=map_type_lower.upper(),
-        model=model,
-        space=space,
-        additional=additional_metadata if additional_metadata else None,
-    )
-
-    # Write the derivative
-    return write_derivative(
-        data=data,
-        output_path=output_path,
-        reference_image=reference_image,
-        metadata=metadata,
-        config_used=config_used,
-        include_provenance=True,
-    )
 
 
 def ensure_dataset_description(
@@ -586,3 +365,143 @@ def write_qc_json(
         json.dump(qc_data, f, indent=2, default=str)
 
     return output_path
+
+
+# -----------------------------------------------------------------------
+# Shared utilities for BIDS-Derivatives output writers
+# -----------------------------------------------------------------------
+
+# Model name → BIDS-safe entity value mapping
+_MODEL_ENTITY_MAP: Dict[str, str] = {
+    "tofts": "tofts",
+    "extended_tofts": "extendedTofts",
+    "patlak": "patlak",
+    "two_compartment_exchange": "2CXM",
+    "2cxm": "2CXM",
+}
+
+
+def sanitize_model_entity(model_name: str) -> str:
+    """Convert a pharmacokinetic model name to a BIDS-safe entity value.
+
+    BIDS entity values must be alphanumeric (no underscores or hyphens).
+    This function maps known model names to their BIDS-safe equivalents
+    and applies camelCase conversion for unknown names.
+
+    Args:
+        model_name: Raw model name (e.g., "extended_tofts", "2cxm").
+
+    Returns:
+        BIDS-safe entity value (e.g., "extendedTofts", "2CXM").
+    """
+    lowered = model_name.lower().strip()
+    if lowered in _MODEL_ENTITY_MAP:
+        return _MODEL_ENTITY_MAP[lowered]
+
+    # Fallback: convert underscores to camelCase
+    parts = model_name.split("_")
+    if len(parts) > 1:
+        return parts[0] + "".join(p.capitalize() for p in parts[1:])
+    return model_name
+
+
+def write_dataset_description(pipeline_dir: Path, bids_dir: str) -> None:
+    """Write a unified dataset_description.json at the derivative root.
+
+    This is the shared implementation used by all four output writers
+    (anat, DSC, DCE, HD-GLIO).  The first writer to run creates the
+    file; subsequent writers skip if it already exists.
+
+    Args:
+        pipeline_dir: Path to the ``pmriprep/`` derivative root directory.
+        bids_dir: Path to the source BIDS dataset root.
+    """
+    desc_path = pipeline_dir / "dataset_description.json"
+    if desc_path.exists():
+        return
+
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+    description: Dict[str, Any] = {
+        "Name": "PMRIPrep - Perfusion MRI Preprocessing Pipeline",
+        "BIDSVersion": "1.8.0",
+        "DatasetType": "derivative",
+        "GeneratedBy": [
+            {
+                "Name": "pmriprep",
+                "Version": pmriprep.__version__,
+                "Description": (
+                    "Anatomical preprocessing, DSC/DCE perfusion processing, "
+                    "and HD-GLIO tumor segmentation"
+                ),
+            }
+        ],
+        "SourceDatasets": [
+            {"URL": str(bids_dir)},
+        ],
+        "HowToAcknowledge": (
+            f"Please cite pmriprep (version {pmriprep.__version__}) "
+            "when using these outputs in publications."
+        ),
+        "License": "CC-BY-4.0",
+    }
+    with open(desc_path, "w") as f:
+        json.dump(description, f, indent=2)
+
+
+# -----------------------------------------------------------------------
+# Shared helpers for derivative writer interfaces
+# -----------------------------------------------------------------------
+
+
+def has_input(inputs: Any, name: str) -> bool:
+    """Check if a Nipype interface input is defined and points to an existing file.
+
+    Handles all sentinel patterns used by Nipype traits (``Undefined``,
+    empty strings, ``"None"``, and ``"."``).
+
+    Args:
+        inputs: A Nipype ``BaseInterfaceInputSpec`` instance (e.g. ``self.inputs``).
+        name: Name of the input attribute to check.
+
+    Returns:
+        ``True`` if the input is set and points to an existing file.
+    """
+    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+    val = getattr(inputs, name, None)
+    if val is None or not isdefined(val):
+        return False
+    if isinstance(val, str):
+        if val in ("", "None", "."):
+            return False
+        return Path(val).exists()
+    return False
+
+
+def copy_derivative(src: str, dst: Path) -> None:
+    """Copy a derivative file (NIfTI, transform, etc.) to *dst*.
+
+    Creates parent directories as needed. Preserves filesystem metadata
+    via :func:`shutil.copy2`.
+
+    Args:
+        src: Source file path.
+        dst: Destination file path.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(src), str(dst))
+
+
+def write_json_sidecar(data: dict, path: Path) -> None:
+    """Write a dictionary as a JSON sidecar file.
+
+    Creates parent directories as needed.  Non-serialisable values are
+    converted to strings via the ``default=str`` fallback.
+
+    Args:
+        data: Dictionary to serialise.
+        path: Output JSON file path.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, default=str)

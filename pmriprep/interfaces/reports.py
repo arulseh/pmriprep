@@ -61,26 +61,21 @@ class GenerateReport(BaseInterface):
         session_id = self.inputs.session_id
 
         # Build BIDS-compliant output path
+        report_dir = output_dir / "pmriprep"
         if session_id:
-            report_dir = (
-                output_dir
-                / f"{pipeline}_pipeline"
-                / f"sub-{subject_id}"
-                / f"ses-{session_id}"
-            )
             report_name = f"sub-{subject_id}_ses-{session_id}_{pipeline}.html"
         else:
-            report_dir = (
-                output_dir
-                / f"{pipeline}_pipeline"
-                / f"sub-{subject_id}"
-            )
             report_name = f"sub-{subject_id}_{pipeline}.html"
 
         output_path = report_dir / report_name
 
-        # Figures dir is a sibling of the report file
-        figures_dir = str(report_dir / "figures")
+        # NOTE: figures_dir must match the path used by the derivative writers.
+        # report_utils.py computes a relative path from the report location
+        # (derivative root) to this directory using os.path.relpath().
+        ses_dir = output_dir / "pmriprep" / f"sub-{subject_id}"
+        if session_id:
+            ses_dir = ses_dir / f"ses-{session_id}"
+        figures_dir = str(ses_dir / "figures")
 
         # Generate the report
         self._report_file = generate_qc_report(
