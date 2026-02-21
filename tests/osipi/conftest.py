@@ -441,7 +441,7 @@ def compute_joint_mask(
 # Fixtures
 # ---------------------------------------------------------------------------
 
-SUBJECT_0081 = "sub-0081"
+SUBJECT_0081 = "sub-0082"
 SES1 = "ses-0001"
 SES2 = "ses-0002"
 
@@ -454,7 +454,7 @@ def _outputs_exist(subject: str, session: str) -> bool:
 
 skip_no_outputs = pytest.mark.skipif(
     not (_outputs_exist(SUBJECT_0081, SES1) and _outputs_exist(SUBJECT_0081, SES2)),
-    reason="PMRIPrep outputs not found for sub-0081 ses-0001 and ses-0002",
+    reason="PMRIPrep outputs not found for sub-0082 ses-0001 and ses-0002",
 )
 
 skip_no_fsl = pytest.mark.skipif(
