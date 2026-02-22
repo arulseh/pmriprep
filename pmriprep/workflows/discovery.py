@@ -908,34 +908,3 @@ def discover_session_data(
     )
 
 
-def get_data_summary(session_data: SessionData) -> Dict[str, Union[bool, str, None]]:
-    """Get a summary dictionary of available data and pipelines.
-
-    Args:
-        session_data: Session data from discover_session_data().
-
-    Returns:
-        Dictionary with boolean flags for each modality and pipeline.
-    """
-    return {
-        # Modalities
-        "has_t1w_pre": session_data.modalities.t1w_pre is not None,
-        "has_t1w_ce_gad": session_data.modalities.t1w_ce_gad is not None,
-        "has_t2w": session_data.modalities.t2w is not None,
-        "has_flair": session_data.modalities.flair is not None,
-        "has_flair_postcon": session_data.modalities.flair_postcon is not None,
-        "has_dsc": session_data.modalities.dsc is not None,
-        "has_dce": session_data.modalities.dce is not None,
-        "has_vfa": len(session_data.modalities.vfa) > 0,
-        "has_afi": len(session_data.modalities.afi) > 0,
-        "has_dwi": session_data.modalities.dwi is not None,
-        # Pipelines
-        "can_run_anat": session_data.pipelines.anat,
-        "can_run_tumor_seg": session_data.pipelines.tumor_seg,
-        "can_run_dsc": session_data.pipelines.dsc,
-        "can_run_dce": session_data.pipelines.dce,
-        # Reasons for unavailable pipelines
-        "tumor_seg_unavailable_reason": session_data.pipelines.tumor_seg_reason,
-        "dsc_unavailable_reason": session_data.pipelines.dsc_reason,
-        "dce_unavailable_reason": session_data.pipelines.dce_reason,
-    }

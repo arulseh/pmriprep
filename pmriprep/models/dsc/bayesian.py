@@ -246,22 +246,34 @@ class BayesianDSCFitter:
         self,
         params: npt.NDArray[np.floating],
         objective: Callable[[npt.NDArray[np.floating]], float],
-        epsilon: float = 1e-5,
+        relative_epsilon: float = 1e-5,
     ) -> npt.NDArray[np.floating]:
         """Compute Hessian matrix using finite differences.
 
-        Uses central differences for second derivatives.
+        Uses central differences for second derivatives with adaptive
+        per-parameter step sizes that scale with parameter magnitude.
+        When perturbations push parameters into invalid regions (causing
+        non-finite objective values), falls back to using prior curvature
+        for those entries.
 
         Args:
             params: Parameter values at which to evaluate Hessian.
             objective: Negative log posterior function.
-            epsilon: Step size for finite differences.
+            relative_epsilon: Relative step size for finite differences.
+                Actual step for parameter i is max(relative_epsilon,
+                relative_epsilon * |params[i]|).
 
         Returns:
             Hessian matrix (n_params x n_params).
         """
         n = len(params)
         hessian = np.zeros((n, n), dtype=np.float64)
+
+        # Compute per-parameter step sizes
+        eps = np.array([
+            max(relative_epsilon, relative_epsilon * abs(params[i]))
+            for i in range(n)
+        ])
 
         for i in range(n):
             for j in range(i, n):
@@ -271,29 +283,41 @@ class BayesianDSCFitter:
                 params_mp = params.copy()
                 params_mm = params.copy()
 
-                params_pp[i] += epsilon
-                params_pp[j] += epsilon
-                params_pm[i] += epsilon
-                params_pm[j] -= epsilon
-                params_mp[i] -= epsilon
-                params_mp[j] += epsilon
-                params_mm[i] -= epsilon
-                params_mm[j] -= epsilon
+                params_pp[i] += eps[i]
+                params_pp[j] += eps[j]
+                params_pm[i] += eps[i]
+                params_pm[j] -= eps[j]
+                params_mp[i] -= eps[i]
+                params_mp[j] += eps[j]
+                params_mm[i] -= eps[i]
+                params_mm[j] -= eps[j]
 
                 # Second derivative
-                with np.errstate(invalid="ignore"):
-                    f_pp = objective(params_pp)
-                    f_pm = objective(params_pm)
-                    f_mp = objective(params_mp)
-                    f_mm = objective(params_mm)
+                f_pp = objective(params_pp)
+                f_pm = objective(params_pm)
+                f_mp = objective(params_mp)
+                f_mm = objective(params_mm)
 
-                    if all(np.isfinite([f_pp, f_pm, f_mp, f_mm])):
-                        hessian[i, j] = (
-                            (f_pp - f_pm - f_mp + f_mm) / (4 * epsilon**2)
-                        )
-                    else:
-                        hessian[i, j] = 0.0
-                    hessian[j, i] = hessian[i, j]
+                if all(np.isfinite([f_pp, f_pm, f_mp, f_mm])):
+                    h_ij = (f_pp - f_pm - f_mp + f_mm) / (4 * eps[i] * eps[j])
+                    if abs(h_ij) < 1e8:
+                        hessian[i, j] = h_ij
+                    elif i == j:
+                        prior_std = self.priors[i].std
+                        if prior_std > 0:
+                            hessian[i, j] = 1.0 / (prior_std**2)
+                        else:
+                            hessian[i, j] = 1.0
+                else:
+                    # Fall back to prior curvature for invalid regions
+                    if i == j:
+                        prior_std = self.priors[i].std
+                        if prior_std > 0:
+                            hessian[i, j] = 1.0 / (prior_std**2)
+                        else:
+                            hessian[i, j] = 1.0
+
+                hessian[j, i] = hessian[i, j]
 
         return hessian
 
@@ -414,9 +438,28 @@ class BayesianDSCFitter:
         if noise_std is None:
             noise_std = self._estimate_noise_std(concentration)
 
-        # Initial guess
-        x0 = np.array(self.model.get_initial_guess(), dtype=np.float64)
+        # Initial guesses for multi-start optimization
+        x0_prior = np.array(self.model.get_initial_guess(), dtype=np.float64)
         bounds = self.model.get_bounds()
+        lower = np.array([b[0] for b in bounds])
+        upper = np.array([b[1] for b in bounds])
+
+        # Data-driven initial guess from concentration curve
+        x0_data = x0_prior.copy()
+        try:
+            peak_conc = float(np.max(concentration))
+            if peak_conc > 0:
+                # Scale CBF-like parameters based on peak concentration
+                param_names = self.model.get_parameter_names()
+                for i, name in enumerate(param_names):
+                    if "cbf" in name.lower():
+                        x0_data[i] = min(peak_conc * 10.0, upper[i])
+        except (ValueError, IndexError):
+            pass
+
+        # Clip start points to bounds
+        x0_prior = np.clip(x0_prior, lower, upper)
+        x0_data = np.clip(x0_data, lower, upper)
 
         # Objective: negative log posterior
         def neg_log_posterior(params: npt.NDArray[np.floating]) -> float:
@@ -426,26 +469,31 @@ class BayesianDSCFitter:
             )
             return min(val, 1e20)
 
-        # Optimize
-        try:
-            result = optimize.minimize(
-                neg_log_posterior,
-                x0,
-                method="L-BFGS-B",
-                bounds=bounds,
-                options={"maxiter": max_iter, "disp": False, "ftol": 1e-6},
-            )
-            converged = result.success
-            fitted_params = np.array(result.x, dtype=np.float64)
+        # Multi-start optimization (matching DCE approach)
+        best_fun = float("inf")
+        converged = False
+        fitted_params = x0_prior
 
-            # Clip to bounds
-            fitted_params = np.array(
-                self.model.clip_params(fitted_params), dtype=np.float64
-            )
+        for x0 in [x0_prior, x0_data]:
+            try:
+                result = optimize.minimize(
+                    neg_log_posterior,
+                    x0,
+                    method="L-BFGS-B",
+                    bounds=bounds,
+                    options={"maxiter": max_iter, "disp": False, "ftol": 1e-6},
+                )
+                if result.fun < best_fun:
+                    best_fun = result.fun
+                    converged = result.success and result.fun < 1e20
+                    fitted_params = np.array(result.x, dtype=np.float64)
+            except (ValueError, RuntimeError):
+                continue
 
-        except (ValueError, RuntimeError):
-            converged = False
-            fitted_params = x0
+        # Clip to bounds
+        fitted_params = np.array(
+            self.model.clip_params(fitted_params), dtype=np.float64
+        )
 
         # Compute Laplace approximation uncertainties
         if compute_uncertainties:

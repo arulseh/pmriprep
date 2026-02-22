@@ -106,7 +106,7 @@ class DSCVoxelResult:
         if self.cbf > 0:
             # CBV is in mL/100g, CBF is in mL/100g/min
             # MTT = CBV / CBF * 60 to convert from min to seconds
-            self.mtt = (self.cbv / self.cbf) * 60.0 if self.cbf > 0 else 0.0
+            self.mtt = (self.cbv / self.cbf) * 60.0
 
         # CTH from vascular model
         if self.alpha is not None and self.beta is not None:

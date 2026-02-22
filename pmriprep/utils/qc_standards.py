@@ -180,37 +180,6 @@ NMI_THRESHOLDS: Final[QCThresholds] = QCThresholds(
 # Based on Stanisz et al. (2005), Wright et al. (2008)
 
 
-class T1Range(NamedTuple):
-    """Expected T1 range in milliseconds."""
-    min: float
-    max: float
-
-
-#: White matter T1 at 3T (ms)
-WM_T1_RANGE_3T: Final[T1Range] = T1Range(800.0, 900.0)
-
-#: Gray matter T1 at 3T (ms)
-GM_T1_RANGE_3T: Final[T1Range] = T1Range(1200.0, 1400.0)
-
-#: CSF T1 at 3T (ms)
-CSF_T1_RANGE_3T: Final[T1Range] = T1Range(3500.0, 5000.0)
-
-
-class PhysiologicalRanges3T(NamedTuple):
-    """Physiological parameter ranges at 3T for QC validation."""
-    wm_t1: T1Range      # White matter T1 in ms
-    gm_t1: T1Range      # Gray matter T1 in ms
-    csf_t1: T1Range     # CSF T1 in ms
-
-
-#: Combined physiological ranges at 3T
-PHYSIOLOGICAL_RANGES_3T: Final[PhysiologicalRanges3T] = PhysiologicalRanges3T(
-    wm_t1=WM_T1_RANGE_3T,
-    gm_t1=GM_T1_RANGE_3T,
-    csf_t1=CSF_T1_RANGE_3T,
-)
-
-
 # =============================================================================
 # QC Status Enumeration Helper
 # =============================================================================

@@ -830,6 +830,7 @@ def _transform_atlas_to_t1w(
     import subprocess
     import tempfile
 
+    inv_path: Optional[str] = None
     try:
         # Invert T1w-to-MNI to get MNI-to-T1w
         inv_file = tempfile.NamedTemporaryFile(suffix="_inv.mat", delete=False)
@@ -872,9 +873,10 @@ def _transform_atlas_to_t1w(
         return None
     finally:
         # Clean up inverted transform temp file
-        tmp_inv = Path(inv_path)  # type: ignore[possibly-undefined]
-        if tmp_inv.exists():
-            tmp_inv.unlink()
+        if inv_path is not None:
+            tmp_inv = Path(inv_path)
+            if tmp_inv.exists():
+                tmp_inv.unlink()
 
 
 def create_nawm_roi(

@@ -12,7 +12,6 @@ from pmriprep.workflows.discovery import (
     PipelineAvailability,
     SessionData,
     discover_session_data,
-    get_data_summary,
 )
 
 __all__ = [
@@ -24,7 +23,6 @@ __all__ = [
     "get_pipeline_summary",
     # Data discovery
     "discover_session_data",
-    "get_data_summary",
     "ModalityAvailability",
     "PipelineAvailability",
     "SessionData",

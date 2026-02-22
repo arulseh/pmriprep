@@ -291,10 +291,8 @@ def compute_psr(
         - This is the physics-correct version for post-integration expert
           review. The legacy version (compute_psr_legacy) matches perf-plus
           ground truth and uses the Cha et al. (AJNR 2002) formula.
-        - TODO(physics-review): s_min currently uses the entire timeseries.
-          The physics expert recommends using post-baseline frames only
-          (signal[..., baseline_frames:]) to avoid baseline contamination,
-          matching the perf-plus convention.
+        - s_min uses post-baseline frames only (signal[..., baseline_frames:])
+          to avoid baseline contamination, matching the perf-plus convention.
         - PSR can exceed 100% in cases where the signal overshoots baseline
           after bolus passage (rare, usually indicates motion artifact).
         - PSR can be negative if signal never recovers (very high leakage
@@ -324,15 +322,17 @@ def compute_psr(
         raise ValueError("baseline_frames and tail_frames must be at least 1")
 
     # Compute signal components
+    # S_min uses post-baseline frames only to find minimum during/after bolus,
+    # avoiding spurious baseline noise minima (matches perf-plus convention)
     if signal.ndim == 1:
         # 1D time series
         s_baseline = float(np.mean(signal[:baseline_frames]))
-        s_min = float(np.min(signal))
+        s_min = float(np.min(signal[baseline_frames:]))
         s_tail = float(np.mean(signal[-tail_frames:]))
     else:
         # 4D volume (x, y, z, time)
         s_baseline = np.mean(signal[..., :baseline_frames], axis=-1)
-        s_min = np.min(signal, axis=-1)
+        s_min = np.min(signal[..., baseline_frames:], axis=-1)
         s_tail = np.mean(signal[..., -tail_frames:], axis=-1)
 
     # Compute PSR with epsilon guard in denominator
@@ -434,11 +434,8 @@ def compute_peak_height(
         - This is the physics-correct version for post-integration expert
           review. The legacy version (compute_peak_height_legacy) matches
           perf-plus ground truth.
-        - TODO(physics-review): s_min currently uses the entire timeseries
-          (lines using np.min(signal) / np.min(signal, axis=-1)). The
-          physics expert recommends using post-baseline frames only
-          (signal[..., baseline_frames:]) to avoid baseline contamination,
-          matching the perf-plus convention.
+        - s_min uses post-baseline frames only (signal[..., baseline_frames:])
+          to avoid baseline contamination, matching the perf-plus convention.
         - PH is always positive when computed from valid DSC signal
           (signal drops during bolus passage).
         - PH can exceed 100% if signal drops below zero (artifact).
@@ -461,14 +458,16 @@ def compute_peak_height(
         raise ValueError("baseline_frames must be at least 1")
 
     # Compute signal components
+    # S_min uses post-baseline frames only to find minimum during/after bolus,
+    # avoiding spurious baseline noise minima (matches perf-plus convention)
     if signal.ndim == 1:
         # 1D time series
         s_baseline = float(np.mean(signal[:baseline_frames]))
-        s_min = float(np.min(signal))
+        s_min = float(np.min(signal[baseline_frames:]))
     else:
         # 4D volume (x, y, z, time)
         s_baseline = np.mean(signal[..., :baseline_frames], axis=-1)
-        s_min = np.min(signal, axis=-1)
+        s_min = np.min(signal[..., baseline_frames:], axis=-1)
 
     # Compute PH with epsilon guard in denominator
     s_baseline_safe = np.maximum(np.abs(s_baseline), EPSILON_SIGNAL)

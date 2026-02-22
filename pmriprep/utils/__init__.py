@@ -21,13 +21,8 @@ from pmriprep.utils.qc_standards import (
     get_status_color,
 )
 from pmriprep.utils.outputs import (
-    DerivativeMetadata,
-    PIPELINE_DESCRIPTIONS,
     copy_derivative,
-    create_dataset_description,
-    ensure_dataset_description,
     has_input,
-    write_derivative,
     write_json_sidecar,
     write_qc_json,
 )
@@ -85,9 +80,6 @@ from pmriprep.utils.structural_reference import (
     get_image_resolution_info,
     get_isotropy_ratio,
     is_postcontrast_image,
-    rank_structural_candidates,
-    select_structural_reference,
-    select_structural_reference_from_session,
 )
 
 __all__ = [
@@ -111,13 +103,8 @@ __all__ = [
     "get_qc_status",
     "get_status_color",
     # outputs
-    "DerivativeMetadata",
-    "PIPELINE_DESCRIPTIONS",
     "copy_derivative",
-    "create_dataset_description",
-    "ensure_dataset_description",
     "has_input",
-    "write_derivative",
     "write_json_sidecar",
     "write_qc_json",
     # dce_aif
@@ -170,7 +157,4 @@ __all__ = [
     "get_image_resolution_info",
     "get_isotropy_ratio",
     "is_postcontrast_image",
-    "rank_structural_candidates",
-    "select_structural_reference",
-    "select_structural_reference_from_session",
 ]
