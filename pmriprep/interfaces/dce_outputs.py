@@ -531,10 +531,17 @@ class DCEDerivativeWriter(BaseInterface):
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         if has_input(self.inputs,"motion_params"):
-            copy_derivative(
-                self.inputs.motion_params,
-                perf_dir / f"{prefix}_desc-dcePreproc_motion.par",
+            from pmriprep.utils.outputs import (
+                par_to_confounds_tsv,
+                write_confounds_sidecar,
             )
+
+            confounds_stem = f"{prefix}_desc-dceConfounds_timeseries"
+            par_to_confounds_tsv(
+                self.inputs.motion_params,
+                perf_dir / f"{confounds_stem}.tsv",
+            )
+            write_confounds_sidecar(perf_dir / f"{confounds_stem}.json")
 
         # -----------------------------------------------------------
         # 6. AIF outputs

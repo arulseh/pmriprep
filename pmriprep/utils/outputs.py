@@ -506,3 +506,149 @@ def write_json_sidecar(data: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(data, f, indent=2, default=str)
+
+
+# -----------------------------------------------------------------------
+# Motion confounds: .par → BIDS confounds TSV + JSON sidecar
+# -----------------------------------------------------------------------
+
+# BIDS confounds column names (BIDS order: translations first, then rotations)
+_CONFOUNDS_COLUMNS = [
+    "trans_x",
+    "trans_y",
+    "trans_z",
+    "rot_x",
+    "rot_y",
+    "rot_z",
+    "framewise_displacement",
+    "rmsd",
+]
+
+
+def par_to_confounds_tsv(
+    par_file: Union[str, Path],
+    output_path: Union[str, Path],
+) -> Path:
+    """Convert an FSL mcflirt ``.par`` file to a BIDS confounds TSV.
+
+    FSL column order: rot_x, rot_y, rot_z, trans_x, trans_y, trans_z.
+    BIDS column order: trans_x, trans_y, trans_z, rot_x, rot_y, rot_z,
+    framewise_displacement, rmsd.
+
+    Rotations are kept in **radians** (matching fMRIPrep convention).
+    The first row of ``framewise_displacement`` is ``n/a`` because FD is
+    undefined for the reference frame.
+
+    Args:
+        par_file: Path to the ``.par`` motion parameters file.
+        output_path: Path for the output ``.tsv`` file.
+
+    Returns:
+        Path to the written TSV file.
+    """
+    from pmriprep.utils.motion import (
+        calculate_framewise_displacement,
+        calculate_rms_displacement,
+    )
+
+    par_file = Path(par_file)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load FSL .par: columns are rot_x, rot_y, rot_z, trans_x, trans_y, trans_z
+    params = np.loadtxt(str(par_file))
+    if params.ndim == 1:
+        params = params.reshape(1, -1)
+
+    # Reorder: FSL [rot(0:3), trans(3:6)] → BIDS [trans, rot]
+    trans = params[:, 3:6]
+    rot = params[:, :3]
+
+    # Compute derived metrics (functions expect FSL order)
+    fd = calculate_framewise_displacement(params)
+    rmsd = calculate_rms_displacement(params)
+
+    # Build output lines
+    n_frames = params.shape[0]
+    lines: list[str] = ["\t".join(_CONFOUNDS_COLUMNS)]
+    for i in range(n_frames):
+        row_vals = [
+            f"{trans[i, 0]:.6f}",
+            f"{trans[i, 1]:.6f}",
+            f"{trans[i, 2]:.6f}",
+            f"{rot[i, 0]:.6f}",
+            f"{rot[i, 1]:.6f}",
+            f"{rot[i, 2]:.6f}",
+            "n/a" if i == 0 else f"{fd[i]:.6f}",
+            f"{rmsd[i]:.6f}",
+        ]
+        lines.append("\t".join(row_vals))
+
+    output_path.write_text("\n".join(lines) + "\n")
+    return output_path
+
+
+def write_confounds_sidecar(output_path: Union[str, Path]) -> Path:
+    """Write the JSON sidecar for a BIDS confounds TSV.
+
+    Describes each column's meaning and units following the BIDS
+    common derivatives specification.
+
+    Args:
+        output_path: Path for the output ``.json`` sidecar file.
+
+    Returns:
+        Path to the written JSON file.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sidecar: Dict[str, Any] = {
+        "trans_x": {
+            "Description": "Translation along the x-axis",
+            "Units": "mm",
+        },
+        "trans_y": {
+            "Description": "Translation along the y-axis",
+            "Units": "mm",
+        },
+        "trans_z": {
+            "Description": "Translation along the z-axis",
+            "Units": "mm",
+        },
+        "rot_x": {
+            "Description": "Rotation about the x-axis",
+            "Units": "rad",
+        },
+        "rot_y": {
+            "Description": "Rotation about the y-axis",
+            "Units": "rad",
+        },
+        "rot_z": {
+            "Description": "Rotation about the z-axis",
+            "Units": "rad",
+        },
+        "framewise_displacement": {
+            "Description": (
+                "Framewise displacement (Power et al., 2012). "
+                "Sum of absolute translations plus rotations "
+                "converted to mm via 50 mm head radius."
+            ),
+            "Units": "mm",
+            "HeadRadius": 50.0,
+        },
+        "rmsd": {
+            "Description": (
+                "Root-mean-square displacement relative to reference frame, "
+                "combining rotations (converted via 50 mm head radius) "
+                "and translations."
+            ),
+            "Units": "mm",
+            "HeadRadius": 50.0,
+        },
+    }
+
+    with open(output_path, "w") as f:
+        json.dump(sidecar, f, indent=2)
+
+    return output_path

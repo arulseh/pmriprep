@@ -104,11 +104,9 @@ def calculate_framewise_displacement(
 ) -> npt.NDArray[np.float64]:
     """Calculate framewise displacement from motion parameters.
 
-    Framewise displacement (FD) quantifies head motion between consecutive
-    frames. Rotation parameters are converted to mm using the specified
-    radius (typically 50mm for head radius).
-
-    FD = |Δtx| + |Δty| + |Δtz| + r×|Δrx| + r×|Δry| + r×|Δrz|
+    Thin wrapper around :func:`pmriprep.utils.motion.calculate_framewise_displacement`
+    that accepts the ``radius`` keyword (used by QC plotting code) and
+    handles 12-column affine parameter arrays by extracting the first 6 columns.
 
     Args:
         motion_params: Motion parameters array of shape (N, 6) in MCFLIRT
@@ -125,6 +123,10 @@ def calculate_framewise_displacement(
     Raises:
         ValueError: If motion_params has wrong shape
     """
+    from pmriprep.utils.motion import (
+        calculate_framewise_displacement as _calculate_fd,
+    )
+
     motion_params = np.asarray(motion_params, dtype=np.float64)
 
     if motion_params.ndim != 2:
@@ -136,23 +138,10 @@ def calculate_framewise_displacement(
             f"got {motion_params.shape[1]}"
         )
 
-    # Extract the 6 rigid-body parameters
+    # Extract the 6 rigid-body parameters (handles 12-column affine)
     params = motion_params[:, :6]
 
-    # Calculate frame-to-frame differences
-    diff = np.diff(params, axis=0)
-
-    # MCFLIRT format: cols 0-2 = rotations (radians), cols 3-5 = translations (mm)
-    rot_disp = np.abs(diff[:, :3]) * radius
-    trans_disp = np.abs(diff[:, 3:6])
-
-    # Sum all displacements
-    fd = np.sum(trans_disp, axis=1) + np.sum(rot_disp, axis=1)
-
-    # Prepend 0 for the first frame (no previous frame to compare)
-    fd = np.concatenate([[0.0], fd])
-
-    return fd  # type: ignore[no-any-return]
+    return _calculate_fd(params, head_radius=radius)  # type: ignore[return-value]
 
 
 def _compute_brain_slice_indices(

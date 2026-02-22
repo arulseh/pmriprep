@@ -78,6 +78,7 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Motion-corrected data
     dsc_moco = traits.Str(desc="Motion-corrected 4D DSC path")
     dsc_mean = traits.Str(desc="Mean DSC image path")
+    motion_params = traits.Str(desc="Motion parameters file path (.par)")
 
     # AIF outputs
     aif_curve = traits.Str(desc="AIF curve text file path")
@@ -447,6 +448,19 @@ class DSCDerivativeWriter(BaseInterface):
             copy_derivative(self.inputs.dsc_mean, perf_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": "Mean DSC reference image"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
+
+        if has_input(self.inputs, "motion_params"):
+            from pmriprep.utils.outputs import (
+                par_to_confounds_tsv,
+                write_confounds_sidecar,
+            )
+
+            confounds_stem = f"{prefix}_desc-dscConfounds_timeseries"
+            par_to_confounds_tsv(
+                self.inputs.motion_params,
+                perf_dir / f"{confounds_stem}.tsv",
+            )
+            write_confounds_sidecar(perf_dir / f"{confounds_stem}.json")
 
         # -----------------------------------------------------------
         # 8. AIF outputs

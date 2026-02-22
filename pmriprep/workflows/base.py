@@ -1481,6 +1481,7 @@ def init_pmriprep_wf(
                 # Motion-corrected data
                 ("outputnode.dsc_moco", "dsc_moco"),
                 ("outputnode.dsc_mean", "dsc_mean"),
+                ("outputnode.motion_params", "motion_params"),
                 # AIF outputs
                 ("outputnode.aif_curve", "aif_curve"),
                 ("outputnode.aif_mask", "aif_mask"),
