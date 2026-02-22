@@ -73,8 +73,10 @@ class MergeMasks(SimpleInterface):
         data_a = np.asarray(img_a.dataobj) > 0  # type: ignore[attr-defined]
 
         # Check if geometries match
+        shape_a = img_a.header.get_data_shape()[:3]  # type: ignore[attr-defined]
+        shape_b = img_b.header.get_data_shape()[:3]  # type: ignore[attr-defined]
         geom_match = (
-            img_a.shape[:3] == img_b.shape[:3]
+            shape_a == shape_b
             and float(np.abs(img_a.affine - img_b.affine).max()) < 1e-4  # type: ignore[attr-defined]
         )
 
@@ -127,7 +129,9 @@ class DilateMask(SimpleInterface):
         mask_data = np.asarray(mask_img.dataobj) > 0  # type: ignore[attr-defined]
         header = mask_img.header  # type: ignore[attr-defined]
         zooms = header.get_zooms()[:3]  # type: ignore[attr-defined]
-        voxel_sizes = tuple(float(z) for z in zooms)
+        voxel_sizes: tuple[float, float, float] = (
+            float(zooms[0]), float(zooms[1]), float(zooms[2]),
+        )
 
         radius_mm = float(self.inputs.radius_mm)
 
@@ -199,4 +203,4 @@ def _create_spherical_kernel(
     xx, yy, zz = np.meshgrid(x * vx, y * vy, z * vz, indexing="ij")
     distance = np.sqrt(xx**2 + yy**2 + zz**2)
 
-    return distance <= radius_mm
+    return np.asarray(distance <= radius_mm)

@@ -103,8 +103,9 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     smooth_fwhm = traits.Float(0.0, usedefault=True, desc="Smoothing FWHM in mm")
 
     # Structural underlays (registered to DSC space)
-    t1w_in_dsc = traits.Either(traits.Str, None, desc="CE-T1w registered to DSC space NIfTI path")
+    t1w_in_dsc = traits.Either(traits.Str, None, desc="T1w registered to DSC space NIfTI path")
     flair_in_dsc = traits.Either(traits.Str, None, desc="FLAIR registered to DSC space NIfTI path")
+    t2w_in_dsc = traits.Either(traits.Str, None, desc="T2w registered to DSC space NIfTI path")
     t1w_to_dsc_xfm = traits.Str(desc="T1w-to-DSC transform matrix path")
 
     # AIF QC plots
@@ -587,6 +588,12 @@ class DSCDerivativeWriter(BaseInterface):
             fname = f"{prefix}_{spatial}_FLAIR"
             copy_derivative(self.inputs.flair_in_dsc, anat_dir / f"{fname}.nii.gz")
             sidecar = {**minimal_sidecar, "Description": "FLAIR registered to DSC space"}
+            write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
+
+        if has_input(self.inputs,"t2w_in_dsc"):
+            fname = f"{prefix}_{spatial}_T2w"
+            copy_derivative(self.inputs.t2w_in_dsc, anat_dir / f"{fname}.nii.gz")
+            sidecar = {**minimal_sidecar, "Description": "T2w registered to DSC space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

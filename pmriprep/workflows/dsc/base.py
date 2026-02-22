@@ -1559,6 +1559,7 @@ def init_dsc_preproc_wf(
                 "field_strength",  # Magnetic field strength
                 "tr",  # Repetition time in seconds
                 "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
+                "t2w_in_t1w",  # T2w coregistered to T1w space (from anat)
             ]
         ),
         name="inputnode",
@@ -1628,6 +1629,7 @@ def init_dsc_preproc_wf(
                 # Structural underlays
                 "t1w_in_dsc",
                 "flair_in_dsc",
+                "t2w_in_dsc",
                 # AIF QC plots
                 "aif_curve_plot",
                 "aif_location_plot",
@@ -2170,7 +2172,7 @@ def init_dsc_preproc_wf(
     # Uses Function interface to handle undefined inputs gracefully.
     # -------------------------------------------------------------------
     transform_t1_to_dsc = None
-    if "t1w" in config.underlays:
+    if "t1w_precon" in config.underlays or "t1w_postcon" in config.underlays:
         transform_t1_to_dsc = pe.Node(
             niu.Function(
                 input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
@@ -2192,6 +2194,18 @@ def init_dsc_preproc_wf(
             name="transform_flair_to_dsc",
         )
         transform_flair_to_dsc.inputs.output_name = "flair_in_dsc.nii.gz"
+
+    transform_t2w_to_dsc = None
+    if "t2w" in config.underlays:
+        transform_t2w_to_dsc = pe.Node(
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dsc,
+            ),
+            name="transform_t2w_to_dsc",
+        )
+        transform_t2w_to_dsc.inputs.output_name = "t2w_in_dsc.nii.gz"
 
     # -------------------------------------------------------------------
     # Node 10: Provenance Logging
@@ -2665,6 +2679,13 @@ def init_dsc_preproc_wf(
             (register, transform_flair_to_dsc, [("out_matrix", "transform_matrix")]),
         ])
 
+    if transform_t2w_to_dsc is not None:
+        workflow.connect([
+            (inputnode, transform_t2w_to_dsc, [("t2w_in_t1w", "structural_file")]),
+            (prebolus_mean, transform_t2w_to_dsc, [("prebolus_mean_file", "reference_file")]),
+            (register, transform_t2w_to_dsc, [("out_matrix", "transform_matrix")]),
+        ])
+
     # -------------------------------------------------------------------
     # Smoothing connections (only if smooth_fwhm > 0)
     # -------------------------------------------------------------------
@@ -2835,6 +2856,11 @@ def init_dsc_preproc_wf(
     if transform_flair_to_dsc is not None:
         workflow.connect([
             (transform_flair_to_dsc, outputnode, [("out_file", "flair_in_dsc")]),
+        ])
+
+    if transform_t2w_to_dsc is not None:
+        workflow.connect([
+            (transform_t2w_to_dsc, outputnode, [("out_file", "t2w_in_dsc")]),
         ])
 
     workflow.connect([

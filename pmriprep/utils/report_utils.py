@@ -167,7 +167,8 @@ def _load_qc_json(ses_dir: Path, prefix: str, pipeline: str) -> dict[str, Any]:
     if qc_path.exists():
         try:
             with open(qc_path) as f:
-                return json.load(f)
+                result: dict[str, Any] = json.load(f)
+                return result
         except json.JSONDecodeError:
             logger.warning("Malformed QC JSON, skipping: %s", qc_path)
     return {}

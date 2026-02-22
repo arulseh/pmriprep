@@ -220,7 +220,9 @@ def init_dce_preproc_wf(
                 # Atlas inputs (optional)
                 "atlas_mask_file",  # MNI-space atlas mask for AIF search territories
                 # Structural underlay inputs
+                "t1w_underlay",  # T1w underlay for DCE-space visualization (pre or postcon)
                 "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
+                "t2w_in_t1w",  # T2w coregistered to T1w space (from anat)
                 # NAWM mask input (from tumor segmentation, for normalization)
                 "nawm_mask",  # NAWM mask in T1w space for nKtrans, nIAUC60
                 # Generic ROI mask for stats extraction only (optional)
@@ -233,6 +235,10 @@ def init_dce_preproc_wf(
     # Default DSC inputs to None (overridden when DSC workflow is connected)
     inputnode.inputs.dsc_cbv_file = None
     inputnode.inputs.dsc_to_t1w_xfm = None
+
+    # Default structural underlay inputs to None
+    inputnode.inputs.t1w_underlay = None
+    inputnode.inputs.t2w_in_t1w = None
 
     # Define output node with all possible outputs
     outputnode = pe.Node(
@@ -306,6 +312,7 @@ def init_dce_preproc_wf(
                 # Structural underlays
                 "t1w_in_dce",
                 "flair_in_dce",
+                "t2w_in_dce",
                 # Lesion statistics (conditional on lesion mask)
                 "lesion_stats_json",
                 "lesion_stats_txt",
@@ -1449,7 +1456,7 @@ def init_dce_preproc_wf(
     # Node 12: Structural underlays (conditional on config.underlays)
     # ==========================================================================
     transform_t1w_underlay = None
-    if "t1w" in config.underlays:
+    if "t1w_precon" in config.underlays or "t1w_postcon" in config.underlays:
         transform_t1w_underlay = pe.Node(
             niu.Function(
                 input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
@@ -1472,10 +1479,22 @@ def init_dce_preproc_wf(
         )
         transform_flair_underlay.inputs.output_name = "flair_in_dce.nii.gz"
 
+    transform_t2w_underlay = None
+    if "t2w" in config.underlays:
+        transform_t2w_underlay = pe.Node(
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dce,
+            ),
+            name="transform_t2w_underlay",
+        )
+        transform_t2w_underlay.inputs.output_name = "t2w_in_dce.nii.gz"
+
     # Connect structural underlay transforms
     if transform_t1w_underlay is not None:
         workflow.connect([
-            (inputnode, transform_t1w_underlay, [("t1w_reference", "structural_file")]),
+            (inputnode, transform_t1w_underlay, [("t1w_underlay", "structural_file")]),
             (dce_preprocess, transform_t1w_underlay, [("mean_img", "reference_file")]),
             (dce_registration, transform_t1w_underlay, [("out_matrix", "transform_matrix")]),
         ])
@@ -1485,6 +1504,13 @@ def init_dce_preproc_wf(
             (inputnode, transform_flair_underlay, [("flair_in_t1w", "structural_file")]),
             (dce_preprocess, transform_flair_underlay, [("mean_img", "reference_file")]),
             (dce_registration, transform_flair_underlay, [("out_matrix", "transform_matrix")]),
+        ])
+
+    if transform_t2w_underlay is not None:
+        workflow.connect([
+            (inputnode, transform_t2w_underlay, [("t2w_in_t1w", "structural_file")]),
+            (dce_preprocess, transform_t2w_underlay, [("mean_img", "reference_file")]),
+            (dce_registration, transform_t2w_underlay, [("out_matrix", "transform_matrix")]),
         ])
 
     # ==========================================================================
@@ -1617,6 +1643,11 @@ def init_dce_preproc_wf(
     if transform_flair_underlay is not None:
         workflow.connect([
             (transform_flair_underlay, outputnode, [("out_file", "flair_in_dce")]),
+        ])
+
+    if transform_t2w_underlay is not None:
+        workflow.connect([
+            (transform_t2w_underlay, outputnode, [("out_file", "t2w_in_dce")]),
         ])
 
     # Lesion statistics output connections

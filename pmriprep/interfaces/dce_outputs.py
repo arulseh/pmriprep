@@ -112,8 +112,13 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     qc_metrics = traits.Dict(desc="Merged QC metrics dictionary")
 
     # Structural underlays (registered to DCE space, optional)
-    t1w_in_dce = traits.Either(traits.Str, None, desc="CE-T1w registered to DCE space NIfTI path")
+    t1w_in_dce = traits.Either(traits.Str, None, desc="T1w registered to DCE space NIfTI path")
     flair_in_dce = traits.Either(traits.Str, None, desc="FLAIR registered to DCE space NIfTI path")
+    t2w_in_dce = traits.Either(traits.Str, None, desc="T2w registered to DCE space NIfTI path")
+
+    # Structural underlay labeling
+    has_postcon_t1w = traits.Bool(False, usedefault=True,
+                                  desc="Whether t1w_in_dce is post-contrast CE-T1w")
 
     # Lesion statistics (conditional on lesion mask, optional)
     lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
@@ -578,9 +583,15 @@ class DCEDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         if has_input(self.inputs,"t1w_in_dce"):
             anat_dir.mkdir(parents=True, exist_ok=True)
-            fname = f"{prefix}_{spatial}_ce-GAD_T1w"
+            if self.inputs.has_postcon_t1w:
+                label = "ce-GAD_T1w"
+                description = "CE-T1w registered to DCE space"
+            else:
+                label = "T1w"
+                description = "T1w registered to DCE space"
+            fname = f"{prefix}_{spatial}_{label}"
             copy_derivative(self.inputs.t1w_in_dce, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**minimal_sidecar, "Description": "CE-T1w registered to DCE space"}
+            sidecar = {**minimal_sidecar, "Description": description}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         if has_input(self.inputs,"flair_in_dce"):
@@ -588,6 +599,13 @@ class DCEDerivativeWriter(BaseInterface):
             fname = f"{prefix}_{spatial}_FLAIR"
             copy_derivative(self.inputs.flair_in_dce, anat_dir / f"{fname}.nii.gz")
             sidecar = {**minimal_sidecar, "Description": "FLAIR registered to DCE space"}
+            write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
+
+        if has_input(self.inputs,"t2w_in_dce"):
+            anat_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{prefix}_{spatial}_T2w"
+            copy_derivative(self.inputs.t2w_in_dce, anat_dir / f"{fname}.nii.gz")
+            sidecar = {**minimal_sidecar, "Description": "T2w registered to DCE space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -627,8 +645,9 @@ class DCEDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # Collect processing warnings for missing data-dependent inputs
         _data_dependent_inputs = {
-            "t1w_in_dce": "CE-T1w structural underlay",
+            "t1w_in_dce": "T1w structural underlay",
             "flair_in_dce": "FLAIR structural underlay",
+            "t2w_in_dce": "T2w structural underlay",
             "b1_map": "B1+ transmit field map",
             "t1_map": "T1 relaxation time map",
             "brain_mask": "Brain mask in DCE space",

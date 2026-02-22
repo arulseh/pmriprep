@@ -87,7 +87,7 @@ class DCEConfig:
     n_aif_candidates: int = 10
 
     # Structural settings
-    underlays: List[str] = field(default_factory=lambda: ["t1w", "flair"])
+    underlays: List[str] = field(default_factory=list)
 
     # T1 mapping settings
     no_b1: bool = False
@@ -123,6 +123,16 @@ class DCEConfig:
         This handles cases where values may be passed as strings from
         YAML/JSON config files or CLI arguments.
         """
+        # Validate underlay values
+        _VALID_UNDERLAYS = {"t1w_precon", "t1w_postcon", "flair", "t2w"}
+        invalid = set(self.underlays) - _VALID_UNDERLAYS
+        if invalid:
+            raise ValueError(
+                f"Invalid underlay(s): {sorted(invalid)}. "
+                f"Valid: {sorted(_VALID_UNDERLAYS)}. "
+                f"Note: 't1w' is no longer valid — use 't1w_precon' or 't1w_postcon'."
+            )
+
         # Coerce integer fields (these have non-None defaults)
         try:
             self.baseline_frames = int(self.baseline_frames)
