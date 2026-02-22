@@ -190,7 +190,7 @@ Examples:
         "--dsc-deconv-method",
         choices=["sSVD", "cSVD", "oSVD", "tikhonov", "vascular", "cpi"],
         default=None,
-        help="Deconvolution method for DSC (default: sSVD).",
+        help="Deconvolution method for DSC (default: oSVD).",
     )
     dsc_group.add_argument(
         "--dsc-bayesian",
@@ -210,13 +210,6 @@ Examples:
         choices=["half", "full", "double"],
         default=None,
         help="Contrast agent dose for DSC (default: full).",
-    )
-    dsc_group.add_argument(
-        "--dsc-gbm-preset",
-        action="store_true",
-        default=False,
-        help="Apply GBM preset: oSVD method, aif_criteria=relaxed, "
-        "n_aif_candidates=5, gamma_fit=true.",
     )
     dsc_group.add_argument(
         "--dsc-aif-method",
@@ -544,11 +537,6 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         dsc_config.num_processes = args.nprocs
     if dce_config.num_processes == 0:
         dce_config.num_processes = args.nprocs
-
-    # Apply GBM preset if requested
-    if args.dsc_gbm_preset:
-        logger.info("Applying GBM clinical preset to DSC configuration")
-        dsc_config = dsc_config.apply_gbm_preset()
 
     # Build skip flags
     skip_flags = PipelineSkipFlags(

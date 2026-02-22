@@ -41,6 +41,8 @@ class ModalityAvailability:
     dwi: Optional[Path] = None
     afi_mode: Optional[str] = None  # "3d" or "4d"
     afi_4d_file: Optional[Path] = None  # Set when afi_mode="4d"
+    afi_tr1_file: Optional[Path] = None  # 3D mode: file with shorter TR
+    afi_tr2_file: Optional[Path] = None  # 3D mode: file with longer TR
     afi_tr1_ms: Optional[float] = None  # TR1 in ms (from sidecar)
     afi_tr2_ms: Optional[float] = None  # TR2 in ms (from sidecar)
     afi_flip_angle: Optional[float] = None  # Nominal flip angle in degrees (from sidecar)
@@ -466,6 +468,8 @@ def _classify_afi_data(
     result: dict[str, Optional[Union[str, Path, float]]] = {
         "afi_mode": None,
         "afi_4d_file": None,
+        "afi_tr1_file": None,
+        "afi_tr2_file": None,
         "afi_tr1_ms": None,
         "afi_tr2_ms": None,
         "afi_flip_angle": None,
@@ -526,8 +530,9 @@ def _classify_afi_data(
         result["afi_mode"] = "3d"
         logger.info("Found %d separate AFI volumes (3D mode)", len(afi_files))
 
-        # Try to read TR values from sidecars for the first two files
-        for idx, afi_path in enumerate(afi_files[:2]):
+        # Read TR from all sidecars to select the correct pair
+        file_trs: list[tuple[Path, float]] = []
+        for afi_path in afi_files:
             json_path = Path(
                 str(afi_path)
                 .replace(".nii.gz", ".json")
@@ -538,17 +543,70 @@ def _classify_afi_data(
                     meta = json.load(f)
                 tr_val = meta.get("RepetitionTime")
                 if tr_val is not None:
-                    tr_ms = float(tr_val) * 1000
-                    if idx == 0:
-                        result["afi_tr1_ms"] = tr_ms
-                    else:
-                        result["afi_tr2_ms"] = tr_ms
-                # Extract nominal flip angle from first sidecar
-                if idx == 0 and "FlipAngle" in meta:
-                    fa = meta["FlipAngle"]
-                    if isinstance(fa, list):
-                        fa = fa[0]
-                    result["afi_flip_angle"] = float(fa)
+                    file_trs.append((afi_path, float(tr_val) * 1000))
+
+        if len(afi_files) > 2 and len(file_trs) >= 2:
+            # >2 files (e.g. duplicate runs from dcm2niix): group by TR,
+            # pick one file per unique TR (shortest TR → tr1, longest → tr2)
+            tr_groups: dict[float, list[Path]] = {}
+            for path, tr_ms in file_trs:
+                tr_groups.setdefault(tr_ms, []).append(path)
+
+            unique_trs = sorted(tr_groups.keys())
+            if len(unique_trs) >= 2:
+                # Select first file from the shortest and longest TR groups
+                selected_tr1 = unique_trs[0]
+                selected_tr2 = unique_trs[-1]
+                selected = [
+                    (tr_groups[selected_tr1][0], selected_tr1),
+                    (tr_groups[selected_tr2][0], selected_tr2),
+                ]
+                logger.info(
+                    "AFI: %d files found with %d unique TRs. "
+                    "Selected pair: TR1=%.1fms (%s), TR2=%.1fms (%s)",
+                    len(afi_files), len(unique_trs),
+                    selected_tr1, tr_groups[selected_tr1][0].name,
+                    selected_tr2, tr_groups[selected_tr2][0].name,
+                )
+            else:
+                # All files have the same TR — degenerate, take first two
+                logger.warning(
+                    "AFI: %d files but all have TR=%.1fms. "
+                    "Cannot form a valid pair; using first two files.",
+                    len(afi_files), unique_trs[0],
+                )
+                selected = [(file_trs[0][0], file_trs[0][1]),
+                            (file_trs[1][0], file_trs[1][1])]
+        elif len(file_trs) >= 2:
+            # Exactly 2 files with TR info — sort by TR
+            file_trs.sort(key=lambda x: x[1])
+            selected = [(file_trs[0][0], file_trs[0][1]),
+                        (file_trs[1][0], file_trs[1][1])]
+        else:
+            # Fallback: no TR info available, use first two files as-is
+            selected = [(afi_files[0], 0.0), (afi_files[1], 0.0)]
+
+        result["afi_tr1_file"] = selected[0][0]
+        result["afi_tr2_file"] = selected[1][0]
+        if selected[0][1] > 0:
+            result["afi_tr1_ms"] = selected[0][1]
+        if selected[1][1] > 0:
+            result["afi_tr2_ms"] = selected[1][1]
+
+        # Extract nominal flip angle from the TR1 file's sidecar
+        tr1_json = Path(
+            str(selected[0][0])
+            .replace(".nii.gz", ".json")
+            .replace(".nii", ".json")
+        )
+        if tr1_json.exists():
+            with open(tr1_json) as f:
+                meta = json.load(f)
+            if "FlipAngle" in meta:
+                fa = meta["FlipAngle"]
+                if isinstance(fa, list):
+                    fa = fa[0]
+                result["afi_flip_angle"] = float(fa)
 
     return result
 
@@ -691,6 +749,10 @@ def discover_session_data(
             modalities.afi_mode = str(afi_info["afi_mode"])
         if afi_info["afi_4d_file"] is not None:
             modalities.afi_4d_file = Path(str(afi_info["afi_4d_file"]))
+        if afi_info["afi_tr1_file"] is not None:
+            modalities.afi_tr1_file = Path(str(afi_info["afi_tr1_file"]))
+        if afi_info["afi_tr2_file"] is not None:
+            modalities.afi_tr2_file = Path(str(afi_info["afi_tr2_file"]))
         if afi_info["afi_tr1_ms"] is not None:
             modalities.afi_tr1_ms = float(afi_info["afi_tr1_ms"])  # type: ignore[arg-type]
         if afi_info["afi_tr2_ms"] is not None:

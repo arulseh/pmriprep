@@ -68,7 +68,7 @@ class DSCConfig:
     dose: Literal["half", "full", "double"] = "full"
 
     # Deconvolution settings
-    method: str = "sSVD"
+    method: str = "oSVD"
     bayesian: str = "none"
     mcmc_samples: int = 500
     cpi_control_points: int = 0  # 0 = auto-select
@@ -122,41 +122,3 @@ class DSCConfig:
         except (ValueError, TypeError) as e:
             raise TypeError(f"DSCConfig float field has invalid type: {e}") from e
 
-    def apply_gbm_preset(self) -> "DSCConfig":
-        """Apply GBM clinical preset settings.
-
-        Returns a new DSCConfig with GBM-optimized settings:
-        - oSVD deconvolution method
-        - relaxed AIF criteria
-        - n_aif_candidates=5
-        - gamma_fit=True (gamma-variate AIF fitting for cleaner deconvolution)
-        Returns
-        -------
-        DSCConfig
-            New config with GBM preset applied.
-        """
-        return DSCConfig(
-            preload_present=self.preload_present,
-            dose=self.dose,
-            method="oSVD",
-            bayesian=self.bayesian,
-            mcmc_samples=self.mcmc_samples,
-            cpi_control_points=self.cpi_control_points,
-            aif_mask_file=self.aif_mask_file,
-            lesion_distance=self.lesion_distance,
-            aif_criteria="relaxed",
-            n_aif_candidates=5,
-            gamma_fit=True,
-            disable_aif_fallback=self.disable_aif_fallback,
-            aif_method=self.aif_method,
-            lesion_mask=self.lesion_mask,
-            nawm_mask=self.nawm_mask,
-            registration=self.registration,
-            smooth_fwhm=self.smooth_fwhm,
-            underlays=self.underlays,
-            motion_thresh=self.motion_thresh,
-            pre_bolus=self.pre_bolus,
-            num_processes=self.num_processes,
-            use_gpu=self.use_gpu,
-            hdbet_device=self.hdbet_device,
-        )

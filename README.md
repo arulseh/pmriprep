@@ -73,28 +73,12 @@ pmriprep /path/to/bids /path/to/output participant \
 
 | Method | Description |
 |--------|-------------|
-| `sSVD` | Standard SVD (default) |
+| `sSVD` | Standard SVD |
 | `cSVD` | Circulant SVD (delay-insensitive) |
-| `oSVD` | Oscillation-index limited SVD |
+| `oSVD` | Oscillation-index limited SVD (default) |
 | `tikhonov` | Tikhonov regularization with GCV |
 | `vascular` | Gamma-variate vascular model |
 | `cpi` | Control Point Interpolation |
-
-#### GBM Preset
-
-For glioma patients, use the `--dsc-gbm-preset` flag which sets:
-- Method: oSVD
-- Pre-bolus frames: 10
-- AIF criteria: relaxed
-- AIF candidates: 5
-- Save K2 map: true
-
-```bash
-pmriprep /path/to/bids /path/to/output participant \
-    --dsc-gbm-preset \
-    --dsc-preload \
-    --dsc-dose half
-```
 
 ### DCE Processing Options
 

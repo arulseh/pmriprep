@@ -1811,18 +1811,23 @@ def init_pmriprep_wf(
                 if session_data.modalities.afi_tr2_ms is not None:
                     dce_wf.inputs.inputnode.afi_tr2 = session_data.modalities.afi_tr2_ms
             else:
-                # 3D mode: separate files (existing behavior)
-                afi_list = session_data.modalities.afi
-                if len(afi_list) >= 2:
-                    dce_wf.inputs.inputnode.afi_tr1_file = str(afi_list[0])
-                    dce_wf.inputs.inputnode.afi_tr2_file = str(afi_list[1])
-                    # Read AFI TR values from BIDS sidecar JSONs
-                    # B1Mapping expects TR in ms; BIDS stores RepetitionTime in s
-                    afi_sidecar_1 = _read_bids_sidecar(afi_list[0])
-                    afi_sidecar_2 = _read_bids_sidecar(afi_list[1])
-                    if afi_sidecar_1["tr"] is not None and afi_sidecar_2["tr"] is not None:
-                        dce_wf.inputs.inputnode.afi_tr1 = afi_sidecar_1["tr"] * 1000
-                        dce_wf.inputs.inputnode.afi_tr2 = afi_sidecar_2["tr"] * 1000
+                # 3D mode: use TR-classified file paths from discovery
+                mods = session_data.modalities
+                tr1_file = mods.afi_tr1_file or (mods.afi[0] if len(mods.afi) >= 2 else None)
+                tr2_file = mods.afi_tr2_file or (mods.afi[1] if len(mods.afi) >= 2 else None)
+                if tr1_file and tr2_file:
+                    dce_wf.inputs.inputnode.afi_tr1_file = str(tr1_file)
+                    dce_wf.inputs.inputnode.afi_tr2_file = str(tr2_file)
+                    # Use pre-read TR values from discovery; fall back to sidecar read
+                    if mods.afi_tr1_ms is not None and mods.afi_tr2_ms is not None:
+                        dce_wf.inputs.inputnode.afi_tr1 = mods.afi_tr1_ms
+                        dce_wf.inputs.inputnode.afi_tr2 = mods.afi_tr2_ms
+                    else:
+                        afi_sidecar_1 = _read_bids_sidecar(tr1_file)
+                        afi_sidecar_2 = _read_bids_sidecar(tr2_file)
+                        if afi_sidecar_1["tr"] is not None and afi_sidecar_2["tr"] is not None:
+                            dce_wf.inputs.inputnode.afi_tr1 = afi_sidecar_1["tr"] * 1000
+                            dce_wf.inputs.inputnode.afi_tr2 = afi_sidecar_2["tr"] * 1000
 
             # Wire AFI nominal flip angle from BIDS sidecar (default 60 in B1Mapping)
             if session_data.modalities.afi_flip_angle is not None:
