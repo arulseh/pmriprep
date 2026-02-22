@@ -157,6 +157,12 @@ def merge_cli_config(
         result.setdefault("dsc", {})["hdbet_device"] = cli_args["hdbet_device"]
         result.setdefault("dce", {})["hdbet_device"] = cli_args["hdbet_device"]
 
+    # --sloppy sets sloppy on DSC, DCE, and anat configs
+    if cli_args.get("sloppy"):
+        result.setdefault("dsc", {})["sloppy"] = True
+        result.setdefault("dce", {})["sloppy"] = True
+        result.setdefault("anat", {})["sloppy"] = True
+
     return result
 
 

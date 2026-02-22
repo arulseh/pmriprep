@@ -539,10 +539,14 @@ def init_anat_preproc_wf(
     # Step 2: Bias Correction - T1w reference
     # Apply N4 bias field correction, optionally preceded by denoising
     # -------------------------------------------------------------------
+    bias_kwargs: dict[str, Any] = {"denoise": config.denoise}
+    if config.sloppy:
+        bias_kwargs.update(
+            shrink_factor=8, convergence="[20x20,0.001]", denoise=False,
+        )
+
     bias_correct = pe.Node(
-        BiasCorrection(
-            denoise=config.denoise,
-        ),
+        BiasCorrection(**bias_kwargs),
         name="bias_correct",
     )
 
@@ -559,7 +563,7 @@ def init_anat_preproc_wf(
     if has_t1w_postcon:
         reorient_postcon = pe.Node(ReorientAndCrop(), name="reorient_postcon")
         bias_correct_postcon = pe.Node(
-            BiasCorrection(denoise=config.denoise), name="bias_correct_postcon"
+            BiasCorrection(**bias_kwargs), name="bias_correct_postcon"
         )
         coreg_postcon = pe.Node(
             Coregistration(modality="T1_postcon", dof=6), name="coreg_postcon"
@@ -578,7 +582,7 @@ def init_anat_preproc_wf(
             ReorientAndCrop(crop_fov=False), name="reorient_t2w"
         )
         bias_correct_t2w = pe.Node(
-            BiasCorrection(denoise=config.denoise), name="bias_correct_t2w"
+            BiasCorrection(**bias_kwargs), name="bias_correct_t2w"
         )
         coreg_t2w = pe.Node(
             Coregistration(modality="T2w", dof=6), name="coreg_t2w"
@@ -597,7 +601,7 @@ def init_anat_preproc_wf(
             ReorientAndCrop(crop_fov=False), name="reorient_flair"
         )
         bias_correct_flair = pe.Node(
-            BiasCorrection(denoise=config.denoise), name="bias_correct_flair"
+            BiasCorrection(**bias_kwargs), name="bias_correct_flair"
         )
         coreg_flair = pe.Node(
             Coregistration(modality="FLAIR", dof=6), name="coreg_flair"
@@ -616,7 +620,7 @@ def init_anat_preproc_wf(
             ReorientAndCrop(crop_fov=False), name="reorient_flair_postcon"
         )
         bias_correct_flair_postcon = pe.Node(
-            BiasCorrection(denoise=config.denoise), name="bias_correct_flair_postcon"
+            BiasCorrection(**bias_kwargs), name="bias_correct_flair_postcon"
         )
         coreg_flair_postcon = pe.Node(
             Coregistration(modality="FLAIR", dof=6), name="coreg_flair_postcon"

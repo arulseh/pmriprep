@@ -29,3 +29,6 @@ class AnatConfig:
     # Subtraction image settings
     create_subtraction: bool = True  # Create post-pre subtraction image
 
+    # Testing / debug
+    sloppy: bool = False  # Use fast, low-quality settings for testing
+

@@ -412,6 +412,7 @@ class BayesianDSCFitter:
         max_iter: int = MAP_MAX_ITER,
         compute_uncertainties: bool = True,
         weights: npt.NDArray[np.floating] | None = None,
+        sloppy: bool = False,
     ) -> DSCFitResult:
         """Fit model using MAP estimation with Laplace approximation.
 
@@ -427,10 +428,14 @@ class BayesianDSCFitter:
             compute_uncertainties: Whether to compute Laplace uncertainties.
                 Set to False to skip the expensive Hessian computation.
             weights: Optional per-frame motion weights (1.0 = full weight).
+            sloppy: Use fast, low-quality settings for testing.
 
         Returns:
             DSCFitResult with parameters, uncertainties, and credible intervals.
         """
+        if sloppy:
+            max_iter = 100
+            compute_uncertainties = False
         self._validate_inputs(concentration, aif, time_points)
 
         # Estimate noise if not provided
@@ -481,7 +486,11 @@ class BayesianDSCFitter:
                     x0,
                     method="L-BFGS-B",
                     bounds=bounds,
-                    options={"maxiter": max_iter, "disp": False, "ftol": 1e-6},
+                    options={
+                        "maxiter": max_iter,
+                        "disp": False,
+                        "ftol": 1e-3 if sloppy else 1e-6,
+                    },
                 )
                 if result.fun < best_fun:
                     best_fun = result.fun
@@ -535,6 +544,7 @@ class BayesianDSCFitter:
         n_iterations: int = 20,
         noise_prior: tuple[float, float] | None = None,
         weights: npt.NDArray[np.floating] | None = None,
+        sloppy: bool = False,
     ) -> DSCFitResult:
         """Fit model using FABBER-style linearized Variational Bayes.
 
@@ -557,6 +567,7 @@ class BayesianDSCFitter:
                 If noise_std was provided to the constructor, uses an
                 informative prior centered on that value.
             weights: Optional per-frame motion weights (1.0 = full weight).
+            sloppy: Use fast, low-quality settings for testing.
 
         Returns:
             DSCFitResult with parameters, uncertainties, and credible intervals.
@@ -566,6 +577,8 @@ class BayesianDSCFitter:
             "Variational Bayesian Inference for a Nonlinear Forward Model."
             IEEE Trans Med Imaging 28(1):94-104.
         """
+        if sloppy:
+            n_iterations = 5
         self._validate_inputs(concentration, aif, time_points)
 
         n_params = self.model.n_parameters
@@ -786,6 +799,7 @@ class BayesianDSCFitter:
         n_walkers: int | None = None,
         n_burnin: int | None = None,
         weights: npt.NDArray[np.floating] | None = None,
+        sloppy: bool = False,
     ) -> DSCFitResult:
         """Fit model using MCMC with ensemble sampler.
 
@@ -801,11 +815,14 @@ class BayesianDSCFitter:
             n_walkers: Number of ensemble walkers (default: 2 * n_dims + 2).
             n_burnin: Number of burn-in samples (default: n_samples // 2).
             weights: Optional per-frame motion weights (1.0 = full weight).
+            sloppy: Use fast, low-quality settings for testing.
 
         Returns:
             DSCFitResult with parameters, uncertainties, credible intervals,
             and MCMC diagnostics (R-hat, ESS).
         """
+        if sloppy:
+            n_samples = 50
         self._validate_inputs(concentration, aif, time_points)
 
         # Estimate baseline noise for walker initialization and prior scale
@@ -976,6 +993,7 @@ def fit_dsc_model(
     noise_std: float | None = None,
     compute_uncertainties: bool = True,
     weights: npt.NDArray[np.floating] | None = None,
+    sloppy: bool = False,
 ) -> DSCFitResult:
     """Convenience function to fit a DSC model using specified Bayesian method.
 
@@ -989,6 +1007,7 @@ def fit_dsc_model(
         noise_std: Optional noise standard deviation.
         compute_uncertainties: Whether to compute Laplace uncertainties for MAP.
         weights: Optional per-frame motion weights (1.0 = full weight).
+        sloppy: Use fast, low-quality settings for testing.
 
     Returns:
         DSCFitResult with fitted parameters and uncertainties.
@@ -1003,15 +1022,18 @@ def fit_dsc_model(
             concentration, aif, time_points,
             compute_uncertainties=compute_uncertainties,
             weights=weights,
+            sloppy=sloppy,
         )
     elif method.lower() == "vi":
         return fitter.fit_vi(
             concentration, aif, time_points, weights=weights,
+            sloppy=sloppy,
         )
     elif method.lower() == "mcmc":
         return fitter.fit_mcmc(
             concentration, aif, time_points, n_samples=mcmc_samples,
             weights=weights,
+            sloppy=sloppy,
         )
     else:
         raise ValueError(

@@ -576,6 +576,7 @@ class BayesianPKFitter:
         max_iter: int = DEFAULT_MAP_MAX_ITER,
         compute_uncertainties: bool = True,
         weights: npt.NDArray[np.floating] | None = None,
+        sloppy: bool = False,
     ) -> FitResult:
         """Fit model using MAP estimation with Laplace approximation.
 
@@ -592,10 +593,14 @@ class BayesianPKFitter:
                 Set to False to skip the expensive Hessian computation.
             weights: Optional per-frame weights for motion-weighted fitting.
                 Values in [0, 1] where 1.0 = full weight.
+            sloppy: Use fast, low-quality settings for testing.
 
         Returns:
             FitResult with parameters, uncertainties, and credible intervals.
         """
+        if sloppy:
+            max_iter = 100
+            compute_uncertainties = False
         self._validate_inputs(tissue_curve, aif, time_points)
 
         noise_std = 1.0  # Unused; profile likelihood estimates from residuals
@@ -660,7 +665,11 @@ class BayesianPKFitter:
                     x0,
                     method="Nelder-Mead",
                     bounds=nm_bounds,
-                    options={"maxiter": max_iter, "xatol": 1e-6, "fatol": 1e-6},
+                    options={
+                        "maxiter": max_iter,
+                        "xatol": 1e-3 if sloppy else 1e-6,
+                        "fatol": 1e-3 if sloppy else 1e-6,
+                    },
                 )
                 if result.fun < best_fun:
                     best_fun = result.fun
@@ -729,6 +738,7 @@ class BayesianPKFitter:
         time_points: npt.NDArray[np.floating],
         n_iterations: int = 20,
         noise_prior: tuple[float, float] | None = None,
+        sloppy: bool = False,
     ) -> FitResult:
         """Fit model using FABBER-style linearized Variational Bayes.
 
@@ -747,6 +757,7 @@ class BayesianPKFitter:
                 tau = 1/sigma^2. If None, uses non-informative prior.
                 If noise_std was provided to the constructor, uses an
                 informative prior centered on that value.
+            sloppy: Use fast, low-quality settings for testing.
 
         Returns:
             FitResult with parameters, uncertainties, and credible intervals.
@@ -756,6 +767,8 @@ class BayesianPKFitter:
             "Variational Bayesian Inference for a Nonlinear Forward Model."
             IEEE Trans Med Imaging 28(1):94-104.
         """
+        if sloppy:
+            n_iterations = 5
         self._validate_inputs(tissue_curve, aif, time_points)
 
         n_params = self.model.n_parameters
@@ -961,6 +974,7 @@ class BayesianPKFitter:
         n_samples: int = DEFAULT_MCMC_SAMPLES,
         n_walkers: int | None = None,
         n_burnin: int | None = None,
+        sloppy: bool = False,
     ) -> FitResult:
         """Fit model using MCMC with ensemble sampler.
 
@@ -978,11 +992,14 @@ class BayesianPKFitter:
             n_samples: Number of samples to draw (after burn-in).
             n_walkers: Number of ensemble walkers (default: 2 * n_dims + 2).
             n_burnin: Number of burn-in samples (default: n_samples // 2).
+            sloppy: Use fast, low-quality settings for testing.
 
         Returns:
             FitResult with parameters, uncertainties, credible intervals,
             and MCMC diagnostics (R-hat, ESS).
         """
+        if sloppy:
+            n_samples = 50
         self._validate_inputs(tissue_curve, aif, time_points)
 
         # Estimate baseline noise for walker initialization and prior scale
@@ -1195,6 +1212,7 @@ def fit_pk_model(
     method: str = "map",
     mcmc_samples: int = DEFAULT_MCMC_SAMPLES,
     noise_std: float | None = None,
+    sloppy: bool = False,
 ) -> FitResult:
     """Convenience function to fit a PK model using specified Bayesian method.
 
@@ -1206,6 +1224,7 @@ def fit_pk_model(
         method: Fitting method: 'map', 'vi', or 'mcmc'.
         mcmc_samples: Number of MCMC samples (for method='mcmc').
         noise_std: Optional noise standard deviation.
+        sloppy: Use fast, low-quality settings for testing.
 
     Returns:
         FitResult with fitted parameters and uncertainties.
@@ -1216,12 +1235,17 @@ def fit_pk_model(
     fitter = BayesianPKFitter(model, noise_std=noise_std)
 
     if method.lower() == "map":
-        return fitter.fit_map(tissue_curve, aif, time_points)
+        return fitter.fit_map(
+            tissue_curve, aif, time_points, sloppy=sloppy,
+        )
     elif method.lower() == "vi":
-        return fitter.fit_vi(tissue_curve, aif, time_points)
+        return fitter.fit_vi(
+            tissue_curve, aif, time_points, sloppy=sloppy,
+        )
     elif method.lower() == "mcmc":
         return fitter.fit_mcmc(
-            tissue_curve, aif, time_points, n_samples=mcmc_samples
+            tissue_curve, aif, time_points, n_samples=mcmc_samples,
+            sloppy=sloppy,
         )
     else:
         raise ValueError(

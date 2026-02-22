@@ -1423,6 +1423,7 @@ def init_dsc_preproc_wf(
     subject_id: str,
     session_id: Optional[str] = None,
     config: Optional[DSCConfig] = None,
+    random_seed: Optional[int] = None,
     name: str = "dsc_preproc_wf",
 ) -> pe.Workflow:
     """Initialize DSC perfusion preprocessing workflow.
@@ -1841,19 +1842,23 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     # Node 5: DSC Map Computation (Deconvolution)
     # -------------------------------------------------------------------
+    dsc_map_kwargs: dict[str, Any] = dict(
+        method=config.method,
+        svd_threshold=0.2,  # Default SVD threshold
+        oi_threshold=0.065,  # Default OI threshold for oSVD
+        cpi_control_points=config.cpi_control_points,
+        bayesian=config.bayesian,
+        mcmc_samples=config.mcmc_samples,
+        use_gpu=config.use_gpu,
+        n_procs=config.num_processes if config.num_processes > 0 else 1,
+        baseline_frames=config.pre_bolus,
+        tail_frames=5,  # Post-bolus frames for PSR (Cha et al. AJNR 2002)
+        sloppy=config.sloppy,
+    )
+    if random_seed is not None:
+        dsc_map_kwargs["random_seed"] = random_seed
     compute_maps = pe.Node(
-        ComputeDSCMaps(
-            method=config.method,
-            svd_threshold=0.2,  # Default SVD threshold
-            oi_threshold=0.065,  # Default OI threshold for oSVD
-            cpi_control_points=config.cpi_control_points,
-            bayesian=config.bayesian,
-            mcmc_samples=config.mcmc_samples,
-            use_gpu=config.use_gpu,
-            n_procs=config.num_processes if config.num_processes > 0 else 1,
-            baseline_frames=config.pre_bolus,
-            tail_frames=5,  # Post-bolus frames for PSR (Cha et al. AJNR 2002)
-        ),
+        ComputeDSCMaps(**dsc_map_kwargs),
         name="compute_maps",
     )
 

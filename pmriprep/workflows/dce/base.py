@@ -32,6 +32,7 @@ def init_dce_preproc_wf(
     session_id: Optional[str] = None,
     config: Optional[DCEConfig] = None,
     has_tissue_seg: bool = True,
+    random_seed: Optional[int] = None,
     name: str = "dce_preproc_wf",
 ) -> pe.Workflow:
     """Initialize the DCE (Dynamic Contrast Enhanced) preprocessing workflow.
@@ -874,17 +875,21 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 7: PK Modeling (ComputeDCEMaps)
     # ==========================================================================
+    pk_kwargs: dict[str, Any] = dict(
+        model=config.model,
+        bayesian=config.bayesian,
+        mcmc_samples=config.mcmc_samples,
+        tsnr_threshold=config.tsnr_threshold,
+        use_gpu=config.use_gpu,
+        constraint_mode=config.cbv_constraint_mode,
+        hematocrit=config.hematocrit,
+        n_procs=max(1, config.num_processes),
+        sloppy=config.sloppy,
+    )
+    if random_seed is not None:
+        pk_kwargs["random_seed"] = random_seed
     pk_modeling = pe.Node(
-        ComputeDCEMaps(
-            model=config.model,
-            bayesian=config.bayesian,
-            mcmc_samples=config.mcmc_samples,
-            tsnr_threshold=config.tsnr_threshold,
-            use_gpu=config.use_gpu,
-            constraint_mode=config.cbv_constraint_mode,
-            hematocrit=config.hematocrit,
-            n_procs=max(1, config.num_processes),
-        ),
+        ComputeDCEMaps(**pk_kwargs),
         name="pk_modeling",
     )
 

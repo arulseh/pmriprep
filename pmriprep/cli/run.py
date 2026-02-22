@@ -111,6 +111,14 @@ Examples:
         help="Maximum number of processors to use (default: 1).",
     )
     parser.add_argument(
+        "--omp-nthreads",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Maximum number of threads per-process for ANTs/FSL. "
+        "Controls OMP_NUM_THREADS and ITK thread settings.",
+    )
+    parser.add_argument(
         "--mem-gb",
         type=float,
         metavar="GB",
@@ -342,6 +350,26 @@ Examples:
         default=False,
         help="Regenerate HTML QC reports from existing outputs without "
         "re-running any pipeline. Requires a previous run's output.",
+    )
+    g_other.add_argument(
+        "--clean-workdir",
+        action="store_true",
+        default=False,
+        help="Delete working directory contents after processing all subjects.",
+    )
+    g_other.add_argument(
+        "--sloppy",
+        action="store_true",
+        default=False,
+        help="Use low-quality, fast settings for testing. NOT FOR PRODUCTION USE.",
+    )
+    g_other.add_argument(
+        "--random-seed",
+        type=int,
+        default=None,
+        metavar="SEED",
+        help="Initialize random seed for reproducible results. "
+        "Full reproducibility requires --omp-nthreads 1 and --nprocs 1.",
     )
 
     return parser
@@ -590,6 +618,25 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     logger.log(IMPORTANT, f"BIDS directory: {args.bids_dir}")
     logger.log(IMPORTANT, f"Output directory: {args.output_dir}")
 
+    # Set per-process thread limits (OMP/ITK) before any computation
+    if args.omp_nthreads is not None:
+        import os
+
+        omp = str(args.omp_nthreads)
+        os.environ["OMP_NUM_THREADS"] = omp
+        os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = omp
+        logger.info("Per-process threads: OMP_NUM_THREADS=%s", omp)
+
+    # Set random seed for reproducibility (numpy + stdlib random)
+    if args.random_seed is not None:
+        import random
+
+        import numpy as np
+
+        np.random.seed(args.random_seed)
+        random.seed(args.random_seed)
+        logger.info("Random seed: %d", args.random_seed)
+
     # Find subjects to process
     subjects = _find_subjects(args.bids_dir, args.participant_label)
 
@@ -655,6 +702,12 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         skip_dce=args.skip_dce,
     )
 
+    if args.sloppy:
+        logger.warning("Sloppy mode enabled — results are for testing only")
+
+    # Resolve work_dir once for downstream use
+    work_dir = args.work_dir if args.work_dir is not None else args.output_dir / "work"
+
     # Process each subject
     for subject_id in subjects:
         sessions = _find_sessions(args.bids_dir, subject_id, args.session_label)
@@ -682,7 +735,11 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                 "pmriprep": {"version": __version__, "run_uuid": run_uuid},
                 "execution": {
                     "nprocs": args.nprocs,
+                    "omp_nthreads": args.omp_nthreads,
                     "mem_gb": args.mem_gb,
+                    "random_seed": args.random_seed,
+                    "sloppy": args.sloppy,
+                    "clean_workdir": args.clean_workdir,
                 },
                 "dsc": asdict(dsc_config),
                 "dce": asdict(dce_config),
@@ -705,7 +762,8 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     tumor_seg_config=tumor_seg_config,
                     dsc_config=dsc_config,
                     dce_config=dce_config,
-                    work_dir=args.work_dir,
+                    work_dir=work_dir,
+                    random_seed=args.random_seed,
                     name=f"pmriprep_sub{subject_id}_{session_str}_wf",
                 )
 
@@ -721,10 +779,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     logger.info(line)
 
                 # Set working directory
-                if args.work_dir is not None:
-                    workflow.base_dir = str(args.work_dir)
-                else:
-                    workflow.base_dir = str(args.output_dir / "work")
+                workflow.base_dir = str(work_dir)
 
                 # Run the workflow
                 logger.log(
@@ -764,6 +819,16 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                             logger.error("    %s", line)
                     except Exception:
                         logger.error("    (could not read crash file)")
+
+    # Clean working directory after all subjects are processed
+    if args.clean_workdir and work_dir.exists():
+        import shutil
+
+        logger.log(IMPORTANT, "Clearing working directory: %s", work_dir)
+        try:
+            shutil.rmtree(work_dir)
+        except OSError as e:
+            logger.warning("Failed to clean work directory: %s", e)
 
     logger.log(IMPORTANT, "PMRIPrep processing complete")
 

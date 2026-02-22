@@ -595,6 +595,7 @@ def _fit_cpi_simple(
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     weights: npt.NDArray[np.floating] | None = None,
+    sloppy: bool = False,
 ) -> DSCFitResult | None:
     """Least-squares fit of CPI model using L-BFGS-B.
 
@@ -612,6 +613,7 @@ def _fit_cpi_simple(
         aif: Arterial input function.
         time_points: Time points (seconds).
         weights: Optional per-frame motion weights (1.0 = full weight).
+        sloppy: Use fast, low-quality settings for testing.
 
     Returns:
         DSCFitResult with fitted parameters, or None if fitting failed.
@@ -654,7 +656,7 @@ def _fit_cpi_simple(
             x0,
             method="L-BFGS-B",
             bounds=bounds,
-            options={"maxiter": 500, "ftol": 1e-6},
+            options={"maxiter": 50 if sloppy else 500, "ftol": 1e-6},
         )
 
         if result.success or result.fun < np.inf:

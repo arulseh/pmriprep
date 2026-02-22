@@ -639,6 +639,7 @@ def init_pmriprep_wf(
     dsc_config: Optional[DSCConfig] = None,
     dce_config: Optional[DCEConfig] = None,
     work_dir: Optional[Union[str, Path]] = None,
+    random_seed: Optional[int] = None,
     name: str = "pmriprep_wf",
 ) -> pe.Workflow:
     """Initialize the master PMRIPrep workflow.
@@ -671,6 +672,9 @@ def init_pmriprep_wf(
     work_dir : Path or str, optional
         Nipype working directory. Required when --skip-anat or --skip-tumor-seg
         is used to locate previously-computed outputs.
+    random_seed : int, optional
+        Random seed for reproducibility. Passed to ProcessPoolExecutor
+        workers for deterministic Bayesian fitting.
     name : str
         Workflow name (default: "pmriprep_wf").
 
@@ -1289,6 +1293,7 @@ def init_pmriprep_wf(
             subject_id=subject_id,
             session_id=session_id,
             config=dsc_config,
+            random_seed=random_seed,
             name="dsc_wf",
         )
 
@@ -1759,6 +1764,7 @@ def init_pmriprep_wf(
             session_id=session_id,
             config=dce_config,
             has_tissue_seg=bool(session_data.modalities.t1w_pre),
+            random_seed=random_seed,
             name="dce_wf",
         )
 

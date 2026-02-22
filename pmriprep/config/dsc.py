@@ -102,6 +102,9 @@ class DSCConfig:
     use_gpu: bool = False
     hdbet_device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
 
+    # Testing / debug
+    sloppy: bool = False  # Use fast, low-quality settings for testing
+
     def __post_init__(self):
         """Ensure numeric fields have correct types after initialization.
 

@@ -105,6 +105,8 @@ def _init_worker(
     constraint_vp_uncertainty: float,
     save_fitted_curves: bool = False,
     motion_weights: Optional[npt.NDArray[np.floating]] = None,
+    sloppy: bool = False,
+    random_seed: Optional[int] = None,
 ) -> None:
     """Initialize per-worker model and fitter objects (called once per process)."""
     import warnings
@@ -121,6 +123,12 @@ def _init_worker(
 
     # Suppress Nelder-Mead RuntimeWarnings in worker processes
     warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+    # Seed RNG in worker process for reproducibility — offset by PID
+    # so parallel workers explore different random sequences
+    if random_seed is not None:
+        import os
+        np.random.seed(random_seed + os.getpid() % (2**31))
 
     model_map: dict[str, type] = {
         "tofts": ToftsModel,
@@ -146,6 +154,7 @@ def _init_worker(
     _worker_ctx["constraint_vp_uncertainty"] = constraint_vp_uncertainty
     _worker_ctx["save_fitted_curves"] = save_fitted_curves
     _worker_ctx["motion_weights"] = motion_weights
+    _worker_ctx["sloppy"] = sloppy
     _worker_ctx["BayesianPKFitter"] = BayesianPKFitter
     _worker_ctx["create_vp_prior_from_dsc"] = create_vp_prior_from_dsc
     _worker_ctx["ConstraintMode"] = ConstraintMode
@@ -180,6 +189,7 @@ def _fit_single_voxel(
     constraint_vp_uncertainty = _worker_ctx["constraint_vp_uncertainty"]
     model_name = _worker_ctx["model_name"]
     motion_weights = _worker_ctx["motion_weights"]
+    sloppy = _worker_ctx.get("sloppy", False)
 
     # Validate voxel (skip concentration-based variation check — raw signal
     # variation is filtered upstream in ComputeDCEMaps, matching perf-plus)
@@ -227,12 +237,14 @@ def _fit_single_voxel(
             if bayesian == "map":
                 result = soft_fitter.fit_map(
                     prepared_curve, aif, time_points,
-                    compute_uncertainties=True,
+                    compute_uncertainties=not sloppy,
                     weights=motion_weights,
+                    sloppy=sloppy,
                 )
             else:
                 result = soft_fitter.fit_mcmc(
-                    prepared_curve, aif, time_points, n_samples=mcmc_samples
+                    prepared_curve, aif, time_points, n_samples=mcmc_samples,
+                    sloppy=sloppy,
                 )
             constrained = True
 
@@ -259,13 +271,15 @@ def _fit_single_voxel(
             elif bayesian == "map" and fitter is not None:
                 result = fitter.fit_map(
                     prepared_curve, aif, time_points,
-                    compute_uncertainties=True,
+                    compute_uncertainties=not sloppy,
                     weights=motion_weights,
+                    sloppy=sloppy,
                 )
             elif bayesian == "mcmc" and fitter is not None:
                 result = fitter.fit_mcmc(
                     prepared_curve, aif, time_points,
                     n_samples=mcmc_samples,
+                    sloppy=sloppy,
                 )
             else:
                 result = model.fit(
@@ -445,6 +459,16 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="AIF detection method: 'population', 'automatic', 'atlas'. "
              "BAT correction is applied only for population AIFs.",
+    )
+
+    # Sloppy / reproducibility
+    sloppy = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Use fast, low-quality settings for testing (NOT for production)",
+    )
+    random_seed = traits.Int(
+        desc="Random seed for reproducibility in worker processes",
     )
 
     # Output files
@@ -1247,10 +1271,14 @@ class ComputeDCEMaps(BaseInterface):
             voxel_data_list.append(VoxelInput(x, y, z, tissue_curve, voxel_vp))
 
         # Worker initializer args (shared across all paths)
+        sloppy = bool(self.inputs.sloppy)
+        random_seed = (
+            int(self.inputs.random_seed) if isdefined(self.inputs.random_seed) else None
+        )
         init_args = (
             aif, time_points, model_name, bayesian, mcmc_samples,
             baseline_frames, constraint_mode.value, constraint_vp_uncertainty,
-            save_fitted_curves, motion_weights,
+            save_fitted_curves, motion_weights, sloppy, random_seed,
         )
 
         n_procs = max(1, int(self.inputs.n_procs))

@@ -106,6 +106,8 @@ def _dsc_init_worker(
     bolus_duration_frames: int,
     dt: float,
     motion_weights: Any = None,
+    sloppy: bool = False,
+    random_seed: Optional[int] = None,
 ) -> None:
     """Initialise shared state once per worker process."""
     from pmriprep.models.dsc import (
@@ -114,6 +116,12 @@ def _dsc_init_worker(
         select_n_control_points,
     )
 
+    # Seed RNG in worker process for reproducibility — offset by PID
+    # so parallel workers explore different random sequences
+    if random_seed is not None:
+        import os
+        np.random.seed(random_seed + os.getpid() % (2**31))
+
     _dsc_worker_ctx["aif"] = aif
     _dsc_worker_ctx["time_points"] = time_points
     _dsc_worker_ctx["method"] = method
@@ -121,6 +129,7 @@ def _dsc_init_worker(
     _dsc_worker_ctx["mcmc_samples"] = mcmc_samples
     _dsc_worker_ctx["dt"] = dt
     _dsc_worker_ctx["motion_weights"] = motion_weights
+    _dsc_worker_ctx["sloppy"] = sloppy
 
     # Pre-build model template so each voxel can cheaply instantiate
     if method == "vascular":
@@ -153,6 +162,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
     time_points = _dsc_worker_ctx["time_points"]
     dt = _dsc_worker_ctx["dt"]
     motion_weights = _dsc_worker_ctx.get("motion_weights")
+    sloppy = _dsc_worker_ctx.get("sloppy", False)
 
     try:
         model_instance = _dsc_worker_ctx["model_factory"]()
@@ -162,6 +172,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
             result = _fit_cpi_simple(
                 model_instance, tissue_curve, aif, time_points,
                 weights=motion_weights,
+                sloppy=sloppy,
             )
             if result is None:
                 return {"coords": (x, y, z), "failed": True}
@@ -174,6 +185,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 method="map",
                 compute_uncertainties=False,
                 weights=motion_weights,
+                sloppy=sloppy,
             )
         else:
             result = fit_dsc_model(
@@ -183,8 +195,9 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 time_points=time_points,
                 method=bayesian,
                 mcmc_samples=_dsc_worker_ctx["mcmc_samples"],
-                compute_uncertainties=True,
+                compute_uncertainties=not sloppy,
                 weights=motion_weights,
+                sloppy=sloppy,
             )
 
         out: dict[str, Any] = {"coords": (x, y, z), "failed": False}
@@ -429,6 +442,16 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     nawm_mask_file = File(
         mandatory=False,
         desc="NAWM mask in DSC space for rTTP normalization",
+    )
+
+    # Sloppy / reproducibility
+    sloppy = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Use fast, low-quality settings for testing (NOT for production)",
+    )
+    random_seed = traits.Int(
+        desc="Random seed for reproducibility in worker processes",
     )
 
     # Output files — quantification-independent
@@ -958,10 +981,14 @@ class ComputeDSCMaps(BaseInterface):
             )
 
         # Worker initializer args
+        sloppy = bool(self.inputs.sloppy)
+        random_seed = (
+            int(self.inputs.random_seed) if isdefined(self.inputs.random_seed) else None
+        )
         init_args = (
             aif, time_points, method, bayesian, mcmc_samples,
             cpi_control_points, bolus_duration_frames, dt,
-            motion_weights,
+            motion_weights, sloppy, random_seed,
         )
 
         n_procs = max(1, int(self.inputs.n_procs))
