@@ -645,9 +645,6 @@ class DCEDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # Collect processing warnings for missing data-dependent inputs
         _data_dependent_inputs = {
-            "t1w_in_dce": "T1w structural underlay",
-            "flair_in_dce": "FLAIR structural underlay",
-            "t2w_in_dce": "T2w structural underlay",
             "b1_map": "B1+ transmit field map",
             "t1_map": "T1 relaxation time map",
             "brain_mask": "Brain mask in DCE space",

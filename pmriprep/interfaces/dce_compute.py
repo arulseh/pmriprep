@@ -1023,12 +1023,30 @@ class ComputeDCEMaps(BaseInterface):
                     constraint_mode = ConstraintMode.SOFT
                     constraint_vp_uncertainty = 0.2
 
+                # Bayesian (MAP/MCMC): hard constraint bypasses the
+                # Bayesian fitter and uses L-BFGS-B, which converges
+                # non-enhancing voxels to exact bounds (Ktrans=0.0)
+                # triggering mass post-fit rejection. SOFT uses the
+                # Bayesian fitter with an informative DSC prior on vp.
+                # Must run BEFORE scale mismatch so SOFT mode can
+                # widen uncertainty instead of downgrading to SKIP.
+                if (
+                    str(self.inputs.bayesian) != "none"
+                    and constraint_mode == ConstraintMode.HARD
+                    and str(self.inputs.constraint_mode) == "auto"
+                ):
+                    constraint_mode = ConstraintMode.SOFT
+                    constraint_vp_uncertainty = 0.2
+
                 # Scale mismatch check: if vp*Cp overshoots tissue
-                # concentration in many voxels, the hard constraint is
+                # concentration in many voxels, the constraint is
                 # incompatible (e.g., DSC/DCE AIF scale differences,
                 # partial volume, half-dose acquisitions).
+                # For HARD (NLLS): downgrade to SKIP (cannot adapt).
+                # For SOFT (Bayesian): widen uncertainty instead.
                 if (
-                    constraint_mode == ConstraintMode.HARD
+                    constraint_mode
+                    in (ConstraintMode.HARD, ConstraintMode.SOFT)
                     and str(self.inputs.constraint_mode) == "auto"
                     and vp_constraint_map is not None
                 ):
@@ -1056,36 +1074,45 @@ class ComputeDCEMaps(BaseInterface):
                                         vp_constraint_map[valid_constrained]
                                     )
                                 )
-                                logger.warning(
-                                    "DSC CBV hard constraint incompatible: "
-                                    "vp*Cp_peak exceeds tissue peak in "
-                                    "%.0f%% of voxels (AIF peak=%.3f mM, "
-                                    "median vp=%.4f). Downgrading to "
-                                    "unconstrained fitting.",
-                                    overshoot_frac * 100,
-                                    aif_peak,
-                                    median_vp,
-                                )
-                                constraint_mode = ConstraintMode.SKIP
-                                constraint_qc["scale_mismatch"] = {
-                                    "overshoot_fraction": overshoot_frac,
-                                    "aif_peak_mM": aif_peak,
-                                    "median_vp": median_vp,
-                                    "action": "downgrade_to_skip",
-                                }
-
-                # Bayesian (MAP/MCMC): hard constraint bypasses the
-                # Bayesian fitter and uses L-BFGS-B, which converges
-                # non-enhancing voxels to exact bounds (Ktrans=0.0)
-                # triggering mass post-fit rejection. SOFT uses the
-                # Bayesian fitter with an informative DSC prior on vp.
-                if (
-                    str(self.inputs.bayesian) != "none"
-                    and constraint_mode == ConstraintMode.HARD
-                    and str(self.inputs.constraint_mode) == "auto"
-                ):
-                    constraint_mode = ConstraintMode.SOFT
-                    constraint_vp_uncertainty = 0.2
+                                if constraint_mode == ConstraintMode.HARD:
+                                    # NLLS: cannot recover from scale mismatch
+                                    logger.warning(
+                                        "DSC CBV hard constraint incompatible: "
+                                        "vp*Cp_peak exceeds tissue peak in "
+                                        "%.0f%% of voxels (AIF peak=%.3f mM, "
+                                        "median vp=%.4f). Downgrading to "
+                                        "unconstrained fitting.",
+                                        overshoot_frac * 100,
+                                        aif_peak,
+                                        median_vp,
+                                    )
+                                    constraint_mode = ConstraintMode.SKIP
+                                    constraint_qc["scale_mismatch"] = {
+                                        "overshoot_fraction": overshoot_frac,
+                                        "aif_peak_mM": aif_peak,
+                                        "median_vp": median_vp,
+                                        "action": "downgrade_to_skip",
+                                    }
+                                else:
+                                    # Bayesian SOFT: widen prior uncertainty
+                                    # instead of killing constraint
+                                    logger.info(
+                                        "DSC CBV scale mismatch detected "
+                                        "(vp*Cp_peak exceeds tissue peak in "
+                                        "%.0f%% of voxels, AIF peak=%.3f mM, "
+                                        "median vp=%.4f). Widening SOFT prior "
+                                        "uncertainty to 0.5.",
+                                        overshoot_frac * 100,
+                                        aif_peak,
+                                        median_vp,
+                                    )
+                                    constraint_vp_uncertainty = 0.5
+                                    constraint_qc["scale_mismatch"] = {
+                                        "overshoot_fraction": overshoot_frac,
+                                        "aif_peak_mM": aif_peak,
+                                        "median_vp": median_vp,
+                                        "action": "widen_soft_uncertainty",
+                                    }
             except Exception as exc:
                 constraint_qc = {
                     "mode": "skip",

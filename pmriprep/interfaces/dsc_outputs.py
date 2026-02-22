@@ -519,8 +519,6 @@ class DSCDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # Collect processing warnings for missing data-dependent inputs
         _data_dependent_inputs = {
-            "t1w_in_dsc": "T1w structural underlay",
-            "flair_in_dsc": "FLAIR structural underlay",
             "brain_mask_dsc": "Brain mask in DSC space",
             "nawm_mask_dsc": "NAWM mask in DSC space",
             "lesion_mask_dsc": "Lesion mask in DSC space",
