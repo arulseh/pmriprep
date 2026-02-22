@@ -367,8 +367,6 @@ def init_anat_preproc_wf(
         Path to T2-weighted image.
     inputnode.flair : str, optional
         Path to FLAIR image.
-    inputnode.lesion_mask : str, optional
-        Path to lesion mask for registration cost function weighting.
 
     Workflow Outputs
     ----------------
@@ -448,7 +446,6 @@ def init_anat_preproc_wf(
                 "t1w_postcon",
                 "t2w",
                 "flair",
-                "lesion_mask",
             ]
         ),
         name="inputnode",
@@ -566,10 +563,6 @@ def init_anat_preproc_wf(
             (bias_correct_postcon, coreg_postcon, [("out_file", "in_file")]),
             (bias_correct, coreg_postcon, [("out_file", "reference")]),
         ]
-        if config.use_lesion_mask:
-            coreg_postcon_conns.append(
-                (inputnode, coreg_postcon, [("lesion_mask", "lesion_mask")])
-            )
         workflow.connect(coreg_postcon_conns)
 
     # T2w preprocessing and coregistration
@@ -589,10 +582,6 @@ def init_anat_preproc_wf(
             (bias_correct_t2w, coreg_t2w, [("out_file", "in_file")]),
             (bias_correct, coreg_t2w, [("out_file", "reference")]),
         ]
-        if config.use_lesion_mask:
-            coreg_t2w_conns.append(
-                (inputnode, coreg_t2w, [("lesion_mask", "lesion_mask")])
-            )
         workflow.connect(coreg_t2w_conns)
 
     # FLAIR preprocessing and coregistration
@@ -612,10 +601,6 @@ def init_anat_preproc_wf(
             (bias_correct_flair, coreg_flair, [("out_file", "in_file")]),
             (bias_correct, coreg_flair, [("out_file", "reference")]),
         ]
-        if config.use_lesion_mask:
-            coreg_flair_conns.append(
-                (inputnode, coreg_flair, [("lesion_mask", "lesion_mask")])
-            )
         workflow.connect(coreg_flair_conns)
 
     # -------------------------------------------------------------------

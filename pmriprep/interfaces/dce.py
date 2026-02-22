@@ -25,7 +25,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     isdefined,
     traits,
 )
-from nipype.interfaces.fsl import FLIRT, ImageMaths  # type: ignore[import-untyped]
+from nipype.interfaces.fsl import FLIRT  # type: ignore[import-untyped]
 
 logger = logging.getLogger("pmriprep.interfaces.dce")
 
@@ -3091,10 +3091,6 @@ class DCERegistrationInputSpec(BaseInterfaceInputSpec):
         genfile=True,
         desc="Output transformation matrix (FLIRT .mat format)",
     )
-    lesion_mask = File(
-        exists=True,
-        desc="Optional lesion mask for cost function weighting (excludes lesion region)",
-    )
     brain_mask = File(
         exists=True,
         desc="Brain mask for QC metric calculation (optional)",
@@ -3152,12 +3148,9 @@ class DCERegistration(SimpleInterface):
       Path B: Original T1w -> FLIRT
       Best path selected by DICE overlap.
 
-    Lesion mask cost function weighting is supported.
-
     Args:
         t1w_file: T1-weighted image to register to DCE space.
         dce_mean: Mean DCE image (target space).
-        lesion_mask: Binary lesion mask - lesion voxels will have reduced weight.
         brain_mask: Brain mask for computing QC metrics.
         dof: Degrees of freedom (default: 6 for rigid body).
         cost: Cost function for FLIRT (default: normmi).
@@ -3179,18 +3172,7 @@ class DCERegistration(SimpleInterface):
             >>> reg.inputs.dce_mean = 'dce_mean.nii.gz'
             >>> result = reg.run()  # doctest: +SKIP
 
-        With lesion mask::
-
-            >>> reg = DCERegistration()
-            >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
-            >>> reg.inputs.dce_mean = 'dce_mean.nii.gz'
-            >>> reg.inputs.lesion_mask = 'lesion.nii.gz'
-            >>> result = reg.run()  # doctest: +SKIP
-
     Note:
-        Lesion mask weighting creates a cost function weight image where:
-        weight = 1.0 - lesion_mask (i.e., lesion voxels have weight 0)
-
         For DCE, the default reference is post-contrast T1w since DCE has contrast
         enhancement similar to post-contrast T1w, providing better intensity
         correspondence for registration.
@@ -3243,9 +3225,6 @@ class DCERegistration(SimpleInterface):
             temp_path = Path(temp_dir)
             ext = ".nii.gz"
 
-            # Create weight file from lesion mask if provided
-            weight_file = self._create_weight_file(temp_path, ext)
-
             # Header-based pre-alignment: resample T1w into DCE space
             header_aligned_file = self._create_header_aligned(
                 t1w_file, dce_mean, temp_path, ext
@@ -3266,7 +3245,6 @@ class DCERegistration(SimpleInterface):
                 out_matrix_a=out_matrix_a,
                 out_file_b=out_file_b,
                 out_matrix_b=out_matrix_b,
-                weight_file=weight_file,
                 dof=dof,
                 cost=cost,
                 search_range=search_range,
@@ -3316,49 +3294,6 @@ class DCERegistration(SimpleInterface):
 
         return runtime
 
-    def _create_weight_file(
-        self, temp_path: Path, ext: str
-    ) -> Optional[str]:
-        """Create cost function weight file from lesion mask.
-
-        Inverts the lesion mask so lesion voxels have weight 0 and healthy
-        tissue has weight 1. The mask is expected to be pre-dilated upstream
-        (via DilateMask or HD-GLIO workflow).
-
-        Args:
-            temp_path: Temporary directory path for output.
-            ext: File extension (.nii or .nii.gz).
-
-        Returns:
-            Path to weight file, or None if lesion mask not provided or
-            processing fails.
-        """
-        if not isdefined(self.inputs.lesion_mask):
-            return None
-        if not Path(self.inputs.lesion_mask).exists():
-            return None
-
-        weight_file = str(temp_path / f"dce_weight{ext}")
-
-        # Invert mask: lesion voxels → 0, healthy → 1
-        # All dilation is handled upstream (DilateMask / HD-GLIO workflow)
-        try:
-            maths = ImageMaths()
-            maths.inputs.in_file = str(self.inputs.lesion_mask)
-            maths.inputs.op_string = "-mul -1 -add 1"
-            maths.inputs.out_file = weight_file
-            maths.run()
-
-            if not Path(weight_file).exists():
-                logger.warning("Lesion mask inversion produced no output")
-                return None
-
-            return weight_file
-
-        except Exception as exc:
-            logger.warning("Lesion mask processing failed: %s", exc)
-            return None
-
     def _create_header_aligned(
         self, t1w_file: str, dce_mean: str, temp_path: Path, ext: str
     ) -> str:
@@ -3394,7 +3329,6 @@ class DCERegistration(SimpleInterface):
         out_matrix_a: str,
         out_file_b: str,
         out_matrix_b: str,
-        weight_file: Optional[str],
         dof: int,
         cost: str,
         search_range: int,
@@ -3412,7 +3346,6 @@ class DCERegistration(SimpleInterface):
             out_matrix_a: Output matrix for path A.
             out_file_b: Output file for path B.
             out_matrix_b: Output matrix for path B.
-            weight_file: Optional cost function weight file.
             dof: Degrees of freedom.
             cost: Cost function name.
             search_range: Search range in degrees.
@@ -3434,8 +3367,6 @@ class DCERegistration(SimpleInterface):
         flirt_a.inputs.searchr_z = [-search_range, search_range]
         flirt_a.inputs.coarse_search = FLIRT_COARSE_SEARCH
         flirt_a.inputs.fine_search = FLIRT_FINE_SEARCH
-        # Note: in_weight NOT applied to path A - weight file is in T1w space,
-        # but header_aligned_file has DCE dimensions, causing FLIRT to fail silently
 
         # Path B: original T1w
         flirt_b = FLIRT()
@@ -3451,9 +3382,6 @@ class DCERegistration(SimpleInterface):
         flirt_b.inputs.searchr_z = [-search_range, search_range]
         flirt_b.inputs.coarse_search = FLIRT_COARSE_SEARCH
         flirt_b.inputs.fine_search = FLIRT_FINE_SEARCH
-        if weight_file:
-            flirt_b.inputs.in_weight = weight_file
-            # Note: ref_weight omitted - weight file is in T1w space, not DCE space
 
         # Run both paths, capture failures
         error_a: Optional[str] = None
@@ -3715,12 +3643,6 @@ class DCERegistration(SimpleInterface):
             qc_metrics["cost_function"] = self.inputs.cost
             qc_metrics["reference_type"] = self.inputs.reference_type
             qc_metrics["brain_mask_used"] = mask_path is not None
-
-            # Determine lesion mask usage
-            lesion_used = isdefined(self.inputs.lesion_mask) and Path(
-                self.inputs.lesion_mask
-            ).exists()
-            qc_metrics["lesion_mask_used"] = lesion_used
 
             # Determine overall QC status
             qc_metrics["warnings"] = warnings_list

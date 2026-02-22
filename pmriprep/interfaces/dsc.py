@@ -449,10 +449,6 @@ class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
         genfile=True,
         desc="Output transformation matrix (FLIRT .mat format)",
     )
-    lesion_mask = File(
-        exists=True,
-        desc="Optional lesion mask for cost function weighting (excludes lesion region)",
-    )
     brain_mask = File(
         exists=True,
         desc="Brain mask for QC metric calculation (optional)",
@@ -532,12 +528,9 @@ class DSCRegistration(SimpleInterface):
       Stage 1: Coarse global search (normcorr, -180 to 180 deg, coarsesearch 30)
       Stage 2: Refined (normmi, -30 to 30 deg, init from stage 1)
 
-    Lesion mask cost function weighting is supported in all modes.
-
     Args:
         t1w_file: T1-weighted image to register to DSC space.
         dsc_mean: Mean DSC image (target space).
-        lesion_mask: Binary lesion mask for cost function weighting.
         brain_mask: Brain mask for computing QC metrics.
         registration: Method: 'auto', 'flirt', or 'bbr'.
         dof: Degrees of freedom (default: 6 for rigid body).
@@ -561,15 +554,6 @@ class DSCRegistration(SimpleInterface):
             >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
             >>> reg.inputs.dsc_mean = 'dsc_mean.nii.gz'
             >>> reg.inputs.wm_seg = 'T1w_wm_probseg.nii.gz'
-            >>> result = reg.run()  # doctest: +SKIP
-
-        FLIRT-only mode with lesion mask::
-
-            >>> reg = DSCRegistration()
-            >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
-            >>> reg.inputs.dsc_mean = 'dsc_mean.nii.gz'
-            >>> reg.inputs.registration = 'flirt'
-            >>> reg.inputs.lesion_mask = 'lesion.nii.gz'
             >>> result = reg.run()  # doctest: +SKIP
 
     Note:
@@ -656,14 +640,6 @@ class DSCRegistration(SimpleInterface):
             temp_path = Path(temp_dir)
             ext = ".nii.gz"
 
-            # Create weight file from lesion mask
-            weight_file = self._create_weight_file(temp_path, ext)
-
-            # Weight args for FLIRT commands (lesion in T1w space → -inweight)
-            weight_args: list[str] = []
-            if weight_file:
-                weight_args = ["-inweight", weight_file]
-
             # --- Two-stage FLIRT (always run first) ---
             stage1_matrix = str(temp_path / "stage1.mat")
             flirt_matrix = str(temp_path / "flirt.mat")
@@ -678,7 +654,7 @@ class DSCRegistration(SimpleInterface):
                 "-searchry", "-180", "180",
                 "-searchrz", "-180", "180",
                 "-coarsesearch", "30", "-finesearch", "10",
-            ] + weight_args
+            ]
             subprocess.run(stage1_cmd, check=True)
 
             # Stage 2: Refined registration
@@ -690,7 +666,7 @@ class DSCRegistration(SimpleInterface):
                 "-searchrx", "-30", "30",
                 "-searchry", "-30", "30",
                 "-searchrz", "-30", "30",
-            ] + weight_args
+            ]
             subprocess.run(stage2_cmd, check=True)
 
             # Selection metadata for QC
@@ -718,7 +694,7 @@ class DSCRegistration(SimpleInterface):
                 self._run_bbr(
                     t1w_file, dsc_mean, flirt_matrix,
                     bbr_out, bbr_matrix,
-                    dof, weight_args, temp_path, ext,
+                    dof, temp_path, ext,
                 )
                 shutil.copy(bbr_out, out_file)
                 shutil.copy(bbr_matrix, out_matrix)
@@ -748,7 +724,7 @@ class DSCRegistration(SimpleInterface):
                         self._run_bbr(
                             t1w_file, dsc_mean, flirt_matrix,
                             bbr_out, bbr_matrix,
-                            dof, weight_args, temp_path, ext,
+                            dof, temp_path, ext,
                         )
                         bbr_succeeded = True
                     except Exception as exc:
@@ -866,36 +842,6 @@ class DSCRegistration(SimpleInterface):
 
         return runtime
 
-    def _create_weight_file(
-        self, temp_path: Path, ext: str
-    ) -> Optional[str]:
-        """Create inverted lesion mask as cost function weight file.
-
-        Args:
-            temp_path: Temporary directory for output.
-            ext: File extension.
-
-        Returns:
-            Path to weight file, or None if no lesion mask.
-        """
-        import subprocess
-
-        if not isdefined(self.inputs.lesion_mask):
-            return None
-        if not Path(self.inputs.lesion_mask).exists():
-            return None
-
-        weight_file = str(temp_path / f"weight{ext}")
-        try:
-            subprocess.run(
-                ["fslmaths", str(self.inputs.lesion_mask),
-                 "-mul", "-1", "-add", "1", weight_file],
-                check=True,
-            )
-            return weight_file
-        except Exception:
-            return None
-
     def _run_bbr(
         self,
         t1w_file: str,
@@ -904,7 +850,6 @@ class DSCRegistration(SimpleInterface):
         out_file: str,
         out_matrix: str,
         dof: int,
-        weight_args: list[str],
         temp_path: Path,
         ext: str,
     ) -> None:
@@ -917,7 +862,6 @@ class DSCRegistration(SimpleInterface):
             out_file: Output registered image.
             out_matrix: Output BBR matrix.
             dof: Degrees of freedom.
-            weight_args: Lesion weight arguments list (e.g. ["-inweight", path]).
             temp_path: Temporary directory.
             ext: File extension.
 
@@ -942,7 +886,7 @@ class DSCRegistration(SimpleInterface):
             "-dof", str(dof), "-cost", "bbr",
             "-init", init_matrix,
             "-wmseg", wm_thresh,
-        ] + weight_args
+        ]
         subprocess.run(bbr_cmd, check=True)
 
     def _compute_qc_metrics(

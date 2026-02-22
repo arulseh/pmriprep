@@ -18,10 +18,6 @@ class AnatConfig:
         Brain extraction tool: hdbet (HD-BET) or ants (ANTs).
     denoise : bool
         Apply ANTs denoising to anatomical images.
-    use_lesion_mask : bool
-        Use lesion mask for registration cost function weighting.
-        Default False: 6-DOF FLIRT is robust to focal lesions.
-        Enable for large (>3cm) enhancing tumors, resection cavities, or BBR.
     """
 
     # Brain extraction settings
@@ -29,9 +25,6 @@ class AnatConfig:
 
     # Processing settings
     denoise: bool = False
-
-    # Registration settings
-    use_lesion_mask: bool = False
 
     # Subtraction image settings
     create_subtraction: bool = True  # Create post-pre subtraction image

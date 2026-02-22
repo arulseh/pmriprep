@@ -587,7 +587,6 @@ def init_dce_preproc_wf(
     workflow.connect([
         (inputnode, dce_registration, [
             ("t1w_reference", "t1w_file"),
-            ("lesion_mask", "lesion_mask"),
             ("brain_mask", "brain_mask"),
         ]),
         (dce_brain_extract, dce_registration, [

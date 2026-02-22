@@ -323,10 +323,6 @@ class CoregistrationInputSpec(CommandLineInputSpec):
         genfile=True,
         desc="Output transformation matrix (FLIRT .mat format)",
     )
-    lesion_mask = File(
-        exists=True,
-        desc="Optional lesion mask for cost function weighting (excludes lesion region)",
-    )
     modality = traits.Enum(
         "T1_postcon",
         "FLAIR",
@@ -360,36 +356,23 @@ class Coregistration(CommandLine):
     - FLAIR, T2w: normcorr (normalized correlation)
     - T1w: corratio (correlation ratio)
 
-    Optionally supports lesion mask cost function weighting, where the lesion
-    region is excluded from the cost function calculation to prevent tumor
-    distorting the registration.
-
     Parameters
     ----------
     in_file : str
         Moving image to be registered
     reference : str
         Reference/target image (typically bias-corrected T1w)
-    lesion_mask : str, optional
-        Binary lesion mask - lesion voxels will have reduced weight
     modality : str
         Modality of moving image: T1_postcon, FLAIR, T2w, T1w
     dof : int
         Degrees of freedom (default: 6 for rigid body)
+
     Examples
     --------
     >>> coreg = Coregistration()
     >>> coreg.inputs.in_file = 'FLAIR.nii.gz'
     >>> coreg.inputs.reference = 'T1w_biascorr.nii.gz'
     >>> coreg.inputs.modality = 'FLAIR'
-    >>> result = coreg.run()  # doctest: +SKIP
-
-    With lesion mask:
-    >>> coreg = Coregistration()
-    >>> coreg.inputs.in_file = 'T1w_ce.nii.gz'
-    >>> coreg.inputs.reference = 'T1w_biascorr.nii.gz'
-    >>> coreg.inputs.modality = 'T1_postcon'
-    >>> coreg.inputs.lesion_mask = 'lesion.nii.gz'
     >>> result = coreg.run()  # doctest: +SKIP
 
     Notes
@@ -399,9 +382,6 @@ class Coregistration(CommandLine):
     - normmi: Best for T1 post-contrast where intensity changes due to Gd
     - normcorr: Best for FLAIR/T2w where contrast inverts vs T1
     - corratio: Best for same-modality registration (T1w to T1w)
-
-    Lesion mask weighting creates a cost function weight image where:
-    weight = 1.0 - lesion_mask (i.e., lesion voxels have weight 0)
 
     Requires FSL to be installed and available in PATH.
 
@@ -469,30 +449,11 @@ class Coregistration(CommandLine):
         # Get cost function for modality
         cost = self._COST_FUNCTIONS.get(modality, "corratio")
 
-        # Check if we have a lesion mask for cost function weighting
-        lesion_mask = getattr(self.inputs, "lesion_mask", None)
-        if lesion_mask and Path(lesion_mask).exists():
-            out_path = Path(out_file)
-            ext = ".nii.gz" if out_path.name.endswith(".nii.gz") else ".nii"
-            weight_file = str(out_path.parent / f"_tmp_weight{ext}")
-
-            invert_cmd = f"fslmaths {lesion_mask} -mul -1 -add 1 {weight_file}"
-            flirt_cmd = (
-                f"flirt -in {in_file} -ref {reference} "
-                f"-out {out_file} -omat {out_matrix} "
-                f"-dof {dof} -cost {cost} "
-                f"-inweight {weight_file} -refweight {weight_file}"
-            )
-            return (
-                f"bash -c '{invert_cmd} && {flirt_cmd} && "
-                f"rm -f {weight_file}'"
-            )
-        else:
-            return (
-                f"flirt -in {in_file} -ref {reference} "
-                f"-out {out_file} -omat {out_matrix} "
-                f"-dof {dof} -cost {cost}"
-            )
+        return (
+            f"flirt -in {in_file} -ref {reference} "
+            f"-out {out_file} -omat {out_matrix} "
+            f"-dof {dof} -cost {cost}"
+        )
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""

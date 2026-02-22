@@ -1548,7 +1548,7 @@ def init_dsc_preproc_wf(
                 "t1w_underlay",  # T1w underlay for DSC-space visualization (CE-T1w if available, else native)
                 "brain_mask",  # Brain mask in T1w space
                 "wm_probseg",  # White matter probability map (optional)
-                "lesion_mask",  # Dilated lesion mask for registration (optional)
+                "lesion_mask",  # Dilated lesion mask for AIF exclusion + lesion stats (optional)
                 "whole_tumor_mask",  # Undilated whole-tumor mask for AIF distance exclusion (optional)
                 "enhancing_mask",  # Enhancing tumor mask for laterality (optional)
                 "tumor_segmentation",  # Multi-label tumor segmentation for lesion stats (optional)
@@ -2396,7 +2396,6 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (hist_match_t1w, register, [("matched_t1w_file", "t1w_file")]),
         (inputnode, register, [
-            ("lesion_mask", "lesion_mask"),
             ("brain_mask", "brain_mask"),
             ("wm_probseg", "wm_seg"),
         ]),
