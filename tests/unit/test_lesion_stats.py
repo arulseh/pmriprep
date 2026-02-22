@@ -134,10 +134,10 @@ class TestDetectMaskType:
     """Tests for detect_mask_type()."""
 
     def test_multi_label(self) -> None:
-        """Max label >= 2 detected as multi_label_hdglio."""
+        """Max label >= 2 detected as multi_label_tumor_seg."""
         mask_data = np.array([[[0, 1, 2, 3]]])
         mask_type, max_label = detect_mask_type(mask_data)
-        assert mask_type == "multi_label_hdglio"
+        assert mask_type == "multi_label_tumor_seg"
         assert max_label == 3
 
     def test_binary(self) -> None:

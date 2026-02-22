@@ -19,8 +19,8 @@
                 <div class="metric-value {% if ran_pipelines.anat %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.anat else "Skipped" }}</div>
             </div>
             <div class="metric">
-                <div class="metric-label">HD-GLIO</div>
-                <div class="metric-value {% if ran_pipelines.hdglio %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.hdglio else "Skipped" }}</div>
+                <div class="metric-label">Tumor Segmentation</div>
+                <div class="metric-value {% if ran_pipelines.tumor_seg %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.tumor_seg else "Skipped" }}</div>
             </div>
             <div class="metric">
                 <div class="metric-label">DSC Perfusion</div>

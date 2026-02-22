@@ -417,7 +417,7 @@ def find_lesion_mask(
         base_pattern += f"_ses-{session}"
 
     # Common lesion/tumor mask naming patterns
-    lesion_keywords = ["lesion", "tumor", "tumour", "hdglio", "enhancing", "wholetumor"]
+    lesion_keywords = ["lesion", "tumor", "tumour", "tumorseg", "enhancing", "wholetumor"]
 
     if space:
         for keyword in lesion_keywords:
@@ -436,7 +436,7 @@ def find_lesion_mask(
     # Also look for dseg files (BIDS derivative segmentation)
     patterns.extend([
         f"{base_pattern}*_dseg.nii.gz",
-        f"{base_pattern}*hdglio*_dseg.nii.gz",
+        f"{base_pattern}*tumorseg*_dseg.nii.gz",
     ])
 
     # Search in derivatives

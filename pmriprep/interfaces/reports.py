@@ -2,7 +2,7 @@
 
 This module provides a Nipype interface for generating a single unified
 NiPreps-style HTML QC report per session, combining all pipeline sections
-(anat, hdglio, dsc, dce) into one document.
+(anat, tumor_seg, dsc, dce) into one document.
 """
 
 from pathlib import Path
@@ -26,7 +26,7 @@ class GenerateUnifiedReportInputSpec(BaseInterfaceInputSpec):
 
     # Which pipelines ran (controls which sections appear)
     ran_anat = traits.Bool(False, usedefault=True, desc="Whether anat pipeline ran")
-    ran_hdglio = traits.Bool(False, usedefault=True, desc="Whether hdglio pipeline ran")
+    ran_tumor_seg = traits.Bool(False, usedefault=True, desc="Whether tumor segmentation pipeline ran")
     ran_dsc = traits.Bool(False, usedefault=True, desc="Whether dsc pipeline ran")
     ran_dce = traits.Bool(False, usedefault=True, desc="Whether dce pipeline ran")
 
@@ -34,7 +34,7 @@ class GenerateUnifiedReportInputSpec(BaseInterfaceInputSpec):
     # Each carries the qc_json path from its writer, ensuring the writer
     # finishes before the report node runs.
     anat_done = traits.Str("", usedefault=True, desc="Barrier from anat writer")
-    hdglio_done = traits.Str("", usedefault=True, desc="Barrier from hdglio writer")
+    tumor_seg_done = traits.Str("", usedefault=True, desc="Barrier from tumor_seg writer")
     dsc_done = traits.Str("", usedefault=True, desc="Barrier from dsc writer")
     dce_done = traits.Str("", usedefault=True, desc="Barrier from dce writer")
 
@@ -49,11 +49,11 @@ class GenerateUnifiedReport(BaseInterface):
     """Generate a single unified HTML QC report for all pipelines in a session.
 
     This interface creates one HTML report that combines QC sections for
-    all pipelines that ran (anat, hdglio, dsc, dce), with a navigation
+    all pipelines that ran (anat, tumor_seg, dsc, dce), with a navigation
     bar and summary section. The report lives inside the session directory
     so figure paths are simply ``figures/<filename>``.
 
-    Barrier inputs (``anat_done``, ``hdglio_done``, etc.) carry the
+    Barrier inputs (``anat_done``, ``tumor_seg_done``, etc.) carry the
     ``qc_json`` path from each writer, enforcing execution order without
     needing explicit data dependencies.
     """
@@ -84,7 +84,7 @@ class GenerateUnifiedReport(BaseInterface):
 
         ran_pipelines = {
             "anat": self.inputs.ran_anat,
-            "hdglio": self.inputs.ran_hdglio,
+            "tumor_seg": self.inputs.ran_tumor_seg,
             "dsc": self.inputs.ran_dsc,
             "dce": self.inputs.ran_dce,
         }

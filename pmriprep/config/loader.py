@@ -9,7 +9,7 @@ import yaml  # type: ignore[import-untyped]
 from .anat import AnatConfig
 from .dce import DCEConfig
 from .dsc import DSCConfig
-from .hdglio import HDGLIOConfig
+from .tumor_seg import TumorSegConfig
 
 
 def load_config(path: Union[str, Path]) -> Dict[str, Any]:
@@ -24,7 +24,7 @@ def load_config(path: Union[str, Path]) -> Dict[str, Any]:
     Returns
     -------
     dict
-        Configuration dictionary with sections: dsc, dce, anat, hdglio.
+        Configuration dictionary with sections: dsc, dce, anat, tumor_seg.
         Missing sections are returned as empty dicts.
 
     Raises
@@ -58,7 +58,7 @@ def load_config(path: Union[str, Path]) -> Dict[str, Any]:
         config = {}
 
     # Ensure all sections exist
-    for section in ("dsc", "dce", "anat", "hdglio"):
+    for section in ("dsc", "dce", "anat", "tumor_seg"):
         if section not in config:
             config[section] = {}
 
@@ -135,9 +135,9 @@ def merge_cli_config(
         # Anatomical options
         "brain_extraction_tool": ("anat", "tool"),
         "denoise": ("anat", "denoise"),
-        # HD-GLIO options
-        "hdglio_conda_env": ("hdglio", "conda_env"),
-        "hdglio_device": ("hdglio", "device"),
+        # Tumor segmentation options
+        "tumor_seg_conda_env": ("tumor_seg", "conda_env"),
+        "tumor_seg_device": ("tumor_seg", "device"),
     }
 
     for cli_key, (section, config_key) in cli_to_config.items():
@@ -286,26 +286,26 @@ def build_anat_config(config_dict: Dict[str, Any]) -> AnatConfig:
     return AnatConfig(**filtered_dict)
 
 
-def build_hdglio_config(config_dict: Dict[str, Any]) -> HDGLIOConfig:
-    """Build HDGLIOConfig from a configuration dictionary.
+def build_tumor_seg_config(config_dict: Dict[str, Any]) -> TumorSegConfig:
+    """Build TumorSegConfig from a configuration dictionary.
 
     Parameters
     ----------
     config_dict : dict
-        Configuration dictionary with HD-GLIO parameters.
+        Configuration dictionary with tumor segmentation parameters.
 
     Returns
     -------
-    HDGLIOConfig
-        Configured HDGLIOConfig instance.
+    TumorSegConfig
+        Configured TumorSegConfig instance.
     """
-    hdglio_dict = config_dict.get("hdglio", {}).copy()
+    tumor_seg_dict = config_dict.get("tumor_seg", {}).copy()
 
-    # Filter to only valid HDGLIOConfig fields
-    valid_fields = {f.name for f in HDGLIOConfig.__dataclass_fields__.values()}
-    filtered_dict = {k: v for k, v in hdglio_dict.items() if k in valid_fields}
+    # Filter to only valid TumorSegConfig fields
+    valid_fields = {f.name for f in TumorSegConfig.__dataclass_fields__.values()}
+    filtered_dict = {k: v for k, v in tumor_seg_dict.items() if k in valid_fields}
 
-    return HDGLIOConfig(**filtered_dict)
+    return TumorSegConfig(**filtered_dict)
 
 
 def build_all_configs(
@@ -324,14 +324,14 @@ def build_all_configs(
     Returns
     -------
     dict
-        Dictionary with keys 'dsc', 'dce', 'anat', 'hdglio' containing
+        Dictionary with keys 'dsc', 'dce', 'anat', 'tumor_seg' containing
         the respective config objects.
     """
     # Load file config if provided
     if config_file is not None:
         file_config = load_config(config_file)
     else:
-        file_config = {"dsc": {}, "dce": {}, "anat": {}, "hdglio": {}}
+        file_config = {"dsc": {}, "dce": {}, "anat": {}, "tumor_seg": {}}
 
     # Merge CLI args if provided
     if cli_args is not None:
@@ -343,5 +343,5 @@ def build_all_configs(
         "dsc": build_dsc_config(merged_config),
         "dce": build_dce_config(merged_config),
         "anat": build_anat_config(merged_config),
-        "hdglio": build_hdglio_config(merged_config),
+        "tumor_seg": build_tumor_seg_config(merged_config),
     }

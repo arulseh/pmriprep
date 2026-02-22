@@ -55,7 +55,7 @@ from pmriprep.utils.dce_dsc_validation import (
     validate_vp_cbv,
     validate_vp_cbv_from_files,
 )
-from pmriprep.utils.hdglio import (
+from pmriprep.utils.tumor_seg import (
     dilate_mask,
     dilate_mask_from_array,
     erode_mask_from_array,
@@ -142,7 +142,7 @@ __all__ = [
     "should_skip_validation",
     "validate_vp_cbv",
     "validate_vp_cbv_from_files",
-    # hdglio
+    # tumor_seg
     "dilate_mask",
     "dilate_mask_from_array",
     "erode_mask_from_array",

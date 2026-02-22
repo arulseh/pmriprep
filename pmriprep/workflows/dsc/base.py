@@ -1551,7 +1551,7 @@ def init_dsc_preproc_wf(
                 "lesion_mask",  # Dilated lesion mask for registration (optional)
                 "whole_tumor_mask",  # Undilated whole-tumor mask for AIF distance exclusion (optional)
                 "enhancing_mask",  # Enhancing tumor mask for laterality (optional)
-                "hdglio_segmentation",  # HD-GLIO multi-label segmentation for lesion stats (optional)
+                "tumor_segmentation",  # Multi-label tumor segmentation for lesion stats (optional)
                 "nawm_mask",  # NAWM mask for normalization (optional)
                 "roi_mask",  # Generic ROI mask for stats extraction only (optional)
                 "t1w_to_mni_xfm",  # T1w to MNI transform (from ACPC alignment)
@@ -1923,14 +1923,14 @@ def init_dsc_preproc_wf(
 
     # -------------------------------------------------------------------
     # Node 6d: Select tumor mask for lesion statistics
-    # Priority: hdglio_segmentation (multi-label) > whole_tumor > None
+    # Priority: tumor_segmentation (multi-label) > whole_tumor > None
     # -------------------------------------------------------------------
     from pmriprep.utils.lesion_stats import combine_tumor_masks
 
     combine_masks = pe.Node(
         niu.Function(
             input_names=[
-                "hdglio_segmentation_file",
+                "tumor_segmentation_file",
                 "whole_tumor_mask_file",
                 "reference_file",
             ],
@@ -2542,10 +2542,10 @@ def init_dsc_preproc_wf(
     # Lesion mask selection and transform (conditional)
     # -------------------------------------------------------------------
     # Select best available tumor mask for lesion stats
-    # Priority: hdglio_segmentation (multi-label) > whole_tumor
+    # Priority: tumor_segmentation (multi-label) > whole_tumor
     workflow.connect([
         (inputnode, combine_masks, [
-            ("hdglio_segmentation", "hdglio_segmentation_file"),
+            ("tumor_segmentation", "tumor_segmentation_file"),
             ("whole_tumor_mask", "whole_tumor_mask_file"),
         ]),
         (prebolus_mean, combine_masks, [("prebolus_mean_file", "reference_file")]),

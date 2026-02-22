@@ -1,4 +1,4 @@
-"""HD-GLIO tumor segmentation workflow for PMRIPrep.
+"""Tumor segmentation workflow for PMRIPrep.
 
 This module implements the HD-GLIO deep learning tumor segmentation workflow,
 following the NiPreps/fMRIPrep workflow design patterns.
@@ -10,7 +10,7 @@ from typing import Any, Optional, Union
 from nipype.interfaces import utility as niu  # type: ignore[import-untyped]
 from nipype.pipeline import engine as pe  # type: ignore[import-untyped]
 
-from pmriprep.config.hdglio import HDGLIOConfig
+from pmriprep.config.tumor_seg import TumorSegConfig
 from pmriprep.data import get_lobar_atlas_dir
 from pmriprep.interfaces.hdglio import HDGLIOPrep, HDGLIOSegment
 
@@ -66,7 +66,7 @@ def _extract_masks_node(
     """
     import os
 
-    from pmriprep.utils.hdglio import extract_tumor_masks
+    from pmriprep.utils.tumor_seg import extract_tumor_masks
 
     # Write to this node's working directory (os.getcwd() in Nipype),
     # not the input file's directory, so outputs survive upstream re-runs.
@@ -92,7 +92,7 @@ def _dilate_mask_node(mask_file, radius_mm):
     str
         Path to the dilated mask file
     """
-    from pmriprep.utils.hdglio import dilate_mask
+    from pmriprep.utils.tumor_seg import dilate_mask
 
     return dilate_mask(
         mask_file=mask_file,
@@ -137,7 +137,7 @@ def _create_nawm_node(
     dict
         Dictionary with output file path and analysis details
     """
-    from pmriprep.utils.hdglio import create_nawm_roi
+    from pmriprep.utils.tumor_seg import create_nawm_roi
 
     return create_nawm_roi(
         tumor_mask_file=tumor_mask_file,
@@ -281,12 +281,12 @@ def _generate_qc_metrics(prep_qc, segment_qc, nawm_analysis):
     }
 
 
-def init_hdglio_wf(
+def init_tumor_seg_wf(
     bids_dir: Union[str, Path],
     subject_id: str,
     session_id: Optional[str] = None,
-    config: Optional[HDGLIOConfig] = None,
-    name: str = "hdglio_wf",
+    config: Optional[TumorSegConfig] = None,
+    name: str = "tumor_seg_wf",
 ) -> pe.Workflow:
     """Initialize HD-GLIO tumor segmentation workflow.
 
@@ -302,10 +302,10 @@ def init_hdglio_wf(
         BIDS subject identifier (without 'sub-' prefix).
     session_id : str, optional
         BIDS session identifier (without 'ses-' prefix).
-    config : HDGLIOConfig, optional
-        HD-GLIO configuration. Uses defaults if not provided.
+    config : TumorSegConfig, optional
+        Tumor segmentation configuration. Uses defaults if not provided.
     name : str
-        Workflow name (default: "hdglio_wf").
+        Workflow name (default: "tumor_seg_wf").
 
     Returns
     -------
@@ -361,7 +361,7 @@ def init_hdglio_wf(
     """
     # Use default config if not provided
     if config is None:
-        config = HDGLIOConfig()
+        config = TumorSegConfig()
 
     # Store parameters for use in workflow nodes
     bids_dir = Path(bids_dir)
@@ -413,7 +413,7 @@ def init_hdglio_wf(
     )
 
     # Store config in workflow for reference by child nodes
-    workflow.config_hdglio = config  # type: ignore[attr-defined]
+    workflow.config_tumor_seg = config  # type: ignore[attr-defined]
     workflow.bids_dir = bids_dir  # type: ignore[attr-defined]
     workflow.subject_id = subject_id  # type: ignore[attr-defined]
     workflow.session_id = session_id  # type: ignore[attr-defined]
@@ -423,14 +423,14 @@ def init_hdglio_wf(
     # - Minimal preprocessing: brain extraction only (NO bias correction)
     # - Verify all 4 modalities present and dimension-matched
     # -------------------------------------------------------------------
-    hdglio_prep = pe.Node(
+    tumor_seg_prep = pe.Node(
         HDGLIOPrep(),
-        name="hdglio_prep",
+        name="tumor_seg_prep",
     )
 
     # Connect inputs to prep node
     workflow.connect([
-        (inputnode, hdglio_prep, [
+        (inputnode, tumor_seg_prep, [
             ("t1w_pre", "t1w_pre"),
             ("t1w_postcon", "t1w_postcon"),
             ("t2w", "t2w"),
@@ -447,14 +447,14 @@ def init_hdglio_wf(
     segment_kwargs: dict[str, Any] = {"device": config.device}
     if config.conda_env:
         segment_kwargs["conda_env"] = config.conda_env
-    hdglio_segment = pe.Node(
+    tumor_seg_segment = pe.Node(
         HDGLIOSegment(**segment_kwargs),
-        name="hdglio_segment",
+        name="tumor_seg_segment",
     )
 
     # Connect prepped images to segmentation node
     workflow.connect([
-        (hdglio_prep, hdglio_segment, [
+        (tumor_seg_prep, tumor_seg_segment, [
             ("t1w_pre_prepped", "t1w_pre"),
             ("t1w_postcon_prepped", "t1w_postcon"),
             ("t2w_prepped", "t2w"),
@@ -464,7 +464,7 @@ def init_hdglio_wf(
 
     # Connect segmentation output to workflow outputnode
     workflow.connect([
-        (hdglio_segment, outputnode, [("segmentation", "segmentation")]),
+        (tumor_seg_segment, outputnode, [("segmentation", "segmentation")]),
     ])
 
     # -------------------------------------------------------------------
@@ -483,7 +483,7 @@ def init_hdglio_wf(
 
     # Connect segmentation to mask extraction
     workflow.connect([
-        (hdglio_segment, extract_masks, [("segmentation", "segmentation_file")]),
+        (tumor_seg_segment, extract_masks, [("segmentation", "segmentation_file")]),
     ])
 
     # Extract individual mask paths from the masks dict using Function nodes
@@ -631,8 +631,8 @@ def init_hdglio_wf(
 
     workflow.connect([
         (create_nawm, extract_nawm_analysis, [("nawm_result", "nawm_result")]),
-        (hdglio_prep, combine_qc, [("qc_metrics", "prep_qc")]),
-        (hdglio_segment, combine_qc, [("qc_metrics", "segment_qc")]),
+        (tumor_seg_prep, combine_qc, [("qc_metrics", "prep_qc")]),
+        (tumor_seg_segment, combine_qc, [("qc_metrics", "segment_qc")]),
         (extract_nawm_analysis, combine_qc, [("analysis", "nawm_analysis")]),
         (combine_qc, outputnode, [("qc_metrics", "qc_metrics")]),
     ])

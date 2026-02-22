@@ -1,7 +1,7 @@
 """Mask manipulation utilities for PMRIPrep.
 
 Provides Nipype SimpleInterface subclasses for mask merging and dilation,
-used to combine user-supplied masks with HD-GLIO-generated masks.
+used to combine user-supplied masks with tumor segmentation masks.
 """
 
 from pathlib import Path

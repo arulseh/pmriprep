@@ -64,7 +64,7 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
         "brain_mask", "tissue_seg", "acpc",
         "coreg_postcon", "coreg_t2w", "coreg_flair", "coreg_pdw",
     ],
-    "hdglio": ["seg_postcon", "seg_flair", "nawm_flair"],
+    "tumor_seg": ["seg_postcon", "seg_flair", "nawm_flair"],
     "dsc": [
         "dsc_brain_mask", "motion", "dsc_preprocessing_qc", "aif_curve",
         "aif_location", "dsc_leakage_qc", "dsc_param_maps_qc", "dsc_fit_qc",
@@ -80,7 +80,7 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
 # QC JSON file desc suffixes per pipeline
 _PIPELINE_QC_SUFFIXES: dict[str, str] = {
     "anat": "anatQC",
-    "hdglio": "hdglioQC",
+    "tumor_seg": "tumorsegQC",
     "dsc": "dscQC",
     "dce": "dceQC",
 }
@@ -218,7 +218,7 @@ def _collect_all_warnings(
     all_warnings: dict[str, list[str]] = {}
     display_names = {
         "anat": "Anatomical",
-        "hdglio": "HD-GLIO",
+        "tumor_seg": "Tumor Segmentation",
         "dsc": "DSC Perfusion",
         "dce": "DCE Perfusion",
     }
@@ -293,7 +293,7 @@ def generate_unified_report(
         "processing_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
         # Pipeline data (None if not run)
         "anat": pipeline_data.get("anat"),
-        "hdglio": pipeline_data.get("hdglio"),
+        "tumor_seg": pipeline_data.get("tumor_seg"),
         "dsc": pipeline_data.get("dsc"),
         "dce": pipeline_data.get("dce"),
         # Summary context
@@ -317,7 +317,7 @@ def generate_unified_report(
         legacy_dir = ses_path.parent.parent  # sub-XX -> pmriprep/
     else:
         legacy_dir = ses_path.parent  # pmriprep/
-    for pipeline_name in ["anat", "dsc", "dce", "hdglio"]:
+    for pipeline_name in ["anat", "dsc", "dce", "tumor_seg"]:
         if session_id:
             legacy_name = f"sub-{subject_id}_ses-{session_id}_{pipeline_name}.html"
         else:

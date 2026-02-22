@@ -107,7 +107,7 @@ class LesionStatisticsResult:
     subject_id: str
     session_id: str
     modality: str  # "DSC" or "DCE"
-    mask_type: str  # "multi_label_hdglio", "separate_binary", "binary"
+    mask_type: str  # "multi_label_tumor_seg", "separate_binary", "binary"
     mask_source: str
     total_voxels: int
     regions: Dict[str, RegionStatistics] = field(default_factory=dict)
@@ -256,12 +256,12 @@ def detect_mask_type(
 
     Returns:
         Tuple of (mask_type, max_label):
-            - mask_type: "multi_label_hdglio" if max >= 2, else "binary"
+            - mask_type: "multi_label_tumor_seg" if max >= 2, else "binary"
             - max_label: Maximum label value in mask
     """
     max_label = int(np.max(mask_data))
     if max_label >= 2:
-        return "multi_label_hdglio", max_label
+        return "multi_label_tumor_seg", max_label
     return "binary", max_label
 
 
@@ -461,20 +461,20 @@ def compute_dce_derived_metrics(
 
 
 def combine_tumor_masks(
-    hdglio_segmentation_file=None,  # Optional[str] - type hint removed for Nipype Function
-    whole_tumor_mask_file=None,     # Optional[str] - type hint removed for Nipype Function
-    reference_file=None,            # str
+    tumor_segmentation_file=None,  # Optional[str] - type hint removed for Nipype Function
+    whole_tumor_mask_file=None,    # Optional[str] - type hint removed for Nipype Function
+    reference_file=None,           # str
 ):  # -> Optional[str]
     """Select the best tumor mask for lesion statistics.
 
     Priority:
-    1. If HD-GLIO segmentation present: use it (already multi-label:
+    1. If tumor segmentation present: use it (already multi-label:
        0=bg, 1=non-enhancing, 2=enhancing)
     2. If only whole_tumor present: use as binary mask
     3. If none present: return None
 
     Args:
-        hdglio_segmentation_file: Path to HD-GLIO multi-label segmentation (or None).
+        tumor_segmentation_file: Path to multi-label tumor segmentation (or None).
         whole_tumor_mask_file: Path to whole tumor binary mask (or None).
         reference_file: Path to reference image for output geometry (unused but
             kept for interface compatibility).
@@ -499,9 +499,9 @@ def combine_tumor_masks(
             return False
         return Path(f).exists()
 
-    # Priority 1: Use HD-GLIO segmentation directly (already multi-label)
-    if _is_valid_file(hdglio_segmentation_file):
-        return hdglio_segmentation_file
+    # Priority 1: Use tumor segmentation directly (already multi-label)
+    if _is_valid_file(tumor_segmentation_file):
+        return tumor_segmentation_file
 
     # Priority 2: Use whole_tumor as binary mask
     if _is_valid_file(whole_tumor_mask_file):

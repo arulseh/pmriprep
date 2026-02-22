@@ -56,7 +56,7 @@ PIPELINE_DESCRIPTIONS: Dict[str, str] = {
     "anat": "Anatomical preprocessing including brain extraction and segmentation",
     "dsc": "Dynamic Susceptibility Contrast perfusion MRI processing",
     "dce": "Dynamic Contrast Enhanced perfusion MRI processing",
-    "hdglio": "HD-GLIO tumor segmentation",
+    "tumor_seg": "Tumor segmentation",
 }
 
 

@@ -58,7 +58,7 @@
         <span class="nav-title">PMRIPrep</span>
         <a href="#summary">Summary</a>
         {% if anat %}<a href="#anat">Anatomical</a>{% else %}<a class="disabled">Anatomical</a>{% endif %}
-        {% if hdglio %}<a href="#hdglio">Segmentation</a>{% else %}<a class="disabled">Segmentation</a>{% endif %}
+        {% if tumor_seg %}<a href="#tumor_seg">Segmentation</a>{% else %}<a class="disabled">Segmentation</a>{% endif %}
         {% if dsc %}<a href="#dsc">DSC</a>{% else %}<a class="disabled">DSC</a>{% endif %}
         {% if dce %}<a href="#dce">DCE</a>{% else %}<a class="disabled">DCE</a>{% endif %}
         <a href="#about">About</a>
@@ -75,9 +75,9 @@
     {% include "sections/section_anat.html" %}
     {% endif %}
 
-    <!-- HD-GLIO -->
-    {% if hdglio %}
-    {% include "sections/section_hdglio.html" %}
+    <!-- Tumor Segmentation -->
+    {% if tumor_seg %}
+    {% include "sections/section_tumor_seg.html" %}
     {% endif %}
 
     <!-- DSC -->

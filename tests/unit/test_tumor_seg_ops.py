@@ -1,9 +1,9 @@
-"""Unit tests for HD-GLIO pure utility functions."""
+"""Unit tests for tumor segmentation pure utility functions."""
 
 import numpy as np
 import pytest
 
-from pmriprep.utils.hdglio import (
+from pmriprep.utils.tumor_seg import (
     TumorAnalysis,
     _analyze_tumor_anatomy,
     _create_hemisphere_mask,

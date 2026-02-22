@@ -550,11 +550,11 @@ def init_anat_preproc_wf(
                 "pdw_to_t1w_xfm",
                 # Subtraction
                 "t1w_subtraction",
-                # HD-GLIO prepared inputs (no bias correction)
-                "hdglio_t1w_pre",
-                "hdglio_t1w_postcon",
-                "hdglio_t2w",
-                "hdglio_flair",
+                # Tumor segmentation prepared inputs (no bias correction)
+                "tumor_seg_t1w_pre",
+                "tumor_seg_t1w_postcon",
+                "tumor_seg_t2w",
+                "tumor_seg_flair",
                 # Processing mode flag
                 "is_postcon_ref",
                 # QC
@@ -772,51 +772,51 @@ def init_anat_preproc_wf(
     if has_t1w_postcon and has_t2w and has_flair:
 
         # T1w pre: reoriented → mask with brain_extract mask
-        hdglio_mask_t1w = pe.Node(ApplyMask(), name="hdglio_mask_t1w")
+        tumor_seg_mask_t1w = pe.Node(ApplyMask(), name="tumor_seg_mask_t1w")
         workflow.connect([
-            (reorient, hdglio_mask_t1w, [("out_file", "in_file")]),
-            (brain_extract, hdglio_mask_t1w, [("out_mask", "mask_file")]),
-            (hdglio_mask_t1w, outputnode, [("out_file", "hdglio_t1w_pre")]),
+            (reorient, tumor_seg_mask_t1w, [("out_file", "in_file")]),
+            (brain_extract, tumor_seg_mask_t1w, [("out_mask", "mask_file")]),
+            (tumor_seg_mask_t1w, outputnode, [("out_file", "tumor_seg_t1w_pre")]),
         ])
 
         # T1w postcon: reoriented → apply coreg xfm → mask
-        hdglio_xfm_postcon = pe.Node(
-            ApplyTransform(), name="hdglio_xfm_postcon"
+        tumor_seg_xfm_postcon = pe.Node(
+            ApplyTransform(), name="tumor_seg_xfm_postcon"
         )
-        hdglio_mask_postcon = pe.Node(ApplyMask(), name="hdglio_mask_postcon")
+        tumor_seg_mask_postcon = pe.Node(ApplyMask(), name="tumor_seg_mask_postcon")
         workflow.connect([
-            (reorient_postcon, hdglio_xfm_postcon, [("out_file", "in_file")]),
-            (reorient, hdglio_xfm_postcon, [("out_file", "reference")]),
-            (coreg_postcon, hdglio_xfm_postcon, [("out_matrix", "in_matrix")]),
-            (hdglio_xfm_postcon, hdglio_mask_postcon, [("out_file", "in_file")]),
-            (brain_extract, hdglio_mask_postcon, [("out_mask", "mask_file")]),
-            (hdglio_mask_postcon, outputnode, [
-                ("out_file", "hdglio_t1w_postcon"),
+            (reorient_postcon, tumor_seg_xfm_postcon, [("out_file", "in_file")]),
+            (reorient, tumor_seg_xfm_postcon, [("out_file", "reference")]),
+            (coreg_postcon, tumor_seg_xfm_postcon, [("out_matrix", "in_matrix")]),
+            (tumor_seg_xfm_postcon, tumor_seg_mask_postcon, [("out_file", "in_file")]),
+            (brain_extract, tumor_seg_mask_postcon, [("out_mask", "mask_file")]),
+            (tumor_seg_mask_postcon, outputnode, [
+                ("out_file", "tumor_seg_t1w_postcon"),
             ]),
         ])
 
         # T2w: reoriented → apply coreg xfm → mask
-        hdglio_xfm_t2w = pe.Node(ApplyTransform(), name="hdglio_xfm_t2w")
-        hdglio_mask_t2w = pe.Node(ApplyMask(), name="hdglio_mask_t2w")
+        tumor_seg_xfm_t2w = pe.Node(ApplyTransform(), name="tumor_seg_xfm_t2w")
+        tumor_seg_mask_t2w = pe.Node(ApplyMask(), name="tumor_seg_mask_t2w")
         workflow.connect([
-            (reorient_t2w, hdglio_xfm_t2w, [("out_file", "in_file")]),
-            (reorient, hdglio_xfm_t2w, [("out_file", "reference")]),
-            (coreg_t2w, hdglio_xfm_t2w, [("out_matrix", "in_matrix")]),
-            (hdglio_xfm_t2w, hdglio_mask_t2w, [("out_file", "in_file")]),
-            (brain_extract, hdglio_mask_t2w, [("out_mask", "mask_file")]),
-            (hdglio_mask_t2w, outputnode, [("out_file", "hdglio_t2w")]),
+            (reorient_t2w, tumor_seg_xfm_t2w, [("out_file", "in_file")]),
+            (reorient, tumor_seg_xfm_t2w, [("out_file", "reference")]),
+            (coreg_t2w, tumor_seg_xfm_t2w, [("out_matrix", "in_matrix")]),
+            (tumor_seg_xfm_t2w, tumor_seg_mask_t2w, [("out_file", "in_file")]),
+            (brain_extract, tumor_seg_mask_t2w, [("out_mask", "mask_file")]),
+            (tumor_seg_mask_t2w, outputnode, [("out_file", "tumor_seg_t2w")]),
         ])
 
         # FLAIR: reoriented → apply coreg xfm → mask
-        hdglio_xfm_flair = pe.Node(ApplyTransform(), name="hdglio_xfm_flair")
-        hdglio_mask_flair = pe.Node(ApplyMask(), name="hdglio_mask_flair")
+        tumor_seg_xfm_flair = pe.Node(ApplyTransform(), name="tumor_seg_xfm_flair")
+        tumor_seg_mask_flair = pe.Node(ApplyMask(), name="tumor_seg_mask_flair")
         workflow.connect([
-            (reorient_flair, hdglio_xfm_flair, [("out_file", "in_file")]),
-            (reorient, hdglio_xfm_flair, [("out_file", "reference")]),
-            (coreg_flair, hdglio_xfm_flair, [("out_matrix", "in_matrix")]),
-            (hdglio_xfm_flair, hdglio_mask_flair, [("out_file", "in_file")]),
-            (brain_extract, hdglio_mask_flair, [("out_mask", "mask_file")]),
-            (hdglio_mask_flair, outputnode, [("out_file", "hdglio_flair")]),
+            (reorient_flair, tumor_seg_xfm_flair, [("out_file", "in_file")]),
+            (reorient, tumor_seg_xfm_flair, [("out_file", "reference")]),
+            (coreg_flair, tumor_seg_xfm_flair, [("out_matrix", "in_matrix")]),
+            (tumor_seg_xfm_flair, tumor_seg_mask_flair, [("out_file", "in_file")]),
+            (brain_extract, tumor_seg_mask_flair, [("out_mask", "mask_file")]),
+            (tumor_seg_mask_flair, outputnode, [("out_file", "tumor_seg_flair")]),
         ])
 
     # -------------------------------------------------------------------

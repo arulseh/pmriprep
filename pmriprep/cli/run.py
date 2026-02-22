@@ -280,26 +280,26 @@ Examples:
         default=None,
         help="Apply ANTs denoising to anatomical images.",
     )
-    # HD-GLIO options
-    hdglio_group = parser.add_argument_group(
-        "HD-GLIO options",
-        "Options for HD-GLIO tumor segmentation.",
+    # Tumor segmentation options
+    tumor_seg_group = parser.add_argument_group(
+        "Tumor segmentation options",
+        "Options for tumor segmentation.",
     )
-    hdglio_group.add_argument(
-        "--hdglio-conda-env",
+    tumor_seg_group.add_argument(
+        "--tumor-seg-conda-env",
         type=str,
         default=None,
         help=(
-            "Conda environment name for hd_glio_predict "
-            "(e.g., 'hdglio-mps' for Apple Silicon). Required when HD-GLIO "
+            "Conda environment name for the segmentation tool "
+            "(e.g., 'hdglio-mps' for Apple Silicon). Required when the tool "
             "is installed in a separate environment."
         ),
     )
-    hdglio_group.add_argument(
-        "--hdglio-device",
+    tumor_seg_group.add_argument(
+        "--tumor-seg-device",
         choices=["cuda", "mps", "cpu"],
         default=None,
-        help="Device for HD-GLIO inference (default: cuda).",
+        help="Device for tumor segmentation inference (default: cuda).",
     )
 
     # Other options (NiPreps parity)
@@ -476,7 +476,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     It handles:
     1. Parsing CLI arguments and loading config file
     2. Merging CLI args with config file (CLI overrides)
-    3. Building DSCConfig, DCEConfig, AnatConfig, HDGLIOConfig from merged config
+    3. Building DSCConfig, DCEConfig, AnatConfig, TumorSegConfig from merged config
     4. Initializing master workflow with configs
     5. Configuring Nipype execution (nprocs, work_dir, etc.)
     6. Running workflow with proper error handling
@@ -490,7 +490,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         build_anat_config,
         build_dce_config,
         build_dsc_config,
-        build_hdglio_config,
+        build_tumor_seg_config,
         load_config,
         merge_cli_config,
     )
@@ -521,7 +521,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         logger.info(f"Loading configuration from: {args.config_file}")
         file_config = load_config(args.config_file)
     else:
-        file_config = {"dsc": {}, "dce": {}, "anat": {}, "hdglio": {}}
+        file_config = {"dsc": {}, "dce": {}, "anat": {}, "tumor_seg": {}}
 
     # Merge CLI args with file config (CLI takes precedence)
     merged_config = merge_cli_config(cli_args, file_config)
@@ -530,7 +530,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     dsc_config = build_dsc_config(merged_config)
     dce_config = build_dce_config(merged_config)
     anat_config = build_anat_config(merged_config)
-    hdglio_config = build_hdglio_config(merged_config)
+    tumor_seg_config = build_tumor_seg_config(merged_config)
 
     # Propagate --nprocs as fallback for num_processes (intra-node parallelism)
     if dsc_config.num_processes == 0:
@@ -587,7 +587,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                 "dsc": asdict(dsc_config),
                 "dce": asdict(dce_config),
                 "anat": asdict(anat_config),
-                "hdglio": asdict(hdglio_config),
+                "tumor_seg": asdict(tumor_seg_config),
             })
             (log_dir / "pmriprep.toml").write_text(toml.dumps(config_snapshot))
 
@@ -602,7 +602,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     session_id=session_id,
                     skip_flags=skip_flags,
                     anat_config=anat_config,
-                    hdglio_config=hdglio_config,
+                    tumor_seg_config=tumor_seg_config,
                     dsc_config=dsc_config,
                     dce_config=dce_config,
                     work_dir=args.work_dir,

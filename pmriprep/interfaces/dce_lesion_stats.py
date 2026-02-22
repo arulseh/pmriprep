@@ -37,8 +37,8 @@ from pmriprep.utils.lesion_stats import (
 )
 
 
-# Region label definitions (HD-GLIO convention, enhancing first for clinical priority)
-HDGLIO_LABELS = {
+# Region label definitions (enhancing first for clinical priority)
+TUMOR_SEG_LABELS = {
     2: "contrast_enhancing_tumor",
     1: "non_enhancing_tumor",
 }
@@ -166,8 +166,8 @@ class DCELesionStats(BaseInterface):
             )
 
             # Extract statistics for each region
-            if mask_type == "multi_label_hdglio":
-                for label, region_name in HDGLIO_LABELS.items():
+            if mask_type == "multi_label_tumor_seg":
+                for label, region_name in TUMOR_SEG_LABELS.items():
                     if label > max_label:
                         continue
                     label_mask = extract_label_mask(lesion_data, label)

@@ -1,7 +1,7 @@
-"""BIDS-Derivatives compliant HD-GLIO output writer interface.
+"""BIDS-Derivatives compliant tumor segmentation output writer interface.
 
-This module implements a custom Nipype interface that writes HD-GLIO
-tumor segmentation outputs with BIDS-compliant filenames, JSON sidecars,
+This module implements a custom Nipype interface that writes tumor
+segmentation outputs with BIDS-compliant filenames, JSON sidecars,
 and QC files. All outputs go to the unified pmriprep/ derivative root.
 """
 
@@ -20,8 +20,8 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 from pmriprep.utils.outputs import copy_derivative, write_json_sidecar
 
 
-class HDGLIODerivativeWriterInputSpec(BaseInterfaceInputSpec):
-    """Input specification for HDGLIODerivativeWriter."""
+class TumorSegDerivativeWriterInputSpec(BaseInterfaceInputSpec):
+    """Input specification for TumorSegDerivativeWriter."""
 
     # Configuration (mandatory)
     output_dir = traits.Str(mandatory=True, desc="Root output derivatives directory")
@@ -29,9 +29,9 @@ class HDGLIODerivativeWriterInputSpec(BaseInterfaceInputSpec):
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
     bids_dir = traits.Str(mandatory=True, desc="BIDS dataset root directory")
 
-    # HD-GLIO segmentation outputs (mandatory)
+    # Tumor segmentation outputs (mandatory)
     segmentation = File(
-        exists=True, mandatory=True, desc="HD-GLIO multi-class segmentation label map"
+        exists=True, mandatory=True, desc="Multi-class tumor segmentation label map"
     )
     enhancing_mask = File(
         exists=True, mandatory=True, desc="Binary enhancing tumor mask (label 2)"
@@ -57,22 +57,22 @@ class HDGLIODerivativeWriterInputSpec(BaseInterfaceInputSpec):
     nawm_filmstrip_flair = traits.Str(desc="NAWM ROI on FLAIR filmstrip PNG path")
 
     # QC metrics
-    qc_metrics = traits.Dict(desc="Combined QC metrics from all HD-GLIO steps")
+    qc_metrics = traits.Dict(desc="Combined QC metrics from all tumor segmentation steps")
 
 
-class HDGLIODerivativeWriterOutputSpec(TraitedSpec):
-    """Output specification for HDGLIODerivativeWriter."""
+class TumorSegDerivativeWriterOutputSpec(TraitedSpec):
+    """Output specification for TumorSegDerivativeWriter."""
 
-    out_dir = traits.Str(desc="Path to the hdglio_pipeline output session directory")
-    qc_json = traits.Str(desc="Path to the hdglio_qc.json QC metrics file")
+    out_dir = traits.Str(desc="Path to the tumor_seg output session directory")
+    qc_json = traits.Str(desc="Path to the tumorsegQC quality JSON file")
     lesion_stats_json = traits.Str(desc="Path to the lesion-stats.json file")
 
 
-class HDGLIODerivativeWriter(BaseInterface):
-    """Write HD-GLIO pipeline outputs with BIDS-compliant naming.
+class TumorSegDerivativeWriter(BaseInterface):
+    """Write tumor segmentation pipeline outputs with BIDS-compliant naming.
 
-    This interface writes HD-GLIO tumor segmentation outputs to BIDS
-    derivative directories, producing:
+    This interface writes tumor segmentation outputs to BIDS derivative
+    directories, producing:
 
     - BIDS-compliant filenames for segmentation maps and binary masks
     - JSON sidecars paired with every NIfTI file
@@ -87,23 +87,23 @@ class HDGLIODerivativeWriter(BaseInterface):
             dataset_description.json
             sub-{subject}/ses-{session}/
                 anat/
-                    sub-XX_ses-XX_space-anat_desc-hdglio_dseg.nii.gz
-                    sub-XX_ses-XX_space-anat_desc-hdglio_dseg.json
+                    sub-XX_ses-XX_space-anat_desc-tumorseg_dseg.nii.gz
+                    sub-XX_ses-XX_space-anat_desc-tumorseg_dseg.json
                     sub-XX_ses-XX_space-anat_desc-enhancing_mask.nii.gz
                     sub-XX_ses-XX_space-anat_desc-nonenhancing_mask.nii.gz
                     sub-XX_ses-XX_space-anat_desc-wholetumor_mask.nii.gz
-                    sub-XX_ses-XX_desc-hdglio_volumes.txt
+                    sub-XX_ses-XX_desc-tumorseg_volumes.txt
                     sub-XX_ses-XX_space-anat_desc-lesion_mask.nii.gz
                     sub-XX_ses-XX_space-anat_desc-lesiondilated15mm_mask.nii.gz
                     sub-XX_ses-XX_space-anat_desc-nawm_mask.nii.gz
-                sub-XX_ses-XX_desc-hdglioQC_quality.json
+                sub-XX_ses-XX_desc-tumorsegQC_quality.json
                 sub-XX_ses-XX_space-anat_desc-lesionStats.json
                 figures/
                     ...
     """
 
-    input_spec = HDGLIODerivativeWriterInputSpec
-    output_spec = HDGLIODerivativeWriterOutputSpec
+    input_spec = TumorSegDerivativeWriterInputSpec
+    output_spec = TumorSegDerivativeWriterOutputSpec
 
     def _run_interface(self, runtime: Any) -> Any:
         output_dir = Path(self.inputs.output_dir)
@@ -126,17 +126,17 @@ class HDGLIODerivativeWriter(BaseInterface):
         anat_dir.mkdir(parents=True, exist_ok=True)
 
         # ---------------------------------------------------------------
-        # 1. HD-GLIO segmentation outputs
+        # 1. Tumor segmentation outputs
         # ---------------------------------------------------------------
 
         # Segmentation label map (dseg)
         copy_derivative(
             self.inputs.segmentation,
-            anat_dir / f"{prefix}_space-anat_desc-hdglio_dseg.nii.gz",
+            anat_dir / f"{prefix}_space-anat_desc-tumorseg_dseg.nii.gz",
         )
         write_json_sidecar(
             {
-                "Description": "HD-GLIO deep learning tumor segmentation",
+                "Description": "Deep learning tumor segmentation",
                 "Manual": False,
                 "SegmentationLabels": {
                     "0": "Background",
@@ -145,7 +145,7 @@ class HDGLIODerivativeWriter(BaseInterface):
                 },
                 "Method": "HD-GLIO (Isensee et al.)",
             },
-            anat_dir / f"{prefix}_space-anat_desc-hdglio_dseg.json",
+            anat_dir / f"{prefix}_space-anat_desc-tumorseg_dseg.json",
         )
 
         # Enhancing tumor mask
@@ -155,9 +155,9 @@ class HDGLIODerivativeWriter(BaseInterface):
         )
         write_json_sidecar(
             {
-                "Description": "Binary mask of enhancing tumor (HD-GLIO label 2)",
+                "Description": "Binary mask of enhancing tumor (label 2)",
                 "Type": "Brain",
-                "Method": "Derived from HD-GLIO segmentation",
+                "Method": "Derived from tumor segmentation",
             },
             anat_dir / f"{prefix}_space-anat_desc-enhancing_mask.json",
         )
@@ -169,9 +169,9 @@ class HDGLIODerivativeWriter(BaseInterface):
         )
         write_json_sidecar(
             {
-                "Description": "Binary mask of non-enhancing tumor (HD-GLIO label 1)",
+                "Description": "Binary mask of non-enhancing tumor (label 1)",
                 "Type": "Brain",
-                "Method": "Derived from HD-GLIO segmentation",
+                "Method": "Derived from tumor segmentation",
             },
             anat_dir / f"{prefix}_space-anat_desc-nonenhancing_mask.json",
         )
@@ -183,9 +183,9 @@ class HDGLIODerivativeWriter(BaseInterface):
         )
         write_json_sidecar(
             {
-                "Description": "Binary mask of whole tumor (HD-GLIO labels 1+2)",
+                "Description": "Binary mask of whole tumor (labels 1+2)",
                 "Type": "Brain",
-                "Method": "Derived from HD-GLIO segmentation",
+                "Method": "Derived from tumor segmentation",
             },
             anat_dir / f"{prefix}_space-anat_desc-wholetumor_mask.json",
         )
@@ -201,9 +201,9 @@ class HDGLIODerivativeWriter(BaseInterface):
         )
         write_json_sidecar(
             {
-                "Description": "Lesion mask from HD-GLIO whole tumor segmentation",
+                "Description": "Lesion mask from whole tumor segmentation",
                 "Type": "Brain",
-                "Method": "HD-GLIO segmentation (labels 1+2)",
+                "Method": "Tumor segmentation (labels 1+2)",
             },
             anat_dir / f"{prefix}_space-anat_desc-lesion_mask.json",
         )
@@ -217,7 +217,7 @@ class HDGLIODerivativeWriter(BaseInterface):
             {
                 "Description": "Lesion mask dilated by 15mm for registration cost function weighting",
                 "Type": "Brain",
-                "Method": "Spherical dilation of HD-GLIO whole tumor mask",
+                "Method": "Spherical dilation of whole tumor mask",
                 "DilationRadiusMM": 15.0,
             },
             anat_dir / f"{prefix}_space-anat_desc-lesiondilated15mm_mask.json",
@@ -245,7 +245,7 @@ class HDGLIODerivativeWriter(BaseInterface):
         qc_metrics = self.inputs.qc_metrics
         if isdefined(qc_metrics) and qc_metrics:
             volumes_path = (
-                anat_dir / f"{prefix}_desc-hdglio_volumes.txt"
+                anat_dir / f"{prefix}_desc-tumorseg_volumes.txt"
             )
             self._write_volumes_txt(qc_metrics, volumes_path)
 
@@ -270,7 +270,7 @@ class HDGLIODerivativeWriter(BaseInterface):
         write_dataset_description(pipeline_dir, self.inputs.bids_dir)
 
         # ---------------------------------------------------------------
-        # 4b. QC figures → figures/ with BIDS names
+        # 4b. QC figures -> figures/ with BIDS names
         # ---------------------------------------------------------------
         from pmriprep.utils.report_utils import figure_filename
 
@@ -284,13 +284,13 @@ class HDGLIODerivativeWriter(BaseInterface):
         for fig_key, attr in _fig_inputs.items():
             val = getattr(self.inputs, attr, None)
             if val is not None and isdefined(val) and val and Path(val).exists():
-                fname = figure_filename(subject, session, fig_key, "hdglio")
+                fname = figure_filename(subject, session, fig_key, "tumor_seg")
                 copy_derivative(str(val), figures_dir / fname)
 
         # ---------------------------------------------------------------
         # 5. QC JSON
         # ---------------------------------------------------------------
-        qc_json_path = ses_dir / f"{prefix}_desc-hdglioQC_quality.json"
+        qc_json_path = ses_dir / f"{prefix}_desc-tumorsegQC_quality.json"
         if isdefined(qc_metrics) and qc_metrics:
             write_json_sidecar(qc_metrics, qc_json_path)
 
@@ -333,12 +333,12 @@ class HDGLIODerivativeWriter(BaseInterface):
         voxel_vol = seg_val.get("voxel_volume_mm3", "N/A")
 
         def _fmt_vol(vol_ml: object) -> str:
-            """Format volume as 'X.XX mL (Y.YY mm³)' or 'N/A'."""
+            """Format volume as 'X.XX mL (Y.YY mm3)' or 'N/A'."""
             if vol_ml == "N/A" or vol_ml is None:
                 return "N/A"
             val = float(str(vol_ml))
             mm3 = val * 1000.0
-            return f"{val:.3f} mL ({mm3:.2f} mm³)"
+            return f"{val:.3f} mL ({mm3:.2f} mm3)"
 
         # Compute enhancing fraction
         enhancing_frac = "N/A"
@@ -350,7 +350,7 @@ class HDGLIODerivativeWriter(BaseInterface):
             enhancing_frac = f"{float(enhancing_vol) / float(total_vol):.3f}"
 
         lines = [
-            "HD-GLIO Tumor Volume Statistics",
+            "Tumor Volume Statistics",
             "=" * 50,
             "",
             "Volumes:",
@@ -363,7 +363,7 @@ class HDGLIODerivativeWriter(BaseInterface):
             f"  Enhancing tumor:      {enhancing_voxels}",
             f"  Non-enhancing tumor:  {non_enhancing_voxels}",
             "",
-            f"Voxel volume:           {voxel_vol} mm³",
+            f"Voxel volume:           {voxel_vol} mm3",
             f"Enhancing fraction:     {enhancing_frac}",
         ]
 
@@ -379,13 +379,13 @@ class HDGLIODerivativeWriter(BaseInterface):
     ) -> None:
         """Write BIDS-compliant lesion statistics JSON from segmentation.
 
-        Reads the HD-GLIO segmentation NIfTI directly and computes
+        Reads the tumor segmentation NIfTI directly and computes
         per-region volumes using ``compute_region_volume``.
 
         Parameters
         ----------
         segmentation_file : str
-            Path to HD-GLIO multi-label segmentation NIfTI.
+            Path to multi-label tumor segmentation NIfTI.
         subject : str
             Subject ID (without ``sub-`` prefix).
         session : str
@@ -433,7 +433,7 @@ class HDGLIODerivativeWriter(BaseInterface):
             enhancing_fraction = round(enh_ml / wt_ml, 4)
 
         result: dict[str, object] = {
-            "Description": "HD-GLIO tumor segmentation lesion volume statistics",
+            "Description": "Tumor segmentation lesion volume statistics",
             "GeneratedBy": [{"Name": "pmriprep", "Version": pmriprep.__version__}],
             "GeneratedAt": datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"

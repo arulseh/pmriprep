@@ -187,7 +187,7 @@ def init_dce_preproc_wf(
                 # Tumor mask inputs for lesion statistics
                 "whole_tumor_mask",  # Undilated whole-tumor mask (fallback for lesion stats)
                 "enhancing_mask",  # Enhancing tumor mask for QC voxel selection (optional)
-                "hdglio_segmentation",  # HD-GLIO multi-label segmentation for lesion stats (optional)
+                "tumor_segmentation",  # Multi-label tumor segmentation for lesion stats (optional)
                 # VFA T1 mapping inputs
                 "vfa_files",
                 "vfa_flip_angles",
@@ -221,7 +221,7 @@ def init_dce_preproc_wf(
                 "atlas_mask_file",  # MNI-space atlas mask for AIF search territories
                 # Structural underlay inputs
                 "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
-                # NAWM mask input (from hdglio, for normalization)
+                # NAWM mask input (from tumor segmentation, for normalization)
                 "nawm_mask",  # NAWM mask in T1w space for nKtrans, nIAUC60
                 # Generic ROI mask for stats extraction only (optional)
                 "roi_mask",
@@ -1379,13 +1379,13 @@ def init_dce_preproc_wf(
     ])
 
     # Select best available tumor mask for lesion statistics
-    # Priority: hdglio_segmentation (multi-label) > whole_tumor
+    # Priority: tumor_segmentation (multi-label) > whole_tumor
     from pmriprep.utils.lesion_stats import combine_tumor_masks
 
     combine_masks = pe.Node(
         niu.Function(
             input_names=[
-                "hdglio_segmentation_file",
+                "tumor_segmentation_file",
                 "whole_tumor_mask_file",
                 "reference_file",
             ],
@@ -1397,7 +1397,7 @@ def init_dce_preproc_wf(
 
     workflow.connect([
         (inputnode, combine_masks, [
-            ("hdglio_segmentation", "hdglio_segmentation_file"),
+            ("tumor_segmentation", "tumor_segmentation_file"),
             ("whole_tumor_mask", "whole_tumor_mask_file"),
         ]),
         (dce_preprocess, combine_masks, [("mean_img", "reference_file")]),
@@ -1691,7 +1691,7 @@ def init_dce_preproc_wf(
             (smooth_tortuosity, outputnode, [("smoothed_files", "smooth_tortuosity_maps")]),
         ])
 
-    # Normalized map output connections (requires NAWM mask from hdglio)
+    # Normalized map output connections (requires NAWM mask from tumor segmentation)
     workflow.connect([
         (normalize_ktrans, outputnode, [("out_file", "nktrans_map")]),
         (normalize_iauc60, outputnode, [("out_file", "niauc60_map")]),

@@ -1,8 +1,8 @@
 """Master workflow for PMRIPrep BIDS-App.
 
 This module implements the master workflow that orchestrates all pipeline
-components (anatomical, HD-GLIO, DSC, DCE) based on available data and
-user-specified skip flags.
+components (anatomical, tumor segmentation, DSC, DCE) based on available data
+and user-specified skip flags.
 """
 
 from dataclasses import dataclass
@@ -16,7 +16,7 @@ import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 from pmriprep.config.anat import AnatConfig
 from pmriprep.config.dce import DCEConfig
 from pmriprep.config.dsc import DSCConfig
-from pmriprep.config.hdglio import HDGLIOConfig
+from pmriprep.config.tumor_seg import TumorSegConfig
 from pmriprep.workflows.discovery import discover_session_data, SessionData
 
 
@@ -29,7 +29,7 @@ class PipelineSkipFlags:
 
     Attributes:
         skip_anat: Skip anatomical preprocessing pipeline.
-        skip_tumor_seg: Skip HD-GLIO tumor segmentation pipeline.
+        skip_tumor_seg: Skip tumor segmentation pipeline.
         skip_dsc: Skip DSC perfusion pipeline.
         skip_dce: Skip DCE perfusion pipeline.
     """
@@ -46,21 +46,21 @@ class PipelineDecision:
 
     Attributes:
         run_anat: Whether to run anatomical preprocessing.
-        run_hdglio: Whether to run HD-GLIO tumor segmentation.
+        run_tumor_seg: Whether to run tumor segmentation.
         run_dsc: Whether to run DSC perfusion processing.
         run_dce: Whether to run DCE perfusion processing.
         anat_reason: Reason for anat decision if not running.
-        hdglio_reason: Reason for hdglio decision if not running.
+        tumor_seg_reason: Reason for tumor_seg decision if not running.
         dsc_reason: Reason for dsc decision if not running.
         dce_reason: Reason for dce decision if not running.
     """
 
     run_anat: bool = True
-    run_hdglio: bool = False
+    run_tumor_seg: bool = False
     run_dsc: bool = False
     run_dce: bool = False
     anat_reason: Optional[str] = None
-    hdglio_reason: Optional[str] = None
+    tumor_seg_reason: Optional[str] = None
     dsc_reason: Optional[str] = None
     dce_reason: Optional[str] = None
 
@@ -73,7 +73,7 @@ def decide_pipelines(
 
     This function applies the following rules:
     1. anat always runs (unless explicitly skipped)
-    2. hdglio runs if all 4 modalities are present (unless skipped)
+    2. tumor_seg runs if all 4 modalities are present (unless skipped)
     3. dsc runs if DSC data is present (unless skipped)
     4. dce runs if DCE data is present (unless skipped)
 
@@ -93,18 +93,18 @@ def decide_pipelines(
     else:
         decision.run_anat = True
 
-    # HD-GLIO tumor segmentation
-    # HD-GLIO requires anat outputs (can come from running anat or previous run)
+    # Tumor segmentation
+    # Tumor segmentation requires anat outputs (can come from running anat or previous run)
     if skip_flags.skip_tumor_seg:
-        decision.run_hdglio = False
-        decision.hdglio_reason = "Skipped by user (--skip-tumor-seg)"
-    elif not session_data.pipelines.hdglio:
-        decision.run_hdglio = False
-        decision.hdglio_reason = session_data.pipelines.hdglio_reason
+        decision.run_tumor_seg = False
+        decision.tumor_seg_reason = "Skipped by user (--skip-tumor-seg)"
+    elif not session_data.pipelines.tumor_seg:
+        decision.run_tumor_seg = False
+        decision.tumor_seg_reason = session_data.pipelines.tumor_seg_reason
     else:
-        # HD-GLIO can run if anat is running OR if previous anat outputs exist
+        # Tumor segmentation can run if anat is running OR if previous anat outputs exist
         # (checked at workflow connection time)
-        decision.run_hdglio = True
+        decision.run_tumor_seg = True
 
     # DSC perfusion
     if skip_flags.skip_dsc:
@@ -217,15 +217,15 @@ def _find_previous_anat_outputs(
     return outputs
 
 
-def _find_previous_hdglio_inputs(
+def _find_previous_tumor_seg_inputs(
     work_dir: Path,
     subject_id: str,
     session_id: Optional[str],
 ) -> dict[str, Optional[str]]:
-    """Find previously-computed anat outputs needed for HD-GLIO.
+    """Find previously-computed anat outputs needed for tumor segmentation.
 
-    When --skip-anat is used but HD-GLIO should run, this function locates
-    the skull-stripped, coregistered images from a prior anat run.
+    When --skip-anat is used but tumor segmentation should run, this function
+    locates the skull-stripped, coregistered images from a prior anat run.
 
     Args:
         work_dir: Nipype working directory (parent of the workflow directory).
@@ -233,17 +233,17 @@ def _find_previous_hdglio_inputs(
         session_id: BIDS session ID (without 'ses-' prefix), or None.
 
     Returns:
-        Dict with keys for HD-GLIO inputs. Values are file paths or None.
+        Dict with keys for tumor segmentation inputs. Values are file paths or None.
     """
     session_label = f"ses-{session_id}" if session_id else "no-session"
     wf_name = f"pmriprep_sub{subject_id}_{session_label}_wf"
     anat_dir = work_dir / wf_name / "anat_wf"
 
     outputs: dict[str, Optional[str]] = {
-        "hdglio_t1w_pre": None,
-        "hdglio_t1w_postcon": None,
-        "hdglio_t2w": None,
-        "hdglio_flair": None,
+        "tumor_seg_t1w_pre": None,
+        "tumor_seg_t1w_postcon": None,
+        "tumor_seg_t2w": None,
+        "tumor_seg_flair": None,
         "brain_mask": None,
         "wm_probseg": None,
         "t1w_to_mni_xfm": None,
@@ -253,33 +253,33 @@ def _find_previous_hdglio_inputs(
     if not anat_dir.exists():
         return outputs
 
-    # HD-GLIO masked T1w (pre-contrast) - skull-stripped without bias correction
-    hdglio_t1w_dir = anat_dir / "hdglio_mask_t1w"
-    if hdglio_t1w_dir.exists():
-        candidates = sorted(hdglio_t1w_dir.glob("*_masked.nii.gz"))
+    # Tumor seg masked T1w (pre-contrast) - skull-stripped without bias correction
+    tumor_seg_t1w_dir = anat_dir / "tumor_seg_mask_t1w"
+    if tumor_seg_t1w_dir.exists():
+        candidates = sorted(tumor_seg_t1w_dir.glob("*_masked.nii.gz"))
         if candidates:
-            outputs["hdglio_t1w_pre"] = str(candidates[0])
+            outputs["tumor_seg_t1w_pre"] = str(candidates[0])
 
-    # HD-GLIO masked post-contrast T1w
-    hdglio_postcon_dir = anat_dir / "hdglio_mask_postcon"
-    if hdglio_postcon_dir.exists():
-        candidates = sorted(hdglio_postcon_dir.glob("*_masked.nii.gz"))
+    # Tumor seg masked post-contrast T1w
+    tumor_seg_postcon_dir = anat_dir / "tumor_seg_mask_postcon"
+    if tumor_seg_postcon_dir.exists():
+        candidates = sorted(tumor_seg_postcon_dir.glob("*_masked.nii.gz"))
         if candidates:
-            outputs["hdglio_t1w_postcon"] = str(candidates[0])
+            outputs["tumor_seg_t1w_postcon"] = str(candidates[0])
 
-    # HD-GLIO masked T2w
-    hdglio_t2w_dir = anat_dir / "hdglio_mask_t2w"
-    if hdglio_t2w_dir.exists():
-        candidates = sorted(hdglio_t2w_dir.glob("*_masked.nii.gz"))
+    # Tumor seg masked T2w
+    tumor_seg_t2w_dir = anat_dir / "tumor_seg_mask_t2w"
+    if tumor_seg_t2w_dir.exists():
+        candidates = sorted(tumor_seg_t2w_dir.glob("*_masked.nii.gz"))
         if candidates:
-            outputs["hdglio_t2w"] = str(candidates[0])
+            outputs["tumor_seg_t2w"] = str(candidates[0])
 
-    # HD-GLIO masked FLAIR
-    hdglio_flair_dir = anat_dir / "hdglio_mask_flair"
-    if hdglio_flair_dir.exists():
-        candidates = sorted(hdglio_flair_dir.glob("*_masked.nii.gz"))
+    # Tumor seg masked FLAIR
+    tumor_seg_flair_dir = anat_dir / "tumor_seg_mask_flair"
+    if tumor_seg_flair_dir.exists():
+        candidates = sorted(tumor_seg_flair_dir.glob("*_masked.nii.gz"))
         if candidates:
-            outputs["hdglio_flair"] = str(candidates[0])
+            outputs["tumor_seg_flair"] = str(candidates[0])
 
     # Brain mask
     brain_dir = anat_dir / "brain_extract"
@@ -464,15 +464,15 @@ def _validate_flip_angle(fa: float, label: str = "") -> float:
     return fa
 
 
-def _find_previous_hdglio_outputs(
+def _find_previous_tumor_seg_outputs(
     work_dir: Path,
     subject_id: str,
     session_id: Optional[str],
 ) -> dict[str, Optional[str]]:
-    """Find previously-computed hdglio outputs in the work directory.
+    """Find previously-computed tumor segmentation outputs in the work directory.
 
     When --skip-tumor-seg is used, DSC/DCE workflows may still need
-    lesion and NAWM masks from a prior HD-GLIO run.
+    lesion and NAWM masks from a prior tumor segmentation run.
 
     Args:
         work_dir: Nipype working directory.
@@ -486,7 +486,7 @@ def _find_previous_hdglio_outputs(
     """
     session_label = f"ses-{session_id}" if session_id else "no-session"
     wf_name = f"pmriprep_sub{subject_id}_{session_label}_wf"
-    hdglio_dir = work_dir / wf_name / "hdglio_wf"
+    tumor_seg_dir = work_dir / wf_name / "tumor_seg_wf"
 
     outputs: dict[str, Optional[str]] = {
         "dilated_lesion_mask": None,
@@ -496,10 +496,10 @@ def _find_previous_hdglio_outputs(
         "nawm_mask": None,
     }
 
-    if not hdglio_dir.exists():
+    if not tumor_seg_dir.exists():
         return outputs
 
-    masks_dir = hdglio_dir / "extract_masks"
+    masks_dir = tumor_seg_dir / "extract_masks"
     if masks_dir.exists():
         for f in masks_dir.glob("*_dilated.nii.gz"):
             outputs["dilated_lesion_mask"] = str(f)
@@ -511,8 +511,8 @@ def _find_previous_hdglio_outputs(
             if "nonenhancing" not in f.name and "non_enhancing" not in f.name:
                 outputs["enhancing_mask"] = str(f)
 
-    # Check hdglio_segment node for segmentation output
-    seg_dir = hdglio_dir / "hdglio_segment"
+    # Check tumor_seg_segment node for segmentation output
+    seg_dir = tumor_seg_dir / "tumor_seg_segment"
     if seg_dir.exists():
         for f in seg_dir.glob("*_seg.nii.gz"):
             outputs["segmentation"] = str(f)
@@ -521,27 +521,27 @@ def _find_previous_hdglio_outputs(
 
     # Also check dilate_lesion and create_nawm nodes
     if outputs["dilated_lesion_mask"] is None:
-        dl_dir = hdglio_dir / "dilate_lesion"
+        dl_dir = tumor_seg_dir / "dilate_lesion"
         if dl_dir.exists():
             for f in dl_dir.glob("*.nii.gz"):
                 outputs["dilated_lesion_mask"] = str(f)
 
     if outputs["nawm_mask"] is None:
-        nawm_dir = hdglio_dir / "create_nawm"
+        nawm_dir = tumor_seg_dir / "create_nawm"
         if nawm_dir.exists():
             for f in nawm_dir.glob("*.nii.gz"):
                 outputs["nawm_mask"] = str(f)
 
     # Check select_whole_tumor node for whole tumor mask
     if outputs["whole_tumor_mask"] is None:
-        wt_dir = hdglio_dir / "select_whole_tumor"
+        wt_dir = tumor_seg_dir / "select_whole_tumor"
         if wt_dir.exists():
             for f in wt_dir.glob("*.nii.gz"):
                 outputs["whole_tumor_mask"] = str(f)
 
     # Check select_enhancing node for enhancing mask
     if outputs["enhancing_mask"] is None:
-        enh_dir = hdglio_dir / "select_enhancing"
+        enh_dir = tumor_seg_dir / "select_enhancing"
         if enh_dir.exists():
             for f in enh_dir.glob("*.nii.gz"):
                 outputs["enhancing_mask"] = str(f)
@@ -619,7 +619,7 @@ def init_pmriprep_wf(
     session_id: Optional[str] = None,
     skip_flags: Optional[PipelineSkipFlags] = None,
     anat_config: Optional[AnatConfig] = None,
-    hdglio_config: Optional[HDGLIOConfig] = None,
+    tumor_seg_config: Optional[TumorSegConfig] = None,
     dsc_config: Optional[DSCConfig] = None,
     dce_config: Optional[DCEConfig] = None,
     work_dir: Optional[Union[str, Path]] = None,
@@ -629,8 +629,8 @@ def init_pmriprep_wf(
 
     This workflow orchestrates all pipeline components based on available
     data and user-specified skip flags. It ensures proper ordering of
-    pipelines (anatomical first, then HD-GLIO, then perfusion) and
-    connects outputs between dependent pipelines.
+    pipelines (anatomical first, then tumor segmentation, then perfusion)
+    and connects outputs between dependent pipelines.
 
     Parameters
     ----------
@@ -646,8 +646,8 @@ def init_pmriprep_wf(
         Flags to explicitly skip pipeline components.
     anat_config : AnatConfig, optional
         Configuration for anatomical preprocessing.
-    hdglio_config : HDGLIOConfig, optional
-        Configuration for HD-GLIO tumor segmentation.
+    tumor_seg_config : TumorSegConfig, optional
+        Configuration for tumor segmentation.
     dsc_config : DSCConfig, optional
         Configuration for DSC perfusion processing.
     dce_config : DCEConfig, optional
@@ -667,8 +667,8 @@ def init_pmriprep_wf(
     -----
     The workflow follows this execution order:
     1. Anatomical preprocessing (always first)
-    2. HD-GLIO tumor segmentation (requires anat outputs)
-    3. DSC perfusion processing (requires anat outputs, optional hdglio)
+    2. Tumor segmentation (requires anat outputs)
+    3. DSC perfusion processing (requires anat outputs, optional tumor seg)
     4. DCE perfusion processing (requires anat outputs, uses DSC CBV if available)
 
     When both DSC and DCE are present, DCE runs after DSC to use DSC's CBV
@@ -678,7 +678,7 @@ def init_pmriprep_wf(
     from pmriprep.workflows.anat.base import init_anat_preproc_wf
     from pmriprep.workflows.dce.base import init_dce_preproc_wf
     from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
-    from pmriprep.workflows.hdglio.base import init_hdglio_wf
+    from pmriprep.workflows.tumor_seg.base import init_tumor_seg_wf
 
     # Normalize paths (resolve to absolute for DataSink and FSL commands)
     bids_dir = Path(bids_dir).resolve()
@@ -693,8 +693,8 @@ def init_pmriprep_wf(
     # Use default configs if not provided
     if anat_config is None:
         anat_config = AnatConfig()
-    if hdglio_config is None:
-        hdglio_config = HDGLIOConfig()
+    if tumor_seg_config is None:
+        tumor_seg_config = TumorSegConfig()
     if dsc_config is None:
         dsc_config = DSCConfig()
     if dce_config is None:
@@ -782,7 +782,7 @@ def init_pmriprep_wf(
     has_lesion_mask = (
         (dsc_config is not None and dsc_config.lesion_mask is not None)
         or (dce_config is not None and dce_config.lesion_mask is not None)
-        or session_data.pipelines.hdglio
+        or session_data.pipelines.tumor_seg
     )
 
     # Build candidates from discovered modalities
@@ -836,7 +836,7 @@ def init_pmriprep_wf(
                 "wm_probseg",
                 "gm_probseg",
                 "csf_probseg",
-                # HD-GLIO outputs
+                # Tumor segmentation outputs
                 "lesion_mask",
                 "enhancing_mask",
                 "non_enhancing_mask",
@@ -855,7 +855,7 @@ def init_pmriprep_wf(
                 "dce_kep",
                 # QC outputs
                 "anat_qc",
-                "hdglio_qc",
+                "tumor_seg_qc",
                 "dsc_qc",
                 "dce_qc",
             ]
@@ -868,7 +868,7 @@ def init_pmriprep_wf(
     # ===================================================================
 
     anat_wf = None
-    hdglio_wf = None
+    tumor_seg_wf = None
     dsc_wf = None
     dce_wf = None
 
@@ -879,13 +879,13 @@ def init_pmriprep_wf(
 
     report_barrier = pe.Node(
         niu.IdentityInterface(
-            fields=["anat_done", "hdglio_done", "dsc_done", "dce_done"],
+            fields=["anat_done", "tumor_seg_done", "dsc_done", "dce_done"],
         ),
         name="report_barrier",
     )
     # Defaults for pipelines that don't run
     report_barrier.inputs.anat_done = ""
-    report_barrier.inputs.hdglio_done = ""
+    report_barrier.inputs.tumor_seg_done = ""
     report_barrier.inputs.dsc_done = ""
     report_barrier.inputs.dce_done = ""
 
@@ -895,7 +895,7 @@ def init_pmriprep_wf(
             session_id=session_id or "",
             output_dir=str(output_dir),
             ran_anat=decision.run_anat,
-            ran_hdglio=decision.run_hdglio,
+            ran_tumor_seg=decision.run_tumor_seg,
             ran_dsc=decision.run_dsc,
             ran_dce=decision.run_dce,
         ),
@@ -905,7 +905,7 @@ def init_pmriprep_wf(
     workflow.connect([
         (report_barrier, unified_report, [
             ("anat_done", "anat_done"),
-            ("hdglio_done", "hdglio_done"),
+            ("tumor_seg_done", "tumor_seg_done"),
             ("dsc_done", "dsc_done"),
             ("dce_done", "dce_done"),
         ]),
@@ -1113,27 +1113,27 @@ def init_pmriprep_wf(
             ])
 
     # -------------------------------------------------------------------
-    # HD-GLIO tumor segmentation workflow (requires anat outputs)
+    # Tumor segmentation workflow (requires anat outputs)
     # -------------------------------------------------------------------
-    if decision.run_hdglio:
-        hdglio_wf = init_hdglio_wf(
+    if decision.run_tumor_seg:
+        tumor_seg_wf = init_tumor_seg_wf(
             bids_dir=bids_dir,
             subject_id=subject_id,
             session_id=session_id,
-            config=hdglio_config,
-            name="hdglio_wf",
+            config=tumor_seg_config,
+            name="tumor_seg_wf",
         )
 
         # Connect prepared inputs from anat workflow
-        # HD-GLIO receives coregistered, skull-stripped, non-bias-corrected
-        # images from the anat pipeline's HD-GLIO prep track
+        # Tumor segmentation receives coregistered, skull-stripped,
+        # non-bias-corrected images from the anat pipeline's tumor seg prep track
         if anat_wf is not None:
             workflow.connect([
-                (anat_wf, hdglio_wf, [
-                    ("outputnode.hdglio_t1w_pre", "inputnode.t1w_pre"),
-                    ("outputnode.hdglio_t1w_postcon", "inputnode.t1w_postcon"),
-                    ("outputnode.hdglio_t2w", "inputnode.t2w"),
-                    ("outputnode.hdglio_flair", "inputnode.flair"),
+                (anat_wf, tumor_seg_wf, [
+                    ("outputnode.tumor_seg_t1w_pre", "inputnode.t1w_pre"),
+                    ("outputnode.tumor_seg_t1w_postcon", "inputnode.t1w_postcon"),
+                    ("outputnode.tumor_seg_t2w", "inputnode.t2w"),
+                    ("outputnode.tumor_seg_flair", "inputnode.flair"),
                     ("outputnode.brain_mask", "inputnode.brain_mask"),
                     ("outputnode.wm_probseg", "inputnode.wm_probseg"),
                     ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
@@ -1141,67 +1141,67 @@ def init_pmriprep_wf(
                 ]),
             ])
         elif work_dir is not None:
-            # --skip-anat: load previously-computed anat outputs for HD-GLIO
+            # --skip-anat: load previously-computed anat outputs for tumor segmentation
             import logging as _logging
             _log = _logging.getLogger("pmriprep.workflows")
-            prev_hdglio = _find_previous_hdglio_inputs(
+            prev_tumor_seg = _find_previous_tumor_seg_inputs(
                 Path(work_dir), subject_id, session_id,
             )
             # Check if required inputs are available
-            if prev_hdglio["hdglio_t1w_pre"]:
-                hdglio_wf.inputs.inputnode.t1w_pre = prev_hdglio["hdglio_t1w_pre"]
-                _log.info("skip-anat (HD-GLIO): loaded t1w_pre from %s", prev_hdglio["hdglio_t1w_pre"])
-            if prev_hdglio["hdglio_t1w_postcon"]:
-                hdglio_wf.inputs.inputnode.t1w_postcon = prev_hdglio["hdglio_t1w_postcon"]
-                _log.info("skip-anat (HD-GLIO): loaded t1w_postcon from %s", prev_hdglio["hdglio_t1w_postcon"])
-            if prev_hdglio["hdglio_t2w"]:
-                hdglio_wf.inputs.inputnode.t2w = prev_hdglio["hdglio_t2w"]
-                _log.info("skip-anat (HD-GLIO): loaded t2w from %s", prev_hdglio["hdglio_t2w"])
-            if prev_hdglio["hdglio_flair"]:
-                hdglio_wf.inputs.inputnode.flair = prev_hdglio["hdglio_flair"]
-                _log.info("skip-anat (HD-GLIO): loaded flair from %s", prev_hdglio["hdglio_flair"])
-            if prev_hdglio["brain_mask"]:
-                hdglio_wf.inputs.inputnode.brain_mask = prev_hdglio["brain_mask"]
-                _log.info("skip-anat (HD-GLIO): loaded brain_mask from %s", prev_hdglio["brain_mask"])
-            if prev_hdglio["wm_probseg"]:
-                hdglio_wf.inputs.inputnode.wm_probseg = prev_hdglio["wm_probseg"]
-                _log.info("skip-anat (HD-GLIO): loaded wm_probseg from %s", prev_hdglio["wm_probseg"])
-            if prev_hdglio["t1w_to_mni_xfm"]:
-                hdglio_wf.inputs.inputnode.t1w_to_mni_xfm = prev_hdglio["t1w_to_mni_xfm"]
-                _log.info("skip-anat (HD-GLIO): loaded t1w_to_mni_xfm from %s", prev_hdglio["t1w_to_mni_xfm"])
-            if prev_hdglio["t1w_preproc"]:
-                hdglio_wf.inputs.inputnode.t1w_preproc = prev_hdglio["t1w_preproc"]
-                _log.info("skip-anat (HD-GLIO): loaded t1w_preproc from %s", prev_hdglio["t1w_preproc"])
+            if prev_tumor_seg["tumor_seg_t1w_pre"]:
+                tumor_seg_wf.inputs.inputnode.t1w_pre = prev_tumor_seg["tumor_seg_t1w_pre"]
+                _log.info("skip-anat (tumor segmentation): loaded t1w_pre from %s", prev_tumor_seg["tumor_seg_t1w_pre"])
+            if prev_tumor_seg["tumor_seg_t1w_postcon"]:
+                tumor_seg_wf.inputs.inputnode.t1w_postcon = prev_tumor_seg["tumor_seg_t1w_postcon"]
+                _log.info("skip-anat (tumor segmentation): loaded t1w_postcon from %s", prev_tumor_seg["tumor_seg_t1w_postcon"])
+            if prev_tumor_seg["tumor_seg_t2w"]:
+                tumor_seg_wf.inputs.inputnode.t2w = prev_tumor_seg["tumor_seg_t2w"]
+                _log.info("skip-anat (tumor segmentation): loaded t2w from %s", prev_tumor_seg["tumor_seg_t2w"])
+            if prev_tumor_seg["tumor_seg_flair"]:
+                tumor_seg_wf.inputs.inputnode.flair = prev_tumor_seg["tumor_seg_flair"]
+                _log.info("skip-anat (tumor segmentation): loaded flair from %s", prev_tumor_seg["tumor_seg_flair"])
+            if prev_tumor_seg["brain_mask"]:
+                tumor_seg_wf.inputs.inputnode.brain_mask = prev_tumor_seg["brain_mask"]
+                _log.info("skip-anat (tumor segmentation): loaded brain_mask from %s", prev_tumor_seg["brain_mask"])
+            if prev_tumor_seg["wm_probseg"]:
+                tumor_seg_wf.inputs.inputnode.wm_probseg = prev_tumor_seg["wm_probseg"]
+                _log.info("skip-anat (tumor segmentation): loaded wm_probseg from %s", prev_tumor_seg["wm_probseg"])
+            if prev_tumor_seg["t1w_to_mni_xfm"]:
+                tumor_seg_wf.inputs.inputnode.t1w_to_mni_xfm = prev_tumor_seg["t1w_to_mni_xfm"]
+                _log.info("skip-anat (tumor segmentation): loaded t1w_to_mni_xfm from %s", prev_tumor_seg["t1w_to_mni_xfm"])
+            if prev_tumor_seg["t1w_preproc"]:
+                tumor_seg_wf.inputs.inputnode.t1w_preproc = prev_tumor_seg["t1w_preproc"]
+                _log.info("skip-anat (tumor segmentation): loaded t1w_preproc from %s", prev_tumor_seg["t1w_preproc"])
 
-        # Connect hdglio outputs to master outputnode
+        # Connect tumor segmentation outputs to master outputnode
         workflow.connect([
-            (hdglio_wf, outputnode, [
+            (tumor_seg_wf, outputnode, [
                 ("outputnode.dilated_lesion_mask", "lesion_mask"),
                 ("outputnode.enhancing_mask", "enhancing_mask"),
                 ("outputnode.non_enhancing_mask", "non_enhancing_mask"),
                 ("outputnode.whole_tumor_mask", "whole_tumor_mask"),
                 ("outputnode.nawm_mask", "nawm_mask"),
-                ("outputnode.qc_metrics", "hdglio_qc"),
+                ("outputnode.qc_metrics", "tumor_seg_qc"),
             ]),
         ])
 
         # -------------------------------------------------------------------
-        # HDGLIODerivativeWriter: Write BIDS-compliant HD-GLIO outputs
+        # TumorSegDerivativeWriter: Write BIDS-compliant tumor seg outputs
         # -------------------------------------------------------------------
-        from pmriprep.interfaces.hdglio_outputs import HDGLIODerivativeWriter
+        from pmriprep.interfaces.tumor_seg_outputs import TumorSegDerivativeWriter
 
-        hdglio_writer = pe.Node(
-            HDGLIODerivativeWriter(
+        tumor_seg_writer = pe.Node(
+            TumorSegDerivativeWriter(
                 output_dir=str(output_dir),
                 subject_id=subject_id,
                 session_id=session_id or "",
                 bids_dir=str(bids_dir),
             ),
-            name="hdglio_writer",
+            name="tumor_seg_writer",
         )
 
         workflow.connect([
-            (hdglio_wf, hdglio_writer, [
+            (tumor_seg_wf, tumor_seg_writer, [
                 ("outputnode.segmentation", "segmentation"),
                 ("outputnode.enhancing_mask", "enhancing_mask"),
                 ("outputnode.non_enhancing_mask", "non_enhancing_mask"),
@@ -1213,15 +1213,15 @@ def init_pmriprep_wf(
         ])
 
         # -------------------------------------------------------------------
-        # HD-GLIO: connect writer to unified report barrier
+        # Tumor segmentation: connect writer to unified report barrier
         # -------------------------------------------------------------------
         workflow.connect([
-            (hdglio_writer, report_barrier, [("qc_json", "hdglio_done")]),
+            (tumor_seg_writer, report_barrier, [("qc_json", "tumor_seg_done")]),
         ])
 
         # Connect filmstrips to writer (writer saves to figures/ dir)
         workflow.connect([
-            (hdglio_wf, hdglio_writer, [
+            (tumor_seg_wf, tumor_seg_writer, [
                 ("outputnode.seg_filmstrip_postcon", "seg_filmstrip_postcon"),
                 ("outputnode.seg_filmstrip_flair", "seg_filmstrip_flair"),
                 ("outputnode.nawm_filmstrip_flair", "nawm_filmstrip_flair"),
@@ -1229,7 +1229,7 @@ def init_pmriprep_wf(
         ])
 
     # -------------------------------------------------------------------
-    # DSC perfusion workflow (requires anat, optional hdglio)
+    # DSC perfusion workflow (requires anat, optional tumor seg)
     # -------------------------------------------------------------------
     if decision.run_dsc:
         dsc_wf = init_dsc_preproc_wf(
@@ -1369,7 +1369,7 @@ def init_pmriprep_wf(
                     work_dir,
                 )
 
-        # Connect lesion mask and tumor segmentation from hdglio if available
+        # Connect lesion mask and tumor segmentation from tumor seg if available
         # Also wire user-supplied masks from config (lesion_mask, nawm_mask, roi_mask)
         _dsc_log = logging.getLogger("pmriprep.workflows")
         _user_lesion = dsc_config.lesion_mask
@@ -1380,9 +1380,9 @@ def init_pmriprep_wf(
             dsc_wf.inputs.inputnode.roi_mask = str(_user_roi)
             _dsc_log.info("DSC: user roi_mask=%s", _user_roi)
 
-        if hdglio_wf is not None:
+        if tumor_seg_wf is not None:
             if _user_lesion:
-                # Merge HD-GLIO + user lesion masks
+                # Merge tumor seg + user lesion masks
                 from pmriprep.utils.mask_utils import DilateMask, MergeMasks
 
                 dsc_dilate_user_lesion = pe.Node(
@@ -1403,10 +1403,10 @@ def init_pmriprep_wf(
                     (dsc_dilate_user_lesion, dsc_merge_dilated, [
                         ("dilated_mask", "mask_b"),
                     ]),
-                    (hdglio_wf, dsc_merge_dilated, [
+                    (tumor_seg_wf, dsc_merge_dilated, [
                         ("outputnode.dilated_lesion_mask", "mask_a"),
                     ]),
-                    (hdglio_wf, dsc_merge_undilated, [
+                    (tumor_seg_wf, dsc_merge_undilated, [
                         ("outputnode.whole_tumor_mask", "mask_a"),
                     ]),
                     (dsc_merge_dilated, dsc_wf, [
@@ -1415,34 +1415,34 @@ def init_pmriprep_wf(
                     (dsc_merge_undilated, dsc_wf, [
                         ("merged_mask", "inputnode.whole_tumor_mask"),
                     ]),
-                    (hdglio_wf, dsc_wf, [
+                    (tumor_seg_wf, dsc_wf, [
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
-                        ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
+                        ("outputnode.segmentation", "inputnode.tumor_segmentation"),
                         ("outputnode.nawm_mask", "inputnode.nawm_mask"),
                     ]),
                 ])
                 _dsc_log.info(
-                    "DSC: merging user lesion_mask=%s with HD-GLIO masks",
+                    "DSC: merging user lesion_mask=%s with tumor segmentation masks",
                     _user_lesion,
                 )
             else:
-                # HD-GLIO only — current behavior
+                # Tumor segmentation only — current behavior
                 workflow.connect([
-                    (hdglio_wf, dsc_wf, [
+                    (tumor_seg_wf, dsc_wf, [
                         ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
                         ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
-                        ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
+                        ("outputnode.segmentation", "inputnode.tumor_segmentation"),
                         ("outputnode.nawm_mask", "inputnode.nawm_mask"),
                     ]),
                 ])
-        elif work_dir is not None and not decision.run_hdglio:
-            # --skip-tumor-seg: load previously-computed hdglio outputs
-            prev_hdglio = _find_previous_hdglio_outputs(
+        elif work_dir is not None and not decision.run_tumor_seg:
+            # --skip-tumor-seg: load previously-computed tumor seg outputs
+            prev_tumor_seg = _find_previous_tumor_seg_outputs(
                 Path(work_dir), subject_id, session_id,
             )
-            if _user_lesion and prev_hdglio["dilated_lesion_mask"]:
-                # Merge user lesion with loaded HD-GLIO masks
+            if _user_lesion and prev_tumor_seg["dilated_lesion_mask"]:
+                # Merge user lesion with loaded tumor seg masks
                 from pmriprep.utils.mask_utils import DilateMask, MergeMasks
 
                 dsc_dilate_user_lesion = pe.Node(
@@ -1454,14 +1454,14 @@ def init_pmriprep_wf(
                 dsc_merge_dilated = pe.Node(
                     MergeMasks(), name="dsc_merge_dilated",
                 )
-                dsc_merge_dilated.inputs.mask_a = prev_hdglio["dilated_lesion_mask"]
+                dsc_merge_dilated.inputs.mask_a = prev_tumor_seg["dilated_lesion_mask"]
 
                 dsc_merge_undilated = pe.Node(
                     MergeMasks(), name="dsc_merge_undilated",
                 )
                 dsc_merge_undilated.inputs.mask_b = str(_user_lesion)
-                if prev_hdglio["whole_tumor_mask"]:
-                    dsc_merge_undilated.inputs.mask_a = prev_hdglio["whole_tumor_mask"]
+                if prev_tumor_seg["whole_tumor_mask"]:
+                    dsc_merge_undilated.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
 
                 workflow.connect([
                     (dsc_dilate_user_lesion, dsc_merge_dilated, [
@@ -1475,28 +1475,28 @@ def init_pmriprep_wf(
                     ]),
                 ])
                 _dsc_log.info(
-                    "DSC skip-tumor-seg: merging user lesion_mask=%s with loaded HD-GLIO masks",
+                    "DSC skip-tumor-seg: merging user lesion_mask=%s with loaded tumor seg masks",
                     _user_lesion,
                 )
             else:
-                if prev_hdglio["dilated_lesion_mask"]:
-                    dsc_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
-                    _dsc_log.info("skip-tumor-seg: loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
-                if prev_hdglio["whole_tumor_mask"]:
-                    dsc_wf.inputs.inputnode.whole_tumor_mask = prev_hdglio["whole_tumor_mask"]
-                    _dsc_log.info("skip-tumor-seg: loaded whole_tumor_mask from %s", prev_hdglio["whole_tumor_mask"])
+                if prev_tumor_seg["dilated_lesion_mask"]:
+                    dsc_wf.inputs.inputnode.lesion_mask = prev_tumor_seg["dilated_lesion_mask"]
+                    _dsc_log.info("skip-tumor-seg: loaded lesion_mask from %s", prev_tumor_seg["dilated_lesion_mask"])
+                if prev_tumor_seg["whole_tumor_mask"]:
+                    dsc_wf.inputs.inputnode.whole_tumor_mask = prev_tumor_seg["whole_tumor_mask"]
+                    _dsc_log.info("skip-tumor-seg: loaded whole_tumor_mask from %s", prev_tumor_seg["whole_tumor_mask"])
 
-            if prev_hdglio["enhancing_mask"]:
-                dsc_wf.inputs.inputnode.enhancing_mask = prev_hdglio["enhancing_mask"]
-                _dsc_log.info("skip-tumor-seg: loaded enhancing_mask from %s", prev_hdglio["enhancing_mask"])
-            if prev_hdglio["segmentation"]:
-                dsc_wf.inputs.inputnode.hdglio_segmentation = prev_hdglio["segmentation"]
-                _dsc_log.info("skip-tumor-seg: loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])
-            if prev_hdglio["nawm_mask"]:
-                dsc_wf.inputs.inputnode.nawm_mask = prev_hdglio["nawm_mask"]
-                _dsc_log.info("skip-tumor-seg: loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
+            if prev_tumor_seg["enhancing_mask"]:
+                dsc_wf.inputs.inputnode.enhancing_mask = prev_tumor_seg["enhancing_mask"]
+                _dsc_log.info("skip-tumor-seg: loaded enhancing_mask from %s", prev_tumor_seg["enhancing_mask"])
+            if prev_tumor_seg["segmentation"]:
+                dsc_wf.inputs.inputnode.tumor_segmentation = prev_tumor_seg["segmentation"]
+                _dsc_log.info("skip-tumor-seg: loaded tumor_segmentation from %s", prev_tumor_seg["segmentation"])
+            if prev_tumor_seg["nawm_mask"]:
+                dsc_wf.inputs.inputnode.nawm_mask = prev_tumor_seg["nawm_mask"]
+                _dsc_log.info("skip-tumor-seg: loaded nawm_mask from %s", prev_tumor_seg["nawm_mask"])
         else:
-            # No HD-GLIO — user-supplied masks only
+            # No tumor segmentation — user-supplied masks only
             if _user_lesion:
                 from pmriprep.utils.mask_utils import DilateMask
 
@@ -1834,7 +1834,7 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
                 _log.info("skip-anat (DCE): loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
 
-        # Connect lesion mask, tumor segmentation, and NAWM mask from hdglio if available
+        # Connect lesion mask, tumor segmentation, and NAWM mask from tumor seg if available
         # Also wire user-supplied masks from config (lesion_mask, nawm_mask, roi_mask)
         _dce_log = logging.getLogger("pmriprep.workflows")
         _dce_user_lesion = dce_config.lesion_mask
@@ -1845,9 +1845,9 @@ def init_pmriprep_wf(
             dce_wf.inputs.inputnode.roi_mask = str(_dce_user_roi)
             _dce_log.info("DCE: user roi_mask=%s", _dce_user_roi)
 
-        if hdglio_wf is not None:
+        if tumor_seg_wf is not None:
             if _dce_user_lesion:
-                # Merge HD-GLIO + user lesion masks
+                # Merge tumor seg + user lesion masks
                 from pmriprep.utils.mask_utils import DilateMask, MergeMasks
 
                 dce_dilate_user_lesion = pe.Node(
@@ -1868,10 +1868,10 @@ def init_pmriprep_wf(
                     (dce_dilate_user_lesion, dce_merge_dilated, [
                         ("dilated_mask", "mask_b"),
                     ]),
-                    (hdglio_wf, dce_merge_dilated, [
+                    (tumor_seg_wf, dce_merge_dilated, [
                         ("outputnode.dilated_lesion_mask", "mask_a"),
                     ]),
-                    (hdglio_wf, dce_merge_undilated, [
+                    (tumor_seg_wf, dce_merge_undilated, [
                         ("outputnode.whole_tumor_mask", "mask_a"),
                     ]),
                     (dce_merge_dilated, dce_wf, [
@@ -1880,34 +1880,34 @@ def init_pmriprep_wf(
                     (dce_merge_undilated, dce_wf, [
                         ("merged_mask", "inputnode.whole_tumor_mask"),
                     ]),
-                    (hdglio_wf, dce_wf, [
+                    (tumor_seg_wf, dce_wf, [
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
-                        ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
+                        ("outputnode.segmentation", "inputnode.tumor_segmentation"),
                         ("outputnode.nawm_mask", "inputnode.nawm_mask"),
                     ]),
                 ])
                 _dce_log.info(
-                    "DCE: merging user lesion_mask=%s with HD-GLIO masks",
+                    "DCE: merging user lesion_mask=%s with tumor segmentation masks",
                     _dce_user_lesion,
                 )
             else:
-                # HD-GLIO only — current behavior
+                # Tumor segmentation only — current behavior
                 workflow.connect([
-                    (hdglio_wf, dce_wf, [
+                    (tumor_seg_wf, dce_wf, [
                         ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
                         ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
-                        ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
+                        ("outputnode.segmentation", "inputnode.tumor_segmentation"),
                         ("outputnode.nawm_mask", "inputnode.nawm_mask"),
                     ]),
                 ])
-        elif work_dir is not None and not decision.run_hdglio:
-            # --skip-tumor-seg: load previously-computed hdglio outputs
-            prev_hdglio = _find_previous_hdglio_outputs(
+        elif work_dir is not None and not decision.run_tumor_seg:
+            # --skip-tumor-seg: load previously-computed tumor seg outputs
+            prev_tumor_seg = _find_previous_tumor_seg_outputs(
                 Path(work_dir), subject_id, session_id,
             )
-            if _dce_user_lesion and prev_hdglio["dilated_lesion_mask"]:
-                # Merge user lesion with loaded HD-GLIO masks
+            if _dce_user_lesion and prev_tumor_seg["dilated_lesion_mask"]:
+                # Merge user lesion with loaded tumor seg masks
                 from pmriprep.utils.mask_utils import DilateMask, MergeMasks
 
                 dce_dilate_user_lesion = pe.Node(
@@ -1919,14 +1919,14 @@ def init_pmriprep_wf(
                 dce_merge_dilated = pe.Node(
                     MergeMasks(), name="dce_merge_dilated",
                 )
-                dce_merge_dilated.inputs.mask_a = prev_hdglio["dilated_lesion_mask"]
+                dce_merge_dilated.inputs.mask_a = prev_tumor_seg["dilated_lesion_mask"]
 
                 dce_merge_undilated = pe.Node(
                     MergeMasks(), name="dce_merge_undilated",
                 )
                 dce_merge_undilated.inputs.mask_b = str(_dce_user_lesion)
-                if prev_hdglio["whole_tumor_mask"]:
-                    dce_merge_undilated.inputs.mask_a = prev_hdglio["whole_tumor_mask"]
+                if prev_tumor_seg["whole_tumor_mask"]:
+                    dce_merge_undilated.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
 
                 workflow.connect([
                     (dce_dilate_user_lesion, dce_merge_dilated, [
@@ -1940,28 +1940,28 @@ def init_pmriprep_wf(
                     ]),
                 ])
                 _dce_log.info(
-                    "DCE skip-tumor-seg: merging user lesion_mask=%s with loaded HD-GLIO masks",
+                    "DCE skip-tumor-seg: merging user lesion_mask=%s with loaded tumor seg masks",
                     _dce_user_lesion,
                 )
             else:
-                if prev_hdglio["dilated_lesion_mask"]:
-                    dce_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
-                    _dce_log.info("skip-tumor-seg (DCE): loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
-                if prev_hdglio["whole_tumor_mask"]:
-                    dce_wf.inputs.inputnode.whole_tumor_mask = prev_hdglio["whole_tumor_mask"]
-                    _dce_log.info("skip-tumor-seg (DCE): loaded whole_tumor_mask from %s", prev_hdglio["whole_tumor_mask"])
+                if prev_tumor_seg["dilated_lesion_mask"]:
+                    dce_wf.inputs.inputnode.lesion_mask = prev_tumor_seg["dilated_lesion_mask"]
+                    _dce_log.info("skip-tumor-seg (DCE): loaded lesion_mask from %s", prev_tumor_seg["dilated_lesion_mask"])
+                if prev_tumor_seg["whole_tumor_mask"]:
+                    dce_wf.inputs.inputnode.whole_tumor_mask = prev_tumor_seg["whole_tumor_mask"]
+                    _dce_log.info("skip-tumor-seg (DCE): loaded whole_tumor_mask from %s", prev_tumor_seg["whole_tumor_mask"])
 
-            if prev_hdglio.get("enhancing_mask"):
-                dce_wf.inputs.inputnode.enhancing_mask = prev_hdglio["enhancing_mask"]
-                _dce_log.info("skip-tumor-seg (DCE): loaded enhancing_mask from %s", prev_hdglio["enhancing_mask"])
-            if prev_hdglio["segmentation"]:
-                dce_wf.inputs.inputnode.hdglio_segmentation = prev_hdglio["segmentation"]
-                _dce_log.info("skip-tumor-seg (DCE): loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])
-            if prev_hdglio["nawm_mask"]:
-                dce_wf.inputs.inputnode.nawm_mask = prev_hdglio["nawm_mask"]
-                _dce_log.info("skip-tumor-seg (DCE): loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
+            if prev_tumor_seg.get("enhancing_mask"):
+                dce_wf.inputs.inputnode.enhancing_mask = prev_tumor_seg["enhancing_mask"]
+                _dce_log.info("skip-tumor-seg (DCE): loaded enhancing_mask from %s", prev_tumor_seg["enhancing_mask"])
+            if prev_tumor_seg["segmentation"]:
+                dce_wf.inputs.inputnode.tumor_segmentation = prev_tumor_seg["segmentation"]
+                _dce_log.info("skip-tumor-seg (DCE): loaded tumor_segmentation from %s", prev_tumor_seg["segmentation"])
+            if prev_tumor_seg["nawm_mask"]:
+                dce_wf.inputs.inputnode.nawm_mask = prev_tumor_seg["nawm_mask"]
+                _dce_log.info("skip-tumor-seg (DCE): loaded nawm_mask from %s", prev_tumor_seg["nawm_mask"])
         else:
-            # No HD-GLIO — user-supplied masks only
+            # No tumor segmentation — user-supplied masks only
             if _dce_user_lesion:
                 from pmriprep.utils.mask_utils import DilateMask
 
@@ -2306,11 +2306,11 @@ def get_pipeline_summary(workflow: pe.Workflow) -> str:
     else:
         lines.append(f"Anatomical preprocessing: SKIPPED ({decision.anat_reason})")
 
-    # HD-GLIO
-    if decision.run_hdglio:
-        lines.append("HD-GLIO tumor segmentation: WILL RUN")
+    # Tumor segmentation
+    if decision.run_tumor_seg:
+        lines.append("Tumor segmentation: WILL RUN")
     else:
-        lines.append(f"HD-GLIO tumor segmentation: SKIPPED ({decision.hdglio_reason})")
+        lines.append(f"Tumor segmentation: SKIPPED ({decision.tumor_seg_reason})")
 
     # DSC
     if decision.run_dsc:

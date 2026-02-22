@@ -54,19 +54,19 @@ class PipelineAvailability:
 
     Attributes:
         anat: Whether anatomical pipeline can run (always True).
-        hdglio: Whether HD-GLIO tumor segmentation can run.
+        tumor_seg: Whether tumor segmentation can run.
         dsc: Whether DSC perfusion pipeline can run.
         dce: Whether DCE perfusion pipeline can run.
-        hdglio_reason: Reason why HD-GLIO cannot run, if applicable.
+        tumor_seg_reason: Reason why tumor segmentation cannot run, if applicable.
         dsc_reason: Reason why DSC cannot run, if applicable.
         dce_reason: Reason why DCE cannot run, if applicable.
     """
 
     anat: bool = True
-    hdglio: bool = False
+    tumor_seg: bool = False
     dsc: bool = False
     dce: bool = False
-    hdglio_reason: Optional[str] = None
+    tumor_seg_reason: Optional[str] = None
     dsc_reason: Optional[str] = None
     dce_reason: Optional[str] = None
 
@@ -644,7 +644,7 @@ def _determine_pipeline_availability(modalities: ModalityAvailability) -> Pipeli
 
     Rules:
     - anat: Always runs (T1w is minimum requirement but assumed present)
-    - hdglio: Requires all 4 modalities (T1w-pre, T1w-ce-GAD, T2w, FLAIR)
+    - tumor_seg: Requires all 4 modalities (T1w-pre, T1w-ce-GAD, T2w, FLAIR)
     - dsc: Requires DSC data
     - dce: Requires DCE data
 
@@ -656,22 +656,22 @@ def _determine_pipeline_availability(modalities: ModalityAvailability) -> Pipeli
     """
     pipelines = PipelineAvailability()
 
-    # HD-GLIO requires 4 modalities
-    hdglio_missing: List[str] = []
+    # Tumor segmentation requires 4 modalities
+    tumor_seg_missing: List[str] = []
     if not modalities.t1w_pre:
-        hdglio_missing.append("T1w-pre")
+        tumor_seg_missing.append("T1w-pre")
     if not modalities.t1w_ce_gad:
-        hdglio_missing.append("T1w-ce-GAD")
+        tumor_seg_missing.append("T1w-ce-GAD")
     if not modalities.t2w:
-        hdglio_missing.append("T2w")
+        tumor_seg_missing.append("T2w")
     if not modalities.flair:
-        hdglio_missing.append("FLAIR")
+        tumor_seg_missing.append("FLAIR")
 
-    if not hdglio_missing:
-        pipelines.hdglio = True
+    if not tumor_seg_missing:
+        pipelines.tumor_seg = True
     else:
-        pipelines.hdglio = False
-        pipelines.hdglio_reason = f"Missing modalities: {', '.join(hdglio_missing)}"
+        pipelines.tumor_seg = False
+        pipelines.tumor_seg_reason = f"Missing modalities: {', '.join(tumor_seg_missing)}"
 
     # DSC requires DSC data
     if modalities.dsc:
@@ -797,11 +797,11 @@ def get_data_summary(session_data: SessionData) -> Dict[str, Union[bool, str, No
         "has_dwi": session_data.modalities.dwi is not None,
         # Pipelines
         "can_run_anat": session_data.pipelines.anat,
-        "can_run_hdglio": session_data.pipelines.hdglio,
+        "can_run_tumor_seg": session_data.pipelines.tumor_seg,
         "can_run_dsc": session_data.pipelines.dsc,
         "can_run_dce": session_data.pipelines.dce,
         # Reasons for unavailable pipelines
-        "hdglio_unavailable_reason": session_data.pipelines.hdglio_reason,
+        "tumor_seg_unavailable_reason": session_data.pipelines.tumor_seg_reason,
         "dsc_unavailable_reason": session_data.pipelines.dsc_reason,
         "dce_unavailable_reason": session_data.pipelines.dce_reason,
     }
