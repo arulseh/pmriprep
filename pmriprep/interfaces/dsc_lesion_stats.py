@@ -70,6 +70,12 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     ncbv_map = traits.Either(traits.Str, None, desc="Normalized CBV map path")
     ncbf_map = traits.Either(traits.Str, None, desc="Normalized CBF map path")
 
+    # ROI mode: treat mask as binary, label region as "roi", skip clinical context
+    force_binary = traits.Bool(
+        False, usedefault=True,
+        desc="Force binary mask interpretation (for generic ROI stats)",
+    )
+
     # Additional maps (all optional)
     psr_map = traits.Either(traits.Str, None, desc="PSR map path")
     ph_map = traits.Either(traits.Str, None, desc="PH map path")
@@ -121,71 +127,85 @@ class DSCLesionStats(BaseInterface):
         lesion_data = np.asarray(lesion_img.dataobj)  # type: ignore[attr-defined]
         voxel_sizes: Tuple[float, float, float] = lesion_img.header.get_zooms()[:3]  # type: ignore[attr-defined]
 
-        # Detect mask type
-        mask_type, max_label = detect_mask_type(lesion_data)
-
         # Load all available perfusion maps
         maps = self._load_maps()
 
-        # Initialize result
-        result = LesionStatisticsResult(
-            subject_id=self.inputs.subject_id,
-            session_id=self.inputs.session_id,
-            modality="DSC",
-            mask_type=mask_type,
-            mask_source=Path(self.inputs.lesion_mask).name,
-            total_voxels=int(np.sum(lesion_data > 0)),
-        )
-
-        # Extract statistics for each region
-        if mask_type == "multi_label_hdglio":
-            # Extract per-label statistics
-            for label, region_name in HDGLIO_LABELS.items():
-                if label > max_label:
-                    continue
-                label_mask = extract_label_mask(lesion_data, label)
-                if np.sum(label_mask) == 0:
-                    continue
-
-                region_stats = self._compute_region_stats(
-                    region_name, label_mask, maps, voxel_sizes
-                )
-                if region_stats is not None:
-                    result.regions[region_name] = region_stats
-
-        else:
-            # Binary mask - single region
+        if self.inputs.force_binary:
+            # ROI mode: treat as binary, label as "roi", skip clinical context
+            mask_type = "binary"
+            result = LesionStatisticsResult(
+                subject_id=self.inputs.subject_id,
+                session_id=self.inputs.session_id,
+                modality="DSC",
+                mask_type="binary",
+                mask_source=Path(self.inputs.lesion_mask).name,
+                total_voxels=int(np.sum(lesion_data > 0)),
+            )
             binary_mask = lesion_data > 0
             region_stats = self._compute_region_stats(
-                "tumor", binary_mask, maps, voxel_sizes
+                "roi", binary_mask, maps, voxel_sizes
             )
             if region_stats is not None:
-                result.regions["tumor"] = region_stats
+                result.regions["roi"] = region_stats
+        else:
+            # Standard lesion stats mode
+            mask_type, max_label = detect_mask_type(lesion_data)
 
-        # Compute NAWM reference if mask provided
-        if self._has_input("nawm_mask"):
-            nawm_img = nib.load(self.inputs.nawm_mask)
-            nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
-            nawm_maps = {
-                k: v for k, v in maps.items()
-                if k in ["cbv", "cbf", "ncbv", "ncbf", "mtt"]
-            }
-            result.nawm_reference = compute_nawm_reference(
-                nawm_data, nawm_maps, voxel_sizes
+            result = LesionStatisticsResult(
+                subject_id=self.inputs.subject_id,
+                session_id=self.inputs.session_id,
+                modality="DSC",
+                mask_type=mask_type,
+                mask_source=Path(self.inputs.lesion_mask).name,
+                total_voxels=int(np.sum(lesion_data > 0)),
             )
 
-        # Compute derived metrics for primary region
-        primary_mask = lesion_data > 0
-        result.derived_metrics = compute_dsc_derived_metrics(
-            ncbv_data=maps.get("ncbv"),
-            ncbf_data=maps.get("ncbf"),
-            cbv_data=maps.get("cbv"),
-            cbf_data=maps.get("cbf"),
-            mask=primary_mask,
-        )
+            # Extract statistics for each region
+            if mask_type == "multi_label_hdglio":
+                for label, region_name in HDGLIO_LABELS.items():
+                    if label > max_label:
+                        continue
+                    label_mask = extract_label_mask(lesion_data, label)
+                    if np.sum(label_mask) == 0:
+                        continue
 
-        # Add clinical context
-        result.clinical_context = get_dsc_clinical_context()
+                    region_stats = self._compute_region_stats(
+                        region_name, label_mask, maps, voxel_sizes
+                    )
+                    if region_stats is not None:
+                        result.regions[region_name] = region_stats
+            else:
+                binary_mask = lesion_data > 0
+                region_stats = self._compute_region_stats(
+                    "tumor", binary_mask, maps, voxel_sizes
+                )
+                if region_stats is not None:
+                    result.regions["tumor"] = region_stats
+
+            # Compute NAWM reference if mask provided
+            if self._has_input("nawm_mask"):
+                nawm_img = nib.load(self.inputs.nawm_mask)
+                nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
+                nawm_maps = {
+                    k: v for k, v in maps.items()
+                    if k in ["cbv", "cbf", "ncbv", "ncbf", "mtt"]
+                }
+                result.nawm_reference = compute_nawm_reference(
+                    nawm_data, nawm_maps, voxel_sizes
+                )
+
+            # Compute derived metrics for primary region
+            primary_mask = lesion_data > 0
+            result.derived_metrics = compute_dsc_derived_metrics(
+                ncbv_data=maps.get("ncbv"),
+                ncbf_data=maps.get("ncbf"),
+                cbv_data=maps.get("cbv"),
+                cbf_data=maps.get("cbf"),
+                mask=primary_mask,
+            )
+
+            # Add clinical context
+            result.clinical_context = get_dsc_clinical_context()
 
         # Write outputs
         output_dir = Path(self.inputs.output_dir)
@@ -196,12 +216,13 @@ class DSCLesionStats(BaseInterface):
             prefix += f"_ses-{self.inputs.session_id}"
 
         # JSON output
-        json_path = output_dir / f"{prefix}_space-DSC_lesion-stats.json"
+        desc = "roi-stats" if self.inputs.force_binary else "lesion-stats"
+        json_path = output_dir / f"{prefix}_space-DSC_{desc}.json"
         with open(json_path, "w") as f:
             json.dump(result.to_dict(), f, indent=2, default=str)
 
         # Text summary
-        txt_path = output_dir / f"{prefix}_space-DSC_lesion-stats.txt"
+        txt_path = output_dir / f"{prefix}_space-DSC_{desc}.txt"
         self._write_text_summary(result, txt_path)
 
         # Set outputs

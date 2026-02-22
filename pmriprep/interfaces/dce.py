@@ -3121,11 +3121,6 @@ class DCERegistrationInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Expected T1w reference type: postcon (post-contrast), precon, or any",
     )
-    lesion_dilation = traits.Float(
-        15.0,
-        usedefault=True,
-        desc="Dilation radius (mm) for lesion mask in cost function weighting",
-    )
     search_range = traits.Int(
         30,
         usedefault=True,
@@ -3168,9 +3163,6 @@ class DCERegistration(SimpleInterface):
         cost: Cost function for FLIRT (default: normmi).
         reference_type: Expected T1w type: postcon (default for DCE), precon,
             or any.
-        lesion_dilation: Dilation radius (mm) for lesion mask in cost weighting
-            (default: 15.0).
-
     Returns:
         out_file: Registered T1w in DCE space.
         out_matrix: FSL FLIRT transformation matrix.
@@ -3330,7 +3322,8 @@ class DCERegistration(SimpleInterface):
         """Create cost function weight file from lesion mask.
 
         Inverts the lesion mask so lesion voxels have weight 0 and healthy
-        tissue has weight 1. Optionally dilates the lesion before inversion.
+        tissue has weight 1. The mask is expected to be pre-dilated upstream
+        (via DilateMask or HD-GLIO workflow).
 
         Args:
             temp_path: Temporary directory path for output.
@@ -3346,45 +3339,19 @@ class DCERegistration(SimpleInterface):
             return None
 
         weight_file = str(temp_path / f"dce_weight{ext}")
-        lesion_dilation = self.inputs.lesion_dilation
 
-        # Skip dilation if input mask is already pre-dilated (e.g., from hdglio_wf)
-        is_pre_dilated = "dilated" in Path(self.inputs.lesion_mask).name.lower()
-
+        # Invert mask: lesion voxels → 0, healthy → 1
+        # All dilation is handled upstream (DilateMask / HD-GLIO workflow)
         try:
-            if lesion_dilation > 0 and not is_pre_dilated:
-                # Calculate kernel radius in voxels
-                lesion_img = nib.load(self.inputs.lesion_mask)
-                header = lesion_img.header
-                voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
-                mean_vox_size = float(np.mean(voxel_sizes))
-                kernel_radius = max(1.0, lesion_dilation / mean_vox_size)
+            maths = ImageMaths()
+            maths.inputs.in_file = str(self.inputs.lesion_mask)
+            maths.inputs.op_string = "-mul -1 -add 1"
+            maths.inputs.out_file = weight_file
+            maths.run()
 
-                # Dilate and invert using ImageMaths
-                maths = ImageMaths()
-                maths.inputs.in_file = str(self.inputs.lesion_mask)
-                maths.inputs.op_string = (
-                    f"-kernel sphere {kernel_radius:.1f} -dilM -mul -1 -add 1"
-                )
-                maths.inputs.out_file = weight_file
-                result = maths.run()
-
-                if not Path(weight_file).exists():
-                    logger.warning(
-                        "Lesion mask dilation/inversion produced no output"
-                    )
-                    return None
-            else:
-                # Invert without dilation
-                maths = ImageMaths()
-                maths.inputs.in_file = str(self.inputs.lesion_mask)
-                maths.inputs.op_string = "-mul -1 -add 1"
-                maths.inputs.out_file = weight_file
-                result = maths.run()
-
-                if not Path(weight_file).exists():
-                    logger.warning("Lesion mask inversion produced no output")
-                    return None
+            if not Path(weight_file).exists():
+                logger.warning("Lesion mask inversion produced no output")
+                return None
 
             return weight_file
 

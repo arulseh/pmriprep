@@ -120,6 +120,11 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
     lesion_mask_dce = traits.Either(traits.Str, None, desc="Lesion mask in DCE space path")
 
+    # ROI statistics (from user-supplied roi_mask, optional)
+    roi_stats_json = traits.Str(desc="ROI statistics JSON file path")
+    roi_stats_txt = traits.Str(desc="ROI statistics text summary path")
+    roi_mask_dce = traits.Either(traits.Str, None, desc="ROI mask in DCE space path")
+
     # Anatomical masks in DCE space (optional)
     brain_mask = traits.Str(desc="Brain mask in DCE space path")
     nawm_mask = traits.Either(traits.Str, None, desc="NAWM mask in DCE space path")
@@ -599,6 +604,22 @@ class DCEDerivativeWriter(BaseInterface):
             fname = f"{prefix}_{spatial}_desc-lesion_mask"
             copy_derivative(self.inputs.lesion_mask_dce, anat_dir / f"{fname}.nii.gz")
             sidecar = {**minimal_sidecar, "Description": "Lesion mask registered to DCE space"}
+            write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 9b. ROI statistics and mask (stats extraction only)
+        # -----------------------------------------------------------
+        if has_input(self.inputs, "roi_stats_json"):
+            copy_derivative(
+                self.inputs.roi_stats_json,
+                ses_dir / f"{prefix}_{spatial}_desc-roiStats.json",
+            )
+
+        if has_input(self.inputs, "roi_mask_dce"):
+            anat_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{prefix}_{spatial}_desc-roi_mask"
+            copy_derivative(self.inputs.roi_mask_dce, anat_dir / f"{fname}.nii.gz")
+            sidecar = {**minimal_sidecar, "Description": "ROI mask registered to DCE space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

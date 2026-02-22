@@ -223,6 +223,8 @@ def init_dce_preproc_wf(
                 "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
                 # NAWM mask input (from hdglio, for normalization)
                 "nawm_mask",  # NAWM mask in T1w space for nKtrans, nIAUC60
+                # Generic ROI mask for stats extraction only (optional)
+                "roi_mask",
             ]
         ),
         name="inputnode",
@@ -308,6 +310,10 @@ def init_dce_preproc_wf(
                 "lesion_stats_json",
                 "lesion_stats_txt",
                 "lesion_mask_dce",
+                # ROI statistics (conditional on roi_mask)
+                "roi_stats_json",
+                "roi_stats_txt",
+                "roi_mask_dce",
                 # Motion QC
                 "motion_qc_plot",
                 # DCE QC plots
@@ -1621,6 +1627,58 @@ def init_dce_preproc_wf(
         (lesion_stats, outputnode, [
             ("stats_json", "lesion_stats_json"),
             ("stats_txt", "lesion_stats_txt"),
+        ]),
+    ])
+
+    # -------------------------------------------------------------------
+    # ROI statistics (conditional on roi_mask input)
+    # -------------------------------------------------------------------
+    transform_roi = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dce_file"],
+            function=_transform_lesion_mask_to_dce,
+        ),
+        name="transform_roi",
+    )
+
+    from pmriprep.interfaces.dce_lesion_stats import DCELesionStats as _DCELesionStatsROI
+
+    roi_stats = pe.Node(
+        _DCELesionStatsROI(force_binary=True),
+        name="roi_stats",
+    )
+    roi_stats.inputs.subject_id = subject_id
+    roi_stats.inputs.session_id = session_id
+    roi_stats.inputs.output_dir = str(Path(bids_dir) / "derivatives" / "pmriprep")
+
+    # Transform ROI mask from T1w to DCE space
+    workflow.connect([
+        (inputnode, transform_roi, [("roi_mask", "lesion_mask_file")]),
+        (dce_preprocess, transform_roi, [("mean_img", "reference_file")]),
+        (dce_registration, transform_roi, [("out_matrix", "transform_matrix")]),
+    ])
+    # Connect perfusion maps to ROI stats
+    workflow.connect([
+        (transform_roi, roi_stats, [("lesion_mask_dce_file", "lesion_mask")]),
+        (pk_modeling, roi_stats, [
+            ("out_ktrans", "ktrans_map"),
+            ("out_ve", "ve_map"),
+            ("out_vp", "vp_map"),
+            ("out_kep", "kep_map"),
+            ("out_iauc60", "iauc60_map"),
+            ("out_peak_enhancement", "peak_enhancement_map"),
+            ("out_time_to_peak", "ttp_map"),
+        ]),
+        (normalize_ktrans, roi_stats, [("out_file", "nktrans_map")]),
+        (normalize_iauc60, roi_stats, [("out_file", "niauc60_map")]),
+    ])
+    # Connect ROI stats outputs to outputnode
+    workflow.connect([
+        (transform_roi, outputnode, [("lesion_mask_dce_file", "roi_mask_dce")]),
+        (roi_stats, outputnode, [
+            ("stats_json", "roi_stats_json"),
+            ("stats_txt", "roi_stats_txt"),
         ]),
     ])
 

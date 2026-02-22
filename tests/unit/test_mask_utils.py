@@ -1,0 +1,208 @@
+"""Unit tests for pmriprep.utils.mask_utils.
+
+Tests MergeMasks and DilateMask Nipype SimpleInterface classes.
+"""
+
+import os
+import tempfile
+from pathlib import Path
+
+import nibabel as nib
+import numpy as np
+import pytest
+
+
+def _create_test_mask(
+    shape: tuple = (10, 10, 10),
+    affine: np.ndarray | None = None,
+    data: np.ndarray | None = None,
+    tmpdir: str | None = None,
+    fname: str = "mask.nii.gz",
+) -> str:
+    """Create a test NIfTI mask file and return its path."""
+    if affine is None:
+        affine = np.eye(4)
+    if data is None:
+        data = np.zeros(shape, dtype=np.uint8)
+    img = nib.Nifti1Image(data, affine)
+    if tmpdir is None:
+        tmpdir = tempfile.mkdtemp()
+    out_path = os.path.join(tmpdir, fname)
+    nib.save(img, out_path)
+    return out_path
+
+
+class TestMergeMasks:
+    """Tests for MergeMasks interface."""
+
+    def test_merge_both_masks(self, tmp_path: Path) -> None:
+        """Merging two masks produces voxel-wise OR."""
+        from pmriprep.utils.mask_utils import MergeMasks
+
+        data_a = np.zeros((5, 5, 5), dtype=np.uint8)
+        data_a[0:3, 0:3, 0:3] = 1  # cube in corner
+        data_b = np.zeros((5, 5, 5), dtype=np.uint8)
+        data_b[2:5, 2:5, 2:5] = 1  # overlapping cube
+
+        mask_a = _create_test_mask(data=data_a, tmpdir=str(tmp_path), fname="a.nii.gz")
+        mask_b = _create_test_mask(data=data_b, tmpdir=str(tmp_path), fname="b.nii.gz")
+
+        merge = MergeMasks()
+        merge.inputs.mask_a = mask_a
+        merge.inputs.mask_b = mask_b
+
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = merge.run()
+        finally:
+            os.chdir(old_cwd)
+
+        merged_img = nib.load(result.outputs.merged_mask)
+        merged_data = np.asarray(merged_img.dataobj)
+
+        expected = (data_a | data_b).astype(np.uint8)
+        np.testing.assert_array_equal(merged_data, expected)
+
+    def test_merge_one_none_a_only(self, tmp_path: Path) -> None:
+        """When only mask_a is provided, output is mask_a passthrough."""
+        from pmriprep.utils.mask_utils import MergeMasks
+
+        data = np.ones((5, 5, 5), dtype=np.uint8)
+        mask_a = _create_test_mask(data=data, tmpdir=str(tmp_path), fname="a.nii.gz")
+
+        merge = MergeMasks()
+        merge.inputs.mask_a = mask_a
+        # mask_b not set
+
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = merge.run()
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.outputs.merged_mask == mask_a
+
+    def test_merge_one_none_b_only(self, tmp_path: Path) -> None:
+        """When only mask_b is provided, output is mask_b passthrough."""
+        from pmriprep.utils.mask_utils import MergeMasks
+
+        data = np.ones((5, 5, 5), dtype=np.uint8)
+        mask_b = _create_test_mask(data=data, tmpdir=str(tmp_path), fname="b.nii.gz")
+
+        merge = MergeMasks()
+        merge.inputs.mask_b = mask_b
+
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = merge.run()
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.outputs.merged_mask == mask_b
+
+    def test_merge_both_none(self, tmp_path: Path) -> None:
+        """When neither mask is provided, output is None."""
+        from pmriprep.utils.mask_utils import MergeMasks
+
+        merge = MergeMasks()
+
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = merge.run()
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.outputs.merged_mask is None
+
+    def test_merge_geometry_mismatch(self, tmp_path: Path) -> None:
+        """When masks have different geometries, mask_b is resampled to mask_a."""
+        from pmriprep.utils.mask_utils import MergeMasks
+
+        # mask_a: 5x5x5, 2mm isotropic
+        affine_a = np.diag([2.0, 2.0, 2.0, 1.0])
+        data_a = np.zeros((5, 5, 5), dtype=np.uint8)
+        data_a[0:2, 0:2, 0:2] = 1
+        mask_a = _create_test_mask(data=data_a, affine=affine_a, tmpdir=str(tmp_path), fname="a.nii.gz")
+
+        # mask_b: 10x10x10, 1mm isotropic
+        affine_b = np.diag([1.0, 1.0, 1.0, 1.0])
+        data_b = np.zeros((10, 10, 10), dtype=np.uint8)
+        data_b[3:7, 3:7, 3:7] = 1
+        mask_b = _create_test_mask(data=data_b, affine=affine_b, tmpdir=str(tmp_path), fname="b.nii.gz")
+
+        merge = MergeMasks()
+        merge.inputs.mask_a = mask_a
+        merge.inputs.mask_b = mask_b
+
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = merge.run()
+        finally:
+            os.chdir(old_cwd)
+
+        merged_img = nib.load(result.outputs.merged_mask)
+        # Output should have same geometry as mask_a
+        assert merged_img.shape == (5, 5, 5)
+        np.testing.assert_allclose(merged_img.affine, affine_a)
+
+
+class TestDilateMask:
+    """Tests for DilateMask interface."""
+
+    def test_dilate_basic(self, tmp_path: Path) -> None:
+        """DilateMask expands the mask and output contains 'dilated' in name."""
+        from pmriprep.utils.mask_utils import DilateMask
+
+        data = np.zeros((20, 20, 20), dtype=np.uint8)
+        data[10, 10, 10] = 1  # single voxel
+        mask_file = _create_test_mask(data=data, tmpdir=str(tmp_path), fname="point.nii.gz")
+
+        dilate = DilateMask()
+        dilate.inputs.mask_file = mask_file
+        dilate.inputs.radius_mm = 3.0
+
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = dilate.run()
+        finally:
+            os.chdir(old_cwd)
+
+        out_path = result.outputs.dilated_mask
+        assert "dilated" in Path(out_path).name
+
+        dilated_img = nib.load(out_path)
+        dilated_data = np.asarray(dilated_img.dataobj)
+
+        # Should have more nonzero voxels than the input
+        assert np.sum(dilated_data > 0) > 1
+        # Original voxel should still be set
+        assert dilated_data[10, 10, 10] > 0
+
+    def test_dilate_preserves_affine(self, tmp_path: Path) -> None:
+        """DilateMask preserves the input affine."""
+        from pmriprep.utils.mask_utils import DilateMask
+
+        affine = np.diag([1.5, 1.5, 3.0, 1.0])
+        data = np.zeros((10, 10, 5), dtype=np.uint8)
+        data[5, 5, 2] = 1
+        mask_file = _create_test_mask(data=data, affine=affine, tmpdir=str(tmp_path), fname="aniso.nii.gz")
+
+        dilate = DilateMask()
+        dilate.inputs.mask_file = mask_file
+        dilate.inputs.radius_mm = 5.0
+
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = dilate.run()
+        finally:
+            os.chdir(old_cwd)
+
+        dilated_img = nib.load(result.outputs.dilated_mask)
+        np.testing.assert_allclose(dilated_img.affine, affine)

@@ -136,6 +136,11 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
     lesion_mask_dsc = traits.Str(desc="Lesion mask in DSC space path")
 
+    # ROI statistics (from user-supplied roi_mask, optional)
+    roi_stats_json = traits.Str(desc="ROI statistics JSON file path")
+    roi_stats_txt = traits.Str(desc="ROI statistics text summary path")
+    roi_mask_dsc = traits.Str(desc="ROI mask in DSC space path")
+
 
 class DSCDerivativeWriterOutputSpec(TraitedSpec):
     """Output specification for DSCDerivativeWriter."""
@@ -597,6 +602,21 @@ class DSCDerivativeWriter(BaseInterface):
             fname = f"{prefix}_{spatial}_desc-lesion_mask"
             copy_derivative(self.inputs.lesion_mask_dsc, anat_dir / f"{fname}.nii.gz")
             sidecar = {**minimal_sidecar, "Description": "Lesion mask registered to DSC space"}
+            write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 10e. ROI statistics and mask (stats extraction only)
+        # -----------------------------------------------------------
+        if has_input(self.inputs, "roi_stats_json"):
+            copy_derivative(
+                self.inputs.roi_stats_json,
+                ses_dir / f"{prefix}_space-DSC_desc-roiStats.json",
+            )
+
+        if has_input(self.inputs, "roi_mask_dsc"):
+            fname = f"{prefix}_{spatial}_desc-roi_mask"
+            copy_derivative(self.inputs.roi_mask_dsc, anat_dir / f"{fname}.nii.gz")
+            sidecar = {**minimal_sidecar, "Description": "ROI mask registered to DSC space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

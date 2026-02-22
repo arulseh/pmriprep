@@ -199,7 +199,7 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     dsc_dict = config_dict.get("dsc", {}).copy()
 
     # Convert path strings to Path objects
-    for path_key in ("aif_mask_file", "lesion_mask", "nawm_mask"):
+    for path_key in ("aif_mask_file", "lesion_mask", "nawm_mask", "roi_mask"):
         _dict_to_path(dsc_dict, path_key)
 
     # Type coerce numeric fields
@@ -243,7 +243,7 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
                     dce_dict[k] = v
 
     # Convert path strings to Path objects
-    for path_key in ("lesion_mask", "aif_mask_file"):
+    for path_key in ("lesion_mask", "nawm_mask", "aif_mask_file", "roi_mask"):
         _dict_to_path(dce_dict, path_key)
 
     # Type coerce numeric fields

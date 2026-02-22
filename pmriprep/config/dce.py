@@ -18,7 +18,12 @@ class DCEConfig:
     reference : str
         Reference image for registration (default: postcon T1w).
     lesion_mask : Optional[Path]
-        Path to lesion mask for registration weighting.
+        Path to lesion mask for registration weighting, AIF exclusion,
+        and lesion statistics.
+    nawm_mask : Optional[Path]
+        Path to NAWM mask in T1w space (NAWM normalization).
+    roi_mask : Optional[Path]
+        Path to ROI mask for stats extraction only (no processing impact).
     aif_method : Literal["auto", "population"]
         AIF detection method: auto or population.
     scale_aif : bool
@@ -70,6 +75,8 @@ class DCEConfig:
     # Registration settings
     reference: str = "postcon"
     lesion_mask: Optional[Path] = None
+    nawm_mask: Optional[Path] = None
+    roi_mask: Optional[Path] = None
 
     # AIF detection settings
     aif_method: Literal["auto", "population"] = "auto"

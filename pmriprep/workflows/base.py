@@ -1370,38 +1370,152 @@ def init_pmriprep_wf(
                 )
 
         # Connect lesion mask and tumor segmentation from hdglio if available
+        # Also wire user-supplied masks from config (lesion_mask, nawm_mask, roi_mask)
+        _dsc_log = logging.getLogger("pmriprep.workflows")
+        _user_lesion = dsc_config.lesion_mask
+        _user_nawm = dsc_config.nawm_mask
+        _user_roi = dsc_config.roi_mask
+
+        if _user_roi:
+            dsc_wf.inputs.inputnode.roi_mask = str(_user_roi)
+            _dsc_log.info("DSC: user roi_mask=%s", _user_roi)
+
         if hdglio_wf is not None:
-            workflow.connect([
-                (hdglio_wf, dsc_wf, [
-                    ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
-                    ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
-                    ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
-                    ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
-                    ("outputnode.nawm_mask", "inputnode.nawm_mask"),
-                ]),
-            ])
+            if _user_lesion:
+                # Merge HD-GLIO + user lesion masks
+                from pmriprep.utils.mask_utils import DilateMask, MergeMasks
+
+                dsc_dilate_user_lesion = pe.Node(
+                    DilateMask(radius_mm=15.0),
+                    name="dsc_dilate_user_lesion",
+                )
+                dsc_dilate_user_lesion.inputs.mask_file = str(_user_lesion)
+
+                dsc_merge_dilated = pe.Node(
+                    MergeMasks(), name="dsc_merge_dilated",
+                )
+                dsc_merge_undilated = pe.Node(
+                    MergeMasks(), name="dsc_merge_undilated",
+                )
+                dsc_merge_undilated.inputs.mask_b = str(_user_lesion)
+
+                workflow.connect([
+                    (dsc_dilate_user_lesion, dsc_merge_dilated, [
+                        ("dilated_mask", "mask_b"),
+                    ]),
+                    (hdglio_wf, dsc_merge_dilated, [
+                        ("outputnode.dilated_lesion_mask", "mask_a"),
+                    ]),
+                    (hdglio_wf, dsc_merge_undilated, [
+                        ("outputnode.whole_tumor_mask", "mask_a"),
+                    ]),
+                    (dsc_merge_dilated, dsc_wf, [
+                        ("merged_mask", "inputnode.lesion_mask"),
+                    ]),
+                    (dsc_merge_undilated, dsc_wf, [
+                        ("merged_mask", "inputnode.whole_tumor_mask"),
+                    ]),
+                    (hdglio_wf, dsc_wf, [
+                        ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+                        ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
+                        ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+                    ]),
+                ])
+                _dsc_log.info(
+                    "DSC: merging user lesion_mask=%s with HD-GLIO masks",
+                    _user_lesion,
+                )
+            else:
+                # HD-GLIO only — current behavior
+                workflow.connect([
+                    (hdglio_wf, dsc_wf, [
+                        ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
+                        ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
+                        ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+                        ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
+                        ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+                    ]),
+                ])
         elif work_dir is not None and not decision.run_hdglio:
             # --skip-tumor-seg: load previously-computed hdglio outputs
-            import logging as _logging
-            _log = _logging.getLogger("pmriprep.workflows")
             prev_hdglio = _find_previous_hdglio_outputs(
                 Path(work_dir), subject_id, session_id,
             )
-            if prev_hdglio["dilated_lesion_mask"]:
-                dsc_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
-                _log.info("skip-tumor-seg: loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
-            if prev_hdglio["whole_tumor_mask"]:
-                dsc_wf.inputs.inputnode.whole_tumor_mask = prev_hdglio["whole_tumor_mask"]
-                _log.info("skip-tumor-seg: loaded whole_tumor_mask from %s", prev_hdglio["whole_tumor_mask"])
+            if _user_lesion and prev_hdglio["dilated_lesion_mask"]:
+                # Merge user lesion with loaded HD-GLIO masks
+                from pmriprep.utils.mask_utils import DilateMask, MergeMasks
+
+                dsc_dilate_user_lesion = pe.Node(
+                    DilateMask(radius_mm=15.0),
+                    name="dsc_dilate_user_lesion",
+                )
+                dsc_dilate_user_lesion.inputs.mask_file = str(_user_lesion)
+
+                dsc_merge_dilated = pe.Node(
+                    MergeMasks(), name="dsc_merge_dilated",
+                )
+                dsc_merge_dilated.inputs.mask_a = prev_hdglio["dilated_lesion_mask"]
+
+                dsc_merge_undilated = pe.Node(
+                    MergeMasks(), name="dsc_merge_undilated",
+                )
+                dsc_merge_undilated.inputs.mask_b = str(_user_lesion)
+                if prev_hdglio["whole_tumor_mask"]:
+                    dsc_merge_undilated.inputs.mask_a = prev_hdglio["whole_tumor_mask"]
+
+                workflow.connect([
+                    (dsc_dilate_user_lesion, dsc_merge_dilated, [
+                        ("dilated_mask", "mask_b"),
+                    ]),
+                    (dsc_merge_dilated, dsc_wf, [
+                        ("merged_mask", "inputnode.lesion_mask"),
+                    ]),
+                    (dsc_merge_undilated, dsc_wf, [
+                        ("merged_mask", "inputnode.whole_tumor_mask"),
+                    ]),
+                ])
+                _dsc_log.info(
+                    "DSC skip-tumor-seg: merging user lesion_mask=%s with loaded HD-GLIO masks",
+                    _user_lesion,
+                )
+            else:
+                if prev_hdglio["dilated_lesion_mask"]:
+                    dsc_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
+                    _dsc_log.info("skip-tumor-seg: loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
+                if prev_hdglio["whole_tumor_mask"]:
+                    dsc_wf.inputs.inputnode.whole_tumor_mask = prev_hdglio["whole_tumor_mask"]
+                    _dsc_log.info("skip-tumor-seg: loaded whole_tumor_mask from %s", prev_hdglio["whole_tumor_mask"])
+
             if prev_hdglio["enhancing_mask"]:
                 dsc_wf.inputs.inputnode.enhancing_mask = prev_hdglio["enhancing_mask"]
-                _log.info("skip-tumor-seg: loaded enhancing_mask from %s", prev_hdglio["enhancing_mask"])
+                _dsc_log.info("skip-tumor-seg: loaded enhancing_mask from %s", prev_hdglio["enhancing_mask"])
             if prev_hdglio["segmentation"]:
                 dsc_wf.inputs.inputnode.hdglio_segmentation = prev_hdglio["segmentation"]
-                _log.info("skip-tumor-seg: loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])
+                _dsc_log.info("skip-tumor-seg: loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])
             if prev_hdglio["nawm_mask"]:
                 dsc_wf.inputs.inputnode.nawm_mask = prev_hdglio["nawm_mask"]
-                _log.info("skip-tumor-seg: loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
+                _dsc_log.info("skip-tumor-seg: loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
+        else:
+            # No HD-GLIO — user-supplied masks only
+            if _user_lesion:
+                from pmriprep.utils.mask_utils import DilateMask
+
+                dsc_dilate_user_lesion = pe.Node(
+                    DilateMask(radius_mm=15.0),
+                    name="dsc_dilate_user_lesion",
+                )
+                dsc_dilate_user_lesion.inputs.mask_file = str(_user_lesion)
+                workflow.connect([
+                    (dsc_dilate_user_lesion, dsc_wf, [
+                        ("dilated_mask", "inputnode.lesion_mask"),
+                    ]),
+                ])
+                dsc_wf.inputs.inputnode.whole_tumor_mask = str(_user_lesion)
+                _dsc_log.info("DSC: user lesion_mask=%s (dilated→lesion_mask, original→whole_tumor_mask)", _user_lesion)
+
+            if _user_nawm:
+                dsc_wf.inputs.inputnode.nawm_mask = str(_user_nawm)
+                _dsc_log.info("DSC: user nawm_mask=%s", _user_nawm)
 
         # Connect DSC outputs to master outputnode
         workflow.connect([
@@ -1506,6 +1620,10 @@ def init_pmriprep_wf(
                 ("outputnode.lesion_stats_json", "lesion_stats_json"),
                 ("outputnode.lesion_stats_txt", "lesion_stats_txt"),
                 ("outputnode.lesion_mask_dsc", "lesion_mask_dsc"),
+                # ROI statistics
+                ("outputnode.roi_stats_json", "roi_stats_json"),
+                ("outputnode.roi_stats_txt", "roi_stats_txt"),
+                ("outputnode.roi_mask_dsc", "roi_mask_dsc"),
             ]),
             (inputnode, dsc_writer, [("dsc_file", "source_dsc")]),
         ])
@@ -1717,38 +1835,152 @@ def init_pmriprep_wf(
                 _log.info("skip-anat (DCE): loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
 
         # Connect lesion mask, tumor segmentation, and NAWM mask from hdglio if available
+        # Also wire user-supplied masks from config (lesion_mask, nawm_mask, roi_mask)
+        _dce_log = logging.getLogger("pmriprep.workflows")
+        _dce_user_lesion = dce_config.lesion_mask
+        _dce_user_nawm = dce_config.nawm_mask
+        _dce_user_roi = dce_config.roi_mask
+
+        if _dce_user_roi:
+            dce_wf.inputs.inputnode.roi_mask = str(_dce_user_roi)
+            _dce_log.info("DCE: user roi_mask=%s", _dce_user_roi)
+
         if hdglio_wf is not None:
-            workflow.connect([
-                (hdglio_wf, dce_wf, [
-                    ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
-                    ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
-                    ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
-                    ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
-                    ("outputnode.nawm_mask", "inputnode.nawm_mask"),  # For nKtrans, nIAUC60
-                ]),
-            ])
+            if _dce_user_lesion:
+                # Merge HD-GLIO + user lesion masks
+                from pmriprep.utils.mask_utils import DilateMask, MergeMasks
+
+                dce_dilate_user_lesion = pe.Node(
+                    DilateMask(radius_mm=15.0),
+                    name="dce_dilate_user_lesion",
+                )
+                dce_dilate_user_lesion.inputs.mask_file = str(_dce_user_lesion)
+
+                dce_merge_dilated = pe.Node(
+                    MergeMasks(), name="dce_merge_dilated",
+                )
+                dce_merge_undilated = pe.Node(
+                    MergeMasks(), name="dce_merge_undilated",
+                )
+                dce_merge_undilated.inputs.mask_b = str(_dce_user_lesion)
+
+                workflow.connect([
+                    (dce_dilate_user_lesion, dce_merge_dilated, [
+                        ("dilated_mask", "mask_b"),
+                    ]),
+                    (hdglio_wf, dce_merge_dilated, [
+                        ("outputnode.dilated_lesion_mask", "mask_a"),
+                    ]),
+                    (hdglio_wf, dce_merge_undilated, [
+                        ("outputnode.whole_tumor_mask", "mask_a"),
+                    ]),
+                    (dce_merge_dilated, dce_wf, [
+                        ("merged_mask", "inputnode.lesion_mask"),
+                    ]),
+                    (dce_merge_undilated, dce_wf, [
+                        ("merged_mask", "inputnode.whole_tumor_mask"),
+                    ]),
+                    (hdglio_wf, dce_wf, [
+                        ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+                        ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
+                        ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+                    ]),
+                ])
+                _dce_log.info(
+                    "DCE: merging user lesion_mask=%s with HD-GLIO masks",
+                    _dce_user_lesion,
+                )
+            else:
+                # HD-GLIO only — current behavior
+                workflow.connect([
+                    (hdglio_wf, dce_wf, [
+                        ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
+                        ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
+                        ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+                        ("outputnode.segmentation", "inputnode.hdglio_segmentation"),
+                        ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+                    ]),
+                ])
         elif work_dir is not None and not decision.run_hdglio:
             # --skip-tumor-seg: load previously-computed hdglio outputs
-            import logging as _logging
-            _log = _logging.getLogger("pmriprep.workflows")
             prev_hdglio = _find_previous_hdglio_outputs(
                 Path(work_dir), subject_id, session_id,
             )
-            if prev_hdglio["dilated_lesion_mask"]:
-                dce_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
-                _log.info("skip-tumor-seg (DCE): loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
-            if prev_hdglio["whole_tumor_mask"]:
-                dce_wf.inputs.inputnode.whole_tumor_mask = prev_hdglio["whole_tumor_mask"]
-                _log.info("skip-tumor-seg (DCE): loaded whole_tumor_mask from %s", prev_hdglio["whole_tumor_mask"])
+            if _dce_user_lesion and prev_hdglio["dilated_lesion_mask"]:
+                # Merge user lesion with loaded HD-GLIO masks
+                from pmriprep.utils.mask_utils import DilateMask, MergeMasks
+
+                dce_dilate_user_lesion = pe.Node(
+                    DilateMask(radius_mm=15.0),
+                    name="dce_dilate_user_lesion",
+                )
+                dce_dilate_user_lesion.inputs.mask_file = str(_dce_user_lesion)
+
+                dce_merge_dilated = pe.Node(
+                    MergeMasks(), name="dce_merge_dilated",
+                )
+                dce_merge_dilated.inputs.mask_a = prev_hdglio["dilated_lesion_mask"]
+
+                dce_merge_undilated = pe.Node(
+                    MergeMasks(), name="dce_merge_undilated",
+                )
+                dce_merge_undilated.inputs.mask_b = str(_dce_user_lesion)
+                if prev_hdglio["whole_tumor_mask"]:
+                    dce_merge_undilated.inputs.mask_a = prev_hdglio["whole_tumor_mask"]
+
+                workflow.connect([
+                    (dce_dilate_user_lesion, dce_merge_dilated, [
+                        ("dilated_mask", "mask_b"),
+                    ]),
+                    (dce_merge_dilated, dce_wf, [
+                        ("merged_mask", "inputnode.lesion_mask"),
+                    ]),
+                    (dce_merge_undilated, dce_wf, [
+                        ("merged_mask", "inputnode.whole_tumor_mask"),
+                    ]),
+                ])
+                _dce_log.info(
+                    "DCE skip-tumor-seg: merging user lesion_mask=%s with loaded HD-GLIO masks",
+                    _dce_user_lesion,
+                )
+            else:
+                if prev_hdglio["dilated_lesion_mask"]:
+                    dce_wf.inputs.inputnode.lesion_mask = prev_hdglio["dilated_lesion_mask"]
+                    _dce_log.info("skip-tumor-seg (DCE): loaded lesion_mask from %s", prev_hdglio["dilated_lesion_mask"])
+                if prev_hdglio["whole_tumor_mask"]:
+                    dce_wf.inputs.inputnode.whole_tumor_mask = prev_hdglio["whole_tumor_mask"]
+                    _dce_log.info("skip-tumor-seg (DCE): loaded whole_tumor_mask from %s", prev_hdglio["whole_tumor_mask"])
+
             if prev_hdglio.get("enhancing_mask"):
                 dce_wf.inputs.inputnode.enhancing_mask = prev_hdglio["enhancing_mask"]
-                _log.info("skip-tumor-seg (DCE): loaded enhancing_mask from %s", prev_hdglio["enhancing_mask"])
+                _dce_log.info("skip-tumor-seg (DCE): loaded enhancing_mask from %s", prev_hdglio["enhancing_mask"])
             if prev_hdglio["segmentation"]:
                 dce_wf.inputs.inputnode.hdglio_segmentation = prev_hdglio["segmentation"]
-                _log.info("skip-tumor-seg (DCE): loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])
+                _dce_log.info("skip-tumor-seg (DCE): loaded hdglio_segmentation from %s", prev_hdglio["segmentation"])
             if prev_hdglio["nawm_mask"]:
                 dce_wf.inputs.inputnode.nawm_mask = prev_hdglio["nawm_mask"]
-                _log.info("skip-tumor-seg (DCE): loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
+                _dce_log.info("skip-tumor-seg (DCE): loaded nawm_mask from %s", prev_hdglio["nawm_mask"])
+        else:
+            # No HD-GLIO — user-supplied masks only
+            if _dce_user_lesion:
+                from pmriprep.utils.mask_utils import DilateMask
+
+                dce_dilate_user_lesion = pe.Node(
+                    DilateMask(radius_mm=15.0),
+                    name="dce_dilate_user_lesion",
+                )
+                dce_dilate_user_lesion.inputs.mask_file = str(_dce_user_lesion)
+                workflow.connect([
+                    (dce_dilate_user_lesion, dce_wf, [
+                        ("dilated_mask", "inputnode.lesion_mask"),
+                    ]),
+                ])
+                dce_wf.inputs.inputnode.whole_tumor_mask = str(_dce_user_lesion)
+                _dce_log.info("DCE: user lesion_mask=%s (dilated→lesion_mask, original→whole_tumor_mask)", _dce_user_lesion)
+
+            if _dce_user_nawm:
+                dce_wf.inputs.inputnode.nawm_mask = str(_dce_user_nawm)
+                _dce_log.info("DCE: user nawm_mask=%s", _dce_user_nawm)
 
         # Connect VFA and AFI inputs if available
         if session_data.modalities.vfa:
@@ -2035,6 +2267,10 @@ def init_pmriprep_wf(
                 ("outputnode.lesion_stats_json", "lesion_stats_json"),
                 ("outputnode.lesion_stats_txt", "lesion_stats_txt"),
                 ("outputnode.lesion_mask_dce", "lesion_mask_dce"),
+                # ROI statistics
+                ("outputnode.roi_stats_json", "roi_stats_json"),
+                ("outputnode.roi_stats_txt", "roi_stats_txt"),
+                ("outputnode.roi_mask_dce", "roi_mask_dce"),
                 # Anatomical masks in DCE space
                 ("outputnode.brain_mask", "brain_mask"),
                 ("outputnode.nawm_mask", "nawm_mask"),

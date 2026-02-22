@@ -1553,6 +1553,7 @@ def init_dsc_preproc_wf(
                 "enhancing_mask",  # Enhancing tumor mask for laterality (optional)
                 "hdglio_segmentation",  # HD-GLIO multi-label segmentation for lesion stats (optional)
                 "nawm_mask",  # NAWM mask for normalization (optional)
+                "roi_mask",  # Generic ROI mask for stats extraction only (optional)
                 "t1w_to_mni_xfm",  # T1w to MNI transform (from ACPC alignment)
                 "te",  # Echo time in seconds
                 "field_strength",  # Magnetic field strength
@@ -1642,6 +1643,10 @@ def init_dsc_preproc_wf(
                 "lesion_stats_json",
                 "lesion_stats_txt",
                 "lesion_mask_dsc",
+                # ROI statistics (conditional on roi_mask)
+                "roi_stats_json",
+                "roi_stats_txt",
+                "roi_mask_dsc",
                 # Motion QC
                 "motion_qc_plot",
                 # DSC QC plots
@@ -2581,6 +2586,60 @@ def init_dsc_preproc_wf(
         (lesion_stats, outputnode, [
             ("stats_json", "lesion_stats_json"),
             ("stats_txt", "lesion_stats_txt"),
+        ]),
+    ])
+
+    # -------------------------------------------------------------------
+    # ROI statistics (conditional on roi_mask input)
+    # -------------------------------------------------------------------
+    transform_roi = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dsc_file"],
+            function=_transform_lesion_mask_to_dsc,
+        ),
+        name="transform_roi",
+    )
+
+    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats as _DSCLesionStatsROI
+
+    roi_stats = pe.Node(
+        _DSCLesionStatsROI(force_binary=True),
+        name="roi_stats",
+    )
+    roi_stats.inputs.subject_id = subject_id
+    roi_stats.inputs.session_id = session_id
+    roi_stats.inputs.output_dir = str(bids_dir / "derivatives" / "pmriprep")
+
+    # Transform ROI mask from T1w to DSC space
+    workflow.connect([
+        (inputnode, transform_roi, [("roi_mask", "lesion_mask_file")]),
+        (prebolus_mean, transform_roi, [("prebolus_mean_file", "reference_file")]),
+        (register, transform_roi, [("out_matrix", "transform_matrix")]),
+    ])
+    # Connect perfusion maps to ROI stats
+    workflow.connect([
+        (transform_roi, roi_stats, [("lesion_mask_dsc_file", "lesion_mask")]),
+        (compute_maps, roi_stats, [
+            ("out_rel_cbf", "cbf_map"),
+            ("out_rel_cbv", "cbv_map"),
+            ("out_mtt", "mtt_map"),
+            ("out_tmax", "tmax_map"),
+            ("out_psr", "psr_map"),
+            ("out_ph", "ph_map"),
+            ("out_ttp_corrected", "ttp_corrected_map"),
+            ("out_rttp", "rttp_map"),
+        ]),
+        (normalize, roi_stats, [("ncbv_file", "ncbv_map")]),
+        (normalize_cbf, roi_stats, [("ncbf_file", "ncbf_map")]),
+        (compute_maps, roi_stats, [("out_k2", "k2_map")]),
+    ])
+    # Connect ROI stats outputs to outputnode
+    workflow.connect([
+        (transform_roi, outputnode, [("lesion_mask_dsc_file", "roi_mask_dsc")]),
+        (roi_stats, outputnode, [
+            ("stats_json", "roi_stats_json"),
+            ("stats_txt", "roi_stats_txt"),
         ]),
     ])
 

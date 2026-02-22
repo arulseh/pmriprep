@@ -40,9 +40,12 @@ class DSCConfig:
     disable_aif_fallback : bool
         Disable synthetic AIF fallback when detection fails.
     lesion_mask : Optional[Path]
-        Path to lesion mask for registration weighting.
+        Path to lesion mask for registration weighting, AIF exclusion,
+        and lesion statistics.
     nawm_mask : Optional[Path]
         Path to NAWM mask for CBV normalization.
+    roi_mask : Optional[Path]
+        Path to ROI mask for stats extraction only (no processing impact).
     registration : Literal["auto", "flirt", "bbr"]
         Registration method: auto (try both, pick best), flirt, or bbr.
     smooth_fwhm : float
@@ -85,6 +88,7 @@ class DSCConfig:
     # Registration settings
     lesion_mask: Optional[Path] = None
     nawm_mask: Optional[Path] = None
+    roi_mask: Optional[Path] = None
     registration: Literal["auto", "flirt", "bbr"] = "auto"
 
     # Processing settings
