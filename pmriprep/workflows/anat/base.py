@@ -625,102 +625,95 @@ def init_anat_preproc_wf(
     # Only create nodes for modalities that are available
     # -------------------------------------------------------------------
 
-    # Initialize node references (will be set if modality is available)
-    coreg_postcon = None
-    coreg_t2w = None
-    coreg_flair = None
-    coreg_pdw = None
+    # T1w post-contrast preprocessing and coregistration
+    if has_t1w_postcon:
+        reorient_postcon = pe.Node(ReorientAndCrop(), name="reorient_postcon")
+        bias_correct_postcon = pe.Node(
+            BiasCorrection(denoise=config.denoise), name="bias_correct_postcon"
+        )
+        coreg_postcon = pe.Node(
+            Coregistration(modality="T1_postcon", dof=6), name="coreg_postcon"
+        )
+        coreg_postcon_conns = [
+            (inputnode, reorient_postcon, [("t1w_postcon", "in_file")]),
+            (reorient_postcon, bias_correct_postcon, [("out_file", "in_file")]),
+            (bias_correct_postcon, coreg_postcon, [("out_file", "in_file")]),
+            (bias_correct, coreg_postcon, [("out_file", "reference")]),
+        ]
+        if config.use_lesion_mask:
+            coreg_postcon_conns.append(
+                (inputnode, coreg_postcon, [("lesion_mask", "lesion_mask")])
+            )
+        workflow.connect(coreg_postcon_conns)
 
-    if config.coregister_modalities:
-        # T1w post-contrast preprocessing and coregistration
-        if has_t1w_postcon:
-            reorient_postcon = pe.Node(ReorientAndCrop(), name="reorient_postcon")
-            bias_correct_postcon = pe.Node(
-                BiasCorrection(denoise=config.denoise), name="bias_correct_postcon"
+    # T2w preprocessing and coregistration
+    if has_t2w:
+        reorient_t2w = pe.Node(
+            ReorientAndCrop(crop_fov=False), name="reorient_t2w"
+        )
+        bias_correct_t2w = pe.Node(
+            BiasCorrection(denoise=config.denoise), name="bias_correct_t2w"
+        )
+        coreg_t2w = pe.Node(
+            Coregistration(modality="T2w", dof=6), name="coreg_t2w"
+        )
+        coreg_t2w_conns = [
+            (inputnode, reorient_t2w, [("t2w", "in_file")]),
+            (reorient_t2w, bias_correct_t2w, [("out_file", "in_file")]),
+            (bias_correct_t2w, coreg_t2w, [("out_file", "in_file")]),
+            (bias_correct, coreg_t2w, [("out_file", "reference")]),
+        ]
+        if config.use_lesion_mask:
+            coreg_t2w_conns.append(
+                (inputnode, coreg_t2w, [("lesion_mask", "lesion_mask")])
             )
-            coreg_postcon = pe.Node(
-                Coregistration(modality="T1_postcon", dof=6), name="coreg_postcon"
-            )
-            coreg_postcon_conns = [
-                (inputnode, reorient_postcon, [("t1w_postcon", "in_file")]),
-                (reorient_postcon, bias_correct_postcon, [("out_file", "in_file")]),
-                (bias_correct_postcon, coreg_postcon, [("out_file", "in_file")]),
-                (bias_correct, coreg_postcon, [("out_file", "reference")]),
-            ]
-            if config.use_lesion_mask:
-                coreg_postcon_conns.append(
-                    (inputnode, coreg_postcon, [("lesion_mask", "lesion_mask")])
-                )
-            workflow.connect(coreg_postcon_conns)
+        workflow.connect(coreg_t2w_conns)
 
-        # T2w preprocessing and coregistration
-        if has_t2w:
-            reorient_t2w = pe.Node(
-                ReorientAndCrop(crop_fov=False), name="reorient_t2w"
+    # FLAIR preprocessing and coregistration
+    if has_flair:
+        reorient_flair = pe.Node(
+            ReorientAndCrop(crop_fov=False), name="reorient_flair"
+        )
+        bias_correct_flair = pe.Node(
+            BiasCorrection(denoise=config.denoise), name="bias_correct_flair"
+        )
+        coreg_flair = pe.Node(
+            Coregistration(modality="FLAIR", dof=6), name="coreg_flair"
+        )
+        coreg_flair_conns = [
+            (inputnode, reorient_flair, [("flair", "in_file")]),
+            (reorient_flair, bias_correct_flair, [("out_file", "in_file")]),
+            (bias_correct_flair, coreg_flair, [("out_file", "in_file")]),
+            (bias_correct, coreg_flair, [("out_file", "reference")]),
+        ]
+        if config.use_lesion_mask:
+            coreg_flair_conns.append(
+                (inputnode, coreg_flair, [("lesion_mask", "lesion_mask")])
             )
-            bias_correct_t2w = pe.Node(
-                BiasCorrection(denoise=config.denoise), name="bias_correct_t2w"
-            )
-            coreg_t2w = pe.Node(
-                Coregistration(modality="T2w", dof=6), name="coreg_t2w"
-            )
-            coreg_t2w_conns = [
-                (inputnode, reorient_t2w, [("t2w", "in_file")]),
-                (reorient_t2w, bias_correct_t2w, [("out_file", "in_file")]),
-                (bias_correct_t2w, coreg_t2w, [("out_file", "in_file")]),
-                (bias_correct, coreg_t2w, [("out_file", "reference")]),
-            ]
-            if config.use_lesion_mask:
-                coreg_t2w_conns.append(
-                    (inputnode, coreg_t2w, [("lesion_mask", "lesion_mask")])
-                )
-            workflow.connect(coreg_t2w_conns)
+        workflow.connect(coreg_flair_conns)
 
-        # FLAIR preprocessing and coregistration
-        if has_flair:
-            reorient_flair = pe.Node(
-                ReorientAndCrop(crop_fov=False), name="reorient_flair"
+    # PDw preprocessing and coregistration
+    if has_pdw:
+        reorient_pdw = pe.Node(
+            ReorientAndCrop(crop_fov=False), name="reorient_pdw"
+        )
+        bias_correct_pdw = pe.Node(
+            BiasCorrection(denoise=config.denoise), name="bias_correct_pdw"
+        )
+        coreg_pdw = pe.Node(
+            Coregistration(modality="PDw", dof=6), name="coreg_pdw"
+        )
+        coreg_pdw_conns = [
+            (inputnode, reorient_pdw, [("pdw", "in_file")]),
+            (reorient_pdw, bias_correct_pdw, [("out_file", "in_file")]),
+            (bias_correct_pdw, coreg_pdw, [("out_file", "in_file")]),
+            (bias_correct, coreg_pdw, [("out_file", "reference")]),
+        ]
+        if config.use_lesion_mask:
+            coreg_pdw_conns.append(
+                (inputnode, coreg_pdw, [("lesion_mask", "lesion_mask")])
             )
-            bias_correct_flair = pe.Node(
-                BiasCorrection(denoise=config.denoise), name="bias_correct_flair"
-            )
-            coreg_flair = pe.Node(
-                Coregistration(modality="FLAIR", dof=6), name="coreg_flair"
-            )
-            coreg_flair_conns = [
-                (inputnode, reorient_flair, [("flair", "in_file")]),
-                (reorient_flair, bias_correct_flair, [("out_file", "in_file")]),
-                (bias_correct_flair, coreg_flair, [("out_file", "in_file")]),
-                (bias_correct, coreg_flair, [("out_file", "reference")]),
-            ]
-            if config.use_lesion_mask:
-                coreg_flair_conns.append(
-                    (inputnode, coreg_flair, [("lesion_mask", "lesion_mask")])
-                )
-            workflow.connect(coreg_flair_conns)
-
-        # PDw preprocessing and coregistration
-        if has_pdw:
-            reorient_pdw = pe.Node(
-                ReorientAndCrop(crop_fov=False), name="reorient_pdw"
-            )
-            bias_correct_pdw = pe.Node(
-                BiasCorrection(denoise=config.denoise), name="bias_correct_pdw"
-            )
-            coreg_pdw = pe.Node(
-                Coregistration(modality="PDw", dof=6), name="coreg_pdw"
-            )
-            coreg_pdw_conns = [
-                (inputnode, reorient_pdw, [("pdw", "in_file")]),
-                (reorient_pdw, bias_correct_pdw, [("out_file", "in_file")]),
-                (bias_correct_pdw, coreg_pdw, [("out_file", "in_file")]),
-                (bias_correct, coreg_pdw, [("out_file", "reference")]),
-            ]
-            if config.use_lesion_mask:
-                coreg_pdw_conns.append(
-                    (inputnode, coreg_pdw, [("lesion_mask", "lesion_mask")])
-                )
-            workflow.connect(coreg_pdw_conns)
+        workflow.connect(coreg_pdw_conns)
 
     # -------------------------------------------------------------------
     # Step 5: Brain Extraction
@@ -742,34 +735,33 @@ def init_anat_preproc_wf(
     # Only create mask nodes for modalities that exist
     # -------------------------------------------------------------------
 
-    if config.coregister_modalities:
-        if has_t1w_postcon and coreg_postcon is not None:
-            mask_postcon = pe.Node(ApplyMask(), name="mask_postcon")
-            workflow.connect([
-                (coreg_postcon, mask_postcon, [("out_file", "in_file")]),
-                (brain_extract, mask_postcon, [("out_mask", "mask_file")]),
-            ])
+    if has_t1w_postcon:
+        mask_postcon = pe.Node(ApplyMask(), name="mask_postcon")
+        workflow.connect([
+            (coreg_postcon, mask_postcon, [("out_file", "in_file")]),
+            (brain_extract, mask_postcon, [("out_mask", "mask_file")]),
+        ])
 
-        if has_t2w and coreg_t2w is not None:
-            mask_t2w = pe.Node(ApplyMask(), name="mask_t2w")
-            workflow.connect([
-                (coreg_t2w, mask_t2w, [("out_file", "in_file")]),
-                (brain_extract, mask_t2w, [("out_mask", "mask_file")]),
-            ])
+    if has_t2w:
+        mask_t2w = pe.Node(ApplyMask(), name="mask_t2w")
+        workflow.connect([
+            (coreg_t2w, mask_t2w, [("out_file", "in_file")]),
+            (brain_extract, mask_t2w, [("out_mask", "mask_file")]),
+        ])
 
-        if has_flair and coreg_flair is not None:
-            mask_flair = pe.Node(ApplyMask(), name="mask_flair")
-            workflow.connect([
-                (coreg_flair, mask_flair, [("out_file", "in_file")]),
-                (brain_extract, mask_flair, [("out_mask", "mask_file")]),
-            ])
+    if has_flair:
+        mask_flair = pe.Node(ApplyMask(), name="mask_flair")
+        workflow.connect([
+            (coreg_flair, mask_flair, [("out_file", "in_file")]),
+            (brain_extract, mask_flair, [("out_mask", "mask_file")]),
+        ])
 
-        if has_pdw and coreg_pdw is not None:
-            mask_pdw = pe.Node(ApplyMask(), name="mask_pdw")
-            workflow.connect([
-                (coreg_pdw, mask_pdw, [("out_file", "in_file")]),
-                (brain_extract, mask_pdw, [("out_mask", "mask_file")]),
-            ])
+    if has_pdw:
+        mask_pdw = pe.Node(ApplyMask(), name="mask_pdw")
+        workflow.connect([
+            (coreg_pdw, mask_pdw, [("out_file", "in_file")]),
+            (brain_extract, mask_pdw, [("out_mask", "mask_file")]),
+        ])
 
     # -------------------------------------------------------------------
     # Step 6b: HD-GLIO input preparation (no bias correction track)
@@ -777,8 +769,7 @@ def init_anat_preproc_wf(
     # then skull-strip. HD-GLIO expects coregistered, skull-stripped,
     # but NOT bias-corrected images (the DL model was trained on raw).
     # -------------------------------------------------------------------
-    if (config.coregister_modalities
-            and has_t1w_postcon and has_t2w and has_flair):
+    if has_t1w_postcon and has_t2w and has_flair:
 
         # T1w pre: reoriented → mask with brain_extract mask
         hdglio_mask_t1w = pe.Node(ApplyMask(), name="hdglio_mask_t1w")
@@ -1022,19 +1013,18 @@ def init_anat_preproc_wf(
     # Step 8: T1w Subtraction (when both pre and post available)
     # -------------------------------------------------------------------
 
-    if config.create_subtraction and config.coregister_modalities and has_t1w_postcon:
-        if coreg_postcon is not None:
-            create_subtraction = pe.Node(
-                T1wSubtraction(),
-                name="create_subtraction",
-            )
+    if config.create_subtraction and has_t1w_postcon:
+        create_subtraction = pe.Node(
+            T1wSubtraction(),
+            name="create_subtraction",
+        )
 
-            # Use FLIRT-coregistered postcon image
-            workflow.connect([
-                (coreg_postcon, create_subtraction, [("out_file", "postcon_file")]),
-                (bias_correct, create_subtraction, [("out_file", "precon_file")]),
-                (brain_extract, create_subtraction, [("out_mask", "brain_mask")]),
-            ])
+        # Use FLIRT-coregistered postcon image
+        workflow.connect([
+            (coreg_postcon, create_subtraction, [("out_file", "postcon_file")]),
+            (bias_correct, create_subtraction, [("out_file", "precon_file")]),
+            (brain_extract, create_subtraction, [("out_mask", "brain_mask")]),
+        ])
 
     # -------------------------------------------------------------------
     # Step 9: ACPC Alignment
@@ -1124,82 +1114,81 @@ def init_anat_preproc_wf(
     coreg_qc_flair = None
     coreg_qc_pdw = None
 
-    if config.coregister_modalities:
-        if has_t1w_postcon and coreg_postcon is not None:
-            coreg_qc_postcon = pe.Node(
-                niu.Function(
-                    input_names=["coregistered_file", "reference_file",
-                                 "brain_mask_file", "title"],
-                    output_names=["filmstrip_file"],
-                    function=_create_coreg_qc_filmstrip,
-                ),
-                name="coreg_qc_postcon",
-            )
-            coreg_qc_postcon.inputs.title = "T1w PostCon to T1w"
-            workflow.connect([
-                (mask_postcon, coreg_qc_postcon, [("out_file", "coregistered_file")]),
-                (brain_extract, coreg_qc_postcon, [
-                    ("out_file", "reference_file"),
-                    ("out_mask", "brain_mask_file"),
-                ]),
-            ])
+    if has_t1w_postcon:
+        coreg_qc_postcon = pe.Node(
+            niu.Function(
+                input_names=["coregistered_file", "reference_file",
+                             "brain_mask_file", "title"],
+                output_names=["filmstrip_file"],
+                function=_create_coreg_qc_filmstrip,
+            ),
+            name="coreg_qc_postcon",
+        )
+        coreg_qc_postcon.inputs.title = "T1w PostCon to T1w"
+        workflow.connect([
+            (mask_postcon, coreg_qc_postcon, [("out_file", "coregistered_file")]),
+            (brain_extract, coreg_qc_postcon, [
+                ("out_file", "reference_file"),
+                ("out_mask", "brain_mask_file"),
+            ]),
+        ])
 
-        if has_t2w and coreg_t2w is not None:
-            coreg_qc_t2w = pe.Node(
-                niu.Function(
-                    input_names=["coregistered_file", "reference_file",
-                                 "brain_mask_file", "title"],
-                    output_names=["filmstrip_file"],
-                    function=_create_coreg_qc_filmstrip,
-                ),
-                name="coreg_qc_t2w",
-            )
-            coreg_qc_t2w.inputs.title = "T2w to T1w"
-            workflow.connect([
-                (mask_t2w, coreg_qc_t2w, [("out_file", "coregistered_file")]),
-                (brain_extract, coreg_qc_t2w, [
-                    ("out_file", "reference_file"),
-                    ("out_mask", "brain_mask_file"),
-                ]),
-            ])
+    if has_t2w:
+        coreg_qc_t2w = pe.Node(
+            niu.Function(
+                input_names=["coregistered_file", "reference_file",
+                             "brain_mask_file", "title"],
+                output_names=["filmstrip_file"],
+                function=_create_coreg_qc_filmstrip,
+            ),
+            name="coreg_qc_t2w",
+        )
+        coreg_qc_t2w.inputs.title = "T2w to T1w"
+        workflow.connect([
+            (mask_t2w, coreg_qc_t2w, [("out_file", "coregistered_file")]),
+            (brain_extract, coreg_qc_t2w, [
+                ("out_file", "reference_file"),
+                ("out_mask", "brain_mask_file"),
+            ]),
+        ])
 
-        if has_flair and coreg_flair is not None:
-            coreg_qc_flair = pe.Node(
-                niu.Function(
-                    input_names=["coregistered_file", "reference_file",
-                                 "brain_mask_file", "title"],
-                    output_names=["filmstrip_file"],
-                    function=_create_coreg_qc_filmstrip,
-                ),
-                name="coreg_qc_flair",
-            )
-            coreg_qc_flair.inputs.title = "FLAIR to T1w"
-            workflow.connect([
-                (mask_flair, coreg_qc_flair, [("out_file", "coregistered_file")]),
-                (brain_extract, coreg_qc_flair, [
-                    ("out_file", "reference_file"),
-                    ("out_mask", "brain_mask_file"),
-                ]),
-            ])
+    if has_flair:
+        coreg_qc_flair = pe.Node(
+            niu.Function(
+                input_names=["coregistered_file", "reference_file",
+                             "brain_mask_file", "title"],
+                output_names=["filmstrip_file"],
+                function=_create_coreg_qc_filmstrip,
+            ),
+            name="coreg_qc_flair",
+        )
+        coreg_qc_flair.inputs.title = "FLAIR to T1w"
+        workflow.connect([
+            (mask_flair, coreg_qc_flair, [("out_file", "coregistered_file")]),
+            (brain_extract, coreg_qc_flair, [
+                ("out_file", "reference_file"),
+                ("out_mask", "brain_mask_file"),
+            ]),
+        ])
 
-        if has_pdw and coreg_pdw is not None:
-            coreg_qc_pdw = pe.Node(
-                niu.Function(
-                    input_names=["coregistered_file", "reference_file",
-                                 "brain_mask_file", "title"],
-                    output_names=["filmstrip_file"],
-                    function=_create_coreg_qc_filmstrip,
-                ),
-                name="coreg_qc_pdw",
-            )
-            coreg_qc_pdw.inputs.title = "PDw to T1w"
-            workflow.connect([
-                (mask_pdw, coreg_qc_pdw, [("out_file", "coregistered_file")]),
-                (brain_extract, coreg_qc_pdw, [
-                    ("out_file", "reference_file"),
-                    ("out_mask", "brain_mask_file"),
-                ]),
-            ])
+    if has_pdw:
+        coreg_qc_pdw = pe.Node(
+            niu.Function(
+                input_names=["coregistered_file", "reference_file",
+                             "brain_mask_file", "title"],
+                output_names=["filmstrip_file"],
+                function=_create_coreg_qc_filmstrip,
+            ),
+            name="coreg_qc_pdw",
+        )
+        coreg_qc_pdw.inputs.title = "PDw to T1w"
+        workflow.connect([
+            (mask_pdw, coreg_qc_pdw, [("out_file", "coregistered_file")]),
+            (brain_extract, coreg_qc_pdw, [
+                ("out_file", "reference_file"),
+                ("out_mask", "brain_mask_file"),
+            ]),
+        ])
 
     # -------------------------------------------------------------------
     # Connect outputs to output node
@@ -1274,30 +1263,29 @@ def init_anat_preproc_wf(
         ])
 
     # Coregistered modalities and transforms (only for available modalities)
-    if config.coregister_modalities:
-        if has_t1w_postcon and coreg_postcon is not None:
-            workflow.connect([
-                (mask_postcon, outputnode, [("out_file", "t1w_postcon_coreg")]),
-                (coreg_postcon, outputnode, [("out_matrix", "t1w_postcon_to_t1w_xfm")]),
-            ])
-        if has_t2w and coreg_t2w is not None:
-            workflow.connect([
-                (mask_t2w, outputnode, [("out_file", "t2w_coreg")]),
-                (coreg_t2w, outputnode, [("out_matrix", "t2w_to_t1w_xfm")]),
-            ])
-        if has_flair and coreg_flair is not None:
-            workflow.connect([
-                (mask_flair, outputnode, [("out_file", "flair_coreg")]),
-                (coreg_flair, outputnode, [("out_matrix", "flair_to_t1w_xfm")]),
-            ])
-        if has_pdw and coreg_pdw is not None:
-            workflow.connect([
-                (mask_pdw, outputnode, [("out_file", "pdw_coreg")]),
-                (coreg_pdw, outputnode, [("out_matrix", "pdw_to_t1w_xfm")]),
-            ])
+    if has_t1w_postcon:
+        workflow.connect([
+            (mask_postcon, outputnode, [("out_file", "t1w_postcon_coreg")]),
+            (coreg_postcon, outputnode, [("out_matrix", "t1w_postcon_to_t1w_xfm")]),
+        ])
+    if has_t2w:
+        workflow.connect([
+            (mask_t2w, outputnode, [("out_file", "t2w_coreg")]),
+            (coreg_t2w, outputnode, [("out_matrix", "t2w_to_t1w_xfm")]),
+        ])
+    if has_flair:
+        workflow.connect([
+            (mask_flair, outputnode, [("out_file", "flair_coreg")]),
+            (coreg_flair, outputnode, [("out_matrix", "flair_to_t1w_xfm")]),
+        ])
+    if has_pdw:
+        workflow.connect([
+            (mask_pdw, outputnode, [("out_file", "pdw_coreg")]),
+            (coreg_pdw, outputnode, [("out_matrix", "pdw_to_t1w_xfm")]),
+        ])
 
     # Subtraction image
-    if config.create_subtraction and config.coregister_modalities and has_t1w_postcon:
+    if config.create_subtraction and has_t1w_postcon:
         workflow.connect([
             (create_subtraction, outputnode, [("out_file", "t1w_subtraction")]),
         ])

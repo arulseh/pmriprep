@@ -33,9 +33,6 @@ class AnatConfig:
     # Registration settings
     use_lesion_mask: bool = False
 
-    # Cross-modal coregistration settings
-    coregister_modalities: bool = True  # Enable cross-modal coregistration
-
     # Subtraction image settings
     create_subtraction: bool = True  # Create post-pre subtraction image
 
