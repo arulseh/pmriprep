@@ -161,6 +161,7 @@ def _find_previous_anat_outputs(
         "csf_probseg": None,
         "t1w_to_mni_xfm": None,
         "flair_coreg": None,
+        "flair_postcon_coreg": None,
         "t2w_coreg": None,
     }
 
@@ -221,6 +222,13 @@ def _find_previous_anat_outputs(
         candidates = sorted(postcon_dir.glob("*_masked.nii.gz"))
         if candidates:
             outputs["t1w_postcon_coreg"] = str(candidates[0])
+
+    # FLAIR post-contrast coregistered and masked
+    flair_postcon_dir = anat_dir / "mask_flair_postcon"
+    if flair_postcon_dir.exists():
+        candidates = sorted(flair_postcon_dir.glob("*_masked.nii.gz"))
+        if candidates:
+            outputs["flair_postcon_coreg"] = str(candidates[0])
 
     return outputs
 
@@ -735,6 +743,7 @@ def init_pmriprep_wf(
                 "t1w_postcon",
                 "t2w",
                 "flair",
+                "flair_postcon",
                 # Perfusion inputs
                 "dsc_file",
                 "dce_file",
@@ -758,6 +767,8 @@ def init_pmriprep_wf(
         inputnode.inputs.t2w = str(session_data.modalities.t2w)
     if session_data.modalities.flair:
         inputnode.inputs.flair = str(session_data.modalities.flair)
+    if session_data.modalities.flair_postcon:
+        inputnode.inputs.flair_postcon = str(session_data.modalities.flair_postcon)
     if session_data.modalities.dsc:
         inputnode.inputs.dsc_file = str(session_data.modalities.dsc)
     if session_data.modalities.dce:
@@ -931,6 +942,7 @@ def init_pmriprep_wf(
             ),
             has_t2w=session_data.modalities.t2w is not None,
             has_flair=session_data.modalities.flair is not None,
+            has_flair_postcon=session_data.modalities.flair_postcon is not None,
             name="anat_wf",
         )
 
@@ -953,6 +965,10 @@ def init_pmriprep_wf(
         if session_data.modalities.flair:
             workflow.connect([
                 (inputnode, anat_wf, [("flair", "inputnode.flair")]),
+            ])
+        if session_data.modalities.flair_postcon:
+            workflow.connect([
+                (inputnode, anat_wf, [("flair_postcon", "inputnode.flair_postcon")]),
             ])
         # Connect anat outputs to master outputnode
         workflow.connect([
@@ -1049,6 +1065,14 @@ def init_pmriprep_wf(
                 ]),
                 (inputnode, anat_writer, [("flair", "source_flair")]),
             ])
+        if session_data.modalities.flair_postcon:
+            workflow.connect([
+                (anat_wf, anat_writer, [
+                    ("outputnode.flair_postcon_coreg", "flair_postcon_coreg"),
+                    ("outputnode.flair_postcon_to_t1w_xfm", "flair_postcon_to_t1w_xfm"),
+                ]),
+                (inputnode, anat_writer, [("flair_postcon", "source_flair_postcon")]),
+            ])
         # -------------------------------------------------------------------
         # Anat: connect writer to unified report barrier
         # -------------------------------------------------------------------
@@ -1093,6 +1117,12 @@ def init_pmriprep_wf(
             workflow.connect([
                 (anat_wf, anat_writer, [
                     ("outputnode.coreg_filmstrip_flair", "coreg_filmstrip_flair"),
+                ]),
+            ])
+        if session_data.modalities.flair_postcon:
+            workflow.connect([
+                (anat_wf, anat_writer, [
+                    ("outputnode.coreg_filmstrip_flair_postcon", "coreg_filmstrip_flair_postcon"),
                 ]),
             ])
     # -------------------------------------------------------------------
@@ -1291,11 +1321,15 @@ def init_pmriprep_wf(
                     logging.getLogger("pmriprep.workflows").warning(
                         "DSC: 't1w_precon' underlay requested but no pre-contrast T1w available. Skipping."
                     )
-            # FLAIR underlay
+            # FLAIR underlay (prefer precon, fall back to postcon)
             if "flair" in dsc_config.underlays:
                 if session_data.modalities.flair:
                     workflow.connect([
                         (anat_wf, dsc_wf, [("outputnode.flair_coreg", "inputnode.flair_in_t1w")]),
+                    ])
+                elif session_data.modalities.flair_postcon:
+                    workflow.connect([
+                        (anat_wf, dsc_wf, [("outputnode.flair_postcon_coreg", "inputnode.flair_in_t1w")]),
                     ])
                 else:
                     logging.getLogger("pmriprep.workflows").warning(
@@ -1347,9 +1381,13 @@ def init_pmriprep_wf(
             if prev_anat["t1w_to_mni_xfm"]:
                 dsc_wf.inputs.inputnode.t1w_to_mni_xfm = prev_anat["t1w_to_mni_xfm"]
                 _log.info("skip-anat: loaded t1w_to_mni_xfm from %s", prev_anat["t1w_to_mni_xfm"])
-            if "flair" in dsc_config.underlays and prev_anat["flair_coreg"]:
-                dsc_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
-                _log.info("skip-anat: loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
+            if "flair" in dsc_config.underlays:
+                if prev_anat["flair_coreg"]:
+                    dsc_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
+                    _log.info("skip-anat: loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
+                elif prev_anat.get("flair_postcon_coreg"):
+                    dsc_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_postcon_coreg"]
+                    _log.info("skip-anat: loaded flair_in_t1w (postcon) from %s", prev_anat["flair_postcon_coreg"])
             if "t2w" in dsc_config.underlays and prev_anat["t2w_coreg"]:
                 dsc_wf.inputs.inputnode.t2w_in_t1w = prev_anat["t2w_coreg"]
                 _log.info("skip-anat: loaded t2w_in_t1w from %s", prev_anat["t2w_coreg"])
@@ -1815,11 +1853,15 @@ def init_pmriprep_wf(
                     logging.getLogger("pmriprep.workflows").warning(
                         "DCE: 't1w_precon' underlay requested but no pre-contrast T1w available. Skipping."
                     )
-            # FLAIR underlay
+            # FLAIR underlay (prefer precon, fall back to postcon)
             if "flair" in dce_config.underlays:
                 if session_data.modalities.flair:
                     workflow.connect([
                         (anat_wf, dce_wf, [("outputnode.flair_coreg", "inputnode.flair_in_t1w")]),
+                    ])
+                elif session_data.modalities.flair_postcon:
+                    workflow.connect([
+                        (anat_wf, dce_wf, [("outputnode.flair_postcon_coreg", "inputnode.flair_in_t1w")]),
                     ])
                 else:
                     logging.getLogger("pmriprep.workflows").warning(
@@ -1878,9 +1920,13 @@ def init_pmriprep_wf(
                     _log.info("skip-anat (DCE): loaded t1w_underlay (precon) from %s", prev_anat["t1w_preproc"])
                 else:
                     _log.warning("DCE: 't1w_precon' underlay requested but unavailable in skip-anat. Skipping.")
-            if "flair" in dce_config.underlays and prev_anat["flair_coreg"]:
-                dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
-                _log.info("skip-anat (DCE): loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
+            if "flair" in dce_config.underlays:
+                if prev_anat["flair_coreg"]:
+                    dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
+                    _log.info("skip-anat (DCE): loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
+                elif prev_anat.get("flair_postcon_coreg"):
+                    dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_postcon_coreg"]
+                    _log.info("skip-anat (DCE): loaded flair_in_t1w (postcon) from %s", prev_anat["flair_postcon_coreg"])
             if "t2w" in dce_config.underlays and prev_anat["t2w_coreg"]:
                 dce_wf.inputs.inputnode.t2w_in_t1w = prev_anat["t2w_coreg"]
                 _log.info("skip-anat (DCE): loaded t2w_in_t1w from %s", prev_anat["t2w_coreg"])

@@ -516,7 +516,7 @@ class TestMapSelectionToAnatOutput:
         assert _map_selection_to_anat_output(ImageType.FLAIR_PRECON) == "outputnode.flair_coreg"
 
     def test_flair_postcon(self) -> None:
-        assert _map_selection_to_anat_output(ImageType.FLAIR_POSTCON) == "outputnode.flair_coreg"
+        assert _map_selection_to_anat_output(ImageType.FLAIR_POSTCON) == "outputnode.flair_postcon_coreg"
 
 
 class TestScoreCandidate:

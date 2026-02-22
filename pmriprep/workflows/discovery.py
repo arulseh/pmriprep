@@ -21,7 +21,8 @@ class ModalityAvailability:
         t1w_pre: Path to pre-contrast T1w image, if available.
         t1w_ce_gad: Path to contrast-enhanced T1w (GAD) image, if available.
         t2w: Path to T2w image, if available.
-        flair: Path to FLAIR image, if available.
+        flair: Path to pre-contrast FLAIR image, if available.
+        flair_postcon: Path to post-contrast FLAIR image, if available.
         dsc: Path to DSC perfusion image, if available.
         dce: Path to DCE perfusion image, if available.
         vfa: List of paths to VFA (Variable Flip Angle) images for T1 mapping.
@@ -33,6 +34,7 @@ class ModalityAvailability:
     t1w_ce_gad: Optional[Path] = None
     t2w: Optional[Path] = None
     flair: Optional[Path] = None
+    flair_postcon: Optional[Path] = None
     dsc: Optional[Path] = None
     dce: Optional[Path] = None
     vfa: List[Path] = field(default_factory=list)
@@ -360,15 +362,21 @@ def _find_t2w(
     return winner_path
 
 
-def _find_flair(anat_dir: Path) -> Optional[Path]:
-    """Find FLAIR image.
+def _find_flair_precontrast(anat_dir: Path) -> Optional[Path]:
+    """Find pre-contrast FLAIR image.
+
+    Pre-contrast FLAIR is identified by having _FLAIR suffix and NOT having
+    a contrast entity (ce-) in the filename. HD-GLIO requires pre-contrast
+    FLAIR (trained on BraTS non-enhanced FLAIR).
 
     Args:
         anat_dir: Path to the anatomical directory.
 
     Returns:
-        Path to FLAIR image, or None if not found.
+        Path to pre-contrast FLAIR image, or None if not found.
     """
+    from pmriprep.utils.structural_reference import is_postcontrast_image
+
     flair_files = (
         list(anat_dir.glob("*_FLAIR.nii.gz"))
         + list(anat_dir.glob("*_FLAIR.nii"))
@@ -376,8 +384,37 @@ def _find_flair(anat_dir: Path) -> Optional[Path]:
         + list(anat_dir.glob("*_flair.nii"))
     )
 
-    if flair_files:
-        return flair_files[0]
+    precon = [f for f in flair_files if not is_postcontrast_image(f)]
+    if precon:
+        return precon[0]
+
+    return None
+
+
+def _find_flair_postcontrast(anat_dir: Path) -> Optional[Path]:
+    """Find post-contrast FLAIR image.
+
+    Post-contrast FLAIR is identified by having _FLAIR suffix AND having
+    a contrast entity (ce-) or post-contrast keyword in the filename.
+
+    Args:
+        anat_dir: Path to the anatomical directory.
+
+    Returns:
+        Path to post-contrast FLAIR image, or None if not found.
+    """
+    from pmriprep.utils.structural_reference import is_postcontrast_image
+
+    flair_files = (
+        list(anat_dir.glob("*_FLAIR.nii.gz"))
+        + list(anat_dir.glob("*_FLAIR.nii"))
+        + list(anat_dir.glob("*_flair.nii.gz"))
+        + list(anat_dir.glob("*_flair.nii"))
+    )
+
+    postcon = [f for f in flair_files if is_postcontrast_image(f)]
+    if postcon:
+        return postcon[0]
 
     return None
 
@@ -756,7 +793,10 @@ def _determine_pipeline_availability(modalities: ModalityAvailability) -> Pipeli
     if not modalities.t2w:
         tumor_seg_missing.append("T2w")
     if not modalities.flair:
-        tumor_seg_missing.append("FLAIR")
+        if modalities.flair_postcon:
+            tumor_seg_missing.append("FLAIR (pre-contrast)")
+        else:
+            tumor_seg_missing.append("FLAIR")
 
     if not tumor_seg_missing:
         pipelines.tumor_seg = True
@@ -817,8 +857,12 @@ def discover_session_data(
     if anat_dir.is_dir():
         modalities.t1w_pre = _find_t1w_precontrast(anat_dir)
         modalities.t1w_ce_gad = _find_t1w_ce_gad(anat_dir)
-        modalities.flair = _find_flair(anat_dir)
-        modalities.t2w = _find_t2w(anat_dir, flair_path=modalities.flair)
+        modalities.flair = _find_flair_precontrast(anat_dir)
+        modalities.flair_postcon = _find_flair_postcontrast(anat_dir)
+        modalities.t2w = _find_t2w(
+            anat_dir,
+            flair_path=modalities.flair or modalities.flair_postcon,
+        )
         modalities.vfa = _find_vfa(anat_dir)
         modalities.afi = _find_afi(anat_dir, fmap_dir=fmap_dir_opt)
 
@@ -879,6 +923,7 @@ def get_data_summary(session_data: SessionData) -> Dict[str, Union[bool, str, No
         "has_t1w_ce_gad": session_data.modalities.t1w_ce_gad is not None,
         "has_t2w": session_data.modalities.t2w is not None,
         "has_flair": session_data.modalities.flair is not None,
+        "has_flair_postcon": session_data.modalities.flair_postcon is not None,
         "has_dsc": session_data.modalities.dsc is not None,
         "has_dce": session_data.modalities.dce is not None,
         "has_vfa": len(session_data.modalities.vfa) > 0,

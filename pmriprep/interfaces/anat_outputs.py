@@ -50,6 +50,8 @@ class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     t2w_to_t1w_xfm = File(desc="T2w to T1w transform matrix")
     flair_coreg = File(desc="FLAIR coregistered to T1w")
     flair_to_t1w_xfm = File(desc="FLAIR to T1w transform matrix")
+    flair_postcon_coreg = File(desc="Post-contrast FLAIR coregistered to T1w")
+    flair_postcon_to_t1w_xfm = File(desc="Post-contrast FLAIR to T1w transform matrix")
     t1w_subtraction = File(desc="T1w subtraction image (post - pre)")
 
     # Source paths for JSON sidecar Sources field
@@ -57,6 +59,7 @@ class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     source_t1w_postcon = File(desc="Original T1w post-contrast source path")
     source_t2w = File(desc="Original T2w source path")
     source_flair = File(desc="Original FLAIR source path")
+    source_flair_postcon = File(desc="Original post-contrast FLAIR source path")
     # QC filmstrips (optional)
     brain_mask_filmstrip = traits.Str(desc="Brain mask QC filmstrip PNG path")
     tissue_seg_filmstrip = traits.Str(desc="Tissue segmentation QC filmstrip PNG path")
@@ -64,6 +67,7 @@ class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     coreg_filmstrip_postcon = traits.Str(desc="T1w postcon coregistration filmstrip PNG path")
     coreg_filmstrip_t2w = traits.Str(desc="T2w coregistration filmstrip PNG path")
     coreg_filmstrip_flair = traits.Str(desc="FLAIR coregistration filmstrip PNG path")
+    coreg_filmstrip_flair_postcon = traits.Str(desc="FLAIR post-contrast coregistration filmstrip PNG path")
     # QC metrics
     qc_metrics = traits.Dict(desc="QC metrics dictionary from brain extraction")
 
@@ -238,7 +242,7 @@ class AnatDerivativeWriter(BaseInterface):
                     anat_dir / f"{prefix}_space-anat_desc-preproc_T2w.json",
                 )
 
-        # FLAIR
+        # FLAIR (pre-contrast)
         if has_input(self.inputs,"flair_coreg"):
             copy_derivative(
                 self.inputs.flair_coreg,
@@ -255,6 +259,25 @@ class AnatDerivativeWriter(BaseInterface):
                 write_json_sidecar(
                     sidecar,
                     anat_dir / f"{prefix}_space-anat_desc-preproc_FLAIR.json",
+                )
+
+        # FLAIR (post-contrast)
+        if has_input(self.inputs, "flair_postcon_coreg"):
+            copy_derivative(
+                self.inputs.flair_postcon_coreg,
+                anat_dir / f"{prefix}_ce-GAD_space-anat_desc-preproc_FLAIR.nii.gz",
+            )
+            source_flair_postcon = self._get_source_path("source_flair_postcon")
+            if source_flair_postcon:
+                sidecar = build_preproc_sidecar(
+                    description="Preprocessed and brain-extracted post-contrast FLAIR image in native anat space",
+                    source_path=source_flair_postcon,
+                    bids_dir=bids_dir,
+                    skull_stripped=True,
+                )
+                write_json_sidecar(
+                    sidecar,
+                    anat_dir / f"{prefix}_ce-GAD_space-anat_desc-preproc_FLAIR.json",
                 )
 
         # T1w subtraction
@@ -296,6 +319,10 @@ class AnatDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"flair_to_t1w_xfm"):
             fname = get_xfm_filename(subject, session, "FLAIR", "anat")
             copy_derivative(self.inputs.flair_to_t1w_xfm, anat_dir / fname)
+
+        if has_input(self.inputs, "flair_postcon_to_t1w_xfm"):
+            fname = get_xfm_filename(subject, session, "FLAIRCE", "anat")
+            copy_derivative(self.inputs.flair_postcon_to_t1w_xfm, anat_dir / fname)
 
         # ---------------------------------------------------------------
         # 4. Dataset description
@@ -350,6 +377,7 @@ class AnatDerivativeWriter(BaseInterface):
             "coreg_postcon": "coreg_filmstrip_postcon",
             "coreg_t2w": "coreg_filmstrip_t2w",
             "coreg_flair": "coreg_filmstrip_flair",
+            "coreg_flair_postcon": "coreg_filmstrip_flair_postcon",
         }
         for fig_key, attr in _fig_inputs.items():
             if has_input(self.inputs,attr):

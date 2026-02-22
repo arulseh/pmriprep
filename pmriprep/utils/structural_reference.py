@@ -869,25 +869,43 @@ def build_candidates_from_session(
             has_lesion_mask=has_lesion_mask,
         ))
 
-    # Handle FLAIR (needs contrast classification)
+    # Handle FLAIR pre-contrast (modalities.flair is strictly precon after discovery)
     flair_path = getattr(modalities, "flair", None)
     if flair_path is not None:
         flair_path = Path(flair_path)
         if flair_path.exists():
             try:
                 info = get_image_resolution_info(flair_path)
-                flair_type = classify_image_type(flair_path)
-                # Ensure it's a FLAIR type
-                if flair_type not in (ImageType.FLAIR_PRECON, ImageType.FLAIR_POSTCON):
-                    flair_type = ImageType.FLAIR_PRECON
-
                 is_high_res = info.geometric_mean <= _HIGH_RES_THRESHOLD
                 if max(info.voxel_sizes) > _MAX_VOXEL_DIM_CUTOFF:
                     is_high_res = False
 
                 candidates.append(StructuralCandidate(
                     path=flair_path,
-                    image_type=flair_type,
+                    image_type=ImageType.FLAIR_PRECON,
+                    voxel_sizes=info.voxel_sizes,
+                    geometric_mean=info.geometric_mean,
+                    isotropy_ratio=info.isotropy_ratio,
+                    is_high_res=is_high_res,
+                    has_lesion_mask=has_lesion_mask,
+                ))
+            except Exception:
+                pass
+
+    # Handle FLAIR post-contrast
+    flair_postcon_path = getattr(modalities, "flair_postcon", None)
+    if flair_postcon_path is not None:
+        flair_postcon_path = Path(flair_postcon_path)
+        if flair_postcon_path.exists():
+            try:
+                info = get_image_resolution_info(flair_postcon_path)
+                is_high_res = info.geometric_mean <= _HIGH_RES_THRESHOLD
+                if max(info.voxel_sizes) > _MAX_VOXEL_DIM_CUTOFF:
+                    is_high_res = False
+
+                candidates.append(StructuralCandidate(
+                    path=flair_postcon_path,
+                    image_type=ImageType.FLAIR_POSTCON,
                     voxel_sizes=info.voxel_sizes,
                     geometric_mean=info.geometric_mean,
                     isotropy_ratio=info.isotropy_ratio,
@@ -1111,6 +1129,6 @@ def _map_selection_to_anat_output(
         ImageType.T1W_POSTCON: "outputnode.t1w_postcon_coreg",
         ImageType.T2W: "outputnode.t2w_coreg",
         ImageType.FLAIR_PRECON: "outputnode.flair_coreg",
-        ImageType.FLAIR_POSTCON: "outputnode.flair_coreg",
+        ImageType.FLAIR_POSTCON: "outputnode.flair_postcon_coreg",
     }
     return mapping.get(image_type, "outputnode.t1w_preproc")
