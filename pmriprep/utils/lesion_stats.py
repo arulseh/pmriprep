@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
+import pmriprep
+
 
 @dataclass
 class MapStatistics:
@@ -117,7 +119,7 @@ class LesionStatisticsResult:
         """Convert to dictionary for JSON serialization."""
         result: Dict[str, Any] = {
             "Description": f"Lesion ROI perfusion statistics extracted from {self.modality}-MRI",
-            "GeneratedBy": "pmriprep",
+            "GeneratedBy": [{"Name": "pmriprep", "Version": pmriprep.__version__}],
             "GeneratedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "Subject": f"sub-{self.subject_id}",
             "Session": f"ses-{self.session_id}" if self.session_id else "",

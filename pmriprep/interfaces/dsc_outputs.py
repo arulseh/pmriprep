@@ -18,6 +18,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.outputs import copy_derivative, has_input, write_json_sidecar
+from pmriprep.utils.provenance import get_bids_derivative_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -227,16 +228,16 @@ class DSCDerivativeWriter(BaseInterface):
         # 2. Core maps (desc-dsc)
         # -----------------------------------------------------------
         core_maps = {
-            "mtt": ("mtt_map", "Mean transit time"),
-            "tmax": ("tmax_map", "Time to maximum of residue function"),
-            "psr": ("psr_map", "Percent signal recovery"),
-            "ph": ("ph_map", "Peak height"),
+            "mtt": ("mtt_map", "Mean transit time", "s"),
+            "tmax": ("tmax_map", "Time to maximum of residue function", "s"),
+            "psr": ("psr_map", "Percent signal recovery", "%"),
+            "ph": ("ph_map", "Peak height", "arbitrary"),
         }
-        for map_name, (attr, description) in core_maps.items():
+        for map_name, (attr, description, units) in core_maps.items():
             src = getattr(self.inputs, attr)
             fname = f"{prefix}_{spatial}_desc-dsc_{map_name}"
             copy_derivative(src, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": description}
+            sidecar = {**base_sidecar, "Description": description, "Units": units}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # Additional optional maps with per-map desc values
@@ -257,6 +258,12 @@ class DSCDerivativeWriter(BaseInterface):
             "snr": ("snr_map", "Signal-to-noise ratio (baseline)", "dsc", "snr"),
             "tsnr": ("tsnr_map", "Temporal signal-to-noise ratio", "dsc", "tsnr"),
         }
+        # Units for optional maps
+        optional_units: dict[str, str] = {
+            "cnr": "arbitrary",
+            "snr": "arbitrary",
+            "tsnr": "arbitrary",
+        }
         # Units and reference points for timing maps
         timing_sidecars: dict[str, dict[str, str]] = {
             "ttp": {"Units": "seconds", "ReferencePoint": "start of acquisition (volume 0)"},
@@ -271,6 +278,8 @@ class DSCDerivativeWriter(BaseInterface):
                 sidecar = {**base_sidecar, "Description": description}
                 if map_key in timing_sidecars:
                     sidecar.update(timing_sidecars[map_key])
+                if map_key in optional_units:
+                    sidecar["Units"] = optional_units[map_key]
                 write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -279,13 +288,13 @@ class DSCDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"ncbv_map"):
             fname = f"{prefix}_{spatial}_desc-dscNawmNorm_cbv"
             copy_derivative(self.inputs.ncbv_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Normalized CBV (NAWM-normalized)"}
+            sidecar = {**base_sidecar, "Description": "Normalized CBV (NAWM-normalized)", "Units": "ratio"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         if has_input(self.inputs,"ncbf_map"):
             fname = f"{prefix}_{spatial}_desc-dscNawmNorm_cbf"
             copy_derivative(self.inputs.ncbf_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Normalized CBF (NAWM-normalized)"}
+            sidecar = {**base_sidecar, "Description": "Normalized CBF (NAWM-normalized)", "Units": "ratio"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -294,7 +303,7 @@ class DSCDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"k2_map"):
             fname = f"{prefix}_{spatial}_desc-dsc_k2"
             copy_derivative(self.inputs.k2_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "K2 leakage correction map"}
+            sidecar = {**base_sidecar, "Description": "K2 leakage correction map", "Units": "1/s"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -456,16 +465,18 @@ class DSCDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # 8b. DSC-space masks (written to anat/)
         # -----------------------------------------------------------
+        minimal_sidecar = self._build_base_sidecar(bids_dir, voxel_sizes, minimal=True)
+
         if has_input(self.inputs,"brain_mask_dsc"):
             fname = f"{prefix}_{spatial}_desc-brain_mask"
             copy_derivative(self.inputs.brain_mask_dsc, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Brain mask in DSC space"}
+            sidecar = {**minimal_sidecar, "Description": "Brain mask in DSC space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         if has_input(self.inputs,"nawm_mask_dsc"):
             fname = f"{prefix}_{spatial}_desc-nawm_mask"
             copy_derivative(self.inputs.nawm_mask_dsc, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Normal-appearing white matter mask in DSC space"}
+            sidecar = {**minimal_sidecar, "Description": "Normal-appearing white matter mask in DSC space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -550,13 +561,13 @@ class DSCDerivativeWriter(BaseInterface):
                 description = "T1w registered to DSC space"
             fname = f"{prefix}_{spatial}_{label}"
             copy_derivative(self.inputs.t1w_in_dsc, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": description}
+            sidecar = {**minimal_sidecar, "Description": description}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         if has_input(self.inputs,"flair_in_dsc"):
             fname = f"{prefix}_{spatial}_FLAIR"
             copy_derivative(self.inputs.flair_in_dsc, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "FLAIR registered to DSC space"}
+            sidecar = {**minimal_sidecar, "Description": "FLAIR registered to DSC space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -571,7 +582,7 @@ class DSCDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"lesion_mask_dsc"):
             fname = f"{prefix}_{spatial}_desc-lesion_mask"
             copy_derivative(self.inputs.lesion_mask_dsc, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Lesion mask registered to DSC space"}
+            sidecar = {**minimal_sidecar, "Description": "Lesion mask registered to DSC space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -594,18 +605,23 @@ class DSCDerivativeWriter(BaseInterface):
     # Helper methods
     # -------------------------------------------------------------------
 
-    def _build_base_sidecar(self, bids_dir: str, voxel_sizes: tuple) -> dict[str, Any]:
+    def _build_base_sidecar(
+        self, bids_dir: str, voxel_sizes: tuple, minimal: bool = False,
+    ) -> dict[str, Any]:
         """Build base JSON sidecar with processing metadata.
 
         Args:
             bids_dir: Path to the BIDS dataset root.
             voxel_sizes: Voxel dimensions from the reference image header.
+            minimal: If True, omit perfusion-specific fields
+                (DeconvolutionMethod, BayesianInference, PreBolus).
+                Use for masks, structural underlays, and non-perfusion maps.
 
         Returns:
             Base sidecar dictionary with common metadata fields.
         """
         sidecar: dict[str, Any] = {
-            "Pipeline": "PMRIPrep DSC",
+            **get_bids_derivative_provenance(),
             "Space": "DSC (native perfusion space)",
             "Resolution": [float(v) for v in voxel_sizes],
         }
@@ -624,12 +640,13 @@ class DSCDerivativeWriter(BaseInterface):
             except (ValueError, TypeError):
                 sidecar["Sources"] = [str(source_dsc)]
 
-        # Add config summary
-        config_dict = self.inputs.config_dict
-        if isdefined(config_dict) and config_dict:
-            sidecar["DeconvolutionMethod"] = config_dict.get("method", "unknown")
-            sidecar["BayesianInference"] = config_dict.get("bayesian", "none")
-            sidecar["PreBolus"] = config_dict.get("pre_bolus", 5)
+        # Add config summary (only for perfusion maps)
+        if not minimal:
+            config_dict = self.inputs.config_dict
+            if isdefined(config_dict) and config_dict:
+                sidecar["DeconvolutionMethod"] = config_dict.get("method", "unknown")
+                sidecar["BayesianInference"] = config_dict.get("bayesian", "none")
+                sidecar["PreBolus"] = config_dict.get("pre_bolus", 5)
 
         return sidecar
 

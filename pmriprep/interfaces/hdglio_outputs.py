@@ -434,7 +434,7 @@ class HDGLIODerivativeWriter(BaseInterface):
 
         result: dict[str, object] = {
             "Description": "HD-GLIO tumor segmentation lesion volume statistics",
-            "GeneratedBy": f"pmriprep {pmriprep.__version__}",
+            "GeneratedBy": [{"Name": "pmriprep", "Version": pmriprep.__version__}],
             "GeneratedAt": datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             ),

@@ -25,6 +25,7 @@ from pmriprep.utils.outputs import (
     write_dataset_description,
     write_json_sidecar,
 )
+from pmriprep.utils.provenance import get_bids_derivative_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,9 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Anatomical masks in DCE space (optional)
     brain_mask = traits.Str(desc="Brain mask in DCE space path")
     nawm_mask = traits.Either(traits.Str, None, desc="NAWM mask in DCE space path")
+
+    # Source DCE file for sidecar
+    source_dce = traits.Str(desc="Original raw DCE source file path")
 
     # Processing config for sidecar (optional)
     pk_model = traits.Str(desc="Pharmacokinetic model name")
@@ -222,27 +226,27 @@ class DCEDerivativeWriter(BaseInterface):
                 logger.warning("Removing stale output: %s", stale.name)
                 stale.unlink()
 
-        # Build base sidecar from config
-        base_sidecar = self._build_base_sidecar(bids_dir, voxel_sizes)
+        # Build base sidecar from config (pass resolved pk_model)
+        base_sidecar = self._build_base_sidecar(bids_dir, voxel_sizes, pk_model=pk_model)
 
         # -----------------------------------------------------------
         # 1. Core PK parameter maps
         # -----------------------------------------------------------
         fname = f"{prefix}_{spatial}_{model_entity}_desc-dce_Ktrans"
         copy_derivative(self.inputs.ktrans_map, perf_dir / f"{fname}.nii.gz")
-        sidecar = {**base_sidecar, "Description": "Volume transfer constant (min\u207b\u00b9)"}
+        sidecar = {**base_sidecar, "Description": "Volume transfer constant (min\u207b\u00b9)", "Units": "1/min"}
         write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         if has_input(self.inputs,"ve_map"):
             fname = f"{prefix}_{spatial}_{model_entity}_desc-dce_ve"
             copy_derivative(self.inputs.ve_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Extravascular extracellular space volume fraction"}
+            sidecar = {**base_sidecar, "Description": "Extravascular extracellular space volume fraction", "Units": "fraction"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         if has_input(self.inputs,"kep_map"):
             fname = f"{prefix}_{spatial}_{model_entity}_desc-dce_kep"
             copy_derivative(self.inputs.kep_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Efflux rate constant (min\u207b\u00b9)"}
+            sidecar = {**base_sidecar, "Description": "Efflux rate constant (min\u207b\u00b9)", "Units": "1/min"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -251,7 +255,7 @@ class DCEDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"vp_map"):
             fname = f"{prefix}_{spatial}_{model_entity}_desc-dce_vp"
             copy_derivative(self.inputs.vp_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Plasma volume fraction"}
+            sidecar = {**base_sidecar, "Description": "Plasma volume fraction", "Units": "fraction"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -319,19 +323,19 @@ class DCEDerivativeWriter(BaseInterface):
         # 3d. Model-free maps (IAUC, peak enhancement, TTP, SER)
         # -----------------------------------------------------------
         model_free_maps = {
-            "IAUC60": ("iauc60_map", "Initial Area Under Curve at 60s (mM\u00b7min)"),
-            "IAUC90": ("iauc90_map", "Initial Area Under Curve at 90s (mM\u00b7min)"),
-            "IAUC120": ("iauc120_map", "Initial Area Under Curve at 120s (mM\u00b7min)"),
-            "peakEnhancement": ("peak_enhancement_map", "Peak enhancement percentage"),
-            "ttp": ("time_to_peak_map", "Time to peak (seconds)"),
-            "SER": ("ser_map", "Signal Enhancement Ratio (washout characterization)"),
+            "IAUC60": ("iauc60_map", "Initial Area Under Curve at 60s (mM\u00b7min)", "mM*min"),
+            "IAUC90": ("iauc90_map", "Initial Area Under Curve at 90s (mM\u00b7min)", "mM*min"),
+            "IAUC120": ("iauc120_map", "Initial Area Under Curve at 120s (mM\u00b7min)", "mM*min"),
+            "peakEnhancement": ("peak_enhancement_map", "Peak enhancement percentage", "%"),
+            "ttp": ("time_to_peak_map", "Time to peak (seconds)", "s"),
+            "SER": ("ser_map", "Signal Enhancement Ratio (washout characterization)", "ratio"),
         }
-        for map_name, (attr, description) in model_free_maps.items():
+        for map_name, (attr, description, units) in model_free_maps.items():
             if has_input(self.inputs,attr):
                 src = getattr(self.inputs, attr)
                 fname = f"{prefix}_{spatial}_desc-dce_{map_name}"
                 copy_derivative(src, perf_dir / f"{fname}.nii.gz")
-                sidecar = {**base_sidecar, "Description": description}
+                sidecar = {**base_sidecar, "Description": description, "Units": units}
                 write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -340,7 +344,7 @@ class DCEDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"tsnr_map"):
             fname = f"{prefix}_{spatial}_desc-dce_tsnr"
             copy_derivative(self.inputs.tsnr_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Temporal signal-to-noise ratio"}
+            sidecar = {**base_sidecar, "Description": "Temporal signal-to-noise ratio", "Units": "arbitrary"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         if has_input(self.inputs,"qc_mask"):
@@ -476,18 +480,22 @@ class DCEDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         # 4. T1/B1 mapping outputs
         # -----------------------------------------------------------
+        minimal_sidecar = self._build_base_sidecar(
+            bids_dir, voxel_sizes, pk_model=pk_model, minimal=True,
+        )
+
         if has_input(self.inputs,"t1_map"):
             anat_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{prefix}_{spatial}_T1map"
             copy_derivative(self.inputs.t1_map, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "T1 relaxation time map (ms)"}
+            sidecar = {**minimal_sidecar, "Description": "T1 relaxation time map (ms)", "Units": "ms"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         if has_input(self.inputs,"b1_map"):
             anat_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{prefix}_{spatial}_B1plusmap"
             copy_derivative(self.inputs.b1_map, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "B1+ transmit field map (ratio)"}
+            sidecar = {**minimal_sidecar, "Description": "B1+ transmit field map (ratio)", "Units": "ratio"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -497,14 +505,14 @@ class DCEDerivativeWriter(BaseInterface):
             anat_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{prefix}_{spatial}_desc-brain_mask"
             copy_derivative(self.inputs.brain_mask, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Brain mask in DCE space"}
+            sidecar = {**minimal_sidecar, "Description": "Brain mask in DCE space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         if has_input(self.inputs,"nawm_mask"):
             anat_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{prefix}_{spatial}_desc-nawm_mask"
             copy_derivative(self.inputs.nawm_mask, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Normal-appearing white matter mask in DCE space"}
+            sidecar = {**minimal_sidecar, "Description": "Normal-appearing white matter mask in DCE space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -560,14 +568,14 @@ class DCEDerivativeWriter(BaseInterface):
             anat_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{prefix}_{spatial}_ce-GAD_T1w"
             copy_derivative(self.inputs.t1w_in_dce, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "CE-T1w registered to DCE space"}
+            sidecar = {**minimal_sidecar, "Description": "CE-T1w registered to DCE space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         if has_input(self.inputs,"flair_in_dce"):
             anat_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{prefix}_{spatial}_FLAIR"
             copy_derivative(self.inputs.flair_in_dce, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "FLAIR registered to DCE space"}
+            sidecar = {**minimal_sidecar, "Description": "FLAIR registered to DCE space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -583,7 +591,7 @@ class DCEDerivativeWriter(BaseInterface):
             anat_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{prefix}_{spatial}_desc-lesion_mask"
             copy_derivative(self.inputs.lesion_mask_dce, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Lesion mask registered to DCE space"}
+            sidecar = {**minimal_sidecar, "Description": "Lesion mask registered to DCE space"}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -660,31 +668,54 @@ class DCEDerivativeWriter(BaseInterface):
     # -------------------------------------------------------------------
 
     def _build_base_sidecar(
-        self, bids_dir: str, voxel_sizes: tuple[float, ...],
+        self,
+        bids_dir: str,
+        voxel_sizes: tuple[float, ...],
+        pk_model: str | None = None,
+        minimal: bool = False,
     ) -> dict[str, Any]:
         """Build base JSON sidecar with processing metadata.
 
         Args:
             bids_dir: Path to the source BIDS dataset root.
             voxel_sizes: Voxel dimensions (x, y, z) from reference image header.
+            pk_model: Resolved pharmacokinetic model name. If provided, used
+                instead of config_dict value (which may be "auto").
+            minimal: If True, omit perfusion-specific fields
+                (PharmacokineticModel, BayesianInference).
+                Use for masks, structural underlays, and non-perfusion maps.
 
         Returns:
             Dictionary with shared sidecar fields.
         """
         sidecar: dict[str, Any] = {
-            "Pipeline": "PMRIPrep DCE",
+            **get_bids_derivative_provenance(),
             "Space": "DCE (native perfusion space)",
             "Resolution": [float(v) for v in voxel_sizes[:3]],
         }
 
-        pk_model = self.inputs.pk_model
-        if isdefined(pk_model) and pk_model:
-            sidecar["PharmacokineticModel"] = pk_model
+        # Add source file reference
+        source_dce = getattr(self.inputs, "source_dce", None)
+        if source_dce and isdefined(source_dce) and source_dce:
+            try:
+                bids_root = Path(bids_dir)
+                src_path = Path(source_dce)
+                if src_path.is_relative_to(bids_root):
+                    rel = src_path.relative_to(bids_root)
+                    sidecar["Sources"] = [f"bids::{rel}"]
+                else:
+                    sidecar["Sources"] = [str(source_dce)]
+            except (ValueError, TypeError):
+                sidecar["Sources"] = [str(source_dce)]
 
-        config_dict = self.inputs.config_dict
-        if isdefined(config_dict) and config_dict:
-            sidecar["PharmacokineticModel"] = config_dict.get("model", "unknown")
-            sidecar["BayesianInference"] = config_dict.get("bayesian", "none")
+        # Add perfusion-specific config (only for perfusion maps)
+        if not minimal:
+            if pk_model:
+                sidecar["PharmacokineticModel"] = pk_model
+
+            config_dict = self.inputs.config_dict
+            if isdefined(config_dict) and config_dict:
+                sidecar["BayesianInference"] = config_dict.get("bayesian", "none")
 
         return sidecar
 

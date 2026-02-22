@@ -3,7 +3,6 @@
 import datetime
 import json
 import platform
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -157,11 +156,12 @@ def create_provenance_dict(
 
     # Processing timestamp
     if include_timestamp:
-        provenance["GeneratedBy"] = {
-            "Name": "pmriprep",
-            "Version": pmriprep.__version__,
-            "CodeURL": "https://github.com/your-org/pmriprep",
-        }
+        provenance["GeneratedBy"] = [
+            {
+                "Name": "pmriprep",
+                "Version": pmriprep.__version__,
+            }
+        ]
         provenance["ProcessingDateTime"] = datetime.datetime.now(
             datetime.timezone.utc
         ).isoformat()
@@ -182,14 +182,6 @@ def create_provenance_dict(
     # Software versions
     if include_versions:
         provenance["SoftwareVersions"] = get_software_versions()
-
-    # System information
-    provenance["SystemInfo"] = {
-        "Platform": platform.platform(),
-        "Architecture": platform.machine(),
-        "Processor": platform.processor(),
-        "PythonExecutable": sys.executable,
-    }
 
     # Scanner metadata
     if scanner_metadata:

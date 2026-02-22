@@ -254,7 +254,6 @@ def create_dataset_description(
             {
                 "Name": pipeline_name,
                 "Version": pmriprep.__version__,
-                "CodeURL": "https://github.com/your-org/pmriprep",  # TODO: update with real URL
             }
         ]
 
@@ -346,10 +345,12 @@ def write_qc_json(
 
     qc_data: Dict[str, Any] = {
         "Subject": f"sub-{subject}",
-        "GeneratedBy": {
-            "Name": "pmriprep",
-            "Version": pmriprep.__version__,
-        },
+        "GeneratedBy": [
+            {
+                "Name": "pmriprep",
+                "Version": pmriprep.__version__,
+            }
+        ],
     }
 
     if session:
@@ -436,7 +437,7 @@ def write_dataset_description(pipeline_dir: Path, bids_dir: str) -> None:
             }
         ],
         "SourceDatasets": [
-            {"URL": str(bids_dir)},
+            {"URL": Path(bids_dir).name},
         ],
         "HowToAcknowledge": (
             f"Please cite pmriprep (version {pmriprep.__version__}) "

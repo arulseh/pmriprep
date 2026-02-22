@@ -1953,6 +1953,7 @@ def init_pmriprep_wf(
 
         # Connect DCE outputs to writer
         workflow.connect([
+            (inputnode, dce_writer, [("dce_file", "source_dce")]),
             (dce_wf, dce_writer, [
                 # Core PK parameter maps
                 ("outputnode.ktrans_map", "ktrans_map"),
