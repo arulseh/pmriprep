@@ -224,26 +224,141 @@ def _find_t1w_ce_gad(anat_dir: Path) -> Optional[Path]:
     return ce_gad_files[0]
 
 
-def _find_t2w(anat_dir: Path) -> Optional[Path]:
-    """Find T2w image.
+def _classify_orientation(iop: List[float]) -> str:
+    """Classify image orientation as axial, coronal, or sagittal.
+
+    Args:
+        iop: ImageOrientationPatientDICOM (6 direction cosines).
+
+    Returns:
+        One of "axial", "coronal", "sagittal".
+    """
+    # Normal vector = cross product of row and column direction cosines
+    normal = [
+        iop[1] * iop[5] - iop[2] * iop[4],
+        iop[2] * iop[3] - iop[0] * iop[5],
+        iop[0] * iop[4] - iop[1] * iop[3],
+    ]
+    abs_normal = [abs(n) for n in normal]
+    max_idx = abs_normal.index(max(abs_normal))
+    return ("sagittal", "coronal", "axial")[max_idx]
+
+
+def _score_t2w_candidate(
+    t2w_path: Path,
+    flair_resolved: Optional[Path],
+) -> int:
+    """Score a T2w candidate for selection preference.
+
+    Scoring criteria (additive):
+     -100  same resolved path as FLAIR (duplicate data)
+      +10  no IR in ScanningSequence (true T2, not FLAIR-like)
+       +5  2D acquisition (MRAcquisitionType)
+       +3  axial orientation
+       +1  coronal orientation
+       +1  non-contrast (no ce- entity; soft preference)
+
+    Args:
+        t2w_path: Path to T2w NIfTI file.
+        flair_resolved: Resolved path of FLAIR file, or None.
+
+    Returns:
+        Integer score (higher is better).
+    """
+    score = 0
+
+    # Duplicate check against FLAIR
+    if flair_resolved is not None and t2w_path.resolve() == flair_resolved:
+        score -= 100
+
+    # Non-contrast is a soft preference (Gd has minimal T2 effect)
+    if "ce-" not in t2w_path.name.lower():
+        score += 1
+
+    # Read sidecar JSON
+    sidecar_path = t2w_path.with_name(
+        t2w_path.name.replace(".nii.gz", ".json").replace(".nii", ".json")
+    )
+    sidecar: Dict = {}
+    if sidecar_path.is_file():
+        try:
+            sidecar = json.loads(sidecar_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Could not read sidecar: %s", sidecar_path)
+
+    # Prefer no inversion recovery (IR = FLAIR-like contrast)
+    # Split on separator to avoid false positives (e.g., "SPIR" on Philips)
+    scanning_seq = sidecar.get("ScanningSequence", "")
+    if isinstance(scanning_seq, list):
+        has_ir = "IR" in scanning_seq
+    else:
+        seq_tokens = [s.strip() for s in scanning_seq.replace("\\", "/").split("/")]
+        has_ir = "IR" in seq_tokens
+    if not has_ir:
+        score += 10
+
+    # Prefer 2D acquisition
+    if sidecar.get("MRAcquisitionType") == "2D":
+        score += 5
+
+    # Prefer axial orientation
+    iop = sidecar.get("ImageOrientationPatientDICOM")
+    if iop and len(iop) == 6:
+        orientation = _classify_orientation(iop)
+        if orientation == "axial":
+            score += 3
+        elif orientation == "coronal":
+            score += 1
+
+    return score
+
+
+def _find_t2w(
+    anat_dir: Path,
+    flair_path: Optional[Path] = None,
+) -> Optional[Path]:
+    """Find the best T2w image using sidecar metadata scoring.
+
+    Selection criteria (by score weight):
+    1. Not the same underlying file as FLAIR (-100 penalty)
+    2. No inversion recovery in ScanningSequence (+10)
+    3. 2D acquisition preferred (+5)
+    4. Axial orientation preferred (+3)
+    5. Non-contrast preferred (+1, soft — Gd has minimal T2 effect)
 
     Args:
         anat_dir: Path to the anatomical directory.
+        flair_path: Path to the selected FLAIR file (for duplicate check).
 
     Returns:
-        Path to T2w image, or None if not found.
+        Path to best T2w image, or None if not found.
     """
-    t2w_files = list(anat_dir.glob("*_T2w.nii.gz")) + list(anat_dir.glob("*_T2w.nii"))
+    t2w_files = (
+        list(anat_dir.glob("*_T2w.nii.gz"))
+        + list(anat_dir.glob("*_T2w.nii"))
+    )
+    if not t2w_files:
+        return None
 
-    if t2w_files:
-        # Prefer non-contrast T2w
-        for f in t2w_files:
-            fname = f.name.lower()
-            if "ce-" not in fname:
-                return f
-        return t2w_files[0]
+    flair_resolved = flair_path.resolve() if flair_path is not None else None
 
-    return None
+    scored = [(f, _score_t2w_candidate(f, flair_resolved)) for f in t2w_files]
+    scored.sort(key=lambda x: (-x[1], x[0].name))  # deterministic tie-breaking
+
+    winner_path, winner_score = scored[0]
+    if len(scored) > 1:
+        logger.info(
+            "T2w selection: %s (score=%d) from %d candidates",
+            winner_path.name, winner_score, len(scored),
+        )
+    if winner_score < 0:
+        logger.warning(
+            "Best T2w candidate has negative score (%d): %s "
+            "— may be FLAIR-like or duplicate of FLAIR",
+            winner_score, winner_path.name,
+        )
+
+    return winner_path
 
 
 def _find_flair(anat_dir: Path) -> Optional[Path]:
@@ -726,8 +841,8 @@ def discover_session_data(
     if anat_dir.is_dir():
         modalities.t1w_pre = _find_t1w_precontrast(anat_dir)
         modalities.t1w_ce_gad = _find_t1w_ce_gad(anat_dir)
-        modalities.t2w = _find_t2w(anat_dir)
         modalities.flair = _find_flair(anat_dir)
+        modalities.t2w = _find_t2w(anat_dir, flair_path=modalities.flair)
         modalities.pdw = _find_pdw(anat_dir)
         modalities.vfa = _find_vfa(anat_dir)
         modalities.afi = _find_afi(anat_dir, fmap_dir=fmap_dir_opt)
