@@ -13,6 +13,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     CommandLineInputSpec,
     File,
     TraitedSpec,
+    isdefined,
     traits,
 )
 
@@ -509,6 +510,10 @@ class BrainExtractionInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Device for HD-BET: auto, cuda, mps (Apple Silicon), cpu",
     )
+    conda_env = traits.Str(
+        desc="Conda environment name for HD-BET. When set, HD-BET is invoked "
+        "via 'conda run -n <env>'. When empty, HD-BET is called directly.",
+    )
     ants_template = File(
         exists=True,
         desc="ANTs brain extraction template (for ants tool)",
@@ -669,11 +674,17 @@ class BrainExtraction(CommandLine):
             if not out_file.endswith(".nii.gz"):
                 out_file = out_file + ".nii.gz"
 
-            hdbet_cmd = (
-                f"conda run -n hdbet-env "
+            hdbet_base = (
                 f"hd-bet -i {in_file} -o {out_file} "
                 f"-device {device} --disable_tta"
             )
+            if isdefined(self.inputs.conda_env) and self.inputs.conda_env:
+                hdbet_cmd = (
+                    f"conda run -n {self.inputs.conda_env} "
+                    f"--no-capture-output {hdbet_base}"
+                )
+            else:
+                hdbet_cmd = hdbet_base
             cmd_parts.append(hdbet_cmd)
 
             # Create mask by binarizing the brain output

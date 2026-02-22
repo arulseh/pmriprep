@@ -520,6 +520,7 @@ def init_dce_preproc_wf(
             bet_frac=0.3,    # Lower threshold for DCE contrast
             fill_holes=True,
             hdbet_device=config.hdbet_device,
+            hdbet_conda_env=config.hdbet_conda_env or "",
         ),
         name="dce_brain_extract",
     )

@@ -1,8 +1,11 @@
 # PMRIPrep: Perfusion MRI Preprocessing Pipeline
 # BIDS-App container for DCE and DSC MRI processing
 #
-# Build:
+# Build (CPU, default):
 #   docker build -t pmriprep:latest .
+#
+# Build (GPU / CUDA 12.1):
+#   docker build -t pmriprep:latest --build-arg PYTORCH_VARIANT=cu121 .
 #
 # Run:
 #   docker run -it --rm \
@@ -24,8 +27,7 @@
 #     -v /path/to/bids_dir:/data:ro \
 #     -v /path/to/output:/out \
 #     pmriprep:latest \
-#     /data /out participant \
-#     --dsc-use-gpu --dce-use-gpu
+#     /data /out participant --use-gpu
 
 FROM nipreps/miniconda:latest
 
@@ -39,12 +41,12 @@ LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Set up environment variables
-ENV FSLDIR=/opt/fsl
-ENV FSLOUTPUTTYPE=NIFTI_GZ
-ENV PATH="${FSLDIR}/bin:${PATH}"
-ENV ANTSPATH=/opt/ants/bin
-ENV PATH="${ANTSPATH}:${PATH}"
+# Thread control — prevent MKL/OpenBLAS from spawning threads inside
+# Nipype workers, which leads to oversubscription on HPC nodes.
+ENV MKL_NUM_THREADS=1
+ENV OMP_NUM_THREADS=1
+
+# nnU-Net directory layout (used by HD-BET and HD-GLIO)
 ENV nnUNet_raw_data_base=/opt/nnunet_data
 ENV nnUNet_preprocessed=/opt/nnunet_preprocessed
 ENV RESULTS_FOLDER=/opt/nnunet_results
@@ -63,7 +65,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libgomp1 \
     libquadmath0 \
-    libtiff5 \
     libxext6 \
     libxrender1 \
     tar \
@@ -71,58 +72,50 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install FSL (minimal installation for FLIRT, FAST, MCFLIRT, etc.)
-# Using NeuroDebian repository for FSL
-RUN wget -q -O /tmp/neurodebian.gpg.key https://neuro.debian.net/lists/focal.de-fzj.full && \
-    apt-key add /tmp/neurodebian.gpg.key && \
-    echo "deb https://neuro.debian.net/debian focal main" > /etc/apt/sources.list.d/neurodebian.sources.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends fsl-core fsl-atlases && \
-    rm -rf /var/lib/apt/lists/* && \
-    rm /tmp/neurodebian.gpg.key
+# Install Python
+RUN conda install -y python=3.10 pip && \
+    conda clean -afy
 
-# Alternatively, download FSL from official source if NeuroDebian fails
-# Uncomment below and comment out NeuroDebian section if needed:
-# ARG FSL_VERSION=6.0.7.1
-# RUN mkdir -p /opt/fsl && \
-#     curl -fsSL https://fsl.fmrib.ox.ac.uk/fsldownloads/fslinstaller.py -o /tmp/fslinstaller.py && \
-#     python /tmp/fslinstaller.py -d /opt/fsl -V ${FSL_VERSION} && \
-#     rm /tmp/fslinstaller.py
+# Install FSL via conda (arch-independent, replaces NeuroDebian)
+RUN conda install -y \
+    -c https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/public/ \
+    -c conda-forge \
+    fsl-avwutils fsl-bet2 fsl-fast4 fsl-flirt fsl-mcflirt fsl-cluster \
+    fsl-data-standard \
+    && conda clean -afy
 
-# Install ANTs
-ARG ANTS_VERSION=2.5.0
-RUN mkdir -p /opt/ants && \
-    curl -fsSL https://github.com/ANTsX/ANTs/releases/download/v${ANTS_VERSION}/ants-${ANTS_VERSION}-linux-ubuntu22-X64.zip \
-    -o /tmp/ants.zip && \
-    unzip -q /tmp/ants.zip -d /tmp && \
-    mv /tmp/ants-${ANTS_VERSION}/bin/* /opt/ants/bin/ && \
-    mv /tmp/ants-${ANTS_VERSION}/lib/* /opt/ants/lib/ 2>/dev/null || true && \
-    rm -rf /tmp/ants.zip /tmp/ants-${ANTS_VERSION}
+# FSLDIR lives inside the conda prefix for conda-based FSL
+ENV FSLDIR=${CONDA_DIR}
+ENV FSLOUTPUTTYPE=NIFTI_GZ
+ENV PATH="${FSLDIR}/bin:${PATH}"
+
+# Install ANTs via conda-forge (arch-independent)
+RUN conda install -y -c conda-forge ants && conda clean -afy
 
 # Create directories for nnU-Net (used by HD-BET and HD-GLIO)
 RUN mkdir -p ${nnUNet_raw_data_base} ${nnUNet_preprocessed} ${RESULTS_FOLDER}
 
-# Set up conda environment for pmriprep
-COPY --chown=1000:1000 . /src/pmriprep
-WORKDIR /src/pmriprep
-
-# Install Python dependencies and the package
-RUN conda install -y python=3.10 pip && \
-    conda clean -afy
-
-# Install PyTorch for HD-BET and HD-GLIO (CPU version by default)
-# For GPU support, users should use nvidia/cuda base image and install pytorch with CUDA
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# Install PyTorch (CPU by default; pass --build-arg PYTORCH_VARIANT=cu121 for GPU)
+ARG PYTORCH_VARIANT=cpu
+RUN if [ "$PYTORCH_VARIANT" != "cpu" ]; then \
+        pip install --no-cache-dir torch torchvision \
+            --index-url https://download.pytorch.org/whl/${PYTORCH_VARIANT}; \
+    else \
+        pip install --no-cache-dir torch torchvision \
+            --index-url https://download.pytorch.org/whl/cpu; \
+    fi
 
 # Install HD-BET for brain extraction
 RUN pip install --no-cache-dir hd-bet
 
-# Install HD-GLIO for glioma segmentation
-# Note: HD-GLIO may require manual installation of model weights
+# Install HD-GLIO for glioma segmentation (requires CUDA at runtime)
 RUN pip install --no-cache-dir HD-GLIO || \
     pip install --no-cache-dir git+https://github.com/MIC-DKFZ/HD-GLIO.git
 
-# Install pmriprep package
+# Copy source and install pmriprep
+COPY --chown=1000:1000 . /src/pmriprep
+WORKDIR /src/pmriprep
+
 RUN pip install --no-cache-dir -e ".[all]" && \
     pip cache purge
 
@@ -132,6 +125,14 @@ RUN python -c "import templateflow; \
     tflow.get('MNI152NLin2009cAsym', resolution=1, desc='brain', suffix='mask'); \
     tflow.get('MNI152NLin2009cAsym', resolution=1, suffix='T1w'); \
     tflow.get('MNI152NLin6Asym', resolution=1, suffix='T1w')"
+
+# Build-time validation — fail the build early if something is broken
+RUN python -c "\
+import torch; import nibabel; import nipype; \
+print(f'PyTorch {torch.__version__}'); \
+print(f'CUDA available: {torch.cuda.is_available()}'); \
+from HD_BET.run import run_hd_bet; print('HD-BET: OK'); \
+import pmriprep; print('PMRIPrep: OK')"
 
 # Set up user (non-root execution)
 RUN useradd -m -u 1000 pmriprep || true

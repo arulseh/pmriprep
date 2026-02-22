@@ -179,8 +179,7 @@ Examples:
         "--hdbet-device",
         choices=["auto", "cuda", "mps", "cpu"],
         default=None,
-        help="Device for HD-BET brain extraction (default: auto). "
-        "Use 'mps' for Mac GPU, 'cuda' for NVIDIA GPU, 'cpu' for CPU-only.",
+        help=argparse.SUPPRESS,
     )
     device_group.add_argument(
         "--use-gpu",
@@ -299,6 +298,12 @@ Examples:
         default=None,
         help="Apply ANTs denoising to anatomical images.",
     )
+    anat_group.add_argument(
+        "--hdbet-conda-env",
+        type=str,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
     # Tumor segmentation options
     tumor_seg_group = parser.add_argument_group(
         "Tumor segmentation options",
@@ -308,17 +313,13 @@ Examples:
         "--tumor-seg-conda-env",
         type=str,
         default=None,
-        help=(
-            "Conda environment name for the segmentation tool "
-            "(e.g., 'hdglio-mps' for Apple Silicon). Required when the tool "
-            "is installed in a separate environment."
-        ),
+        help=argparse.SUPPRESS,
     )
     tumor_seg_group.add_argument(
         "--tumor-seg-device",
         choices=["cuda", "mps", "cpu"],
         default=None,
-        help="Device for tumor segmentation inference (default: cuda).",
+        help=argparse.SUPPRESS,
     )
 
     # Other options (NiPreps parity)

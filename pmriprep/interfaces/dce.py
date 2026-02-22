@@ -2666,6 +2666,10 @@ class DCEBrainExtractInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Device for HD-BET: auto, cuda, mps, or cpu (default: auto)",
     )
+    hdbet_conda_env = traits.Str(
+        desc="Conda environment name for HD-BET. When set, HD-BET is invoked "
+        "via 'conda run -n <env>'. When empty, HD-BET is called directly.",
+    )
 
 
 class DCEBrainExtractOutputSpec(TraitedSpec):
@@ -2731,9 +2735,11 @@ class DCEBrainExtract(SimpleInterface):
 
     Notes
     -----
-    HD-BET is called via conda environment to avoid dependency conflicts:
+    When ``hdbet_conda_env`` is set, HD-BET is invoked via::
 
-        conda run -n hdbet-env hd-bet -i <input> -o <output>
+        conda run -n <env> --no-capture-output hd-bet -i <input> -o <output>
+
+    When unset (default, e.g. inside Docker), HD-BET is called directly.
 
     If HD-BET is not available, falls back to FSL BET with parameters
     optimized for DCE contrast (lower fractional intensity threshold).
@@ -2798,8 +2804,10 @@ class DCEBrainExtract(SimpleInterface):
         return runtime
 
     def _run_hdbet(self, dce_mean: Path, out_brain: str, out_mask: str) -> bool:
-        """Run HD-BET brain extraction via conda environment."""
+        """Run HD-BET brain extraction, optionally via conda environment."""
         import subprocess
+
+        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
         # HD-BET requires output to end with .nii.gz
         # It creates <output>.nii.gz (brain) and <output>_mask.nii.gz (mask)
@@ -2811,14 +2819,24 @@ class DCEBrainExtract(SimpleInterface):
             # Auto-detect: try cuda first, then mps, then cpu
             device = self._detect_hdbet_device()
 
-        cmd = [
-            "conda", "run", "-n", "hdbet-env",
+        hdbet_args = [
             "hd-bet",
             "-i", str(dce_mean),
             "-o", hdbet_out,
             "-device", device,
             "--disable_tta",
         ]
+        conda_env = (
+            self.inputs.hdbet_conda_env
+            if isdefined(self.inputs.hdbet_conda_env)
+            else ""
+        )
+        if conda_env:
+            cmd = [
+                "conda", "run", "-n", conda_env, "--no-capture-output",
+            ] + hdbet_args
+        else:
+            cmd = hdbet_args
 
         try:
             result = subprocess.run(
@@ -2852,7 +2870,7 @@ class DCEBrainExtract(SimpleInterface):
             logger.warning("HD-BET timed out after 5 minutes")
             return False
         except FileNotFoundError:
-            logger.warning("conda or hdbet-env not available")
+            logger.warning("HD-BET executable not found")
             return False
 
     def _detect_hdbet_device(self) -> str:

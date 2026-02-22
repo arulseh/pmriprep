@@ -101,6 +101,7 @@ class DSCConfig:
     num_processes: int = 0  # 0 = use system default
     use_gpu: bool = False
     hdbet_device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
+    hdbet_conda_env: Optional[str] = None
 
     # Testing / debug
     sloppy: bool = False  # Use fast, low-quality settings for testing

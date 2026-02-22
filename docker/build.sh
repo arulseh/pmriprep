@@ -32,6 +32,8 @@ REGISTRY="${DOCKER_REGISTRY:-docker.io}"
 REPO="${DOCKER_REPO:-pmriprep/pmriprep}"
 PUSH=false
 MULTIARCH=false
+GPU=false
+PYTORCH_VARIANT="cpu"
 PLATFORMS="linux/amd64,linux/arm64"
 
 # Colors for output
@@ -69,6 +71,15 @@ parse_args() {
             --multiarch)
                 MULTIARCH=true
                 shift
+                ;;
+            --gpu)
+                GPU=true
+                PYTORCH_VARIANT="cu121"
+                shift
+                ;;
+            --pytorch-variant)
+                PYTORCH_VARIANT="$2"
+                shift 2
                 ;;
             --platforms)
                 PLATFORMS="$2"
@@ -109,6 +120,8 @@ Usage: $(basename "$0") [OPTIONS]
 Options:
   --push              Push image to registry after building
   --multiarch         Build for multiple architectures (amd64, arm64)
+  --gpu               Build with CUDA 12.1 PyTorch (for NVIDIA GPU support)
+  --pytorch-variant V PyTorch variant (default: cpu, e.g. cu121, cu124)
   --platforms PLAT    Comma-separated list of platforms (default: linux/amd64,linux/arm64)
   --registry REG      Docker registry (default: docker.io, env: DOCKER_REGISTRY)
   --repo REPO         Repository name (default: pmriprep/pmriprep, env: DOCKER_REPO)
@@ -116,8 +129,11 @@ Options:
   -h, --help          Show this help message
 
 Examples:
-  # Build local image
+  # Build local CPU image
   ./docker/build.sh
+
+  # Build with GPU support (CUDA 12.1)
+  ./docker/build.sh --gpu
 
   # Build and push to Docker Hub
   ./docker/build.sh --push
@@ -211,12 +227,13 @@ build_single() {
     docker build \
         --tag "$full_image" \
         --tag "$latest_image" \
+        --build-arg "PYTORCH_VARIANT=${PYTORCH_VARIANT}" \
         --label "org.opencontainers.image.version=${version}" \
         --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --file "${PROJECT_ROOT}/Dockerfile" \
         "$PROJECT_ROOT"
 
-    log_success "Built: $full_image"
+    log_success "Built: $full_image (PyTorch variant: ${PYTORCH_VARIANT})"
     log_success "Tagged as: $latest_image"
 
     if $PUSH; then
@@ -255,6 +272,7 @@ build_multiarch() {
         --platform "$PLATFORMS" \
         --tag "$full_image" \
         --tag "$latest_image" \
+        --build-arg "PYTORCH_VARIANT=${PYTORCH_VARIANT}" \
         --label "org.opencontainers.image.version=${version}" \
         --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --file "${PROJECT_ROOT}/Dockerfile" \
@@ -302,6 +320,7 @@ print_singularity_instructions() {
     echo "    --bind /path/to/bids_dir:/data:ro \\"
     echo "    --bind /path/to/output:/out \\"
     echo "    --bind /path/to/work:/work \\"
+    echo "    --bind /tmp:/home/pmriprep/.cache \\"
     echo "    pmriprep_${version}.sif \\"
     echo "    /data /out participant \\"
     echo "    --participant-label 01 \\"
@@ -311,9 +330,10 @@ print_singularity_instructions() {
     echo "  singularity run --nv --cleanenv \\"
     echo "    --bind /path/to/bids_dir:/data:ro \\"
     echo "    --bind /path/to/output:/out \\"
+    echo "    --bind /tmp:/home/pmriprep/.cache \\"
     echo "    pmriprep_${version}.sif \\"
     echo "    /data /out participant \\"
-    echo "    --dsc-use-gpu --dce-use-gpu"
+    echo "    --use-gpu"
     echo ""
     echo "=============================================="
 }

@@ -225,7 +225,7 @@ def _create_perfusion_brain_mask_filmstrip(mean_file, brain_mask_file):
     return output_path
 
 
-def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto"):
+def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto", hdbet_conda_env=""):
     """Extract DSC brain using HD-BET for improved registration quality.
 
     HD-BET produces a brain-extracted DSC image that yields better
@@ -237,6 +237,11 @@ def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto"):
 
     Args:
         dsc_mean_file: Path to pre-bolus mean DSC image.
+        hdbet_device: Device for HD-BET inference.
+        hdbet_conda_env: Conda environment name for HD-BET. When non-empty,
+            HD-BET is invoked via ``conda run -n <env>``. When empty (the
+            default), HD-BET is called directly first, with a ``conda run``
+            fallback.
 
     Returns:
         Tuple of (dsc_brain_file, dsc_brain_mask_file).
@@ -265,18 +270,29 @@ def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto"):
         except ImportError:
             hdbet_device = "cpu"
 
-    # Try HD-BET via conda env first, then directly
-    for cmd_prefix in [["conda", "run", "-n", "hdbet-env"], []]:
+    hdbet_args = [
+        "hd-bet",
+        "-i", dsc_mean_file,
+        "-o", dsc_brain_file,
+        "-device", hdbet_device,
+        "--disable_tta",
+    ]
+
+    if hdbet_conda_env:
+        # Explicit conda env requested — try it, then fall back to direct
+        cmd_prefixes = [
+            ["conda", "run", "-n", hdbet_conda_env, "--no-capture-output"],
+            [],
+        ]
+    else:
+        # No conda env — try direct first, then fall back (no env name)
+        cmd_prefixes = [[], ]
+
+    for cmd_prefix in cmd_prefixes:
         if hdbet_succeeded:
             break
         try:
-            hdbet_cmd = cmd_prefix + [
-                "hd-bet",
-                "-i", dsc_mean_file,
-                "-o", dsc_brain_file,
-                "-device", hdbet_device,
-                "--disable_tta",
-            ]
+            hdbet_cmd = cmd_prefix + hdbet_args
             subprocess.run(hdbet_cmd, check=True, capture_output=True)
             hdbet_succeeded = True
         except (subprocess.CalledProcessError, FileNotFoundError, OSError):
@@ -1727,13 +1743,14 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     hdbet_dsc = pe.Node(
         niu.Function(
-            input_names=["dsc_mean_file", "hdbet_device"],
+            input_names=["dsc_mean_file", "hdbet_device", "hdbet_conda_env"],
             output_names=["dsc_brain_file", "dsc_brain_mask_file"],
             function=_hdbet_dsc_brain,
         ),
         name="hdbet_dsc",
     )
     hdbet_dsc.inputs.hdbet_device = config.hdbet_device
+    hdbet_dsc.inputs.hdbet_conda_env = config.hdbet_conda_env or ""
 
     # -------------------------------------------------------------------
     # Node 1b2: Histogram Match T1w to DSC (for FLIRT convergence)

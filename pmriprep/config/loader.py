@@ -136,6 +136,7 @@ def merge_cli_config(
         # Anatomical options
         "brain_extraction_tool": ("anat", "tool"),
         "denoise": ("anat", "denoise"),
+        "hdbet_conda_env": ("anat", "hdbet_conda_env"),
         # Tumor segmentation options
         "tumor_seg_conda_env": ("tumor_seg", "conda_env"),
         "tumor_seg_device": ("tumor_seg", "device"),
@@ -156,6 +157,11 @@ def merge_cli_config(
     if cli_args.get("hdbet_device") is not None:
         result.setdefault("dsc", {})["hdbet_device"] = cli_args["hdbet_device"]
         result.setdefault("dce", {})["hdbet_device"] = cli_args["hdbet_device"]
+
+    # --hdbet-conda-env propagates to DSC and DCE configs
+    if cli_args.get("hdbet_conda_env") is not None:
+        result.setdefault("dsc", {})["hdbet_conda_env"] = cli_args["hdbet_conda_env"]
+        result.setdefault("dce", {})["hdbet_conda_env"] = cli_args["hdbet_conda_env"]
 
     # --sloppy sets sloppy on DSC, DCE, and anat configs
     if cli_args.get("sloppy"):

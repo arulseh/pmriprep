@@ -640,6 +640,7 @@ def init_anat_preproc_wf(
     brain_extract = pe.Node(
         BrainExtraction(
             tool=config.tool,
+            conda_env=config.hdbet_conda_env or "",
         ),
         name="brain_extract",
     )
