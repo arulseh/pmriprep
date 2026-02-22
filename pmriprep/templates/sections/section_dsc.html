@@ -22,6 +22,18 @@
     </div>
     {% endif %}
 
+    <!-- Registration -->
+    {% if dsc.images.registration %}
+    <div class="section">
+        <h3>Registration Quality</h3>
+        <p>Multi-slice overlay showing DSC to T1w registration.</p>
+        <div class="figure-container">
+            <img src="{{ dsc.images.registration }}" alt="Registration QC">
+            <a href="{{ dsc.images.registration }}" download class="figure-download">Save</a>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Motion QC -->
     {% if dsc.images.motion or dsc.qc_metrics.motion %}
     <div class="section">
@@ -180,12 +192,6 @@
             <div class="metric">
                 <div class="metric-label">Candidates (used / available)</div>
                 <div class="metric-value">{{ dsc.qc_metrics.aif.n_aif_candidates_used }} / {{ dsc.qc_metrics.aif.n_aif_candidates_available }}</div>
-            </div>
-            {% endif %}
-            {% if dsc.qc_metrics.aif.aif_hemisphere is defined %}
-            <div class="metric">
-                <div class="metric-label">Hemisphere</div>
-                <div class="metric-value">{{ dsc.qc_metrics.aif.aif_hemisphere }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.aif.n_baseline_frames is defined %}
@@ -419,15 +425,4 @@
     </div>
     {% endif %}
 
-    <!-- Registration -->
-    {% if dsc.images.registration %}
-    <div class="section">
-        <h3>Registration Quality</h3>
-        <p>Multi-slice overlay showing DSC to T1w registration.</p>
-        <div class="figure-container">
-            <img src="{{ dsc.images.registration }}" alt="Registration QC">
-            <a href="{{ dsc.images.registration }}" download class="figure-download">Save</a>
-        </div>
-    </div>
-    {% endif %}
 </section>

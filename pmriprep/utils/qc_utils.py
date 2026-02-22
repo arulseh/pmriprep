@@ -350,7 +350,7 @@ def plot_registration_qc_filmstrip(
                         levels = [float(np.percentile(moving_valid, 50))]
                     ax.contour(
                         moving_slice, levels=levels,
-                        colors=[contour_color], linewidths=0.5,
+                        colors=[contour_color], linewidths=1.5,
                     )
 
             ax.axis("off")
@@ -491,7 +491,7 @@ def plot_segmentation_qc_filmstrip(
                 )
                 if np.any(mask_slice > 0):
                     ax.contour(
-                        mask_slice, levels=[0.5], colors=[color], linewidths=0.5,
+                        mask_slice, levels=[0.5], colors=[color], linewidths=1.5,
                     )
 
             ax.axis("off")

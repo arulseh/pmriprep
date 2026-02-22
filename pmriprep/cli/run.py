@@ -336,6 +336,13 @@ Examples:
         default=False,
         help="Enable Nipype's resource monitoring to keep track of memory and CPU usage.",
     )
+    g_other.add_argument(
+        "--report-only",
+        action="store_true",
+        default=False,
+        help="Regenerate HTML QC reports from existing outputs without "
+        "re-running any pipeline. Requires a previous run's output.",
+    )
 
     return parser
 
@@ -480,6 +487,82 @@ def _find_sessions(
     return sessions if sessions else [None]
 
 
+def _run_report_only(
+    args: argparse.Namespace,
+    subjects: List[str],
+) -> None:
+    """Regenerate HTML reports from existing QC outputs on disk.
+
+    For each subject/session, auto-detects which pipelines ran by checking
+    for QC JSON files and calls ``generate_unified_report()`` directly
+    without any Nipype involvement.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command line arguments.
+    subjects : list of str
+        Subject IDs to generate reports for.
+    """
+    from pmriprep.utils.report_utils import (
+        _PIPELINE_QC_SUFFIXES,
+        generate_unified_report,
+    )
+
+    for subject_id in subjects:
+        sessions = _find_sessions(args.bids_dir, subject_id, args.session_label)
+
+        for session_id in sessions:
+            session_str = f"ses-{session_id}" if session_id else "no-session"
+
+            # Build paths
+            ses_dir = args.output_dir / "pmriprep" / f"sub-{subject_id}"
+            if session_id:
+                ses_dir = ses_dir / f"ses-{session_id}"
+            figures_dir = ses_dir / "figures"
+
+            # Build BIDS prefix
+            prefix = f"sub-{subject_id}"
+            if session_id:
+                prefix += f"_ses-{session_id}"
+
+            # Auto-detect which pipelines ran from QC JSONs on disk
+            ran_pipelines: Dict[str, bool] = {}
+            for pipeline, suffix in _PIPELINE_QC_SUFFIXES.items():
+                qc_path = ses_dir / f"{prefix}_desc-{suffix}_quality.json"
+                ran_pipelines[pipeline] = qc_path.exists()
+
+            if not any(ran_pipelines.values()):
+                logger.warning(
+                    "No QC JSON files found for sub-%s/%s in %s — skipping",
+                    subject_id,
+                    session_str,
+                    ses_dir,
+                )
+                continue
+
+            detected = [k for k, v in ran_pipelines.items() if v]
+            logger.log(
+                IMPORTANT,
+                "sub-%s/%s: regenerating report (detected: %s)",
+                subject_id,
+                session_str,
+                ", ".join(detected),
+            )
+
+            output_path = ses_dir / f"{prefix}.html"
+            generate_unified_report(
+                subject_id=subject_id,
+                session_id=session_id or "",
+                output_path=str(output_path),
+                ses_dir=str(ses_dir),
+                figures_dir=str(figures_dir),
+                ran_pipelines=ran_pipelines,
+            )
+
+            logger.log(IMPORTANT, "Report written: %s", output_path)
+
+
 def run_pmriprep_wf(args: argparse.Namespace) -> None:
     """Run the PMRIPrep workflow.
 
@@ -497,6 +580,31 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     args : argparse.Namespace
         Parsed command line arguments.
     """
+    # Compute log level from -v count: (none)=25, -v=20, -vv=15, -vvv=10
+    log_level = int(max(IMPORTANT - 5 * args.verbose_count, logging.DEBUG))
+
+    # Console-only logging before per-subject FileHandler is set up
+    plogger.init(log_level=log_level)
+
+    logger.log(IMPORTANT, f"PMRIPrep version {__version__}")
+    logger.log(IMPORTANT, f"BIDS directory: {args.bids_dir}")
+    logger.log(IMPORTANT, f"Output directory: {args.output_dir}")
+
+    # Find subjects to process
+    subjects = _find_subjects(args.bids_dir, args.participant_label)
+
+    if not subjects:
+        logger.error("No subjects found to process")
+        sys.exit(1)
+
+    logger.log(IMPORTANT, f"Found {len(subjects)} subject(s) to process")
+
+    # --report-only: regenerate HTML from existing QC outputs and exit
+    if args.report_only:
+        _run_report_only(args, subjects)
+        return
+
+    # --- Full pipeline path: load configs, build workflows, run Nipype ---
     from pmriprep.config.loader import (
         build_anat_config,
         build_dce_config,
@@ -511,18 +619,8 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         init_pmriprep_wf,
     )
 
-    # Compute log level from -v count: (none)=25, -v=20, -vv=15, -vvv=10
-    log_level = int(max(IMPORTANT - 5 * args.verbose_count, logging.DEBUG))
-
     # Generate run UUID once per invocation (all subjects share it)
     run_uuid = f"{strftime('%Y%m%d-%H%M%S')}_{uuid4()}"
-
-    # Console-only logging before per-subject FileHandler is set up
-    plogger.init(log_level=log_level)
-
-    logger.log(IMPORTANT, f"PMRIPrep version {__version__}")
-    logger.log(IMPORTANT, f"BIDS directory: {args.bids_dir}")
-    logger.log(IMPORTANT, f"Output directory: {args.output_dir}")
 
     # Convert args to dict for config merging
     cli_args = _args_to_dict(args)
@@ -556,15 +654,6 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         skip_dsc=args.skip_dsc,
         skip_dce=args.skip_dce,
     )
-
-    # Find subjects to process
-    subjects = _find_subjects(args.bids_dir, args.participant_label)
-
-    if not subjects:
-        logger.error("No subjects found to process")
-        sys.exit(1)
-
-    logger.log(IMPORTANT, f"Found {len(subjects)} subject(s) to process")
 
     # Process each subject
     for subject_id in subjects:
