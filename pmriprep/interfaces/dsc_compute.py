@@ -427,7 +427,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Enhancing tumor mask (any space, resampled internally to DSC)",
     )
     nawm_mask_file = File(
-        exists=True,
         mandatory=False,
         desc="NAWM mask in DSC space for rTTP normalization",
     )
