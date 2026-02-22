@@ -125,7 +125,7 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
 
     # Masks in DSC space
     brain_mask_dsc = traits.Str(desc="Brain mask in DSC space")
-    nawm_mask_dsc = traits.Str(desc="NAWM mask in DSC space")
+    nawm_mask_dsc = traits.Either(traits.Str, None, desc="NAWM mask in DSC space")
 
     # Structural underlay labeling
     has_postcon_t1w = traits.Bool(False, usedefault=True,
@@ -134,12 +134,12 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Lesion statistics
     lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
     lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
-    lesion_mask_dsc = traits.Str(desc="Lesion mask in DSC space path")
+    lesion_mask_dsc = traits.Either(traits.Str, None, desc="Lesion mask in DSC space path")
 
     # ROI statistics (from user-supplied roi_mask, optional)
     roi_stats_json = traits.Str(desc="ROI statistics JSON file path")
     roi_stats_txt = traits.Str(desc="ROI statistics text summary path")
-    roi_mask_dsc = traits.Str(desc="ROI mask in DSC space path")
+    roi_mask_dsc = traits.Either(traits.Str, None, desc="ROI mask in DSC space path")
 
 
 class DSCDerivativeWriterOutputSpec(TraitedSpec):

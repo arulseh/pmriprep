@@ -337,7 +337,7 @@ class TestLesionStatisticsResultToDict:
         d = result.to_dict()
         assert "Description" in d
         assert "GeneratedBy" in d
-        assert d["GeneratedBy"] == "pmriprep"
+        assert d["GeneratedBy"][0]["Name"] == "pmriprep"
         assert "GeneratedAt" in d
         assert "Subject" in d
         assert d["Subject"] == "sub-0001"
