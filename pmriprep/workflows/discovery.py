@@ -33,7 +33,6 @@ class ModalityAvailability:
     t1w_ce_gad: Optional[Path] = None
     t2w: Optional[Path] = None
     flair: Optional[Path] = None
-    pdw: Optional[Path] = None
     dsc: Optional[Path] = None
     dce: Optional[Path] = None
     vfa: List[Path] = field(default_factory=list)
@@ -379,29 +378,6 @@ def _find_flair(anat_dir: Path) -> Optional[Path]:
 
     if flair_files:
         return flair_files[0]
-
-    return None
-
-
-def _find_pdw(anat_dir: Path) -> Optional[Path]:
-    """Find PDw (proton density-weighted) image.
-
-    Prefers non-contrast PDw images.
-
-    Args:
-        anat_dir: Path to the anatomical directory.
-
-    Returns:
-        Path to PDw image, or None if not found.
-    """
-    pdw_files = list(anat_dir.glob("*_PDw.nii.gz")) + list(anat_dir.glob("*_PDw.nii"))
-
-    if pdw_files:
-        # Prefer non-contrast PDw
-        for f in pdw_files:
-            if "ce-" not in f.name.lower():
-                return f
-        return pdw_files[0]
 
     return None
 
@@ -843,7 +819,6 @@ def discover_session_data(
         modalities.t1w_ce_gad = _find_t1w_ce_gad(anat_dir)
         modalities.flair = _find_flair(anat_dir)
         modalities.t2w = _find_t2w(anat_dir, flair_path=modalities.flair)
-        modalities.pdw = _find_pdw(anat_dir)
         modalities.vfa = _find_vfa(anat_dir)
         modalities.afi = _find_afi(anat_dir, fmap_dir=fmap_dir_opt)
 
@@ -904,7 +879,6 @@ def get_data_summary(session_data: SessionData) -> Dict[str, Union[bool, str, No
         "has_t1w_ce_gad": session_data.modalities.t1w_ce_gad is not None,
         "has_t2w": session_data.modalities.t2w is not None,
         "has_flair": session_data.modalities.flair is not None,
-        "has_pdw": session_data.modalities.pdw is not None,
         "has_dsc": session_data.modalities.dsc is not None,
         "has_dce": session_data.modalities.dce is not None,
         "has_vfa": len(session_data.modalities.vfa) > 0,

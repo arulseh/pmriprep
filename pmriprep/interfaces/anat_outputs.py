@@ -50,8 +50,6 @@ class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     t2w_to_t1w_xfm = File(desc="T2w to T1w transform matrix")
     flair_coreg = File(desc="FLAIR coregistered to T1w")
     flair_to_t1w_xfm = File(desc="FLAIR to T1w transform matrix")
-    pdw_coreg = File(desc="PDw coregistered to T1w")
-    pdw_to_t1w_xfm = File(desc="PDw to T1w transform matrix")
     t1w_subtraction = File(desc="T1w subtraction image (post - pre)")
 
     # Source paths for JSON sidecar Sources field
@@ -59,8 +57,6 @@ class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     source_t1w_postcon = File(desc="Original T1w post-contrast source path")
     source_t2w = File(desc="Original T2w source path")
     source_flair = File(desc="Original FLAIR source path")
-    source_pdw = File(desc="Original PDw source path")
-
     # QC filmstrips (optional)
     brain_mask_filmstrip = traits.Str(desc="Brain mask QC filmstrip PNG path")
     tissue_seg_filmstrip = traits.Str(desc="Tissue segmentation QC filmstrip PNG path")
@@ -68,8 +64,6 @@ class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     coreg_filmstrip_postcon = traits.Str(desc="T1w postcon coregistration filmstrip PNG path")
     coreg_filmstrip_t2w = traits.Str(desc="T2w coregistration filmstrip PNG path")
     coreg_filmstrip_flair = traits.Str(desc="FLAIR coregistration filmstrip PNG path")
-    coreg_filmstrip_pdw = traits.Str(desc="PDw coregistration filmstrip PNG path")
-
     # QC metrics
     qc_metrics = traits.Dict(desc="QC metrics dictionary from brain extraction")
 
@@ -263,25 +257,6 @@ class AnatDerivativeWriter(BaseInterface):
                     anat_dir / f"{prefix}_space-anat_desc-preproc_FLAIR.json",
                 )
 
-        # PDw
-        if has_input(self.inputs,"pdw_coreg"):
-            copy_derivative(
-                self.inputs.pdw_coreg,
-                anat_dir / f"{prefix}_space-anat_desc-preproc_PDw.nii.gz",
-            )
-            source_pdw = self._get_source_path("source_pdw")
-            if source_pdw:
-                sidecar = build_preproc_sidecar(
-                    description="Preprocessed and brain-extracted proton density weighted image in native anat space",
-                    source_path=source_pdw,
-                    bids_dir=bids_dir,
-                    skull_stripped=True,
-                )
-                write_json_sidecar(
-                    sidecar,
-                    anat_dir / f"{prefix}_space-anat_desc-preproc_PDw.json",
-                )
-
         # T1w subtraction
         if has_input(self.inputs,"t1w_subtraction"):
             copy_derivative(
@@ -322,10 +297,6 @@ class AnatDerivativeWriter(BaseInterface):
             fname = get_xfm_filename(subject, session, "FLAIR", "anat")
             copy_derivative(self.inputs.flair_to_t1w_xfm, anat_dir / fname)
 
-        if has_input(self.inputs,"pdw_to_t1w_xfm"):
-            fname = get_xfm_filename(subject, session, "PDw", "anat")
-            copy_derivative(self.inputs.pdw_to_t1w_xfm, anat_dir / fname)
-
         # ---------------------------------------------------------------
         # 4. Dataset description
         # ---------------------------------------------------------------
@@ -340,7 +311,6 @@ class AnatDerivativeWriter(BaseInterface):
             "wm_probseg": "Tissue segmentation (WM/GM/CSF probability maps)",
             "flair_coreg": "FLAIR",
             "t2w_coreg": "T2w",
-            "pdw_coreg": "PDw",
         }
         # Only warn about missing postcon coreg when both pre and post T1w
         # are available. In postcon-only mode the postcon IS the reference,
@@ -380,7 +350,6 @@ class AnatDerivativeWriter(BaseInterface):
             "coreg_postcon": "coreg_filmstrip_postcon",
             "coreg_t2w": "coreg_filmstrip_t2w",
             "coreg_flair": "coreg_filmstrip_flair",
-            "coreg_pdw": "coreg_filmstrip_pdw",
         }
         for fig_key, attr in _fig_inputs.items():
             if has_input(self.inputs,attr):

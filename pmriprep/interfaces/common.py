@@ -151,7 +151,7 @@ class Reorient(CommandLine):
     non-structural images like perfusion data).
 
     Use this for: DCE, DSC, VFA, AFI, DWI
-    Use ReorientAndCrop for: T1w, T2w, FLAIR, PDw (structurals)
+    Use ReorientAndCrop for: T1w, T2w, FLAIR (structurals)
 
     Examples
     --------

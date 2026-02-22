@@ -316,67 +316,6 @@ def _passthrough_if_undefined(in_file=None):
     return in_file
 
 
-def _check_same_sequence(pdw_json=None, t2w_json=None):
-    """Check if PDw and T2w are from the same multi-echo sequence.
-
-    When PDw and T2w are acquired together in a TSE sequence (different echoes),
-    PDw typically registers better to T1w than T2w. In this case, we can register
-    PDw and apply the same transform to T2w.
-
-    Parameters
-    ----------
-    pdw_json : str or None
-        Path to PDw JSON sidecar file.
-    t2w_json : str or None
-        Path to T2w JSON sidecar file.
-
-    Returns
-    -------
-    bool
-        True if PDw and T2w are from the same sequence (same SeriesNumber,
-        different EchoNumber), False otherwise.
-    """
-    import json
-    from pathlib import Path
-
-    if not pdw_json or not t2w_json:
-        return False
-
-    pdw_path = Path(pdw_json)
-    t2w_path = Path(t2w_json)
-
-    if not pdw_path.exists() or not t2w_path.exists():
-        return False
-
-    try:
-        with open(pdw_path) as f:
-            pdw_meta = json.load(f)
-        with open(t2w_path) as f:
-            t2w_meta = json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return False
-
-    # Check if same SeriesNumber (same acquisition)
-    pdw_series = pdw_meta.get("SeriesNumber")
-    t2w_series = t2w_meta.get("SeriesNumber")
-
-    if pdw_series is None or t2w_series is None:
-        return False
-
-    same_series = pdw_series == t2w_series
-
-    # Check if different EchoNumber (different echoes in same sequence)
-    pdw_echo = pdw_meta.get("EchoNumber")
-    t2w_echo = t2w_meta.get("EchoNumber")
-
-    if pdw_echo is None or t2w_echo is None:
-        return False
-
-    different_echo = pdw_echo != t2w_echo
-
-    return same_series and different_echo
-
-
 def init_anat_preproc_wf(
     bids_dir: Union[str, Path],
     subject_id: str,
@@ -385,7 +324,6 @@ def init_anat_preproc_wf(
     has_t1w_postcon: bool = False,
     has_t2w: bool = False,
     has_flair: bool = False,
-    has_pdw: bool = False,
     name: str = "anat_preproc_wf",
 ) -> pe.Workflow:
     """Initialize anatomical preprocessing workflow.
@@ -411,8 +349,6 @@ def init_anat_preproc_wf(
         Whether T2w image is available.
     has_flair : bool
         Whether FLAIR image is available.
-    has_pdw : bool
-        Whether PDw image is available.
     name : str
         Workflow name (default: "anat_preproc_wf").
 
@@ -431,8 +367,6 @@ def init_anat_preproc_wf(
         Path to T2-weighted image.
     inputnode.flair : str, optional
         Path to FLAIR image.
-    inputnode.pdw : str, optional
-        Path to proton density weighted image.
     inputnode.lesion_mask : str, optional
         Path to lesion mask for registration cost function weighting.
 
@@ -460,16 +394,12 @@ def init_anat_preproc_wf(
         T2w coregistered to T1w.
     outputnode.flair_coreg : str, optional
         FLAIR coregistered to T1w.
-    outputnode.pdw_coreg : str, optional
-        PDw coregistered to T1w.
     outputnode.t1w_postcon_to_t1w_xfm : str, optional
         T1w postcon to T1w transform.
     outputnode.t2w_to_t1w_xfm : str, optional
         T2w to T1w transform.
     outputnode.flair_to_t1w_xfm : str, optional
         FLAIR to T1w transform.
-    outputnode.pdw_to_t1w_xfm : str, optional
-        PDw to T1w transform.
     outputnode.t1w_subtraction : str, optional
         T1w subtraction image (post - pre).
     outputnode.is_postcon_ref : bool
@@ -518,7 +448,6 @@ def init_anat_preproc_wf(
                 "t1w_postcon",
                 "t2w",
                 "flair",
-                "pdw",
                 "lesion_mask",
             ]
         ),
@@ -542,12 +471,10 @@ def init_anat_preproc_wf(
                 "t1w_postcon_coreg",
                 "t2w_coreg",
                 "flair_coreg",
-                "pdw_coreg",
                 # Coregistration transforms
                 "t1w_postcon_to_t1w_xfm",
                 "t2w_to_t1w_xfm",
                 "flair_to_t1w_xfm",
-                "pdw_to_t1w_xfm",
                 # Subtraction
                 "t1w_subtraction",
                 # Tumor segmentation prepared inputs (no bias correction)
@@ -565,7 +492,6 @@ def init_anat_preproc_wf(
                 "coreg_filmstrip_postcon",
                 "coreg_filmstrip_t2w",
                 "coreg_filmstrip_flair",
-                "coreg_filmstrip_pdw",
                 "tissue_seg_filmstrip",
             ]
         ),
@@ -692,29 +618,6 @@ def init_anat_preproc_wf(
             )
         workflow.connect(coreg_flair_conns)
 
-    # PDw preprocessing and coregistration
-    if has_pdw:
-        reorient_pdw = pe.Node(
-            ReorientAndCrop(crop_fov=False), name="reorient_pdw"
-        )
-        bias_correct_pdw = pe.Node(
-            BiasCorrection(denoise=config.denoise), name="bias_correct_pdw"
-        )
-        coreg_pdw = pe.Node(
-            Coregistration(modality="PDw", dof=6), name="coreg_pdw"
-        )
-        coreg_pdw_conns = [
-            (inputnode, reorient_pdw, [("pdw", "in_file")]),
-            (reorient_pdw, bias_correct_pdw, [("out_file", "in_file")]),
-            (bias_correct_pdw, coreg_pdw, [("out_file", "in_file")]),
-            (bias_correct, coreg_pdw, [("out_file", "reference")]),
-        ]
-        if config.use_lesion_mask:
-            coreg_pdw_conns.append(
-                (inputnode, coreg_pdw, [("lesion_mask", "lesion_mask")])
-            )
-        workflow.connect(coreg_pdw_conns)
-
     # -------------------------------------------------------------------
     # Step 5: Brain Extraction
     # Extract brain using HD-BET (default) or ANTs
@@ -754,13 +657,6 @@ def init_anat_preproc_wf(
         workflow.connect([
             (coreg_flair, mask_flair, [("out_file", "in_file")]),
             (brain_extract, mask_flair, [("out_mask", "mask_file")]),
-        ])
-
-    if has_pdw:
-        mask_pdw = pe.Node(ApplyMask(), name="mask_pdw")
-        workflow.connect([
-            (coreg_pdw, mask_pdw, [("out_file", "in_file")]),
-            (brain_extract, mask_pdw, [("out_mask", "mask_file")]),
         ])
 
     # -------------------------------------------------------------------
@@ -1112,8 +1008,6 @@ def init_anat_preproc_wf(
     coreg_qc_postcon = None
     coreg_qc_t2w = None
     coreg_qc_flair = None
-    coreg_qc_pdw = None
-
     if has_t1w_postcon:
         coreg_qc_postcon = pe.Node(
             niu.Function(
@@ -1166,25 +1060,6 @@ def init_anat_preproc_wf(
         workflow.connect([
             (mask_flair, coreg_qc_flair, [("out_file", "coregistered_file")]),
             (brain_extract, coreg_qc_flair, [
-                ("out_file", "reference_file"),
-                ("out_mask", "brain_mask_file"),
-            ]),
-        ])
-
-    if has_pdw:
-        coreg_qc_pdw = pe.Node(
-            niu.Function(
-                input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title"],
-                output_names=["filmstrip_file"],
-                function=_create_coreg_qc_filmstrip,
-            ),
-            name="coreg_qc_pdw",
-        )
-        coreg_qc_pdw.inputs.title = "PDw to T1w"
-        workflow.connect([
-            (mask_pdw, coreg_qc_pdw, [("out_file", "coregistered_file")]),
-            (brain_extract, coreg_qc_pdw, [
                 ("out_file", "reference_file"),
                 ("out_mask", "brain_mask_file"),
             ]),
@@ -1255,13 +1130,6 @@ def init_anat_preproc_wf(
                 ("filmstrip_file", "coreg_filmstrip_flair"),
             ]),
         ])
-    if coreg_qc_pdw is not None:
-        workflow.connect([
-            (coreg_qc_pdw, outputnode, [
-                ("filmstrip_file", "coreg_filmstrip_pdw"),
-            ]),
-        ])
-
     # Coregistered modalities and transforms (only for available modalities)
     if has_t1w_postcon:
         workflow.connect([
@@ -1278,12 +1146,6 @@ def init_anat_preproc_wf(
             (mask_flair, outputnode, [("out_file", "flair_coreg")]),
             (coreg_flair, outputnode, [("out_matrix", "flair_to_t1w_xfm")]),
         ])
-    if has_pdw:
-        workflow.connect([
-            (mask_pdw, outputnode, [("out_file", "pdw_coreg")]),
-            (coreg_pdw, outputnode, [("out_matrix", "pdw_to_t1w_xfm")]),
-        ])
-
     # Subtraction image
     if config.create_subtraction and has_t1w_postcon:
         workflow.connect([

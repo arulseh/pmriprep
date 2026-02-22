@@ -727,7 +727,6 @@ def init_pmriprep_wf(
                 "t1w_postcon",
                 "t2w",
                 "flair",
-                "pdw",
                 # Perfusion inputs
                 "dsc_file",
                 "dce_file",
@@ -751,8 +750,6 @@ def init_pmriprep_wf(
         inputnode.inputs.t2w = str(session_data.modalities.t2w)
     if session_data.modalities.flair:
         inputnode.inputs.flair = str(session_data.modalities.flair)
-    if session_data.modalities.pdw:
-        inputnode.inputs.pdw = str(session_data.modalities.pdw)
     if session_data.modalities.dsc:
         inputnode.inputs.dsc_file = str(session_data.modalities.dsc)
     if session_data.modalities.dce:
@@ -926,7 +923,6 @@ def init_pmriprep_wf(
             ),
             has_t2w=session_data.modalities.t2w is not None,
             has_flair=session_data.modalities.flair is not None,
-            has_pdw=session_data.modalities.pdw is not None,
             name="anat_wf",
         )
 
@@ -950,11 +946,6 @@ def init_pmriprep_wf(
             workflow.connect([
                 (inputnode, anat_wf, [("flair", "inputnode.flair")]),
             ])
-        if session_data.modalities.pdw:
-            workflow.connect([
-                (inputnode, anat_wf, [("pdw", "inputnode.pdw")]),
-            ])
-
         # Connect anat outputs to master outputnode
         workflow.connect([
             (anat_wf, outputnode, [
@@ -1050,15 +1041,6 @@ def init_pmriprep_wf(
                 ]),
                 (inputnode, anat_writer, [("flair", "source_flair")]),
             ])
-        if session_data.modalities.pdw:
-            workflow.connect([
-                (anat_wf, anat_writer, [
-                    ("outputnode.pdw_coreg", "pdw_coreg"),
-                    ("outputnode.pdw_to_t1w_xfm", "pdw_to_t1w_xfm"),
-                ]),
-                (inputnode, anat_writer, [("pdw", "source_pdw")]),
-            ])
-
         # -------------------------------------------------------------------
         # Anat: connect writer to unified report barrier
         # -------------------------------------------------------------------
@@ -1105,13 +1087,6 @@ def init_pmriprep_wf(
                     ("outputnode.coreg_filmstrip_flair", "coreg_filmstrip_flair"),
                 ]),
             ])
-        if session_data.modalities.pdw:
-            workflow.connect([
-                (anat_wf, anat_writer, [
-                    ("outputnode.coreg_filmstrip_pdw", "coreg_filmstrip_pdw"),
-                ]),
-            ])
-
     # -------------------------------------------------------------------
     # Tumor segmentation workflow (requires anat outputs)
     # -------------------------------------------------------------------

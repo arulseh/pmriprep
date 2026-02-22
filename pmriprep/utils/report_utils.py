@@ -47,7 +47,6 @@ FIGURE_NAME_MAP: dict[str, tuple[str, str]] = {
     "coreg_postcon": ("coregpostcon", "anat"),
     "coreg_t2w": ("coregt2w", "anat"),
     "coreg_flair": ("coregflair", "anat"),
-    "coreg_pdw": ("coregpdw", "anat"),
     # HD-GLIO
     "seg_postcon": ("segpostcon", "anat"),
     "seg_flair": ("segflair", "FLAIR"),
@@ -62,7 +61,7 @@ _SHARED_KEYS = {"motion", "aif_curve", "aif_location", "registration"}
 _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
     "anat": [
         "brain_mask", "tissue_seg", "acpc",
-        "coreg_postcon", "coreg_t2w", "coreg_flair", "coreg_pdw",
+        "coreg_postcon", "coreg_t2w", "coreg_flair",
     ],
     "tumor_seg": ["seg_postcon", "seg_flair", "nawm_flair"],
     "dsc": [

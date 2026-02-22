@@ -33,7 +33,7 @@ class ReorientAndCropInputSpec(CommandLineInputSpec):
         True,
         usedefault=True,
         desc="Apply robustfov cropping after reorientation. Set to False for "
-        "non-T1w modalities (FLAIR, T2w, PDw) where robustfov may "
+        "non-T1w modalities (FLAIR, T2w) where robustfov may "
         "incorrectly crop the FOV.",
     )
 
@@ -331,7 +331,6 @@ class CoregistrationInputSpec(CommandLineInputSpec):
         "T1_postcon",
         "FLAIR",
         "T2w",
-        "PDw",
         "T1w",
         usedefault=True,
         desc="Modality of moving image (determines cost function)",
@@ -340,11 +339,6 @@ class CoregistrationInputSpec(CommandLineInputSpec):
         6,
         usedefault=True,
         desc="Degrees of freedom for registration (default: 6 for rigid)",
-    )
-    use_template_t2 = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Use MNI T2 template for T2w registration when PDw unavailable",
     )
 
 
@@ -363,7 +357,7 @@ class Coregistration(CommandLine):
     selected based on the modality to optimize registration accuracy:
 
     - T1 post-contrast (ce-GAD): normmi (normalized mutual information)
-    - FLAIR, PDw, T2w: normcorr (normalized correlation)
+    - FLAIR, T2w: normcorr (normalized correlation)
     - T1w: corratio (correlation ratio)
 
     Optionally supports lesion mask cost function weighting, where the lesion
@@ -379,12 +373,9 @@ class Coregistration(CommandLine):
     lesion_mask : str, optional
         Binary lesion mask - lesion voxels will have reduced weight
     modality : str
-        Modality of moving image: T1_postcon, FLAIR, T2w, PDw, T1w
+        Modality of moving image: T1_postcon, FLAIR, T2w, T1w
     dof : int
         Degrees of freedom (default: 6 for rigid body)
-    use_template_t2 : bool
-        If True and modality is T2w, use MNI T2 template as intermediate
-
     Examples
     --------
     >>> coreg = Coregistration()
@@ -406,7 +397,7 @@ class Coregistration(CommandLine):
     Cost function selection by modality:
 
     - normmi: Best for T1 post-contrast where intensity changes due to Gd
-    - normcorr: Best for FLAIR/T2w/PDw where contrast inverts vs T1
+    - normcorr: Best for FLAIR/T2w where contrast inverts vs T1
     - corratio: Best for same-modality registration (T1w to T1w)
 
     Lesion mask weighting creates a cost function weight image where:
@@ -429,7 +420,6 @@ class Coregistration(CommandLine):
         "T1_postcon": "normmi",
         "FLAIR": "normcorr",
         "T2w": "normcorr",
-        "PDw": "normcorr",
         "T1w": "corratio",
     }
 
