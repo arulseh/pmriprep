@@ -108,6 +108,9 @@ class DCEConfig:
     bayesian: str = "none"
     mcmc_samples: int = 500
 
+    # Relaxivity override
+    r1_relaxivity: Optional[float] = None  # User-supplied r1 (s^-1/mM)
+
     # DSC CBV constraint settings
     cbv_constraint_mode: str = "auto"  # "auto", "hard", "soft", "skip"
     hematocrit: float = 0.40  # Blood hematocrit for CBV-to-vp conversion
@@ -157,3 +160,9 @@ class DCEConfig:
                 self.target_peak = float(self.target_peak)
             except (ValueError, TypeError) as e:
                 raise TypeError(f"DCEConfig.target_peak has invalid type: {e}") from e
+
+        if self.r1_relaxivity is not None:
+            try:
+                self.r1_relaxivity = float(self.r1_relaxivity)
+            except (ValueError, TypeError) as e:
+                raise TypeError(f"DCEConfig.r1_relaxivity has invalid type: {e}") from e

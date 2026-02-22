@@ -842,6 +842,45 @@ def init_pmriprep_wf(
                 dce_ref_selection.bbr_eligible,
             )
 
+    # -------------------------------------------------------------------
+    # Pre-flight validation: read sidecars and validate metadata
+    # before any workflow initialization to catch errors early.
+    # -------------------------------------------------------------------
+    from pmriprep.utils.preflight import run_preflight
+
+    dsc_sidecar = None
+    dce_sidecar = None
+    preflight_vfa_flip_angles: Optional[list[float]] = None
+    preflight_vfa_trs: Optional[list[Optional[float]]] = None
+
+    if decision.run_dsc and session_data.modalities.dsc:
+        dsc_sidecar = _read_bids_sidecar(session_data.modalities.dsc)
+
+    if decision.run_dce and session_data.modalities.dce:
+        dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
+
+        # Read VFA metadata for preflight (if VFA data present)
+        if session_data.modalities.vfa:
+            preflight_vfa_flip_angles = []
+            preflight_vfa_trs = []
+            for vfa_path in session_data.modalities.vfa:
+                vfa_sc = _read_bids_sidecar(vfa_path)
+                if vfa_sc["flip_angle"] is not None:
+                    preflight_vfa_flip_angles.append(vfa_sc["flip_angle"])
+                preflight_vfa_trs.append(vfa_sc.get("tr"))
+
+    preflight_report = run_preflight(
+        session_data=session_data,
+        decision=decision,
+        dsc_sidecar=dsc_sidecar,
+        dce_sidecar=dce_sidecar,
+        dce_config=dce_config,
+        vfa_flip_angles=preflight_vfa_flip_angles,
+        vfa_trs=preflight_vfa_trs,
+    )
+    preflight_report.log_all()
+    preflight_report.raise_if_errors()
+
     # Define master output node
     outputnode = pe.Node(
         niu.IdentityInterface(
@@ -1743,10 +1782,20 @@ def init_pmriprep_wf(
             if dce_sidecar["field_strength"] is not None:
                 dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
 
-            # Set r1 relaxivity from contrast agent lookup or default
-            # Agent-specific r1 (e.g., Gadovist=5.0 at 3T) improves AIF accuracy
+            # Set r1 relaxivity — priority chain:
+            # 1. User-supplied override (dce_config.r1_relaxivity)
+            # 2. Agent-specific lookup from BIDS sidecar
+            # 3. Generic Gd-DTPA for known field strength
+            # 4. Hardcoded Gd-DTPA at 3T fallback (3.8 s^-1/mM)
             logger = logging.getLogger("pmriprep.workflows")
-            if dce_sidecar["r1_relaxivity"] is not None:
+            if dce_config.r1_relaxivity is not None:
+                dce_wf.inputs.inputnode.r1_relaxivity = dce_config.r1_relaxivity
+                dce_wf.inputs.inputnode.agent_r1_known = True
+                logger.info(
+                    f"Using user-supplied r1={dce_config.r1_relaxivity:.1f} "
+                    f"s^-1/mM (overrides sidecar lookup)"
+                )
+            elif dce_sidecar["r1_relaxivity"] is not None:
                 dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
                 dce_wf.inputs.inputnode.agent_r1_known = True
                 logger.info(

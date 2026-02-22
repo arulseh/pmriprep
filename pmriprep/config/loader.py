@@ -132,6 +132,7 @@ def merge_cli_config(
         "dce_no_b1": ("dce", "no_b1"),
         "dce_no_t1": ("dce", "no_t1"),
         "dce_dose": ("dce", "dose"),
+        "dce_r1": ("dce", "r1_relaxivity"),
         # Anatomical options
         "brain_extraction_tool": ("anat", "tool"),
         "denoise": ("anat", "denoise"),
@@ -256,6 +257,7 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     _coerce_float(dce_dict, "tsnr_threshold")
     _coerce_float(dce_dict, "hematocrit")
     _coerce_float(dce_dict, "target_peak")
+    _coerce_float(dce_dict, "r1_relaxivity")
 
     # Filter to only valid DCEConfig fields
     valid_fields = {f.name for f in DCEConfig.__dataclass_fields__.values()}

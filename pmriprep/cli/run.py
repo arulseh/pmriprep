@@ -248,6 +248,17 @@ Examples:
         help="Contrast agent dose for DCE (default: full).",
     )
     dce_group.add_argument(
+        "--dce-r1",
+        type=float,
+        default=None,
+        metavar="R1",
+        help=(
+            "Override r1 relaxivity (s^-1/mM) for DCE concentration "
+            "conversion. Bypasses contrast-agent lookup from BIDS sidecar. "
+            "Typical values: Gd-DTPA 3.8, Gadovist 5.0 at 3T."
+        ),
+    )
+    dce_group.add_argument(
         "--dce-no-b1",
         action="store_const",
         const=True,
