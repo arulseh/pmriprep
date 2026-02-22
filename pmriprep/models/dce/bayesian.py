@@ -673,7 +673,7 @@ class BayesianPKFitter:
                 continue
 
         # Apply volume constraint and clip to bounds
-        fitted_params = self._apply_volume_constraint(fitted_params)
+        fitted_params = self._apply_volume_constraint(fitted_params)  # type: ignore[assignment]
         fitted_params = np.array(
             self.model.clip_params(list(fitted_params)), dtype=np.float64
         )
@@ -1040,7 +1040,7 @@ class BayesianPKFitter:
                 model_params, tissue_curve, aif, time_points, sigma
             )
 
-            return log_p + log_lik
+            return log_p + log_lik  # type: ignore[no-any-return]
 
         # Initialize walkers near MAP estimate
         map_result = self.fit_map(

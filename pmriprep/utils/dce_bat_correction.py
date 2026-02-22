@@ -157,7 +157,7 @@ def apply_aif_time_shift(
         Time-shifted AIF concentration, shape (nt,).
     """
     if abs(shift_s) < 0.1:
-        return aif_concentration.copy()
+        return aif_concentration.copy()  # type: ignore[no-any-return]
 
     # Create interpolation function for original AIF
     aif_interp = interp1d(

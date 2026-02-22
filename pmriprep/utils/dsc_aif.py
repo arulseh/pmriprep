@@ -894,7 +894,7 @@ def get_contralateral_mask(
     # Find lesion center of mass
     lesion_coords = np.where(lesion_mask > 0)
     if len(lesion_coords[0]) == 0:
-        return brain_mask.copy()
+        return brain_mask.copy()  # type: ignore[no-any-return]
 
     lesion_center_x = np.mean(lesion_coords[0])
     brain_center_x = brain_mask.shape[0] / 2.0

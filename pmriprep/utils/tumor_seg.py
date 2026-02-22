@@ -390,7 +390,7 @@ def erode_mask_from_array(
     from scipy import ndimage  # type: ignore[import-untyped]
 
     if radius_mm <= 0:
-        return mask_data.copy()
+        return mask_data.copy()  # type: ignore[no-any-return]
 
     kernel = _create_spherical_kernel(radius_mm, voxel_sizes)
     eroded: npt.NDArray[np.bool_] = ndimage.binary_erosion(mask_data, structure=kernel)

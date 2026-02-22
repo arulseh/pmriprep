@@ -392,7 +392,7 @@ def compute_psr_legacy(
         denom = s0 - s_min
         denom_safe = np.maximum(np.abs(denom), EPSILON_SIGNAL)
         denom_safe = np.where(denom >= 0, denom_safe, -denom_safe)  # type: ignore[assignment]
-        return 100.0 * (s1 - s_min) / denom_safe
+        return 100.0 * (s1 - s_min) / denom_safe  # type: ignore[no-any-return]
     else:
         raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
 
@@ -520,7 +520,7 @@ def compute_peak_height_legacy(
         s_min = np.min(signal[..., baseline_frames:], axis=-1)
         s0_safe = np.maximum(np.abs(s0), EPSILON_SIGNAL)
         s0_safe = np.where(s0 >= 0, s0_safe, -s0_safe)  # type: ignore[assignment]
-        return 100.0 * (s0 - s_min) / s0_safe
+        return 100.0 * (s0 - s_min) / s0_safe  # type: ignore[no-any-return]
     else:
         raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
 

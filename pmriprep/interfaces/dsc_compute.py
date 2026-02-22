@@ -794,10 +794,10 @@ class ComputeDSCMaps(BaseInterface):
                         mask=mask.astype(bool),
                         return_residues=False,
                     )
-                    cbf = result.cbf
-                    cbv = result.cbv
-                    mtt = result.mtt
-                    tmax = result.tmax
+                    cbf = result.cbf  # type: ignore[assignment]
+                    cbv = result.cbv  # type: ignore[assignment]
+                    mtt = result.mtt  # type: ignore[assignment]
+                    tmax = result.tmax  # type: ignore[assignment]
                     qc_metrics["used_gpu"] = True
 
                 elif method == "cSVD":
@@ -809,10 +809,10 @@ class ComputeDSCMaps(BaseInterface):
                         mask=mask.astype(bool),
                         return_residues=False,
                     )
-                    cbf = result.cbf
-                    cbv = result.cbv
-                    mtt = result.mtt
-                    tmax = result.tmax
+                    cbf = result.cbf  # type: ignore[assignment]
+                    cbv = result.cbv  # type: ignore[assignment]
+                    mtt = result.mtt  # type: ignore[assignment]
+                    tmax = result.tmax  # type: ignore[assignment]
                     delay = result.delay
                     qc_metrics["used_gpu"] = True
 
@@ -827,7 +827,7 @@ class ComputeDSCMaps(BaseInterface):
         mask_bool = mask.astype(bool)
 
         if method == "sSVD":
-            res, cbf, cbv, mtt = svd_deconvolve_standard_batch(
+            res, cbf, cbv, mtt = svd_deconvolve_standard_batch(  # type: ignore[assignment]
                 concentration_data,
                 aif,
                 dt=dt,
@@ -839,7 +839,7 @@ class ComputeDSCMaps(BaseInterface):
             residues = res if self.inputs.save_residue else None
 
         elif method == "cSVD":
-            res, cbf, cbv, mtt, delay = svd_deconvolve_circulant_batch(
+            res, cbf, cbv, mtt, delay = svd_deconvolve_circulant_batch(  # type: ignore[assignment]
                 concentration_data,
                 aif,
                 dt=dt,
@@ -851,14 +851,12 @@ class ComputeDSCMaps(BaseInterface):
             residues = res if self.inputs.save_residue else None
 
         elif method == "oSVD":
-            res, cbf, cbv, mtt, oi_values, thresholds_used = (
-                svd_deconvolve_oscillation_batch(
-                    concentration_data,
-                    aif,
-                    dt=dt,
-                    oi_target=oi_threshold,
-                    mask=mask_bool,
-                )
+            res, cbf, cbv, mtt, oi_values, thresholds_used = svd_deconvolve_oscillation_batch(  # type: ignore[assignment]
+                concentration_data,
+                aif,
+                dt=dt,
+                oi_target=oi_threshold,
+                mask=mask_bool,
             )
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
             residues = res if self.inputs.save_residue else None
@@ -866,7 +864,7 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["threshold_mean"] = float(np.mean(thresholds_used[mask_bool]))
 
         elif method == "tikhonov":
-            res, cbf, cbv, mtt, lambda_opt = tikhonov_deconvolve_batch(
+            res, cbf, cbv, mtt, lambda_opt = tikhonov_deconvolve_batch(  # type: ignore[assignment]
                 concentration_data,
                 aif,
                 dt=dt,

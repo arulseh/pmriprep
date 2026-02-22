@@ -356,10 +356,10 @@ def svd_deconvolve_standard_batch(
 
     # Reshape to original spatial dimensions
     if tissue_curves.ndim > 2:
-        residues = residues.reshape(original_shape)
-        cbf = cbf.reshape(spatial_shape)
-        cbv = cbv.reshape(spatial_shape)
-        mtt = mtt.reshape(spatial_shape)
+        residues = residues.reshape(original_shape)  # type: ignore[assignment]
+        cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
+        cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
+        mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
 
     return residues, cbf, cbv, mtt
 
@@ -741,11 +741,11 @@ def svd_deconvolve_circulant_batch(
     # Reshape to original spatial dimensions
     if tissue_curves.ndim > 2:
         residue_shape = spatial_shape + (m,)
-        residues = residues.reshape(residue_shape)
-        cbf = cbf.reshape(spatial_shape)
-        cbv = cbv.reshape(spatial_shape)
-        mtt = mtt.reshape(spatial_shape)
-        delay = delay.reshape(spatial_shape)
+        residues = residues.reshape(residue_shape)  # type: ignore[assignment]
+        cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
+        cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
+        mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
+        delay = delay.reshape(spatial_shape)  # type: ignore[assignment]
 
     return residues, cbf, cbv, mtt, delay
 
@@ -1174,12 +1174,12 @@ def svd_deconvolve_oscillation_batch(
 
     # Reshape to original spatial dimensions
     if tissue_curves.ndim > 2:
-        residues = residues.reshape(original_shape)
-        cbf = cbf.reshape(spatial_shape)
-        cbv = cbv.reshape(spatial_shape)
-        mtt = mtt.reshape(spatial_shape)
-        oscillation_index = oscillation_index.reshape(spatial_shape)
-        threshold_used = threshold_used.reshape(spatial_shape)
+        residues = residues.reshape(original_shape)  # type: ignore[assignment]
+        cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
+        cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
+        mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
+        oscillation_index = oscillation_index.reshape(spatial_shape)  # type: ignore[assignment]
+        threshold_used = threshold_used.reshape(spatial_shape)  # type: ignore[assignment]
 
     return residues, cbf, cbv, mtt, oscillation_index, threshold_used
 
@@ -1543,11 +1543,11 @@ def tikhonov_deconvolve_batch(
 
     # Reshape to original spatial dimensions
     if tissue_curves.ndim > 2:
-        residues = residues.reshape(original_shape)
-        cbf = cbf.reshape(spatial_shape)
-        cbv = cbv.reshape(spatial_shape)
-        mtt = mtt.reshape(spatial_shape)
-        lambda_optimal = lambda_optimal.reshape(spatial_shape)
+        residues = residues.reshape(original_shape)  # type: ignore[assignment]
+        cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
+        cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
+        mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
+        lambda_optimal = lambda_optimal.reshape(spatial_shape)  # type: ignore[assignment]
 
     return residues, cbf, cbv, mtt, lambda_optimal
 
@@ -2155,9 +2155,9 @@ def extract_perfusion_params_batch(
 
     # Reshape to original spatial dimensions
     if residues.ndim > 2:
-        cbf = cbf.reshape(spatial_shape)
-        cbv = cbv.reshape(spatial_shape)
-        mtt = mtt.reshape(spatial_shape)
-        tmax = tmax.reshape(spatial_shape)
+        cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
+        cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
+        mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
+        tmax = tmax.reshape(spatial_shape)  # type: ignore[assignment]
 
     return cbf, cbv, mtt, tmax

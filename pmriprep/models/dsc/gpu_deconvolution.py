@@ -357,14 +357,14 @@ def batched_svd_deconvolve(
     if n_masked == 0:
         # No voxels to process
         if tissue_curves.ndim > 2:
-            cbf = cbf.reshape(spatial_shape)
-            cbv = cbv.reshape(spatial_shape)
-            mtt = mtt.reshape(spatial_shape)
-            tmax = tmax.reshape(spatial_shape)
+            cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
+            cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
+            mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
+            tmax = tmax.reshape(spatial_shape)  # type: ignore[assignment]
             if residues_out is not None:
-                residues_out = residues_out.reshape(spatial_shape + (output_time_dim,))
+                residues_out = residues_out.reshape(spatial_shape + (output_time_dim,))  # type: ignore[assignment]
             if delay_out is not None:
-                delay_out = delay_out.reshape(spatial_shape)
+                delay_out = delay_out.reshape(spatial_shape)  # type: ignore[assignment]
 
         return GPUDeconvolutionResult(
             cbf=cbf,
@@ -491,14 +491,14 @@ def batched_svd_deconvolve(
 
     # Reshape to original spatial dimensions
     if tissue_curves.ndim > 2:
-        cbf = cbf.reshape(spatial_shape)
-        cbv = cbv.reshape(spatial_shape)
-        mtt = mtt.reshape(spatial_shape)
-        tmax = tmax.reshape(spatial_shape)
+        cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
+        cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
+        mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
+        tmax = tmax.reshape(spatial_shape)  # type: ignore[assignment]
         if residues_out is not None:
-            residues_out = residues_out.reshape(spatial_shape + (output_time_dim,))
+            residues_out = residues_out.reshape(spatial_shape + (output_time_dim,))  # type: ignore[assignment]
         if delay_out is not None:
-            delay_out = delay_out.reshape(spatial_shape)
+            delay_out = delay_out.reshape(spatial_shape)  # type: ignore[assignment]
 
     return GPUDeconvolutionResult(
         cbf=cbf,

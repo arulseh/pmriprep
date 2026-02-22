@@ -812,7 +812,7 @@ class BayesianDSCFitter:
                 weights=weights,
             )
 
-            return log_p + log_lik
+            return log_p + log_lik  # type: ignore[no-any-return]
 
         # Initialize walkers near MAP estimate
         map_result = self.fit_map(
