@@ -18,8 +18,7 @@ class DCEConfig:
     reference : str
         Reference image for registration (default: postcon T1w).
     lesion_mask : Optional[Path]
-        Path to lesion mask for registration weighting, AIF exclusion,
-        and lesion statistics.
+        Path to lesion mask for AIF exclusion and lesion statistics.
     nawm_mask : Optional[Path]
         Path to NAWM mask in T1w space (NAWM normalization).
     roi_mask : Optional[Path]

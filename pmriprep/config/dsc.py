@@ -40,8 +40,7 @@ class DSCConfig:
     disable_aif_fallback : bool
         Disable synthetic AIF fallback when detection fails.
     lesion_mask : Optional[Path]
-        Path to lesion mask for registration weighting, AIF exclusion,
-        and lesion statistics.
+        Path to lesion mask for AIF exclusion and lesion statistics.
     nawm_mask : Optional[Path]
         Path to NAWM mask for CBV normalization.
     roi_mask : Optional[Path]

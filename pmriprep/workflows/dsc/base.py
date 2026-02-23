@@ -1480,7 +1480,7 @@ def init_dsc_preproc_wf(
     inputnode.wm_probseg : str, optional
         Path to white matter probability map for NAWM mask.
     inputnode.lesion_mask : str, optional
-        Path to lesion mask for registration cost weighting and AIF exclusion.
+        Path to lesion mask for AIF exclusion and lesion statistics.
     inputnode.nawm_mask : str, optional
         Path to pre-computed NAWM mask for CBV normalization.
     inputnode.te : float, optional

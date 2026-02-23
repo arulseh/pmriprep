@@ -76,7 +76,7 @@ def init_dce_preproc_wf(
     wm_probseg : str
         Path to white matter probability map for BBR registration.
     lesion_mask : str, optional
-        Path to lesion mask for registration weighting and AIF exclusion.
+        Path to lesion mask for AIF exclusion and lesion statistics.
     vfa_files : list of str
         Paths to VFA (Variable Flip Angle) images for T1 mapping.
     vfa_flip_angles : list of float

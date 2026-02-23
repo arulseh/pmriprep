@@ -6,17 +6,14 @@ PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and 
 
 ## Features
 
-- **DSC Processing**: Six deconvolution methods (sSVD, cSVD, oSVD, Tikhonov, CPI, Vascular) with CBF, CBV, MTT, and Tmax maps
-- **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps (IAUC, SER, peak enhancement, TTP)
+- **DSC Processing**: Six deconvolution methods (sSVD, cSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction
+- **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps
 - **Bayesian Inference**: Optional MAP, VI, or MCMC fitting with uncertainty quantification
-- **Automatic AIF Detection**: Atlas-based arterial input function detection with synthetic fallback
-- **Leakage Correction**: K2 correction for BBB disruption in DSC
+- **Automatic AIF Detection**: Multi-level arterial input function detection with synthetic fallback
 - **T1 Mapping**: Variable flip angle T1 mapping with optional B1+ correction
-- **Tumor Segmentation**: HD-GLIO integration for glioma segmentation with enhancing/non-enhancing labels
-- **NAWM Normalization**: Relative CBF/CBV and normalized Ktrans/IAUC using contralateral NAWM
+- **Tumor Segmentation**: HD-GLIO integration for glioma segmentation
+- **NAWM Normalization**: Relative perfusion metrics using contralateral normal-appearing white matter
 - **QC Reports**: Per-session HTML reports with AIF quality, motion, registration, and parameter map visualizations
-- **GPU Acceleration**: Optional CuPy-based GPU acceleration for DSC and DCE processing
-- **Preload Correction**: K2-based leakage correction for contrast-preloaded DSC acquisitions
 
 ## Installation
 
@@ -38,8 +35,6 @@ docker run --rm \
     --participant-label 01 \
     -w /work
 ```
-
-> **Apple Silicon (M1/M2/M3):** Add `--platform linux/amd64` to the `docker run` command. The container is built for x86_64 and runs under Rosetta emulation.
 
 For GPU support (NVIDIA):
 
@@ -117,7 +112,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | Flag | Description |
 |------|-------------|
 | `--skip-anat` | Skip anatomical preprocessing |
-| `--skip-tumor-seg` | Skip HD-GLIO tumor segmentation |
+| `--skip-tumor-seg` | Skip tumor segmentation |
 | `--skip-dsc` | Skip DSC perfusion pipeline |
 | `--skip-dce` | Skip DCE perfusion pipeline |
 
@@ -176,45 +171,17 @@ pmriprep /path/to/bids /path/to/output participant \
 
 ```yaml
 dsc:
-  preload_present: true
-  dose: half
-  method: oSVD
+  method: cpi
   bayesian: map
-  mcmc_samples: 500
   aif_criteria: relaxed
-  n_aif_candidates: 10
-  pre_bolus: 12
-  use_gpu: false
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
-  roi_mask: /path/to/roi_mask.nii.gz
-  aif_mask_file: /path/to/aif_mask.nii.gz
 
 dce:
   model: extended_tofts
   bayesian: map
-  aif_method: auto
-  scale_aif: true
-  dose: full
-  no_b1: false
-  no_t1: false
-  baseline_frames: 0
-  tsnr_threshold: 0.0
-  use_gpu: false
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
-  roi_mask: /path/to/roi_mask.nii.gz
-  aif_mask_file: /path/to/aif_mask.nii.gz
-
-anat:
-  tool: hdbet
-  denoise: false
-
-tumor_seg:
-  lesion_dilation: 15.0
-  nawm_erosion: 2
-  nawm_min_voxels: 500
-  device: cuda
 ```
 
 ### DSC Configuration
@@ -233,15 +200,13 @@ tumor_seg:
 | `aif_mask_file` | path | `null` | Custom AIF mask file |
 | `gamma_fit` | bool | `false` | Apply gamma-variate fitting to AIF |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |
-| `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `pre_bolus` | int | `12` | Pre-bolus baseline frames |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none) |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
 | `registration` | str | `"auto"` | Registration method: `auto`, `flirt`, `bbr` |
-| `lesion_mask` | path | `null` | Lesion mask for registration weighting and AIF exclusion |
-| `nawm_mask` | path | `null` | NAWM mask for CBV normalization |
+| `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
+| `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
-| `use_gpu` | bool | `false` | Enable GPU acceleration |
 
 ### DCE Configuration
 
@@ -254,7 +219,6 @@ tumor_seg:
 | `scale_aif` | bool | `true` | Scale AIF to population reference |
 | `target_peak` | float | `null` | Target AIF peak (mM); null = field-strength default |
 | `aif_mask_file` | path | `null` | Custom AIF mask file |
-| `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `dose` | str | `"full"` | Dose: `half`, `full`, `double` |
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
@@ -266,10 +230,9 @@ tumor_seg:
 | `t1_correction` | str | `"auto"` | T1 correction mode: `auto`, `none`, `offset`, `fallback` |
 | `cbv_constraint_mode` | str | `"auto"` | DSC CBV constraint: `auto`, `hard`, `soft`, `skip` |
 | `hematocrit` | float | `0.40` | Blood hematocrit for CBV-to-vp conversion |
-| `lesion_mask` | path | `null` | Lesion mask for registration and AIF exclusion |
-| `nawm_mask` | path | `null` | NAWM mask for Ktrans/IAUC normalization |
+| `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
+| `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
-| `use_gpu` | bool | `false` | Enable GPU acceleration |
 
 ### Anatomical Configuration
 
@@ -287,8 +250,6 @@ tumor_seg:
 | `lesion_dilation` | float | `15.0` | Dilation radius (mm) for lesion mask |
 | `nawm_erosion` | int | `2` | Erosion iterations for NAWM mask (voxels) |
 | `nawm_min_voxels` | int | `500` | Minimum voxels required in NAWM ROI |
-| `device` | str | `"cuda"` | Inference device: `cuda`, `mps`, `cpu` |
-| `conda_env` | str | `null` | Conda environment for the segmentation tool |
 
 ## BIDS Input Requirements
 
@@ -300,29 +261,31 @@ bids_dir/
   sub-01/
     ses-01/
       anat/
-        sub-01_ses-01_T1w.nii.gz
-        sub-01_ses-01_T1w.json
-        sub-01_ses-01_acq-postcon_T1w.nii.gz  # Post-contrast T1w
-        sub-01_ses-01_FLAIR.nii.gz
-        sub-01_ses-01_T2w.nii.gz
+        sub-01_ses-01_acq-mprage_run-1_T1w.nii.gz            # Pre-contrast T1w
+        sub-01_ses-01_acq-mprage_run-1_T1w.json
+        sub-01_ses-01_acq-mprage_ce-GAD_run-1_T1w.nii.gz     # Post-contrast T1w
+        sub-01_ses-01_acq-mprage_ce-GAD_run-1_T1w.json
+        sub-01_ses-01_acq-space_run-1_FLAIR.nii.gz
+        sub-01_ses-01_acq-space_run-1_T2w.nii.gz
+        sub-01_ses-01_acq-vibe_flip-02_run-1_VFA.nii.gz      # VFA T1 mapping
+        sub-01_ses-01_acq-vibe_flip-15_run-1_VFA.nii.gz
       perf/
-        sub-01_ses-01_dsc.nii.gz
-        sub-01_ses-01_dsc.json
-        sub-01_ses-01_dce.nii.gz
-        sub-01_ses-01_dce.json
+        sub-01_ses-01_acq-ep2d_ce-GAD_run-1_dsc.nii.gz       # DSC perfusion
+        sub-01_ses-01_acq-ep2d_ce-GAD_run-1_dsc.json
+        sub-01_ses-01_acq-vibe_ce-GAD_run-1_dce.nii.gz       # DCE perfusion
+        sub-01_ses-01_acq-vibe_ce-GAD_run-1_dce.json
       fmap/
-        sub-01_ses-01_acq-vfa_flip-5_T1map.nii.gz   # VFA T1 mapping
-        sub-01_ses-01_acq-vfa_flip-15_T1map.nii.gz
-        sub-01_ses-01_acq-afi_B1plusmap.nii.gz       # B1+ mapping
+        sub-01_ses-01_acq-afi_run-1_TB1AFI.nii.gz            # B1+ mapping 
+        sub-01_ses-01_acq-afi_run-1_TB1AFI.json
 ```
 
 ### Required Files
 
-| Pipeline | Required | Optional |
-|----------|----------|----------|
-| DSC | `*_dsc.nii.gz`, T1w | Lesion mask, FLAIR |
-| DCE | `*_dce.nii.gz`, T1w | VFA images, B1+ map, lesion mask |
-| HD-GLIO | T1w-pre, T1w-postcon, T2w, FLAIR | - |
+| Pipeline | Required |
+|----------|----------|
+| DSC | `*_dsc.nii.gz` + JSON sidecar, T1w |
+| DCE | `*_dce.nii.gz` + JSON sidecar, T1w |
+| HD-GLIO | T1w pre-contrast, T1w post-contrast, T2w, FLAIR |
 
 ### JSON Sidecar Fields
 
@@ -332,19 +295,42 @@ bids_dir/
   "RepetitionTime": 1.5,
   "EchoTime": 0.03,
   "FlipAngle": 60,
-  "MagneticFieldStrength": 3
+  "MagneticFieldStrength": 3,
+  "ContrastBolusAgent": "gadobutrol"
 }
 ```
+Required: `RepetitionTime`, `EchoTime`, `FlipAngle`. Optional: `MagneticFieldStrength` (default 3T), `ContrastBolusAgent`.
 
 **DCE sidecar (`*_dce.json`):**
 ```json
 {
   "RepetitionTime": 5.0,
-  "EchoTime": 0.002,
+  "RepetitionTimeExcitation": 0.00313,
+  "EchoTime": 0.001,
   "FlipAngle": 15,
-  "MagneticFieldStrength": 3
+  "MagneticFieldStrength": 3,
+  "ContrastBolusAgent": "gadobutrol"
 }
 ```
+Required: `FlipAngle`. For 3D sequences (VIBE/LAVA/THRIVE), both `RepetitionTime` (volume TR) and `RepetitionTimeExcitation` (pulse TR) are required. For 2D sequences, `RepetitionTime` serves as both. Optional: `MagneticFieldStrength`, `ContrastBolusAgent`.
+
+**VFA sidecar (`*_VFA.json`):**
+```json
+{
+  "RepetitionTime": 0.00313,
+  "FlipAngle": 2
+}
+```
+Required: `RepetitionTime`, `FlipAngle` (per file, minimum 2 distinct angles).
+
+**AFI sidecar (`*_TB1AFI.json`):**
+```json
+{
+  "RepetitionTime": [0.02, 0.1],
+  "FlipAngle": 60
+}
+```
+Required: `RepetitionTime` (scalar or 2-element array for 4D), `FlipAngle`.
 
 ## Output Structure
 
@@ -355,55 +341,43 @@ output_dir/pmriprep/
   dataset_description.json
   sub-01/ses-01/
     anat/
-      sub-01_ses-01_desc-preproc_T1w.nii.gz
-      sub-01_ses-01_desc-brain_mask.nii.gz
-      sub-01_ses-01_label-WM_probseg.nii.gz
-      sub-01_ses-01_label-GM_probseg.nii.gz
-      sub-01_ses-01_label-CSF_probseg.nii.gz
-      sub-01_ses-01_T1map.nii.gz
-      sub-01_ses-01_B1plusmap.nii.gz
-      # Tumor segmentation
-      sub-01_ses-01_space-anat_desc-tumorseg_dseg.nii.gz
+      sub-01_ses-01_space-anat_desc-preproc_T1w.nii.gz
+      sub-01_ses-01_space-anat_desc-brain_mask.nii.gz
+      sub-01_ses-01_space-anat_label-WM_probseg.nii.gz
+      sub-01_ses-01_space-DCE_T1map.nii.gz
+      sub-01_ses-01_space-DCE_B1plusmap.nii.gz
+      sub-01_ses-01_space-anat_desc-hdglio_dseg.nii.gz
       sub-01_ses-01_space-anat_desc-enhancing_mask.nii.gz
-      sub-01_ses-01_space-anat_desc-nonenhancing_mask.nii.gz
-      sub-01_ses-01_space-anat_desc-wholetumor_mask.nii.gz
-      sub-01_ses-01_space-anat_desc-lesion_mask.nii.gz
       sub-01_ses-01_space-anat_desc-nawm_mask.nii.gz
+      # ... tissue segmentations, transforms, space-specific masks
     perf/
-      # DSC maps (relative)
+      # DSC maps
       sub-01_ses-01_space-DSC_desc-dscRel_cbf.nii.gz
       sub-01_ses-01_space-DSC_desc-dscRel_cbv.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_mtt.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_tmax.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_k2.nii.gz
-      # DSC maps (NAWM-normalized)
-      sub-01_ses-01_space-DSC_desc-dscNawmNorm_cbv.nii.gz
       sub-01_ses-01_space-DSC_desc-dscNawmNorm_cbf.nii.gz
-      # DSC ancillary
-      sub-01_ses-01_desc-dscAif_timeseries.txt
-      sub-01_ses-01_space-DSC_desc-dscAif_mask.nii.gz
-      sub-01_ses-01_desc-dscConfounds_timeseries.tsv
-      # DCE PK maps (model-dependent)
+      sub-01_ses-01_space-DSC_desc-dscNawmNorm_cbv.nii.gz
+      # DCE PK maps
       sub-01_ses-01_space-DCE_model-extendedTofts_desc-dce_Ktrans.nii.gz
       sub-01_ses-01_space-DCE_model-extendedTofts_desc-dce_ve.nii.gz
       sub-01_ses-01_space-DCE_model-extendedTofts_desc-dce_vp.nii.gz
-      sub-01_ses-01_space-DCE_model-extendedTofts_desc-dce_kep.nii.gz
+      sub-01_ses-01_space-DCE_model-extendedTofts_desc-dceNawmNorm_Ktrans.nii.gz
       # DCE model-free maps
       sub-01_ses-01_space-DCE_desc-dce_IAUC60.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_IAUC90.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_IAUC120.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_peakEnhancement.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_ttp.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_SER.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_tsnr.nii.gz
-      # DCE ancillary
+      sub-01_ses-01_space-DCE_desc-dceNawmNorm_IAUC60.nii.gz
+      # ... additional maps (SER, TTP, peak enhancement, SNR, tSNR, etc.)
+      # AIF
+      sub-01_ses-01_desc-dscAif_timeseries.txt
       sub-01_ses-01_desc-dceAif_timeseries.txt
-      sub-01_ses-01_space-DCE_desc-dceAif_mask.nii.gz
-      sub-01_ses-01_desc-dceConfounds_timeseries.tsv
-    # QC files (session level)
+    # QC and statistics
+    sub-01_ses-01_desc-anatQC_quality.json
     sub-01_ses-01_desc-dscQC_quality.json
     sub-01_ses-01_desc-dceQC_quality.json
-    sub-01_ses-01_desc-tumorsegQC_quality.json
+    sub-01_ses-01_desc-hdglioQC_quality.json
+    sub-01_ses-01_space-DSC_desc-lesionStats.json
+    sub-01_ses-01_space-DCE_desc-lesionStats.json
     # HTML report
     sub-01_ses-01.html
 ```
