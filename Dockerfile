@@ -29,12 +29,12 @@
 #     pmriprep:latest \
 #     /data /out participant --use-gpu
 
-FROM nipreps/miniconda:latest
+FROM condaforge/miniforge3:latest
 
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
-LABEL org.opencontainers.image.version="0.1.0"
+LABEL org.opencontainers.image.version="0.2.0"
 LABEL org.opencontainers.image.source="https://github.com/pmriprep/pmriprep"
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 
@@ -46,12 +46,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV MKL_NUM_THREADS=1
 ENV OMP_NUM_THREADS=1
 
+# Conda prefix
+ENV CONDA_DIR=/opt/conda
+
 # nnU-Net directory layout (used by HD-BET and HD-GLIO)
 ENV nnUNet_raw_data_base=/opt/nnunet_data
 ENV nnUNet_preprocessed=/opt/nnunet_preprocessed
 ENV RESULTS_FOLDER=/opt/nnunet_results
 
-# Install system dependencies
+# Install system dependencies (Ubuntu-based)
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bc \
@@ -64,7 +67,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-dev \
     libglib2.0-0 \
     libgomp1 \
-    libquadmath0 \
     libxext6 \
     libxrender1 \
     tar \
@@ -72,25 +74,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python
-RUN conda install -y python=3.10 pip && \
-    conda clean -afy
+# Install Python 3.10, FSL, and ANTs via mamba (fast solver)
+# FSL and ANTs are separate installs because the FSL channel does not
+# carry ANTs packages (mixing channels in one solve can confuse the solver).
+RUN mamba install -y -c conda-forge python=3.10 pip && mamba clean -afy
 
-# Install FSL via conda (arch-independent, replaces NeuroDebian)
-RUN conda install -y \
+RUN mamba install -y \
     -c https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/public/ \
     -c conda-forge \
     fsl-avwutils fsl-bet2 fsl-fast4 fsl-flirt fsl-mcflirt fsl-cluster \
-    fsl-data-standard \
-    && conda clean -afy
+    fsl-data_standard \
+    && mamba clean -afy
 
-# FSLDIR lives inside the conda prefix for conda-based FSL
+RUN mamba install -y -c conda-forge ants && mamba clean -afy
+
+# FSLDIR = conda prefix; FSL data lands at $CONDA_DIR/data/standard/
 ENV FSLDIR=${CONDA_DIR}
 ENV FSLOUTPUTTYPE=NIFTI_GZ
-ENV PATH="${FSLDIR}/bin:${PATH}"
-
-# Install ANTs via conda-forge (arch-independent)
-RUN conda install -y -c conda-forge ants && conda clean -afy
 
 # Create directories for nnU-Net (used by HD-BET and HD-GLIO)
 RUN mkdir -p ${nnUNet_raw_data_base} ${nnUNet_preprocessed} ${RESULTS_FOLDER}
@@ -116,8 +116,11 @@ RUN pip install --no-cache-dir HD-GLIO || \
 COPY --chown=1000:1000 . /src/pmriprep
 WORKDIR /src/pmriprep
 
-RUN pip install --no-cache-dir -e ".[all]" && \
-    pip cache purge
+RUN if [ "$PYTORCH_VARIANT" != "cpu" ]; then \
+        pip install --no-cache-dir -e ".[all]"; \
+    else \
+        pip install --no-cache-dir -e ".[dev]"; \
+    fi && pip cache purge
 
 # Download required TemplateFlow templates
 RUN python -c "import templateflow; \
@@ -131,7 +134,7 @@ RUN python -c "\
 import torch; import nibabel; import nipype; \
 print(f'PyTorch {torch.__version__}'); \
 print(f'CUDA available: {torch.cuda.is_available()}'); \
-from HD_BET.run import run_hd_bet; print('HD-BET: OK'); \
+import HD_BET; print('HD-BET: OK'); \
 import pmriprep; print('PMRIPrep: OK')"
 
 # Set up user (non-root execution)
