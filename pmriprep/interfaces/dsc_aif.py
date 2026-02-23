@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import numpy as np
 import numpy.typing as npt
-from scipy.ndimage import binary_dilation, binary_erosion  # type: ignore[import-untyped]
+from scipy.ndimage import binary_erosion  # type: ignore[import-untyped]
 from scipy.signal import savgol_filter  # type: ignore[import-untyped]
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
@@ -355,15 +355,13 @@ class AIFDetection(BaseInterface):
         roi_mask: Optional[npt.NDArray[Any]],
         lesion_mask: Optional[npt.NDArray[Any]],
         erosion_iterations: int = 4,
-        lesion_dilation: int = 0,
     ) -> npt.NDArray[Any]:
         """Prepare binary search mask with erosion and exclusion.
 
         Matches perf-plus ``_prepare_aif_search_mask``: erosion for
         cortical vein exclusion, optional ROI intersection, and binary
-        lesion exclusion with optional dilation buffer.  Distance-based
-        lesion filtering happens *after* scoring (see
-        ``_apply_post_scoring_filters``).
+        lesion exclusion.  Distance-based lesion filtering happens
+        *after* scoring (see ``_apply_post_scoring_filters``).
 
         Parameters
         ----------
@@ -375,9 +373,6 @@ class AIFDetection(BaseInterface):
             Optional 3D lesion mask to exclude.
         erosion_iterations : int
             Number of binary erosion iterations (default 4).
-        lesion_dilation : int
-            Number of binary dilation iterations for lesion buffer
-            (default 0, use mask as-is).
 
         Returns
         -------
@@ -404,10 +399,6 @@ class AIFDetection(BaseInterface):
 
         if lesion_mask is not None and np.any(lesion_mask > 0.5):
             lesion_bool = lesion_mask > 0.5
-            if lesion_dilation > 0:
-                lesion_bool = binary_dilation(
-                    lesion_bool, iterations=lesion_dilation
-                )
             pre_lesion = search.copy()
             search = search & ~lesion_bool
             if not np.any(search):

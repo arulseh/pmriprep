@@ -496,8 +496,8 @@ def _find_previous_tumor_seg_outputs(
         session_id: BIDS session ID (without 'ses-' prefix), or None.
 
     Returns:
-        Dict with keys: dilated_lesion_mask, whole_tumor_mask,
-        enhancing_mask, segmentation, nawm_mask.
+        Dict with keys: whole_tumor_mask, enhancing_mask,
+        segmentation, nawm_mask.
         Values are file paths (str) or None if not found.
     """
     session_label = f"ses-{session_id}" if session_id else "no-session"
@@ -505,7 +505,6 @@ def _find_previous_tumor_seg_outputs(
     tumor_seg_dir = work_dir / wf_name / "tumor_seg_wf"
 
     outputs: dict[str, Optional[str]] = {
-        "dilated_lesion_mask": None,
         "whole_tumor_mask": None,
         "enhancing_mask": None,
         "segmentation": None,
@@ -517,8 +516,6 @@ def _find_previous_tumor_seg_outputs(
 
     masks_dir = tumor_seg_dir / "extract_masks"
     if masks_dir.exists():
-        for f in masks_dir.glob("*_dilated.nii.gz"):
-            outputs["dilated_lesion_mask"] = str(f)
         for f in masks_dir.glob("*_nawm.nii.gz"):
             outputs["nawm_mask"] = str(f)
         for f in masks_dir.glob("*wholetumor_mask.nii.gz"):
@@ -534,13 +531,6 @@ def _find_previous_tumor_seg_outputs(
             outputs["segmentation"] = str(f)
         for f in seg_dir.glob("*segmentation*.nii.gz"):
             outputs["segmentation"] = str(f)
-
-    # Also check dilate_lesion and create_nawm nodes
-    if outputs["dilated_lesion_mask"] is None:
-        dl_dir = tumor_seg_dir / "dilate_lesion"
-        if dl_dir.exists():
-            for f in dl_dir.glob("*.nii.gz"):
-                outputs["dilated_lesion_mask"] = str(f)
 
     if outputs["nawm_mask"] is None:
         nawm_dir = tumor_seg_dir / "create_nawm"
@@ -1232,7 +1222,7 @@ def init_pmriprep_wf(
         # Connect tumor segmentation outputs to master outputnode
         workflow.connect([
             (tumor_seg_wf, outputnode, [
-                ("outputnode.dilated_lesion_mask", "lesion_mask"),
+                ("outputnode.whole_tumor_mask", "lesion_mask"),
                 ("outputnode.enhancing_mask", "enhancing_mask"),
                 ("outputnode.non_enhancing_mask", "non_enhancing_mask"),
                 ("outputnode.whole_tumor_mask", "whole_tumor_mask"),
@@ -1262,7 +1252,6 @@ def init_pmriprep_wf(
                 ("outputnode.enhancing_mask", "enhancing_mask"),
                 ("outputnode.non_enhancing_mask", "non_enhancing_mask"),
                 ("outputnode.whole_tumor_mask", "whole_tumor_mask"),
-                ("outputnode.dilated_lesion_mask", "dilated_lesion_mask"),
                 ("outputnode.nawm_mask", "nawm_mask"),
                 ("outputnode.qc_metrics", "qc_metrics"),
             ]),
@@ -1456,37 +1445,19 @@ def init_pmriprep_wf(
 
         if tumor_seg_wf is not None:
             if _user_lesion:
-                # Merge tumor seg + user lesion masks
-                from pmriprep.utils.mask_utils import DilateMask, MergeMasks
+                # Merge tumor seg whole_tumor + user lesion masks
+                from pmriprep.utils.mask_utils import MergeMasks
 
-                dsc_dilate_user_lesion = pe.Node(
-                    DilateMask(radius_mm=15.0),
-                    name="dsc_dilate_user_lesion",
+                dsc_merge_masks = pe.Node(
+                    MergeMasks(), name="dsc_merge_masks",
                 )
-                dsc_dilate_user_lesion.inputs.mask_file = str(_user_lesion)
-
-                dsc_merge_dilated = pe.Node(
-                    MergeMasks(), name="dsc_merge_dilated",
-                )
-                dsc_merge_undilated = pe.Node(
-                    MergeMasks(), name="dsc_merge_undilated",
-                )
-                dsc_merge_undilated.inputs.mask_b = str(_user_lesion)
+                dsc_merge_masks.inputs.mask_b = str(_user_lesion)
 
                 workflow.connect([
-                    (dsc_dilate_user_lesion, dsc_merge_dilated, [
-                        ("dilated_mask", "mask_b"),
-                    ]),
-                    (tumor_seg_wf, dsc_merge_dilated, [
-                        ("outputnode.dilated_lesion_mask", "mask_a"),
-                    ]),
-                    (tumor_seg_wf, dsc_merge_undilated, [
+                    (tumor_seg_wf, dsc_merge_masks, [
                         ("outputnode.whole_tumor_mask", "mask_a"),
                     ]),
-                    (dsc_merge_dilated, dsc_wf, [
-                        ("merged_mask", "inputnode.lesion_mask"),
-                    ]),
-                    (dsc_merge_undilated, dsc_wf, [
+                    (dsc_merge_masks, dsc_wf, [
                         ("merged_mask", "inputnode.whole_tumor_mask"),
                     ]),
                     (tumor_seg_wf, dsc_wf, [
@@ -1496,14 +1467,13 @@ def init_pmriprep_wf(
                     ]),
                 ])
                 _dsc_log.info(
-                    "DSC: merging user lesion_mask=%s with tumor segmentation masks",
+                    "DSC: merging user lesion_mask=%s with tumor segmentation whole_tumor_mask",
                     _user_lesion,
                 )
             else:
-                # Tumor segmentation only — current behavior
+                # Tumor segmentation only
                 workflow.connect([
                     (tumor_seg_wf, dsc_wf, [
-                        ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
                         ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
                         ("outputnode.segmentation", "inputnode.tumor_segmentation"),
@@ -1515,47 +1485,26 @@ def init_pmriprep_wf(
             prev_tumor_seg = _find_previous_tumor_seg_outputs(
                 Path(work_dir), subject_id, session_id,
             )
-            if _user_lesion and prev_tumor_seg["dilated_lesion_mask"]:
-                # Merge user lesion with loaded tumor seg masks
-                from pmriprep.utils.mask_utils import DilateMask, MergeMasks
+            if _user_lesion and prev_tumor_seg["whole_tumor_mask"]:
+                # Merge user lesion with loaded whole_tumor_mask
+                from pmriprep.utils.mask_utils import MergeMasks
 
-                dsc_dilate_user_lesion = pe.Node(
-                    DilateMask(radius_mm=15.0),
-                    name="dsc_dilate_user_lesion",
+                dsc_merge_masks = pe.Node(
+                    MergeMasks(), name="dsc_merge_masks",
                 )
-                dsc_dilate_user_lesion.inputs.mask_file = str(_user_lesion)
-
-                dsc_merge_dilated = pe.Node(
-                    MergeMasks(), name="dsc_merge_dilated",
-                )
-                dsc_merge_dilated.inputs.mask_a = prev_tumor_seg["dilated_lesion_mask"]
-
-                dsc_merge_undilated = pe.Node(
-                    MergeMasks(), name="dsc_merge_undilated",
-                )
-                dsc_merge_undilated.inputs.mask_b = str(_user_lesion)
-                if prev_tumor_seg["whole_tumor_mask"]:
-                    dsc_merge_undilated.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
+                dsc_merge_masks.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
+                dsc_merge_masks.inputs.mask_b = str(_user_lesion)
 
                 workflow.connect([
-                    (dsc_dilate_user_lesion, dsc_merge_dilated, [
-                        ("dilated_mask", "mask_b"),
-                    ]),
-                    (dsc_merge_dilated, dsc_wf, [
-                        ("merged_mask", "inputnode.lesion_mask"),
-                    ]),
-                    (dsc_merge_undilated, dsc_wf, [
+                    (dsc_merge_masks, dsc_wf, [
                         ("merged_mask", "inputnode.whole_tumor_mask"),
                     ]),
                 ])
                 _dsc_log.info(
-                    "DSC skip-tumor-seg: merging user lesion_mask=%s with loaded tumor seg masks",
+                    "DSC skip-tumor-seg: merging user lesion_mask=%s with loaded whole_tumor_mask",
                     _user_lesion,
                 )
             else:
-                if prev_tumor_seg["dilated_lesion_mask"]:
-                    dsc_wf.inputs.inputnode.lesion_mask = prev_tumor_seg["dilated_lesion_mask"]
-                    _dsc_log.info("skip-tumor-seg: loaded lesion_mask from %s", prev_tumor_seg["dilated_lesion_mask"])
                 if prev_tumor_seg["whole_tumor_mask"]:
                     dsc_wf.inputs.inputnode.whole_tumor_mask = prev_tumor_seg["whole_tumor_mask"]
                     _dsc_log.info("skip-tumor-seg: loaded whole_tumor_mask from %s", prev_tumor_seg["whole_tumor_mask"])
@@ -1572,20 +1521,8 @@ def init_pmriprep_wf(
         else:
             # No tumor segmentation — user-supplied masks only
             if _user_lesion:
-                from pmriprep.utils.mask_utils import DilateMask
-
-                dsc_dilate_user_lesion = pe.Node(
-                    DilateMask(radius_mm=15.0),
-                    name="dsc_dilate_user_lesion",
-                )
-                dsc_dilate_user_lesion.inputs.mask_file = str(_user_lesion)
-                workflow.connect([
-                    (dsc_dilate_user_lesion, dsc_wf, [
-                        ("dilated_mask", "inputnode.lesion_mask"),
-                    ]),
-                ])
                 dsc_wf.inputs.inputnode.whole_tumor_mask = str(_user_lesion)
-                _dsc_log.info("DSC: user lesion_mask=%s (dilated→lesion_mask, original→whole_tumor_mask)", _user_lesion)
+                _dsc_log.info("DSC: user lesion_mask=%s → whole_tumor_mask", _user_lesion)
 
             if _user_nawm:
                 dsc_wf.inputs.inputnode.nawm_mask = str(_user_nawm)
@@ -1999,37 +1936,19 @@ def init_pmriprep_wf(
 
         if tumor_seg_wf is not None:
             if _dce_user_lesion:
-                # Merge tumor seg + user lesion masks
-                from pmriprep.utils.mask_utils import DilateMask, MergeMasks
+                # Merge tumor seg whole_tumor + user lesion masks
+                from pmriprep.utils.mask_utils import MergeMasks
 
-                dce_dilate_user_lesion = pe.Node(
-                    DilateMask(radius_mm=15.0),
-                    name="dce_dilate_user_lesion",
+                dce_merge_masks = pe.Node(
+                    MergeMasks(), name="dce_merge_masks",
                 )
-                dce_dilate_user_lesion.inputs.mask_file = str(_dce_user_lesion)
-
-                dce_merge_dilated = pe.Node(
-                    MergeMasks(), name="dce_merge_dilated",
-                )
-                dce_merge_undilated = pe.Node(
-                    MergeMasks(), name="dce_merge_undilated",
-                )
-                dce_merge_undilated.inputs.mask_b = str(_dce_user_lesion)
+                dce_merge_masks.inputs.mask_b = str(_dce_user_lesion)
 
                 workflow.connect([
-                    (dce_dilate_user_lesion, dce_merge_dilated, [
-                        ("dilated_mask", "mask_b"),
-                    ]),
-                    (tumor_seg_wf, dce_merge_dilated, [
-                        ("outputnode.dilated_lesion_mask", "mask_a"),
-                    ]),
-                    (tumor_seg_wf, dce_merge_undilated, [
+                    (tumor_seg_wf, dce_merge_masks, [
                         ("outputnode.whole_tumor_mask", "mask_a"),
                     ]),
-                    (dce_merge_dilated, dce_wf, [
-                        ("merged_mask", "inputnode.lesion_mask"),
-                    ]),
-                    (dce_merge_undilated, dce_wf, [
+                    (dce_merge_masks, dce_wf, [
                         ("merged_mask", "inputnode.whole_tumor_mask"),
                     ]),
                     (tumor_seg_wf, dce_wf, [
@@ -2039,14 +1958,13 @@ def init_pmriprep_wf(
                     ]),
                 ])
                 _dce_log.info(
-                    "DCE: merging user lesion_mask=%s with tumor segmentation masks",
+                    "DCE: merging user lesion_mask=%s with tumor segmentation whole_tumor_mask",
                     _dce_user_lesion,
                 )
             else:
-                # Tumor segmentation only — current behavior
+                # Tumor segmentation only
                 workflow.connect([
                     (tumor_seg_wf, dce_wf, [
-                        ("outputnode.dilated_lesion_mask", "inputnode.lesion_mask"),
                         ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
                         ("outputnode.segmentation", "inputnode.tumor_segmentation"),
@@ -2058,47 +1976,26 @@ def init_pmriprep_wf(
             prev_tumor_seg = _find_previous_tumor_seg_outputs(
                 Path(work_dir), subject_id, session_id,
             )
-            if _dce_user_lesion and prev_tumor_seg["dilated_lesion_mask"]:
-                # Merge user lesion with loaded tumor seg masks
-                from pmriprep.utils.mask_utils import DilateMask, MergeMasks
+            if _dce_user_lesion and prev_tumor_seg["whole_tumor_mask"]:
+                # Merge user lesion with loaded whole_tumor_mask
+                from pmriprep.utils.mask_utils import MergeMasks
 
-                dce_dilate_user_lesion = pe.Node(
-                    DilateMask(radius_mm=15.0),
-                    name="dce_dilate_user_lesion",
+                dce_merge_masks = pe.Node(
+                    MergeMasks(), name="dce_merge_masks",
                 )
-                dce_dilate_user_lesion.inputs.mask_file = str(_dce_user_lesion)
-
-                dce_merge_dilated = pe.Node(
-                    MergeMasks(), name="dce_merge_dilated",
-                )
-                dce_merge_dilated.inputs.mask_a = prev_tumor_seg["dilated_lesion_mask"]
-
-                dce_merge_undilated = pe.Node(
-                    MergeMasks(), name="dce_merge_undilated",
-                )
-                dce_merge_undilated.inputs.mask_b = str(_dce_user_lesion)
-                if prev_tumor_seg["whole_tumor_mask"]:
-                    dce_merge_undilated.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
+                dce_merge_masks.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
+                dce_merge_masks.inputs.mask_b = str(_dce_user_lesion)
 
                 workflow.connect([
-                    (dce_dilate_user_lesion, dce_merge_dilated, [
-                        ("dilated_mask", "mask_b"),
-                    ]),
-                    (dce_merge_dilated, dce_wf, [
-                        ("merged_mask", "inputnode.lesion_mask"),
-                    ]),
-                    (dce_merge_undilated, dce_wf, [
+                    (dce_merge_masks, dce_wf, [
                         ("merged_mask", "inputnode.whole_tumor_mask"),
                     ]),
                 ])
                 _dce_log.info(
-                    "DCE skip-tumor-seg: merging user lesion_mask=%s with loaded tumor seg masks",
+                    "DCE skip-tumor-seg: merging user lesion_mask=%s with loaded whole_tumor_mask",
                     _dce_user_lesion,
                 )
             else:
-                if prev_tumor_seg["dilated_lesion_mask"]:
-                    dce_wf.inputs.inputnode.lesion_mask = prev_tumor_seg["dilated_lesion_mask"]
-                    _dce_log.info("skip-tumor-seg (DCE): loaded lesion_mask from %s", prev_tumor_seg["dilated_lesion_mask"])
                 if prev_tumor_seg["whole_tumor_mask"]:
                     dce_wf.inputs.inputnode.whole_tumor_mask = prev_tumor_seg["whole_tumor_mask"]
                     _dce_log.info("skip-tumor-seg (DCE): loaded whole_tumor_mask from %s", prev_tumor_seg["whole_tumor_mask"])
@@ -2115,20 +2012,8 @@ def init_pmriprep_wf(
         else:
             # No tumor segmentation — user-supplied masks only
             if _dce_user_lesion:
-                from pmriprep.utils.mask_utils import DilateMask
-
-                dce_dilate_user_lesion = pe.Node(
-                    DilateMask(radius_mm=15.0),
-                    name="dce_dilate_user_lesion",
-                )
-                dce_dilate_user_lesion.inputs.mask_file = str(_dce_user_lesion)
-                workflow.connect([
-                    (dce_dilate_user_lesion, dce_wf, [
-                        ("dilated_mask", "inputnode.lesion_mask"),
-                    ]),
-                ])
                 dce_wf.inputs.inputnode.whole_tumor_mask = str(_dce_user_lesion)
-                _dce_log.info("DCE: user lesion_mask=%s (dilated→lesion_mask, original→whole_tumor_mask)", _dce_user_lesion)
+                _dce_log.info("DCE: user lesion_mask=%s → whole_tumor_mask", _dce_user_lesion)
 
             if _dce_user_nawm:
                 dce_wf.inputs.inputnode.nawm_mask = str(_dce_user_nawm)

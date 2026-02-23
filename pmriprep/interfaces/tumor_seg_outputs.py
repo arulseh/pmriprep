@@ -44,9 +44,6 @@ class TumorSegDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     )
 
     # Downstream masks (mandatory)
-    dilated_lesion_mask = File(
-        exists=True, mandatory=True, desc="Dilated lesion mask for registration"
-    )
     nawm_mask = File(
         exists=True, mandatory=True, desc="Contralateral NAWM mask for CBV normalization"
     )
@@ -94,7 +91,6 @@ class TumorSegDerivativeWriter(BaseInterface):
                     sub-XX_ses-XX_space-anat_desc-wholetumor_mask.nii.gz
                     sub-XX_ses-XX_desc-tumorseg_volumes.txt
                     sub-XX_ses-XX_space-anat_desc-lesion_mask.nii.gz
-                    sub-XX_ses-XX_space-anat_desc-lesiondilated15mm_mask.nii.gz
                     sub-XX_ses-XX_space-anat_desc-nawm_mask.nii.gz
                 sub-XX_ses-XX_desc-tumorsegQC_quality.json
                 sub-XX_ses-XX_space-anat_desc-lesionStats.json
@@ -206,21 +202,6 @@ class TumorSegDerivativeWriter(BaseInterface):
                 "Method": "Tumor segmentation (labels 1+2)",
             },
             anat_dir / f"{prefix}_space-anat_desc-lesion_mask.json",
-        )
-
-        # Dilated lesion mask
-        copy_derivative(
-            self.inputs.dilated_lesion_mask,
-            anat_dir / f"{prefix}_space-anat_desc-lesiondilated15mm_mask.nii.gz",
-        )
-        write_json_sidecar(
-            {
-                "Description": "Lesion mask dilated by 15mm for registration cost function weighting",
-                "Type": "Brain",
-                "Method": "Spherical dilation of whole tumor mask",
-                "DilationRadiusMM": 15.0,
-            },
-            anat_dir / f"{prefix}_space-anat_desc-lesiondilated15mm_mask.json",
         )
 
         # NAWM mask

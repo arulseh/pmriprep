@@ -247,7 +247,6 @@ dce:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `tool` | str | `"hdglio"` | Segmentation tool (currently only `hdglio`) |
-| `lesion_dilation` | float | `15.0` | Dilation radius (mm) for lesion mask |
 | `nawm_erosion` | int | `2` | Erosion iterations for NAWM mask (voxels) |
 | `nawm_min_voxels` | int | `500` | Minimum voxels required in NAWM ROI |
 

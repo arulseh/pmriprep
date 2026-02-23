@@ -75,8 +75,6 @@ def init_dce_preproc_wf(
         Path to brain mask NIfTI file.
     wm_probseg : str
         Path to white matter probability map for BBR registration.
-    lesion_mask : str, optional
-        Path to lesion mask for AIF exclusion and lesion statistics.
     vfa_files : list of str
         Paths to VFA (Variable Flip Angle) images for T1 mapping.
     vfa_flip_angles : list of float
@@ -184,7 +182,6 @@ def init_dce_preproc_wf(
                 "brain_mask",
                 "wm_probseg",
                 "csf_probseg",
-                "lesion_mask",
                 # Tumor mask inputs for lesion statistics
                 "whole_tumor_mask",  # Undilated whole-tumor mask (fallback for lesion stats)
                 "enhancing_mask",  # Enhancing tumor mask for QC voxel selection (optional)
@@ -1367,7 +1364,7 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 11: Lesion Statistics (conditional on lesion mask availability)
     # ==========================================================================
-    # Transform dilated lesion mask from T1w to DCE space (for AIF exclusion)
+    # Transform whole tumor mask from T1w to DCE space (for AIF exclusion)
     transform_lesion = pe.Node(
         niu.Function(
             input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
@@ -1378,7 +1375,7 @@ def init_dce_preproc_wf(
     )
 
     workflow.connect([
-        (inputnode, transform_lesion, [("lesion_mask", "lesion_mask_file")]),
+        (inputnode, transform_lesion, [("whole_tumor_mask", "lesion_mask_file")]),
         (dce_preprocess, transform_lesion, [("mean_img", "reference_file")]),
         (dce_registration, transform_lesion, [("out_matrix", "transform_matrix")]),
     ])

@@ -51,7 +51,6 @@ from pmriprep.utils.dce_dsc_validation import (
     validate_vp_cbv_from_files,
 )
 from pmriprep.utils.tumor_seg import (
-    dilate_mask,
     dilate_mask_from_array,
     erode_mask_from_array,
     extract_tumor_masks,
@@ -130,7 +129,6 @@ __all__ = [
     "validate_vp_cbv",
     "validate_vp_cbv_from_files",
     # tumor_seg
-    "dilate_mask",
     "dilate_mask_from_array",
     "erode_mask_from_array",
     "extract_tumor_masks",

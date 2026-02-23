@@ -1,15 +1,12 @@
-"""HD-GLIO tumor mask extraction and dilation utilities for PMRIPrep.
+"""HD-GLIO tumor mask extraction utilities for PMRIPrep.
 
 This module provides utilities for extracting binary masks from HD-GLIO
-multi-class segmentation outputs and applying morphological operations
-like dilation with proper handling of voxel anisotropy.
+multi-class segmentation outputs and creating NAWM ROIs.
 
 Functions
 ---------
 extract_tumor_masks
     Extract binary masks for enhancing, non-enhancing, and whole tumor
-dilate_mask
-    Dilate a binary mask using a spherical kernel with anisotropy support
 create_nawm_roi
     Create contralateral normal-appearing white matter ROI for CBV normalization
 """
@@ -208,111 +205,6 @@ def _create_spherical_kernel(
     kernel: npt.NDArray[np.bool_] = distance <= radius_mm
 
     return kernel
-
-
-def dilate_mask(
-    mask_file: Union[str, Path],
-    radius_mm: float,
-    output_file: Union[str, Path, None] = None,
-) -> str:
-    """Dilate a binary mask using a spherical structuring element.
-
-    Applies morphological dilation to a binary mask using a sphere of
-    the specified radius in millimeters. The dilation properly accounts
-    for anisotropic voxel dimensions by creating an appropriately shaped
-    structuring element.
-
-    Parameters
-    ----------
-    mask_file : str or Path
-        Path to input binary mask NIfTI file
-    radius_mm : float
-        Dilation radius in millimeters. This is the radius of the
-        spherical structuring element used for dilation.
-    output_file : str or Path, optional
-        Path to output dilated mask. If None, generates filename by
-        appending "_dilated" to input filename.
-
-    Returns
-    -------
-    str
-        Path to the output dilated mask file
-
-    Examples
-    --------
-    >>> dilated = dilate_mask("tumor_mask.nii.gz", radius_mm=15.0)
-    >>> dilated
-    'tumor_mask_dilated.nii.gz'
-
-    >>> dilated = dilate_mask("mask.nii.gz", 15.0, "mask_15mm.nii.gz")
-    >>> dilated
-    'mask_15mm.nii.gz'
-
-    Notes
-    -----
-    The dilation is performed using scipy.ndimage.binary_dilation with
-    a spherical structuring element. For anisotropic voxels, the kernel
-    shape is adjusted to maintain a spherical dilation in physical space.
-
-    The dilation radius in HD-GLIO workflows is typically 15mm (default
-    from HDGLIOConfig.lesion_dilation), which creates a safety margin
-    around the tumor for registration cost function weighting.
-
-    See Also
-    --------
-    _create_spherical_kernel : Create the spherical structuring element
-    scipy.ndimage.binary_dilation : The underlying dilation operation
-    """
-    import nibabel as nib  # type: ignore[import-untyped]
-    from scipy import ndimage  # type: ignore[import-untyped]
-
-    # Load mask
-    mask_path = Path(mask_file)
-    mask_img = nib.load(mask_path)
-    mask_data = mask_img.get_fdata()  # type: ignore[attr-defined]
-    affine = mask_img.affine  # type: ignore[attr-defined]
-    header = mask_img.header  # type: ignore[attr-defined]
-
-    # Get voxel sizes from header
-    zooms = header.get_zooms()[:3]  # type: ignore[attr-defined]
-    voxel_sizes = tuple(float(z) for z in zooms)
-
-    # Create spherical kernel respecting anisotropy
-    kernel = _create_spherical_kernel(radius_mm, voxel_sizes)  # type: ignore[arg-type]
-
-    # Binarize mask (in case it has non-binary values)
-    binary_mask = mask_data > 0.5
-
-    # Apply dilation
-    dilated_mask = ndimage.binary_dilation(binary_mask, structure=kernel)
-
-    # Determine output path
-    if output_file is None:
-        # Generate output filename
-        if mask_path.name.endswith(".nii.gz"):
-            base = mask_path.name[:-7]
-            ext = ".nii.gz"
-        elif mask_path.name.endswith(".nii"):
-            base = mask_path.stem
-            ext = ".nii"
-        else:
-            base = mask_path.stem
-            ext = mask_path.suffix
-
-        out_path = mask_path.parent / f"{base}_dilated{ext}"
-    else:
-        out_path = Path(output_file)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Save dilated mask as uint8
-    dilated_img = nib.Nifti1Image(  # type: ignore[attr-defined]
-        dilated_mask.astype(np.uint8),
-        affine,
-        header,
-    )
-    nib.save(dilated_img, out_path)
-
-    return str(out_path)
 
 
 def dilate_mask_from_array(

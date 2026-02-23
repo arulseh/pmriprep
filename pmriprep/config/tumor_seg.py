@@ -16,8 +16,6 @@ class TumorSegConfig:
     ----------
     tool : Literal["hdglio"]
         Segmentation tool to use. Currently only HD-GLIO is supported.
-    lesion_dilation : float
-        Dilation radius (mm) for lesion mask output.
     nawm_erosion : int
         Erosion iterations for NAWM mask (voxels).
     nawm_min_voxels : int
@@ -35,7 +33,6 @@ class TumorSegConfig:
     tool: Literal["hdglio"] = "hdglio"
 
     # Mask processing settings
-    lesion_dilation: float = 15.0
     nawm_erosion: int = 2
     nawm_min_voxels: int = 500
 

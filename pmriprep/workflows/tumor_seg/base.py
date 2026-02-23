@@ -77,30 +77,6 @@ def _extract_masks_node(
     )
 
 
-def _dilate_mask_node(mask_file, radius_mm):
-    """Node function to dilate a tumor mask.
-
-    Parameters
-    ----------
-    mask_file : str
-        Path to input binary mask
-    radius_mm : float
-        Dilation radius in millimeters
-
-    Returns
-    -------
-    str
-        Path to the dilated mask file
-    """
-    from pmriprep.utils.tumor_seg import dilate_mask
-
-    return dilate_mask(
-        mask_file=mask_file,
-        radius_mm=radius_mm,
-        output_file=None,  # Auto-generate filename
-    )
-
-
 def _create_nawm_node(
     tumor_mask_file,
     wm_probseg_file,
@@ -341,8 +317,6 @@ def init_tumor_seg_wf(
         Path to non-enhancing tumor mask (label 1).
     outputnode.whole_tumor_mask : str
         Path to whole tumor mask (labels 1 + 2).
-    outputnode.dilated_lesion_mask : str
-        Path to dilated lesion mask for registration cost function weighting.
     outputnode.nawm_mask : str
         Path to contralateral NAWM mask for CBV normalization.
     outputnode.qc_metrics : dict
@@ -354,8 +328,7 @@ def init_tumor_seg_wf(
     1. Prepare images for HD-GLIO (NO bias correction, NO intensity normalization)
     2. Run HD-GLIO deep learning segmentation
     3. Extract individual tumor masks (enhancing, non-enhancing, whole)
-    4. Dilate lesion mask for registration use
-    5. Create contralateral NAWM ROI for CBV normalization
+    4. Create contralateral NAWM ROI for CBV normalization
 
     HD-GLIO requires all 4 modalities: T1w-pre, T1w-ce-GAD, T2w, FLAIR.
     """
@@ -401,7 +374,6 @@ def init_tumor_seg_wf(
                 "enhancing_mask",
                 "non_enhancing_mask",
                 "whole_tumor_mask",
-                "dilated_lesion_mask",
                 "nawm_mask",
                 "qc_metrics",
                 "seg_filmstrip_postcon",
@@ -529,31 +501,7 @@ def init_tumor_seg_wf(
     ])
 
     # -------------------------------------------------------------------
-    # Step 4: Mask Dilation (US-080)
-    # - Dilate whole tumor mask with config.lesion_dilation (default: 15mm)
-    # -------------------------------------------------------------------
-    dilate_lesion = pe.Node(
-        niu.Function(
-            input_names=["mask_file", "radius_mm"],
-            output_names=["dilated_mask"],
-            function=_dilate_mask_node,
-        ),
-        name="dilate_lesion",
-    )
-    dilate_lesion.inputs.radius_mm = config.lesion_dilation
-
-    # Connect whole tumor mask to dilation
-    workflow.connect([
-        (select_whole_tumor, dilate_lesion, [("mask_path", "mask_file")]),
-    ])
-
-    # Connect dilated mask to output
-    workflow.connect([
-        (dilate_lesion, outputnode, [("dilated_mask", "dilated_lesion_mask")]),
-    ])
-
-    # -------------------------------------------------------------------
-    # Step 5: NAWM ROI Creation (US-081)
+    # Step 4: NAWM ROI Creation (US-081)
     # - Create contralateral NAWM mask for CBV normalization
     # - Use WM probability >= 0.9, exclude tumor + 20mm margin
     # - Apply config.nawm_erosion (default: 2 voxels)
@@ -608,7 +556,7 @@ def init_tumor_seg_wf(
     ])
 
     # -------------------------------------------------------------------
-    # Step 6: Combine QC Metrics
+    # Step 5: Combine QC Metrics
     # -------------------------------------------------------------------
     combine_qc = pe.Node(
         niu.Function(
@@ -638,7 +586,7 @@ def init_tumor_seg_wf(
     ])
 
     # -------------------------------------------------------------------
-    # Step 7: QC Filmstrips
+    # Step 6: QC Filmstrips
     # -------------------------------------------------------------------
 
     # Tumor on T1w post-contrast

@@ -1479,8 +1479,6 @@ def init_dsc_preproc_wf(
         Path to brain mask in T1w space.
     inputnode.wm_probseg : str, optional
         Path to white matter probability map for NAWM mask.
-    inputnode.lesion_mask : str, optional
-        Path to lesion mask for AIF exclusion and lesion statistics.
     inputnode.nawm_mask : str, optional
         Path to pre-computed NAWM mask for CBV normalization.
     inputnode.te : float, optional
@@ -1565,8 +1563,7 @@ def init_dsc_preproc_wf(
                 "t1w_underlay",  # T1w underlay for DSC-space visualization (CE-T1w if available, else native)
                 "brain_mask",  # Brain mask in T1w space
                 "wm_probseg",  # White matter probability map (optional)
-                "lesion_mask",  # Dilated lesion mask for AIF exclusion + lesion stats (optional)
-                "whole_tumor_mask",  # Undilated whole-tumor mask for AIF distance exclusion (optional)
+                "whole_tumor_mask",  # Whole-tumor mask for AIF exclusion + lesion stats (optional)
                 "enhancing_mask",  # Enhancing tumor mask for laterality (optional)
                 "tumor_segmentation",  # Multi-label tumor segmentation for lesion stats (optional)
                 "nawm_mask",  # NAWM mask for normalization (optional)

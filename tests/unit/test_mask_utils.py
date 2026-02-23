@@ -1,6 +1,6 @@
 """Unit tests for pmriprep.utils.mask_utils.
 
-Tests MergeMasks and DilateMask Nipype SimpleInterface classes.
+Tests MergeMasks Nipype SimpleInterface class.
 """
 
 import os
@@ -151,58 +151,3 @@ class TestMergeMasks:
         np.testing.assert_allclose(merged_img.affine, affine_a)
 
 
-class TestDilateMask:
-    """Tests for DilateMask interface."""
-
-    def test_dilate_basic(self, tmp_path: Path) -> None:
-        """DilateMask expands the mask and output contains 'dilated' in name."""
-        from pmriprep.utils.mask_utils import DilateMask
-
-        data = np.zeros((20, 20, 20), dtype=np.uint8)
-        data[10, 10, 10] = 1  # single voxel
-        mask_file = _create_test_mask(data=data, tmpdir=str(tmp_path), fname="point.nii.gz")
-
-        dilate = DilateMask()
-        dilate.inputs.mask_file = mask_file
-        dilate.inputs.radius_mm = 3.0
-
-        old_cwd = os.getcwd()
-        os.chdir(str(tmp_path))
-        try:
-            result = dilate.run()
-        finally:
-            os.chdir(old_cwd)
-
-        out_path = result.outputs.dilated_mask
-        assert "dilated" in Path(out_path).name
-
-        dilated_img = nib.load(out_path)
-        dilated_data = np.asarray(dilated_img.dataobj)
-
-        # Should have more nonzero voxels than the input
-        assert np.sum(dilated_data > 0) > 1
-        # Original voxel should still be set
-        assert dilated_data[10, 10, 10] > 0
-
-    def test_dilate_preserves_affine(self, tmp_path: Path) -> None:
-        """DilateMask preserves the input affine."""
-        from pmriprep.utils.mask_utils import DilateMask
-
-        affine = np.diag([1.5, 1.5, 3.0, 1.0])
-        data = np.zeros((10, 10, 5), dtype=np.uint8)
-        data[5, 5, 2] = 1
-        mask_file = _create_test_mask(data=data, affine=affine, tmpdir=str(tmp_path), fname="aniso.nii.gz")
-
-        dilate = DilateMask()
-        dilate.inputs.mask_file = mask_file
-        dilate.inputs.radius_mm = 5.0
-
-        old_cwd = os.getcwd()
-        os.chdir(str(tmp_path))
-        try:
-            result = dilate.run()
-        finally:
-            os.chdir(old_cwd)
-
-        dilated_img = nib.load(result.outputs.dilated_mask)
-        np.testing.assert_allclose(dilated_img.affine, affine)
