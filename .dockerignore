@@ -1,50 +1,27 @@
-# Large data directories (tens of GB combined)
-work/
-test_outputs/
-sourcedata/
-
 # VCS
 .git
 
-# Dev artifacts
-bak/
-build/
-debug/
-debug_logs/
-plans/
-scripts/
-docs/
-install/
-
-# Python caches
+# Python
 __pycache__
 *.py[cod]
 *.egg-info
 .eggs/
 dist/
-.mypy_cache
+build/
+
+# Test/lint artifacts
 .pytest_cache
+.mypy_cache
 .coverage
 htmlcov/
 
-# IDE / OS / dev
-.DS_Store
-.vscode/
-.idea/
-*.swp
-.last-branch
-.claude/
-CLAUDE.md
-.gitignore
+# Data directories (potentially tens of GB)
+work/
+sourcedata/
 
-# Test fixtures (large NIfTI files)
-tests/fixtures/
-tests/integration/
+# Nipype
+crash-*.txt
 
 # Container images
 *.sif
-
-# Misc
-crash-*.txt
-subject_options.sh
-auto_debug.sh
+*.simg
