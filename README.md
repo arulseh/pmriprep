@@ -9,7 +9,7 @@ PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and 
 - **DSC Processing**: Six deconvolution methods (sSVD, cSVD, oSVD, Tikhonov, CPI, Vascular) with CBF, CBV, MTT, and Tmax maps
 - **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps (IAUC, SER, peak enhancement, TTP)
 - **Bayesian Inference**: Optional MAP, VI, or MCMC fitting with uncertainty quantification
-- **Automatic AIF Detection**: Atlas-based arterial input function detection with population fallback
+- **Automatic AIF Detection**: Atlas-based arterial input function detection with synthetic fallback
 - **Leakage Correction**: K2 correction for BBB disruption in DSC
 - **T1 Mapping**: Variable flip angle T1 mapping with optional B1+ correction
 - **Tumor Segmentation**: HD-GLIO integration for glioma segmentation with enhancing/non-enhancing labels
@@ -129,7 +129,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dsc-bayesian {none,map,vi,mcmc}` | Bayesian inference method (default: none) |
 | `--dsc-preload` | Indicate contrast preload is present |
 | `--dsc-dose {half,full,double}` | Contrast agent dose (default: full) |
-| `--dsc-aif-method {auto,population}` | AIF detection method (default: auto) |
+| `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
 
 ### DCE Options
 
@@ -229,7 +229,7 @@ tumor_seg:
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
 | `aif_criteria` | str | `"strict"` | AIF selection: `strict`, `relaxed` |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
-| `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
+| `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
 | `aif_mask_file` | path | `null` | Custom AIF mask file |
 | `gamma_fit` | bool | `false` | Apply gamma-variate fitting to AIF |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |

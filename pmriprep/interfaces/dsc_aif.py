@@ -240,9 +240,9 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
     # Detection parameters
     aif_method = traits.Enum(
         "auto",
-        "population",
+        "synthetic",
         usedefault=True,
-        desc="AIF detection method: 'auto' (multi-level) or 'population' (synthetic)",
+        desc="AIF detection method: 'auto' (multi-level) or 'synthetic' (gamma-variate)",
     )
     criteria = traits.Enum(
         "strict",
@@ -1831,7 +1831,7 @@ class AIFDetection(BaseInterface):
         n_available = 0
         filter_meta: dict[str, Any] = {}
 
-        if aif_method == "population":
+        if aif_method == "synthetic":
             pass  # Go directly to synthetic
         else:
             # --- GAP 7: Unified attempts loop ---

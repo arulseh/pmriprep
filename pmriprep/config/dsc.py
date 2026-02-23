@@ -62,8 +62,8 @@ class DSCConfig:
         Enable GPU acceleration.
     hdbet_device : Literal["auto", "cuda", "mps", "cpu"]
         Device for HD-BET brain extraction: auto, cuda, mps, or cpu.
-    aif_method : Literal["auto", "population"]
-        AIF detection method: auto or population.
+    aif_method : Literal["auto", "synthetic"]
+        AIF detection method: auto or synthetic.
     """
 
     # Preload settings
@@ -83,7 +83,7 @@ class DSCConfig:
     n_aif_candidates: int = 10
     gamma_fit: bool = False
     disable_aif_fallback: bool = False
-    aif_method: Literal["auto", "population"] = "auto"
+    aif_method: Literal["auto", "synthetic"] = "auto"
 
     # Registration settings
     lesion_mask: Optional[Path] = None

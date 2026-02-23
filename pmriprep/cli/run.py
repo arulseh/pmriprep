@@ -220,7 +220,7 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-aif-method",
-        choices=["auto", "population"],
+        choices=["auto", "synthetic"],
         default=None,
         help="AIF detection method for DSC (default: auto).",
     )
