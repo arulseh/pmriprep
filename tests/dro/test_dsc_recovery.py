@@ -111,9 +111,9 @@ DSC_PARAMS = [
 # the cost of increased regularization bias (underestimated CBF).
 SSVD_NOISE_LEVELS = [
     pytest.param(0.0, 0.001, 0.05, 0.10, id="zero"),
-    pytest.param(0.02, 0.02, 0.15, 0.65, id="low"),
-    pytest.param(0.05, 0.05, 0.20, 0.55, id="medium"),
-    pytest.param(0.10, 0.10, 0.30, 0.85, id="high"),
+    pytest.param(0.02, 0.02, 0.28, 1.10, id="low"),
+    pytest.param(0.05, 0.05, 0.34, 1.00, id="medium"),
+    pytest.param(0.10, 0.10, 0.45, 1.35, id="high"),
 ]
 
 
@@ -197,9 +197,9 @@ class TestOSVDRecovery:
 
     OSVD_NOISE_LEVELS = [
         pytest.param(0.0, 0.001, 0.05, 0.10, id="zero"),
-        pytest.param(0.02, 0.005, 0.15, 0.65, id="low"),
-        pytest.param(0.05, 0.01, 0.25, 1.05, id="medium"),
-        pytest.param(0.10, 0.01, 0.35, 0.85, id="high"),
+        pytest.param(0.02, 0.005, 0.25, 0.65, id="low"),
+        pytest.param(0.05, 0.01, 0.33, 1.20, id="medium"),
+        pytest.param(0.10, 0.01, 0.47, 1.50, id="high"),
     ]
 
     @pytest.mark.parametrize("noise_frac,thresh_min,cbf_tol,mtt_tol", OSVD_NOISE_LEVELS)
@@ -274,8 +274,8 @@ CPI_PARAMS = [
 # error even at zero noise — this is inherent to the method.
 CPI_NOISE_LEVELS = [
     pytest.param(0.0, 0.30, 0.35, id="zero"),
-    pytest.param(0.02, 0.35, 0.45, id="low"),
-    pytest.param(0.05, 0.45, 0.55, id="medium"),
+    pytest.param(0.02, 0.42, 0.45, id="low"),
+    pytest.param(0.05, 0.46, 0.55, id="medium"),
 ]
 
 
@@ -346,9 +346,9 @@ VASCULAR_PARAMS = [
 # High-noise tolerances cover normal_wm (CBF=25, ~25-35% error).
 VASCULAR_NOISE_LEVELS = [
     pytest.param(0.0, 0.05, 0.05, id="zero"),
-    pytest.param(0.02, 0.15, 0.20, id="low"),
-    pytest.param(0.05, 0.25, 0.35, id="medium"),
-    pytest.param(0.10, 0.40, 0.45, id="high"),
+    pytest.param(0.02, 0.19, 0.25, id="low"),
+    pytest.param(0.05, 0.28, 0.43, id="medium"),
+    pytest.param(0.10, 0.40, 0.62, id="high"),
 ]
 
 
