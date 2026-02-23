@@ -110,10 +110,10 @@ DSC_PARAMS = [
 # At higher noise, higher thresholds control noise amplification at
 # the cost of increased regularization bias (underestimated CBF).
 SSVD_NOISE_LEVELS = [
-    pytest.param(0.0, 0.001, 0.05, 0.10, id="zero"),
-    pytest.param(0.02, 0.02, 0.28, 1.10, id="low"),
-    pytest.param(0.05, 0.05, 0.34, 1.00, id="medium"),
-    pytest.param(0.10, 0.10, 0.45, 1.35, id="high"),
+    pytest.param(0.0, 0.001, 0.05, 0.05, id="zero"),
+    pytest.param(0.02, 0.02, 0.40, 1.59, id="low"),
+    pytest.param(0.05, 0.05, 0.50, 1.43, id="medium"),
+    pytest.param(0.10, 0.10, 0.62, 1.99, id="high"),
 ]
 
 
@@ -133,7 +133,7 @@ class TestSSVDRecovery:
     ) -> None:
         """Test sSVD recovery of CBF and MTT."""
         # SVD regularization systematically inflates MTT for low-CBF residues
-        # (MC calibration: mean+3sigma = 1.2-1.7 vs tolerance 0.55-0.85).
+        # (MC N=100: low_flow mtt mean+3sigma = 1.22-1.66).
         if cbf <= 10 and noise_frac > 0:
             pytest.xfail("SVD regularization inflates MTT for low-CBF residues")
 
@@ -196,10 +196,10 @@ class TestOSVDRecovery:
     """
 
     OSVD_NOISE_LEVELS = [
-        pytest.param(0.0, 0.001, 0.05, 0.10, id="zero"),
-        pytest.param(0.02, 0.005, 0.25, 0.65, id="low"),
-        pytest.param(0.05, 0.01, 0.33, 1.20, id="medium"),
-        pytest.param(0.10, 0.01, 0.47, 1.50, id="high"),
+        pytest.param(0.0, 0.001, 0.05, 0.05, id="zero"),
+        pytest.param(0.02, 0.005, 0.37, 0.95, id="low"),
+        pytest.param(0.05, 0.01, 0.49, 1.79, id="medium"),
+        pytest.param(0.10, 0.01, 0.70, 2.24, id="high"),
     ]
 
     @pytest.mark.parametrize("noise_frac,thresh_min,cbf_tol,mtt_tol", OSVD_NOISE_LEVELS)
@@ -215,7 +215,7 @@ class TestOSVDRecovery:
     ) -> None:
         """Test oSVD recovery of CBF and MTT."""
         # SVD regularization systematically inflates MTT for low-CBF residues
-        # (MC calibration: mean+3sigma = 0.88-1.91 vs tolerance 0.55-1.05).
+        # (MC N=100: low_flow mtt mean+3sigma = 0.88-1.91).
         if cbf <= 10 and noise_frac > 0:
             pytest.xfail("SVD regularization inflates MTT for low-CBF residues")
 
@@ -255,7 +255,7 @@ class TestTikhonovRecovery:
         result = tikhonov_deconvolve(tissue, aif, dt)
 
         _assert_param_recovery(result.cbf, cbf, 0.05, param_name="CBF")
-        _assert_param_recovery(result.mtt, mtt, 0.10, param_name="MTT")
+        _assert_param_recovery(result.mtt, mtt, 0.05, param_name="MTT")
 
 
 # =============================================================================
@@ -273,9 +273,9 @@ CPI_PARAMS = [
 # exponential residue. The spline approximation introduces ~15-20%
 # error even at zero noise — this is inherent to the method.
 CPI_NOISE_LEVELS = [
-    pytest.param(0.0, 0.30, 0.35, id="zero"),
-    pytest.param(0.02, 0.42, 0.45, id="low"),
-    pytest.param(0.05, 0.46, 0.55, id="medium"),
+    pytest.param(0.0, 0.40, 0.32, id="zero"),
+    pytest.param(0.02, 0.63, 0.48, id="low"),
+    pytest.param(0.05, 0.68, 0.54, id="medium"),
 ]
 
 
@@ -345,10 +345,10 @@ VASCULAR_PARAMS = [
 # overwhelms the data — that tests prior behavior, not fitting quality.
 # High-noise tolerances cover normal_wm (CBF=25, ~25-35% error).
 VASCULAR_NOISE_LEVELS = [
-    pytest.param(0.0, 0.05, 0.05, id="zero"),
-    pytest.param(0.02, 0.19, 0.25, id="low"),
-    pytest.param(0.05, 0.28, 0.43, id="medium"),
-    pytest.param(0.10, 0.40, 0.62, id="high"),
+    pytest.param(0.0, 0.07, 0.08, id="zero"),
+    pytest.param(0.02, 0.29, 0.37, id="low"),
+    pytest.param(0.05, 0.42, 0.65, id="medium"),
+    pytest.param(0.10, 0.54, 0.92, id="high"),
 ]
 
 
@@ -434,7 +434,7 @@ class TestVascularRecovery:
             pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
 
         # MAP prior N(55, 22.5^2) systematically pulls CBF=25 upward at all
-        # noise levels (MC calibration: mean+3sigma = 0.25-0.86 vs tolerance 0.15-0.40).
+        # noise levels (MC N=100: normal_wm cbf mean+3sigma = 0.25-0.75).
         if cbf <= 25 and noise_frac > 0:
             pytest.xfail("MAP prior bias pulls CBF=25 upward at all noise levels")
 

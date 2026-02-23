@@ -82,26 +82,26 @@ def _make_dce_aif_and_time(
 NOISE_LEVELS_STANDARD = [
     pytest.param(0.0, 0.01, id="zero"),
     pytest.param(0.02, 0.08, id="low"),
-    pytest.param(0.05, 0.15, id="medium"),
-    pytest.param(0.10, 0.27, id="high"),
+    pytest.param(0.05, 0.19, id="medium"),
+    pytest.param(0.10, 0.40, id="high"),
 ]
 
 # Extended Tofts (3 params) is harder to identify than Tofts (2 params),
 # especially for high kep and low permeability cases.
 NOISE_LEVELS_ETOFTS = [
     pytest.param(0.0, 0.01, id="zero"),
-    pytest.param(0.02, 0.10, id="low"),
-    pytest.param(0.05, 0.20, id="medium"),
-    pytest.param(0.10, 0.40, id="high"),
+    pytest.param(0.02, 0.11, id="low"),
+    pytest.param(0.05, 0.26, id="medium"),
+    pytest.param(0.10, 0.50, id="high"),
 ]
 
 # 2CXM (4 free params): known coupling between PS and ve makes
 # individual parameter recovery inherently less precise.
 NOISE_LEVELS_2CXM = [
-    pytest.param(0.0, 0.02, id="zero"),
-    pytest.param(0.02, 0.20, id="low"),
-    pytest.param(0.05, 0.35, id="medium"),
-    pytest.param(0.10, 0.50, id="high"),
+    pytest.param(0.0, 0.01, id="zero"),
+    pytest.param(0.02, 0.09, id="low"),
+    pytest.param(0.05, 0.21, id="medium"),
+    pytest.param(0.10, 0.41, id="high"),
 ]
 
 
