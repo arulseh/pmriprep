@@ -283,8 +283,8 @@ bids_dir/
 
 | Pipeline | Required |
 |----------|----------|
-| DSC | `*_dsc.nii.gz` + JSON sidecar, T1w |
-| DCE | `*_dce.nii.gz` + JSON sidecar, T1w |
+| DSC | `*_dsc.nii.gz`, T1w |
+| DCE | `*_dce.nii.gz`, T1w |
 | HD-GLIO | T1w pre-contrast, T1w post-contrast, T2w, FLAIR |
 
 ### JSON Sidecar Fields
