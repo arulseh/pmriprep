@@ -239,9 +239,6 @@ def dilate_mask_from_array(
     >>> dilated.sum() > mask.sum()
     True
 
-    See Also
-    --------
-    dilate_mask : File-based version with NIfTI I/O
     """
     from scipy import ndimage  # type: ignore[import-untyped]
 
