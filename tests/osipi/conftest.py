@@ -441,9 +441,11 @@ def compute_joint_mask(
 # Fixtures
 # ---------------------------------------------------------------------------
 
-SUBJECT_0081 = "sub-0082"
 SES1 = "ses-0001"
 SES2 = "ses-0002"
+
+# OSIPI clinical test-retest cohort: sub-0081 through sub-0088
+TEST_RETEST_SUBJECTS = [f"sub-00{i}" for i in range(81, 89)]
 
 
 def _outputs_exist(subject: str, session: str) -> bool:
@@ -452,19 +454,17 @@ def _outputs_exist(subject: str, session: str) -> bool:
     return ktrans_path.exists()
 
 
-skip_no_outputs = pytest.mark.skipif(
-    not (_outputs_exist(SUBJECT_0081, SES1) and _outputs_exist(SUBJECT_0081, SES2)),
-    reason="PMRIPrep outputs not found for sub-0082 ses-0001 and ses-0002",
-)
+def has_perfplus_reference(subject: str) -> bool:
+    """Check if perf-plus test-retest reference exists for a subject."""
+    ref = load_perfplus_reference()
+    if ref is None:
+        return False
+    return subject in ref.get("test_retest", {})
+
 
 skip_no_fsl = pytest.mark.skipif(
     not has_fsl(),
     reason="FSL FLIRT not available",
-)
-
-skip_no_perfplus = pytest.mark.skipif(
-    not PERFPLUS_REFERENCE_JSON.exists(),
-    reason="Perf-plus reference JSON not found",
 )
 
 
