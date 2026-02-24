@@ -90,4 +90,12 @@
     </div>
     {% endif %}
 
+    {% if anat.images.coreg_flair_postcon %}
+    <div class="section">
+        <h3>Coregistration: FLAIR Post-Contrast to T1w</h3>
+        <p>T1w structural edges overlaid on coregistered post-contrast FLAIR.</p>
+        <img src="{{ anat.images.coreg_flair_postcon }}" alt="FLAIR PostCon Coreg QC">
+    </div>
+    {% endif %}
+
 </section>
