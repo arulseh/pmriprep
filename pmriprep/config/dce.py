@@ -37,8 +37,9 @@ class DCEConfig:
         Number of AIF candidate voxels to average.
     underlays : List[str]
         List of underlay images for QC visualizations.
-    no_b1 : bool
-        Skip B1+ mapping (use nominal flip angles).
+    b1_method : Literal["auto", "afi", "tfl_b1map", "none"]
+        B1+ correction method: auto (detect from data), afi (Yarnykh AFI),
+        tfl_b1map (pre-computed flip angle map), none (skip B1+ correction).
     no_t1 : bool
         Skip T1 mapping (use field-strength-appropriate default T1).
     skip_flip_validation : bool
@@ -89,7 +90,7 @@ class DCEConfig:
     underlays: List[str] = field(default_factory=list)
 
     # T1 mapping settings
-    no_b1: bool = False
+    b1_method: Literal["auto", "afi", "tfl_b1map", "none"] = "auto"
     no_t1: bool = False
     skip_flip_validation: bool = False
     lenient_t1_qc: bool = False
@@ -137,6 +138,14 @@ class DCEConfig:
                 f"Invalid underlay(s): {sorted(invalid)}. "
                 f"Valid: {sorted(_VALID_UNDERLAYS)}. "
                 f"Note: 't1w' is no longer valid — use 't1w_precon' or 't1w_postcon'."
+            )
+
+        # Validate b1_method
+        _VALID_B1_METHODS = {"auto", "afi", "tfl_b1map", "none"}
+        if self.b1_method not in _VALID_B1_METHODS:
+            raise ValueError(
+                f"Invalid b1_method: {self.b1_method!r}. "
+                f"Valid: {sorted(_VALID_B1_METHODS)}"
             )
 
         # Coerce integer fields (these have non-None defaults)

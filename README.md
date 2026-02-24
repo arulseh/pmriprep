@@ -135,7 +135,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dce-aif-method {auto,population}` | AIF detection method (default: auto) |
 | `--dce-dose {half,full,double}` | Contrast agent dose (default: full) |
 | `--dce-r1 R1` | Override r1 relaxivity (s⁻¹/mM) for concentration conversion |
-| `--dce-no-b1` | Skip B1+ mapping (use nominal flip angles) |
+| `--dce-b1-method {auto,afi,tfl_b1map,none}` | B1+ correction method (default: auto) |
 | `--dce-no-t1` | Skip T1 mapping (use default T1 for field strength) |
 
 ### Anatomical Options
@@ -222,7 +222,7 @@ dce:
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `dose` | str | `"full"` | Dose: `half`, `full`, `double` |
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
-| `no_b1` | bool | `false` | Skip B1+ mapping |
+| `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `tfl_b1map`, `none` |
 | `no_t1` | bool | `false` | Skip T1 mapping |
 | `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect) |
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |

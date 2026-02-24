@@ -266,11 +266,11 @@ Examples:
         ),
     )
     dce_group.add_argument(
-        "--dce-no-b1",
-        action="store_const",
-        const=True,
+        "--dce-b1-method",
+        choices=["auto", "afi", "tfl_b1map", "none"],
         default=None,
-        help="Skip B1+ mapping (use nominal flip angles).",
+        help="B1+ correction method: auto (detect from data), afi (Yarnykh AFI), "
+             "tfl_b1map (pre-computed flip angle map), none (skip B1+ correction).",
     )
     dce_group.add_argument(
         "--dce-no-t1",

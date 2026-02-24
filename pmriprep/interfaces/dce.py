@@ -135,6 +135,16 @@ class B1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Session ID for QC figure title",
     )
+    precomputed_b1_file = File(
+        exists=True,
+        desc="Pre-computed B1+ flip angle map (e.g., tfl_b1map). "
+             "Values in 0.1 degree units (Siemens convention).",
+    )
+    b1_nominal_prep_fa = traits.Float(
+        desc="Nominal preparation/saturation flip angle (degrees) for "
+             "pre-computed B1+ map scaling. Read from FlipAngle in the "
+             "acq-famp JSON sidecar.",
+    )
 
 
 class B1MappingOutputSpec(TraitedSpec):
@@ -517,6 +527,10 @@ class B1Mapping(SimpleInterface):
             get_b1_thresholds,
         )
 
+        # Check for pre-computed B1+ map (e.g., tfl_b1map)
+        if isdefined(self.inputs.precomputed_b1_file) and self.inputs.precomputed_b1_file:
+            return self._run_precomputed_b1(runtime)
+
         # Generate output filename
         out_file = self._gen_outfilename()
 
@@ -783,6 +797,7 @@ class B1Mapping(SimpleInterface):
 
         # Build QC metrics dictionary
         qc_metrics = {
+            "method": "afi",
             "mean_b1": mean_b1,
             "std_b1": std_b1,
             "median_b1": median_b1,
@@ -877,6 +892,240 @@ class B1Mapping(SimpleInterface):
 
         return runtime
 
+    def _run_precomputed_b1(self, runtime: Any) -> Any:
+        """Process pre-computed B1+ flip angle map (e.g., Siemens tfl_b1map).
+
+        Scaling: b1_ratio = pixel_value / (nominal_prep_fa * 10)
+        where pixel values are in 0.1 degree units (Siemens convention).
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+        from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
+
+        from pmriprep.utils.dce_constants import (
+            B1_EXPECTED_MEAN,
+            B1_MIN_COVERAGE,
+            B1_MIN_SIGMA_VOXELS,
+            get_b1_thresholds,
+        )
+
+        out_file = self._gen_outfilename()
+
+        # Load pre-computed B1+ map
+        b1_img = nib.load(self.inputs.precomputed_b1_file)
+        b1_raw = np.asarray(b1_img.dataobj, dtype=np.float64)  # type: ignore[attr-defined]
+        affine = b1_img.affine  # type: ignore[attr-defined]
+        header = b1_img.header  # type: ignore[attr-defined]
+        shape = b1_raw.shape[:3]
+
+        # Reorient to RAS
+        from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
+
+        orig_ornt = io_orientation(affine)
+        ras_ornt = axcodes2ornt(("R", "A", "S"))
+        transform = ornt_transform(orig_ornt, ras_ornt)
+        if not np.allclose(transform[:, 0], np.arange(len(transform))):
+            from nibabel.orientations import apply_orientation
+            b1_raw = apply_orientation(b1_raw, transform)
+            affine = nib.orientations.inv_ornt_aff(transform, b1_raw.shape)  # type: ignore[attr-defined]
+            logger.info("Reoriented pre-computed B1+ map to RAS")
+
+        # Read nominal preparation flip angle
+        if not isdefined(self.inputs.b1_nominal_prep_fa) or not self.inputs.b1_nominal_prep_fa:
+            raise ValueError(
+                "b1_nominal_prep_fa is required for pre-computed B1+ maps. "
+                "This should be set from the FlipAngle field in the acq-famp "
+                "JSON sidecar."
+            )
+        nominal_prep_fa = float(self.inputs.b1_nominal_prep_fa)
+        scale_factor = nominal_prep_fa * 10.0
+        logger.info(
+            "Pre-computed B1+ scaling: pixel / %.1f "
+            "(FlipAngle=%.0f°, scale=FA×10)",
+            scale_factor, nominal_prep_fa,
+        )
+
+        # Validate pixel values — catch grossly wrong files (e.g., anatomical
+        # companion with signal-intensity values), but allow high B1+ at FOV
+        # edges. Downstream physiological clipping handles the actual range.
+        p99 = float(np.percentile(b1_raw[b1_raw > 0], 99)) if np.any(b1_raw > 0) else 0.0
+        if p99 > scale_factor * 5.0:
+            raise ValueError(
+                f"Pre-computed B1+ map pixel p99={p99:.0f} exceeds "
+                f"5× expected maximum ({scale_factor * 5.0:.0f}). "
+                f"Check that this is the correct file (acq-famp, not acq-anat)."
+            )
+        if p99 > scale_factor * 2.0:
+            logger.warning(
+                "Pre-computed B1+ map pixel p99=%.0f exceeds 2× nominal "
+                "(%.0f). Some voxels have B1+ ratio > 2.0 — likely edge/artifact "
+                "voxels that will be clipped.",
+                p99, scale_factor * 2.0,
+            )
+
+        # Create valid mask (non-zero pixels)
+        valid_mask = b1_raw > 0
+
+        # Scale to B1+ ratio
+        b1_map = np.ones(shape, dtype=np.float64)
+        b1_map[valid_mask] = b1_raw[valid_mask] / scale_factor
+
+        # -----------------------------------------------------------------
+        # Physiological clipping (field-strength-dependent)
+        # -----------------------------------------------------------------
+        field_strength = self.inputs.field_strength
+        b1_thresh = get_b1_thresholds(field_strength)
+        b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
+        b1_map[~valid_mask] = 1.0  # Background = nominal
+
+        # Flag extreme values for QC
+        n_valid = max(int(np.sum(valid_mask)), 1)
+        n_extreme_low = int(np.sum((b1_map < b1_thresh.extreme_low) & valid_mask))
+        n_extreme_high = int(np.sum((b1_map > b1_thresh.extreme_high) & valid_mask))
+        if n_extreme_low > 0:
+            logger.info(
+                "%.1f%% of brain has B1+ < %.2f (expected in temporal lobes at %.1fT)",
+                100.0 * n_extreme_low / n_valid,
+                b1_thresh.extreme_low,
+                field_strength,
+            )
+        if n_extreme_high > 0:
+            logger.warning(
+                "%.1f%% of brain has B1+ > %.2f (check for dielectric effects at %.1fT)",
+                100.0 * n_extreme_high / n_valid,
+                b1_thresh.extreme_high,
+                field_strength,
+            )
+
+        # -----------------------------------------------------------------
+        # Normalized convolution smoothing (same as AFI path)
+        # -----------------------------------------------------------------
+        smoothing_fwhm = self.inputs.smoothing_fwhm
+        n_b1_outliers = 0
+        if smoothing_fwhm > 0:
+            from scipy.ndimage import binary_erosion
+
+            voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
+            sigma_voxels = [
+                max(smoothing_fwhm / (2.355 * vs), B1_MIN_SIGMA_VOXELS)
+                for vs in voxel_sizes
+            ]
+            # Pass 1: robust local B1+ from interior voxels
+            sigma_wide = [s * 1.5 for s in sigma_voxels]
+            interior = binary_erosion(valid_mask, iterations=2)
+            interior_float = interior.astype(np.float64)
+            s_num = gaussian_filter(b1_map * interior_float, sigma=sigma_wide)
+            s_den = gaussian_filter(interior_float, sigma=sigma_wide)
+            has_coverage = s_den > B1_MIN_COVERAGE
+            b1_local = np.where(has_coverage, s_num / s_den, 0.0)
+
+            outlier = valid_mask & has_coverage & (
+                np.abs(b1_map - b1_local) > b1_thresh.outlier_deviation
+            )
+            n_b1_outliers = int(np.sum(outlier))
+            if n_b1_outliers > 0:
+                logger.info(
+                    "B1+ outlier rejection: excluded %d voxels (%.1f%% of valid)",
+                    n_b1_outliers, 100.0 * n_b1_outliers / n_valid,
+                )
+            valid_mask = valid_mask & ~outlier
+            b1_map[outlier] = 1.0
+
+            # Pass 2: re-smooth with cleaned mask
+            mask_float = valid_mask.astype(np.float64)
+            smoothed_num = gaussian_filter(b1_map * mask_float, sigma=sigma_voxels)
+            smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
+            smoothed_den = np.maximum(smoothed_den, 1e-6)
+            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 1.0)
+            b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
+
+        b1_map = b1_map.astype(np.float32)
+
+        # -----------------------------------------------------------------
+        # QC metrics
+        # -----------------------------------------------------------------
+        b1_in_roi = b1_map[b1_map > 0]
+        b1_clean = b1_in_roi[(b1_in_roi > 0.5) & (b1_in_roi < 2.0)]
+
+        if len(b1_clean) > 0:
+            mean_b1 = float(np.mean(b1_clean))
+            std_b1 = float(np.std(b1_clean))
+            median_b1 = float(np.median(b1_clean))
+        else:
+            mean_b1 = B1_EXPECTED_MEAN
+            std_b1 = 0.0
+            median_b1 = B1_EXPECTED_MEAN
+
+        qc_pass = (
+            b1_thresh.mean_range[0] <= mean_b1 <= b1_thresh.mean_range[1]
+            and std_b1 < b1_thresh.max_std
+        )
+
+        from pmriprep.utils.qc_standards import QCStatus
+        b1_status = QCStatus.PASS if qc_pass else QCStatus.WARN
+
+        qc_metrics = {
+            "method": "tfl_b1map",
+            "mean_b1": mean_b1,
+            "std_b1": std_b1,
+            "median_b1": median_b1,
+            "b1_status": b1_status,
+            "qc_pass": qc_pass,
+            "skipped": False,
+            "smoothing_fwhm_mm": smoothing_fwhm,
+            "nominal_prep_fa_deg": nominal_prep_fa,
+            "scale_factor": scale_factor,
+            "pixel_p99": p99,
+            "b1_range_expected": b1_thresh.mean_range,
+            "b1_max_std_expected": b1_thresh.max_std,
+            "n_valid_voxels": int(np.sum(valid_mask)),
+            "n_extreme_low_b1": n_extreme_low,
+            "n_extreme_high_b1": n_extreme_high,
+            "n_b1_outliers_rejected": n_b1_outliers,
+            "pct_correction_gt_10": (
+                float(100.0 * np.sum(np.abs(b1_clean - 1.0) > 0.1) / len(b1_clean))
+                if len(b1_clean) > 0 else 0.0
+            ),
+            "pct_correction_gt_20": (
+                float(100.0 * np.sum(np.abs(b1_clean - 1.0) > 0.2) / len(b1_clean))
+                if len(b1_clean) > 0 else 0.0
+            ),
+        }
+
+        # Save output
+        out_img = nib.Nifti1Image(b1_map, affine, header)
+        nib.save(out_img, out_file)
+
+        # Generate QC plot
+        qc_plot_path: Optional[str] = None
+        try:
+            from pmriprep.utils.dce_qc_plots import generate_b1_precomputed_qc_plot
+
+            qc_plot_path = generate_b1_precomputed_qc_plot(
+                b1_raw=b1_raw,
+                b1_map=b1_map,
+                valid_mask=valid_mask,
+                nominal_prep_fa=nominal_prep_fa,
+                mean_b1=mean_b1,
+                std_b1=std_b1,
+                subject_id=self.inputs.subject_id,
+                session_id=self.inputs.session_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to generate pre-computed B1+ QC plot: %s", e, exc_info=True,
+            )
+
+        # Set outputs
+        self._results["out_file"] = out_file
+        self._results["mean_b1"] = mean_b1
+        self._results["std_b1"] = std_b1
+        self._results["qc_pass"] = qc_pass
+        self._results["qc_metrics"] = qc_metrics
+        if qc_plot_path is not None:
+            self._results["qc_plot"] = qc_plot_path
+
+        return runtime
+
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""
         from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
@@ -885,7 +1134,9 @@ class B1Mapping(SimpleInterface):
             return str(self.inputs.out_file)
 
         # Determine source file for naming
-        if isdefined(self.inputs.afi_4d_file) and self.inputs.afi_4d_file:
+        if isdefined(self.inputs.precomputed_b1_file) and self.inputs.precomputed_b1_file:
+            in_file = Path(str(self.inputs.precomputed_b1_file))
+        elif isdefined(self.inputs.afi_4d_file) and self.inputs.afi_4d_file:
             in_file = Path(str(self.inputs.afi_4d_file))
         elif isdefined(self.inputs.tr1_file) and self.inputs.tr1_file:
             in_file = Path(self.inputs.tr1_file)
@@ -904,9 +1155,11 @@ class B1Mapping(SimpleInterface):
             base = in_file.stem
             ext = in_file.suffix
 
-        # Remove any AFI-specific suffixes and add B1plus suffix
+        # Remove any B1-specific suffixes and add B1plus suffix
         base = base.replace("_AFI", "").replace("_afi", "")
         base = base.replace("_TR1", "").replace("_tr1", "")
+        base = base.replace("_TB1TFL", "").replace("_tb1tfl", "")
+        base = base.replace("_TB1AFI", "").replace("_tb1afi", "")
 
         return str(Path.cwd() / f"{base}_B1plus{ext}")
 

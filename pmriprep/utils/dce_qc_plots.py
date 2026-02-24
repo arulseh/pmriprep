@@ -425,3 +425,167 @@ def generate_b1_qc_plot(
 
     logger.info("B1+ QC plot saved to %s", output_path)
     return output_path
+
+
+def generate_b1_precomputed_qc_plot(
+    b1_raw: npt.NDArray[np.floating],
+    b1_map: npt.NDArray[np.floating],
+    valid_mask: npt.NDArray[np.bool_],
+    nominal_prep_fa: float,
+    mean_b1: float = 1.0,
+    std_b1: float = 0.0,
+    output_path: Optional[str] = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
+    """Generate a QC plot for pre-computed B1+ mapping (e.g., tfl_b1map).
+
+    Layout (2 rows x 3 columns):
+        Row 1: Raw pixel map (FA x 10), B1+ ratio map (scaled), Brain mask overlay
+        Row 2: B1+ histogram, B1+ ratio stats text, (empty)
+
+    Parameters
+    ----------
+    b1_raw : ndarray
+        3D raw pixel values from pre-computed B1+ map (0.1 degree units).
+    b1_map : ndarray
+        3D B1+ correction factor map (ratio, after scaling and smoothing).
+    valid_mask : ndarray
+        Boolean mask of voxels with valid B1+ data.
+    nominal_prep_fa : float
+        Nominal preparation/saturation flip angle in degrees.
+    mean_b1 : float
+        Mean B1+ value in brain.
+    std_b1 : float
+        Standard deviation of B1+ in brain.
+    output_path : str, optional
+        Output path for the PNG file. If None, uses cwd.
+    subject_id : str
+        Subject ID for figure title.
+    session_id : str
+        Session ID for figure title.
+
+    Returns
+    -------
+    str
+        Path to the saved QC plot PNG file.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+
+    from pmriprep.utils.qc_standards import COLORBLIND_PALETTE
+    from pmriprep.utils.qc_utils import get_radiological_slice
+
+    if output_path is None:
+        output_path = str(Path.cwd() / "b1_qc.png")
+
+    mid_slice = b1_map.shape[2] // 2
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+    from pmriprep.utils.qc_utils import qc_figure_title
+    fig.suptitle(
+        qc_figure_title(subject_id, session_id, "tfl_b1map B1+ Mapping QC"),
+        fontsize=14, fontweight="bold", y=0.98,
+    )
+
+    # ---- Panel 1: Raw pixel map ----
+    ax = axes[0, 0]
+    raw_sl = get_radiological_slice(b1_raw, axis=2, slice_idx=mid_slice)
+    mask_sl = get_radiological_slice(valid_mask.astype(float), axis=2, slice_idx=mid_slice)
+    raw_display = np.where(mask_sl > 0.5, raw_sl, np.nan)
+    expected_center = nominal_prep_fa * 10.0
+    im = ax.imshow(
+        raw_display, cmap="viridis",
+        vmin=expected_center * 0.5, vmax=expected_center * 1.5,
+        origin="upper",
+    )
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="0.1\u00b0")
+    ax.set_title(f"Raw FA Map (\u00d70.1\u00b0, nom={nominal_prep_fa:.0f}\u00b0)", fontsize=11)
+    ax.axis("off")
+
+    # ---- Panel 2: B1+ ratio map ----
+    ax = axes[0, 1]
+    b1_sl = get_radiological_slice(b1_map, axis=2, slice_idx=mid_slice)
+    b1_display = np.where(mask_sl > 0.5, b1_sl, np.nan)
+    im = ax.imshow(
+        b1_display, cmap="plasma", vmin=0.5, vmax=1.5, origin="upper",
+    )
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_title("B1+ Ratio Map", fontsize=11)
+    ax.axis("off")
+
+    # ---- Panel 3: Valid mask overlay ----
+    ax = axes[0, 2]
+    ax.imshow(raw_sl, cmap="gray", vmin=0,
+              vmax=float(np.percentile(raw_sl[raw_sl > 0], 99)) if np.any(raw_sl > 0) else 1.0,
+              origin="upper")
+    mask_overlay = np.ma.masked_where(mask_sl < 0.5, mask_sl)  # type: ignore[attr-defined]
+    ax.imshow(mask_overlay, cmap="Reds", alpha=0.3, origin="upper")
+    ax.set_title("Valid Mask Overlay", fontsize=11)
+    ax.axis("off")
+
+    # ---- Panel 4: B1+ histogram ----
+    ax = axes[1, 0]
+    b1_brain = b1_map[valid_mask]
+    b1_brain = b1_brain[(b1_brain > 0.5) & (b1_brain < 2.0)]
+
+    if len(b1_brain) > 0:
+        ax.hist(
+            b1_brain, bins=80, range=(0.3, 1.8),
+            color=COLORBLIND_PALETTE.primary, alpha=0.7,
+            edgecolor="none", density=True,
+        )
+        ax.axvspan(0.7, 1.5, alpha=0.10, color=COLORBLIND_PALETTE.success,
+                   label="Typical (0.7\u20131.5)")
+        ax.axvline(1.0, color="gray", linestyle="--", linewidth=1.0,
+                   label="Nominal (1.0)")
+        hist_mean = float(np.mean(b1_brain))
+        hist_median = float(np.median(b1_brain))
+        ax.axvline(hist_mean, color=COLORBLIND_PALETTE.error, linestyle="-",
+                   linewidth=1.5, label=f"Mean: {hist_mean:.3f}")
+        ax.axvline(hist_median, color=COLORBLIND_PALETTE.secondary, linestyle=":",
+                   linewidth=1.5, label=f"Median: {hist_median:.3f}")
+        ax.legend(fontsize=7, loc="upper left")
+    else:
+        ax.text(0.5, 0.5, "No valid B1+ voxels",
+                transform=ax.transAxes, ha="center", va="center", fontsize=11)
+
+    ax.set_xlabel("B1+ Correction Factor")
+    ax.set_ylabel("Density")
+    ax.set_title(
+        f"B1+ Distribution (mean={mean_b1:.3f}, std={std_b1:.3f})",
+        fontsize=10,
+    )
+
+    # ---- Panel 5: Stats text ----
+    ax = axes[1, 1]
+    ax.axis("off")
+    scale_factor = nominal_prep_fa * 10.0
+    stats_text = (
+        f"Method: tfl_b1map (pre-computed)\n"
+        f"Nominal prep FA: {nominal_prep_fa:.0f}\u00b0\n"
+        f"Scale factor: {scale_factor:.0f}\n"
+        f"Mean B1+: {mean_b1:.3f}\n"
+        f"Std B1+: {std_b1:.3f}\n"
+        f"Valid voxels: {int(np.sum(valid_mask)):,}\n"
+        f">10% correction: "
+        f"{100.0 * np.sum(np.abs(b1_brain - 1.0) > 0.1) / max(len(b1_brain), 1):.1f}%\n"
+        f">20% correction: "
+        f"{100.0 * np.sum(np.abs(b1_brain - 1.0) > 0.2) / max(len(b1_brain), 1):.1f}%"
+    )
+    ax.text(0.1, 0.95, stats_text, transform=ax.transAxes,
+            fontsize=11, verticalalignment="top", fontfamily="monospace",
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
+    ax.set_title("B1+ Statistics", fontsize=11)
+
+    # ---- Panel 6: empty ----
+    axes[1, 2].axis("off")
+
+    plt.tight_layout(rect=(0, 0.02, 1, 0.96))
+    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    logger.info("Pre-computed B1+ QC plot saved to %s", output_path)
+    return output_path

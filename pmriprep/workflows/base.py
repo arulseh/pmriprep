@@ -1676,7 +1676,6 @@ def init_pmriprep_wf(
         _log = _logging.getLogger("pmriprep.workflows")
 
         # Auto-skip T1 mapping when no VFA data is available
-        # (B1 mapping is also unnecessary without VFA)
         if not session_data.modalities.vfa and not dce_config.no_t1:
             _log.warning(
                 "No VFA data found for sub-%s ses-%s; "
@@ -1684,16 +1683,27 @@ def init_pmriprep_wf(
                 subject_id, session_id,
             )
             dce_config.no_t1 = True
-            dce_config.no_b1 = True
+            # Without VFA, AFI-based B1+ is unnecessary (no flip angles to correct).
+            # tfl_b1map still works — it directly corrects the DCE flip angle.
+            if not session_data.modalities.b1_precomputed_file:
+                dce_config.b1_method = "none"
 
-        # Auto-skip B1 when no AFI data (VFA may still exist)
-        if not session_data.modalities.afi and not dce_config.no_b1:
-            _log.warning(
-                "No AFI/B1+ data found for sub-%s ses-%s; "
-                "disabling B1+ correction (using nominal flip angles)",
-                subject_id, session_id,
-            )
-            dce_config.no_b1 = True
+        # Resolve b1_method="auto" to a concrete method based on available data
+        b1_method = dce_config.b1_method
+        if b1_method == "auto":
+            detected = session_data.modalities.b1_method_detected
+            if detected in ("afi", "tfl_b1map"):
+                b1_method = detected  # type: ignore[assignment]
+            elif session_data.modalities.afi:
+                b1_method = "afi"
+            else:
+                _log.warning(
+                    "No B1+ data (AFI or tfl_b1map) found for sub-%s ses-%s; "
+                    "skipping B1+ correction (using nominal flip angles)",
+                    subject_id, session_id,
+                )
+                b1_method = "none"
+            dce_config.b1_method = b1_method
 
         dce_wf = init_dce_preproc_wf(
             bids_dir=bids_dir,
@@ -2067,7 +2077,17 @@ def init_pmriprep_wf(
                     "No RepetitionTime found in VFA sidecar JSONs; "
                     "T1 mapping will fail unless TR is configured manually"
                 )
-        if session_data.modalities.afi:
+        # Wire B1+ data based on resolved method
+        b1_method = dce_config.b1_method
+        if b1_method == "tfl_b1map" and session_data.modalities.b1_precomputed_file:
+            dce_wf.inputs.inputnode.precomputed_b1_file = str(
+                session_data.modalities.b1_precomputed_file
+            )
+            if session_data.modalities.b1_nominal_prep_fa is not None:
+                dce_wf.inputs.inputnode.b1_nominal_prep_fa = (
+                    session_data.modalities.b1_nominal_prep_fa
+                )
+        elif b1_method == "afi" and session_data.modalities.afi:
             afi_mode = session_data.modalities.afi_mode
 
             if afi_mode == "4d" and session_data.modalities.afi_4d_file:
@@ -2080,7 +2100,7 @@ def init_pmriprep_wf(
                     dce_wf.inputs.inputnode.afi_tr1 = session_data.modalities.afi_tr1_ms
                 if session_data.modalities.afi_tr2_ms is not None:
                     dce_wf.inputs.inputnode.afi_tr2 = session_data.modalities.afi_tr2_ms
-            else:
+            elif afi_mode != "precomputed":
                 # 3D mode: use TR-classified file paths from discovery
                 mods = session_data.modalities
                 tr1_file = mods.afi_tr1_file or (mods.afi[0] if len(mods.afi) >= 2 else None)

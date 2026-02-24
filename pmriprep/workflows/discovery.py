@@ -28,6 +28,9 @@ class ModalityAvailability:
         vfa: List of paths to VFA (Variable Flip Angle) images for T1 mapping.
         afi: List of paths to AFI (Actual Flip Angle Imaging) images for B1+ mapping.
         dwi: Path to DWI image, if available.
+        b1_precomputed_file: Path to pre-computed B1+ flip angle map (e.g., tfl_b1map famp).
+        b1_nominal_prep_fa: Nominal preparation flip angle (degrees) from famp JSON sidecar.
+        b1_method_detected: Detected B1+ method ("afi" or "tfl_b1map"), if any.
     """
 
     t1w_pre: Optional[Path] = None
@@ -47,6 +50,9 @@ class ModalityAvailability:
     afi_tr1_ms: Optional[float] = None  # TR1 in ms (from sidecar)
     afi_tr2_ms: Optional[float] = None  # TR2 in ms (from sidecar)
     afi_flip_angle: Optional[float] = None  # Nominal flip angle in degrees (from sidecar)
+    b1_precomputed_file: Optional[Path] = None  # Pre-computed B1+ map (e.g., tfl_b1map famp)
+    b1_nominal_prep_fa: Optional[float] = None  # FlipAngle from famp JSON sidecar
+    b1_method_detected: Optional[str] = None  # "afi" or "tfl_b1map"
 
 
 @dataclass
@@ -521,29 +527,36 @@ def _find_vfa(anat_dir: Path, perf_dir: Optional[Path] = None) -> List[Path]:
     return sorted(unique_vfa)
 
 
-def _find_afi(
+def _find_b1_data(
     anat_dir: Path,
     perf_dir: Optional[Path] = None,
     fmap_dir: Optional[Path] = None,
 ) -> List[Path]:
-    """Find AFI (Actual Flip Angle Imaging) images for B1+ mapping.
+    """Find B1+ mapping images (AFI or pre-computed tfl_b1map).
 
-    AFI images are identified by:
-    - Having 'afi' or 'AFI' or 'b1' or 'B1' in filename
-    - Typically pairs of images with different TRs
+    B1+ images are identified by:
+    - Having 'afi' or 'AFI' or 'b1' or 'B1' in filename (AFI)
+    - Having 'TB1TFL' in filename (Siemens tfl_b1map)
+    - Having 'TB1AFI' in filename (BIDS-standard AFI suffix)
+    - Typically pairs of images with different TRs (AFI)
+    - Or single pre-computed flip angle map (tfl_b1map)
 
     Args:
         anat_dir: Path to the anatomical directory.
         perf_dir: Path to the perfusion directory (AFI sometimes stored there).
-        fmap_dir: Path to the fieldmap directory (AFI stored here per BIDS spec).
+        fmap_dir: Path to the fieldmap directory (B1 maps stored here per BIDS spec).
 
     Returns:
-        List of paths to AFI images.
+        List of paths to B1+ images.
     """
-    afi_files: List[Path] = []
+    b1_files: List[Path] = []
 
-    # Search patterns for AFI and B1 mapping
-    afi_patterns = [
+    # Search patterns for AFI, tfl_b1map, and general B1 mapping
+    b1_patterns = [
+        "*TB1TFL*.nii.gz",
+        "*TB1TFL*.nii",
+        "*TB1AFI*.nii.gz",
+        "*TB1AFI*.nii",
         "*AFI*.nii.gz",
         "*AFI*.nii",
         "*afi*.nii.gz",
@@ -554,42 +567,43 @@ def _find_afi(
         "*b1map*.nii",
     ]
 
-    for pattern in afi_patterns:
-        afi_files.extend(anat_dir.glob(pattern))
+    for pattern in b1_patterns:
+        b1_files.extend(anat_dir.glob(pattern))
 
     if perf_dir:
-        for pattern in afi_patterns:
-            afi_files.extend(perf_dir.glob(pattern))
+        for pattern in b1_patterns:
+            b1_files.extend(perf_dir.glob(pattern))
 
     if fmap_dir:
-        for pattern in afi_patterns:
-            afi_files.extend(fmap_dir.glob(pattern))
+        for pattern in b1_patterns:
+            b1_files.extend(fmap_dir.glob(pattern))
 
     # Remove duplicates while preserving order
     seen = set()
-    unique_afi: List[Path] = []
-    for f in afi_files:
+    unique_b1: List[Path] = []
+    for f in b1_files:
         if f not in seen:
             seen.add(f)
-            unique_afi.append(f)
+            unique_b1.append(f)
 
-    return sorted(unique_afi)
+    return sorted(unique_b1)
 
 
-def _classify_afi_data(
-    afi_files: List[Path],
+def _classify_b1_data(
+    b1_files: List[Path],
 ) -> dict[str, Optional[Union[str, Path, float]]]:
-    """Classify AFI files as 4D (single volume) or 3D (paired volumes).
+    """Classify B1+ files as tfl_b1map (pre-computed), AFI 4D, or AFI 3D.
 
-    Checks if a single AFI file contains 2 volumes (4D mode) or if there are
-    two separate 3D files with different TRs.
+    First checks for Siemens tfl_b1map pre-computed flip angle maps (TB1TFL),
+    then falls through to AFI classification (4D single volume or 3D paired).
 
     Args:
-        afi_files: List of discovered AFI NIfTI paths.
+        b1_files: List of discovered B1+ NIfTI paths.
 
     Returns:
-        Dict with keys: afi_mode ("3d", "4d", or None), afi_4d_file,
-        afi_tr1_ms, afi_tr2_ms.
+        Dict with keys: afi_mode ("precomputed", "3d", "4d", or None),
+        b1_precomputed_file, b1_nominal_prep_fa, b1_method_detected,
+        afi_4d_file, afi_tr1_ms, afi_tr2_ms, afi_flip_angle.
     """
     import nibabel as nib  # type: ignore[import-untyped]
 
@@ -601,7 +615,96 @@ def _classify_afi_data(
         "afi_tr1_ms": None,
         "afi_tr2_ms": None,
         "afi_flip_angle": None,
+        "b1_precomputed_file": None,
+        "b1_nominal_prep_fa": None,
+        "b1_method_detected": None,
     }
+
+    if not b1_files:
+        return result
+
+    # --- Phase 1: Check for tfl_b1map pre-computed B1+ maps ---
+    # TB1TFL files come in pairs: acq-famp (flip angle map) and acq-anat (magnitude).
+    # We want only the famp file.
+    for b1_path in b1_files:
+        fname = b1_path.name.upper()
+        if "TB1TFL" not in fname:
+            continue
+
+        # Skip the anatomical/magnitude companion
+        if "ANAT" in fname:
+            logger.debug("Skipping TB1TFL anatomical file: %s", b1_path.name)
+            continue
+
+        # Check for famp in filename, or fall back to JSON metadata
+        is_famp = "FAMP" in fname
+
+        if not is_famp:
+            # Check JSON sidecar for ImageType containing "FLIP ANGLE MAP"
+            json_path = Path(
+                str(b1_path)
+                .replace(".nii.gz", ".json")
+                .replace(".nii", ".json")
+            )
+            if json_path.exists():
+                with open(json_path) as f:
+                    meta = json.load(f)
+                image_type = meta.get("ImageType", [])
+                if isinstance(image_type, list):
+                    image_type_str = " ".join(image_type).upper()
+                else:
+                    image_type_str = str(image_type).upper()
+                is_famp = "FLIP ANGLE MAP" in image_type_str
+
+                # Also check PulseSequenceDetails as final fallback
+                if not is_famp:
+                    psd = str(meta.get("PulseSequenceDetails", ""))
+                    is_famp = "tfl_b1map" in psd.lower()
+
+        if not is_famp:
+            logger.debug(
+                "TB1TFL file %s is not a flip angle map — skipping",
+                b1_path.name,
+            )
+            continue
+
+        # Read FlipAngle from JSON sidecar (required for scaling)
+        json_path = Path(
+            str(b1_path)
+            .replace(".nii.gz", ".json")
+            .replace(".nii", ".json")
+        )
+        nominal_prep_fa: Optional[float] = None
+        if json_path.exists():
+            with open(json_path) as f:
+                meta = json.load(f)
+            fa = meta.get("FlipAngle")
+            if fa is not None:
+                nominal_prep_fa = float(fa)
+
+        # Defensive check: famp should have a high FlipAngle (saturation pulse)
+        # The anat companion has a low readout FA (e.g., 8°)
+        if nominal_prep_fa is not None and nominal_prep_fa < 20:
+            raise ValueError(
+                f"tfl_b1map file {b1_path.name} has FlipAngle={nominal_prep_fa}° "
+                f"(expected ≥20° for saturation pulse). This looks like the "
+                f"anatomical companion — use the acq-famp file instead."
+            )
+
+        logger.info(
+            "Found tfl_b1map pre-computed B1+ map: %s (FlipAngle=%s°)",
+            b1_path.name,
+            nominal_prep_fa,
+        )
+        result["afi_mode"] = "precomputed"
+        result["b1_precomputed_file"] = b1_path
+        result["b1_nominal_prep_fa"] = nominal_prep_fa
+        result["b1_method_detected"] = "tfl_b1map"
+        return result
+
+    # --- Phase 2: Fall through to AFI classification ---
+    # Filter to only AFI files (exclude any remaining TB1TFL files)
+    afi_files = [f for f in b1_files if "TB1TFL" not in f.name.upper()]
 
     if not afi_files:
         return result
@@ -649,6 +752,7 @@ def _classify_afi_data(
                             fa = fa[0]
                         result["afi_flip_angle"] = float(fa)
 
+                result["b1_method_detected"] = "afi"
                 return result
         except Exception:
             continue
@@ -735,6 +839,8 @@ def _classify_afi_data(
                 if isinstance(fa, list):
                     fa = fa[0]
                 result["afi_flip_angle"] = float(fa)
+
+        result["b1_method_detected"] = "afi"
 
     return result
 
@@ -864,35 +970,42 @@ def discover_session_data(
             flair_path=modalities.flair or modalities.flair_postcon,
         )
         modalities.vfa = _find_vfa(anat_dir)
-        modalities.afi = _find_afi(anat_dir, fmap_dir=fmap_dir_opt)
+        modalities.afi = _find_b1_data(anat_dir, fmap_dir=fmap_dir_opt)
 
     # Find perfusion directory
     perf_dir = base_path / "perf"
     if perf_dir.is_dir():
         modalities.dsc = _find_dsc(perf_dir)
         modalities.dce = _find_dce(perf_dir, anat_dir if anat_dir.is_dir() else None)
-        # Also check perf for VFA/AFI
+        # Also check perf for VFA/B1
         if anat_dir.is_dir():
             modalities.vfa = _find_vfa(anat_dir, perf_dir)
-            modalities.afi = _find_afi(anat_dir, perf_dir, fmap_dir=fmap_dir_opt)
+            modalities.afi = _find_b1_data(anat_dir, perf_dir, fmap_dir=fmap_dir_opt)
 
-    # Classify AFI data as 4D or 3D
+    # Classify B1+ data (tfl_b1map, AFI 4D, or AFI 3D)
     if modalities.afi:
-        afi_info = _classify_afi_data(modalities.afi)
-        if afi_info["afi_mode"] is not None:
-            modalities.afi_mode = str(afi_info["afi_mode"])
-        if afi_info["afi_4d_file"] is not None:
-            modalities.afi_4d_file = Path(str(afi_info["afi_4d_file"]))
-        if afi_info["afi_tr1_file"] is not None:
-            modalities.afi_tr1_file = Path(str(afi_info["afi_tr1_file"]))
-        if afi_info["afi_tr2_file"] is not None:
-            modalities.afi_tr2_file = Path(str(afi_info["afi_tr2_file"]))
-        if afi_info["afi_tr1_ms"] is not None:
-            modalities.afi_tr1_ms = float(afi_info["afi_tr1_ms"])  # type: ignore[arg-type]
-        if afi_info["afi_tr2_ms"] is not None:
-            modalities.afi_tr2_ms = float(afi_info["afi_tr2_ms"])  # type: ignore[arg-type]
-        if afi_info.get("afi_flip_angle") is not None:
-            modalities.afi_flip_angle = float(afi_info["afi_flip_angle"])  # type: ignore[arg-type]
+        b1_info = _classify_b1_data(modalities.afi)
+        if b1_info["afi_mode"] is not None:
+            modalities.afi_mode = str(b1_info["afi_mode"])
+        if b1_info["afi_4d_file"] is not None:
+            modalities.afi_4d_file = Path(str(b1_info["afi_4d_file"]))
+        if b1_info["afi_tr1_file"] is not None:
+            modalities.afi_tr1_file = Path(str(b1_info["afi_tr1_file"]))
+        if b1_info["afi_tr2_file"] is not None:
+            modalities.afi_tr2_file = Path(str(b1_info["afi_tr2_file"]))
+        if b1_info["afi_tr1_ms"] is not None:
+            modalities.afi_tr1_ms = float(b1_info["afi_tr1_ms"])  # type: ignore[arg-type]
+        if b1_info["afi_tr2_ms"] is not None:
+            modalities.afi_tr2_ms = float(b1_info["afi_tr2_ms"])  # type: ignore[arg-type]
+        if b1_info.get("afi_flip_angle") is not None:
+            modalities.afi_flip_angle = float(b1_info["afi_flip_angle"])  # type: ignore[arg-type]
+        # Wire tfl_b1map-specific fields
+        if b1_info.get("b1_precomputed_file") is not None:
+            modalities.b1_precomputed_file = Path(str(b1_info["b1_precomputed_file"]))
+        if b1_info.get("b1_nominal_prep_fa") is not None:
+            modalities.b1_nominal_prep_fa = float(b1_info["b1_nominal_prep_fa"])  # type: ignore[arg-type]
+        if b1_info.get("b1_method_detected") is not None:
+            modalities.b1_method_detected = str(b1_info["b1_method_detected"])
 
     # Find DWI
     modalities.dwi = _find_dwi(bids_path, subject, session)

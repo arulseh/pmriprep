@@ -129,7 +129,7 @@ def merge_cli_config(
         "dce_model": ("dce", "model"),
         "dce_bayesian": ("dce", "bayesian"),
         "dce_aif_method": ("dce", "aif_method"),
-        "dce_no_b1": ("dce", "no_b1"),
+        "dce_b1_method": ("dce", "b1_method"),
         "dce_no_t1": ("dce", "no_t1"),
         "dce_dose": ("dce", "dose"),
         "dce_r1": ("dce", "r1_relaxivity"),

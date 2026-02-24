@@ -958,7 +958,7 @@ def sample_dce_config() -> Dict[str, Any]:
         "bayesian": "none",
         "aif_method": "auto",
         "scale_aif": False,
-        "no_b1": False,
+        "b1_method": "auto",
         "no_t1": False,
         "tsnr_threshold": 0.0,
         "use_gpu": False,

@@ -146,7 +146,7 @@ def init_dce_preproc_wf(
     Notes
     -----
     Processing flow:
-    1. B1+ mapping from AFI (optional, skip if config.no_b1=True)
+    1. B1+ mapping from AFI or pre-computed map (optional, skip if config.b1_method="none")
     2. T1 mapping from VFA with B1+ correction (skip if config.no_t1=True)
     3. Motion correction of DCE time series
     4. DCE to T1w registration
@@ -197,6 +197,9 @@ def init_dce_preproc_wf(
                 "afi_tr1",
                 "afi_tr2",
                 "afi_flip_angle",
+                # Pre-computed B1+ mapping inputs (e.g., tfl_b1map)
+                "precomputed_b1_file",
+                "b1_nominal_prep_fa",
                 # DSC integration inputs
                 "dsc_cbv_file",
                 "dsc_to_t1w_xfm",
@@ -374,10 +377,10 @@ def init_dce_preproc_wf(
             (inputnode, vfa_reorient, [("vfa_files", "in_files")]),
         ])
 
-        # Node 1: B1+ Mapping (optional — skip_b1 disables correction)
+        # Node 1: B1+ Mapping (optional — skip when b1_method="none")
         b1_mapping = pe.Node(
             B1Mapping(
-                skip_b1=config.no_b1,
+                skip_b1=(config.b1_method == "none"),
             ),
             name="b1_mapping",
         )
@@ -393,6 +396,8 @@ def init_dce_preproc_wf(
                 ("field_strength", "field_strength"),
                 ("afi_flip_angle", "nominal_flip_angle"),
                 ("dce_file", "reference_file"),
+                ("precomputed_b1_file", "precomputed_b1_file"),
+                ("b1_nominal_prep_fa", "b1_nominal_prep_fa"),
             ]),
         ])
 
