@@ -1734,6 +1734,12 @@ class AIFDetection(BaseInterface):
 
         # Score candidates for ranking (using individual _score_dce_candidate for ranking)
         # Pass tissue TTP so timing is factored into scoring
+        # Precompute physiological peak floor (loop-invariant)
+        peak_min_expected, _ = self._get_expected_peak_range()
+        # Most permissive floor: 15% of minimum expected arterial peak
+        # (matches peak_tol for permissive/degraded criteria in _score_dce_candidate)
+        peak_floor = peak_min_expected * 0.15
+
         scores: list[float] = []
         for idx, (x, y, z) in enumerate(candidates):
             curve = concentration_data[x, y, z, :]
@@ -1744,17 +1750,25 @@ class AIFDetection(BaseInterface):
             # Update metrics with timing score if computed
             if "timing_score" in scored_metrics:
                 all_metrics[idx]["timing_score"] = scored_metrics["timing_score"]
-            # If score is 0, use a small positive value based on tier
-            # (candidates already passed arterial criteria cascade)
+            # If score is 0, check whether peak is physiologically plausible
+            # before applying tier-based fallback
             if score <= 0:
-                # Fallback score based on tier (higher tier = less strict = lower score)
-                # Venous candidates (is_likely_venous=True) get additional penalty
-                base_score = max(0.1, round(1.0 - (tier_used - 1) * 0.1, 2))
-                if all_metrics[idx].get("is_likely_venous", False):
-                    # Significant penalty for venous candidates
-                    score = base_score * 0.3
+                # The arterial cascade uses relative (percentile) thresholds,
+                # so tissue/vein peaks can pass. The scorer correctly rejects
+                # them; don't override when peak is non-physiological.
+                candidate_peak = all_metrics[idx].get("peak_mm", 0.0)
+
+                if candidate_peak < peak_floor:
+                    # Peak far below expected arterial range - keep rejected
+                    score = 0.0
                 else:
-                    score = base_score
+                    # Score=0 due to other criteria (FWHM, CNR, etc.) -
+                    # tier-based fallback is appropriate
+                    base_score = max(0.1, round(1.0 - (tier_used - 1) * 0.1, 2))
+                    if all_metrics[idx].get("is_likely_venous", False):
+                        score = base_score * 0.3
+                    else:
+                        score = base_score
             scores.append(score)
 
         # ----- Peak timing validation (40% cutoff) -----
