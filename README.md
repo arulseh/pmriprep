@@ -176,12 +176,14 @@ dsc:
   aif_criteria: relaxed
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
+  underlays: [t1w_postcon, flair]
 
 dce:
   model: extended_tofts
   bayesian: map
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
+  underlays: [t1w_postcon, flair]
 ```
 
 ### DSC Configuration
@@ -207,6 +209,7 @@ dce:
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
+| `underlays` | list | `[]` | Structural images to transform to DSC space for QC overlays: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
 
 ### DCE Configuration
 
@@ -233,6 +236,7 @@ dce:
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
+| `underlays` | list | `[]` | Structural images to transform to DCE space for QC overlays: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
 
 ### Anatomical Configuration
 
