@@ -393,6 +393,13 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="Optional user-supplied AIF search mask (overrides atlas mask)",
     )
+    external_aif_file = File(
+        exists=True,
+        mandatory=False,
+        desc="External AIF curve file (.txt or .npz with 'Cp'/'aif' key). "
+             "Values must be plasma concentration in mM, temporally aligned "
+             "with DCE volumes. Bypasses all AIF detection.",
+    )
     lesion_mask_file = traits.Either(
         File(exists=True),
         None,
@@ -2132,6 +2139,130 @@ class AIFDetection(BaseInterface):
         )
 
     # -----------------------------------------------------------------
+    # External AIF Handling
+    # -----------------------------------------------------------------
+
+    def _handle_external_aif(
+        self,
+        runtime: Any,
+        conc_data: npt.NDArray[Any],
+        affine: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+    ) -> Any:
+        """Handle externally supplied AIF curve, bypassing all detection.
+
+        Loads an external AIF from .txt or .npz file, validates its length
+        against DCE timepoints, and writes outputs. External AIFs are assumed
+        to already be in plasma concentration (mM) — no hematocrit correction
+        or AIF scaling is applied.
+
+        Parameters
+        ----------
+        runtime : Any
+            Nipype runtime object.
+        conc_data : ndarray
+            4D concentration data (x, y, z, t).
+        affine : ndarray
+            NIfTI affine matrix from concentration image.
+        brain_mask : ndarray
+            3D brain mask.
+
+        Returns
+        -------
+        runtime
+            Updated Nipype runtime object.
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        ext_path = Path(self.inputs.external_aif_file)
+        n_timepoints = conc_data.shape[3]
+        tr = float(self.inputs.tr)
+        baseline_frames = int(self.inputs.baseline_frames)
+        field_strength = float(self.inputs.field_strength)
+        blood_t1 = get_blood_t1(field_strength)
+
+        # Load external AIF
+        if ext_path.suffix == ".npz":
+            npz = np.load(str(ext_path))
+            if "Cp" in npz:
+                aif_curve = np.asarray(npz["Cp"], dtype=np.float64)
+            elif "aif" in npz:
+                aif_curve = np.asarray(npz["aif"], dtype=np.float64)
+            else:
+                raise ValueError(
+                    f"External AIF .npz must contain 'Cp' or 'aif' key, "
+                    f"found: {list(npz.keys())}"
+                )
+        else:
+            # Assume plain text (one value per line)
+            aif_curve = np.loadtxt(str(ext_path), dtype=np.float64)
+
+        # Validate length
+        if len(aif_curve) != n_timepoints:
+            raise ValueError(
+                f"External AIF has {len(aif_curve)} timepoints but DCE data "
+                f"has {n_timepoints} volumes. They must match."
+            )
+
+        # Compute final AIF metrics
+        final_peak = compute_dce_aif_peak_concentration(aif_curve)
+        final_fwhm = compute_dce_aif_fwhm_seconds(aif_curve, tr, baseline_frames)
+        final_auc = compute_dce_aif_auc(aif_curve, tr)
+        final_washout = compute_dce_aif_washout(aif_curve, baseline_frames)
+
+        # QC metrics
+        from pmriprep.utils.qc_standards import QCStatus
+
+        qc_metrics: dict[str, Any] = {
+            "external_aif": True,
+            "external_aif_file": str(ext_path),
+            "final_peak_mm": final_peak,
+            "final_fwhm_seconds": final_fwhm,
+            "final_auc": final_auc,
+            "final_washout": final_washout,
+            "blood_t1_seconds": blood_t1,
+            "field_strength_t": field_strength,
+            "scaling_factor": 1.0,
+            "detection_method": "external",
+            "quality_score": 1.0,
+            "baseline_frames": baseline_frames,
+            "n_candidates": 0,
+            "aif_status": QCStatus.PASS,
+        }
+
+        # Write AIF curve
+        out_aif_curve = self._gen_outfilename("_dce_aif_curve.txt")
+        np.savetxt(out_aif_curve, aif_curve)
+
+        # Write zero AIF mask (no spatial origin for external AIF)
+        aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+        out_aif_mask = self._gen_outfilename("_dce_aif_mask.nii.gz")
+        mask_img = nib.Nifti1Image(aif_mask, affine)  # type: ignore[attr-defined]
+        nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
+
+        logger.info(
+            "Using external AIF from %s (peak=%.3f mM, AUC=%.1f mM·s)",
+            ext_path.name, final_peak, final_auc,
+        )
+
+        self._results = {
+            "out_aif_curve": out_aif_curve,
+            "out_aif_mask": out_aif_mask,
+            "aif_curve": [float(x) for x in aif_curve],
+            "detection_method": "external",
+            "quality_score": 1.0,
+            "peak_concentration": final_peak,
+            "fwhm_seconds": final_fwhm,
+            "auc": final_auc,
+            "blood_t1": blood_t1,
+            "scaling_factor": 1.0,
+            "candidate_count": 0,
+            "qc_metrics": qc_metrics,
+        }
+
+        return runtime
+
+    # -----------------------------------------------------------------
     # Main Interface Execution
     # -----------------------------------------------------------------
 
@@ -2147,6 +2278,12 @@ class AIFDetection(BaseInterface):
 
         brain_img = nib.load(self.inputs.brain_mask_file)
         brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
+
+        # ===== External AIF: bypass all detection if provided =====
+        if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
+            return self._handle_external_aif(
+                runtime, conc_data, affine, brain_mask,
+            )
 
         # Optional atlas masks — build ordered list (tightest → broadest)
         # User-supplied aif_mask_file overrides all atlas masks.
@@ -2507,7 +2644,7 @@ class AIFDetection(BaseInterface):
                 qc_metrics.update(_detection_attempt)
 
         # Apply AIF scaling if requested
-        if scale_aif and detection_method != "population":
+        if scale_aif and detection_method not in ("population", "external"):
             current_peak = float(np.max(aif_curve))
             if current_peak > EPSILON_T1:
                 # Determine target peak
@@ -2539,6 +2676,7 @@ class AIFDetection(BaseInterface):
         else:
             method_to_status = {
                 "auto": QCStatus.PASS,
+                "external": QCStatus.PASS,
                 "population": QCStatus.WARN,
                 "fallback": QCStatus.FAIL,
             }

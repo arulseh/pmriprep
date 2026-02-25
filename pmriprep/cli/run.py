@@ -249,6 +249,15 @@ Examples:
         help="AIF detection method for DCE (default: auto).",
     )
     dce_group.add_argument(
+        "--dce-aif-file",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="External AIF curve file (.txt with one value per line, or .npz with 'Cp' or 'aif' key). "
+             "Values must be plasma concentration in mM, temporally aligned with DCE volumes. "
+             "Bypasses AIF detection. Number of values must match DCE volumes.",
+    )
+    dce_group.add_argument(
         "--dce-dose",
         choices=["half", "full", "double"],
         default=None,
@@ -401,6 +410,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     # Validate config_file exists if specified
     if args.config_file is not None and not args.config_file.is_file():
         parser.error(f"config_file does not exist: {args.config_file}")
+
+    # Validate dce_aif_file exists if specified
+    if args.dce_aif_file is not None and not args.dce_aif_file.is_file():
+        parser.error(f"--dce-aif-file does not exist: {args.dce_aif_file}")
 
     # Run the workflow
     run_pmriprep_wf(args)

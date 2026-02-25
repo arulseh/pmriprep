@@ -846,6 +846,10 @@ def init_dce_preproc_wf(
     if config.target_peak is not None:
         aif_detection.inputs.target_peak = config.target_peak
 
+    # Wire external AIF file if provided (bypasses detection entirely)
+    if config.aif_file is not None:
+        aif_detection.inputs.external_aif_file = str(config.aif_file)
+
     # Wire user-supplied AIF mask if provided (overrides atlas mask)
     if config.aif_mask_file is not None:
         aif_detection.inputs.aif_mask_file = str(config.aif_mask_file)

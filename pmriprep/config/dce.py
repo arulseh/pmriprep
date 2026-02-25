@@ -80,6 +80,7 @@ class DCEConfig:
 
     # AIF detection settings
     aif_method: Literal["auto", "population"] = "auto"
+    aif_file: Optional[Path] = None  # External AIF curve file (bypasses detection)
     scale_aif: bool = True
     target_peak: Optional[float] = None  # None = use field-strength default
     aif_mask_file: Optional[Path] = None

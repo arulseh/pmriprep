@@ -129,6 +129,7 @@ def merge_cli_config(
         "dce_model": ("dce", "model"),
         "dce_bayesian": ("dce", "bayesian"),
         "dce_aif_method": ("dce", "aif_method"),
+        "dce_aif_file": ("dce", "aif_file"),
         "dce_b1_method": ("dce", "b1_method"),
         "dce_no_t1": ("dce", "no_t1"),
         "dce_dose": ("dce", "dose"),
@@ -256,7 +257,7 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
                     dce_dict[k] = v
 
     # Convert path strings to Path objects
-    for path_key in ("lesion_mask", "nawm_mask", "aif_mask_file", "roi_mask"):
+    for path_key in ("lesion_mask", "nawm_mask", "aif_mask_file", "aif_file", "roi_mask"):
         _dict_to_path(dce_dict, path_key)
 
     # Type coerce numeric fields

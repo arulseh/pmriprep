@@ -118,7 +118,7 @@ class DCEAIFQCPlot(BaseInterface):
 
         # Only generate location plot if voxel-based detection was used
         aif_location_path: str | None = None
-        if detection_method != "population" and isdefined(self.inputs.aif_mask_file):
+        if detection_method not in ("population", "external") and isdefined(self.inputs.aif_mask_file):
             aif_mask_img = nib.load(self.inputs.aif_mask_file)
             aif_mask = aif_mask_img.get_fdata()  # type: ignore[attr-defined]
 
