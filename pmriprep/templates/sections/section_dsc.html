@@ -188,10 +188,18 @@
                 <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.arrival_time_seconds) }} s</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.n_aif_candidates_used is defined and dsc.qc_metrics.aif.n_aif_candidates_available is defined %}
+            {% set dsc_used = dsc.qc_metrics.aif.n_aif_voxels_used
+               if dsc.qc_metrics.aif.n_aif_voxels_used is defined
+               else dsc.qc_metrics.aif.n_aif_candidates_used
+               if dsc.qc_metrics.aif.n_aif_candidates_used is defined %}
+            {% set dsc_available = dsc.qc_metrics.aif.n_aif_voxels_available
+               if dsc.qc_metrics.aif.n_aif_voxels_available is defined
+               else dsc.qc_metrics.aif.n_aif_candidates_available
+               if dsc.qc_metrics.aif.n_aif_candidates_available is defined %}
+            {% if dsc_used is defined and dsc_available is defined %}
             <div class="metric">
-                <div class="metric-label">Candidates (used / available)</div>
-                <div class="metric-value">{{ dsc.qc_metrics.aif.n_aif_candidates_used }} / {{ dsc.qc_metrics.aif.n_aif_candidates_available }}</div>
+                <div class="metric-label">AIF Voxels (used / available)</div>
+                <div class="metric-value">{{ dsc_used }} / {{ dsc_available }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.aif.n_baseline_frames is defined %}

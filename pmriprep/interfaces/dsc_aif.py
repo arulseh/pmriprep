@@ -1660,9 +1660,9 @@ class AIFDetection(BaseInterface):
 
         qc: dict[str, Any] = {
             # Candidate counts
-            "n_aif_candidates_used": n_used,
-            "n_aif_candidates_requested": n_candidates_requested,
-            "n_aif_candidates_available": n_available,
+            "n_aif_voxels_used": n_used,
+            "n_aif_voxels_requested": n_candidates_requested,
+            "n_aif_voxels_available": n_available,
             "aif_insufficient_candidates": n_available < 3,
             # Baseline / arrival
             "n_baseline_frames": n_baseline_detected,
@@ -1963,8 +1963,8 @@ class AIFDetection(BaseInterface):
             quality_score = 0.3
             qc_metrics = {
                 "synthetic": True,
-                "n_aif_candidates_used": 0,
-                "n_aif_candidates_available": 0,
+                "n_aif_voxels_used": 0,
+                "n_aif_voxels_available": 0,
             }
             qc_metrics.update(synth_metrics)
         else:
