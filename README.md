@@ -9,7 +9,7 @@ PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and 
 - **DSC Processing**: Six deconvolution methods (sSVD, cSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction
 - **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps
 - **Bayesian Inference**: Optional MAP, VI, or MCMC fitting with uncertainty quantification
-- **Automatic AIF Detection**: Multi-level arterial input function detection with synthetic fallback
+- **Automatic AIF Detection**: Multi-level arterial input function detection with population fallback, or user-supplied external AIF
 - **T1 Mapping**: Variable flip angle T1 mapping with optional B1+ correction
 - **Tumor Segmentation**: HD-GLIO integration for glioma segmentation
 - **NAWM Normalization**: Relative perfusion metrics using contralateral normal-appearing white matter
@@ -133,6 +133,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dce-model {auto,tofts,extended_tofts,patlak,2cxm}` | Pharmacokinetic model (default: auto) |
 | `--dce-bayesian {none,map,vi,mcmc}` | Bayesian inference method (default: none) |
 | `--dce-aif-method {auto,population}` | AIF detection method (default: auto) |
+| `--dce-aif-file FILE` | External AIF curve file (plasma concentration in mM); bypasses detection |
 | `--dce-dose {half,full,double}` | Contrast agent dose (default: full) |
 | `--dce-r1 R1` | Override r1 relaxivity (s⁻¹/mM) for concentration conversion |
 | `--dce-b1-method {auto,afi,tfl_b1map,none}` | B1+ correction method (default: auto) |
@@ -219,6 +220,7 @@ dce:
 | `bayesian` | str | `"none"` | Bayesian mode: `none`, `map`, `vi`, `mcmc` |
 | `mcmc_samples` | int | `500` | MCMC samples if bayesian=mcmc |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
+| `aif_file` | path | `null` | External AIF curve file (`.txt` or `.npz` with `Cp`/`aif` key); plasma concentration in mM, temporally aligned with DCE volumes. Bypasses AIF detection |
 | `scale_aif` | bool | `true` | Scale AIF to population reference |
 | `target_peak` | float | `null` | Target AIF peak (mM); null = field-strength default |
 | `aif_mask_file` | path | `null` | Custom AIF mask file |
