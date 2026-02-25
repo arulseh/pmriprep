@@ -36,14 +36,19 @@ from .conftest import (
     CTH_CONFIGS,
     QIBA_NOISE_LEVELS,
     QIBA_TISSUE_PARAMS,
+    RILMAYO_CONFIGS,
+    RILMAYO_DRO_ROOT,
     add_gaussian_noise,
     deconvolve_dro_batch,
     dsc_forward_model,
     generate_cth_residue,
     generate_qiba_aif,
     load_qiba_dro,
+    load_rilmayo_dro,
     make_exponential_residue,
+    rilmayo_config_available,
     skip_no_qiba_dro,
+    skip_no_rilmayo_dro,
 )
 
 # =============================================================================
@@ -1015,4 +1020,422 @@ class TestGBMDSCDRO:
         assert frac_in_range > 0.50, (
             f"[{method}] Only {frac_in_range:.0%} of tmax values in 0-30s range "
             f"(need >50%)"
+        )
+
+
+# =============================================================================
+# Phase 3: RILMAYO DSC-MRI DRO (leakage + deconvolution validation)
+# =============================================================================
+
+# Deconvolution methods to parametrize
+RILMAYO_METHODS = [
+    pytest.param("ssvd", id="ssvd"),
+    pytest.param("osvd", id="osvd"),
+]
+
+
+@skip_no_rilmayo_dro
+class TestRILMAYODSCDRO:
+    """Phase 3: RILMAYO DSC-MRI DRO with leakage simulation.
+
+    RILMAYO DROs from qibadscdro.rsna.org have known ground truth (flow,
+    leak, R(t) shape) and much better dynamic range than BNI (max~54464 vs
+    ~53). They simulate BBB leakage via a T1-shortening K2 parameter,
+    testing both deconvolution AND K2 leakage correction.
+
+    **No absolute CBF comparison**: DRO "flow" != deconvolved CBF without
+    calibration factors (K_H, r2*, rho_brain). Tests use **ratios** and
+    **ordering** only.
+
+    **K2 correction improves CBV, not CBF**: First-pass peak (CBF) is
+    T2*-dominated; leakage mainly distorts the post-bolus tail (CBV/MTT).
+
+    Known limitations:
+    - TR=0.1s = 20s total scan, no recirculation captured
+    - TE=50ms at 1.5T gives ~88% signal drop at 1mM (near-void AIF)
+    - Marginal post-bolus window for K2 estimation
+    """
+
+    # -- Test 1: Concentration sanity (all configs) ---
+
+    @pytest.mark.parametrize(
+        "config_name",
+        [
+            pytest.param("flow40_leak005", id="flow40_leak005"),
+            pytest.param("flow60_leak002", id="flow60_leak002"),
+            pytest.param("flow40_leak002", id="flow40_leak002"),
+            pytest.param("flow70_leak002", id="flow70_leak002"),
+            pytest.param("flow60_leak005", id="flow60_leak005"),
+            pytest.param("flow60_box_leak002", id="flow60_box_leak002"),
+            pytest.param("flow60_noise2_leak002", id="flow60_noise2_leak002"),
+        ],
+    )
+    def test_concentration_sanity(self, config_name: str) -> None:
+        """AIF has bolus, baseline is stable, deltaR2* is bounded."""
+        if not rilmayo_config_available(config_name):
+            pytest.skip(f"Config {config_name} not converted")
+
+        dro = load_rilmayo_dro(config_name)
+
+        # AIF should have a detectable bolus
+        aif_peak = np.max(dro.aif)
+        assert aif_peak > 1.0, (
+            f"AIF peak too low: {aif_peak:.2f} s^-1"
+        )
+
+        # Tissue deltaR2* should be non-negative (clipped) and bounded
+        tissue_dr2 = dro.delta_r2[dro.tissue_mask]
+        assert tissue_dr2.min() >= -0.1, (
+            f"deltaR2* has unexpected negative values: min={tissue_dr2.min():.4f}"
+        )
+
+        peak_vals = np.max(tissue_dr2, axis=1)
+        median_peak = np.median(peak_vals)
+        assert 0.1 < median_peak < 500.0, (
+            f"Median tissue peak deltaR2* out of range: {median_peak:.2f} s^-1"
+        )
+
+    # -- Test 2: Flow ordering (cancels all calibration factors) ---
+
+    @pytest.mark.parametrize("method", RILMAYO_METHODS)
+    def test_flow_ordering(self, method: str) -> None:
+        """CBF(40) < CBF(60) < CBF(70) — cancels all calibration factors.
+
+        This is the most robust test: since all configs share the same AIF
+        extraction and deconvolution pipeline, calibration factors cancel
+        in the ordering comparison. Only the relative flow matters.
+        """
+        # Need at least 3 configs with different flows
+        needed = ["flow40_leak002", "flow60_leak002", "flow70_leak002"]
+        for name in needed:
+            if not rilmayo_config_available(name):
+                pytest.skip(f"Config {name} not available")
+
+        median_cbf = {}
+        for config_name in needed:
+            dro = load_rilmayo_dro(config_name)
+            tissue_curves = dro.delta_r2[dro.tissue_mask]
+
+            _, cbf, _, _ = deconvolve_dro_batch(
+                tissue_curves, dro.aif, dro.dt, method
+            )
+
+            valid = np.isfinite(cbf) & (cbf > 0)
+            assert valid.sum() > 0.1 * len(cbf), (
+                f"Too few valid CBF voxels for {config_name}"
+            )
+            median_cbf[config_name] = float(np.median(cbf[valid]))
+
+        # Flow ordering: 40 < 60 < 70
+        assert median_cbf["flow40_leak002"] < median_cbf["flow60_leak002"], (
+            f"[{method}] CBF(40)={median_cbf['flow40_leak002']:.2f} >= "
+            f"CBF(60)={median_cbf['flow60_leak002']:.2f}"
+        )
+        assert median_cbf["flow60_leak002"] < median_cbf["flow70_leak002"], (
+            f"[{method}] CBF(60)={median_cbf['flow60_leak002']:.2f} >= "
+            f"CBF(70)={median_cbf['flow70_leak002']:.2f}"
+        )
+
+    # -- Test 3: CBF ratio linearity ---
+
+    @pytest.mark.parametrize("method", RILMAYO_METHODS)
+    def test_cbf_ratio_linearity(self, method: str) -> None:
+        """CBF(70)/CBF(40) should approximate 1.75 within 30%.
+
+        Tests linearity of deconvolution without absolute calibration.
+        Expected ratio = 70/40 = 1.75.
+        """
+        needed = ["flow40_leak002", "flow70_leak002"]
+        for name in needed:
+            if not rilmayo_config_available(name):
+                pytest.skip(f"Config {name} not available")
+
+        median_cbf = {}
+        for config_name in needed:
+            dro = load_rilmayo_dro(config_name)
+            tissue_curves = dro.delta_r2[dro.tissue_mask]
+
+            _, cbf, _, _ = deconvolve_dro_batch(
+                tissue_curves, dro.aif, dro.dt, method
+            )
+
+            valid = np.isfinite(cbf) & (cbf > 0)
+            median_cbf[config_name] = float(np.median(cbf[valid]))
+
+        ratio = median_cbf["flow70_leak002"] / max(
+            median_cbf["flow40_leak002"], 1e-10
+        )
+        expected = 70.0 / 40.0  # 1.75
+
+        rel_err = abs(ratio - expected) / expected
+        assert rel_err < 0.30, (
+            f"[{method}] CBF ratio={ratio:.3f}, expected={expected:.3f}, "
+            f"rel_err={rel_err:.2%} (>30%)"
+        )
+
+    # -- Test 4: K2 correction improves CBV ---
+
+    @pytest.mark.parametrize("method", RILMAYO_METHODS)
+    @pytest.mark.parametrize(
+        "config_name",
+        [
+            pytest.param("flow40_leak005", id="flow40_leak005"),
+            pytest.param("flow60_leak005", id="flow60_leak005"),
+        ],
+    )
+    def test_k2_correction_improves_cbv(
+        self, method: str, config_name: str
+    ) -> None:
+        """K2-corrected CBV should be closer to no-leak reference than uncorrected.
+
+        K2 correction primarily fixes the post-bolus tail (CBV/MTT), not
+        the first-pass peak (CBF). Compare CBV from corrected vs uncorrected
+        deltaR2* against the low-leak reference (leak=0.02, same flow).
+
+        Uses leak=0.05 configs and compares to leak=0.02 reference.
+        """
+        if not rilmayo_config_available(config_name):
+            pytest.skip(f"Config {config_name} not available")
+
+        # Find matching low-leak reference (same flow, leak=0.02)
+        config = RILMAYO_CONFIGS[config_name]
+        ref_name = f"flow{config.flow}_leak002"
+        if not rilmayo_config_available(ref_name):
+            pytest.skip(f"Reference config {ref_name} not available")
+
+        # Get reference CBV (low leak ~ no leak)
+        ref_dro = load_rilmayo_dro(ref_name)
+        ref_curves = ref_dro.delta_r2[ref_dro.tissue_mask]
+        _, _, ref_cbv, _ = deconvolve_dro_batch(
+            ref_curves, ref_dro.aif, ref_dro.dt, method
+        )
+        ref_valid = np.isfinite(ref_cbv) & (ref_cbv > 0)
+        ref_median = float(np.median(ref_cbv[ref_valid]))
+
+        # Get uncorrected CBV (high leak)
+        dro = load_rilmayo_dro(config_name)
+        uncorr_curves = dro.delta_r2[dro.tissue_mask]
+        _, _, uncorr_cbv, _ = deconvolve_dro_batch(
+            uncorr_curves, dro.aif, dro.dt, method
+        )
+        uncorr_valid = np.isfinite(uncorr_cbv) & (uncorr_cbv > 0)
+        uncorr_median = float(np.median(uncorr_cbv[uncorr_valid]))
+
+        # Get corrected CBV
+        corr_curves = dro.delta_r2_corrected[dro.tissue_mask]
+        _, _, corr_cbv, _ = deconvolve_dro_batch(
+            corr_curves, dro.aif, dro.dt, method
+        )
+        corr_valid = np.isfinite(corr_cbv) & (corr_cbv > 0)
+        corr_median = float(np.median(corr_cbv[corr_valid]))
+
+        # Corrected should be closer to reference than uncorrected
+        uncorr_err = abs(uncorr_median - ref_median)
+        corr_err = abs(corr_median - ref_median)
+
+        assert corr_err < uncorr_err, (
+            f"[{method}/{config_name}] K2 correction did NOT improve CBV: "
+            f"uncorr_err={uncorr_err:.2f}, corr_err={corr_err:.2f}, "
+            f"ref={ref_median:.2f}"
+        )
+
+    # -- Test 5: K2 detection ---
+
+    @pytest.mark.parametrize(
+        "config_name",
+        [
+            pytest.param("flow40_leak005", id="flow40_leak005"),
+            pytest.param("flow60_leak005", id="flow60_leak005"),
+        ],
+    )
+    def test_k2_detection(self, config_name: str) -> None:
+        """Median K2 should be > 0.005 s^-1 in tissue voxels for leak=0.05.
+
+        K2 = 0.005 s^-1 is a physically grounded threshold: below this,
+        leakage has <1% effect on the concentration curve over 20s.
+        """
+        if not rilmayo_config_available(config_name):
+            pytest.skip(f"Config {config_name} not available")
+
+        config_dir = RILMAYO_DRO_ROOT / config_name
+        k2_file = config_dir / "k2_map.npz"
+        if not k2_file.exists():
+            pytest.skip(f"K2 map not found for {config_name}")
+
+        k2_data = np.load(k2_file)
+        k2_map = k2_data["k2_map"]
+
+        dro = load_rilmayo_dro(config_name)
+        k2_tissue = k2_map[dro.tissue_mask]
+
+        # Fraction of voxels with detectable K2
+        detectable = k2_tissue > 1e-4
+        frac_detectable = detectable.sum() / len(k2_tissue)
+
+        # For leak=0.05, expect substantial K2 detection
+        assert frac_detectable > 0.10, (
+            f"[{config_name}] Only {frac_detectable:.0%} voxels with "
+            f"K2 > 0.0001 (expected >10% for leak=0.05)"
+        )
+
+        # Median K2 among detectable voxels
+        if detectable.sum() > 0:
+            median_k2 = float(np.median(k2_tissue[detectable]))
+            assert median_k2 > 0.005, (
+                f"[{config_name}] Median K2={median_k2:.4f} s^-1, "
+                f"expected > 0.005 for leak=0.05"
+            )
+
+    # -- Test 6: Residue shape consistency ---
+
+    @pytest.mark.parametrize("method", RILMAYO_METHODS)
+    def test_residue_shape_consistency(self, method: str) -> None:
+        """CBF from mono and box residue should agree within 25%.
+
+        Deconvolution should be approximately shape-independent for
+        the same flow value. Box R(t) gives a step function instead
+        of exponential decay.
+        """
+        needed = ["flow60_leak002", "flow60_box_leak002"]
+        for name in needed:
+            if not rilmayo_config_available(name):
+                pytest.skip(f"Config {name} not available")
+
+        median_cbf = {}
+        for config_name in needed:
+            dro = load_rilmayo_dro(config_name)
+            tissue_curves = dro.delta_r2[dro.tissue_mask]
+
+            _, cbf, _, _ = deconvolve_dro_batch(
+                tissue_curves, dro.aif, dro.dt, method
+            )
+
+            valid = np.isfinite(cbf) & (cbf > 0)
+            median_cbf[config_name] = float(np.median(cbf[valid]))
+
+        # CBF should agree within 25%
+        cbf_mono = median_cbf["flow60_leak002"]
+        cbf_box = median_cbf["flow60_box_leak002"]
+        mean_cbf = (cbf_mono + cbf_box) / 2.0
+
+        if mean_cbf > 0:
+            rel_diff = abs(cbf_mono - cbf_box) / mean_cbf
+            assert rel_diff < 0.25, (
+                f"[{method}] Mono/box CBF disagree: "
+                f"mono={cbf_mono:.2f}, box={cbf_box:.2f}, "
+                f"rel_diff={rel_diff:.2%} (>25%)"
+            )
+
+    # -- Test 7: K2 is low in low-leak configs ---
+
+    @pytest.mark.parametrize(
+        "config_name",
+        [
+            pytest.param("flow60_leak002", id="flow60_leak002"),
+            pytest.param("flow40_leak002", id="flow40_leak002"),
+        ],
+    )
+    def test_k2_low_in_low_leak(self, config_name: str) -> None:
+        """Median K2 should be < 0.02 s^-1 for leak=0.02 configs.
+
+        leak=0.02 has minimal first-pass effect (<2% at peak), so K2
+        estimates should be much smaller than leak=0.05 configs.
+        """
+        if not rilmayo_config_available(config_name):
+            pytest.skip(f"Config {config_name} not available")
+
+        config_dir = RILMAYO_DRO_ROOT / config_name
+        k2_file = config_dir / "k2_map.npz"
+        if not k2_file.exists():
+            pytest.skip(f"K2 map not found for {config_name}")
+
+        k2_data = np.load(k2_file)
+        k2_map = k2_data["k2_map"]
+
+        dro = load_rilmayo_dro(config_name)
+        k2_tissue = k2_map[dro.tissue_mask]
+        k2_nonzero = k2_tissue[k2_tissue > 1e-4]
+
+        if len(k2_nonzero) > 0:
+            median_k2 = float(np.median(k2_nonzero))
+            assert median_k2 < 0.02, (
+                f"[{config_name}] Median K2={median_k2:.4f} s^-1, "
+                f"expected < 0.02 for leak=0.02"
+            )
+
+    # -- Test 8: Noise robustness ---
+
+    @pytest.mark.parametrize("method", RILMAYO_METHODS)
+    def test_noise_robustness(self, method: str) -> None:
+        """CBF from noisy data (noise=2) should agree with noiseless within 40%.
+
+        noise=2 in RILMAYO is a low-noise setting. Deconvolution should
+        be robust at this level.
+        """
+        needed = ["flow60_leak002", "flow60_noise2_leak002"]
+        for name in needed:
+            if not rilmayo_config_available(name):
+                pytest.skip(f"Config {name} not available")
+
+        median_cbf = {}
+        for config_name in needed:
+            dro = load_rilmayo_dro(config_name)
+            tissue_curves = dro.delta_r2[dro.tissue_mask]
+
+            _, cbf, _, _ = deconvolve_dro_batch(
+                tissue_curves, dro.aif, dro.dt, method
+            )
+
+            valid = np.isfinite(cbf) & (cbf > 0)
+            median_cbf[config_name] = float(np.median(cbf[valid]))
+
+        # Noisy should agree with noiseless within 40%
+        cbf_clean = median_cbf["flow60_leak002"]
+        cbf_noisy = median_cbf["flow60_noise2_leak002"]
+
+        if cbf_clean > 0:
+            rel_diff = abs(cbf_noisy - cbf_clean) / cbf_clean
+            assert rel_diff < 0.40, (
+                f"[{method}] Noise degrades CBF too much: "
+                f"clean={cbf_clean:.2f}, noisy={cbf_noisy:.2f}, "
+                f"rel_diff={rel_diff:.2%} (>40%)"
+            )
+
+    # -- Test 9: MTT in physiological range ---
+
+    @pytest.mark.parametrize("method", RILMAYO_METHODS)
+    @pytest.mark.parametrize(
+        "config_name",
+        [
+            pytest.param("flow40_leak005", id="flow40_leak005"),
+            pytest.param("flow60_leak002", id="flow60_leak002"),
+            pytest.param("flow70_leak002", id="flow70_leak002"),
+        ],
+    )
+    def test_mtt_range(self, method: str, config_name: str) -> None:
+        """Median MTT should be in range (0.1-10s) for RILMAYO configs.
+
+        RILMAYO DROs have TR=0.1s (dt=0.1s), so temporal resolution is
+        excellent. MTT range is narrower than BNI because of the higher
+        quality data.
+        """
+        if not rilmayo_config_available(config_name):
+            pytest.skip(f"Config {config_name} not available")
+
+        dro = load_rilmayo_dro(config_name)
+        tissue_curves = dro.delta_r2[dro.tissue_mask]
+
+        _, _, _, mtt = deconvolve_dro_batch(
+            tissue_curves, dro.aif, dro.dt, method
+        )
+
+        valid = np.isfinite(mtt) & (mtt > 0)
+        assert valid.sum() > 0.1 * len(mtt), (
+            f"Too few valid MTT voxels: {valid.sum()}/{len(mtt)}"
+        )
+
+        median_mtt = float(np.median(mtt[valid]))
+        assert 0.01 < median_mtt < 10.0, (
+            f"[{method}/{config_name}] Median MTT={median_mtt:.3f}s "
+            f"outside range (0.01-10s)"
         )

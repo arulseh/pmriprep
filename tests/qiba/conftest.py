@@ -71,6 +71,14 @@ __all__ = [
     "QIBADROData",
     "load_qiba_dro",
     "deconvolve_dro_batch",
+    # RILMAYO
+    "RILMAYO_DRO_ROOT",
+    "RILMAYOConfig",
+    "RILMAYO_CONFIGS",
+    "RILMAYODROData",
+    "rilmayo_config_available",
+    "skip_no_rilmayo_dro",
+    "load_rilmayo_dro",
 ]
 
 
@@ -501,3 +509,170 @@ def deconvolve_dro_batch(
         raise ValueError(f"Unknown method: {method}")
 
     return residues, cbf, cbv, mtt
+
+
+# =============================================================================
+# Phase 3: RILMAYO DSC-MRI DRO (leakage + deconvolution validation)
+# =============================================================================
+
+RILMAYO_DRO_ROOT = PROJECT_ROOT / "sourcedata" / "qiba" / "rilmayo_dsc_dro"
+
+
+@dataclass(frozen=True)
+class RILMAYOConfig:
+    """RILMAYO DRO configuration with ground truth parameters.
+
+    All configs share: TE=0.05s, TR=0.1s, S0=100, t0=10.0s, B0=1.5T.
+
+    Attributes:
+        name: Config identifier (directory name).
+        flow: Ground truth flow (CBF proxy, mL/100g/min).
+        leak: Ground truth K2 leakage parameter.
+        method: Residue function shape ("mono" = exponential, "box" = boxcar).
+        noise: Noise level (0 = noiseless).
+        te: Echo time in seconds.
+        tr: Repetition time in seconds.
+        s0: Baseline signal intensity.
+        t0: Bolus arrival time in seconds.
+        b0: Static field strength in Tesla.
+    """
+
+    name: str
+    flow: int
+    leak: float
+    method: str = "mono"
+    noise: int = 0
+    te: float = 0.05
+    tr: float = 0.1
+    s0: int = 100
+    t0: float = 10.0
+    b0: float = 1.5
+
+
+RILMAYO_CONFIGS: Dict[str, RILMAYOConfig] = {
+    "flow40_leak005": RILMAYOConfig(
+        name="flow40_leak005", flow=40, leak=0.05,
+    ),
+    "flow60_leak002": RILMAYOConfig(
+        name="flow60_leak002", flow=60, leak=0.02,
+    ),
+    "flow40_leak002": RILMAYOConfig(
+        name="flow40_leak002", flow=40, leak=0.02,
+    ),
+    "flow70_leak002": RILMAYOConfig(
+        name="flow70_leak002", flow=70, leak=0.02,
+    ),
+    "flow60_leak005": RILMAYOConfig(
+        name="flow60_leak005", flow=60, leak=0.05,
+    ),
+    "flow60_box_leak002": RILMAYOConfig(
+        name="flow60_box_leak002", flow=60, leak=0.02, method="box",
+    ),
+    "flow60_noise2_leak002": RILMAYOConfig(
+        name="flow60_noise2_leak002", flow=60, leak=0.02, noise=2,
+    ),
+}
+
+
+@dataclass
+class RILMAYODROData:
+    """Loaded RILMAYO DRO data for a single config.
+
+    Attributes:
+        delta_r2: Uncorrected deltaR2* concentration, shape (X, Y, Z, T).
+        delta_r2_corrected: K2-corrected deltaR2*, shape (X, Y, Z, T).
+        baseline: Baseline signal S0, shape (X, Y, Z).
+        aif: AIF deltaR2* curve, shape (T,).
+        time_sec: Time array in seconds, shape (T,).
+        dt: Temporal resolution in seconds.
+        tissue_mask: Boolean tissue mask, shape (X, Y, Z).
+        config: RILMAYO config for this dataset.
+        metadata: Acquisition metadata dict.
+    """
+
+    delta_r2: npt.NDArray[np.floating]
+    delta_r2_corrected: npt.NDArray[np.floating]
+    baseline: npt.NDArray[np.floating]
+    aif: npt.NDArray[np.floating]
+    time_sec: npt.NDArray[np.floating]
+    dt: float
+    tissue_mask: npt.NDArray[np.bool_]
+    config: RILMAYOConfig
+    metadata: Dict[str, Any]
+
+
+_rilmayo_dro_cache: Dict[str, RILMAYODROData] = {}
+
+
+def rilmayo_config_available(config_name: str) -> bool:
+    """Check if a RILMAYO DRO config has been converted.
+
+    Args:
+        config_name: Config identifier (e.g. "flow40_leak005").
+
+    Returns:
+        True if concentration.npz exists for this config.
+    """
+    return (RILMAYO_DRO_ROOT / config_name / "concentration.npz").exists()
+
+
+skip_no_rilmayo_dro = pytest.mark.skipif(
+    not rilmayo_config_available("flow40_leak005"),
+    reason="RILMAYO DRO data not found "
+    f"(expected at {RILMAYO_DRO_ROOT / 'flow40_leak005' / 'concentration.npz'})",
+)
+
+
+def load_rilmayo_dro(config_name: str) -> RILMAYODROData:
+    """Load converted RILMAYO DRO data with caching.
+
+    Args:
+        config_name: Config identifier (e.g. "flow40_leak005").
+
+    Returns:
+        RILMAYODROData with all arrays, metadata, and config.
+
+    Raises:
+        FileNotFoundError: If converted NPZ files don't exist.
+        KeyError: If config_name is not a known RILMAYO config.
+    """
+    if config_name in _rilmayo_dro_cache:
+        return _rilmayo_dro_cache[config_name]
+
+    if config_name not in RILMAYO_CONFIGS:
+        raise KeyError(
+            f"Unknown RILMAYO config: {config_name}. "
+            f"Available: {list(RILMAYO_CONFIGS.keys())}"
+        )
+
+    config_dir = RILMAYO_DRO_ROOT / config_name
+    conc_file = config_dir / "concentration.npz"
+
+    if not conc_file.exists():
+        raise FileNotFoundError(
+            f"RILMAYO DRO data not found for {config_name}: {conc_file}"
+        )
+
+    conc = np.load(conc_file)
+    aif_data = np.load(config_dir / "aif.npz")
+    mask_data = np.load(config_dir / "roi_masks.npz")
+
+    with open(config_dir / "metadata.json") as f:
+        metadata = json.load(f)
+
+    config = RILMAYO_CONFIGS[config_name]
+
+    data = RILMAYODROData(
+        delta_r2=conc["delta_r2"].astype(np.float64),
+        delta_r2_corrected=conc["delta_r2_corrected"].astype(np.float64),
+        baseline=conc["baseline"].astype(np.float64),
+        aif=aif_data["aif_delta_r2"].astype(np.float64),
+        time_sec=aif_data["time_sec"].astype(np.float64),
+        dt=float(metadata["dt_sec"]),
+        tissue_mask=mask_data["tissue"].astype(bool),
+        config=config,
+        metadata=metadata,
+    )
+
+    _rilmayo_dro_cache[config_name] = data
+    return data
