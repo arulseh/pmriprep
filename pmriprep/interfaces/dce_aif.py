@@ -63,6 +63,11 @@ from pmriprep.utils.dce_constants import (
 
 logger = logging.getLogger(__name__)
 
+# Per-candidate quality filtering for detected AIF
+# Candidates below this score are partial-volume contaminated (tiers 6-7)
+_MIN_CANDIDATE_SCORE = 0.5
+# Minimum survivors for a reliable detected AIF (SNR >= 21, basic outlier check)
+_MIN_CANDIDATES_FOR_DETECTED = 2
 
 # =============================================================================
 # Parker Population AIF Parameters
@@ -2226,7 +2231,7 @@ class AIFDetection(BaseInterface):
             "detection_method": "external",
             "quality_score": 1.0,
             "baseline_frames": baseline_frames,
-            "n_candidates": 0,
+            "n_aif_voxels": 0,
             "aif_status": QCStatus.PASS,
         }
 
@@ -2436,28 +2441,56 @@ class AIFDetection(BaseInterface):
             # Venous filtering already applied inside _find_candidates_in_mask
             # (after cluster selection). No need to duplicate here.
 
-            # ===== Quality gate: population fallback for poor detections =====
-            # Tier 6-7 candidates (score <= 0.5) lack key arterial
-            # characteristics (timing, washout, FWHM). Fall back to Parker
-            # population AIF rather than using a degraded/last-resort curve.
-            _POPULATION_FALLBACK_THRESHOLD = 0.5
+            # ===== Per-candidate quality filter =====
+            # Low-scoring candidates (< 0.5) are partial-volume contaminated
+            # (tiers 6-7). Averaging them in degrades the AIF. Filter by
+            # individual score, then decide based on survivor count.
+            n_filtered_out = 0
             if candidates and aif_method != "population":
-                best_score = max(scores) if scores else 0.0
-                if best_score < _POPULATION_FALLBACK_THRESHOLD:
+                n_before = len(candidates)
+                keep = [i for i, s in enumerate(scores) if s >= _MIN_CANDIDATE_SCORE]
+                n_filtered_out = n_before - len(keep)
+
+                if len(keep) >= _MIN_CANDIDATES_FOR_DETECTED:
+                    # Enough high-quality candidates survive
+                    if n_filtered_out > 0:
+                        logger.info(
+                            "AIF quality filter: kept %d/%d candidates "
+                            "(removed %d with score < %.2f).",
+                            len(keep), n_before, n_filtered_out,
+                            _MIN_CANDIDATE_SCORE,
+                        )
+                    candidates = [candidates[i] for i in keep]
+                    scores = [scores[i] for i in keep]
+                    metrics_list = [metrics_list[i] for i in keep]
+                elif len(keep) == 1:
+                    # Single high-quality voxel — use it but warn
+                    logger.warning(
+                        "AIF quality filter: only 1/%d candidate with "
+                        "score >= %.2f. Using single voxel AIF "
+                        "(no consistency check possible).",
+                        n_before, _MIN_CANDIDATE_SCORE,
+                    )
+                    candidates = [candidates[keep[0]]]
+                    scores = [scores[keep[0]]]
+                    metrics_list = [metrics_list[keep[0]]]
+                else:
+                    # No candidates above threshold — fall back to population
+                    best_score = max(scores) if scores else 0.0
                     _detection_attempt = {
                         "auto_detection_attempted": True,
                         "auto_best_score": float(best_score),
-                        "auto_n_candidates": len(candidates),
+                        "auto_n_candidates": n_before,
+                        "auto_n_above_threshold": 0,
                         "auto_fallback_reason": (
-                            f"best quality score {best_score:.2f} < "
-                            f"{_POPULATION_FALLBACK_THRESHOLD}"
+                            f"0/{n_before} candidates scored >= "
+                            f"{_MIN_CANDIDATE_SCORE}"
                         ),
                     }
                     logger.warning(
-                        "AIF quality gate: best score %.2f < %.2f, "
-                        "falling back to Parker population AIF.",
-                        best_score,
-                        _POPULATION_FALLBACK_THRESHOLD,
+                        "AIF quality filter: 0/%d candidates scored >= %.2f "
+                        "(best=%.2f). Falling back to Parker population AIF.",
+                        n_before, _MIN_CANDIDATE_SCORE, best_score,
                     )
                     candidates = []
                     scores = []
@@ -2509,7 +2542,8 @@ class AIFDetection(BaseInterface):
                     "upstroke_slope_mean": float(
                         np.mean([m.get("upstroke_slope", 0.0) for m in metrics_list])
                     ),
-                    "n_candidates": len(candidates),
+                    "n_aif_voxels": len(candidates),
+                    "n_aif_voxels_filtered_out": n_filtered_out,
                     "candidate_coords": [list(c) for c in candidates],
                     "candidate_scores": [float(s) for s in scores],
                     "arterial_cascade_tier": tier_used,
@@ -2633,7 +2667,7 @@ class AIFDetection(BaseInterface):
             qc_metrics = {
                 "population_aif": True,
                 "dose_factor": dose_factor,
-                "n_candidates": 0,
+                "n_aif_voxels": 0,
                 "bat_seconds": bat_shift,
                 "bat_method": "baseline_frames",
             }

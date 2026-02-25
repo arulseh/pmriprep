@@ -296,10 +296,14 @@
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.scaling_factor) }}x</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.aif_detection.n_candidates is defined %}
+            {% set used = dce.qc_metrics.aif_detection.n_aif_voxels
+               if dce.qc_metrics.aif_detection.n_aif_voxels is defined
+               else dce.qc_metrics.aif_detection.n_candidates
+               if dce.qc_metrics.aif_detection.n_candidates is defined %}
+            {% if used is defined %}
             <div class="metric">
-                <div class="metric-label">Candidates</div>
-                <div class="metric-value">{{ dce.qc_metrics.aif_detection.n_candidates }}</div>
+                <div class="metric-label">AIF Voxels (used / available)</div>
+                <div class="metric-value">{{ used }} / {{ used + (dce.qc_metrics.aif_detection.n_aif_voxels_filtered_out | default(0)) }}</div>
             </div>
             {% endif %}
         </div>
