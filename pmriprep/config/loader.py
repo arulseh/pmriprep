@@ -174,9 +174,13 @@ def merge_cli_config(
 
 
 def _dict_to_path(d: Dict[str, Any], key: str) -> None:
-    """Convert a string value to Path in-place if key exists."""
+    """Convert a string value to an absolute Path in-place if key exists.
+
+    Relative paths are resolved against the current working directory
+    so that nipype nodes can locate them regardless of execution directory.
+    """
     if key in d and d[key] is not None and isinstance(d[key], str):
-        d[key] = Path(d[key])
+        d[key] = Path(d[key]).resolve()
 
 
 def _coerce_int(d: Dict[str, Any], key: str) -> None:

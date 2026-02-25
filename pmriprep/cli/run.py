@@ -415,6 +415,13 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if args.dce_aif_file is not None and not args.dce_aif_file.is_file():
         parser.error(f"--dce-aif-file does not exist: {args.dce_aif_file}")
 
+    # Resolve all Path arguments to absolute paths so nipype nodes
+    # can locate them regardless of their execution working directory
+    for attr in ("bids_dir", "output_dir", "work_dir", "config_file", "dce_aif_file"):
+        val = getattr(args, attr, None)
+        if val is not None:
+            setattr(args, attr, val.resolve())
+
     # Run the workflow
     run_pmriprep_wf(args)
 
