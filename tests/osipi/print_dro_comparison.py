@@ -18,6 +18,7 @@ from tests.osipi.conftest import (
     load_ci_map,
     load_ground_truth_ktrans,
     load_map,
+    load_osipi_aif,
     load_tumor_mask,
 )
 
@@ -31,7 +32,36 @@ def ccc(x: np.ndarray, y: np.ndarray) -> float:
     return float(2.0 * cov / denom) if denom > 1e-15 else 0.0
 
 
+def _print_aif_comparison() -> None:
+    """Print AIF comparison between Parker population AIF and OSIPI GT AIF."""
+    from pmriprep.interfaces.dce_aif import parker_population_aif
+
+    osipi_aif = load_osipi_aif()
+    if osipi_aif is None:
+        print("OSIPI GT AIF not found — skipping AIF comparison\n")
+        return
+
+    n_tp = len(osipi_aif)
+    # DRO uses volume TR = 3.735s (from BIDS sidecar)
+    tr = 3.735
+    t = np.arange(n_tp) * tr
+
+    # Generate Parker AIF at matching timepoints (full dose, no r1 correction)
+    parker_aif = parker_population_aif(t, dose_factor=1.0)
+
+    gt_auc = float(np.trapezoid(osipi_aif, t))
+    parker_auc = float(np.trapezoid(parker_aif, t))
+
+    print("=== AIF Comparison ===")
+    print(f"  OSIPI GT AIF:  peak={np.max(osipi_aif):.3f} mM  AUC={gt_auc:.1f} mM-s  n={n_tp}")
+    print(f"  Parker pop:    peak={np.max(parker_aif):.3f} mM  AUC={parker_auc:.1f} mM-s")
+    print(f"  AUC ratio:     GT/Parker = {gt_auc / parker_auc:.2f}x")
+    print()
+
+
 def main() -> None:
+    _print_aif_comparison()
+
     for subject, session in DRO_SESSIONS:
         gt = load_ground_truth_ktrans(subject, session)
         calc = load_map(subject, session, "Ktrans")

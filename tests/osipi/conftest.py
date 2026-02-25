@@ -32,7 +32,7 @@ PERFPLUS_REFERENCE_JSON = (
 )
 
 # DRO ground truth paths
-OSIPI_GT_ROOT = Path.home() / "Developer" / "perf-plus" / "OSIPI"
+OSIPI_GT_ROOT = PROJECT_ROOT / "sourcedata" / "osipi"
 
 PERFPLUS_DRO_JSON = (
     Path.home()
@@ -653,3 +653,28 @@ skip_no_perfplus_dro = pytest.mark.skipif(
     not PERFPLUS_DRO_JSON.exists(),
     reason="Perf-plus DRO validation JSON not found",
 )
+
+# OSIPI ground truth AIF path
+OSIPI_AIF_PATH = OSIPI_GT_ROOT / "AIF.npz"
+
+skip_no_osipi_aif = pytest.mark.skipif(
+    not OSIPI_AIF_PATH.exists(),
+    reason="OSIPI GT AIF file not found (sourcedata/osipi/AIF.npz)",
+)
+
+
+def load_osipi_aif() -> Optional[NDArray[np.floating]]:
+    """Load OSIPI ground truth AIF (plasma concentration in mM).
+
+    Returns the Cp array from ``sourcedata/osipi/AIF.npz``. Values may
+    include small negative baseline values — these are NOT clipped, as
+    they represent noise in the pre-contrast baseline.
+
+    Returns:
+        1D array of plasma concentration (mM), or None if file not found.
+    """
+    if not OSIPI_AIF_PATH.exists():
+        return None
+
+    npz = np.load(str(OSIPI_AIF_PATH))
+    return np.asarray(npz["Cp"], dtype=np.float64)
