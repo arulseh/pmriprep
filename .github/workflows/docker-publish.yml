@@ -1,0 +1,81 @@
+name: Build and Publish PMRIPrep
+
+on:
+  workflow_dispatch:  # manual trigger only
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Extract metadata for tagging
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # Build and load locally for testing (don't push yet)
+      - name: Build Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64   # x86_64 — matches your RHEL server
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha   # cache layers between runs = faster builds
+          cache-to: type=gha,mode=max
+
+      # Basic smoke test — confirm the image runs
+      - name: Test image - help text
+        run: |
+          docker run --rm \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }} \
+            --help
+
+      # Run unit tests inside the container
+      - name: Test image - pytest
+        run: |
+          docker run --rm \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }} \
+            python -m pytest tests/unit/ -v --tb=short
+
+      # Push only after tests pass
+      - name: Push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
