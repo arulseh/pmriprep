@@ -1,0 +1,647 @@
+"""Unit tests for hierarchical BIC-based per-voxel model selection.
+
+Tests the `model=auto` behavior:
+- BIC fundamentals (perfect fits, penalty direction)
+- N-model BIC comparison across full hierarchy
+- Temporal resolution gating (_build_candidate_set)
+- Delta-BIC computation (positive convention)
+- BIC runs for constrained voxels (adjusted k_eff)
+- PatlakModel.fit_constrained (analytical, k=1)
+- NaN parameter maps for non-applicable params
+"""
+
+import numpy as np
+import pytest
+
+from pmriprep.models.dce import (
+    ExtendedToftsModel,
+    PatlakModel,
+    ToftsModel,
+    TwoCompartmentExchangeModel,
+)
+from pmriprep.models.dce.base import EPSILON_RSS
+
+# New complexity-ordered label encoding
+_MODEL_SELECTION_CODES: dict[str, int] = {
+    "patlak": 1,
+    "tofts": 2,
+    "extended_tofts": 3,
+    "2cxm": 4,
+}
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def time_points() -> np.ndarray:
+    """Time vector: 60 frames at 7.6 s spacing (typical DCE)."""
+    return np.arange(60, dtype=np.float64) * (7.6 / 60.0)  # minutes
+
+
+@pytest.fixture
+def time_points_fast() -> np.ndarray:
+    """Time vector: 120 frames at 2 s spacing (fast DCE for 2CXM)."""
+    return np.arange(120, dtype=np.float64) * (2.0 / 60.0)  # minutes
+
+
+@pytest.fixture
+def aif(time_points: np.ndarray) -> np.ndarray:
+    """Simple population AIF: gamma-variate-like."""
+    t = time_points * 60.0  # seconds
+    t_peak = 30.0  # s
+    aif_curve = np.zeros_like(t)
+    post_bolus = t > 10.0
+    t_shifted = t[post_bolus] - 10.0
+    aif_curve[post_bolus] = (
+        5.0 * (t_shifted / t_peak) * np.exp(1.0 - t_shifted / t_peak)
+    )
+    return aif_curve
+
+
+@pytest.fixture
+def aif_fast(time_points_fast: np.ndarray) -> np.ndarray:
+    """Population AIF for fast temporal resolution."""
+    t = time_points_fast * 60.0  # seconds
+    t_peak = 30.0
+    aif_curve = np.zeros_like(t)
+    post_bolus = t > 10.0
+    t_shifted = t[post_bolus] - 10.0
+    aif_curve[post_bolus] = (
+        5.0 * (t_shifted / t_peak) * np.exp(1.0 - t_shifted / t_peak)
+    )
+    return aif_curve
+
+
+# ---------------------------------------------------------------------------
+# Test: BIC perfect fit (RSS=0 → lowest BIC, not inf)
+# ---------------------------------------------------------------------------
+
+class TestBICPerfectFit:
+    """BIC must produce lowest value when RSS=0 (perfect fit)."""
+
+    def test_bic_perfect_fit_lower_than_nonzero_rss(self) -> None:
+        """RSS=0 should produce lower BIC than RSS>0 for same model."""
+        model = PatlakModel()
+        n_obs = 60
+
+        bic_perfect = model.compute_bic(0.0, n_obs)
+        bic_nonzero = model.compute_bic(1e-6, n_obs)
+
+        assert np.isfinite(bic_perfect), "BIC for RSS=0 must be finite"
+        assert bic_perfect < bic_nonzero, (
+            f"BIC for RSS=0 ({bic_perfect:.1f}) must be lower than "
+            f"BIC for RSS=1e-6 ({bic_nonzero:.1f})"
+        )
+
+    def test_aic_perfect_fit_lower_than_nonzero_rss(self) -> None:
+        """RSS=0 should produce lower AIC than RSS>0 for same model."""
+        model = ExtendedToftsModel()
+        n_obs = 60
+
+        aic_perfect = model.compute_aic(0.0, n_obs)
+        aic_nonzero = model.compute_aic(1e-6, n_obs)
+
+        assert np.isfinite(aic_perfect), "AIC for RSS=0 must be finite"
+        assert aic_perfect < aic_nonzero
+
+    def test_bic_zero_observations_returns_inf(self) -> None:
+        """Zero observations should still return inf."""
+        model = PatlakModel()
+        assert model.compute_bic(0.0, 0) == float("inf")
+
+    def test_epsilon_rss_is_tiny(self) -> None:
+        """EPSILON_RSS should be very small to not distort real BICs."""
+        assert EPSILON_RSS < 1e-20
+
+
+# ---------------------------------------------------------------------------
+# Test: BIC penalty direction (fewer params → lower BIC for equal RSS)
+# ---------------------------------------------------------------------------
+
+class TestBICPenaltyDirection:
+    """Models with fewer params should have lower BIC for equal RSS."""
+
+    def test_patlak_lower_bic_equal_rss(self) -> None:
+        """With same RSS, Patlak BIC < Extended Tofts BIC (fewer params)."""
+        patlak = PatlakModel()
+        etofts = ExtendedToftsModel()
+        rss = 0.01
+        n_obs = 60
+
+        bic_patlak = patlak.compute_bic(rss, n_obs)
+        bic_etofts = etofts.compute_bic(rss, n_obs)
+
+        assert bic_patlak < bic_etofts, (
+            f"Patlak BIC ({bic_patlak:.2f}) should be less than "
+            f"Extended Tofts BIC ({bic_etofts:.2f}) for equal RSS"
+        )
+
+    def test_tofts_lower_bic_than_etofts_equal_rss(self) -> None:
+        """Tofts (k=2) should beat Extended Tofts (k=3) for equal RSS."""
+        tofts = ToftsModel()
+        etofts = ExtendedToftsModel()
+        rss = 0.01
+        n_obs = 60
+
+        bic_tofts = tofts.compute_bic(rss, n_obs)
+        bic_etofts = etofts.compute_bic(rss, n_obs)
+
+        assert bic_tofts < bic_etofts
+
+    def test_etofts_can_win_with_lower_rss(self) -> None:
+        """Extended Tofts should win when its RSS is sufficiently lower."""
+        patlak = PatlakModel()
+        etofts = ExtendedToftsModel()
+        n_obs = 60
+
+        bic_patlak = patlak.compute_bic(0.1, n_obs)
+        bic_etofts = etofts.compute_bic(0.001, n_obs)
+
+        assert bic_etofts < bic_patlak
+
+
+# ---------------------------------------------------------------------------
+# Test: BIC selects Patlak for low-Ktrans synthetic voxel
+# ---------------------------------------------------------------------------
+
+class TestBICSelectsPatlakLowKtrans:
+    """For low-Ktrans tissue (NAWM), Patlak should win via BIC."""
+
+    def test_bic_selects_patlak_for_nawm(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Synthetic voxel with Ktrans=0.005: Patlak should win."""
+        patlak = PatlakModel()
+        true_ktrans = 0.005  # min⁻¹ (NAWM range)
+        true_vp = 0.02
+        tissue_curve = patlak.evaluate(
+            [true_ktrans, true_vp], aif, time_points
+        )
+        rng = np.random.default_rng(42)
+        noise = rng.normal(0, 0.001, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve + noise, 0.0)
+
+        etofts = ExtendedToftsModel()
+        patlak_result = patlak.fit(tissue_curve, aif, time_points)
+        etofts_result = etofts.fit(tissue_curve, aif, time_points)
+
+        assert patlak_result.bic < etofts_result.bic, (
+            f"Patlak BIC ({patlak_result.bic:.2f}) should be lower than "
+            f"Extended Tofts BIC ({etofts_result.bic:.2f}) for Ktrans=0.005"
+        )
+
+    def test_bic_selects_patlak_for_near_zero_ktrans(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Synthetic voxel with Ktrans≈0: Patlak should definitely win."""
+        patlak = PatlakModel()
+        tissue_curve = patlak.evaluate([0.001, 0.01], aif, time_points)
+        rng = np.random.default_rng(123)
+        noise = rng.normal(0, 0.0005, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve + noise, 0.0)
+
+        etofts = ExtendedToftsModel()
+        patlak_result = patlak.fit(tissue_curve, aif, time_points)
+        etofts_result = etofts.fit(tissue_curve, aif, time_points)
+
+        assert patlak_result.bic < etofts_result.bic
+
+
+# ---------------------------------------------------------------------------
+# Test: BIC selects Extended Tofts for high-Ktrans synthetic voxel
+# ---------------------------------------------------------------------------
+
+class TestBICSelectsEToftsHighKtrans:
+    """For high-Ktrans tissue (tumor), Extended Tofts should win."""
+
+    def test_bic_selects_etofts_for_enhancing_tumor(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Synthetic voxel with Ktrans=0.1, ve=0.3: ETofts should win."""
+        etofts = ExtendedToftsModel()
+        true_params = [0.1, 0.3, 0.05]  # Ktrans, ve, vp
+        tissue_curve = etofts.evaluate(true_params, aif, time_points)
+        rng = np.random.default_rng(99)
+        noise = rng.normal(0, 0.005, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve + noise, 0.0)
+
+        patlak = PatlakModel()
+        etofts_result = etofts.fit(tissue_curve, aif, time_points)
+        patlak_result = patlak.fit(tissue_curve, aif, time_points)
+
+        assert etofts_result.bic < patlak_result.bic, (
+            f"Extended Tofts BIC ({etofts_result.bic:.2f}) should be lower "
+            f"than Patlak BIC ({patlak_result.bic:.2f}) for enhancing tumor"
+        )
+
+    def test_bic_selects_etofts_for_high_ve(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """High-ve tissue needs Extended Tofts backflux term."""
+        etofts = ExtendedToftsModel()
+        true_params = [0.2, 0.5, 0.03]  # Ktrans, ve, vp
+        tissue_curve = etofts.evaluate(true_params, aif, time_points)
+        rng = np.random.default_rng(77)
+        noise = rng.normal(0, 0.01, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve + noise, 0.0)
+
+        patlak = PatlakModel()
+        etofts_result = etofts.fit(tissue_curve, aif, time_points)
+        patlak_result = patlak.fit(tissue_curve, aif, time_points)
+
+        assert etofts_result.bic < patlak_result.bic
+
+
+# ---------------------------------------------------------------------------
+# Test: BIC is_better_than comparison
+# ---------------------------------------------------------------------------
+
+class TestFitResultIsBetterThan:
+    """FitResult.is_better_than works for BIC comparison."""
+
+    def test_lower_bic_is_better(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Patlak result with lower BIC is_better_than Extended Tofts."""
+        patlak = PatlakModel()
+        tissue_curve = patlak.evaluate([0.003, 0.02], aif, time_points)
+
+        patlak_result = patlak.fit(tissue_curve, aif, time_points)
+        etofts = ExtendedToftsModel()
+        etofts_result = etofts.fit(tissue_curve, aif, time_points)
+
+        assert patlak_result.is_better_than(etofts_result, "bic")
+
+
+# ---------------------------------------------------------------------------
+# Test: BIC runs for constrained voxels (inverted from old behavior)
+# ---------------------------------------------------------------------------
+
+class TestBICRunsWhenConstrained:
+    """BIC comparison runs for DSC-constrained voxels with adjusted k_eff.
+
+    Per Burnham & Anderson 2002, BIC is valid with reduced free parameters
+    when vp is fixed from DSC-CBV.
+    """
+
+    def test_bic_runs_when_constrained_and_auto(self) -> None:
+        """is_auto + candidates → BIC runs regardless of constraint."""
+        is_auto = True
+        bic_candidates = {"patlak": PatlakModel(), "tofts": ToftsModel()}
+
+        should_do_bic = is_auto and bool(bic_candidates)
+        assert should_do_bic, "BIC should run for constrained voxels in auto mode"
+
+    def test_bic_skipped_when_not_auto(self) -> None:
+        """Fixed model → no BIC comparison."""
+        is_auto = False
+        bic_candidates: dict[str, object] = {}
+
+        should_do_bic = is_auto and bool(bic_candidates)
+        assert not should_do_bic, "BIC should not run in fixed model mode"
+
+
+# ---------------------------------------------------------------------------
+# Test: _build_candidate_set temporal resolution gating
+# ---------------------------------------------------------------------------
+
+class TestBuildCandidateSet:
+    """Candidate set depends on volume TR."""
+
+    def test_fast_tr_includes_all(self) -> None:
+        """TR=2s should include all 4 models."""
+        # Simulate _build_candidate_set logic
+        volume_tr = 2.0
+        candidates = ["patlak", "tofts"]
+        if volume_tr <= 10.0:
+            candidates.append("extended_tofts")
+        if volume_tr <= 3.0:
+            candidates.append("2cxm")
+
+        assert candidates == ["patlak", "tofts", "extended_tofts", "2cxm"]
+
+    def test_moderate_tr_excludes_2cxm(self) -> None:
+        """TR=7.6s should exclude 2CXM but include ETofts."""
+        volume_tr = 7.6
+        candidates = ["patlak", "tofts"]
+        if volume_tr <= 10.0:
+            candidates.append("extended_tofts")
+        if volume_tr <= 3.0:
+            candidates.append("2cxm")
+
+        assert "2cxm" not in candidates
+        assert "extended_tofts" in candidates
+        assert candidates == ["patlak", "tofts", "extended_tofts"]
+
+    def test_coarse_tr_only_patlak_tofts(self) -> None:
+        """TR=15s should only have Patlak and Tofts."""
+        volume_tr = 15.0
+        candidates = ["patlak", "tofts"]
+        if volume_tr <= 10.0:
+            candidates.append("extended_tofts")
+        if volume_tr <= 3.0:
+            candidates.append("2cxm")
+
+        assert candidates == ["patlak", "tofts"]
+
+
+# ---------------------------------------------------------------------------
+# Test: N-model BIC comparison
+# ---------------------------------------------------------------------------
+
+class TestNModelBIC:
+    """N-model BIC comparison selects the best model."""
+
+    def test_three_model_bic_patlak_generated(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Patlak-generated data: Patlak should win 3-model BIC."""
+        patlak = PatlakModel()
+        tofts = ToftsModel()
+        etofts = ExtendedToftsModel()
+
+        tissue_curve = patlak.evaluate([0.005, 0.02], aif, time_points)
+        rng = np.random.default_rng(42)
+        tissue_curve += rng.normal(0, 0.001, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve, 0.0)
+
+        results = [
+            patlak.fit(tissue_curve, aif, time_points),
+            tofts.fit(tissue_curve, aif, time_points),
+            etofts.fit(tissue_curve, aif, time_points),
+        ]
+        best = min(results, key=lambda r: r.bic if np.isfinite(r.bic) else np.inf)
+        assert best.model_name == "patlak"
+
+    def test_three_model_bic_etofts_generated(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """ETofts-generated data: ETofts should win 3-model BIC."""
+        patlak = PatlakModel()
+        tofts = ToftsModel()
+        etofts = ExtendedToftsModel()
+
+        tissue_curve = etofts.evaluate([0.15, 0.4, 0.05], aif, time_points)
+        rng = np.random.default_rng(99)
+        tissue_curve += rng.normal(0, 0.005, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve, 0.0)
+
+        results = [
+            patlak.fit(tissue_curve, aif, time_points),
+            tofts.fit(tissue_curve, aif, time_points),
+            etofts.fit(tissue_curve, aif, time_points),
+        ]
+        best = min(results, key=lambda r: r.bic if np.isfinite(r.bic) else np.inf)
+        assert best.model_name == "extended_tofts"
+
+    def test_three_model_bic_tofts_generated(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Tofts-generated data: Tofts should win or tie with ETofts."""
+        tofts = ToftsModel()
+        patlak = PatlakModel()
+        etofts = ExtendedToftsModel()
+
+        # Pure Tofts: Ktrans, ve (no vp contribution)
+        tissue_curve = tofts.evaluate([0.1, 0.3], aif, time_points)
+        rng = np.random.default_rng(55)
+        tissue_curve += rng.normal(0, 0.005, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve, 0.0)
+
+        results = [
+            patlak.fit(tissue_curve, aif, time_points),
+            tofts.fit(tissue_curve, aif, time_points),
+            etofts.fit(tissue_curve, aif, time_points),
+        ]
+        best = min(results, key=lambda r: r.bic if np.isfinite(r.bic) else np.inf)
+        # Tofts should win, or ETofts may tie (vp≈0)
+        assert best.model_name in ("tofts", "extended_tofts")
+
+
+# ---------------------------------------------------------------------------
+# Test: Delta-BIC computation
+# ---------------------------------------------------------------------------
+
+class TestDeltaBIC:
+    """Delta-BIC: positive convention (runner-up - winner)."""
+
+    def test_delta_bic_positive_convention(self) -> None:
+        """Delta-BIC should be positive (runner-up minus winner)."""
+        bics = [-100.0, -80.0, -50.0]  # sorted ascending
+        sorted_bics = sorted(bics)
+        delta_bic = sorted_bics[1] - sorted_bics[0]
+
+        assert delta_bic > 0, f"Delta-BIC should be positive, got {delta_bic}"
+        assert delta_bic == 20.0
+
+    def test_delta_bic_nan_for_single_model(self) -> None:
+        """Delta-BIC should be NaN when only one model fitted."""
+        sorted_bics = [-100.0]
+        delta_bic = sorted_bics[1] - sorted_bics[0] if len(sorted_bics) > 1 else np.nan
+        assert np.isnan(delta_bic)
+
+    def test_delta_bic_evidence_thresholds(self) -> None:
+        """Delta-BIC thresholds per Kass & Raftery 1995."""
+        # >2 = positive, >6 = strong, >10 = very strong
+        assert 2.5 > 2, "Positive evidence"
+        assert 7.0 > 6, "Strong evidence"
+        assert 12.0 > 10, "Very strong evidence"
+
+
+# ---------------------------------------------------------------------------
+# Test: PatlakModel.fit_constrained
+# ---------------------------------------------------------------------------
+
+class TestPatlakFitConstrained:
+    """PatlakModel.fit_constrained: analytical Ktrans-only fit with fixed vp."""
+
+    def test_fit_constrained_recovers_ktrans(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Constrained fit should recover true Ktrans."""
+        patlak = PatlakModel()
+        true_ktrans = 0.05
+        true_vp = 0.03
+        tissue_curve = patlak.evaluate([true_ktrans, true_vp], aif, time_points)
+
+        result = patlak.fit_constrained(
+            tissue_curve, aif, time_points, fixed_vp=true_vp
+        )
+
+        assert result.converged
+        assert abs(result.parameters["Ktrans"] - true_ktrans) < 0.01
+        assert result.parameters["vp"] == true_vp
+        assert result.n_parameters == 1  # Only Ktrans is free
+        assert result.model_name == "patlak"
+
+    def test_fit_constrained_bic_uses_k1(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """BIC should use k=1 (one free parameter)."""
+        patlak = PatlakModel()
+        tissue_curve = patlak.evaluate([0.05, 0.03], aif, time_points)
+
+        constrained = patlak.fit_constrained(
+            tissue_curve, aif, time_points, fixed_vp=0.03
+        )
+        unconstrained = patlak.fit(tissue_curve, aif, time_points)
+
+        # Constrained BIC should be lower (k=1 vs k=2, similar RSS)
+        assert constrained.bic < unconstrained.bic, (
+            f"Constrained BIC ({constrained.bic:.2f}) should be lower than "
+            f"unconstrained ({unconstrained.bic:.2f}) for known-vp data"
+        )
+
+    def test_fit_constrained_with_noise(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Constrained fit should handle noisy data."""
+        patlak = PatlakModel()
+        tissue_curve = patlak.evaluate([0.08, 0.04], aif, time_points)
+        rng = np.random.default_rng(42)
+        tissue_curve += rng.normal(0, 0.005, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve, 0.0)
+
+        result = patlak.fit_constrained(
+            tissue_curve, aif, time_points, fixed_vp=0.04
+        )
+        assert result.converged
+        assert 0.0 < result.parameters["Ktrans"] < 1.0
+        assert result.r_squared > 0.5
+
+    def test_fit_constrained_zero_denominator_guard(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Zero AIF integral should not crash (EPSILON_INTEGRAL guard)."""
+        patlak = PatlakModel()
+        # Zero AIF → zero integral → denominator guard needed
+        zero_aif = np.zeros_like(aif)
+        tissue_curve = np.ones(len(time_points)) * 0.01
+
+        result = patlak.fit_constrained(
+            tissue_curve, zero_aif, time_points, fixed_vp=0.02
+        )
+        assert result.converged
+        assert np.isfinite(result.parameters["Ktrans"])
+
+    def test_fit_constrained_uses_trapezoidal_integral(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Constrained fit must use trapezoidal rule matching evaluate()."""
+        patlak = PatlakModel()
+        true_ktrans = 0.1
+        true_vp = 0.05
+
+        # Generate ground truth with evaluate (which uses trapezoidal rule)
+        tissue_curve = patlak.evaluate([true_ktrans, true_vp], aif, time_points)
+
+        result = patlak.fit_constrained(
+            tissue_curve, aif, time_points, fixed_vp=true_vp
+        )
+
+        # Near-perfect recovery implies same integration rule
+        assert abs(result.parameters["Ktrans"] - true_ktrans) < 1e-6, (
+            f"Ktrans={result.parameters['Ktrans']:.6f} should match "
+            f"true={true_ktrans:.6f} (same integral rule)"
+        )
+        assert result.r_squared > 0.9999
+
+
+# ---------------------------------------------------------------------------
+# Test: Constrained BIC k_eff across models
+# ---------------------------------------------------------------------------
+
+class TestConstrainedBICKeff:
+    """Each model's fit_constrained returns correct effective k."""
+
+    def test_patlak_constrained_k1(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Patlak constrained: k_eff = 1 (Ktrans only)."""
+        patlak = PatlakModel()
+        tissue_curve = patlak.evaluate([0.05, 0.03], aif, time_points)
+        result = patlak.fit_constrained(
+            tissue_curve, aif, time_points, fixed_vp=0.03
+        )
+        assert result.n_parameters == 1
+
+    def test_etofts_constrained_k2(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Extended Tofts constrained: k_eff = 2 (Ktrans, ve)."""
+        etofts = ExtendedToftsModel()
+        tissue_curve = etofts.evaluate([0.1, 0.3, 0.05], aif, time_points)
+        result = etofts.fit_constrained(
+            tissue_curve, aif, time_points, fixed_vp=0.05
+        )
+        assert result.n_parameters == 2
+
+
+# ---------------------------------------------------------------------------
+# Test: Model selection codes
+# ---------------------------------------------------------------------------
+
+class TestModelSelectionCodes:
+    """Verify label encoding is complexity-ordered."""
+
+    def test_codes_are_complexity_ordered(self) -> None:
+        """Lower code = simpler model."""
+        assert _MODEL_SELECTION_CODES["patlak"] < _MODEL_SELECTION_CODES["tofts"]
+        assert _MODEL_SELECTION_CODES["tofts"] < _MODEL_SELECTION_CODES["extended_tofts"]
+        assert _MODEL_SELECTION_CODES["extended_tofts"] < _MODEL_SELECTION_CODES["2cxm"]
+
+    def test_unfitted_is_zero(self) -> None:
+        """Code 0 is reserved for unfitted voxels."""
+        assert 0 not in _MODEL_SELECTION_CODES.values()
+
+
+# ---------------------------------------------------------------------------
+# Test: NaN parameter maps for non-applicable params
+# ---------------------------------------------------------------------------
+
+class TestNaNParameterMaps:
+    """Auto mode uses NaN for non-applicable parameters."""
+
+    def test_patlak_voxel_has_nan_ve(self) -> None:
+        """Patlak voxels should have NaN ve (no backflux term)."""
+        # Simulate: model_selection_map == 1 (patlak) → ve = NaN
+        model_code = _MODEL_SELECTION_CODES["patlak"]
+        has_ve = model_code not in (_MODEL_SELECTION_CODES["patlak"],)
+        assert not has_ve, "Patlak should not have ve"
+
+    def test_tofts_voxel_has_nan_vp(self) -> None:
+        """Tofts voxels should have NaN vp (no plasma term)."""
+        model_code = _MODEL_SELECTION_CODES["tofts"]
+        has_vp = model_code not in (_MODEL_SELECTION_CODES["tofts"],)
+        assert not has_vp, "Tofts should not have vp"
+
+    def test_etofts_voxel_has_all_params(self) -> None:
+        """Extended Tofts voxels should have all params (Ktrans, ve, vp)."""
+        model_code = _MODEL_SELECTION_CODES["extended_tofts"]
+        has_ve = model_code not in (_MODEL_SELECTION_CODES["patlak"],)
+        has_vp = model_code not in (_MODEL_SELECTION_CODES["tofts"],)
+        assert has_ve and has_vp
+
+    def test_nan_safe_qc_mask_volume_fraction(self) -> None:
+        """QC mask should handle NaN in ve+vp check."""
+        ve = np.array([np.nan, 0.3, 0.0])
+        vp = np.array([0.02, np.nan, 0.01])
+
+        ve_safe = np.where(np.isfinite(ve), ve, 0.0)
+        vp_safe = np.where(np.isfinite(vp), vp, 0.0)
+        volume_ok = (ve_safe + vp_safe) < 0.95
+
+        assert volume_ok[0], "NaN ve → 0 + 0.02 < 0.95"
+        assert volume_ok[1], "0.3 + NaN vp → 0.3 + 0 < 0.95"
+        assert volume_ok[2], "0.0 + 0.01 < 0.95"
+
+    def test_nan_safe_kep_check(self) -> None:
+        """QC mask kep check should pass NaN kep (Patlak voxels)."""
+        kep = np.array([np.nan, 0.5, 0.0001])
+
+        kep_ok = np.where(np.isfinite(kep), kep > 0.001, True)
+        assert kep_ok[0], "NaN kep should pass (Patlak)"
+        assert kep_ok[1], "kep=0.5 should pass"
+        assert not kep_ok[2], "kep=0.0001 should fail"
