@@ -335,6 +335,7 @@ class BayesianPKFitter:
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         sigma: float,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> float:
         """Compute log likelihood with explicit noise sigma (for MCMC).
 
@@ -348,6 +349,9 @@ class BayesianPKFitter:
             aif: Arterial input function.
             time_points: Time points (minutes).
             sigma: Noise standard deviation.
+            weights: Optional per-frame weights in [0, 1]. If provided,
+                uses weighted Gaussian log-likelihood with effective
+                sample size n_eff = sum(weights).
 
         Returns:
             Log likelihood (unnormalized).
@@ -361,9 +365,14 @@ class BayesianPKFitter:
             return float("-inf")
 
         residuals = tissue_curve - predicted
-        n = len(tissue_curve)
-        log_lik = -0.5 * n * np.log(2 * np.pi * sigma**2)
-        log_lik -= 0.5 * np.sum(residuals**2) / (sigma**2)
+        if weights is not None:
+            n_eff = float(np.sum(weights))
+            log_lik = -0.5 * n_eff * np.log(2 * np.pi * sigma**2)
+            log_lik -= 0.5 * np.sum(weights * residuals**2) / (sigma**2)
+        else:
+            n = len(tissue_curve)
+            log_lik = -0.5 * n * np.log(2 * np.pi * sigma**2)
+            log_lik -= 0.5 * np.sum(residuals**2) / (sigma**2)
 
         return float(log_lik)
 
@@ -975,6 +984,7 @@ class BayesianPKFitter:
         n_walkers: int | None = None,
         n_burnin: int | None = None,
         sloppy: bool = False,
+        weights: npt.NDArray[np.floating] | None = None,
     ) -> FitResult:
         """Fit model using MCMC with ensemble sampler.
 
@@ -993,6 +1003,8 @@ class BayesianPKFitter:
             n_walkers: Number of ensemble walkers (default: 2 * n_dims + 2).
             n_burnin: Number of burn-in samples (default: n_samples // 2).
             sloppy: Use fast, low-quality settings for testing.
+            weights: Optional per-frame weights for motion-weighted fitting.
+                Values in [0, 1] where 1.0 = full weight.
 
         Returns:
             FitResult with parameters, uncertainties, credible intervals,
@@ -1054,7 +1066,8 @@ class BayesianPKFitter:
 
             # Likelihood with sampled sigma (not profile)
             log_lik = self._log_likelihood_with_sigma(
-                model_params, tissue_curve, aif, time_points, sigma
+                model_params, tissue_curve, aif, time_points, sigma,
+                weights=weights,
             )
 
             return log_p + log_lik  # type: ignore[no-any-return]
@@ -1144,6 +1157,7 @@ class BayesianPKFitter:
         all_rhat_ok = all(r < QC_RHAT_MAX for r in rhat)
         all_ess_ok = all(e > QC_ESS_MIN for e in ess)
         converged = all_rhat_ok and all_ess_ok
+        quality_flag = "good" if converged else "poor_convergence"
 
         # Compute fitted curve using posterior mean
         fitted_params = posterior_mean
@@ -1174,6 +1188,7 @@ class BayesianPKFitter:
             converged=converged,
             fitting_method="mcmc",
             fitted_curve=fitted_curve,
+            quality_flag=quality_flag,
         )
 
 

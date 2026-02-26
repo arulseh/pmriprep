@@ -278,7 +278,7 @@ def _fit_single_voxel(
                 )
                 result = soft_fitter.fit_mcmc(
                     prepared_curve, aif, time_points, n_samples=mcmc_samples,
-                    sloppy=sloppy,
+                    sloppy=sloppy, weights=motion_weights,
                 )
                 constrained = True
 
@@ -314,7 +314,7 @@ def _fit_single_voxel(
                 result = fitter.fit_mcmc(
                     prepared_curve, aif, time_points,
                     n_samples=mcmc_samples,
-                    sloppy=sloppy,
+                    sloppy=sloppy, weights=motion_weights,
                 )
             else:
                 result = model.fit(
@@ -408,10 +408,10 @@ def _fit_single_voxel(
                     )
                     winner_fitter = BayesianPKFitter(winner_model, **vp_prior_kw)
                     try:
-                        # Note: fit_mcmc does not accept weights (existing limitation)
                         best = winner_fitter.fit_mcmc(
                             prepared_curve, aif, time_points,
                             n_samples=mcmc_samples, sloppy=sloppy,
+                            weights=motion_weights,
                         )
                     except Exception:
                         logger.debug(
@@ -451,6 +451,8 @@ def _fit_single_voxel(
             "uncertainties": uncertainties,
             "fitted_curve": fitted_curve,
             "quality_flag": getattr(result, "quality_flag", "good"),
+            "rhat": getattr(result, "rhat", {}),
+            "ess": getattr(result, "ess", {}),
             "failed": False,
             "failure_reason": None,
             "constrained": constrained,
@@ -1405,6 +1407,9 @@ class ComputeDCEMaps(BaseInterface):
         n_rejected_postfit = 0
         r2_list: list[float] = []
         failure_reason_counts: dict[str, int] = {}
+        mcmc_rhat_lists: dict[str, list[float]] = {}
+        mcmc_ess_lists: dict[str, list[float]] = {}
+        n_mcmc_voxels: int = 0
 
         # Compute motion weights from framewise displacement (if available)
         motion_weights: Optional[npt.NDArray[np.floating]] = None
@@ -1626,6 +1631,16 @@ class ComputeDCEMaps(BaseInterface):
             else:
                 n_failed += 1
 
+            # Accumulate MCMC diagnostics (rhat/ess are empty for non-MCMC)
+            voxel_rhat = res.get("rhat", {})
+            voxel_ess = res.get("ess", {})
+            if voxel_rhat:
+                n_mcmc_voxels += 1
+                for param, val in voxel_rhat.items():
+                    mcmc_rhat_lists.setdefault(param, []).append(val)
+                for param, val in voxel_ess.items():
+                    mcmc_ess_lists.setdefault(param, []).append(val)
+
         # Compile QC metrics
         qc_metrics["n_converged"] = n_converged
         qc_metrics["n_failed"] = n_failed
@@ -1659,6 +1674,25 @@ class ComputeDCEMaps(BaseInterface):
             qc_metrics["r2_mean"] = float(np.mean(r2_list))
             qc_metrics["r2_std"] = float(np.std(r2_list))
             qc_metrics["r2_median"] = float(np.median(r2_list))
+
+        # MCMC convergence diagnostics summary
+        if n_mcmc_voxels > 0:
+            from pmriprep.models.dce.bayesian import QC_RHAT_MAX, QC_ESS_MIN
+
+            mcmc_diag: dict[str, Any] = {"n_mcmc_voxels": n_mcmc_voxels}
+            for param, vals in mcmc_rhat_lists.items():
+                arr = np.array(vals)
+                mcmc_diag[f"rhat_median_{param}"] = float(np.median(arr))
+                mcmc_diag[f"rhat_frac_poor_{param}"] = float(
+                    np.mean(arr >= QC_RHAT_MAX)
+                )
+            for param, vals in mcmc_ess_lists.items():
+                arr = np.array(vals)
+                mcmc_diag[f"ess_median_{param}"] = float(np.median(arr))
+                mcmc_diag[f"ess_frac_low_{param}"] = float(
+                    np.mean(arr < QC_ESS_MIN)
+                )
+            qc_metrics["mcmc_diagnostics"] = mcmc_diag
 
         # Compute summary statistics on fitted voxels
         # For auto mode, use np.isfinite guard (NaN = non-applicable parameter)

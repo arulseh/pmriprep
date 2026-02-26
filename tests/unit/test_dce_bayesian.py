@@ -15,6 +15,8 @@ import pytest
 from pmriprep.models.bayesian_utils import BayesianPrior
 from pmriprep.models.dce.bayesian import (
     EPSILON_SIGMA_CONCENTRATION,
+    QC_RHAT_MAX,
+    QC_ESS_MIN,
     BayesianPKFitter,
     create_vp_prior_from_dsc,
     fit_pk_model,
@@ -383,3 +385,145 @@ class TestBayesianMAPFitSynthetic:
         assert result.r_squared > 0.95, (
             f"Expected R^2 > 0.95 for clean data, got {result.r_squared}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests 13-15: Weighted MCMC likelihood and quality_flag
+# ---------------------------------------------------------------------------
+
+class TestWeightedLogLikelihoodWithSigma:
+    """Tests for _log_likelihood_with_sigma with motion weights."""
+
+    def test_weights_ones_matches_unweighted(self) -> None:
+        """weights=np.ones(n) should produce the same result as weights=None."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ToftsModel()
+        fitter = BayesianPKFitter(model)
+
+        params = np.array([0.1, 0.2])
+        sigma = 0.01
+
+        ll_unweighted = fitter._log_likelihood_with_sigma(
+            params, tissue_curve, aif, time_points, sigma, weights=None,
+        )
+        ll_ones = fitter._log_likelihood_with_sigma(
+            params, tissue_curve, aif, time_points, sigma,
+            weights=np.ones(len(tissue_curve)),
+        )
+
+        assert np.isclose(ll_unweighted, ll_ones, rtol=1e-10), (
+            f"Unweighted={ll_unweighted}, ones={ll_ones}"
+        )
+
+    def test_half_weights_halves_effective_n(self) -> None:
+        """weights=0.5*np.ones(n) should halve the effective sample size,
+        so the log-likelihood is approximately half (n_eff scales both terms)."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ToftsModel()
+        fitter = BayesianPKFitter(model)
+
+        params = np.array([0.1, 0.2])
+        sigma = 0.01
+
+        ll_full = fitter._log_likelihood_with_sigma(
+            params, tissue_curve, aif, time_points, sigma, weights=None,
+        )
+        ll_half = fitter._log_likelihood_with_sigma(
+            params, tissue_curve, aif, time_points, sigma,
+            weights=0.5 * np.ones(len(tissue_curve)),
+        )
+
+        # Both should be finite
+        assert np.isfinite(ll_full) and np.isfinite(ll_half)
+        # Half-weighted should be approximately half the magnitude
+        # (n_eff scales both the normalization and sum-of-squares terms)
+        assert np.isclose(ll_half, ll_full / 2.0, rtol=0.01), (
+            f"Expected half-weighted ({ll_half}) ≈ full/2 ({ll_full / 2.0})"
+        )
+
+
+class TestFitMCMCWeights:
+    """Test that fit_mcmc accepts and uses weights."""
+
+    def test_fit_mcmc_accepts_weights(self) -> None:
+        """fit_mcmc should run without error when weights are provided."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ToftsModel()
+        fitter = BayesianPKFitter(model)
+
+        weights = np.ones(len(tissue_curve))
+        weights[5] = 0.1  # Downweight one frame
+
+        result = fitter.fit_mcmc(
+            tissue_curve, aif, time_points,
+            sloppy=True, weights=weights,
+        )
+
+        assert "Ktrans" in result.parameters
+        assert "ve" in result.parameters
+        assert result.fitting_method == "mcmc"
+
+    def test_fit_mcmc_weights_none_works(self) -> None:
+        """fit_mcmc with weights=None should behave identically to no weights."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ToftsModel()
+        fitter = BayesianPKFitter(model)
+
+        result = fitter.fit_mcmc(
+            tissue_curve, aif, time_points,
+            sloppy=True, weights=None,
+        )
+
+        assert "Ktrans" in result.parameters
+        assert result.fitting_method == "mcmc"
+
+
+class TestMCMCQualityFlag:
+    """Test that fit_mcmc sets quality_flag based on convergence diagnostics."""
+
+    def test_quality_flag_set_on_converged(self) -> None:
+        """A converged MCMC run should have quality_flag='good'."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ToftsModel()
+        fitter = BayesianPKFitter(model)
+
+        result = fitter.fit_mcmc(
+            tissue_curve, aif, time_points,
+            n_samples=200,
+        )
+
+        # If converged, quality_flag should be "good"
+        if result.converged:
+            assert result.quality_flag == "good"
+        else:
+            assert result.quality_flag == "poor_convergence"
+
+    def test_quality_flag_always_set(self) -> None:
+        """fit_mcmc should always set quality_flag (not rely on default)."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ToftsModel()
+        fitter = BayesianPKFitter(model)
+
+        result = fitter.fit_mcmc(
+            tissue_curve, aif, time_points, sloppy=True,
+        )
+
+        # quality_flag must be explicitly set (not the dataclass default)
+        assert result.quality_flag in ("good", "poor_convergence")
+
+    def test_rhat_ess_populated(self) -> None:
+        """fit_mcmc should populate rhat and ess dicts."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ToftsModel()
+        fitter = BayesianPKFitter(model)
+
+        result = fitter.fit_mcmc(
+            tissue_curve, aif, time_points, sloppy=True,
+        )
+
+        assert isinstance(result.rhat, dict)
+        assert isinstance(result.ess, dict)
+        assert len(result.rhat) > 0, "rhat should be populated for MCMC"
+        assert len(result.ess) > 0, "ess should be populated for MCMC"
+        assert "Ktrans" in result.rhat
+        assert "ve" in result.rhat
