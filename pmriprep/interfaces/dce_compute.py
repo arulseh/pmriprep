@@ -201,6 +201,7 @@ def _fit_single_voxel(
     model_name = _worker_ctx["model_name"]
     motion_weights = _worker_ctx["motion_weights"]
     sloppy = _worker_ctx.get("sloppy", False)
+    is_auto = _worker_ctx.get("is_auto", False)
 
     # Validate voxel (skip concentration-based variation check — raw signal
     # variation is filtered upstream in ComputeDCEMaps, matching perf-plus)
@@ -249,22 +250,37 @@ def _fit_single_voxel(
             vp_prior = create_vp_prior_from_dsc(
                 fixed_vp, relative_uncertainty=constraint_vp_uncertainty
             )
-            soft_fitter = BayesianPKFitter(
-                model, vp_prior_override=vp_prior
-            )
-            if bayesian == "map":
+            if is_auto:
+                # BIC mode: use NLLS constrained for fair comparison
+                # MAP refinement happens post-BIC-selection
+                if hasattr(model, "fit_constrained"):
+                    result = model.fit_constrained(
+                        prepared_curve, aif, time_points, fixed_vp=fixed_vp,
+                        weights=motion_weights,
+                    )
+                # Flag constrained even if ceiling model has no vp (e.g. Tofts)
+                # so BIC candidates WITH vp (Patlak, ETofts) get constrained
+                constrained = True
+            elif bayesian == "map":
+                soft_fitter = BayesianPKFitter(
+                    model, vp_prior_override=vp_prior
+                )
                 result = soft_fitter.fit_map(
                     prepared_curve, aif, time_points,
                     compute_uncertainties=not sloppy,
                     weights=motion_weights,
                     sloppy=sloppy,
                 )
-            else:
+                constrained = True
+            else:  # mcmc
+                soft_fitter = BayesianPKFitter(
+                    model, vp_prior_override=vp_prior
+                )
                 result = soft_fitter.fit_mcmc(
                     prepared_curve, aif, time_points, n_samples=mcmc_samples,
                     sloppy=sloppy,
                 )
-            constrained = True
+                constrained = True
 
         # SOFT constraint with NLLS: fall back to hard constraint
         elif (
@@ -281,7 +297,8 @@ def _fit_single_voxel(
 
         # Unconstrained fallback
         if result is None:
-            if bayesian == "none":
+            if is_auto or bayesian == "none":
+                # is_auto: NLLS for BIC comparison; MAP applied to winner later
                 result = model.fit(
                     prepared_curve, aif, time_points,
                     weights=motion_weights,
@@ -307,7 +324,6 @@ def _fit_single_voxel(
 
         # N-model BIC selection (auto mode)
         bic_candidates = _worker_ctx.get("bic_candidates", {})
-        is_auto = _worker_ctx.get("is_auto", False)
 
         if is_auto and bic_candidates:
             all_results = [result]  # primary model already fitted
@@ -319,8 +335,8 @@ def _fit_single_voxel(
                             prepared_curve, aif, time_points, fixed_vp=fixed_vp,
                             weights=motion_weights,
                         )
-                    elif constrained and cname == "tofts":
-                        # Tofts has no vp — unaffected by constraint
+                    elif constrained and not hasattr(cmodel, "fit_constrained"):
+                        # Model has no vp to constrain (e.g. Tofts) — fit unconstrained
                         cand_result = cmodel.fit(
                             prepared_curve, aif, time_points,
                             weights=motion_weights,
@@ -335,6 +351,10 @@ def _fit_single_voxel(
                     if cand_result.converged and np.isfinite(cand_result.bic):
                         all_results.append(cand_result)
                 except Exception:
+                    logger.debug(
+                        "BIC candidate %s failed at (%d,%d,%d)",
+                        cname, x, y, z, exc_info=True,
+                    )
                     continue
 
             # Select winner = lowest BIC
@@ -353,8 +373,8 @@ def _fit_single_voxel(
                 else np.nan
             )
 
-            # MAP refinement of winner if it differs from primary
-            if best is not result and bayesian == "map":
+            # MAP refinement of BIC winner
+            if bayesian == "map":
                 model_map = _worker_ctx.get("model_map", {})
                 winner_model_cls = model_map.get(best.model_name)
                 if winner_model_cls is not None:
@@ -371,7 +391,33 @@ def _fit_single_voxel(
                             weights=motion_weights, sloppy=sloppy,
                         )
                     except Exception:
-                        pass  # Keep NLLS winner on MAP failure
+                        logger.debug(
+                            "MAP refinement failed at (%d,%d,%d), keeping NLLS",
+                            x, y, z, exc_info=True,
+                        )
+
+            # MCMC refinement of BIC winner
+            elif bayesian == "mcmc":
+                model_map = _worker_ctx.get("model_map", {})
+                winner_model_cls = model_map.get(best.model_name)
+                if winner_model_cls is not None:
+                    winner_model = winner_model_cls()
+                    vp_prior_kw = (
+                        {"vp_prior_override": vp_prior}
+                        if vp_prior is not None else {}
+                    )
+                    winner_fitter = BayesianPKFitter(winner_model, **vp_prior_kw)
+                    try:
+                        # Note: fit_mcmc does not accept weights (existing limitation)
+                        best = winner_fitter.fit_mcmc(
+                            prepared_curve, aif, time_points,
+                            n_samples=mcmc_samples, sloppy=sloppy,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "MCMC refinement failed at (%d,%d,%d), keeping NLLS",
+                            x, y, z, exc_info=True,
+                        )
 
             result = best
 

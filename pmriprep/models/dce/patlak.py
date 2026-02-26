@@ -110,7 +110,7 @@ class PatlakModel(PKModel):
             ModelParameter(
                 name="Ktrans",
                 bounds=(0.0, 5.0),  # Match perf-plus Patlak bounds
-                typical_range=(0.01, 0.5),
+                typical_range=(0.001, 0.1),
                 log_transform=False,
                 description="Volume transfer constant (influx)",
                 units="min^-1",

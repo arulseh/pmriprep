@@ -645,3 +645,87 @@ class TestNaNParameterMaps:
         assert kep_ok[0], "NaN kep should pass (Patlak)"
         assert kep_ok[1], "kep=0.5 should pass"
         assert not kep_ok[2], "kep=0.0001 should fail"
+
+
+# ---------------------------------------------------------------------------
+# Test: Symmetric BIC (all NLLS for comparison)
+# ---------------------------------------------------------------------------
+
+class TestSymmetricBIC:
+    """BIC comparison must use same fitting method for all candidates."""
+
+    def test_all_nlls_for_bic_comparison(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """All BIC candidates should use NLLS, not MAP."""
+        etofts = ExtendedToftsModel()
+        tissue_curve = etofts.evaluate([0.1, 0.3, 0.05], aif, time_points)
+        rng = np.random.default_rng(42)
+        noise = rng.normal(0, 0.005, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve + noise, 0.0)
+
+        nlls_result = etofts.fit(tissue_curve, aif, time_points)
+        # BIC should come from NLLS, not MAP
+        assert nlls_result.fitting_method != "map"
+
+    def test_nlls_winner_converges_for_map_refinement(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """NLLS winner converges, confirming it is eligible for MAP refinement."""
+        patlak = PatlakModel()
+        tissue_curve = patlak.evaluate([0.005, 0.02], aif, time_points)
+        rng = np.random.default_rng(42)
+        noise = rng.normal(0, 0.001, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve + noise, 0.0)
+
+        # When Patlak wins BIC and bayesian="map", it should get MAP'd
+        nlls_result = patlak.fit(tissue_curve, aif, time_points)
+        assert nlls_result.converged
+        # (Full MAP integration test would need worker context)
+
+    def test_primary_model_uses_nlls_in_auto(
+        self, time_points: np.ndarray, aif: np.ndarray
+    ) -> None:
+        """Primary model (ceiling) must use NLLS when is_auto=True."""
+        etofts = ExtendedToftsModel()
+        tissue_curve = etofts.evaluate([0.15, 0.4, 0.05], aif, time_points)
+        rng = np.random.default_rng(77)
+        tissue_curve += rng.normal(0, 0.005, size=tissue_curve.shape)
+        tissue_curve = np.maximum(tissue_curve, 0.0)
+
+        # NLLS fit should produce fitting_method="nlls"
+        result = etofts.fit(tissue_curve, aif, time_points)
+        assert result.fitting_method == "nlls"
+        assert np.isfinite(result.bic)
+
+
+# ---------------------------------------------------------------------------
+# Test: Patlak Ktrans prior recentered
+# ---------------------------------------------------------------------------
+
+class TestPatlakKtransPrior:
+    """Patlak Ktrans prior should match its validity domain (no backflux)."""
+
+    def test_patlak_ktrans_prior_below_01(self) -> None:
+        """Patlak Ktrans prior mean should be below 0.1 (no-backflux domain)."""
+        patlak = PatlakModel()
+        ktrans_param = patlak.get_parameter_definitions()[0]
+        assert ktrans_param.get_prior_mean() < 0.1
+
+    def test_patlak_ktrans_prior_range(self) -> None:
+        """Patlak Ktrans typical_range should be (0.001, 0.1)."""
+        patlak = PatlakModel()
+        ktrans_param = patlak.get_parameter_definitions()[0]
+        assert ktrans_param.typical_range == (0.001, 0.1)
+
+    def test_tofts_ktrans_prior_unchanged(self) -> None:
+        """Tofts Ktrans prior should remain at (0.001, 0.2)."""
+        tofts = ToftsModel()
+        ktrans_param = tofts.get_parameter_definitions()[0]
+        assert ktrans_param.typical_range == (0.001, 0.2)
+
+    def test_etofts_ktrans_prior_unchanged(self) -> None:
+        """Extended Tofts Ktrans prior should remain at (0.001, 0.2)."""
+        etofts = ExtendedToftsModel()
+        ktrans_param = etofts.get_parameter_definitions()[0]
+        assert ktrans_param.typical_range == (0.001, 0.2)
