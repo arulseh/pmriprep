@@ -1043,7 +1043,7 @@ class B1Mapping(SimpleInterface):
         # -----------------------------------------------------------------
         # QC metrics
         # -----------------------------------------------------------------
-        b1_in_roi = b1_map[b1_map > 0]
+        b1_in_roi = b1_map[valid_mask]
         b1_clean = b1_in_roi[(b1_in_roi > 0.5) & (b1_in_roi < 2.0)]
 
         if len(b1_clean) > 0:
