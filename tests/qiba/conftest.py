@@ -5,7 +5,7 @@ CTH (capillary transit time heterogeneity) residue functions (Mouridsen 2006),
 and published tissue parameter tables (Semmineh 2017, Boxerman 2020).
 
 Phase 1: Code-generated synthetic data for CI.
-Phase 2: External GBM-DSC-MRI-DRO (Phantomas/BNI) from qibadscdro.rsna.org.
+Phase 4: TCIA GBM-DSC-MRI-DRO (Semmineh 2017) for external validation.
 
 References:
     Patil V, Johnson G. An improved model for describing the contrast
@@ -31,9 +31,9 @@ References:
 """
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -51,7 +51,6 @@ from tests.dro.conftest import (
 # =============================================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-QIBA_DRO_ROOT = PROJECT_ROOT / "sourcedata" / "qiba" / "gbm_dsc_dro"
 
 # Re-export for use by test_dsc_dro.py
 __all__ = [
@@ -66,19 +65,14 @@ __all__ = [
     "add_gaussian_noise",
     "dsc_forward_model",
     "make_exponential_residue",
-    "QIBA_DRO_ROOT",
-    "skip_no_qiba_dro",
-    "QIBADROData",
-    "load_qiba_dro",
     "deconvolve_dro_batch",
-    # RILMAYO
-    "RILMAYO_DRO_ROOT",
-    "RILMAYOConfig",
-    "RILMAYO_CONFIGS",
-    "RILMAYODROData",
-    "rilmayo_config_available",
-    "skip_no_rilmayo_dro",
-    "load_rilmayo_dro",
+    # TCIA GBM-DSC-MRI-DRO (Phase 4)
+    "TCIA_DRO_ROOT",
+    "TCIAConfig",
+    "TCIADROData",
+    "load_tcia_dro",
+    "skip_no_tcia_dro",
+    "deconvolve_tcia_regions",
 ]
 
 
@@ -393,76 +387,8 @@ def qiba_aif_no_recirc() -> (
 
 
 # =============================================================================
-# Phase 2: External GBM-DSC-MRI-DRO (Phantomas/BNI)
+# Batch deconvolution helper (used by Phase 1 and Phase 4 tests)
 # =============================================================================
-
-skip_no_qiba_dro = pytest.mark.skipif(
-    not (QIBA_DRO_ROOT / "concentration.npz").exists(),
-    reason="QIBA GBM-DSC-MRI-DRO data not found "
-    f"(expected at {QIBA_DRO_ROOT / 'concentration.npz'})",
-)
-
-
-@dataclass
-class QIBADROData:
-    """Loaded QIBA GBM-DSC-MRI-DRO data.
-
-    Attributes:
-        delta_r2: DeltaR2* concentration, shape (X, Y, Z, T).
-        baseline: Baseline signal S0, shape (X, Y, Z).
-        aif: AIF deltaR2* curve, shape (T,).
-        time_sec: Time array in seconds, shape (T,).
-        dt: Temporal resolution in seconds.
-        roi_masks: Dict of boolean ROI masks (tissue_high, tissue_low, background).
-        metadata: Acquisition metadata dict.
-    """
-
-    delta_r2: npt.NDArray[np.floating]
-    baseline: npt.NDArray[np.floating]
-    aif: npt.NDArray[np.floating]
-    time_sec: npt.NDArray[np.floating]
-    dt: float
-    roi_masks: Dict[str, npt.NDArray[np.bool_]]
-    metadata: Dict[str, Any]
-
-
-_qiba_dro_cache: Optional[QIBADROData] = None
-
-
-def load_qiba_dro() -> QIBADROData:
-    """Load converted QIBA DRO data with session-scoped caching.
-
-    Returns:
-        QIBADROData with all arrays and metadata.
-
-    Raises:
-        FileNotFoundError: If converted NPZ files don't exist.
-    """
-    global _qiba_dro_cache
-    if _qiba_dro_cache is not None:
-        return _qiba_dro_cache
-
-    conc = np.load(QIBA_DRO_ROOT / "concentration.npz")
-    aif_data = np.load(QIBA_DRO_ROOT / "aif.npz")
-    mask_data = np.load(QIBA_DRO_ROOT / "roi_masks.npz")
-
-    with open(QIBA_DRO_ROOT / "metadata.json") as f:
-        metadata = json.load(f)
-
-    _qiba_dro_cache = QIBADROData(
-        delta_r2=conc["delta_r2"].astype(np.float64),
-        baseline=conc["baseline"].astype(np.float64),
-        aif=aif_data["aif_delta_r2"].astype(np.float64),
-        time_sec=aif_data["time_sec"].astype(np.float64),
-        dt=float(metadata["dt_sec"]),
-        roi_masks={
-            "tissue_high": mask_data["tissue_high"].astype(bool),
-            "tissue_low": mask_data["tissue_low"].astype(bool),
-            "background": mask_data["background"].astype(bool),
-        },
-        metadata=metadata,
-    )
-    return _qiba_dro_cache
 
 
 def deconvolve_dro_batch(
@@ -512,145 +438,117 @@ def deconvolve_dro_batch(
 
 
 # =============================================================================
-# Phase 3: RILMAYO DSC-MRI DRO (leakage + deconvolution validation)
+# Phase 4: TCIA GBM-DSC-MRI-DRO (Semmineh 2017)
 # =============================================================================
 
-RILMAYO_DRO_ROOT = PROJECT_ROOT / "sourcedata" / "qiba" / "rilmayo_dsc_dro"
+TCIA_DRO_ROOT = PROJECT_ROOT / "sourcedata" / "qiba" / "tcia_gbm_dsc_dro"
 
 
 @dataclass(frozen=True)
-class RILMAYOConfig:
-    """RILMAYO DRO configuration with ground truth parameters.
-
-    All configs share: TE=0.05s, TR=0.1s, S0=100, t0=10.0s, B0=1.5T.
+class TCIAConfig:
+    """TCIA GBM-DSC-MRI-DRO configuration.
 
     Attributes:
-        name: Config identifier (directory name).
-        flow: Ground truth flow (CBF proxy, mL/100g/min).
-        leak: Ground truth K2 leakage parameter.
-        method: Residue function shape ("mono" = exponential, "box" = boxcar).
-        noise: Noise level (0 = noiseless).
-        te: Echo time in seconds.
-        tr: Repetition time in seconds.
-        s0: Baseline signal intensity.
-        t0: Bolus arrival time in seconds.
-        b0: Static field strength in Tesla.
+        name: Config directory name.
+        tr_ms: Repetition time in milliseconds.
+        te_ms: Echo time in milliseconds.
+        fa_deg: Flip angle in degrees.
+        preload: Preload dose ("none", "quarter", "half", "full").
+        bolus_dose: Bolus dose ("full", "three_quarter", "half").
+        b0_tesla: Static field strength in Tesla.
     """
 
     name: str
-    flow: int
-    leak: float
-    method: str = "mono"
-    noise: int = 0
-    te: float = 0.05
-    tr: float = 0.1
-    s0: int = 100
-    t0: float = 10.0
-    b0: float = 1.5
-
-
-RILMAYO_CONFIGS: Dict[str, RILMAYOConfig] = {
-    "flow40_leak005": RILMAYOConfig(
-        name="flow40_leak005", flow=40, leak=0.05,
-    ),
-    "flow60_leak002": RILMAYOConfig(
-        name="flow60_leak002", flow=60, leak=0.02,
-    ),
-    "flow40_leak002": RILMAYOConfig(
-        name="flow40_leak002", flow=40, leak=0.02,
-    ),
-    "flow70_leak002": RILMAYOConfig(
-        name="flow70_leak002", flow=70, leak=0.02,
-    ),
-    "flow60_leak005": RILMAYOConfig(
-        name="flow60_leak005", flow=60, leak=0.05,
-    ),
-    "flow60_box_leak002": RILMAYOConfig(
-        name="flow60_box_leak002", flow=60, leak=0.02, method="box",
-    ),
-    "flow60_noise2_leak002": RILMAYOConfig(
-        name="flow60_noise2_leak002", flow=60, leak=0.02, noise=2,
-    ),
-}
+    tr_ms: float
+    te_ms: float
+    fa_deg: float
+    preload: str
+    bolus_dose: str
+    b0_tesla: float
 
 
 @dataclass
-class RILMAYODROData:
-    """Loaded RILMAYO DRO data for a single config.
+class TCIADROData:
+    """Loaded TCIA DRO data for a single configuration.
 
     Attributes:
-        delta_r2: Uncorrected deltaR2* concentration, shape (X, Y, Z, T).
-        delta_r2_corrected: K2-corrected deltaR2*, shape (X, Y, Z, T).
-        baseline: Baseline signal S0, shape (X, Y, Z).
+        delta_r2: DeltaR2* concentration, shape (230, 200, T).
+        baseline: Baseline signal intensity, shape (230, 200).
         aif: AIF deltaR2* curve, shape (T,).
-        time_sec: Time array in seconds, shape (T,).
+        time_sec: Time vector in seconds, shape (T,).
         dt: Temporal resolution in seconds.
-        tissue_mask: Boolean tissue mask, shape (X, Y, Z).
-        config: RILMAYO config for this dataset.
-        metadata: Acquisition metadata dict.
+        roi_masks: Dict of boolean masks {tumor_leak, tumor_noleak, nawm, aif_region}.
+        config: TCIAConfig with acquisition parameters.
+        metadata: Full metadata dict from metadata.json.
     """
 
     delta_r2: npt.NDArray[np.floating]
-    delta_r2_corrected: npt.NDArray[np.floating]
     baseline: npt.NDArray[np.floating]
     aif: npt.NDArray[np.floating]
     time_sec: npt.NDArray[np.floating]
     dt: float
-    tissue_mask: npt.NDArray[np.bool_]
-    config: RILMAYOConfig
+    roi_masks: Dict[str, npt.NDArray[np.bool_]]
+    config: TCIAConfig
     metadata: Dict[str, Any]
 
 
-_rilmayo_dro_cache: Dict[str, RILMAYODROData] = {}
+# Cache to avoid reloading
+_tcia_dro_cache: Dict[str, TCIADROData] = {}
 
 
-def rilmayo_config_available(config_name: str) -> bool:
-    """Check if a RILMAYO DRO config has been converted.
+def _parse_tcia_config_name(name: str) -> TCIAConfig:
+    """Parse TCIAConfig from standardized directory name.
 
-    Args:
-        config_name: Config identifier (e.g. "flow40_leak005").
-
-    Returns:
-        True if concentration.npz exists for this config.
+    Example: b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg
     """
-    return (RILMAYO_DRO_ROOT / config_name / "concentration.npz").exists()
+    import re
+
+    b0_match = re.search(r"b0_(\d+)T", name)
+    pre_match = re.search(r"pre_(\w+?)_bolus", name)
+    bolus_match = re.search(r"bolus_(\w+?)_TR", name)
+    tr_match = re.search(r"TR(\d+)ms", name)
+    te_match = re.search(r"TE(\d+)ms", name)
+    fa_match = re.search(r"FA(\d+)deg", name)
+
+    if not all([b0_match, pre_match, bolus_match, tr_match, te_match, fa_match]):
+        raise ValueError(f"Cannot parse TCIA config name: {name}")
+
+    b0_int = int(b0_match.group(1))
+    b0_tesla = b0_int / 10.0 if b0_int > 10 else float(b0_int)
+
+    return TCIAConfig(
+        name=name,
+        tr_ms=float(tr_match.group(1)),
+        te_ms=float(te_match.group(1)),
+        fa_deg=float(fa_match.group(1)),
+        preload=pre_match.group(1),
+        bolus_dose=bolus_match.group(1),
+        b0_tesla=b0_tesla,
+    )
 
 
-skip_no_rilmayo_dro = pytest.mark.skipif(
-    not rilmayo_config_available("flow40_leak005"),
-    reason="RILMAYO DRO data not found "
-    f"(expected at {RILMAYO_DRO_ROOT / 'flow40_leak005' / 'concentration.npz'})",
-)
-
-
-def load_rilmayo_dro(config_name: str) -> RILMAYODROData:
-    """Load converted RILMAYO DRO data with caching.
+def load_tcia_dro(config_name: str) -> TCIADROData:
+    """Load converted TCIA DRO data with caching.
 
     Args:
-        config_name: Config identifier (e.g. "flow40_leak005").
+        config_name: Config directory name
+            (e.g. "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg").
 
     Returns:
-        RILMAYODROData with all arrays, metadata, and config.
+        TCIADROData with all arrays, metadata, and config.
 
     Raises:
         FileNotFoundError: If converted NPZ files don't exist.
-        KeyError: If config_name is not a known RILMAYO config.
     """
-    if config_name in _rilmayo_dro_cache:
-        return _rilmayo_dro_cache[config_name]
+    if config_name in _tcia_dro_cache:
+        return _tcia_dro_cache[config_name]
 
-    if config_name not in RILMAYO_CONFIGS:
-        raise KeyError(
-            f"Unknown RILMAYO config: {config_name}. "
-            f"Available: {list(RILMAYO_CONFIGS.keys())}"
-        )
-
-    config_dir = RILMAYO_DRO_ROOT / config_name
+    config_dir = TCIA_DRO_ROOT / config_name
     conc_file = config_dir / "concentration.npz"
 
     if not conc_file.exists():
         raise FileNotFoundError(
-            f"RILMAYO DRO data not found for {config_name}: {conc_file}"
+            f"TCIA DRO data not found for {config_name}: {conc_file}"
         )
 
     conc = np.load(conc_file)
@@ -660,19 +558,79 @@ def load_rilmayo_dro(config_name: str) -> RILMAYODROData:
     with open(config_dir / "metadata.json") as f:
         metadata = json.load(f)
 
-    config = RILMAYO_CONFIGS[config_name]
+    config = _parse_tcia_config_name(config_name)
 
-    data = RILMAYODROData(
+    roi_masks = {
+        "tumor_leak": mask_data["tumor_leak"].astype(bool),
+        "tumor_noleak": mask_data["tumor_noleak"].astype(bool),
+        "nawm": mask_data["nawm"].astype(bool),
+        "aif_region": mask_data["aif_region"].astype(bool),
+    }
+
+    data = TCIADROData(
         delta_r2=conc["delta_r2"].astype(np.float64),
-        delta_r2_corrected=conc["delta_r2_corrected"].astype(np.float64),
         baseline=conc["baseline"].astype(np.float64),
         aif=aif_data["aif_delta_r2"].astype(np.float64),
         time_sec=aif_data["time_sec"].astype(np.float64),
         dt=float(metadata["dt_sec"]),
-        tissue_mask=mask_data["tissue"].astype(bool),
+        roi_masks=roi_masks,
         config=config,
         metadata=metadata,
     )
 
-    _rilmayo_dro_cache[config_name] = data
+    _tcia_dro_cache[config_name] = data
     return data
+
+
+# Default consensus config name
+TCIA_CONSENSUS_15T = "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg"
+TCIA_CONSENSUS_3T = "b0_30T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg"
+
+skip_no_tcia_dro = pytest.mark.skipif(
+    not (TCIA_DRO_ROOT / TCIA_CONSENSUS_15T / "concentration.npz").exists(),
+    reason="TCIA GBM-DSC-MRI-DRO data not converted "
+    f"(expected at {TCIA_DRO_ROOT / TCIA_CONSENSUS_15T / 'concentration.npz'})",
+)
+
+
+def deconvolve_tcia_regions(
+    dro: TCIADROData,
+    method: str,
+) -> Dict[str, Dict[str, float]]:
+    """Deconvolve all TCIA ROI regions against the explicit AIF.
+
+    Extracts voxels from each tissue ROI mask, deconvolves against the
+    provided AIF, and returns per-region median perfusion parameters.
+
+    Args:
+        dro: Loaded TCIA DRO data.
+        method: Deconvolution method ("ssvd", "osvd", "tikhonov").
+
+    Returns:
+        Dict keyed by region name, each containing:
+            cbf: Median CBF (mL/100g/min × calibration).
+            cbv: Median CBV (raw = CBF × MTT).
+            mtt: Median MTT (seconds).
+    """
+    results = {}
+
+    for region in ["tumor_leak", "tumor_noleak", "nawm"]:
+        mask = dro.roi_masks[region]
+        curves = dro.delta_r2[mask]
+
+        _, cbf, cbv, mtt = deconvolve_dro_batch(
+            curves, dro.aif, dro.dt, method
+        )
+
+        valid = np.isfinite(cbf) & (cbf > 0)
+        if valid.sum() == 0:
+            results[region] = {"cbf": 0.0, "cbv": 0.0, "mtt": 0.0}
+            continue
+
+        results[region] = {
+            "cbf": float(np.median(cbf[valid])),
+            "cbv": float(np.median(cbv[valid])),
+            "mtt": float(np.median(mtt[valid & np.isfinite(mtt) & (mtt > 0)])),
+        }
+
+    return results
