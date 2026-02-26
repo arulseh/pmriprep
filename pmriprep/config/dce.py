@@ -11,7 +11,7 @@ class DCEConfig:
 
     This dataclass contains all parameters for DCE perfusion processing,
     including registration, AIF detection, structural imaging, T1 mapping,
-    processing options, model selection, and resource settings.
+    processing options, pharmacokinetic modeling, and resource settings.
 
     Attributes
     ----------
@@ -59,7 +59,8 @@ class DCEConfig:
     tsnr_threshold : float
         tSNR threshold for voxel inclusion (0 = no threshold).
     model : str
-        Pharmacokinetic model: auto, tofts, extended_tofts, patlak, 2cxm.
+        Pharmacokinetic model: auto (per-voxel BIC selection),
+        tofts, extended_tofts, patlak, or 2cxm.
     bayesian : str
         Bayesian inference method: none, map, or mcmc.
     mcmc_samples : int

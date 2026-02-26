@@ -107,6 +107,7 @@ def _init_worker(
     motion_weights: Optional[npt.NDArray[np.floating]] = None,
     sloppy: bool = False,
     random_seed: Optional[int] = None,
+    candidate_names: Optional[list[str]] = None,
 ) -> None:
     """Initialize per-worker model and fitter objects (called once per process)."""
     import warnings
@@ -142,6 +143,13 @@ def _init_worker(
     if bayesian != "none":
         fitter = BayesianPKFitter(model)
 
+    # BIC model selection: instantiate all candidate models
+    bic_candidates: dict[str, Any] = {}
+    is_auto = bool(candidate_names)
+    for cname in (candidate_names or []):
+        if cname != model_name:
+            bic_candidates[cname] = model_map[cname]()
+
     _worker_ctx["aif"] = aif
     _worker_ctx["time_points"] = time_points
     _worker_ctx["model"] = model
@@ -155,6 +163,9 @@ def _init_worker(
     _worker_ctx["save_fitted_curves"] = save_fitted_curves
     _worker_ctx["motion_weights"] = motion_weights
     _worker_ctx["sloppy"] = sloppy
+    _worker_ctx["bic_candidates"] = bic_candidates
+    _worker_ctx["is_auto"] = is_auto
+    _worker_ctx["model_map"] = model_map
     _worker_ctx["BayesianPKFitter"] = BayesianPKFitter
     _worker_ctx["create_vp_prior_from_dsc"] = create_vp_prior_from_dsc
     _worker_ctx["ConstraintMode"] = ConstraintMode
@@ -209,27 +220,34 @@ def _fit_single_voxel(
     try:
         result = None
         constrained = False
+        fixed_vp: Optional[float] = None
+        vp_prior = None  # Hoisted for BIC winner MAP refinement
+        delta_bic = np.nan
+
+        # Determine constraint state
+        if voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
+            fixed_vp = voxel_vp
 
         # HARD constraint: use fit_constrained with fixed vp
         if (
-            voxel_vp is not None
+            fixed_vp is not None
             and constraint_mode == ConstraintMode.HARD
             and hasattr(model, "fit_constrained")
         ):
             result = model.fit_constrained(
-                prepared_curve, aif, time_points, fixed_vp=voxel_vp,
+                prepared_curve, aif, time_points, fixed_vp=fixed_vp,
                 weights=motion_weights,
             )
             constrained = True
 
         # SOFT constraint: Bayesian with informative vp prior
         elif (
-            voxel_vp is not None
+            fixed_vp is not None
             and constraint_mode == ConstraintMode.SOFT
             and bayesian != "none"
         ):
             vp_prior = create_vp_prior_from_dsc(
-                voxel_vp, relative_uncertainty=constraint_vp_uncertainty
+                fixed_vp, relative_uncertainty=constraint_vp_uncertainty
             )
             soft_fitter = BayesianPKFitter(
                 model, vp_prior_override=vp_prior
@@ -250,13 +268,13 @@ def _fit_single_voxel(
 
         # SOFT constraint with NLLS: fall back to hard constraint
         elif (
-            voxel_vp is not None
+            fixed_vp is not None
             and constraint_mode == ConstraintMode.SOFT
             and bayesian == "none"
             and hasattr(model, "fit_constrained")
         ):
             result = model.fit_constrained(
-                prepared_curve, aif, time_points, fixed_vp=voxel_vp,
+                prepared_curve, aif, time_points, fixed_vp=fixed_vp,
                 weights=motion_weights,
             )
             constrained = True
@@ -287,17 +305,91 @@ def _fit_single_voxel(
                     weights=motion_weights,
                 )
 
+        # N-model BIC selection (auto mode)
+        bic_candidates = _worker_ctx.get("bic_candidates", {})
+        is_auto = _worker_ctx.get("is_auto", False)
+
+        if is_auto and bic_candidates:
+            all_results = [result]  # primary model already fitted
+
+            for cname, cmodel in bic_candidates.items():
+                try:
+                    if constrained and fixed_vp is not None and hasattr(cmodel, "fit_constrained"):
+                        cand_result = cmodel.fit_constrained(
+                            prepared_curve, aif, time_points, fixed_vp=fixed_vp,
+                            weights=motion_weights,
+                        )
+                    elif constrained and cname == "tofts":
+                        # Tofts has no vp — unaffected by constraint
+                        cand_result = cmodel.fit(
+                            prepared_curve, aif, time_points,
+                            weights=motion_weights,
+                        )
+                    elif not constrained:
+                        cand_result = cmodel.fit(
+                            prepared_curve, aif, time_points,
+                            weights=motion_weights,
+                        )
+                    else:
+                        continue
+                    if cand_result.converged and np.isfinite(cand_result.bic):
+                        all_results.append(cand_result)
+                except Exception:
+                    continue
+
+            # Select winner = lowest BIC
+            best = min(
+                all_results,
+                key=lambda r: r.bic if np.isfinite(r.bic) else np.inf,
+            )
+
+            # Delta-BIC: positive = winner's margin over runner-up
+            sorted_bics = sorted(
+                r.bic for r in all_results if np.isfinite(r.bic)
+            )
+            delta_bic = (
+                sorted_bics[1] - sorted_bics[0]
+                if len(sorted_bics) > 1
+                else np.nan
+            )
+
+            # MAP refinement of winner if it differs from primary
+            if best is not result and bayesian == "map":
+                model_map = _worker_ctx.get("model_map", {})
+                winner_model_cls = model_map.get(best.model_name)
+                if winner_model_cls is not None:
+                    winner_model = winner_model_cls()
+                    vp_prior_kw = (
+                        {"vp_prior_override": vp_prior}
+                        if vp_prior is not None else {}
+                    )
+                    winner_fitter = BayesianPKFitter(winner_model, **vp_prior_kw)
+                    try:
+                        best = winner_fitter.fit_map(
+                            prepared_curve, aif, time_points,
+                            compute_uncertainties=not sloppy,
+                            weights=motion_weights, sloppy=sloppy,
+                        )
+                    except Exception:
+                        pass  # Keep NLLS winner on MAP failure
+
+            result = best
+
+        # Determine effective model name for this voxel
+        selected_model_name = result.model_name
+
         # Build output dict
-        has_vp = model_name in ("extended_tofts", "patlak", "2cxm")
+        effective_model = selected_model_name
+        has_vp = effective_model in ("extended_tofts", "patlak", "2cxm")
         uncertainties = {}
         if result.has_uncertainty():
             uncertainties["Ktrans"] = result.get_uncertainty("Ktrans", 0.0)
-            if model_name not in ("patlak",):
+            if effective_model not in ("patlak",):
                 uncertainties["ve"] = result.get_uncertainty("ve", 0.0)
             if has_vp:
                 uncertainties["vp"] = result.get_uncertainty("vp", 0.0)
             # 2CXM-specific: Fp and PS uncertainties
-            if model_name == "2cxm":
+            if effective_model == "2cxm":
                 uncertainties["Fp"] = result.get_uncertainty("Fp", 0.0)
                 uncertainties["PS"] = result.get_uncertainty("PS", 0.0)
 
@@ -316,6 +408,8 @@ def _fit_single_voxel(
             "failed": False,
             "failure_reason": None,
             "constrained": constrained,
+            "selected_model_name": selected_model_name,
+            "delta_bic": float(delta_bic) if is_auto else np.nan,
         }
 
     except Exception:
@@ -530,6 +624,12 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_peak_enhancement = File(desc="Peak enhancement percentage")
     out_time_to_peak = File(desc="Time to peak (seconds)")
     out_ser = File(desc="Signal Enhancement Ratio (washout characterization)")
+
+    # Model selection map (auto mode)
+    out_model_selection = File(desc="Model selection map (int8: 0=unfitted, 1=patlak, 2=tofts, 3=extended_tofts, 4=2cxm)")
+
+    # Delta-BIC confidence map (auto mode)
+    out_delta_bic = File(desc="Delta-BIC confidence map (runner-up BIC minus winner BIC; >2 = positive evidence)")
 
     # QC outputs
     out_quality_flag = File(desc="Quality flag map (0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty)")
@@ -812,6 +912,26 @@ class ComputeDCEMaps(BaseInterface):
         """
         return model_name in ("tofts", "extended_tofts", "2cxm")
 
+    # Temporal resolution gates for BIC candidate set
+    _MAX_VOLUME_TR_2CXM = 3.0       # Nadav et al. JMRI 2017
+    _MAX_VOLUME_TR_ETOFTS = 10.0    # Conservative clinical limit
+
+    def _build_candidate_set(self, volume_tr: float) -> list[str]:
+        """Build BIC candidate model set gated by temporal resolution.
+
+        Args:
+            volume_tr: Volume TR in seconds.
+
+        Returns:
+            List of candidate model names, ordered by complexity.
+        """
+        candidates = ["patlak", "tofts"]
+        if volume_tr <= self._MAX_VOLUME_TR_ETOFTS:
+            candidates.append("extended_tofts")
+        if volume_tr <= self._MAX_VOLUME_TR_2CXM:
+            candidates.append("2cxm")
+        return candidates
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
@@ -865,9 +985,11 @@ class ComputeDCEMaps(BaseInterface):
 
         # Select model
         model_name = str(self.inputs.model)
-        was_auto = model_name == "auto"
-        if was_auto:
-            model_name = self._select_model(selection_tr_seconds)
+        is_auto = model_name == "auto"
+        candidate_names: list[str] = []
+        if is_auto:
+            candidate_names = self._build_candidate_set(selection_tr_seconds)
+            model_name = candidate_names[-1]  # ceiling = most complex eligible
 
         # Baseline frames for tSNR
         baseline_frames = int(self.inputs.baseline_frames)
@@ -1013,7 +1135,7 @@ class ComputeDCEMaps(BaseInterface):
         has_dsc_cbv = (
             isdefined(self.inputs.dsc_cbv_file)
             and self.inputs.dsc_cbv_file  # non-empty string
-            and (model_name in ("extended_tofts", "2cxm") or was_auto)
+            and (model_name in ("extended_tofts", "2cxm") or is_auto)
         )
 
         if has_dsc_cbv:
@@ -1143,11 +1265,12 @@ class ComputeDCEMaps(BaseInterface):
                     "reason": f"Failed to load DSC CBV constraint: {exc}",
                 }
 
-            # Auto-upgrade: if auto selected tofts but DSC CBV passed quality,
-            # upgrade to extended_tofts with constrained vp (same 2 free params,
-            # but correctly accounts for intravascular contribution)
-            if was_auto and model_name == "tofts" and constraint_mode != ConstraintMode.SKIP:
-                model_name = "extended_tofts"
+            # Auto mode: when DSC-CBV passes quality, ensure extended_tofts is
+            # in the candidate set and set ceiling to most complex eligible
+            if is_auto and constraint_mode != ConstraintMode.SKIP:
+                if "extended_tofts" not in candidate_names:
+                    candidate_names.append("extended_tofts")
+                model_name = candidate_names[-1]
 
         # =====================================================================
         # Compute model-free maps (vectorized, fast, before PK fitting loop)
@@ -1169,13 +1292,15 @@ class ComputeDCEMaps(BaseInterface):
         # =====================================================================
         # Initialize output arrays
         # =====================================================================
-        ktrans = np.zeros(spatial_shape, dtype=np.float64)
-        ve = np.zeros(spatial_shape, dtype=np.float64)
-        vp = np.zeros(spatial_shape, dtype=np.float64)
-        kep = np.zeros(spatial_shape, dtype=np.float64)
+        fill_val = np.nan if is_auto else 0.0
+        ktrans = np.full(spatial_shape, fill_val, dtype=np.float64)
+        ve = np.full(spatial_shape, fill_val, dtype=np.float64)
+        vp = np.full(spatial_shape, fill_val, dtype=np.float64)
+        kep = np.full(spatial_shape, fill_val, dtype=np.float64)
         r2_map = np.zeros(spatial_shape, dtype=np.float64)
 
-        # 2CXM-specific
+        # 2CXM-specific (only if 2CXM is in candidates or explicitly selected)
+        save_2cxm = (is_auto and "2cxm" in candidate_names) or model_name == "2cxm"
         fp_map = np.zeros(spatial_shape, dtype=np.float64)
         ps_map = np.zeros(spatial_shape, dtype=np.float64)
         e_map = np.zeros(spatial_shape, dtype=np.float64)
@@ -1183,6 +1308,18 @@ class ComputeDCEMaps(BaseInterface):
         # Quality flag map: 0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty
         quality_flag_map = np.zeros(spatial_shape, dtype=np.int8)
         _QUALITY_FLAG_CODES = {"good": 1, "poor_convergence": 2, "high_uncertainty": 3}
+
+        # Model selection map: complexity-ordered encoding
+        _MODEL_SELECTION_CODES: dict[str, int] = {
+            "patlak": 1,          # 2 params
+            "tofts": 2,           # 2 params
+            "extended_tofts": 3,  # 3 params
+            "2cxm": 4,            # 4 params
+        }
+        model_selection_map = np.zeros(spatial_shape, dtype=np.int8)
+
+        # Delta-BIC confidence map (auto mode only)
+        delta_bic_map = np.full(spatial_shape, np.nan, dtype=np.float32)
 
         # Uncertainty maps
         ktrans_std = np.zeros(spatial_shape, dtype=np.float64)
@@ -1279,6 +1416,7 @@ class ComputeDCEMaps(BaseInterface):
             aif, time_points, model_name, bayesian, mcmc_samples,
             baseline_frames, constraint_mode.value, constraint_vp_uncertainty,
             save_fitted_curves, motion_weights, sloppy, random_seed,
+            candidate_names if is_auto else None,
         )
 
         n_procs = max(1, int(self.inputs.n_procs))
@@ -1307,8 +1445,14 @@ class ComputeDCEMaps(BaseInterface):
         # Clear worker state to avoid stale references across runs
         _worker_ctx.clear()
 
+        # Per-voxel model selection tracking
+        from collections import Counter
+        model_counts: Counter[str] = Counter()
+
         # Scatter results into output arrays
-        has_vp = self._has_vp(model_name)
+        # For auto mode, we always save ve/vp/2cxm maps (NaN where not applicable)
+        save_ve = is_auto or self._has_ve(model_name)
+        save_vp = is_auto or self._has_vp(model_name)
         for vd, res in zip(voxel_data_list, results):
             if res["failed"]:
                 n_failed += 1
@@ -1318,6 +1462,19 @@ class ComputeDCEMaps(BaseInterface):
 
             x, y, z = res["coords"]
             params = res["params"]
+
+            # Per-voxel effective model name (may differ from global model_name
+            # when BIC model selection is active)
+            effective_model_name = res.get("selected_model_name", model_name)
+
+            # Record model selection
+            model_selection_map[x, y, z] = _MODEL_SELECTION_CODES.get(
+                effective_model_name, 0
+            )
+            model_counts[effective_model_name] += 1
+
+            # Record delta-BIC
+            delta_bic_map[x, y, z] = float(res.get("delta_bic", np.nan))
 
             # Post-fit validation: reject bound-railing fits only.
             # Parameters at exact optimizer bounds are degenerate (optimizer
@@ -1335,7 +1492,7 @@ class ComputeDCEMaps(BaseInterface):
             # only reject strictly negative (numerical error). vp checks
             # are skipped because vp was fixed and guaranteed positive.
             ktrans_lo = ktrans_val < 0 if is_constrained else ktrans_val <= 0
-            if model_name == "2cxm":
+            if effective_model_name == "2cxm":
                 fp_val = params.get("Fp", 0.0)
                 ps_val = params.get("PS", 0.0)
                 degenerate = (
@@ -1344,12 +1501,14 @@ class ComputeDCEMaps(BaseInterface):
                     or ve_val <= 0 or ve_val >= VE_BOUNDS.max
                     or vp_val <= 0 or vp_val >= VP_BOUNDS.max
                 )
-            elif model_name == "patlak":
+            elif effective_model_name == "patlak":
+                # Patlak: Ktrans=0 is valid (non-enhancing tissue), only
+                # reject strictly negative. ve is not a Patlak parameter.
                 degenerate = (
-                    ktrans_lo or ktrans_val >= KTRANS_BOUNDS.max
+                    (ktrans_val < 0) or ktrans_val >= KTRANS_BOUNDS.max
                     or (not is_constrained and (vp_val <= 0 or vp_val >= VP_BOUNDS.max))
                 )
-            elif model_name == "extended_tofts":
+            elif effective_model_name == "extended_tofts":
                 degenerate = (
                     ktrans_lo or ktrans_val >= KTRANS_BOUNDS.max
                     or ve_val <= 0 or ve_val >= VE_BOUNDS.max
@@ -1361,26 +1520,28 @@ class ComputeDCEMaps(BaseInterface):
                     or ve_val <= 0 or ve_val >= VE_BOUNDS.max
                 )
             if degenerate:
-                ktrans[x, y, z] = 0.0
-                ve[x, y, z] = 0.0
-                kep[x, y, z] = 0.0
+                degen_fill = np.nan if is_auto else 0.0
+                ktrans[x, y, z] = degen_fill
+                if self._has_ve(effective_model_name):
+                    ve[x, y, z] = degen_fill
+                    kep[x, y, z] = degen_fill
+                if self._has_vp(effective_model_name):
+                    vp[x, y, z] = degen_fill
                 r2_map[x, y, z] = res["r_squared"]
-                if has_vp:
-                    vp[x, y, z] = 0.0
                 n_rejected_postfit += 1
                 continue
 
             ktrans[x, y, z] = ktrans_val
-            if self._has_ve(model_name):
+            if self._has_ve(effective_model_name):
                 ve[x, y, z] = ve_val
                 kep[x, y, z] = params.get("kep", 0.0)
             r2_map[x, y, z] = res["r_squared"]
 
-            if has_vp:
+            if self._has_vp(effective_model_name):
                 vp[x, y, z] = params.get("vp", 0.0)
 
             # 2CXM-specific parameters
-            if model_name == "2cxm":
+            if effective_model_name == "2cxm":
                 fp_map[x, y, z] = params.get("Fp", 0.0)
                 ps_map[x, y, z] = params.get("PS", 0.0)
                 e_map[x, y, z] = params.get("E", 0.0)
@@ -1388,12 +1549,12 @@ class ComputeDCEMaps(BaseInterface):
             # Uncertainty (Bayesian only)
             if bayesian != "none" and res["uncertainties"]:
                 ktrans_std[x, y, z] = res["uncertainties"].get("Ktrans", 0.0)
-                if self._has_ve(model_name):
+                if self._has_ve(effective_model_name):
                     ve_std[x, y, z] = res["uncertainties"].get("ve", 0.0)
-                if has_vp:
+                if self._has_vp(effective_model_name):
                     vp_std[x, y, z] = res["uncertainties"].get("vp", 0.0)
                 # 2CXM-specific: Fp and PS uncertainties
-                if model_name == "2cxm":
+                if effective_model_name == "2cxm":
                     fp_std[x, y, z] = res["uncertainties"].get("Fp", 0.0)
                     ps_std[x, y, z] = res["uncertainties"].get("PS", 0.0)
 
@@ -1428,6 +1589,20 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["n_rejected_postfit"] = n_rejected_postfit
         qc_metrics["failure_reasons"] = failure_reason_counts
 
+        qc_metrics["model_selection"] = "auto" if is_auto else "fixed"
+
+        # Per-model selection stats (auto mode)
+        if is_auto:
+            n_total = int(np.sum(model_selection_map > 0))
+            for code_name in candidate_names:
+                count = int(np.sum(
+                    model_selection_map == _MODEL_SELECTION_CODES[code_name]
+                ))
+                qc_metrics[f"n_{code_name}_selected"] = count
+                qc_metrics[f"{code_name}_fraction"] = (
+                    count / max(1, n_total)
+                )
+
         # Quality flag breakdown
         qf_vals = quality_flag_map[fitting_mask]
         qc_metrics["quality_n_good"] = int(np.sum(qf_vals == 1))
@@ -1440,33 +1615,49 @@ class ComputeDCEMaps(BaseInterface):
             qc_metrics["r2_median"] = float(np.median(r2_list))
 
         # Compute summary statistics on fitted voxels
-        fitted_mask = fitting_mask & (ktrans > 0)
+        # For auto mode, use np.isfinite guard (NaN = non-applicable parameter)
+        fitted_mask = fitting_mask & (np.isfinite(ktrans)) & (ktrans > 0)
         if np.any(fitted_mask):
-            qc_metrics["ktrans_mean"] = float(np.mean(ktrans[fitted_mask]))
-            qc_metrics["ktrans_median"] = float(np.median(ktrans[fitted_mask]))
-            if self._has_ve(model_name):
-                qc_metrics["ve_mean"] = float(np.mean(ve[fitted_mask]))
-                qc_metrics["ve_median"] = float(np.median(ve[fitted_mask]))
+            qc_metrics["ktrans_mean"] = float(np.nanmean(ktrans[fitted_mask]))
+            qc_metrics["ktrans_median"] = float(np.nanmedian(ktrans[fitted_mask]))
 
-            if self._has_vp(model_name):
-                qc_metrics["vp_mean"] = float(np.mean(vp[fitted_mask]))
-                qc_metrics["vp_median"] = float(np.median(vp[fitted_mask]))
+            if save_ve:
+                ve_vals = ve[fitted_mask]
+                finite_ve = np.isfinite(ve_vals)
+                if np.any(finite_ve):
+                    qc_metrics["ve_mean"] = float(np.nanmean(ve_vals[finite_ve]))
+                    qc_metrics["ve_median"] = float(np.nanmedian(ve_vals[finite_ve]))
 
-            if model_name == "2cxm":
-                qc_metrics["fp_median"] = float(np.median(fp_map[fitted_mask]))
-                qc_metrics["ps_median"] = float(np.median(ps_map[fitted_mask]))
+            if save_vp:
+                vp_vals = vp[fitted_mask]
+                finite_vp = np.isfinite(vp_vals)
+                if np.any(finite_vp):
+                    qc_metrics["vp_mean"] = float(np.nanmean(vp_vals[finite_vp]))
+                    qc_metrics["vp_median"] = float(np.nanmedian(vp_vals[finite_vp]))
+
+            if save_2cxm:
+                fp_vals = fp_map[fitted_mask]
+                finite_fp = np.isfinite(fp_vals) & (fp_vals > 0)
+                if np.any(finite_fp):
+                    qc_metrics["fp_median"] = float(np.nanmedian(fp_vals[finite_fp]))
+                ps_vals = ps_map[fitted_mask]
+                finite_ps = np.isfinite(ps_vals) & (ps_vals > 0)
+                if np.any(finite_ps):
+                    qc_metrics["ps_median"] = float(np.nanmedian(ps_vals[finite_ps]))
 
             # Histogram statistics for fitted parameters
             ktrans_vals = ktrans[fitted_mask]
-            hist_counts, hist_edges = np.histogram(ktrans_vals, bins=50)
+            hist_counts, hist_edges = np.histogram(ktrans_vals[np.isfinite(ktrans_vals)], bins=50)
             qc_metrics["ktrans_histogram"] = hist_counts.tolist()
             qc_metrics["ktrans_histogram_edges"] = hist_edges.tolist()
 
-            if self._has_ve(model_name):
-                ve_vals = ve[fitted_mask]
-                hist_counts_ve, hist_edges_ve = np.histogram(ve_vals, bins=50)
-                qc_metrics["ve_histogram"] = hist_counts_ve.tolist()
-                qc_metrics["ve_histogram_edges"] = hist_edges_ve.tolist()
+            if save_ve:
+                ve_hist = ve[fitted_mask]
+                ve_hist = ve_hist[np.isfinite(ve_hist)]
+                if len(ve_hist) > 0:
+                    hist_counts_ve, hist_edges_ve = np.histogram(ve_hist, bins=50)
+                    qc_metrics["ve_histogram"] = hist_counts_ve.tolist()
+                    qc_metrics["ve_histogram_edges"] = hist_edges_ve.tolist()
 
         # Generate output filenames
         out_ktrans = self._gen_outfilename("_Ktrans")
@@ -1478,7 +1669,8 @@ class ComputeDCEMaps(BaseInterface):
 
         # ve and kep are model-dependent: produced by Tofts, ExtTofts, 2CXM
         # but NOT by Patlak (which only estimates Ktrans and vp).
-        if self._has_ve(model_name):
+        # In auto mode, always save (NaN where not applicable).
+        if save_ve:
             out_ve = self._gen_outfilename("_ve")
             ve_img = nib.Nifti1Image(ve.astype(np.float32), affine, header)  # type: ignore[attr-defined]
             nib.save(ve_img, out_ve)  # type: ignore[attr-defined]
@@ -1529,19 +1721,19 @@ class ComputeDCEMaps(BaseInterface):
             "constraint_qc": constraint_qc,
         }
 
-        if self._has_ve(model_name):
+        if save_ve:
             self._results["out_ve"] = out_ve
             self._results["out_kep"] = out_kep
 
         # Save vp if applicable
-        if self._has_vp(model_name):
+        if save_vp:
             out_vp = self._gen_outfilename("_vp")
             vp_img = nib.Nifti1Image(vp.astype(np.float32), affine, header)  # type: ignore[attr-defined]
             nib.save(vp_img, out_vp)  # type: ignore[attr-defined]
             self._results["out_vp"] = out_vp
 
         # Save 2CXM-specific outputs
-        if model_name == "2cxm":
+        if save_2cxm:
             out_fp = self._gen_outfilename("_Fp")
             out_ps = self._gen_outfilename("_PS")
             out_e = self._gen_outfilename("_E")
@@ -1568,20 +1760,20 @@ class ComputeDCEMaps(BaseInterface):
 
             self._results["out_ktrans_std"] = out_ktrans_std
 
-            if self._has_ve(model_name):
+            if save_ve:
                 out_ve_std = self._gen_outfilename("_ve_std")
                 ve_std_img = nib.Nifti1Image(ve_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
                 nib.save(ve_std_img, out_ve_std)  # type: ignore[attr-defined]
                 self._results["out_ve_std"] = out_ve_std
 
-            if self._has_vp(model_name):
+            if save_vp:
                 out_vp_std = self._gen_outfilename("_vp_std")
                 vp_std_img = nib.Nifti1Image(vp_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
                 nib.save(vp_std_img, out_vp_std)  # type: ignore[attr-defined]
                 self._results["out_vp_std"] = out_vp_std
 
             # 2CXM-specific: save Fp and PS uncertainty maps
-            if model_name == "2cxm":
+            if save_2cxm:
                 out_fp_std_file = self._gen_outfilename("_Fp_std")
                 fp_std_img = nib.Nifti1Image(fp_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
                 nib.save(fp_std_img, out_fp_std_file)  # type: ignore[attr-defined]
@@ -1594,28 +1786,29 @@ class ComputeDCEMaps(BaseInterface):
 
             # Compute and save Coefficient of Variation (CV = std / mean)
             # Use safe division to avoid divide-by-zero
+            cv_fill = np.nan if is_auto else 0.0
             with np.errstate(divide="ignore", invalid="ignore"):
                 ktrans_cv = np.where(
-                    ktrans > EPSILON_VE, ktrans_std / ktrans, 0.0
+                    ktrans > EPSILON_VE, ktrans_std / ktrans, cv_fill
                 ).astype(np.float32)
 
             out_ktrans_cv = self._gen_outfilename("_Ktrans_cv")
             nib.save(nib.Nifti1Image(ktrans_cv, affine, header), out_ktrans_cv)  # type: ignore[attr-defined]
             self._results["out_ktrans_cv"] = out_ktrans_cv
 
-            if self._has_ve(model_name):
+            if save_ve:
                 with np.errstate(divide="ignore", invalid="ignore"):
                     ve_cv = np.where(
-                        ve > EPSILON_VE, ve_std / ve, 0.0
+                        ve > EPSILON_VE, ve_std / ve, cv_fill
                     ).astype(np.float32)
                 out_ve_cv = self._gen_outfilename("_ve_cv")
                 nib.save(nib.Nifti1Image(ve_cv, affine, header), out_ve_cv)  # type: ignore[attr-defined]
                 self._results["out_ve_cv"] = out_ve_cv
 
-            if self._has_vp(model_name):
+            if save_vp:
                 with np.errstate(divide="ignore", invalid="ignore"):
                     vp_cv = np.where(
-                        vp > EPSILON_VE, vp_std / vp, 0.0
+                        vp > EPSILON_VE, vp_std / vp, cv_fill
                     ).astype(np.float32)
                 out_vp_cv = self._gen_outfilename("_vp_cv")
                 nib.save(nib.Nifti1Image(vp_cv, affine, header), out_vp_cv)  # type: ignore[attr-defined]
@@ -1635,7 +1828,7 @@ class ComputeDCEMaps(BaseInterface):
             self._results["out_ktrans_ci95_lower"] = out_ktrans_ci95_lower
             self._results["out_ktrans_ci95_upper"] = out_ktrans_ci95_upper
 
-            if self._has_ve(model_name):
+            if save_ve:
                 ve_ci95_lower = np.clip(ve - 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
                 ve_ci95_upper = np.clip(ve + 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
 
@@ -1648,7 +1841,7 @@ class ComputeDCEMaps(BaseInterface):
                 self._results["out_ve_ci95_lower"] = out_ve_ci95_lower
                 self._results["out_ve_ci95_upper"] = out_ve_ci95_upper
 
-            if self._has_vp(model_name):
+            if save_vp:
                 vp_ci95_lower = np.clip(vp - 1.96 * vp_std, 0.0, 1.0).astype(np.float32)
                 vp_ci95_upper = np.clip(vp + 1.96 * vp_std, 0.0, 1.0).astype(np.float32)
 
@@ -1676,17 +1869,39 @@ class ComputeDCEMaps(BaseInterface):
         qc_mask &= (ktrans > 0) & (ktrans < 5.0)  # Physiological Ktrans
         qc_mask &= (r2_map >= 0.5)  # Reasonable model fit
 
-        # Model-specific constraints
-        if model_name in ["extended_tofts", "2cxm"]:
-            qc_mask &= ((ve + vp) < 0.95)  # Volume fraction constraint
-        if model_name != "patlak":
-            qc_mask &= (kep > 0.001)  # Non-zero efflux rate
+        # Model-specific constraints (per-voxel model-aware for BIC selection)
+        is_patlak_voxel = model_selection_map == _MODEL_SELECTION_CODES.get("patlak", -1)
+        is_tofts_voxel = model_selection_map == _MODEL_SELECTION_CODES.get("tofts", -1)
+        if is_auto or model_name in ["extended_tofts", "2cxm"]:
+            # Volume fraction constraint: ve+vp < 0.95
+            # NaN-safe: treat NaN as 0 so Patlak/Tofts voxels pass
+            ve_safe = np.where(np.isfinite(ve), ve, 0.0)
+            vp_safe = np.where(np.isfinite(vp), vp, 0.0)
+            etofts_volume_ok = (ve_safe + vp_safe) < 0.95
+            qc_mask &= (etofts_volume_ok | is_patlak_voxel | is_tofts_voxel)
+        if is_auto or model_name != "patlak":
+            # kep check: NaN kep is fine for Patlak voxels (kep undefined)
+            kep_ok = np.where(np.isfinite(kep), kep > 0.001, True)
+            qc_mask &= kep_ok
 
         qc_mask = qc_mask.astype(np.uint8)
         out_qc_mask = self._gen_outfilename("_qc_mask")
         qc_mask_img = nib.Nifti1Image(qc_mask, affine, header)  # type: ignore[attr-defined]
         nib.save(qc_mask_img, out_qc_mask)  # type: ignore[attr-defined]
         self._results["out_qc_mask"] = out_qc_mask
+
+        # Save model selection map (auto/BIC mode)
+        if is_auto:
+            out_model_sel = self._gen_outfilename("_modelSelection")
+            model_sel_img = nib.Nifti1Image(model_selection_map, affine, header)  # type: ignore[attr-defined]
+            nib.save(model_sel_img, out_model_sel)  # type: ignore[attr-defined]
+            self._results["out_model_selection"] = out_model_sel
+
+            # Save delta-BIC confidence map
+            out_delta_bic = self._gen_outfilename("_deltaBIC")
+            delta_bic_img = nib.Nifti1Image(delta_bic_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+            nib.save(delta_bic_img, out_delta_bic)  # type: ignore[attr-defined]
+            self._results["out_delta_bic"] = out_delta_bic
 
         # Save fitted curves
         if save_fitted_curves and fitted_curves is not None:
@@ -1761,7 +1976,14 @@ class ComputeDCEMaps(BaseInterface):
                     "patlak": PatlakModel,
                     "2cxm": TwoCompartmentExchangeModel,
                 }
-                qc_model = model_cls_map[model_name]()
+                # Use per-voxel winner model when is_auto
+                if is_auto:
+                    qc_code = int(model_selection_map[qc_vx, qc_vy, qc_vz])
+                    code_to_name = {v: k for k, v in _MODEL_SELECTION_CODES.items()}
+                    qc_model_name = code_to_name.get(qc_code, model_name)
+                else:
+                    qc_model_name = model_name
+                qc_model = model_cls_map[qc_model_name]()
                 qc_param_map: dict[str, npt.NDArray[Any]] = {
                     "Ktrans": ktrans, "ve": ve, "vp": vp,
                     "Fp": fp_map, "PS": ps_map,
@@ -1776,14 +1998,18 @@ class ComputeDCEMaps(BaseInterface):
             except Exception as exc:
                 logger.debug("Could not compute QC fitted curve: %s", exc)
 
+            # NaN-safe maps for QC plots (replace NaN with 0 for display)
+            ve_plot = np.nan_to_num(ve, nan=0.0) if is_auto else ve
+            vp_plot = np.nan_to_num(vp, nan=0.0) if is_auto else vp
+
             pk_modeling_qc_path, pk_voxel_metrics = generate_pk_modeling_qc_plot(
                 conc_data=conc_data,
                 signal_data=signal_for_qc,
                 aif=aif,
                 time_points_s=time_points * 60.0,  # min -> sec
-                ktrans=ktrans,
-                ve=ve if self._has_ve(model_name) else None,
-                vp=vp if self._has_vp(model_name) else None,
+                ktrans=np.nan_to_num(ktrans, nan=0.0) if is_auto else ktrans,
+                ve=ve_plot if save_ve else None,
+                vp=vp_plot if save_vp else None,
                 r2_map=r2_map,
                 brain_mask=mask_bool.astype(np.float64),
                 fitted_curves=fitted_curves,
@@ -1791,8 +2017,8 @@ class ComputeDCEMaps(BaseInterface):
                 baseline_frames=baseline_frames,
                 qc_mask=qc_mask,
                 qc_fitted_curve=qc_fitted_curve_1d,
-                fp=fp_map if model_name == "2cxm" else None,
-                ps=ps_map if model_name == "2cxm" else None,
+                fp=fp_map if save_2cxm else None,
+                ps=ps_map if save_2cxm else None,
                 enhancing_mask=enhancing_mask_data,
             )
             if pk_modeling_qc_path:
@@ -1800,13 +2026,13 @@ class ComputeDCEMaps(BaseInterface):
             qc_metrics.update(pk_voxel_metrics)
 
             param_maps_dict: dict[str, npt.NDArray[Any]] = {
-                "Ktrans": ktrans,
+                "Ktrans": np.nan_to_num(ktrans, nan=0.0) if is_auto else ktrans,
             }
-            if self._has_ve(model_name):
-                param_maps_dict["ve"] = ve
-            if self._has_vp(model_name):
-                param_maps_dict["vp"] = vp
-            if model_name == "2cxm":
+            if save_ve:
+                param_maps_dict["ve"] = ve_plot
+            if save_vp:
+                param_maps_dict["vp"] = vp_plot
+            if save_2cxm:
                 param_maps_dict["Fp"] = fp_map
                 param_maps_dict["PS"] = ps_map
 

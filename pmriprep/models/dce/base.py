@@ -7,13 +7,17 @@ interface.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Sequence, Union
+from typing import Final, Optional, Sequence, Union
 
 import numpy as np
 import numpy.typing as npt
 
 # Type alias for parameter arrays (accepts both list and ndarray)
 ParamsType = Union[Sequence[float], npt.NDArray[np.floating]]
+
+# Floor for RSS in BIC/AIC computation: a perfect fit (RSS=0) should yield
+# the lowest (most negative) information criterion, not inf.
+EPSILON_RSS: Final[float] = 1e-30
 
 
 @dataclass
@@ -477,9 +481,10 @@ class PKModel(ABC):
         """
         n = n_observations
         k = self.n_parameters
-        if n <= 0 or residual_sum_squares <= 0:
+        if n <= 0:
             return float("inf")
-        return float(n * np.log(residual_sum_squares / n) + 2 * k)
+        rss_safe = max(residual_sum_squares, EPSILON_RSS)
+        return float(n * np.log(rss_safe / n) + 2 * k)
 
     def compute_bic(
         self,
@@ -499,9 +504,10 @@ class PKModel(ABC):
         """
         n = n_observations
         k = self.n_parameters
-        if n <= 0 or residual_sum_squares <= 0:
+        if n <= 0:
             return float("inf")
-        return float(n * np.log(residual_sum_squares / n) + k * np.log(n))
+        rss_safe = max(residual_sum_squares, EPSILON_RSS)
+        return float(n * np.log(rss_safe / n) + k * np.log(n))
 
     def compute_r_squared(
         self,

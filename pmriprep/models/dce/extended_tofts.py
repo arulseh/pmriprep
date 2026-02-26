@@ -433,9 +433,10 @@ class ExtendedToftsModel(PKModel):
         rss = float(np.sum((tissue_curve - fitted_curve) ** 2))
         r_squared = self.compute_r_squared(tissue_curve, fitted_curve)
         # Use 2 free parameters for AIC/BIC
+        from pmriprep.models.dce.base import EPSILON_RSS
         n_free = 2
-        aic = float(n_obs * np.log(rss / n_obs) + 2 * n_free) if rss > 0 and n_obs > 0 else float("inf")
-        bic = float(n_obs * np.log(rss / n_obs) + n_free * np.log(n_obs)) if rss > 0 and n_obs > 0 else float("inf")
+        aic = float(n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + 2 * n_free) if n_obs > 0 else float("inf")
+        bic = float(n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + n_free * np.log(n_obs)) if n_obs > 0 else float("inf")
 
         # Derived parameters
         kep = min(ktrans / ve, MAX_KEP) if ve > EPSILON_VE else 0.0

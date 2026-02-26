@@ -2263,6 +2263,8 @@ def init_pmriprep_wf(
                 ("outputnode.qc_mask", "qc_mask"),
                 ("outputnode.r2_map", "r2_map"),
                 ("outputnode.quality_flag_map", "quality_flag_map"),
+                ("outputnode.model_selection_map", "model_selection_map"),
+                ("outputnode.delta_bic_map", "delta_bic_map"),
                 # T1/B1 mapping
                 ("outputnode.t1_map", "t1_map"),
                 ("outputnode.b1_map", "b1_map"),

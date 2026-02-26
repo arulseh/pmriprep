@@ -269,6 +269,8 @@ def init_dce_preproc_wf(
                 "qc_mask",
                 "r2_map",
                 "quality_flag_map",
+                "model_selection_map",
+                "delta_bic_map",
                 # AIF outputs
                 "aif_curve",
                 "aif_mask",
@@ -1557,6 +1559,8 @@ def init_dce_preproc_wf(
             ("out_qc_mask", "qc_mask"),
             ("out_r2", "r2_map"),
             ("out_quality_flag", "quality_flag_map"),
+            ("out_model_selection", "model_selection_map"),
+            ("out_delta_bic", "delta_bic_map"),
         ]),
         # Uncertainty maps (if Bayesian)
         (pk_modeling, outputnode, [

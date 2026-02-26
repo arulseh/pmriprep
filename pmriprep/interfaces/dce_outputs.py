@@ -94,6 +94,8 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     qc_mask = traits.Str(desc="QC mask (good fit voxels) path")
     r2_map = traits.Str(desc="R-squared goodness-of-fit map path")
     quality_flag_map = traits.Str(desc="Quality flag map path")
+    model_selection_map = traits.Str(desc="Model selection map path (BIC mode)")
+    delta_bic_map = traits.Str(desc="Delta-BIC confidence map path")
 
     # Tortuosity-corrected output (optional)
     ktrans_tortuosity_corrected = traits.Str(desc="Ktrans with tortuosity correction map path")
@@ -377,6 +379,35 @@ class DCEDerivativeWriter(BaseInterface):
                 "Description": "Quality flag map (0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty)",
             }
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
+
+        if has_input(self.inputs, "model_selection_map"):
+            fname = f"{prefix}_{spatial}_{model_entity}_desc-dceModelSelection_dseg"
+            copy_derivative(self.inputs.model_selection_map, perf_dir / f"{fname}.nii.gz")
+            ms_sidecar = {
+                **self._build_base_sidecar(bids_dir, voxel_sizes, pk_model=pk_model, minimal=True),
+                "Description": "Per-voxel BIC model selection: complexity-ordered encoding",
+                "LabelEncoding": {
+                    "0": "unfitted",
+                    "1": "patlak",
+                    "2": "tofts",
+                    "3": "extended_tofts",
+                    "4": "2cxm",
+                },
+            }
+            write_json_sidecar(ms_sidecar, perf_dir / f"{fname}.json")
+
+        if has_input(self.inputs, "delta_bic_map"):
+            fname = f"{prefix}_{spatial}_{model_entity}_desc-dceDeltaBIC_stat"
+            copy_derivative(self.inputs.delta_bic_map, perf_dir / f"{fname}.nii.gz")
+            dbic_sidecar = {
+                **self._build_base_sidecar(bids_dir, voxel_sizes, pk_model=pk_model, minimal=True),
+                "Description": (
+                    "BIC confidence: runner-up minus winner. "
+                    ">2 = positive, >6 = strong, >10 = very strong "
+                    "(Kass & Raftery 1995)"
+                ),
+            }
+            write_json_sidecar(dbic_sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
         # 3f. Tortuosity-corrected Ktrans
@@ -760,6 +791,8 @@ class DCEDerivativeWriter(BaseInterface):
             config_dict = self.inputs.config_dict
             if isdefined(config_dict) and config_dict:
                 sidecar["BayesianInference"] = config_dict.get("bayesian", "none")
+                if config_dict.get("model") == "auto":
+                    sidecar["ModelSelection"] = "auto (per-voxel BIC)"
 
         return sidecar
 

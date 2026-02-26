@@ -489,6 +489,84 @@ class PatlakModel(PKModel):
             quality_flag=quality_flag,
         )
 
+    def fit_constrained(
+        self,
+        tissue_curve: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+        fixed_vp: float,
+        initial_guess: Optional[Sequence[float]] = None,
+        weights: Optional[npt.NDArray[np.floating]] = None,
+    ) -> FitResult:
+        """Fit Patlak with vp fixed from DSC-CBV. 1 free param: Ktrans.
+
+        Uses analytical weighted least-squares with trapezoidal integral
+        matching evaluate() exactly.
+
+        Args:
+            tissue_curve: Observed tissue concentration C_t(t) in mM.
+            aif: Arterial input function Cp(t) in mM.
+            time_points: Time points (minutes).
+            fixed_vp: Fixed plasma volume fraction from DSC CBV.
+            initial_guess: Not used (analytical solution).
+            weights: Optional per-frame weights for motion-weighted fitting.
+
+        Returns:
+            FitResult with n_parameters=1 and fitting_method='analytical_constrained_vp'.
+        """
+        from pmriprep.models.dce.base import EPSILON_RSS
+
+        n_obs = len(tissue_curve)
+        fixed_vp = float(np.clip(fixed_vp, VP_BOUNDS.min, VP_BOUNDS.max))
+
+        # Trapezoidal integral — MUST match evaluate() exactly
+        n_times = len(time_points)
+        dts = np.diff(time_points)
+        aif_integral = np.zeros(n_times, dtype=np.float64)
+        if n_times >= 2:
+            aif_integral[1:] = np.cumsum(0.5 * (aif[:-1] + aif[1:]) * dts)
+
+        residual = tissue_curve - fixed_vp * aif
+
+        # Analytical weighted least-squares for Ktrans
+        EPSILON_INTEGRAL = 1e-30
+        if weights is not None:
+            num = float(np.dot(weights * residual, aif_integral))
+            den = float(np.dot(weights * aif_integral, aif_integral))
+        else:
+            num = float(np.dot(residual, aif_integral))
+            den = float(np.dot(aif_integral, aif_integral))
+
+        ktrans = float(np.clip(
+            num / (den + EPSILON_INTEGRAL), KTRANS_BOUNDS.min, KTRANS_BOUNDS.max
+        ))
+
+        fitted_curve = fixed_vp * aif + ktrans * aif_integral
+        rss = float(np.sum((tissue_curve - fitted_curve) ** 2))
+        r_squared = self.compute_r_squared(tissue_curve, fitted_curve)
+
+        n_free = 1
+        bic = float(
+            n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + n_free * np.log(n_obs)
+        ) if n_obs > 0 else float("inf")
+        aic = float(
+            n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + 2 * n_free
+        ) if n_obs > 0 else float("inf")
+
+        return FitResult(
+            parameters={"Ktrans": ktrans, "vp": fixed_vp},
+            r_squared=r_squared,
+            residual_sum_squares=rss,
+            aic=aic,
+            bic=bic,
+            model_name=self.name,
+            n_parameters=n_free,
+            n_observations=n_obs,
+            converged=True,
+            fitting_method="analytical_constrained_vp",
+            fitted_curve=fitted_curve,
+        )
+
     def compute_derived_parameters(
         self, params: ParamsType
     ) -> dict[str, float]:

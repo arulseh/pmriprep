@@ -24,6 +24,7 @@ GPU Functions:
 """
 
 from pmriprep.models.dce.base import (
+    EPSILON_RSS,
     FitResult,
     ModelParameter,
     PKModel,
@@ -50,6 +51,7 @@ __all__ = [
     "BayesianPKFitter",
     "BayesianPrior",
     "create_vp_prior_from_dsc",
+    "EPSILON_RSS",
     "ExtendedToftsModel",
     "FitResult",
     "fit_pk_model",

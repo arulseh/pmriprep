@@ -336,6 +336,12 @@
                 <div class="metric-value">{{ dce.qc_metrics.pk_modeling.model }}</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.pk_modeling.model_selection is defined %}
+            <div class="metric">
+                <div class="metric-label">Selection</div>
+                <div class="metric-value">{{ dce.qc_metrics.pk_modeling.model_selection }}</div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.pk_modeling.ktrans_median is defined %}
             <div class="metric">
                 <div class="metric-label">Median Ktrans</div>
@@ -366,6 +372,16 @@
                 <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.ps_median) }} mL/100g/min</div>
             </div>
             {% endif %}
+            {% for mn in ['patlak', 'tofts', 'extended_tofts', '2cxm'] %}
+            {% set count_key = 'n_' + mn + '_selected' %}
+            {% set frac_key = mn + '_fraction' %}
+            {% if dce.qc_metrics.pk_modeling[count_key] is defined %}
+            <div class="metric">
+                <div class="metric-label">{{ mn }}</div>
+                <div class="metric-value">{{ dce.qc_metrics.pk_modeling[count_key] }} ({{ "%.0f"|format(dce.qc_metrics.pk_modeling[frac_key] * 100) }}%)</div>
+            </div>
+            {% endif %}
+            {% endfor %}
         </div>
 
         {% if dce.images.pk_param_maps_qc %}
