@@ -184,9 +184,17 @@ def generate_vfa_t1_qc_plot(
         hist_t1 = t1_map[(t1_map > 100) & (t1_map < 3000)]
 
     if len(hist_t1) > 0:
-        ax.hist(hist_t1, bins=100, color=COLORBLIND_PALETTE.primary, alpha=0.7,
-                edgecolor="none", density=True)
-        # Add reference ranges
+        # IQR-based outlier trimming for display (matches M0 histogram pattern)
+        q1, q3 = np.percentile(hist_t1, [25, 75])
+        iqr = q3 - q1
+        if iqr < 1.0:
+            t1_display = hist_t1
+        else:
+            t1_display = hist_t1[(hist_t1 >= q1 - 1.5 * iqr) & (hist_t1 <= q3 + 1.5 * iqr)]
+        if len(t1_display) > 0:
+            ax.hist(t1_display, bins=100, color=COLORBLIND_PALETTE.primary, alpha=0.7,
+                    edgecolor="none", density=True)
+        # Reference ranges and median use full hist_t1, not trimmed
         wm_range = t1_ref["wm"]
         gm_range = t1_ref["gm"]
         ax.axvspan(wm_range[0], wm_range[1], alpha=0.15, color=COLORBLIND_PALETTE.success,
@@ -196,6 +204,12 @@ def generate_vfa_t1_qc_plot(
         median_val = float(np.median(hist_t1))
         ax.axvline(median_val, color=COLORBLIND_PALETTE.error, linestyle="--",
                    label=f"Median: {median_val:.0f}ms")
+        # Ensure reference bands and median are visible
+        lo = q1 - 1.5 * iqr if iqr >= 1.0 else float(t1_display.min())
+        hi = q3 + 1.5 * iqr if iqr >= 1.0 else float(t1_display.max())
+        display_min = min(lo, wm_range[0], median_val) - 50
+        display_max = max(hi, gm_range[1], median_val) + 50
+        ax.set_xlim(display_min, display_max)
         ax.legend(fontsize=7, loc="upper right")
     ax.set_xlabel("T1 (ms)")
     ax.set_ylabel("Density")
