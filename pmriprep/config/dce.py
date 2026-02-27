@@ -15,8 +15,6 @@ class DCEConfig:
 
     Attributes
     ----------
-    reference : str
-        Reference image for registration (default: postcon T1w).
     lesion_mask : Optional[Path]
         Path to lesion mask for AIF exclusion and lesion statistics.
     nawm_mask : Optional[Path]
@@ -62,7 +60,7 @@ class DCEConfig:
         Pharmacokinetic model: auto (per-voxel BIC selection),
         tofts, extended_tofts, patlak, or 2cxm.
     bayesian : str
-        Bayesian inference method: none, map, or mcmc.
+        Bayesian inference method: none, map, vi, or mcmc.
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
     num_processes : int
@@ -74,7 +72,6 @@ class DCEConfig:
     """
 
     # Registration settings
-    reference: str = "postcon"
     lesion_mask: Optional[Path] = None
     nawm_mask: Optional[Path] = None
     roi_mask: Optional[Path] = None

@@ -242,7 +242,6 @@ dce:
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
 | `underlays` | list | `[]` | Structural images to transform to DCE space for QC overlays: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
-| `reference` | str | `"postcon"` | Reference image for registration: `postcon`, `precon` |
 
 ### Anatomical Configuration
 

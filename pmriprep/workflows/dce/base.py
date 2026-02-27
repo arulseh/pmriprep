@@ -590,9 +590,7 @@ def init_dce_preproc_wf(
     # Node 4: DCE to T1w Registration
     # ==========================================================================
     dce_registration = pe.Node(
-        DCERegistration(
-            reference_type=config.reference,  # "postcon" or "precon"
-        ),
+        DCERegistration(),
         name="dce_registration",
     )
 
