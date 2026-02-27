@@ -36,7 +36,7 @@ docker run --rm \
     -w /work
 ```
 
-For GPU support (NVIDIA):
+For GPU support (required for tumor segmentation):
 
 ```bash
 docker run --gpus all --rm \
@@ -45,8 +45,11 @@ docker run --gpus all --rm \
     -v /path/to/work:/work \
     ghcr.io/arulseh/pmriprep:latest \
     /data /out participant \
-    --use-gpu -w /work
+    --participant-label 01 \
+    -w /work
 ```
+
+> **Note:** Tumor segmentation (HD-GLIO) requires an NVIDIA GPU. When no GPU is detected, tumor segmentation is automatically skipped and the remaining pipelines proceed normally. Use `--skip-tumor-seg` to suppress the warning.
 
 ### Apptainer
 
@@ -67,7 +70,20 @@ apptainer run --cleanenv \
     -w /work
 ```
 
-TemplateFlow templates are pre-populated at `/opt/templateflow` inside the image — no extra bind mounts needed. For GPU support, add `--nv` (NVIDIA) to the `apptainer run` command.
+For GPU support (required for tumor segmentation), add `--nv`:
+
+```bash
+apptainer run --cleanenv --nv \
+    --bind /path/to/bids:/data:ro \
+    --bind /path/to/output:/out \
+    --bind /path/to/work:/work \
+    pmriprep.sif \
+    /data /out participant \
+    --participant-label 01 \
+    -w /work
+```
+
+TemplateFlow templates are pre-populated at `/opt/templateflow` inside the image — no extra bind mounts needed.
 
 ### pip (Development)
 
