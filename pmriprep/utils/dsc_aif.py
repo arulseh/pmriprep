@@ -1074,7 +1074,7 @@ def atlas_based_aif_search(
         "peak_value_mean": float(
             np.mean([c.metrics.peak_value for c in top_candidates])
         ),
-        "n_candidates_used": len(top_candidates),
+        "n_aif_voxels_used": len(top_candidates),
     }
 
     return AIFSearchResult(

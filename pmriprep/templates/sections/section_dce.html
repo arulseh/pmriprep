@@ -297,9 +297,7 @@
             </div>
             {% endif %}
             {% set used = dce.qc_metrics.aif_detection.n_aif_voxels
-               if dce.qc_metrics.aif_detection.n_aif_voxels is defined
-               else dce.qc_metrics.aif_detection.n_candidates
-               if dce.qc_metrics.aif_detection.n_candidates is defined %}
+               if dce.qc_metrics.aif_detection.n_aif_voxels is defined %}
             {% if used is defined %}
             <div class="metric">
                 <div class="metric-label">AIF Voxels (used / available)</div>

@@ -189,13 +189,9 @@
             </div>
             {% endif %}
             {% set dsc_used = dsc.qc_metrics.aif.n_aif_voxels_used
-               if dsc.qc_metrics.aif.n_aif_voxels_used is defined
-               else dsc.qc_metrics.aif.n_aif_candidates_used
-               if dsc.qc_metrics.aif.n_aif_candidates_used is defined %}
+               if dsc.qc_metrics.aif.n_aif_voxels_used is defined %}
             {% set dsc_available = dsc.qc_metrics.aif.n_aif_voxels_available
-               if dsc.qc_metrics.aif.n_aif_voxels_available is defined
-               else dsc.qc_metrics.aif.n_aif_candidates_available
-               if dsc.qc_metrics.aif.n_aif_candidates_available is defined %}
+               if dsc.qc_metrics.aif.n_aif_voxels_available is defined %}
             {% if dsc_used is defined and dsc_available is defined %}
             <div class="metric">
                 <div class="metric-label">AIF Voxels (used / available)</div>
