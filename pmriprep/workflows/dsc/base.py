@@ -423,8 +423,7 @@ def _signal_to_concentration(
     """Convert DSC signal to ΔR2* concentration.
 
     This is a Function node wrapper for the signal_to_concentration utility.
-    Always returns ΔR2* in s⁻¹. Absolute quantification (mM conversion
-    via r2*) is applied at output time in ComputeDSCMaps.
+    Always returns ΔR2* in s⁻¹. All downstream quantification is relative.
 
     Args:
         dsc_file: Path to motion-corrected 4D DSC NIfTI.
@@ -1781,8 +1780,7 @@ def init_dsc_preproc_wf(
 
     # -------------------------------------------------------------------
     # Node 2: Signal to Concentration Conversion
-    # Always produces ΔR2* (s⁻¹). Absolute quantification (mM) is
-    # applied at output time in ComputeDSCMaps via r2* calibration.
+    # Always produces ΔR2* (s⁻¹). All downstream quantification is relative.
     # -------------------------------------------------------------------
     signal_to_conc = pe.Node(
         niu.Function(

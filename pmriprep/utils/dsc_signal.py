@@ -26,9 +26,7 @@ def signal_to_concentration(
     Computes concentration from the signal decay using the relationship:
         ΔR2* = -ln(S(t)/S0) / TE
 
-    Always returns ΔR2* in s⁻¹. Conversion to absolute concentration
-    (mM) via r2* relaxivity is an output-time calibration step applied
-    downstream (see ComputeDSCMaps absolute quantification gating).
+    Always returns ΔR2* in s⁻¹. All downstream quantification is relative.
 
     Args:
         signal: 4D array of DSC signal (x, y, z, time) or 1D time series.

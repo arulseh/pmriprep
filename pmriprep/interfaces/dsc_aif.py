@@ -1996,7 +1996,7 @@ class AIFDetection(BaseInterface):
             qc_metrics["synthetic_aif_warnings"] = [
                 "Synthetic AIF used - automatic detection failed",
                 "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-                "Absolute CBV/CBF have ±50% uncertainty - NOT valid for clinical thresholds",
+                "Absolute CBV/CBF are not computed - only relative values are produced",
                 "TTP and Tmax are valid (timing independent of AIF amplitude)",
                 "Manual AIF selection recommended for clinical use",
             ]
@@ -2011,20 +2011,17 @@ class AIFDetection(BaseInterface):
             }
             qc_metrics["degraded_aif_warnings"] = [
                 "AIF quality is DEGRADED - quantification unreliable",
-                "Absolute CBV/CBF values are NOT VALID",
+                "Absolute CBV/CBF are not computed - only relative values are produced",
                 "Relative CBV may have 30-50% error vs optimal AIF",
                 "Use TTP/Tmax for timing analysis (unaffected by AIF quality)",
                 "Consider manual AIF selection for publication-quality results",
             ]
         elif detection_level != "synthetic":
-            is_high_quality = any(
-                lvl in detection_level
-                for lvl in ("strict", "relaxed")
-            )
             qc_metrics["quantification_validity"] = {
-                "absolute_cbv": True if is_high_quality else "ACCEPTABLE",
-                "absolute_cbf": True if is_high_quality else "ACCEPTABLE",
+                "absolute_cbv": False,
+                "absolute_cbf": False,
                 "relative_cbv": True,
+                "relative_cbf": True,
                 "mtt": True,
                 "ttp": True,
                 "tmax": True,

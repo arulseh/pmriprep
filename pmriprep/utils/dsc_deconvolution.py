@@ -143,7 +143,7 @@ def svd_deconvolve_standard(
         aif: Arterial input function, shape (n_timepoints,).
             Must have same length as tissue_curve.
         dt: Time step in seconds. Default 1.0 gives results in frame units.
-            For absolute quantification, provide actual TR.
+            Provide actual TR for timing parameters (MTT, Tmax) in seconds.
         threshold: SVD truncation threshold as fraction of maximum singular
             value. Singular values below threshold × max(s) are set to zero.
             Default is 0.2 (20% of max). Higher values = more regularization.
@@ -942,7 +942,7 @@ def svd_deconvolve_oscillation(
         aif: Arterial input function, shape (n_timepoints,).
             Must have same length as tissue_curve.
         dt: Time step in seconds. Default 1.0 gives results in frame units.
-            For absolute quantification, provide actual TR.
+            Provide actual TR for timing parameters (MTT, Tmax) in seconds.
         oi_target: Target oscillation index threshold. Residue functions with
             OI above this value are considered too oscillatory. Default is 0.065.
         threshold_min: Minimum SVD threshold to consider. Default 0.01.
@@ -1314,7 +1314,7 @@ def tikhonov_deconvolve(
         aif: Arterial input function, shape (n_timepoints,).
             Must have same length as tissue_curve.
         dt: Time step in seconds. Default 1.0 gives results in frame units.
-            For absolute quantification, provide actual TR.
+            Provide actual TR for timing parameters (MTT, Tmax) in seconds.
         lambda_min: Minimum λ value to consider. Default 1e-4.
         lambda_max: Maximum λ value to consider. Default 1.0.
         n_lambda: Unused. Kept for API compatibility.
@@ -1934,9 +1934,9 @@ class PerfusionParameters:
 
     Attributes:
         cbf: Cerebral blood flow = max(R(t)).
-            Units depend on input: typically mL/100g/min for absolute quantification.
+            Units: arbitrary (relative).
         cbv: Cerebral blood volume = ∫R(t)dt.
-            Units: mL/100g for absolute quantification.
+            Units: arbitrary (relative).
         mtt: Mean transit time = CBV / CBF (central volume theorem).
             Units: seconds.
         tmax: Time to maximum of residue function = argmax(R(t)) × dt.
@@ -2003,10 +2003,7 @@ def extract_perfusion_params(
         ValueError: If residue array is empty.
 
     Notes:
-        - CBF and CBV units depend on the input residue units:
-            - If residue is from relative deconvolution: unitless or arbitrary
-            - If residue includes r2* scaling: concentration units
-            - For absolute CBF in mL/100g/min, additional scaling factors needed
+        - CBF and CBV are relative (arbitrary units)
         - MTT is always in seconds (or frames if dt=1.0)
         - Tmax > 6 seconds is often used as a clinical threshold for penumbra
         - For cSVD results, the delay is already accounted for in the residue

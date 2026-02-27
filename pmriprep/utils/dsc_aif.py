@@ -1822,7 +1822,7 @@ class SyntheticAIFResult:
     is_synthetic : bool
         Always True - indicates synthetic AIF.
     absolute_quantification_valid : bool
-        Always False - synthetic AIFs don't support absolute quantification.
+        Always False - pipeline produces relative quantification only.
     warning_message : str
         Warning about limitations of synthetic AIF.
     qc_metrics : dict[str, Any]
