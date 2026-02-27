@@ -2293,9 +2293,11 @@ class AIFDetection(BaseInterface):
         # Optional atlas masks — build ordered list (tightest → broadest)
         # User-supplied aif_mask_file overrides all atlas masks.
         atlas_masks: list[npt.NDArray[Any]] = []
+        atlas_names: list[str] = []
         if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
             atlas_img = nib.load(self.inputs.aif_mask_file)
             atlas_masks = [atlas_img.get_fdata()]  # type: ignore[attr-defined]
+            atlas_names = [Path(self.inputs.aif_mask_file).name.split(".")[0].replace("MNI_2mm_MRA_arterial_", "")]
         else:
             # Load tiered atlas cascade (atlas_mask_files, tightest first)
             if (
@@ -2308,6 +2310,9 @@ class AIFDetection(BaseInterface):
                         atlas_masks.append(
                             nib.load(str(af_path)).get_fdata()  # type: ignore[attr-defined]
                         )
+                        atlas_names.append(
+                            af_path.name.split(".")[0].replace("MNI_2mm_MRA_arterial_", "")
+                        )
             # Backward compat: single atlas_mask_file appended if not already loaded
             if (
                 not atlas_masks
@@ -2319,6 +2324,7 @@ class AIFDetection(BaseInterface):
                 atlas_masks = [
                     nib.load(self.inputs.atlas_mask_file).get_fdata()  # type: ignore[attr-defined]
                 ]
+                atlas_names = [Path(self.inputs.atlas_mask_file).name.split(".")[0].replace("MNI_2mm_MRA_arterial_", "")]
 
         # Optional lesion mask
         lesion_mask: Optional[npt.NDArray[Any]] = None
@@ -2390,14 +2396,17 @@ class AIFDetection(BaseInterface):
                         )
                         if candidates:
                             detection_method = "atlas"
-                            atlas_tier_used = f"atlas_{atlas_idx}_{crit}"
+                            atlas_tier_used = f"{atlas_names[atlas_idx]}_{crit}"
                             break
                     if candidates:
                         break
 
-            # Whole-brain attempts: relaxed → permissive → degraded
+            # Whole-brain fallback: relaxed only.
+            # If the full atlas cascade AND whole-brain relaxed all fail,
+            # data quality is too poor for voxel-based AIF — go to population
+            # rather than scraping with permissive/degraded (which finds tissue).
             if not candidates:
-                for crit in ("relaxed", "permissive", "degraded"):
+                for crit in ("relaxed",):
                     candidates, scores, metrics_list = self._find_candidates_in_mask(
                         conc_data, search_mask, n_candidates, tr,
                         baseline_frames, crit,

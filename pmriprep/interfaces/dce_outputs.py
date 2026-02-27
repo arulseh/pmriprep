@@ -707,6 +707,18 @@ class DCEDerivativeWriter(BaseInterface):
         figures_dir = ses_dir / "figures"
         figures_dir.mkdir(parents=True, exist_ok=True)
 
+        # Clean stale AIF location figure from prior runs when not generated this run
+        aif_detection_method = self.inputs.qc_metrics.get(
+            "aif_detection", {}
+        ).get("detection_method", "unknown") if isdefined(qc_metrics) and qc_metrics else "unknown"
+        if aif_detection_method in ("population", "external"):
+            stale = figures_dir / figure_filename(
+                subject, session, "aif_location", "dce"
+            )
+            if stale.exists():
+                logger.info("Removing stale AIF location figure (method=%s): %s", aif_detection_method, stale.name)
+                stale.unlink()
+
         _fig_inputs = {
             "dce_brain_mask": "brain_mask_filmstrip",
             "motion": "motion_qc_plot",

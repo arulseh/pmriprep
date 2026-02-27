@@ -42,10 +42,18 @@ def get_arterial_atlas(resolution: str = "1mm", variant: str = "dil3") -> Path:
 def get_arterial_atlas_cascade(resolution: str = "2mm") -> list[Path]:
     """Return atlas files from tightest to broadest for cascade search.
 
-    The cascade ordering allows AIF detection to try the most spatially
-    specific atlas first (MCA/ACA only), then Circle of Willis, and finally
-    the fully dilated MRA mask. This reduces tissue contamination from
-    overly broad atlas masks at high spatial resolution.
+    The cascade uses progressively dilated MCA/ACA masks, then the full
+    MRA mask.  CoW is omitted: its voxels overlap MCA_ACA_dil2 and add
+    skull-base susceptibility / cavernous sinus partial-volume risk.
+
+    Levels (when all files present):
+        1. MCA_ACA          — undilated, highest arterial specificity
+        2. MCA_ACA_dil      — 1× dilated (~2 mm margin)
+        3. MCA_ACA_dil2     — 2× dilated (~4 mm margin)
+        4. full_mask_dil2   — full MRA incl. basilar, broadest atlas
+
+    Missing files are silently skipped, so the effective cascade adapts
+    to whichever atlas files are installed.
 
     Parameters
     ----------
@@ -60,9 +68,10 @@ def get_arterial_atlas_cascade(resolution: str = "2mm") -> list[Path]:
     """
     # (region_name, dilation_suffix) — ordered tightest to broadest
     variants = [
-        ("MCA_ACA", "dil2"),   # Most superior: MCA + ACA, 2× dilated
-        ("CoW_mask", "dil2"),  # Circle of Willis, 2× dilated
-        ("full_mask", "dil2"), # Full MRA incl. basilar, 2× dilated
+        ("MCA_ACA", ""),      # Undilated — tightest, highest arterial specificity
+        ("MCA_ACA", "dil"),   # 1× dilated — ~2 mm margin
+        ("MCA_ACA", "dil2"),  # 2× dilated — ~4 mm margin
+        ("full_mask", "dil2"),# Full MRA incl. basilar — broadest atlas
     ]
     cascade: list[Path] = []
     for region, dilation in variants:
