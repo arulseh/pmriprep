@@ -64,7 +64,7 @@ jobs:
         run: |
           IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
           docker run --rm --entrypoint python "$IMAGE_TAG" \
-            -m pytest tests/unit/ -v --tb=short
+            -m pytest /src/pmriprep/tests/unit/ -v --tb=short
 
       # Push the already-tested image (no rebuild)
       - name: Push tested image
