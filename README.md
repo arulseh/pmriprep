@@ -127,7 +127,7 @@ pmriprep bids_dir output_dir {participant} [options]
 
 | Flag | Description |
 |------|-------------|
-| `--dce-model {auto,tofts,extended_tofts,patlak,2cxm}` | Pharmacokinetic model. `auto` performs per-voxel BIC model selection, producing a hybrid map where each voxel uses its best-fitting model (default: auto) |
+| `--dce-model {auto,tofts,extended_tofts,patlak,2cxm}` | Pharmacokinetic model. `auto` performs per-voxel BIC model selection, where each voxel uses the best-fitting model (default: auto) |
 | `--dce-bayesian {none,map,vi,mcmc}` | Bayesian inference method (default: none) |
 | `--dce-aif-method {auto,population}` | AIF detection method (default: auto) |
 | `--dce-aif-file FILE` | External AIF curve file (plasma concentration in mM); bypasses detection |
@@ -214,7 +214,7 @@ dce:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection (hybrid map + model-selection map). Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
+| `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection. Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
 | `bayesian` | str | `"none"` | Bayesian mode: `none`, `map`, `vi`, `mcmc` |
 | `mcmc_samples` | int | `500` | MCMC samples if bayesian=mcmc |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
