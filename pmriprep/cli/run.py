@@ -236,7 +236,10 @@ Examples:
         "--dce-model",
         choices=["auto", "tofts", "extended_tofts", "patlak", "2cxm"],
         default=None,
-        help="Pharmacokinetic model for DCE (default: auto).",
+        help="Pharmacokinetic model for DCE. 'auto' performs per-voxel BIC "
+        "model selection (candidate set gated by temporal resolution), "
+        "producing a hybrid map where each voxel uses its best-fitting "
+        "model. (default: auto).",
     )
     dce_group.add_argument(
         "--dce-bayesian",
