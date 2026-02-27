@@ -20,7 +20,7 @@ PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and 
 ### Docker (Recommended)
 
 ```bash
-docker pull pmriprep/pmriprep:latest
+docker pull ghcr.io/arulseh/pmriprep:latest
 ```
 
 Run with Docker:
@@ -30,7 +30,7 @@ docker run --rm \
     -v /path/to/bids:/data:ro \
     -v /path/to/output:/out \
     -v /path/to/work:/work \
-    pmriprep/pmriprep:latest \
+    ghcr.io/arulseh/pmriprep:latest \
     /data /out participant \
     --participant-label 01 \
     -w /work
@@ -43,25 +43,21 @@ docker run --gpus all --rm \
     -v /path/to/bids:/data:ro \
     -v /path/to/output:/out \
     -v /path/to/work:/work \
-    pmriprep/pmriprep:latest \
+    ghcr.io/arulseh/pmriprep:latest \
     /data /out participant \
     --use-gpu -w /work
 ```
 
-### Singularity / Apptainer
+### Apptainer
 
 ```bash
-# Pull from Docker Hub
-singularity pull pmriprep.sif docker://pmriprep/pmriprep:latest
-
-# Or from local Docker daemon
-singularity pull pmriprep.sif docker-daemon://pmriprep:latest
+apptainer pull pmriprep.sif docker://ghcr.io/arulseh/pmriprep:latest
 ```
 
-Run with Singularity:
+Run with Apptainer:
 
 ```bash
-singularity run --cleanenv \
+apptainer run --cleanenv \
     --bind /path/to/bids:/data:ro \
     --bind /path/to/output:/out \
     --bind /path/to/work:/work \
@@ -72,7 +68,7 @@ singularity run --cleanenv \
     -w /work
 ```
 
-The `--bind /tmp:/home/pmriprep/.cache` mount is needed for TemplateFlow template caching. For GPU support, add `--nv` (NVIDIA) to the `singularity run` command.
+The `--bind /tmp:/home/pmriprep/.cache` mount is needed for TemplateFlow template caching. For GPU support, add `--nv` (NVIDIA) to the `apptainer run` command.
 
 ### pip (Development)
 
@@ -106,6 +102,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--mem-gb GB` | Upper bound memory limit in GB |
 | `-w PATH`, `--work-dir PATH` | Working directory for intermediate files |
 | `--config-file PATH` | YAML or JSON configuration file for advanced options |
+| `-v`, `--verbose` | Increase log verbosity (repeat for more: `-v`, `-vv`, `-vvv`) |
 
 ### Pipeline Skip Flags
 
@@ -199,6 +196,7 @@ dce:
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
 | `aif_criteria` | str | `"strict"` | AIF selection: `strict`, `relaxed` |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
+| `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
 | `aif_mask_file` | path | `null` | Custom AIF mask file |
 | `gamma_fit` | bool | `false` | Apply gamma-variate fitting to AIF |
@@ -225,20 +223,26 @@ dce:
 | `target_peak` | float | `null` | Target AIF peak (mM); null = field-strength default |
 | `aif_mask_file` | path | `null` | Custom AIF mask file |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
+| `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `dose` | str | `"full"` | Dose: `half`, `full`, `double` |
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
 | `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `tfl_b1map`, `none` |
 | `no_t1` | bool | `false` | Skip T1 mapping |
+| `skip_flip_validation` | bool | `false` | Skip flip angle validation in VFA T1 mapping |
+| `lenient_t1_qc` | bool | `false` | Use lenient T1 QC ranges (500-2500 ms vs strict) |
 | `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect) |
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none) |
 | `t1_correction` | str | `"auto"` | T1 correction mode: `auto`, `none`, `offset`, `fallback` |
+| `no_tortuosity` | bool | `false` | Skip DWI-based tortuosity correction |
+| `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation |
 | `cbv_constraint_mode` | str | `"auto"` | DSC CBV constraint: `auto`, `hard`, `soft`, `skip` |
 | `hematocrit` | float | `0.40` | Blood hematocrit for CBV-to-vp conversion |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
 | `underlays` | list | `[]` | Structural images to transform to DCE space for QC overlays: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
+| `reference` | str | `"postcon"` | Reference image for registration: `postcon`, `precon` |
 
 ### Anatomical Configuration
 

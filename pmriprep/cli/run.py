@@ -137,7 +137,8 @@ Examples:
         "--config-file",
         type=Path,
         metavar="PATH",
-        help="Path to a YAML or JSON configuration file for advanced options.",
+        help="Path to a YAML or JSON configuration file for advanced options. "
+        "See README for full parameter reference.",
     )
 
     # Pipeline component skip flags
@@ -203,7 +204,8 @@ Examples:
         "--dsc-bayesian",
         choices=["none", "map", "vi", "mcmc"],
         default=None,
-        help="Bayesian inference method for DSC (default: none).",
+        help="Bayesian inference method for DSC: none, map (maximum a posteriori), "
+        "vi (variational), mcmc (Markov chain Monte Carlo). Default: none.",
     )
     dsc_group.add_argument(
         "--dsc-preload",
@@ -240,7 +242,8 @@ Examples:
         "--dce-bayesian",
         choices=["none", "map", "vi", "mcmc"],
         default=None,
-        help="Bayesian inference method for DCE (default: none).",
+        help="Bayesian inference method for DCE: none, map (maximum a posteriori), "
+        "vi (variational), mcmc (Markov chain Monte Carlo). Default: none.",
     )
     dce_group.add_argument(
         "--dce-aif-method",
