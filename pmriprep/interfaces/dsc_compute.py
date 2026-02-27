@@ -439,8 +439,9 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="Enhancing tumor mask (any space, resampled internally to DSC)",
     )
-    nawm_mask_file = File(
-        mandatory=False,
+    nawm_mask_file = traits.Either(
+        File(),
+        None,
         desc="NAWM mask in DSC space for rTTP normalization",
     )
 
@@ -1666,7 +1667,12 @@ class ComputeDSCMaps(BaseInterface):
 
         # NAWM-relative TTP
         rttp: Optional[npt.NDArray[Any]] = None
-        if isdefined(self.inputs.nawm_mask_file):
+        if (
+            isdefined(self.inputs.nawm_mask_file)
+            and self.inputs.nawm_mask_file is not None
+            and self.inputs.nawm_mask_file != "None"
+            and Path(self.inputs.nawm_mask_file).exists()
+        ):
             nawm_img = nib.load(self.inputs.nawm_mask_file)
             nawm_mask = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
             nawm_ttp = ttp[nawm_mask]
