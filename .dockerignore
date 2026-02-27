@@ -15,7 +15,7 @@ build/
 .coverage
 htmlcov/
 
-# Data directories (potentially tens of GB)
+# Data directories
 work/
 sourcedata/
 
