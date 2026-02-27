@@ -1,6 +1,6 @@
 # PMRIPrep
 
-**Perfusion MRI Preprocessing Pipeline** (v0.2.0)
+**Perfusion MRI Preprocessing Pipeline** (v0.3.0)
 
 PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and Dynamic Contrast Enhanced (DCE) perfusion MRI data. It follows the [NiPreps](https://www.nipreps.org/) framework conventions and produces BIDS-Derivatives compliant outputs with HTML QC reports.
 
