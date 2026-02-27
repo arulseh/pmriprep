@@ -31,7 +31,7 @@ FROM condaforge/miniforge3:latest
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
-LABEL org.opencontainers.image.version="0.2.0"
+LABEL org.opencontainers.image.version="0.3.0"
 LABEL org.opencontainers.image.source="https://github.com/pmriprep/pmriprep"
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 
@@ -125,11 +125,15 @@ RUN python -c "from hd_glio.setup_hd_glio import maybe_download_weights; maybe_d
     mv /root/hd_glio_params /home/pmriprep/hd_glio_params && \
     chmod -R a+rX /home/pmriprep/hd_glio_params
 
-# Copy source and install pmriprep (includes CuPy for GPU-accelerated deconvolution)
+# Install CuPy (GPU-accelerated deconvolution) — prebuilt CUDA 12.x wheel,
+# same pattern as PyTorch above (generic `cupy` has no prebuilt wheels).
+RUN pip install --no-cache-dir cupy-cuda12x
+
+# Copy source and install pmriprep
 COPY --chown=1000:1000 . /src/pmriprep
 WORKDIR /src/pmriprep
 
-RUN pip install --no-cache-dir ".[all]" && pip cache purge
+RUN pip install --no-cache-dir ".[test,dev]" && pip cache purge
 
 # Download required TemplateFlow templates to a shared location
 # (not under $HOME, which Apptainer auto-binds from the host)
