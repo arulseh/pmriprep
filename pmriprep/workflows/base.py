@@ -68,18 +68,21 @@ class PipelineDecision:
 def decide_pipelines(
     session_data: SessionData,
     skip_flags: PipelineSkipFlags,
+    tumor_seg_config: Optional[TumorSegConfig] = None,
 ) -> PipelineDecision:
     """Decide which pipelines to run based on data and skip flags.
 
     This function applies the following rules:
     1. anat always runs (unless explicitly skipped)
     2. tumor_seg runs if all 4 modalities are present (unless skipped)
+       and the requested GPU device is available
     3. dsc runs if DSC data is present (unless skipped)
     4. dce runs if DCE data is present (unless skipped)
 
     Args:
         session_data: Available data from discovery.
         skip_flags: User-specified skip flags.
+        tumor_seg_config: Tumor segmentation config for device check.
 
     Returns:
         PipelineDecision with boolean flags and reasons.
@@ -104,7 +107,12 @@ def decide_pipelines(
     else:
         # Tumor segmentation can run if anat is running OR if previous anat outputs exist
         # (checked at workflow connection time)
-        decision.run_tumor_seg = True
+        device_available, device_reason = _check_tumor_seg_device(tumor_seg_config)
+        if not device_available:
+            decision.run_tumor_seg = False
+            decision.tumor_seg_reason = device_reason
+        else:
+            decision.run_tumor_seg = True
 
     # DSC perfusion
     if skip_flags.skip_dsc:
@@ -127,6 +135,72 @@ def decide_pipelines(
         decision.run_dce = True
 
     return decision
+
+
+def _check_tumor_seg_device(
+    config: Optional[TumorSegConfig] = None,
+) -> tuple[bool, str]:
+    """Check whether the requested tumor-seg device is available.
+
+    When ``conda_env`` is set, the check is skipped because the host
+    environment's PyTorch may differ from the conda env where HD-GLIO
+    actually runs (e.g. bare-metal MPS with --tumor-seg-conda-env hdglio-mps).
+
+    When config is None (e.g. in tests that don't pass a config), returns
+    True — the data-availability check earlier in decide_pipelines already
+    gates whether tumor seg can run.
+
+    Args:
+        config: Tumor segmentation configuration, or None.
+
+    Returns:
+        Tuple of (available, reason). Reason is only meaningful when
+        available is False.
+    """
+    if config is None:
+        return True, ""
+
+    # When running in a separate conda env, the host PyTorch is irrelevant
+    if config.conda_env:
+        return True, ""
+
+    device = config.device
+
+    if device == "cuda":
+        try:
+            import torch
+
+            if not torch.cuda.is_available():
+                return False, (
+                    "No CUDA GPU detected (--tumor-seg-device cuda). "
+                    "Tumor segmentation requires GPU acceleration. "
+                    "Use --skip-tumor-seg to proceed without tumor segmentation."
+                )
+        except ImportError:
+            return False, (
+                "PyTorch not installed; cannot run tumor segmentation. "
+                "Use --skip-tumor-seg to proceed without it."
+            )
+    elif device == "mps":
+        try:
+            import torch
+
+            if not (
+                hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+            ):
+                return False, (
+                    "MPS not available (--tumor-seg-device mps). "
+                    "Tumor segmentation requires GPU acceleration. "
+                    "Use --skip-tumor-seg to proceed without tumor segmentation."
+                )
+        except ImportError:
+            return False, (
+                "PyTorch not installed; cannot run tumor segmentation. "
+                "Use --skip-tumor-seg to proceed without it."
+            )
+    # device == "cpu": always available (user explicitly chose slow path)
+
+    return True, ""
 
 
 def _find_previous_anat_outputs(
@@ -726,7 +800,7 @@ def init_pmriprep_wf(
     session_data = discover_session_data(bids_dir, subject_id, session_id)
 
     # Decide which pipelines to run
-    decision = decide_pipelines(session_data, skip_flags)
+    decision = decide_pipelines(session_data, skip_flags, tumor_seg_config)
 
     # Create master workflow
     workflow = pe.Workflow(name=name)

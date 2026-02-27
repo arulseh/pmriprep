@@ -5,6 +5,8 @@ import health, QC standards, and utility constants. These tests require
 no external tools (FSL, ANTs, etc.) and no local test fixtures.
 """
 
+import sys
+import unittest.mock
 from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import MagicMock
@@ -467,3 +469,67 @@ class TestUtilityFunctions:
         assert VP_BOUNDS.min < VP_BOUNDS.max
         assert FP_BOUNDS.min < FP_BOUNDS.max
         assert PS_BOUNDS.min < PS_BOUNDS.max
+
+
+# =============================================================================
+# Device Preflight Tests
+# =============================================================================
+
+
+class TestDevicePreflight:
+    """Preflight GPU/device checks for tumor segmentation."""
+
+    @pytest.fixture
+    def tumor_seg_session(self) -> SessionData:
+        """SessionData with all 4 modalities so tumor_seg is eligible."""
+        return SessionData(
+            subject="0001",
+            session="0001",
+            modalities=ModalityAvailability(),
+            pipelines=PipelineAvailability(tumor_seg=True, tumor_seg_reason=""),
+        )
+
+    def test_cuda_unavailable_skips(self, tumor_seg_session: SessionData) -> None:
+        """Verify tumor seg is skipped when CUDA is requested but unavailable."""
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        config = TumorSegConfig(device="cuda")
+        with unittest.mock.patch.dict("sys.modules", {"torch": mock_torch}):
+            decision = decide_pipelines(
+                tumor_seg_session, PipelineSkipFlags(), config
+            )
+        assert decision.run_tumor_seg is False
+        assert "No CUDA GPU" in (decision.tumor_seg_reason or "")
+
+    def test_mps_unavailable_skips(self, tumor_seg_session: SessionData) -> None:
+        """Verify tumor seg is skipped when MPS is requested but unavailable."""
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = False
+        config = TumorSegConfig(device="mps")
+        with unittest.mock.patch.dict("sys.modules", {"torch": mock_torch}):
+            decision = decide_pipelines(
+                tumor_seg_session, PipelineSkipFlags(), config
+            )
+        assert decision.run_tumor_seg is False
+        assert "MPS not available" in (decision.tumor_seg_reason or "")
+
+    def test_conda_env_bypasses_check(self, tumor_seg_session: SessionData) -> None:
+        """Verify device check is skipped when conda_env is set."""
+        config = TumorSegConfig(device="mps", conda_env="hdglio-mps")
+        decision = decide_pipelines(
+            tumor_seg_session, PipelineSkipFlags(), config
+        )
+        assert decision.run_tumor_seg is True
+
+    def test_cpu_always_passes(self, tumor_seg_session: SessionData) -> None:
+        """Verify CPU device always passes the check."""
+        config = TumorSegConfig(device="cpu")
+        decision = decide_pipelines(
+            tumor_seg_session, PipelineSkipFlags(), config
+        )
+        assert decision.run_tumor_seg is True
+
+    def test_no_config_passes(self, tumor_seg_session: SessionData) -> None:
+        """Verify tumor seg runs when no config is provided."""
+        decision = decide_pipelines(tumor_seg_session, PipelineSkipFlags())
+        assert decision.run_tumor_seg is True

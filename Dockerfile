@@ -1,11 +1,8 @@
 # PMRIPrep: Perfusion MRI Preprocessing Pipeline
 # BIDS-App container for DCE and DSC MRI processing
 #
-# Build (CPU, default):
+# Build:
 #   docker build -t pmriprep:latest .
-#
-# Build (GPU / CUDA 12.1):
-#   docker build -t pmriprep:latest --build-arg PYTORCH_VARIANT=cu121 .
 #
 # Run:
 #   docker run -it --rm \
@@ -99,34 +96,40 @@ ENV FSLDIR=${CONDA_DIR}
 ENV FSLOUTPUTTYPE=NIFTI_GZ
 
 # Create directories for nnU-Net (used by HD-BET and HD-GLIO)
-RUN mkdir -p ${nnUNet_raw_data_base} ${nnUNet_preprocessed} ${RESULTS_FOLDER}
+# nnunet.paths.py calls maybe_mkdir_p() at import time, creating subdirs.
+# These must be world-writable for Apptainer (read-only container FS).
+RUN mkdir -p ${nnUNet_raw_data_base}/nnUNet_raw_data \
+             ${nnUNet_preprocessed} \
+             ${RESULTS_FOLDER} && \
+    chmod -R 777 ${nnUNet_raw_data_base} ${nnUNet_preprocessed} ${RESULTS_FOLDER}
 
-# Install PyTorch (CPU by default; pass --build-arg PYTORCH_VARIANT=cu121 for GPU)
-ARG PYTORCH_VARIANT=cpu
-RUN if [ "$PYTORCH_VARIANT" != "cpu" ]; then \
-        pip install --no-cache-dir torch torchvision \
-            --index-url https://download.pytorch.org/whl/${PYTORCH_VARIANT}; \
-    else \
-        pip install --no-cache-dir torch torchvision \
-            --index-url https://download.pytorch.org/whl/cpu; \
-    fi
+# Install PyTorch with CUDA 12.1 support (GPU-accelerated tumor segmentation)
+# The preflight check in decide_pipelines() auto-skips tumor seg at runtime
+# if no GPU is detected, so shipping GPU PyTorch is always safe.
+RUN pip install --no-cache-dir torch torchvision \
+    --index-url https://download.pytorch.org/whl/cu121
 
-# Install HD-BET for brain extraction
-RUN pip install --no-cache-dir hd-bet
+# Install HD-BET for brain extraction and pre-download model weights
+# (avoids runtime download failure on Apptainer's read-only filesystem)
+RUN pip install --no-cache-dir hd-bet && \
+    python -c "from HD_BET.checkpoint_download import maybe_download_parameters; maybe_download_parameters()"
 
-# Install HD-GLIO for glioma segmentation (requires CUDA at runtime)
+# Install HD-GLIO for glioma segmentation and pre-download model weights
+# (avoids runtime download failure on Apptainer's read-only filesystem)
+# hd_glio/paths.py resolves ~ ($HOME) for weight storage; at build time
+# $HOME=/root, so we download there and move to runtime user's home.
 RUN pip install --no-cache-dir HD-GLIO || \
     pip install --no-cache-dir git+https://github.com/MIC-DKFZ/HD-GLIO.git
+RUN python -c "from hd_glio.setup_hd_glio import maybe_download_weights; maybe_download_weights()" && \
+    mkdir -p /home/pmriprep && \
+    mv /root/hd_glio_params /home/pmriprep/hd_glio_params && \
+    chmod -R a+rX /home/pmriprep/hd_glio_params
 
-# Copy source and install pmriprep
+# Copy source and install pmriprep (includes CuPy for GPU-accelerated deconvolution)
 COPY --chown=1000:1000 . /src/pmriprep
 WORKDIR /src/pmriprep
 
-RUN if [ "$PYTORCH_VARIANT" != "cpu" ]; then \
-        pip install --no-cache-dir ".[all]"; \
-    else \
-        pip install --no-cache-dir ".[dev]"; \
-    fi && pip cache purge
+RUN pip install --no-cache-dir ".[all]" && pip cache purge
 
 # Download required TemplateFlow templates to a shared location
 # (not under $HOME, which Apptainer auto-binds from the host)
