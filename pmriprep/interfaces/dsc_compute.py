@@ -440,7 +440,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Enhancing tumor mask (any space, resampled internally to DSC)",
     )
     nawm_mask_file = traits.Either(
-        File(),
+        traits.Str,
         None,
         desc="NAWM mask in DSC space for rTTP normalization",
     )

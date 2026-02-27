@@ -275,17 +275,9 @@ class DCELesionStats(BaseInterface):
         return maps
 
     def _has_input(self, attr: str) -> bool:
-        """Check if an input is defined and non-empty."""
-        from nipype.interfaces.base import isdefined
-
-        val = getattr(self.inputs, attr, None)
-        if val is None:
-            return False
-        if not isdefined(val):
-            return False
-        if isinstance(val, str) and val.strip() == "":
-            return False
-        return True
+        """Check if an input is defined and points to an existing file."""
+        from pmriprep.utils.outputs import has_input
+        return has_input(self.inputs, attr)
 
     def _compute_region_stats(
         self,

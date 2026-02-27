@@ -555,6 +555,18 @@ def _find_previous_tumor_seg_outputs(
     return outputs
 
 
+def _pick_nawm_mask(tumor_seg_nawm=None, user_nawm=None):
+    """Pick best NAWM mask: prefer tumor-seg, fall back to user-supplied."""
+    from pathlib import Path
+
+    for candidate in (tumor_seg_nawm, user_nawm):
+        if candidate is not None and candidate != "None":
+            p = Path(candidate)
+            if p.exists():
+                return str(p)
+    return None
+
+
 def _find_previous_dsc_outputs(
     output_dir: Path,
     subject_id: str,
@@ -1444,6 +1456,18 @@ def init_pmriprep_wf(
             _dsc_log.info("DSC: user roi_mask=%s", _user_roi)
 
         if tumor_seg_wf is not None:
+            # NAWM picker: prefer tumor-seg NAWM, fall back to user-supplied
+            dsc_pick_nawm = pe.Node(
+                niu.Function(
+                    input_names=["tumor_seg_nawm", "user_nawm"],
+                    output_names=["nawm_mask"],
+                    function=_pick_nawm_mask,
+                ),
+                name="dsc_pick_nawm",
+            )
+            if _user_nawm:
+                dsc_pick_nawm.inputs.user_nawm = str(_user_nawm)
+
             if _user_lesion:
                 # Merge tumor seg whole_tumor + user lesion masks
                 from pmriprep.utils.mask_utils import MergeMasks
@@ -1463,7 +1487,12 @@ def init_pmriprep_wf(
                     (tumor_seg_wf, dsc_wf, [
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
                         ("outputnode.segmentation", "inputnode.tumor_segmentation"),
-                        ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+                    ]),
+                    (tumor_seg_wf, dsc_pick_nawm, [
+                        ("outputnode.nawm_mask", "tumor_seg_nawm"),
+                    ]),
+                    (dsc_pick_nawm, dsc_wf, [
+                        ("nawm_mask", "inputnode.nawm_mask"),
                     ]),
                 ])
                 _dsc_log.info(
@@ -1477,7 +1506,12 @@ def init_pmriprep_wf(
                         ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
                         ("outputnode.segmentation", "inputnode.tumor_segmentation"),
-                        ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+                    ]),
+                    (tumor_seg_wf, dsc_pick_nawm, [
+                        ("outputnode.nawm_mask", "tumor_seg_nawm"),
+                    ]),
+                    (dsc_pick_nawm, dsc_wf, [
+                        ("nawm_mask", "inputnode.nawm_mask"),
                     ]),
                 ])
         elif work_dir is not None and not decision.run_tumor_seg:
@@ -1518,6 +1552,9 @@ def init_pmriprep_wf(
             if prev_tumor_seg["nawm_mask"]:
                 dsc_wf.inputs.inputnode.nawm_mask = prev_tumor_seg["nawm_mask"]
                 _dsc_log.info("skip-tumor-seg: loaded nawm_mask from %s", prev_tumor_seg["nawm_mask"])
+            elif _user_nawm:
+                dsc_wf.inputs.inputnode.nawm_mask = str(_user_nawm)
+                _dsc_log.info("skip-tumor-seg: using user nawm_mask=%s (no cached nawm)", _user_nawm)
         else:
             # No tumor segmentation — user-supplied masks only
             if _user_lesion:
@@ -1945,6 +1982,18 @@ def init_pmriprep_wf(
             _dce_log.info("DCE: user roi_mask=%s", _dce_user_roi)
 
         if tumor_seg_wf is not None:
+            # NAWM picker: prefer tumor-seg NAWM, fall back to user-supplied
+            dce_pick_nawm = pe.Node(
+                niu.Function(
+                    input_names=["tumor_seg_nawm", "user_nawm"],
+                    output_names=["nawm_mask"],
+                    function=_pick_nawm_mask,
+                ),
+                name="dce_pick_nawm",
+            )
+            if _dce_user_nawm:
+                dce_pick_nawm.inputs.user_nawm = str(_dce_user_nawm)
+
             if _dce_user_lesion:
                 # Merge tumor seg whole_tumor + user lesion masks
                 from pmriprep.utils.mask_utils import MergeMasks
@@ -1964,7 +2013,12 @@ def init_pmriprep_wf(
                     (tumor_seg_wf, dce_wf, [
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
                         ("outputnode.segmentation", "inputnode.tumor_segmentation"),
-                        ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+                    ]),
+                    (tumor_seg_wf, dce_pick_nawm, [
+                        ("outputnode.nawm_mask", "tumor_seg_nawm"),
+                    ]),
+                    (dce_pick_nawm, dce_wf, [
+                        ("nawm_mask", "inputnode.nawm_mask"),
                     ]),
                 ])
                 _dce_log.info(
@@ -1978,7 +2032,12 @@ def init_pmriprep_wf(
                         ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
                         ("outputnode.segmentation", "inputnode.tumor_segmentation"),
-                        ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+                    ]),
+                    (tumor_seg_wf, dce_pick_nawm, [
+                        ("outputnode.nawm_mask", "tumor_seg_nawm"),
+                    ]),
+                    (dce_pick_nawm, dce_wf, [
+                        ("nawm_mask", "inputnode.nawm_mask"),
                     ]),
                 ])
         elif work_dir is not None and not decision.run_tumor_seg:
@@ -2019,6 +2078,9 @@ def init_pmriprep_wf(
             if prev_tumor_seg["nawm_mask"]:
                 dce_wf.inputs.inputnode.nawm_mask = prev_tumor_seg["nawm_mask"]
                 _dce_log.info("skip-tumor-seg (DCE): loaded nawm_mask from %s", prev_tumor_seg["nawm_mask"])
+            elif _dce_user_nawm:
+                dce_wf.inputs.inputnode.nawm_mask = str(_dce_user_nawm)
+                _dce_log.info("skip-tumor-seg (DCE): using user nawm_mask=%s (no cached nawm)", _dce_user_nawm)
         else:
             # No tumor segmentation — user-supplied masks only
             if _dce_user_lesion:
