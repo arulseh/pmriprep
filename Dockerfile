@@ -49,6 +49,12 @@ ENV OMP_NUM_THREADS=1
 # Conda prefix
 ENV CONDA_DIR=/opt/conda
 
+# Matplotlib cache dir — prevents writes to ~/.config/matplotlib (read-only in Apptainer)
+ENV MPLCONFIGDIR="/tmp/matplotlib"
+
+# NiPreps container-detection convention
+ENV IS_DOCKER_8395080871=1
+
 # nnU-Net directory layout (used by HD-BET and HD-GLIO)
 ENV nnUNet_raw_data_base=/opt/nnunet_data
 ENV nnUNet_preprocessed=/opt/nnunet_preprocessed
@@ -117,17 +123,20 @@ COPY --chown=1000:1000 . /src/pmriprep
 WORKDIR /src/pmriprep
 
 RUN if [ "$PYTORCH_VARIANT" != "cpu" ]; then \
-        pip install --no-cache-dir -e ".[all]"; \
+        pip install --no-cache-dir ".[all]"; \
     else \
-        pip install --no-cache-dir -e ".[dev]"; \
+        pip install --no-cache-dir ".[dev]"; \
     fi && pip cache purge
 
-# Download required TemplateFlow templates
+# Download required TemplateFlow templates to a shared location
+# (not under $HOME, which Apptainer auto-binds from the host)
+ENV TEMPLATEFLOW_HOME="/opt/templateflow"
 RUN python -c "import templateflow; \
     from templateflow import api as tflow; \
     tflow.get('MNI152NLin2009cAsym', resolution=1, desc='brain', suffix='mask'); \
     tflow.get('MNI152NLin2009cAsym', resolution=1, suffix='T1w'); \
-    tflow.get('MNI152NLin6Asym', resolution=1, suffix='T1w')"
+    tflow.get('MNI152NLin6Asym', resolution=1, suffix='T1w')" && \
+    chmod -R a+rX ${TEMPLATEFLOW_HOME}
 
 # Build-time validation — fail the build early if something is broken
 RUN python -c "\
@@ -138,12 +147,13 @@ import HD_BET; print('HD-BET: OK'); \
 import pmriprep; print('PMRIPrep: OK')"
 
 # Set up user (non-root execution)
-RUN useradd -m -u 1000 pmriprep || true
+# chmod go=u lets Apptainer's host UID (mapped into the container) write to $HOME
+RUN useradd -m -s /bin/bash -G users -u 1000 pmriprep || true
+ENV HOME="/home/pmriprep"
+RUN mkdir -p /home/pmriprep/.cache && \
+    chmod -R go=u /home/pmriprep
+WORKDIR /tmp
 USER 1000
-WORKDIR /home/pmriprep
-
-# Create default working directories
-RUN mkdir -p /home/pmriprep/.cache /home/pmriprep/work
 
 # Set up entry point
 ENTRYPOINT ["pmriprep"]

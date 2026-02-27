@@ -61,14 +61,13 @@ apptainer run --cleanenv \
     --bind /path/to/bids:/data:ro \
     --bind /path/to/output:/out \
     --bind /path/to/work:/work \
-    --bind /tmp:/home/pmriprep/.cache \
     pmriprep.sif \
     /data /out participant \
     --participant-label 01 \
     -w /work
 ```
 
-The `--bind /tmp:/home/pmriprep/.cache` mount is needed for TemplateFlow template caching. For GPU support, add `--nv` (NVIDIA) to the `apptainer run` command.
+TemplateFlow templates are pre-populated at `/opt/templateflow` inside the image — no extra bind mounts needed. For GPU support, add `--nv` (NVIDIA) to the `apptainer run` command.
 
 ### pip (Development)
 

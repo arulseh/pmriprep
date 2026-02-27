@@ -2,7 +2,7 @@
 #
 # PMRIPrep Docker Build Script
 #
-# Build Docker and Singularity containers for PMRIPrep.
+# Build Docker and Apptainer containers for PMRIPrep.
 #
 # Usage:
 #   ./docker/build.sh                    # Build local image
@@ -15,11 +15,11 @@
 #   DOCKER_REPO       - Repository name (default: pmriprep/pmriprep)
 #   VERSION           - Override version (default: from pyproject.toml)
 #
-# Singularity conversion (after building):
-#   singularity pull pmriprep.sif docker://pmriprep/pmriprep:latest
-#   singularity pull pmriprep.sif docker-daemon://pmriprep:latest
+# Apptainer conversion (after building):
+#   apptainer pull pmriprep.sif docker://pmriprep/pmriprep:latest
+#   apptainer pull pmriprep.sif docker-daemon://pmriprep:latest
 #
-# See bottom of file for detailed Singularity instructions.
+# See bottom of file for detailed Apptainer instructions.
 
 set -euo pipefail
 
@@ -144,14 +144,14 @@ Examples:
   # Build for custom registry
   ./docker/build.sh --registry ghcr.io --repo myorg/pmriprep --push
 
-Singularity Conversion:
-  After building, convert to Singularity with:
+Apptainer Conversion:
+  After building, convert to Apptainer with:
 
   # From registry (after --push)
-  singularity pull pmriprep.sif docker://pmriprep/pmriprep:latest
+  apptainer pull pmriprep.sif docker://pmriprep/pmriprep:latest
 
   # From local Docker daemon
-  singularity pull pmriprep.sif docker-daemon://pmriprep:latest
+  apptainer pull pmriprep.sif docker-daemon://pmriprep:latest
 EOF
 }
 
@@ -287,50 +287,51 @@ build_multiarch() {
     fi
 }
 
-# Print Singularity conversion instructions
-print_singularity_instructions() {
+# Print Apptainer conversion instructions
+print_apptainer_instructions() {
     local version="$1"
     local full_image="${REPO}:${version}"
 
     echo ""
     echo "=============================================="
-    echo "Singularity Conversion Instructions"
+    echo "Apptainer Conversion Instructions"
     echo "=============================================="
     echo ""
-    echo "Convert the Docker image to Singularity:"
+    echo "Convert the Docker image to Apptainer:"
     echo ""
 
     if $PUSH; then
         echo "# From Docker Hub (recommended after push):"
-        echo "singularity pull pmriprep_${version}.sif docker://${full_image}"
+        echo "apptainer pull pmriprep_${version}.sif docker://${full_image}"
         echo ""
         echo "# Or for latest:"
-        echo "singularity pull pmriprep_latest.sif docker://${REPO}:latest"
+        echo "apptainer pull pmriprep_latest.sif docker://${REPO}:latest"
     else
         echo "# From local Docker daemon:"
-        echo "singularity pull pmriprep_${version}.sif docker-daemon://${REPO}:${version}"
+        echo "apptainer pull pmriprep_${version}.sif docker-daemon://${REPO}:${version}"
         echo ""
         echo "# Note: This requires Docker images to be available locally."
-        echo "# Run with --push to push to registry for easier Singularity conversion."
+        echo "# Run with --push to push to registry for easier Apptainer conversion."
     fi
 
     echo ""
-    echo "Run Singularity container:"
-    echo "  singularity run --cleanenv \\"
+    echo "TemplateFlow templates are pre-populated at /opt/templateflow inside the image."
+    echo ""
+    echo "Run Apptainer container:"
+    echo "  apptainer run --cleanenv \\"
     echo "    --bind /path/to/bids_dir:/data:ro \\"
     echo "    --bind /path/to/output:/out \\"
     echo "    --bind /path/to/work:/work \\"
-    echo "    --bind /tmp:/home/pmriprep/.cache \\"
     echo "    pmriprep_${version}.sif \\"
     echo "    /data /out participant \\"
     echo "    --participant-label 01 \\"
     echo "    -w /work"
     echo ""
     echo "For GPU support (NVIDIA):"
-    echo "  singularity run --nv --cleanenv \\"
+    echo "  apptainer run --nv --cleanenv \\"
     echo "    --bind /path/to/bids_dir:/data:ro \\"
     echo "    --bind /path/to/output:/out \\"
-    echo "    --bind /tmp:/home/pmriprep/.cache \\"
+    echo "    --bind /path/to/work:/work \\"
     echo "    pmriprep_${version}.sif \\"
     echo "    /data /out participant \\"
     echo "    --use-gpu"
@@ -362,8 +363,8 @@ main() {
         build_single "$version"
     fi
 
-    # Print Singularity instructions
-    print_singularity_instructions "$version"
+    # Print Apptainer instructions
+    print_apptainer_instructions "$version"
 
     log_success "Build complete!"
 }

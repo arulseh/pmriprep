@@ -54,28 +54,22 @@ jobs:
           cache-to: type=gha,mode=max
 
       # Basic smoke test — confirm the image runs
-      - name: Test image - help text
+      - name: Smoke test
         run: |
-          docker run --rm \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }} \
-            --help
+          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          docker run --rm "$IMAGE_TAG" --help
 
       # Run unit tests inside the container
-      - name: Test image - pytest
+      - name: Unit tests
         run: |
-          docker run --rm \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }} \
-            python -m pytest tests/unit/ -v --tb=short
+          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          docker run --rm --entrypoint python "$IMAGE_TAG" \
+            -m pytest tests/unit/ -v --tb=short
 
-      # Push only after tests pass
-      - name: Push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # Push the already-tested image (no rebuild)
+      - name: Push tested image
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+            docker push "$tag"
+          done
 
