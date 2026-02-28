@@ -188,7 +188,6 @@ Examples:
         default=False,
         help="Enable GPU acceleration for DSC and DCE processing.",
     )
-
     # DSC options
     dsc_group = parser.add_argument_group(
         "DSC options",
@@ -935,6 +934,25 @@ def _run_workflow(
         if args.mem_gb is not None:
             # Convert GB to bytes for nipype
             plugin_args["memory_gb"] = args.mem_gb
+
+        # Tell nipype how many GPU slots are available when --use-gpu is set.
+        # nipype's gpu_count() relies on nvidia-smi which may not be on PATH
+        # inside containers (e.g., Apptainer --contain).  Without this,
+        # MultiProc._prerun_check raises "Insufficient GPU resources" because
+        # n_gpu_procs defaults to 0 while nodes with use_gpu=True are present.
+        if getattr(args, "use_gpu", False):
+            from pmriprep.utils.gpu import detect_gpu_count
+
+            n_gpus = detect_gpu_count()
+            if n_gpus > 0:
+                plugin_args["n_gpu_procs"] = n_gpus
+                logger.info("Detected %d GPU(s) via CUDA runtime", n_gpus)
+            else:
+                plugin_args["n_gpu_procs"] = 1
+                logger.warning(
+                    "GPU detection failed (no CUDA driver visible), but "
+                    "--use-gpu was requested; defaulting to 1 GPU slot"
+                )
 
         logger.info(f"Running workflow with {args.nprocs} processors")
         workflow.run(plugin=plugin, plugin_args=plugin_args)

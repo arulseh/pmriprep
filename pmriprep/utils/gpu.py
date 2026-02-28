@@ -45,6 +45,27 @@ def is_cupy_available() -> bool:
     return _CUPY_AVAILABLE
 
 
+def detect_gpu_count() -> int:
+    """Detect the number of CUDA GPUs via the CUDA runtime API.
+
+    Uses ``cupy.cuda.runtime.getDeviceCount()`` which talks directly to
+    ``libcuda.so`` — unlike ``nvidia-smi``, this works inside containers
+    (Apptainer ``--contain``, Docker, etc.) as long as the CUDA driver
+    library is visible.
+
+    Returns:
+        Number of CUDA devices, or 0 if CuPy is unavailable or any
+        runtime error occurs (missing driver, ``/sys`` not bound, etc.).
+    """
+    if not _CUPY_AVAILABLE:
+        return 0
+
+    try:
+        return int(_cupy_module.cuda.runtime.getDeviceCount())
+    except Exception:
+        return 0
+
+
 def get_array_module(
     *arrays: ArrayLike, prefer_gpu: bool = False
 ) -> Any:
