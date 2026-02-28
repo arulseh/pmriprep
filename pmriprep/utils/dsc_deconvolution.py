@@ -403,10 +403,11 @@ class CirculantDeconvolutionResult:
     condition_number: float
 
     def get_tmax(self, dt: float = 1.0) -> float:
-        """Get time to maximum of residue function relative to delay.
+        """Get Tmax for cSVD (= delay).
 
-        For cSVD, this returns the time from bolus arrival (accounting for delay)
-        to the maximum of the residue function.
+        For cSVD, Tmax represents the time delay of the tissue residue
+        function relative to the AIF (Calamante, Stroke 2010). This is
+        the standard definition used in DEFUSE-3 and DAWN trials.
 
         Args:
             dt: Time step in seconds (default 1.0 for frame units).
@@ -414,7 +415,7 @@ class CirculantDeconvolutionResult:
         Returns:
             Tmax in seconds (or frames if dt=1.0).
         """
-        return float(np.argmax(self.residue)) * dt
+        return float(self.delay_frames) * dt
 
 
 def build_block_circulant_matrix(
@@ -585,9 +586,6 @@ def svd_deconvolve_circulant(
     if apply_non_negativity:
         residue = np.maximum(residue, 0.0)
 
-    # Extract perfusion parameters
-    cbf = float(np.max(residue))
-
     # Extract delay from position of maximum
     # The zero-delay position is at index (n-1) in the padded residue
     # Delay = peak_position - (n-1)
@@ -595,8 +593,16 @@ def svd_deconvolve_circulant(
     delay_frames = peak_position - (n - 1)
     delay_seconds = float(delay_frames) * dt
 
-    # CBV via trapezoidal integration of residue (Sourbron & Luypaert 2007)
-    cbv = float(np.trapezoid(residue, dx=dt))
+    # Extract N causal points starting at peak position
+    # (Østergaard 1996: CBV = integral over causal response only)
+    causal_indices = (peak_position + np.arange(n)) % m
+    causal_residue = residue[causal_indices]
+
+    # Extract perfusion parameters from causal portion
+    cbf = float(np.max(causal_residue))
+
+    # CBV via trapezoidal integration of causal residue (Østergaard 1996)
+    cbv = float(np.trapezoid(causal_residue, dx=dt))
 
     # MTT from central volume theorem: MTT = CBV / CBF
     if cbf > EPSILON_CONCENTRATION:
@@ -712,16 +718,22 @@ def svd_deconvolve_circulant_batch(
         if apply_non_negativity:
             residues_masked = np.maximum(residues_masked, 0.0)
 
-        # Extract parameters
-        cbf_masked = np.max(residues_masked, axis=1)
-
         # Extract delays from peak positions
         peak_positions = np.argmax(residues_masked, axis=1)
         delay_frames = peak_positions - (n_timepoints - 1)
         delay_masked = delay_frames.astype(np.float64) * dt
 
-        # CBV via trapezoidal integration (Sourbron & Luypaert 2007)
-        cbv_masked = np.trapezoid(residues_masked, dx=dt, axis=1)
+        # Extract N causal points from each voxel's 2N-1 residue
+        # (Østergaard 1996: CBV = integral over causal response only)
+        vox_idx = np.arange(len(masked_indices))[:, None]
+        time_idx = (peak_positions[:, None] + np.arange(n_timepoints)[None, :]) % m
+        causal_residues = residues_masked[vox_idx, time_idx]  # (n_vox, N)
+
+        # Extract parameters from causal portion
+        cbf_masked = np.max(causal_residues, axis=1)
+
+        # CBV via trapezoidal integration of causal residue (Østergaard 1996)
+        cbv_masked = np.trapezoid(causal_residues, dx=dt, axis=1)
 
         # MTT = CBV / CBF
         with np.errstate(divide="ignore", invalid="ignore"):

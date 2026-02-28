@@ -870,8 +870,8 @@ class ComputeDSCMaps(BaseInterface):
                 threshold=threshold,
                 mask=mask_bool,
             )
-            # For cSVD, tmax includes delay
-            tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
+            # For cSVD, Tmax = delay (Calamante, Stroke 2010)
+            tmax = delay.copy()
             residues = res if self.inputs.save_residue else None
 
         elif method == "oSVD":

@@ -79,9 +79,9 @@ class TestStandardMethod:
             tissue, aif, dt=dt, threshold=threshold, use_gpu=False,
         )
 
-        np.testing.assert_allclose(gpu_result.cbf, cpu_cbf, rtol=0.1)
-        np.testing.assert_allclose(gpu_result.cbv, cpu_cbv, rtol=0.1)
-        np.testing.assert_allclose(gpu_result.mtt, cpu_mtt, rtol=0.1)
+        np.testing.assert_allclose(gpu_result.cbf, cpu_cbf, rtol=1e-10)
+        np.testing.assert_allclose(gpu_result.cbv, cpu_cbv, rtol=1e-10)
+        np.testing.assert_allclose(gpu_result.mtt, cpu_mtt, rtol=1e-10)
 
 
 class TestCirculantMethod:
@@ -113,9 +113,20 @@ class TestCirculantMethod:
             tissue, aif, dt=dt, threshold=threshold, use_gpu=False,
         )
 
-        np.testing.assert_allclose(gpu_result.cbf, cpu_cbf, rtol=0.1)
-        np.testing.assert_allclose(gpu_result.cbv, cpu_cbv, rtol=0.1)
-        np.testing.assert_allclose(gpu_result.mtt, cpu_mtt, rtol=0.1)
+        np.testing.assert_allclose(gpu_result.cbf, cpu_cbf, rtol=1e-10)
+        np.testing.assert_allclose(gpu_result.cbv, cpu_cbv, rtol=1e-10)
+        np.testing.assert_allclose(gpu_result.mtt, cpu_mtt, rtol=1e-10)
+
+    def test_csvd_tmax_equals_delay(self) -> None:
+        """For cSVD, Tmax should equal delay (Calamante, Stroke 2010)."""
+        tissue, aif, dt = _make_synthetic_batch(n_voxels=5, n_timepoints=30)
+
+        result = batched_svd_deconvolve_circulant(
+            tissue, aif, dt=dt, use_gpu=False,
+        )
+
+        assert result.delay is not None
+        np.testing.assert_array_equal(result.tmax, result.delay)
 
 
 class TestMaskAndResidues:

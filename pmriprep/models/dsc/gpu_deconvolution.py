@@ -396,13 +396,16 @@ def batched_svd_deconvolve(
     s_host = to_host(s) if use_gpu_actual else s
     s_max = float(s_host[0]) if len(s_host) > 0 else 1.0
     truncation_threshold = threshold * s_max
-    n_retained = max(1, int(np.sum(s_host >= truncation_threshold)))
+    n_retained = int(np.sum(s_host > truncation_threshold))
+    if n_retained == 0:
+        n_retained = 1
 
-    # Create truncated inverse singular values
-    s_inv = xp.zeros_like(s)
+    # Create truncated inverse singular values on host, transfer once
+    s_inv_host = np.zeros_like(s_host)
     for i in range(n_retained):
-        if s_host[i] >= truncation_threshold:
-            s_inv[i] = 1.0 / s[i]
+        if s_host[i] > truncation_threshold:
+            s_inv_host[i] = 1.0 / s_host[i]
+    s_inv = to_device(s_inv_host, "gpu" if use_gpu_actual else "cpu")
 
     # Determine batch size based on GPU memory
     if batch_size is None:
@@ -449,24 +452,34 @@ def batched_svd_deconvolve(
         if apply_non_negativity:
             residues_batch = xp.maximum(residues_batch, 0.0)
 
-        # Extract parameters (all vectorized)
-        cbf_batch = xp.max(residues_batch, axis=1)
-        ttp_batch = xp.argmax(residues_batch, axis=1)
-        tmax_batch = ttp_batch.astype(xp.float64) * dt
-
-        # CBV via trapezoidal integration
-        cbv_batch = _trapezoid_gpu(residues_batch, dt, axis=-1, xp=xp)
-
-        # MTT = CBV / CBF with epsilon guard
-        eps = EPSILON_CONCENTRATION
-        mtt_batch = xp.where(cbf_batch > eps, cbv_batch / cbf_batch, 0.0)
-
-        # For circulant method, extract delays
+        # Extract parameters
         if method == "circulant":
-            delay_frames = ttp_batch - (n_timepoints - 1)
-            delay_batch = delay_frames.astype(xp.float64) * dt
+            peak_indices = xp.argmax(residues_batch, axis=1)
+            # Delay from full-residue argmax
+            delay_frames_batch = peak_indices - (n_timepoints - 1)
+            delay_batch = delay_frames_batch.astype(xp.float64) * dt
+            # Tmax = delay for cSVD (Calamante, Stroke 2010)
+            tmax_batch = delay_batch
+            # Extract N causal points from each voxel's 2N-1 residue
+            # (Østergaard 1996: CBV = integral over causal response only)
+            vox_idx = xp.arange(batch_n)[:, None]
+            time_idx = (peak_indices[:, None] + xp.arange(n_timepoints)[None, :]) % matrix_dim
+            causal_residues = residues_batch[vox_idx, time_idx]  # (batch_n, N)
+            cbf_batch = xp.max(causal_residues, axis=1)
+            cbv_batch = _trapezoid_gpu(causal_residues, dt, axis=-1, xp=xp)
+            # Store delay
             delay_batch_host = to_host(delay_batch)
             delay_out[batch_indices] = delay_batch_host  # type: ignore[index]
+        else:
+            # sSVD path
+            cbf_batch = xp.max(residues_batch, axis=1)
+            tmax_batch = xp.argmax(residues_batch, axis=1).astype(xp.float64) * dt
+            cbv_batch = _trapezoid_gpu(residues_batch, dt, axis=-1, xp=xp)
+
+        # MTT = CBV / CBF with safe denominator
+        eps = EPSILON_CONCENTRATION
+        safe_cbf = xp.where(cbf_batch > eps, cbf_batch, xp.ones_like(cbf_batch))
+        mtt_batch = xp.where(cbf_batch > eps, cbv_batch / safe_cbf, 0.0)
 
         # Transfer results back to CPU
         cbf_host = to_host(cbf_batch)
