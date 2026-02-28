@@ -52,6 +52,11 @@ ENV MPLCONFIGDIR="/tmp/matplotlib"
 # NiPreps container-detection convention
 ENV IS_DOCKER_8395080871=1
 
+# NVIDIA container labels — enables proper GPU pass-through with
+# `docker run --gpus all` and Apptainer's `--nv` flag.
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
 # nnU-Net directory layout (used by HD-BET and HD-GLIO)
 ENV nnUNet_raw_data_base=/opt/nnunet_data
 ENV nnUNet_preprocessed=/opt/nnunet_preprocessed
@@ -109,21 +114,26 @@ RUN mkdir -p ${nnUNet_raw_data_base}/nnUNet_raw_data \
 RUN pip install --no-cache-dir torch torchvision \
     --index-url https://download.pytorch.org/whl/cu121
 
-# Install HD-BET for brain extraction and pre-download model weights
-# (avoids runtime download failure on Apptainer's read-only filesystem)
+# Install HD-BET for brain extraction and pre-download model weights.
+# Overwrite paths.py so weights live at /opt/ (not $HOME) — Apptainer
+# auto-binds host $HOME over the container's, hiding baked-in weights.
 RUN pip install --no-cache-dir hd-bet && \
-    python -c "from HD_BET.checkpoint_download import maybe_download_parameters; maybe_download_parameters()"
+    HDBET_PATHS=$(python -c "import HD_BET.paths; print(HD_BET.paths.__file__)") && \
+    HDBET_URL=$(python -c "from HD_BET.paths import ZENODO_DOWNLOAD_URL; print(ZENODO_DOWNLOAD_URL)") && \
+    printf "import os\nfolder_with_parameter_files = '/opt/hd-bet_params/release_2.0.0'\nZENODO_DOWNLOAD_URL = '%s'\n" "$HDBET_URL" > "$HDBET_PATHS" && \
+    python -c "from HD_BET.paths import folder_with_parameter_files; assert folder_with_parameter_files.startswith('/opt/'), f'patch failed: {folder_with_parameter_files}'" && \
+    python -c "from HD_BET.checkpoint_download import maybe_download_parameters; maybe_download_parameters()" && \
+    chmod -R a+rX /opt/hd-bet_params
 
-# Install HD-GLIO for glioma segmentation and pre-download model weights
-# (avoids runtime download failure on Apptainer's read-only filesystem)
-# hd_glio/paths.py resolves ~ ($HOME) for weight storage; at build time
-# $HOME=/root, so we download there and move to runtime user's home.
+# Install HD-GLIO for glioma segmentation and pre-download model weights.
+# Same /opt/ relocation as HD-BET above — Apptainer-safe.
 RUN pip install --no-cache-dir HD-GLIO || \
     pip install --no-cache-dir git+https://github.com/MIC-DKFZ/HD-GLIO.git
-RUN python -c "from hd_glio.setup_hd_glio import maybe_download_weights; maybe_download_weights()" && \
-    mkdir -p /home/pmriprep && \
-    mv /root/hd_glio_params /home/pmriprep/hd_glio_params && \
-    chmod -R a+rX /home/pmriprep/hd_glio_params
+RUN HDGLIO_PATHS=$(python -c "import hd_glio.paths; print(hd_glio.paths.__file__)") && \
+    printf "import os\nfolder_with_parameter_files = '/opt/hd_glio_params'\n" > "$HDGLIO_PATHS" && \
+    python -c "from hd_glio.paths import folder_with_parameter_files; assert folder_with_parameter_files.startswith('/opt/'), f'patch failed: {folder_with_parameter_files}'" && \
+    python -c "from hd_glio.setup_hd_glio import maybe_download_weights; maybe_download_weights()" && \
+    chmod -R a+rX /opt/hd_glio_params
 
 # Install CuPy (GPU-accelerated deconvolution) — prebuilt CUDA 12.x wheel,
 # same pattern as PyTorch above (generic `cupy` has no prebuilt wheels).
@@ -147,10 +157,14 @@ RUN python -c "import templateflow; \
 
 # Build-time validation — fail the build early if something is broken
 RUN python -c "\
-import torch; import nibabel; import nipype; \
+import os, torch, nibabel, nipype; \
 print(f'PyTorch {torch.__version__}'); \
 print(f'CUDA available: {torch.cuda.is_available()}'); \
 import HD_BET; print('HD-BET: OK'); \
+assert os.path.isdir('/opt/hd-bet_params'), 'HD-BET weights missing'; \
+print('HD-BET weights: OK'); \
+assert os.path.isdir('/opt/hd_glio_params'), 'HD-GLIO weights missing'; \
+print('HD-GLIO weights: OK'); \
 import pmriprep; print('PMRIPrep: OK')"
 
 # Set up user (non-root execution)
