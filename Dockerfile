@@ -118,8 +118,11 @@ RUN pip install --no-cache-dir torch torchvision \
 # Overwrite paths.py so weights live at /opt/ (not $HOME) — Apptainer
 # auto-binds host $HOME over the container's, hiding baked-in weights.
 RUN pip install --no-cache-dir hd-bet && \
-    HDBET_PATHS=$(python -c "import HD_BET.paths; print(HD_BET.paths.__file__)") && \
-    HDBET_URL=$(python -c "from HD_BET.paths import ZENODO_DOWNLOAD_URL; print(ZENODO_DOWNLOAD_URL)") && \
+    HDBET_LOC=$(pip show hd-bet 2>/dev/null | grep -i "^Location:" | awk '{print $2}') && \
+    [ -n "$HDBET_LOC" ] || { echo "ERROR: hd-bet not installed"; exit 1; } && \
+    HDBET_PATHS="${HDBET_LOC}/HD_BET/paths.py" && \
+    [ -f "$HDBET_PATHS" ] || { echo "ERROR: $HDBET_PATHS not found"; exit 1; } && \
+    HDBET_URL=$(grep -oP "ZENODO_DOWNLOAD_URL\s*=\s*['\"]\\K[^'\"]*" "$HDBET_PATHS") && \
     printf "import os\nfolder_with_parameter_files = '/opt/hd-bet_params/release_2.0.0'\nZENODO_DOWNLOAD_URL = '%s'\n" "$HDBET_URL" > "$HDBET_PATHS" && \
     python -c "from HD_BET.paths import folder_with_parameter_files; assert folder_with_parameter_files.startswith('/opt/'), f'patch failed: {folder_with_parameter_files}'" && \
     python -c "from HD_BET.checkpoint_download import maybe_download_parameters; maybe_download_parameters()" && \
@@ -127,9 +130,12 @@ RUN pip install --no-cache-dir hd-bet && \
 
 # Install HD-GLIO for glioma segmentation and pre-download model weights.
 # Same /opt/ relocation as HD-BET above — Apptainer-safe.
-RUN pip install --no-cache-dir HD-GLIO || \
-    pip install --no-cache-dir git+https://github.com/MIC-DKFZ/HD-GLIO.git
-RUN HDGLIO_PATHS=$(python -c "import hd_glio.paths; print(hd_glio.paths.__file__)") && \
+RUN (pip install --no-cache-dir HD-GLIO || \
+     pip install --no-cache-dir git+https://github.com/CCI-Bonn/HD-GLIO.git) && \
+    HDGLIO_LOC=$(pip show hd-glio 2>/dev/null | grep -i "^Location:" | awk '{print $2}') && \
+    [ -n "$HDGLIO_LOC" ] || { echo "ERROR: hd-glio not installed"; exit 1; } && \
+    HDGLIO_PATHS="${HDGLIO_LOC}/hd_glio/paths.py" && \
+    [ -f "$HDGLIO_PATHS" ] || { echo "ERROR: $HDGLIO_PATHS not found"; exit 1; } && \
     printf "import os\nfolder_with_parameter_files = '/opt/hd_glio_params'\n" > "$HDGLIO_PATHS" && \
     python -c "from hd_glio.paths import folder_with_parameter_files; assert folder_with_parameter_files.startswith('/opt/'), f'patch failed: {folder_with_parameter_files}'" && \
     python -c "from hd_glio.setup_hd_glio import maybe_download_weights; maybe_download_weights()" && \
