@@ -39,60 +39,60 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     ph_map = File(exists=True, mandatory=True, desc="PH map")
 
     # Additional quantification-independent (optional — use Str for safe handling)
-    ttp_map = traits.Str(desc="TTP map path")
-    ttp_corrected_map = traits.Str(desc="AIF-corrected TTP map path")
-    rttp_map = traits.Str(desc="NAWM-relative TTP map path")
-    cnr_map = traits.Str(desc="CNR map path")
-    auc_diff_map = traits.Str(desc="AUC diff (leakage contribution) map path")
-    snr_map = traits.Str(desc="SNR (baseline) map path")
-    tsnr_map = traits.Str(desc="tSNR (temporal) map path")
+    ttp_map = traits.Either(traits.Str, None, desc="TTP map path")
+    ttp_corrected_map = traits.Either(traits.Str, None, desc="AIF-corrected TTP map path")
+    rttp_map = traits.Either(traits.Str, None, desc="NAWM-relative TTP map path")
+    cnr_map = traits.Either(traits.Str, None, desc="CNR map path")
+    auc_diff_map = traits.Either(traits.Str, None, desc="AUC diff (leakage contribution) map path")
+    snr_map = traits.Either(traits.Str, None, desc="SNR (baseline) map path")
+    tsnr_map = traits.Either(traits.Str, None, desc="tSNR (temporal) map path")
 
     # Relative maps (always produced)
-    rel_cbf_map = traits.Str(desc="Relative CBF map path")
-    rel_cbv_map = traits.Str(desc="Relative CBV map path")
-    rel_auc_raw_map = traits.Str(desc="Relative AUC raw map path")
-    rel_auc_corr_map = traits.Str(desc="Relative AUC corrected map path")
+    rel_cbf_map = traits.Either(traits.Str, None, desc="Relative CBF map path")
+    rel_cbv_map = traits.Either(traits.Str, None, desc="Relative CBV map path")
+    rel_auc_raw_map = traits.Either(traits.Str, None, desc="Relative AUC raw map path")
+    rel_auc_corr_map = traits.Either(traits.Str, None, desc="Relative AUC corrected map path")
 
     # Normalized maps (optional)
-    ncbv_map = traits.Str(desc="Normalized CBV map path")
-    ncbf_map = traits.Str(desc="Normalized CBF map path")
+    ncbv_map = traits.Either(traits.Str, None, desc="Normalized CBV map path")
+    ncbf_map = traits.Either(traits.Str, None, desc="Normalized CBF map path")
 
     # Vascular model parameters (optional)
-    alpha_map = traits.Str(desc="Alpha parameter map path (vascular only)")
-    beta_map = traits.Str(desc="Beta parameter map path (vascular only)")
-    cth_map = traits.Str(desc="CTH (capillary transit time heterogeneity) map path (vascular only)")
+    alpha_map = traits.Either(traits.Str, None, desc="Alpha parameter map path (vascular only)")
+    beta_map = traits.Either(traits.Str, None, desc="Beta parameter map path (vascular only)")
+    cth_map = traits.Either(traits.Str, None, desc="CTH (capillary transit time heterogeneity) map path (vascular only)")
 
     # Bayesian uncertainty maps (optional)
-    cbf_std_map = traits.Str(desc="CBF uncertainty (std) map path (Bayesian only)")
-    cbv_std_map = traits.Str(desc="CBV uncertainty (std) map path (Bayesian only)")
-    cbf_cv_map = traits.Str(desc="CBF coefficient of variation path (Bayesian only)")
-    cbv_cv_map = traits.Str(desc="CBV coefficient of variation path (Bayesian only)")
-    cbf_ci95_lower_map = traits.Str(desc="CBF 95% CI lower bound path (VI/MCMC only)")
-    cbf_ci95_upper_map = traits.Str(desc="CBF 95% CI upper bound path (VI/MCMC only)")
-    cbv_ci95_lower_map = traits.Str(desc="CBV 95% CI lower bound path (VI/MCMC only)")
-    cbv_ci95_upper_map = traits.Str(desc="CBV 95% CI upper bound path (VI/MCMC only)")
+    cbf_std_map = traits.Either(traits.Str, None, desc="CBF uncertainty (std) map path (Bayesian only)")
+    cbv_std_map = traits.Either(traits.Str, None, desc="CBV uncertainty (std) map path (Bayesian only)")
+    cbf_cv_map = traits.Either(traits.Str, None, desc="CBF coefficient of variation path (Bayesian only)")
+    cbv_cv_map = traits.Either(traits.Str, None, desc="CBV coefficient of variation path (Bayesian only)")
+    cbf_ci95_lower_map = traits.Either(traits.Str, None, desc="CBF 95% CI lower bound path (VI/MCMC only)")
+    cbf_ci95_upper_map = traits.Either(traits.Str, None, desc="CBF 95% CI upper bound path (VI/MCMC only)")
+    cbv_ci95_lower_map = traits.Either(traits.Str, None, desc="CBV 95% CI lower bound path (VI/MCMC only)")
+    cbv_ci95_upper_map = traits.Either(traits.Str, None, desc="CBV 95% CI upper bound path (VI/MCMC only)")
 
     # Leakage correction (optional)
-    k2_map = traits.Str(desc="K2 leakage correction map path")
+    k2_map = traits.Either(traits.Str, None, desc="K2 leakage correction map path")
 
     # Motion-corrected data
-    dsc_moco = traits.Str(desc="Motion-corrected 4D DSC path")
-    dsc_mean = traits.Str(desc="Mean DSC image path")
-    motion_params = traits.Str(desc="Motion parameters file path (.par)")
+    dsc_moco = traits.Either(traits.Str, None, desc="Motion-corrected 4D DSC path")
+    dsc_mean = traits.Either(traits.Str, None, desc="Mean DSC image path")
+    motion_params = traits.Either(traits.Str, None, desc="Motion parameters file path (.par)")
 
     # AIF outputs
-    aif_curve = traits.Str(desc="AIF curve text file path")
-    aif_mask = traits.Str(desc="AIF detection mask path")
+    aif_curve = traits.Either(traits.Str, None, desc="AIF curve text file path")
+    aif_mask = traits.Either(traits.Str, None, desc="AIF detection mask path")
 
     # Registration
-    dsc_to_t1w_xfm = traits.Str(desc="DSC to T1w transform matrix path")
-    registration_filmstrip = traits.Str(desc="Registration QC filmstrip PNG path")
+    dsc_to_t1w_xfm = traits.Either(traits.Str, None, desc="DSC to T1w transform matrix path")
+    registration_filmstrip = traits.Either(traits.Str, None, desc="Registration QC filmstrip PNG path")
 
     # QC metrics
     qc_metrics = traits.Dict(desc="Merged QC metrics dictionary")
 
     # Source DSC file for sidecar
-    source_dsc = traits.Str(desc="Original raw DSC source file path")
+    source_dsc = traits.Either(traits.Str, None, desc="Original raw DSC source file path")
 
     # Processing config for sidecar
     config_dict = traits.Dict(desc="DSC processing config as dictionary")
@@ -106,26 +106,26 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     t1w_in_dsc = traits.Either(traits.Str, None, desc="T1w registered to DSC space NIfTI path")
     flair_in_dsc = traits.Either(traits.Str, None, desc="FLAIR registered to DSC space NIfTI path")
     t2w_in_dsc = traits.Either(traits.Str, None, desc="T2w registered to DSC space NIfTI path")
-    t1w_to_dsc_xfm = traits.Str(desc="T1w-to-DSC transform matrix path")
+    t1w_to_dsc_xfm = traits.Either(traits.Str, None, desc="T1w-to-DSC transform matrix path")
 
     # AIF QC plots
-    aif_curve_plot = traits.Str(desc="AIF curve QC plot PNG path")
-    aif_location_plot = traits.Str(desc="AIF location overlay PNG path")
+    aif_curve_plot = traits.Either(traits.Str, None, desc="AIF curve QC plot PNG path")
+    aif_location_plot = traits.Either(traits.Str, None, desc="AIF location overlay PNG path")
 
     # Brain mask filmstrip
-    brain_mask_filmstrip = traits.Str(desc="Brain mask QC filmstrip PNG path")
+    brain_mask_filmstrip = traits.Either(traits.Str, None, desc="Brain mask QC filmstrip PNG path")
 
     # Motion QC plot
-    motion_qc_plot = traits.Str(desc="Motion QC plot PNG path")
+    motion_qc_plot = traits.Either(traits.Str, None, desc="Motion QC plot PNG path")
 
     # DSC QC plots
-    dsc_preprocessing_qc_plot = traits.Str(desc="DSC preprocessing QC plot PNG path")
-    dsc_param_maps_qc_plot = traits.Str(desc="DSC parameter maps QC plot PNG path")
-    dsc_fit_qc_plot = traits.Str(desc="DSC fit QC plot PNG path (parametric methods only)")
-    dsc_leakage_qc_plot = traits.Str(desc="DSC leakage correction QC plot PNG path")
+    dsc_preprocessing_qc_plot = traits.Either(traits.Str, None, desc="DSC preprocessing QC plot PNG path")
+    dsc_param_maps_qc_plot = traits.Either(traits.Str, None, desc="DSC parameter maps QC plot PNG path")
+    dsc_fit_qc_plot = traits.Either(traits.Str, None, desc="DSC fit QC plot PNG path (parametric methods only)")
+    dsc_leakage_qc_plot = traits.Either(traits.Str, None, desc="DSC leakage correction QC plot PNG path")
 
     # Masks in DSC space
-    brain_mask_dsc = traits.Str(desc="Brain mask in DSC space")
+    brain_mask_dsc = traits.Either(traits.Str, None, desc="Brain mask in DSC space")
     nawm_mask_dsc = traits.Either(traits.Str, None, desc="NAWM mask in DSC space")
 
     # Structural underlay labeling
@@ -133,13 +133,13 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
                                   desc="Whether t1w_in_dsc is post-contrast CE-T1w")
 
     # Lesion statistics
-    lesion_stats_json = traits.Str(desc="Lesion statistics JSON file path")
-    lesion_stats_txt = traits.Str(desc="Lesion statistics text summary path")
+    lesion_stats_json = traits.Either(traits.Str, None, desc="Lesion statistics JSON file path")
+    lesion_stats_txt = traits.Either(traits.Str, None, desc="Lesion statistics text summary path")
     lesion_mask_dsc = traits.Either(traits.Str, None, desc="Lesion mask in DSC space path")
 
     # ROI statistics (from user-supplied roi_mask, optional)
-    roi_stats_json = traits.Str(desc="ROI statistics JSON file path")
-    roi_stats_txt = traits.Str(desc="ROI statistics text summary path")
+    roi_stats_json = traits.Either(traits.Str, None, desc="ROI statistics JSON file path")
+    roi_stats_txt = traits.Either(traits.Str, None, desc="ROI statistics text summary path")
     roi_mask_dsc = traits.Either(traits.Str, None, desc="ROI mask in DSC space path")
 
 
