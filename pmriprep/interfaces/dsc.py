@@ -428,6 +428,16 @@ class MotionCorrection(CommandLine):
         return None
 
 
+# =============================================================================
+# DSC Registration Constants
+# =============================================================================
+
+# FLIRT search step sizes (degrees) — 15° coarse gives ~7.5° worst-case
+# distance to true optimum, much better than 30° (15° worst-case)
+DSC_COARSE_SEARCH: int = 15
+DSC_FINE_SEARCH: int = 6
+
+
 class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
     """Input specification for DSCRegistration interface."""
 
@@ -507,26 +517,33 @@ class DSCRegistrationOutputSpec(TraitedSpec):
 
 
 class DSCRegistration(SimpleInterface):
-    """DSC to T1w structural registration with auto-selection.
+    """DSC to T1w structural registration with dual-path auto-selection.
 
     Registers a T1-weighted structural image to DSC EPI space using FSL FLIRT,
-    with optional BBR refinement. In auto mode, both methods are run and the
-    better result is selected based on transform displacement and NMI.
+    with optional BBR refinement. Uses a dual-path Stage 1 strategy to guard
+    against FLIRT coarse-search local minima caused by HD-BET non-determinism.
 
     Three modes are available:
 
-    1. **auto** (default): Runs two-stage FLIRT, then BBR initialized from
-       the FLIRT result. Compares transform displacement between the two;
-       BBR is accepted only if displacement < threshold AND NMI improves.
+    1. **auto** (default): Dual-path Stage 1, then optional BBR refinement.
+       BBR is accepted only if displacement < threshold AND DICE improves.
        Falls back to FLIRT if no WM segmentation is available.
 
-    2. **flirt**: Two-stage FLIRT only (coarse global search + refined).
+    2. **flirt**: Dual-path Stage 1 + Stage 2 refinement only.
 
     3. **bbr**: FLIRT-initialized BBR, no fallback. Requires wm_seg.
 
-    Two-stage FLIRT in all modes:
-      Stage 1: Coarse global search (normcorr, -180 to 180 deg, coarsesearch 30)
-      Stage 2: Refined (normmi, -30 to 30 deg, init from stage 1)
+    Dual-path Stage 1 (coarse global search with normcorr):
+      Path A (header-init): Header-aligned T1w, [-30,30] deg search
+      Path B (full-search): Original histogram-matched T1w, [-180,180] deg search
+      Best path selected by DICE overlap (B must beat A by margin to win).
+
+    Stage 2 (refinement): normmi, [-30,30] deg, initialised from best Stage 1.
+
+    The dual-path design stabilises registration against small input
+    variations (e.g. HD-BET GPU non-determinism changing a few boundary
+    voxels) that can tip a single-path coarse search into a different
+    basin of attraction.
 
     Args:
         t1w_file: T1-weighted image to register to DSC space.
@@ -563,7 +580,7 @@ class DSCRegistration(SimpleInterface):
         and tumor enhancement disrupting boundaries.
 
         In auto mode, BBR must demonstrably improve on FLIRT to be accepted:
-        transform displacement must be < threshold AND NMI must improve.
+        transform displacement must be < threshold AND DICE must improve.
         This provides a bias toward the more robust FLIRT result.
 
     See Also:
@@ -608,7 +625,7 @@ class DSCRegistration(SimpleInterface):
         return str(out_file.parent / f"{base}.mat")
 
     def _run_interface(self, runtime: Any) -> Any:
-        """Execute DSC to T1w registration with auto-selection.
+        """Execute DSC to T1w registration with dual-path auto-selection.
 
         Args:
             runtime: Nipype runtime object.
@@ -620,6 +637,14 @@ class DSCRegistration(SimpleInterface):
         import shutil
         import subprocess
         import tempfile
+
+        from pmriprep.utils.registration import (
+            DICE_SELECTION_MARGIN,
+            compare_transforms,
+            compute_dice_for_selection,
+            compute_header_init_matrix,
+            calculate_nmi_from_files,
+        )
 
         logger = logging.getLogger("pmriprep.interfaces.dsc")
 
@@ -640,24 +665,103 @@ class DSCRegistration(SimpleInterface):
             temp_path = Path(temp_dir)
             ext = ".nii.gz"
 
-            # --- Two-stage FLIRT (always run first) ---
-            stage1_matrix = str(temp_path / "stage1.mat")
+            # =============================================================
+            # Stage 1: Dual-path coarse global search (normcorr)
+            # =============================================================
+            # Path A: header-aligned T1w with narrow search
+            # Path B: original T1w with full-sphere search
+            # Best path selected by DICE overlap.
+
+            # --- Path A: header-initialised, narrow search ---
+            # Compute a FLIRT-format matrix from NIfTI headers, then
+            # run FLIRT with t1w_file as input and this matrix as -init.
+            # Both paths use t1w_file as -in, keeping matrix spaces consistent.
+            stage1a_matrix = str(temp_path / "stage1a.mat")
+            stage1a_out = str(temp_path / f"stage1a_out{ext}")
+            error_a: Optional[str] = None
+
+            try:
+                header_init_mat = compute_header_init_matrix(
+                    t1w_file, dsc_mean, temp_path
+                )
+                stage1a_cmd = [
+                    "flirt", "-in", t1w_file, "-ref", dsc_mean,
+                    "-out", stage1a_out, "-omat", stage1a_matrix,
+                    "-init", header_init_mat,
+                    "-dof", str(dof), "-cost", "normcorr",
+                    "-searchrx", "-30", "30",
+                    "-searchry", "-30", "30",
+                    "-searchrz", "-30", "30",
+                    "-coarsesearch", str(DSC_COARSE_SEARCH),
+                    "-finesearch", str(DSC_FINE_SEARCH),
+                ]
+                subprocess.run(stage1a_cmd, check=True)
+            except Exception as exc:
+                error_a = str(exc)
+                logger.warning("Stage 1 path A (header-init) failed: %s", exc)
+
+            # --- Path B: full-sphere search ---
+            stage1b_matrix = str(temp_path / "stage1b.mat")
+            stage1b_out = str(temp_path / f"stage1b_out{ext}")
+            error_b: Optional[str] = None
+
+            try:
+                stage1b_cmd = [
+                    "flirt", "-in", t1w_file, "-ref", dsc_mean,
+                    "-out", stage1b_out, "-omat", stage1b_matrix,
+                    "-dof", str(dof), "-cost", "normcorr",
+                    "-searchrx", "-180", "180",
+                    "-searchry", "-180", "180",
+                    "-searchrz", "-180", "180",
+                    "-coarsesearch", str(DSC_COARSE_SEARCH),
+                    "-finesearch", str(DSC_FINE_SEARCH),
+                ]
+                subprocess.run(stage1b_cmd, check=True)
+            except Exception as exc:
+                error_b = str(exc)
+                logger.warning("Stage 1 path B (full-search) failed: %s", exc)
+
+            if error_a and error_b:
+                raise RuntimeError(
+                    f"Both Stage 1 paths failed:\n"
+                    f"Path A (header-aligned): {error_a}\n"
+                    f"Path B (full-search): {error_b}"
+                )
+
+            # --- Select best Stage 1 via DICE ---
+            file_a_ok = error_a is None and Path(stage1a_out).exists()
+            file_b_ok = error_b is None and Path(stage1b_out).exists()
+
+            dice_a = (
+                compute_dice_for_selection(stage1a_out, dsc_mean)
+                if file_a_ok else 0.0
+            )
+            dice_b = (
+                compute_dice_for_selection(stage1b_out, dsc_mean)
+                if file_b_ok else 0.0
+            )
+
+            # B must beat A by margin to be selected (preference for header-aligned)
+            if file_b_ok and (
+                not file_a_ok or dice_b > dice_a + DICE_SELECTION_MARGIN
+            ):
+                stage1_matrix = stage1b_matrix
+                stage1_path = "B"
+            else:
+                stage1_matrix = stage1a_matrix
+                stage1_path = "A"
+
+            logger.info(
+                "Stage 1 path selection: %s (DICE A=%.4f, B=%.4f)",
+                stage1_path, dice_a, dice_b,
+            )
+
+            # =============================================================
+            # Stage 2: Refined registration (normmi, narrow search)
+            # =============================================================
             flirt_matrix = str(temp_path / "flirt.mat")
             flirt_out = str(temp_path / f"flirt_out{ext}")
 
-            # Stage 1: Coarse global search
-            stage1_cmd = [
-                "flirt", "-in", t1w_file, "-ref", dsc_mean,
-                "-omat", stage1_matrix,
-                "-dof", str(dof), "-cost", "normcorr",
-                "-searchrx", "-180", "180",
-                "-searchry", "-180", "180",
-                "-searchrz", "-180", "180",
-                "-coarsesearch", "30", "-finesearch", "10",
-            ]
-            subprocess.run(stage1_cmd, check=True)
-
-            # Stage 2: Refined registration
             stage2_cmd = [
                 "flirt", "-in", t1w_file, "-ref", dsc_mean,
                 "-out", flirt_out, "-omat", flirt_matrix,
@@ -673,6 +777,9 @@ class DSCRegistration(SimpleInterface):
             selection_meta: dict[str, Any] = {
                 "registration_mode": registration,
                 "bbr_attempted": False,
+                "stage1_path_selected": stage1_path,
+                "stage1_dice_a": round(dice_a, 4),
+                "stage1_dice_b": round(dice_b, 4),
             }
 
             # Determine effective method
@@ -739,11 +846,6 @@ class DSCRegistration(SimpleInterface):
                         selection_meta["selection_reason"] = "bbr_failed"
                     else:
                         # Compare transforms
-                        from pmriprep.utils.registration import (
-                            compare_transforms,
-                            calculate_nmi_from_files,
-                        )
-
                         flirt_mat = np.loadtxt(flirt_matrix)
                         bbr_mat = np.loadtxt(bbr_matrix)
                         displacement = compare_transforms(flirt_mat, bbr_mat)
@@ -768,7 +870,15 @@ class DSCRegistration(SimpleInterface):
                                 threshold,
                             )
                         else:
-                            # Displacement acceptable — compare NMI
+                            # Displacement acceptable — compare via DICE
+                            dice_flirt = compute_dice_for_selection(
+                                flirt_out, dsc_mean
+                            )
+                            dice_bbr = compute_dice_for_selection(
+                                bbr_out, dsc_mean
+                            )
+
+                            # Also compute NMI for logging/QC
                             brain_mask = None
                             if (
                                 isdefined(self.inputs.brain_mask)
@@ -787,21 +897,26 @@ class DSCRegistration(SimpleInterface):
                                 nmi_flirt = 0.0
                                 nmi_bbr = 0.0
 
+                            selection_meta["dice_flirt"] = round(dice_flirt, 4)
+                            selection_meta["dice_bbr"] = round(dice_bbr, 4)
                             selection_meta["nmi_flirt"] = round(nmi_flirt, 4)
                             selection_meta["nmi_bbr"] = round(nmi_bbr, 4)
 
-                            if nmi_bbr > nmi_flirt:
-                                # BBR improves NMI — accept
+                            if dice_bbr > dice_flirt:
+                                # BBR improves DICE — accept
                                 shutil.copy(bbr_out, out_file)
                                 shutil.copy(bbr_matrix, out_matrix)
                                 selection_meta["registration_method"] = "bbr"
                                 selection_meta["selection_reason"] = (
-                                    "bbr_improved_nmi"
+                                    "bbr_improved_dice"
                                 )
                                 logger.info(
                                     "Auto: BBR selected — displacement %.1fmm, "
-                                    "NMI improved %.4f → %.4f",
+                                    "DICE improved %.4f → %.4f "
+                                    "(NMI: %.4f → %.4f)",
                                     displacement,
+                                    dice_flirt,
+                                    dice_bbr,
                                     nmi_flirt,
                                     nmi_bbr,
                                 )
@@ -811,12 +926,15 @@ class DSCRegistration(SimpleInterface):
                                 shutil.copy(flirt_matrix, out_matrix)
                                 selection_meta["registration_method"] = "flirt"
                                 selection_meta["selection_reason"] = (
-                                    "bbr_no_nmi_improvement"
+                                    "bbr_no_dice_improvement"
                                 )
                                 logger.info(
                                     "Auto: FLIRT kept — displacement %.1fmm, "
-                                    "NMI no improvement (%.4f vs %.4f)",
+                                    "DICE no improvement (%.4f vs %.4f) "
+                                    "(NMI: %.4f vs %.4f)",
                                     displacement,
+                                    dice_flirt,
+                                    dice_bbr,
                                     nmi_flirt,
                                     nmi_bbr,
                                 )

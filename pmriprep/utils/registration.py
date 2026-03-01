@@ -2,14 +2,27 @@
 
 This module provides functions for calculating registration quality metrics
 including DICE coefficient, correlation, normalized mutual information (NMI),
-and AIF preservation metrics.
+and AIF preservation metrics.  Also provides shared registration utilities
+(header alignment, DICE-based path selection) used by both DSC and DCE.
 """
 
+import logging
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 from numpy.typing import NDArray
+
+logger = logging.getLogger(__name__)
+
+# Registration path selection: path B must exceed path A by this margin
+DICE_SELECTION_MARGIN: float = 0.01
+
+# Percentile threshold for automatic mask creation in DICE selection
+MASK_THRESHOLD_PERCENTILE: int = 5
+
+# Epsilon to prevent division by zero in DICE selection
+DICE_EPSILON: float = 1e-9
 
 
 def compare_transforms(
@@ -588,3 +601,172 @@ def compute_aif_preservation_with_auc(
         "peak_time_shift": peak_time_shift,
         "quality": quality,
     }
+
+
+def _fsl_vox2mm(img: Any) -> NDArray[np.floating]:
+    """Compute FSL's internal voxel-to-mm scaling matrix.
+
+    FSL uses a specific convention: if the sform determinant is positive
+    (neurological convention), the x-axis is flipped and an offset is
+    added so that the origin stays at the first voxel corner.
+
+    Args:
+        img: Nibabel image object (Nifti1Image or similar).
+
+    Returns:
+        4x4 scaling matrix in FSL mm coordinates.
+    """
+    zooms = np.array(img.header.get_zooms()[:3], dtype=np.float64)
+    shape = np.array(img.shape[:3], dtype=np.float64)
+
+    mat = np.eye(4, dtype=np.float64)
+    mat[0, 0] = zooms[0]
+    mat[1, 1] = zooms[1]
+    mat[2, 2] = zooms[2]
+
+    # If sform determinant is positive, FSL flips x-axis
+    if np.linalg.det(img.affine[:3, :3]) > 0:
+        mat[0, 0] = -zooms[0]
+        mat[0, 3] = (shape[0] - 1) * zooms[0]
+
+    return mat
+
+
+def compute_header_init_matrix(
+    moving_file: Union[str, Path],
+    reference_file: Union[str, Path],
+    output_dir: Union[str, Path],
+) -> str:
+    """Compute FLIRT-format matrix encoding header-based alignment.
+
+    Derives the affine mapping from the moving image's voxel space to
+    the reference image's voxel space using NIfTI sform/qform headers,
+    expressed in FSL's internal coordinate convention.  The resulting
+    ``.mat`` file can be passed as ``-init`` to FLIRT so that the
+    coarse search starts near the header-aligned solution.
+
+    The formula is::
+
+        M_flirt = S_ref @ inv(W_ref) @ W_mov @ inv(S_mov)
+
+    where ``S`` is FSL's voxel-to-mm scaling matrix and ``W`` is the
+    NIfTI sform affine.
+
+    Args:
+        moving_file: Path to the moving image (e.g. T1w).
+        reference_file: Path to the reference image (e.g. DSC mean).
+        output_dir: Directory for the output ``.mat`` file.
+
+    Returns:
+        Path to the FLIRT-format ``.mat`` file.
+    """
+    import nibabel as nib
+
+    mov_img = nib.load(str(moving_file))
+    ref_img = nib.load(str(reference_file))
+
+    S_mov = _fsl_vox2mm(mov_img)
+    S_ref = _fsl_vox2mm(ref_img)
+    W_mov = np.asarray(mov_img.affine, dtype=np.float64)  # type: ignore[attr-defined]
+    W_ref = np.asarray(ref_img.affine, dtype=np.float64)  # type: ignore[attr-defined]
+
+    # M_flirt = S_ref @ inv(W_ref) @ W_mov @ inv(S_mov)
+    init_mat = S_ref @ np.linalg.inv(W_ref) @ W_mov @ np.linalg.inv(S_mov)
+
+    out_path = str(Path(output_dir) / "header_init.mat")
+    np.savetxt(out_path, init_mat, fmt="%.10f")
+
+    return out_path
+
+
+def create_header_aligned(
+    moving_file: Union[str, Path],
+    reference_file: Union[str, Path],
+    output_dir: Union[str, Path],
+    ext: str = ".nii.gz",
+) -> str:
+    """Create header-aligned image resampled into reference space.
+
+    Uses nibabel's ``resample_from_to`` to align the moving image to the
+    reference grid using NIfTI header geometry.  This pre-alignment
+    exploits sform/qform information so that FLIRT starts from a
+    reasonable initialisation even without a global angular search.
+
+    Args:
+        moving_file: Path to moving image (e.g. T1w).
+        reference_file: Path to reference image (e.g. DSC/DCE mean).
+        output_dir: Directory for the output file.
+        ext: File extension (.nii or .nii.gz).
+
+    Returns:
+        Path to the header-aligned image.
+    """
+    import nibabel as nib
+    from nibabel.processing import resample_from_to
+
+    moving_img = nib.load(str(moving_file))
+    ref_img = nib.load(str(reference_file))
+
+    aligned_img = resample_from_to(moving_img, ref_img)
+    out_path = str(Path(output_dir) / f"header_aligned{ext}")
+    nib.save(aligned_img, out_path)
+
+    return out_path
+
+
+def compute_dice_for_selection(
+    registered_file: Union[str, Path],
+    reference_file: Union[str, Path],
+) -> float:
+    """Compute DICE coefficient for registration path selection.
+
+    Creates rough brain masks from both images by thresholding at a low
+    percentile of positive voxels, then computes DICE overlap.  This is
+    intentionally simple: the masks need only be consistent enough to
+    discriminate a good registration from a bad one.
+
+    Args:
+        registered_file: Path to registered image.
+        reference_file: Path to reference image.
+
+    Returns:
+        DICE coefficient in [0, 1].  Returns 0.0 on failure.
+    """
+    import nibabel as nib
+
+    registered_file = Path(registered_file)
+    reference_file = Path(reference_file)
+
+    if not registered_file.exists():
+        return 0.0
+
+    try:
+        reg_data = nib.load(str(registered_file)).get_fdata()  # type: ignore[attr-defined]
+        ref_data = nib.load(str(reference_file)).get_fdata()  # type: ignore[attr-defined]
+
+        reg_nonzero = reg_data[reg_data > 0]
+        ref_nonzero = ref_data[ref_data > 0]
+
+        if len(reg_nonzero) == 0 or len(ref_nonzero) == 0:
+            return 0.0
+
+        reg_thresh = np.percentile(reg_nonzero, MASK_THRESHOLD_PERCENTILE)
+        ref_thresh = np.percentile(ref_nonzero, MASK_THRESHOLD_PERCENTILE)
+
+        reg_mask = reg_data > reg_thresh
+        ref_mask = ref_data > ref_thresh
+
+        intersection = np.logical_and(reg_mask, ref_mask).sum()
+        dice = 2.0 * intersection / (
+            reg_mask.sum() + ref_mask.sum() + DICE_EPSILON
+        )
+
+        return float(dice)
+    except Exception as exc:
+        logger.warning(
+            "DICE computation failed for %s vs %s: %s",
+            registered_file,
+            reference_file,
+            exc,
+        )
+        return 0.0

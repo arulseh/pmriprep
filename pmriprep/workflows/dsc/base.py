@@ -162,6 +162,15 @@ def _histogram_match_t1w_to_dsc(
     src_mask = src_brain > 0
     tpl_mask = tpl_data > 0
 
+    # Erode template mask by 1 voxel to exclude HD-BET boundary voxels,
+    # which are non-deterministic between GPU runs and have partial-volume
+    # contamination. Interior voxels are stable across runs.
+    from scipy.ndimage import binary_erosion
+    tpl_mask_eroded = binary_erosion(tpl_mask, iterations=1)
+    # Guard for thin-slab acquisitions: only erode if ≥80% of voxels remain
+    if tpl_mask_eroded.sum() >= 0.8 * tpl_mask.sum():
+        tpl_mask = tpl_mask_eroded
+
     matched = np.zeros_like(src_data)
     if src_mask.sum() > 0 and tpl_mask.sum() > 0:
         matched[src_mask] = match_histograms(
