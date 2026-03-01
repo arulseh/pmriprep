@@ -259,16 +259,8 @@ def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto", hdbet_conda_env=""):
 
     # Resolve HD-BET device
     if hdbet_device == "auto":
-        try:
-            import torch
-            if torch.cuda.is_available():
-                hdbet_device = "cuda"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                hdbet_device = "mps"
-            else:
-                hdbet_device = "cpu"
-        except ImportError:
-            hdbet_device = "cpu"
+        from pmriprep.utils.device import detect_torch_device
+        hdbet_device = detect_torch_device()
 
     hdbet_args = [
         "hd-bet",

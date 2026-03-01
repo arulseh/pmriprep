@@ -57,6 +57,7 @@ from pmriprep.utils.tumor_seg import (
     get_mask_statistics,
     get_mask_volume_ml,
 )
+from pmriprep.utils.device import detect_torch_device
 from pmriprep.utils.gpu import (
     GPUVoxelProcessor,
     array_on_device,
@@ -135,6 +136,8 @@ __all__ = [
     "extract_tumor_masks",
     "get_mask_statistics",
     "get_mask_volume_ml",
+    # device
+    "detect_torch_device",
     # gpu
     "GPUVoxelProcessor",
     "array_on_device",

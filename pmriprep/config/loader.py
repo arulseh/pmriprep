@@ -154,10 +154,11 @@ def merge_cli_config(
         result.setdefault("dsc", {})["use_gpu"] = True
         result.setdefault("dce", {})["use_gpu"] = True
 
-    # --hdbet-device sets hdbet_device on both DSC and DCE configs
+    # --hdbet-device sets hdbet_device on DSC, DCE, and anat configs
     if cli_args.get("hdbet_device") is not None:
         result.setdefault("dsc", {})["hdbet_device"] = cli_args["hdbet_device"]
         result.setdefault("dce", {})["hdbet_device"] = cli_args["hdbet_device"]
+        result.setdefault("anat", {})["hdbet_device"] = cli_args["hdbet_device"]
 
     # --hdbet-conda-env propagates to DSC and DCE configs
     if cli_args.get("hdbet_conda_env") is not None:

@@ -16,6 +16,8 @@ class AnatConfig:
     ----------
     tool : Literal["hdbet", "ants"]
         Brain extraction tool: hdbet (HD-BET) or ants (ANTs).
+    hdbet_device : Literal["auto", "cuda", "mps", "cpu"]
+        Device for HD-BET: ``'auto'`` detects CUDA > MPS > CPU.
     denoise : bool
         Apply ANTs denoising to anatomical images.
     hdbet_conda_env : Optional[str]
@@ -26,6 +28,7 @@ class AnatConfig:
 
     # Brain extraction settings
     tool: Literal["hdbet", "ants"] = "hdbet"
+    hdbet_device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
     hdbet_conda_env: Optional[str] = None
 
     # Processing settings

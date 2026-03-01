@@ -644,17 +644,12 @@ class BrainExtraction(CommandLine):
 
     def _get_hdbet_device(self) -> str:
         """Get HD-BET device string based on settings and architecture."""
-        import platform
+        from pmriprep.utils.device import detect_torch_device
 
         device = self.inputs.device
 
         if device == "auto":
-            system = platform.system()
-            if system == "Darwin":
-                return "mps"
-            else:
-                # Linux - let HD-BET auto-detect CUDA
-                return "cpu"
+            return detect_torch_device()
         return device  # type: ignore[no-any-return]
 
     @property

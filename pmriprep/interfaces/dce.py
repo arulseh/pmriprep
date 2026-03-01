@@ -3134,27 +3134,9 @@ class DCEBrainExtract(SimpleInterface):
         str
             Device name: 'cuda', 'mps', or 'cpu'.
         """
-        import sys
+        from pmriprep.utils.device import detect_torch_device
 
-        # Try to detect available devices
-        try:
-            import torch
-            if torch.cuda.is_available():
-                logger.info("HD-BET: CUDA GPU detected")
-                return "cuda"
-            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                logger.info("HD-BET: Apple MPS detected")
-                return "mps"
-        except ImportError:
-            pass
-
-        # Fallback: check platform for macOS (likely has MPS)
-        if sys.platform == "darwin":
-            logger.info("HD-BET: macOS detected, trying MPS")
-            return "mps"
-
-        logger.info("HD-BET: No GPU detected, using CPU")
-        return "cpu"
+        return detect_torch_device()
 
     def _run_bet(self, dce_mean: Path, out_brain: str, out_mask: str) -> bool:
         """Run FSL BET brain extraction."""
