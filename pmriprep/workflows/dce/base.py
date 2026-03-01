@@ -2965,7 +2965,7 @@ def _generate_dce_motion_qc_plot(motion_params_file, out_dir, tr):
     from pmriprep.utils.qc_utils import plot_motion_qc
 
     motion_params = np.loadtxt(motion_params_file)
-    out_path = Path(out_dir) / "motion_qc.png"
+    out_path = Path(out_dir) / "dce_motion_qc.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plot_motion_qc(motion_params, out_path, tr=tr, title="DCE Motion QC")
     return str(out_path)
