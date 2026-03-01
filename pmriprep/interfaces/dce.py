@@ -15,7 +15,6 @@ from typing import Any, Optional
 import nibabel as nib  # type: ignore[import-untyped]
 import numpy as np
 import numpy.typing as npt
-from nibabel.processing import resample_from_to  # type: ignore[import-untyped]
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterface,
     BaseInterfaceInputSpec,
@@ -3295,17 +3294,8 @@ class DCEBrainExtract(SimpleInterface):
 # DCE Registration Constants
 # =============================================================================
 
-# Registration path selection: path B must exceed path A by this margin to be selected
-DICE_SELECTION_MARGIN: float = 0.01
-
-# Percentile threshold for automatic mask creation in DICE computation
-MASK_THRESHOLD_PERCENTILE: int = 5
-
 # Percentile threshold for brain mask creation in QC
 QC_MASK_THRESHOLD_PERCENTILE: int = 10
-
-# Epsilon to prevent division by zero in DICE calculation
-DICE_EPSILON: float = 1e-9
 
 # FLIRT search step sizes (degrees)
 FLIRT_COARSE_SEARCH: int = 15
@@ -3479,7 +3469,9 @@ class DCERegistration(SimpleInterface):
             ext = ".nii.gz"
 
             # Header-based pre-alignment: resample T1w into DCE space
-            header_aligned_file = self._create_header_aligned(
+            from pmriprep.utils.registration import create_header_aligned
+
+            header_aligned_file = create_header_aligned(
                 t1w_file, dce_mean, temp_path, ext
             )
 
@@ -3546,32 +3538,6 @@ class DCERegistration(SimpleInterface):
             self._results["nmi"] = qc_metrics["nmi"]
 
         return runtime
-
-    def _create_header_aligned(
-        self, t1w_file: str, dce_mean: str, temp_path: Path, ext: str
-    ) -> str:
-        """Create header-aligned T1w image resampled into DCE space.
-
-        Uses nibabel's resample_from_to to align T1w to DCE grid using
-        header geometry before running FLIRT.
-
-        Args:
-            t1w_file: Path to T1w input image.
-            dce_mean: Path to DCE mean reference image.
-            temp_path: Temporary directory for output.
-            ext: File extension (.nii or .nii.gz).
-
-        Returns:
-            Path to header-aligned T1w image.
-        """
-        t1w_img = nib.load(t1w_file)
-        dce_img = nib.load(dce_mean)
-
-        t1w_header_aligned = resample_from_to(t1w_img, dce_img)
-        header_aligned_file = str(temp_path / f"t1w_header_aligned{ext}")
-        nib.save(t1w_header_aligned, header_aligned_file)
-
-        return header_aligned_file
 
     def _run_flirt_dual_path(
         self,
@@ -3697,13 +3663,18 @@ class DCERegistration(SimpleInterface):
                 f"Check FSL installation and input images."
             )
 
+        from pmriprep.utils.registration import (
+            DICE_SELECTION_MARGIN,
+            compute_dice_for_selection,
+        )
+
         dice_a = (
-            self._compute_dice_for_selection(out_file_a, dce_mean)
+            compute_dice_for_selection(out_file_a, dce_mean)
             if file_a_exists
             else 0.0
         )
         dice_b = (
-            self._compute_dice_for_selection(out_file_b, dce_mean)
+            compute_dice_for_selection(out_file_b, dce_mean)
             if file_b_exists
             else 0.0
         )
@@ -3720,60 +3691,6 @@ class DCERegistration(SimpleInterface):
                 "FLIRT registration produced no valid output files. "
                 "Check FSL installation and input images."
             )
-
-    def _compute_dice_for_selection(
-        self, registered_file: str, reference_file: str
-    ) -> float:
-        """Compute DICE coefficient for path selection.
-
-        Creates a rough brain mask from both images by thresholding
-        and computes DICE overlap.
-
-        Args:
-            registered_file: Path to registered T1w image.
-            reference_file: Path to reference DCE mean image.
-
-        Returns:
-            DICE coefficient (0.0 if files don't exist or computation fails).
-        """
-        if not Path(registered_file).exists():
-            return 0.0
-
-        try:
-            reg_img = nib.load(registered_file)
-            ref_img = nib.load(reference_file)
-
-            reg_data = reg_img.get_fdata()  # type: ignore[attr-defined]
-            ref_data = ref_img.get_fdata()  # type: ignore[attr-defined]
-
-            # Create masks by thresholding at percentile of positive values
-            reg_nonzero = reg_data[reg_data > 0]
-            ref_nonzero = ref_data[ref_data > 0]
-
-            if len(reg_nonzero) == 0 or len(ref_nonzero) == 0:
-                return 0.0
-
-            reg_thresh = np.percentile(reg_nonzero, MASK_THRESHOLD_PERCENTILE)
-            ref_thresh = np.percentile(ref_nonzero, MASK_THRESHOLD_PERCENTILE)
-
-            reg_mask = reg_data > reg_thresh
-            ref_mask = ref_data > ref_thresh
-
-            # Compute DICE
-            intersection = np.logical_and(reg_mask, ref_mask).sum()
-            dice = 2.0 * intersection / (
-                reg_mask.sum() + ref_mask.sum() + DICE_EPSILON
-            )
-
-            return float(dice)
-        except Exception as exc:
-            logger.warning(
-                "DICE computation failed for %s vs %s: %s",
-                registered_file,
-                reference_file,
-                exc,
-            )
-            return 0.0
 
     def _compute_qc_metrics(
         self, registered_t1w: str, dce_mean: str
