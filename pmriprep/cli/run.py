@@ -902,6 +902,29 @@ def _configure_nipype(
     if args.resource_monitor:
         nipype_config.enable_resource_monitor()
 
+    # Monkey-patch nipype's file logging to use plain FileHandler.
+    # ConcurrentRotatingFileHandler uses SoftFileLock which breaks in forked
+    # worker processes (MultiProc plugin, ProcessPoolExecutor for GPU ops),
+    # silently dropping log entries.
+    import types
+
+    def _plain_file_logging(self: Any) -> None:
+        config = self._config
+        log_filename = os.path.join(
+            config.get("logging", "log_directory"), "pypeline.log"
+        )
+        hdlr = logging.FileHandler(log_filename, mode="a")
+        hdlr.setFormatter(logging.Formatter(fmt=self.fmt, datefmt=self.datefmt))
+        self._logger.addHandler(hdlr)
+        self._utlogger.addHandler(hdlr)
+        self._iflogger.addHandler(hdlr)
+        self._fmlogger.addHandler(hdlr)
+        self._hdlr = hdlr
+
+    nipype_logging.enable_file_logging = types.MethodType(
+        _plain_file_logging, nipype_logging
+    )
+
     # Set up nipype logging
     nipype_logging.update_logging(nipype_config)
 
