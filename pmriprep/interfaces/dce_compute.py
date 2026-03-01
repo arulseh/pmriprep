@@ -1560,7 +1560,7 @@ class ComputeDCEMaps(BaseInterface):
         # QC tracking
         n_brain = int(np.sum(mask_bool))
         qc_metrics: dict[str, Any] = {
-            "model": model_name,
+            "model": "auto" if is_auto else model_name,
             "bayesian": bayesian,
             "n_voxels_brain": n_brain,
             "n_voxels_fitted": n_voxels,
@@ -1845,6 +1845,7 @@ class ComputeDCEMaps(BaseInterface):
 
         # Per-model selection stats (auto mode)
         if is_auto:
+            qc_metrics["candidate_models"] = candidate_names
             n_total = int(np.sum(model_selection_map > 0))
             for code_name in candidate_names:
                 count = int(np.sum(

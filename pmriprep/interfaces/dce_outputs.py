@@ -203,19 +203,10 @@ class DCEDerivativeWriter(BaseInterface):
         ref_img = nib.load(self.inputs.ktrans_map)
         voxel_sizes = ref_img.header.get_zooms()[:3]  # type: ignore[attr-defined]
 
-        # Get model name for filename - extract resolved model from qc_metrics if "auto"
+        # Get model name for filename
         pk_model = self.inputs.pk_model
-        if not isdefined(pk_model) or not pk_model or pk_model == "auto":
-            qc_metrics = self.inputs.qc_metrics
-            if (
-                isdefined(qc_metrics)
-                and qc_metrics
-                and "pk_modeling" in qc_metrics
-                and "model" in qc_metrics["pk_modeling"]
-            ):
-                pk_model = qc_metrics["pk_modeling"]["model"]
-            else:
-                pk_model = "unknown"
+        if not isdefined(pk_model) or not pk_model:
+            pk_model = "unknown"
 
         # Build spatial and model entity strings
         spatial = "space-DCE"
@@ -804,7 +795,23 @@ class DCEDerivativeWriter(BaseInterface):
             if isdefined(config_dict) and config_dict:
                 sidecar["BayesianInference"] = config_dict.get("bayesian", "none")
                 if config_dict.get("model") == "auto":
-                    sidecar["ModelSelection"] = "auto (per-voxel BIC)"
+                    selection_info: dict[str, Any] = {
+                        "Method": "per-voxel BIC comparison",
+                    }
+                    qc = self.inputs.qc_metrics
+                    if isdefined(qc) and qc and "pk_modeling" in qc:
+                        pk_qc = qc["pk_modeling"]
+                        candidates = pk_qc.get("candidate_models", [])
+                        if candidates:
+                            selection_info["CandidateModels"] = candidates
+                        dist = {}
+                        for mn in candidates:
+                            frac = pk_qc.get(f"{mn}_fraction")
+                            if frac is not None:
+                                dist[mn] = round(frac, 4)
+                        if dist:
+                            selection_info["ModelDistribution"] = dist
+                    sidecar["ModelSelection"] = selection_info
 
         return sidecar
 

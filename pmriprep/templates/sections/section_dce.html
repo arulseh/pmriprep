@@ -334,12 +334,6 @@
                 <div class="metric-value">{{ dce.qc_metrics.pk_modeling.model }}</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.pk_modeling.model_selection is defined %}
-            <div class="metric">
-                <div class="metric-label">Selection</div>
-                <div class="metric-value">{{ dce.qc_metrics.pk_modeling.model_selection }}</div>
-            </div>
-            {% endif %}
             {% if dce.qc_metrics.pk_modeling.ktrans_median is defined %}
             <div class="metric">
                 <div class="metric-label">Median Ktrans</div>

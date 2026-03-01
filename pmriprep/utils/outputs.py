@@ -76,6 +76,7 @@ _MODEL_ENTITY_MAP: Dict[str, str] = {
     "patlak": "patlak",
     "two_compartment_exchange": "2CXM",
     "2cxm": "2CXM",
+    "auto": "auto",
 }
 
 
