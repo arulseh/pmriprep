@@ -1523,20 +1523,56 @@ class T1Mapping(SimpleInterface):
             )
             csf_excluded = True
 
-        # Set out-of-range T1 to NaN (matches perf-plus [100, 6000] ms bounds)
-        # No brain tissue at 3T pre-contrast has T1 < 100ms
+        # Set out-of-range T1 to NaN using field-strength-dependent bounds.
+        # Lower bound (reject_min) depends on field strength: 450/600/800ms at 1.5/3/7T.
+        # Upper bound depends on field strength and whether CSF was excluded:
+        #   - With CSF exclusion: use full t1_upper_bound (allows some CSF partial volume)
+        #   - Without CSF exclusion: use tighter t1_parenchyma_upper to reject CSF voxels
+        field_strength = self.inputs.field_strength
+        correction_mode = self.inputs.t1_correction_mode
+
+        from pmriprep.utils.dce_t1_validation import (
+            T1_TISSUE_REFERENCE,
+            apply_t1_correction,
+            get_field_strength_key,
+        )
+
+        field_key = get_field_strength_key(field_strength)
+        if csf_excluded:
+            t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_upper_bound"]
+        else:
+            t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_parenchyma_upper"]
+            logger.info(
+                "No CSF probseg: using tighter T1 upper bound (%.0fms)", t1_upper,
+            )
+        t1_lower = T1_TISSUE_REFERENCE[field_key]["reject_min"]
         t1_map = np.where(
-            (t1_map >= 100.0) & (t1_map <= 6000.0), t1_map, np.nan,
+            (t1_map >= t1_lower) & (t1_map <= t1_upper), t1_map, np.nan,
+        )
+
+        # Erode valid-T1 region BEFORE T1 correction so the correction median
+        # reflects interior brain tissue, not partial-volume edge voxels.
+        # 6-connectivity (face-adjacent only): MRI PSF is separable along
+        # encoding axes, so contamination is strongest face-adjacent.
+        # Low T1 (~500ms) causes ~2.5x Ktrans overestimation.
+        from scipy.ndimage import binary_erosion, generate_binary_structure  # type: ignore[import-untyped]
+
+        valid_t1_mask = np.isfinite(t1_map) & (t1_map > 0)
+        struct = generate_binary_structure(3, 1)  # 6-connectivity
+        eroded = binary_erosion(valid_t1_mask, structure=struct, iterations=1)
+        edge_mask = valid_t1_mask & ~eroded
+        n_edge = int(np.sum(edge_mask))
+        t1_map[edge_mask] = np.nan
+        # Update brain_mask to match (mirrors CSF exclusion pattern at line 1514)
+        brain_mask = brain_mask & ~edge_mask
+        logger.info(
+            "T1 edge erosion: removed %d partial-volume voxels "
+            "(%.1f%% of brain mask)",
+            n_edge, 100.0 * n_edge / max(int(np.sum(brain_mask) + n_edge), 1),
         )
 
         # Convert to float32 for storage
         t1_map = t1_map.astype(np.float32)
-
-        # T1 value correction (field-strength-aware)
-        field_strength = self.inputs.field_strength
-        correction_mode = self.inputs.t1_correction_mode
-
-        from pmriprep.utils.dce_t1_validation import apply_t1_correction
 
         t1_map_arr, correction_result = apply_t1_correction(
             t1_map,
@@ -1607,6 +1643,7 @@ class T1Mapping(SimpleInterface):
             "csf_excluded": csf_excluded,
             "median_filtered": True,
         }
+        qc_metrics["edge_voxels_eroded"] = n_edge
         qc_metrics["t1_correction"] = correction_info
 
         # Derive hierarchical T1 QC status

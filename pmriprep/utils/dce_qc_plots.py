@@ -73,24 +73,24 @@ def generate_vfa_t1_qc_plot(
     # Select middle axial slice
     mid_slice = t1_map.shape[2] // 2
 
+    # Get T1 reference ranges (needed for windowing and histograms)
+    from pmriprep.utils.dce_t1_validation import T1_TISSUE_REFERENCE, get_field_strength_key
+
+    field_key = get_field_strength_key(field_strength)
+    t1_ref = T1_TISSUE_REFERENCE[field_key]
+
     # Determine display window for T1 map (exclude CSF)
     if brain_mask is not None:
         valid_t1 = t1_map[brain_mask > 0.5]
     else:
         valid_t1 = t1_map[~np.isnan(t1_map)]
-    valid_t1 = valid_t1[(valid_t1 > 100) & (valid_t1 < 2500)]
+    valid_t1 = valid_t1[(valid_t1 > t1_ref["reject_min"]) & (valid_t1 < 2500)]
 
     if len(valid_t1) > 0:
         t1_vmin = float(np.percentile(valid_t1, 1))
         t1_vmax = float(np.percentile(valid_t1, 99))
     else:
         t1_vmin, t1_vmax = 0.0, 3000.0
-
-    # Get T1 reference ranges
-    from pmriprep.utils.dce_t1_validation import T1_TISSUE_REFERENCE, get_field_strength_key
-
-    field_key = get_field_strength_key(field_strength)
-    t1_ref = T1_TISSUE_REFERENCE[field_key]
 
     # Create figure
     fig, axes = plt.subplots(3, 3, figsize=(15, 13))
@@ -179,21 +179,21 @@ def generate_vfa_t1_qc_plot(
     # T1 histogram
     ax = axes[2, 0]
     if brain_mask is not None:
-        hist_t1 = t1_map[(brain_mask > 0.5) & (t1_map > 100) & (t1_map < 3000)]
+        hist_t1 = t1_map[(brain_mask > 0.5) & (t1_map > t1_ref["reject_min"]) & (t1_map < 3000)]
     else:
-        hist_t1 = t1_map[(t1_map > 100) & (t1_map < 3000)]
+        hist_t1 = t1_map[(t1_map > t1_ref["reject_min"]) & (t1_map < 3000)]
 
     if len(hist_t1) > 0:
-        # IQR-based outlier trimming for display (matches M0 histogram pattern)
-        q1, q3 = np.percentile(hist_t1, [25, 75])
-        iqr = q3 - q1
-        if iqr < 1.0:
-            t1_display = hist_t1
-        else:
-            t1_display = hist_t1[(hist_t1 >= q1 - 1.5 * iqr) & (hist_t1 <= q3 + 1.5 * iqr)]
+        # Percentile trimming for display (matches spatial T1 map windowing)
+        p1, p99 = np.percentile(hist_t1, [1, 99])
+        t1_display = hist_t1[(hist_t1 >= p1) & (hist_t1 <= p99)]
         if len(t1_display) > 0:
-            ax.hist(t1_display, bins=100, color=COLORBLIND_PALETTE.primary, alpha=0.7,
-                    edgecolor="none", density=True)
+            n, _, _ = ax.hist(t1_display, bins=100, color=COLORBLIND_PALETTE.primary,
+                              alpha=0.7, edgecolor="none", density=True)
+            # Cap y-axis so outlier edge-voxel bars don't compress the main peak
+            nonzero = n[n > 1e-10]
+            if len(nonzero) > 5:
+                ax.set_ylim(0, float(np.percentile(nonzero, 95)) * 1.5)
         # Reference ranges and median use full hist_t1, not trimmed
         wm_range = t1_ref["wm"]
         gm_range = t1_ref["gm"]
@@ -205,10 +205,8 @@ def generate_vfa_t1_qc_plot(
         ax.axvline(median_val, color=COLORBLIND_PALETTE.error, linestyle="--",
                    label=f"Median: {median_val:.0f}ms")
         # Ensure reference bands and median are visible
-        lo = q1 - 1.5 * iqr if iqr >= 1.0 else float(t1_display.min())
-        hi = q3 + 1.5 * iqr if iqr >= 1.0 else float(t1_display.max())
-        display_min = min(lo, wm_range[0], median_val) - 50
-        display_max = max(hi, gm_range[1], median_val) + 50
+        display_min = min(p1, wm_range[0], median_val) - 50
+        display_max = max(p99, gm_range[1], median_val) + 50
         ax.set_xlim(display_min, display_max)
         ax.legend(fontsize=7, loc="upper right")
     ax.set_xlabel("T1 (ms)")
@@ -219,7 +217,8 @@ def generate_vfa_t1_qc_plot(
     ax = axes[2, 1]
     if n_fa >= 1:
         if brain_mask is not None:
-            hist_m0 = m0_est[(brain_mask > 0.5) & (m0_est > 0)]
+            valid_voxels = (brain_mask > 0.5) & np.isfinite(t1_map) & (t1_map > t1_ref["reject_min"])
+            hist_m0 = m0_est[valid_voxels & (m0_est > 0)]
         else:
             hist_m0 = m0_est[m0_est > 0]
         # IQR-based outlier rejection for display
@@ -228,8 +227,11 @@ def generate_vfa_t1_qc_plot(
             iqr = q3 - q1
             m0_display = hist_m0[(hist_m0 >= q1 - 1.5 * iqr) & (hist_m0 <= q3 + 1.5 * iqr)]
             if len(m0_display) > 0:
-                ax.hist(m0_display, bins=80, color=COLORBLIND_PALETTE.secondary, alpha=0.7,
-                        edgecolor="none", density=True)
+                n_m0, _, _ = ax.hist(m0_display, bins=80, color=COLORBLIND_PALETTE.secondary,
+                                     alpha=0.7, edgecolor="none", density=True)
+                nonzero_m0 = n_m0[n_m0 > 1e-10]
+                if len(nonzero_m0) > 5:
+                    ax.set_ylim(0, float(np.percentile(nonzero_m0, 95)) * 1.5)
     ax.set_xlabel("M0 (a.u.)")
     ax.set_ylabel("Density")
     ax.set_title("M0 Distribution (Brain)", fontsize=11)
@@ -237,7 +239,7 @@ def generate_vfa_t1_qc_plot(
     # T1 vs M0 scatter
     ax = axes[2, 2]
     if n_fa >= 1 and brain_mask is not None:
-        scatter_mask = (brain_mask > 0.5) & (t1_map > 100) & (t1_map < 3000) & (m0_est > 0)
+        scatter_mask = (brain_mask > 0.5) & np.isfinite(t1_map) & (t1_map > t1_ref["reject_min"]) & (t1_map < 3000) & (m0_est > 0)
         t1_sc = t1_map[scatter_mask]
         m0_sc = m0_est[scatter_mask]
         if len(t1_sc) > 1000:

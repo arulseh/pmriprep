@@ -201,6 +201,18 @@
                 <div class="metric-value {{ dce.qc_metrics.t1_mapping.t1_status | lower }}">{{ dce.qc_metrics.t1_mapping.t1_status }}</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.t1_mapping.n_flip_angles is defined %}
+            <div class="metric">
+                <div class="metric-label">Flip Angles</div>
+                <div class="metric-value">{{ dce.qc_metrics.t1_mapping.flip_angles_deg | join("°, ") }}° ({{ dce.qc_metrics.t1_mapping.n_flip_angles }})</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.t1_mapping.tr_ms is defined %}
+            <div class="metric">
+                <div class="metric-label">TR</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.t1_mapping.tr_ms) }} ms</div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.t1_mapping.median_t1_ms is defined %}
             <div class="metric">
                 <div class="metric-label">Median T1</div>

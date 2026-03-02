@@ -17,6 +17,13 @@ tissue at 3T." MRM. 2005;54(3):507-512.
 
 Rooney WD et al. "Magnetic field and tissue dependencies of human
 brain longitudinal 1H2O relaxation in vivo." MRM. 2007;57(2):308-318.
+
+Wright PJ et al. "Water proton T1 measurements in brain tissue at 7,
+3, and 1.5 T using IR-EPI, IR-TSE, and MPRAGE." MRM. 2008;26(10):1362-1368.
+
+Marques JP et al. "MP2RAGE, a self bias-field corrected sequence for
+improved segmentation and T1-mapping at high field." NeuroImage.
+2010;49(2):1271-1281.
 """
 
 import logging
@@ -51,6 +58,7 @@ T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
         "csf": 3000,
         "default": 900,
         "t1_upper_bound": 5000,
+        "t1_parenchyma_upper": 2000,
         "reject_min": 450,
         "reject_max": 1500,
         "warn_low": 650,
@@ -69,11 +77,32 @@ T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
         "csf": 4000,
         "default": 1200,
         "t1_upper_bound": 6000,
+        "t1_parenchyma_upper": 2500,
         "reject_min": 600,
         "reject_max": 1800,
         "warn_low": 850,
         "warn_high": 1250,
         "expected_median": 1050,
+    },
+    # 7.0T: Rooney 2007 (WM/GM T1), Wright 2008, Marques 2010
+    7.0: {
+        "wm": (1000, 1250),
+        "gm": (1700, 2100),
+        "brain_median": (1300, 1700),
+        "brain_mean": 1550,
+        "brain_sd": 250,
+        "qc_min": 1000,
+        "qc_max_strict": 2100,
+        "qc_max_lenient": 2350,
+        "csf": 4500,
+        "default": 1700,
+        "t1_upper_bound": 7000,
+        "t1_parenchyma_upper": 3500,
+        "reject_min": 800,
+        "reject_max": 2400,
+        "warn_low": 1200,
+        "warn_high": 1850,
+        "expected_median": 1550,
     },
 }
 
@@ -157,7 +186,7 @@ class T1CorrectionResult:
 
 
 def get_field_strength_key(field_strength: float) -> float:
-    """Round field strength to nearest standard value (1.5 or 3.0).
+    """Round field strength to nearest standard value (1.5, 3.0, or 7.0).
 
     Parameters
     ----------
@@ -167,7 +196,7 @@ def get_field_strength_key(field_strength: float) -> float:
     Returns
     -------
     float
-        Nearest standard field strength (1.5 or 3.0).
+        Nearest standard field strength (1.5, 3.0, or 7.0).
 
     Raises
     ------
@@ -188,7 +217,12 @@ def get_field_strength_key(field_strength: float) -> float:
             f"Field strength {field_strength} T exceeds maximum supported (7.0 T). "
             f"Check units - value should be in Tesla."
         )
-    return 1.5 if field_strength < 2.25 else 3.0
+    if field_strength < 2.25:
+        return 1.5
+    elif field_strength < 5.0:
+        return 3.0
+    else:
+        return 7.0
 
 
 def _distance_from_range(value: float, range_tuple: Tuple[float, float]) -> float:
@@ -216,6 +250,7 @@ def cross_validate_field_strength(
     T1 relaxation times are field-strength-dependent:
     - At 1.5T: WM ~600-700ms, GM ~900-1100ms, brain median ~700-950ms
     - At 3.0T: WM ~800-1000ms, GM ~1200-1400ms, brain median ~900-1200ms
+    - At 7.0T: WM ~1000-1250ms, GM ~1700-2100ms, brain median ~1300-1700ms
 
     If the measured T1 is significantly closer to the opposite field strength's
     expected range, warn the user that field strength may be mis-specified.
@@ -233,13 +268,20 @@ def cross_validate_field_strength(
         Validation result with confidence and optional warning.
     """
     field_key = get_field_strength_key(specified_field_strength)
-    opposite_key = 3.0 if field_key == 1.5 else 1.5
+
+    # Find the alternative field strength closest to measured median
+    other_keys = [k for k in T1_TISSUE_REFERENCE if k != field_key]
+    distances = {
+        k: _distance_from_range(median_t1, T1_TISSUE_REFERENCE[k]["brain_median"])
+        for k in other_keys
+    }
+    opposite_key = min(distances, key=distances.get)
 
     expected_specified = T1_TISSUE_REFERENCE[field_key]["brain_median"]
     expected_opposite = T1_TISSUE_REFERENCE[opposite_key]["brain_median"]
 
     dist_specified = _distance_from_range(median_t1, expected_specified)
-    dist_opposite = _distance_from_range(median_t1, expected_opposite)
+    dist_opposite = distances[opposite_key]
 
     result = FieldStrengthValidation(
         field_strength_valid=True,
