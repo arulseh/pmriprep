@@ -1003,7 +1003,6 @@ def _generate_dsc_preprocessing_qc(
     dsc_signal_file,
     brain_mask_file,
     baseline_frames,
-    bolus_arrival_frame,
     tr,
     te=None,
     subject_id="",
@@ -1015,7 +1014,6 @@ def _generate_dsc_preprocessing_qc(
         dsc_signal_file: Path to motion-corrected 4D DSC signal NIfTI.
         brain_mask_file: Path to brain mask NIfTI.
         baseline_frames: Number of pre-bolus baseline frames.
-        bolus_arrival_frame: Frame index of bolus arrival.
         tr: Repetition time in seconds.
         subject_id: Subject identifier.
         session_id: Session identifier.
@@ -1034,7 +1032,6 @@ def _generate_dsc_preprocessing_qc(
         dsc_signal_4d=signal_4d,
         brain_mask=mask_data,
         baseline_frames=baseline_frames,
-        bolus_arrival_frame=bolus_arrival_frame,
         volume_tr_s=tr,
         te_s=te,
         subject_id=subject_id,
@@ -2116,7 +2113,7 @@ def init_dsc_preproc_wf(
         niu.Function(
             input_names=[
                 "dsc_signal_file", "brain_mask_file",
-                "baseline_frames", "bolus_arrival_frame",
+                "baseline_frames",
                 "tr", "te", "subject_id", "session_id",
             ],
             output_names=["plot_file", "stats"],
@@ -2124,8 +2121,7 @@ def init_dsc_preproc_wf(
         ),
         name="dsc_preproc_qc",
     )
-    dsc_preproc_qc.inputs.baseline_frames = config.pre_bolus
-    dsc_preproc_qc.inputs.bolus_arrival_frame = config.pre_bolus  # default, may be overridden
+    dsc_preproc_qc.inputs.baseline_frames = config.pre_bolus  # S0 baseline (pipeline value)
     dsc_preproc_qc.inputs.subject_id = subject_id
     dsc_preproc_qc.inputs.session_id = session_id or ""
 

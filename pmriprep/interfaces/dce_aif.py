@@ -2715,13 +2715,13 @@ class AIFDetection(BaseInterface):
             elif quality_score >= 0.4:
                 aif_status = QCStatus.WARN
             else:
-                aif_status = QCStatus.FAIL
+                aif_status = QCStatus.POOR
         else:
             method_to_status = {
                 "auto": QCStatus.PASS,
                 "external": QCStatus.PASS,
                 "population": QCStatus.WARN,
-                "fallback": QCStatus.FAIL,
+                "fallback": QCStatus.POOR,
             }
             aif_status = method_to_status.get(detection_method, QCStatus.WARN)
 

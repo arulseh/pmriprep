@@ -125,6 +125,27 @@ class ReorientAndCrop(CommandLine):
         outputs["out_file"] = self._gen_outfilename()
         return outputs
 
+    def _post_run_hook(self, runtime: Any) -> Any:
+        """Enforce true RAS after fslreorient2std completes.
+
+        fslreorient2std only reorders axes but doesn't flip handedness.
+        This post-run hook applies nibabel's ``as_reoriented()`` to ensure
+        the output is truly RAS.
+        """
+        import nibabel as nib
+        import numpy as np
+        from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
+
+        out_file = self._gen_outfilename()
+        img = nib.load(out_file)
+        ornt = io_orientation(img.affine)  # type: ignore[attr-defined]
+        ras_ornt = axcodes2ornt(("R", "A", "S"))
+        if not np.array_equal(ornt, ras_ornt):
+            transform = ornt_transform(ornt, ras_ornt)
+            img_ras = img.as_reoriented(transform)  # type: ignore[attr-defined]
+            nib.save(img_ras, out_file)
+        return runtime
+
     def _gen_filename(self, name: str) -> Optional[str]:
         """Generate filename for outputs."""
         if name == "out_file":

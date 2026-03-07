@@ -487,7 +487,10 @@ def init_dce_preproc_wf(
     # Connect DCE preprocessing inputs (using reoriented DCE file)
     workflow.connect([
         (dce_reorient, dce_preprocess, [("out_file", "in_file")]),
-        (inputnode, dce_preprocess, [("brain_mask", "brain_mask")]),
+        (inputnode, dce_preprocess, [
+            ("brain_mask", "brain_mask"),
+            ("volume_tr", "volume_tr"),
+        ]),
     ])
 
     # ==========================================================================
@@ -2767,6 +2770,16 @@ def _register_dwi_to_dce(
             check=True,
             capture_output=True,
         )
+        # Enforce true RAS (fslreorient2std only reorders axes, not flips)
+        from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
+
+        _dwi_img = nib.load(dwi_reoriented)
+        _ornt = io_orientation(_dwi_img.affine)
+        _ras_ornt = axcodes2ornt(("R", "A", "S"))
+        if not np.array_equal(_ornt, _ras_ornt):
+            _transform = ornt_transform(_ornt, _ras_ornt)
+            _dwi_ras = _dwi_img.as_reoriented(_transform)
+            nib.save(_dwi_ras, dwi_reoriented)
         dwi_file = dwi_reoriented
     except subprocess.CalledProcessError:
         pass  # Use original file if reorientation fails

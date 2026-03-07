@@ -22,6 +22,16 @@ EPSILON_CONCENTRATION: Final[float] = 1e-10
 
 
 # =============================================================================
+# Leakage Correction (K2)
+# =============================================================================
+
+#: Upper bound for K2 leakage rate (s⁻¹). Literature maximum is ~0.04 s⁻¹;
+#: values above 0.5 are numerically degenerate OLS fits. Existing QC already
+#: treats K2 > 0.5 as "severe leakage."
+K2_UPPER_BOUND: Final[float] = 0.5
+
+
+# =============================================================================
 # SVD Deconvolution Thresholds
 # =============================================================================
 

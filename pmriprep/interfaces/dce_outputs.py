@@ -831,6 +831,7 @@ class DCEDerivativeWriter(BaseInterface):
         from pmriprep.utils.qc_standards import (
             QCAction,
             QCRecommendation,
+            QCStatus,
             aggregate_qc_recommendations,
         )
 
@@ -869,6 +870,33 @@ class DCEDerivativeWriter(BaseInterface):
             else:
                 kt_rec = QCRecommendation(QCAction.REVIEW, f"Ktrans outside typical range (mean={ktrans_mean:.4f})", 1)
             recommendations.append(kt_rec)
+
+        # Evaluate motion QC using composite motion_status
+        preprocessing_qc = qc_metrics.get("preprocessing", {})
+        motion_status = preprocessing_qc.get("motion_status")
+        if motion_status is not None:
+            fd_mean = preprocessing_qc.get("fd_mean")
+            fd_max = preprocessing_qc.get("fd_max")
+            pct_outliers = preprocessing_qc.get("percent_outliers")
+            parts = []
+            if fd_mean is not None:
+                parts.append(f"mean FD={fd_mean:.2f}mm")
+            if fd_max is not None:
+                parts.append(f"max FD={fd_max:.2f}mm")
+            if pct_outliers is not None:
+                parts.append(f"outliers={pct_outliers:.1f}%")
+            detail = f"({', '.join(parts)})" if parts else ""
+
+            if motion_status == QCStatus.PASS:
+                motion_rec = QCRecommendation(QCAction.INCLUDE, f"Motion acceptable {detail}", 0)
+            elif motion_status == QCStatus.WARN:
+                motion_rec = QCRecommendation(QCAction.REVIEW, f"Motion marginal {detail}", 1)
+            elif motion_status == QCStatus.POOR:
+                motion_rec = QCRecommendation(QCAction.EXCLUDE, f"Excessive motion {detail}", 3)
+            else:
+                motion_rec = None
+            if motion_rec is not None:
+                recommendations.append(motion_rec)
 
         # Aggregate recommendations
         overall = aggregate_qc_recommendations(recommendations)

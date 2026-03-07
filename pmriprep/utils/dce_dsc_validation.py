@@ -271,7 +271,7 @@ def validate_vp_cbv(
 
     if metrics.n_total_voxels == 0:
         logger.warning("Empty mask, cannot perform validation")
-        result.status = QCStatus.FAIL
+        result.status = QCStatus.POOR
         result.interpretation = "Empty mask - no voxels for validation"
         result.metrics = metrics
         return result

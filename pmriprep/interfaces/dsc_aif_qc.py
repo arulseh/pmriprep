@@ -397,9 +397,6 @@ class AIFQCPlot(BaseInterface):
                 ax_plt.axhline(y=cross_y, color="cyan", linestyle="--", linewidth=0.8, alpha=0.5)
                 ax_plt.axvline(x=cross_x, color="cyan", linestyle="--", linewidth=0.8, alpha=0.5)
 
-                # Magenta marker at centroid
-                ax_plt.plot(cross_x, cross_y, "m+", markersize=12, markeredgewidth=2)
-
                 # Candidate markers (perf-plus style: numbered circles)
                 all_coords = qc.get("all_candidate_coords", [])
                 if len(all_coords) > 0:

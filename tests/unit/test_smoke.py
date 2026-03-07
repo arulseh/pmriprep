@@ -279,6 +279,10 @@ class TestTypecheckVerification:
         import pmriprep
 
         assert pmriprep.__version__ is not None
+        assert pmriprep.__version__ != "0+unknown", (
+            "Package metadata not found -- is pmriprep installed? "
+            "Run: pip install -e ."
+        )
 
     def test_import_cli(self) -> None:
         """Verify CLI module imports."""

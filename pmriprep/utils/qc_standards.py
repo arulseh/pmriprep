@@ -84,15 +84,15 @@ DIVERGING_COLORMAP: Final[tuple[str, str, str]] = (
 
 
 class QCThresholds(NamedTuple):
-    """QC thresholds for pass/warn/fail classification."""
+    """QC thresholds for pass/warn/poor classification."""
     pass_threshold: float   # Values below this: PASS
-    warn_threshold: float   # Values between pass and warn: WARN; above warn: FAIL
+    warn_threshold: float   # Values between pass and warn: WARN; above warn: POOR
 
 
 #: Framewise displacement (FD) thresholds in mm
 #: Pass: FD < 0.3mm (minimal motion)
 #: Warn: 0.3mm <= FD < 0.5mm (moderate motion)
-#: Fail: FD >= 0.5mm (excessive motion)
+#: Poor: FD >= 0.5mm (excessive motion)
 MOTION_FD_THRESHOLDS: Final[QCThresholds] = QCThresholds(
     pass_threshold=0.3,
     warn_threshold=0.5,
@@ -111,7 +111,7 @@ MOTION_OUTLIER_FRACTION_MAX: Final[float] = 0.20
 #: Percent outlier frames thresholds
 #: Pass: <5% outlier frames (minimal motion artifacts)
 #: Warn: 5-20% (some motion-corrupted volumes)
-#: Fail: >=20% (excessive motion corruption)
+#: Poor: >=20% (excessive motion corruption)
 #: References: Power et al. (2012), Satterthwaite et al. (2013)
 MOTION_OUTLIER_PCT_THRESHOLDS: Final[QCThresholds] = QCThresholds(
     pass_threshold=5.0,
@@ -121,7 +121,7 @@ MOTION_OUTLIER_PCT_THRESHOLDS: Final[QCThresholds] = QCThresholds(
 #: Maximum framewise displacement thresholds in mm
 #: Pass: max FD <1mm (no large motion spikes)
 #: Warn: 1-2mm (transient spike, may affect bolus tracking)
-#: Fail: >=2mm (large spike, likely corrupts perfusion estimates)
+#: Poor: >=2mm (large spike, likely corrupts perfusion estimates)
 #: References: Power et al. (2012), Boxerman et al. (2020)
 MOTION_FD_MAX_THRESHOLDS: Final[QCThresholds] = QCThresholds(
     pass_threshold=1.0,
@@ -138,7 +138,7 @@ MOTION_FD_MAX_THRESHOLDS: Final[QCThresholds] = QCThresholds(
 #: DICE coefficient thresholds for mask comparison
 #: Pass: DICE > 0.85 (excellent overlap)
 #: Warn: 0.75 < DICE <= 0.85 (acceptable overlap)
-#: Fail: DICE <= 0.75 (poor overlap)
+#: Poor: DICE <= 0.75 (poor overlap)
 DICE_THRESHOLDS: Final[QCThresholds] = QCThresholds(
     pass_threshold=0.85,
     warn_threshold=0.75,
@@ -160,7 +160,7 @@ DICE_THRESHOLDS_STRICT: Final[QCThresholds] = QCThresholds(
 #: Correlation coefficient thresholds for image comparison
 #: Pass: r > 0.7 (strong correlation)
 #: Warn: 0.5 < r <= 0.7 (moderate correlation)
-#: Fail: r <= 0.5 (weak correlation)
+#: Poor: r <= 0.5 (weak correlation)
 CORRELATION_THRESHOLDS: Final[QCThresholds] = QCThresholds(
     pass_threshold=0.7,
     warn_threshold=0.5,
@@ -189,7 +189,7 @@ class QCStatus:
     """QC status strings for consistent reporting."""
     PASS: Final[str] = "PASS"
     WARN: Final[str] = "WARN"
-    FAIL: Final[str] = "FAIL"
+    POOR: Final[str] = "POOR"
     UNKNOWN: Final[str] = "UNKNOWN"
 
 
@@ -203,7 +203,7 @@ def get_qc_status(value: float, thresholds: QCThresholds, higher_is_better: bool
                          If False, values below pass_threshold are PASS.
 
     Returns:
-        QC status string: "PASS", "WARN", or "FAIL"
+        QC status string: "PASS", "WARN", or "POOR"
     """
     if higher_is_better:
         # For metrics like DICE, correlation where higher is better
@@ -212,7 +212,7 @@ def get_qc_status(value: float, thresholds: QCThresholds, higher_is_better: bool
         elif value > thresholds.warn_threshold:
             return QCStatus.WARN
         else:
-            return QCStatus.FAIL
+            return QCStatus.POOR
     else:
         # For metrics like motion FD where lower is better
         if value < thresholds.pass_threshold:
@@ -220,7 +220,7 @@ def get_qc_status(value: float, thresholds: QCThresholds, higher_is_better: bool
         elif value < thresholds.warn_threshold:
             return QCStatus.WARN
         else:
-            return QCStatus.FAIL
+            return QCStatus.POOR
 
 
 def get_composite_motion_status(
@@ -240,7 +240,7 @@ def get_composite_motion_status(
         pct_outliers: Percentage of frames exceeding the motion threshold.
 
     Returns:
-        QC status string: "PASS", "WARN", or "FAIL".
+        QC status string: "PASS", "WARN", or "POOR".
 
     References:
         Power et al. (2012). doi:10.1016/j.neuroimage.2011.10.018
@@ -257,7 +257,7 @@ def get_composite_motion_status(
         pct_outliers, MOTION_OUTLIER_PCT_THRESHOLDS, higher_is_better=False,
     )
 
-    severity = {QCStatus.FAIL: 2, QCStatus.WARN: 1, QCStatus.PASS: 0}
+    severity = {QCStatus.POOR: 2, QCStatus.WARN: 1, QCStatus.PASS: 0}
     worst = max(
         [status_mean, status_max, status_pct],
         key=lambda s: severity.get(s, 0),
@@ -269,7 +269,7 @@ def get_status_color(status: str) -> str:
     """Get the appropriate color for a QC status.
 
     Args:
-        status: QC status string ("PASS", "WARN", "FAIL", or "UNKNOWN")
+        status: QC status string ("PASS", "WARN", "POOR", or "UNKNOWN")
 
     Returns:
         Hex color code from the colorblind-safe palette
@@ -277,7 +277,7 @@ def get_status_color(status: str) -> str:
     status_colors = {
         QCStatus.PASS: COLORBLIND_PALETTE.success,
         QCStatus.WARN: COLORBLIND_PALETTE.warning,
-        QCStatus.FAIL: COLORBLIND_PALETTE.error,
+        QCStatus.POOR: COLORBLIND_PALETTE.error,
         QCStatus.UNKNOWN: COLORBLIND_PALETTE.secondary,
     }
     return status_colors.get(status, COLORBLIND_PALETTE.secondary)
@@ -345,7 +345,7 @@ def get_qc_recommendation(
             reason=f"{metric_name} marginal ({value:.3f}); visual inspection recommended",
             severity=1,
         )
-    else:  # FAIL
+    else:  # POOR
         if higher_is_better:
             threshold_desc = f"below {thresholds.warn_threshold}"
         else:
@@ -414,7 +414,7 @@ def build_qc_summary(
 
     Args:
         metrics: Dictionary mapping metric names to (value, status) tuples.
-        overall_status: Overall QC status (PASS/WARN/FAIL).
+        overall_status: Overall QC status (PASS/WARN/POOR).
         overall_recommendation: Aggregated QC recommendation.
 
     Returns:

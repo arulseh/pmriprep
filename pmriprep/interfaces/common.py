@@ -63,6 +63,20 @@ def reorient_to_ras(in_file=None):
         warnings.warn(f"fslreorient2std failed for {in_file}: {e.stderr.decode()}")
         return None
 
+    # Enforce true RAS orientation (fslreorient2std only reorders axes,
+    # doesn't flip handedness — e.g. LAS stays LAS)
+    import nibabel as _nib
+    from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
+    import numpy as _np
+
+    _img = _nib.load(str(out_file))
+    _ornt = io_orientation(_img.affine)
+    _ras_ornt = axcodes2ornt(("R", "A", "S"))
+    if not _np.array_equal(_ornt, _ras_ornt):
+        _transform = ornt_transform(_ornt, _ras_ornt)
+        _img_ras = _img.as_reoriented(_transform)
+        _nib.save(_img_ras, str(out_file))
+
     return out_file
 
 
@@ -117,6 +131,20 @@ def reorient_list_to_ras(in_files=None):
             import warnings
             warnings.warn(f"fslreorient2std failed for {in_file}: {e.stderr.decode()}")
             return None
+
+        # Enforce true RAS orientation (fslreorient2std only reorders axes,
+        # doesn't flip handedness — e.g. LAS stays LAS)
+        import nibabel as _nib
+        from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
+        import numpy as _np
+
+        _img = _nib.load(str(out_file))
+        _ornt = io_orientation(_img.affine)
+        _ras_ornt = axcodes2ornt(("R", "A", "S"))
+        if not _np.array_equal(_ornt, _ras_ornt):
+            _transform = ornt_transform(_ornt, _ras_ornt)
+            _img_ras = _img.as_reoriented(_transform)
+            _nib.save(_img_ras, str(out_file))
 
         return out_file
 
@@ -201,6 +229,28 @@ class Reorient(CommandLine):
         outputs: dict[str, Any] = self.output_spec().get()
         outputs["out_file"] = self._gen_outfilename()
         return outputs
+
+    def _post_run_hook(self, runtime: Any) -> Any:
+        """Enforce true RAS after fslreorient2std completes.
+
+        fslreorient2std only reorders axes but doesn't flip handedness.
+        For example, LAS (negative x determinant) stays LAS after
+        fslreorient2std. This post-run hook applies nibabel's
+        ``as_reoriented()`` to ensure the output is truly RAS.
+        """
+        import nibabel as nib
+        import numpy as np
+        from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
+
+        out_file = self._gen_outfilename()
+        img = nib.load(out_file)
+        ornt = io_orientation(img.affine)  # type: ignore[attr-defined]
+        ras_ornt = axcodes2ornt(("R", "A", "S"))
+        if not np.array_equal(ornt, ras_ornt):
+            transform = ornt_transform(ornt, ras_ornt)
+            img_ras = img.as_reoriented(transform)  # type: ignore[attr-defined]
+            nib.save(img_ras, out_file)
+        return runtime
 
     def _gen_filename(self, name: str) -> Optional[str]:
         """Generate filename for outputs."""

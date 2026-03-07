@@ -54,7 +54,8 @@ class DSCConfig:
     motion_thresh : float
         Framewise displacement threshold (mm) for motion outliers.
     pre_bolus : int
-        Number of pre-bolus baseline frames.
+        Number of pre-bolus baseline frames for S0 estimation.
+        AIF detection auto-detects actual bolus arrival independently.
     num_processes : int
         Number of parallel processes (0 = use system default).
     use_gpu : bool
@@ -94,7 +95,7 @@ class DSCConfig:
     smooth_fwhm: float = 0.0  # No smoothing by default
     underlays: List[str] = field(default_factory=list)
     motion_thresh: float = 0.5
-    pre_bolus: int = 12
+    pre_bolus: int = 5
 
     # Resource settings
     num_processes: int = 0  # 0 = use system default

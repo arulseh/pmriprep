@@ -167,7 +167,7 @@ class AIFQualityResult:
     Attributes
     ----------
     status : str
-        Overall QC status: "PASS", "WARN", or "FAIL".
+        Overall QC status: "PASS", "WARN", or "POOR".
     quality_score : float
         Overall quality score (0-1).
     washout_fraction : float
@@ -423,7 +423,7 @@ def assess_aif_quality(
     Overall status is determined as follows:
     - PASS: All metrics meet the specified criteria level thresholds
     - WARN: Some metrics fail specified criteria but all meet relaxed thresholds
-    - FAIL: One or more metrics fail even relaxed thresholds
+    - POOR: One or more metrics fail even relaxed thresholds
 
     Clinical significance of AIF quality:
     - PSR-like interpretation: washout >50% is ideal, <20% suggests venous contamination
@@ -480,12 +480,12 @@ def assess_aif_quality(
         elif relaxed_pass:
             status = QCStatus.WARN
         else:
-            status = QCStatus.FAIL
+            status = QCStatus.POOR
     else:  # relaxed criteria
         if relaxed_pass:
             status = QCStatus.PASS
         else:
-            status = QCStatus.FAIL
+            status = QCStatus.POOR
 
     return AIFQualityResult(
         status=status,
@@ -599,7 +599,7 @@ def _get_criteria_details(
     elif cnr >= relaxed_thresholds["cnr_min"]:
         details["cnr"] = QCStatus.WARN
     else:
-        details["cnr"] = QCStatus.FAIL
+        details["cnr"] = QCStatus.POOR
 
     # Washout evaluation (higher is better, up to ~0.5)
     if washout >= strict_thresholds["washout_min"]:
@@ -607,7 +607,7 @@ def _get_criteria_details(
     elif washout >= relaxed_thresholds["washout_min"]:
         details["washout"] = QCStatus.WARN
     else:
-        details["washout"] = QCStatus.FAIL
+        details["washout"] = QCStatus.POOR
 
     # FWHM evaluation (within range is better)
     fwhm_float = float(fwhm)
@@ -620,7 +620,7 @@ def _get_criteria_details(
     ):
         details["fwhm"] = QCStatus.WARN
     else:
-        details["fwhm"] = QCStatus.FAIL
+        details["fwhm"] = QCStatus.POOR
 
     # Baseline CV evaluation (lower is better)
     if baseline_cv <= strict_thresholds["baseline_cv_max"]:
@@ -628,7 +628,7 @@ def _get_criteria_details(
     elif baseline_cv <= relaxed_thresholds["baseline_cv_max"]:
         details["baseline_cv"] = QCStatus.WARN
     else:
-        details["baseline_cv"] = QCStatus.FAIL
+        details["baseline_cv"] = QCStatus.POOR
 
     return details
 

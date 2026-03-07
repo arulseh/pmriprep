@@ -226,8 +226,8 @@ class TestComputeTTPLegacy:
         # ttp = (5 + 2) * 1.5 = 10.5
         assert float(ttp) == pytest.approx(10.5, rel=1e-6)
 
-    def test_4d_clipping(self) -> None:
-        """TTP is clipped to [0, 60] seconds."""
+    def test_4d_unclipped(self) -> None:
+        """TTP is returned unclipped (caller handles clipping)."""
         # Create 4D concentration with peak very late
         shape = (2, 2, 2, 100)
         conc = np.zeros(shape, dtype=np.float64)
@@ -236,8 +236,14 @@ class TestComputeTTPLegacy:
         ttp = compute_ttp_legacy(conc, pre_bolus_frames=5, dt=1.0)
 
         assert ttp.shape == (2, 2, 2)
-        # (5 + 94) * 1.0 = 99 => clipped to 60
-        assert np.all(ttp <= 60.0)
+        # (5 + 94) * 1.0 = 99 — returned unclipped
+        assert np.all(ttp == pytest.approx(99.0, rel=1e-6))
+
+    def test_empty_window_raises(self) -> None:
+        """Raises ValueError when pre_bolus_frames >= n_timepoints."""
+        conc = np.zeros(10, dtype=np.float64)
+        with pytest.raises(ValueError, match="pre_bolus_frames"):
+            compute_ttp_legacy(conc, pre_bolus_frames=10, dt=1.0)
 
 
 class TestNormalizeCBV:

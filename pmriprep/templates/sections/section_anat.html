@@ -19,7 +19,7 @@
             {% if anat.qc_metrics.brain_extraction.qc_status is defined %}
             <div class="metric">
                 <div class="metric-label">Status</div>
-                <div class="metric-value {% if anat.qc_metrics.brain_extraction.qc_status == 'PASS' %}pass{% elif anat.qc_metrics.brain_extraction.qc_status == 'WARN' %}warn{% else %}fail{% endif %}">
+                <div class="metric-value {% if anat.qc_metrics.brain_extraction.qc_status == 'PASS' %}pass{% elif anat.qc_metrics.brain_extraction.qc_status == 'WARN' %}warn{% else %}poor{% endif %}">
                     {{ anat.qc_metrics.brain_extraction.qc_status }}
                 </div>
             </div>

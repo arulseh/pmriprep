@@ -115,7 +115,7 @@ class DCEAIFQualityResult:
     Attributes
     ----------
     status : str
-        Overall QC status: "PASS", "WARN", or "FAIL".
+        Overall QC status: "PASS", "WARN", or "POOR".
     quality_score : float
         Overall quality score (0-1).
     metrics : DCEAIFQualityMetrics
@@ -439,7 +439,7 @@ def assess_dce_aif_quality(
     Overall status is determined as follows:
     - PASS: All metrics meet the specified criteria level thresholds
     - WARN: Some metrics fail specified criteria but all meet relaxed thresholds
-    - FAIL: One or more metrics fail even relaxed thresholds
+    - POOR: One or more metrics fail even relaxed thresholds
 
     Expected AIF characteristics for full dose (0.1 mmol/kg) at 3T:
     - Peak concentration: 5.0-7.6 mM
@@ -593,7 +593,7 @@ def assess_dce_aif_quality(
     elif fallback_map[criteria]:
         status = QCStatus.WARN
     else:
-        status = QCStatus.FAIL
+        status = QCStatus.POOR
 
     return DCEAIFQualityResult(
         status=status,
@@ -690,7 +690,7 @@ def _get_dce_criteria_details(
     elif expected_peak_min * 0.3 <= metrics.peak_concentration <= expected_peak_max * 3.0:
         details["peak_concentration"] = QCStatus.WARN
     else:
-        details["peak_concentration"] = QCStatus.FAIL
+        details["peak_concentration"] = QCStatus.POOR
 
     # Washout evaluation (higher is better)
     if metrics.washout_fraction >= strict_thresholds.washout_min:
@@ -698,7 +698,7 @@ def _get_dce_criteria_details(
     elif metrics.washout_fraction >= relaxed_thresholds.washout_min:
         details["washout"] = QCStatus.WARN
     else:
-        details["washout"] = QCStatus.FAIL
+        details["washout"] = QCStatus.POOR
 
     # FWHM evaluation (within range is better)
     if (
@@ -714,7 +714,7 @@ def _get_dce_criteria_details(
     ):
         details["fwhm"] = QCStatus.WARN
     else:
-        details["fwhm"] = QCStatus.FAIL
+        details["fwhm"] = QCStatus.POOR
 
     # CNR evaluation (higher is better)
     if metrics.cnr >= 5.0:
@@ -722,7 +722,7 @@ def _get_dce_criteria_details(
     elif metrics.cnr >= 3.0:
         details["cnr"] = QCStatus.WARN
     else:
-        details["cnr"] = QCStatus.FAIL
+        details["cnr"] = QCStatus.POOR
 
     # Baseline evaluation (lower std is better)
     baseline_noise_fraction = metrics.baseline_std / max(
@@ -733,7 +733,7 @@ def _get_dce_criteria_details(
     elif baseline_noise_fraction <= ParkerAIFExpected.BASELINE_STD_MAX_FRACTION * 2:
         details["baseline"] = QCStatus.WARN
     else:
-        details["baseline"] = QCStatus.FAIL
+        details["baseline"] = QCStatus.POOR
 
     # AUC evaluation
     if ParkerAIFExpected.AUC_MIN <= metrics.auc <= ParkerAIFExpected.AUC_MAX:
@@ -741,7 +741,7 @@ def _get_dce_criteria_details(
     elif ParkerAIFExpected.AUC_MIN * 0.3 <= metrics.auc <= ParkerAIFExpected.AUC_MAX * 3.0:
         details["auc"] = QCStatus.WARN
     else:
-        details["auc"] = QCStatus.FAIL
+        details["auc"] = QCStatus.POOR
 
     return details
 

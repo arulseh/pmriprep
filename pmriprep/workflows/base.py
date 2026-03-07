@@ -1525,9 +1525,16 @@ def init_pmriprep_wf(
         _user_nawm = dsc_config.nawm_mask
         _user_roi = dsc_config.roi_mask
 
+        # Reorient user-supplied masks to RAS (they may have different
+        # orientation than pipeline-processed images, causing registration
+        # failures or left-right flips)
+        from pmriprep.interfaces.common import Reorient
+
         if _user_roi:
-            dsc_wf.inputs.inputnode.roi_mask = str(_user_roi)
-            _dsc_log.info("DSC: user roi_mask=%s", _user_roi)
+            dsc_roi_reorient = pe.Node(Reorient(), name="dsc_roi_reorient")
+            dsc_roi_reorient.inputs.in_file = str(_user_roi)
+            workflow.connect([(dsc_roi_reorient, dsc_wf, [("out_file", "inputnode.roi_mask")])])
+            _dsc_log.info("DSC: user roi_mask=%s (reoriented to RAS)", _user_roi)
 
         if tumor_seg_wf is not None:
             # NAWM picker: prefer tumor-seg NAWM, fall back to user-supplied
@@ -1540,18 +1547,25 @@ def init_pmriprep_wf(
                 name="dsc_pick_nawm",
             )
             if _user_nawm:
-                dsc_pick_nawm.inputs.user_nawm = str(_user_nawm)
+                _nawm_reorient = pe.Node(Reorient(), name="dsc_nawm_reorient")
+                _nawm_reorient.inputs.in_file = str(_user_nawm)
+                workflow.connect([(_nawm_reorient, dsc_pick_nawm, [("out_file", "user_nawm")])])
 
             if _user_lesion:
                 # Merge tumor seg whole_tumor + user lesion masks
                 from pmriprep.utils.mask_utils import MergeMasks
 
+                dsc_lesion_reorient = pe.Node(Reorient(), name="dsc_lesion_reorient")
+                dsc_lesion_reorient.inputs.in_file = str(_user_lesion)
+
                 dsc_merge_masks = pe.Node(
                     MergeMasks(), name="dsc_merge_masks",
                 )
-                dsc_merge_masks.inputs.mask_b = str(_user_lesion)
 
                 workflow.connect([
+                    (dsc_lesion_reorient, dsc_merge_masks, [
+                        ("out_file", "mask_b"),
+                    ]),
                     (tumor_seg_wf, dsc_merge_masks, [
                         ("outputnode.whole_tumor_mask", "mask_a"),
                     ]),
@@ -1597,19 +1611,24 @@ def init_pmriprep_wf(
                 # Merge user lesion with loaded whole_tumor_mask
                 from pmriprep.utils.mask_utils import MergeMasks
 
+                dsc_lesion_reorient2 = pe.Node(Reorient(), name="dsc_lesion_reorient_skip")
+                dsc_lesion_reorient2.inputs.in_file = str(_user_lesion)
+
                 dsc_merge_masks = pe.Node(
                     MergeMasks(), name="dsc_merge_masks",
                 )
                 dsc_merge_masks.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
-                dsc_merge_masks.inputs.mask_b = str(_user_lesion)
 
                 workflow.connect([
+                    (dsc_lesion_reorient2, dsc_merge_masks, [
+                        ("out_file", "mask_b"),
+                    ]),
                     (dsc_merge_masks, dsc_wf, [
                         ("merged_mask", "inputnode.whole_tumor_mask"),
                     ]),
                 ])
                 _dsc_log.info(
-                    "DSC skip-tumor-seg: merging user lesion_mask=%s with loaded whole_tumor_mask",
+                    "DSC skip-tumor-seg: merging user lesion_mask=%s (reoriented) with loaded whole_tumor_mask",
                     _user_lesion,
                 )
             else:
@@ -1627,17 +1646,23 @@ def init_pmriprep_wf(
                 dsc_wf.inputs.inputnode.nawm_mask = prev_tumor_seg["nawm_mask"]
                 _dsc_log.info("skip-tumor-seg: loaded nawm_mask from %s", prev_tumor_seg["nawm_mask"])
             elif _user_nawm:
-                dsc_wf.inputs.inputnode.nawm_mask = str(_user_nawm)
-                _dsc_log.info("skip-tumor-seg: using user nawm_mask=%s (no cached nawm)", _user_nawm)
+                _nawm_reorient2 = pe.Node(Reorient(), name="dsc_nawm_reorient_skip")
+                _nawm_reorient2.inputs.in_file = str(_user_nawm)
+                workflow.connect([(_nawm_reorient2, dsc_wf, [("out_file", "inputnode.nawm_mask")])])
+                _dsc_log.info("skip-tumor-seg: using user nawm_mask=%s (reoriented, no cached nawm)", _user_nawm)
         else:
             # No tumor segmentation — user-supplied masks only
             if _user_lesion:
-                dsc_wf.inputs.inputnode.whole_tumor_mask = str(_user_lesion)
-                _dsc_log.info("DSC: user lesion_mask=%s → whole_tumor_mask", _user_lesion)
+                _lesion_reorient3 = pe.Node(Reorient(), name="dsc_lesion_reorient_only")
+                _lesion_reorient3.inputs.in_file = str(_user_lesion)
+                workflow.connect([(_lesion_reorient3, dsc_wf, [("out_file", "inputnode.whole_tumor_mask")])])
+                _dsc_log.info("DSC: user lesion_mask=%s → whole_tumor_mask (reoriented)", _user_lesion)
 
             if _user_nawm:
-                dsc_wf.inputs.inputnode.nawm_mask = str(_user_nawm)
-                _dsc_log.info("DSC: user nawm_mask=%s", _user_nawm)
+                _nawm_reorient3 = pe.Node(Reorient(), name="dsc_nawm_reorient_only")
+                _nawm_reorient3.inputs.in_file = str(_user_nawm)
+                workflow.connect([(_nawm_reorient3, dsc_wf, [("out_file", "inputnode.nawm_mask")])])
+                _dsc_log.info("DSC: user nawm_mask=%s (reoriented)", _user_nawm)
 
         # Connect DSC outputs to master outputnode
         workflow.connect([
@@ -2052,8 +2077,10 @@ def init_pmriprep_wf(
         _dce_user_roi = dce_config.roi_mask
 
         if _dce_user_roi:
-            dce_wf.inputs.inputnode.roi_mask = str(_dce_user_roi)
-            _dce_log.info("DCE: user roi_mask=%s", _dce_user_roi)
+            dce_roi_reorient = pe.Node(Reorient(), name="dce_roi_reorient")
+            dce_roi_reorient.inputs.in_file = str(_dce_user_roi)
+            workflow.connect([(dce_roi_reorient, dce_wf, [("out_file", "inputnode.roi_mask")])])
+            _dce_log.info("DCE: user roi_mask=%s (reoriented to RAS)", _dce_user_roi)
 
         if tumor_seg_wf is not None:
             # NAWM picker: prefer tumor-seg NAWM, fall back to user-supplied
@@ -2066,18 +2093,25 @@ def init_pmriprep_wf(
                 name="dce_pick_nawm",
             )
             if _dce_user_nawm:
-                dce_pick_nawm.inputs.user_nawm = str(_dce_user_nawm)
+                _dce_nawm_reorient = pe.Node(Reorient(), name="dce_nawm_reorient")
+                _dce_nawm_reorient.inputs.in_file = str(_dce_user_nawm)
+                workflow.connect([(_dce_nawm_reorient, dce_pick_nawm, [("out_file", "user_nawm")])])
 
             if _dce_user_lesion:
                 # Merge tumor seg whole_tumor + user lesion masks
                 from pmriprep.utils.mask_utils import MergeMasks
 
+                dce_lesion_reorient = pe.Node(Reorient(), name="dce_lesion_reorient")
+                dce_lesion_reorient.inputs.in_file = str(_dce_user_lesion)
+
                 dce_merge_masks = pe.Node(
                     MergeMasks(), name="dce_merge_masks",
                 )
-                dce_merge_masks.inputs.mask_b = str(_dce_user_lesion)
 
                 workflow.connect([
+                    (dce_lesion_reorient, dce_merge_masks, [
+                        ("out_file", "mask_b"),
+                    ]),
                     (tumor_seg_wf, dce_merge_masks, [
                         ("outputnode.whole_tumor_mask", "mask_a"),
                     ]),
@@ -2096,7 +2130,7 @@ def init_pmriprep_wf(
                     ]),
                 ])
                 _dce_log.info(
-                    "DCE: merging user lesion_mask=%s with tumor segmentation whole_tumor_mask",
+                    "DCE: merging user lesion_mask=%s (reoriented) with tumor segmentation whole_tumor_mask",
                     _dce_user_lesion,
                 )
             else:
@@ -2123,19 +2157,24 @@ def init_pmriprep_wf(
                 # Merge user lesion with loaded whole_tumor_mask
                 from pmriprep.utils.mask_utils import MergeMasks
 
+                dce_lesion_reorient2 = pe.Node(Reorient(), name="dce_lesion_reorient_skip")
+                dce_lesion_reorient2.inputs.in_file = str(_dce_user_lesion)
+
                 dce_merge_masks = pe.Node(
                     MergeMasks(), name="dce_merge_masks",
                 )
                 dce_merge_masks.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
-                dce_merge_masks.inputs.mask_b = str(_dce_user_lesion)
 
                 workflow.connect([
+                    (dce_lesion_reorient2, dce_merge_masks, [
+                        ("out_file", "mask_b"),
+                    ]),
                     (dce_merge_masks, dce_wf, [
                         ("merged_mask", "inputnode.whole_tumor_mask"),
                     ]),
                 ])
                 _dce_log.info(
-                    "DCE skip-tumor-seg: merging user lesion_mask=%s with loaded whole_tumor_mask",
+                    "DCE skip-tumor-seg: merging user lesion_mask=%s (reoriented) with loaded whole_tumor_mask",
                     _dce_user_lesion,
                 )
             else:
@@ -2153,17 +2192,23 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.nawm_mask = prev_tumor_seg["nawm_mask"]
                 _dce_log.info("skip-tumor-seg (DCE): loaded nawm_mask from %s", prev_tumor_seg["nawm_mask"])
             elif _dce_user_nawm:
-                dce_wf.inputs.inputnode.nawm_mask = str(_dce_user_nawm)
-                _dce_log.info("skip-tumor-seg (DCE): using user nawm_mask=%s (no cached nawm)", _dce_user_nawm)
+                _dce_nawm_reorient2 = pe.Node(Reorient(), name="dce_nawm_reorient_skip")
+                _dce_nawm_reorient2.inputs.in_file = str(_dce_user_nawm)
+                workflow.connect([(_dce_nawm_reorient2, dce_wf, [("out_file", "inputnode.nawm_mask")])])
+                _dce_log.info("skip-tumor-seg (DCE): using user nawm_mask=%s (reoriented, no cached nawm)", _dce_user_nawm)
         else:
             # No tumor segmentation — user-supplied masks only
             if _dce_user_lesion:
-                dce_wf.inputs.inputnode.whole_tumor_mask = str(_dce_user_lesion)
-                _dce_log.info("DCE: user lesion_mask=%s → whole_tumor_mask", _dce_user_lesion)
+                _dce_lesion_reorient3 = pe.Node(Reorient(), name="dce_lesion_reorient_only")
+                _dce_lesion_reorient3.inputs.in_file = str(_dce_user_lesion)
+                workflow.connect([(_dce_lesion_reorient3, dce_wf, [("out_file", "inputnode.whole_tumor_mask")])])
+                _dce_log.info("DCE: user lesion_mask=%s → whole_tumor_mask (reoriented)", _dce_user_lesion)
 
             if _dce_user_nawm:
-                dce_wf.inputs.inputnode.nawm_mask = str(_dce_user_nawm)
-                _dce_log.info("DCE: user nawm_mask=%s", _dce_user_nawm)
+                _dce_nawm_reorient3 = pe.Node(Reorient(), name="dce_nawm_reorient_only")
+                _dce_nawm_reorient3.inputs.in_file = str(_dce_user_nawm)
+                workflow.connect([(_dce_nawm_reorient3, dce_wf, [("out_file", "inputnode.nawm_mask")])])
+                _dce_log.info("DCE: user nawm_mask=%s (reoriented)", _dce_user_nawm)
 
         # Connect VFA and AFI inputs if available
         if session_data.modalities.vfa:

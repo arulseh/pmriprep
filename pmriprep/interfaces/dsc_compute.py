@@ -695,29 +695,46 @@ class ComputeDSCMaps(BaseInterface):
 
             if aif_is_synthetic and concentration_data is not None and mask is not None:
                 # Synthetic AIF: detect bolus onset from mean brain
-                # concentration gradient (5% of max gradient threshold)
+                # concentration using z-score detection (scale-invariant,
+                # self-calibrating to noise level). The previous 5%-of-max-
+                # gradient method was a scale-dependent heuristic easily
+                # triggered by baseline noise when the true bolus gradient
+                # is large.
                 mask_bool = mask > 0
                 mean_conc = np.mean(concentration_data[mask_bool], axis=0)
                 if len(mean_conc) >= 7:
-                    smooth_conc = savgol_filter(
-                        mean_conc, window_length=7, polyorder=2,
-                    )
-                    smooth_conc = np.maximum(smooth_conc, 0.0)
-                    grad = np.diff(smooth_conc)
-                    max_grad: float = float(np.max(grad))
-                    if max_grad > 0:
-                        thresh = max_grad * 0.05
-                        above = np.where(grad > thresh)[0]
-                        if len(above) > 0:
-                            n_baseline = int(above[0])
-                            if 2 <= n_baseline <= len(aif) // 2:
-                                info.update(
-                                    baseline_detection_method="auto_conc_gradient",
-                                    baseline_frames_detected=n_baseline,
-                                    arrival_index=n_baseline,
-                                    aif_synthetic=True,
-                                )
-                                return n_baseline, info
+                    grad = np.gradient(mean_conc)
+
+                    # Z-score: baseline stats from first N frames
+                    baseline_window = min(20, len(grad) // 4)
+                    baseline_grad = grad[:baseline_window]
+                    mu = np.mean(baseline_grad)
+                    sigma = float(np.std(baseline_grad))
+                    z_thresh = 3.0  # 3 standard deviations
+
+                    if sigma > 0:
+                        z_scores = (grad - mu) / sigma
+                        above = z_scores > z_thresh
+
+                        # Find first run of 3 consecutive frames exceeding
+                        # z-score threshold (prevents single-frame noise)
+                        n_baseline = len(grad)  # fallback: entire series
+                        for i in range(len(above) - 2):
+                            if above[i] and above[i + 1] and above[i + 2]:
+                                n_baseline = i
+                                break
+
+                        # Enforce minimum floor at configured baseline
+                        n_baseline = max(n_baseline, configured_baseline)
+
+                        if 2 <= n_baseline <= len(aif) // 2:
+                            info.update(
+                                baseline_detection_method="auto_conc_zscore",
+                                baseline_frames_detected=n_baseline,
+                                arrival_index=n_baseline,
+                                aif_synthetic=True,
+                            )
+                            return n_baseline, info
 
             # Real AIF: detect arrival directly on the loaded AIF.
             # The AIF saved by AIFDetection is already savgol-smoothed
@@ -1434,6 +1451,8 @@ class ComputeDSCMaps(BaseInterface):
         mask_img = nib.load(self.inputs.brain_mask_file)
         mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
 
+        mask_bool = mask > 0
+
         # Verify brain mask is in DSC space (guaranteed by transform_brain_mask node)
         if mask.shape[:3] != conc_data.shape[:3]:
             raise RuntimeError(
@@ -1657,15 +1676,29 @@ class ComputeDSCMaps(BaseInterface):
             raw_conc_data = conc_data
 
         # Compute TTP from raw concentration (post-bolus argmax)
-        ttp = compute_ttp_legacy(raw_conc_data, detected_baseline, dt)
+        # Returns unclipped values so derived maps use true peak times
+        ttp_raw = compute_ttp_legacy(raw_conc_data, detected_baseline, dt)
 
-        # AIF-corrected TTP: subtract AIF bolus arrival time
+        # AIF-corrected TTP: subtract AIF bolus arrival time (from unclipped)
         aif_bat_frames = baseline_detection_info.get("arrival_index", detected_baseline)
         aif_bat_seconds = float(aif_bat_frames) * dt
-        ttp_corrected = ttp - aif_bat_seconds
-        ttp_corrected = np.where(np.isnan(ttp), np.nan, ttp_corrected)
+        ttp_corrected = ttp_raw - aif_bat_seconds
 
-        # NAWM-relative TTP
+        # Warn if many brain voxels have negative TTPc
+        n_negative = int(np.sum(mask_bool & (ttp_corrected < 0)))
+        n_mask = int(np.sum(mask_bool))
+        if n_mask > 0 and n_negative / n_mask > 0.05:
+            logger.warning(
+                "%.1f%% of brain voxels have negative TTPc (ttp < aif_bat=%.1fs). "
+                "Check AIF QC.",
+                100.0 * n_negative / n_mask,
+                aif_bat_seconds,
+            )
+
+        ttp_corrected = np.clip(ttp_corrected, 0.0, 30.0)
+        ttp_corrected = np.where(np.isnan(ttp_raw), np.nan, ttp_corrected)
+
+        # NAWM-relative TTP (from unclipped values)
         rttp: Optional[npt.NDArray[Any]] = None
         if (
             isdefined(self.inputs.nawm_mask_file)
@@ -1675,11 +1708,14 @@ class ComputeDSCMaps(BaseInterface):
         ):
             nawm_img = nib.load(self.inputs.nawm_mask_file)
             nawm_mask = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
-            nawm_ttp = ttp[nawm_mask]
+            nawm_ttp = ttp_raw[nawm_mask]
             nawm_ttp = nawm_ttp[np.isfinite(nawm_ttp)]
             if len(nawm_ttp) > 100:
-                rttp = ttp - np.median(nawm_ttp)
-                rttp = np.where(np.isnan(ttp), np.nan, rttp)  # type: ignore[arg-type]
+                rttp = ttp_raw - np.median(nawm_ttp)
+                rttp = np.where(np.isnan(ttp_raw), np.nan, rttp)  # type: ignore[arg-type]
+
+        # Clip raw TTP for output (after derived maps computed)
+        ttp = np.clip(ttp_raw, 0.0, 60.0)
 
         # -----------------------------------------------------------
         # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
@@ -1696,13 +1732,16 @@ class ComputeDSCMaps(BaseInterface):
 
         # CNR: peak concentration / baseline std per voxel (from raw conc)
         # perf-plus uses ddof=0 (default) and full-timeseries peak
+        # Suppress RuntimeWarnings from np.where eagerly evaluating both
+        # branches (division in true branch, guard in condition).
         baseline_std = np.std(raw_conc_data[..., :detected_baseline], axis=-1)
         peak_conc = np.max(raw_conc_data, axis=-1)
-        cnr = np.where(
-            baseline_std > EPSILON_CONCENTRATION,
-            peak_conc / baseline_std,
-            0.0,
-        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cnr = np.where(
+                baseline_std > EPSILON_CONCENTRATION,
+                peak_conc / baseline_std,
+                0.0,
+            )
 
         # -----------------------------------------------------------
         # SNR / tSNR (from raw signal, not concentration)
@@ -1714,11 +1753,12 @@ class ComputeDSCMaps(BaseInterface):
             baseline_sig = signal_data[..., :snr_baseline_frames]
             baseline_mean = np.mean(baseline_sig, axis=-1)
             baseline_std_sig = np.std(baseline_sig, axis=-1, ddof=1)
-            snr = np.where(baseline_std_sig > EPSILON_SIGNAL, baseline_mean / baseline_std_sig, 0.0)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                snr = np.where(baseline_std_sig > EPSILON_SIGNAL, baseline_mean / baseline_std_sig, 0.0)
 
-            all_mean = np.mean(signal_data, axis=-1)
-            all_std = np.std(signal_data, axis=-1, ddof=1)
-            tsnr = np.where(all_std > EPSILON_SIGNAL, all_mean / all_std, 0.0)
+                all_mean = np.mean(signal_data, axis=-1)
+                all_std = np.std(signal_data, axis=-1, ddof=1)
+                tsnr = np.where(all_std > EPSILON_SIGNAL, all_mean / all_std, 0.0)
         else:
             snr = np.zeros(spatial_shape, dtype=np.float64)
             tsnr = np.zeros(spatial_shape, dtype=np.float64)
@@ -1748,7 +1788,6 @@ class ComputeDSCMaps(BaseInterface):
         # -----------------------------------------------------------
         # Mask all outputs
         # -----------------------------------------------------------
-        mask_bool = mask > 0
         rel_cbf = np.where(mask_bool, rel_cbf, 0.0)
         rel_cbv = np.where(mask_bool, rel_cbv, 0.0)
         mtt = np.where(mask_bool, mtt, 0.0)
@@ -1764,6 +1803,9 @@ class ComputeDSCMaps(BaseInterface):
         tsnr = np.where(mask_bool, tsnr, 0.0)
         psr = np.where(mask_bool, psr, 0.0)
         ph = np.where(mask_bool, ph, 0.0)
+        ttp_corrected = np.where(mask_bool, np.where(np.isnan(ttp_corrected), 0.0, ttp_corrected), 0.0)
+        if rttp is not None:
+            rttp = np.where(mask_bool, np.where(np.isnan(rttp), 0.0, rttp), 0.0)
 
         # Add general QC metrics
         qc_metrics.update({

@@ -216,7 +216,7 @@ dce:
 | `aif_mask_file` | path | `null` | Custom AIF mask file |
 | `gamma_fit` | bool | `false` | Apply gamma-variate fitting to AIF |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |
-| `pre_bolus` | int | `12` | Pre-bolus baseline frames |
+| `pre_bolus` | int | `5` | Pre-bolus frames for S0 estimation (AIF timing auto-detected) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none) |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
 | `registration` | str | `"auto"` | Registration method: `auto`, `flirt`, `bbr` |
@@ -297,8 +297,13 @@ bids_dir/
         sub-01_ses-01_acq-ep2d_ce-GAD_run-1_dsc.json
         sub-01_ses-01_acq-vibe_ce-GAD_run-1_dce.nii.gz       # DCE perfusion
         sub-01_ses-01_acq-vibe_ce-GAD_run-1_dce.json
+      dwi/
+        sub-01_ses-01_acq-trace_run-1_dwi.nii.gz             # DWI (for ADC / tortuosity)
+        sub-01_ses-01_acq-trace_run-1_dwi.json
+        sub-01_ses-01_acq-trace_run-1_dwi.bvec
+        sub-01_ses-01_acq-trace_run-1_dwi.bval
       fmap/
-        sub-01_ses-01_acq-afi_run-1_TB1AFI.nii.gz            # B1+ mapping 
+        sub-01_ses-01_acq-afi_run-1_TB1AFI.nii.gz            # B1+ mapping
         sub-01_ses-01_acq-afi_run-1_TB1AFI.json
 ```
 

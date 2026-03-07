@@ -715,28 +715,46 @@ class DSCDerivativeWriter(BaseInterface):
         # Evaluate AIF detection quality
         aif_qc = qc_metrics.get("aif", {})
         detection_level = aif_qc.get("detection_level", "unknown")
-        level_to_rec = {
-            "atlas": QCRecommendation(QCAction.INCLUDE, "AIF detected via atlas method", 0),
-            "relaxed": QCRecommendation(QCAction.REVIEW, "AIF detected via relaxed criteria", 1),
-            "synthetic": QCRecommendation(QCAction.EXCLUDE, "Synthetic AIF used; verify clinically", 3),
-        }
-        aif_rec = level_to_rec.get(
-            detection_level,
-            QCRecommendation(QCAction.REVIEW, f"AIF detection: {detection_level}", 1),
-        )
+        if detection_level in ("atlas_strict", "atlas_relaxed"):
+            aif_rec = QCRecommendation(QCAction.INCLUDE, f"AIF detected ({detection_level})", 0)
+        elif detection_level in ("atlas_permissive", "brain_relaxed", "brain_permissive"):
+            aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF detection marginal ({detection_level})", 1)
+        elif detection_level == "brain_degraded":
+            aif_rec = QCRecommendation(QCAction.EXCLUDE, f"AIF detection degraded ({detection_level})", 3)
+        elif detection_level == "synthetic":
+            aif_rec = QCRecommendation(QCAction.EXCLUDE, "Synthetic AIF used; verify clinically", 3)
+        elif detection_level in ("none", "unknown"):
+            aif_rec = QCRecommendation(QCAction.EXCLUDE, f"AIF detection failed ({detection_level})", 3)
+        else:
+            aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF detection: {detection_level}", 1)
         recommendations.append(aif_rec)
 
-        # Evaluate motion QC if available
+        # Evaluate motion QC using composite motion_status
         motion_qc = qc_metrics.get("motion", {})
-        fd_mean = motion_qc.get("fd_mean")
-        if fd_mean is not None:
-            if fd_mean < 0.3:
-                motion_rec = QCRecommendation(QCAction.INCLUDE, f"Motion acceptable (FD={fd_mean:.2f}mm)", 0)
-            elif fd_mean < 0.5:
-                motion_rec = QCRecommendation(QCAction.REVIEW, f"Motion marginal (FD={fd_mean:.2f}mm)", 1)
+        motion_status = motion_qc.get("motion_status")
+        if motion_status is not None:
+            fd_mean = motion_qc.get("fd_mean")
+            fd_max = motion_qc.get("fd_max")
+            pct_outliers = motion_qc.get("percent_outliers")
+            parts = []
+            if fd_mean is not None:
+                parts.append(f"mean FD={fd_mean:.2f}mm")
+            if fd_max is not None:
+                parts.append(f"max FD={fd_max:.2f}mm")
+            if pct_outliers is not None:
+                parts.append(f"outliers={pct_outliers:.1f}%")
+            detail = f"({', '.join(parts)})" if parts else ""
+
+            if motion_status == QCStatus.PASS:
+                motion_rec = QCRecommendation(QCAction.INCLUDE, f"Motion acceptable {detail}", 0)
+            elif motion_status == QCStatus.WARN:
+                motion_rec = QCRecommendation(QCAction.REVIEW, f"Motion marginal {detail}", 1)
+            elif motion_status == QCStatus.POOR:
+                motion_rec = QCRecommendation(QCAction.EXCLUDE, f"Excessive motion {detail}", 3)
             else:
-                motion_rec = QCRecommendation(QCAction.EXCLUDE, f"Excessive motion (FD={fd_mean:.2f}mm)", 3)
-            recommendations.append(motion_rec)
+                motion_rec = None
+            if motion_rec is not None:
+                recommendations.append(motion_rec)
 
         # Evaluate CNR if available
         cnr_qc = qc_metrics.get("cnr_whole_brain", {})

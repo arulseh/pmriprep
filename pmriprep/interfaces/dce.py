@@ -68,6 +68,20 @@ def _reorient_to_ras(in_file: Optional[str]) -> Optional[str]:
         logger.warning("fslreorient2std failed for %s: %s", in_file, e.stderr.decode())
         return None
 
+    # Enforce true RAS orientation (fslreorient2std only reorders axes,
+    # doesn't flip handedness — e.g. LAS stays LAS)
+    import nibabel as _nib
+    from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
+    import numpy as _np
+
+    _img = _nib.load(str(out_file))
+    _ornt = io_orientation(_img.affine)  # type: ignore[attr-defined]
+    _ras_ornt = axcodes2ornt(("R", "A", "S"))
+    if not _np.array_equal(_ornt, _ras_ornt):
+        _transform = ornt_transform(_ornt, _ras_ornt)
+        _img_ras = _img.as_reoriented(_transform)  # type: ignore[attr-defined]
+        _nib.save(_img_ras, str(out_file))
+
     return out_file
 
 
@@ -922,7 +936,10 @@ class B1Mapping(SimpleInterface):
         orig_ornt = io_orientation(affine)
         ras_ornt = axcodes2ornt(("R", "A", "S"))
         transform = ornt_transform(orig_ornt, ras_ornt)
-        if not np.allclose(transform[:, 0], np.arange(len(transform))):
+        # Always apply as_reoriented — it's a no-op when already RAS.
+        # The previous check (allclose on column 0) missed flips where
+        # axes are in correct order but handedness is wrong (e.g. LAS→RAS).
+        if not np.array_equal(orig_ornt, ras_ornt):
             from nibabel.orientations import apply_orientation
             b1_raw = apply_orientation(b1_raw, transform)
             affine = nib.orientations.inv_ornt_aff(transform, b1_raw.shape)  # type: ignore[attr-defined]
@@ -1650,18 +1667,18 @@ class T1Mapping(SimpleInterface):
         from pmriprep.utils.qc_standards import QCStatus
         corr_type = correction_info.get("correction_applied", "none")
         if corr_type == "fallback":
-            t1_status = QCStatus.FAIL
+            t1_status = QCStatus.POOR
         elif corr_type == "offset":
-            t1_status = QCStatus.FAIL if (not wm_pass and not gm_pass) else QCStatus.WARN
+            t1_status = QCStatus.POOR if (not wm_pass and not gm_pass) else QCStatus.WARN
         else:  # "none"
             if wm_pass and gm_pass:
                 t1_status = QCStatus.PASS
             elif wm_pass or gm_pass:
                 t1_status = QCStatus.WARN
             else:
-                t1_status = QCStatus.FAIL
+                t1_status = QCStatus.POOR
         qc_metrics["t1_status"] = t1_status
-        qc_metrics["t1_usable"] = (t1_status != QCStatus.FAIL) or (corr_type != "none")
+        qc_metrics["t1_usable"] = (t1_status != QCStatus.POOR) or (corr_type != "none")
 
         # Flip angle validation for 2-angle VFA
         # Compare observed vs expected signal ratio using field-strength T1
@@ -2319,6 +2336,11 @@ class DCEPreprocessInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Signal increase threshold (%) for bolus arrival detection (default: 1.5%)",
     )
+    volume_tr = traits.Float(
+        0.0,
+        usedefault=True,
+        desc="Volume TR in seconds for TR-adaptive baseline smoothing (0 = use default sigma)",
+    )
 
 
 class DCEPreprocessOutputSpec(TraitedSpec):
@@ -2475,7 +2497,7 @@ class DCEPreprocess(SimpleInterface):
             if mask_data.shape == dce_data.shape[:3]:
                 brain_mask = mask_data
             else:
-                logger.warning(
+                logger.debug(
                     "Brain mask shape %s != DCE data shape %s, "
                     "ignoring mask (will use signal-based threshold)",
                     mask_data.shape, dce_data.shape[:3],
@@ -2776,12 +2798,22 @@ class DCEPreprocess(SimpleInterface):
         if n_volumes < 6:
             return DEFAULT_BASELINE_FRAMES
 
-        min_baseline = 3
+        min_baseline = DEFAULT_BASELINE_FRAMES
         n_baseline_noise = 5  # Frames for noise estimation (matches perf-plus)
 
-        # Compute first derivative and smooth (sigma=2 matches perf-plus)
+        # TR-adaptive sigma: at volume_tr=7.4s, sigma=2.0 smoothes over
+        # ~14.8s — wider than the bolus FWHM — causing Gaussian bleed-back
+        # that triggers false early detection. Target ~4s smoothing window
+        # in temporal units, converted to sample space.
+        volume_tr = self.inputs.volume_tr if self.inputs.volume_tr > 0 else 0.0
+        if volume_tr > 0:
+            sigma = max(0.5, 4.0 / volume_tr)
+        else:
+            sigma = 2.0  # legacy default
+
+        # Compute first derivative and smooth
         signal_deriv = np.diff(signal)
-        signal_deriv_smooth = gaussian_filter1d(signal_deriv, sigma=2.0)
+        signal_deriv_smooth = gaussian_filter1d(signal_deriv, sigma=sigma)
 
         # Threshold: 2x std of baseline derivative, with absolute floor
         # to prevent false triggers when baseline is very quiet
@@ -3745,7 +3777,7 @@ class DCERegistration(SimpleInterface):
         warnings_list: list[str] = []
 
         if not Path(registered_t1w).exists():
-            qc_metrics["qc_status"] = "FAIL"
+            qc_metrics["qc_status"] = "POOR"
             qc_metrics["warnings"] = ["Registered file does not exist"]
             return qc_metrics
 
@@ -3861,7 +3893,7 @@ class DCERegistration(SimpleInterface):
                     dice < REG_QC_THRESHOLDS["dice_min"]
                     or corr < REG_QC_THRESHOLDS["correlation_min"]
                 ):
-                    qc_metrics["qc_status"] = "FAIL"
+                    qc_metrics["qc_status"] = "POOR"
                 else:
                     qc_metrics["qc_status"] = "WARN"
             else:

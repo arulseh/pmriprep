@@ -16,6 +16,7 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_DELTA_R2,
     EPSILON_SIGNAL,
+    K2_UPPER_BOUND,
 )
 
 
@@ -641,9 +642,10 @@ def estimate_k2_per_voxel(
         coeffs = np.linalg.solve(XtX, X.T @ c_post)
         k2_estimate = coeffs[1]  # K2 = tissue-integral coefficient (BSW leakage rate)
 
-        # Clip to physical range [0, inf)
-        # Negative K2 would mean tissue is absorbing contrast from blood
-        k2_map[x, y, z] = max(0.0, k2_estimate)
+        # Clip to physical range [0, K2_UPPER_BOUND]
+        # Negative K2 would mean tissue is absorbing contrast from blood;
+        # values above K2_UPPER_BOUND are numerically degenerate OLS fits
+        k2_map[x, y, z] = min(max(0.0, k2_estimate), K2_UPPER_BOUND)
 
     return k2_map
 

@@ -142,7 +142,7 @@ class TestAssessAIFQuality:
 
         result = assess_aif_quality(aif, baseline_frames=baseline_frames)
 
-        assert result.status != "FAIL"
+        assert result.status != "POOR"
         assert result.meets_strict is True
         assert result.meets_relaxed is True
 
@@ -182,8 +182,8 @@ class TestAssessAIFQuality:
         assert result.meets_strict is False
         assert result.meets_relaxed is True
 
-    def test_fail(self) -> None:
-        """Bad AIF with no bolus fails both criteria."""
+    def test_poor(self) -> None:
+        """Bad AIF with no bolus gets POOR status for both criteria."""
         aif = np.zeros(30, dtype=np.float64)
         # Tiny random noise, no real bolus
         rng = np.random.default_rng(0)
@@ -191,19 +191,19 @@ class TestAssessAIFQuality:
 
         result = assess_aif_quality(aif, baseline_frames=5)
 
-        assert result.status == "FAIL"
+        assert result.status == "POOR"
         assert result.meets_strict is False
         assert result.meets_relaxed is False
 
     def test_criteria_details(self) -> None:
-        """Good AIF produces criteria_details with expected keys and PASS/WARN/FAIL values."""
+        """Good AIF produces criteria_details with expected keys and PASS/WARN/POOR values."""
         aif = _make_good_aif()
         result = assess_aif_quality(aif, baseline_frames=5)
 
         expected_keys = {"cnr", "washout", "fwhm", "baseline_cv"}
         assert expected_keys.issubset(result.criteria_details.keys())
 
-        valid_statuses = {"PASS", "WARN", "FAIL"}
+        valid_statuses = {"PASS", "WARN", "POOR"}
         for key in expected_keys:
             assert result.criteria_details[key] in valid_statuses, (
                 f"criteria_details['{key}'] = '{result.criteria_details[key]}' "

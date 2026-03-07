@@ -80,7 +80,7 @@
             {% if tumor_seg.qc_metrics.nawm.valid is defined %}
             <div class="metric">
                 <div class="metric-label">Valid</div>
-                <div class="metric-value {% if tumor_seg.qc_metrics.nawm.valid %}pass{% else %}fail{% endif %}">{{ "Yes" if tumor_seg.qc_metrics.nawm.valid else "No" }}</div>
+                <div class="metric-value {% if tumor_seg.qc_metrics.nawm.valid %}pass{% else %}poor{% endif %}">{{ "Yes" if tumor_seg.qc_metrics.nawm.valid else "No" }}</div>
             </div>
             {% endif %}
             {% if tumor_seg.qc_metrics.nawm.atlas_used is defined %}

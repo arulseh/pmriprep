@@ -61,7 +61,10 @@
             {% if dce.qc_metrics.preprocessing.n_outliers is defined and dce.qc_metrics.preprocessing.percent_outliers is defined %}
             <div class="metric">
                 <div class="metric-label">Outlier Frames</div>
-                <div class="metric-value">{{ dce.qc_metrics.preprocessing.n_outliers }} ({{ "%.1f"|format(dce.qc_metrics.preprocessing.percent_outliers) }}%)</div>
+                <div class="metric-value
+                    {%- if dce.qc_metrics.preprocessing.percent_outliers < 5 %} pass
+                    {%- elif dce.qc_metrics.preprocessing.percent_outliers < 10 %} warn
+                    {%- else %} poor{% endif %}">{{ dce.qc_metrics.preprocessing.n_outliers }} ({{ "%.1f"|format(dce.qc_metrics.preprocessing.percent_outliers) }}%)</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.preprocessing.baseline_frames is defined %}
@@ -175,7 +178,7 @@
                 <div class="metric-value
                     {%- if dce.qc_metrics.b1_mapping.pct_correction_gt_20 < 10 %} pass
                     {%- elif dce.qc_metrics.b1_mapping.pct_correction_gt_20 < 30 %} warn
-                    {%- else %} fail{% endif %}">{{ "%.1f"|format(dce.qc_metrics.b1_mapping.pct_correction_gt_20) }}%</div>
+                    {%- else %} poor{% endif %}">{{ "%.1f"|format(dce.qc_metrics.b1_mapping.pct_correction_gt_20) }}%</div>
             </div>
             {% endif %}
         </div>
@@ -443,7 +446,7 @@
                     <div class="metric-value
                         {%- if dce.qc_metrics.pk_modeling.qc_voxel_fit_r2 >= 0.9 %} pass
                         {%- elif dce.qc_metrics.pk_modeling.qc_voxel_fit_r2 >= 0.7 %} warn
-                        {%- else %} fail{% endif %}">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_fit_r2) }}</div>
+                        {%- else %} poor{% endif %}">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_fit_r2) }}</div>
                 </div>
                 {% endif %}
             </div>

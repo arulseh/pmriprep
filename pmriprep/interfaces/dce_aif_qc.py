@@ -197,7 +197,7 @@ class DCEAIFQCPlot(BaseInterface):
 
             # Baseline region shading
             baseline_frames = qc.get("baseline_frames", 5)
-            baseline_end_t = (baseline_frames - 1) * tr
+            baseline_end_t = (baseline_frames - 0.5) * tr
             ax.axvspan(0, baseline_end_t, alpha=0.08, color="gray", label=f"Baseline ({baseline_frames} fr)")
 
             ax.set_xlabel("Time (s)", fontsize=11)
@@ -233,7 +233,9 @@ class DCEAIFQCPlot(BaseInterface):
         """Plot 3-pane AIF location overlay on temporal mean DCE.
 
         Shows AIF voxel locations overlaid on the temporal mean DCE image
-        in axial, coronal, and sagittal views centered on the AIF centroid.
+        in axial, coronal, and sagittal views centered on the best-ranked
+        candidate voxel (first entry in candidate_coords), with fallback
+        to mask centroid.
         """
         import matplotlib.pyplot as plt  # type: ignore[import-untyped]
         from pmriprep.utils.qc_utils import get_radiological_slice
@@ -244,19 +246,23 @@ class DCEAIFQCPlot(BaseInterface):
         else:
             bg = dce_data.copy()
 
-        # Find AIF centroid for crosshair placement
-        aif_coords = np.argwhere(aif_mask > 0.5)
-        if len(aif_coords) == 0:
-            # No AIF voxels - use center of brain
-            brain_coords = np.argwhere(brain_mask > 0.5)
-            if len(brain_coords) > 0:
-                centroid = brain_coords.mean(axis=0).astype(int)
-            else:
-                centroid = np.array([s // 2 for s in bg.shape[:3]])
+        # Prefer best candidate voxel (first entry in ranked candidate_coords)
+        cand_coords = qc.get("candidate_coords", [])
+        if len(cand_coords) > 0:
+            best = cand_coords[0]
+            cx, cy, cz = int(best[0]), int(best[1]), int(best[2])
         else:
-            centroid = aif_coords.mean(axis=0).astype(int)
-
-        cx, cy, cz = int(centroid[0]), int(centroid[1]), int(centroid[2])
+            # Fallback to mask centroid
+            aif_coords = np.argwhere(aif_mask > 0.5)
+            if len(aif_coords) == 0:
+                brain_coords = np.argwhere(brain_mask > 0.5)
+                if len(brain_coords) > 0:
+                    centroid = brain_coords.mean(axis=0).astype(int)
+                else:
+                    centroid = np.array([s // 2 for s in bg.shape[:3]])
+            else:
+                centroid = aif_coords.mean(axis=0).astype(int)
+            cx, cy, cz = int(centroid[0]), int(centroid[1]), int(centroid[2])
 
         # Voxel aspect ratios
         dx, dy, dz = voxel_sizes[0], voxel_sizes[1], voxel_sizes[2]
@@ -294,36 +300,8 @@ class DCEAIFQCPlot(BaseInterface):
                     masked = np.ma.masked_where(mask_slice < 0.5, mask_slice)  # type: ignore[no-untyped-call]
                     ax_plt.imshow(masked, cmap="hot", alpha=0.4, aspect=aspect)
 
-                # Numbered candidate markers
-                cand_coords = qc.get("candidate_coords", [])
-                for rank, coord in enumerate(cand_coords):
-                    px, py, pz = int(coord[0]), int(coord[1]), int(coord[2])
-                    # Check if candidate is within ±1 voxel of displayed slice
-                    if axis_id == 2 and abs(pz - slice_idx) > 1:
-                        continue
-                    elif axis_id == 1 and abs(py - slice_idx) > 1:
-                        continue
-                    elif axis_id == 0 and abs(px - slice_idx) > 1:
-                        continue
-                    # Map 3D coord to 2D using same radiological transform
-                    h_c, w_c = bg_slice.shape
-                    if axis_id == 2:  # Axial
-                        mx = w_c - 1 - px
-                        my = h_c - 1 - py
-                    elif axis_id == 1:  # Coronal
-                        mx = w_c - 1 - px
-                        my = h_c - 1 - pz
-                    else:  # Sagittal
-                        mx = py
-                        my = h_c - 1 - pz
-                    color = "cyan" if rank == 0 else "yellow"
-                    ax_plt.plot(mx, my, "o", color=color, markersize=8,
-                                markeredgewidth=1.5, markerfacecolor="none")
-                    ax_plt.text(mx + 1.5, my - 1.5, str(rank + 1),
-                                color=color, fontsize=7, fontweight="bold")
-
-                # Crosshair at centroid
-                # Map 3D centroid to 2D slice position after radiological transform.
+                # Crosshair at best candidate / centroid
+                # Map 3D coord to 2D slice position after radiological transform.
                 # get_radiological_slice applies: rot90(k=1) then fliplr (axial/coronal)
                 # or rot90(k=1) only (sagittal). See qc_utils.py for details.
                 h, w = bg_slice.shape
@@ -340,8 +318,42 @@ class DCEAIFQCPlot(BaseInterface):
                 ax_plt.axhline(y=cross_y, color="cyan", linestyle="--", linewidth=0.8, alpha=0.5)
                 ax_plt.axvline(x=cross_x, color="cyan", linestyle="--", linewidth=0.8, alpha=0.5)
 
-                # Magenta marker at centroid
-                ax_plt.plot(cross_x, cross_y, "m+", markersize=12, markeredgewidth=2)
+                # Candidate markers (DSC style: numbered filled circles)
+                if len(cand_coords) > 0:
+                    candidate_colors = [
+                        "#EE3377", "#FFDD00", "#33BBEE", "#009988",
+                        "#EE7733", "#CC3311", "#0077BB", "#BBBBBB",
+                    ]
+                    for i, coord_3d in enumerate(cand_coords):
+                        cand_x = int(coord_3d[0])
+                        cand_y = int(coord_3d[1])
+                        cand_z = int(coord_3d[2])
+
+                        # Check if candidate is within ±1 slice of this view
+                        if axis_id == 2 and abs(cand_z - slice_idx) <= 1:
+                            px = w - 1 - cand_x
+                            py = h - 1 - cand_y
+                        elif axis_id == 1 and abs(cand_y - slice_idx) <= 1:
+                            px = w - 1 - cand_x
+                            py = h - 1 - cand_z
+                        elif axis_id == 0 and abs(cand_x - slice_idx) <= 1:
+                            px = cand_y
+                            py = h - 1 - cand_z
+                        else:
+                            continue
+
+                        color = candidate_colors[i % len(candidate_colors)]
+                        size = 120 if i == 0 else 80
+                        ax_plt.scatter(
+                            [px], [py], c=color, s=size, marker="o",
+                            edgecolors="black", linewidths=1.5, zorder=10,
+                        )
+                        if len(cand_coords) > 1:
+                            ax_plt.annotate(
+                                str(i + 1), (px, py), color="white", fontsize=7,
+                                ha="center", va="center", fontweight="bold",
+                                zorder=11,
+                            )
 
                 # L/R labels (radiological: L on right, R on left)
                 if lr[0] is not None:

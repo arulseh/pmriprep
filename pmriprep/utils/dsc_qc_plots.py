@@ -85,7 +85,6 @@ def generate_dsc_preprocessing_qc_plot(
     dsc_signal_4d: npt.NDArray[Any],
     brain_mask: npt.NDArray[Any],
     baseline_frames: int,
-    bolus_arrival_frame: int,
     volume_tr_s: float,
     te_s: float | None = None,
     subject_id: str = "",
@@ -108,7 +107,6 @@ def generate_dsc_preprocessing_qc_plot(
         dsc_signal_4d: 4D raw DSC signal array (x, y, z, t).
         brain_mask: 3D boolean brain mask.
         baseline_frames: Number of baseline (pre-bolus) frames.
-        bolus_arrival_frame: Frame index of bolus arrival.
         volume_tr_s: Temporal resolution between volumes in seconds.
         subject_id: Subject identifier for title.
         session_id: Session identifier for title.
@@ -144,16 +142,10 @@ def generate_dsc_preprocessing_qc_plot(
     ])
     time_s = np.arange(n_volumes) * volume_tr_s
     ax.plot(time_s, global_signal, color=COLORBLIND_PALETTE.primary, linewidth=1.2)
-    # Baseline shading
+    # S0 estimation window shading
     if baseline_frames > 0:
         ax.axvspan(0, (baseline_frames - 0.5) * volume_tr_s, alpha=0.15,
-                   color=COLORBLIND_PALETTE.success, label="Baseline")
-        ax.axvline((baseline_frames - 0.5) * volume_tr_s, color="gray",
-                   linestyle="--", linewidth=0.8, label="Baseline end")
-    # Bolus arrival (TTM)
-    if bolus_arrival_frame > 0:
-        ax.axvline(bolus_arrival_frame * volume_tr_s, color="#EE7733",
-                   linestyle="--", linewidth=1.0, label="Bolus arrival")
+                   color=COLORBLIND_PALETTE.success, label="S0 window")
     # Peak signal drop annotation
     baseline_mean = np.mean(global_signal[:max(1, baseline_frames)])
     min_val = np.min(global_signal)
@@ -336,10 +328,11 @@ def generate_dsc_parameter_maps_qc_plot(
         cmap, vmin, vmax_mode, vmax_fixed, unit_label = param_config[name]
 
         # Determine vmax
-        data_masked = data[mask_bool & (data > 0)]
+        data_masked = data[mask_bool & np.isfinite(data)]
         if vmax_mode.startswith("pct") and len(data_masked) > 0:
             pct = int(vmax_mode[3:])
             vmax = float(np.percentile(data_masked, pct))
+            vmax = max(vmax, vmin + 1e-3)
         elif vmax_fixed is not None:
             vmax = vmax_fixed
         else:
@@ -675,10 +668,16 @@ def generate_dsc_leakage_qc_plot(
     # --- (1,1) Example Voxel Curves ---
     ax = axes[1, 1]
     if conc_raw_4d is not None and conc_corr_4d is not None:
-        # Find voxel with maximum K2 (most leakage)
+        # Find voxel near 90th percentile K2 (representative leakage,
+        # avoiding degenerate max-K2 fits from OLS outliers)
         k2_masked = k2_map.copy()
         k2_masked[~mask_bool] = 0
-        max_k2_idx = np.unravel_index(np.argmax(k2_masked), k2_masked.shape)
+        k2_vals = k2_masked[mask_bool]
+        p90 = float(np.percentile(k2_vals, 90)) if len(k2_vals) > 0 else 0.0
+        # Find the voxel closest to the 90th percentile value
+        diffs = np.abs(k2_masked - p90)
+        diffs[~mask_bool] = np.inf
+        max_k2_idx = np.unravel_index(np.argmin(diffs), k2_masked.shape)
         ex, ey, ez = int(max_k2_idx[0]), int(max_k2_idx[1]), int(max_k2_idx[2])
         n_t = conc_raw_4d.shape[3]
         time_s = np.arange(n_t) * tr

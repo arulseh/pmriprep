@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import numpy as np
 import numpy.typing as npt
-from scipy.ndimage import binary_erosion  # type: ignore[import-untyped]
+from scipy.ndimage import binary_erosion, generate_binary_structure  # type: ignore[import-untyped]
 from scipy.signal import savgol_filter  # type: ignore[import-untyped]
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
@@ -271,7 +271,7 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         desc="Disable synthetic AIF fallback when detection fails",
     )
     strict_roi_constraint = traits.Bool(
-        True,
+        False,
         usedefault=True,
         desc="If True, do NOT fall back to whole brain when atlas/ROI mask is provided",
     )
@@ -307,7 +307,10 @@ class AIFDetectionOutputSpec(TraitedSpec):
     )
     out_aif_coord = traits.List(traits.Int, desc="Best AIF voxel coordinate [x, y, z]")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values")
-    detection_level = traits.Str(desc="Detection level: 'atlas', 'relaxed', 'synthetic'")
+    detection_level = traits.Str(
+        desc="Detection level: 'atlas_strict', 'atlas_relaxed', 'atlas_permissive', "
+             "'brain_relaxed', 'brain_permissive', 'brain_degraded', or 'synthetic'"
+    )
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
     candidate_count = traits.Int(desc="Number of candidate voxels evaluated")
     gamma_fit_applied = traits.Bool(desc="Whether gamma-variate fitting was applied")
@@ -379,8 +382,19 @@ class AIFDetection(BaseInterface):
         ndarray
             3D boolean search mask.
         """
+        # In-plane-only erosion: preserves all slices while excluding
+        # cortical surface voxels. 3D erosion with 4 iterations removes
+        # ~4 voxels from all faces including z, which wipes out skull-base
+        # slices where the best AIF candidates (ICA, MCA M1) reside.
+        # After RAS enforcement (Fix 7), z is consistently the slice
+        # direction (third axis, index 2).
+        struct_inplane = generate_binary_structure(3, 1)  # 6-connected
+        struct_inplane[:, :, 0] = 0  # Remove z-minus connectivity
+        struct_inplane[:, :, 2] = 0  # Remove z-plus connectivity
         eroded = binary_erosion(
-            brain_mask > 0.5, iterations=erosion_iterations
+            brain_mask > 0.5,
+            structure=struct_inplane,
+            iterations=erosion_iterations,
         ).astype(bool)
 
         if roi_mask is not None:
@@ -1816,6 +1830,29 @@ class AIFDetection(BaseInterface):
             else:
                 tr = 1.5
 
+        # --- Auto-detect actual bolus arrival for AIF first-pass window ---
+        # Use 99th percentile across brain voxels — naturally selects arterial
+        # timing without transit delay (avoids GAP 6 problem where mean brain
+        # concentration detects tissue arrival 4-12 s later than arteries).
+        brain_conc_all = conc_data[brain_mask > 0.5]
+        if (
+            brain_conc_all.ndim > 1
+            and brain_conc_all.shape[0] > 100
+            and aif_method != "synthetic"
+        ):
+            p99_curve = np.percentile(brain_conc_all, 99, axis=0)
+            detected_arrival, detected_baseline = detect_bolus_arrival(
+                p99_curve,
+                baseline_frames=min(5, n_timepoints // 4),
+                n_consecutive=3,
+            )
+            aif_baseline_frames = max(
+                max(5, int(10.0 / tr)),  # floor: at least 10 s or 5 frames
+                detected_baseline,
+            )
+        else:
+            aif_baseline_frames = baseline_frames  # fallback to configured
+
         # Initialize
         detection_level = "synthetic"
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
@@ -1856,16 +1893,16 @@ class AIFDetection(BaseInterface):
                     brain_mask, roi, lesion_mask
                 )
                 cands, peak_map = self._find_aif_candidate_voxels(
-                    conc_data, search, baseline_frames
+                    conc_data, search, aif_baseline_frames
                 )
                 if cands.shape[0] == 0:
                     continue
                 tissue_ttp = self._calculate_tissue_ttp_reference(
-                    conc_data, brain_mask, baseline_frames
+                    conc_data, brain_mask, aif_baseline_frames
                 )
                 scored, n_avail = self._score_and_select_candidates(
                     cands, conc_data, signal_data, peak_map,
-                    brain_mask, tr, baseline_frames, crit,
+                    brain_mask, tr, aif_baseline_frames, crit,
                     tissue_ttp,
                     atlas_mask=atlas_mask if roi is None else None,
                 )
@@ -1910,7 +1947,7 @@ class AIFDetection(BaseInterface):
             aif_curve, aif_bool_mask, top_candidates, validation_qc = (
                 self._validate_averaged_aif(
                     aif_curve, top_candidates, conc_data, brain_mask,
-                    tr, baseline_frames,
+                    tr, aif_baseline_frames,
                 )
             )
             aif_mask_arr[aif_bool_mask] = 1
@@ -1919,7 +1956,7 @@ class AIFDetection(BaseInterface):
 
             # Stage 2: re-detect baseline on final smoothed AIF curve
             stage2_window = min(
-                baseline_frames, max(2, len(aif_curve) // 3)
+                aif_baseline_frames, max(2, len(aif_curve) // 3)
             )
             _, aif_detected_baseline = detect_bolus_arrival(
                 aif_curve,
@@ -1956,7 +1993,7 @@ class AIFDetection(BaseInterface):
                 tissue_max = float(np.percentile(max_per_voxel, 95))
 
             aif_curve, synth_metrics = self._generate_synthetic_aif(
-                n_timepoints, tr, baseline_frames,
+                n_timepoints, tr, aif_baseline_frames,
                 tissue_max_delta_r2star=tissue_max,
             )
             detection_level = "synthetic"
@@ -1976,11 +2013,10 @@ class AIFDetection(BaseInterface):
         qc_metrics["detection_level"] = detection_level
         qc_metrics["s0_rejection_available"] = signal_data is not None
         qc_metrics["tr_used"] = tr
-        qc_metrics["baseline_frames_initial"] = baseline_frames_initial
+        qc_metrics["baseline_frames_initial"] = baseline_frames  # configured S0 baseline
+        qc_metrics["aif_baseline_frames"] = aif_baseline_frames  # auto-detected for AIF
         qc_metrics["baseline_frames_used"] = baseline_frames
-        qc_metrics["baseline_detection_method"] = (
-            "auto_aif" if baseline_frames > baseline_frames_initial else "config"
-        )
+        qc_metrics["baseline_detection_method"] = "auto_p99"
 
         # --- GAP 9: Quantification validity flags ---
         if detection_level == "synthetic":

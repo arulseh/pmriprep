@@ -35,9 +35,9 @@ class TestGetQCStatus:
         assert status == "WARN"
 
     def test_higher_is_better_fail(self) -> None:
-        """DICE = 0.6 with DICE_THRESHOLDS (warn=0.75) returns FAIL."""
+        """DICE = 0.6 with DICE_THRESHOLDS (warn=0.75) returns POOR."""
         status = get_qc_status(0.6, DICE_THRESHOLDS, higher_is_better=True)
-        assert status == "FAIL"
+        assert status == "POOR"
 
     def test_lower_is_better_pass(self) -> None:
         """FD = 0.2 with MOTION_FD_THRESHOLDS (pass=0.3) returns PASS."""
@@ -50,9 +50,9 @@ class TestGetQCStatus:
         assert status == "WARN"
 
     def test_lower_is_better_fail(self) -> None:
-        """FD = 0.6 with MOTION_FD_THRESHOLDS (warn=0.5) returns FAIL."""
+        """FD = 0.6 with MOTION_FD_THRESHOLDS (warn=0.5) returns POOR."""
         status = get_qc_status(0.6, MOTION_FD_THRESHOLDS, higher_is_better=False)
-        assert status == "FAIL"
+        assert status == "POOR"
 
 
 class TestGetStatusColor:
@@ -66,9 +66,9 @@ class TestGetStatusColor:
         """WARN status returns the warning hex color."""
         assert get_status_color("WARN") == COLORBLIND_PALETTE.warning
 
-    def test_fail_returns_error_color(self) -> None:
-        """FAIL status returns the error hex color."""
-        assert get_status_color("FAIL") == COLORBLIND_PALETTE.error
+    def test_poor_returns_error_color(self) -> None:
+        """POOR status returns the error hex color."""
+        assert get_status_color("POOR") == COLORBLIND_PALETTE.error
 
     def test_unknown_returns_secondary_color(self) -> None:
         """UNKNOWN status returns the secondary hex color."""
@@ -94,19 +94,19 @@ class TestGetQCRecommendation:
         assert rec.action == "review"
         assert rec.severity == 1
 
-    def test_fail_higher_is_better(self) -> None:
-        """FAIL with higher_is_better yields action=exclude, reason contains 'below'."""
+    def test_poor_higher_is_better(self) -> None:
+        """POOR with higher_is_better yields action=exclude, reason contains 'below'."""
         rec = get_qc_recommendation(
-            "FAIL", "DICE", 0.6, DICE_THRESHOLDS, higher_is_better=True
+            "POOR", "DICE", 0.6, DICE_THRESHOLDS, higher_is_better=True
         )
         assert rec.action == "exclude"
         assert "below" in rec.reason
         assert rec.severity == 3
 
-    def test_fail_lower_is_better(self) -> None:
-        """FAIL with lower_is_better yields reason containing 'above'."""
+    def test_poor_lower_is_better(self) -> None:
+        """POOR with lower_is_better yields reason containing 'above'."""
         rec = get_qc_recommendation(
-            "FAIL", "FD mean", 0.6, MOTION_FD_THRESHOLDS, higher_is_better=False
+            "POOR", "FD mean", 0.6, MOTION_FD_THRESHOLDS, higher_is_better=False
         )
         assert rec.action == "exclude"
         assert "above" in rec.reason
@@ -206,8 +206,8 @@ class TestCompositeMotionStatus:
         assert get_composite_motion_status(0.1, 1.5, 2.0) == "WARN"
 
     def test_worst_wins(self) -> None:
-        """fd_mean PASS + outliers WARN + fd_max FAIL -> FAIL."""
-        assert get_composite_motion_status(0.1, 2.5, 12.0) == "FAIL"
+        """fd_mean PASS + outliers WARN + fd_max POOR -> POOR."""
+        assert get_composite_motion_status(0.1, 2.5, 12.0) == "POOR"
 
     def test_sub0005_scenario(self) -> None:
         """Sub-0005: fd_mean=0.297, fd_max=1.015, pct=11.7 -> WARN."""

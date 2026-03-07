@@ -555,8 +555,9 @@ def compute_ttp_legacy(
 ) -> npt.NDArray[np.floating]:
     """Compute TTP using the perf-plus legacy method.
 
-    Finds time to peak concentration using unsmoothed post-bolus argmax,
-    clipping to [0, 60] seconds. Matches perf-plus ground truth.
+    Finds time to peak concentration using unsmoothed post-bolus argmax.
+    Returns unclipped TTP so callers can compute derived maps (TTPc, rTTP)
+    before applying their own clipping.
 
     Args:
         concentration: Concentration array (4D: x,y,z,time or 1D: time).
@@ -564,8 +565,17 @@ def compute_ttp_legacy(
         dt: Time step in seconds (TR).
 
     Returns:
-        TTP map in seconds, clipped to [0, 60].
+        TTP map in seconds (unclipped).
+
+    Raises:
+        ValueError: If pre_bolus_frames >= number of timepoints.
     """
+    n_timepoints = concentration.shape[-1]
+    if pre_bolus_frames >= n_timepoints:
+        raise ValueError(
+            f"pre_bolus_frames ({pre_bolus_frames}) >= n_timepoints "
+            f"({n_timepoints}): no post-bolus window to search"
+        )
     if concentration.ndim == 4:
         conc_post = concentration[..., pre_bolus_frames:]
         peak_idx = np.argmax(conc_post, axis=-1)
@@ -576,7 +586,7 @@ def compute_ttp_legacy(
         ttp = np.float64((pre_bolus_frames + peak_idx) * dt)
     else:
         raise ValueError(f"Concentration must be 1D or 4D, got {concentration.ndim}D")
-    return np.clip(ttp, 0.0, 60.0)  # type: ignore[no-any-return]
+    return ttp  # type: ignore[no-any-return]
 
 
 def find_nawm_mask(
