@@ -1561,7 +1561,8 @@ def fit_gamma_variate(
         If True, fit only the first-pass portion and remove recirculation.
         If False, fit the entire curve.
     preserve_auc : bool
-        If True, scale the fitted curve to match original AUC (preserves dose).
+        If True, scale the fitted curve to match the first-pass AUC (when
+        remove_recirculation=True) or the full AUC (when False).
     tr : float
         Repetition time in seconds (for AUC calculation).
 
@@ -1656,29 +1657,9 @@ def fit_gamma_variate(
     # Generate fitted curve
     fitted_curve = _gamma_variate_model(t, amplitude, t0, alpha, beta)
 
-    # Detect recirculation if requested
-    recirculation_removed = False
-    if remove_recirculation:
-        recirc_start = _find_recirculation_start(
-            curve_shifted, fitted_curve, baseline_frames
-        )
-        if recirc_start > 0:
-            recirculation_removed = True
-            # The fitted gamma-variate naturally excludes recirculation
-            # since it only models first-pass bolus
-
-    # Compute fitted AUC
-    auc_fitted = _compute_auc(fitted_curve, tr)
-
-    # Optionally scale to preserve original AUC
-    if preserve_auc and auc_fitted > EPSILON_CONCENTRATION:
-        scale_factor = auc_original / auc_fitted
-        fitted_curve = fitted_curve * scale_factor
-        amplitude = amplitude * scale_factor
-        auc_fitted = _compute_auc(fitted_curve, tr)
-
-    # Compute fit quality metrics
-    # Use only first-pass portion for R² if recirculation was removed
+    # Compute fit quality metrics on UNSCALED curve (before AUC scaling)
+    # R² and residual_rms measure shape fit quality and must not be
+    # corrupted by dose-preservation scaling
     if remove_recirculation:
         eval_end = min(
             peak_idx + max(10, 2 * compute_aif_fwhm_frames(aif_curve, baseline_frames)),
@@ -1706,9 +1687,40 @@ def fit_gamma_variate(
     # Clip R² to valid range (can be negative for poor fits)
     r_squared = max(-1.0, min(1.0, r_squared))
 
-    # Compute RMS residual
+    # Compute RMS residual on unscaled curve
     residuals = curve_shifted - fitted_curve
     residual_rms = float(np.sqrt(np.mean(residuals**2)))
+
+    # Detect recirculation if requested
+    recirculation_removed = False
+    if remove_recirculation:
+        recirc_start = _find_recirculation_start(
+            curve_shifted, fitted_curve, baseline_frames
+        )
+        if recirc_start > 0:
+            recirculation_removed = True
+            # The fitted gamma-variate naturally excludes recirculation
+            # since it only models first-pass bolus
+
+    # Compute AUC scaling target: first-pass only when removing recirculation
+    # to avoid inflating the fitted curve by recirculation/tail AUC
+    if remove_recirculation:
+        cutoff_for_auc = min(
+            peak_idx + max(10, 2 * compute_aif_fwhm_frames(aif_curve, baseline_frames)),
+            n_frames,
+        )
+        auc_target = _compute_auc(curve_shifted[baseline_frames:cutoff_for_auc], tr)
+        auc_fitted = _compute_auc(fitted_curve[baseline_frames:cutoff_for_auc], tr)
+    else:
+        auc_target = auc_original
+        auc_fitted = _compute_auc(fitted_curve, tr)
+
+    # Optionally scale to preserve AUC (first-pass or full, depending on mode)
+    if preserve_auc and auc_fitted > EPSILON_CONCENTRATION:
+        scale_factor = auc_target / auc_fitted
+        fitted_curve = fitted_curve * scale_factor
+        amplitude = amplitude * scale_factor
+        auc_fitted = auc_target  # by construction
 
     # Compute AUC ratio
     if auc_original > EPSILON_CONCENTRATION:

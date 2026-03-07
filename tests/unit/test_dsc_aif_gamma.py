@@ -136,7 +136,7 @@ class TestFitGammaVariate:
         assert result.r_squared > 0.95
 
     def test_with_recirculation(self) -> None:
-        """AIF with secondary peak triggers recirculation detection."""
+        """AIF with secondary peak triggers recirculation detection with good R²."""
         t = np.arange(60, dtype=np.float64)
         # First pass
         first_pass = _gamma_variate_model(t, amplitude=10.0, t0=5.0, alpha=2.5, beta=3.0)
@@ -148,6 +148,7 @@ class TestFitGammaVariate:
 
         assert result.fit_converged is True
         assert result.recirculation_removed is True
+        assert result.r_squared > 0.5
 
     def test_preserve_auc(self) -> None:
         """With preserve_auc=True, AUC ratio is close to 1.0."""
@@ -174,6 +175,50 @@ class TestFitGammaVariate:
 
         assert result.fit_converged is True
         assert result.r_squared > 0.7
+
+    def test_large_recirculation_r_squared(self) -> None:
+        """Regression: large recirculation tail must not cause spurious R² rejection.
+
+        Reproduces the sub-01 run2 scenario where a 120-frame AIF with
+        baseline_frames=45, sharp first-pass peak (~28 mM), and persistent
+        recirculation tail (~2-3 mM) caused R² = -0.554 because R² was
+        evaluated after AUC-preservation scaling inflated the fitted curve.
+        """
+        n_frames = 120
+        t = np.arange(n_frames, dtype=np.float64)
+        baseline_frames = 45
+
+        # First pass: sharp gamma-variate peaking at ~28 mM
+        # Peak at t0 + alpha*beta = 46 + 2.5*1.5 = 49.75
+        first_pass = _gamma_variate_model(t, amplitude=28.0, t0=46.0, alpha=2.5, beta=1.5)
+        measured_peak = float(np.max(first_pass))
+
+        # Persistent tail elevation (~2-3 mM) starting well after first-pass washout.
+        # This models recirculation + slow washout adding ~60% extra full-curve AUC
+        # without competing with the first-pass peak.
+        tail = np.zeros(n_frames)
+        tail_start = 60
+        tail[tail_start:] = 3.0 * (1.0 - np.exp(-0.1 * (t[tail_start:] - tail_start)))
+
+        aif = first_pass + tail
+
+        result = fit_gamma_variate(
+            aif, baseline_frames=baseline_frames, remove_recirculation=True, preserve_auc=True
+        )
+
+        # Fit must converge and not be spuriously rejected
+        assert result.fit_converged is True
+        assert result.r_squared > 0.5, (
+            f"R² = {result.r_squared:.3f} — gamma fit should not be rejected "
+            f"due to AUC-scaling inflation"
+        )
+
+        # Fitted peak should not be inflated beyond 20% of measured first-pass peak
+        fitted_peak = float(np.max(result.fitted_curve))
+        assert fitted_peak < 1.2 * measured_peak, (
+            f"Fitted peak {fitted_peak:.1f} mM exceeds 1.2× measured "
+            f"first-pass peak {measured_peak:.1f} mM — AUC scaling is inflating"
+        )
 
 
 class TestFindRecirculationStart:
