@@ -846,7 +846,10 @@ def _classify_b1_data(
 
 
 def _find_dwi(bids_dir: Path, subject: str, session: Optional[str]) -> Optional[Path]:
-    """Find DWI image.
+    """Find DWI image best suited for ADC calculation.
+
+    When multiple DWI files exist, prefers the one with fewest volumes that
+    still has >= 2 unique b-values (sufficient for mono-exponential ADC).
 
     Args:
         bids_dir: BIDS root directory.
@@ -864,13 +867,39 @@ def _find_dwi(bids_dir: Path, subject: str, session: Optional[str]) -> Optional[
     if not dwi_dir.is_dir():
         return None
 
-    dwi_patterns = ["*_dwi.nii.gz", "*_dwi.nii"]
-    for pattern in dwi_patterns:
-        matches = list(dwi_dir.glob(pattern))
-        if matches:
-            return matches[0]
+    matches: List[Path] = []
+    for pattern in ["*_dwi.nii.gz", "*_dwi.nii"]:
+        matches.extend(dwi_dir.glob(pattern))
 
-    return None
+    if not matches:
+        return None
+
+    if len(matches) == 1:
+        return matches[0]
+
+    # Multiple DWI files: prefer fewest volumes with >= 2 unique b-values
+    import numpy as np
+
+    scored: List[tuple] = []
+    for m in matches:
+        bval_path = str(m).replace(".nii.gz", ".bval").replace(".nii", ".bval")
+        try:
+            if Path(bval_path).exists():
+                bvals = np.atleast_1d(np.loadtxt(bval_path))
+                if len(np.unique(bvals)) >= 2:
+                    scored.append((len(bvals), m))
+                    continue
+        except Exception as exc:
+            logger.warning("Could not read %s: %s", bval_path, exc)
+        scored.append((float("inf"), m))
+
+    scored.sort(key=lambda x: x[0])
+    logger.info(
+        "Multiple DWI files found, selected %s (%s volumes)",
+        scored[0][1].name,
+        scored[0][0] if scored[0][0] != float("inf") else "unknown",
+    )
+    return scored[0][1]
 
 
 def _determine_pipeline_availability(modalities: ModalityAvailability) -> PipelineAvailability:

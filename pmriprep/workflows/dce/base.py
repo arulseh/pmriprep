@@ -206,7 +206,7 @@ def init_dce_preproc_wf(
                 "dsc_aif_qc_file",
                 # DWI tortuosity inputs
                 "dwi_file",
-                "dwi_bval",
+                "dwi_bvals",
                 # Acquisition parameters
                 "flip_angle",
                 "tr",  # Pulse TR for SPGR signal equation
@@ -1014,7 +1014,7 @@ def init_dce_preproc_wf(
             input_names=[
                 "ktrans_file",
                 "dwi_file",
-                "dwi_bval",
+                "dwi_bvals",
                 "brain_mask",
                 "no_tortuosity",
             ],
@@ -1035,7 +1035,7 @@ def init_dce_preproc_wf(
             ("dwi_in_dce", "dwi_file"),
         ]),
         (inputnode, tortuosity_corr, [
-            ("dwi_bval", "dwi_bval"),
+            ("dwi_bvals", "dwi_bvals"),
         ]),
         # Use native DCE brain mask for tortuosity correction
         (dce_brain_extract, tortuosity_corr, [
@@ -2356,62 +2356,67 @@ def _signal_to_concentration_node(
 def _tortuosity_correction_node(
     ktrans_file,
     dwi_file,
-    dwi_bval=None,
+    dwi_bvals=None,
     brain_mask=None,
     no_tortuosity=False,
 ):
     """Function node for tortuosity correction.
 
-    Returns the (possibly corrected) Ktrans file, whether correction was applied,
-    and path to QC plot.
+    Returns ``(ktrans_corrected_file, was_corrected, qc_plot)`` on success,
+    or ``(None, False, None)`` when correction is skipped or fails so that
+    the output writer does not produce bogus ``dceTortuosityCorr`` files.
+
+    Accepts the full b-value array from the DWI sidecar.  B-values > 2000
+    s/mm² are excluded (kurtosis regime breaks mono-exponential model).
 
     Includes:
-    - Gap 3: B-value auto-detection from BIDS .bval sidecar
     - Gap 5: QC visualization (6-panel figure)
     - Gap 7: JSON sidecar with provenance metadata
     """
     import json
-    import shutil
+    import logging
     from pathlib import Path
 
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
     from pmriprep.utils.dce_tortuosity import (
-        D_FREE_GD,
+        D_FREE_WATER,
         calculate_and_apply_tortuosity_correction,
         generate_tortuosity_qc_plot,
     )
 
-    # If skipping tortuosity or no DWI data, return original Ktrans
+    logger = logging.getLogger("nipype.workflow")
+
+    # If skipping tortuosity or no DWI data, return None (no output file)
     if no_tortuosity or dwi_file is None:
-        # Just copy the file to output directory for consistency
-        out_file = str(Path.cwd() / "ktrans_final.nii.gz")
-        shutil.copy(ktrans_file, out_file)
-        return out_file, False, None
+        logger.info(
+            "Tortuosity correction skipped (no_tortuosity=%s, dwi=%s)",
+            no_tortuosity, dwi_file is not None,
+        )
+        return None, False, None
 
-    # Gap 4: Auto-detect b-values from BIDS sidecar if not provided
-    effective_bval = dwi_bval
-    if effective_bval is None:
-        bval_file = str(dwi_file).replace(".nii.gz", ".bval").replace(".nii", ".bval")
-        if Path(bval_file).exists():
-            try:
-                bvals = np.loadtxt(bval_file)
-                # Select b0 (<50) and high-b (800-1200 s/mm²)
-                b0_idx = np.where(bvals < 50)[0]
-                high_b_idx = np.where((bvals >= 800) & (bvals <= 1200))[0]
-                if len(b0_idx) > 0 and len(high_b_idx) > 0:
-                    effective_bval = float(bvals[high_b_idx[0]])
-            except Exception:
-                pass
-
-    # If still no b-value, cannot proceed
-    if effective_bval is None:
-        out_file = str(Path.cwd() / "ktrans_final.nii.gz")
-        shutil.copy(ktrans_file, out_file)
-        return out_file, False, None
+    # If no b-values provided, cannot proceed
+    if dwi_bvals is None or len(dwi_bvals) < 2:
+        logger.info(
+            "Tortuosity correction skipped: insufficient b-values (%s)",
+            dwi_bvals,
+        )
+        return None, False, None
 
     try:
+        # Filter b-values: exclude b > 2000 s/mm² (kurtosis regime)
+        bvals_arr = np.array(dwi_bvals, dtype=np.float64)
+        keep_mask = bvals_arr <= 2000.0
+        if np.sum(keep_mask) < 2:
+            logger.info(
+                "Tortuosity correction skipped: < 2 b-values <= 2000 s/mm²"
+            )
+            return None, False, None
+
+        b_values = bvals_arr[keep_mask]
+        keep_indices = np.where(keep_mask)[0]
+
         # Load files
         ktrans_img = nib.load(ktrans_file)
         ktrans_data = ktrans_img.get_fdata()  # type: ignore[attr-defined]
@@ -2419,12 +2424,12 @@ def _tortuosity_correction_node(
         dwi_img = nib.load(dwi_file)
         dwi_data = dwi_img.get_fdata()  # type: ignore[attr-defined]
 
+        # Select only the volumes matching kept b-values
+        if dwi_data.ndim == 4:
+            dwi_data = dwi_data[..., keep_indices]
+
         mask_img = nib.load(brain_mask)
         mask_data = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
-
-        # Create b_values array: [0, effective_bval]
-        # Assume dwi_file is 4D with b0 and b>0
-        b_values = np.array([0.0, effective_bval])
 
         # Apply tortuosity correction
         correction_result, tortuosity_result = calculate_and_apply_tortuosity_correction(
@@ -2464,9 +2469,9 @@ def _tortuosity_correction_node(
             "Sources": [str(ktrans_file), str(dwi_file)],
             "TortuosityCorrection": True,
             "TortuosityMethod": "simple",
-            "FreeDiffusionCoefficient": D_FREE_GD,
+            "FreeDiffusionCoefficient": D_FREE_WATER,
             "FreeDiffusionCoefficientUnits": "mm²/s",
-            "BValue": effective_bval,
+            "BValues": b_values.tolist(),
             "BValueUnits": "s/mm²",
             "Units": "min^-1",
         }
@@ -2481,10 +2486,10 @@ def _tortuosity_correction_node(
         return out_file, correction_result.was_corrected, qc_plot
 
     except Exception:
-        # If correction fails, return original Ktrans
-        out_file = str(Path.cwd() / "ktrans_final.nii.gz")
-        shutil.copy(ktrans_file, out_file)
-        return out_file, False, None
+        logger.warning(
+            "Tortuosity correction failed, skipping", exc_info=True
+        )
+        return None, False, None
 
 
 def _dsc_dce_validation_node(

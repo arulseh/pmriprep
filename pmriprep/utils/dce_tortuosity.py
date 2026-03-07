@@ -23,10 +23,13 @@ import numpy as np
 import numpy.typing as npt
 
 
-# Free diffusion coefficient of Gadolinium-DTPA at 37°C in mm²/s
-# Literature values range from 2.5-3.5 × 10⁻³ mm²/s
-# We use 3.0 × 10⁻³ mm²/s as the standard value
-D_FREE_GD: float = 3.0e-3  # mm²/s
+# Free diffusion coefficient of water at 37°C in mm²/s
+# (Mills 1973). DWI measures water self-diffusion; tortuosity assumes
+# equal structural hindrance for water and Gd contrast agent.
+D_FREE_WATER: float = 3.0e-3  # mm²/s
+
+# Backwards-compatible alias
+D_FREE_GD = D_FREE_WATER
 
 # Epsilon guard for ADC calculations to prevent division by zero
 # Using 0.1e-3 mm²/s limits max tortuosity to ~30 (= D_free / EPSILON_ADC)
@@ -110,8 +113,8 @@ def calculate_adc(
         dwi_signal: DWI signal array. Can be:
             - 3D (x, y, z) for single b-value pair (S at b)
             - 4D (x, y, z, n_b) for multiple b-values
-        b_values: Array of b-values in s/mm². Must include b=0.
-            - For 3D input: array([b0, b1]) where b0=0
+        b_values: Array of b-values in s/mm². Must include a reference
+            b-value < 100 s/mm² (typically b=0, but low-b protocols accepted).
             - For 4D input: array([b0, b1, ...]) matching last dimension
         mask: Optional brain mask. If provided, ADC is only calculated
             within the mask.
@@ -120,7 +123,7 @@ def calculate_adc(
         ADC map in mm²/s. Shape matches spatial dimensions of input.
 
     Raises:
-        ValueError: If b_values don't include b=0.
+        ValueError: If b_values don't include a reference b < 100 s/mm².
         ValueError: If number of b-values doesn't match signal dimensions.
 
     Notes:
@@ -140,8 +143,11 @@ def calculate_adc(
     if b_values.ndim != 1:
         raise ValueError(f"b_values must be 1D array, got {b_values.ndim}D")
 
-    if not np.any(np.isclose(b_values, 0.0)):
-        raise ValueError("b_values must include b=0 (reference image)")
+    if np.min(b_values) >= 100:
+        raise ValueError(
+            "b_values must include a reference b-value < 100 s/mm² "
+            f"(lowest is {np.min(b_values):.0f})"
+        )
 
     # Find b0 index
     b0_idx = int(np.argmin(np.abs(b_values)))
@@ -189,35 +195,36 @@ def calculate_adc(
             # Safe signal ratio
             ratio = np.maximum(s, EPSILON_ADC) / s0_safe
 
-            # Calculate ADC
-            # ADC = -ln(ratio) / b, but b is in s/mm², ADC in mm²/s
-            # So: ADC [mm²/s] = -ln(ratio) / (b [s/mm²])
-            adc = -np.log(ratio) / b
+            # ADC = -ln(ratio) / (b - b_ref) for non-zero b_ref
+            delta_b = b - b_values[b0_idx]
+            adc = -np.log(ratio) / delta_b
 
         else:
             # Multiple b-values: linear regression of ln(S) vs b
             # ln(S) = ln(S0) - b × ADC
-            # y = a + bx where y=ln(S), x=b, slope=-ADC
+            # Vectorized via np.linalg.lstsq
 
-            # Reshape for vectorized regression
-            # Signal: (x, y, z, n_b) -> (n_voxels, n_b)
             n_voxels = int(np.prod(spatial_shape))
             signal_flat = dwi_signal.reshape(n_voxels, n_b)
 
-            # Take log of signal (with safety)
-            log_signal = np.log(np.maximum(signal_flat, EPSILON_ADC))
+            # Determine which voxels to fit (mask or all)
+            if mask is not None:
+                mask_flat = mask.ravel()
+            else:
+                mask_flat = np.ones(n_voxels, dtype=bool)
 
-            # Linear regression: ADC = -slope of ln(S) vs b
-            # Using numpy polyfit for each voxel
-            adc_flat = np.zeros(n_voxels)
+            adc_flat = np.full(n_voxels, EPSILON_ADC)
 
-            for i in range(n_voxels):
-                try:
-                    # polyfit returns [slope, intercept] for degree 1
-                    coeffs = np.polyfit(b_values, log_signal[i, :], 1)
-                    adc_flat[i] = -coeffs[0]  # ADC = -slope
-                except (np.linalg.LinAlgError, ValueError):
-                    adc_flat[i] = EPSILON_ADC
+            # Only fit within mask
+            idx = np.where(mask_flat)[0]
+            if len(idx) > 0:
+                log_signal = np.log(
+                    np.maximum(signal_flat[idx], EPSILON_ADC)
+                )
+                # Design matrix: [b_values, ones] for y = -ADC*b + ln(S0)
+                X = np.column_stack([b_values, np.ones(n_b)])
+                coeffs, _, _, _ = np.linalg.lstsq(X, log_signal.T, rcond=None)
+                adc_flat[idx] = -coeffs[0, :]
 
             adc = adc_flat.reshape(spatial_shape)
 
@@ -238,7 +245,7 @@ def calculate_adc(
 
 def calculate_tortuosity(
     adc: npt.NDArray[np.floating],
-    d_free: float = D_FREE_GD,
+    d_free: float = D_FREE_WATER,
     mask: Optional[npt.NDArray[np.bool_]] = None,
     clip_range: bool = True,
 ) -> TortuosityResult:
@@ -269,7 +276,7 @@ def calculate_tortuosity(
         - Dense tumor λ: 2.5-5.0 or higher
 
     Example:
-        >>> result = calculate_tortuosity(adc_map, d_free=D_FREE_GD)
+        >>> result = calculate_tortuosity(adc_map, d_free=D_FREE_WATER)
         >>> tortuosity = result.tortuosity
         >>> print(f"Mean tortuosity in mask: {tortuosity[mask].mean():.2f}")
     """
@@ -409,7 +416,7 @@ def calculate_and_apply_tortuosity_correction(
     dwi_signal: npt.NDArray[np.floating],
     b_values: npt.NDArray[np.floating],
     mask: Optional[npt.NDArray[np.bool_]] = None,
-    d_free: float = D_FREE_GD,
+    d_free: float = D_FREE_WATER,
 ) -> Tuple[TortuosityCorrectionResult, TortuosityResult]:
     """Full tortuosity correction pipeline from DWI data.
 
@@ -455,7 +462,7 @@ def load_and_apply_tortuosity_correction(
     b_values: npt.NDArray[np.floating],
     output_file: Union[str, Path],
     mask_file: Optional[Union[str, Path]] = None,
-    d_free: float = D_FREE_GD,
+    d_free: float = D_FREE_WATER,
 ) -> Tuple[Path, TortuosityCorrectionResult, TortuosityResult]:
     """File-based tortuosity correction workflow.
 

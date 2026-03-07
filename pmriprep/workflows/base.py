@@ -2309,30 +2309,22 @@ def init_pmriprep_wf(
             workflow.connect([
                 (inputnode, dce_wf, [("dwi_file", "inputnode.dwi_file")]),
             ])
-            # Gap 4: Extract b-value from BIDS .bval sidecar for tortuosity correction
+            # Pass full b-value array from BIDS .bval sidecar for tortuosity
             import logging as _logging
+            import numpy as _np
             _log = _logging.getLogger("pmriprep.workflows")
             dwi_path = session_data.modalities.dwi
             bval_path = str(dwi_path).replace(".nii.gz", ".bval").replace(".nii", ".bval")
             if Path(bval_path).exists():
                 try:
-                    import numpy as _np
-                    bvals = _np.loadtxt(bval_path)
-                    # Select high-b value in range 800-1200 s/mm²
-                    high_b = bvals[(bvals >= 800) & (bvals <= 1200)]
-                    if len(high_b) > 0:
-                        dce_wf.inputs.inputnode.dwi_bval = float(high_b[0])
-                        _log.info(
-                            "DWI: extracted b-value %.0f s/mm² from %s",
-                            high_b[0], bval_path
-                        )
-                    else:
-                        _log.warning(
-                            "DWI: no b-value in range 800-1200 s/mm² found in %s",
-                            bval_path
-                        )
+                    bvals = _np.atleast_1d(_np.loadtxt(bval_path))
+                    dce_wf.inputs.inputnode.dwi_bvals = bvals.tolist()
+                    _log.info(
+                        "DWI: loaded %d b-values from %s (range %.0f-%.0f s/mm²)",
+                        len(bvals), bval_path, bvals.min(), bvals.max(),
+                    )
                 except Exception as exc:
-                    _log.warning("DWI: failed to read b-value from %s: %s", bval_path, exc)
+                    _log.warning("DWI: failed to read b-values from %s: %s", bval_path, exc)
 
         # Connect DSC CBV for vp constraint in DCE PK modeling.
         # Models with vp (extended_tofts, 2cxm) use DSC CBV as a fitting constraint.
