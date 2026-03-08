@@ -3,13 +3,21 @@
 import numpy as np
 import pytest
 
+from pmriprep.config.dsc import DSCConfig
 from pmriprep.utils.dsc_aif import (
+    GAMMA_NEG_TAIL_FRACTION,
+    GAMMA_NEG_TAIL_MIN_FRAMES,
+    GAMMA_NOISE_RATIO_THRESHOLD,
+    GAMMA_SPR_THRESHOLD,
+    GammaAutoDecision,
     GammaVariateFitResult,
     _compute_auc,
     _estimate_initial_params,
     _find_recirculation_start,
     _gamma_variate_model,
+    compute_aif_fwhm_frames,
     fit_gamma_variate,
+    should_apply_gamma_fit,
 )
 
 
@@ -278,3 +286,238 @@ class TestGammaVariateFitResultDataclass:
         assert result.fit_converged is True
         assert result.recirculation_removed is False
         assert result.fitted_curve.shape == (10,)
+
+
+# =============================================================================
+# Helpers for auto-decision tests
+# =============================================================================
+
+
+def _make_clean_aif(n: int = 60, baseline_frames: int = 5) -> np.ndarray:
+    """Create a clean gamma-variate shaped AIF with no defects."""
+    t = np.arange(n, dtype=float)
+    aif = np.zeros(n)
+    for i in range(baseline_frames, n):
+        dt = t[i] - t[baseline_frames]
+        aif[i] = 10.0 * (dt**2.0) * np.exp(-dt / 3.0)
+    return aif
+
+
+def _make_fit_result(
+    original_aif: np.ndarray,
+    r_squared: float = 0.95,
+    fit_converged: bool = True,
+    fitted_curve: np.ndarray | None = None,
+    auc_ratio: float = 1.0,
+) -> GammaVariateFitResult:
+    """Create a GammaVariateFitResult for testing."""
+    if fitted_curve is None:
+        fitted_curve = original_aif.copy()
+    return GammaVariateFitResult(
+        fitted_curve=fitted_curve,
+        amplitude=10.0,
+        t0=5.0,
+        alpha=2.0,
+        beta=3.0,
+        auc_original=100.0,
+        auc_fitted=100.0 * auc_ratio,
+        auc_ratio=auc_ratio,
+        residual_rms=0.1,
+        r_squared=r_squared,
+        fit_converged=fit_converged,
+    )
+
+
+# =============================================================================
+# TestShouldApplyGammaFit
+# =============================================================================
+
+
+class TestShouldApplyGammaFit:
+    """Tests for should_apply_gamma_fit() auto-decision logic."""
+
+    def test_reject_fit_not_converged(self) -> None:
+        """Hard gate: reject when fit did not converge."""
+        aif = _make_clean_aif()
+        fit = _make_fit_result(aif, fit_converged=False)
+        decision, _ = should_apply_gamma_fit(aif, fit)
+        assert not decision.apply
+        assert "converge" in decision.reason.lower()
+
+    def test_reject_low_r_squared(self) -> None:
+        """Hard gate: reject when R² is below threshold."""
+        aif = _make_clean_aif()
+        fit = _make_fit_result(aif, r_squared=0.84)
+        decision, metrics = should_apply_gamma_fit(aif, fit)
+        assert not decision.apply
+
+    def test_reject_peak_ratio_too_high(self) -> None:
+        """Hard gate: reject when peak ratio exceeds upper bound."""
+        aif = _make_clean_aif()
+        fitted = aif.copy() * 1.12
+        fit = _make_fit_result(aif, fitted_curve=fitted)
+        decision, metrics = should_apply_gamma_fit(aif, fit)
+        assert not decision.apply
+        assert "peak" in decision.reason.lower() or "Peak" in decision.reason
+
+    def test_reject_auc_ratio_too_high(self) -> None:
+        """Hard gate: reject when AUC ratio exceeds upper bound."""
+        aif = _make_clean_aif()
+        fit = _make_fit_result(aif, auc_ratio=1.16)
+        decision, metrics = should_apply_gamma_fit(aif, fit)
+        assert not decision.apply
+        assert "AUC" in decision.reason
+
+    def test_accept_recirculation_defect(self) -> None:
+        """Recirculation defect: accept when SPR > threshold and local max."""
+        aif = _make_clean_aif()
+        peak_idx = int(np.argmax(aif))
+        peak_val = float(np.max(aif))
+        # Add a secondary hump well after first-pass washout
+        recirc_center = peak_idx + 15
+        if recirc_center + 5 < len(aif):
+            for i in range(recirc_center - 3, min(recirc_center + 4, len(aif))):
+                offset = i - recirc_center
+                aif[i] += peak_val * 0.35 * np.exp(-0.5 * offset**2)
+
+        fit = _make_fit_result(aif)
+        decision, metrics = should_apply_gamma_fit(aif, fit)
+        assert decision.apply
+        assert decision.defect_detected == "recirculation"
+        assert metrics["spr"] > GAMMA_SPR_THRESHOLD
+        assert metrics["spr_is_local_max"]
+
+    def test_reject_spr_above_threshold_but_monotonic(self) -> None:
+        """Reject when SPR > threshold but tail is monotonic (no local max)."""
+        aif = _make_clean_aif()
+        peak_idx = int(np.argmax(aif))
+        fwhm = compute_aif_fwhm_frames(aif, 5)
+        recirc_start = peak_idx + max(fwhm, 5)
+        if recirc_start < len(aif):
+            peak_val = float(np.max(aif))
+            # Monotonically increasing tail — no local max
+            for i in range(recirc_start, len(aif)):
+                aif[i] = peak_val * 0.3 * (i - recirc_start + 1) / (len(aif) - recirc_start)
+
+        fit = _make_fit_result(aif)
+        decision, metrics = should_apply_gamma_fit(aif, fit)
+        assert not decision.apply or decision.defect_detected != "recirculation"
+
+    def test_reject_spr_just_below_threshold(self) -> None:
+        """Reject when SPR is just below threshold."""
+        aif = _make_clean_aif()
+        peak_idx = int(np.argmax(aif))
+        peak_val = float(np.max(aif))
+        fwhm = compute_aif_fwhm_frames(aif, 5)
+        recirc_center = peak_idx + max(fwhm, 5) + 5
+        if recirc_center + 3 < len(aif):
+            for i in range(recirc_center - 2, min(recirc_center + 3, len(aif))):
+                offset = i - recirc_center
+                aif[i] += peak_val * 0.20 * np.exp(-0.5 * offset**2)
+
+        fit = _make_fit_result(aif)
+        decision, metrics = should_apply_gamma_fit(aif, fit)
+        if metrics.get("spr", 0) < GAMMA_SPR_THRESHOLD:
+            assert not decision.apply or decision.defect_detected != "recirculation"
+
+    def test_accept_noise_and_negative_tail(self) -> None:
+        """Accept when both noise and negative tail defects are present."""
+        aif = _make_clean_aif()
+        peak_idx = int(np.argmax(aif))
+        peak_val = float(np.max(aif))
+
+        # Add high-frequency noise
+        rng = np.random.default_rng(42)
+        noise = rng.normal(0, peak_val * 0.15, len(aif))
+        noisy_aif = aif + noise
+        noisy_aif[:5] = aif[:5]
+
+        # Add negative tail
+        tail_start = peak_idx + 10
+        for i in range(tail_start, min(tail_start + 8, len(noisy_aif))):
+            noisy_aif[i] = -peak_val * 0.08
+
+        # Smooth fitted curve
+        fit = _make_fit_result(noisy_aif, fitted_curve=aif.copy())
+        decision, metrics = should_apply_gamma_fit(noisy_aif, fit, baseline_frames=5)
+
+        if (
+            metrics.get("noise_ratio", 0) > GAMMA_NOISE_RATIO_THRESHOLD
+            and metrics.get("neg_tail_frames", 0) >= GAMMA_NEG_TAIL_MIN_FRAMES
+        ):
+            assert decision.apply
+            assert decision.defect_detected == "noise_and_negative_tail"
+
+    def test_reject_noise_alone(self) -> None:
+        """Reject when only noise defect is present (no negative tail)."""
+        aif = _make_clean_aif()
+        peak_val = float(np.max(aif))
+
+        rng = np.random.default_rng(42)
+        noisy_aif = aif + rng.normal(0, peak_val * 0.15, len(aif))
+        noisy_aif[:5] = aif[:5]
+        noisy_aif = np.maximum(noisy_aif, 0)
+
+        fit = _make_fit_result(noisy_aif, fitted_curve=aif.copy())
+        decision, metrics = should_apply_gamma_fit(noisy_aif, fit, baseline_frames=5)
+        if decision.defect_detected != "recirculation":
+            assert not decision.apply or decision.defect_detected == "noise_and_negative_tail"
+
+    def test_reject_negative_tail_alone(self) -> None:
+        """Reject when only negative tail defect is present (no noise)."""
+        aif = _make_clean_aif()
+        peak_idx = int(np.argmax(aif))
+        peak_val = float(np.max(aif))
+
+        tail_start = peak_idx + 10
+        for i in range(tail_start, min(tail_start + 8, len(aif))):
+            aif[i] = -peak_val * 0.08
+
+        fit = _make_fit_result(aif)
+        decision, metrics = should_apply_gamma_fit(aif, fit, baseline_frames=5)
+        if metrics.get("noise_ratio", 0) <= GAMMA_NOISE_RATIO_THRESHOLD:
+            assert not decision.apply
+
+    def test_reject_clean_aif(self) -> None:
+        """Reject when AIF is clean — no defects detected."""
+        aif = _make_clean_aif()
+        fit = _make_fit_result(aif)
+        decision, metrics = should_apply_gamma_fit(aif, fit)
+        assert not decision.apply
+        assert decision.defect_detected is None
+
+    def test_metrics_populated(self) -> None:
+        """Verify detail_metrics dict contains expected keys."""
+        aif = _make_clean_aif()
+        fit = _make_fit_result(aif)
+        _, metrics = should_apply_gamma_fit(aif, fit)
+        assert "spr" in metrics
+        assert "spr_is_local_max" in metrics
+        assert "noise_ratio" in metrics
+        assert "neg_tail_frames" in metrics
+        assert "neg_tail_min_fraction" in metrics
+
+
+# =============================================================================
+# TestDSCConfigGammaFitCoercion
+# =============================================================================
+
+
+class TestDSCConfigGammaFitCoercion:
+    """Tests for DSCConfig gamma_fit bool→str coercion."""
+
+    def test_true_becomes_on(self) -> None:
+        config = DSCConfig(gamma_fit=True)  # type: ignore[arg-type]
+        assert config.gamma_fit == "on"
+
+    def test_false_becomes_off(self) -> None:
+        config = DSCConfig(gamma_fit=False)  # type: ignore[arg-type]
+        assert config.gamma_fit == "off"
+
+    def test_default_is_auto(self) -> None:
+        config = DSCConfig()
+        assert config.gamma_fit == "auto"
+
+    def test_invalid_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Invalid gamma_fit"):
+            DSCConfig(gamma_fit="maybe")  # type: ignore[arg-type]

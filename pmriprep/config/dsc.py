@@ -35,8 +35,8 @@ class DSCConfig:
         AIF quality criteria threshold.
     n_aif_candidates : int
         Number of AIF candidate voxels to average.
-    gamma_fit : bool
-        Apply gamma-variate fitting to AIF.
+    gamma_fit : str
+        Gamma-variate fitting mode: "auto", "on", or "off".
     disable_aif_fallback : bool
         Disable synthetic AIF fallback when detection fails.
     lesion_mask : Optional[Path]
@@ -81,7 +81,7 @@ class DSCConfig:
     lesion_distance: float = 15.0
     aif_criteria: Literal["strict", "relaxed"] = "strict"
     n_aif_candidates: int = 10
-    gamma_fit: bool = False
+    gamma_fit: str = "auto"
     disable_aif_fallback: bool = False
     aif_method: Literal["auto", "synthetic"] = "auto"
 
@@ -139,4 +139,14 @@ class DSCConfig:
             self.motion_thresh = float(self.motion_thresh)
         except (ValueError, TypeError) as e:
             raise TypeError(f"DSCConfig float field has invalid type: {e}") from e
+
+        # Coerce gamma_fit: bool→str for backward compatibility
+        if isinstance(self.gamma_fit, bool):
+            self.gamma_fit = "on" if self.gamma_fit else "off"
+        _valid_gamma = {"auto", "on", "off"}
+        if self.gamma_fit not in _valid_gamma:
+            raise ValueError(
+                f"Invalid gamma_fit={self.gamma_fit!r}. "
+                f"Valid: {sorted(_valid_gamma)}"
+            )
 

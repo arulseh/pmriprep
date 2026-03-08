@@ -1744,6 +1744,209 @@ def fit_gamma_variate(
     )
 
 
+# =============================================================================
+# Auto Gamma-Variate Decision Logic
+# =============================================================================
+
+# Hard gate thresholds — fit must satisfy ALL to be eligible
+GAMMA_R2_THRESHOLD: float = 0.85
+GAMMA_PEAK_RATIO_MIN: float = 0.90
+GAMMA_PEAK_RATIO_MAX: float = 1.10
+GAMMA_AUC_RATIO_MIN: float = 0.85
+GAMMA_AUC_RATIO_MAX: float = 1.15
+
+# Defect detection thresholds
+GAMMA_SPR_THRESHOLD: float = 0.25
+GAMMA_NOISE_RATIO_THRESHOLD: float = 2.5
+GAMMA_NEG_TAIL_MIN_FRAMES: int = 3
+GAMMA_NEG_TAIL_FRACTION: float = 0.05
+
+
+@dataclass(frozen=True)
+class GammaAutoDecision:
+    """Result of the auto gamma-variate decision.
+
+    Attributes
+    ----------
+    apply : bool
+        Whether to apply the gamma-variate fit.
+    reason : str
+        Human-readable reason for the decision.
+    defect_detected : str or None
+        Type of defect detected: "recirculation",
+        "noise_and_negative_tail", or None.
+    """
+
+    apply: bool
+    reason: str
+    defect_detected: Optional[str] = None
+
+
+def should_apply_gamma_fit(
+    original_aif: npt.NDArray[Any],
+    fit_result: GammaVariateFitResult,
+    baseline_frames: int = 5,
+) -> tuple["GammaAutoDecision", dict[str, Any]]:
+    """Decide whether to apply gamma-variate fitting to the AIF.
+
+    Uses hard gates (fit quality) and defect triggers (recirculation,
+    noise + negative tail) to decide. The gamma-variate is applied only
+    when the fit is good AND a defect is detected that gamma fitting
+    would correct.
+
+    Parameters
+    ----------
+    original_aif : np.ndarray
+        1D original AIF concentration curve (before gamma fitting).
+    fit_result : GammaVariateFitResult
+        Result from ``fit_gamma_variate()``.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+
+    Returns
+    -------
+    tuple[GammaAutoDecision, dict[str, Any]]
+        Decision and detailed metrics for QC logging.
+    """
+    metrics: dict[str, Any] = {}
+
+    # --- Hard gates ---
+    if not fit_result.fit_converged:
+        return (
+            GammaAutoDecision(apply=False, reason="Fit did not converge"),
+            metrics,
+        )
+
+    if fit_result.r_squared < GAMMA_R2_THRESHOLD:
+        metrics["r_squared"] = fit_result.r_squared
+        return (
+            GammaAutoDecision(
+                apply=False,
+                reason=f"R²={fit_result.r_squared:.3f} < {GAMMA_R2_THRESHOLD}",
+            ),
+            metrics,
+        )
+
+    peak_orig = float(np.max(original_aif))
+    peak_fit = float(np.max(fit_result.fitted_curve))
+    if peak_orig > EPSILON_CONCENTRATION:
+        peak_ratio = peak_fit / peak_orig
+    else:
+        peak_ratio = 1.0
+    metrics["peak_ratio"] = peak_ratio
+
+    if not (GAMMA_PEAK_RATIO_MIN <= peak_ratio <= GAMMA_PEAK_RATIO_MAX):
+        return (
+            GammaAutoDecision(
+                apply=False,
+                reason=f"Peak ratio {peak_ratio:.3f} outside [{GAMMA_PEAK_RATIO_MIN}, {GAMMA_PEAK_RATIO_MAX}]",
+            ),
+            metrics,
+        )
+
+    auc_ratio = fit_result.auc_ratio
+    metrics["auc_ratio"] = auc_ratio
+    if not (GAMMA_AUC_RATIO_MIN <= auc_ratio <= GAMMA_AUC_RATIO_MAX):
+        return (
+            GammaAutoDecision(
+                apply=False,
+                reason=f"AUC ratio {auc_ratio:.3f} outside [{GAMMA_AUC_RATIO_MIN}, {GAMMA_AUC_RATIO_MAX}]",
+            ),
+            metrics,
+        )
+
+    # --- Defect detection ---
+    n = len(original_aif)
+    peak_idx = int(np.argmax(original_aif))
+    baseline_mean = float(np.mean(original_aif[:baseline_frames])) if baseline_frames > 0 else 0.0
+    peak_val = peak_orig - baseline_mean  # baseline-corrected peak
+
+    # 1) Recirculation defect: secondary peak ratio > threshold AND is local max
+    # Look in post-first-pass window
+    fwhm = compute_aif_fwhm_frames(original_aif, baseline_frames)
+    recirc_start = peak_idx + max(fwhm, 5)
+    spr = 0.0
+    spr_is_local_max = False
+
+    if recirc_start < n - 1 and peak_val > EPSILON_CONCENTRATION:
+        tail = original_aif[recirc_start:] - baseline_mean
+        if len(tail) > 2:
+            secondary_peak_idx_local = int(np.argmax(tail))
+            secondary_peak_val = float(tail[secondary_peak_idx_local])
+            spr = secondary_peak_val / peak_val if peak_val > EPSILON_CONCENTRATION else 0.0
+
+            # Check if it's a true local maximum (derivative sign change)
+            abs_idx = recirc_start + secondary_peak_idx_local
+            if 0 < secondary_peak_idx_local < len(tail) - 1:
+                left_slope = tail[secondary_peak_idx_local] - tail[secondary_peak_idx_local - 1]
+                right_slope = tail[secondary_peak_idx_local + 1] - tail[secondary_peak_idx_local]
+                spr_is_local_max = left_slope > 0 and right_slope < 0
+
+    metrics["spr"] = spr
+    metrics["spr_is_local_max"] = spr_is_local_max
+    recirculation_defect = spr > GAMMA_SPR_THRESHOLD and spr_is_local_max
+
+    # 2) Noise defect: 2nd derivative L2 norm ratio (fitted vs original) > threshold
+    if n > 4:
+        d2_orig = np.diff(original_aif, n=2)
+        d2_fit = np.diff(fit_result.fitted_curve, n=2)
+        l2_orig = float(np.sqrt(np.sum(d2_orig**2)))
+        l2_fit = float(np.sqrt(np.sum(d2_fit**2)))
+        noise_ratio = l2_orig / l2_fit if l2_fit > EPSILON_CONCENTRATION else 0.0
+    else:
+        noise_ratio = 0.0
+    metrics["noise_ratio"] = noise_ratio
+    noise_defect = noise_ratio > GAMMA_NOISE_RATIO_THRESHOLD
+
+    # 3) Negative tail defect: >N frames below zero AND min < -fraction of peak
+    if peak_idx < n - 1 and peak_val > EPSILON_CONCENTRATION:
+        tail_full = original_aif[peak_idx:] - baseline_mean
+        neg_frames = int(np.sum(tail_full < 0))
+        neg_min = float(np.min(tail_full))
+        neg_min_fraction = abs(neg_min) / peak_val
+    else:
+        neg_frames = 0
+        neg_min_fraction = 0.0
+    metrics["neg_tail_frames"] = neg_frames
+    metrics["neg_tail_min_fraction"] = neg_min_fraction
+    negative_tail_defect = (
+        neg_frames >= GAMMA_NEG_TAIL_MIN_FRAMES
+        and neg_min_fraction > GAMMA_NEG_TAIL_FRACTION
+    )
+
+    # --- Decision ---
+    if recirculation_defect:
+        return (
+            GammaAutoDecision(
+                apply=True,
+                reason=f"Recirculation detected (SPR={spr:.3f}, local max)",
+                defect_detected="recirculation",
+            ),
+            metrics,
+        )
+
+    if noise_defect and negative_tail_defect:
+        return (
+            GammaAutoDecision(
+                apply=True,
+                reason=(
+                    f"Noise (ratio={noise_ratio:.2f}) and negative tail "
+                    f"({neg_frames} frames, min={neg_min_fraction:.3f}×peak)"
+                ),
+                defect_detected="noise_and_negative_tail",
+            ),
+            metrics,
+        )
+
+    return (
+        GammaAutoDecision(
+            apply=False,
+            reason="No defect detected — AIF is clean",
+        ),
+        metrics,
+    )
+
+
 def fit_gamma_variate_from_file(
     aif_file: Union[str, Path],
     baseline_frames: int = 5,

@@ -260,10 +260,12 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
     )
-    gamma_fit = traits.Bool(
-        False,
+    gamma_fit = traits.Enum(
+        "auto",
+        "off",
+        "on",
         usedefault=True,
-        desc="Apply gamma-variate fitting to AIF",
+        desc="Gamma-variate fitting mode: 'auto', 'on', or 'off'",
     )
     disable_fallback = traits.Bool(
         False,
@@ -1803,7 +1805,7 @@ class AIFDetection(BaseInterface):
         initial_criteria = str(self.inputs.criteria)
         n_candidates = int(self.inputs.n_candidates)
         baseline_frames = int(self.inputs.baseline_frames)
-        gamma_fit = bool(self.inputs.gamma_fit)
+        gamma_fit_mode = str(self.inputs.gamma_fit)
         disable_fallback = bool(self.inputs.disable_fallback)
         lesion_distance = float(self.inputs.lesion_distance)
         n_timepoints = conc_data.shape[3]
@@ -2065,38 +2067,13 @@ class AIFDetection(BaseInterface):
         # Gamma-variate fitting
         gamma_fit_applied = False
         raw_aif_curve = None
-        if gamma_fit and detection_level != "synthetic":
-            try:
-                from pmriprep.utils.dsc_aif import fit_gamma_variate
-
-                raw_aif_curve = aif_curve.copy()
-                fit_result = fit_gamma_variate(
-                    aif_curve=aif_curve,
-                    baseline_frames=baseline_frames,
-                    remove_recirculation=True,
-                    preserve_auc=True,
-                    tr=tr,
+        if gamma_fit_mode != "off" and detection_level != "synthetic":
+            gamma_fit_applied, raw_aif_curve, aif_curve = (
+                self._apply_gamma_fit_if_appropriate(
+                    aif_curve, gamma_fit_mode, baseline_frames, tr, qc_metrics,
                 )
-                if fit_result.fit_converged and fit_result.r_squared > 0.5:
-                    aif_curve = fit_result.fitted_curve
-                    gamma_fit_applied = True
-                    qc_metrics["gamma_fit_applied"] = True
-                    qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
-                    qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
-                    qc_metrics["gamma_recirculation_removed"] = (
-                        fit_result.recirculation_removed
-                    )
-                else:
-                    qc_metrics["gamma_fit_applied"] = False
-                    qc_metrics["gamma_fit_rejected_reason"] = (
-                        "no_convergence" if not fit_result.fit_converged
-                        else f"low_r_squared_{fit_result.r_squared:.3f}"
-                    )
-            except Exception:
-                raw_aif_curve = None
-                qc_metrics["gamma_fit_applied"] = False
-                qc_metrics["gamma_fit_rejected_reason"] = "exception"
-        elif gamma_fit and detection_level == "synthetic":
+            )
+        elif gamma_fit_mode != "off" and detection_level == "synthetic":
             qc_metrics["gamma_fit_applied"] = False
             qc_metrics["gamma_fit_rejected_reason"] = "synthetic_aif"
 
@@ -2105,7 +2082,7 @@ class AIFDetection(BaseInterface):
         np.savetxt(out_aif_curve, aif_curve)
 
         out_raw_aif = ""
-        if raw_aif_curve is not None and gamma_fit_applied:
+        if raw_aif_curve is not None:
             out_raw_aif = self._gen_outfilename("_raw_aif_curve.txt")
             np.savetxt(out_raw_aif, raw_aif_curve)
 
@@ -2128,6 +2105,103 @@ class AIFDetection(BaseInterface):
         }
 
         return runtime
+
+    @staticmethod
+    def _apply_gamma_fit_if_appropriate(
+        aif_curve: npt.NDArray[Any],
+        gamma_fit_mode: str,
+        baseline_frames: int,
+        tr: float,
+        qc_metrics: dict[str, Any],
+    ) -> tuple[bool, Optional[npt.NDArray[Any]], npt.NDArray[Any]]:
+        """Attempt gamma-variate fitting and decide whether to apply it.
+
+        Parameters
+        ----------
+        aif_curve : np.ndarray
+            Current AIF curve (may be modified if fit is applied).
+        gamma_fit_mode : str
+            "on" (legacy: apply if R²>0.5) or "auto" (rule-based).
+        baseline_frames : int
+            Number of pre-bolus baseline frames.
+        tr : float
+            Repetition time in seconds.
+        qc_metrics : dict
+            QC metrics dict (modified in place).
+
+        Returns
+        -------
+        tuple[bool, Optional[np.ndarray], np.ndarray]
+            (gamma_fit_applied, raw_aif_curve, aif_curve)
+            raw_aif_curve is the original AIF when fit is applied,
+            or the fitted curve when fit is rejected (for QC overlay).
+        """
+        from pmriprep.utils.dsc_aif import (
+            fit_gamma_variate,
+            should_apply_gamma_fit,
+        )
+
+        try:
+            original_aif = aif_curve.copy()
+            fit_result = fit_gamma_variate(
+                aif_curve=aif_curve,
+                baseline_frames=baseline_frames,
+                remove_recirculation=True,
+                preserve_auc=True,
+                tr=tr,
+            )
+
+            if gamma_fit_mode == "on":
+                # Legacy mode: accept if converged and R² > 0.5
+                if fit_result.fit_converged and fit_result.r_squared > 0.5:
+                    qc_metrics["gamma_fit_applied"] = True
+                    qc_metrics["gamma_fit_mode"] = "on"
+                    qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
+                    qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
+                    qc_metrics["gamma_recirculation_removed"] = (
+                        fit_result.recirculation_removed
+                    )
+                    return True, original_aif, fit_result.fitted_curve
+                else:
+                    qc_metrics["gamma_fit_applied"] = False
+                    qc_metrics["gamma_fit_mode"] = "on"
+                    qc_metrics["gamma_fit_rejected_reason"] = (
+                        "no_convergence"
+                        if not fit_result.fit_converged
+                        else f"low_r_squared_{fit_result.r_squared:.3f}"
+                    )
+                    return False, None, aif_curve
+
+            # Auto mode
+            decision, detail_metrics = should_apply_gamma_fit(
+                original_aif=original_aif,
+                fit_result=fit_result,
+                baseline_frames=baseline_frames,
+            )
+            qc_metrics["gamma_fit_mode"] = "auto"
+            qc_metrics["gamma_fit_auto_metrics"] = detail_metrics
+            qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
+            qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
+
+            if decision.apply:
+                qc_metrics["gamma_fit_applied"] = True
+                qc_metrics["gamma_fit_auto_reason"] = decision.reason
+                qc_metrics["gamma_fit_auto_defect"] = decision.defect_detected
+                qc_metrics["gamma_recirculation_removed"] = (
+                    fit_result.recirculation_removed
+                )
+                return True, original_aif, fit_result.fitted_curve
+            else:
+                qc_metrics["gamma_fit_applied"] = False
+                qc_metrics["gamma_fit_rejected_reason"] = decision.reason
+                # Save fitted curve for QC overlay (rejected fit shown dashed)
+                qc_metrics["gamma_fit_rejection_curve_available"] = True
+                return False, fit_result.fitted_curve, aif_curve
+
+        except Exception:
+            qc_metrics["gamma_fit_applied"] = False
+            qc_metrics["gamma_fit_rejected_reason"] = "exception"
+            return False, None, aif_curve
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List interface outputs."""

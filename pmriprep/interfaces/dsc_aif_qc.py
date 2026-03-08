@@ -223,18 +223,31 @@ class AIFQCPlot(BaseInterface):
         try:
             # Plot AIF curve(s)
             if raw_aif_curve is not None and gamma_fit_applied:
-                # Raw AIF behind (translucent)
+                # Accepted gamma fit: raw AIF behind (translucent) + fitted solid
                 ax.plot(
                     time, raw_aif_curve,
                     color=COLORBLIND_PALETTE.primary,
                     linewidth=1, marker=".", markersize=3,
                     alpha=0.5, label="Raw AIF",
                 )
-                # Gamma-fitted AIF on top
                 ax.plot(
                     time, aif_curve,
                     color=COLORBLIND_PALETTE.error,
                     linewidth=2, label="Gamma-variate fit",
+                )
+            elif raw_aif_curve is not None and not gamma_fit_applied:
+                # Rejected gamma fit: AIF solid + rejected fit dashed
+                ax.plot(
+                    time, aif_curve,
+                    color=COLORBLIND_PALETTE.primary,
+                    linewidth=1.5, marker="o", markersize=3,
+                    label="AIF",
+                )
+                ax.plot(
+                    time, raw_aif_curve,
+                    color=COLORBLIND_PALETTE.error,
+                    linewidth=1.5, linestyle="--", alpha=0.6,
+                    label="Gamma fit (rejected)",
                 )
             else:
                 ax.plot(
@@ -286,6 +299,9 @@ class AIFQCPlot(BaseInterface):
             r_sq = qc.get("gamma_fit_r_squared")
             if gamma_fit_applied and r_sq is not None:
                 title_suffix = f" | Gamma fit (R\u00b2={r_sq:.3f})"
+            elif raw_aif_curve is not None and not gamma_fit_applied:
+                r_sq_str = f", R\u00b2={r_sq:.3f}" if r_sq is not None else ""
+                title_suffix = f" | Gamma fit rejected{r_sq_str}"
             else:
                 title_suffix = ""
             ax.set_title(
