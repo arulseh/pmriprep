@@ -154,6 +154,7 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     preprocessing_qc_plot = traits.Either(traits.Str, None, desc="DCE preprocessing QC plot PNG path")
     pk_modeling_qc_plot = traits.Either(traits.Str, None, desc="PK modeling QC plot PNG path")
     pk_param_maps_qc_plot = traits.Either(traits.Str, None, desc="PK parameter maps QC plot PNG path")
+    dsc_dce_xval_plot = traits.Either(traits.Str, None, desc="DSC-DCE cross-validation QC plot PNG path")
 
 
 class DCEDerivativeWriterOutputSpec(TraitedSpec):
@@ -721,6 +722,7 @@ class DCEDerivativeWriter(BaseInterface):
             "preprocessing_qc": "preprocessing_qc_plot",
             "pk_modeling_qc": "pk_modeling_qc_plot",
             "pk_param_maps_qc": "pk_param_maps_qc_plot",
+            "dsc_dce_xval": "dsc_dce_xval_plot",
         }
         for fig_key, attr in _fig_inputs.items():
             if has_input(self.inputs,attr):
@@ -897,6 +899,38 @@ class DCEDerivativeWriter(BaseInterface):
                 motion_rec = None
             if motion_rec is not None:
                 recommendations.append(motion_rec)
+
+        # Evaluate DSC-DCE cross-validation if available
+        xval = qc_metrics.get("dsc_dce_validation", {})
+        if (
+            not xval.get("skipped", False)
+            and not xval.get("circular", False)
+        ):
+            xval_status = xval.get("status")
+            xval_metrics = xval.get("metrics", {})
+            corr = xval_metrics.get("correlation", 0.0)
+            if xval_status == QCStatus.WARN:
+                preload = xval.get("preload_effect_detected", False)
+                detail = (
+                    "preload effect suspected"
+                    if preload
+                    else "ratio outside range"
+                )
+                recommendations.append(
+                    QCRecommendation(
+                        QCAction.REVIEW,
+                        f"DSC-DCE: {detail} (r={corr:.2f})",
+                        1,
+                    )
+                )
+            elif xval_status == QCStatus.PASS:
+                recommendations.append(
+                    QCRecommendation(
+                        QCAction.INCLUDE,
+                        f"DSC-DCE validation passed (r={corr:.2f})",
+                        0,
+                    )
+                )
 
         # Aggregate recommendations
         overall = aggregate_qc_recommendations(recommendations)

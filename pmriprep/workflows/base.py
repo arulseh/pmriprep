@@ -2354,6 +2354,11 @@ def init_pmriprep_wf(
                     ]),
                 ])
 
+            # Pass DSC preload config to validation node
+            dce_wf.inputs.dsc_dce_validation.dsc_preload_configured = (
+                dsc_config.preload_present
+            )
+
         elif dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):
             # DSC skipped but DCE needs CBV: look for previous DSC outputs
             prev_dsc = _find_previous_dsc_outputs(
@@ -2493,6 +2498,8 @@ def init_pmriprep_wf(
                 # B1/T1 QC plots
                 ("outputnode.b1_qc_plot", "b1_qc_plot"),
                 ("outputnode.t1_qc_plot", "t1_qc_plot"),
+                # DSC-DCE cross-validation plot
+                ("outputnode.dsc_dce_xval_plot", "dsc_dce_xval_plot"),
                 # Structural underlays
                 ("outputnode.t1w_in_dce", "t1w_in_dce"),
                 ("outputnode.flair_in_dce", "flair_in_dce"),

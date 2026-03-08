@@ -224,6 +224,7 @@ def _fit_single_voxel(
         fixed_vp: Optional[float] = None
         vp_prior = None  # Hoisted for BIC winner MAP refinement
         delta_bic = np.nan
+        tofts_r2 = np.nan  # Tofts R² for delta-R² metric
 
         # Determine constraint state
         if voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
@@ -373,6 +374,13 @@ def _fit_single_voxel(
                 else np.nan
             )
 
+            # Extract Tofts R² for delta-R² metric (constraint benefit)
+            tofts_r2 = np.nan
+            for ar in all_results:
+                if ar.model_name == "tofts":
+                    tofts_r2 = ar.r_squared
+                    break
+
             # MAP refinement of BIC winner
             if bayesian == "map":
                 model_map = _worker_ctx.get("model_map", {})
@@ -458,6 +466,7 @@ def _fit_single_voxel(
             "constrained": constrained,
             "selected_model_name": selected_model_name,
             "delta_bic": float(delta_bic) if is_auto else np.nan,
+            "tofts_r_squared": float(tofts_r2) if is_auto else np.nan,
         }
 
     except Exception:
@@ -1388,6 +1397,11 @@ class ComputeDCEMaps(BaseInterface):
                 ):
                     constraint_mode = ConstraintMode.SOFT
                     constraint_vp_uncertainty = 0.2
+                    constraint_qc["downgrade_from"] = "hard"
+                    constraint_qc["mode"] = "soft"
+                    constraint_qc["reason"] = (
+                        "2CXM model: hard->soft (vp enters nonlinearly)"
+                    )
 
                 # Bayesian (MAP/MCMC): hard constraint bypasses the
                 # Bayesian fitter and uses L-BFGS-B, which converges
@@ -1403,6 +1417,14 @@ class ComputeDCEMaps(BaseInterface):
                 ):
                     constraint_mode = ConstraintMode.SOFT
                     constraint_vp_uncertainty = 0.2
+                    constraint_qc["downgrade_from"] = constraint_qc.get(
+                        "downgrade_from", "hard"
+                    )
+                    constraint_qc["mode"] = "soft"
+                    constraint_qc["reason"] = (
+                        "Bayesian fitting: hard->soft "
+                        "(informative prior on vp)"
+                    )
 
                 # Scale mismatch check: if vp*Cp overshoots tissue
                 # concentration in many voxels, the constraint is
@@ -1452,7 +1474,19 @@ class ComputeDCEMaps(BaseInterface):
                                         aif_peak,
                                         median_vp,
                                     )
+                                    constraint_qc["downgrade_from"] = (
+                                        constraint_qc.get(
+                                            "downgrade_from",
+                                            constraint_qc.get("mode", "hard"),
+                                        )
+                                    )
                                     constraint_mode = ConstraintMode.SKIP
+                                    constraint_qc["mode"] = "skip"
+                                    constraint_qc["reason"] = (
+                                        f"Scale mismatch: vp*Cp overshoots "
+                                        f"tissue in {overshoot_frac*100:.0f}% "
+                                        f"of voxels -> skip"
+                                    )
                                     constraint_qc["scale_mismatch"] = {
                                         "overshoot_fraction": overshoot_frac,
                                         "aif_peak_mM": aif_peak,
@@ -1473,6 +1507,11 @@ class ComputeDCEMaps(BaseInterface):
                                         median_vp,
                                     )
                                     constraint_vp_uncertainty = 0.5
+                                    constraint_qc["reason"] = (
+                                        f"Scale mismatch: widened soft prior "
+                                        f"uncertainty to 0.5 "
+                                        f"({overshoot_frac*100:.0f}% overshoot)"
+                                    )
                                     constraint_qc["scale_mismatch"] = {
                                         "overshoot_fraction": overshoot_frac,
                                         "aif_peak_mM": aif_peak,
@@ -1518,6 +1557,9 @@ class ComputeDCEMaps(BaseInterface):
         vp = np.full(spatial_shape, fill_val, dtype=np.float64)
         kep = np.full(spatial_shape, fill_val, dtype=np.float64)
         r2_map = np.zeros(spatial_shape, dtype=np.float64)
+
+        # Delta-R² map: R²(winner) - R²(Tofts) for constraint benefit (auto only)
+        delta_r2_map = np.full(spatial_shape, np.nan, dtype=np.float32)
 
         # 2CXM-specific (only if 2CXM is in candidates or explicitly selected)
         save_2cxm = (is_auto and "2cxm" in candidate_names) or model_name == "2cxm"
@@ -1582,6 +1624,7 @@ class ComputeDCEMaps(BaseInterface):
         mcmc_rhat_lists: dict[str, list[float]] = {}
         mcmc_ess_lists: dict[str, list[float]] = {}
         n_mcmc_voxels: int = 0
+        z_departure_list: list[float] = []  # soft constraint prior departure
 
         # Compute motion weights from framewise displacement (if available)
         motion_weights: Optional[npt.NDArray[np.floating]] = None
@@ -1779,6 +1822,14 @@ class ComputeDCEMaps(BaseInterface):
                 kep[x, y, z] = params.get("kep", 0.0)
             r2_map[x, y, z] = res["r_squared"]
 
+            # Delta-R²: R²(winner) - R²(Tofts) for constraint benefit
+            if is_auto:
+                t_r2 = res.get("tofts_r_squared", np.nan)
+                if effective_model_name == "tofts":
+                    delta_r2_map[x, y, z] = 0.0
+                elif np.isfinite(t_r2):
+                    delta_r2_map[x, y, z] = res["r_squared"] - t_r2
+
             if self._has_vp(effective_model_name):
                 vp[x, y, z] = params.get("vp", 0.0)
 
@@ -1815,6 +1866,23 @@ class ComputeDCEMaps(BaseInterface):
             elif vd.voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
                 # Had vp constraint but fell back to unconstrained
                 n_unconstrained_fallback += 1
+
+            # z_departure: how much DCE data pulled vp away from DSC prior
+            # Only meaningful for SOFT + Bayesian (where a soft prior was used)
+            if (
+                constraint_mode == ConstraintMode.SOFT
+                and bayesian != "none"
+                and self._has_vp(effective_model_name)
+                and vd.voxel_vp is not None
+                and vd.voxel_vp > 0
+            ):
+                vp_fitted = params.get("vp", 0.0)
+                vp_prior = vd.voxel_vp
+                prior_sigma = max(
+                    vp_prior * constraint_vp_uncertainty, 0.001
+                )
+                z = abs(vp_fitted - vp_prior) / prior_sigma
+                z_departure_list.append(z)
 
             if res["converged"]:
                 n_converged += 1
@@ -1885,6 +1953,29 @@ class ComputeDCEMaps(BaseInterface):
                     np.mean(arr < QC_ESS_MIN)
                 )
             qc_metrics["mcmc_diagnostics"] = mcmc_diag
+
+        # Delta-R² stats: constraint benefit assessment (auto mode)
+        if is_auto:
+            dr2_valid = delta_r2_map[fitting_mask]
+            dr2_finite = dr2_valid[np.isfinite(dr2_valid)]
+            if len(dr2_finite) > 0:
+                qc_metrics["delta_r2_mean"] = float(np.mean(dr2_finite))
+                qc_metrics["delta_r2_median"] = float(np.median(dr2_finite))
+                qc_metrics["frac_positive_delta_r2"] = float(
+                    np.mean(dr2_finite > 0)
+                )
+                # Count Tofts winners (delta_r2 == 0.0 exactly)
+                qc_metrics["n_tofts_winner"] = int(
+                    np.sum(model_selection_map == _MODEL_SELECTION_CODES.get("tofts", 0))
+                )
+
+        # z_departure stats: soft constraint prior departure
+        if z_departure_list:
+            z_arr = np.array(z_departure_list)
+            qc_metrics["z_departure_median"] = float(np.median(z_arr))
+            qc_metrics["z_departure_p90"] = float(np.percentile(z_arr, 90))
+            qc_metrics["frac_prior_dominated"] = float(np.mean(z_arr < 0.5))
+            qc_metrics["frac_strong_departure"] = float(np.mean(z_arr > 2.0))
 
         # Compute summary statistics on fitted voxels
         # For auto mode, use np.isfinite guard (NaN = non-applicable parameter)
@@ -2557,6 +2648,11 @@ class ComputeDCEMaps(BaseInterface):
             if save_fitted_curves and winner_result.fitted_curves is not None:
                 fitted_curve = winner_result.fitted_curves[i]
 
+            # Extract Tofts R² for delta-R² metric
+            gpu_tofts_r2 = np.nan
+            if "tofts" in gpu_results:
+                gpu_tofts_r2 = float(gpu_results["tofts"].r_squared[i])
+
             results.append({
                 "coords": (x, y, z),
                 "params": params_out,
@@ -2572,6 +2668,7 @@ class ComputeDCEMaps(BaseInterface):
                 "constrained": is_constrained,
                 "selected_model_name": winner_name,
                 "delta_bic": float(delta_bic[i]),
+                "tofts_r_squared": gpu_tofts_r2,
             })
 
         # MAP refinement of BIC winners

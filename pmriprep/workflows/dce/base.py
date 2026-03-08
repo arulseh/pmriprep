@@ -332,6 +332,8 @@ def init_dce_preproc_wf(
                 "pk_param_maps_qc_plot",
                 # Brain mask filmstrip
                 "brain_mask_filmstrip",
+                # DSC-DCE cross-validation plot
+                "dsc_dce_xval_plot",
                 # Anatomical masks in DCE space
                 "brain_mask",
                 "nawm_mask",
@@ -1099,6 +1101,8 @@ def init_dce_preproc_wf(
                 "dsc_cbv_file",
                 "brain_mask",
                 "no_dsc_validation",
+                "constraint_mode",
+                "dsc_preload_configured",
             ],
             output_names=["validation_result"],
             function=_dsc_dce_validation_node,
@@ -1107,11 +1111,14 @@ def init_dce_preproc_wf(
     )
 
     dsc_dce_validation.inputs.no_dsc_validation = config.no_dsc_validation
+    # dsc_preload_configured is set from base.py (None when DSC not configured)
+    # constraint_mode is connected from pk_modeling.qc_metrics (extracted in function)
     # dsc_cbv_file is provided by resample_dsc_cbv node (None when DSC unavailable)
 
     workflow.connect([
         (pk_modeling, dsc_dce_validation, [
             ("out_vp", "vp_file"),
+            ("qc_metrics", "constraint_mode"),  # extracts mode inside function
         ]),
         (transform_brain_mask, dsc_dce_validation, [
             ("out_file", "brain_mask"),
@@ -1119,6 +1126,44 @@ def init_dce_preproc_wf(
         # Feed resampled DSC CBV (deferred from Node 7c)
         (resample_dsc_cbv, dsc_dce_validation, [
             ("cbv_in_dce", "dsc_cbv_file"),
+        ]),
+    ])
+
+    # ==========================================================================
+    # Node 9a: DSC-DCE Cross-Validation Plot
+    # ==========================================================================
+    dsc_dce_xval_plot = pe.Node(
+        niu.Function(
+            input_names=[
+                "vp_file",
+                "dsc_cbv_file",
+                "brain_mask",
+                "validation_result",
+                "subject_id",
+                "session_id",
+                "constraint_mode",
+            ],
+            output_names=["plot_file"],
+            function=_dsc_dce_xval_plot_node,
+        ),
+        name="dsc_dce_xval_plot",
+    )
+    dsc_dce_xval_plot.inputs.subject_id = subject_id
+    dsc_dce_xval_plot.inputs.session_id = session_id or ""
+
+    workflow.connect([
+        (pk_modeling, dsc_dce_xval_plot, [
+            ("out_vp", "vp_file"),
+            ("qc_metrics", "constraint_mode"),
+        ]),
+        (resample_dsc_cbv, dsc_dce_xval_plot, [
+            ("cbv_in_dce", "dsc_cbv_file"),
+        ]),
+        (transform_brain_mask, dsc_dce_xval_plot, [
+            ("out_file", "brain_mask"),
+        ]),
+        (dsc_dce_validation, dsc_dce_xval_plot, [
+            ("validation_result", "validation_result"),
         ]),
     ])
 
@@ -1624,6 +1669,10 @@ def init_dce_preproc_wf(
         (pk_modeling, outputnode, [
             ("pk_modeling_qc_plot", "pk_modeling_qc_plot"),
             ("pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
+        ]),
+        # DSC-DCE cross-validation plot
+        (dsc_dce_xval_plot, outputnode, [
+            ("plot_file", "dsc_dce_xval_plot"),
         ]),
     ])
 
@@ -2497,12 +2546,29 @@ def _dsc_dce_validation_node(
     dsc_cbv_file=None,
     brain_mask=None,
     no_dsc_validation=False,
+    constraint_mode=None,
+    dsc_preload_configured=None,
 ):
     """Function node for DSC-DCE cross-validation.
+
+    Args:
+        constraint_mode: Either a string ("hard"/"soft"/"skip") or the full
+            pk_qc dict from pk_modeling (from which we extract
+            ``dsc_cbv_constraint.mode``).
+        dsc_preload_configured: Whether DSC preload was configured.
 
     Returns a dictionary with validation results.
     """
     from pmriprep.utils.dce_dsc_validation import validate_vp_cbv_from_files
+
+    # Extract constraint mode from pk_qc dict if that's what was passed
+    resolved_mode = None
+    if isinstance(constraint_mode, dict):
+        resolved_mode = constraint_mode.get(
+            "dsc_cbv_constraint", {}
+        ).get("mode")
+    elif isinstance(constraint_mode, str):
+        resolved_mode = constraint_mode
 
     # If skipping validation or missing data, return empty result
     if no_dsc_validation or not vp_file or not dsc_cbv_file:
@@ -2517,6 +2583,8 @@ def _dsc_dce_validation_node(
             vp_path=vp_file,
             cbv_path=dsc_cbv_file,
             mask_path=brain_mask,
+            constraint_mode=resolved_mode,
+            dsc_preload_configured=dsc_preload_configured,
         )
         return result.to_dict()
     except Exception as e:
@@ -2525,6 +2593,72 @@ def _dsc_dce_validation_node(
             "status": "error",
             "reason": str(e),
         }
+
+
+def _dsc_dce_xval_plot_node(
+    vp_file=None,
+    dsc_cbv_file=None,
+    brain_mask=None,
+    validation_result=None,
+    subject_id="",
+    session_id="",
+    constraint_mode=None,
+):
+    """Function node for DSC-DCE cross-validation plot generation.
+
+    Args:
+        constraint_mode: Either a string or the full pk_qc dict from
+            pk_modeling (from which we extract ``dsc_cbv_constraint.mode``).
+
+    Returns:
+        Path to plot PNG, or None if skipped.
+    """
+    # Skip if missing data or validation was skipped
+    if not vp_file or not dsc_cbv_file or not brain_mask:
+        return None
+    if validation_result and validation_result.get("skipped"):
+        return None
+
+    # Extract constraint mode from pk_qc dict if needed
+    resolved_mode = None
+    if isinstance(constraint_mode, dict):
+        resolved_mode = constraint_mode.get(
+            "dsc_cbv_constraint", {}
+        ).get("mode")
+    elif isinstance(constraint_mode, str):
+        resolved_mode = constraint_mode
+
+    try:
+        import nibabel as nib  # type: ignore[import-untyped]
+        import numpy as np
+
+        from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot
+
+        vp_data = np.asarray(
+            nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]
+        )
+        cbv_data = np.asarray(
+            nib.load(dsc_cbv_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]
+        )
+        mask = np.asarray(
+            nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]
+        )
+
+        return generate_xval_plot(
+            vp_data=vp_data,
+            cbv_data=cbv_data,
+            mask=mask,
+            validation_result=validation_result or {},
+            subject_id=subject_id,
+            session_id=session_id,
+            constraint_mode=resolved_mode,
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "DSC-DCE xval plot failed", exc_info=True
+        )
+        return None
 
 
 def _collect_qc_metrics(
