@@ -1,6 +1,6 @@
 # PMRIPrep
 
-**Perfusion MRI Preprocessing Pipeline** (v0.3.0)
+**Perfusion MRI Preprocessing Pipeline** (v0.4.1)
 
 PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and Dynamic Contrast Enhanced (DCE) perfusion MRI data. It follows the [NiPreps](https://www.nipreps.org/) framework conventions and produces BIDS-Derivatives compliant outputs with HTML QC reports.
 
@@ -214,7 +214,7 @@ dce:
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
 | `aif_mask_file` | path | `null` | Custom AIF mask file |
-| `gamma_fit` | bool | `false` | Apply gamma-variate fitting to AIF |
+| `gamma_fit` | str | `"auto"` | Gamma-variate AIF fitting: `auto`, `on`, `off` |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |
 | `pre_bolus` | int | `5` | Pre-bolus frames for S0 estimation (AIF timing auto-detected) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none) |
@@ -303,17 +303,21 @@ bids_dir/
         sub-01_ses-01_acq-trace_run-1_dwi.bvec
         sub-01_ses-01_acq-trace_run-1_dwi.bval
       fmap/
-        sub-01_ses-01_acq-afi_run-1_TB1AFI.nii.gz            # B1+ mapping
+        sub-01_ses-01_acq-afi_run-1_TB1AFI.nii.gz            # B1+ mapping (AFI)
         sub-01_ses-01_acq-afi_run-1_TB1AFI.json
+        sub-01_ses-01_acq-famp_run-1_TB1TFL.nii.gz           # B1+ mapping (Siemens tfl_b1map, alternative to AFI)
+        sub-01_ses-01_acq-famp_run-1_TB1TFL.json
 ```
 
 ### Required Files
 
-| Pipeline | Required |
-|----------|----------|
-| DSC | `*_dsc.nii.gz`, T1w |
-| DCE | `*_dce.nii.gz`, T1w |
-| HD-GLIO | T1w pre-contrast, T1w post-contrast, T2w, FLAIR |
+| Pipeline | Required | Optional |
+|----------|----------|----------|
+| DSC | `*_dsc.nii.gz`, T1w | — |
+| DCE | `*_dce.nii.gz`, T1w, VFA | B1+ map (`*_TB1AFI` or `*_TB1TFL`), DWI (tortuosity) |
+| HD-GLIO | T1w pre-contrast, T1w post-contrast, T2w, FLAIR | — |
+
+B1+ correction accepts either AFI (`*_TB1AFI`) or Siemens pre-computed flip angle maps (`*_TB1TFL`). Auto-detected via `--dce-b1-method auto`.
 
 ### JSON Sidecar Fields
 
@@ -360,6 +364,15 @@ Required: `RepetitionTime`, `FlipAngle` (per file, minimum 2 distinct angles).
 ```
 Required: `RepetitionTime` (scalar or 2-element array for 4D), `FlipAngle`.
 
+**TB1TFL sidecar (`*_TB1TFL.json`):**
+```json
+{
+  "RepetitionTime": 0.008,
+  "FlipAngle": 80
+}
+```
+Required: `RepetitionTime`, `FlipAngle`.
+
 ## Output Structure
 
 PMRIPrep outputs follow BIDS-Derivatives conventions:
@@ -382,20 +395,53 @@ output_dir/pmriprep/
       # DSC maps
       sub-01_ses-01_space-DSC_desc-dscRel_cbf.nii.gz
       sub-01_ses-01_space-DSC_desc-dscRel_cbv.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscRel_auc.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_mtt.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_tmax.nii.gz
+      sub-01_ses-01_space-DSC_desc-dsc_ttp.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_k2.nii.gz
+      sub-01_ses-01_space-DSC_desc-dsc_ph.nii.gz
+      sub-01_ses-01_space-DSC_desc-dsc_psr.nii.gz
+      sub-01_ses-01_space-DSC_desc-dsc_snr.nii.gz
+      sub-01_ses-01_space-DSC_desc-dsc_tsnr.nii.gz
+      sub-01_ses-01_space-DSC_desc-dsc_cnr.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscAifCorrected_ttp.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscRelCorrected_auc.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscLeakage_auc.nii.gz
       sub-01_ses-01_space-DSC_desc-dscNawmNorm_cbf.nii.gz
       sub-01_ses-01_space-DSC_desc-dscNawmNorm_cbv.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscNawmRel_ttp.nii.gz
+      # DSC Bayesian (optional)
+      sub-01_ses-01_space-DSC_desc-dscUncertainty_cbf.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscCV_cbf.nii.gz
+      # DSC vascular model (optional)
+      sub-01_ses-01_space-DSC_desc-dsc_alpha.nii.gz
+      sub-01_ses-01_space-DSC_desc-dsc_beta.nii.gz
+      sub-01_ses-01_space-DSC_desc-dsc_cth.nii.gz
       # DCE PK maps
-      sub-01_ses-01_space-DCE_model-extendedTofts_desc-dce_Ktrans.nii.gz
-      sub-01_ses-01_space-DCE_model-extendedTofts_desc-dce_ve.nii.gz
-      sub-01_ses-01_space-DCE_model-extendedTofts_desc-dce_vp.nii.gz
-      sub-01_ses-01_space-DCE_model-extendedTofts_desc-dceNawmNorm_Ktrans.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dce_Ktrans.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dce_ve.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dce_vp.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dce_kep.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dce_R2.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dceNawmNorm_Ktrans.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dceTortuosityCorr_Ktrans.nii.gz
+      # DCE Bayesian (optional)
+      sub-01_ses-01_space-DCE_model-auto_desc-dceUncertainty_Ktrans.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dceCV_Ktrans.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dceCI95lower_Ktrans.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dceCI95upper_Ktrans.nii.gz
+      # DCE model selection (auto mode)
+      sub-01_ses-01_space-DCE_model-auto_desc-dceModelSelection_dseg.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dceDeltaBIC_stat.nii.gz
+      sub-01_ses-01_space-DCE_model-auto_desc-dceQualityFlag_mask.nii.gz
       # DCE model-free maps
       sub-01_ses-01_space-DCE_desc-dce_IAUC60.nii.gz
+      sub-01_ses-01_space-DCE_desc-dce_peakEnhancement.nii.gz
+      sub-01_ses-01_space-DCE_desc-dce_SER.nii.gz
+      sub-01_ses-01_space-DCE_desc-dce_ttp.nii.gz
+      sub-01_ses-01_space-DCE_desc-dce_tsnr.nii.gz
       sub-01_ses-01_space-DCE_desc-dceNawmNorm_IAUC60.nii.gz
-      # ... additional maps (SER, TTP, peak enhancement, SNR, tSNR, etc.)
       # AIF
       sub-01_ses-01_desc-dscAif_timeseries.txt
       sub-01_ses-01_desc-dceAif_timeseries.txt
@@ -412,19 +458,45 @@ output_dir/pmriprep/
 
 ### Output File Descriptions
 
+**DSC maps:**
+
 | File Pattern | Description | Units |
 |--------------|-------------|-------|
 | `*_desc-dscRel_cbf` | Cerebral blood flow (relative) | 1/min |
 | `*_desc-dscRel_cbv` | Cerebral blood volume (relative) | arbitrary |
-| `*_desc-dscNawmNorm_cbf` | CBF normalized by NAWM | ratio |
-| `*_desc-dscNawmNorm_cbv` | CBV normalized by NAWM | ratio |
+| `*_desc-dscRel_auc` | Relative area under curve | arbitrary |
 | `*_desc-dsc_mtt` | Mean transit time | seconds |
 | `*_desc-dsc_tmax` | Time to maximum of residue function | seconds |
+| `*_desc-dsc_ttp` | Time to peak concentration | seconds |
+| `*_desc-dscAifCorrected_ttp` | Time to peak, corrected for AIF bolus arrival | seconds |
+| `*_desc-dscNawmRel_ttp` | Time to peak relative to contralateral NAWM | seconds |
 | `*_desc-dsc_k2` | K2 leakage parameter | 1/s |
+| `*_desc-dsc_ph` | Peak height | arbitrary |
+| `*_desc-dsc_psr` | Percent signal recovery | % |
+| `*_desc-dsc_snr` | Signal-to-noise ratio (baseline) | arbitrary |
+| `*_desc-dsc_tsnr` | Temporal signal-to-noise ratio | arbitrary |
+| `*_desc-dsc_cnr` | Contrast-to-noise ratio | arbitrary |
+| `*_desc-dscRelCorrected_auc` | Leakage-corrected relative AUC | arbitrary |
+| `*_desc-dscLeakage_auc` | Leakage contribution (AUC_raw - AUC_corr) | arbitrary |
+| `*_desc-dscNawmNorm_cbf` | CBF normalized by NAWM | ratio |
+| `*_desc-dscNawmNorm_cbv` | CBV normalized by NAWM | ratio |
+| `*_desc-dsc_alpha` | Vascular model alpha (vascular method only) | — |
+| `*_desc-dsc_beta` | Vascular model beta (vascular method only) | — |
+| `*_desc-dsc_cth` | Capillary transit heterogeneity (vascular method only) | seconds |
+| `*_desc-dscUncertainty_{param}` | Posterior std (Bayesian only) | varies |
+| `*_desc-dscCV_{param}` | Coefficient of variation (Bayesian only) | fraction |
+| `*_desc-dscCI95lower_{param}` | 95% credible interval lower bound (Bayesian only) | varies |
+| `*_desc-dscCI95upper_{param}` | 95% credible interval upper bound (Bayesian only) | varies |
+
+**DCE maps:**
+
+| File Pattern | Description | Units |
+|--------------|-------------|-------|
 | `*_desc-dce_Ktrans` | Volume transfer constant | 1/min |
 | `*_desc-dce_ve` | Extravascular extracellular volume | fraction |
 | `*_desc-dce_vp` | Plasma volume fraction | fraction |
 | `*_desc-dce_kep` | Efflux rate constant | 1/min |
+| `*_desc-dce_R2` | Goodness of fit (R-squared) | fraction |
 | `*_desc-dce_IAUC60` | Initial area under curve at 60s | mM\*min |
 | `*_desc-dce_IAUC90` | Initial area under curve at 90s | mM\*min |
 | `*_desc-dce_IAUC120` | Initial area under curve at 120s | mM\*min |
@@ -432,7 +504,16 @@ output_dir/pmriprep/
 | `*_desc-dce_ttp` | Time to peak | seconds |
 | `*_desc-dce_SER` | Signal enhancement ratio | ratio |
 | `*_desc-dce_tsnr` | Temporal signal-to-noise ratio | ratio |
-| `*_desc-dce_R2` | Goodness of fit (R-squared) | fraction |
+| `*_desc-dceNawmNorm_Ktrans` | NAWM-normalized Ktrans | ratio |
+| `*_desc-dceNawmNorm_IAUC60` | NAWM-normalized IAUC60 | ratio |
+| `*_desc-dceTortuosityCorr_Ktrans` | Tortuosity-corrected Ktrans (requires DWI) | 1/min |
+| `*_desc-dceUncertainty_{param}` | Posterior std (Bayesian only) | varies |
+| `*_desc-dceCV_{param}` | Coefficient of variation (Bayesian only) | fraction |
+| `*_desc-dceCI95lower_{param}` | 95% credible interval lower bound (Bayesian only) | varies |
+| `*_desc-dceCI95upper_{param}` | 95% credible interval upper bound (Bayesian only) | varies |
+| `*_desc-dceModelSelection_dseg` | Per-voxel model selection (auto mode only) | categorical |
+| `*_desc-dceDeltaBIC_stat` | Delta-BIC confidence (auto mode only) | — |
+| `*_desc-dceQualityFlag_mask` | Voxel quality flags (auto mode only) | categorical |
 
 All NIfTI outputs have paired `.json` sidecars with descriptions, units, and provenance.
 
