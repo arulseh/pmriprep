@@ -185,6 +185,7 @@ def init_dce_preproc_wf(
                 # Tumor mask inputs for lesion statistics
                 "whole_tumor_mask",  # Undilated whole-tumor mask (fallback for lesion stats)
                 "enhancing_mask",  # Enhancing tumor mask for QC voxel selection (optional)
+                "non_enhancing_mask",  # Non-enhancing tumor mask for model selection QC (optional)
                 "tumor_segmentation",  # Multi-label tumor segmentation for lesion stats (optional)
                 # VFA T1 mapping inputs
                 "vfa_files",
@@ -228,6 +229,8 @@ def init_dce_preproc_wf(
                 "nawm_mask",  # NAWM mask in T1w space for nKtrans, nIAUC60
                 # Generic ROI mask for stats extraction only (optional)
                 "roi_mask",
+                # User-supplied lesion mask (T1w space) for QC bars
+                "user_lesion_mask",
             ]
         ),
         name="inputnode",
@@ -330,6 +333,7 @@ def init_dce_preproc_wf(
                 "preprocessing_qc_plot",
                 "pk_modeling_qc_plot",
                 "pk_param_maps_qc_plot",
+                "model_selection_qc_plot",
                 # Brain mask filmstrip
                 "brain_mask_filmstrip",
                 # DSC-DCE cross-validation plot
@@ -922,7 +926,6 @@ def init_dce_preproc_wf(
         (inputnode, pk_modeling, [
             ("tr", "tr"),
             ("volume_tr", "volume_tr"),  # For model auto-selection
-            ("enhancing_mask", "enhancing_mask_file"),
         ]),
         # Raw DCE signal for tSNR computation (matches perf-plus)
         # Also wire baseline_frames so pk_modeling uses the same value
@@ -1063,6 +1066,50 @@ def init_dce_preproc_wf(
         (dce_registration, transform_nawm_mask, [("out_matrix", "transform_matrix")]),
     ])
 
+    # Transform non-enhancing mask to DCE space (for model selection QC)
+    transform_non_enhancing_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "transform_matrix"],
+            output_names=["out_file"],
+            function=_transform_mask_to_dce,
+        ),
+        name="transform_non_enhancing_mask",
+    )
+
+    # Transform enhancing mask to DCE space (for QC voxel selection)
+    transform_enhancing_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "transform_matrix"],
+            output_names=["out_file"],
+            function=_transform_mask_to_dce,
+        ),
+        name="transform_enhancing_mask",
+    )
+
+    workflow.connect([
+        (inputnode, transform_non_enhancing_mask, [("non_enhancing_mask", "mask_file")]),
+        (dce_preprocess, transform_non_enhancing_mask, [("mean_img", "reference_file")]),
+        (dce_registration, transform_non_enhancing_mask, [("out_matrix", "transform_matrix")]),
+        (inputnode, transform_enhancing_mask, [("enhancing_mask", "mask_file")]),
+        (dce_preprocess, transform_enhancing_mask, [("mean_img", "reference_file")]),
+        (dce_registration, transform_enhancing_mask, [("out_matrix", "transform_matrix")]),
+    ])
+
+    # Transform user-supplied lesion mask to DCE space (for QC bars)
+    transform_user_lesion_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "transform_matrix"],
+            output_names=["out_file"],
+            function=_transform_mask_to_dce,
+        ),
+        name="transform_user_lesion_mask",
+    )
+    workflow.connect([
+        (inputnode, transform_user_lesion_mask, [("user_lesion_mask", "mask_file")]),
+        (dce_preprocess, transform_user_lesion_mask, [("mean_img", "reference_file")]),
+        (dce_registration, transform_user_lesion_mask, [("out_matrix", "transform_matrix")]),
+    ])
+
     # ==========================================================================
     # Node 8c: NAWM Normalization (nKtrans, nIAUC60)
     # ==========================================================================
@@ -1164,6 +1211,113 @@ def init_dce_preproc_wf(
         ]),
         (dsc_dce_validation, dsc_dce_xval_plot, [
             ("validation_result", "validation_result"),
+        ]),
+    ])
+
+    # ==========================================================================
+    # Node 9a2: DCE PK QC Plots (lightweight wrappers over saved NIfTIs)
+    # ==========================================================================
+    dce_pk_maps_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "ktrans_file", "ve_file", "vp_file", "fp_file", "ps_file",
+                "brain_mask_file",
+                "model_selection_file", "delta_bic_file",
+                "enhancing_mask_file", "non_enhancing_mask_file",
+                "nawm_mask_file",
+                "user_lesion_mask_file", "roi_mask_file",
+                "model_name", "subject_id", "session_id",
+            ],
+            output_names=[
+                "pk_param_maps_qc_plot",
+                "model_selection_qc_plot",
+                "model_selection_regions",
+            ],
+            function=_generate_dce_pk_maps_qc,
+        ),
+        name="dce_pk_maps_qc",
+    )
+    dce_pk_maps_qc.inputs.model_name = config.model
+    dce_pk_maps_qc.inputs.subject_id = subject_id
+    dce_pk_maps_qc.inputs.session_id = session_id or ""
+
+    workflow.connect([
+        (pk_modeling, dce_pk_maps_qc, [
+            ("out_ktrans", "ktrans_file"),
+            ("out_ve", "ve_file"),
+            ("out_vp", "vp_file"),
+            ("out_fp", "fp_file"),
+            ("out_ps", "ps_file"),
+            ("out_model_selection", "model_selection_file"),
+            ("out_delta_bic", "delta_bic_file"),
+        ]),
+        (dce_brain_extract, dce_pk_maps_qc, [
+            ("out_mask", "brain_mask_file"),
+        ]),
+        (transform_enhancing_mask, dce_pk_maps_qc, [
+            ("out_file", "enhancing_mask_file"),
+        ]),
+        (transform_non_enhancing_mask, dce_pk_maps_qc, [
+            ("out_file", "non_enhancing_mask_file"),
+        ]),
+        (transform_nawm_mask, dce_pk_maps_qc, [
+            ("out_file", "nawm_mask_file"),
+        ]),
+        (transform_user_lesion_mask, dce_pk_maps_qc, [
+            ("out_file", "user_lesion_mask_file"),
+        ]),
+    ])
+
+    dce_pk_fit_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "concentration_file", "dce_signal_file", "aif_file",
+                "brain_mask_file",
+                "ktrans_file", "ve_file", "vp_file", "fp_file", "ps_file",
+                "r2_file", "qc_mask_file", "fitted_curves_file",
+                "model_selection_file", "enhancing_mask_file",
+                "volume_tr", "baseline_frames",
+                "model_name", "subject_id", "session_id",
+            ],
+            output_names=["pk_modeling_qc_plot", "pk_voxel_metrics"],
+            function=_generate_dce_pk_fit_qc,
+        ),
+        name="dce_pk_fit_qc",
+    )
+    dce_pk_fit_qc.inputs.model_name = config.model
+    dce_pk_fit_qc.inputs.subject_id = subject_id
+    dce_pk_fit_qc.inputs.session_id = session_id or ""
+
+    workflow.connect([
+        (signal_to_conc, dce_pk_fit_qc, [
+            ("concentration_file", "concentration_file"),
+        ]),
+        (dce_preprocess, dce_pk_fit_qc, [
+            ("out_file", "dce_signal_file"),
+            ("baseline_frames", "baseline_frames"),
+        ]),
+        (aif_detection, dce_pk_fit_qc, [
+            ("out_aif_curve", "aif_file"),
+        ]),
+        (dce_brain_extract, dce_pk_fit_qc, [
+            ("out_mask", "brain_mask_file"),
+        ]),
+        (pk_modeling, dce_pk_fit_qc, [
+            ("out_ktrans", "ktrans_file"),
+            ("out_ve", "ve_file"),
+            ("out_vp", "vp_file"),
+            ("out_fp", "fp_file"),
+            ("out_ps", "ps_file"),
+            ("out_r2", "r2_file"),
+            ("out_qc_mask", "qc_mask_file"),
+            ("out_fitted_curves", "fitted_curves_file"),
+            ("out_model_selection", "model_selection_file"),
+        ]),
+        (inputnode, dce_pk_fit_qc, [
+            ("volume_tr", "volume_tr"),
+        ]),
+        (transform_enhancing_mask, dce_pk_fit_qc, [
+            ("out_file", "enhancing_mask_file"),
         ]),
     ])
 
@@ -1377,6 +1531,8 @@ def init_dce_preproc_wf(
                 "pk_qc",
                 "validation_result",
                 "preproc_display",
+                "pk_fit_qc_metrics",
+                "pk_maps_qc_metrics",
             ],
             output_names=["qc_metrics"],
             function=_collect_qc_metrics,
@@ -1415,6 +1571,13 @@ def init_dce_preproc_wf(
         ]),
         (preprocessing_qc, collect_qc, [
             ("preproc_display_stats", "preproc_display"),
+        ]),
+        # Wire QC metrics from the DCE PK plot nodes
+        (dce_pk_fit_qc, collect_qc, [
+            ("pk_voxel_metrics", "pk_fit_qc_metrics"),
+        ]),
+        (dce_pk_maps_qc, collect_qc, [
+            ("model_selection_regions", "pk_maps_qc_metrics"),
         ]),
     ])
 
@@ -1666,9 +1829,12 @@ def init_dce_preproc_wf(
         (preprocessing_qc, outputnode, [
             ("plot_file", "preprocessing_qc_plot"),
         ]),
-        (pk_modeling, outputnode, [
+        (dce_pk_fit_qc, outputnode, [
             ("pk_modeling_qc_plot", "pk_modeling_qc_plot"),
+        ]),
+        (dce_pk_maps_qc, outputnode, [
             ("pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
+            ("model_selection_qc_plot", "model_selection_qc_plot"),
         ]),
         # DSC-DCE cross-validation plot
         (dsc_dce_xval_plot, outputnode, [
@@ -1753,6 +1919,10 @@ def init_dce_preproc_wf(
         (inputnode, transform_roi, [("roi_mask", "lesion_mask_file")]),
         (dce_preprocess, transform_roi, [("mean_img", "reference_file")]),
         (dce_registration, transform_roi, [("out_matrix", "transform_matrix")]),
+        # Wire transformed ROI mask to model selection QC bars
+        (transform_roi, dce_pk_maps_qc, [
+            ("lesion_mask_dce_file", "roi_mask_file"),
+        ]),
     ])
     # Connect perfusion maps to ROI stats
     workflow.connect([
@@ -1826,17 +1996,18 @@ def _transform_mask_to_dce(
         transform_matrix: Path to T1w→DCE FLIRT matrix.
 
     Returns:
-        Path to transformed brain mask in DCE space, or None if no mask.
+        Path to transformed brain mask in DCE space, or "" if no mask.
     """
     from nipype.interfaces.base import isdefined
 
-    # Handle both None and Nipype Undefined
+    # Handle both None and Nipype Undefined.
+    # Return "" (not None) because downstream traits.Str rejects None.
     if not isdefined(mask_file) or mask_file is None:
-        return None
+        return ""
     if not isdefined(reference_file) or reference_file is None:
-        return None
+        return ""
     if not isdefined(transform_matrix) or transform_matrix is None:
-        return None
+        return ""
 
     from pathlib import Path
     import subprocess
@@ -1845,8 +2016,8 @@ def _transform_mask_to_dce(
     import numpy as np
 
     mask_path = Path(mask_file)
-    if not mask_path.exists():
-        return None
+    if not mask_path.is_file():
+        return ""
 
     out_dir = Path.cwd()
     out_file = str(out_dir / "brain_mask_dce.nii.gz")
@@ -1935,7 +2106,7 @@ def _transform_probseg_to_dce(
     import numpy as np
 
     probseg_path = Path(probseg_file)
-    if not probseg_path.exists():
+    if not probseg_path.is_file():
         return None
 
     out_dir = Path.cwd()
@@ -2015,7 +2186,7 @@ def _transform_lesion_mask_to_dce(
     import subprocess
 
     lesion_path = Path(lesion_mask_file)
-    if not lesion_path.exists():
+    if not lesion_path.is_file():
         return None
 
     out_dir = Path.cwd()
@@ -2057,11 +2228,11 @@ def _create_aif_search_mask(
     Returns:
         Path to conservative AIF search mask, or None if inputs missing.
     """
-    if t1w_mask_in_dce is None:
+    if not t1w_mask_in_dce or t1w_mask_in_dce is None:
         # If no T1w mask, fall back to native DCE mask
         return dce_native_mask
 
-    if dce_native_mask is None:
+    if not dce_native_mask or dce_native_mask is None:
         # If no native DCE mask, fall back to T1w mask
         return t1w_mask_in_dce
 
@@ -2074,9 +2245,9 @@ def _create_aif_search_mask(
     t1w_mask_path = Path(t1w_mask_in_dce)
     dce_mask_path = Path(dce_native_mask)
 
-    if not t1w_mask_path.exists():
+    if not t1w_mask_path.is_file():
         return str(dce_native_mask)
-    if not dce_mask_path.exists():
+    if not dce_mask_path.is_file():
         return str(t1w_mask_in_dce)
 
     # Load masks
@@ -2137,7 +2308,7 @@ def _transform_atlas_to_dce(
     import subprocess
 
     atlas_path = Path(atlas_file)
-    if not atlas_path.exists():
+    if not atlas_path.is_file():
         return None
 
     out_dir = Path.cwd()
@@ -2272,7 +2443,7 @@ def _transform_atlas_cascade_to_dce(
     out_files = []
     for atlas_file in atlas_files:
         atlas_path = Path(atlas_file)
-        if not atlas_path.exists():
+        if not atlas_path.is_file():
             continue
 
         atlas_stem = atlas_path.name.replace(".nii.gz", "").replace(".nii", "")
@@ -2670,6 +2841,8 @@ def _collect_qc_metrics(
     pk_qc,
     validation_result,
     preproc_display=None,
+    pk_fit_qc_metrics=None,
+    pk_maps_qc_metrics=None,
 ):
     """Collect all QC metrics into a single dictionary."""
     qc_metrics = {}
@@ -2686,6 +2859,10 @@ def _collect_qc_metrics(
         qc_metrics["aif_detection"] = aif_qc
     if pk_qc is not None:
         qc_metrics["pk_modeling"] = pk_qc
+    if pk_fit_qc_metrics is not None:
+        qc_metrics.setdefault("pk_modeling", {}).update(pk_fit_qc_metrics)
+    if pk_maps_qc_metrics is not None:
+        qc_metrics.setdefault("pk_modeling", {})["model_selection_regions"] = pk_maps_qc_metrics
     if validation_result is not None:
         qc_metrics["dsc_dce_validation"] = validation_result
 
@@ -2895,7 +3072,7 @@ def _register_dwi_to_dce(
     import numpy as np
 
     dwi_path = Path(dwi_file)
-    if not dwi_path.exists():
+    if not dwi_path.is_file():
         return None, None
 
     out_dir = Path.cwd()
@@ -3078,7 +3255,7 @@ def _transform_structural_to_dce(
     from pathlib import Path
     import subprocess
 
-    if not Path(structural_file).exists():
+    if not Path(structural_file).is_file():
         return None
 
     out_file = str(Path.cwd() / output_name)
@@ -3216,9 +3393,9 @@ def _create_dce_registration_filmstrip(
     if dce_mean_file is None or registered_t1w_file is None:
         return None
 
-    if not Path(dce_mean_file).exists():
+    if not Path(dce_mean_file).is_file():
         return None
-    if not Path(registered_t1w_file).exists():
+    if not Path(registered_t1w_file).is_file():
         return None
 
     # Load data
@@ -3231,7 +3408,7 @@ def _create_dce_registration_filmstrip(
 
     # Load mask if provided
     mask = None
-    if brain_mask_file is not None and Path(brain_mask_file).exists():
+    if brain_mask_file is not None and Path(brain_mask_file).is_file():
         mask_img = nib.load(brain_mask_file)
         mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
@@ -3272,7 +3449,7 @@ def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
         return results
     if not brain_mask_file or not isdefined(brain_mask_file):
         return results
-    if not Path(brain_mask_file).exists():
+    if not Path(brain_mask_file).is_file():
         return results
 
     sigma = fwhm / 2.355
@@ -3281,7 +3458,7 @@ def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
             continue
         if isinstance(filepath, str) and filepath in ("", "None"):
             continue
-        if not Path(filepath).exists():
+        if not Path(filepath).is_file():
             continue
         out_path = str(Path.cwd() / f"{Path(filepath).stem}_fwhm{int(fwhm)}.nii.gz")
         subprocess.run(
@@ -3390,9 +3567,9 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):
         return None
     if not isdefined(param_map) or param_map is None:
         return None
-    if not Path(nawm_mask).exists():
+    if not Path(nawm_mask).is_file():
         return None
-    if not Path(param_map).exists():
+    if not Path(param_map).is_file():
         return None
 
     param_img = nib.load(param_map)
@@ -3427,3 +3604,349 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):
         out_file,
     )
     return out_file
+
+
+def _generate_dce_pk_maps_qc(
+    ktrans_file: str,
+    ve_file: str | None = None,
+    vp_file: str | None = None,
+    fp_file: str | None = None,
+    ps_file: str | None = None,
+    brain_mask_file: str | None = None,
+    model_selection_file: str | None = None,
+    delta_bic_file: str | None = None,
+    enhancing_mask_file: str | None = None,
+    non_enhancing_mask_file: str | None = None,
+    nawm_mask_file: str | None = None,
+    user_lesion_mask_file: str | None = None,
+    roi_mask_file: str | None = None,
+    model_name: str = "tofts",
+    subject_id: str = "",
+    session_id: str = "",
+) -> tuple:
+    """Generate DCE PK parameter maps QC and model selection QC plots.
+
+    Lightweight wrapper that loads saved NIfTIs and calls plot functions.
+    Follows the DSC QC wrapper pattern (dsc/base.py).
+
+    Args:
+        ktrans_file: Path to Ktrans map NIfTI.
+        ve_file: Path to ve map NIfTI (may be undefined for patlak).
+        vp_file: Path to vp map NIfTI (may be undefined for tofts).
+        fp_file: Path to Fp map NIfTI (may be undefined for non-2cxm).
+        ps_file: Path to PS map NIfTI (may be undefined for non-2cxm).
+        brain_mask_file: Path to brain mask NIfTI.
+        model_selection_file: Path to model selection map NIfTI (auto mode).
+        delta_bic_file: Path to delta-BIC map NIfTI (auto mode).
+        enhancing_mask_file: Path to enhancing tumor mask NIfTI (optional).
+        non_enhancing_mask_file: Path to non-enhancing tumor mask NIfTI (optional).
+        nawm_mask_file: Path to NAWM mask NIfTI (optional).
+        user_lesion_mask_file: Path to user-supplied lesion mask NIfTI (optional).
+        roi_mask_file: Path to user-supplied ROI mask NIfTI (optional).
+        model_name: PK model name.
+        subject_id: Subject identifier.
+        session_id: Session identifier.
+
+    Returns:
+        Tuple of (pk_param_maps_qc_plot, model_selection_qc_plot,
+        model_selection_regions).
+    """
+    import logging
+
+    from pathlib import Path as _P
+
+    import nibabel as nib
+    import numpy as np
+
+    logger = logging.getLogger("pmriprep.workflows.dce")
+
+    def _safe_load(filepath):
+        if not filepath or not _P(str(filepath)).is_file():
+            return None
+        return nib.load(filepath).get_fdata()
+
+    pk_param_maps_qc_plot = ""
+    model_selection_qc_plot = ""
+    model_selection_regions = None
+
+    try:
+        from pmriprep.utils.dce_pk_qc_plots import (
+            generate_model_selection_qc_plot,
+            generate_pk_parameter_maps_qc_plot,
+        )
+
+        mask_data = nib.load(brain_mask_file).get_fdata()
+        is_auto = model_name == "auto"
+
+        # Build param_maps dict from available files
+        param_maps = {}
+        ktrans_data = _safe_load(ktrans_file)
+        if ktrans_data is not None:
+            param_maps["Ktrans"] = np.nan_to_num(ktrans_data, nan=0.0) if is_auto else ktrans_data
+
+        ve_data = _safe_load(ve_file)
+        if ve_data is not None:
+            param_maps["ve"] = np.nan_to_num(ve_data, nan=0.0) if is_auto else ve_data
+
+        vp_data = _safe_load(vp_file)
+        if vp_data is not None:
+            param_maps["vp"] = np.nan_to_num(vp_data, nan=0.0) if is_auto else vp_data
+
+        fp_data = _safe_load(fp_file)
+        if fp_data is not None:
+            param_maps["Fp"] = fp_data
+
+        ps_data = _safe_load(ps_file)
+        if ps_data is not None:
+            param_maps["PS"] = ps_data
+
+        # Generate parameter maps QC plot
+        pk_param_maps_qc_plot = generate_pk_parameter_maps_qc_plot(
+            param_maps=param_maps,
+            brain_mask=mask_data,
+            subject_id=subject_id,
+            session_id=session_id,
+        )
+
+        # Generate model selection QC plot (auto mode only)
+        model_sel_data = _safe_load(model_selection_file)
+        delta_bic_data = _safe_load(delta_bic_file)
+
+        if model_sel_data is not None and delta_bic_data is not None:
+            enh_data = _safe_load(enhancing_mask_file)
+            if enh_data is not None:
+                enh_data = (enh_data > 0.5).astype(np.float64)
+
+            ne_data = _safe_load(non_enhancing_mask_file)
+            if ne_data is not None:
+                ne_data = (ne_data > 0.5).astype(np.float64)
+
+            nawm_data = _safe_load(nawm_mask_file)
+            if nawm_data is not None:
+                nawm_data = (nawm_data > 0.5).astype(np.float64)
+
+            ul_data = _safe_load(user_lesion_mask_file)
+            if ul_data is not None:
+                ul_data = (ul_data > 0.5).astype(np.float64)
+
+            roi_data = _safe_load(roi_mask_file)
+            if roi_data is not None:
+                roi_data = (roi_data > 0.5).astype(np.float64)
+
+            regional_stats: dict = {}
+            model_selection_qc_plot = generate_model_selection_qc_plot(
+                model_selection_map=model_sel_data.astype(np.int8),
+                delta_bic_map=delta_bic_data.astype(np.float32),
+                brain_mask=mask_data,
+                enhancing_mask=enh_data,
+                non_enhancing_mask=ne_data,
+                nawm_mask=nawm_data,
+                user_lesion_mask=ul_data,
+                roi_mask=roi_data,
+                subject_id=subject_id,
+                session_id=session_id,
+                regional_stats_out=regional_stats,
+            )
+            if regional_stats:
+                model_selection_regions = regional_stats
+
+    except Exception as e:
+        logger.warning("Failed to generate PK maps QC plots: %s", e, exc_info=True)
+
+    return pk_param_maps_qc_plot, model_selection_qc_plot, model_selection_regions
+
+
+def _generate_dce_pk_fit_qc(
+    concentration_file,
+    dce_signal_file=None,
+    aif_file=None,
+    brain_mask_file=None,
+    ktrans_file=None,
+    ve_file=None,
+    vp_file=None,
+    fp_file=None,
+    ps_file=None,
+    r2_file=None,
+    qc_mask_file=None,
+    fitted_curves_file=None,
+    model_selection_file=None,
+    enhancing_mask_file=None,
+    volume_tr=1.0,
+    baseline_frames=10,
+    model_name="tofts",
+    subject_id="",
+    session_id="",
+):
+    """Generate DCE PK modeling fit QC plot.
+
+    Lightweight wrapper that loads saved NIfTIs, recomputes the single-voxel
+    fitted curve, and calls the QC plot function. Follows the DSC QC wrapper
+    pattern (dsc/base.py).
+
+    Args:
+        concentration_file: Path to 4D concentration NIfTI.
+        dce_signal_file: Path to 4D raw DCE signal NIfTI.
+        aif_file: Path to AIF curve (.npy or NIfTI).
+        brain_mask_file: Path to brain mask NIfTI.
+        ktrans_file: Path to Ktrans map NIfTI.
+        ve_file: Path to ve map NIfTI (may be undefined).
+        vp_file: Path to vp map NIfTI (may be undefined).
+        fp_file: Path to Fp map NIfTI (may be undefined).
+        ps_file: Path to PS map NIfTI (may be undefined).
+        r2_file: Path to R² map NIfTI.
+        qc_mask_file: Path to QC mask NIfTI.
+        fitted_curves_file: Path to 4D fitted curves NIfTI (optional).
+        model_selection_file: Path to model selection map NIfTI (auto mode).
+        enhancing_mask_file: Path to enhancing tumor mask NIfTI (optional).
+        volume_tr: Volume TR in seconds.
+        baseline_frames: Number of baseline frames.
+        model_name: PK model name.
+        subject_id: Subject identifier.
+        session_id: Session identifier.
+
+    Returns:
+        Tuple of (pk_modeling_qc_plot path, pk_voxel_metrics dict).
+    """
+    import logging
+
+    from pathlib import Path as _P
+
+    import nibabel as nib
+    import numpy as np
+
+    logger = logging.getLogger("pmriprep.workflows.dce")
+
+    def _safe_load(filepath):
+        if not filepath or not _P(str(filepath)).is_file():
+            return None
+        return nib.load(filepath).get_fdata()
+
+    try:
+        from pmriprep.utils.dce_pk_qc_plots import (
+            _select_qc_voxel,
+            generate_pk_modeling_qc_plot,
+        )
+
+        # Load required data
+        conc_data = nib.load(concentration_file).get_fdata()
+        mask_data = nib.load(brain_mask_file).get_fdata()
+        mask_bool = mask_data > 0.5
+
+        n_timepoints = conc_data.shape[3]
+        time_points = np.arange(n_timepoints) * (volume_tr / 60.0)  # seconds -> minutes
+
+        # Load AIF
+        aif_path = _P(str(aif_file))
+        if aif_path.suffix == ".npy":
+            aif = np.load(str(aif_path))
+        else:
+            aif = nib.load(str(aif_path)).get_fdata().flatten()
+
+        # Load parameter maps
+        ktrans = _safe_load(ktrans_file)
+        if ktrans is None:
+            return "", {}
+
+        is_auto = model_name == "auto"
+        ve = _safe_load(ve_file)
+        vp = _safe_load(vp_file)
+        fp = _safe_load(fp_file)
+        ps = _safe_load(ps_file)
+        r2_map = _safe_load(r2_file)
+        if r2_map is None:
+            r2_map = np.zeros(ktrans.shape, dtype=np.float32)
+        qc_mask = _safe_load(qc_mask_file)
+        if qc_mask is not None:
+            qc_mask = qc_mask.astype(np.uint8)
+
+        signal_data = _safe_load(dce_signal_file)
+        fitted_curves = _safe_load(fitted_curves_file)
+
+        # Load enhancing mask
+        enhancing_mask_data = None
+        enh_raw = _safe_load(enhancing_mask_file)
+        if enh_raw is not None:
+            enhancing_mask_data = (enh_raw > 0.5).astype(np.float64)
+
+        # Recompute single-voxel fitted curve
+        qc_fitted_curve_1d = None
+        try:
+            from scipy.ndimage import binary_erosion
+
+            from pmriprep.models.dce import (
+                ExtendedToftsModel,
+                PatlakModel,
+                ToftsModel,
+                TwoCompartmentExchangeModel,
+            )
+
+            qc_vx, qc_vy, qc_vz = _select_qc_voxel(
+                ktrans, mask_bool, qc_mask, binary_erosion,
+                enhancing_mask=enhancing_mask_data,
+            )
+
+            model_cls_map = {
+                "tofts": ToftsModel,
+                "extended_tofts": ExtendedToftsModel,
+                "patlak": PatlakModel,
+                "2cxm": TwoCompartmentExchangeModel,
+            }
+
+            # Determine model for the QC voxel
+            _CODE_TO_MODEL = {1: "patlak", 2: "tofts", 3: "extended_tofts", 4: "2cxm"}
+            model_sel_data = _safe_load(model_selection_file)
+
+            if is_auto and model_sel_data is not None:
+                qc_code = int(model_sel_data[qc_vx, qc_vy, qc_vz])
+                qc_model_name = _CODE_TO_MODEL.get(qc_code, model_name)
+            else:
+                qc_model_name = model_name
+
+            if qc_model_name in model_cls_map:
+                qc_model = model_cls_map[qc_model_name]()
+                param_map = {"Ktrans": ktrans, "ve": ve, "vp": vp, "Fp": fp, "PS": ps}
+                qc_params = []
+                for n in qc_model.get_parameter_names():
+                    arr = param_map.get(n)
+                    if arr is not None:
+                        qc_params.append(float(arr[qc_vx, qc_vy, qc_vz]))
+                    else:
+                        qc_params.append(0.0)
+                qc_fitted_curve_1d = qc_model.evaluate(
+                    qc_params, aif, time_points,
+                ).astype(np.float32)
+        except Exception:
+            pass  # Fall back to fitted_curves array in the plot function
+
+        # NaN-safe maps for display
+        ktrans_display = np.nan_to_num(ktrans, nan=0.0) if is_auto else ktrans
+        ve_display = np.nan_to_num(ve, nan=0.0) if is_auto and ve is not None else ve
+        vp_display = np.nan_to_num(vp, nan=0.0) if is_auto and vp is not None else vp
+
+        pk_modeling_qc_path, pk_voxel_metrics = generate_pk_modeling_qc_plot(
+            conc_data=conc_data,
+            signal_data=signal_data,
+            aif=aif,
+            time_points_s=time_points * 60.0,  # min -> sec
+            ktrans=ktrans_display,
+            ve=ve_display,
+            vp=vp_display,
+            r2_map=r2_map,
+            brain_mask=mask_bool.astype(np.float64),
+            fitted_curves=fitted_curves,
+            model_name=model_name,
+            baseline_frames=baseline_frames,
+            qc_mask=qc_mask,
+            qc_fitted_curve=qc_fitted_curve_1d,
+            fp=fp,
+            ps=ps,
+            enhancing_mask=enhancing_mask_data,
+            subject_id=subject_id,
+            session_id=session_id,
+        )
+
+        return pk_modeling_qc_path, pk_voxel_metrics
+
+    except Exception as e:
+        logger.warning("Failed to generate PK fit QC plot: %s", e, exc_info=True)
+        return "", {}

@@ -304,7 +304,7 @@ def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto", hdbet_conda_env=""):
         # With -o dsc_brain.nii.gz, mask lands at dsc_brain_mask.nii.gz
         # which is exactly our target path — no move needed.
         hdbet_mask_path = Path(dsc_brain_file.replace(".nii.gz", "_mask.nii.gz"))
-        if not hdbet_mask_path.exists():
+        if not hdbet_mask_path.is_file():
             # Derive mask from brain-extracted image
             brain_img = nib.load(dsc_brain_file)
             brain_data = brain_img.get_fdata()
@@ -666,7 +666,7 @@ def _transform_nawm_to_dsc(
     import subprocess
 
     nawm_path = Path(nawm_mask_file)
-    if not nawm_path.exists():
+    if not nawm_path.is_file():
         return None
 
     out_dir = Path.cwd()
@@ -718,7 +718,7 @@ def _transform_lesion_mask_to_dsc(
     import subprocess
 
     lesion_path = Path(lesion_mask_file)
-    if not lesion_path.exists():
+    if not lesion_path.is_file():
         return None
 
     out_dir = Path.cwd()
@@ -771,7 +771,7 @@ def _transform_structural_to_dsc(
     import subprocess
 
     structural_path = Path(structural_file)
-    if not structural_path.exists():
+    if not structural_path.is_file():
         return None
 
     out_dir = Path.cwd()
@@ -823,7 +823,7 @@ def _normalize_cbv(
         return None, None
 
     nawm_path = Path(nawm_mask_file)
-    if not nawm_path.exists():
+    if not nawm_path.is_file():
         return None, None
 
     from pmriprep.utils.dsc_signal import normalize_cbv_from_files
@@ -881,7 +881,7 @@ def _normalize_cbf(
         return None, None
 
     nawm_path = Path(nawm_mask_file)
-    if not nawm_path.exists():
+    if not nawm_path.is_file():
         return None, None
 
     from pmriprep.utils.dsc_signal import normalize_cbv_from_files
@@ -1083,7 +1083,7 @@ def _generate_dsc_param_maps_qc(
     ]:
         if filepath:
             from pathlib import Path as _P
-            if _P(filepath).exists():
+            if _P(filepath).is_file():
                 param_maps[name] = nib.load(filepath).get_fdata()
 
     plot_path = generate_dsc_parameter_maps_qc_plot(
@@ -1142,15 +1142,15 @@ def _generate_dsc_leakage_qc(
     mask_data = nib.load(brain_mask_file).get_fdata()
 
     conc_raw_4d = None
-    if concentration_file and _P(concentration_file).exists():
+    if concentration_file and _P(concentration_file).is_file():
         conc_raw_4d = nib.load(concentration_file).get_fdata()
 
     conc_corr_4d = None
-    if corrected_concentration_file and _P(corrected_concentration_file).exists():
+    if corrected_concentration_file and _P(corrected_concentration_file).is_file():
         conc_corr_4d = nib.load(corrected_concentration_file).get_fdata()
 
     psr_data = None
-    if psr_file and _P(psr_file).exists():
+    if psr_file and _P(psr_file).is_file():
         psr_data = nib.load(psr_file).get_fdata()
 
     plot_path = generate_dsc_leakage_qc_plot(
@@ -1194,7 +1194,7 @@ def _generate_dsc_fit_qc(
     import nibabel as nib
     import numpy as np
 
-    if not qc_fit_data_file or not Path(qc_fit_data_file).exists():
+    if not qc_fit_data_file or not Path(qc_fit_data_file).is_file():
         return ""
 
     with open(qc_fit_data_file) as f:
@@ -1265,7 +1265,7 @@ def _smooth_maps(map_files, brain_mask_file, fwhm):
     for name, filepath in map_files.items():
         if not filepath or filepath in ("", "None"):
             continue
-        if not Path(filepath).exists():
+        if not Path(filepath).is_file():
             continue
         out_path = str(Path.cwd() / f"{Path(filepath).stem}_fwhm{int(fwhm)}.nii.gz")
         subprocess.run(
@@ -2716,7 +2716,7 @@ def init_dsc_preproc_wf(
             for name, val in [
                 ("ncbf", ncbf), ("ncbv", ncbv),
             ]:
-                if isinstance(val, str) and val not in ("", "None") and _P(val).exists():
+                if isinstance(val, str) and val not in ("", "None") and _P(val).is_file():
                     d[name] = val
             return d
 

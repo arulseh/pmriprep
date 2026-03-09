@@ -40,6 +40,7 @@ FIGURE_NAME_MAP: dict[str, tuple[str, str]] = {
     "preprocessing_qc": ("preprocessing", "dce"),
     "pk_modeling_qc": ("pkfit", "dce"),
     "pk_param_maps_qc": ("pkparammaps", "dce"),
+    "model_selection_qc": ("modelselection", "dce"),
     "dsc_dce_xval": ("dscxval", "dce"),
     # Anatomical
     "brain_mask": ("brainmask", "anat"),
@@ -75,7 +76,7 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
     "dce": [
         "dce_brain_mask", "motion", "b1", "t1", "preprocessing_qc",
         "aif_curve", "aif_location", "pk_modeling_qc", "pk_param_maps_qc",
-        "dsc_dce_xval", "registration",
+        "model_selection_qc", "dsc_dce_xval", "registration",
     ],
 }
 

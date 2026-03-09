@@ -720,13 +720,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="Number of baseline frames for tSNR calculation (0 = auto-detect)",
     )
 
-    # Enhancing tumor mask for QC voxel selection
-    enhancing_mask_file = File(
-        exists=True,
-        mandatory=False,
-        desc="Enhancing tumor mask (any space, resampled internally to DCE)",
-    )
-
     # DSC CBV constraint options
     # Use traits.Str instead of File: when DSC is unavailable, the upstream
     # resample node returns "" which nipype File trait cannot validate.
@@ -868,10 +861,6 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_fitted_curves = File(desc="Fitted concentration curves (if save_fitted_curves=True)")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
     constraint_qc = traits.Dict(desc="DSC CBV constraint QC report")
-
-    # PK QC plots
-    pk_modeling_qc_plot = File(desc="PK modeling QC plot PNG path")
-    pk_param_maps_qc_plot = File(desc="PK parameter maps QC plot PNG path")
 
 
 class ComputeDCEMaps(BaseInterface):
@@ -2272,142 +2261,6 @@ class ComputeDCEMaps(BaseInterface):
             fitted_img = nib.Nifti1Image(fitted_curves, affine)  # type: ignore[attr-defined]
             nib.save(fitted_img, out_fitted)  # type: ignore[attr-defined]
             self._results["out_fitted_curves"] = out_fitted
-
-        # Generate PK QC plots
-        try:
-            from pmriprep.utils.dce_pk_qc_plots import (
-                _select_qc_voxel,
-                generate_pk_modeling_qc_plot,
-                generate_pk_parameter_maps_qc_plot,
-            )
-
-            # Reload signal data for QC voxel (if dce_signal_file provided)
-            signal_for_qc: Optional[npt.NDArray[Any]] = None
-            if isdefined(self.inputs.dce_signal_file):
-                signal_for_qc = nib.load(self.inputs.dce_signal_file).get_fdata()  # type: ignore[attr-defined]
-
-            # Load enhancing mask for QC voxel selection (optional)
-            enhancing_mask_data: Optional[npt.NDArray[Any]] = None
-            if (
-                isdefined(self.inputs.enhancing_mask_file)
-                and self.inputs.enhancing_mask_file
-            ):
-                try:
-                    enh_img = nib.load(self.inputs.enhancing_mask_file)
-                    conc_img_qc = nib.load(self.inputs.concentration_file)
-                    enh_data = enh_img.get_fdata()  # type: ignore[attr-defined]
-                    needs_resample = (
-                        enh_data.shape[:3] != conc_data.shape[:3]
-                        or not np.allclose(
-                            enh_img.affine,  # type: ignore[attr-defined]
-                            conc_img_qc.affine,  # type: ignore[attr-defined]
-                            atol=1e-3,
-                        )
-                    )
-                    if needs_resample:
-                        from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-                        resampled = resample_to_img(
-                            enh_img, conc_img_qc, interpolation="nearest"
-                        )
-                        enhancing_mask_data = (
-                            resampled.get_fdata() > 0.5  # type: ignore[attr-defined]
-                        ).astype(np.float64)
-                    else:
-                        enhancing_mask_data = enh_data
-                except Exception as exc:
-                    logger.debug("Could not load enhancing mask for QC: %s", exc)
-
-            # Compute single-voxel fitted curve for QC display
-            qc_fitted_curve_1d: Optional[npt.NDArray[Any]] = None
-            try:
-                from scipy.ndimage import binary_erosion as _be
-
-                from pmriprep.models.dce import (
-                    ExtendedToftsModel,
-                    PatlakModel,
-                    ToftsModel,
-                    TwoCompartmentExchangeModel,
-                )
-
-                qc_vx, qc_vy, qc_vz = _select_qc_voxel(
-                    ktrans, mask_bool, qc_mask, _be,
-                    enhancing_mask=enhancing_mask_data,
-                )
-                model_cls_map: dict[str, type] = {
-                    "tofts": ToftsModel,
-                    "extended_tofts": ExtendedToftsModel,
-                    "patlak": PatlakModel,
-                    "2cxm": TwoCompartmentExchangeModel,
-                }
-                # Use per-voxel winner model when is_auto
-                if is_auto:
-                    qc_code = int(model_selection_map[qc_vx, qc_vy, qc_vz])
-                    code_to_name = {v: k for k, v in _MODEL_SELECTION_CODES.items()}
-                    qc_model_name = code_to_name.get(qc_code, model_name)
-                else:
-                    qc_model_name = model_name
-                qc_model = model_cls_map[qc_model_name]()
-                qc_param_map: dict[str, npt.NDArray[Any]] = {
-                    "Ktrans": ktrans, "ve": ve, "vp": vp,
-                    "Fp": fp_map, "PS": ps_map,
-                }
-                qc_params = [
-                    float(qc_param_map[n][qc_vx, qc_vy, qc_vz])
-                    for n in qc_model.get_parameter_names()
-                ]
-                qc_fitted_curve_1d = qc_model.evaluate(
-                    qc_params, aif, time_points,
-                ).astype(np.float32)
-            except Exception as exc:
-                logger.debug("Could not compute QC fitted curve: %s", exc)
-
-            # NaN-safe maps for QC plots (replace NaN with 0 for display)
-            ve_plot = np.nan_to_num(ve, nan=0.0) if is_auto else ve
-            vp_plot = np.nan_to_num(vp, nan=0.0) if is_auto else vp
-
-            pk_modeling_qc_path, pk_voxel_metrics = generate_pk_modeling_qc_plot(
-                conc_data=conc_data,
-                signal_data=signal_for_qc,
-                aif=aif,
-                time_points_s=time_points * 60.0,  # min -> sec
-                ktrans=np.nan_to_num(ktrans, nan=0.0) if is_auto else ktrans,
-                ve=ve_plot if save_ve else None,
-                vp=vp_plot if save_vp else None,
-                r2_map=r2_map,
-                brain_mask=mask_bool.astype(np.float64),
-                fitted_curves=fitted_curves,
-                model_name=model_name,
-                baseline_frames=baseline_frames,
-                qc_mask=qc_mask,
-                qc_fitted_curve=qc_fitted_curve_1d,
-                fp=fp_map if save_2cxm else None,
-                ps=ps_map if save_2cxm else None,
-                enhancing_mask=enhancing_mask_data,
-            )
-            if pk_modeling_qc_path:
-                self._results["pk_modeling_qc_plot"] = pk_modeling_qc_path
-            qc_metrics.update(pk_voxel_metrics)
-
-            param_maps_dict: dict[str, npt.NDArray[Any]] = {
-                "Ktrans": np.nan_to_num(ktrans, nan=0.0) if is_auto else ktrans,
-            }
-            if save_ve:
-                param_maps_dict["ve"] = ve_plot
-            if save_vp:
-                param_maps_dict["vp"] = vp_plot
-            if save_2cxm:
-                param_maps_dict["Fp"] = fp_map
-                param_maps_dict["PS"] = ps_map
-
-            pk_param_maps_qc_path = generate_pk_parameter_maps_qc_plot(
-                param_maps=param_maps_dict,
-                brain_mask=mask_bool.astype(np.float64),
-            )
-            if pk_param_maps_qc_path:
-                self._results["pk_param_maps_qc_plot"] = pk_param_maps_qc_path
-
-        except Exception as e:
-            logger.warning("Failed to generate PK QC plots: %s", e, exc_info=True)
 
         return runtime
 

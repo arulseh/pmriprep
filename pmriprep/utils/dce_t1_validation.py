@@ -275,7 +275,7 @@ def cross_validate_field_strength(
         k: _distance_from_range(median_t1, T1_TISSUE_REFERENCE[k]["brain_median"])
         for k in other_keys
     }
-    opposite_key = min(distances, key=distances.get)
+    opposite_key = min(distances, key=lambda k: distances[k])
 
     expected_specified = T1_TISSUE_REFERENCE[field_key]["brain_median"]
     expected_opposite = T1_TISSUE_REFERENCE[opposite_key]["brain_median"]

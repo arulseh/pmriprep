@@ -379,16 +379,6 @@
                 <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.ps_median) }} mL/100g/min</div>
             </div>
             {% endif %}
-            {% for mn in ['patlak', 'tofts', 'extended_tofts', '2cxm'] %}
-            {% set count_key = 'n_' + mn + '_selected' %}
-            {% set frac_key = mn + '_fraction' %}
-            {% if dce.qc_metrics.pk_modeling[count_key] is defined %}
-            <div class="metric">
-                <div class="metric-label">{{ mn }}</div>
-                <div class="metric-value">{{ dce.qc_metrics.pk_modeling[count_key] }} ({{ "%.0f"|format(dce.qc_metrics.pk_modeling[frac_key] * 100) }}%)</div>
-            </div>
-            {% endif %}
-            {% endfor %}
         </div>
 
         {% if dce.images.pk_param_maps_qc %}
@@ -457,6 +447,77 @@
             </div>
         </div>
         {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Model Selection -->
+    {% if dce.images.model_selection_qc %}
+    <div class="section">
+        <h3>Model Selection</h3>
+        {% set model_colors = {
+            'Patlak': '#4477AA',
+            'Tofts': '#228833',
+            'Ext. Tofts': '#66CCEE',
+            '2CXM': '#AA3377'
+        } %}
+        {% set model_text_colors = {
+            'Patlak': '#fff',
+            'Tofts': '#fff',
+            'Ext. Tofts': '#333',
+            '2CXM': '#fff'
+        } %}
+
+        {% if dce.qc_metrics.pk_modeling.model_selection_regions is defined %}
+        {% set regions = dce.qc_metrics.pk_modeling.model_selection_regions %}
+        {% set region_keys = regions.keys() | list %}
+
+        {# Whole Brain bar #}
+        {% if 'Whole Brain' in regions %}
+        <div style="display: flex; align-items: center;" aria-label="Whole Brain model distribution">
+            <div style="min-width: 110px; font-size: 0.88em; font-weight: 600; color: #555;">Whole Brain</div>
+            <div style="display: flex; flex: 1; height: 28px; border-radius: 3px; overflow: hidden;">
+                {% for model_name, pct in regions['Whole Brain'].items() %}
+                <div style="width: {{ pct }}%; min-width: 2px; background: {{ model_colors[model_name] | default('#BBBBBB') }}; display: flex; align-items: center; justify-content: center; font-size: 0.8em; color: {{ model_text_colors[model_name] | default('#fff') }}; white-space: nowrap; overflow: hidden;" title="{{ model_name }}: {{ '%.0f'|format(pct) }}%">{% if pct >= 8 %}{{ '%.0f'|format(pct) }}%{% endif %}</div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {# ROI bars #}
+        {% if region_keys | length > 1 %}
+        <div style="margin-top: 8px;">
+            {% for rname in region_keys %}
+            {% if rname != 'Whole Brain' %}
+            <div style="display: flex; align-items: center; margin-top: 6px;" aria-label="{{ rname }} model distribution">
+                <div style="min-width: 110px; font-size: 0.88em; font-weight: 600; color: #555;">{{ rname }}</div>
+                <div style="display: flex; flex: 1; height: 28px; border-radius: 3px; overflow: hidden;">
+                    {% for model_name, pct in regions[rname].items() %}
+                    <div style="width: {{ pct }}%; min-width: 2px; background: {{ model_colors[model_name] | default('#BBBBBB') }}; display: flex; align-items: center; justify-content: center; font-size: 0.8em; color: {{ model_text_colors[model_name] | default('#fff') }}; white-space: nowrap; overflow: hidden;" title="{{ model_name }}: {{ '%.0f'|format(pct) }}%">{% if pct >= 8 %}{{ '%.0f'|format(pct) }}%{% endif %}</div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {# Color legend — centered with respect to bars (offset by label column) #}
+        {% if 'Whole Brain' in regions %}
+        <div style="display: flex; justify-content: center; padding-left: 110px; margin-top: 8px; flex-wrap: wrap; gap: 14px;">
+            {% for model_name in regions['Whole Brain'].keys() %}
+            <div style="display: flex; align-items: center; gap: 5px; font-size: 0.82em; color: #555;">
+                <div style="width: 12px; height: 12px; border-radius: 2px; background: {{ model_colors[model_name] | default('#BBBBBB') }};"></div>
+                {{ model_name }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endif %}
+
+        <div class="figure-container" style="margin-top: 16px;">
+            <img src="{{ dce.images.model_selection_qc }}" alt="Model Selection QC">
+            <a href="{{ dce.images.model_selection_qc }}" download class="figure-download">Save</a>
+        </div>
     </div>
     {% endif %}
 

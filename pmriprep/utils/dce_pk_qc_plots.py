@@ -609,3 +609,232 @@ def generate_pk_parameter_maps_qc_plot(
     plt.close(fig)
 
     return str(out)
+
+
+def generate_model_selection_qc_plot(
+    model_selection_map: npt.NDArray[np.int8],
+    delta_bic_map: npt.NDArray[np.float32],
+    brain_mask: npt.NDArray[Any],
+    enhancing_mask: npt.NDArray[Any] | None = None,
+    non_enhancing_mask: npt.NDArray[Any] | None = None,
+    nawm_mask: npt.NDArray[Any] | None = None,
+    user_lesion_mask: npt.NDArray[Any] | None = None,
+    roi_mask: npt.NDArray[Any] | None = None,
+    subject_id: str = "",
+    session_id: str = "",
+    output_path: str | None = None,
+    regional_stats_out: dict[str, dict[str, float]] | None = None,
+) -> str:
+    """Generate a 2-row model selection QC plot for auto-mode DCE.
+
+    Layout matches PK Parameter Maps style (GridSpec 2 rows x 8 cols):
+        Row 0: Categorical model map on black background with discrete colorbar
+        Row 1: Delta-BIC confidence map (Kass-Raftery scale)
+
+    Regional model distribution statistics are computed and returned via
+    the *regional_stats_out* mutable dict (not rendered in the figure).
+
+    Args:
+        model_selection_map: 3D int8 array (0=unfitted, 1=patlak, 2=tofts,
+            3=extended_tofts, 4=2cxm).
+        delta_bic_map: 3D float32 delta-BIC confidence map.
+        brain_mask: 3D brain mask.
+        enhancing_mask: 3D enhancing tumor mask (optional).
+        non_enhancing_mask: 3D non-enhancing tumor mask (optional).
+        nawm_mask: 3D NAWM mask (optional).
+        user_lesion_mask: 3D user-supplied lesion mask (optional).
+        roi_mask: 3D user-supplied ROI mask (optional).
+        subject_id: Subject identifier for title.
+        session_id: Session identifier for title.
+        output_path: Path to save PNG. If None, uses CWD.
+        regional_stats_out: If provided, populated with per-region model
+            distribution percentages.  Format:
+            ``{"Whole Brain": {"Patlak": 45.2, ...}, "Enhancing": {...}}``.
+
+    Returns:
+        Path to the saved QC plot PNG, or empty string on failure.
+    """
+    import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+    from matplotlib.gridspec import GridSpec
+
+    from pmriprep.utils.qc_standards import EXTENDED_PALETTE
+    from pmriprep.utils.qc_utils import get_radiological_slice, qc_figure_title
+
+    mask_bool = brain_mask > 0.5
+
+    # Model code -> color mapping (matches _MODEL_SELECTION_CODES in dce_compute.py)
+    _MODEL_COLORS: dict[int, str] = {
+        0: EXTENDED_PALETTE[6],  # unfitted — Gray
+        1: EXTENDED_PALETTE[0],  # patlak — Blue
+        2: EXTENDED_PALETTE[2],  # tofts — Green
+        3: EXTENDED_PALETTE[4],  # extended_tofts — Cyan
+        4: EXTENDED_PALETTE[5],  # 2cxm — Purple
+    }
+    _CODE_LABELS: dict[int, str] = {
+        0: "Unfitted",
+        1: "Patlak",
+        2: "Tofts",
+        3: "Ext. Tofts",
+        4: "2CXM",
+    }
+
+    # Determine slice positions (25%, 50%, 75% of brain z-extent)
+    z_coords = np.where(mask_bool)[2]
+    if len(z_coords) == 0:
+        z_min, z_max = 0, brain_mask.shape[2] - 1
+    else:
+        z_min, z_max = int(z_coords.min()), int(z_coords.max())
+    z_positions = np.linspace(z_min, z_max, 5, dtype=int)[1:4]
+
+    fig = plt.figure(figsize=(10, 5.6))
+    gs = GridSpec(
+        2, 8, figure=fig,
+        width_ratios=[0.4, 1, 1, 1, 1, 1, 1, 0.06],
+        wspace=0.05, hspace=0.15,
+    )
+    fig.suptitle(
+        qc_figure_title(subject_id, session_id, "Model Selection"),
+        fontsize=13, fontweight="bold", y=0.99,
+    )
+
+    # ---- Row 0: Categorical model map (white background) ----
+    active_codes = sorted(set(int(c) for c in np.unique(model_selection_map) if c > 0))
+    if not active_codes:
+        active_codes = [1]  # fallback
+
+    cmap_colors = [_MODEL_COLORS.get(c, "#BBBBBB") for c in active_codes]
+    cat_cmap = ListedColormap(cmap_colors)
+    boundaries = [c - 0.5 for c in active_codes] + [active_codes[-1] + 0.5]
+    cat_norm = BoundaryNorm(boundaries, cat_cmap.N)
+
+    # Prepare overlay: mask non-brain and unfitted as NaN
+    overlay = model_selection_map.astype(float).copy()
+    overlay[~mask_bool | (model_selection_map == 0)] = np.nan
+
+    label_ax = fig.add_subplot(gs[0, 0])
+    label_ax.axis("off")
+    label_ax.text(
+        0.5, 0.5, "Model\nSelection",
+        transform=label_ax.transAxes, fontsize=9, fontweight="bold",
+        rotation=90, ha="center", va="center",
+    )
+
+    slice_spans = [(1, 3), (3, 5), (5, 7)]
+    cat_im = None
+    for col_idx, (z_idx, (c_start, c_end)) in enumerate(
+        zip(z_positions, slice_spans)
+    ):
+        ax = fig.add_subplot(gs[0, c_start:c_end])
+
+        ax.set_facecolor("white")
+
+        # Categorical overlay — full opacity
+        cat_slice = get_radiological_slice(overlay, axis=2, slice_idx=int(z_idx))
+        cat_im = ax.imshow(
+            cat_slice, cmap=cat_cmap, norm=cat_norm, aspect="equal",
+            interpolation="nearest",
+        )
+        ax.axis("off")
+        ax.set_title(f"z = {z_idx}", fontsize=9)
+
+    # Discrete colorbar in col 7
+    if cat_im is None:
+        plt.close(fig)
+        return ""
+    cax = fig.add_subplot(gs[0, 7])
+    cbar = fig.colorbar(cat_im, cax=cax, ticks=active_codes)
+    cbar.ax.set_yticklabels(
+        [_CODE_LABELS.get(c, f"Code {c}") for c in active_codes], fontsize=5,
+    )
+    cbar.ax.tick_params(length=0)
+
+    # ---- Row 1: Delta-BIC confidence map ----
+    label_ax = fig.add_subplot(gs[1, 0])
+    label_ax.axis("off")
+    label_ax.text(
+        0.5, 0.5, "\u0394BIC\nConfidence",
+        transform=label_ax.transAxes, fontsize=9, fontweight="bold",
+        rotation=90, ha="center", va="center",
+    )
+
+    dbic_display = delta_bic_map.astype(float).copy()
+    dbic_display[~mask_bool] = np.nan
+    brain_dbic = delta_bic_map[mask_bool & (delta_bic_map > 0)]
+    if len(brain_dbic) > 0:
+        dbic_vmax = float(min(np.percentile(brain_dbic, 95), 20.0))
+    else:
+        dbic_vmax = 10.0
+    dbic_vmax = max(dbic_vmax, 2.0)  # ensure minimum range
+
+    im = None
+    for col_idx, (z_idx, (c_start, c_end)) in enumerate(
+        zip(z_positions, slice_spans)
+    ):
+        ax = fig.add_subplot(gs[1, c_start:c_end])
+        dbic_slice = get_radiological_slice(dbic_display, axis=2, slice_idx=int(z_idx))
+        im = ax.imshow(dbic_slice, cmap="OrRd", vmin=0, vmax=dbic_vmax,
+                       aspect="equal")
+        ax.axis("off")
+
+    # Colorbar with Kass-Raftery labels
+    if im is None:
+        plt.close(fig)
+        return ""
+    cax = fig.add_subplot(gs[1, 7])
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label("\u0394BIC", fontsize=7)
+    kr_ticks = [t for t in [2, 6, 10] if t <= dbic_vmax]
+    if dbic_vmax >= 15:
+        kr_ticks.append(int(dbic_vmax))
+    if kr_ticks:
+        cbar.set_ticks(kr_ticks)
+        cbar.set_ticklabels([str(t) for t in kr_ticks])
+    cbar.ax.tick_params(labelsize=6)
+
+    # ---- Compute regional model distribution stats ----
+    regions: dict[str, npt.NDArray[np.bool_]] = {"Whole Brain": mask_bool}
+    if enhancing_mask is not None:
+        enh_bool = (enhancing_mask > 0.5) & mask_bool
+        if np.any(enh_bool):
+            regions["Enhancing"] = enh_bool
+    if non_enhancing_mask is not None:
+        ne_bool = (non_enhancing_mask > 0.5) & mask_bool
+        if np.any(ne_bool):
+            regions["Non-enhancing"] = ne_bool
+    if nawm_mask is not None:
+        nawm_bool = (nawm_mask > 0.5) & mask_bool
+        if np.any(nawm_bool):
+            regions["NAWM"] = nawm_bool
+    if user_lesion_mask is not None:
+        lesion_bool = (user_lesion_mask > 0.5) & mask_bool
+        if np.any(lesion_bool):
+            regions["Lesion"] = lesion_bool
+    if roi_mask is not None:
+        roi_bool = (roi_mask > 0.5) & mask_bool
+        if np.any(roi_bool):
+            regions["ROI"] = roi_bool
+
+    if regional_stats_out is not None:
+        for region_name, region_mask in regions.items():
+            # Count only fitted voxels so percentages sum to 100%
+            fitted = region_mask & (model_selection_map > 0)
+            total = int(np.sum(fitted))
+            dist: dict[str, float] = {}
+            for code in active_codes:
+                count = int(np.sum(
+                    (model_selection_map == code) & region_mask
+                ))
+                dist[_CODE_LABELS.get(code, f"Code {code}")] = round(
+                    100.0 * count / max(total, 1), 1,
+                )
+            regional_stats_out[region_name] = dist
+
+    if output_path is None:
+        output_path = str(Path.cwd() / "model_selection_qc.png")
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    return str(out)

@@ -581,6 +581,7 @@ def _find_previous_tumor_seg_outputs(
     outputs: dict[str, Optional[str]] = {
         "whole_tumor_mask": None,
         "enhancing_mask": None,
+        "non_enhancing_mask": None,
         "segmentation": None,
         "nawm_mask": None,
     }
@@ -597,6 +598,10 @@ def _find_previous_tumor_seg_outputs(
         for f in masks_dir.glob("*enhancing_mask.nii.gz"):
             if "nonenhancing" not in f.name and "non_enhancing" not in f.name:
                 outputs["enhancing_mask"] = str(f)
+        for f in masks_dir.glob("*nonenhancing_mask.nii.gz"):
+            outputs["non_enhancing_mask"] = str(f)
+        for f in masks_dir.glob("*non_enhancing_mask.nii.gz"):
+            outputs["non_enhancing_mask"] = str(f)
 
     # Check tumor_seg_segment node for segmentation output
     seg_dir = tumor_seg_dir / "tumor_seg_segment"
@@ -625,6 +630,13 @@ def _find_previous_tumor_seg_outputs(
         if enh_dir.exists():
             for f in enh_dir.glob("*.nii.gz"):
                 outputs["enhancing_mask"] = str(f)
+
+    # Check select_non_enhancing node for non-enhancing mask
+    if outputs["non_enhancing_mask"] is None:
+        ne_dir = tumor_seg_dir / "select_non_enhancing"
+        if ne_dir.exists():
+            for f in ne_dir.glob("*.nii.gz"):
+                outputs["non_enhancing_mask"] = str(f)
 
     return outputs
 
@@ -2120,6 +2132,7 @@ def init_pmriprep_wf(
                     ]),
                     (tumor_seg_wf, dce_wf, [
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+                        ("outputnode.non_enhancing_mask", "inputnode.non_enhancing_mask"),
                         ("outputnode.segmentation", "inputnode.tumor_segmentation"),
                     ]),
                     (tumor_seg_wf, dce_pick_nawm, [
@@ -2127,6 +2140,10 @@ def init_pmriprep_wf(
                     ]),
                     (dce_pick_nawm, dce_wf, [
                         ("nawm_mask", "inputnode.nawm_mask"),
+                    ]),
+                    # Wire user lesion separately for QC bars (distinct from tumor seg masks)
+                    (dce_lesion_reorient, dce_wf, [
+                        ("out_file", "inputnode.user_lesion_mask"),
                     ]),
                 ])
                 _dce_log.info(
@@ -2139,6 +2156,7 @@ def init_pmriprep_wf(
                     (tumor_seg_wf, dce_wf, [
                         ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
                         ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+                        ("outputnode.non_enhancing_mask", "inputnode.non_enhancing_mask"),
                         ("outputnode.segmentation", "inputnode.tumor_segmentation"),
                     ]),
                     (tumor_seg_wf, dce_pick_nawm, [
@@ -2153,30 +2171,48 @@ def init_pmriprep_wf(
             prev_tumor_seg = _find_previous_tumor_seg_outputs(
                 Path(work_dir), subject_id, session_id,
             )
-            if _dce_user_lesion and prev_tumor_seg["whole_tumor_mask"]:
-                # Merge user lesion with loaded whole_tumor_mask
-                from pmriprep.utils.mask_utils import MergeMasks
-
+            if _dce_user_lesion:
+                # Reorient user lesion mask and wire for QC bars
                 dce_lesion_reorient2 = pe.Node(Reorient(), name="dce_lesion_reorient_skip")
                 dce_lesion_reorient2.inputs.in_file = str(_dce_user_lesion)
-
-                dce_merge_masks = pe.Node(
-                    MergeMasks(), name="dce_merge_masks",
-                )
-                dce_merge_masks.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
-
                 workflow.connect([
-                    (dce_lesion_reorient2, dce_merge_masks, [
-                        ("out_file", "mask_b"),
-                    ]),
-                    (dce_merge_masks, dce_wf, [
-                        ("merged_mask", "inputnode.whole_tumor_mask"),
+                    (dce_lesion_reorient2, dce_wf, [
+                        ("out_file", "inputnode.user_lesion_mask"),
                     ]),
                 ])
-                _dce_log.info(
-                    "DCE skip-tumor-seg: merging user lesion_mask=%s (reoriented) with loaded whole_tumor_mask",
-                    _dce_user_lesion,
-                )
+
+                if prev_tumor_seg["whole_tumor_mask"]:
+                    # Merge user lesion with loaded whole_tumor_mask
+                    from pmriprep.utils.mask_utils import MergeMasks
+
+                    dce_merge_masks = pe.Node(
+                        MergeMasks(), name="dce_merge_masks",
+                    )
+                    dce_merge_masks.inputs.mask_a = prev_tumor_seg["whole_tumor_mask"]
+
+                    workflow.connect([
+                        (dce_lesion_reorient2, dce_merge_masks, [
+                            ("out_file", "mask_b"),
+                        ]),
+                        (dce_merge_masks, dce_wf, [
+                            ("merged_mask", "inputnode.whole_tumor_mask"),
+                        ]),
+                    ])
+                    _dce_log.info(
+                        "DCE skip-tumor-seg: merging user lesion_mask=%s (reoriented) with loaded whole_tumor_mask",
+                        _dce_user_lesion,
+                    )
+                else:
+                    # No cached whole_tumor_mask — user lesion IS the whole_tumor_mask
+                    workflow.connect([
+                        (dce_lesion_reorient2, dce_wf, [
+                            ("out_file", "inputnode.whole_tumor_mask"),
+                        ]),
+                    ])
+                    _dce_log.info(
+                        "DCE skip-tumor-seg: user lesion_mask=%s → whole_tumor_mask (no cached mask)",
+                        _dce_user_lesion,
+                    )
             else:
                 if prev_tumor_seg["whole_tumor_mask"]:
                     dce_wf.inputs.inputnode.whole_tumor_mask = prev_tumor_seg["whole_tumor_mask"]
@@ -2185,6 +2221,9 @@ def init_pmriprep_wf(
             if prev_tumor_seg.get("enhancing_mask"):
                 dce_wf.inputs.inputnode.enhancing_mask = prev_tumor_seg["enhancing_mask"]
                 _dce_log.info("skip-tumor-seg (DCE): loaded enhancing_mask from %s", prev_tumor_seg["enhancing_mask"])
+            if prev_tumor_seg.get("non_enhancing_mask"):
+                dce_wf.inputs.inputnode.non_enhancing_mask = prev_tumor_seg["non_enhancing_mask"]
+                _dce_log.info("skip-tumor-seg (DCE): loaded non_enhancing_mask from %s", prev_tumor_seg["non_enhancing_mask"])
             if prev_tumor_seg["segmentation"]:
                 dce_wf.inputs.inputnode.tumor_segmentation = prev_tumor_seg["segmentation"]
                 _dce_log.info("skip-tumor-seg (DCE): loaded tumor_segmentation from %s", prev_tumor_seg["segmentation"])
@@ -2201,8 +2240,13 @@ def init_pmriprep_wf(
             if _dce_user_lesion:
                 _dce_lesion_reorient3 = pe.Node(Reorient(), name="dce_lesion_reorient_only")
                 _dce_lesion_reorient3.inputs.in_file = str(_dce_user_lesion)
-                workflow.connect([(_dce_lesion_reorient3, dce_wf, [("out_file", "inputnode.whole_tumor_mask")])])
-                _dce_log.info("DCE: user lesion_mask=%s → whole_tumor_mask (reoriented)", _dce_user_lesion)
+                workflow.connect([
+                    (_dce_lesion_reorient3, dce_wf, [
+                        ("out_file", "inputnode.whole_tumor_mask"),
+                        ("out_file", "inputnode.user_lesion_mask"),
+                    ]),
+                ])
+                _dce_log.info("DCE: user lesion_mask=%s → whole_tumor_mask + user_lesion_mask (reoriented)", _dce_user_lesion)
 
             if _dce_user_nawm:
                 _dce_nawm_reorient3 = pe.Node(Reorient(), name="dce_nawm_reorient_only")
@@ -2495,6 +2539,7 @@ def init_pmriprep_wf(
                 ("outputnode.preprocessing_qc_plot", "preprocessing_qc_plot"),
                 ("outputnode.pk_modeling_qc_plot", "pk_modeling_qc_plot"),
                 ("outputnode.pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
+                ("outputnode.model_selection_qc_plot", "model_selection_qc_plot"),
                 # B1/T1 QC plots
                 ("outputnode.b1_qc_plot", "b1_qc_plot"),
                 ("outputnode.t1_qc_plot", "t1_qc_plot"),

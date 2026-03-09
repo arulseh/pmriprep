@@ -154,6 +154,7 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     preprocessing_qc_plot = traits.Either(traits.Str, None, desc="DCE preprocessing QC plot PNG path")
     pk_modeling_qc_plot = traits.Either(traits.Str, None, desc="PK modeling QC plot PNG path")
     pk_param_maps_qc_plot = traits.Either(traits.Str, None, desc="PK parameter maps QC plot PNG path")
+    model_selection_qc_plot = traits.Either(traits.Str, None, desc="Model selection QC plot PNG path")
     dsc_dce_xval_plot = traits.Either(traits.Str, None, desc="DSC-DCE cross-validation QC plot PNG path")
 
 
@@ -722,6 +723,7 @@ class DCEDerivativeWriter(BaseInterface):
             "preprocessing_qc": "preprocessing_qc_plot",
             "pk_modeling_qc": "pk_modeling_qc_plot",
             "pk_param_maps_qc": "pk_param_maps_qc_plot",
+            "model_selection_qc": "model_selection_qc_plot",
             "dsc_dce_xval": "dsc_dce_xval_plot",
         }
         for fig_key, attr in _fig_inputs.items():
