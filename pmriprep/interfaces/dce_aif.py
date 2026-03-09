@@ -2156,10 +2156,10 @@ class AIFDetection(BaseInterface):
     ) -> Any:
         """Handle externally supplied AIF curve, bypassing all detection.
 
-        Loads an external AIF from .txt or .npz file, validates its length
-        against DCE timepoints, and writes outputs. External AIFs are assumed
-        to already be in plasma concentration (mM) — no hematocrit correction
-        or AIF scaling is applied.
+        Loads an external AIF from .txt, .npz, or .npy file, validates shape,
+        values, and length against DCE timepoints, and writes outputs.
+        External AIFs are assumed to already be in plasma concentration (mM)
+        — no hematocrit correction or AIF scaling is applied.
 
         Parameters
         ----------
@@ -2187,7 +2187,8 @@ class AIFDetection(BaseInterface):
         blood_t1 = get_blood_t1(field_strength)
 
         # Load external AIF
-        if ext_path.suffix == ".npz":
+        suffix = ext_path.suffix.lower()
+        if suffix == ".npz":
             npz = np.load(str(ext_path))
             if "Cp" in npz:
                 aif_curve = np.asarray(npz["Cp"], dtype=np.float64)
@@ -2198,9 +2199,37 @@ class AIFDetection(BaseInterface):
                     f"External AIF .npz must contain 'Cp' or 'aif' key, "
                     f"found: {list(npz.keys())}"
                 )
+        elif suffix == ".npy":
+            aif_curve = np.load(str(ext_path)).astype(np.float64)
         else:
-            # Assume plain text (one value per line)
-            aif_curve = np.loadtxt(str(ext_path), dtype=np.float64)
+            # Plain text: try whitespace-delimited first, then comma
+            try:
+                aif_curve = np.loadtxt(str(ext_path), dtype=np.float64)
+            except ValueError:
+                aif_curve = np.loadtxt(str(ext_path), dtype=np.float64, delimiter=",")
+
+        # Shape validation: squeeze (N,1) -> (N,), reject if not 1-D
+        aif_curve = np.squeeze(aif_curve)
+        if aif_curve.ndim != 1:
+            raise ValueError(
+                f"External AIF must be 1-D, got shape {aif_curve.shape}. "
+                f"Multi-column files are not supported — provide one value per line."
+            )
+
+        # Value validation: NaN/Inf
+        if not np.all(np.isfinite(aif_curve)):
+            raise ValueError(
+                "External AIF contains NaN or Inf values. "
+                "All values must be finite."
+            )
+
+        # Value validation: negative values
+        if np.any(aif_curve < 0):
+            n_neg = int(np.sum(aif_curve < 0))
+            logger.warning(
+                "External AIF has %d negative values; clipping to zero.", n_neg
+            )
+            aif_curve = np.clip(aif_curve, 0.0, None)
 
         # Validate length
         if len(aif_curve) != n_timepoints:
@@ -2209,11 +2238,67 @@ class AIFDetection(BaseInterface):
                 f"has {n_timepoints} volumes. They must match."
             )
 
+        # Validate non-zero peak
+        peak = float(np.max(aif_curve))
+        if peak < 1e-6:
+            raise ValueError(
+                f"External AIF peak ({peak:.2e}) is near zero. "
+                "Check that values are concentration in mM (not raw signal)."
+            )
+
+        # Physiological range warnings
+        if peak < 1.0:
+            logger.warning(
+                "External AIF peak (%.3f mM) is below expected range "
+                "(typical full-dose: 5-7.6 mM). Check units and dose.",
+                peak,
+            )
+        elif peak > 20.0:
+            logger.warning(
+                "External AIF peak (%.1f mM) exceeds expected range "
+                "(typical full-dose: 5-7.6 mM). Check units.",
+                peak,
+            )
+        baseline_mean = float(np.mean(aif_curve[:baseline_frames])) if baseline_frames > 0 else 0.0
+        if baseline_mean > 0.5:
+            logger.warning(
+                "External AIF baseline mean (%.3f mM) is elevated. "
+                "Expected near-zero before contrast arrival.",
+                baseline_mean,
+            )
+
+        # Log hematocrit notice
+        logger.info(
+            "External AIF assumed to be in PLASMA concentration (mM). "
+            "No hematocrit correction applied."
+        )
+
         # Compute final AIF metrics
         final_peak = compute_dce_aif_peak_concentration(aif_curve)
         final_fwhm = compute_dce_aif_fwhm_seconds(aif_curve, tr, baseline_frames)
         final_auc = compute_dce_aif_auc(aif_curve, tr)
         final_washout = compute_dce_aif_washout(aif_curve, baseline_frames)
+
+        # Compute quality score from measured metrics (not hardcoded)
+        quality_score = 0.0
+        # Peak in physiological range (0-0.3)
+        if 2.0 <= final_peak <= 15.0:
+            quality_score += 0.3
+        elif 1.0 <= final_peak <= 20.0:
+            quality_score += 0.15
+        # FWHM in expected range (0-0.25): 8-25s typical
+        if 5.0 <= final_fwhm <= 40.0:
+            quality_score += 0.25
+        elif final_fwhm > 0:
+            quality_score += 0.1
+        # Washout > 0.2 is arterial (0-0.25)
+        quality_score += min(final_washout / 0.6, 1.0) * 0.25
+        # Baseline stability (0-0.2)
+        if baseline_frames > 1 and baseline_mean < 0.1:
+            quality_score += 0.2
+        elif baseline_mean < 0.5:
+            quality_score += 0.1
+        quality_score = min(quality_score, 1.0)
 
         # QC metrics
         from pmriprep.utils.qc_standards import QCStatus
@@ -2229,7 +2314,7 @@ class AIFDetection(BaseInterface):
             "field_strength_t": field_strength,
             "scaling_factor": 1.0,
             "detection_method": "external",
-            "quality_score": 1.0,
+            "quality_score": quality_score,
             "baseline_frames": baseline_frames,
             "n_aif_voxels": 0,
             "aif_status": QCStatus.PASS,
@@ -2246,8 +2331,8 @@ class AIFDetection(BaseInterface):
         nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
 
         logger.info(
-            "Using external AIF from %s (peak=%.3f mM, AUC=%.1f mM·s)",
-            ext_path.name, final_peak, final_auc,
+            "Using external AIF from %s (peak=%.3f mM, AUC=%.1f mM·s, quality=%.2f)",
+            ext_path.name, final_peak, final_auc, quality_score,
         )
 
         self._results = {
@@ -2255,7 +2340,7 @@ class AIFDetection(BaseInterface):
             "out_aif_mask": out_aif_mask,
             "aif_curve": [float(x) for x in aif_curve],
             "detection_method": "external",
-            "quality_score": 1.0,
+            "quality_score": quality_score,
             "peak_concentration": final_peak,
             "fwhm_seconds": final_fwhm,
             "auc": final_auc,

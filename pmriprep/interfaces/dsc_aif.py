@@ -236,6 +236,13 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="4D raw signal for S0-based partial volume rejection",
     )
+    external_aif_file = File(
+        exists=True,
+        mandatory=False,
+        desc="External AIF curve file (.txt, .npz, or .npy). "
+             "Values must be ΔR2* concentration in s⁻¹. "
+             "Bypasses all detection when provided.",
+    )
 
     # Detection parameters
     aif_method = traits.Enum(
@@ -311,7 +318,7 @@ class AIFDetectionOutputSpec(TraitedSpec):
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values")
     detection_level = traits.Str(
         desc="Detection level: 'atlas_strict', 'atlas_relaxed', 'atlas_permissive', "
-             "'brain_relaxed', 'brain_permissive', 'brain_degraded', or 'synthetic'"
+             "'brain_relaxed', 'brain_permissive', 'brain_degraded', 'synthetic', or 'external'"
     )
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
     candidate_count = traits.Int(desc="Number of candidate voxels evaluated")
@@ -1715,6 +1722,186 @@ class AIFDetection(BaseInterface):
         return aif_curve, qc
 
     # -----------------------------------------------------------------
+    # External AIF Handling
+    # -----------------------------------------------------------------
+
+    def _handle_external_aif(
+        self,
+        runtime: Any,
+    ) -> Any:
+        """Handle externally supplied AIF curve, bypassing all detection.
+
+        Loads an external AIF from .txt, .npz, or .npy file, validates its
+        length against DSC timepoints, and writes outputs. External AIFs are
+        assumed to already be in ΔR2* concentration (s⁻¹).
+
+        Parameters
+        ----------
+        runtime : Any
+            Nipype runtime object.
+
+        Returns
+        -------
+        runtime
+            Updated Nipype runtime object.
+        """
+        import logging
+
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        _logger = logging.getLogger(__name__)
+
+        ext_path = Path(self.inputs.external_aif_file)
+
+        # Load concentration image for shape and affine
+        conc_img = nib.load(self.inputs.concentration_file)
+        conc_data: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
+        affine = conc_img.affine  # type: ignore[attr-defined]
+        n_timepoints = conc_data.shape[3]
+
+        # Load external AIF
+        suffix = ext_path.suffix.lower()
+        if suffix == ".npz":
+            npz = np.load(str(ext_path))
+            if "aif" in npz:
+                aif_curve = np.asarray(npz["aif"], dtype=np.float64)
+            elif "delta_r2_star" in npz:
+                aif_curve = np.asarray(npz["delta_r2_star"], dtype=np.float64)
+            else:
+                raise ValueError(
+                    f"External AIF .npz must contain 'aif' or 'delta_r2_star' key, "
+                    f"found: {list(npz.keys())}"
+                )
+        elif suffix == ".npy":
+            aif_curve = np.load(str(ext_path)).astype(np.float64)
+        else:
+            # Plain text: try whitespace-delimited first, then comma
+            try:
+                aif_curve = np.loadtxt(str(ext_path), dtype=np.float64)
+            except ValueError:
+                aif_curve = np.loadtxt(str(ext_path), dtype=np.float64, delimiter=",")
+
+        # Squeeze (N,1) -> (N,)
+        aif_curve = np.squeeze(aif_curve)
+        if aif_curve.ndim != 1:
+            raise ValueError(
+                f"External AIF must be 1-D, got shape {aif_curve.shape}. "
+                f"Multi-column files are not supported."
+            )
+
+        # Validate finite values
+        if not np.all(np.isfinite(aif_curve)):
+            raise ValueError(
+                "External AIF contains NaN or Inf values. "
+                "All values must be finite."
+            )
+
+        # Validate non-negative
+        if np.any(aif_curve < 0):
+            n_neg = int(np.sum(aif_curve < 0))
+            _logger.warning(
+                "External AIF has %d negative values; clipping to zero.", n_neg
+            )
+            aif_curve = np.clip(aif_curve, 0.0, None)
+
+        # Validate length
+        if len(aif_curve) != n_timepoints:
+            raise ValueError(
+                f"External AIF has {len(aif_curve)} timepoints but DSC data "
+                f"has {n_timepoints} volumes. They must match."
+            )
+
+        # Validate non-zero peak
+        peak = float(np.max(aif_curve))
+        if peak < 1e-6:
+            raise ValueError(
+                f"External AIF peak ({peak:.2e}) is near zero. "
+                "Check that values are ΔR2* in s⁻¹ (not raw signal)."
+            )
+
+        # Warn if values look like they might be in mM rather than s⁻¹
+        if peak < 0.5:
+            _logger.warning(
+                "External DSC AIF peak (%.3f) is very low. DSC AIF values "
+                "should be ΔR2* in s⁻¹ (typically 5-50 s⁻¹ at peak). "
+                "Values < 0.5 suggest wrong units (mM instead of s⁻¹).",
+                peak,
+            )
+
+        # Compute QC metrics
+        baseline_frames = int(self.inputs.baseline_frames)
+        cnr = compute_aif_cnr(aif_curve, baseline_frames)
+        fwhm_frames = compute_aif_fwhm_frames(aif_curve, baseline_frames)
+        washout = compute_aif_washout_fraction(aif_curve, baseline_frames)
+        baseline_cv = compute_baseline_stability(aif_curve, baseline_frames)
+
+        # Compute quality score from measured metrics (not hardcoded 1.0)
+        quality_score = 0.0
+        # CNR contribution (0-0.4): >10 is good
+        quality_score += min(cnr / 25.0, 1.0) * 0.4
+        # FWHM contribution (0-0.2): 3-15 frames is good
+        if 3 <= fwhm_frames <= 15:
+            quality_score += 0.2
+        elif fwhm_frames > 0:
+            quality_score += 0.1
+        # Washout contribution (0-0.2): >0.2 is arterial
+        quality_score += min(washout / 0.5, 1.0) * 0.2
+        # Baseline stability contribution (0-0.2): CV < 0.1 is good
+        if baseline_cv < 0.1:
+            quality_score += 0.2
+        elif baseline_cv < 0.3:
+            quality_score += 0.1
+        quality_score = min(quality_score, 1.0)
+
+        qc_metrics: dict[str, Any] = {
+            "external_aif": True,
+            "external_aif_file": str(ext_path),
+            "detection_level": "external",
+            "quality_score": quality_score,
+            "peak_delta_r2_star": peak,
+            "cnr": cnr,
+            "fwhm_frames": fwhm_frames,
+            "washout_fraction": washout,
+            "baseline_cv": baseline_cv,
+            "n_candidates": 0,
+            "baseline_frames": baseline_frames,
+            # Keys accessed by AIFQCPlot via .get() with NaN defaults
+            "best_fwhm": float(fwhm_frames),
+            "best_brr": float(washout),
+            "best_psr": peak,
+        }
+
+        # Write AIF curve
+        out_aif_curve = self._gen_outfilename("_aif_curve.txt")
+        np.savetxt(out_aif_curve, aif_curve)
+
+        # Write zero AIF mask (no spatial origin for external AIF)
+        aif_mask_data = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+        out_aif_mask = self._gen_outfilename("_aif_mask.nii.gz")
+        mask_img = nib.Nifti1Image(aif_mask_data, affine)  # type: ignore[attr-defined]
+        nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
+
+        _logger.info(
+            "Using external DSC AIF from %s (peak=%.2f s⁻¹, CNR=%.1f, quality=%.2f)",
+            ext_path.name, peak, cnr, quality_score,
+        )
+
+        self._results = {
+            "out_aif_curve": out_aif_curve,
+            "out_aif_mask": out_aif_mask,
+            "out_raw_aif_curve": "",
+            "out_aif_coord": [0, 0, 0],
+            "aif_curve": [float(x) for x in aif_curve],
+            "detection_level": "external",
+            "quality_score": quality_score,
+            "candidate_count": 0,
+            "gamma_fit_applied": False,
+            "qc_metrics": qc_metrics,
+        }
+
+        return runtime
+
+    # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
 
@@ -1730,6 +1917,10 @@ class AIFDetection(BaseInterface):
         4. Synthetic fallback if all attempts fail.
         """
         import nibabel as nib  # type: ignore[import-untyped]
+
+        # ===== External AIF: bypass all detection if provided =====
+        if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
+            return self._handle_external_aif(runtime)
 
         from pmriprep.utils.dsc_signal import detect_bolus_arrival
 

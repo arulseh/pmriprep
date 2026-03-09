@@ -880,7 +880,7 @@ def _find_dwi(bids_dir: Path, subject: str, session: Optional[str]) -> Optional[
     # Multiple DWI files: prefer fewest volumes with >= 2 unique b-values
     import numpy as np
 
-    scored: List[tuple] = []
+    scored: List[tuple[float, Path]] = []
     for m in matches:
         bval_path = str(m).replace(".nii.gz", ".bval").replace(".nii", ".bval")
         try:

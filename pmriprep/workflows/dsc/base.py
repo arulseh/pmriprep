@@ -1808,6 +1808,10 @@ def init_dsc_preproc_wf(
         name="aif_detect",
     )
 
+    # Wire external AIF file if provided (bypasses all detection)
+    if config.aif_file is not None:
+        aif_detect.inputs.external_aif_file = str(config.aif_file)
+
     # Wire user-supplied AIF mask if provided (overrides atlas mask)
     if config.aif_mask_file is not None:
         aif_detect.inputs.aif_mask_file = str(config.aif_mask_file)

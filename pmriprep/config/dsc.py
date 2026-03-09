@@ -27,6 +27,10 @@ class DSCConfig:
         Number of MCMC samples for Bayesian inference.
     cpi_control_points : int
         Number of control points for CPI model (0 = auto-select).
+    aif_file : Optional[Path]
+        Path to external AIF curve file (.txt, .npz, or .npy).
+        Values must be DeltaR2* concentration in s^-1.
+        Bypasses AIF detection when provided.
     aif_mask_file : Optional[Path]
         Path to custom AIF mask file.
     lesion_distance : float
@@ -77,6 +81,7 @@ class DSCConfig:
     cpi_control_points: int = 0  # 0 = auto-select
 
     # AIF detection settings
+    aif_file: Optional[Path] = None
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
     aif_criteria: Literal["strict", "relaxed"] = "strict"

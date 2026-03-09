@@ -1,6 +1,6 @@
 # PMRIPrep
 
-**Perfusion MRI Preprocessing Pipeline** (v0.4.1)
+**Perfusion MRI Preprocessing Pipeline** (v0.5.0)
 
 PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and Dynamic Contrast Enhanced (DCE) perfusion MRI data. It follows the [NiPreps](https://www.nipreps.org/) framework conventions and produces BIDS-Derivatives compliant outputs with HTML QC reports.
 
@@ -137,6 +137,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dsc-preload` | Indicate contrast preload is present |
 | `--dsc-dose {half,full,double}` | Contrast agent dose (default: full) |
 | `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
+| `--dsc-aif-file FILE` | External AIF curve file (ΔR2* in s⁻¹); bypasses detection |
 
 ### DCE Options
 

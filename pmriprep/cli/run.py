@@ -225,6 +225,15 @@ Examples:
         default=None,
         help="AIF detection method for DSC (default: auto).",
     )
+    dsc_group.add_argument(
+        "--dsc-aif-file",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="External AIF curve file (.txt with one value per line, .npz with 'aif' key, "
+             "or .npy). Values must be \u0394R2* concentration in s\u207b\u00b9, temporally aligned "
+             "with DSC volumes. Bypasses AIF detection.",
+    )
 
     # DCE options
     dce_group = parser.add_argument_group(
@@ -258,8 +267,8 @@ Examples:
         type=Path,
         default=None,
         metavar="FILE",
-        help="External AIF curve file (.txt with one value per line, or .npz with 'Cp' or 'aif' key). "
-             "Values must be plasma concentration in mM, temporally aligned with DCE volumes. "
+        help="External AIF curve file (.txt with one value per line, .npz with 'Cp' or 'aif' key, "
+             "or .npy). Values must be plasma concentration in mM, temporally aligned with DCE volumes. "
              "Bypasses AIF detection. Number of values must match DCE volumes.",
     )
     dce_group.add_argument(
@@ -417,12 +426,29 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         parser.error(f"config_file does not exist: {args.config_file}")
 
     # Validate dce_aif_file exists if specified
-    if args.dce_aif_file is not None and not args.dce_aif_file.is_file():
-        parser.error(f"--dce-aif-file does not exist: {args.dce_aif_file}")
+    _VALID_AIF_EXTENSIONS = {".txt", ".npz", ".npy"}
+    if args.dce_aif_file is not None:
+        if not args.dce_aif_file.is_file():
+            parser.error(f"--dce-aif-file does not exist: {args.dce_aif_file}")
+        if args.dce_aif_file.suffix.lower() not in _VALID_AIF_EXTENSIONS:
+            parser.error(
+                f"--dce-aif-file has unsupported extension '{args.dce_aif_file.suffix}'. "
+                f"Supported: {sorted(_VALID_AIF_EXTENSIONS)}"
+            )
+
+    # Validate dsc_aif_file exists if specified
+    if args.dsc_aif_file is not None:
+        if not args.dsc_aif_file.is_file():
+            parser.error(f"--dsc-aif-file does not exist: {args.dsc_aif_file}")
+        if args.dsc_aif_file.suffix.lower() not in _VALID_AIF_EXTENSIONS:
+            parser.error(
+                f"--dsc-aif-file has unsupported extension '{args.dsc_aif_file.suffix}'. "
+                f"Supported: {sorted(_VALID_AIF_EXTENSIONS)}"
+            )
 
     # Resolve all Path arguments to absolute paths so nipype nodes
     # can locate them regardless of their execution working directory
-    for attr in ("bids_dir", "output_dir", "work_dir", "config_file", "dce_aif_file"):
+    for attr in ("bids_dir", "output_dir", "work_dir", "config_file", "dce_aif_file", "dsc_aif_file"):
         val = getattr(args, attr, None)
         if val is not None:
             setattr(args, attr, val.resolve())

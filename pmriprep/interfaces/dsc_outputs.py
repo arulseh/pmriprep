@@ -721,6 +721,8 @@ class DSCDerivativeWriter(BaseInterface):
             aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF detection marginal ({detection_level})", 1)
         elif detection_level == "brain_degraded":
             aif_rec = QCRecommendation(QCAction.EXCLUDE, f"AIF detection degraded ({detection_level})", 3)
+        elif detection_level == "external":
+            aif_rec = QCRecommendation(QCAction.REVIEW, "External AIF provided; verify curve quality", 1)
         elif detection_level == "synthetic":
             aif_rec = QCRecommendation(QCAction.EXCLUDE, "Synthetic AIF used; verify clinically", 3)
         elif detection_level in ("none", "unknown"):

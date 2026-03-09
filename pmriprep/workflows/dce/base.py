@@ -3675,7 +3675,9 @@ def _generate_dce_pk_maps_qc(
             generate_pk_parameter_maps_qc_plot,
         )
 
-        mask_data = nib.load(brain_mask_file).get_fdata()
+        if not brain_mask_file:
+            raise ValueError("brain_mask_file is required for DCE PK maps QC")
+        mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]
         is_auto = model_name == "auto"
 
         # Build param_maps dict from available files

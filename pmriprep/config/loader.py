@@ -125,6 +125,7 @@ def merge_cli_config(
         "dsc_preload": ("dsc", "preload_present"),
         "dsc_dose": ("dsc", "dose"),
         "dsc_aif_method": ("dsc", "aif_method"),
+        "dsc_aif_file": ("dsc", "aif_file"),
         # DCE options
         "dce_model": ("dce", "model"),
         "dce_bayesian": ("dce", "bayesian"),
@@ -218,7 +219,7 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     dsc_dict = config_dict.get("dsc", {}).copy()
 
     # Convert path strings to Path objects
-    for path_key in ("aif_mask_file", "lesion_mask", "nawm_mask", "roi_mask"):
+    for path_key in ("aif_file", "aif_mask_file", "lesion_mask", "nawm_mask", "roi_mask"):
         _dict_to_path(dsc_dict, path_key)
 
     # Type coerce numeric fields
