@@ -289,9 +289,13 @@ bids_dir/
         sub-01_ses-01_acq-mprage_ce-GAD_run-1_T1w.nii.gz     # Post-contrast T1w
         sub-01_ses-01_acq-mprage_ce-GAD_run-1_T1w.json
         sub-01_ses-01_acq-space_run-1_FLAIR.nii.gz
+        sub-01_ses-01_acq-space_run-1_FLAIR.json
         sub-01_ses-01_acq-space_run-1_T2w.nii.gz
+        sub-01_ses-01_acq-space_run-1_T2w.json		
         sub-01_ses-01_acq-vibe_flip-02_run-1_VFA.nii.gz      # VFA T1 mapping
+        sub-01_ses-01_acq-vibe_flip-02_run-1_VFA.json		
         sub-01_ses-01_acq-vibe_flip-15_run-1_VFA.nii.gz
+        sub-01_ses-01_acq-vibe_flip-15_run-1_VFA.json		
       perf/
         sub-01_ses-01_acq-ep2d_ce-GAD_run-1_dsc.nii.gz       # DSC perfusion
         sub-01_ses-01_acq-ep2d_ce-GAD_run-1_dsc.json
