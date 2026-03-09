@@ -3837,12 +3837,21 @@ def _generate_dce_pk_fit_qc(
         n_timepoints = conc_data.shape[3]
         time_points = np.arange(n_timepoints) * (volume_tr / 60.0)  # seconds -> minutes
 
-        # Load AIF
+        # Load AIF (always a 1-D text file from AIF detection)
         aif_path = _P(str(aif_file))
         if aif_path.suffix == ".npy":
             aif = np.load(str(aif_path))
+        elif aif_path.suffix == ".npz":
+            npz = np.load(str(aif_path))
+            aif = npz.get("Cp", npz.get("aif", next(iter(npz.values()))))
+        elif aif_path.suffix in (".txt", ".csv", ".tsv"):
+            aif = np.loadtxt(str(aif_path))
         else:
-            aif = nib.load(str(aif_path)).get_fdata().flatten()
+            # Last resort: try as text, then as NIfTI
+            try:
+                aif = np.loadtxt(str(aif_path))
+            except ValueError:
+                aif = nib.load(str(aif_path)).get_fdata().flatten()  # type: ignore[attr-defined]
 
         # Load parameter maps
         ktrans = _safe_load(ktrans_file)
