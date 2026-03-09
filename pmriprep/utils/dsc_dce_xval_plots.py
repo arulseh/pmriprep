@@ -98,7 +98,6 @@ def generate_xval_plot(
     )
 
     is_hard = constraint_mode == "hard"
-    is_soft = constraint_mode == "soft"
 
     # ---- Panel 1: Scatter (vp-derived CBV vs DSC CBV) ----
     ax = axes[0]
@@ -145,13 +144,6 @@ def generate_xval_plot(
         ax.set_title("vp vs CBV Scatter", fontsize=10)
         ax.set_xlim(0, lim_max * 1.05)
         ax.set_ylim(0, lim_max * 1.05)
-
-        if is_soft:
-            ax.text(
-                0.05, 0.82, "soft-constrained",
-                transform=ax.transAxes, fontsize=8,
-                color=COLORBLIND_PALETTE.warning,
-            )
 
     ax.grid(True, alpha=0.3)
 
@@ -204,13 +196,6 @@ def generate_xval_plot(
             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
         )
 
-        if is_soft:
-            ax.text(
-                0.05, 0.92, "soft-constrained",
-                transform=ax.transAxes, fontsize=8,
-                color=COLORBLIND_PALETTE.warning,
-            )
-
     ax.grid(True, alpha=0.3)
 
     # ---- Panel 3: Spatial ratio map ----
@@ -251,13 +236,6 @@ def generate_xval_plot(
 
     ax.set_title(f"Ratio Map (z={best_slice})", fontsize=10)
     ax.axis("off")
-
-    # Add expected ratio annotation
-    ax.text(
-        0.05, 0.05, f"expected={expected_ratio:.3f}",
-        transform=ax.transAxes, fontsize=8,
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
-    )
 
     plt.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")

@@ -529,22 +529,16 @@
         <h3>DSC CBV Constraint</h3>
         <div class="metrics">
             <div class="metric">
-                <div class="metric-label">Mode</div>
+                <div class="metric-label">Constraint</div>
                 <div class="metric-value
                     {%- if cbv_c.mode == 'hard' %} pass
                     {%- elif cbv_c.mode == 'soft' %} warn
                     {%- else %} unknown{% endif %}">{{ cbv_c.mode }}</div>
             </div>
-            {% if cbv_c.confidence is defined %}
+            {% if cbv_c.dsc_cbv_confidence is defined %}
             <div class="metric">
-                <div class="metric-label">Confidence</div>
-                <div class="metric-value">{{ cbv_c.confidence }}</div>
-            </div>
-            {% endif %}
-            {% if cbv_c.reason is defined %}
-            <div class="metric">
-                <div class="metric-label">Reason</div>
-                <div class="metric-value" style="font-size: 0.85em;">{{ cbv_c.reason }}</div>
+                <div class="metric-label">DSC Quality</div>
+                <div class="metric-value">{{ cbv_c.dsc_cbv_confidence }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.pk_modeling.n_constrained is defined %}
@@ -556,12 +550,12 @@
             {% if cbv_c.downgrade_from is defined %}
             <div class="metric">
                 <div class="metric-label">Downgraded</div>
-                <div class="metric-value warn">{{ cbv_c.downgrade_from }} &rarr; {{ cbv_c.mode }}</div>
+                <div class="metric-value"><span class="pass">{{ cbv_c.downgrade_from }}</span> &rarr; <span class="warn">{{ cbv_c.mode }}</span></div>
             </div>
             {% endif %}
             {% if cbv_c.cbv_negative_fraction is defined %}
             <div class="metric">
-                <div class="metric-label">CBV neg%</div>
+                <div class="metric-label">CBV Negative</div>
                 <div class="metric-value
                     {%- if cbv_c.cbv_negative_fraction < 0.01 %} pass
                     {%- elif cbv_c.cbv_negative_fraction < 0.05 %} warn
@@ -573,19 +567,19 @@
         <div class="metrics" style="margin-top: 8px;">
             <div class="metric">
                 <div class="metric-label">Scale Mismatch</div>
-                <div class="metric-value warn">{{ "%.0f"|format(cbv_c.scale_mismatch.overshoot_fraction * 100) }}% overshoot ({{ cbv_c.scale_mismatch.action }})</div>
+                <div class="metric-value warn">{{ "%.0f"|format(cbv_c.scale_mismatch.overshoot_fraction * 100) }}% vp overshoot</div>
             </div>
         </div>
         {% endif %}
         {% if dce.qc_metrics.pk_modeling.delta_r2_median is defined %}
         <div class="metrics" style="margin-top: 8px;">
             <div class="metric">
-                <div class="metric-label">&Delta;R&sup2; (median)</div>
+                <div class="metric-label">&Delta;R&sup2; Change</div>
                 <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.delta_r2_median) }}</div>
             </div>
             {% if dce.qc_metrics.pk_modeling.frac_positive_delta_r2 is defined %}
             <div class="metric">
-                <div class="metric-label">&Delta;R&sup2; &gt; 0</div>
+                <div class="metric-label">Improved</div>
                 <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.pk_modeling.frac_positive_delta_r2 * 100) }}%</div>
             </div>
             {% endif %}
@@ -594,7 +588,7 @@
         {% if dce.qc_metrics.pk_modeling.z_departure_median is defined %}
         <div class="metrics" style="margin-top: 8px;">
             <div class="metric">
-                <div class="metric-label">z-departure (med)</div>
+                <div class="metric-label">Prior Departure</div>
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.pk_modeling.z_departure_median) }}</div>
             </div>
             {% if dce.qc_metrics.pk_modeling.frac_prior_dominated is defined %}
@@ -605,7 +599,7 @@
             {% endif %}
             {% if dce.qc_metrics.pk_modeling.frac_strong_departure is defined %}
             <div class="metric">
-                <div class="metric-label">Strong departure</div>
+                <div class="metric-label">Prior Override</div>
                 <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.pk_modeling.frac_strong_departure * 100) }}%</div>
             </div>
             {% endif %}
@@ -616,7 +610,7 @@
     {% endif %}
 
     <!-- DSC-DCE Cross-Validation -->
-    {% if dce.qc_metrics.dsc_dce_validation is defined and dce.qc_metrics.dsc_dce_validation and not dce.qc_metrics.dsc_dce_validation.skipped is defined %}
+    {% if dce.qc_metrics.dsc_dce_validation is defined and dce.qc_metrics.dsc_dce_validation %}
     {% set xval = dce.qc_metrics.dsc_dce_validation %}
     {% if not xval.skipped|default(false) %}
     <div class="section">
@@ -627,33 +621,32 @@
                 <div class="metric-label">Status</div>
                 <div class="metric-value
                     {%- if xval.status == 'PASS' %} pass
-                    {%- elif xval.status == 'CIRCULAR' %} warn
+                    {%- elif xval.status == 'CIRCULAR' %}
                     {%- elif xval.status == 'WARN' %} warn
                     {%- else %} poor{% endif %}">{{ xval.status }}</div>
             </div>
             {% endif %}
             {% if xval.circular is defined and xval.circular %}
             <div class="metric">
-                <div class="metric-label">Note</div>
-                <div class="metric-value warn" style="font-size: 0.85em;">Circular: vp hard-constrained from CBV</div>
+                <div class="metric-value" style="font-size: 0.85em; font-style: italic;">Hard-constrained &mdash; cross-validation is circular</div>
             </div>
             {% endif %}
             {% if xval.metrics is defined %}
             {% if xval.metrics.median_ratio is defined and xval.metrics.median_ratio > 0 %}
             <div class="metric">
-                <div class="metric-label">Median Ratio</div>
+                <div class="metric-label">vp/CBV Ratio</div>
                 <div class="metric-value">{{ "%.3f"|format(xval.metrics.median_ratio) }}</div>
             </div>
             {% endif %}
             {% if xval.metrics.expected_ratio is defined and xval.metrics.expected_ratio > 0 %}
             <div class="metric">
-                <div class="metric-label">Expected Ratio</div>
+                <div class="metric-label">Expected</div>
                 <div class="metric-value">{{ "%.3f"|format(xval.metrics.expected_ratio) }}</div>
             </div>
             {% endif %}
             {% if xval.metrics.correlation is defined and xval.metrics.correlation != 0 %}
             <div class="metric">
-                <div class="metric-label">Correlation</div>
+                <div class="metric-label">Correlation (r)</div>
                 <div class="metric-value
                     {%- if xval.metrics.correlation >= 0.7 %} pass
                     {%- elif xval.metrics.correlation >= 0.4 %} warn
@@ -662,8 +655,14 @@
             {% endif %}
             {% if xval.metrics.fraction_valid is defined %}
             <div class="metric">
-                <div class="metric-label">Coverage</div>
+                <div class="metric-label">Valid Voxels</div>
                 <div class="metric-value">{{ "%.0f"|format(xval.metrics.fraction_valid * 100) }}%</div>
+            </div>
+            {% endif %}
+            {% if xval.correction_factor is defined and xval.status != 'PASS' and xval.status != 'CIRCULAR' %}
+            <div class="metric">
+                <div class="metric-label">Correction</div>
+                <div class="metric-value warn">{{ "%.2f"|format(xval.correction_factor) }}x</div>
             </div>
             {% endif %}
             {% endif %}
@@ -675,7 +674,7 @@
             {% endif %}
             {% if xval.dsc_preload_configured is defined and xval.dsc_preload_configured is not none %}
             <div class="metric">
-                <div class="metric-label">DSC Preload</div>
+                <div class="metric-label">Preload Config</div>
                 <div class="metric-value">{{ "yes" if xval.dsc_preload_configured else "no" }}</div>
             </div>
             {% endif %}
@@ -686,11 +685,6 @@
             </div>
             {% endif %}
         </div>
-        {% if xval.interpretation is defined and xval.interpretation %}
-        <div style="margin-top: 8px; font-size: 0.9em; color: #555;">
-            {{ xval.interpretation }}
-        </div>
-        {% endif %}
         {% if dce.images.dsc_dce_xval is defined and dce.images.dsc_dce_xval %}
         <div class="figure-container" style="margin-top: 10px;">
             <img src="{{ dce.images.dsc_dce_xval }}" alt="DSC-DCE Cross-Validation">

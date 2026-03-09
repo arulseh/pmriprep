@@ -4,11 +4,12 @@ Post-hoc comparison of DCE-derived vp (plasma volume fraction) with DSC-derived
 CBV (cerebral blood volume) to validate quantification and detect preload effects.
 
 The expected relationship between vp and CBV accounts for:
-- Hematocrit (0.45): vp measures plasma, CBV measures whole blood
+- Hematocrit (0.40): vp measures plasma, CBV measures whole blood
+  (microvascular Hct, reduced from large-vessel ~0.45 by Fahraeus-Lindqvist effect)
 - Tissue density (1.04 g/mL): converts mL/100mL to mL/100g
 
 Expected ratio at 3T with full dose:
-    (vp × 100) / CBV ≈ (1 - Hct) × ρ ≈ 0.572
+    (vp × 100) / CBV ≈ (1 - Hct) × ρ ≈ 0.624
 
 where:
     vp is in fraction (0-1)
@@ -50,10 +51,11 @@ logger = logging.getLogger(__name__)
 # Constants
 # =============================================================================
 
-#: Default hematocrit (fraction of red blood cells in whole blood)
-#: Note: This differs from dce_constants.HEMATOCRIT (0.42) which is used for
-#: plasma concentration conversion. Here we use 0.45 for vp/CBV comparison.
-HEMATOCRIT_VP_CBV: float = 0.45
+#: Microvascular hematocrit for vp/CBV comparison.
+#: Uses tissue/capillary Hct (0.40), reduced from large-vessel Hct (~0.45) by the
+#: Fahraeus-Lindqvist effect. Matches dsc_cbv_constraint.py HEMATOCRIT_TISSUE.
+#: Ref: Levin et al., MRM 2004; 51:735-742.
+HEMATOCRIT_VP_CBV: float = 0.40
 
 #: Tolerance for ratio validation (±)
 #: Acceptable range: expected × (1 ± 0.5)
@@ -203,7 +205,7 @@ def get_expected_ratio(
         expected_ratio = (1 - hematocrit) * tissue_density
 
     Args:
-        hematocrit: Hematocrit value (default: 0.45).
+        hematocrit: Hematocrit value (default: 0.40).
         tissue_density: Tissue density in g/mL (default: 1.04).
 
     Returns:
