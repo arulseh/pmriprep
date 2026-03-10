@@ -134,12 +134,10 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
 
     # Lesion statistics
     lesion_stats_json = traits.Either(traits.Str, None, desc="Lesion statistics JSON file path")
-    lesion_stats_txt = traits.Either(traits.Str, None, desc="Lesion statistics text summary path")
     lesion_mask_dsc = traits.Either(traits.Str, None, desc="Lesion mask in DSC space path")
 
     # ROI statistics (from user-supplied roi_mask, optional)
     roi_stats_json = traits.Either(traits.Str, None, desc="ROI statistics JSON file path")
-    roi_stats_txt = traits.Either(traits.Str, None, desc="ROI statistics text summary path")
     roi_mask_dsc = traits.Either(traits.Str, None, desc="ROI mask in DSC space path")
 
 

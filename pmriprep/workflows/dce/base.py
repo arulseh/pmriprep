@@ -166,8 +166,6 @@ def init_dce_preproc_wf(
     if config is None:
         config = DCEConfig()
 
-    pmriprep_dir = Path(output_dir) / "pmriprep"
-
     # Create the workflow
     workflow = pe.Workflow(name=name)
 
@@ -326,11 +324,9 @@ def init_dce_preproc_wf(
                 "t2w_in_dce",
                 # Lesion statistics (conditional on lesion mask)
                 "lesion_stats_json",
-                "lesion_stats_txt",
                 "lesion_mask_dce",
                 # ROI statistics (conditional on roi_mask)
                 "roi_stats_json",
-                "roi_stats_txt",
                 "roi_mask_dce",
                 # Motion QC
                 "motion_qc_plot",
@@ -510,14 +506,12 @@ def init_dce_preproc_wf(
     # ==========================================================================
     motion_qc_plot = pe.Node(
         niu.Function(
-            input_names=["motion_params_file", "out_dir", "tr"],
+            input_names=["motion_params_file", "tr"],
             output_names=["plot_file"],
             function=_generate_dce_motion_qc_plot,
         ),
         name="motion_qc_plot",
     )
-    motion_qc_plot.inputs.out_dir = str(pmriprep_dir)
-
     # Connect motion QC plot
     workflow.connect([
         (dce_preprocess, motion_qc_plot, [("out_params", "motion_params_file")]),
@@ -1662,7 +1656,6 @@ def init_dce_preproc_wf(
     )
     lesion_stats.inputs.subject_id = subject_id
     lesion_stats.inputs.session_id = session_id
-    lesion_stats.inputs.output_dir = str(pmriprep_dir)
 
     workflow.connect([
         (transform_stats_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),
@@ -1893,7 +1886,6 @@ def init_dce_preproc_wf(
         (transform_stats_lesion, outputnode, [("lesion_mask_dce_file", "lesion_mask_dce")]),
         (lesion_stats, outputnode, [
             ("stats_json", "lesion_stats_json"),
-            ("stats_txt", "lesion_stats_txt"),
         ]),
     ])
 
@@ -1917,7 +1909,6 @@ def init_dce_preproc_wf(
     )
     roi_stats.inputs.subject_id = subject_id
     roi_stats.inputs.session_id = session_id
-    roi_stats.inputs.output_dir = str(pmriprep_dir)
 
     # Transform ROI mask from T1w to DCE space
     workflow.connect([
@@ -1949,7 +1940,6 @@ def init_dce_preproc_wf(
         (transform_roi, outputnode, [("lesion_mask_dce_file", "roi_mask_dce")]),
         (roi_stats, outputnode, [
             ("stats_json", "roi_stats_json"),
-            ("stats_txt", "roi_stats_txt"),
         ]),
     ])
 
@@ -3280,7 +3270,7 @@ def _transform_structural_to_dce(
     return out_file
 
 
-def _generate_dce_motion_qc_plot(motion_params_file, out_dir, tr):
+def _generate_dce_motion_qc_plot(motion_params_file, tr):
     """Generate motion QC plot from DCE motion parameters.
 
     Creates a two-panel figure showing raw motion parameters and
@@ -3288,7 +3278,6 @@ def _generate_dce_motion_qc_plot(motion_params_file, out_dir, tr):
 
     Args:
         motion_params_file: Path to motion parameters text file.
-        out_dir: Output directory for the plot.
         tr: Repetition time in seconds.
 
     Returns:
@@ -3299,8 +3288,7 @@ def _generate_dce_motion_qc_plot(motion_params_file, out_dir, tr):
     from pmriprep.utils.qc_utils import plot_motion_qc
 
     motion_params = np.loadtxt(motion_params_file)
-    out_path = Path(out_dir) / "dce_motion_qc.png"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path = Path(".") / "dce_motion_qc.png"
     plot_motion_qc(motion_params, out_path, tr=tr, title="DCE Motion QC")
     return str(out_path)
 

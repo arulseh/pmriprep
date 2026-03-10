@@ -53,7 +53,6 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     )
     subject_id = traits.Str(mandatory=True, desc="Subject ID (without sub- prefix)")
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
-    output_dir = traits.Str(mandatory=True, desc="Output directory for statistics files")
 
     # Optional NAWM mask for reference values
     nawm_mask = traits.Either(
@@ -88,7 +87,6 @@ class DSCLesionStatsOutputSpec(TraitedSpec):
     """Output specification for DSC lesion statistics extraction."""
 
     stats_json = traits.Str(desc="Path to JSON statistics file")
-    stats_txt = traits.Str(desc="Path to text summary file")
 
 
 class DSCLesionStats(BaseInterface):
@@ -104,7 +102,6 @@ class DSCLesionStats(BaseInterface):
 
     Output files:
         {prefix}_space-DSC_lesion-stats.json  - Comprehensive JSON statistics
-        {prefix}_space-DSC_lesion-stats.txt   - Human-readable text summary
     """
 
     input_spec = DSCLesionStatsInputSpec
@@ -119,7 +116,6 @@ class DSCLesionStats(BaseInterface):
         if not self._has_input("lesion_mask"):
             # No lesion mask - skip processing
             self._results["stats_json"] = ""
-            self._results["stats_txt"] = ""
             return runtime
 
         # Load lesion mask
@@ -208,8 +204,7 @@ class DSCLesionStats(BaseInterface):
             result.clinical_context = get_dsc_clinical_context()
 
         # Write outputs
-        output_dir = Path(self.inputs.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = Path(runtime.cwd)
 
         prefix = f"sub-{self.inputs.subject_id}"
         if self.inputs.session_id:
@@ -221,13 +216,8 @@ class DSCLesionStats(BaseInterface):
         with open(json_path, "w") as f:
             json.dump(result.to_dict(), f, indent=2, default=str)
 
-        # Text summary
-        txt_path = output_dir / f"{prefix}_space-DSC_{desc}.txt"
-        self._write_text_summary(result, txt_path)
-
         # Set outputs
         self._results["stats_json"] = str(json_path)
-        self._results["stats_txt"] = str(txt_path)
 
         return runtime
 
@@ -308,102 +298,3 @@ class DSCLesionStats(BaseInterface):
 
         return region
 
-    def _write_text_summary(
-        self, result: LesionStatisticsResult, path: Path
-    ) -> None:
-        """Write human-readable text summary.
-
-        Args:
-            result: LesionStatisticsResult object.
-            path: Output file path.
-        """
-        lines = [
-            "=" * 70,
-            "DSC PERFUSION LESION STATISTICS",
-            "=" * 70,
-            f"Subject: sub-{result.subject_id}",
-            f"Session: ses-{result.session_id}" if result.session_id else "",
-            f"Lesion Mask: {result.mask_source}",
-            f"Mask Type: {result.mask_type}",
-            f"Total Lesion Voxels: {result.total_voxels}",
-            "",
-        ]
-
-        # Region statistics
-        for region_name, region in result.regions.items():
-            lines.extend([
-                "-" * 50,
-                f"Region: {region_name.upper().replace('_', ' ')}",
-                "-" * 50,
-                f"  Voxels: {region.voxel_count}",
-                f"  Volume: {region.volume_ml:.2f} mL ({region.volume_mm3:.1f} mm³)",
-                "",
-            ])
-
-            for map_name, stats in region.perfusion_maps.items():
-                lines.extend([
-                    f"  {map_name.upper()}:",
-                    f"    Mean ± SD: {stats.mean:.4f} ± {stats.std:.4f}",
-                    f"    Median (IQR): {stats.median:.4f} ({stats.p25:.4f} - {stats.p75:.4f})",
-                    f"    Range: [{stats.min:.4f}, {stats.max:.4f}]",
-                    f"    P90/P95: {stats.p90:.4f} / {stats.p95:.4f}",
-                ])
-                if stats.cv is not None:
-                    lines.append(f"    CV: {stats.cv:.4f}")
-                lines.append("")
-
-        # Derived metrics
-        if result.derived_metrics:
-            lines.extend([
-                "-" * 50,
-                "DERIVED METRICS",
-                "-" * 50,
-            ])
-            if "fractional_volumes" in result.derived_metrics:
-                fv = result.derived_metrics["fractional_volumes"]
-                lines.append("  Fractional Volumes:")
-                for key, val in fv.items():
-                    if key != "interpretation" and val is not None:
-                        lines.append(f"    {key}: {val:.1%}")
-
-            if "hotspot_summary" in result.derived_metrics:
-                hs = result.derived_metrics["hotspot_summary"]
-                lines.append("  Hotspot Values (P90):")
-                for key, val in hs.items():
-                    if key != "description" and val is not None:
-                        lines.append(f"    {key}: {val:.4f}")
-            lines.append("")
-
-        # NAWM reference
-        if result.nawm_reference:
-            lines.extend([
-                "-" * 50,
-                "NAWM REFERENCE VALUES",
-                "-" * 50,
-                f"  Voxels: {result.nawm_reference.get('voxel_count', 'N/A')}",
-                f"  Volume: {result.nawm_reference.get('volume_ml', 'N/A')} mL",
-            ])
-            for key, val in result.nawm_reference.items():
-                if isinstance(val, dict) and "median" in val:
-                    lines.append(f"  {key.upper()}: median={val['median']:.4f}")
-            lines.append("")
-
-        # Clinical context
-        if result.clinical_context:
-            lines.extend([
-                "-" * 50,
-                "CLINICAL INTERPRETATION",
-                "-" * 50,
-            ])
-            ctx = result.clinical_context
-            if "nCBV_threshold_high_grade" in ctx:
-                lines.append(f"  nCBV threshold (high-grade): {ctx['nCBV_threshold_high_grade']}")
-                lines.append(f"    {ctx.get('nCBV_interpretation', '')}")
-            if "reference" in ctx:
-                lines.append(f"  Reference: {ctx['reference']}")
-
-        lines.append("")
-        lines.append("=" * 70)
-
-        with open(path, "w") as f:
-            f.write("\n".join(lines))

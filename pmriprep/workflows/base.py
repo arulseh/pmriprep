@@ -1779,11 +1779,9 @@ def init_pmriprep_wf(
                 ("outputnode.nawm_mask_dsc", "nawm_mask_dsc"),
                 # Lesion statistics
                 ("outputnode.lesion_stats_json", "lesion_stats_json"),
-                ("outputnode.lesion_stats_txt", "lesion_stats_txt"),
                 ("outputnode.lesion_mask_dsc", "lesion_mask_dsc"),
                 # ROI statistics
                 ("outputnode.roi_stats_json", "roi_stats_json"),
-                ("outputnode.roi_stats_txt", "roi_stats_txt"),
                 ("outputnode.roi_mask_dsc", "roi_mask_dsc"),
             ]),
             (inputnode, dsc_writer, [("dsc_file", "source_dsc")]),
@@ -2553,11 +2551,9 @@ def init_pmriprep_wf(
                 ("outputnode.t2w_in_dce", "t2w_in_dce"),
                 # Lesion statistics
                 ("outputnode.lesion_stats_json", "lesion_stats_json"),
-                ("outputnode.lesion_stats_txt", "lesion_stats_txt"),
                 ("outputnode.lesion_mask_dce", "lesion_mask_dce"),
                 # ROI statistics
                 ("outputnode.roi_stats_json", "roi_stats_json"),
-                ("outputnode.roi_stats_txt", "roi_stats_txt"),
                 ("outputnode.roi_mask_dce", "roi_mask_dce"),
                 # Anatomical masks in DCE space
                 ("outputnode.brain_mask", "brain_mask"),

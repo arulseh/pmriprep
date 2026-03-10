@@ -969,7 +969,7 @@ def _extract_preload_class(qc_dict):
     return qc_dict.get("preload_classification", "none")
 
 
-def _generate_motion_qc_plot(motion_params_file, out_dir, tr, subject_id="", session_id=""):
+def _generate_motion_qc_plot(motion_params_file, tr, subject_id="", session_id=""):
     """Generate motion QC plot from motion parameters.
 
     Creates a three-panel figure showing raw motion parameters and
@@ -977,7 +977,6 @@ def _generate_motion_qc_plot(motion_params_file, out_dir, tr, subject_id="", ses
 
     Args:
         motion_params_file: Path to motion parameters text file.
-        out_dir: Output directory for the plot.
         tr: Repetition time in seconds.
         subject_id: Subject ID for QC figure title.
         session_id: Session ID for QC figure title.
@@ -990,8 +989,7 @@ def _generate_motion_qc_plot(motion_params_file, out_dir, tr, subject_id="", ses
     from pmriprep.utils.qc_utils import plot_motion_qc
 
     motion_params = np.loadtxt(motion_params_file)
-    out_path = Path(out_dir) / "dsc_motion_qc.png"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path = Path(".") / "dsc_motion_qc.png"
     _, motion_summary = plot_motion_qc(
         motion_params, out_path, tr=tr,
         subject_id=subject_id, session_id=session_id,
@@ -1549,7 +1547,6 @@ def init_dsc_preproc_wf(
     bids_dir = Path(bids_dir)
     output_dir = Path(output_dir)
     derivatives_dir = output_dir       # interfaces that append "pmriprep" internally
-    pmriprep_dir = output_dir / "pmriprep"
 
     # Create workflow
     workflow = pe.Workflow(name=name)
@@ -1660,11 +1657,9 @@ def init_dsc_preproc_wf(
                 "nawm_mask_dsc",
                 # Lesion statistics (conditional on lesion mask)
                 "lesion_stats_json",
-                "lesion_stats_txt",
                 "lesion_mask_dsc",
                 # ROI statistics (conditional on roi_mask)
                 "roi_stats_json",
-                "roi_stats_txt",
                 "roi_mask_dsc",
                 # Motion QC
                 "motion_qc_plot",
@@ -1709,13 +1704,12 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     motion_qc_plot = pe.Node(
         niu.Function(
-            input_names=["motion_params_file", "out_dir", "tr", "subject_id", "session_id"],
+            input_names=["motion_params_file", "tr", "subject_id", "session_id"],
             output_names=["plot_file", "motion_summary"],
             function=_generate_motion_qc_plot,
         ),
         name="motion_qc_plot",
     )
-    motion_qc_plot.inputs.out_dir = str(pmriprep_dir)
     motion_qc_plot.inputs.subject_id = subject_id
     motion_qc_plot.inputs.session_id = session_id or ""
 
@@ -1991,7 +1985,6 @@ def init_dsc_preproc_wf(
     )
     lesion_stats.inputs.subject_id = subject_id
     lesion_stats.inputs.session_id = session_id
-    lesion_stats.inputs.output_dir = str(pmriprep_dir)
 
     # -------------------------------------------------------------------
     # Node 7: CBV Normalization
@@ -2622,7 +2615,6 @@ def init_dsc_preproc_wf(
         (transform_lesion, outputnode, [("lesion_mask_dsc_file", "lesion_mask_dsc")]),
         (lesion_stats, outputnode, [
             ("stats_json", "lesion_stats_json"),
-            ("stats_txt", "lesion_stats_txt"),
         ]),
     ])
 
@@ -2646,7 +2638,6 @@ def init_dsc_preproc_wf(
     )
     roi_stats.inputs.subject_id = subject_id
     roi_stats.inputs.session_id = session_id
-    roi_stats.inputs.output_dir = str(pmriprep_dir)
 
     # Transform ROI mask from T1w to DSC space
     workflow.connect([
@@ -2676,7 +2667,6 @@ def init_dsc_preproc_wf(
         (transform_roi, outputnode, [("lesion_mask_dsc_file", "roi_mask_dsc")]),
         (roi_stats, outputnode, [
             ("stats_json", "roi_stats_json"),
-            ("stats_txt", "roi_stats_txt"),
         ]),
     ])
 
