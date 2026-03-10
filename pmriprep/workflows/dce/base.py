@@ -28,6 +28,7 @@ from pmriprep.data import get_arterial_atlas, get_arterial_atlas_cascade
 
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
+    output_dir: Union[str, Path],
     subject_id: str,
     session_id: Optional[str] = None,
     config: Optional[DCEConfig] = None,
@@ -48,6 +49,8 @@ def init_dce_preproc_wf(
     ----------
     bids_dir : str or Path
         Path to the BIDS dataset root directory.
+    output_dir : str or Path
+        Path to output derivatives directory (e.g., /project/derivatives).
     subject_id : str
         Subject identifier (without "sub-" prefix).
     session_id : str, optional
@@ -162,6 +165,8 @@ def init_dce_preproc_wf(
     # Use default config if not provided
     if config is None:
         config = DCEConfig()
+
+    pmriprep_dir = Path(output_dir) / "pmriprep"
 
     # Create the workflow
     workflow = pe.Workflow(name=name)
@@ -511,7 +516,7 @@ def init_dce_preproc_wf(
         ),
         name="motion_qc_plot",
     )
-    motion_qc_plot.inputs.out_dir = str(Path(bids_dir) / "derivatives" / "pmriprep")
+    motion_qc_plot.inputs.out_dir = str(pmriprep_dir)
 
     # Connect motion QC plot
     workflow.connect([
@@ -1657,7 +1662,7 @@ def init_dce_preproc_wf(
     )
     lesion_stats.inputs.subject_id = subject_id
     lesion_stats.inputs.session_id = session_id
-    lesion_stats.inputs.output_dir = str(Path(bids_dir) / "derivatives" / "pmriprep")
+    lesion_stats.inputs.output_dir = str(pmriprep_dir)
 
     workflow.connect([
         (transform_stats_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),
@@ -1912,7 +1917,7 @@ def init_dce_preproc_wf(
     )
     roi_stats.inputs.subject_id = subject_id
     roi_stats.inputs.session_id = session_id
-    roi_stats.inputs.output_dir = str(Path(bids_dir) / "derivatives" / "pmriprep")
+    roi_stats.inputs.output_dir = str(pmriprep_dir)
 
     # Transform ROI mask from T1w to DCE space
     workflow.connect([

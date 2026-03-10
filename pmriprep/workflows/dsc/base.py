@@ -1433,6 +1433,7 @@ def _write_pipeline_provenance(
 
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
+    output_dir: Union[str, Path],
     subject_id: str,
     session_id: Optional[str] = None,
     config: Optional[DSCConfig] = None,
@@ -1449,6 +1450,8 @@ def init_dsc_preproc_wf(
     ----------
     bids_dir : Path or str
         Path to BIDS dataset root directory.
+    output_dir : Path or str
+        Path to output derivatives directory (e.g., /project/derivatives).
     subject_id : str
         BIDS subject identifier (without 'sub-' prefix).
     session_id : str, optional
@@ -1544,6 +1547,9 @@ def init_dsc_preproc_wf(
 
     # Store parameters for use in workflow nodes
     bids_dir = Path(bids_dir)
+    output_dir = Path(output_dir)
+    derivatives_dir = output_dir       # interfaces that append "pmriprep" internally
+    pmriprep_dir = output_dir / "pmriprep"
 
     # Create workflow
     workflow = pe.Workflow(name=name)
@@ -1709,7 +1715,7 @@ def init_dsc_preproc_wf(
         ),
         name="motion_qc_plot",
     )
-    motion_qc_plot.inputs.out_dir = str(bids_dir / "derivatives" / "pmriprep")
+    motion_qc_plot.inputs.out_dir = str(pmriprep_dir)
     motion_qc_plot.inputs.subject_id = subject_id
     motion_qc_plot.inputs.session_id = session_id or ""
 
@@ -1985,7 +1991,7 @@ def init_dsc_preproc_wf(
     )
     lesion_stats.inputs.subject_id = subject_id
     lesion_stats.inputs.session_id = session_id
-    lesion_stats.inputs.output_dir = str(bids_dir / "derivatives" / "pmriprep")
+    lesion_stats.inputs.output_dir = str(pmriprep_dir)
 
     # -------------------------------------------------------------------
     # Node 7: CBV Normalization
@@ -2005,7 +2011,7 @@ def init_dsc_preproc_wf(
         ),
         name="normalize",
     )
-    normalize.inputs.derivatives_dir = str(bids_dir / "derivatives")
+    normalize.inputs.derivatives_dir = str(derivatives_dir)
     normalize.inputs.subject_id = subject_id
     normalize.inputs.session_id = session_id
 
@@ -2027,7 +2033,7 @@ def init_dsc_preproc_wf(
         ),
         name="normalize_cbf",
     )
-    normalize_cbf.inputs.derivatives_dir = str(bids_dir / "derivatives")
+    normalize_cbf.inputs.derivatives_dir = str(derivatives_dir)
     normalize_cbf.inputs.subject_id = subject_id
     normalize_cbf.inputs.session_id = session_id
 
@@ -2250,7 +2256,7 @@ def init_dsc_preproc_wf(
         ),
         name="write_provenance",
     )
-    write_provenance.inputs.derivatives_dir = str(bids_dir / "derivatives")
+    write_provenance.inputs.derivatives_dir = str(derivatives_dir)
     write_provenance.inputs.subject_id = subject_id
     write_provenance.inputs.session_id = session_id
     write_provenance.inputs.config_dict = config_dict
@@ -2272,7 +2278,7 @@ def init_dsc_preproc_wf(
         ),
         name="save_transforms",
     )
-    save_transforms.inputs.derivatives_dir = str(bids_dir / "derivatives")
+    save_transforms.inputs.derivatives_dir = str(derivatives_dir)
     save_transforms.inputs.subject_id = subject_id
     save_transforms.inputs.session_id = session_id
 
@@ -2640,7 +2646,7 @@ def init_dsc_preproc_wf(
     )
     roi_stats.inputs.subject_id = subject_id
     roi_stats.inputs.session_id = session_id
-    roi_stats.inputs.output_dir = str(bids_dir / "derivatives" / "pmriprep")
+    roi_stats.inputs.output_dir = str(pmriprep_dir)
 
     # Transform ROI mask from T1w to DSC space
     workflow.connect([

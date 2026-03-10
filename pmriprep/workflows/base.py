@@ -1377,6 +1377,7 @@ def init_pmriprep_wf(
     if decision.run_dsc:
         dsc_wf = init_dsc_preproc_wf(
             bids_dir=bids_dir,
+            output_dir=output_dir,
             subject_id=subject_id,
             session_id=session_id,
             config=dsc_config,
@@ -1855,6 +1856,7 @@ def init_pmriprep_wf(
 
         dce_wf = init_dce_preproc_wf(
             bids_dir=bids_dir,
+            output_dir=output_dir,
             subject_id=subject_id,
             session_id=session_id,
             config=dce_config,

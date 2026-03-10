@@ -101,6 +101,7 @@ class TestWorkflowInitialization:
 
         workflow = init_dsc_preproc_wf(
             bids_dir=bids_dir,
+            output_dir=bids_dir / "derivatives",
             subject_id=subject_id,
             session_id=session_id,
             config=config,
@@ -121,6 +122,7 @@ class TestWorkflowInitialization:
 
         workflow = init_dce_preproc_wf(
             bids_dir=bids_dir,
+            output_dir=bids_dir / "derivatives",
             subject_id=subject_id,
             session_id=session_id,
             config=config,
