@@ -989,7 +989,7 @@ def _generate_motion_qc_plot(motion_params_file, tr, subject_id="", session_id="
     from pmriprep.utils.qc_utils import plot_motion_qc
 
     motion_params = np.loadtxt(motion_params_file)
-    out_path = Path(".") / "dsc_motion_qc.png"
+    out_path = Path.cwd() / "dsc_motion_qc.png"
     _, motion_summary = plot_motion_qc(
         motion_params, out_path, tr=tr,
         subject_id=subject_id, session_id=session_id,
