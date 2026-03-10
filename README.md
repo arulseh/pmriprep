@@ -285,34 +285,36 @@ bids_dir/
   sub-01/
     ses-01/
       anat/
-        sub-01_ses-01_acq-mprage_run-1_T1w.nii.gz            # Pre-contrast T1w
-        sub-01_ses-01_acq-mprage_run-1_T1w.json
-        sub-01_ses-01_acq-mprage_ce-GAD_run-1_T1w.nii.gz     # Post-contrast T1w
-        sub-01_ses-01_acq-mprage_ce-GAD_run-1_T1w.json
-        sub-01_ses-01_acq-space_run-1_FLAIR.nii.gz
-        sub-01_ses-01_acq-space_run-1_FLAIR.json
-        sub-01_ses-01_acq-space_run-1_T2w.nii.gz
-        sub-01_ses-01_acq-space_run-1_T2w.json		
-        sub-01_ses-01_acq-vibe_flip-02_run-1_VFA.nii.gz      # VFA T1 mapping
-        sub-01_ses-01_acq-vibe_flip-02_run-1_VFA.json		
-        sub-01_ses-01_acq-vibe_flip-15_run-1_VFA.nii.gz
-        sub-01_ses-01_acq-vibe_flip-15_run-1_VFA.json		
+        sub-01_ses-01_run-1_T1w.nii.gz                       # Pre-contrast T1w
+        sub-01_ses-01_run-1_T1w.json
+        sub-01_ses-01_ce-GAD_run-1_T1w.nii.gz                # Post-contrast T1w
+        sub-01_ses-01_ce-GAD_run-1_T1w.json
+        sub-01_ses-01_run-1_FLAIR.nii.gz
+        sub-01_ses-01_run-1_FLAIR.json
+        sub-01_ses-01_run-1_T2w.nii.gz
+        sub-01_ses-01_run-1_T2w.json
+        sub-01_ses-01_flip-02_run-1_VFA.nii.gz               # VFA T1 mapping
+        sub-01_ses-01_flip-02_run-1_VFA.json
+        sub-01_ses-01_flip-15_run-1_VFA.nii.gz
+        sub-01_ses-01_flip-15_run-1_VFA.json
       perf/
-        sub-01_ses-01_acq-ep2d_ce-GAD_run-1_dsc.nii.gz       # DSC perfusion
-        sub-01_ses-01_acq-ep2d_ce-GAD_run-1_dsc.json
-        sub-01_ses-01_acq-vibe_ce-GAD_run-1_dce.nii.gz       # DCE perfusion
-        sub-01_ses-01_acq-vibe_ce-GAD_run-1_dce.json
+        sub-01_ses-01_ce-GAD_run-1_dsc.nii.gz                # DSC perfusion
+        sub-01_ses-01_ce-GAD_run-1_dsc.json
+        sub-01_ses-01_ce-GAD_run-1_dce.nii.gz                # DCE perfusion
+        sub-01_ses-01_ce-GAD_run-1_dce.json
       dwi/
-        sub-01_ses-01_acq-trace_run-1_dwi.nii.gz             # DWI (for ADC / tortuosity)
-        sub-01_ses-01_acq-trace_run-1_dwi.json
-        sub-01_ses-01_acq-trace_run-1_dwi.bvec
-        sub-01_ses-01_acq-trace_run-1_dwi.bval
+        sub-01_ses-01_run-1_dwi.nii.gz                       # DWI (for ADC / tortuosity)
+        sub-01_ses-01_run-1_dwi.json
+        sub-01_ses-01_run-1_dwi.bvec
+        sub-01_ses-01_run-1_dwi.bval
       fmap/
-        sub-01_ses-01_acq-afi_run-1_TB1AFI.nii.gz            # B1+ mapping (AFI)
-        sub-01_ses-01_acq-afi_run-1_TB1AFI.json
+        sub-01_ses-01_run-1_TB1AFI.nii.gz                    # B1+ mapping (AFI)
+        sub-01_ses-01_run-1_TB1AFI.json
         sub-01_ses-01_acq-famp_run-1_TB1TFL.nii.gz           # B1+ mapping (Siemens tfl_b1map, alternative to AFI)
         sub-01_ses-01_acq-famp_run-1_TB1TFL.json
 ```
+
+> The `acq-<label>` entity is optional. If your BIDS dataset includes it (e.g., `acq-mprage`, `acq-3d`), it will be recognized automatically. The pipeline discovers files by suffix (`_T1w`, `_FLAIR`, `_dsc`, etc.) and functional entities (`ce-`, `flip-`), not by `acq-` label.
 
 ### Required Files
 

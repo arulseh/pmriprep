@@ -368,12 +368,60 @@ def _find_t2w(
     return winner_path
 
 
+def _select_best_flair(candidates: list[Path]) -> Path:
+    """Select best FLAIR from multiple candidates, preferring 3D.
+
+    Selection criteria (in priority order):
+    1. MRAcquisitionType == "3D" in JSON sidecar
+    2. "acq-3d" in filename
+    3. First candidate (fallback)
+
+    Args:
+        candidates: List of FLAIR NIfTI paths (must be non-empty).
+
+    Returns:
+        Path to the best FLAIR candidate.
+    """
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # Prefer 3D acquisition (check JSON sidecar MRAcquisitionType)
+    for f in candidates:
+        json_path = f.with_name(
+            f.name.replace(".nii.gz", ".json").replace(".nii", ".json")
+        )
+        if json_path.exists():
+            import json as json_mod
+            try:
+                meta = json_mod.loads(json_path.read_text())
+            except (json_mod.JSONDecodeError, OSError):
+                continue
+            if meta.get("MRAcquisitionType") == "3D":
+                logger.info("Multiple FLAIRs found; selected 3D: %s", f.name)
+                return f
+
+    # Fallback: prefer acq-3d in filename
+    for f in candidates:
+        if "acq-3d" in f.name.lower():
+            logger.info("Multiple FLAIRs found; selected acq-3d: %s", f.name)
+            return f
+
+    logger.warning(
+        "Multiple FLAIRs found, no 3D preference resolved; using: %s",
+        candidates[0].name,
+    )
+    return candidates[0]
+
+
 def _find_flair_precontrast(anat_dir: Path) -> Optional[Path]:
     """Find pre-contrast FLAIR image.
 
     Pre-contrast FLAIR is identified by having _FLAIR suffix and NOT having
     a contrast entity (ce-) in the filename. HD-GLIO requires pre-contrast
     FLAIR (trained on BraTS non-enhanced FLAIR).
+
+    When multiple pre-contrast FLAIRs exist, prefers 3D (BraTS/HD-GLIO
+    protocol) via ``_select_best_flair``.
 
     Args:
         anat_dir: Path to the anatomical directory.
@@ -392,7 +440,7 @@ def _find_flair_precontrast(anat_dir: Path) -> Optional[Path]:
 
     precon = [f for f in flair_files if not is_postcontrast_image(f)]
     if precon:
-        return precon[0]
+        return _select_best_flair(precon)
 
     return None
 
@@ -402,6 +450,9 @@ def _find_flair_postcontrast(anat_dir: Path) -> Optional[Path]:
 
     Post-contrast FLAIR is identified by having _FLAIR suffix AND having
     a contrast entity (ce-) or post-contrast keyword in the filename.
+
+    When multiple post-contrast FLAIRs exist, prefers 3D via
+    ``_select_best_flair``.
 
     Args:
         anat_dir: Path to the anatomical directory.
@@ -420,7 +471,7 @@ def _find_flair_postcontrast(anat_dir: Path) -> Optional[Path]:
 
     postcon = [f for f in flair_files if is_postcontrast_image(f)]
     if postcon:
-        return postcon[0]
+        return _select_best_flair(postcon)
 
     return None
 
