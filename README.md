@@ -321,7 +321,7 @@ bids_dir/
 | Pipeline | Required | Optional |
 |----------|----------|----------|
 | DSC | `*_dsc.nii.gz`, T1w | — |
-| DCE | `*_dce.nii.gz`, T1w, VFA | B1+ map (`*_TB1AFI` or `*_TB1TFL`), DWI (tortuosity) |
+| DCE | `*_dce.nii.gz`, T1w | VFA (T1 mapping), B1+ map (`*_TB1AFI` or `*_TB1TFL`), DWI (tortuosity) |
 | HD-GLIO | T1w pre-contrast, T1w post-contrast, T2w, FLAIR | — |
 
 B1+ correction accepts either AFI (`*_TB1AFI`) or Siemens pre-computed flip angle maps (`*_TB1TFL`). Auto-detected via `--dce-b1-method auto`.
