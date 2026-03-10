@@ -41,20 +41,22 @@ class MapStatistics:
         iqr: Interquartile range (p75 - p25).
     """
 
-    mean: float
-    std: float
-    median: float
-    min: float
-    max: float
-    p10: float
-    p25: float
-    p75: float
-    p90: float
-    p95: float
+    mean: Optional[float] = None
+    std: Optional[float] = None
+    median: Optional[float] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    p10: Optional[float] = None
+    p25: Optional[float] = None
+    p75: Optional[float] = None
+    p90: Optional[float] = None
+    p95: Optional[float] = None
     cv: Optional[float] = None
     iqr: Optional[float] = None
+    n_valid: int = 0
+    n_total: int = 0
 
-    def to_dict(self) -> Dict[str, float]:
+    def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary, excluding None values."""
         return {k: v for k, v in vars(self).items() if v is not None}
 
@@ -155,10 +157,16 @@ def compute_map_statistics(
     if len(values) == 0:
         return None
 
+    n_total = len(values)
+
     # Filter NaN and Inf values
     values = values[np.isfinite(values)]
-    if len(values) == 0:
-        return None
+    n_valid = len(values)
+
+    if n_valid == 0:
+        # Non-empty mask but all values invalid — return stats with
+        # n_valid=0 so callers can distinguish from empty-mask (None).
+        return MapStatistics(n_valid=0, n_total=n_total)
 
     mean_val = float(np.mean(values))
     std_val = float(np.std(values))
@@ -183,6 +191,8 @@ def compute_map_statistics(
         p95=round(float(np.percentile(values, 95)), 6),
         cv=cv,
         iqr=round(p75 - p25, 6),
+        n_valid=n_valid,
+        n_total=n_total,
     )
 
 
@@ -541,7 +551,7 @@ def compute_nawm_reference(
         if map_data is None:
             continue
         stats = compute_map_statistics(map_data, nawm_mask)
-        if stats is not None:
+        if stats is not None and stats.n_valid > 0:
             reference[map_name] = {
                 "median": stats.median,
                 "std": stats.std,

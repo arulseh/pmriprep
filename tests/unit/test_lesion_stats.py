@@ -56,11 +56,15 @@ class TestComputeMapStatistics:
         mask = np.zeros((5, 5, 5), dtype=bool)
         assert compute_map_statistics(data, mask) is None
 
-    def test_all_nan_values_returns_none(self) -> None:
-        """All NaN values within the mask returns None."""
+    def test_all_nan_values_returns_stats_with_zero_valid(self) -> None:
+        """All NaN values within non-empty mask returns stats with n_valid=0."""
         data = np.full((5, 5, 5), np.nan)
         mask = np.ones((5, 5, 5), dtype=bool)
-        assert compute_map_statistics(data, mask) is None
+        stats = compute_map_statistics(data, mask)
+        assert stats is not None
+        assert stats.n_valid == 0
+        assert stats.n_total == 125
+        assert stats.mean is None
 
     def test_mean_zero_cv_is_none(self) -> None:
         """When mean is zero, coefficient of variation is None."""

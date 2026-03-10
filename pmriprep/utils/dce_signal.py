@@ -321,7 +321,11 @@ def signal_to_concentration(
     if b1_map is not None:
         # B1+ map is relative: actual_flip = nominal_flip × B1+
         b1_thresh = get_b1_thresholds(field_strength)
+        # Mark voxels with no B1 data BEFORE clipping so they aren't
+        # silently mapped to the clip minimum (which halves flip angles).
+        b1_missing = b1_map <= 0
         b1_safe = np.clip(b1_map, b1_thresh.dce_clip_low, b1_thresh.dce_clip_high)
+        b1_safe[b1_missing] = 1.0  # No B1 data → nominal flip angles
         if signal.ndim == 4:
             # B1 map is 3D (spatial), same for all timepoints
             effective_flip_rad = flip_angle_rad * b1_safe

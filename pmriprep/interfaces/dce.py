@@ -925,25 +925,23 @@ class B1Mapping(SimpleInterface):
 
         # Load pre-computed B1+ map
         b1_img = nib.load(self.inputs.precomputed_b1_file)
+
+        # Reorient to RAS (no-op if already RAS).
+        # Uses as_reoriented() which correctly preserves the world-space
+        # affine — the previous inv_ornt_aff() approach dropped it.
+        from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
+
+        orig_ornt = io_orientation(b1_img.affine)  # type: ignore[attr-defined]
+        ras_ornt = axcodes2ornt(("R", "A", "S"))
+        if not np.array_equal(orig_ornt, ras_ornt):
+            transform = ornt_transform(orig_ornt, ras_ornt)
+            b1_img = b1_img.as_reoriented(transform)  # type: ignore[attr-defined]
+            logger.info("Reoriented pre-computed B1+ map to RAS")
+
         b1_raw = np.asarray(b1_img.dataobj, dtype=np.float64)  # type: ignore[attr-defined]
         affine = b1_img.affine  # type: ignore[attr-defined]
         header = b1_img.header  # type: ignore[attr-defined]
         shape = b1_raw.shape[:3]
-
-        # Reorient to RAS
-        from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
-
-        orig_ornt = io_orientation(affine)
-        ras_ornt = axcodes2ornt(("R", "A", "S"))
-        transform = ornt_transform(orig_ornt, ras_ornt)
-        # Always apply as_reoriented — it's a no-op when already RAS.
-        # The previous check (allclose on column 0) missed flips where
-        # axes are in correct order but handedness is wrong (e.g. LAS→RAS).
-        if not np.array_equal(orig_ornt, ras_ornt):
-            from nibabel.orientations import apply_orientation
-            b1_raw = apply_orientation(b1_raw, transform)
-            affine = nib.orientations.inv_ornt_aff(transform, b1_raw.shape)  # type: ignore[attr-defined]
-            logger.info("Reoriented pre-computed B1+ map to RAS")
 
         # Read nominal preparation flip angle
         if not isdefined(self.inputs.b1_nominal_prep_fa) or not self.inputs.b1_nominal_prep_fa:
@@ -1440,7 +1438,11 @@ class T1Mapping(SimpleInterface):
         if isdefined(self.inputs.b1_map) and self.inputs.b1_map:
             b1_img = nib.load(self.inputs.b1_map)
             b1_map = b1_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            # Mark voxels with no B1 data BEFORE clipping so they aren't
+            # silently mapped to the clip minimum (which halves flip angles).
+            b1_missing = b1_map <= 0
             b1_map = np.clip(b1_map, b1_thresh.vfa_clip_low, b1_thresh.vfa_clip_high)
+            b1_map[b1_missing] = 1.0  # No B1 data → nominal flip angles
         else:
             b1_map = np.ones(shape, dtype=np.float64)
 
