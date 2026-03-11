@@ -689,7 +689,7 @@ class B1Mapping(SimpleInterface):
         smoothing_fwhm = self.inputs.smoothing_fwhm
         n_b1_outliers = 0
         if smoothing_fwhm > 0:
-            from scipy.ndimage import binary_erosion
+            from scipy.ndimage import binary_erosion, binary_fill_holes
 
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
             sigma_voxels = [
@@ -699,8 +699,13 @@ class B1Mapping(SimpleInterface):
             # Pass 1: robust local B1+ from interior voxels.
             # Eroding by 2 voxels excludes partial-volume edges from the
             # reference, so outlier detection at edges uses tissue-only neighbors.
+            # Fill internal holes (CSF, noisy B1+) so erosion targets only the
+            # outer boundary.  Intersect with valid so only real B1+
+            # measurements contribute to the normalized convolution reference.
+            # (Robustness improvement for outlier detection; Pass 2 smoothing
+            # already handles these voxels.)
             sigma_wide = [s * 1.5 for s in sigma_voxels]
-            interior = binary_erosion(valid, iterations=2)
+            interior = binary_erosion(binary_fill_holes(valid), iterations=2) & valid
             interior_float = interior.astype(np.float64)
             s_num = gaussian_filter(b1_map * interior_float, sigma=sigma_wide)
             s_den = gaussian_filter(interior_float, sigma=sigma_wide)
@@ -1016,16 +1021,18 @@ class B1Mapping(SimpleInterface):
         smoothing_fwhm = self.inputs.smoothing_fwhm
         n_b1_outliers = 0
         if smoothing_fwhm > 0:
-            from scipy.ndimage import binary_erosion
+            from scipy.ndimage import binary_erosion, binary_fill_holes
 
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
             sigma_voxels = [
                 max(smoothing_fwhm / (2.355 * vs), B1_MIN_SIGMA_VOXELS)
                 for vs in voxel_sizes
             ]
-            # Pass 1: robust local B1+ from interior voxels
+            # Pass 1: robust local B1+ from interior voxels.
+            # Fill internal holes so erosion targets only the outer boundary.
+            # Intersect with valid_mask so only real B1+ measurements contribute.
             sigma_wide = [s * 1.5 for s in sigma_voxels]
-            interior = binary_erosion(valid_mask, iterations=2)
+            interior = binary_erosion(binary_fill_holes(valid_mask), iterations=2) & valid_mask
             interior_float = interior.astype(np.float64)
             s_num = gaussian_filter(b1_map * interior_float, sigma=sigma_wide)
             s_den = gaussian_filter(interior_float, sigma=sigma_wide)
@@ -1614,11 +1621,18 @@ class T1Mapping(SimpleInterface):
         # 6-connectivity (face-adjacent only): MRI PSF is separable along
         # encoding axes, so contamination is strongest face-adjacent.
         # Low T1 (~500ms) causes ~2.5x Ktrans overestimation.
-        from scipy.ndimage import binary_erosion, generate_binary_structure  # type: ignore[import-untyped]
+        from scipy.ndimage import binary_erosion, binary_fill_holes, generate_binary_structure  # type: ignore[import-untyped]
 
         valid_t1_mask = np.isfinite(t1_map) & (t1_map > 0)
         struct = generate_binary_structure(3, 1)  # 6-connectivity
-        eroded = binary_erosion(valid_t1_mask, structure=struct, iterations=1)
+        # Fill internal holes (from CSF exclusion, range clipping, noisy VFA)
+        # so erosion only targets the outer brain-CSF/skull boundary where
+        # partial-volume contamination actually occurs.
+        valid_filled = binary_fill_holes(valid_t1_mask)
+        eroded = binary_erosion(valid_filled, structure=struct, iterations=1)
+        # Erode the filled volume, then remove original valid voxels that fall
+        # within the erosion shell.  Holes (filled but not originally valid) are
+        # already NaN, so they need no further masking.
         edge_mask = valid_t1_mask & ~eroded
         n_edge = int(np.sum(edge_mask))
         t1_map[edge_mask] = np.nan

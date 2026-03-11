@@ -26,6 +26,7 @@ from pmriprep.utils.dce_constants import (
     DEFAULT_TSNR_THRESHOLD,
     FP_BOUNDS,
     KTRANS_BOUNDS,
+    MIN_ENHANCEMENT_MM,
     PS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
@@ -1243,11 +1244,13 @@ class ComputeDCEMaps(BaseInterface):
         if signal_std_map is not None:
             fitting_mask = fitting_mask & (signal_std_map >= 1.0)
 
-        # Pre-fit enhancement screen: skip voxels with CNR < 3 where
-        # Ktrans estimation error exceeds 100% (Buckley, MRM 2002)
-        peak_enhancement = np.max(conc_data, axis=-1)
-        baseline_std = np.std(conc_data[..., :baseline_frames], axis=-1)
-        enhancement_mask = peak_enhancement > 3.0 * np.maximum(baseline_std, 1e-10)
+        # Pre-fit: exclude only voxels with no measurable enhancement (CSF, skull, air).
+        # Concentration-domain CNR is degraded by Ernst equation noise amplification
+        # (~1/(E1*TR)), making CNR > 3 reject 50-66% of brain tissue with adequate
+        # signal-domain tSNR. Quality gating deferred to post-fit QC mask (R² >= 0.5,
+        # tSNR >= 10, physiological bounds). Matches perf-plus approach.
+        # Ref: Buckley MRM 2002 CNR guideline is informational, not a hard cutoff.
+        enhancement_mask = np.max(conc_data, axis=-1) > MIN_ENHANCEMENT_MM
         fitting_mask = fitting_mask & enhancement_mask
 
         # Parameters
