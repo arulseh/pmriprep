@@ -1,6 +1,7 @@
 """Unit tests for DCE masking operations.
 
 Tests fill-then-erode T1 edge erosion, enhancement gating,
+median filter sentinel, slab-aware erosion, hemispheric asymmetry,
 and B1 fill-then-erode interior mask construction.
 """
 
@@ -10,7 +11,43 @@ from scipy.ndimage import (
     binary_erosion,
     binary_fill_holes,
     generate_binary_structure,
+    median_filter,
 )
+
+from pmriprep.interfaces.dce import _b1_interior_mask
+from pmriprep.utils.dce_constants import MIN_ENHANCEMENT_MM, SLAB_EROSION_MAX_SLICES
+
+
+# ============================================================================
+# Shared test helpers
+# ============================================================================
+
+
+def _apply_median_filter_new(t1_map: np.ndarray) -> np.ndarray:
+    """Brain-median sentinel approach (production algorithm)."""
+    nan_mask = np.isnan(t1_map)
+    valid_vals = t1_map[~nan_mask]
+    sentinel = float(np.median(valid_vals)) if len(valid_vals) > 0 else 1000.0
+    t1_for_filter = np.where(nan_mask, sentinel, t1_map)
+    result = median_filter(t1_for_filter, size=3)
+    result[nan_mask] = np.nan
+    return result
+
+
+def _erode_slab_aware(valid_filled: np.ndarray) -> np.ndarray:
+    """Slab-aware erosion (production algorithm)."""
+    n_slices = valid_filled.shape[2]
+    if n_slices <= SLAB_EROSION_MAX_SLICES:
+        struct_2d = generate_binary_structure(2, 1)
+        eroded = np.zeros_like(valid_filled)
+        for z in range(n_slices):
+            eroded[:, :, z] = binary_erosion(
+                valid_filled[:, :, z], structure=struct_2d, iterations=1,
+            )
+    else:
+        struct = generate_binary_structure(3, 1)
+        eroded = binary_erosion(valid_filled, structure=struct, iterations=1)
+    return eroded
 
 
 # ============================================================================
@@ -147,14 +184,13 @@ class TestEnhancementGate:
 class TestB1FillThenErode:
     """Tests for B1 smoothing interior mask construction.
 
-    Reproduces the pattern from dce.py (AFI ~line 703, VFA ~line 1028):
-        interior = binary_erosion(binary_fill_holes(valid), iterations=2) & valid
+    Uses the extracted _b1_interior_mask() helper from dce.py.
     """
 
     @staticmethod
     def _interior(valid: np.ndarray) -> np.ndarray:
-        """Compute interior mask using the production algorithm."""
-        return binary_erosion(binary_fill_holes(valid), iterations=2) & valid
+        """Compute interior mask using the production helper."""
+        return _b1_interior_mask(valid)
 
     def test_hole_does_not_shrink_interior(self) -> None:
         """Internal hole should not cause interior voxels to be lost."""
@@ -197,3 +233,356 @@ class TestB1FillThenErode:
         interior_old = binary_erosion(mask, iterations=2)
 
         np.testing.assert_array_equal(interior_new, interior_old)
+
+
+# ============================================================================
+# Median filter sentinel
+# ============================================================================
+
+
+class TestMedianFilterSentinel:
+    """Tests for the brain-median sentinel fix.
+
+    The old -1.0 sentinel poisons boundary voxels: when >=14/27 kernel voxels
+    are background (-1.0), the median becomes -1.0, destroying valid brain
+    voxels at the edge. The brain-median sentinel gives "neutral" votes.
+    """
+
+    @staticmethod
+    def _apply_filter_old(t1_map: np.ndarray) -> np.ndarray:
+        """Old sentinel=-1.0 approach (buggy)."""
+        nan_mask = np.isnan(t1_map)
+        t1_for_filter = np.where(nan_mask, -1.0, t1_map)
+        result = median_filter(t1_for_filter, size=3)
+        result[nan_mask] = np.nan
+        return result
+
+    def test_boundary_voxels_preserved_with_new_sentinel(self) -> None:
+        """Brain-median sentinel preserves boundary voxels that -1.0 destroys."""
+        # 10x10x10 brain with NaN background outside a sphere of radius 4
+        rng = np.random.default_rng(42)
+        t1_map = np.full((10, 10, 10), np.nan)
+        center = np.array([5, 5, 5])
+        for ix in range(10):
+            for iy in range(10):
+                for iz in range(10):
+                    if np.linalg.norm(np.array([ix, iy, iz]) - center) <= 4:
+                        t1_map[ix, iy, iz] = 1000.0 + rng.normal(0, 50)
+
+        brain_before = np.isfinite(t1_map)
+
+        result_old = self._apply_filter_old(t1_map.copy())
+        result_new = _apply_median_filter_new(t1_map.copy())
+
+        # Count voxels that were valid brain but became negative (out-of-range)
+        # with each approach. -1.0 sentinel pulls boundary medians negative.
+        old_damaged = brain_before & (result_old < 0)
+        new_damaged = brain_before & (result_new < 0)
+
+        # Old sentinel should damage boundary voxels
+        assert int(np.sum(old_damaged)) > 0, "Expected -1.0 sentinel to damage boundary"
+        # New sentinel should not damage any voxels
+        assert int(np.sum(new_damaged)) == 0, "Brain-median sentinel should not damage boundary"
+
+    def test_interior_voxels_unchanged(self) -> None:
+        """Interior voxels far from NaN boundary are unchanged by sentinel choice."""
+        t1_map = np.full((11, 11, 11), 1000.0)
+        # NaN border only on faces
+        t1_map[0, :, :] = np.nan
+        t1_map[-1, :, :] = np.nan
+        t1_map[:, 0, :] = np.nan
+        t1_map[:, -1, :] = np.nan
+        t1_map[:, :, 0] = np.nan
+        t1_map[:, :, -1] = np.nan
+
+        result_old = self._apply_filter_old(t1_map.copy())
+        result_new = _apply_median_filter_new(t1_map.copy())
+
+        # Deep interior (3+ voxels from border) should be identical
+        np.testing.assert_array_equal(
+            result_old[3:-3, 3:-3, 3:-3],
+            result_new[3:-3, 3:-3, 3:-3],
+        )
+
+    def test_all_nan_returns_nan(self) -> None:
+        """All-NaN input should remain all-NaN."""
+        t1_map = np.full((5, 5, 5), np.nan)
+        result = _apply_median_filter_new(t1_map)
+        assert np.all(np.isnan(result))
+
+
+# ============================================================================
+# Slab-aware erosion
+# ============================================================================
+
+
+class TestSlabAwareErosion:
+    """Tests for slab-aware erosion: 2D per-slice for thin slabs, 3D for thick."""
+
+    def test_thin_slab_preserves_top_bottom_slices(self) -> None:
+        """2D erosion for thin slab (<=30 slices) preserves top/bottom slice interior."""
+        mask = np.ones((20, 20, 24), dtype=bool)
+
+        eroded = _erode_slab_aware(mask)
+
+        # Interior of top/bottom slices should be preserved with 2D erosion
+        assert eroded[10, 10, 0], "Top slice interior lost with 2D erosion"
+        assert eroded[10, 10, 23], "Bottom slice interior lost with 2D erosion"
+
+        # 3D erosion would have removed these
+        struct_3d = generate_binary_structure(3, 1)
+        eroded_3d = binary_erosion(mask, structure=struct_3d, iterations=1)
+        assert not eroded_3d[10, 10, 0], "3D erosion should remove top slice"
+        assert not eroded_3d[10, 10, 23], "3D erosion should remove bottom slice"
+
+    def test_thin_slab_still_erodes_in_plane(self) -> None:
+        """2D erosion still removes in-plane boundary voxels."""
+        mask = np.ones((20, 20, 10), dtype=bool)
+
+        eroded = _erode_slab_aware(mask)
+
+        # In-plane edges should be eroded
+        assert not eroded[0, 10, 5], "In-plane edge should be eroded"
+        assert not eroded[10, 0, 5], "In-plane edge should be eroded"
+        # Interior should be preserved
+        assert eroded[10, 10, 5]
+
+    def test_thick_volume_uses_3d_erosion(self) -> None:
+        """Volumes with >30 slices should use standard 3D erosion."""
+        mask = np.ones((40, 40, 40), dtype=bool)
+
+        eroded = _erode_slab_aware(mask)
+
+        # 3D erosion removes top/bottom slices
+        assert not eroded[20, 20, 0], "3D erosion should remove top slice"
+        assert not eroded[20, 20, 39], "3D erosion should remove bottom slice"
+        # Interior preserved
+        assert eroded[20, 20, 20]
+
+    def test_boundary_n_slices_30_uses_2d(self) -> None:
+        """Exactly 30 slices should use 2D erosion (<=30 threshold)."""
+        mask = np.ones((15, 15, 30), dtype=bool)
+
+        eroded = _erode_slab_aware(mask)
+
+        # Top/bottom slice interior should be preserved (2D mode)
+        assert eroded[7, 7, 0]
+        assert eroded[7, 7, 29]
+
+    def test_boundary_n_slices_31_uses_3d(self) -> None:
+        """31 slices should use 3D erosion (>30 threshold)."""
+        mask = np.ones((15, 15, 31), dtype=bool)
+
+        eroded = _erode_slab_aware(mask)
+
+        # Top/bottom slice should be eroded (3D mode)
+        assert not eroded[7, 7, 0]
+        assert not eroded[7, 7, 30]
+
+
+# ============================================================================
+# Hemispheric asymmetry QC
+# ============================================================================
+
+
+class TestHemisphericAsymmetry:
+    """Tests for hemispheric asymmetry QC metric computation."""
+
+    @staticmethod
+    def _compute_asymmetry(
+        t1_map: np.ndarray, brain_mask: np.ndarray,
+    ) -> dict:
+        """Reproduce the production hemispheric asymmetry logic."""
+        shape = t1_map.shape
+        midplane = shape[0] // 2
+        right_valid = brain_mask[:midplane] & np.isfinite(t1_map[:midplane])
+        left_valid = brain_mask[midplane:] & np.isfinite(t1_map[midplane:])
+        right_t1 = t1_map[:midplane][right_valid]
+        left_t1 = t1_map[midplane:][left_valid]
+        if len(right_t1) > 100 and len(left_t1) > 100:
+            med_r = float(np.median(right_t1))
+            med_l = float(np.median(left_t1))
+            denom = (med_r + med_l) / 2.0
+            asym = abs(med_r - med_l) / denom if denom > 0 else 0.0
+            return {
+                "asymmetry_index": round(float(asym), 4),
+                "median_right_ms": round(med_r, 1),
+                "median_left_ms": round(med_l, 1),
+                "warn": bool(asym > 0.15),
+                "fail": bool(asym > 0.30),
+            }
+        return {}
+
+    def test_symmetric_brain_low_asymmetry(self) -> None:
+        """Symmetric T1 map should have near-zero asymmetry index."""
+        rng = np.random.default_rng(42)
+        t1_map = np.full((20, 20, 20), np.nan)
+        brain_mask = np.zeros((20, 20, 20), dtype=bool)
+        # Fill both hemispheres with similar T1 values
+        brain_mask[2:18, 2:18, 2:18] = True
+        t1_map[brain_mask] = 1000.0 + rng.normal(0, 20, size=int(np.sum(brain_mask)))
+
+        result = self._compute_asymmetry(t1_map, brain_mask)
+
+        assert result["asymmetry_index"] < 0.05
+        assert not result["warn"]
+        assert not result["fail"]
+
+    def test_asymmetric_brain_triggers_warn(self) -> None:
+        """20% median difference should trigger warn but not fail."""
+        t1_map = np.full((20, 20, 20), np.nan)
+        brain_mask = np.zeros((20, 20, 20), dtype=bool)
+        brain_mask[2:18, 2:18, 2:18] = True
+        # Right hemisphere: T1=1000ms, Left hemisphere: T1=1200ms (20% diff)
+        t1_map[2:10, 2:18, 2:18] = 1000.0
+        t1_map[10:18, 2:18, 2:18] = 1200.0
+
+        result = self._compute_asymmetry(t1_map, brain_mask)
+
+        assert result["warn"]
+        assert not result["fail"]
+
+    def test_severe_asymmetry_triggers_fail(self) -> None:
+        """40% median difference should trigger fail."""
+        t1_map = np.full((20, 20, 20), np.nan)
+        brain_mask = np.zeros((20, 20, 20), dtype=bool)
+        brain_mask[2:18, 2:18, 2:18] = True
+        # Right: 800ms, Left: 1200ms (~40% diff)
+        t1_map[2:10, 2:18, 2:18] = 800.0
+        t1_map[10:18, 2:18, 2:18] = 1200.0
+
+        result = self._compute_asymmetry(t1_map, brain_mask)
+
+        assert result["fail"]
+
+    def test_insufficient_voxels_returns_empty(self) -> None:
+        """Fewer than 100 voxels in a hemisphere should return empty dict."""
+        t1_map = np.full((10, 10, 10), np.nan)
+        brain_mask = np.zeros((10, 10, 10), dtype=bool)
+        # Only a few voxels in each hemisphere
+        brain_mask[2:4, 2:4, 2:4] = True
+        brain_mask[6:8, 6:8, 6:8] = True
+        t1_map[brain_mask] = 1000.0
+
+        result = self._compute_asymmetry(t1_map, brain_mask)
+
+        assert result == {}
+
+
+# ============================================================================
+# Additional edge-case tests
+# ============================================================================
+
+
+class TestMedianFilterSentinelEdgeCases:
+    """Edge-case tests for the brain-median sentinel approach."""
+
+    def test_wide_t1_range_no_bias(self) -> None:
+        """Sentinel should not bias boundary voxels toward any tissue type.
+
+        With T1 values spanning 500-4000ms (WM through CSF), the sentinel
+        (median ~1200ms) should not pull boundary voxels toward WM or CSF.
+        """
+        rng = np.random.default_rng(123)
+        t1_map = np.full((12, 12, 12), np.nan)
+        center = np.array([6, 6, 6])
+        for ix in range(12):
+            for iy in range(12):
+                for iz in range(12):
+                    dist = np.linalg.norm(np.array([ix, iy, iz]) - center)
+                    if dist <= 4:
+                        # Assign tissue-like T1: WM=800, GM=1400, CSF=4000
+                        if dist <= 2:
+                            t1_map[ix, iy, iz] = 4000.0 + rng.normal(0, 100)
+                        elif dist <= 3:
+                            t1_map[ix, iy, iz] = 1400.0 + rng.normal(0, 50)
+                        else:
+                            t1_map[ix, iy, iz] = 800.0 + rng.normal(0, 30)
+
+        result = _apply_median_filter_new(t1_map.copy())
+
+        # Boundary WM voxels (dist ~4) should remain in WM range, not be
+        # pulled toward the median (~1400ms GM)
+        brain = np.isfinite(t1_map)
+        boundary_wm = brain & (result > 0) & (result < 1000)
+        assert int(np.sum(boundary_wm)) > 0, "Should have boundary WM voxels"
+        # No voxel should become negative
+        assert not np.any(result[brain] < 0)
+
+    def test_single_valid_voxel_preserved(self) -> None:
+        """Single valid voxel surrounded by NaN — sentinel equals that value."""
+        t1_map = np.full((5, 5, 5), np.nan)
+        t1_map[2, 2, 2] = 1500.0
+
+        result = _apply_median_filter_new(t1_map.copy())
+
+        # Sentinel = median of [1500.0] = 1500.0
+        # All kernel voxels are 1500.0, so median = 1500.0
+        assert result[2, 2, 2] == pytest.approx(1500.0)
+
+
+class TestSlabAwareErosionEdgeCases:
+    """Edge-case tests for slab-aware erosion."""
+
+    def test_spherical_mask_thin_slab(self) -> None:
+        """Spherical brain mask in thin slab — curved boundary eroded in-plane."""
+        mask = np.zeros((20, 20, 15), dtype=bool)
+        center = np.array([10, 10, 7])
+        for ix in range(20):
+            for iy in range(20):
+                for iz in range(15):
+                    if np.linalg.norm(np.array([ix, iy, iz]) - center) <= 6:
+                        mask[ix, iy, iz] = True
+
+        eroded = _erode_slab_aware(mask)
+
+        # Interior should be preserved
+        assert eroded[10, 10, 7]
+        # In-plane boundary should be eroded (voxel at edge of sphere)
+        mid_slice = mask[:, :, 7].copy()
+        mid_eroded = eroded[:, :, 7]
+        boundary = mid_slice & ~mid_eroded
+        assert int(np.sum(boundary)) > 0, "Should erode in-plane boundary"
+        # Each slice with data should retain some interior voxels after 2D erosion
+        # (sphere radius 6 means inner slices have radius >= 3, enough to survive)
+        for z in range(15):
+            if np.sum(mask[:, :, z]) > 8:  # slices with enough data
+                assert np.any(eroded[:, :, z]), (
+                    f"Slice {z} lost all voxels despite having "
+                    f"{int(np.sum(mask[:, :, z]))} input voxels"
+                )
+
+    def test_empty_slice_in_middle(self) -> None:
+        """Empty slice in the middle of slab — 2D erosion handles gracefully."""
+        mask = np.ones((15, 15, 10), dtype=bool)
+        # Clear an entire slice
+        mask[:, :, 5] = False
+
+        eroded = _erode_slab_aware(mask)
+
+        # Empty slice stays empty
+        assert not np.any(eroded[:, :, 5])
+        # Neighboring slices still have interior
+        assert eroded[7, 7, 4]
+        assert eroded[7, 7, 6]
+
+
+class TestEnhancementGateNegative:
+    """Test that negative concentrations fail the enhancement gate."""
+
+    THRESHOLD = MIN_ENHANCEMENT_MM
+
+    def test_negative_concentration_fails(self) -> None:
+        """Negative concentration (noise/baseline drift) should fail the gate."""
+        conc = np.array([0.0, -0.01, -0.005, 0.0])
+        assert not (np.max(conc) > self.THRESHOLD)
+
+    def test_mixed_negative_positive_below_threshold_fails(self) -> None:
+        """Mix of negative and tiny positive (below threshold) fails."""
+        conc = np.array([-0.01, 0.0, 1e-9, -0.005])
+        assert not (np.max(conc) > self.THRESHOLD)
+
+    def test_mixed_negative_positive_above_threshold_passes(self) -> None:
+        """Negative values don't prevent passing if peak exceeds threshold."""
+        conc = np.array([-0.01, 0.0, 1e-7, -0.005])
+        assert np.max(conc) > self.THRESHOLD

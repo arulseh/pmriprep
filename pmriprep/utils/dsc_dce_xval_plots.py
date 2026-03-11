@@ -216,7 +216,7 @@ def generate_xval_plot(
     if np.any(n_valid_per_slice > 0):
         best_slice = int(np.argmax(n_valid_per_slice))
     else:
-        best_slice = ratio_3d.shape[2] // 2
+        best_slice = ratio_3d.shape[2] // 2  # type: ignore[misc]
 
     slice_2d = get_radiological_slice(ratio_3d, axis=2, slice_idx=best_slice)
 

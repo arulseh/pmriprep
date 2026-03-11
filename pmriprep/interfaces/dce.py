@@ -85,6 +85,25 @@ def _reorient_to_ras(in_file: Optional[str]) -> Optional[str]:
     return out_file
 
 
+def _b1_interior_mask(valid: np.ndarray, iterations: int = 2) -> np.ndarray:
+    """Compute interior mask for B1+ normalized convolution.
+
+    Fills internal holes (CSF, noisy B1+) so erosion targets only the
+    outer brain boundary, then intersects with the original valid mask
+    to exclude filled-but-invalid voxels.
+
+    Args:
+        valid: Boolean mask of valid B1+ voxels.
+        iterations: Number of erosion iterations (default 2).
+
+    Returns:
+        Boolean interior mask.
+    """
+    from scipy.ndimage import binary_erosion, binary_fill_holes  # type: ignore[import-untyped]
+
+    return binary_erosion(binary_fill_holes(valid), iterations=iterations) & valid  # type: ignore[no-any-return]
+
+
 class B1MappingInputSpec(BaseInterfaceInputSpec):
     """Input specification for B1Mapping interface."""
 
@@ -689,8 +708,6 @@ class B1Mapping(SimpleInterface):
         smoothing_fwhm = self.inputs.smoothing_fwhm
         n_b1_outliers = 0
         if smoothing_fwhm > 0:
-            from scipy.ndimage import binary_erosion, binary_fill_holes
-
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
             sigma_voxels = [
                 max(smoothing_fwhm / (2.355 * vs), B1_MIN_SIGMA_VOXELS)
@@ -705,7 +722,7 @@ class B1Mapping(SimpleInterface):
             # (Robustness improvement for outlier detection; Pass 2 smoothing
             # already handles these voxels.)
             sigma_wide = [s * 1.5 for s in sigma_voxels]
-            interior = binary_erosion(binary_fill_holes(valid), iterations=2) & valid
+            interior = _b1_interior_mask(valid)
             interior_float = interior.astype(np.float64)
             s_num = gaussian_filter(b1_map * interior_float, sigma=sigma_wide)
             s_den = gaussian_filter(interior_float, sigma=sigma_wide)
@@ -1021,8 +1038,6 @@ class B1Mapping(SimpleInterface):
         smoothing_fwhm = self.inputs.smoothing_fwhm
         n_b1_outliers = 0
         if smoothing_fwhm > 0:
-            from scipy.ndimage import binary_erosion, binary_fill_holes
-
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
             sigma_voxels = [
                 max(smoothing_fwhm / (2.355 * vs), B1_MIN_SIGMA_VOXELS)
@@ -1032,7 +1047,7 @@ class B1Mapping(SimpleInterface):
             # Fill internal holes so erosion targets only the outer boundary.
             # Intersect with valid_mask so only real B1+ measurements contribute.
             sigma_wide = [s * 1.5 for s in sigma_voxels]
-            interior = binary_erosion(binary_fill_holes(valid_mask), iterations=2) & valid_mask
+            interior = _b1_interior_mask(valid_mask)
             interior_float = interior.astype(np.float64)
             s_num = gaussian_filter(b1_map * interior_float, sigma=sigma_wide)
             s_den = gaussian_filter(interior_float, sigma=sigma_wide)
@@ -1388,6 +1403,7 @@ class T1Mapping(SimpleInterface):
             DEFAULT_T1_MS,
             EPSILON_TRIG,
             LENIENT_T1_RANGE,
+            SLAB_EROSION_MAX_SLICES,
             get_b1_thresholds,
             get_tissue_t1_ranges,
         )
@@ -1544,18 +1560,20 @@ class T1Mapping(SimpleInterface):
         t1_map[~brain_mask] = np.nan
 
         # Apply 3x3x3 median filter to reduce noise spikes.
-        # Background NaN voxels are replaced with a sentinel value (-1.0)
-        # below the valid T1 range so they lose the median vote in any
-        # kernel with a majority of real brain voxels. After filtering,
-        # original NaN positions are restored. This avoids the ~100-1000x
-        # performance penalty of generic_filter with a Python callback.
+        # Background NaN voxels are replaced with the brain-median sentinel
+        # so they cast "neutral" votes in the kernel — boundary voxels with
+        # a majority of real brain neighbors are preserved (unlike a -1.0
+        # sentinel which poisons ~15-20K boundary voxels via median pull-down).
+        # After filtering, original NaN positions are restored.
         # Applied BEFORE CSF exclusion to avoid introducing artificial zeros
         # that would contaminate periventricular tissue during filtering.
         # Matches perf-plus order: median filter → CSF exclusion → range clipping.
         from scipy.ndimage import median_filter  # type: ignore[import-untyped]
 
         nan_mask = np.isnan(t1_map)
-        t1_for_filter = np.where(nan_mask, -1.0, t1_map)
+        valid_vals = t1_map[~nan_mask]
+        sentinel = float(np.median(valid_vals)) if len(valid_vals) > 0 else 1000.0
+        t1_for_filter = np.where(nan_mask, sentinel, t1_map)
         t1_map = median_filter(t1_for_filter, size=3)
         t1_map[nan_mask] = np.nan
 
@@ -1624,12 +1642,40 @@ class T1Mapping(SimpleInterface):
         from scipy.ndimage import binary_erosion, binary_fill_holes, generate_binary_structure  # type: ignore[import-untyped]
 
         valid_t1_mask = np.isfinite(t1_map) & (t1_map > 0)
-        struct = generate_binary_structure(3, 1)  # 6-connectivity
         # Fill internal holes (from CSF exclusion, range clipping, noisy VFA)
         # so erosion only targets the outer brain-CSF/skull boundary where
         # partial-volume contamination actually occurs.
         valid_filled = binary_fill_holes(valid_t1_mask)
-        eroded = binary_erosion(valid_filled, structure=struct, iterations=1)
+
+        # Defensive check: slab-aware erosion assumes axis 2 = slices (RAS).
+        # The workflow guarantees RAS via reorientation nodes, but warn if
+        # the interface is used directly with non-RAS data.
+        from nibabel.orientations import axcodes2ornt, io_orientation
+
+        ornt = io_orientation(first_img.affine)  # type: ignore[attr-defined]
+        ras_ornt = axcodes2ornt(("R", "A", "S"))
+        if not np.array_equal(ornt, ras_ornt):
+            logger.warning(
+                "T1Mapping input is not RAS-oriented; slab-aware erosion "
+                "assumes axis 2 is the slice axis. Results may be incorrect."
+            )
+
+        # Slab-aware erosion: for thin 3D slabs (≤SLAB_EROSION_MAX_SLICES),
+        # through-plane erosion is not physically motivated — 3D VIBE has
+        # well-defined slice profile within the slab, so partial volume is
+        # an in-plane phenomenon. Through-plane erosion of a 24-slice slab
+        # loses 2 slices (8% of z-coverage) for no benefit.
+        n_slices = shape[2]  # RAS orientation: axis 2 = slices
+        if n_slices <= SLAB_EROSION_MAX_SLICES:
+            struct_2d = generate_binary_structure(2, 1)  # 4-connectivity in-plane
+            eroded = np.zeros_like(valid_filled)
+            for z in range(n_slices):
+                eroded[:, :, z] = binary_erosion(
+                    valid_filled[:, :, z], structure=struct_2d, iterations=1,
+                )
+        else:
+            struct = generate_binary_structure(3, 1)  # 6-connectivity
+            eroded = binary_erosion(valid_filled, structure=struct, iterations=1)
         # Erode the filled volume, then remove original valid voxels that fall
         # within the erosion shell.  Holes (filled but not originally valid) are
         # already NaN, so they need no further masking.
@@ -1763,6 +1809,9 @@ class T1Mapping(SimpleInterface):
             "median_filtered": True,
         }
         qc_metrics["edge_voxels_eroded"] = n_edge
+        qc_metrics["edge_erosion_mode"] = (
+            "2d_per_slice" if n_slices <= SLAB_EROSION_MAX_SLICES else "3d"
+        )
         qc_metrics["t1_correction"] = correction_info
         qc_metrics["vfa_conditioning"] = {
             "e1_median": round(e1_median, 5),
@@ -1770,6 +1819,25 @@ class T1Mapping(SimpleInterface):
             "tr_ms": tr_ms,
             "nan_fraction": round(nan_fraction, 4),
         }
+
+        # Hemispheric asymmetry: detect systematic left/right coverage loss
+        midplane = shape[0] // 2
+        right_valid = brain_mask[:midplane] & np.isfinite(t1_map_arr[:midplane])
+        left_valid = brain_mask[midplane:] & np.isfinite(t1_map_arr[midplane:])
+        right_t1 = t1_map_arr[:midplane][right_valid]
+        left_t1 = t1_map_arr[midplane:][left_valid]
+        if len(right_t1) > 100 and len(left_t1) > 100:
+            med_r = float(np.median(right_t1))
+            med_l = float(np.median(left_t1))
+            denom = (med_r + med_l) / 2.0
+            asym = abs(med_r - med_l) / denom if denom > 0 else 0.0
+            qc_metrics["hemispheric_asymmetry"] = {
+                "asymmetry_index": round(float(asym), 4),
+                "median_right_ms": round(med_r, 1),
+                "median_left_ms": round(med_l, 1),
+                "warn": bool(asym > 0.15),
+                "fail": bool(asym > 0.30),
+            }
 
         # Derive hierarchical T1 QC status
         from pmriprep.utils.qc_standards import QCStatus

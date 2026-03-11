@@ -124,9 +124,9 @@ def _build_param_dict(
 
 
 def _apply_volume_constraint_batched(
-    params: npt.NDArray[np.floating],
+    params: npt.NDArray[np.float64],
     param_names: list[str],
-) -> npt.NDArray[np.floating]:
+) -> npt.NDArray[np.float64]:
     """Apply ve + vp <= 1.0 constraint by proportional scaling.
 
     Only applies to models that have both ve and vp.

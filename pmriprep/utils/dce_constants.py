@@ -52,6 +52,12 @@ MIN_SIGNAL_STD: Final[float] = 0.01
 #: Minimum enhancement in mM for voxel to be considered valid
 MIN_ENHANCEMENT_MM: Final[float] = 1e-8
 
+#: Maximum number of slices for 2D per-slice erosion.
+#: 3D VIBE thin slabs (≤30 slices) have well-defined slice profile —
+#: through-plane partial volume is minimal, so only in-plane erosion
+#: is physically motivated. Whole-brain volumes (>30 slices) use 3D erosion.
+SLAB_EROSION_MAX_SLICES: Final[int] = 30
+
 #: Minimum flow rate to prevent division by zero in 2CXM eigenvalue calculations
 EPSILON_FLOW: Final[float] = 1e-9
 
