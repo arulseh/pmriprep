@@ -184,6 +184,7 @@ def init_dce_preproc_wf(
                 "t1w_reference",
                 "brain_mask",
                 "wm_probseg",
+                "gm_probseg",
                 "csf_probseg",
                 # Tumor mask inputs for lesion statistics
                 "whole_tumor_mask",  # Undilated whole-tumor mask (fallback for lesion stats)
@@ -665,10 +666,40 @@ def init_dce_preproc_wf(
             (dce_registration, transform_csf_probseg, [("out_matrix", "transform_matrix")]),
         ])
 
+        # Transform WM and GM probsegs to DCE space for tissue-segmented T1 fallback
+        transform_wm_probseg = pe.Node(
+            niu.Function(
+                input_names=["probseg_file", "reference_file", "transform_matrix"],
+                output_names=["out_file"],
+                function=_transform_probseg_to_dce,
+            ),
+            name="transform_wm_probseg",
+        )
+
+        transform_gm_probseg = pe.Node(
+            niu.Function(
+                input_names=["probseg_file", "reference_file", "transform_matrix"],
+                output_names=["out_file"],
+                function=_transform_probseg_to_dce,
+            ),
+            name="transform_gm_probseg",
+        )
+
+        workflow.connect([
+            (inputnode, transform_wm_probseg, [("wm_probseg", "probseg_file")]),
+            (dce_preprocess, transform_wm_probseg, [("mean_img", "reference_file")]),
+            (dce_registration, transform_wm_probseg, [("out_matrix", "transform_matrix")]),
+            (inputnode, transform_gm_probseg, [("gm_probseg", "probseg_file")]),
+            (dce_preprocess, transform_gm_probseg, [("mean_img", "reference_file")]),
+            (dce_registration, transform_gm_probseg, [("out_matrix", "transform_matrix")]),
+        ])
+
         # Wire transformed CSF probseg to T1 mapping only when active
         if not config.no_t1:
             workflow.connect([
                 (transform_csf_probseg, t1_mapping, [("out_file", "csf_probseg")]),
+                (transform_wm_probseg, t1_mapping, [("out_file", "wm_probseg")]),
+                (transform_gm_probseg, t1_mapping, [("out_file", "gm_probseg")]),
             ])
 
     # ==========================================================================
@@ -2105,7 +2136,9 @@ def _transform_probseg_to_dce(
         return None
 
     out_dir = Path.cwd()
-    out_file = str(out_dir / "csf_probseg_dce.nii.gz")
+    # Derive output name from input (e.g., *_pve_0 → csf, *_pve_1 → gm, *_pve_2 → wm)
+    stem = probseg_path.name.replace(".nii.gz", "").replace(".nii", "")
+    out_file = str(out_dir / f"{stem}_dce.nii.gz")
 
     # Same-space shortcut: skip transform if already aligned
     probseg_img = nib.load(probseg_file)
@@ -2121,7 +2154,7 @@ def _transform_probseg_to_dce(
             return out_file
 
     # Transform with FLIRT using trilinear interpolation
-    tmp_file = str(out_dir / "_tmp_csf_probseg_dce.nii.gz")
+    tmp_file = str(out_dir / f"_tmp_{stem}_dce.nii.gz")
     cmd = [
         "flirt",
         "-in", str(probseg_file),

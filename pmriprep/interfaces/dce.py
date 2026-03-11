@@ -1230,6 +1230,14 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         exists=True,
         desc="CSF probability map for excluding CSF voxels from T1 fitting",
     )
+    wm_probseg = File(
+        exists=True,
+        desc="WM probability map for tissue-segmented T1 fallback (optional)",
+    )
+    gm_probseg = File(
+        exists=True,
+        desc="GM probability map for tissue-segmented T1 fallback (optional)",
+    )
     csf_threshold = traits.Float(
         0.3,
         usedefault=True,
@@ -1388,17 +1396,42 @@ class T1Mapping(SimpleInterface):
 
         # Check if T1 mapping should be skipped
         if self.inputs.skip_t1:
-            # Use field-strength-appropriate default T1
             from pmriprep.utils.dce_t1_validation import (
                 T1_TISSUE_REFERENCE,
+                build_tissue_t1_map,
                 get_field_strength_key,
             )
 
             field_key = get_field_strength_key(self.inputs.field_strength)
             default_t1 = T1_TISSUE_REFERENCE[field_key]["default"]
+            tissue_t1_used = False
 
-            # Create uniform T1 map with field-strength default
-            t1_map = np.full(shape, default_t1, dtype=np.float32)
+            # Use tissue-segmented T1 if probsegs are available
+            if (
+                isdefined(self.inputs.wm_probseg) and self.inputs.wm_probseg
+                and isdefined(self.inputs.gm_probseg) and self.inputs.gm_probseg
+            ):
+                wm_img = nib.load(self.inputs.wm_probseg)
+                gm_img = nib.load(self.inputs.gm_probseg)
+                # Resample to VFA space if needed
+                if wm_img.shape[:3] != shape:  # type: ignore[attr-defined]
+                    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+                    wm_img = resample_to_img(wm_img, first_img, interpolation="continuous")
+                    gm_img = resample_to_img(gm_img, first_img, interpolation="continuous")
+                wm_arr = wm_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+                gm_arr = gm_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+                t1_map = build_tissue_t1_map(
+                    wm_arr, gm_arr, self.inputs.field_strength,
+                )
+                tissue_t1_used = True
+                logger.info(
+                    "skip_t1: using tissue-segmented T1 map (WM=%.0fms, GM=%.0fms)",
+                    float((T1_TISSUE_REFERENCE[field_key]["wm"][0] + T1_TISSUE_REFERENCE[field_key]["wm"][1]) / 2),
+                    float((T1_TISSUE_REFERENCE[field_key]["gm"][0] + T1_TISSUE_REFERENCE[field_key]["gm"][1]) / 2),
+                )
+            else:
+                # Uniform fallback
+                t1_map = np.full(shape, default_t1, dtype=np.float32)
 
             # Save output
             out_img = nib.Nifti1Image(t1_map, affine)
@@ -1406,14 +1439,21 @@ class T1Mapping(SimpleInterface):
 
             # Set outputs for skipped case
             self._results["out_file"] = out_file
-            self._results["mean_t1_wm"] = default_t1
-            self._results["mean_t1_gm"] = default_t1
+            if tissue_t1_used:
+                wm_mid = float((T1_TISSUE_REFERENCE[field_key]["wm"][0] + T1_TISSUE_REFERENCE[field_key]["wm"][1]) / 2)
+                gm_mid = float((T1_TISSUE_REFERENCE[field_key]["gm"][0] + T1_TISSUE_REFERENCE[field_key]["gm"][1]) / 2)
+            else:
+                wm_mid = default_t1
+                gm_mid = default_t1
+            self._results["mean_t1_wm"] = wm_mid
+            self._results["mean_t1_gm"] = gm_mid
             self._results["qc_pass"] = True
             self._results["qc_metrics"] = {
-                "mean_t1_wm_ms": default_t1,
-                "mean_t1_gm_ms": default_t1,
+                "mean_t1_wm_ms": wm_mid,
+                "mean_t1_gm_ms": gm_mid,
                 "qc_pass": True,
                 "skipped": True,
+                "tissue_t1_used": tissue_t1_used,
             }
             return runtime
 
@@ -1593,12 +1633,58 @@ class T1Mapping(SimpleInterface):
         # Convert to float32 for storage
         t1_map = t1_map.astype(np.float32)
 
+        # Compute NaN fraction in brain before correction
+        nan_in_brain = np.isnan(t1_map) & brain_mask
+        nan_fraction = float(np.sum(nan_in_brain)) / max(1, int(np.sum(brain_mask)))
+
+        # VFA conditioning QC metric
+        # Compute median T1 from valid voxels for E1 calculation
+        valid_for_e1 = t1_map[brain_mask & np.isfinite(t1_map) & (t1_map > 0)]
+        if len(valid_for_e1) > 0:
+            median_t1_original = float(np.median(valid_for_e1))
+            e1_median = float(np.exp(-tr_s / (median_t1_original / 1000.0)))
+        else:
+            median_t1_original = 0.0
+            e1_median = 0.99  # default to moderately ill-conditioned
+
+        if e1_median > 0.995:
+            vfa_conditioning = "severe"
+        elif e1_median > 0.99:
+            vfa_conditioning = "poor"
+        else:
+            vfa_conditioning = "good"
+
+        logger.info(
+            "VFA conditioning: E1=%.4f (%s), NaN fraction=%.1f%%",
+            e1_median, vfa_conditioning, nan_fraction * 100,
+        )
+
+        # Load WM/GM probsegs for tissue-segmented fallback
+        wm_probseg_arr: Optional[np.ndarray] = None
+        gm_probseg_arr: Optional[np.ndarray] = None
+        if (
+            isdefined(self.inputs.wm_probseg) and self.inputs.wm_probseg
+            and isdefined(self.inputs.gm_probseg) and self.inputs.gm_probseg
+        ):
+            wm_ps_img = nib.load(self.inputs.wm_probseg)
+            gm_ps_img = nib.load(self.inputs.gm_probseg)
+            if wm_ps_img.shape[:3] != shape:  # type: ignore[attr-defined]
+                from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+                wm_ps_img = resample_to_img(wm_ps_img, first_img, interpolation="continuous")
+                gm_ps_img = resample_to_img(gm_ps_img, first_img, interpolation="continuous")
+            wm_probseg_arr = wm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            gm_probseg_arr = gm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+
         t1_map_arr, correction_result = apply_t1_correction(
             t1_map,
             field_strength=field_strength,
             correction_mode=correction_mode,
             brain_mask=brain_mask,
             b1_qc_pass=self.inputs.b1_qc_pass,
+            nan_fraction=nan_fraction,
+            wm_probseg=wm_probseg_arr,
+            gm_probseg=gm_probseg_arr,
+            e1_median=e1_median,
         )
         t1_map = t1_map_arr.astype(np.float32)
         correction_info = correction_result.to_dict()
@@ -1664,11 +1750,17 @@ class T1Mapping(SimpleInterface):
         }
         qc_metrics["edge_voxels_eroded"] = n_edge
         qc_metrics["t1_correction"] = correction_info
+        qc_metrics["vfa_conditioning"] = {
+            "e1_median": round(e1_median, 5),
+            "conditioning": vfa_conditioning,
+            "tr_ms": tr_ms,
+            "nan_fraction": round(nan_fraction, 4),
+        }
 
         # Derive hierarchical T1 QC status
         from pmriprep.utils.qc_standards import QCStatus
         corr_type = correction_info.get("correction_applied", "none")
-        if corr_type == "fallback":
+        if corr_type in ("fallback", "tissue_segmented"):
             t1_status = QCStatus.POOR
         elif corr_type == "offset":
             t1_status = QCStatus.POOR if (not wm_pass and not gm_pass) else QCStatus.WARN

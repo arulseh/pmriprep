@@ -232,6 +232,7 @@ def _find_previous_anat_outputs(
         "t1w_postcon_coreg": None,
         "brain_mask": None,
         "wm_probseg": None,
+        "gm_probseg": None,
         "csf_probseg": None,
         "t1w_to_mni_xfm": None,
         "flair_coreg": None,
@@ -262,6 +263,12 @@ def _find_previous_anat_outputs(
         candidates = sorted(seg_dir.glob("*_pve_2.nii.gz"))
         if candidates:
             outputs["wm_probseg"] = str(candidates[0])
+
+    # GM probability segmentation (FAST pve_1 = GM)
+    if seg_dir.exists():
+        candidates = sorted(seg_dir.glob("*_pve_1.nii.gz"))
+        if candidates:
+            outputs["gm_probseg"] = str(candidates[0])
 
     # CSF probability segmentation (FAST pve_0 = CSF)
     if seg_dir.exists():
@@ -1976,6 +1983,7 @@ def init_pmriprep_wf(
                 workflow.connect([
                     (anat_wf, dce_wf, [
                         ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+                        ("outputnode.gm_probseg", "inputnode.gm_probseg"),
                         ("outputnode.csf_probseg", "inputnode.csf_probseg"),
                     ]),
                 ])
@@ -2049,6 +2057,8 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.brain_mask = prev_anat["brain_mask"]
             if prev_anat["wm_probseg"]:
                 dce_wf.inputs.inputnode.wm_probseg = prev_anat["wm_probseg"]
+            if prev_anat["gm_probseg"]:
+                dce_wf.inputs.inputnode.gm_probseg = prev_anat["gm_probseg"]
             if prev_anat["csf_probseg"]:
                 dce_wf.inputs.inputnode.csf_probseg = prev_anat["csf_probseg"]
             if prev_anat["t1w_to_mni_xfm"]:
