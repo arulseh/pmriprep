@@ -51,16 +51,20 @@ VFA_NAN_FRACTION_TISSUE_FALLBACK: float = 0.40
 # T1 Tissue Reference Values by Field Strength
 # ============================================================================
 
+# brain_mean = 0.60 * wm_midpoint + 0.40 * gm_midpoint
+# (approximate whole-brain WM:GM volume ratio, Ge et al. AJNR 2002)
+# Derived values: qc_max_strict = gm[1], qc_max_lenient = qc_max_strict + brain_sd,
+# expected_median = brain_mean, warn_high = expected_median + brain_sd
 T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
     1.5: {
         "wm": (550, 750),
-        "gm": (900, 1100),
+        "gm": (900, 1200),
         "brain_median": (700, 950),
-        "brain_mean": 825,
+        "brain_mean": 810,
         "brain_sd": 150,
         "qc_min": 525,
-        "qc_max_strict": 1125,
-        "qc_max_lenient": 1275,
+        "qc_max_strict": 1200,
+        "qc_max_lenient": 1350,
         "csf": 3000,
         "default": 900,
         "t1_upper_bound": 5000,
@@ -68,8 +72,8 @@ T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
         "reject_min": 450,
         "reject_max": 1500,
         "warn_low": 650,
-        "warn_high": 1000,
-        "expected_median": 825,
+        "warn_high": 960,
+        "expected_median": 810,
     },
     3.0: {
         "wm": (800, 1000),
@@ -93,9 +97,9 @@ T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
     # 7.0T: Rooney 2007 (WM/GM T1), Wright 2008, Marques 2010
     7.0: {
         "wm": (1000, 1250),
-        "gm": (1700, 2100),
+        "gm": (1800, 2100),
         "brain_median": (1300, 1700),
-        "brain_mean": 1550,
+        "brain_mean": 1455,
         "brain_sd": 250,
         "qc_min": 1000,
         "qc_max_strict": 2100,
@@ -107,8 +111,8 @@ T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
         "reject_min": 800,
         "reject_max": 2400,
         "warn_low": 1200,
-        "warn_high": 1850,
-        "expected_median": 1550,
+        "warn_high": 1705,
+        "expected_median": 1455,
     },
 }
 
@@ -350,9 +354,9 @@ def cross_validate_field_strength(
     """Cross-validate field strength by checking if measured T1 matches expectations.
 
     T1 relaxation times are field-strength-dependent:
-    - At 1.5T: WM ~600-700ms, GM ~900-1100ms, brain median ~700-950ms
+    - At 1.5T: WM ~600-700ms, GM ~900-1200ms, brain median ~700-950ms
     - At 3.0T: WM ~800-1000ms, GM ~1250-1500ms, brain median ~900-1250ms
-    - At 7.0T: WM ~1000-1250ms, GM ~1700-2100ms, brain median ~1300-1700ms
+    - At 7.0T: WM ~1000-1250ms, GM ~1800-2100ms, brain median ~1300-1700ms
 
     If the measured T1 is significantly closer to the opposite field strength's
     expected range, warn the user that field strength may be mis-specified.

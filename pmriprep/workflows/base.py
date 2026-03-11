@@ -1923,8 +1923,9 @@ def init_pmriprep_wf(
                     "agent-specific accuracy."
                 )
             else:
-                # Default to 3T value (3.8 s^-1/mM)
-                dce_wf.inputs.inputnode.r1_relaxivity = 3.8
+                # Default to 3T value
+                from pmriprep.utils.dce_constants import get_r1_relaxivity
+                dce_wf.inputs.inputnode.r1_relaxivity = get_r1_relaxivity(3.0)
                 logger.warning(
                     "ContrastBolusAgent and field strength not found in BIDS JSON. "
                     "Using default Gd-DTPA r1=3.8 s^-1/mM at 3.0T. "

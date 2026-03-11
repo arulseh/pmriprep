@@ -389,13 +389,9 @@ class TestFieldStrengthOrderingMixedTissue:
 
 
 class TestReferenceTableSelfConsistency:
-    """Test that derived values in T1_TISSUE_REFERENCE are self-consistent.
+    """Test that derived values in T1_TISSUE_REFERENCE are self-consistent."""
 
-    Only 3T is tested: 1.5T and 7T entries predate these derivation rules
-    and use slightly different conventions (separate task to harmonize).
-    """
-
-    @pytest.mark.parametrize("field_key", [3.0])
+    @pytest.mark.parametrize("field_key", [1.5, 3.0, 7.0])
     def test_qc_max_strict_equals_gm_upper(self, field_key: float) -> None:
         """qc_max_strict should equal the upper bound of GM range."""
         ref = T1_TISSUE_REFERENCE[field_key]
@@ -404,7 +400,7 @@ class TestReferenceTableSelfConsistency:
             f"!= gm upper ({ref['gm'][1]})"
         )
 
-    @pytest.mark.parametrize("field_key", [3.0])
+    @pytest.mark.parametrize("field_key", [1.5, 3.0, 7.0])
     def test_qc_max_lenient_equals_strict_plus_sd(self, field_key: float) -> None:
         """qc_max_lenient should equal qc_max_strict + brain_sd."""
         ref = T1_TISSUE_REFERENCE[field_key]
@@ -414,7 +410,7 @@ class TestReferenceTableSelfConsistency:
             f"({ref['qc_max_strict']} + {ref['brain_sd']})"
         )
 
-    @pytest.mark.parametrize("field_key", [3.0])
+    @pytest.mark.parametrize("field_key", [1.5, 3.0, 7.0])
     def test_expected_median_equals_brain_mean(self, field_key: float) -> None:
         """expected_median should equal brain_mean."""
         ref = T1_TISSUE_REFERENCE[field_key]
@@ -423,7 +419,7 @@ class TestReferenceTableSelfConsistency:
             f"!= brain_mean ({ref['brain_mean']})"
         )
 
-    @pytest.mark.parametrize("field_key", [3.0])
+    @pytest.mark.parametrize("field_key", [1.5, 3.0, 7.0])
     def test_warn_high_equals_expected_plus_sd(self, field_key: float) -> None:
         """warn_high should equal expected_median + brain_sd."""
         ref = T1_TISSUE_REFERENCE[field_key]
