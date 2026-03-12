@@ -1,19 +1,24 @@
 """Unit tests for dce_t1_validation module.
 
 Tests tissue-segmented T1 fallback, NaN abandon threshold,
-auto-correction tiers, and T1CorrectionResult serialization.
+auto-correction tiers, T1CorrectionResult serialization,
+and interior NaN gap-fill.
 """
 
 import numpy as np
 import pytest
 
 from pmriprep.utils.dce_t1_validation import (
+    GAPFILL_MIN_NEIGHBOR_FLOOR,
+    GAPFILL_MIN_NEIGHBOR_FRACTION,
     T1CorrectionResult,
+    T1GapFillResult,
     T1_TISSUE_REFERENCE,
     VFA_NAN_FRACTION_GOOD,
     VFA_NAN_FRACTION_TISSUE_FALLBACK,
     apply_t1_correction,
     build_tissue_t1_map,
+    fill_t1_gaps,
     get_field_strength_key,
     get_nan_abandon_threshold,
 )
@@ -458,3 +463,287 @@ class TestSkipT1Paths:
         )
         assert result.correction_applied == "none"
         np.testing.assert_array_equal(t1_corr, t1_map)
+
+
+# ============================================================================
+# T1 gap-fill tests
+# ============================================================================
+
+
+class TestT1GapFill:
+    """Tests for interior NaN gap-fill in T1 maps."""
+
+    @pytest.fixture
+    def brain_mask_20(self) -> np.ndarray:
+        """20x20x20 brain mask (inner 4:16 cube)."""
+        mask = np.zeros((20, 20, 20), dtype=bool)
+        mask[4:16, 4:16, 4:16] = True
+        return mask
+
+    @pytest.fixture
+    def t1_map_20(self, brain_mask_20: np.ndarray) -> np.ndarray:
+        """20x20x20 T1 map with valid values in brain, NaN outside."""
+        t1 = np.full((20, 20, 20), np.nan, dtype=np.float32)
+        t1[brain_mask_20] = 1050.0  # typical 3T brain T1
+        return t1
+
+    def test_no_gaps_returns_unchanged(
+        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
+    ) -> None:
+        """No NaN gaps → returns copy, method='none'."""
+        t1_out, result = fill_t1_gaps(t1_map_20, brain_mask_20, field_strength=3.0)
+        assert result.method == "none"
+        assert result.n_nan_before == 0
+        np.testing.assert_array_equal(t1_out[brain_mask_20], t1_map_20[brain_mask_20])
+
+    def test_scattered_nans_filled_by_interp(
+        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
+    ) -> None:
+        """Scattered interior NaN voxels filled by IDW interpolation."""
+        rng = np.random.default_rng(42)
+        # Add spatial variation so interpolation is meaningful
+        t1_map_20[brain_mask_20] = rng.normal(1050.0, 50.0, int(np.sum(brain_mask_20))).astype(np.float32)
+        # Punch scattered NaN holes in interior (far from boundary)
+        interior = np.zeros_like(brain_mask_20)
+        interior[7:13, 7:13, 7:13] = True
+        gap_coords = np.argwhere(interior)
+        chosen = rng.choice(len(gap_coords), size=20, replace=False)
+        for idx in chosen:
+            c = tuple(gap_coords[idx])
+            t1_map_20[c] = np.nan
+
+        t1_out, result = fill_t1_gaps(
+            t1_map_20, brain_mask_20, field_strength=3.0,
+            voxel_sizes_mm=np.array([1.5, 1.5, 1.5]),
+        )
+        assert result.n_nan_before == 20
+        assert result.n_filled_interp > 0
+        assert result.n_remaining == 0
+        assert "interp" in result.method
+
+    def test_large_gap_stays_nan(
+        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
+    ) -> None:
+        """Large NaN hole with < min_neighbors → stays NaN (no tissue fallback)."""
+        # Create a big hole that can't be filled by IDW
+        t1_map_20[6:14, 6:14, 6:14] = np.nan
+
+        t1_out, result = fill_t1_gaps(
+            t1_map_20, brain_mask_20, field_strength=3.0,
+            voxel_sizes_mm=np.array([1.5, 1.5, 1.5]),
+        )
+        assert result.n_filled_tissue == 0
+        assert result.n_remaining > 0
+        # Interior of the large hole should still be NaN
+        assert np.any(np.isnan(t1_out[brain_mask_20]))
+
+    def test_large_gap_remains_nan(
+        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
+    ) -> None:
+        """Large gap without probsegs → remains NaN (downstream PK handles)."""
+        t1_map_20[6:14, 6:14, 6:14] = np.nan
+
+        t1_out, result = fill_t1_gaps(
+            t1_map_20, brain_mask_20, field_strength=3.0,
+            voxel_sizes_mm=np.array([1.5, 1.5, 1.5]),
+        )
+        assert result.n_filled_tissue == 0
+        assert result.n_remaining > 0
+
+    def test_outside_brain_mask_stays_nan(
+        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
+    ) -> None:
+        """Voxels outside brain mask must remain NaN."""
+        # Punch some gaps in brain
+        t1_map_20[8:12, 8:12, 8:12] = np.nan
+
+        t1_out, result = fill_t1_gaps(
+            t1_map_20, brain_mask_20, field_strength=3.0,
+        )
+        assert np.all(np.isnan(t1_out[~brain_mask_20]))
+
+    def test_valid_values_never_changed(
+        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
+    ) -> None:
+        """Original valid T1 values must not be modified (bitwise equality)."""
+        # Punch a few holes
+        rng = np.random.default_rng(123)
+        t1_map_20[brain_mask_20] = rng.normal(1050.0, 50.0, int(np.sum(brain_mask_20))).astype(np.float32)
+        original = t1_map_20.copy()
+        interior = np.zeros_like(brain_mask_20)
+        interior[8:12, 8:12, 8:12] = True
+        gap_coords = np.argwhere(interior)
+        chosen = rng.choice(len(gap_coords), size=10, replace=False)
+        for idx in chosen:
+            c = tuple(gap_coords[idx])
+            t1_map_20[c] = np.nan
+
+        valid_before = np.isfinite(t1_map_20) & brain_mask_20
+        t1_out, _ = fill_t1_gaps(
+            t1_map_20, brain_mask_20, field_strength=3.0,
+            voxel_sizes_mm=np.array([1.5, 1.5, 1.5]),
+        )
+        # Boundary smoothing only applies to filled voxels, not original valid voxels
+        np.testing.assert_array_equal(
+            t1_out[valid_before], t1_map_20[valid_before],
+        )
+
+    def test_metrics_sum_correctly(
+        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
+    ) -> None:
+        """n_nan_before == n_filled_interp + n_filled_tissue + n_remaining."""
+        t1_map_20[7:13, 7:13, 7:13] = np.nan
+
+        _, result = fill_t1_gaps(
+            t1_map_20, brain_mask_20, field_strength=3.0,
+            voxel_sizes_mm=np.array([1.5, 1.5, 1.5]),
+        )
+        assert result.n_filled_tissue == 0
+        assert result.n_nan_before == (
+            result.n_filled_interp + result.n_filled_tissue + result.n_remaining
+        )
+
+    def test_output_dtype_float32(
+        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
+    ) -> None:
+        """Output must be float32."""
+        t1_map_20[8:12, 8:12, 8:12] = np.nan
+        t1_out, _ = fill_t1_gaps(t1_map_20, brain_mask_20, field_strength=3.0)
+        assert t1_out.dtype == np.float32
+
+    @pytest.mark.parametrize("field_strength", [1.5, 3.0, 7.0])
+    def test_field_strengths(
+        self, brain_mask_20: np.ndarray, field_strength: float,
+    ) -> None:
+        """Gap-fill works at all supported field strengths (scattered gaps)."""
+        t1 = np.full((20, 20, 20), np.nan, dtype=np.float32)
+        expected = T1_TISSUE_REFERENCE[get_field_strength_key(field_strength)]["expected_median"]
+        t1[brain_mask_20] = expected
+        # Punch scattered single-voxel holes (well-surrounded by valid neighbors)
+        rng = np.random.default_rng(42)
+        interior = np.zeros_like(brain_mask_20)
+        interior[7:13, 7:13, 7:13] = True
+        gap_coords = np.argwhere(interior)
+        chosen = rng.choice(len(gap_coords), size=10, replace=False)
+        for idx in chosen:
+            c = tuple(gap_coords[idx])
+            t1[c] = np.nan
+
+        t1_out, result = fill_t1_gaps(
+            t1, brain_mask_20, field_strength=field_strength,
+            voxel_sizes_mm=np.array([1.5, 1.5, 1.5]),
+        )
+        assert result.n_nan_before > 0
+        assert result.n_remaining == 0
+
+    def test_t1_gap_fill_result_to_dict(self) -> None:
+        """T1GapFillResult.to_dict() returns expected keys."""
+        result = T1GapFillResult(
+            n_nan_before=100, n_filled_interp=80,
+            n_filled_tissue=0, n_remaining=20, method="interp_only",
+        )
+        d = result.to_dict()
+        assert d["n_nan_before"] == 100
+        assert d["n_filled_interp"] == 80
+        assert d["n_filled_tissue"] == 0
+        assert d["n_remaining"] == 20
+        assert d["method"] == "interp_only"
+
+    def test_anisotropic_voxels(
+        self, brain_mask_20: np.ndarray,
+    ) -> None:
+        """Thick-slice DCE (anisotropic voxels) uses ellipsoidal kernel."""
+        t1 = np.full((20, 20, 20), np.nan, dtype=np.float32)
+        t1[brain_mask_20] = 1050.0
+        # Punch a single interior gap
+        t1[10, 10, 10] = np.nan
+
+        t1_out, result = fill_t1_gaps(
+            t1, brain_mask_20, field_strength=3.0,
+            voxel_sizes_mm=np.array([0.5, 0.5, 5.0]),
+        )
+        assert result.n_nan_before == 1
+        assert result.n_filled_interp == 1
+        assert np.isfinite(t1_out[10, 10, 10])
+
+    def test_single_voxel_gap(
+        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
+    ) -> None:
+        """One NaN surrounded by valid → filled near neighbor mean."""
+        t1_map_20[10, 10, 10] = np.nan
+
+        t1_out, result = fill_t1_gaps(
+            t1_map_20, brain_mask_20, field_strength=3.0,
+            voxel_sizes_mm=np.array([1.5, 1.5, 1.5]),
+        )
+        assert result.n_nan_before == 1
+        assert result.n_filled_interp == 1
+        assert result.n_remaining == 0
+        # Filled value should be close to surrounding value (1050.0)
+        assert t1_out[10, 10, 10] == pytest.approx(1050.0, rel=0.01)
+
+    def test_all_nan_brain(self, brain_mask_20: np.ndarray) -> None:
+        """Entire brain NaN → graceful return, n_remaining == n_nan_before."""
+        t1 = np.full((20, 20, 20), np.nan, dtype=np.float32)
+
+        t1_out, result = fill_t1_gaps(
+            t1, brain_mask_20, field_strength=3.0,
+            voxel_sizes_mm=np.array([1.5, 1.5, 1.5]),
+        )
+        assert result.n_nan_before == int(np.sum(brain_mask_20))
+        assert result.n_remaining == result.n_nan_before
+        assert result.n_filled_interp == 0
+        assert result.n_filled_tissue == 0
+        # All brain voxels still NaN
+        assert np.all(np.isnan(t1_out[brain_mask_20]))
+
+    def test_fractional_threshold_scales_with_resolution(self) -> None:
+        """Verify min_neighbors increases with finer resolution."""
+        from pmriprep.utils.dce_t1_validation import (
+            GAPFILL_IDW_RADIUS_MM,
+        )
+
+        # Coarse voxels: 3mm isotropic → small ball → floor applies
+        vox_coarse = np.array([3.0, 3.0, 3.0])
+        radius_vox_coarse = GAPFILL_IDW_RADIUS_MM / vox_coarse
+        half_coarse = np.ceil(radius_vox_coarse).astype(int)
+        grid_c = np.mgrid[
+            -half_coarse[0]:half_coarse[0] + 1,
+            -half_coarse[1]:half_coarse[1] + 1,
+            -half_coarse[2]:half_coarse[2] + 1,
+        ]
+        dist_c = np.sqrt(
+            (grid_c[0] * vox_coarse[0]) ** 2
+            + (grid_c[1] * vox_coarse[1]) ** 2
+            + (grid_c[2] * vox_coarse[2]) ** 2
+        )
+        n_ball_coarse = int(np.sum(dist_c <= GAPFILL_IDW_RADIUS_MM)) - 1
+        min_neigh_coarse = max(
+            GAPFILL_MIN_NEIGHBOR_FLOOR,
+            int(n_ball_coarse * GAPFILL_MIN_NEIGHBOR_FRACTION),
+        )
+
+        # Fine voxels: 1.0mm isotropic → large ball → fraction dominates
+        vox_fine = np.array([1.0, 1.0, 1.0])
+        radius_vox_fine = GAPFILL_IDW_RADIUS_MM / vox_fine
+        half_fine = np.ceil(radius_vox_fine).astype(int)
+        grid_f = np.mgrid[
+            -half_fine[0]:half_fine[0] + 1,
+            -half_fine[1]:half_fine[1] + 1,
+            -half_fine[2]:half_fine[2] + 1,
+        ]
+        dist_f = np.sqrt(
+            (grid_f[0] * vox_fine[0]) ** 2
+            + (grid_f[1] * vox_fine[1]) ** 2
+            + (grid_f[2] * vox_fine[2]) ** 2
+        )
+        n_ball_fine = int(np.sum(dist_f <= GAPFILL_IDW_RADIUS_MM)) - 1
+        min_neigh_fine = max(
+            GAPFILL_MIN_NEIGHBOR_FLOOR,
+            int(n_ball_fine * GAPFILL_MIN_NEIGHBOR_FRACTION),
+        )
+
+        # Fine resolution should require more neighbors
+        assert min_neigh_fine > min_neigh_coarse
+        # Coarse should hit floor
+        assert min_neigh_coarse == GAPFILL_MIN_NEIGHBOR_FLOOR

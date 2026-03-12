@@ -1261,9 +1261,10 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         desc="GM probability map for tissue-segmented T1 fallback (optional)",
     )
     csf_threshold = traits.Float(
-        0.3,
+        0.5,
         usedefault=True,
-        desc="CSF probability threshold for exclusion (default: 0.3 = 30%)",
+        desc="CSF probability threshold for exclusion (default: 0.5 = 50%, "
+             "matches ASLPrep/FreeSurfer standard)",
     )
     t1_correction_mode = traits.Enum(
         "auto",
@@ -1609,9 +1610,9 @@ class T1Mapping(SimpleInterface):
 
         # Set out-of-range T1 to NaN using field-strength-dependent bounds.
         # Lower bound (reject_min) depends on field strength: 450/600/800ms at 1.5/3/7T.
-        # Upper bound depends on field strength and whether CSF was excluded:
-        #   - With CSF exclusion: use full t1_upper_bound (allows some CSF partial volume)
-        #   - Without CSF exclusion: use tighter t1_parenchyma_upper to reject CSF voxels
+        # Upper bound: always t1_parenchyma_upper (2000/2500/3500ms at 1.5/3/7T).
+        # This catches CSF partial-volume voxels that pass the 0.5 probseg
+        # threshold while preserving edema (1600-2200ms at 3T).
         field_strength = self.inputs.field_strength
         correction_mode = self.inputs.t1_correction_mode
 
@@ -1622,80 +1623,82 @@ class T1Mapping(SimpleInterface):
         )
 
         field_key = get_field_strength_key(field_strength)
-        if csf_excluded:
-            t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_upper_bound"]
-        else:
-            t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_parenchyma_upper"]
-            logger.info(
-                "No CSF probseg: using tighter T1 upper bound (%.0fms)", t1_upper,
-            )
+        t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_parenchyma_upper"]
         t1_lower = T1_TISSUE_REFERENCE[field_key]["reject_min"]
         t1_map = np.where(
             (t1_map >= t1_lower) & (t1_map <= t1_upper), t1_map, np.nan,
         )
 
-        # Erode valid-T1 region BEFORE T1 correction so the correction median
-        # reflects interior brain tissue, not partial-volume edge voxels.
-        # 6-connectivity (face-adjacent only): MRI PSF is separable along
-        # encoding axes, so contamination is strongest face-adjacent.
-        # Low T1 (~500ms) causes ~2.5x Ktrans overestimation.
-        from scipy.ndimage import binary_erosion, binary_fill_holes, generate_binary_structure  # type: ignore[import-untyped]
-
-        valid_t1_mask = np.isfinite(t1_map) & (t1_map > 0)
-        # Fill internal holes (from CSF exclusion, range clipping, noisy VFA)
-        # so erosion only targets the outer brain-CSF/skull boundary where
-        # partial-volume contamination actually occurs.
-        valid_filled = binary_fill_holes(valid_t1_mask)
-
-        # Defensive check: slab-aware erosion assumes axis 2 = slices (RAS).
-        # The workflow guarantees RAS via reorientation nodes, but warn if
-        # the interface is used directly with non-RAS data.
-        from nibabel.orientations import axcodes2ornt, io_orientation
-
-        ornt = io_orientation(first_img.affine)  # type: ignore[attr-defined]
-        ras_ornt = axcodes2ornt(("R", "A", "S"))
-        if not np.array_equal(ornt, ras_ornt):
-            logger.warning(
-                "T1Mapping input is not RAS-oriented; slab-aware erosion "
-                "assumes axis 2 is the slice axis. Results may be incorrect."
-            )
-
-        # Slab-aware erosion: for thin 3D slabs (≤SLAB_EROSION_MAX_SLICES),
-        # through-plane erosion is not physically motivated — 3D VIBE has
-        # well-defined slice profile within the slab, so partial volume is
-        # an in-plane phenomenon. Through-plane erosion of a 24-slice slab
-        # loses 2 slices (8% of z-coverage) for no benefit.
+        # Edge erosion: only needed when CSF probseg is NOT available.
+        # When CSF exclusion at threshold 0.5 is applied, the problematic
+        # partial-volume voxels at the brain-CSF boundary are already removed.
+        # The range filter (T1 < reject_min) catches the rare remaining
+        # outliers, and downstream QC (R² >= 0.5, tSNR >= 10) catches bad
+        # PK fits. Blind erosion after CSF exclusion needlessly removes
+        # ~12-17k gray matter voxels at the cortical surface.
+        n_brain_pre_erosion = int(np.sum(brain_mask))
+        n_edge = 0
+        edge_erosion_skipped = False
         n_slices = shape[2]  # RAS orientation: axis 2 = slices
-        if n_slices <= SLAB_EROSION_MAX_SLICES:
-            struct_2d = generate_binary_structure(2, 1)  # 4-connectivity in-plane
-            eroded = np.zeros_like(valid_filled)
-            for z in range(n_slices):
-                eroded[:, :, z] = binary_erosion(
-                    valid_filled[:, :, z], structure=struct_2d, iterations=1,
-                )
+
+        if csf_excluded:
+            # CSF probseg handled partial-volume voxels — skip blind erosion
+            edge_erosion_skipped = True
+            logger.info(
+                "T1 edge erosion: SKIPPED (CSF exclusion at threshold %.2f "
+                "already removes partial-volume boundary voxels)",
+                self.inputs.csf_threshold,
+            )
         else:
-            struct = generate_binary_structure(3, 1)  # 6-connectivity
-            eroded = binary_erosion(valid_filled, structure=struct, iterations=1)
-        # Erode the filled volume, then remove original valid voxels that fall
-        # within the erosion shell.  Holes (filled but not originally valid) are
-        # already NaN, so they need no further masking.
-        edge_mask = valid_t1_mask & ~eroded
-        n_edge = int(np.sum(edge_mask))
-        t1_map[edge_mask] = np.nan
-        # Update brain_mask to match (mirrors CSF exclusion pattern at line 1514)
-        brain_mask = brain_mask & ~edge_mask
-        logger.info(
-            "T1 edge erosion: removed %d partial-volume voxels "
-            "(%.1f%% of brain mask)",
-            n_edge, 100.0 * n_edge / max(int(np.sum(brain_mask) + n_edge), 1),
-        )
+            # Fallback: blind morphological erosion when no CSF probseg
+            from scipy.ndimage import binary_erosion, binary_fill_holes, generate_binary_structure  # type: ignore[import-untyped]
+
+            valid_t1_mask = np.isfinite(t1_map) & (t1_map > 0)
+            valid_filled = binary_fill_holes(valid_t1_mask)
+
+            # Defensive check: slab-aware erosion assumes axis 2 = slices (RAS).
+            from nibabel.orientations import axcodes2ornt, io_orientation
+
+            ornt = io_orientation(first_img.affine)  # type: ignore[attr-defined]
+            ras_ornt = axcodes2ornt(("R", "A", "S"))
+            if not np.array_equal(ornt, ras_ornt):
+                logger.warning(
+                    "T1Mapping input is not RAS-oriented; slab-aware erosion "
+                    "assumes axis 2 is the slice axis. Results may be incorrect."
+                )
+
+            # Slab-aware erosion for thin 3D slabs
+            if n_slices <= SLAB_EROSION_MAX_SLICES:
+                struct_2d = generate_binary_structure(2, 1)  # 4-connectivity in-plane
+                eroded = np.zeros_like(valid_filled)
+                for z in range(n_slices):
+                    eroded[:, :, z] = binary_erosion(
+                        valid_filled[:, :, z], structure=struct_2d, iterations=1,
+                    )
+            else:
+                struct = generate_binary_structure(3, 1)  # 6-connectivity
+                eroded = binary_erosion(valid_filled, structure=struct, iterations=1)
+
+            edge_mask = valid_t1_mask & ~eroded
+            n_edge = int(np.sum(edge_mask))
+            t1_map[edge_mask] = np.nan
+            brain_mask = brain_mask & ~edge_mask
+            logger.info(
+                "T1 edge erosion (fallback, no CSF probseg): removed %d "
+                "partial-volume voxels (%.1f%% of brain mask)",
+                n_edge, 100.0 * n_edge / max(int(np.sum(brain_mask) + n_edge), 1),
+            )
 
         # Convert to float32 for storage
         t1_map = t1_map.astype(np.float32)
 
-        # Compute NaN fraction in brain before correction
+        # Compute NaN fraction in brain before correction.
+        # Use pre-erosion count as denominator. For the numerator, count all
+        # NaN voxels within the original brain extent — eroded voxels are NaN
+        # in t1_map but excluded from the narrowed brain_mask, so we also
+        # count NaN voxels that were eroded away (n_edge).
         nan_in_brain = np.isnan(t1_map) & brain_mask
-        nan_fraction = float(np.sum(nan_in_brain)) / max(1, int(np.sum(brain_mask)))
+        nan_fraction = float(np.sum(nan_in_brain) + n_edge) / max(1, n_brain_pre_erosion)
 
         # VFA conditioning QC metric
         # Compute median T1 from valid voxels for E1 calculation
@@ -1755,6 +1758,18 @@ class T1Mapping(SimpleInterface):
             correction_result.median_t1_corrected,
         )
 
+        # Fill interior NaN gaps (B1+ failures, range-filter, VFA noise)
+        from pmriprep.utils.dce_t1_validation import fill_t1_gaps
+
+        voxel_sizes = np.array(first_img.header.get_zooms()[:3], dtype=np.float64)  # type: ignore[attr-defined]
+        t1_map, gap_fill_result = fill_t1_gaps(
+            t1_map,
+            brain_mask=brain_mask,
+            field_strength=field_strength,
+            voxel_sizes_mm=voxel_sizes,
+        )
+        correction_info["gap_fill"] = gap_fill_result.to_dict()
+
         # Calculate QC metrics
         qc_ranges = get_tissue_t1_ranges(field_strength)
 
@@ -1809,8 +1824,10 @@ class T1Mapping(SimpleInterface):
             "median_filtered": True,
         }
         qc_metrics["edge_voxels_eroded"] = n_edge
+        qc_metrics["edge_erosion_skipped"] = edge_erosion_skipped
         qc_metrics["edge_erosion_mode"] = (
-            "2d_per_slice" if n_slices <= SLAB_EROSION_MAX_SLICES else "3d"
+            "skipped" if edge_erosion_skipped
+            else ("2d_per_slice" if n_slices <= SLAB_EROSION_MAX_SLICES else "3d")
         )
         qc_metrics["t1_correction"] = correction_info
         qc_metrics["vfa_conditioning"] = {

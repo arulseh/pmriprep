@@ -682,3 +682,180 @@ def _auto_correct_t1(
     result.offset_ms = offset
     result.median_t1_corrected = float(np.nanmedian(t1_corrected[valid_mask]))
     return t1_corrected, result
+
+
+# ============================================================================
+# Interior NaN gap-fill
+# ============================================================================
+
+# Gap-fill constants (in mm, converted to voxels via affine)
+GAPFILL_IDW_RADIUS_MM: float = 4.5  # ~3 voxels at 1.5mm resolution
+GAPFILL_MIN_NEIGHBOR_FRACTION: float = 0.30  # 30% of ball voxels must be valid
+GAPFILL_MIN_NEIGHBOR_FLOOR: int = 6  # absolute floor for very coarse voxels
+GAPFILL_BOUNDARY_FWHM_MM: float = 1.5  # smoothing at fill boundary
+
+
+@dataclass
+class T1GapFillResult:
+    """Result of interior NaN gap-fill for T1 maps."""
+
+    n_nan_before: int = 0
+    n_filled_interp: int = 0
+    n_filled_tissue: int = 0
+    n_remaining: int = 0
+    method: str = "none"  # "none", "interp_only"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to JSON-serializable dictionary."""
+        return {
+            "n_nan_before": self.n_nan_before,
+            "n_filled_interp": self.n_filled_interp,
+            "n_filled_tissue": self.n_filled_tissue,
+            "n_remaining": self.n_remaining,
+            "method": self.method,
+        }
+
+
+def fill_t1_gaps(
+    t1_map: npt.NDArray[np.floating],
+    brain_mask: npt.NDArray[np.bool_],
+    field_strength: float,
+    voxel_sizes_mm: Optional[npt.NDArray[np.floating]] = None,
+) -> Tuple[npt.NDArray[np.floating], T1GapFillResult]:
+    """Fill interior NaN gaps in T1 map within brain mask.
+
+    Uses IDW (inverse-distance-weighted) interpolation for gaps with
+    sufficient valid neighbors — preserves local T1 variation. Gaps
+    without enough neighbors (large holes, necrotic cores) remain NaN
+    so that downstream PK fitting produces NaN Ktrans rather than
+    fabricated values.
+
+    The minimum neighbor threshold scales with resolution: 30% of ball
+    kernel voxels must be valid, with an absolute floor of 6.
+
+    Boundary smoothing blends filled voxels with original neighbors to
+    avoid sharp discontinuities.
+
+    Parameters
+    ----------
+    t1_map : ndarray
+        T1 map in milliseconds (float32). Not modified in place.
+    brain_mask : ndarray of bool
+        Brain mask (True = brain voxel).
+    field_strength : float
+        Scanner field strength in Tesla.
+    voxel_sizes_mm : ndarray, optional
+        Voxel dimensions in mm (3-element). If None, assumes isotropic 1.5mm.
+
+    Returns
+    -------
+    t1_filled : ndarray
+        T1 map with NaN gaps filled (float32).
+    result : T1GapFillResult
+        Metrics describing the gap-fill operation.
+    """
+    from scipy.ndimage import binary_dilation, gaussian_filter, generate_binary_structure  # type: ignore[import-untyped]
+    from scipy.signal import fftconvolve  # type: ignore[import-untyped]
+
+    result = T1GapFillResult()
+    gap_mask = np.isnan(t1_map) & brain_mask
+    result.n_nan_before = int(np.sum(gap_mask))
+
+    if result.n_nan_before == 0:
+        return t1_map.copy().astype(np.float32), result
+
+    t1_filled = t1_map.copy()
+
+    # Convert radius from mm to voxels
+    if voxel_sizes_mm is not None:
+        vox = np.asarray(voxel_sizes_mm, dtype=np.float64)
+    else:
+        vox = np.array([1.5, 1.5, 1.5], dtype=np.float64)
+
+    radius_vox = GAPFILL_IDW_RADIUS_MM / vox  # per-axis radius in voxels
+
+    # Stage 1: IDW interpolation
+    # Build ball kernel in voxel units (handles anisotropic voxels)
+    half_size = np.ceil(radius_vox).astype(int)
+    grid = np.mgrid[
+        -half_size[0]:half_size[0] + 1,
+        -half_size[1]:half_size[1] + 1,
+        -half_size[2]:half_size[2] + 1,
+    ]
+    # Normalized distance (ellipsoidal for anisotropic voxels)
+    dist = np.sqrt(
+        (grid[0] * vox[0]) ** 2 + (grid[1] * vox[1]) ** 2 + (grid[2] * vox[2]) ** 2
+    )
+    ball = dist <= GAPFILL_IDW_RADIUS_MM
+    ball_center = tuple(half_size)
+    ball[ball_center] = False  # exclude center voxel
+
+    # IDW weights: 1/distance within ball, 0 outside
+    kernel = np.zeros_like(dist, dtype=np.float64)
+    kernel[ball] = 1.0 / np.maximum(dist[ball], 1e-6)
+
+    # Count valid neighbors per gap voxel
+    valid_map = np.isfinite(t1_filled) & brain_mask
+    valid_float = valid_map.astype(np.float64)
+    neighbor_count = fftconvolve(valid_float, np.ones_like(kernel) * ball, mode="same")
+    neighbor_count = np.round(neighbor_count).astype(int)
+
+    # IDW interpolation: weighted sum / weight total
+    t1_for_conv = np.where(valid_map, t1_filled, 0.0).astype(np.float64)
+    weighted_sum = fftconvolve(t1_for_conv, kernel, mode="same")
+    weight_total = fftconvolve(valid_float, kernel, mode="same")
+
+    # Dynamic threshold: 30% of ball voxels, floor of 6
+    n_ball_voxels = int(np.sum(ball))
+    min_neighbors = max(
+        GAPFILL_MIN_NEIGHBOR_FLOOR,
+        int(n_ball_voxels * GAPFILL_MIN_NEIGHBOR_FRACTION),
+    )
+
+    interp_mask = gap_mask & (neighbor_count >= min_neighbors)
+    safe_weights = np.where(weight_total > 0, weight_total, 1.0)
+    interp_values = weighted_sum / safe_weights
+
+    t1_filled[interp_mask] = interp_values[interp_mask].astype(np.float32)
+    result.n_filled_interp = int(np.sum(interp_mask))
+
+    # Remaining gaps stay NaN — downstream PK handles NaN→NaN Ktrans
+    # (no tissue fallback to avoid fabricating Ktrans in necrotic cores)
+
+    # Boundary smoothing: Gaussian on 1-voxel dilated fill boundary only
+    all_filled = interp_mask
+    if np.any(all_filled):
+        struct = generate_binary_structure(3, 1)
+        boundary = binary_dilation(all_filled, structure=struct) & ~all_filled & valid_map
+        smooth_region = all_filled | boundary
+
+        if np.any(smooth_region):
+            # FWHM to sigma in voxels (per-axis for anisotropic)
+            sigma_vox = (GAPFILL_BOUNDARY_FWHM_MM / vox) / 2.3548
+            # Smooth only the fill+boundary region
+            t1_smooth_input = np.where(smooth_region, t1_filled, 0.0).astype(np.float64)
+            weight_input = smooth_region.astype(np.float64)
+            t1_smoothed = gaussian_filter(t1_smooth_input, sigma=sigma_vox)
+            weight_smoothed = gaussian_filter(weight_input, sigma=sigma_vox)
+            # Safe divide
+            safe_w = np.where(weight_smoothed > 0, weight_smoothed, 1.0)
+            t1_boundary_smoothed = t1_smoothed / safe_w
+            # Only apply smoothing to filled voxels (not original valid voxels)
+            t1_filled[all_filled] = t1_boundary_smoothed[all_filled].astype(np.float32)
+
+    # Ensure voxels outside brain mask stay NaN
+    t1_filled[~brain_mask] = np.nan
+
+    result.n_remaining = int(np.sum(np.isnan(t1_filled) & brain_mask))
+
+    # Determine method string
+    if result.n_filled_interp > 0:
+        result.method = "interp_only"
+
+    logger.info(
+        "T1 gap-fill: %d NaN voxels → %d interp, %d tissue, %d remaining",
+        result.n_nan_before, result.n_filled_interp,
+        result.n_filled_tissue, result.n_remaining,
+    )
+
+    return t1_filled.astype(np.float32), result
