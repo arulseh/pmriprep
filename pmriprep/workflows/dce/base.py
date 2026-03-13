@@ -212,6 +212,7 @@ def init_dce_preproc_wf(
                 # DWI tortuosity inputs
                 "dwi_file",
                 "dwi_bvals",
+                "dwi_bvecs",
                 # Acquisition parameters
                 "flip_angle",
                 "tr",  # Pulse TR for SPGR signal equation
@@ -1050,6 +1051,7 @@ def init_dce_preproc_wf(
                 "ktrans_file",
                 "dwi_file",
                 "dwi_bvals",
+                "dwi_bvecs",
                 "brain_mask",
                 "no_tortuosity",
             ],
@@ -1071,6 +1073,7 @@ def init_dce_preproc_wf(
         ]),
         (inputnode, tortuosity_corr, [
             ("dwi_bvals", "dwi_bvals"),
+            ("dwi_bvecs", "dwi_bvecs"),
         ]),
         # Use native DCE brain mask for tortuosity correction
         (dce_brain_extract, tortuosity_corr, [
@@ -2605,6 +2608,7 @@ def _tortuosity_correction_node(
     ktrans_file,
     dwi_file,
     dwi_bvals=None,
+    dwi_bvecs=None,
     brain_mask=None,
     no_tortuosity=False,
 ):
@@ -2630,6 +2634,7 @@ def _tortuosity_correction_node(
 
     from pmriprep.utils.dce_tortuosity import (
         D_FREE_WATER,
+        average_dwi_directions,
         calculate_and_apply_tortuosity_correction,
         generate_tortuosity_qc_plot,
     )
@@ -2676,6 +2681,29 @@ def _tortuosity_correction_node(
         if dwi_data.ndim == 4:
             dwi_data = dwi_data[..., keep_indices]
 
+        # Average DTI directions per shell (trace DWI passes through unchanged)
+        bvecs_arr = None
+        direction_averaged = False
+        if dwi_bvecs is not None:
+            bvecs_arr = np.array(dwi_bvecs, dtype=np.float64)
+            # Normalise to (N, 3) if needed
+            if bvecs_arr.ndim == 2 and bvecs_arr.shape[0] == 3 and bvecs_arr.shape[1] != 3:
+                bvecs_arr = bvecs_arr.T
+            # Filter bvecs to match kept b-value indices
+            bvecs_arr = bvecs_arr[keep_indices]
+
+        n_before = dwi_data.shape[3] if dwi_data.ndim == 4 else 1
+        dwi_data, b_values = average_dwi_directions(
+            dwi_data, b_values, bvecs_arr
+        )
+        n_after = dwi_data.shape[3] if dwi_data.ndim == 4 else 1
+        direction_averaged = n_after < n_before
+        if direction_averaged:
+            logger.info(
+                "DTI direction averaging: %d -> %d volumes (%d shells)",
+                n_before, n_after, n_after,
+            )
+
         mask_img = nib.load(brain_mask)
         mask_data = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
@@ -2721,6 +2749,7 @@ def _tortuosity_correction_node(
             "FreeDiffusionCoefficientUnits": "mm²/s",
             "BValues": b_values.tolist(),
             "BValueUnits": "s/mm²",
+            "DirectionAveraged": direction_averaged,
             "Units": "min^-1",
         }
         # Add QC metrics if available

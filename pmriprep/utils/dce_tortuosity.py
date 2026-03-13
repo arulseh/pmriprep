@@ -17,11 +17,19 @@ References:
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
 
+
+# B-shell grouping tolerance in s/mm² (matches DIPY/MRtrix3 convention)
+DWI_B_SHELL_TOLERANCE: float = 50.0
+
+# Maximum number of volumes per non-b0 shell to classify as trace DWI.
+# Trace DWI typically has 1-3 directions per shell (averaged by scanner);
+# DTI has 6+ directions (intentionally spread on the sphere).
+DWI_TRACE_MAX_DIRS: int = 3
 
 # Free diffusion coefficient of water at 37°C in mm²/s
 # (Mills 1973). DWI measures water self-diffusion; tortuosity assumes
@@ -49,6 +57,155 @@ ADC_MAX_VALID: float = 3.0e-3  # mm²/s
 # Values > 5.0 are physiologically implausible and likely artifacts (Gap 3 fix)
 TORTUOSITY_MIN_VALID: float = 1.0
 TORTUOSITY_MAX_VALID: float = 5.0
+
+
+def is_trace_dwi(
+    b_values: npt.NDArray[np.floating],
+    b_vectors: Optional[npt.NDArray[np.floating]] = None,
+    b_shell_tolerance: float = DWI_B_SHELL_TOLERANCE,
+) -> bool:
+    """Classify a DWI acquisition as trace or DTI.
+
+    Trace DWI has few directions per shell (scanner-averaged), while DTI
+    has many directions (intentionally spread for tensor estimation).
+
+    Args:
+        b_values: 1-D array of b-values in s/mm².
+        b_vectors: Optional (N, 3) or (3, N) array of gradient directions.
+            If None, conservatively returns True (assume trace).
+        b_shell_tolerance: Tolerance for grouping b-values into shells.
+
+    Returns:
+        True if the acquisition is trace DWI, False if DTI.
+    """
+    if b_vectors is None:
+        return True
+
+    b_values = np.asarray(b_values, dtype=np.float64).ravel()
+    b_vectors = np.asarray(b_vectors, dtype=np.float64)
+
+    # Normalise to (N, 3)
+    if b_vectors.ndim == 2 and b_vectors.shape[0] == 3 and b_vectors.shape[1] != 3:
+        b_vectors = b_vectors.T
+
+    # Group into shells
+    shells = _group_b_shells(b_values, b_shell_tolerance)
+
+    for mean_b, indices in shells:
+        if mean_b < 100:
+            continue  # skip b=0 group
+        if len(indices) > DWI_TRACE_MAX_DIRS:
+            return False
+
+    return True
+
+
+def average_dwi_directions(
+    dwi_signal: npt.NDArray[np.floating],
+    b_values: npt.NDArray[np.floating],
+    b_vectors: Optional[npt.NDArray[np.floating]] = None,
+    b_shell_tolerance: float = DWI_B_SHELL_TOLERANCE,
+) -> Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
+    """Average DWI volumes within each b-shell for DTI acquisitions.
+
+    When a DTI acquisition (many gradient directions at one b-value) is
+    used for ADC calculation, averaging directions per shell removes
+    directional variation and produces a single representative volume
+    per shell — equivalent to a trace-weighted image.
+
+    Trace DWI (<=3 directions per shell) is returned unchanged.
+
+    Args:
+        dwi_signal: 4-D array (x, y, z, N) of DWI signal.
+        b_values: 1-D array of b-values in s/mm² (length N).
+        b_vectors: Optional (N, 3) or (3, N) array of gradient directions.
+            If None, data is returned unchanged.
+        b_shell_tolerance: Tolerance for grouping b-values into shells.
+
+    Returns:
+        Tuple of (averaged_signal, shell_mean_bvals) where:
+            - averaged_signal: 4-D array (x, y, z, n_shells)
+            - shell_mean_bvals: 1-D array of mean b-value per shell
+
+    Raises:
+        ValueError: If array dimensions are inconsistent.
+    """
+    b_values = np.asarray(b_values, dtype=np.float64).ravel()
+
+    if b_vectors is None:
+        return dwi_signal, b_values
+
+    b_vectors = np.asarray(b_vectors, dtype=np.float64)
+
+    # Normalise to (N, 3)
+    if b_vectors.ndim == 2 and b_vectors.shape[0] == 3 and b_vectors.shape[1] != 3:
+        b_vectors = b_vectors.T
+
+    n_vols = dwi_signal.shape[3] if dwi_signal.ndim == 4 else 1
+    if len(b_values) != n_vols:
+        raise ValueError(
+            f"Number of b-values ({len(b_values)}) doesn't match "
+            f"4th dimension of signal ({n_vols})"
+        )
+    if b_vectors.shape[0] != n_vols:
+        raise ValueError(
+            f"Number of b-vectors ({b_vectors.shape[0]}) doesn't match "
+            f"number of volumes ({n_vols})"
+        )
+
+    # If trace DWI, return unchanged
+    if is_trace_dwi(b_values, b_vectors, b_shell_tolerance):
+        return dwi_signal, b_values
+
+    # Group into shells and average
+    shells = _group_b_shells(b_values, b_shell_tolerance)
+    spatial_shape = dwi_signal.shape[:3]
+
+    averaged_vols: List[npt.NDArray[np.floating]] = []
+    shell_bvals: List[float] = []
+
+    for mean_b, indices in shells:
+        vol = np.mean(dwi_signal[..., indices], axis=-1)
+        averaged_vols.append(vol)
+        shell_bvals.append(mean_b)
+
+    averaged_signal = np.stack(averaged_vols, axis=-1)
+    return averaged_signal, np.array(shell_bvals, dtype=np.float64)
+
+
+def _group_b_shells(
+    b_values: npt.NDArray[np.floating],
+    tolerance: float = DWI_B_SHELL_TOLERANCE,
+) -> List[Tuple[float, List[int]]]:
+    """Group b-values into shells by tolerance.
+
+    Args:
+        b_values: 1-D array of b-values.
+        tolerance: Maximum deviation from shell mean.
+
+    Returns:
+        List of (shell_mean_b, [volume_indices]) sorted by mean b-value.
+    """
+    b_values = np.asarray(b_values, dtype=np.float64).ravel()
+    sorted_idx = np.argsort(b_values)
+    shells: List[Tuple[float, List[int]]] = []
+
+    for idx in sorted_idx:
+        b = b_values[idx]
+        placed = False
+        for i, (mean_b, indices) in enumerate(shells):
+            if abs(b - mean_b) <= tolerance:
+                indices.append(int(idx))
+                # Update shell mean
+                all_b = b_values[indices]
+                shells[i] = (float(np.mean(all_b)), indices)
+                placed = True
+                break
+        if not placed:
+            shells.append((float(b), [int(idx)]))
+
+    shells.sort(key=lambda x: x[0])
+    return shells
 
 
 @dataclass

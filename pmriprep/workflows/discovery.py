@@ -928,29 +928,60 @@ def _find_dwi(bids_dir: Path, subject: str, session: Optional[str]) -> Optional[
     if len(matches) == 1:
         return matches[0]
 
-    # Multiple DWI files: prefer fewest volumes with >= 2 unique b-values
+    # Multiple DWI files: prefer trace over DTI, AP/PA over LR/RL, fewer volumes
+    import json as _json
+
     import numpy as np
 
-    scored: List[tuple[float, Path]] = []
+    from pmriprep.utils.dce_tortuosity import is_trace_dwi
+
+    scored: List[tuple[tuple[int, int, float], Path]] = []
     for m in matches:
         bval_path = str(m).replace(".nii.gz", ".bval").replace(".nii", ".bval")
+        bvec_path = str(m).replace(".nii.gz", ".bvec").replace(".nii", ".bvec")
+        json_path = str(m).replace(".nii.gz", ".json").replace(".nii", ".json")
+
+        is_dti = 1  # default: assume DTI (worse)
+        is_lr_pe = 0  # default: assume AP/PA (better)
+        n_vols: float = float("inf")
+
         try:
             if Path(bval_path).exists():
                 bvals = np.atleast_1d(np.loadtxt(bval_path))
                 if len(np.unique(bvals)) >= 2:
-                    scored.append((len(bvals), m))
-                    continue
+                    n_vols = float(len(bvals))
+                    # Load bvecs if available for trace classification
+                    bvecs = None
+                    if Path(bvec_path).exists():
+                        bvecs = np.loadtxt(bvec_path)
+                    is_dti = 0 if is_trace_dwi(bvals, bvecs) else 1
         except Exception as exc:
             logger.warning("Could not read %s: %s", bval_path, exc)
-        scored.append((float("inf"), m))
+
+        # Check phase encoding direction from JSON sidecar
+        try:
+            if Path(json_path).exists():
+                with open(json_path) as f:
+                    sidecar = _json.load(f)
+                pe_dir = sidecar.get("PhaseEncodingDirection", "")
+                if pe_dir.startswith("i"):
+                    is_lr_pe = 1  # LR/RL is less preferred
+        except Exception:
+            pass
+
+        scored.append(((is_dti, is_lr_pe, n_vols), m))
 
     scored.sort(key=lambda x: x[0])
+    winner_key, winner_path = scored[0]
     logger.info(
-        "Multiple DWI files found, selected %s (%s volumes)",
-        scored[0][1].name,
-        scored[0][0] if scored[0][0] != float("inf") else "unknown",
+        "Multiple DWI files found, selected %s "
+        "(is_dti=%d, is_lr_pe=%d, n_vols=%s)",
+        winner_path.name,
+        winner_key[0],
+        winner_key[1],
+        winner_key[2] if winner_key[2] != float("inf") else "unknown",
     )
-    return scored[0][1]
+    return winner_path
 
 
 def _determine_pipeline_availability(modalities: ModalityAvailability) -> PipelineAvailability:

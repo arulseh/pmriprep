@@ -2381,6 +2381,22 @@ def init_pmriprep_wf(
                 except Exception as exc:
                     _log.warning("DWI: failed to read b-values from %s: %s", bval_path, exc)
 
+            # Read b-vectors for DTI direction averaging
+            bvec_path = str(dwi_path).replace(".nii.gz", ".bvec").replace(".nii", ".bvec")
+            if Path(bvec_path).exists():
+                try:
+                    bvecs = _np.loadtxt(bvec_path)
+                    # Normalise (3, N) -> (N, 3) for consistent passing
+                    if bvecs.ndim == 2 and bvecs.shape[0] == 3 and bvecs.shape[1] != 3:
+                        bvecs = bvecs.T
+                    dce_wf.inputs.inputnode.dwi_bvecs = bvecs.tolist()
+                    _log.info(
+                        "DWI: loaded %d b-vectors from %s",
+                        bvecs.shape[0], bvec_path,
+                    )
+                except Exception as exc:
+                    _log.warning("DWI: failed to read b-vectors from %s: %s", bvec_path, exc)
+
         # Connect DSC CBV for vp constraint in DCE PK modeling.
         # Models with vp (extended_tofts, 2cxm) use DSC CBV as a fitting constraint.
         # Other models with vp (patlak) fit freely, cross-validate post-hoc.
