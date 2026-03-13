@@ -272,6 +272,10 @@ def init_dce_preproc_wf(
                 "peak_enhancement_map",
                 "time_to_peak_map",
                 "ser_map",
+                "wash_in_slope_map",
+                "wash_out_slope_map",
+                "bat_map",
+                "curve_type_map",
                 # QC maps
                 "tsnr_map",
                 "qc_mask",
@@ -1401,7 +1405,7 @@ def init_dce_preproc_wf(
         # Build dict of model-free maps for smoothing
         build_mf_dict = pe.Node(
             niu.Function(
-                input_names=["iauc60", "iauc90", "iauc120", "peak", "ttp", "ser"],
+                input_names=["iauc60", "iauc90", "iauc120", "peak", "ttp", "ser", "wash_in_slope", "wash_out_slope"],
                 output_names=["map_dict"],
                 function=_build_model_free_map_dict,
             ),
@@ -1416,6 +1420,8 @@ def init_dce_preproc_wf(
                 ("out_peak_enhancement", "peak"),
                 ("out_time_to_peak", "ttp"),
                 ("out_ser", "ser"),
+                ("out_wash_in_slope", "wash_in_slope"),
+                ("out_wash_out_slope", "wash_out_slope"),
             ]),
         ])
 
@@ -1793,6 +1799,10 @@ def init_dce_preproc_wf(
             ("out_peak_enhancement", "peak_enhancement_map"),
             ("out_time_to_peak", "time_to_peak_map"),
             ("out_ser", "ser_map"),
+            ("out_wash_in_slope", "wash_in_slope_map"),
+            ("out_wash_out_slope", "wash_out_slope_map"),
+            ("out_bat", "bat_map"),
+            ("out_curve_type", "curve_type_map"),
         ]),
         # QC maps
         (pk_modeling, outputnode, [
@@ -3543,12 +3553,14 @@ def _build_pk_map_dict(ktrans=None, ve=None, vp=None, kep=None):
 
 def _build_model_free_map_dict(
     iauc60=None, iauc90=None, iauc120=None, peak=None, ttp=None, ser=None,
+    wash_in_slope=None, wash_out_slope=None,
 ):
     """Build dictionary of model-free maps for smoothing.
 
     Note: TTP is excluded from smoothing because it is a discrete timing
     parameter (quantized to TR). Smoothing creates non-physical intermediate
     time values. The ttp parameter is accepted but not included in the dict.
+    BAT and curve_type are also excluded (discrete/categorical maps).
     """
     from nipype.interfaces.base import isdefined
 
@@ -3563,6 +3575,10 @@ def _build_model_free_map_dict(
         d["peak_enhancement"] = peak
     if ser and isdefined(ser):
         d["ser"] = ser
+    if wash_in_slope and isdefined(wash_in_slope):
+        d["wash_in_slope"] = wash_in_slope
+    if wash_out_slope and isdefined(wash_out_slope):
+        d["wash_out_slope"] = wash_out_slope
     return d
 
 

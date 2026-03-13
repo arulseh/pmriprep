@@ -446,6 +446,10 @@ output_dir/pmriprep/
       sub-01_ses-01_space-DCE_desc-dce_IAUC60.nii.gz
       sub-01_ses-01_space-DCE_desc-dce_peakEnhancement.nii.gz
       sub-01_ses-01_space-DCE_desc-dce_SER.nii.gz
+      sub-01_ses-01_space-DCE_desc-dce_washInSlope.nii.gz
+      sub-01_ses-01_space-DCE_desc-dce_washOutSlope.nii.gz
+      sub-01_ses-01_space-DCE_desc-dce_BAT.nii.gz
+      sub-01_ses-01_space-DCE_desc-dce_curveType.nii.gz
       sub-01_ses-01_space-DCE_desc-dce_ttp.nii.gz
       sub-01_ses-01_space-DCE_desc-dce_tsnr.nii.gz
       sub-01_ses-01_space-DCE_desc-dceNawmNorm_IAUC60.nii.gz
@@ -510,6 +514,10 @@ output_dir/pmriprep/
 | `*_desc-dce_peakEnhancement` | Peak enhancement percentage | % |
 | `*_desc-dce_ttp` | Time to peak | seconds |
 | `*_desc-dce_SER` | Signal enhancement ratio | ratio |
+| `*_desc-dce_washInSlope` | Maximum upslope during wash-in | mM/min |
+| `*_desc-dce_washOutSlope` | Linear washout slope (negative=washout) | mM/min |
+| `*_desc-dce_BAT` | Bolus arrival time | seconds |
+| `*_desc-dce_curveType` | Curve type (1=persistent, 2=plateau, 3=washout) | categorical |
 | `*_desc-dce_tsnr` | Temporal signal-to-noise ratio | ratio |
 | `*_desc-dceNawmNorm_Ktrans` | NAWM-normalized Ktrans | ratio |
 | `*_desc-dceNawmNorm_IAUC60` | NAWM-normalized IAUC60 | ratio |
@@ -531,7 +539,7 @@ PMRIPrep generates a per-session HTML report (`sub-XX_ses-XX.html`) in the outpu
 - **Anatomical**: Brain mask overlays, tissue segmentation, registration quality
 - **Tumor segmentation**: Segmentation overlays on T1w post-contrast and FLAIR, volume statistics
 - **DSC**: AIF curve and quality metrics, motion parameters, parameter map montages (CBF, CBV, MTT, Tmax), K2 leakage maps
-- **DCE**: AIF curve, T1 map quality, tSNR map, parameter map montages (Ktrans, ve, vp, kep), model-free maps, R-squared goodness-of-fit
+- **DCE**: AIF curve, T1 map quality, tSNR map, parameter map montages (Ktrans, ve, vp, kep), model-free maps (IAUC, SER, wash-in/out slopes, BAT, curve type), R-squared goodness-of-fit
 
 Use `--report-only` to regenerate reports from existing outputs without re-running the pipeline.
 

@@ -88,6 +88,10 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     peak_enhancement_map = traits.Either(traits.Str, None, desc="Peak enhancement map path")
     time_to_peak_map = traits.Either(traits.Str, None, desc="Time to peak map path")
     ser_map = traits.Either(traits.Str, None, desc="Signal enhancement ratio map path")
+    wash_in_slope_map = traits.Either(traits.Str, None, desc="Wash-in slope map path")
+    wash_out_slope_map = traits.Either(traits.Str, None, desc="Wash-out slope map path")
+    bat_map = traits.Either(traits.Str, None, desc="Bolus arrival time map path")
+    curve_type_map = traits.Either(traits.Str, None, desc="Curve type classification map path")
 
     # QC maps (optional)
     tsnr_map = traits.Either(traits.Str, None, desc="tSNR map path")
@@ -332,13 +336,48 @@ class DCEDerivativeWriter(BaseInterface):
             "peakEnhancement": ("peak_enhancement_map", "Peak enhancement percentage", "%"),
             "ttp": ("time_to_peak_map", "Time to peak (seconds)", "s"),
             "SER": ("ser_map", "Signal Enhancement Ratio (washout characterization)", "ratio"),
+            "washInSlope": ("wash_in_slope_map", "Maximum upslope of concentration during wash-in (mM/min)", "mM/min"),
+            "washOutSlope": ("wash_out_slope_map", "Linear washout slope (mM/min, negative=washout)", "mM/min"),
+            "BAT": ("bat_map", "Bolus arrival time (seconds)", "s"),
+            "curveType": ("curve_type_map", "Curve type classification (1=persistent, 2=plateau, 3=washout)", "categorical"),
         }
         for map_name, (attr, description, units) in model_free_maps.items():
-            if has_input(self.inputs,attr):
+            if has_input(self.inputs, attr):
                 src = getattr(self.inputs, attr)
                 fname = f"{prefix}_{spatial}_desc-dce_{map_name}"
                 copy_derivative(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": description, "Units": units}
+                # Enhanced sidecars with method metadata
+                if map_name == "washInSlope":
+                    sidecar.update({
+                        "SmoothingMethod": "Savitzky-Golay",
+                        "SmoothingWindow": 5,
+                        "SmoothingPolyorder": 2,
+                        "InputCurve": "concentration",
+                    })
+                elif map_name == "washOutSlope":
+                    sidecar.update({
+                        "PostPeakStartSeconds": 30.0,
+                        "PostPeakEndSeconds": 120.0,
+                        "MinPoints": 4,
+                        "RegressionMethod": "ordinary_least_squares",
+                    })
+                elif map_name == "BAT":
+                    sidecar.update({
+                        "DetectionMethod": "threshold_then_gradient_fallback",
+                        "ConfidenceThreshold": "high",
+                    })
+                elif map_name == "curveType":
+                    sidecar.update({
+                        "PersistentThreshold": 0.9,
+                        "WashoutThreshold": 1.1,
+                        "ValueMapping": {
+                            "0": "unclassified",
+                            "1": "persistent",
+                            "2": "plateau",
+                            "3": "washout",
+                        },
+                    })
                 write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

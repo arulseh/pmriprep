@@ -2507,6 +2507,10 @@ def init_pmriprep_wf(
                 ("outputnode.peak_enhancement_map", "peak_enhancement_map"),
                 ("outputnode.time_to_peak_map", "time_to_peak_map"),
                 ("outputnode.ser_map", "ser_map"),
+                ("outputnode.wash_in_slope_map", "wash_in_slope_map"),
+                ("outputnode.wash_out_slope_map", "wash_out_slope_map"),
+                ("outputnode.bat_map", "bat_map"),
+                ("outputnode.curve_type_map", "curve_type_map"),
                 # QC maps
                 ("outputnode.tsnr_map", "tsnr_map"),
                 ("outputnode.qc_mask", "qc_mask"),

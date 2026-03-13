@@ -847,6 +847,10 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_peak_enhancement = File(desc="Peak enhancement percentage")
     out_time_to_peak = File(desc="Time to peak (seconds)")
     out_ser = File(desc="Signal Enhancement Ratio (washout characterization)")
+    out_wash_in_slope = File(desc="Wash-in slope (maximum upslope, mM/min)")
+    out_wash_out_slope = File(desc="Wash-out slope (linear fit, mM/min, signed)")
+    out_bat = File(desc="Bolus arrival time (seconds)")
+    out_curve_type = File(desc="Curve type classification (0=unclassified, 1=persistent, 2=plateau, 3=washout)")
 
     # Model selection map (auto mode)
     out_model_selection = File(desc="Model selection map (int8: 0=unfitted, 1=patlak, 2=tofts, 3=extended_tofts, 4=2cxm)")
@@ -1527,10 +1531,14 @@ class ComputeDCEMaps(BaseInterface):
         # Compute model-free maps (vectorized, fast, before PK fitting loop)
         # =====================================================================
         from pmriprep.utils.dce_model_free import (
+            compute_bolus_arrival_time,
+            compute_curve_type,
             compute_iauc,
             compute_peak_enhancement,
             compute_signal_enhancement_ratio,
             compute_time_to_peak,
+            compute_wash_in_slope,
+            compute_wash_out_slope,
         )
 
         iauc60 = compute_iauc(conc_data, time_points, cutoff_s=60.0)
@@ -1539,6 +1547,24 @@ class ComputeDCEMaps(BaseInterface):
         peak_enh = compute_peak_enhancement(conc_data, baseline_frames)
         ttp = compute_time_to_peak(conc_data, time_points)
         ser = compute_signal_enhancement_ratio(conc_data, time_points)
+
+        # New semi-quantitative maps: wash-in slope, wash-out slope, BAT, curve type
+        vol_tr_s = (
+            float(self.inputs.volume_tr)
+            if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
+            else None
+        )
+        wash_in_slope = compute_wash_in_slope(
+            conc_data, time_points, bolus_arrival_frame=baseline_frames,
+            volume_tr_s=vol_tr_s,
+        )
+        wash_out_slope = compute_wash_out_slope(
+            conc_data, time_points, volume_tr_s=vol_tr_s,
+        )
+        bat = compute_bolus_arrival_time(
+            conc_data, time_points, baseline_frames=baseline_frames,
+        )
+        curve_type = compute_curve_type(ser)
 
         # =====================================================================
         # Initialize output arrays
@@ -2050,6 +2076,11 @@ class ComputeDCEMaps(BaseInterface):
         out_ttp_path = self._gen_outfilename("_time_to_peak")
         out_ser_path = self._gen_outfilename("_SER")
 
+        out_wash_in_path = self._gen_outfilename("_wash_in_slope")
+        out_wash_out_path = self._gen_outfilename("_wash_out_slope")
+        out_bat_path = self._gen_outfilename("_BAT")
+        out_curve_type_path = self._gen_outfilename("_curve_type")
+
         for arr, path in [
             (iauc60, out_iauc60_path),
             (iauc90, out_iauc90_path),
@@ -2057,9 +2088,16 @@ class ComputeDCEMaps(BaseInterface):
             (peak_enh, out_peak_enh_path),
             (ttp, out_ttp_path),
             (ser, out_ser_path),
+            (wash_in_slope, out_wash_in_path),
+            (wash_out_slope, out_wash_out_path),
+            (bat, out_bat_path),
         ]:
             img = nib.Nifti1Image(arr.astype(np.float32), affine, header)  # type: ignore[attr-defined]
             nib.save(img, path)  # type: ignore[attr-defined]
+
+        # Save curve type as int8 (categorical)
+        ct_img = nib.Nifti1Image(curve_type, affine, header)  # type: ignore[attr-defined]
+        nib.save(ct_img, out_curve_type_path)  # type: ignore[attr-defined]
 
         # Initialize results
         self._results: dict[str, Any] = {
@@ -2072,6 +2110,10 @@ class ComputeDCEMaps(BaseInterface):
             "out_peak_enhancement": out_peak_enh_path,
             "out_time_to_peak": out_ttp_path,
             "out_ser": out_ser_path,
+            "out_wash_in_slope": out_wash_in_path,
+            "out_wash_out_slope": out_wash_out_path,
+            "out_bat": out_bat_path,
+            "out_curve_type": out_curve_type_path,
             "qc_metrics": qc_metrics,
             "constraint_qc": constraint_qc,
         }
