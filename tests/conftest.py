@@ -801,7 +801,7 @@ def generate_synthetic_dce_aif(
     tr: float = 4.0,
     baseline_frames: int = 10,
     peak_concentration: float = 5.0,
-    dose_level: str = "full",
+    dose_level: float = 1.0,
     random_seed: Optional[int] = 42,
 ) -> npt.NDArray[Any]:
     """Generate a synthetic DCE AIF (plasma concentration).
@@ -811,7 +811,7 @@ def generate_synthetic_dce_aif(
         tr: Repetition time in seconds.
         baseline_frames: Number of baseline frames.
         peak_concentration: Peak AIF concentration (mM).
-        dose_level: Dose level ('half', 'full', 'double').
+        dose_level: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
         random_seed: Random seed.
 
     Returns:
@@ -820,10 +820,8 @@ def generate_synthetic_dce_aif(
     if random_seed is not None:
         np.random.seed(random_seed)
 
-    # Adjust peak based on dose level
-    dose_factors = {"half": 0.5, "full": 1.0, "double": 2.0}
-    dose_factor = dose_factors.get(dose_level, 1.0)
-    adjusted_peak = peak_concentration * dose_factor
+    # Adjust peak based on dose level (dose IS the multiplier)
+    adjusted_peak = peak_concentration * float(dose_level)
 
     # Time in minutes
     t_sec = np.arange(n_timepoints) * tr
@@ -940,7 +938,7 @@ def sample_dsc_config() -> Dict[str, Any]:
     """Fixture providing a sample DSC configuration dict."""
     return {
         "preload_present": False,
-        "dose": "full",
+        "dose": 1.0,
         "method": "sSVD",
         "bayesian": "none",
         "aif_criteria": "strict",

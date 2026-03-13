@@ -135,7 +135,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dsc-deconv-method {sSVD,cSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
 | `--dsc-bayesian {none,map,vi,mcmc}` | Bayesian inference method (default: none) |
 | `--dsc-preload` | Indicate contrast preload is present |
-| `--dsc-dose {half,full,double}` | Contrast agent dose (default: full) |
+| `--dsc-dose DOSE` | Contrast agent dose: named preset (`half`, `full`, `double`) or float multiplier (e.g. `0.75`). Default: `full` (1.0) |
 | `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
 | `--dsc-aif-file FILE` | External AIF curve file (ΔR2* in s⁻¹); bypasses detection |
 
@@ -147,7 +147,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dce-bayesian {none,map,vi,mcmc}` | Bayesian inference method (default: none) |
 | `--dce-aif-method {auto,population}` | AIF detection method (default: auto) |
 | `--dce-aif-file FILE` | External AIF curve file (plasma concentration in mM); bypasses detection |
-| `--dce-dose {half,full,double}` | Contrast agent dose (default: full) |
+| `--dce-dose DOSE` | Contrast agent dose: named preset (`half`, `full`, `double`) or float multiplier (e.g. `0.75`). Default: `full` (1.0) |
 | `--dce-r1 R1` | Override r1 relaxivity (s⁻¹/mM) for concentration conversion |
 | `--dce-b1-method {auto,afi,tfl_b1map,none}` | B1+ correction method (default: auto) |
 | `--dce-no-t1` | Skip T1 mapping (use default T1 for field strength) |
@@ -205,7 +205,7 @@ dce:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `preload_present` | bool | `false` | Contrast preload present |
-| `dose` | str | `"full"` | Dose: `half`, `full`, `double` |
+| `dose` | float | `1.0` | Dose multiplier: named preset (`half`=0.5, `full`=1.0, `double`=2.0) or any positive float |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
 | `bayesian` | str | `"none"` | Bayesian mode: `none`, `map`, `vi`, `mcmc` |
 | `mcmc_samples` | int | `500` | MCMC samples if bayesian=mcmc |
@@ -240,7 +240,7 @@ dce:
 | `aif_mask_file` | path | `null` | Custom AIF mask file |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
-| `dose` | str | `"full"` | Dose: `half`, `full`, `double` |
+| `dose` | float | `1.0` | Dose multiplier: named preset (`half`=0.5, `full`=1.0, `double`=2.0) or any positive float |
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
 | `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `tfl_b1map`, `none` |
 | `no_t1` | bool | `false` | Skip T1 mapping |

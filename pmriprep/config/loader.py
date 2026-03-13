@@ -203,6 +203,30 @@ def _coerce_float(d: Dict[str, Any], key: str) -> None:
             pass  # Leave as-is if conversion fails
 
 
+# Named dose presets for resolving YAML string values to floats
+_DOSE_PRESETS: Dict[str, float] = {"half": 0.5, "full": 1.0, "double": 2.0}
+
+
+def _coerce_dose(d: Dict[str, Any], key: str = "dose") -> None:
+    """Resolve a dose value (string preset or numeric) to float in-place."""
+    if key not in d or d[key] is None:
+        return
+    val = d[key]
+    if isinstance(val, str):
+        if val in _DOSE_PRESETS:
+            d[key] = _DOSE_PRESETS[val]
+        else:
+            try:
+                d[key] = float(val)
+            except (ValueError, TypeError):
+                pass  # Leave for dataclass __post_init__ to raise
+    else:
+        try:
+            d[key] = float(val)
+        except (ValueError, TypeError):
+            pass
+
+
 def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     """Build DSCConfig from a configuration dictionary.
 
@@ -231,6 +255,7 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     _coerce_float(dsc_dict, "smooth_fwhm")
     _coerce_float(dsc_dict, "lesion_distance")
     _coerce_float(dsc_dict, "motion_thresh")
+    _coerce_dose(dsc_dict)
 
     # Filter to only valid DSCConfig fields
     valid_fields = {f.name for f in DSCConfig.__dataclass_fields__.values()}
@@ -277,6 +302,7 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     _coerce_float(dce_dict, "hematocrit")
     _coerce_float(dce_dict, "target_peak")
     _coerce_float(dce_dict, "r1_relaxivity")
+    _coerce_dose(dce_dict)
 
     # Filter to only valid DCEConfig fields
     valid_fields = {f.name for f in DCEConfig.__dataclass_fields__.values()}

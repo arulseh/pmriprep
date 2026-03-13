@@ -297,7 +297,7 @@ def detect_preload_from_dce_protocol(
     dce_ran: bool,
     dce_end_time: Optional[float] = None,
     dsc_start_time: Optional[float] = None,
-    dce_dose: str = "full",
+    dce_dose: float = 1.0,
 ) -> PreloadResult:
     """Detect preload from DCE protocol information.
 
@@ -307,7 +307,7 @@ def detect_preload_from_dce_protocol(
         dce_ran: Whether DCE was acquired before DSC.
         dce_end_time: Time when DCE acquisition ended (seconds from session start).
         dsc_start_time: Time when DSC acquisition started.
-        dce_dose: Dose used for DCE ("half", "full", "double").
+        dce_dose: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
 
     Returns:
         PreloadResult with estimated preload from protocol.
@@ -323,7 +323,7 @@ def detect_preload_from_dce_protocol(
 
     # Estimate preload based on dose and timing
     # Reference: typical contrast clearance kinetics
-    dose_factor = {"half": 0.5, "full": 1.0, "double": 2.0}.get(dce_dose.lower(), 1.0)
+    dose_factor = float(dce_dose)
 
     # Calculate time elapsed since DCE
     elapsed_time: Optional[float] = None
@@ -483,7 +483,7 @@ def detect_preload(
             dce_ran=dce_ran,
             dce_end_time=dce_info.get("end_time"),
             dsc_start_time=dce_info.get("dsc_start_time"),
-            dce_dose=dce_info.get("dose", "full"),
+            dce_dose=float(dce_info.get("dose", 1.0)),
         )
         results.append(result)
 

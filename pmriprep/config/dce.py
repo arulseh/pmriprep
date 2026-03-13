@@ -1,8 +1,14 @@
 """DCE (Dynamic Contrast Enhanced) configuration dataclass."""
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Literal, Optional
+
+logger = logging.getLogger(__name__)
+
+# Named dose presets resolved to float multipliers
+_DOSE_PRESETS: dict[str, float] = {"half": 0.5, "full": 1.0, "double": 2.0}
 
 
 @dataclass
@@ -52,8 +58,8 @@ class DCEConfig:
         Smoothing kernel FWHM (mm) for output maps.
     baseline_frames : int
         Number of baseline frames (0 = auto-detect).
-    dose : Literal["half", "full", "double"]
-        Contrast agent dose level (default: full).
+    dose : float
+        Contrast agent dose multiplier (0.5 = half, 1.0 = full, 2.0 = double).
     tsnr_threshold : float
         tSNR threshold for voxel inclusion (0 = no threshold).
     model : str
@@ -99,7 +105,7 @@ class DCEConfig:
     no_dsc_validation: bool = False
     smooth_fwhm: float = 0.0  # No smoothing by default
     baseline_frames: int = 0  # 0 = auto-detect
-    dose: Literal["half", "full", "double"] = "full"
+    dose: float = 1.0
     tsnr_threshold: float = 0.0  # 0 = no threshold
 
     # Model settings
@@ -155,6 +161,30 @@ class DCEConfig:
             self.num_processes = int(self.num_processes)
         except (ValueError, TypeError) as e:
             raise TypeError(f"DCEConfig integer field has invalid type: {e}") from e
+
+        # Coerce dose: string preset → float, numeric → float
+        if isinstance(self.dose, str):
+            if self.dose in _DOSE_PRESETS:
+                self.dose = _DOSE_PRESETS[self.dose]
+            else:
+                try:
+                    self.dose = float(self.dose)
+                except (ValueError, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid dose={self.dose!r}. Use a named preset "
+                        f"({', '.join(sorted(_DOSE_PRESETS))}) or a positive number."
+                    ) from e
+        else:
+            self.dose = float(self.dose)
+        import math
+        if not math.isfinite(self.dose) or self.dose <= 0:
+            raise ValueError(f"dose must be a finite positive number, got {self.dose}")
+        if self.dose < 0.2 or self.dose > 3.0:
+            logger.warning(
+                "DCE dose=%.2f is outside typical range [0.2, 3.0]. "
+                "Values <0.2 may have insufficient SNR; >3.0 risk signal saturation.",
+                self.dose,
+            )
 
         # Coerce float fields (these have non-None defaults)
         try:

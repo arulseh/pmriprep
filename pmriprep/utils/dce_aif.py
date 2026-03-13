@@ -397,7 +397,7 @@ def assess_dce_aif_quality(
     tr: float,
     baseline_frames: int = 5,
     criteria: Literal["strict", "relaxed", "permissive", "degraded"] = "strict",
-    dose_level: Literal["half", "full", "double"] = "full",
+    dose_level: float = 1.0,
     field_strength: float = 3.0,
 ) -> DCEAIFQualityResult:
     """Assess the quality of a DCE AIF curve and return pass/warn/fail status.
@@ -424,7 +424,7 @@ def assess_dce_aif_quality(
     criteria : Literal["strict", "relaxed", "permissive", "degraded"]
         Primary criteria level for overall status determination.
         All four levels are evaluated regardless.
-    dose_level : Literal["half", "full", "double"]
+    dose_level : float
         Contrast dose level, affects expected peak range.
     field_strength : float
         Magnetic field strength in Tesla (default: 3.0).
@@ -492,13 +492,8 @@ def assess_dce_aif_quality(
         time_to_peak=time_to_peak,
     )
 
-    # Get dose scaling factor
-    if dose_level == "half":
-        dose_factor = 0.5
-    elif dose_level == "double":
-        dose_factor = 2.0
-    else:
-        dose_factor = 1.0
+    # Dose level IS the multiplier
+    dose_factor = float(dose_level)
 
     # Get expected peak range for dose
     expected_peak_min = ParkerAIFExpected.PEAK_MIN_MM * dose_factor
@@ -962,7 +957,7 @@ def assess_dce_aif_quality_from_file(
     tr: float,
     baseline_frames: int = 5,
     criteria: Literal["strict", "relaxed", "permissive", "degraded"] = "strict",
-    dose_level: Literal["half", "full", "double"] = "full",
+    dose_level: float = 1.0,
     field_strength: float = 3.0,
 ) -> DCEAIFQualityResult:
     """Assess DCE AIF quality from a text file.
@@ -979,7 +974,7 @@ def assess_dce_aif_quality_from_file(
         Number of pre-contrast baseline frames.
     criteria : Literal["strict", "relaxed"]
         Primary criteria level for overall status.
-    dose_level : Literal["half", "full", "double"]
+    dose_level : float
         Contrast dose level.
     field_strength : float
         Magnetic field strength in Tesla.
@@ -1036,7 +1031,7 @@ class AIFScalingResult:
 
 def get_population_peak_concentration(
     field_strength: float = 3.0,
-    dose_level: Literal["half", "full", "double"] = "full",
+    dose_level: float = 1.0,
 ) -> float:
     """Get expected population peak concentration for a given dose level.
 
@@ -1049,8 +1044,8 @@ def get_population_peak_concentration(
         Magnetic field strength in Tesla (default: 3.0).
         Note: Peak concentration is relatively field-strength independent
         as it depends primarily on dose and blood volume.
-    dose_level : Literal["half", "full", "double"]
-        Contrast dose level.
+    dose_level : float
+        Contrast dose multiplier (0.5=half, 1.0=full, 2.0=double).
 
     Returns
     -------
@@ -1061,12 +1056,7 @@ def get_population_peak_concentration(
     base_peak = ParkerAIFExpected.PEAK_TYPICAL_MM  # 6.3 mM
 
     # Adjust for dose level (linear with dose)
-    if dose_level == "half":
-        return base_peak * 0.5
-    elif dose_level == "double":
-        return base_peak * 2.0
-    else:  # full
-        return base_peak
+    return base_peak * float(dose_level)
 
 
 def scale_aif_to_population(
@@ -1074,7 +1064,7 @@ def scale_aif_to_population(
     target_peak: Optional[float] = None,
     baseline_frames: int = 5,
     field_strength: float = 3.0,
-    dose_level: Literal["half", "full", "double"] = "full",
+    dose_level: float = 1.0,
     scaling_tolerance: float = 0.15,
     max_scaling_factor: float = 3.0,
     min_scaling_factor: float = 0.3,
@@ -1100,8 +1090,8 @@ def scale_aif_to_population(
         Number of pre-contrast baseline frames (default: 5).
     field_strength : float
         Magnetic field strength in Tesla (default: 3.0).
-    dose_level : Literal["half", "full", "double"]
-        Contrast dose level for population reference (default: "full").
+    dose_level : float
+        Contrast dose multiplier for population reference (default: 1.0).
     scaling_tolerance : float
         Tolerance for skipping scaling. If the measured peak is within
         this fraction of target, no scaling is applied (default: 0.15 = 15%).
@@ -1148,7 +1138,7 @@ def scale_aif_to_population(
     >>> result = scale_aif_to_population(
     ...     aif_curve=measured_aif,
     ...     field_strength=3.0,
-    ...     dose_level="full"
+    ...     dose_level=1.0
     ... )
     >>> print(f"Scaling factor: {result.scaling_factor:.2f}")
     >>> print(f"Original peak: {result.original_peak:.2f} mM")
@@ -1270,7 +1260,7 @@ def scale_aif_to_population_from_file(
     target_peak: Optional[float] = None,
     baseline_frames: int = 5,
     field_strength: float = 3.0,
-    dose_level: Literal["half", "full", "double"] = "full",
+    dose_level: float = 1.0,
     scaling_tolerance: float = 0.15,
 ) -> AIFScalingResult:
     """Scale AIF amplitude to population reference from a text file.
@@ -1287,7 +1277,7 @@ def scale_aif_to_population_from_file(
         Number of pre-contrast baseline frames.
     field_strength : float
         Magnetic field strength in Tesla.
-    dose_level : Literal["half", "full", "double"]
+    dose_level : float
         Contrast dose level.
     scaling_tolerance : float
         Tolerance for skipping scaling.

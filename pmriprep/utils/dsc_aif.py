@@ -2030,8 +2030,8 @@ class SyntheticAIFResult:
         Gamma-variate shape parameter.
     beta : float
         Gamma-variate scale parameter.
-    dose_level : str
-        Estimated dose level ('half', 'full', 'double').
+    dose_level : float
+        Estimated dose multiplier (e.g. 0.5, 1.0, 2.0).
     scaling_factor : float
         Factor applied to match estimated global signal.
     is_synthetic : bool
@@ -2049,7 +2049,7 @@ class SyntheticAIFResult:
     t0: float
     alpha: float
     beta: float
-    dose_level: str
+    dose_level: float
     scaling_factor: float
     is_synthetic: bool = True
     absolute_quantification_valid: bool = False
@@ -2061,11 +2061,11 @@ def _estimate_dose_from_global_signal(
     concentration_data: npt.NDArray[Any],
     brain_mask: npt.NDArray[Any],
     baseline_frames: int = 5,
-) -> Tuple[str, float, float]:
+) -> Tuple[float, float, float]:
     """Estimate contrast dose from global signal characteristics.
 
     Uses the peak ΔR2* of the global average signal to estimate the
-    contrast dose level.
+    contrast dose level as a continuous float multiplier.
 
     Parameters
     ----------
@@ -2078,9 +2078,9 @@ def _estimate_dose_from_global_signal(
 
     Returns
     -------
-    Tuple[str, float, float]
+    Tuple[float, float, float]
         (dose_level, peak_deltaR2, scaling_factor)
-        dose_level: 'half', 'full', or 'double'
+        dose_level: Continuous dose multiplier (e.g. 0.5, 1.0, 2.0)
         peak_deltaR2: Estimated peak ΔR2* value
         scaling_factor: Factor to apply to population AIF
     """
@@ -2088,7 +2088,7 @@ def _estimate_dose_from_global_signal(
     mask_indices = np.where(brain_mask > 0)
     if len(mask_indices[0]) == 0:
         # Empty mask, return defaults
-        return ("full", 40.0, 1.0)
+        return (1.0, 40.0, 1.0)
 
     # Extract time courses and compute mean
     time_courses = concentration_data[mask_indices]  # (n_voxels, n_frames)
@@ -2099,34 +2099,18 @@ def _estimate_dose_from_global_signal(
     peak_value: float = float(np.max(global_signal))
     peak_deltaR2 = peak_value - baseline_mean
 
-    # Estimate dose based on peak ΔR2*
-    # Typical values at 3T:
-    # - Half dose: ~15-25 s^-1 peak
-    # - Full dose: ~35-50 s^-1 peak
-    # - Double dose: ~70-100 s^-1 peak
-
-    if peak_deltaR2 < 10.0:
-        dose_level = "half"
-        expected_peak = SYNTHETIC_AIF_PARAMS["peak_deltaR2_half_dose"]
-    elif peak_deltaR2 < 30.0:
-        dose_level = "half"
-        expected_peak = SYNTHETIC_AIF_PARAMS["peak_deltaR2_half_dose"]
-    elif peak_deltaR2 < 60.0:
-        dose_level = "full"
-        expected_peak = SYNTHETIC_AIF_PARAMS["peak_deltaR2_full_dose"]
+    # Estimate dose as continuous multiplier relative to full-dose reference.
+    # Full dose peak ΔR2* ≈ 40 s^-1 at 3T; ΔR2* scales linearly with dose.
+    full_dose_peak = SYNTHETIC_AIF_PARAMS["peak_deltaR2_full_dose"]
+    if full_dose_peak > EPSILON_CONCENTRATION:
+        dose_level = max(peak_deltaR2, EPSILON_CONCENTRATION) / full_dose_peak
     else:
-        dose_level = "double"
-        expected_peak = SYNTHETIC_AIF_PARAMS["peak_deltaR2_double_dose"]
+        dose_level = 1.0
 
-    # Compute scaling factor to match observed signal
-    # This accounts for individual variation in signal magnitude
-    if expected_peak > EPSILON_CONCENTRATION:
-        scaling_factor = peak_deltaR2 / expected_peak
-    else:
-        scaling_factor = 1.0
-
-    # Clamp scaling factor to reasonable range
-    scaling_factor = max(0.2, min(5.0, scaling_factor))
+    # With continuous dose estimation, dose_level already captures the
+    # observed-vs-expected ratio — scaling_factor is unity by definition.
+    # Callers that previously relied on scaling_factor should use dose_level.
+    scaling_factor = 1.0
 
     return (dose_level, peak_deltaR2, scaling_factor)
 
@@ -2134,7 +2118,7 @@ def _estimate_dose_from_global_signal(
 def generate_synthetic_aif(
     n_frames: int,
     baseline_frames: int = 5,
-    dose_level: str = "full",
+    dose_level: float = 1.0,
     field_strength: float = 3.0,
     global_scaling: Optional[float] = None,
     concentration_data: Optional[npt.NDArray[Any]] = None,
@@ -2156,9 +2140,9 @@ def generate_synthetic_aif(
         Number of time frames for the AIF curve.
     baseline_frames : int
         Number of pre-bolus baseline frames (AIF = 0 for these frames).
-    dose_level : str
-        Contrast dose level: 'half', 'full', or 'double'.
-        Used to set the AIF amplitude.
+    dose_level : float
+        Contrast dose multiplier (0.5=half, 1.0=full, 2.0=double).
+        Used to set the AIF amplitude via linear scaling.
     field_strength : float
         Magnetic field strength in Tesla. Affects expected relaxivity.
     global_scaling : float, optional
@@ -2212,7 +2196,7 @@ def generate_synthetic_aif(
     Examples
     --------
     >>> # Generate synthetic AIF for 60-frame scan, full dose
-    >>> result = generate_synthetic_aif(n_frames=60, baseline_frames=5, dose_level="full")
+    >>> result = generate_synthetic_aif(n_frames=60, baseline_frames=5, dose_level=1.0)
     >>> print(f"Peak ΔR2*: {result.aif_curve.max():.1f} s^-1")
     >>> print(f"Warning: {result.warning_message}")
 
@@ -2253,13 +2237,8 @@ def generate_synthetic_aif(
             global_scaling = auto_scaling
             dose_level = estimated_dose
 
-    # Determine amplitude from dose level
-    if dose_level == "half":
-        base_amplitude = SYNTHETIC_AIF_PARAMS["peak_deltaR2_half_dose"]
-    elif dose_level == "double":
-        base_amplitude = SYNTHETIC_AIF_PARAMS["peak_deltaR2_double_dose"]
-    else:  # full dose (default)
-        base_amplitude = SYNTHETIC_AIF_PARAMS["peak_deltaR2_full_dose"]
+    # Determine amplitude from dose level — linear scaling from full-dose reference
+    base_amplitude = SYNTHETIC_AIF_PARAMS["peak_deltaR2_full_dose"] * float(dose_level)
 
     # Apply field strength correction (approximate)
     # r2* scales roughly linearly with field strength
@@ -2346,7 +2325,7 @@ def generate_synthetic_aif_from_files(
     brain_mask_file: Optional[Union[str, Path]] = None,
     concentration_file: Optional[Union[str, Path]] = None,
     baseline_frames: int = 5,
-    dose_level: str = "full",
+    dose_level: float = 1.0,
     field_strength: float = 3.0,
 ) -> SyntheticAIFResult:
     """Generate synthetic AIF with optional automatic dose estimation from files.
@@ -2363,8 +2342,8 @@ def generate_synthetic_aif_from_files(
         Path to 4D concentration NIfTI file.
     baseline_frames : int
         Number of pre-bolus baseline frames.
-    dose_level : str
-        Contrast dose level if not auto-estimated.
+    dose_level : float
+        Contrast dose multiplier if not auto-estimated (default 1.0).
     field_strength : float
         Magnetic field strength in Tesla.
 

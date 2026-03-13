@@ -458,12 +458,10 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         mandatory=True,
         desc="Temporal resolution (TR) in seconds",
     )
-    dose = traits.Enum(
-        "full",
-        "half",
-        "double",
+    dose = traits.Float(
+        1.0,
         usedefault=True,
-        desc="Contrast agent dose level (affects expected peak)",
+        desc="Contrast agent dose multiplier (0.5=half, 1.0=full, 2.0=double)",
     )
     r1_relaxivity = traits.Float(
         0.0,
@@ -565,8 +563,8 @@ class AIFDetection(BaseInterface):
         Magnetic field strength in Tesla.
     tr : float
         Temporal resolution in seconds.
-    dose : str
-        Contrast dose level: 'half', 'full', or 'double'.
+    dose : float
+        Contrast dose multiplier (0.5=half, 1.0=full, 2.0=double).
     r1_relaxivity : float
         Contrast agent relaxivity for Parker AIF correction.
 
@@ -647,8 +645,7 @@ class AIFDetection(BaseInterface):
           - Vueway, full dose:          (0.05 * 1.0) / 0.1 = 0.5
         """
         std_dose = float(self.inputs.agent_standard_dose)
-        dose = str(self.inputs.dose)
-        multiplier = {"half": 0.5, "double": 2.0}.get(dose, 1.0)
+        multiplier = float(self.inputs.dose)
         return (std_dose * multiplier) / 0.1
 
     def _get_expected_peak_range(self) -> tuple[float, float]:

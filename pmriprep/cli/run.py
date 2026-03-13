@@ -19,6 +19,46 @@ from pmriprep.cli.logging import IMPORTANT
 # messages that should be IMPORTANT-level by default.
 logger = plogger.cli
 
+# Named dose presets resolved to float multipliers
+_DOSE_PRESETS: dict[str, float] = {"half": 0.5, "full": 1.0, "double": 2.0}
+
+
+def _dose_type(value: str) -> float:
+    """Parse a dose argument as a named preset or positive float.
+
+    Parameters
+    ----------
+    value : str
+        Dose string from CLI (e.g. ``"half"``, ``"1.0"``, ``"0.75"``).
+
+    Returns
+    -------
+    float
+        Dose multiplier (e.g. ``0.5``, ``1.0``, ``0.75``).
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        If *value* is not a known preset or a finite positive number.
+    """
+    import math
+
+    if value in _DOSE_PRESETS:
+        return _DOSE_PRESETS[value]
+    try:
+        fval = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid dose value: {value!r}. "
+            f"Use a named preset ({', '.join(sorted(_DOSE_PRESETS))}) "
+            f"or a positive number (e.g. 0.75)."
+        )
+    if not math.isfinite(fval) or fval <= 0:
+        raise argparse.ArgumentTypeError(
+            f"dose must be a finite positive number, got {fval}"
+        )
+    return fval
+
 
 def _sanitize_for_toml(obj: Any) -> Any:
     """Convert Path objects to strings and drop None values for TOML."""
@@ -215,9 +255,12 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-dose",
-        choices=["half", "full", "double"],
+        type=_dose_type,
         default=None,
-        help="Contrast agent dose for DSC (default: full).",
+        metavar="DOSE",
+        help="Contrast agent dose for DSC: a named preset "
+        "(half, full, double) or a positive float multiplier "
+        "(e.g. 0.75). Default: full (1.0).",
     )
     dsc_group.add_argument(
         "--dsc-aif-method",
@@ -273,9 +316,12 @@ Examples:
     )
     dce_group.add_argument(
         "--dce-dose",
-        choices=["half", "full", "double"],
+        type=_dose_type,
         default=None,
-        help="Contrast agent dose for DCE (default: full).",
+        metavar="DOSE",
+        help="Contrast agent dose for DCE: a named preset "
+        "(half, full, double) or a positive float multiplier "
+        "(e.g. 0.75). Default: full (1.0).",
     )
     dce_group.add_argument(
         "--dce-r1",
