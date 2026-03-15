@@ -126,7 +126,7 @@ class TestAverageDwiDirections:
         assert abs(out_bvals[1] - 1000.0) < 50  # b=1000 shell
 
     def test_averaging_correctness(self):
-        """Verify averaged signal matches np.mean per shell."""
+        """Verify averaged signal matches geometric mean per shell."""
         rng = np.random.default_rng(99)
         n_dirs = 6
         signal = rng.random((3, 3, 3, 1 + n_dirs)) * 500
@@ -139,10 +139,12 @@ class TestAverageDwiDirections:
 
         out_signal, out_bvals = average_dwi_directions(signal, bvals, bvecs)
 
-        # b=0 shell: just volume 0
+        # b=0 shell: just volume 0 (geometric mean of 1 value = itself)
         np.testing.assert_allclose(out_signal[..., 0], signal[..., 0])
-        # b=1000 shell: mean of volumes 1-6
-        expected_b1000 = np.mean(signal[..., 1:], axis=-1)
+        # b=1000 shell: geometric mean of volumes 1-6
+        expected_b1000 = np.exp(np.mean(np.log(
+            np.maximum(signal[..., 1:], 1e-10)
+        ), axis=-1))
         np.testing.assert_allclose(out_signal[..., 1], expected_b1000)
 
     def test_zero_norm_bvec(self):

@@ -357,18 +357,35 @@ class TestPeakEnhancement:
     def test_known_enhancement(self) -> None:
         """Known peak should give correct enhancement percentage."""
         n_time = 20
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        # Baseline = 1.0, peak = 3.0 → enhancement = 200%
-        concentration[..., :5] = 1.0
-        concentration[..., 10] = 3.0
-        result = compute_peak_enhancement(concentration, baseline_frames=5)
+        signal = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        # Baseline = 500, peak = 1500 → enhancement = 200%
+        signal[..., :5] = 500.0
+        signal[..., 5:] = 500.0
+        signal[..., 10] = 1500.0
+        result = compute_peak_enhancement(signal, baseline_frames=5)
         assert np.allclose(result, 200.0)
 
     def test_no_enhancement(self) -> None:
         """Flat signal should give 0% enhancement."""
-        concentration = np.ones((2, 2, 1, 20), dtype=np.float64)
-        result = compute_peak_enhancement(concentration)
+        signal = np.ones((2, 2, 1, 20), dtype=np.float64) * 500.0
+        result = compute_peak_enhancement(signal)
         assert np.allclose(result, 0.0)
+
+    def test_dead_voxel_guard(self) -> None:
+        """Signal below epsilon (1.0) returns 0% (dead/background voxel)."""
+        n_time = 20
+        signal = np.full((2, 2, 1, n_time), 0.5, dtype=np.float64)
+        result = compute_peak_enhancement(signal, baseline_frames=5)
+        assert np.allclose(result, 0.0)
+
+    def test_max_cap(self) -> None:
+        """Extreme enhancement is capped at max_cap."""
+        n_time = 20
+        signal = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        signal[..., :5] = 10.0  # low baseline
+        signal[..., 10] = 10000.0  # extreme peak
+        result = compute_peak_enhancement(signal, baseline_frames=5, max_cap=5000.0)
+        assert np.all(result <= 5000.0)
 
 
 class TestTimeToPeak:
@@ -428,7 +445,9 @@ class TestNoInfOutputs:
         concentration, time_points = gamma_variate_data
 
         iauc60 = compute_iauc(concentration, time_points, 60.0)
-        peak = compute_peak_enhancement(concentration)
+        # Peak enhancement uses raw signal, not concentration — simulate signal
+        signal_like = concentration + 500.0  # shift to realistic signal range
+        peak = compute_peak_enhancement(signal_like)
         ttp = compute_time_to_peak(concentration, time_points)
         ser = compute_signal_enhancement_ratio(concentration, time_points)
         wash_in = compute_wash_in_slope(

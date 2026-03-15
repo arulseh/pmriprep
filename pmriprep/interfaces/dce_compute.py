@@ -1229,6 +1229,10 @@ class ComputeDCEMaps(BaseInterface):
             tsnr_map = self._compute_tsnr(signal_data, mask, baseline_frames)
             # Raw signal variation map (matches perf-plus dce_pk_modeling.py:1576)
             signal_std_map = np.std(signal_data, axis=-1)
+            # Peak enhancement must use raw signal (concentration baseline ~0
+            # by definition → division by near-zero → overflow)
+            from pmriprep.utils.dce_model_free import compute_peak_enhancement
+            peak_enh = compute_peak_enhancement(signal_data, baseline_frames)
             del signal_data
         else:
             logger.warning(
@@ -1236,6 +1240,7 @@ class ComputeDCEMaps(BaseInterface):
                 "data (values will be low — consider wiring dce_preprocess.out_file)"
             )
             tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
+            peak_enh = None  # Cannot compute without raw signal
 
         # Create fitting mask (brain mask + tSNR threshold if specified)
         mask_bool = mask > 0
@@ -1534,7 +1539,6 @@ class ComputeDCEMaps(BaseInterface):
             compute_bolus_arrival_time,
             compute_curve_type,
             compute_iauc,
-            compute_peak_enhancement,
             compute_signal_enhancement_ratio,
             compute_time_to_peak,
             compute_wash_in_slope,
@@ -1544,7 +1548,7 @@ class ComputeDCEMaps(BaseInterface):
         iauc60 = compute_iauc(conc_data, time_points, cutoff_s=60.0)
         iauc90 = compute_iauc(conc_data, time_points, cutoff_s=90.0)
         iauc120 = compute_iauc(conc_data, time_points, cutoff_s=120.0)
-        peak_enh = compute_peak_enhancement(conc_data, baseline_frames)
+        # peak_enh already computed from raw signal above (not concentration)
         ttp = compute_time_to_peak(conc_data, time_points)
         ser = compute_signal_enhancement_ratio(conc_data, time_points)
 
@@ -2081,17 +2085,19 @@ class ComputeDCEMaps(BaseInterface):
         out_bat_path = self._gen_outfilename("_BAT")
         out_curve_type_path = self._gen_outfilename("_curve_type")
 
-        for arr, path in [
+        save_list: list[tuple[Any, str]] = [
             (iauc60, out_iauc60_path),
             (iauc90, out_iauc90_path),
             (iauc120, out_iauc120_path),
-            (peak_enh, out_peak_enh_path),
             (ttp, out_ttp_path),
             (ser, out_ser_path),
             (wash_in_slope, out_wash_in_path),
             (wash_out_slope, out_wash_out_path),
             (bat, out_bat_path),
-        ]:
+        ]
+        if peak_enh is not None:
+            save_list.insert(3, (peak_enh, out_peak_enh_path))
+        for arr, path in save_list:
             img = nib.Nifti1Image(arr.astype(np.float32), affine, header)  # type: ignore[attr-defined]
             nib.save(img, path)  # type: ignore[attr-defined]
 
@@ -2262,7 +2268,8 @@ class ComputeDCEMaps(BaseInterface):
         qc_mask = np.ones(spatial_shape, dtype=bool)
         qc_mask &= fitting_mask  # Within brain mask
         qc_mask &= (tsnr_map >= 10)  # Adequate tSNR (perf-plus threshold)
-        qc_mask &= (peak_enh >= 10)  # Visible enhancement
+        if peak_enh is not None:
+            qc_mask &= (peak_enh >= 10)  # Visible enhancement
         qc_mask &= (ktrans > 0) & (ktrans < 5.0)  # Physiological Ktrans
         qc_mask &= (r2_map >= 0.5)  # Reasonable model fit
 

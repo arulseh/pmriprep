@@ -2211,17 +2211,7 @@ class AIFDetection(BaseInterface):
         qc_metrics["baseline_frames_used"] = baseline_frames
         qc_metrics["baseline_detection_method"] = "auto_p99"
 
-        # --- GAP 9: Quantification validity flags ---
         if detection_level == "synthetic":
-            qc_metrics["quantification_validity"] = {
-                "absolute_cbv": False,
-                "absolute_cbf": False,
-                "relative_cbv": True,
-                "relative_cbf": True,
-                "mtt": "CAUTION",
-                "ttp": True,
-                "tmax": True,
-            }
             qc_metrics["synthetic_aif_warnings"] = [
                 "Synthetic AIF used - automatic detection failed",
                 "Relative quantification only (rCBV, rCBF normalized to contralateral)",
@@ -2229,31 +2219,12 @@ class AIFDetection(BaseInterface):
                 "Manual AIF selection recommended for clinical use",
             ]
         elif "degraded" in detection_level:
-            qc_metrics["quantification_validity"] = {
-                "absolute_cbv": False,
-                "absolute_cbf": False,
-                "relative_cbv": "CAUTION",
-                "relative_cbf": "CAUTION",
-                "mtt": "CAUTION",
-                "ttp": True,
-                "tmax": True,
-            }
             qc_metrics["degraded_aif_warnings"] = [
                 "AIF quality is DEGRADED - quantification unreliable",
                 "Relative CBV may have 30-50% error vs optimal AIF",
                 "Use TTP/Tmax for timing analysis (unaffected by AIF quality)",
                 "Consider manual AIF selection for publication-quality results",
             ]
-        else:
-            qc_metrics["quantification_validity"] = {
-                "absolute_cbv": False,
-                "absolute_cbf": False,
-                "relative_cbv": True,
-                "relative_cbf": True,
-                "mtt": True,
-                "ttp": True,
-                "tmax": True,
-            }
 
         # Gamma-variate fitting
         gamma_fit_applied = False

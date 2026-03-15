@@ -109,9 +109,9 @@ def average_dwi_directions(
     """Average DWI volumes within each b-shell for DTI acquisitions.
 
     When a DTI acquisition (many gradient directions at one b-value) is
-    used for ADC calculation, averaging directions per shell removes
-    directional variation and produces a single representative volume
-    per shell — equivalent to a trace-weighted image.
+    used for ADC calculation, the geometric mean across directions per
+    shell produces the trace-equivalent signal (correct for the
+    mono-exponential DWI model: S = S0 * exp(-b*D)).
 
     Trace DWI (<=3 directions per shell) is returned unchanged.
 
@@ -165,7 +165,7 @@ def average_dwi_directions(
     shell_bvals: List[float] = []
 
     for mean_b, indices in shells:
-        vol = np.mean(dwi_signal[..., indices], axis=-1)
+        vol = np.exp(np.mean(np.log(np.maximum(dwi_signal[..., indices], 1e-10)), axis=-1))
         averaged_vols.append(vol)
         shell_bvals.append(mean_b)
 

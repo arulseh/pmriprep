@@ -2725,6 +2725,15 @@ def _tortuosity_correction_node(
             mask=mask_data,
         )
 
+        # Save ADC map to work directory for inspection
+        adc_file = str(Path.cwd() / "adc_map.nii.gz")
+        adc_img = nib.Nifti1Image(
+            tortuosity_result.adc.astype(np.float32),
+            ktrans_img.affine,  # type: ignore[attr-defined]
+            ktrans_img.header,  # type: ignore[attr-defined]
+        )
+        nib.save(adc_img, adc_file)
+
         # Save corrected Ktrans
         out_file = str(Path.cwd() / "ktrans_tortuosity_corrected.nii.gz")
         corrected_img = nib.Nifti1Image(

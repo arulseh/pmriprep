@@ -13,6 +13,14 @@ from scipy.signal import savgol_filter
 
 logger = logging.getLogger(__name__)
 
+# Signal below this is dead/background (air, outside FOV).
+# Real tissue signal is hundreds-thousands.
+_PEAK_ENH_SIGNAL_FLOOR = 1.0
+
+# No tissue produces >5000% signal enhancement; anything above is
+# numerical artifact from near-zero baseline voxels.
+_PEAK_ENH_MAX_CAP = 5000.0
+
 
 def compute_iauc(
     concentration: npt.NDArray[np.floating],
@@ -46,27 +54,36 @@ def compute_iauc(
 
 
 def compute_peak_enhancement(
-    concentration: npt.NDArray[np.floating],
+    signal_data: npt.NDArray[np.floating],
     baseline_frames: int = 5,
+    max_cap: float = _PEAK_ENH_MAX_CAP,
 ) -> npt.NDArray[np.floating]:
-    """Compute peak enhancement percentage.
+    """Compute peak enhancement percentage from raw signal data.
 
-    (max_concentration - baseline_mean) / max(baseline_mean, epsilon) × 100
+    (S_max - S_baseline) / max(S_baseline, epsilon) × 100
+
+    Must be computed on **raw MRI signal**, not concentration.
+    Concentration has baseline ~0 by definition, causing division by
+    near-zero and overflow.
 
     Args:
-        concentration: 4D concentration data (x, y, z, time) in mM.
+        signal_data: 4D raw signal data (x, y, z, time).
         baseline_frames: Number of pre-contrast baseline frames.
+        max_cap: Maximum enhancement percentage (default 5000%).
+            No tissue produces >5000% signal enhancement.
 
     Returns:
         3D peak enhancement percentage map.
     """
-    baseline_mean = np.mean(concentration[..., :baseline_frames], axis=-1)
-    peak = np.max(concentration, axis=-1)
+    baseline_mean = np.mean(signal_data[..., :baseline_frames], axis=-1)
+    peak = np.max(signal_data, axis=-1)
 
-    baseline_safe = np.maximum(np.abs(baseline_mean), 1e-9)
+    # Signal < 1.0 is dead/background — avoid division by near-zero
+    baseline_safe = np.maximum(np.abs(baseline_mean), _PEAK_ENH_SIGNAL_FLOOR)
     enhancement = (peak - baseline_mean) / baseline_safe * 100.0
 
-    return np.maximum(enhancement, 0.0)  # type: ignore[no-any-return]
+    enhancement = np.clip(enhancement, 0.0, max_cap)
+    return enhancement  # type: ignore[return-value]
 
 
 def compute_time_to_peak(
