@@ -191,6 +191,27 @@ class QCStatus:
     WARN: Final[str] = "WARN"
     POOR: Final[str] = "POOR"
     UNKNOWN: Final[str] = "UNKNOWN"
+    CIRCULAR: Final[str] = "CIRCULAR"
+
+    #: Severity ordering for worst-of comparisons.
+    _SEVERITY: Final[dict[str, int]] = {
+        "PASS": 0, "WARN": 1, "POOR": 2,
+    }
+
+    @classmethod
+    def worst(cls, statuses: list[str]) -> str:
+        """Return the most severe status from a list.
+
+        Args:
+            statuses: List of QC status strings (PASS, WARN, POOR).
+
+        Returns:
+            The worst (highest severity) status.
+
+        Raises:
+            KeyError: If any status is not in PASS/WARN/POOR.
+        """
+        return max(statuses, key=lambda s: cls._SEVERITY[s])
 
 
 def get_qc_status(value: float, thresholds: QCThresholds, higher_is_better: bool = True) -> str:
@@ -257,12 +278,7 @@ def get_composite_motion_status(
         pct_outliers, MOTION_OUTLIER_PCT_THRESHOLDS, higher_is_better=False,
     )
 
-    severity = {QCStatus.POOR: 2, QCStatus.WARN: 1, QCStatus.PASS: 0}
-    worst = max(
-        [status_mean, status_max, status_pct],
-        key=lambda s: severity.get(s, 0),
-    )
-    return worst
+    return QCStatus.worst([status_mean, status_max, status_pct])
 
 
 def get_status_color(status: str) -> str:
@@ -279,6 +295,7 @@ def get_status_color(status: str) -> str:
         QCStatus.WARN: COLORBLIND_PALETTE.warning,
         QCStatus.POOR: COLORBLIND_PALETTE.error,
         QCStatus.UNKNOWN: COLORBLIND_PALETTE.secondary,
+        QCStatus.CIRCULAR: COLORBLIND_PALETTE.secondary,
     }
     return status_colors.get(status, COLORBLIND_PALETTE.secondary)
 

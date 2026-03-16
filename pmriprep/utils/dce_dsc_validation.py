@@ -73,6 +73,24 @@ MAX_VP_FOR_VALIDATION: float = 0.15
 #: Maximum CBV for validation (above = likely large vessel partial volume effect)
 MAX_CBV_FOR_VALIDATION: float = 8.0
 
+#: Correlation thresholds for unconstrained vp-CBV validation.
+#: Voxel-wise DCE-DSC correlation is inherently modest (r~0.3-0.6) due to
+#: different contrast mechanisms (T1 vs T2*), spatial resolution, and PSF.
+#: Ref: Quarles et al., NMR Biomed 2009; Shin et al., JMRI 2013.
+CORRELATION_PASS_UNCONSTRAINED: float = 0.30
+CORRELATION_WARN_UNCONSTRAINED: float = 0.15
+
+#: Correlation thresholds for soft-constrained validation.
+#: Higher bar because Bayesian prior from CBV should inflate correlation.
+CORRELATION_PASS_SOFT: float = 0.50
+CORRELATION_WARN_SOFT: float = 0.30
+
+#: Minimum fraction of valid voxels for reliable validation.
+#: Filtering bounds (vp [0.001,0.15], CBV [0.1,8.0]) should retain most
+#: gray and white matter; low fractions indicate fitting failures.
+FRACTION_VALID_PASS: float = 0.20
+FRACTION_VALID_WARN: float = 0.10
+
 
 # =============================================================================
 # Data Classes
@@ -304,7 +322,7 @@ def validate_vp_cbv(
     # Detect circularity: hard constraint means vp = f(CBV) deterministically
     if constraint_mode == "hard":
         result.circular = True
-        result.status = "CIRCULAR"
+        result.status = QCStatus.CIRCULAR
         result.interpretation = (
             "vp hard-constrained from CBV — cross-validation is circular. "
             "See delta-R² in pk_qc for constraint benefit assessment."
@@ -366,12 +384,12 @@ def validate_vp_cbv(
         metrics.median_ratio, expected_ratio
     )
 
-    # Determine status and detect preload
+    # Determine status from ratio, correlation, and coverage
     interpretations: list[str] = []
 
+    # --- Ratio status ---
     if metrics.median_ratio < ratio_preload_threshold:
-        # Ratio much lower than expected - suggests preload
-        result.status = QCStatus.WARN
+        ratio_status = QCStatus.WARN
         result.preload_effect_detected = True
         interpretations.append(
             f"Low vp/CBV ratio ({metrics.median_ratio:.3f}) suggests preload effect"
@@ -382,10 +400,8 @@ def validate_vp_cbv(
         interpretations.append(
             f"Suggested correction factor: {result.correction_factor:.2f}"
         )
-
     elif metrics.median_ratio > ratio_high_threshold:
-        # Ratio much higher than expected - suggests DCE overestimation
-        result.status = QCStatus.WARN
+        ratio_status = QCStatus.WARN
         result.preload_effect_detected = False
         interpretations.append(
             f"High vp/CBV ratio ({metrics.median_ratio:.3f}) suggests DCE vp overestimation"
@@ -396,10 +412,8 @@ def validate_vp_cbv(
         interpretations.append(
             f"Suggested correction factor: {result.correction_factor:.2f}"
         )
-
     else:
-        # Ratio within acceptable range
-        result.status = QCStatus.PASS
+        ratio_status = QCStatus.PASS
         result.preload_effect_detected = False
         interpretations.append(
             f"vp/CBV ratio ({metrics.median_ratio:.3f}) within expected range"
@@ -408,19 +422,62 @@ def validate_vp_cbv(
             f"Expected: {expected_ratio:.3f}, tolerance: +/-{RATIO_TOLERANCE_FRACTION*100:.0f}%"
         )
 
-    # Soft constraint annotation
+    # --- Correlation status ---
     if constraint_mode == "soft":
+        corr_pass = CORRELATION_PASS_SOFT
+        corr_warn = CORRELATION_WARN_SOFT
         interpretations.append(
             "vp soft-constrained — correlation may be inflated"
         )
-
-    # Add correlation assessment
-    if metrics.correlation > 0.7:
-        interpretations.append(f"Strong vp-CBV correlation (r={metrics.correlation:.3f})")
-    elif metrics.correlation > 0.4:
-        interpretations.append(f"Moderate vp-CBV correlation (r={metrics.correlation:.3f})")
     else:
-        interpretations.append(f"Weak vp-CBV correlation (r={metrics.correlation:.3f})")
+        corr_pass = CORRELATION_PASS_UNCONSTRAINED
+        corr_warn = CORRELATION_WARN_UNCONSTRAINED
+
+    if metrics.correlation < 0:
+        corr_status = QCStatus.POOR
+        interpretations.append(
+            f"Negative vp-CBV correlation (r={metrics.correlation:.3f}): "
+            "physically implausible"
+        )
+    elif metrics.correlation < corr_warn:
+        corr_status = QCStatus.POOR
+        interpretations.append(
+            f"No meaningful vp-CBV correlation (r={metrics.correlation:.3f})"
+        )
+    elif metrics.correlation < corr_pass:
+        corr_status = QCStatus.WARN
+        interpretations.append(
+            f"Weak vp-CBV correlation (r={metrics.correlation:.3f})"
+        )
+    elif metrics.correlation > 0.7:
+        corr_status = QCStatus.PASS
+        interpretations.append(
+            f"Strong vp-CBV correlation (r={metrics.correlation:.3f})"
+        )
+    else:
+        corr_status = QCStatus.PASS
+        interpretations.append(
+            f"Moderate vp-CBV correlation (r={metrics.correlation:.3f})"
+        )
+
+    # --- Coverage status ---
+    if metrics.fraction_valid < FRACTION_VALID_WARN:
+        coverage_status = QCStatus.POOR
+        interpretations.append(
+            f"Insufficient overlap: only {metrics.fraction_valid:.1%} of voxels "
+            "passed filtering; validation unreliable"
+        )
+    elif metrics.fraction_valid < FRACTION_VALID_PASS:
+        coverage_status = QCStatus.WARN
+        interpretations.append(
+            f"Limited overlap: only {metrics.fraction_valid:.1%} of voxels "
+            "passed filtering"
+        )
+    else:
+        coverage_status = QCStatus.PASS
+
+    # --- Final status = worst of all three ---
+    result.status = QCStatus.worst([ratio_status, corr_status, coverage_status])
 
     result.interpretation = "; ".join(interpretations)
     result.metrics = metrics
