@@ -1550,7 +1550,9 @@ class ComputeDCEMaps(BaseInterface):
         iauc120 = compute_iauc(conc_data, time_points, cutoff_s=120.0)
         # peak_enh already computed from raw signal above (not concentration)
         ttp = compute_time_to_peak(conc_data, time_points)
-        ser = compute_signal_enhancement_ratio(conc_data, time_points)
+        ser = compute_signal_enhancement_ratio(
+            conc_data, time_points, bolus_arrival_frame=baseline_frames,
+        )
 
         # New semi-quantitative maps: wash-in slope, wash-out slope, BAT, curve type
         vol_tr_s = (

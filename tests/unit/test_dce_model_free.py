@@ -409,25 +409,95 @@ class TestSER:
 
     def test_washout(self) -> None:
         """Higher early than late concentration → SER > 1."""
+        # 80 frames, 10s each → ~13.3 min total; bolus at frame 2
         n_time = 80
         time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
+        bolus_frame = 2
         concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        # Early window (0.5-2 min): frames 3-12
-        concentration[..., 3:13] = 2.0
-        # Late window (5-10 min): frames 30-60
-        concentration[..., 30:61] = 0.5
-        result = compute_signal_enhancement_ratio(concentration, time_points)
+        # Early window: bolus + 0.5 to bolus + 2.5 min → ~frames 5-17
+        concentration[..., 5:18] = 2.0
+        # Late window: last 20% of post-bolus → ~last 16 frames
+        concentration[..., 64:] = 0.5
+        result = compute_signal_enhancement_ratio(
+            concentration, time_points, bolus_arrival_frame=bolus_frame,
+        )
         assert np.all(result > 1.0)
 
     def test_persistent(self) -> None:
         """Higher late than early → SER < 1."""
         n_time = 80
         time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
+        bolus_frame = 2
         concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        concentration[..., 3:13] = 0.5
-        concentration[..., 30:61] = 2.0
-        result = compute_signal_enhancement_ratio(concentration, time_points)
+        concentration[..., 5:18] = 0.5
+        concentration[..., 64:] = 2.0
+        result = compute_signal_enhancement_ratio(
+            concentration, time_points, bolus_arrival_frame=bolus_frame,
+        )
         assert np.all(result < 1.0)
+
+    def test_plateau_near_one(self) -> None:
+        """Constant concentration post-bolus → SER ≈ 1.0."""
+        n_time = 60
+        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
+        bolus_frame = 3
+        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        concentration[..., bolus_frame:] = 1.5  # constant post-bolus
+        result = compute_signal_enhancement_ratio(
+            concentration, time_points, bolus_arrival_frame=bolus_frame,
+        )
+        assert np.allclose(result, 1.0, atol=0.05)
+
+    def test_short_acquisition(self) -> None:
+        """Short acquisition (5 min) uses adaptive late window, not absolute."""
+        # 40 frames, 7.6s each → ~5.1 min; bolus at frame 7
+        n_time = 40
+        time_points = np.arange(n_time, dtype=np.float64) * 7.6 / 60.0
+        bolus_frame = 7
+        concentration = np.zeros((3, 3, 1, n_time), dtype=np.float64)
+        # Early: frames ~10-25 (0.5-2.5 min post-bolus)
+        concentration[..., 10:26] = 2.0
+        # Late: last 20% of post-bolus → ~last 6-7 frames
+        concentration[..., 33:] = 1.0
+        result = compute_signal_enhancement_ratio(
+            concentration, time_points, bolus_arrival_frame=bolus_frame,
+        )
+        # Should be ~2.0, definitely not millions
+        assert np.all(result > 1.0)
+        assert np.all(result < 10.0)
+
+    def test_near_zero_early_returns_ones(self) -> None:
+        """Near-zero early concentration → SER = 1.0 (not inf)."""
+        n_time = 60
+        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
+        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        # Near-zero everywhere
+        concentration[..., :] = 1e-12
+        result = compute_signal_enhancement_ratio(
+            concentration, time_points, bolus_arrival_frame=3,
+        )
+        assert np.all(np.isfinite(result))
+
+    def test_long_acquisition_late_capped(self) -> None:
+        """Long acquisition (>10 min): late window capped at 5 min."""
+        # 120 frames, 10s each → 20 min; bolus at frame 5
+        n_time = 120
+        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
+        bolus_frame = 5
+        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        # Early: strong signal
+        concentration[..., 8:20] = 3.0
+        # Fill late portion: high value only in last 5 min (frames 90-120)
+        concentration[..., 90:] = 1.0
+        # Put low value in the preceding region (frames 60-90)
+        concentration[..., 60:90] = 0.1
+        result = compute_signal_enhancement_ratio(
+            concentration, time_points, bolus_arrival_frame=bolus_frame,
+        )
+        # Late window should capture frames ~90-120 (last 5 min), not 60-120
+        # So SER ≈ 3.0/1.0 = 3.0, not 3.0/0.55 ≈ 5.5
+        assert np.all(result > 1.0)
+        assert np.all(result < 5.0)
 
 
 # =========================================================================

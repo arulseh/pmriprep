@@ -38,6 +38,11 @@ from pmriprep.utils.dsc_constants import (
 # minimum check in ``_score_candidate_cost`` (strict ≥ 5 s, relaxed ≥ 3 s).
 _FP_GAP_SECONDS: float = 3.0
 
+# Minimum number of AIF candidates before accepting a cascade level.
+# If a level finds fewer than this, the cascade continues to more relaxed
+# criteria to build a larger candidate pool (quality gating is downstream).
+MIN_AIF_CANDIDATES_ACCEPT: int = 3
+
 
 # ---------------------------------------------------------------------------
 # Top-level helper functions (backward-compatible with utils/dsc_aif.py)
@@ -2051,6 +2056,7 @@ class AIFDetection(BaseInterface):
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
         n_available = 0
         filter_meta: dict[str, Any] = {}
+        cascade_initial_level: Optional[str] = None
 
         if aif_method == "synthetic":
             pass  # Go directly to synthetic
@@ -2116,11 +2122,31 @@ class AIFDetection(BaseInterface):
                     scored, affine, n_candidates,
                 )
 
-                top_candidates = scored
-                n_available = n_avail
-                detection_level = level_name
-                filter_meta = f_meta
-                break
+                if cascade_initial_level is None:
+                    cascade_initial_level = level_name
+
+                if len(scored) >= MIN_AIF_CANDIDATES_ACCEPT:
+                    top_candidates = scored
+                    n_available = n_avail
+                    detection_level = level_name
+                    filter_meta = f_meta
+                    break
+                elif len(scored) > len(top_candidates):
+                    # Stash best-so-far but keep cascading for more candidates.
+                    # Prefers stricter levels at equal count.
+                    top_candidates = scored
+                    n_available = n_avail
+                    detection_level = level_name
+                    filter_meta = f_meta
+
+            if top_candidates and len(top_candidates) < MIN_AIF_CANDIDATES_ACCEPT:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "AIF cascade found only %d candidates (minimum %d preferred) "
+                    "at level '%s'. Quantification may be less stable.",
+                    len(top_candidates), MIN_AIF_CANDIDATES_ACCEPT,
+                    detection_level,
+                )
 
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
@@ -2171,6 +2197,12 @@ class AIFDetection(BaseInterface):
             )
             qc_metrics.update(finalized_qc)
             qc_metrics.update(filter_meta)
+            if cascade_initial_level is not None:
+                qc_metrics["cascade_downgraded"] = (
+                    cascade_initial_level != detection_level
+                )
+                qc_metrics["cascade_initial_level"] = cascade_initial_level
+                qc_metrics["cascade_final_level"] = detection_level
             qc_metrics.update(validation_qc)
 
         elif not disable_fallback:

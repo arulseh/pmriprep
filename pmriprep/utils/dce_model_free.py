@@ -107,8 +107,9 @@ def compute_time_to_peak(
 def compute_signal_enhancement_ratio(
     concentration: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
-    early_window: tuple[float, float] = (0.5, 2.0),
-    late_window: tuple[float, float] = (5.0, 10.0),
+    bolus_arrival_frame: int = 0,
+    early_offset: tuple[float, float] = (0.5, 2.5),
+    late_fraction: float = 0.2,
 ) -> npt.NDArray[np.floating]:
     """Compute Signal Enhancement Ratio (SER) for washout characterization.
 
@@ -116,25 +117,46 @@ def compute_signal_enhancement_ratio(
 
     High SER (>1) indicates washout; low SER (<1) indicates persistent enhancement.
 
+    Time windows are relative to bolus arrival and adaptive to acquisition
+    length, so the metric is valid for both short (<6 min) and long (>10 min)
+    acquisitions.
+
     Args:
         concentration: 4D concentration data (x, y, z, time) in mM.
         time_points: 1D time array in minutes.
-        early_window: (start, end) in minutes for early phase.
-        late_window: (start, end) in minutes for late phase.
+        bolus_arrival_frame: Frame index of bolus arrival.
+        early_offset: (start, end) in minutes post-bolus for early phase.
+        late_fraction: Fraction of post-bolus duration for late window
+            (capped at 5 min for very long acquisitions).
 
     Returns:
-        3D SER map.
+        3D SER map. Returns ones where windows have insufficient frames.
     """
-    early_mask = (time_points >= early_window[0]) & (time_points <= early_window[1])
-    late_mask = (time_points >= late_window[0]) & (time_points <= late_window[1])
+    ones = np.ones(concentration.shape[:3], dtype=np.float64)
 
-    if np.sum(early_mask) < 1 or np.sum(late_mask) < 1:
-        return np.ones(concentration.shape[:3], dtype=np.float64)
+    bolus_time = time_points[bolus_arrival_frame]
+
+    # Early window: fixed offset from bolus arrival
+    early_start = bolus_time + early_offset[0]
+    early_end = bolus_time + early_offset[1]
+    early_mask = (time_points >= early_start) & (time_points <= early_end)
+
+    # Late window: last fraction of post-bolus acquisition, capped at 5 min
+    post_bolus_duration = time_points[-1] - bolus_time
+    late_duration = min(late_fraction * post_bolus_duration, 5.0)
+    late_start = time_points[-1] - late_duration
+    late_mask = (time_points >= late_start) & (time_points <= time_points[-1])
+
+    if np.sum(early_mask) < 2 or np.sum(late_mask) < 2:
+        return ones
 
     early_mean = np.mean(concentration[..., early_mask], axis=-1)
     late_mean = np.mean(concentration[..., late_mask], axis=-1)
 
-    late_safe = np.maximum(np.abs(late_mean), 1e-9)
+    # Scale floor to data magnitude to avoid million-fold amplification
+    early_median = float(np.nanmedian(early_mean))
+    floor = max(0.05 * max(early_median, 0.0), 1e-6)
+    late_safe = np.maximum(np.abs(late_mean), floor)
     ser = early_mean / late_safe
 
     return ser  # type: ignore[no-any-return]
