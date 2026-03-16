@@ -220,7 +220,7 @@ dce:
 | `pre_bolus` | int | `5` | Pre-bolus frames for S0 estimation (AIF timing auto-detected) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none) |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
-| `registration` | str | `"auto"` | Registration method: `auto`, `flirt`, `bbr` |
+| `registration` | str | `"flirt"` | Registration method: `flirt`, `flirt_bbr` |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |

@@ -464,13 +464,12 @@ class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
         desc="Brain mask for QC metric calculation (optional)",
     )
     registration = traits.Enum(
-        "auto",
         "flirt",
-        "bbr",
+        "flirt_bbr",
         usedefault=True,
         desc=(
-            "Registration method: 'auto' runs both FLIRT and BBR then selects best, "
-            "'flirt' uses two-stage FLIRT only, 'bbr' uses FLIRT-initialized BBR"
+            "Registration method: 'flirt' uses two-stage FLIRT only, "
+            "'flirt_bbr' adds BBR refinement and keeps whichever is best"
         ),
     )
     dof = traits.Int(
@@ -489,7 +488,7 @@ class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
     )
     wm_seg = File(
         exists=True,
-        desc="White matter segmentation (required for BBR and auto modes)",
+        desc="White matter segmentation (required for flirt_bbr mode)",
     )
     reference_type = traits.Enum(
         "precon",
@@ -501,7 +500,7 @@ class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
     displacement_threshold = traits.Float(
         10.0,
         usedefault=True,
-        desc="Max displacement (mm) between FLIRT and BBR to accept BBR in auto mode",
+        desc="Max displacement (mm) between FLIRT and BBR to accept BBR in flirt_bbr mode",
     )
 
 
@@ -517,21 +516,19 @@ class DSCRegistrationOutputSpec(TraitedSpec):
 
 
 class DSCRegistration(SimpleInterface):
-    """DSC to T1w structural registration with dual-path auto-selection.
+    """DSC to T1w structural registration with dual-path selection.
 
     Registers a T1-weighted structural image to DSC EPI space using FSL FLIRT,
     with optional BBR refinement. Uses a dual-path Stage 1 strategy to guard
     against FLIRT coarse-search local minima caused by HD-BET non-determinism.
 
-    Three modes are available:
+    Two modes are available:
 
-    1. **auto** (default): Dual-path Stage 1, then optional BBR refinement.
+    1. **flirt** (default): Dual-path Stage 1 + Stage 2 refinement only.
+
+    2. **flirt_bbr**: Dual-path Stage 1, then BBR refinement.
        BBR is accepted only if displacement < threshold AND DICE improves.
        Falls back to FLIRT if no WM segmentation is available.
-
-    2. **flirt**: Dual-path Stage 1 + Stage 2 refinement only.
-
-    3. **bbr**: FLIRT-initialized BBR, no fallback. Requires wm_seg.
 
     Dual-path Stage 1 (coarse global search with normcorr):
       Path A (header-init): Header-aligned T1w, [-30,30] deg search
@@ -549,12 +546,12 @@ class DSCRegistration(SimpleInterface):
         t1w_file: T1-weighted image to register to DSC space.
         dsc_mean: Mean DSC image (target space).
         brain_mask: Brain mask for computing QC metrics.
-        registration: Method: 'auto', 'flirt', or 'bbr'.
+        registration: Method: 'flirt' or 'flirt_bbr'.
         dof: Degrees of freedom (default: 6 for rigid body).
         cost: Cost function for FLIRT (default: normmi).
-        wm_seg: White matter segmentation (required for BBR/auto).
+        wm_seg: White matter segmentation (required for flirt_bbr).
         displacement_threshold: Max displacement (mm) for BBR acceptance
-            in auto mode (default: 10mm).
+            in flirt_bbr mode (default: 10mm).
 
     Returns:
         out_file: Registered T1w in DSC space.
@@ -625,7 +622,7 @@ class DSCRegistration(SimpleInterface):
         return str(out_file.parent / f"{base}.mat")
 
     def _run_interface(self, runtime: Any) -> Any:
-        """Execute DSC to T1w registration with dual-path auto-selection.
+        """Execute DSC to T1w registration with dual-path selection.
 
         Args:
             runtime: Nipype runtime object.
@@ -790,31 +787,12 @@ class DSCRegistration(SimpleInterface):
                 selection_meta["registration_method"] = "flirt"
                 selection_meta["selection_reason"] = "flirt_only_requested"
 
-            elif registration == "bbr":
-                # BBR always, no fallback
-                if not has_wm_seg:
-                    raise RuntimeError(
-                        "BBR registration requires wm_seg input but none provided"
-                    )
-                bbr_matrix = str(temp_path / "bbr.mat")
-                bbr_out = str(temp_path / f"bbr_out{ext}")
-                self._run_bbr(
-                    t1w_file, dsc_mean, flirt_matrix,
-                    bbr_out, bbr_matrix,
-                    dof, temp_path, ext,
-                )
-                shutil.copy(bbr_out, out_file)
-                shutil.copy(bbr_matrix, out_matrix)
-                selection_meta["registration_method"] = "bbr"
-                selection_meta["bbr_attempted"] = True
-                selection_meta["selection_reason"] = "bbr_only_requested"
-
-            else:
-                # Auto mode: run both, compare, select best
+            elif registration == "flirt_bbr":
+                # FLIRT+BBR mode: run both, compare, select best
                 if not has_wm_seg:
                     # No WM seg — fall back to FLIRT silently
                     logger.info(
-                        "Auto registration: no WM segmentation available, "
+                        "FLIRT+BBR registration: no WM segmentation available, "
                         "using FLIRT only"
                     )
                     shutil.copy(flirt_out, out_file)
@@ -864,7 +842,7 @@ class DSCRegistration(SimpleInterface):
                                 "displacement_exceeded_threshold"
                             )
                             logger.info(
-                                "Auto: BBR rejected — displacement %.1fmm "
+                                "FLIRT+BBR: BBR rejected — displacement %.1fmm "
                                 ">= %.1fmm threshold",
                                 displacement,
                                 threshold,
@@ -911,7 +889,7 @@ class DSCRegistration(SimpleInterface):
                                     "bbr_improved_dice"
                                 )
                                 logger.info(
-                                    "Auto: BBR selected — displacement %.1fmm, "
+                                    "FLIRT+BBR: BBR selected — displacement %.1fmm, "
                                     "DICE improved %.4f → %.4f "
                                     "(NMI: %.4f → %.4f)",
                                     displacement,
@@ -929,7 +907,7 @@ class DSCRegistration(SimpleInterface):
                                     "bbr_no_dice_improvement"
                                 )
                                 logger.info(
-                                    "Auto: FLIRT kept — displacement %.1fmm, "
+                                    "FLIRT+BBR: FLIRT kept — displacement %.1fmm, "
                                     "DICE no improvement (%.4f vs %.4f) "
                                     "(NMI: %.4f vs %.4f)",
                                     displacement,
@@ -938,6 +916,12 @@ class DSCRegistration(SimpleInterface):
                                     nmi_flirt,
                                     nmi_bbr,
                                 )
+
+            else:
+                raise ValueError(
+                    f"Unknown registration method: {registration!r}. "
+                    f"Expected 'flirt' or 'flirt_bbr'."
+                )
 
         # Compute QC metrics on the final selected output
         qc_metrics = self._compute_qc_metrics(out_file, dsc_mean)

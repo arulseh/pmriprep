@@ -126,6 +126,7 @@ def merge_cli_config(
         "dsc_dose": ("dsc", "dose"),
         "dsc_aif_method": ("dsc", "aif_method"),
         "dsc_aif_file": ("dsc", "aif_file"),
+        "dsc_registration": ("dsc", "registration"),
         # DCE options
         "dce_model": ("dce", "model"),
         "dce_bayesian": ("dce", "bayesian"),
