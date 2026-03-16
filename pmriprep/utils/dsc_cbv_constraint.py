@@ -73,6 +73,15 @@ CBV_NEGATIVE_FRACTION_MAX: float = 0.01
 #: Literature NAWM CBV for normalization (mL/100g)
 CBV_NAWM_LITERATURE: float = 2.5
 
+# Composite K2 criteria for preload-aware uncertainty adjustment.
+# Computed over whole-brain-masked statistics (zeros included).
+K2_MEDIAN_SUPPRESSED: float = 0.01   # s⁻¹, below = focal leakage only (well-suppressed)
+LEAKY_VOXELS_LOW: float = 5.0       # %, below = well-suppressed
+LEAKY_VOXELS_HIGH: float = 15.0     # %, above = substantial correction
+K2_MEDIAN_CORRECTION: float = 0.005  # s⁻¹, above with no preload = large K2 correction
+                                      # (effectively dead for current data where no-preload
+                                      # k2_median=0.0; safety net for diffuse enhancement)
+
 
 # =============================================================================
 # Enums and Dataclasses
@@ -114,6 +123,7 @@ class CBVQualityAssessment:
     aif_baseline_return: float = 1.0
     cbv_median: Optional[float] = None
     cbv_negative_fraction: Optional[float] = None
+    preload_status: Optional[str] = None
     reasons: list[str] = field(default_factory=list)
 
 
@@ -216,10 +226,40 @@ def _downgrade_confidence(current: str, target: str) -> str:
     return current
 
 
+def _classify_preload_k2(
+    preload_classification: Optional[str],
+    k2_metrics: Optional[dict[str, Any]],
+) -> tuple[bool, bool, bool]:
+    """Classify preload/K2 status for quality and uncertainty logic.
+
+    Args:
+        preload_classification: Preload classification string from DSC QC.
+        k2_metrics: K2 leakage correction metrics from dsc_preload.
+
+    Returns:
+        Tuple of (is_preloaded, well_suppressed, high_correction).
+    """
+    if not k2_metrics or not preload_classification:
+        return False, False, False
+
+    k2_med = float(k2_metrics.get("k2_median", 0.0))
+    pct_leaky = float(k2_metrics.get("percent_leaky_voxels", 0.0))
+
+    is_preloaded = preload_classification in (
+        "user_specified_preload", "half_dose", "significant", "severe",
+    )
+    well_suppressed = k2_med < K2_MEDIAN_SUPPRESSED and pct_leaky < LEAKY_VOXELS_LOW
+    high_correction = pct_leaky > LEAKY_VOXELS_HIGH or k2_med > K2_MEDIAN_CORRECTION
+
+    return is_preloaded, well_suppressed, high_correction
+
+
 def assess_dsc_cbv_quality(
     aif_qc_data: dict[str, Any],
     cbv_data: Optional[npt.NDArray[np.floating]] = None,
     brain_mask: Optional[npt.NDArray[np.floating]] = None,
+    preload_classification: Optional[str] = None,
+    k2_metrics: Optional[dict[str, Any]] = None,
 ) -> CBVQualityAssessment:
     """Assess DSC CBV quality for use as a vp constraint.
 
@@ -234,6 +274,8 @@ def assess_dsc_cbv_quality(
             like cnr_whole_brain, aif_peak_height, baseline_return_ratio.
         cbv_data: Optional 3D CBV map for value range validation.
         brain_mask: Optional 3D brain mask for CBV statistics.
+        preload_classification: DSC preload classification string.
+        k2_metrics: K2 leakage correction metrics from dsc_preload.
 
     Returns:
         CBVQualityAssessment with confidence tier and detailed metrics.
@@ -325,6 +367,26 @@ def assess_dsc_cbv_quality(
                         f"[{CBV_MEDIAN_RANGE[0]}, {CBV_MEDIAN_RANGE[1]}]"
                     )
 
+    result.preload_status = preload_classification
+    is_preloaded, well_suppressed, high_correction = _classify_preload_k2(
+        preload_classification, k2_metrics,
+    )
+    if is_preloaded and well_suppressed:
+        k2_med = float((k2_metrics or {}).get("k2_median", 0.0))
+        pct_leaky = float((k2_metrics or {}).get("percent_leaky_voxels", 0.0))
+        result.reasons.append(
+            f"Preload present, leakage well-suppressed "
+            f"(K2 median={k2_med:.4f}, leaky={pct_leaky:.1f}%)"
+        )
+    elif not is_preloaded and high_correction:
+        k2_med = float((k2_metrics or {}).get("k2_median", 0.0))
+        pct_leaky = float((k2_metrics or {}).get("percent_leaky_voxels", 0.0))
+        result.reasons.append(
+            f"No preload with substantial leakage correction "
+            f"(K2 median={k2_med:.4f}, leaky={pct_leaky:.1f}%): "
+            "CBV relies on large K2 correction"
+        )
+
     result.confidence = confidence
     result.use_constraint = confidence != "low"
 
@@ -392,6 +454,8 @@ def cbv_to_vp(
 def determine_constraint_mode(
     dsc_quality: CBVQualityAssessment,
     user_override: Optional[str] = None,
+    preload_classification: Optional[str] = None,
+    k2_metrics: Optional[dict[str, Any]] = None,
 ) -> ConstraintConfig:
     """Determine constraint mode from DSC quality assessment.
 
@@ -405,6 +469,10 @@ def determine_constraint_mode(
         dsc_quality: Quality assessment from assess_dsc_cbv_quality.
         user_override: User-specified mode override ('auto', 'hard', 'soft',
             'skip'). If 'auto' or None, auto-determined from quality.
+        preload_classification: DSC preload classification string from QC
+            (e.g., 'user_specified_preload', 'half_dose', 'none').
+        k2_metrics: K2 leakage correction metrics dict from dsc_preload,
+            containing 'k2_median', 'percent_leaky_voxels', etc.
 
     Returns:
         ConstraintConfig with mode, uncertainty, and reason.
@@ -431,10 +499,22 @@ def determine_constraint_mode(
             reason="High-quality DSC CBV: fixing vp (hard constraint)",
         )
     elif confidence == "moderate":
+        uncertainty = 0.2
+        reason_suffix = ""
+        is_preloaded, well_suppressed, high_correction = _classify_preload_k2(
+            preload_classification, k2_metrics,
+        )
+        if is_preloaded and well_suppressed:
+            uncertainty = 0.12
+            reason_suffix = " (tightened: preload + low K2)"
+        elif not is_preloaded and high_correction:
+            uncertainty = 0.30
+            reason_suffix = " (widened: no preload + high K2 correction)"
+
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,
-            vp_uncertainty=0.2,
-            reason="Moderate-quality DSC CBV: Bayesian prior on vp (soft constraint)",
+            vp_uncertainty=uncertainty,
+            reason=f"Moderate-quality DSC CBV: Bayesian prior on vp{reason_suffix}",
         )
     else:
         return ConstraintConfig(
@@ -458,6 +538,8 @@ def prepare_vp_constraint(
     brain_mask_file: Union[str, Path],
     mode_override: Optional[str] = None,
     hematocrit: float = HEMATOCRIT_TISSUE,
+    preload_classification: Optional[str] = None,
+    k2_metrics: Optional[dict[str, Any]] = None,
 ) -> VpConstraintResult:
     """Prepare vp constraint map from DSC CBV for DCE PK modeling.
 
@@ -473,23 +555,14 @@ def prepare_vp_constraint(
         brain_mask_file: Path to brain mask NIfTI.
         mode_override: User-specified constraint mode override.
         hematocrit: Blood hematocrit for CBV-to-vp conversion.
+        preload_classification: DSC preload classification string from QC
+            (e.g., 'user_specified_preload', 'half_dose', 'none').
+        k2_metrics: K2 leakage correction metrics dict from dsc_preload,
+            containing 'k2_median', 'percent_leaky_voxels', etc.
 
     Returns:
         VpConstraintResult with vp_map, config, quality, and qc_report.
     """
-    import nibabel as nib  # type: ignore[import-untyped]
-
-    result = VpConstraintResult()
-
-    # Load brain mask
-    mask_img = nib.load(str(brain_mask_file))
-    mask_data: npt.NDArray[np.floating] = mask_img.get_fdata()  # type: ignore[attr-defined]
-
-    # Load CBV map
-    cbv_img = nib.load(str(cbv_file))
-    cbv_data: npt.NDArray[np.floating] = cbv_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-
-    # Load AIF QC JSON
     aif_qc_path = Path(aif_qc_file)
     if aif_qc_path.exists():
         with open(aif_qc_path) as f:
@@ -497,59 +570,15 @@ def prepare_vp_constraint(
     else:
         aif_qc_data = {}
 
-    # Step 1: Assess quality
-    quality = assess_dsc_cbv_quality(
+    return prepare_vp_constraint_from_data(
+        cbv_file=cbv_file,
         aif_qc_data=aif_qc_data,
-        cbv_data=cbv_data,
-        brain_mask=mask_data,
+        brain_mask_file=brain_mask_file,
+        mode_override=mode_override,
+        hematocrit=hematocrit,
+        preload_classification=preload_classification,
+        k2_metrics=k2_metrics,
     )
-    result.quality = quality
-
-    # Step 2: Determine constraint mode
-    config = determine_constraint_mode(quality, user_override=mode_override)
-    result.config = config
-
-    # Step 3: Convert CBV to vp (even for skip mode, for QC reporting)
-    vp_map = cbv_to_vp(cbv_data, hematocrit=hematocrit)
-
-    # Build QC report
-    mask_bool = mask_data > 0
-    vp_in_brain = vp_map[mask_bool]
-    vp_valid = vp_in_brain[np.isfinite(vp_in_brain)]
-
-    qc_report: dict[str, Any] = {
-        "mode": config.mode.value,
-        "reason": config.reason,
-        "dsc_cbv_confidence": quality.confidence,
-        "dsc_cbv_use_constraint": quality.use_constraint,
-        "cnr_coverage": quality.cnr_coverage,
-        "aif_peak_height": quality.aif_peak_height,
-        "aif_baseline_return": quality.aif_baseline_return,
-        "hematocrit": hematocrit,
-    }
-
-    if len(vp_valid) > 0:
-        qc_report["vp_median"] = float(np.median(vp_valid))
-        qc_report["vp_p5"] = float(np.percentile(vp_valid, 5))
-        qc_report["vp_p95"] = float(np.percentile(vp_valid, 95))
-        qc_report["vp_nan_fraction"] = float(
-            np.sum(~np.isfinite(vp_in_brain)) / len(vp_in_brain)
-        )
-
-    if quality.cbv_median is not None:
-        qc_report["cbv_median"] = quality.cbv_median
-    if quality.cbv_negative_fraction is not None:
-        qc_report["cbv_negative_fraction"] = quality.cbv_negative_fraction
-
-    result.qc_report = qc_report
-
-    # Only provide vp_map if constraint will be used
-    if config.mode != ConstraintMode.SKIP:
-        result.vp_map = vp_map
-    else:
-        result.vp_map = None
-
-    return result
 
 
 def prepare_vp_constraint_from_data(
@@ -558,6 +587,8 @@ def prepare_vp_constraint_from_data(
     brain_mask_file: Union[str, Path],
     mode_override: Optional[str] = None,
     hematocrit: float = HEMATOCRIT_TISSUE,
+    preload_classification: Optional[str] = None,
+    k2_metrics: Optional[dict[str, Any]] = None,
 ) -> VpConstraintResult:
     """Prepare vp constraint map from DSC CBV for DCE PK modeling.
 
@@ -570,6 +601,10 @@ def prepare_vp_constraint_from_data(
         brain_mask_file: Path to brain mask NIfTI.
         mode_override: User-specified constraint mode override.
         hematocrit: Blood hematocrit for CBV-to-vp conversion.
+        preload_classification: DSC preload classification string from QC
+            (e.g., 'user_specified_preload', 'half_dose', 'none').
+        k2_metrics: K2 leakage correction metrics dict from dsc_preload,
+            containing 'k2_median', 'percent_leaky_voxels', etc.
 
     Returns:
         VpConstraintResult with vp_map, config, quality, and qc_report.
@@ -591,11 +626,18 @@ def prepare_vp_constraint_from_data(
         aif_qc_data=aif_qc_data if aif_qc_data else {},
         cbv_data=cbv_data,
         brain_mask=mask_data,
+        preload_classification=preload_classification,
+        k2_metrics=k2_metrics,
     )
     result.quality = quality
 
     # Step 2: Determine constraint mode
-    config = determine_constraint_mode(quality, user_override=mode_override)
+    config = determine_constraint_mode(
+        quality,
+        user_override=mode_override,
+        preload_classification=preload_classification,
+        k2_metrics=k2_metrics,
+    )
     result.config = config
 
     # Step 3: Convert CBV to vp (even for skip mode, for QC reporting)

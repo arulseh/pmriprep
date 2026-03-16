@@ -683,6 +683,7 @@ def _find_previous_dsc_outputs(
         "rel_cbv_map": None,
         "dsc_to_t1w_xfm": None,
         "aif_qc": None,
+        "preload_qc": None,
     }
 
     ses_label = f"ses-{session_id}" if session_id else ""
@@ -717,6 +718,8 @@ def _find_previous_dsc_outputs(
                 qc_data = json.load(fh)
             if "aif" in qc_data:
                 outputs["aif_qc"] = qc_data["aif"]
+            if "preload" in qc_data:
+                outputs["preload_qc"] = qc_data["preload"]
         except Exception:
             pass
 
@@ -2411,6 +2414,7 @@ def init_pmriprep_wf(
                         ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                         # AIF QC is a JSON file, no spatial resampling needed
                         ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc"),
+                        ("outputnode.preload_qc", "pk_modeling.dsc_preload_qc"),
                     ]),
                 ])
 
@@ -2443,7 +2447,9 @@ def init_pmriprep_wf(
                 )
                 if prev_dsc["aif_qc"]:
                     dce_wf.inputs.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
-                else:
+                if prev_dsc.get("preload_qc"):
+                    dce_wf.inputs.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
+                if not prev_dsc["aif_qc"]:
                     _log.warning(
                         "skip-dsc: AIF QC not found in previous DSC outputs; "
                         "constraint quality assessment will use defaults"

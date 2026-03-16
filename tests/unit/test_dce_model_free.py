@@ -269,6 +269,33 @@ class TestBolusArrivalTime:
                 assert np.isfinite(bat_map[i, 0, 0])
                 assert bat_map[i, 0, 0] == pytest.approx(direct.bat_seconds)
 
+    def test_bat_with_brain_mask(self) -> None:
+        """Masked-out voxels should remain NaN; unmasked should get valid BAT."""
+        n_time = 60
+        tr_s = 5.0
+        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
+
+        # 2x2x1 volume, all voxels have enhancement
+        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        arrival_frame = 10
+        for t in range(arrival_frame, n_time):
+            concentration[..., t] = 2.0 * (1.0 - np.exp(-0.1 * (t - arrival_frame)))
+
+        # Mask: only top-left voxel is in-brain
+        brain_mask = np.zeros((2, 2, 1), dtype=np.float64)
+        brain_mask[0, 0, 0] = 1.0
+
+        result = compute_bolus_arrival_time(
+            concentration, time_points, baseline_frames=5, brain_mask=brain_mask,
+        )
+
+        # Masked-out voxels must be NaN
+        assert np.isnan(result[0, 1, 0])
+        assert np.isnan(result[1, 0, 0])
+        assert np.isnan(result[1, 1, 0])
+        # Unmasked voxel should have a finite BAT
+        assert np.isfinite(result[0, 0, 0])
+
 
 # =========================================================================
 # Curve type tests

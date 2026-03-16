@@ -11,6 +11,7 @@ from pmriprep.utils.dsc_cbv_constraint import (
     ConstraintConfig,
     ConstraintMode,
     VP_MAX_PHYSIOLOGICAL,
+    _classify_preload_k2,
     _normalize_aif_qc_keys,
     assess_dsc_cbv_quality,
     cbv_to_vp,
@@ -297,3 +298,200 @@ class TestQcReportSchema:
         assert "mode" in default_qc
         assert "reason" in default_qc
         assert "constraint_mode" not in default_qc
+
+
+# =============================================================================
+# Preload + K2 Classification
+# =============================================================================
+
+
+class TestClassifyPreloadK2:
+    """Tests for _classify_preload_k2 helper."""
+
+    def test_preloaded_well_suppressed(self) -> None:
+        """Preloaded with low K2 and low leaky voxels → well_suppressed."""
+        k2 = {"k2_median": 0.0005, "percent_leaky_voxels": 3.0}
+        is_pre, well, high = _classify_preload_k2("user_specified_preload", k2)
+        assert is_pre is True
+        assert well is True
+        assert high is False
+
+    def test_not_preloaded_high_correction(self) -> None:
+        """No preload with high leaky voxels → high_correction."""
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
+        is_pre, well, high = _classify_preload_k2("user_specified_no_preload", k2)
+        assert is_pre is False
+        assert well is False
+        assert high is True
+
+    def test_none_inputs(self) -> None:
+        """None inputs → (False, False, False)."""
+        assert _classify_preload_k2(None, None) == (False, False, False)
+
+    def test_boundary_k2_median_at_threshold(self) -> None:
+        """k2_median exactly at K2_MEDIAN_SUPPRESSED (0.01) → NOT well_suppressed."""
+        k2 = {"k2_median": 0.01, "percent_leaky_voxels": 1.0}
+        _, well, _ = _classify_preload_k2("half_dose", k2)
+        assert well is False
+
+    def test_boundary_leaky_at_low_threshold(self) -> None:
+        """percent_leaky_voxels exactly at LEAKY_VOXELS_LOW (5.0) → NOT well_suppressed."""
+        k2 = {"k2_median": 0.005, "percent_leaky_voxels": 5.0}
+        _, well, _ = _classify_preload_k2("significant", k2)
+        assert well is False
+
+    def test_boundary_leaky_at_high_threshold(self) -> None:
+        """percent_leaky_voxels exactly at LEAKY_VOXELS_HIGH (15.0) → NOT high_correction."""
+        k2 = {"k2_median": 0.003, "percent_leaky_voxels": 15.0}
+        _, _, high = _classify_preload_k2("none", k2)
+        assert high is False
+
+    def test_preloaded_moderate_k2(self) -> None:
+        """Preloaded with moderate K2 → not well_suppressed, not high_correction."""
+        # leaky between LOW (5%) and HIGH (15%), k2_median below K2_MEDIAN_CORRECTION (0.005)
+        k2 = {"k2_median": 0.004, "percent_leaky_voxels": 10.0}
+        is_pre, well, high = _classify_preload_k2("half_dose", k2)
+        assert is_pre is True
+        assert well is False  # pct_leaky >= LEAKY_VOXELS_LOW
+        assert high is False  # pct_leaky <= LEAKY_VOXELS_HIGH and k2_med <= K2_MEDIAN_CORRECTION
+
+
+# =============================================================================
+# Preload-Aware Quality Assessment
+# =============================================================================
+
+
+class TestPreloadAwareQuality:
+    """Tests for preload-aware assess_dsc_cbv_quality."""
+
+    _HIGH_AIF_QC: dict[str, Any] = {
+        "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+        "aif_peak_height": 0.4,
+        "baseline_return_ratio": 0.15,
+    }
+
+    def test_preload_low_k2_adds_well_suppressed_reason(self) -> None:
+        """Preloaded + low K2 adds well-suppressed reason."""
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
+        result = assess_dsc_cbv_quality(
+            self._HIGH_AIF_QC,
+            preload_classification="half_dose",
+            k2_metrics=k2,
+        )
+        assert any("well-suppressed" in r for r in result.reasons)
+
+    def test_no_preload_high_k2_adds_substantial_reason(self) -> None:
+        """No preload + high leaky adds substantial correction reason."""
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
+        result = assess_dsc_cbv_quality(
+            self._HIGH_AIF_QC,
+            preload_classification="none",
+            k2_metrics=k2,
+        )
+        assert any("substantial" in r.lower() for r in result.reasons)
+
+    def test_none_args_backward_compat(self) -> None:
+        """None preload/k2 args → no new reasons, identical to current behavior."""
+        result = assess_dsc_cbv_quality(self._HIGH_AIF_QC)
+        assert result.confidence == "high"
+        assert not any("preload" in r.lower() for r in result.reasons)
+        assert not any("k2" in r.lower() for r in result.reasons)
+
+    def test_preload_status_stored(self) -> None:
+        """preload_status is stored on result."""
+        result = assess_dsc_cbv_quality(
+            self._HIGH_AIF_QC,
+            preload_classification="severe",
+        )
+        assert result.preload_status == "severe"
+
+
+# =============================================================================
+# Preload-Aware Uncertainty Modulation
+# =============================================================================
+
+
+class TestPreloadAwareUncertainty:
+    """Tests for preload-aware determine_constraint_mode."""
+
+    _MODERATE_QUALITY = CBVQualityAssessment(
+        confidence="moderate",
+        use_constraint=True,
+        reasons=["CNR coverage 0.90 < 0.99"],
+    )
+
+    def test_preload_low_k2_tightens_soft(self) -> None:
+        """Preload + low K2 → uncertainty=0.12."""
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
+        config = determine_constraint_mode(
+            self._MODERATE_QUALITY,
+            preload_classification="half_dose",
+            k2_metrics=k2,
+        )
+        assert config.mode == ConstraintMode.SOFT
+        assert config.vp_uncertainty == pytest.approx(0.12)
+        assert "tightened" in config.reason
+
+    def test_no_preload_high_k2_widens_soft(self) -> None:
+        """No preload + high leaky → uncertainty=0.30."""
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
+        config = determine_constraint_mode(
+            self._MODERATE_QUALITY,
+            preload_classification="none",
+            k2_metrics=k2,
+        )
+        assert config.mode == ConstraintMode.SOFT
+        assert config.vp_uncertainty == pytest.approx(0.30)
+        assert "widened" in config.reason
+
+    def test_default_uncertainty_unchanged(self) -> None:
+        """No preload info → uncertainty=0.20."""
+        config = determine_constraint_mode(self._MODERATE_QUALITY)
+        assert config.vp_uncertainty == pytest.approx(0.20)
+
+    def test_preload_high_k2_default_uncertainty(self) -> None:
+        """Preloaded but NOT well-suppressed → default 0.20."""
+        k2 = {"k2_median": 0.02, "percent_leaky_voxels": 10.0}
+        config = determine_constraint_mode(
+            self._MODERATE_QUALITY,
+            preload_classification="half_dose",
+            k2_metrics=k2,
+        )
+        assert config.vp_uncertainty == pytest.approx(0.20)
+
+    def test_high_confidence_unaffected(self) -> None:
+        """HARD mode → preload/K2 don't change anything."""
+        quality = CBVQualityAssessment(
+            confidence="high", use_constraint=True, reasons=["All quality checks passed"],
+        )
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
+        config = determine_constraint_mode(
+            quality, preload_classification="half_dose", k2_metrics=k2,
+        )
+        assert config.mode == ConstraintMode.HARD
+        assert config.vp_uncertainty == 0.0
+
+    def test_low_confidence_unaffected(self) -> None:
+        """SKIP mode → preload/K2 don't change anything."""
+        quality = CBVQualityAssessment(
+            confidence="low", use_constraint=False,
+            reasons=["CNR coverage 0.50 < 0.84"],
+        )
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
+        config = determine_constraint_mode(
+            quality, preload_classification="half_dose", k2_metrics=k2,
+        )
+        assert config.mode == ConstraintMode.SKIP
+
+    def test_user_override_ignores_preload(self) -> None:
+        """User override 'soft' + preload data → default 0.20 (override path)."""
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
+        config = determine_constraint_mode(
+            self._MODERATE_QUALITY,
+            user_override="soft",
+            preload_classification="half_dose",
+            k2_metrics=k2,
+        )
+        assert config.mode == ConstraintMode.SOFT
+        assert config.vp_uncertainty == pytest.approx(0.20)
+        assert "User override" in config.reason

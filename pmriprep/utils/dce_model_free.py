@@ -6,6 +6,7 @@ wash-out slope, bolus arrival time, and curve type classification.
 """
 
 import logging
+from typing import Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -83,7 +84,7 @@ def compute_peak_enhancement(
     enhancement = (peak - baseline_mean) / baseline_safe * 100.0
 
     enhancement = np.clip(enhancement, 0.0, max_cap)
-    return enhancement  # type: ignore[return-value]
+    return np.asarray(enhancement, dtype=np.float64)  # type: ignore[return-value]
 
 
 def compute_time_to_peak(
@@ -321,6 +322,7 @@ def compute_bolus_arrival_time(
     concentration: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     baseline_frames: int = 5,
+    brain_mask: Optional[npt.NDArray[np.floating]] = None,
 ) -> npt.NDArray[np.floating]:
     """Compute per-voxel bolus arrival time map.
 
@@ -332,6 +334,9 @@ def compute_bolus_arrival_time(
         concentration: 4D concentration data (x, y, z, time) in mM.
         time_points: 1D time array in minutes.
         baseline_frames: Number of pre-contrast baseline frames.
+        brain_mask: Optional 3D brain mask. When provided, voxels where
+            mask <= 0 are skipped (remain NaN), avoiding ~50-70% of
+            the per-voxel loop iterations.
 
     Returns:
         3D BAT map in seconds. NaN for low-confidence detections.
@@ -341,16 +346,34 @@ def compute_bolus_arrival_time(
     spatial_shape = concentration.shape[:3]
     bat_map = np.full(spatial_shape, np.nan, dtype=np.float64)
 
+    if brain_mask is not None and brain_mask.shape != spatial_shape:
+        raise ValueError(
+            f"brain_mask shape {brain_mask.shape} does not match "
+            f"concentration spatial shape {spatial_shape}"
+        )
+
     flat_conc = concentration.reshape(-1, concentration.shape[-1])
     flat_bat = bat_map.ravel()
+    flat_mask = brain_mask.ravel().astype(bool) if brain_mask is not None else None
 
-    n_active = int(np.sum(np.max(np.abs(flat_conc), axis=1) >= 1e-9))
-    logger.info(
-        "Computing BAT for %d active voxels (of %d total)",
-        n_active, flat_conc.shape[0],
-    )
+    has_signal = np.max(np.abs(flat_conc), axis=1) >= 1e-9
+    if flat_mask is not None:
+        n_active = int(np.sum(has_signal & flat_mask))
+        n_in_mask = int(np.sum(flat_mask))
+        logger.info(
+            "Computing BAT for %d active voxels (%d in mask, %d total)",
+            n_active, n_in_mask, flat_conc.shape[0],
+        )
+    else:
+        n_active = int(np.sum(has_signal))
+        logger.info(
+            "Computing BAT for %d active voxels (of %d total)",
+            n_active, flat_conc.shape[0],
+        )
 
     for i in range(flat_conc.shape[0]):
+        if flat_mask is not None and not flat_mask[i]:
+            continue
         curve = flat_conc[i]
         # Skip voxels with no enhancement
         if np.max(np.abs(curve)) < 1e-9:

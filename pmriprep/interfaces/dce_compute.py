@@ -480,6 +480,13 @@ def _fit_single_voxel(
 
 _MODEL_HAS_VP = {"extended_tofts", "patlak", "2cxm"}
 
+#: K2 leakage correction metric keys to extract from preload QC dict.
+_K2_QC_KEYS = {
+    "k2_mean", "k2_std", "k2_max", "k2_median",
+    "percent_leaky_voxels", "percent_severe_leakage",
+    "n_brain_voxels", "auc_mean",
+}
+
 
 def _normalize_param_name(pname: str) -> str:
     """Normalize GPU param name to output format.
@@ -728,7 +735,12 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="DSC-derived CBV map for vp constraint (optional, empty when unavailable)",
     )
     dsc_aif_qc = traits.Dict(
+        mandatory=False,
         desc="DSC AIF QC metrics dict for CBV quality assessment (optional)",
+    )
+    dsc_preload_qc = traits.Dict(
+        mandatory=False,
+        desc="DSC preload + K2 QC metrics dict from preload_correct node",
     )
     constraint_mode = traits.Enum(
         "auto",
@@ -1376,12 +1388,24 @@ class ComputeDCEMaps(BaseInterface):
                     if isdefined(self.inputs.dsc_aif_qc)
                     else {}
                 )
+                preload_qc = (
+                    dict(self.inputs.dsc_preload_qc)
+                    if isdefined(self.inputs.dsc_preload_qc) else {}
+                )
+                preload_class = preload_qc.get("preload_classification")
+                k2_metrics = (
+                    {k: v for k, v in preload_qc.items() if k in _K2_QC_KEYS}
+                    or None
+                )
+
                 vp_result = prepare_vp_constraint_from_data(
                     cbv_file=self.inputs.dsc_cbv_file,
                     aif_qc_data=aif_qc_data,
                     brain_mask_file=self.inputs.brain_mask_file,
                     mode_override=str(self.inputs.constraint_mode),
                     hematocrit=float(self.inputs.hematocrit),
+                    preload_classification=preload_class,
+                    k2_metrics=k2_metrics,
                 )
                 vp_constraint_map = vp_result.vp_map
                 constraint_mode = vp_result.config.mode
@@ -1569,6 +1593,7 @@ class ComputeDCEMaps(BaseInterface):
         )
         bat = compute_bolus_arrival_time(
             conc_data, time_points, baseline_frames=baseline_frames,
+            brain_mask=mask,
         )
         curve_type = compute_curve_type(ser)
 

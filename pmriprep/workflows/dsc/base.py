@@ -1652,6 +1652,7 @@ def init_dsc_preproc_wf(
                 "smooth_auc",
                 # QC metrics
                 "qc_metrics",
+                "preload_qc",
                 # Masks in DSC space
                 "brain_mask_dsc",
                 "nawm_mask_dsc",
@@ -2900,6 +2901,7 @@ def init_dsc_preproc_wf(
     workflow.connect([
         # QC metrics
         (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
+        (preload_correct, outputnode, [("qc_dict", "preload_qc")]),
     ])
 
     # Smoothed outputs (only if smooth_fwhm > 0)
