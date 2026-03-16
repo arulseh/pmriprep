@@ -278,6 +278,7 @@ def generate_dsc_parameter_maps_qc_plot(
         Path to the saved QC plot PNG.
     """
     import matplotlib.pyplot as plt
+    from matplotlib.colors import TwoSlopeNorm
 
     from pmriprep.utils.qc_utils import get_radiological_slice
 
@@ -367,7 +368,11 @@ def generate_dsc_parameter_maps_qc_plot(
         ):
             ax = fig.add_subplot(gs[row_idx, c_start:c_end])
             slc = get_radiological_slice(display, axis=2, slice_idx=int(z_idx))
-            im = ax.imshow(slc, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
+            if name == "PSR":
+                norm = TwoSlopeNorm(vcenter=100.0, vmin=vmin, vmax=vmax)
+                im = ax.imshow(slc, cmap=cmap, norm=norm, aspect="equal")
+            else:
+                im = ax.imshow(slc, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
             ax.axis("off")
 
             # Column headers (top row only)

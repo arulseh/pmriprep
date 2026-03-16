@@ -60,6 +60,7 @@ def generate_xval_plot(
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt  # noqa: E402
+    from matplotlib.colors import TwoSlopeNorm  # noqa: E402
 
     from pmriprep.utils.qc_standards import COLORBLIND_PALETTE
     from pmriprep.utils.qc_utils import get_radiological_slice, qc_figure_title
@@ -223,11 +224,11 @@ def generate_xval_plot(
     # Diverging colormap centered at expected ratio
     vmin = max(0, expected_ratio - 0.5)
     vmax = expected_ratio + 0.5
+    norm = TwoSlopeNorm(vcenter=expected_ratio, vmin=vmin, vmax=vmax)
     im = ax.imshow(
         slice_2d,
-        cmap="RdBu_r",
-        vmin=vmin,
-        vmax=vmax,
+        cmap="coolwarm",
+        norm=norm,
         aspect="equal",
         interpolation="nearest",
     )
