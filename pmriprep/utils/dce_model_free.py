@@ -22,6 +22,13 @@ _PEAK_ENH_SIGNAL_FLOOR = 1.0
 # numerical artifact from near-zero baseline voxels.
 _PEAK_ENH_MAX_CAP = 5000.0
 
+# Concentration-based SER above 10.0 is not physiologically plausible;
+# values above this are numerical artifacts from near-zero late-phase
+# concentration. Brain tumors rarely exceed 2.5, but hypervascular
+# extracranial tumors (liver HCC, angiosarcoma) can reach 5-6.
+# Cap at 10.0 for generalizability; users can tighten via max_cap param.
+_SER_MAX_CAP = 10.0
+
 
 def compute_iauc(
     concentration: npt.NDArray[np.floating],
@@ -111,6 +118,7 @@ def compute_signal_enhancement_ratio(
     bolus_arrival_frame: int = 0,
     early_offset: tuple[float, float] = (0.5, 2.5),
     late_fraction: float = 0.2,
+    max_cap: float = _SER_MAX_CAP,
 ) -> npt.NDArray[np.floating]:
     """Compute Signal Enhancement Ratio (SER) for washout characterization.
 
@@ -129,9 +137,13 @@ def compute_signal_enhancement_ratio(
         early_offset: (start, end) in minutes post-bolus for early phase.
         late_fraction: Fraction of post-bolus duration for late window
             (capped at 5 min for very long acquisitions).
+        max_cap: Maximum SER value (default 10.0). Concentration-based SER
+            can diverge when late-phase concentration is near zero; values
+            above this cap are clamped.
 
     Returns:
-        3D SER map. Returns ones where windows have insufficient frames.
+        3D SER map, clamped to [0, max_cap]. Returns ones where windows
+        have insufficient frames.
     """
     ones = np.ones(concentration.shape[:3], dtype=np.float64)
 
@@ -159,6 +171,7 @@ def compute_signal_enhancement_ratio(
     floor = max(0.05 * max(early_median, 0.0), 1e-6)
     late_safe = np.maximum(np.abs(late_mean), floor)
     ser = early_mean / late_safe
+    ser = np.clip(ser, 0.0, max_cap)
 
     return ser  # type: ignore[no-any-return]
 

@@ -505,6 +505,22 @@ class TestSER:
         )
         assert np.all(np.isfinite(result))
 
+    def test_extreme_ser_clamped(self) -> None:
+        """Near-zero late concentration → raw SER >> 10, clamped to max_cap."""
+        n_time = 80
+        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
+        bolus_frame = 2
+        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        # High early concentration
+        concentration[..., 5:18] = 5.0
+        # Near-zero late concentration (triggers large raw SER)
+        concentration[..., 64:] = 1e-4
+        result = compute_signal_enhancement_ratio(
+            concentration, time_points, bolus_arrival_frame=bolus_frame,
+        )
+        assert np.all(result <= 10.0)
+        assert np.all(result == 10.0)
+
     def test_long_acquisition_late_capped(self) -> None:
         """Long acquisition (>10 min): late window capped at 5 min."""
         # 120 frames, 10s each → 20 min; bolus at frame 5
