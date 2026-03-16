@@ -1,11 +1,15 @@
 """Tests for AIF cascade minimum candidate acceptance logic."""
 
+import math
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
-from pmriprep.interfaces.dsc_aif import MIN_AIF_CANDIDATES_ACCEPT
+from pmriprep.interfaces.dsc_aif import (
+    MIN_AIF_CANDIDATES_ACCEPT,
+    _CASCADE_N_CANDIDATES_FRACTION,
+)
 
 
 def _make_scored(
@@ -139,3 +143,47 @@ class TestCascadeMinCandidates:
         assert level == "atlas_strict"
         assert len(cands) == 3
         assert broke is True
+
+
+class TestGraduatedNCandidates:
+    """Test graduated n_candidates per cascade level."""
+
+    @staticmethod
+    def _level_n(crit: str, n_candidates: int) -> int:
+        """Compute level_n_candidates the same way the cascade does."""
+        frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
+        return max(MIN_AIF_CANDIDATES_ACCEPT, math.ceil(frac * n_candidates))
+
+    def test_fraction_strict(self) -> None:
+        """Strict uses full n_candidates (10 → 10)."""
+        assert self._level_n("strict", 10) == 10
+
+    def test_fraction_relaxed(self) -> None:
+        """Relaxed uses ceil(0.6 * 10) = 6."""
+        assert self._level_n("relaxed", 10) == 6
+
+    def test_fraction_permissive(self) -> None:
+        """Permissive uses ceil(0.4 * 10) = 4."""
+        assert self._level_n("permissive", 10) == 4
+
+    def test_fraction_degraded(self) -> None:
+        """Degraded floors at MIN_AIF_CANDIDATES_ACCEPT = 3."""
+        assert self._level_n("degraded", 10) == MIN_AIF_CANDIDATES_ACCEPT
+
+    def test_small_n_floors(self) -> None:
+        """n_candidates=5 → relaxed=3, permissive=3, degraded=3."""
+        assert self._level_n("relaxed", 5) == 3
+        assert self._level_n("permissive", 5) == 3
+        assert self._level_n("degraded", 5) == MIN_AIF_CANDIDATES_ACCEPT
+
+    def test_cascade_prefers_stricter_at_equal_count(self) -> None:
+        """2 strict stashed, 2 relaxed doesn't replace (not >)."""
+        levels = {
+            "atlas_strict": _make_scored(2),
+            "brain_relaxed": _make_scored(2),
+        }
+        level, cands, broke = TestCascadeMinCandidates._run_cascade(levels)
+        # strict found 2 first; relaxed has 2 but not > 2, so strict kept
+        assert level == "atlas_strict"
+        assert len(cands) == 2
+        assert broke is False

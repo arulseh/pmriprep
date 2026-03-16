@@ -10,6 +10,7 @@ SSS/edge spatial exclusions, tissue-TTP cross-validation, cost-function
 scoring, 3x3x3 ROI averaging, and Savitzky-Golay smoothing.
 """
 
+import math
 from pathlib import Path
 from typing import Any, Optional
 
@@ -42,6 +43,16 @@ _FP_GAP_SECONDS: float = 3.0
 # If a level finds fewer than this, the cascade continues to more relaxed
 # criteria to build a larger candidate pool (quality gating is downstream).
 MIN_AIF_CANDIDATES_ACCEPT: int = 3
+
+# Fraction of user-configured n_candidates to keep at each criteria level.
+# As criteria relax, candidate quality drops — fewer candidates concentrates
+# on the best-scoring voxels from a noisier pool.
+_CASCADE_N_CANDIDATES_FRACTION: dict[str, float] = {
+    "strict": 1.0,
+    "relaxed": 0.6,
+    "permissive": 0.4,
+    "degraded": 0.0,  # uses MIN_AIF_CANDIDATES_ACCEPT
+}
 
 
 # ---------------------------------------------------------------------------
@@ -2088,6 +2099,12 @@ class AIFDetection(BaseInterface):
             ]
 
             for crit, roi, level_name in attempts:
+                frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
+                level_n_candidates = max(
+                    MIN_AIF_CANDIDATES_ACCEPT,
+                    math.ceil(frac * n_candidates),
+                )
+
                 search = self._prepare_search_mask(
                     brain_mask, roi, lesion_mask
                 )
@@ -2119,7 +2136,7 @@ class AIFDetection(BaseInterface):
 
                 # Bilateral balance (always applied)
                 scored = self._ensure_bilateral_balance(
-                    scored, affine, n_candidates,
+                    scored, affine, level_n_candidates,
                 )
 
                 if cascade_initial_level is None:
@@ -2133,7 +2150,8 @@ class AIFDetection(BaseInterface):
                     break
                 elif len(scored) > len(top_candidates):
                     # Stash best-so-far but keep cascading for more candidates.
-                    # Prefers stricter levels at equal count.
+                    # With variable level_n_candidates, equal counts across levels
+                    # favor the stricter (earlier) level by design.
                     top_candidates = scored
                     n_available = n_avail
                     detection_level = level_name
@@ -2236,6 +2254,7 @@ class AIFDetection(BaseInterface):
             )
 
         qc_metrics["detection_level"] = detection_level
+        qc_metrics["n_candidates_effective"] = len(top_candidates)
         qc_metrics["s0_rejection_available"] = signal_data is not None
         qc_metrics["tr_used"] = tr
         qc_metrics["baseline_frames_initial"] = baseline_frames  # configured S0 baseline
