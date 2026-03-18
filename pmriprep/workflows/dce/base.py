@@ -3614,7 +3614,10 @@ def _create_dce_registration_filmstrip(
 def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
     """Apply Gaussian smoothing to a dict of DCE maps.
 
-    Uses fslmaths -s for smoothing and -mas for re-masking.
+    Uses normalized convolution for maps containing NaN (PK maps in auto
+    mode, wash-in/out slopes). This prevents edge dilution where unfitted
+    voxels would otherwise contribute 0 to the Gaussian kernel.
+    Reference: Knutsson & Westin, CVPR 1993.
 
     Args:
         map_files: Dict mapping map name to file path.
@@ -3624,10 +3627,22 @@ def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
     Returns:
         Dict mapping map name to smoothed file path.
     """
+    import logging
     import subprocess
     from pathlib import Path
 
+    import nibabel as nib
+    import numpy as np
     from nipype.interfaces.base import isdefined
+
+    logger = logging.getLogger("nipype.workflow")
+
+    # Maps that are non-negative by definition
+    _NON_NEGATIVE_MAPS = {
+        "ktrans", "ve", "vp", "kep",
+        "iauc60", "iauc90", "iauc120",
+        "peak_enhancement", "ser",
+    }
 
     results = {}
     if not map_files:
@@ -3645,12 +3660,56 @@ def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
             continue
         if not Path(filepath).is_file():
             continue
+
         out_path = str(Path.cwd() / f"{Path(filepath).stem}_fwhm{int(fwhm)}.nii.gz")
-        subprocess.run(
-            ["fslmaths", filepath, "-s", str(sigma), "-mas", brain_mask_file, out_path],
-            check=True,
-            capture_output=True,
-        )
+
+        # Check for NaN values
+        img = nib.load(filepath)
+        data = img.get_fdata()
+        has_nan = np.any(np.isnan(data))
+
+        if has_nan:
+            logger.info(
+                "Normalized convolution for '%s' (NaN voxels present)", name,
+            )
+            # Normalized convolution: smooth(data) / smooth(valid_mask)
+            valid_mask = np.isfinite(data).astype(np.float32)
+            vmask_path = str(Path.cwd() / f"{name}_vmask.nii.gz")
+            nib.save(nib.Nifti1Image(valid_mask, img.affine, img.header), vmask_path)
+
+            num_path = str(Path.cwd() / f"{name}_num.nii.gz")
+            den_path = str(Path.cwd() / f"{name}_den.nii.gz")
+
+            thr_args = ["-thr", "0"] if name in _NON_NEGATIVE_MAPS else []
+
+            try:
+                # Numerator: NaN→0, smooth
+                subprocess.run(
+                    ["fslmaths", filepath, "-nan", "-s", str(sigma), num_path],
+                    check=True, capture_output=True,
+                )
+                # Denominator: smooth valid mask
+                subprocess.run(
+                    ["fslmaths", vmask_path, "-s", str(sigma), den_path],
+                    check=True, capture_output=True,
+                )
+                # Normalize; -nan cleans 0/0→NaN; conditionally threshold
+                subprocess.run(
+                    ["fslmaths", num_path, "-div", den_path,
+                     "-nan", *thr_args, "-mas", brain_mask_file, out_path],
+                    check=True, capture_output=True,
+                )
+            finally:
+                for tmp in [vmask_path, num_path, den_path]:
+                    Path(tmp).unlink(missing_ok=True)
+        else:
+            # No NaN: simple smoothing + brain mask
+            subprocess.run(
+                ["fslmaths", filepath, "-s", str(sigma),
+                 "-mas", brain_mask_file, out_path],
+                check=True, capture_output=True,
+            )
+
         results[name] = out_path
     return results
 

@@ -2123,6 +2123,7 @@ class ComputeDCEMaps(BaseInterface):
             (bat, out_bat_path),
         ]
         if peak_enh is not None:
+            peak_enh[~mask_bool] = 0.0
             save_list.insert(3, (peak_enh, out_peak_enh_path))
         for arr, path in save_list:
             img = nib.Nifti1Image(arr.astype(np.float32), affine, header)  # type: ignore[attr-defined]
