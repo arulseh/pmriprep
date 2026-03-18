@@ -20,8 +20,8 @@ from numpy.typing import NDArray
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_ROOT = PROJECT_ROOT / "test_outputs" / "pmriprep"
-ANAT_OUTPUT_ROOT = PROJECT_ROOT / "test_outputs" / "pmriprep"
+OUTPUT_ROOT = PROJECT_ROOT / "debug" / "osipi"
+ANAT_OUTPUT_ROOT = PROJECT_ROOT / "debug" / "osipi"
 
 PERFPLUS_REFERENCE_JSON = (
     Path.home()
@@ -68,11 +68,11 @@ SPACE_ENTITY = "space-DCE"
 
 # Map suffix patterns
 MAP_SUFFIXES = {
-    "Ktrans": "model-extendedTofts_desc-dce_Ktrans",
-    "ve": "model-extendedTofts_desc-dce_ve",
-    "vp": "model-extendedTofts_desc-dce_vp",
-    "kep": "model-extendedTofts_desc-dce_kep",
-    "R2": "model-extendedTofts_desc-dce_R2",
+    "Ktrans": "model-auto_desc-dce_Ktrans",
+    "ve": "model-auto_desc-dce_ve",
+    "vp": "model-auto_desc-dce_vp",
+    "kep": "model-auto_desc-dce_kep",
+    "R2": "model-auto_desc-dce_R2",
     "IAUC60": "desc-dce_IAUC60",
     "IAUC90": "desc-dce_IAUC90",
     "IAUC120": "desc-dce_IAUC120",
@@ -271,15 +271,96 @@ def has_fsl() -> bool:
     return shutil.which("flirt") is not None
 
 
+def _get_anat_path(subject: str, session: str) -> Path:
+    """Get path to preprocessed T1w in anat space."""
+    fname = f"{subject}_{session}_space-anat_desc-preproc_T1w.nii.gz"
+    return OUTPUT_ROOT / subject / session / "anat" / fname
+
+
+def _get_dce_to_anat_xfm(subject: str, session: str) -> Path:
+    """Get path to the pipeline's DCE-to-anat FLIRT transform."""
+    fname = f"{subject}_{session}_from-DCE_to-anat_mode-image_xfm.mat"
+    return OUTPUT_ROOT / subject / session / "anat" / fname
+
+
+def _invert_xfm(mat_in: Path, mat_out: Path) -> bool:
+    """Invert a FLIRT transform matrix."""
+    cmd = ["convert_xfm", "-omat", str(mat_out), "-inverse", str(mat_in)]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+        return mat_out.exists()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            FileNotFoundError):
+        return False
+
+
+def _concat_xfm(mat_a: Path, mat_b: Path, mat_out: Path) -> bool:
+    """Concatenate two FLIRT transforms: mat_out = mat_b * mat_a.
+
+    The resulting transform applies mat_a first, then mat_b.
+    """
+    cmd = [
+        "convert_xfm", "-omat", str(mat_out),
+        "-concat", str(mat_b), str(mat_a),
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+        return mat_out.exists()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            FileNotFoundError):
+        return False
+
+
+def _brain_mask_dice(
+    subject: str,
+    ses_ref: str,
+    ses_mov: str,
+    mat_file: Path,
+    out_dir: Path,
+    tag: str,
+) -> float:
+    """Compute brain mask Dice for a given transform to evaluate quality."""
+    import nibabel as nib
+
+    brain1 = load_mask(subject, ses_ref, "brain")
+    if brain1 is None:
+        return 0.0
+
+    brain2_in = get_mask_path(subject, ses_mov, "brain")
+    brain2_out = out_dir / f"{subject}_brain_mask_{tag}_reg.nii.gz"
+    ref_path = get_ref_dce_path(subject, ses_ref)
+
+    result = apply_transform(
+        brain2_in, ref_path, str(mat_file), brain2_out, "nearestneighbour"
+    )
+    if result is None:
+        return 0.0
+
+    brain2_img = nib.load(brain2_out)
+    brain2 = np.asarray(brain2_img.get_fdata(), dtype=np.float64)
+
+    bin1 = brain1 > 0.5
+    bin2 = brain2 > 0.5
+    intersection = int(np.sum(bin1 & bin2))
+    total = int(np.sum(bin1)) + int(np.sum(bin2))
+    return 2.0 * intersection / total if total > 0 else 0.0
+
+
 def register_sessions(
     subject: str,
     ses_ref: str = "ses-0001",
     ses_mov: str = "ses-0002",
 ) -> Optional[Tuple[str, str]]:
-    """Register ses_mov to ses_ref using FLIRT 6-DOF rigid.
+    """Register ses_mov DCE space to ses_ref DCE space.
 
-    Creates a temporary directory with the transform matrix and registered
-    reference image. Results are cached per subject.
+    Tries two approaches and picks the one with better brain mask overlap:
+
+    1. **Direct**: FLIRT DCE-ref → DCE-ref (works well when slabs overlap
+       sufficiently).
+    2. **Anat-mediated**: Chain DCE→anat→anat→DCE using the pipeline's
+       DCE-to-anat transforms plus an inter-session T1 registration.
+       More robust for large positioning differences, but the 3-transform
+       chain can accumulate interpolation error.
 
     Args:
         subject: Subject ID (e.g., "sub-0081").
@@ -297,39 +378,103 @@ def register_sessions(
     if not has_fsl():
         return None
 
-    ref_path = get_ref_dce_path(subject, ses_ref)
-    mov_path = get_ref_dce_path(subject, ses_mov)
-
-    if not ref_path.exists() or not mov_path.exists():
-        return None
-
-    # Create output directory under test_outputs
+    # Create output directory
     out_dir = (
         PROJECT_ROOT / "test_outputs" / "pmriprep" / subject
         / "test_retest_qc"
     )
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    candidates: list = []  # list of (dice, mat_path_str)
+
+    # --- Approach 1: Direct DCE-to-DCE registration ---
+    ref_path = get_ref_dce_path(subject, ses_ref)
+    mov_path = get_ref_dce_path(subject, ses_mov)
+    direct_mat = out_dir / f"{ses_mov}_to_{ses_ref}_direct.mat"
+
+    if ref_path.exists() and mov_path.exists():
+        cmd = [
+            "flirt",
+            "-in", str(mov_path),
+            "-ref", str(ref_path),
+            "-omat", str(direct_mat),
+            "-dof", "6",
+        ]
+        try:
+            subprocess.run(
+                cmd, check=True, capture_output=True, timeout=120
+            )
+            if direct_mat.exists():
+                dice = _brain_mask_dice(
+                    subject, ses_ref, ses_mov, direct_mat, out_dir, "direct"
+                )
+                candidates.append((dice, direct_mat))
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+                FileNotFoundError):
+            pass
+
+    # --- Approach 2: Anat-mediated registration ---
+    xfm_dce2anat_mov = _get_dce_to_anat_xfm(subject, ses_mov)
+    xfm_dce2anat_ref = _get_dce_to_anat_xfm(subject, ses_ref)
+    t1_ref = _get_anat_path(subject, ses_ref)
+    t1_mov = _get_anat_path(subject, ses_mov)
+    anat_mat_path = out_dir / f"{ses_mov}_to_{ses_ref}_anat.mat"
+
+    if (xfm_dce2anat_mov.exists() and xfm_dce2anat_ref.exists()
+            and t1_ref.exists() and t1_mov.exists()):
+        # Step 1: T1(ses_mov) → T1(ses_ref)
+        t1_mat = out_dir / f"{ses_mov}_anat_to_{ses_ref}_anat.mat"
+        cmd = [
+            "flirt",
+            "-in", str(t1_mov),
+            "-ref", str(t1_ref),
+            "-omat", str(t1_mat),
+            "-dof", "6",
+        ]
+        try:
+            subprocess.run(
+                cmd, check=True, capture_output=True, timeout=180
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+                FileNotFoundError):
+            t1_mat = None
+
+        if t1_mat is not None and t1_mat.exists():
+            # Step 2: Invert DCE→anat(ses_ref) to get anat→DCE(ses_ref)
+            xfm_anat2dce_ref = out_dir / f"{ses_ref}_anat_to_DCE.mat"
+            ok = _invert_xfm(xfm_dce2anat_ref, xfm_anat2dce_ref)
+
+            if ok:
+                # Step 3: Chain DCE(mov) → anat(mov) → anat(ref) → DCE(ref)
+                intermediate = (
+                    out_dir / f"{ses_mov}_DCE_to_{ses_ref}_anat.mat"
+                )
+                ok = _concat_xfm(
+                    xfm_dce2anat_mov, t1_mat, intermediate
+                )
+                if ok:
+                    ok = _concat_xfm(
+                        intermediate, xfm_anat2dce_ref, anat_mat_path
+                    )
+                    if ok:
+                        dice = _brain_mask_dice(
+                            subject, ses_ref, ses_mov,
+                            anat_mat_path, out_dir, "anat",
+                        )
+                        candidates.append((dice, anat_mat_path))
+
+    if not candidates:
+        return None
+
+    # Pick the transform with the best brain mask overlap
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    best_dice, best_mat = candidates[0]
+
+    # Copy winner to canonical name
     mat_path = out_dir / f"{ses_mov}_to_{ses_ref}.mat"
-    reg_ref_path = out_dir / f"{subject}_{ses_mov}_reg_to_{ses_ref}_ref.nii.gz"
-
-    # Run FLIRT
-    cmd = [
-        "flirt",
-        "-in", str(mov_path),
-        "-ref", str(ref_path),
-        "-omat", str(mat_path),
-        "-out", str(reg_ref_path),
-        "-dof", "6",
-    ]
-
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-        return None
-
-    if not mat_path.exists():
-        return None
+    if best_mat != mat_path:
+        import shutil as _shutil
+        _shutil.copy2(str(best_mat), str(mat_path))
 
     result = (str(mat_path), str(out_dir))
     _registration_cache[cache_key] = result
@@ -382,10 +527,13 @@ def compute_joint_mask(
     ses_ref: str = "ses-0001",
     ses_mov: str = "ses-0002",
     min_voxels: int = 500,
+    require_qc: bool = False,
 ) -> Optional[NDArray[np.bool_]]:
-    """Compute joint QC mask across registered sessions.
+    """Compute joint mask across registered sessions.
 
-    Joint mask = brain1 AND brain2_reg AND qc1 AND qc2_reg.
+    By default, uses the intersection of brain masks only. With
+    ``require_qc=True``, also requires QC mask overlap (much more
+    restrictive, especially with model-auto per-voxel model selection).
 
     Args:
         subject: Subject ID.
@@ -393,6 +541,8 @@ def compute_joint_mask(
         ses_ref: Reference session.
         ses_mov: Moving session.
         min_voxels: Minimum required voxels in joint mask.
+        require_qc: If True, also intersect with QC masks from both
+            sessions. Default False.
 
     Returns:
         Boolean 3D array, or None if insufficient voxels or files missing.
@@ -401,16 +551,13 @@ def compute_joint_mask(
 
     # Load reference session masks
     brain1 = load_mask(subject, ses_ref, "brain")
-    qc1 = load_mask(subject, ses_ref, "qc")
-
-    if brain1 is None or qc1 is None:
+    if brain1 is None:
         return None
 
-    # Register moving session masks
+    # Register moving session brain mask
     ref_path = get_ref_dce_path(subject, ses_ref)
     out_dir = Path(mat_file).parent
 
-    # Brain mask (nearest-neighbor)
     brain2_in = get_mask_path(subject, ses_mov, "brain")
     brain2_out = out_dir / f"{subject}_{ses_mov}_brain_mask_reg.nii.gz"
     result = apply_transform(brain2_in, ref_path, mat_file, brain2_out, "nearestneighbour")
@@ -419,17 +566,22 @@ def compute_joint_mask(
     brain2_img = nib.load(brain2_out)
     brain2 = np.asarray(brain2_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
 
-    # QC mask (nearest-neighbor)
-    qc2_in = get_mask_path(subject, ses_mov, "qc")
-    qc2_out = out_dir / f"{subject}_{ses_mov}_qc_mask_reg.nii.gz"
-    result = apply_transform(qc2_in, ref_path, mat_file, qc2_out, "nearestneighbour")
-    if result is None:
-        return None
-    qc2_img = nib.load(qc2_out)
-    qc2 = np.asarray(qc2_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+    joint = (brain1 > 0.5) & (brain2 > 0.5)
 
-    # Compute intersection
-    joint = (brain1 > 0.5) & (brain2 > 0.5) & (qc1 > 0.5) & (qc2 > 0.5)
+    if require_qc:
+        qc1 = load_mask(subject, ses_ref, "qc")
+        if qc1 is None:
+            return None
+
+        qc2_in = get_mask_path(subject, ses_mov, "qc")
+        qc2_out = out_dir / f"{subject}_{ses_mov}_qc_mask_reg.nii.gz"
+        result = apply_transform(qc2_in, ref_path, mat_file, qc2_out, "nearestneighbour")
+        if result is None:
+            return None
+        qc2_img = nib.load(qc2_out)
+        qc2 = np.asarray(qc2_img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+
+        joint = joint & (qc1 > 0.5) & (qc2 > 0.5)
 
     if int(np.sum(joint)) < min_voxels:
         return None
@@ -616,7 +768,7 @@ def load_ci_map(
     """
     import nibabel as nib
 
-    suffix = f"model-extendedTofts_desc-dceCI95{bound}_{parameter}"
+    suffix = f"model-auto_desc-dceCI95{bound}_{parameter}"
     fname = f"{subject}_{session}_{SPACE_ENTITY}_{suffix}.nii.gz"
     fpath = OUTPUT_ROOT / subject / session / "perf" / fname
 

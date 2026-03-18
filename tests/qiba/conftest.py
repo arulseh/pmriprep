@@ -72,7 +72,14 @@ __all__ = [
     "TCIADROData",
     "load_tcia_dro",
     "skip_no_tcia_dro",
+    "skip_no_tcia_preload",
+    "skip_no_tcia_tr",
     "deconvolve_tcia_regions",
+    # Preload and TR config constants
+    "TCIA_PRELOAD_CONFIGS_15T",
+    "TCIA_PRELOAD_CONFIGS_3T",
+    "TCIA_TR_CONFIGS_15T",
+    "TCIA_TR_CONFIGS_3T",
 ]
 
 
@@ -590,6 +597,50 @@ skip_no_tcia_dro = pytest.mark.skipif(
     not (TCIA_DRO_ROOT / TCIA_CONSENSUS_15T / "concentration.npz").exists(),
     reason="TCIA GBM-DSC-MRI-DRO data not converted "
     f"(expected at {TCIA_DRO_ROOT / TCIA_CONSENSUS_15T / 'concentration.npz'})",
+)
+
+# Preload config constants (explicit names, no auto-discovery)
+# TCIA DRO dosing: pre_none/bolus_full, pre_quarter/bolus_full,
+# pre_half/bolus_half, pre_full/bolus_full
+TCIA_PRELOAD_CONFIGS_15T = [
+    "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg",
+    "b0_15T_pre_quarter_bolus_full_TR1500ms_TE30ms_FA60deg",
+    "b0_15T_pre_half_bolus_half_TR1500ms_TE30ms_FA60deg",
+    "b0_15T_pre_full_bolus_full_TR1500ms_TE30ms_FA60deg",
+]
+TCIA_PRELOAD_CONFIGS_3T = [
+    "b0_30T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg",
+    "b0_30T_pre_quarter_bolus_full_TR1500ms_TE30ms_FA60deg",
+    "b0_30T_pre_half_bolus_half_TR1500ms_TE30ms_FA60deg",
+    "b0_30T_pre_full_bolus_full_TR1500ms_TE30ms_FA60deg",
+]
+
+# TR config constants (no preload, full bolus, consensus TE/FA)
+TCIA_TR_CONFIGS_15T = [
+    "b0_15T_pre_none_bolus_full_TR1000ms_TE30ms_FA60deg",
+    "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg",
+    "b0_15T_pre_none_bolus_full_TR2000ms_TE30ms_FA60deg",
+]
+TCIA_TR_CONFIGS_3T = [
+    "b0_30T_pre_none_bolus_full_TR1000ms_TE30ms_FA60deg",
+    "b0_30T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg",
+    "b0_30T_pre_none_bolus_full_TR2000ms_TE30ms_FA60deg",
+]
+
+skip_no_tcia_preload = pytest.mark.skipif(
+    not all(
+        (TCIA_DRO_ROOT / c / "concentration.npz").exists()
+        for c in TCIA_PRELOAD_CONFIGS_15T
+    ),
+    reason="TCIA preload configs not converted (run conversion with --all)",
+)
+
+skip_no_tcia_tr = pytest.mark.skipif(
+    not all(
+        (TCIA_DRO_ROOT / c / "concentration.npz").exists()
+        for c in TCIA_TR_CONFIGS_15T
+    ),
+    reason="TCIA TR configs not converted (run conversion with --all)",
 )
 
 
