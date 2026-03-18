@@ -86,10 +86,23 @@ CORRELATION_PASS_SOFT: float = 0.50
 CORRELATION_WARN_SOFT: float = 0.30
 
 #: Minimum fraction of valid voxels for reliable validation.
-#: Filtering bounds (vp [0.001,0.15], CBV [0.1,8.0]) should retain most
-#: gray and white matter; low fractions indicate fitting failures.
-FRACTION_VALID_PASS: float = 0.20
-FRACTION_VALID_WARN: float = 0.10
+#: Thresholds depend on DCE constraint mode because soft-constrained Bayesian
+#: vp fitting concentrates WM voxels at the lower bound (prior mean ~0.02,
+#: sigma ~0.01), so most fall below MIN_VP_FOR_VALIDATION = 0.001.
+#: The 5-9% that pass represent well-perfused GM — the most informative
+#: subset for cross-validation.
+#: Unconstrained fitting has wider scatter → 35-60% expected coverage.
+
+# Unconstrained or skip: most tissue voxels should have valid vp
+FRACTION_VALID_PASS_UNCONSTRAINED: float = 0.20
+FRACTION_VALID_WARN_UNCONSTRAINED: float = 0.10
+
+# Soft constraint: Bayesian prior concentrates vp, reducing valid fraction
+FRACTION_VALID_PASS_SOFT: float = 0.05
+FRACTION_VALID_WARN_SOFT: float = 0.02
+
+#: Absolute minimum valid voxels for statistical reliability.
+MIN_VALID_VOXELS: int = 500
 
 
 # =============================================================================
@@ -349,13 +362,15 @@ def validate_vp_cbv(
     metrics.n_valid_voxels = len(vp_valid)
     metrics.fraction_valid = metrics.n_valid_voxels / metrics.n_total_voxels
 
-    if metrics.n_valid_voxels < 100:
+    if metrics.n_valid_voxels < MIN_VALID_VOXELS:
         logger.warning(
-            f"Insufficient valid voxels for validation: {metrics.n_valid_voxels}"
+            f"Insufficient valid voxels for validation: {metrics.n_valid_voxels} "
+            f"(minimum {MIN_VALID_VOXELS})"
         )
         result.status = QCStatus.WARN
         result.interpretation = (
-            f"Insufficient valid voxels ({metrics.n_valid_voxels}) for reliable validation"
+            f"Insufficient valid voxels ({metrics.n_valid_voxels}, "
+            f"minimum {MIN_VALID_VOXELS}) for reliable validation"
         )
         result.metrics = metrics
         return result
@@ -460,18 +475,25 @@ def validate_vp_cbv(
             f"Moderate vp-CBV correlation (r={metrics.correlation:.3f})"
         )
 
-    # --- Coverage status ---
-    if metrics.fraction_valid < FRACTION_VALID_WARN:
+    # --- Coverage status (constraint-mode-dependent thresholds) ---
+    if constraint_mode == "soft":
+        frac_pass = FRACTION_VALID_PASS_SOFT
+        frac_warn = FRACTION_VALID_WARN_SOFT
+    else:
+        frac_pass = FRACTION_VALID_PASS_UNCONSTRAINED
+        frac_warn = FRACTION_VALID_WARN_UNCONSTRAINED
+
+    if metrics.fraction_valid < frac_warn:
         coverage_status = QCStatus.POOR
         interpretations.append(
             f"Insufficient overlap: only {metrics.fraction_valid:.1%} of voxels "
-            "passed filtering; validation unreliable"
+            f"passed filtering (threshold {frac_warn:.0%}); validation unreliable"
         )
-    elif metrics.fraction_valid < FRACTION_VALID_PASS:
+    elif metrics.fraction_valid < frac_pass:
         coverage_status = QCStatus.WARN
         interpretations.append(
             f"Limited overlap: only {metrics.fraction_valid:.1%} of voxels "
-            "passed filtering"
+            f"passed filtering (threshold {frac_pass:.0%})"
         )
     else:
         coverage_status = QCStatus.PASS

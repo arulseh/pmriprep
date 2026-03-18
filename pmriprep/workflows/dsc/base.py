@@ -1956,7 +1956,7 @@ def init_dsc_preproc_wf(
                 "whole_tumor_mask_file",
                 "reference_file",
             ],
-            output_names=["combined_mask_file"],
+            output_names=["combined_mask_file", "mask_origin"],
             function=combine_tumor_masks,
         ),
         name="combine_masks",
@@ -2593,6 +2593,7 @@ def init_dsc_preproc_wf(
     # Connect lesion mask in DSC space
     workflow.connect([
         (transform_lesion, lesion_stats, [("lesion_mask_dsc_file", "lesion_mask")]),
+        (combine_masks, lesion_stats, [("mask_origin", "mask_origin")]),
         (transform_nawm, lesion_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
     ])
     # Connect perfusion maps

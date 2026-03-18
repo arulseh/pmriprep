@@ -474,14 +474,14 @@ def combine_tumor_masks(
     tumor_segmentation_file=None,  # Optional[str] - type hint removed for Nipype Function
     whole_tumor_mask_file=None,    # Optional[str] - type hint removed for Nipype Function
     reference_file=None,           # str
-):  # -> Optional[str]
+):  # -> Tuple[Optional[str], str]
     """Select the best tumor mask for lesion statistics.
 
     Priority:
     1. If tumor segmentation present: use it (already multi-label:
        0=bg, 1=non-enhancing, 2=enhancing)
     2. If only whole_tumor present: use as binary mask
-    3. If none present: return None
+    3. If none present: return (None, "")
 
     Args:
         tumor_segmentation_file: Path to multi-label tumor segmentation (or None).
@@ -490,7 +490,8 @@ def combine_tumor_masks(
             kept for interface compatibility).
 
     Returns:
-        Path to tumor mask file for lesion stats, or None if no masks available.
+        Tuple of (mask_file_path, mask_origin) where mask_origin is
+        "tumor_segmentation" or "whole_tumor" or "" if no masks available.
 
     Note:
         This function is used as a Nipype Function node, so type hints are removed
@@ -511,14 +512,14 @@ def combine_tumor_masks(
 
     # Priority 1: Use tumor segmentation directly (already multi-label)
     if _is_valid_file(tumor_segmentation_file):
-        return tumor_segmentation_file
+        return (tumor_segmentation_file, "tumor_segmentation")
 
     # Priority 2: Use whole_tumor as binary mask
     if _is_valid_file(whole_tumor_mask_file):
-        return whole_tumor_mask_file
+        return (whole_tumor_mask_file, "whole_tumor")
 
     # Priority 3: No masks available
-    return None
+    return (None, "")
 
 
 def compute_nawm_reference(

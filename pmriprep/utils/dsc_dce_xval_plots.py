@@ -222,12 +222,16 @@ def generate_xval_plot(
     slice_2d = get_radiological_slice(ratio_3d, axis=2, slice_idx=best_slice)
 
     # Diverging colormap centered at expected ratio
+    # Set NaN (background) to black so it's distinct from coolwarm's
+    # near-white center (RGB ~0.87), which represents the expected ratio.
+    cmap = plt.get_cmap("coolwarm").copy()
+    cmap.set_bad(color="black")
     vmin = max(0, expected_ratio - 0.5)
     vmax = expected_ratio + 0.5
     norm = TwoSlopeNorm(vcenter=expected_ratio, vmin=vmin, vmax=vmax)
     im = ax.imshow(
         slice_2d,
-        cmap="coolwarm",
+        cmap=cmap,
         norm=norm,
         aspect="equal",
         interpolation="nearest",

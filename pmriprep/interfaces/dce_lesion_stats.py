@@ -74,6 +74,12 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     iauc120_map = traits.Either(traits.Str, None, desc="IAUC at 120 seconds map path")
     niauc60_map = traits.Either(traits.Str, None, desc="Normalized IAUC60 map path")
 
+    # Mask origin: "tumor_segmentation" or "whole_tumor" (from combine_tumor_masks)
+    mask_origin = traits.Str(
+        "", usedefault=True,
+        desc="Source of the lesion mask: 'tumor_segmentation' or 'whole_tumor'",
+    )
+
     # ROI mode: treat mask as binary, label region as "roi", skip clinical context
     force_binary = traits.Bool(
         False, usedefault=True,
@@ -177,11 +183,19 @@ class DCELesionStats(BaseInterface):
                         result.regions[region_name] = region_stats
             else:
                 binary_mask = lesion_data > 0
+                # When mask comes from tumor_segmentation with only label 1
+                # (non-enhancing), use the specific label name instead of
+                # generic "tumor"
+                mask_origin = self.inputs.mask_origin
+                if mask_origin == "tumor_segmentation" and max_label == 1:
+                    region_name = TUMOR_SEG_LABELS[1]  # "non_enhancing_tumor"
+                else:
+                    region_name = "tumor"
                 region_stats = self._compute_region_stats(
-                    "tumor", binary_mask, maps, voxel_sizes
+                    region_name, binary_mask, maps, voxel_sizes
                 )
                 if region_stats is not None:
-                    result.regions["tumor"] = region_stats
+                    result.regions[region_name] = region_stats
 
             # Compute NAWM reference if mask provided
             if self._has_input("nawm_mask"):

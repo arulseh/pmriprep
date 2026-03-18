@@ -1657,7 +1657,7 @@ def init_dce_preproc_wf(
                 "whole_tumor_mask_file",
                 "reference_file",
             ],
-            output_names=["combined_mask_file"],
+            output_names=["combined_mask_file", "mask_origin"],
             function=combine_tumor_masks,
         ),
         name="combine_masks",
@@ -1699,6 +1699,7 @@ def init_dce_preproc_wf(
 
     workflow.connect([
         (transform_stats_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),
+        (combine_masks, lesion_stats, [("mask_origin", "mask_origin")]),
         (transform_nawm_mask, lesion_stats, [("out_file", "nawm_mask")]),
         (pk_modeling, lesion_stats, [
             ("out_ktrans", "ktrans_map"),

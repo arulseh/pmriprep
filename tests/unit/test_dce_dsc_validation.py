@@ -8,8 +8,11 @@ from pmriprep.utils.dce_dsc_validation import (
     CORRELATION_PASS_UNCONSTRAINED,
     CORRELATION_WARN_SOFT,
     CORRELATION_WARN_UNCONSTRAINED,
-    FRACTION_VALID_PASS,
-    FRACTION_VALID_WARN,
+    FRACTION_VALID_PASS_SOFT,
+    FRACTION_VALID_PASS_UNCONSTRAINED,
+    FRACTION_VALID_WARN_SOFT,
+    FRACTION_VALID_WARN_UNCONSTRAINED,
+    MIN_VALID_VOXELS,
     MIN_VP_FOR_VALIDATION,
     ValidationResult,
     validate_vp_cbv,
@@ -102,14 +105,14 @@ class TestCoverageStatus:
     """Low fraction_valid should downgrade status."""
 
     def test_very_low_coverage_poor(self):
-        """Most voxels filtered out → POOR."""
+        """Most voxels filtered out → POOR (unconstrained mode)."""
         n = 5000
         rng = np.random.default_rng(42)
         # Make most vp values below threshold (will be filtered)
         vp_flat = np.full(n, 0.0005)  # below MIN_VP_FOR_VALIDATION
         cbv_flat = np.full(n, 2.0)
-        # A few valid voxels
-        n_valid = 200
+        # A few valid voxels (above MIN_VALID_VOXELS)
+        n_valid = 600
         vp_flat[:n_valid] = np.clip(
             0.04 + 0.02 * rng.standard_normal(n_valid), 0.002, 0.14
         )
@@ -120,6 +123,53 @@ class TestCoverageStatus:
         cbv = cbv_flat.reshape(n, 1, 1)
         mask = np.ones((n, 1, 1), dtype=bool)
         result = validate_vp_cbv(vp, cbv, mask)
+        # 600/5000 = 12% < 20% unconstrained warn threshold → coverage degrades
+        assert result.status in (QCStatus.WARN, QCStatus.POOR)
+
+
+class TestSoftConstraintCoverage:
+    """Soft-constrained coverage uses relaxed thresholds."""
+
+    def test_soft_constraint_low_coverage_passes(self):
+        """~6% coverage should PASS under soft constraint (threshold 5%)."""
+        n = 10000
+        rng = np.random.default_rng(42)
+        # 94% below MIN_VP threshold
+        vp_flat = np.full(n, 0.0005)
+        cbv_flat = np.full(n, 2.0)
+        n_valid = 600  # 6% coverage
+        z1 = rng.standard_normal(n_valid)
+        vp_flat[:n_valid] = np.clip(0.019 + 0.008 * z1, 0.002, 0.14)
+        cbv_flat[:n_valid] = np.clip(3.0 + 1.5 * z1, 0.2, 7.5)
+        vp = vp_flat.reshape(n, 1, 1)
+        cbv = cbv_flat.reshape(n, 1, 1)
+        mask = np.ones((n, 1, 1), dtype=bool)
+        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="soft")
+        # 6% > 5% soft pass threshold → coverage PASS
+        # Overall status depends on correlation and ratio too
+        assert "Insufficient overlap" not in result.interpretation
+        assert "Limited overlap" not in result.interpretation
+
+    def test_soft_constraint_very_low_coverage_poor(self):
+        """~1.5% coverage should be POOR even under soft constraint."""
+        n = 10000
+        rng = np.random.default_rng(42)
+        vp_flat = np.full(n, 0.0005)
+        cbv_flat = np.full(n, 2.0)
+        n_valid = 150  # 1.5% < 2% soft warn threshold
+        # But 150 < MIN_VALID_VOXELS (500) → early return WARN
+        # So use n_valid > 500 but fraction < 2%
+        n = 50000
+        n_valid = 600  # 1.2% < 2% soft warn threshold
+        vp_flat = np.full(n, 0.0005)
+        cbv_flat = np.full(n, 2.0)
+        z1 = rng.standard_normal(n_valid)
+        vp_flat[:n_valid] = np.clip(0.019 + 0.008 * z1, 0.002, 0.14)
+        cbv_flat[:n_valid] = np.clip(3.0 + 1.5 * z1, 0.2, 7.5)
+        vp = vp_flat.reshape(n, 1, 1)
+        cbv = cbv_flat.reshape(n, 1, 1)
+        mask = np.ones((n, 1, 1), dtype=bool)
+        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="soft")
         assert result.status == QCStatus.POOR
         assert "Insufficient overlap" in result.interpretation
 
@@ -180,7 +230,7 @@ class TestWorstOfLogic:
         # 95% of voxels below MIN_VP threshold
         vp_flat = np.full(n, 0.0005)
         cbv_flat = np.full(n, 2.0)
-        n_valid = 200  # 2% coverage
+        n_valid = 600  # 6% coverage < 10% unconstrained warn → POOR
         z1 = rng.standard_normal(n_valid)
         vp_flat[:n_valid] = np.clip(0.019 + 0.008 * z1, 0.002, 0.14)
         cbv_flat[:n_valid] = np.clip(3.0 + 1.5 * z1, 0.2, 7.5)
@@ -202,14 +252,14 @@ class TestEarlyReturns:
         assert result.status == QCStatus.POOR
 
     def test_insufficient_voxels_returns_warn(self):
-        """Fewer than 100 valid voxels after filtering → WARN."""
-        n = 200
+        """Fewer than MIN_VALID_VOXELS valid voxels after filtering → WARN."""
+        n = 1000
         rng = np.random.default_rng(42)
-        # Only 50 valid, rest below MIN_VP
+        # Only 200 valid, rest below MIN_VP — 200 < 500 MIN_VALID_VOXELS
         vp_flat = np.full(n, 0.0005)
         cbv_flat = np.full(n, 2.0)
-        vp_flat[:50] = np.clip(0.019 + 0.005 * rng.standard_normal(50), 0.002, 0.14)
-        cbv_flat[:50] = np.clip(3.0 + 1.0 * rng.standard_normal(50), 0.2, 7.5)
+        vp_flat[:200] = np.clip(0.019 + 0.005 * rng.standard_normal(200), 0.002, 0.14)
+        cbv_flat[:200] = np.clip(3.0 + 1.0 * rng.standard_normal(200), 0.2, 7.5)
         vp = vp_flat.reshape(n, 1, 1)
         cbv = cbv_flat.reshape(n, 1, 1)
         mask = np.ones((n, 1, 1), dtype=bool)
@@ -219,10 +269,10 @@ class TestEarlyReturns:
 
 
 class TestCoverageWarn:
-    """Coverage between FRACTION_VALID_WARN and FRACTION_VALID_PASS."""
+    """Coverage between warn and pass thresholds."""
 
     def test_marginal_coverage_warns(self):
-        """~15% valid voxels → coverage WARN."""
+        """~15% valid voxels → coverage WARN (unconstrained)."""
         n = 5000
         rng = np.random.default_rng(42)
         # 85% below MIN_VP, 15% valid
