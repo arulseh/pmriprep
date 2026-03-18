@@ -356,6 +356,22 @@ Examples:
         default=None,
         help="Skip T1 mapping (use field-strength-appropriate default T1).",
     )
+    dce_group.add_argument(
+        "--dce-t1-map",
+        type=Path,
+        default=None,
+        help="External T1 map file (NIfTI, units: milliseconds). Bypasses "
+             "VFA T1 fitting. Useful for MP2RAGE, MOLLI, or ground-truth T1 maps.",
+    )
+    dce_group.add_argument(
+        "--dce-t1-method",
+        choices=["hybrid", "wlls", "nlls"],
+        default=None,
+        help="VFA T1 fitting method (default: hybrid). "
+             "hybrid = WLLS with NLLS refinement for ill-conditioned voxels. "
+             "wlls = linearized DESPOT1-WLLS. "
+             "nlls = full nonlinear least squares.",
+    )
 
     # Anatomical options
     anat_group = parser.add_argument_group(

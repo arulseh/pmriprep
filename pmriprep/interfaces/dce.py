@@ -1266,6 +1266,13 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         desc="CSF probability threshold for exclusion (default: 0.5 = 50%, "
              "matches ASLPrep/FreeSurfer standard)",
     )
+    t1_method = traits.Enum(
+        "hybrid", "wlls", "nlls",
+        usedefault=True,
+        desc="VFA T1 fitting method: hybrid (WLLS + NLLS refinement for "
+             "ill-conditioned voxels), wlls (linearized DESPOT1), or nlls "
+             "(nonlinear least squares in signal space).",
+    )
     t1_correction_mode = traits.Enum(
         "auto",
         "none",
@@ -1404,6 +1411,7 @@ class T1Mapping(SimpleInterface):
             DEFAULT_T1_MS,
             EPSILON_TRIG,
             LENIENT_T1_RANGE,
+            NLLS_REFINEMENT_E1_THRESHOLD,
             SLAB_EROSION_MAX_SLICES,
             get_b1_thresholds,
             get_tissue_t1_ranges,
@@ -1528,13 +1536,52 @@ class T1Mapping(SimpleInterface):
         y_data = signal_data / sin_fa  # Shape: (n_fa, x, y, z)
         x_data = signal_data / tan_fa  # Shape: (n_fa, x, y, z)
 
-        # Perform linear regression: Y = m × X + b
-        # Using least squares for each voxel
-        # m = E1, b = S0 × (1 - E1)
+        # Perform T1 fitting based on selected method
         cos_fa = np.cos(corrected_fa_rad)
-        t1_map = self._fit_t1_wlls(
-            x_data, y_data, sin_fa, cos_fa, tr_s, shape,
-        )
+        t1_method = self.inputs.t1_method
+        needs_refinement: np.ndarray | None = None  # For hybrid QC metrics
+        rough_mask: np.ndarray | None = None
+
+        if t1_method == "wlls":
+            t1_map = self._fit_t1_wlls(
+                x_data, y_data, sin_fa, cos_fa, tr_s, shape,
+            )
+        elif t1_method == "nlls":
+            t1_map = self._fit_t1_nlls(
+                signal_data, sin_fa, cos_fa, tr_s, shape,
+            )
+        elif t1_method == "hybrid":
+            # Stage 1: Fast WLLS for all voxels
+            t1_map = self._fit_t1_wlls(
+                x_data, y_data, sin_fa, cos_fa, tr_s, shape,
+            )
+
+            # Stage 2: Identify ill-conditioned voxels (E1 > threshold)
+            e1_map = np.exp(-tr_s / np.where(t1_map > 0, t1_map, 1.0))
+            # Simple brain mask: positive signal in first VFA
+            positive_signal = signal_data[0][signal_data[0] > 0]
+            if len(positive_signal) == 0:
+                rough_mask = np.zeros(shape, dtype=bool)
+            else:
+                rough_mask = signal_data[0] > np.percentile(positive_signal, 10)
+            needs_refinement = (e1_map > NLLS_REFINEMENT_E1_THRESHOLD) & rough_mask
+
+            if np.any(needs_refinement):
+                n_refine = int(needs_refinement.sum())
+                n_brain = int(rough_mask.sum())
+                logger.info(
+                    "Hybrid T1: refining %d voxels (%.1f%%) with NLLS",
+                    n_refine,
+                    100.0 * n_refine / max(n_brain, 1),
+                )
+                refined = self._fit_t1_nlls(
+                    signal_data, sin_fa, cos_fa, tr_s, shape,
+                    e1_init=e1_map.ravel(),
+                    mask=needs_refinement,
+                )
+                t1_map[needs_refinement] = refined[needs_refinement]
+        else:
+            raise ValueError(f"Unknown t1_method: {t1_method!r}")
 
         # Convert T1 from seconds to milliseconds
         t1_map = t1_map * 1000.0
@@ -1822,7 +1869,16 @@ class T1Mapping(SimpleInterface):
             "lenient_qc": self.inputs.lenient_qc,
             "csf_excluded": csf_excluded,
             "median_filtered": True,
+            "t1_method": t1_method,
         }
+        # Hybrid-specific QC: fraction of voxels refined by NLLS
+        if t1_method == "hybrid" and needs_refinement is not None and np.any(needs_refinement):
+            qc_metrics["nlls_refined_count"] = int(needs_refinement.sum())
+            qc_metrics["nlls_refined_fraction"] = round(
+                float(needs_refinement.sum()) / max(
+                    1, int(rough_mask.sum()) if rough_mask is not None else 1,
+                ), 4,
+            )
         qc_metrics["edge_voxels_eroded"] = n_edge
         qc_metrics["edge_erosion_skipped"] = edge_erosion_skipped
         qc_metrics["edge_erosion_mode"] = (
@@ -2058,6 +2114,186 @@ class T1Mapping(SimpleInterface):
         t1_map: np.ndarray = t1_flat.reshape(shape)  # type: ignore[assignment]
 
         return t1_map
+
+    def _fit_t1_nlls(
+        self,
+        signal_data: np.ndarray,
+        sin_fa: np.ndarray,
+        cos_fa: np.ndarray,
+        tr_s: float,
+        shape: tuple[int, ...],
+        e1_init: np.ndarray | None = None,
+        mask: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Fit T1 using nonlinear least squares in signal space.
+
+        Uses a vectorized Levenberg-Marquardt (damped Gauss-Newton) solver
+        operating in R1 = 1/T1 space, with analytical Jacobian. This avoids
+        the correlated-noise bias of DESPOT1 linearization that causes
+        systematic T1 underestimation when E1 > 0.999 (T1 >> TR).
+
+        Reparameterization rationale: at E1 ~ 0.9999, dS/dT1 -> 0 for all
+        flip angles, making the T1-space Jacobian degenerate. But dS/dR1
+        remains finite as R1 -> 0 because E1 = exp(-TR*R1) and
+        dE1/dR1 = -TR*exp(-TR*R1).
+
+        With n_fa=2 flip angles and 2 parameters (R1, S0), the system is
+        exactly determined — residual-based QC (R², chi²) is degenerate
+        (always perfect). This is a known limitation documented here.
+
+        Args:
+            signal_data: Raw VFA signal, shape (n_fa, x, y, z).
+            sin_fa: sin(corrected_fa), shape (n_fa, x, y, z).
+            cos_fa: cos(corrected_fa), shape (n_fa, x, y, z).
+            tr_s: TR in seconds.
+            shape: Output volume shape (x, y, z).
+            e1_init: Optional initial E1 from WLLS, shape (n_voxels,).
+                If None, uses unweighted GLLS estimate as starting point.
+            mask: Boolean mask of voxels to fit. If None, fits all voxels.
+
+        Returns:
+            T1 map in seconds, shape (x, y, z). Unfitted voxels are 0.
+        """
+        from pmriprep.utils.dce_constants import EPSILON_T1
+
+        n_fa = signal_data.shape[0]
+        n_voxels = int(np.prod(shape))
+
+        # R1 bounds: [0.05, 100] s⁻¹ → T1 in [10ms, 20s]
+        R1_MIN = 0.05
+        R1_MAX = 100.0
+
+        # Reshape to (n_fa, n_voxels)
+        sig_flat = signal_data.reshape(n_fa, n_voxels)
+        sin_flat = sin_fa.reshape(n_fa, n_voxels)
+        cos_flat = cos_fa.reshape(n_fa, n_voxels)
+
+        # Determine which voxels to fit
+        if mask is not None:
+            fit_idx = mask.ravel().nonzero()[0]
+        else:
+            fit_idx = np.arange(n_voxels)
+
+        if len(fit_idx) == 0:
+            return np.zeros(shape, dtype=np.float64)
+
+        # Extract fitting subset: (n_fa, N_fit)
+        S = sig_flat[:, fit_idx]
+        sin_a = sin_flat[:, fit_idx]
+        cos_a = cos_flat[:, fit_idx]
+
+        # --- Initial guess for R1 ---
+        if e1_init is not None:
+            # Use WLLS E1 estimate → R1 = -ln(E1) / TR
+            e1_sub = e1_init[fit_idx]
+            e1_sub = np.clip(e1_sub, EPSILON_T1, 1.0 - EPSILON_T1)
+            r1 = -np.log(e1_sub) / tr_s
+        else:
+            # Unweighted GLLS: single-pass linearized regression (no IRLS)
+            # Y = S/sin(a), X = S/tan(a) → slope = E1
+            y_init = S / np.where(np.abs(sin_a) < 1e-10, 1e-10, sin_a)
+            tan_a = sin_a / np.where(np.abs(cos_a) < 1e-10, 1e-10, cos_a)
+            x_init = S / np.where(np.abs(tan_a) < 1e-10, 1e-10, tan_a)
+
+            sum_x = np.sum(x_init, axis=0)
+            sum_y = np.sum(y_init, axis=0)
+            sum_xy = np.sum(x_init * y_init, axis=0)
+            sum_x2 = np.sum(x_init * x_init, axis=0)
+            denom = n_fa * sum_x2 - sum_x * sum_x
+            denom = np.where(np.abs(denom) < 1e-12, 1e-12, denom)
+            e1_glls = np.clip(
+                (n_fa * sum_xy - sum_x * sum_y) / denom,
+                EPSILON_T1, 1.0 - EPSILON_T1,
+            )
+            r1 = -np.log(e1_glls) / tr_s
+
+        r1 = np.clip(r1, R1_MIN, R1_MAX)
+
+        # Initial S0 estimate from first flip angle:
+        # S = S0 * sin(a) * (1 - E1) / (1 - cos(a) * E1)
+        E1 = np.exp(-tr_s * r1)  # (N_fit,)
+        numer_s0 = 1.0 - cos_a[0] * E1
+        denom_s0 = sin_a[0] * (1.0 - E1)
+        denom_s0 = np.where(np.abs(denom_s0) < 1e-12, 1e-12, denom_s0)
+        s0 = S[0] * numer_s0 / denom_s0
+        s0 = np.maximum(s0, 1e-6)
+
+        # --- Vectorized Levenberg-Marquardt ---
+        lam = 1e-4  # Fixed damping parameter
+        max_iter = 20
+        tol = 1e-6
+
+        for _iteration in range(max_iter):
+            E1 = np.exp(-tr_s * r1)  # (N_fit,)
+            one_minus_E1 = 1.0 - E1
+            # Predicted signal: S_pred(a) = S0 * sin(a) * (1-E1) / (1 - cos(a)*E1)
+            denom_model = 1.0 - cos_a * E1[np.newaxis, :]  # (n_fa, N_fit)
+            denom_model = np.where(
+                np.abs(denom_model) < 1e-12, 1e-12, denom_model,
+            )
+            S_pred = s0[np.newaxis, :] * sin_a * one_minus_E1[np.newaxis, :] / denom_model
+
+            # Residuals: (n_fa, N_fit)
+            r_vec = S - S_pred
+
+            # Analytical Jacobian: dS/dS0 and dS/dR1
+            # dS/dS0 = sin(a) * (1-E1) / (1 - cos(a)*E1) = S_pred / S0
+            J_s0 = S_pred / np.where(np.abs(s0) < 1e-12, 1e-12, s0)[np.newaxis, :]
+
+            # dS/dR1 = S0 * sin(a) * dE1/dR1 * d/dE1[(1-E1)/(1-cos(a)*E1)]
+            # dE1/dR1 = -TR * E1
+            # d/dE1[(1-E1)/(1-cos(a)*E1)] = [-1*(1-cos(a)*E1) - (1-E1)*(-cos(a))] / (1-cos(a)*E1)^2
+            #   = [-(1-cos(a)*E1) + cos(a)*(1-E1)] / (1-cos(a)*E1)^2
+            #   = [-1 + cos(a)*E1 + cos(a) - cos(a)*E1] / (1-cos(a)*E1)^2
+            #   = (cos(a) - 1) / (1-cos(a)*E1)^2
+            dE1_dR1 = -tr_s * E1  # (N_fit,)
+            d_ratio_dE1 = (cos_a - 1.0) / (denom_model ** 2)  # (n_fa, N_fit)
+            J_r1 = (
+                s0[np.newaxis, :] * sin_a * dE1_dR1[np.newaxis, :] * d_ratio_dE1
+            )  # (n_fa, N_fit)
+
+            # Gauss-Newton: solve (J^T J + lam*I) dp = J^T r
+            # For 2 params, this is a 2x2 system per voxel — fully vectorizable.
+            # J^T J entries (all shape N_fit):
+            JtJ_00 = np.sum(J_r1 * J_r1, axis=0)      # d²/dR1²
+            JtJ_01 = np.sum(J_r1 * J_s0, axis=0)      # cross
+            JtJ_11 = np.sum(J_s0 * J_s0, axis=0)      # d²/dS0²
+
+            # J^T r entries:
+            Jtr_0 = np.sum(J_r1 * r_vec, axis=0)       # dR1
+            Jtr_1 = np.sum(J_s0 * r_vec, axis=0)       # dS0
+
+            # Add damping
+            JtJ_00_d = JtJ_00 + lam
+            JtJ_11_d = JtJ_11 + lam
+
+            # 2x2 solve: Cramer's rule
+            det = JtJ_00_d * JtJ_11_d - JtJ_01 * JtJ_01
+            det = np.where(np.abs(det) < 1e-30, 1e-30, det)
+
+            d_r1 = (JtJ_11_d * Jtr_0 - JtJ_01 * Jtr_1) / det
+            d_s0 = (JtJ_00_d * Jtr_1 - JtJ_01 * Jtr_0) / det
+
+            # Update and enforce bounds
+            r1_new = np.clip(r1 + d_r1, R1_MIN, R1_MAX)
+            s0_new = np.maximum(s0 + d_s0, 1e-6)
+
+            # Convergence check: relative parameter change
+            rel_change_r1 = np.abs(r1_new - r1) / np.maximum(np.abs(r1), 1e-12)
+            rel_change_s0 = np.abs(s0_new - s0) / np.maximum(np.abs(s0), 1e-12)
+            max_change = np.maximum(rel_change_r1, rel_change_s0)
+
+            r1 = r1_new
+            s0 = s0_new
+
+            if np.max(max_change) < tol:
+                break
+
+        # Convert R1 → T1
+        t1_flat = np.zeros(n_voxels, dtype=np.float64)
+        t1_flat[fit_idx] = 1.0 / np.clip(r1, R1_MIN, R1_MAX)
+
+        return t1_flat.reshape(shape)
 
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""

@@ -100,6 +100,8 @@ class DCEConfig:
     skip_flip_validation: bool = False
     lenient_t1_qc: bool = False
     t1_correction: Literal["auto", "none", "offset", "fallback"] = "auto"
+    t1_method: Literal["hybrid", "wlls", "nlls"] = "hybrid"
+    t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
     # Processing settings
     no_tortuosity: bool = False
     no_dsc_validation: bool = False
@@ -207,3 +209,16 @@ class DCEConfig:
                 self.r1_relaxivity = float(self.r1_relaxivity)
             except (ValueError, TypeError) as e:
                 raise TypeError(f"DCEConfig.r1_relaxivity has invalid type: {e}") from e
+
+        # Validate t1_map_file / no_t1 mutual exclusivity
+        if self.t1_map_file and self.no_t1:
+            raise ValueError(
+                "Cannot set both t1_map_file and no_t1=True. "
+                "Use t1_map_file to supply an external T1 map, or no_t1 to skip T1 mapping."
+            )
+        if (self.no_t1 or self.t1_map_file) and self.t1_method != "hybrid":
+            logger.warning(
+                "t1_method=%r is ignored when %s is set.",
+                self.t1_method,
+                "no_t1=True" if self.no_t1 else "t1_map_file",
+            )

@@ -371,28 +371,20 @@ def init_dce_preproc_wf(
     # issues with nipype passing None to interfaces that expect files.
 
     # ==========================================================================
-    # Nodes 1-2: VFA/B1/T1 pipeline (conditional — skipped when no_t1=True)
+    # Nodes 1-2: VFA/B1/T1 pipeline (conditional)
     # ==========================================================================
-    # When no VFA data is available (no_t1=True), the entire VFA→B1→T1 chain
-    # is skipped. signal_to_concentration uses field-strength default T1 and
-    # nominal flip angles, producing semi-quantitative results per QIBA
-    # DCE-MRI profile (Tofts et al., 1999; QIBA v2.0, 2019).
-    if not config.no_t1:
-        # VFA images (list of 3D) - reorient to RAS
-        vfa_reorient = pe.Node(
-            niu.Function(
-                input_names=["in_files"],
-                output_names=["out_file"],
-                function=reorient_list_to_ras,
-            ),
-            name="vfa_reorient",
-        )
+    # Three T1 source modes:
+    #   1. VFA T1 fitting (default): full VFA→B1→T1 chain
+    #   2. External T1 map: skip VFA fitting, keep B1 for concentration conversion
+    #   3. no_t1: skip everything, use field-strength default T1
+    use_external_t1 = config.t1_map_file is not None
+    use_vfa_t1 = not config.no_t1 and not use_external_t1
+    # B1 needed for VFA fitting AND concentration conversion with external T1.
+    # Skip if b1_method="none" and using external T1 (no AFI data expected).
+    need_b1 = use_vfa_t1 or (use_external_t1 and config.b1_method != "none")
 
-        workflow.connect([
-            (inputnode, vfa_reorient, [("vfa_files", "in_files")]),
-        ])
-
-        # Node 1: B1+ Mapping (optional — skip when b1_method="none")
+    # Node 1: B1+ Mapping — needed for VFA fitting AND concentration conversion
+    if need_b1:
         b1_mapping = pe.Node(
             B1Mapping(
                 skip_b1=(config.b1_method == "none"),
@@ -418,6 +410,21 @@ def init_dce_preproc_wf(
 
         b1_mapping.inputs.subject_id = subject_id
         b1_mapping.inputs.session_id = session_id or ""
+
+    if use_vfa_t1:
+        # VFA images (list of 3D) - reorient to RAS
+        vfa_reorient = pe.Node(
+            niu.Function(
+                input_names=["in_files"],
+                output_names=["out_file"],
+                function=reorient_list_to_ras,
+            ),
+            name="vfa_reorient",
+        )
+
+        workflow.connect([
+            (inputnode, vfa_reorient, [("vfa_files", "in_files")]),
+        ])
 
         # Node 1b: VFA Preprocessing (coregistration + quality assessment)
         vfa_preprocess = pe.Node(
@@ -462,6 +469,7 @@ def init_dce_preproc_wf(
                 skip_t1=False,
                 lenient_qc=config.lenient_t1_qc,
                 t1_correction_mode=config.t1_correction,
+                t1_method=config.t1_method,
             ),
             name="t1_mapping",
         )
@@ -700,7 +708,7 @@ def init_dce_preproc_wf(
         ])
 
         # Wire transformed CSF probseg to T1 mapping only when active
-        if not config.no_t1:
+        if use_vfa_t1:
             workflow.connect([
                 (transform_csf_probseg, t1_mapping, [("out_file", "csf_probseg")]),
                 (transform_wm_probseg, t1_mapping, [("out_file", "wm_probseg")]),
@@ -780,7 +788,7 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Nodes 4c-4d: Transform T1/B1 maps to DCE space (conditional)
     # ==========================================================================
-    if not config.no_t1:
+    if use_vfa_t1:
         transform_t1_to_dce = pe.Node(
             niu.Function(
                 input_names=["t1_map_file", "reference_file"],
@@ -799,6 +807,7 @@ def init_dce_preproc_wf(
             ]),
         ])
 
+    if need_b1:
         transform_b1_to_dce = pe.Node(
             niu.Function(
                 input_names=["b1_map_file", "reference_file"],
@@ -815,6 +824,21 @@ def init_dce_preproc_wf(
             (dce_preprocess, transform_b1_to_dce, [
                 ("mean_img", "reference_file"),
             ]),
+        ])
+
+    if use_external_t1:
+        # External T1: validate units, resample to DCE space
+        external_t1_to_dce = pe.Node(
+            niu.Function(
+                input_names=["t1_map_file", "reference_file"],
+                output_names=["out_file"],
+                function=_transform_external_t1_to_dce,
+            ),
+            name="external_t1_to_dce",
+        )
+        external_t1_to_dce.inputs.t1_map_file = str(config.t1_map_file)
+        workflow.connect([
+            (dce_preprocess, external_t1_to_dce, [("mean_img", "reference_file")]),
         ])
 
     # ==========================================================================
@@ -858,7 +882,7 @@ def init_dce_preproc_wf(
         ]),
     ])
 
-    if not config.no_t1:
+    if use_vfa_t1:
         workflow.connect([
             (transform_t1_to_dce, signal_to_conc, [
                 ("out_file", "t1_map_file"),
@@ -867,7 +891,21 @@ def init_dce_preproc_wf(
                 ("out_file", "b1_map_file"),
             ]),
         ])
-    else:
+    elif use_external_t1:
+        workflow.connect([
+            (external_t1_to_dce, signal_to_conc, [
+                ("out_file", "t1_map_file"),
+            ]),
+        ])
+        if need_b1:
+            workflow.connect([
+                (transform_b1_to_dce, signal_to_conc, [
+                    ("out_file", "b1_map_file"),
+                ]),
+            ])
+        else:
+            signal_to_conc.inputs.b1_map_file = None
+    else:  # no_t1
         signal_to_conc.inputs.t1_map_file = None
         signal_to_conc.inputs.b1_map_file = None
 
@@ -1579,7 +1617,7 @@ def init_dce_preproc_wf(
         name="collect_qc_metrics",
     )
 
-    if not config.no_t1:
+    if use_vfa_t1:
         workflow.connect([
             (b1_mapping, collect_qc, [
                 ("qc_metrics", "b1_qc"),
@@ -1588,6 +1626,13 @@ def init_dce_preproc_wf(
                 ("qc_metrics", "t1_qc"),
             ]),
         ])
+    elif use_external_t1 and need_b1:
+        workflow.connect([
+            (b1_mapping, collect_qc, [
+                ("qc_metrics", "b1_qc"),
+            ]),
+        ])
+        collect_qc.inputs.t1_qc = None
     else:
         collect_qc.inputs.b1_qc = None
         collect_qc.inputs.t1_qc = None
@@ -1885,8 +1930,8 @@ def init_dce_preproc_wf(
         ]),
     ])
 
-    # T1/B1/VFA output connections (conditional on T1 mapping being active)
-    if not config.no_t1:
+    # T1/B1/VFA output connections (conditional on T1 source)
+    if use_vfa_t1:
         workflow.connect([
             (b1_mapping, outputnode, [
                 ("out_file", "b1_map"),
@@ -1906,6 +1951,14 @@ def init_dce_preproc_wf(
             # QC plots - VFA T1 mapping
             (t1_mapping, outputnode, [
                 ("qc_plot", "t1_qc_plot"),
+            ]),
+        ])
+    elif use_external_t1 and need_b1:
+        workflow.connect([
+            (b1_mapping, outputnode, [
+                ("out_file", "b1_map"),
+                ("registration_qc_plot", "afi_registration_qc_plot"),
+                ("qc_plot", "b1_qc_plot"),
             ]),
         ])
 
@@ -3300,6 +3353,63 @@ def _transform_t1_to_dce(t1_map_file=None, reference_file=None):
     out_file = str(Path.cwd() / "t1_map_dce_space.nii.gz")
     nib.save(resampled, out_file)
     return out_file
+
+
+def _transform_external_t1_to_dce(t1_map_file=None, reference_file=None):
+    """Resample external T1 map to DCE space with unit validation.
+
+    Validates that T1 values are in milliseconds (expected units for the
+    pipeline). If median T1 < 10, assumes values are in seconds and
+    auto-converts. Then delegates to _transform_t1_to_dce for resampling.
+
+    Args:
+        t1_map_file: Path to external T1 map (NIfTI).
+        reference_file: Path to DCE mean image for output geometry.
+
+    Returns:
+        Path to T1 map resampled to DCE space in milliseconds.
+    """
+    if t1_map_file is None or reference_file is None:
+        return t1_map_file
+
+    import logging
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    logger = logging.getLogger("pmriprep.workflows.dce")
+
+    t1_img = nib.load(t1_map_file)
+    t1_data = t1_img.get_fdata()
+    valid = t1_data[t1_data > 0]
+    if len(valid) == 0:
+        logger.warning("External T1 map has no positive values.")
+        return _transform_t1_to_dce(t1_map_file, reference_file)
+
+    median_t1 = float(np.nanmedian(valid))
+
+    if median_t1 < 10:  # Likely seconds, not ms
+        logger.warning(
+            "External T1 map median=%.3f — appears to be in seconds. "
+            "Converting to milliseconds (expected units).",
+            median_t1,
+        )
+        t1_data = t1_data * 1000.0
+        t1_img = nib.Nifti1Image(
+            t1_data.astype(np.float32), t1_img.affine, t1_img.header,
+        )
+        corrected = str(Path.cwd() / "external_t1_ms.nii.gz")
+        nib.save(t1_img, corrected)
+        t1_map_file = corrected
+    elif median_t1 > 10000:
+        logger.warning(
+            "External T1 map median=%.0f ms — unusually large. "
+            "Verify units are in milliseconds.",
+            median_t1,
+        )
+
+    return _transform_t1_to_dce(t1_map_file, reference_file)
 
 
 def _transform_structural_to_dce(

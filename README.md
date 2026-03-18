@@ -151,6 +151,8 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dce-r1 R1` | Override r1 relaxivity (s⁻¹/mM) for concentration conversion |
 | `--dce-b1-method {auto,afi,tfl_b1map,none}` | B1+ correction method (default: auto) |
 | `--dce-no-t1` | Skip T1 mapping (use default T1 for field strength) |
+| `--dce-t1-method {hybrid,wlls,nlls}` | VFA T1 fitting method (default: hybrid). `hybrid` = WLLS with NLLS refinement for ill-conditioned voxels (E1 > 0.995). `wlls` = linearized DESPOT1-WLLS. `nlls` = full nonlinear least squares in signal space. |
+| `--dce-t1-map FILE` | External T1 map (NIfTI, units: milliseconds). Bypasses VFA T1 fitting. Useful for MP2RAGE, MOLLI, or ground-truth T1 maps. |
 
 ### Anatomical Options
 
@@ -244,6 +246,8 @@ dce:
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
 | `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `tfl_b1map`, `none` |
 | `no_t1` | bool | `false` | Skip T1 mapping |
+| `t1_method` | str | `"hybrid"` | VFA T1 fitting: `hybrid`, `wlls`, `nlls` |
+| `t1_map_file` | path | `null` | External T1 map (NIfTI, ms). Bypasses VFA fitting |
 | `skip_flip_validation` | bool | `false` | Skip flip angle validation in VFA T1 mapping |
 | `lenient_t1_qc` | bool | `false` | Use lenient T1 QC ranges (500-2500 ms vs strict) |
 | `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect) |
