@@ -4,6 +4,7 @@ This module implements Nipype interfaces for DSC perfusion preprocessing steps
 including motion correction with QC metrics.
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1060,10 +1061,10 @@ class DSCRegistration(SimpleInterface):
                     qc_metrics["brain_mask_used"] = True
 
                     if dice < 0.8:
-                        import warnings
-                        warnings.warn(
-                            f"Registration DICE coefficient is low "
-                            f"({dice:.3f} < 0.8). Check registration quality."
+                        logging.getLogger(__name__).warning(
+                            "Registration DICE coefficient is low "
+                            "(%.3f < 0.8). Check registration quality.",
+                            dice,
                         )
                 except Exception:
                     qc_metrics["brain_mask_used"] = True

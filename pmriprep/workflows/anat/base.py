@@ -756,7 +756,6 @@ def init_anat_preproc_wf(
         Skip mode: returns None (no acceptable precon for FAST).
         """
         import logging
-        import warnings
 
         _log = logging.getLogger("pmriprep.workflows.anat")
 
@@ -770,12 +769,11 @@ def init_anat_preproc_wf(
         _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
 
         if fast_t1w is None:
-            warnings.warn(
+            _log.warning(
                 "FAST segmentation skipped — no acceptable pre-contrast T1w. "
                 "Tissue probability maps unavailable. Downstream features "
                 "requiring WM/GM/CSF segmentation (BBR registration, NAWM "
                 "normalization, CSF exclusion) will be limited.",
-                stacklevel=2,
             )
             return None
 

@@ -768,8 +768,8 @@ def init_dce_preproc_wf(
     if atlas_cascade:
         transform_atlas_cascade.inputs.atlas_files = [str(p) for p in atlas_cascade]
     else:
-        import warnings
-        warnings.warn(
+        import logging as _logging
+        _logging.getLogger("pmriprep.workflows.dce").warning(
             "No arterial atlases found. AIF detection will use whole-brain search."
         )
 

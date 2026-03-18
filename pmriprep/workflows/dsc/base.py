@@ -318,8 +318,8 @@ def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto", hdbet_conda_env=""):
             shutil.move(str(hdbet_mask_path), dsc_brain_mask_file)
     else:
         # Fallback: intensity-based brain extraction
-        import warnings
-        warnings.warn(
+        import logging as _logging
+        _logging.getLogger("pmriprep.workflows.dsc").warning(
             "HD-BET unavailable. Falling back to intensity-based "
             "DSC brain extraction."
         )
@@ -1977,8 +1977,8 @@ def init_dsc_preproc_wf(
     try:
         transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm", "dil2"))
     except FileNotFoundError:
-        import warnings
-        warnings.warn(
+        import logging as _logging
+        _logging.getLogger("pmriprep.workflows.dsc").warning(
             "Arterial atlas not found. AIF detection will use whole-brain search."
         )
 

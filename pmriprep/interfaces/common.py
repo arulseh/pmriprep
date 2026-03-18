@@ -4,8 +4,11 @@ This module contains interfaces that are used by multiple workflows,
 such as reorientation to standard RAS orientation.
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from nipype.interfaces.base import (
     CommandLine,
@@ -59,8 +62,7 @@ def reorient_to_ras(in_file=None):
     try:
         subprocess.run(cmd, check=True, capture_output=True)
     except subprocess.CalledProcessError as e:
-        import warnings
-        warnings.warn(f"fslreorient2std failed for {in_file}: {e.stderr.decode()}")
+        logger.warning("fslreorient2std failed for %s: %s", in_file, e.stderr.decode())
         return None
 
     # Enforce true RAS orientation (fslreorient2std only reorders axes,

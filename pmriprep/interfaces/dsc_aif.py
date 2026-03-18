@@ -1182,7 +1182,7 @@ class AIFDetection(BaseInterface):
         -------
         tuple of (filtered_candidates, filter_metadata)
         """
-        import warnings
+        import logging
 
         meta: dict[str, Any] = {}
 
@@ -1215,12 +1215,10 @@ class AIFDetection(BaseInterface):
                 top_candidates = filtered
             else:
                 # All excluded — keep originals with warning
-                warnings.warn(
-                    f"All {len(top_candidates)} AIF candidates were "
-                    f"<{lesion_min_distance_mm}mm from lesion. "
+                logging.getLogger(__name__).warning(
+                    "All %d AIF candidates were <%.0fmm from lesion. "
                     "Keeping closest candidate(s).",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    len(top_candidates), lesion_min_distance_mm,
                 )
                 for _, _, m in top_candidates:
                     m["lesion_distance_warning"] = True
@@ -1932,7 +1930,10 @@ class AIFDetection(BaseInterface):
         3. On success, finalize metrics and break.
         4. Synthetic fallback if all attempts fail.
         """
+        import logging
         import nibabel as nib  # type: ignore[import-untyped]
+
+        _logger = logging.getLogger(__name__)
 
         # ===== External AIF: bypass all detection if provided =====
         if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
@@ -2028,12 +2029,10 @@ class AIFDetection(BaseInterface):
                 tr = float(zooms[3])
                 # Sanity: DSC TR is typically 1-3 s; detect ms/us units
                 if tr > 100.0:
-                    import warnings
-                    warnings.warn(
-                        f"Auto-detected TR={tr:.1f}s from NIfTI header seems too "
+                    _logger.warning(
+                        "Auto-detected TR=%.1fs from NIfTI header seems too "
                         "large (possible millisecond units). Falling back to 1.5s.",
-                        RuntimeWarning,
-                        stacklevel=2,
+                        tr,
                     )
                     tr = 1.5
             else:
