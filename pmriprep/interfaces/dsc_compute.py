@@ -1544,7 +1544,6 @@ class ComputeDSCMaps(BaseInterface):
             assert recomputed_raw_conc is not None  # guaranteed by outer if
             k2_result = apply_k2_correction(
                 concentration=recomputed_raw_conc,
-                aif=aif,
                 brain_mask=mask.astype(bool),
                 tr=dt,
             )

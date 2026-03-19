@@ -916,7 +916,6 @@ class TestTCIAGBMDSCDRO:
 
         k2_result = apply_k2_correction(
             concentration=conc_4d,
-            aif=dro.aif,
             brain_mask=mask_3d,
             tr=dro.dt,
         )
@@ -976,7 +975,6 @@ class TestTCIAGBMDSCDRO:
 
         k2_result = apply_k2_correction(
             concentration=conc_4d,
-            aif=dro.aif,
             brain_mask=mask_3d,
             tr=dro.dt,
         )
@@ -1439,7 +1437,6 @@ class TestTCIAPreloadLeakage:
 
         k2_result = apply_k2_correction(
             concentration=conc_4d,
-            aif=dro.aif,
             brain_mask=mask_3d,
             tr=dro.dt,
         )
@@ -1507,7 +1504,6 @@ class TestTCIAPreloadLeakage:
 
             k2_result = apply_k2_correction(
                 concentration=conc_4d,
-                aif=dro.aif,
                 brain_mask=mask_3d,
                 tr=dro.dt,
             )

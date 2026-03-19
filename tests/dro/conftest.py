@@ -5,7 +5,7 @@ signal-domain helpers, and pytest fixtures for parametric recovery tests.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, NamedTuple, Optional, Set, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -196,7 +196,7 @@ def concentration_to_signal(
 
 def generate_leaky_dsc_tissue(
     c_tissue_noleak: npt.NDArray[np.floating],
-    aif: npt.NDArray[np.floating],
+    reference_curve: npt.NDArray[np.floating],
     k2: float,
     dt: float,
 ) -> npt.NDArray[np.floating]:
@@ -204,14 +204,16 @@ def generate_leaky_dsc_tissue(
 
     T1 leakage reduces apparent ΔR2*, so the leaky curve is LOWER than
     the non-leaky curve:
-        C_leaky(t) = C_noleak(t) - K2 * cumsum(C_AIF) * dt
+        C_leaky(t) = C_noleak(t) - K2 * cumsum(reference) * dt
 
-    This is the forward model; the correction in apply_k2_correction() ADDS
-    back the K2 term.
+    The reference_curve should be C̄(t) (mean brain reference) for K2 DRO
+    phantoms, matching the estimator. For legacy single-voxel tests, AIF
+    may be used as reference.
 
     Args:
         c_tissue_noleak: Clean tissue concentration (1D, no leakage).
-        aif: AIF concentration (1D, same length).
+        reference_curve: Reference curve for leakage (1D, same length).
+            Typically mean brain C̄(t) or AIF.
         k2: K2 leakage rate parameter.
         dt: Time step in seconds.
 
@@ -219,14 +221,161 @@ def generate_leaky_dsc_tissue(
         Leaky tissue concentration (1D). May contain negative values
         at high K2 (physically correct: T1 leakage overshoot).
     """
-    if len(c_tissue_noleak) != len(aif):
+    if len(c_tissue_noleak) != len(reference_curve):
         raise ValueError(
-            f"Tissue ({len(c_tissue_noleak)}) and AIF ({len(aif)}) "
+            f"Tissue ({len(c_tissue_noleak)}) and reference ({len(reference_curve)}) "
             f"must have same length"
         )
-    cumsum_aif = np.cumsum(aif) * dt
-    c_leaky = c_tissue_noleak - k2 * cumsum_aif
+    cumsum_ref = np.cumsum(reference_curve) * dt
+    c_leaky = c_tissue_noleak - k2 * cumsum_ref
     return np.asarray(c_leaky, dtype=np.float64)
+
+
+class K2DROPhantom(NamedTuple):
+    """Result of generate_k2_dro_phantom()."""
+
+    concentration: npt.NDArray[np.floating]
+    """4D leaky concentration (x, y, z, time) with baseline."""
+    clean: npt.NDArray[np.floating]
+    """4D clean concentration (x, y, z, time) with baseline."""
+    aif: npt.NDArray[np.floating]
+    """1D AIF (n_timepoints total including baseline)."""
+    brain_mask: npt.NDArray[np.bool_]
+    """3D brain mask (all tissue + AIF voxels)."""
+    enhancing_mask: npt.NDArray[np.bool_]
+    """3D mask of enhancing (leaky) voxels."""
+    dt: float
+    """Time step in seconds."""
+
+
+def generate_k2_dro_phantom(
+    k2_enhancing: float = 0.1,
+    n_brain_voxels: int = 100,
+    n_enhancing_voxels: int = 10,
+    dt_sec: float = 1.5,
+    n_timepoints: int = 60,
+    baseline_frames: int = 10,
+    aif_peak: float = 40.0,
+    noise_frac: float = 0.0,
+    seed: int = 42,
+) -> K2DROPhantom:
+    """Generate a multi-voxel 4D phantom for K2 validation.
+
+    Creates a single-slice phantom with non-enhancing brain voxels
+    (varied CBF/MTT, K2=0) and enhancing voxels (tumor-like, K2>0).
+    The forward leakage model uses the mean brain reference C̄(t),
+    matching what the estimator recovers.
+
+    Args:
+        k2_enhancing: K2 value for enhancing voxels.
+        n_brain_voxels: Number of non-enhancing brain voxels.
+        n_enhancing_voxels: Number of enhancing (leaky) voxels.
+        dt_sec: Time step in seconds.
+        n_timepoints: Number of post-baseline timepoints.
+        baseline_frames: Number of baseline frames.
+        aif_peak: Peak AIF delta-R2* in s⁻¹.
+        noise_frac: Fraction of peak for Gaussian noise (0=noiseless).
+        seed: Random seed for reproducibility.
+
+    Returns:
+        K2DROPhantom with all fields populated.
+    """
+    rng = np.random.default_rng(seed)
+
+    # Generate AIF (post-baseline only)
+    aif_post, _ = generate_dsc_aif_dro(
+        n_timepoints=n_timepoints,
+        dt_sec=dt_sec,
+        baseline_frames=0,
+        peak_delta_r2=aif_peak,
+    )
+
+    # Determine phantom spatial dimensions
+    # Need enough voxels: n_brain + n_enhancing + margin
+    total_voxels = n_brain_voxels + n_enhancing_voxels
+    nx = 12
+    ny = max(12, (total_voxels + nx - 1) // nx + 2)
+    nz = 1
+    shape = (nx, ny, nz)
+
+    n_total = baseline_frames + n_timepoints
+
+    # Generate varied non-enhancing brain tissue curves
+    brain_cbfs = rng.uniform(20.0, 60.0, n_brain_voxels)
+    brain_mtts = rng.uniform(3.0, 6.0, n_brain_voxels)
+
+    brain_curves_post = np.zeros((n_brain_voxels, n_timepoints), dtype=np.float64)
+    for i in range(n_brain_voxels):
+        residue = make_exponential_residue(
+            brain_cbfs[i], brain_mtts[i], n_timepoints, dt_sec,
+        )
+        brain_curves_post[i] = dsc_forward_model(aif_post, residue, dt_sec)
+
+    # Compute mean brain reference C̄(t) from non-enhancing voxels
+    c_bar_post = np.mean(brain_curves_post, axis=0)
+
+    # Generate enhancing (tumor) tissue curves
+    tumor_cbf = 100.0
+    tumor_mtt = 6.0
+    tumor_residue = make_exponential_residue(
+        tumor_cbf, tumor_mtt, n_timepoints, dt_sec,
+    )
+    tumor_clean_post = dsc_forward_model(aif_post, tumor_residue, dt_sec)
+
+    # Apply leakage using mean brain reference (NOT AIF)
+    tumor_leaky_post = generate_leaky_dsc_tissue(
+        tumor_clean_post, c_bar_post, k2_enhancing, dt_sec,
+    )
+
+    # Build 4D volumes
+    concentration = np.zeros((*shape, n_total), dtype=np.float64)
+    clean = np.zeros((*shape, n_total), dtype=np.float64)
+    brain_mask = np.zeros(shape, dtype=bool)
+    enhancing_mask = np.zeros(shape, dtype=bool)
+
+    # Place brain voxels
+    idx = 0
+    for i in range(n_brain_voxels):
+        x = idx % nx
+        y = idx // nx
+        if y >= ny:
+            break
+        concentration[x, y, 0, baseline_frames:] = brain_curves_post[i]
+        clean[x, y, 0, baseline_frames:] = brain_curves_post[i]
+        brain_mask[x, y, 0] = True
+        idx += 1
+
+    # Place enhancing voxels
+    for i in range(n_enhancing_voxels):
+        x = idx % nx
+        y = idx // nx
+        if y >= ny:
+            break
+        concentration[x, y, 0, baseline_frames:] = tumor_leaky_post
+        clean[x, y, 0, baseline_frames:] = tumor_clean_post
+        brain_mask[x, y, 0] = True
+        enhancing_mask[x, y, 0] = True
+        idx += 1
+
+    # Add noise if requested
+    if noise_frac > 0:
+        peak = float(np.max(np.abs(clean)))
+        if peak > 0:
+            noise = rng.normal(0.0, noise_frac * peak, concentration.shape)
+            concentration = concentration + noise
+
+    # Full AIF with baseline
+    aif_full = np.zeros(n_total, dtype=np.float64)
+    aif_full[baseline_frames:] = aif_post
+
+    return K2DROPhantom(
+        concentration=concentration,
+        clean=clean,
+        aif=aif_full,
+        brain_mask=brain_mask,
+        enhancing_mask=enhancing_mask,
+        dt=dt_sec,
+    )
 
 
 def generate_dsc_3d_phantom(

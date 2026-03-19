@@ -297,7 +297,6 @@ class TestK2CorrectionInChain:
 
         result = apply_k2_correction(
             concentration=conc_post,
-            aif=aif_post,
             brain_mask=masks["brain"],
             tr=_DT,
         )

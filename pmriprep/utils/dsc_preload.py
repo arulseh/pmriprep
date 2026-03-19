@@ -4,6 +4,7 @@ Automatic detection of contrast preload from prior DCE injection
 and classification of residual contrast effects on DSC signal.
 """
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -18,6 +19,8 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_SIGNAL,
     K2_UPPER_BOUND,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -536,27 +539,108 @@ class K2CorrectionResult:
     qc_metrics: Optional[dict[str, Any]] = None
 
 
-def estimate_k2_per_voxel(
+def _compute_mean_brain_reference(
     concentration: npt.NDArray[np.floating],
-    aif: npt.NDArray[np.floating],
-    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
-    tr: float = 1.5,
-) -> npt.NDArray[np.floating]:
-    """Estimate K2 leakage parameter per voxel using BSW 2-regressor model.
+    brain_mask: Optional[npt.NDArray[np.bool_]],
+) -> Optional[npt.NDArray[np.floating]]:
+    """Compute mean brain reference curve C̄(t) per Boxerman 2006.
 
-    K2 represents the rate of contrast agent leakage through the BBB.
-    Estimated using the two-regressor Boxerman-Schmainda-Weisskoff model:
-
-        C_tissue(t) = K1 × ∫₀ᵗ AIF(τ)dτ + K2 × ∫₀ᵗ C_tissue(τ)dτ
-
-    K1 captures the intravascular susceptibility contribution (proportional
-    to CBV) and K2 captures T1-shortening leakage through the BBB. Both
-    regressors are fit simultaneously via ordinary least squares on the
-    post-bolus phase.
+    Averages concentration across non-enhancing brain voxels.
+    Excludes voxels with negative mean post-bolus concentration
+    (T1 leakage dominance) if enough non-enhancing voxels remain.
 
     Args:
         concentration: 4D concentration array (x, y, z, time).
-        aif: 1D arterial input function (time).
+        brain_mask: Optional 3D brain mask. If None, uses voxels
+            with max concentration above noise floor.
+
+    Returns:
+        1D array (n_timepoints,) or None if insufficient voxels.
+    """
+    _MIN_VOXELS = 10
+    _WARN_VOXELS = 100
+
+    # Select brain voxels
+    if brain_mask is not None:
+        valid_indices = np.where(brain_mask)
+    else:
+        max_conc = np.max(concentration, axis=-1)
+        valid_indices = np.where(max_conc > EPSILON_CONCENTRATION)
+
+    n_brain = len(valid_indices[0])
+    if n_brain < _MIN_VOXELS:
+        logger.warning(
+            "Insufficient brain voxels for mean reference: %d (need ≥%d)",
+            n_brain, _MIN_VOXELS,
+        )
+        return None
+
+    # Extract brain voxel time courses: (n_voxels, n_timepoints)
+    brain_curves = concentration[valid_indices[0], valid_indices[1], valid_indices[2], :]
+
+    # Exclude voxels with negative mean in last 50% of timepoints
+    # (T1 leakage dominance — these would bias C̄ downward)
+    n_tp = brain_curves.shape[1]
+    post_half = brain_curves[:, n_tp // 2:]
+    post_mean = np.mean(post_half, axis=1)
+    non_leaky = post_mean >= 0
+
+    n_excluded = int(np.sum(~non_leaky))
+    n_remaining = int(np.sum(non_leaky))
+
+    if n_remaining >= _MIN_VOXELS:
+        brain_curves = brain_curves[non_leaky]
+    else:
+        # Not enough non-leaky voxels — fall back to ALL brain voxels
+        logger.info(
+            "Only %d non-leaky voxels (need ≥%d), using all %d brain voxels",
+            n_remaining, _MIN_VOXELS, n_brain,
+        )
+        n_excluded = 0
+
+    c_bar = np.mean(brain_curves, axis=0)
+
+    n_used = len(brain_curves)
+    logger.info(
+        "Mean brain reference: %d voxels used, %d excluded (T1 leakage), "
+        "peak C̄ = %.3f",
+        n_used, n_excluded, float(np.max(c_bar)),
+    )
+    if n_used < _WARN_VOXELS:
+        logger.warning(
+            "Mean brain reference from only %d voxels (<100 recommended "
+            "per Bjornerud 2011); consider checking brain mask quality",
+            n_used,
+        )
+
+    return np.asarray(c_bar, dtype=np.float64)
+
+
+def estimate_k2_per_voxel(
+    concentration: npt.NDArray[np.floating],
+    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
+    tr: float = 1.5,
+) -> npt.NDArray[np.floating]:
+    """Estimate K2 leakage parameter per voxel using BSW model.
+
+    K2 represents the rate of contrast agent leakage through the BBB.
+    Estimated using the Boxerman-Schmainda-Weisskoff model with a mean
+    brain reference curve C̄(t) (Boxerman et al., AJNR 2006):
+
+        C_voxel(t) = K1 × C̄(t) + K2_reg × ∫₀ᵗ C̄(τ)dτ
+
+    K1 captures the instantaneous susceptibility scaling relative to
+    the mean brain, and K2_reg captures T1-shortening leakage.
+
+    Sign convention:
+        - T1-dominant leakage *reduces* observed ΔR2* → K2_reg < 0
+          → K2_physical = -K2_reg > 0
+        - T2*-dominant leakage *increases* observed ΔR2* → K2_reg > 0
+          → clipped to K2_physical = 0 (conservative: no correction
+          rather than wrong-sign correction)
+
+    Args:
+        concentration: 4D concentration array (x, y, z, time).
         brain_mask: Optional 3D brain mask.
         tr: Repetition time in seconds for integration.
 
@@ -565,8 +649,8 @@ def estimate_k2_per_voxel(
 
     Notes:
         - K2 ≈ 0: Intact blood-brain barrier
-        - K2 > 0.5: Significant BBB disruption (leakage)
-        - Negative K2 values are clipped to 0 (non-physical)
+        - K2 > 0: BBB disruption (T1 leakage)
+        - Uses vectorized OLS for efficiency
 
     References:
         Boxerman JL, Schmainda KM, Weisskoff RM. AJNR 2006;27:859-867.
@@ -574,99 +658,93 @@ def estimate_k2_per_voxel(
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
 
-    if aif.ndim != 1:
-        raise ValueError(f"AIF must be 1D, got {aif.ndim}D")
-
     n_timepoints = concentration.shape[3]
-    if len(aif) != n_timepoints:
-        raise ValueError(
-            f"AIF length ({len(aif)}) must match concentration "
-            f"timepoints ({n_timepoints})"
-        )
-
-    # Compute cumulative integrals using trapezoidal rule
-    # ∫C_tissue(τ)dτ from 0 to t
-    cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
-
-    # ∫AIF(τ)dτ from 0 to t
-    cumsum_aif = np.cumsum(aif) * tr
-
-    # Initialize K2 map
     k2_map = np.zeros(concentration.shape[:3], dtype=np.float64)
 
-    # Create mask of valid voxels
+    # Compute mean brain reference curve C̄(t)
+    c_bar = _compute_mean_brain_reference(concentration, brain_mask)
+    if c_bar is None:
+        return k2_map
+
+    # Derive regression start from C̄ peak (2 frames after peak)
+    regression_start = int(np.argmax(c_bar)) + 2
+    if regression_start >= n_timepoints - 2:
+        logger.warning(
+            "Mean reference peak at frame %d of %d — too late for regression",
+            regression_start - 2, n_timepoints,
+        )
+        return k2_map
+
+    # Build design matrix ONCE (same for all voxels)
+    # c_bar_post: instantaneous reference (sliced from regression_start)
+    c_bar_post = c_bar[regression_start:]
+    # cumsum_c_bar: integral from t=0, preserving first-pass leakage contribution
+    cumsum_c_bar = np.cumsum(c_bar) * tr
+    # Then sliced — different time origin from c_bar_post by design
+    cumsum_c_bar_post = cumsum_c_bar[regression_start:]
+
+    X = np.column_stack([c_bar_post, cumsum_c_bar_post])  # (n_post, 2)
+
+    # Condition check on shared design matrix
+    if np.linalg.cond(X) > 1e8:
+        logger.warning("Mean brain reference design matrix ill-conditioned")
+        return k2_map
+
+    # Determine valid voxels
     if brain_mask is not None:
         valid_mask = brain_mask
     else:
-        # Use voxels with signal above noise floor
         max_conc = np.max(concentration, axis=-1)
         valid_mask = max_conc > EPSILON_CONCENTRATION
 
-    # Find indices of valid voxels
     valid_indices = np.where(valid_mask)
+    n_voxels = len(valid_indices[0])
 
-    if len(valid_indices[0]) == 0:
+    if n_voxels == 0:
         return k2_map
 
-    # For each valid voxel, estimate K2 from linear regression
-    # C_tissue(t) = K1 × cumsum_aif + K2 × cumsum_tissue
-    # Using post-bolus phase (typically last 30-50% of acquisition)
-    post_bolus_start = int(n_timepoints * 0.5)
+    if n_voxels > 1_000_000:
+        logger.warning(
+            "K2 estimation on %d voxels (~%.0f MB); consider tighter brain mask",
+            n_voxels, n_voxels * (n_timepoints - regression_start) * 8 / 1e6,
+        )
 
-    for i in range(len(valid_indices[0])):
-        x, y, z = valid_indices[0][i], valid_indices[1][i], valid_indices[2][i]
+    # Vectorized solve: extract all valid voxel time courses
+    Y = concentration[
+        valid_indices[0], valid_indices[1], valid_indices[2], regression_start:
+    ]  # (n_voxels, n_post)
 
-        # Get tissue curve and its integral for this voxel
-        c_tissue = concentration[x, y, z, :]
-        integral_tissue = cumsum_tissue[x, y, z, :]
+    # lstsq: X @ coeffs = Y.T → coeffs shape (2, n_voxels)
+    coeffs, _, _, _ = np.linalg.lstsq(X, Y.T, rcond=None)
 
-        # Use post-bolus phase for regression
-        c_post = c_tissue[post_bolus_start:]
-        integral_post = integral_tissue[post_bolus_start:]
-        aif_integral_post = cumsum_aif[post_bolus_start:]
+    # NEGATE: K2_physical = -K2_regression (T1 leakage gives negative K2_reg)
+    # Clip: only correct T1-dominant leakage (positive K2_phys)
+    k2_values = np.clip(-coeffs[1, :], 0.0, K2_UPPER_BOUND)
 
-        # BSW 2-regressor OLS: C_tissue = K1 × ∫AIF + K2 × ∫C_tissue
-        # Design matrix X = [∫AIF, ∫C_tissue], solve for [K1, K2]
-        X = np.column_stack([aif_integral_post, integral_post])
-
-        # Condition number check (replaces det-based singularity check)
-        if np.linalg.cond(X) > 1e8:
-            continue
-
-        # OLS via SVD pseudoinverse: [K1, K2] = pinv(X) @ y
-        coeffs, _, _, _ = np.linalg.lstsq(X, c_post, rcond=None)
-        k2_estimate = coeffs[1]  # K2 = tissue-integral coefficient (BSW leakage rate)
-
-        # Clip to physical range [0, K2_UPPER_BOUND]
-        # Negative K2 would mean tissue is absorbing contrast from blood;
-        # values above K2_UPPER_BOUND are numerically degenerate OLS fits
-        k2_map[x, y, z] = min(max(0.0, k2_estimate), K2_UPPER_BOUND)
+    k2_map[valid_indices] = k2_values
 
     return k2_map
 
 
 def apply_k2_correction(
     concentration: npt.NDArray[np.floating],
-    aif: npt.NDArray[np.floating],
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
     tr: float = 1.5,
     k2_map: Optional[npt.NDArray[np.floating]] = None,
 ) -> K2CorrectionResult:
-    """Apply K2 leakage correction using the integral BSW method.
+    """Apply K2 leakage correction using the BSW method with mean brain reference.
 
     Implements the Boxerman-Schmainda-Weisskoff (BSW) leakage correction
-    method for DSC-MRI perfusion imaging.
+    for DSC-MRI using a mean brain reference curve C̄(t) rather than AIF
+    (Boxerman et al., AJNR 2006):
 
-    The correction formula (Boxerman et al., AJNR 2006):
-        C_corrected(t) = C_tissue(t) + K2 × ∫₀ᵗ C_AIF(τ)dτ
+        C_corrected(t) = C_tissue(t) + K2 × ∫₀ᵗ C̄(τ)dτ
 
-    T1 leakage causes signal increase (reduced apparent ΔR2*),
-    so correction ADDS to restore the true susceptibility effect.
-    The reference curve is the AIF, not the tissue curve.
+    K2 is estimated from the reference scale, so correction must use the
+    same reference. Using AIF would produce wrong magnitudes (AIF >> C̄).
 
     Args:
         concentration: 4D concentration array (x, y, z, time).
-        aif: 1D arterial input function (time).
         brain_mask: Optional 3D brain mask for voxel selection.
         tr: Repetition time in seconds for integration.
         k2_map: Pre-computed K2 map. If None, K2 is estimated per voxel.
@@ -680,21 +758,14 @@ def apply_k2_correction(
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
 
-    if aif.ndim != 1:
-        raise ValueError(f"AIF must be 1D, got {aif.ndim}D")
-
-    n_timepoints = concentration.shape[3]
-    if len(aif) != n_timepoints:
-        raise ValueError(
-            f"AIF length ({len(aif)}) must match concentration "
-            f"timepoints ({n_timepoints})"
-        )
+    # Compute AUC before any early returns (needed for QC regardless)
+    cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
+    auc_tissue = cumsum_tissue[..., -1].copy()
 
     # Estimate K2 if not provided
     if k2_map is None:
         k2_map = estimate_k2_per_voxel(
             concentration=concentration,
-            aif=aif,
             brain_mask=brain_mask,
             tr=tr,
         )
@@ -703,23 +774,32 @@ def apply_k2_correction(
     K2_THRESHOLD = 1e-4  # s⁻¹
     k2_map = np.where(k2_map > K2_THRESHOLD, k2_map, 0.0)
 
-    # Compute cumulative integral of AIF (standard BSW reference curve)
-    # ∫₀ᵗ C_AIF(τ)dτ
-    cumsum_aif = np.cumsum(aif) * tr
+    # Compute mean brain reference for correction
+    c_bar = _compute_mean_brain_reference(concentration, brain_mask)
+    if c_bar is None:
+        # No valid brain reference — skip correction entirely.
+        # Using AIF as fallback would be wrong: AIF >> C̄, so K2 × ∫AIF
+        # would overcorrect by 5-10x. No correction is safer.
+        logger.warning(
+            "K2 correction skipped: insufficient brain voxels for mean reference"
+        )
+        return K2CorrectionResult(
+            concentration_corrected=concentration.copy(),
+            k2_map=k2_map,
+            auc_tissue=auc_tissue,
+            correction_applied=False,
+        )
 
-    # Compute area under tissue curve (before correction) for QC
-    cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
-    auc_tissue = cumsum_tissue[..., -1].copy()
-
-    # Apply correction: C_corrected(t) = C_tissue(t) + K2 × ∫₀ᵗ C_AIF(τ)dτ
-    # T1 leakage reduces apparent ΔR2*, so we ADD back the leaked component.
-    # Broadcast AIF integral to 4D: (time,) → (1, 1, 1, time)
-    cumsum_aif_4d = cumsum_aif[np.newaxis, np.newaxis, np.newaxis, :]
+    # Compute cumulative integral of mean brain reference
+    cumsum_ref = np.cumsum(c_bar) * tr
+    cumsum_ref_4d = cumsum_ref[np.newaxis, np.newaxis, np.newaxis, :]
 
     # Expand K2 map to match time dimension for broadcasting
     k2_expanded = k2_map[..., np.newaxis]
 
-    concentration_corrected = concentration + k2_expanded * cumsum_aif_4d
+    # Apply correction: C_corrected(t) = C_tissue(t) + K2 × ∫₀ᵗ C̄(τ)dτ
+    # T1 leakage reduces apparent ΔR2*, so we ADD back the leaked component.
+    concentration_corrected = concentration + k2_expanded * cumsum_ref_4d
 
     # Ensure non-negative concentration (clip at zero)
     concentration_corrected = np.maximum(concentration_corrected, 0.0)

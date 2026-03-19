@@ -572,7 +572,6 @@ def _detect_and_correct_preload(
     # Apply K2 leakage correction
     correction_result = apply_k2_correction(
         concentration=conc_data,
-        aif=aif,
         brain_mask=brain_mask,
         tr=tr,
     )
