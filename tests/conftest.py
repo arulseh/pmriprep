@@ -21,6 +21,35 @@ import pytest
 # =============================================================================
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Add custom command-line options."""
+    parser.addoption(
+        "--runslow",
+        action="store_true",
+        default=False,
+        help="Run slow tests (multi-seed noise sweeps with 50 seeds)",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Skip slow and publication tests unless opted in."""
+    if not config.getoption("--runslow"):
+        skip_slow = pytest.mark.skip(reason="need --runslow option to run")
+        for item in items:
+            if "slow" in item.keywords:
+                item.add_marker(skip_slow)
+
+    # Publication tests only run when explicitly selected via -m publication
+    # (strict markers + addopts handles this via pytest's default behavior)
+
+
+# =============================================================================
+# Directory Fixtures
+# =============================================================================
+
+
 @pytest.fixture
 def test_fixtures_dir() -> Path:
     """Return the path to the tests/fixtures directory."""
