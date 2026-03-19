@@ -1672,6 +1672,9 @@ class T1Mapping(SimpleInterface):
         field_key = get_field_strength_key(field_strength)
         t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_parenchyma_upper"]
         t1_lower = T1_TISSUE_REFERENCE[field_key]["reject_min"]
+        # Save raw T1 before range clipping for post-offset recovery
+        t1_pre_clip = t1_map.copy()
+
         t1_map = np.where(
             (t1_map >= t1_lower) & (t1_map <= t1_upper), t1_map, np.nan,
         )
@@ -1686,6 +1689,7 @@ class T1Mapping(SimpleInterface):
         n_brain_pre_erosion = int(np.sum(brain_mask))
         n_edge = 0
         edge_erosion_skipped = False
+        edge_mask = np.zeros_like(brain_mask, dtype=bool)
         n_slices = shape[2]  # RAS orientation: axis 2 = slices
 
         if csf_excluded:
@@ -1804,6 +1808,51 @@ class T1Mapping(SimpleInterface):
             correction_result.median_t1_original,
             correction_result.median_t1_corrected,
         )
+
+        # Post-offset recovery: recover voxels clipped to NaN by range filter
+        # that would be valid after applying the offset correction.
+        t1_ref = T1_TISSUE_REFERENCE[field_key]
+        n_recovered = 0
+        if (
+            correction_result.correction_applied == "offset"
+            and correction_result.offset_ms is not None
+        ):
+            offset = correction_result.offset_ms
+            clamp_lo = t1_ref["reject_min"] * 0.9
+            # Gate: only recover voxels whose raw T1 is within one offset
+            # of the parenchyma upper bound — beyond that, the offset
+            # (derived from parenchyma) is not reliable for extreme T1.
+            raw_t1_max = t1_ref["t1_parenchyma_upper"] + abs(offset)
+            # Corrected values bounded by original parenchyma upper
+            recovery_upper = t1_ref["t1_parenchyma_upper"]
+
+            t1_raw_corrected = t1_pre_clip + offset  # no clip
+
+            recoverable = (
+                np.isnan(t1_map) & brain_mask       # currently NaN in final map
+                & ~edge_mask                          # NOT an edge-eroded voxel
+                & np.isfinite(t1_pre_clip)            # raw VFA fit succeeded
+                & (t1_pre_clip > 0)                   # positive T1
+                & (t1_pre_clip <= raw_t1_max)         # raw T1 gate
+                & (t1_raw_corrected >= clamp_lo)      # corrected lower bound
+                & (t1_raw_corrected <= recovery_upper) # corrected upper bound
+            )
+            n_recovered = int(np.sum(recoverable))
+            if n_recovered > 0:
+                t1_map[recoverable] = t1_raw_corrected[recoverable].astype(
+                    np.float32,
+                )
+                recovered_range = t1_raw_corrected[recoverable]
+                logger.info(
+                    "Post-offset recovery: %d voxels recovered "
+                    "(raw T1 %.0f-%.0fms, corrected %.0f-%.0fms)",
+                    n_recovered,
+                    float(t1_pre_clip[recoverable].min()),
+                    float(t1_pre_clip[recoverable].max()),
+                    float(recovered_range.min()),
+                    float(recovered_range.max()),
+                )
+        correction_info["n_recovered_post_offset"] = n_recovered
 
         # Fill interior NaN gaps (B1+ failures, range-filter, VFA noise)
         from pmriprep.utils.dce_t1_validation import fill_t1_gaps

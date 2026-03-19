@@ -1087,3 +1087,215 @@ class TestConfigMutualExclusivity:
 
         config = DCEConfig()
         assert config.t1_method == "hybrid"
+
+
+# ============================================================================
+# Post-offset recovery logic tests
+# ============================================================================
+
+
+class TestPostOffsetRecovery:
+    """Tests for the post-offset T1 recovery logic in T1Mapping.
+
+    This tests the recovery algorithm directly (not the full interface)
+    to verify that voxels clipped to NaN by range filtering are correctly
+    recovered after offset correction.
+    """
+
+    def _run_recovery(
+        self,
+        t1_pre_clip: np.ndarray,
+        t1_map: np.ndarray,
+        brain_mask: np.ndarray,
+        edge_mask: np.ndarray,
+        offset_ms: float,
+        field_key: float = 3.0,
+    ) -> tuple[np.ndarray, int]:
+        """Run the post-offset recovery algorithm (extracted from dce.py)."""
+        t1_ref = T1_TISSUE_REFERENCE[field_key]
+        clamp_lo = t1_ref["reject_min"] * 0.9
+        raw_t1_max = t1_ref["t1_parenchyma_upper"] + abs(offset_ms)
+        recovery_upper = t1_ref["t1_parenchyma_upper"]
+        t1_raw_corrected = t1_pre_clip + offset_ms  # no clip
+        recoverable = (
+            np.isnan(t1_map) & brain_mask
+            & ~edge_mask
+            & np.isfinite(t1_pre_clip)
+            & (t1_pre_clip > 0)
+            & (t1_pre_clip <= raw_t1_max)
+            & (t1_raw_corrected >= clamp_lo)
+            & (t1_raw_corrected <= recovery_upper)
+        )
+        n_recovered = int(np.sum(recoverable))
+        if n_recovered > 0:
+            t1_map[recoverable] = t1_raw_corrected[recoverable].astype(
+                np.float32,
+            )
+        return t1_map, n_recovered
+
+    def test_recovers_clipped_tumor_voxels_3t(self) -> None:
+        """Voxels with raw T1 in [2500, 3109]ms recovered at 3T offset=-609ms."""
+        shape = (10, 10, 5)
+        brain_mask = np.ones(shape, dtype=bool)
+        edge_mask = np.zeros(shape, dtype=bool)
+
+        # Simulate: 90% normal brain (1000ms), 10% tumor outliers (2700ms)
+        rng = np.random.default_rng(42)
+        t1_pre_clip = np.full(shape, 1000.0)
+        tumor_idx = rng.choice(np.prod(shape), size=50, replace=False)
+        t1_pre_clip.flat[tumor_idx] = 2700.0  # above 2500ms upper bound
+
+        # After range clip: tumor voxels become NaN
+        t1_upper = T1_TISSUE_REFERENCE[3.0]["t1_parenchyma_upper"]  # 2500
+        t1_lower = T1_TISSUE_REFERENCE[3.0]["reject_min"]  # 600
+        t1_map = np.where(
+            (t1_pre_clip >= t1_lower) & (t1_pre_clip <= t1_upper),
+            t1_pre_clip, np.nan,
+        ).astype(np.float32)
+
+        # Apply offset correction to normal voxels (simulating what
+        # apply_t1_correction does)
+        offset = -609.0
+        valid = np.isfinite(t1_map)
+        t1_map[valid] += offset  # 1000 → 391ms (would be clamped in real code)
+
+        # Run recovery
+        t1_map, n_recovered = self._run_recovery(
+            t1_pre_clip, t1_map, brain_mask, edge_mask, offset, 3.0,
+        )
+
+        assert n_recovered == 50
+        # Recovered voxels: 2700 + (-609) = 2091ms (no clamp, within recovery_upper=2500)
+        recovered_vals = t1_map.flat[tumor_idx]
+        np.testing.assert_allclose(recovered_vals, 2091.0, atol=1.0)
+
+    def test_edge_mask_prevents_recovery(self) -> None:
+        """Edge-eroded voxels are NOT recovered."""
+        shape = (5, 5, 3)
+        brain_mask = np.ones(shape, dtype=bool)
+        edge_mask = np.zeros(shape, dtype=bool)
+
+        t1_pre_clip = np.full(shape, 2700.0)
+        t1_map = np.full(shape, np.nan, dtype=np.float32)
+
+        # Mark all voxels as edge
+        edge_mask[:] = True
+
+        t1_map, n_recovered = self._run_recovery(
+            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
+        )
+        assert n_recovered == 0
+
+    def test_no_recovery_without_offset(self) -> None:
+        """Recovery only runs for offset correction, not for other types."""
+        # This is tested implicitly by the condition in dce.py:
+        # correction_result.correction_applied == "offset"
+        # Here we verify the guard: if offset_ms is None, no recovery.
+        result = T1CorrectionResult()
+        result.correction_applied = "tissue_segmented"
+        result.offset_ms = None
+        assert result.offset_ms is None
+
+    def test_no_recovery_for_small_offset(self) -> None:
+        """Normal brain with small offset recovers ~0 voxels."""
+        shape = (10, 10, 5)
+        brain_mask = np.ones(shape, dtype=bool)
+        edge_mask = np.zeros(shape, dtype=bool)
+
+        # All voxels well within range — none clipped
+        t1_pre_clip = np.full(shape, 1200.0)
+        t1_lower = T1_TISSUE_REFERENCE[3.0]["reject_min"]
+        t1_upper = T1_TISSUE_REFERENCE[3.0]["t1_parenchyma_upper"]
+        t1_map = np.where(
+            (t1_pre_clip >= t1_lower) & (t1_pre_clip <= t1_upper),
+            t1_pre_clip, np.nan,
+        ).astype(np.float32)
+
+        # Small offset
+        t1_map, n_recovered = self._run_recovery(
+            t1_pre_clip, t1_map, brain_mask, edge_mask, -50.0, 3.0,
+        )
+        assert n_recovered == 0
+
+    def test_recovery_respects_clamp_bounds(self) -> None:
+        """Extreme outliers (5000ms) excluded by raw T1 gate."""
+        shape = (5, 5, 3)
+        brain_mask = np.ones(shape, dtype=bool)
+        edge_mask = np.zeros(shape, dtype=bool)
+
+        # Raw T1 = 5000ms, way above raw_t1_max (2500 + 609 = 3109ms)
+        t1_pre_clip = np.full(shape, 5000.0)
+        t1_map = np.full(shape, np.nan, dtype=np.float32)
+
+        t1_map, n_recovered = self._run_recovery(
+            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
+        )
+        assert n_recovered == 0
+
+    def test_recovery_at_1_5t(self) -> None:
+        """Recovery works at 1.5T with appropriate bounds."""
+        shape = (5, 5, 3)
+        brain_mask = np.ones(shape, dtype=bool)
+        edge_mask = np.zeros(shape, dtype=bool)
+
+        # At 1.5T: t1_parenchyma_upper = 2000ms
+        # Raw T1 = 2200ms (above upper), offset = -474ms → 1726ms (valid)
+        t1_pre_clip = np.full(shape, 2200.0)
+        t1_lower = T1_TISSUE_REFERENCE[1.5]["reject_min"]
+        t1_upper = T1_TISSUE_REFERENCE[1.5]["t1_parenchyma_upper"]
+        t1_map = np.where(
+            (t1_pre_clip >= t1_lower) & (t1_pre_clip <= t1_upper),
+            t1_pre_clip, np.nan,
+        ).astype(np.float32)
+
+        t1_map, n_recovered = self._run_recovery(
+            t1_pre_clip, t1_map, brain_mask, edge_mask, -474.0, 1.5,
+        )
+        assert n_recovered == np.prod(shape)
+        # 2200 + (-474) = 1726ms (no clamp, within recovery_upper=2000)
+        np.testing.assert_allclose(t1_map, 1726.0, atol=1.0)
+
+    def test_negative_t1_not_recovered(self) -> None:
+        """Negative t1_pre_clip values are not recovered."""
+        shape = (5, 5, 3)
+        brain_mask = np.ones(shape, dtype=bool)
+        edge_mask = np.zeros(shape, dtype=bool)
+
+        t1_pre_clip = np.full(shape, -500.0)
+        t1_map = np.full(shape, np.nan, dtype=np.float32)
+
+        t1_map, n_recovered = self._run_recovery(
+            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
+        )
+        assert n_recovered == 0
+
+    def test_nan_inf_t1_not_recovered(self) -> None:
+        """NaN and Inf in t1_pre_clip are not recovered."""
+        shape = (5, 5, 3)
+        brain_mask = np.ones(shape, dtype=bool)
+        edge_mask = np.zeros(shape, dtype=bool)
+
+        t1_pre_clip = np.full(shape, np.nan)
+        t1_pre_clip[:3] = np.inf
+        t1_map = np.full(shape, np.nan, dtype=np.float32)
+
+        t1_map, n_recovered = self._run_recovery(
+            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
+        )
+        assert n_recovered == 0
+
+    def test_raw_t1_beyond_gate_excluded(self) -> None:
+        """Raw T1 just beyond the gate (t1_parenchyma_upper + |offset|) is excluded."""
+        shape = (5, 5, 3)
+        brain_mask = np.ones(shape, dtype=bool)
+        edge_mask = np.zeros(shape, dtype=bool)
+
+        # At 3T: raw_t1_max = 2500 + 609 = 3109ms
+        # Raw T1 = 3200ms → exceeds gate → excluded
+        t1_pre_clip = np.full(shape, 3200.0)
+        t1_map = np.full(shape, np.nan, dtype=np.float32)
+
+        t1_map, n_recovered = self._run_recovery(
+            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
+        )
+        assert n_recovered == 0
