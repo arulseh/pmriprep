@@ -816,6 +816,13 @@ def apply_k2_correction(
     )
 
 
+# K2 QC thresholds (s⁻¹)
+# Boxerman et al. AJNR 2006;27:859-867; Schmainda et al. Neuro Oncol 2015
+_K2_CLINICAL_THRESHOLD: Final[float] = 0.04  # clinically meaningful BBB disruption
+_K2_LEAKY_THRESHOLD: Final[float] = 0.1  # used by dsc_cbv_constraint.py
+_K2_SEVERE_THRESHOLD: Final[float] = 0.10  # physiological maximum (Boxerman 2006)
+
+
 def _compute_k2_qc_metrics(
     k2_map: npt.NDArray[np.floating],
     brain_mask: Optional[npt.NDArray[np.bool_]],
@@ -847,6 +854,7 @@ def _compute_k2_qc_metrics(
             "k2_median": 0.0,
             "percent_leaky_voxels": 0.0,
             "percent_severe_leakage": 0.0,
+            "percent_above_clinical_max": 0.0,
         }
 
     # K2 statistics
@@ -855,14 +863,17 @@ def _compute_k2_qc_metrics(
     k2_max = float(np.max(k2_values))
     k2_median = float(np.median(k2_values))
 
-    # Fraction of voxels with BBB disruption
-    # K2 > 0.1 indicates leakage
-    n_leaky = int(np.sum(k2_values > 0.1))
+    # Fraction of voxels with BBB disruption (consumed by dsc_cbv_constraint.py)
+    n_leaky = int(np.sum(k2_values > _K2_LEAKY_THRESHOLD))
     percent_leaky = 100.0 * n_leaky / k2_values.size
 
-    # Fraction with severe leakage (K2 > 0.5)
-    n_severe = int(np.sum(k2_values > 0.5))
+    # Fraction with severe leakage (numerically suspect fits)
+    n_severe = int(np.sum(k2_values > _K2_SEVERE_THRESHOLD))
     percent_severe = 100.0 * n_severe / k2_values.size
+
+    # Fraction above clinical maximum (Boxerman 2006)
+    n_clinical = int(np.sum(k2_values > _K2_CLINICAL_THRESHOLD))
+    percent_clinical = 100.0 * n_clinical / k2_values.size
 
     return {
         "k2_mean": k2_mean,
@@ -871,6 +882,7 @@ def _compute_k2_qc_metrics(
         "k2_median": k2_median,
         "percent_leaky_voxels": percent_leaky,
         "percent_severe_leakage": percent_severe,
+        "percent_above_clinical_max": percent_clinical,
         "n_brain_voxels": int(k2_values.size),
         "auc_mean": float(np.mean(auc_values)) if auc_values.size > 0 else 0.0,
     }

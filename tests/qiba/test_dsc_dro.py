@@ -1006,6 +1006,21 @@ class TestTCIAGBMDSCDRO:
             f"Too few K2 nonzero voxels: {k2_nonzero}/{brain_mask.sum()}"
         )
 
+        # K2 should be elevated in tumor-leak ROI and near-zero in noleak ROI
+        leak_k2 = k2_map_2d[dro.roi_masks["tumor_leak"]]
+        noleak_k2 = k2_map_2d[dro.roi_masks["tumor_noleak"]]
+
+        assert np.median(leak_k2) > 0.001, (
+            f"Leak ROI K2 should be non-zero, got median {np.median(leak_k2):.4f}"
+        )
+        assert np.median(noleak_k2) < 0.01, (
+            f"Noleak ROI K2 should be near-zero, got median {np.median(noleak_k2):.4f}"
+        )
+        assert np.median(leak_k2) > np.median(noleak_k2), (
+            f"Leak K2 ({np.median(leak_k2):.4f}) should exceed noleak K2 "
+            f"({np.median(noleak_k2):.4f})"
+        )
+
     # -- Test E: Cross-method rCBV consistency ---
 
     def test_cross_method_rcbv_consistency(self) -> None:

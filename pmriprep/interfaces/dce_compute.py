@@ -484,6 +484,7 @@ _MODEL_HAS_VP = {"extended_tofts", "patlak", "2cxm"}
 _K2_QC_KEYS = {
     "k2_mean", "k2_std", "k2_max", "k2_median",
     "percent_leaky_voxels", "percent_severe_leakage",
+    "percent_above_clinical_max",
     "n_brain_voxels", "auc_mean",
 }
 
