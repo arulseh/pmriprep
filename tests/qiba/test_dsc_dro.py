@@ -859,7 +859,8 @@ class TestTCIAGBMDSCDRO:
         """rCBV = CBV(noleak) / CBV(WM) should approximate GT ~1.74.
 
         Ground truth (Semmineh 2017): tumor CBV=6.1%, WM CBV=3.5%.
-        Tolerance: 0.5 - 5.0 (generous for deconvolution-based rCBV).
+        Tolerance: 0.8 - 4.0 (Law 2003: GBM rCBV 1.5-5.0, lower bound excludes
+        sub-NAWM values, upper bound catches >2x systematic overestimation).
         """
         dro = load_tcia_dro(TCIA_CONSENSUS_15T)
         results = deconvolve_tcia_regions(dro, method)
@@ -870,9 +871,9 @@ class TestTCIAGBMDSCDRO:
         assert nawm_cbv > 0, f"NAWM CBV should be positive, got {nawm_cbv:.4f}"
 
         rcbv = noleak_cbv / nawm_cbv
-        assert 0.5 < rcbv < 5.0, (
+        assert 0.8 < rcbv < 4.0, (
             f"[{method}] rCBV(noleak/WM) = {rcbv:.3f}, "
-            f"expected 0.5-5.0 (GT ~1.74)"
+            f"expected 0.8-4.0 (GT ~1.74)"
         )
 
     # -- Test C: K2 correction effectiveness ---
@@ -1270,7 +1271,7 @@ class TestTCIAGBMDSCDRO:
 
     @pytest.mark.parametrize("method", TCIA_METHODS)
     def test_rcbv_noleak_3t(self, method: str) -> None:
-        """rCBV at 3T should match 1.5T range (0.5-5.0, GT ~1.74).
+        """rCBV at 3T should match 1.5T range (0.8-4.0, GT ~1.74).
 
         Extends test_rcbv_noleak to 3T field strength.
         """

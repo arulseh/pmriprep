@@ -586,11 +586,7 @@ def estimate_k2_per_voxel(
 
     # Compute cumulative integrals using trapezoidal rule
     # ∫C_tissue(τ)dτ from 0 to t
-    try:
-        # numpy 2.0+
-        cumsum_tissue = np.cumsum(concentration, axis=-1) * tr  # type: ignore[call-overload]
-    except AttributeError:
-        cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
+    cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
 
     # ∫AIF(τ)dτ from 0 to t
     cumsum_aif = np.cumsum(aif) * tr
@@ -632,14 +628,13 @@ def estimate_k2_per_voxel(
         # BSW 2-regressor OLS: C_tissue = K1 × ∫AIF + K2 × ∫C_tissue
         # Design matrix X = [∫AIF, ∫C_tissue], solve for [K1, K2]
         X = np.column_stack([aif_integral_post, integral_post])
-        XtX = X.T @ X
 
-        # Singularity check
-        if np.linalg.det(XtX) < EPSILON_CONCENTRATION:
+        # Condition number check (replaces det-based singularity check)
+        if np.linalg.cond(X) > 1e8:
             continue
 
-        # OLS: [K1, K2] = (X^T X)^{-1} X^T y
-        coeffs = np.linalg.solve(XtX, X.T @ c_post)
+        # OLS via SVD pseudoinverse: [K1, K2] = pinv(X) @ y
+        coeffs, _, _, _ = np.linalg.lstsq(X, c_post, rcond=None)
         k2_estimate = coeffs[1]  # K2 = tissue-integral coefficient (BSW leakage rate)
 
         # Clip to physical range [0, K2_UPPER_BOUND]

@@ -21,6 +21,7 @@ References:
     Magn Reson Med 50(1):164-174.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -36,6 +37,8 @@ from pmriprep.utils.dsc_constants import (
     DEFAULT_SVD_THRESHOLD,
     EPSILON_CONCENTRATION,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -1218,6 +1221,8 @@ class TikhonovDeconvolutionResult:
         n_lambda_evaluated: Number of λ values evaluated during optimization.
         residual_norm: ||AR - C||² at the solution.
         regularization_norm: ||R||² at the solution.
+        gcv_boundary_expanded: True if the GCV search was expanded beyond
+            the initial lambda_max boundary.
     """
 
     residue: npt.NDArray[np.floating]
@@ -1229,6 +1234,7 @@ class TikhonovDeconvolutionResult:
     n_lambda_evaluated: int
     residual_norm: float
     regularization_norm: float
+    gcv_boundary_expanded: bool = False
 
     def get_tmax(self, dt: float = 1.0) -> float:
         """Get time to maximum of residue function.
@@ -1390,6 +1396,7 @@ def tikhonov_deconvolve(
         gcv, _ = _compute_gcv_score(tissue_curve, u, s, vh, lam)
         return gcv
 
+    gcv_boundary_expanded = False
     try:
         result = minimize_scalar(
             gcv_objective,
@@ -1398,6 +1405,52 @@ def tikhonov_deconvolve(
         )
         if result.success and np.isfinite(result.x):
             best_lambda = 10.0 ** result.x
+
+            # Boundary detection: if GCV minimum is at the upper boundary,
+            # expand the search range (Hansen, SIAM 1998).
+            if result.x > np.log10(lambda_max) - 0.05:
+                expanded_lambda_max = min(lambda_max * 10, 100.0)
+                if expanded_lambda_max <= lambda_max * 1.1:
+                    logger.debug(
+                        "GCV at upper boundary but lambda_max=%.2f "
+                        "already near hard cap; cannot expand.",
+                        lambda_max,
+                    )
+                else:
+                    logger.debug(
+                        "GCV selected lambda=%.4f at upper boundary "
+                        "(lambda_max=%.4f), expanding search to %.2f",
+                        best_lambda, lambda_max, expanded_lambda_max,
+                    )
+                    try:
+                        result2 = minimize_scalar(
+                            gcv_objective,
+                            bounds=(
+                                np.log10(lambda_min),
+                                np.log10(expanded_lambda_max),
+                            ),
+                            method="bounded",
+                        )
+                        if (
+                            result2.success
+                            and np.isfinite(result2.x)
+                            and np.isfinite(result2.fun)
+                            and result2.fun <= result.fun
+                        ):
+                            best_lambda = 10.0 ** result2.x
+                            gcv_boundary_expanded = True
+                            if result2.x > np.log10(expanded_lambda_max) - 0.05:
+                                logger.debug(
+                                    "GCV still at boundary after "
+                                    "expansion (lambda=%.4f).",
+                                    best_lambda,
+                                )
+                    except Exception as e:
+                        logger.debug(
+                            "Expanded GCV search failed (%s); keeping "
+                            "initial lambda=%.4f",
+                            e, best_lambda,
+                        )
         else:
             best_lambda = 0.1
     except Exception:
@@ -1438,6 +1491,7 @@ def tikhonov_deconvolve(
         n_lambda_evaluated=n_lambda,
         residual_norm=residual_norm,
         regularization_norm=regularization_norm,
+        gcv_boundary_expanded=gcv_boundary_expanded,
     )
 
 

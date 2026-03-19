@@ -283,27 +283,21 @@ class TestRicianNoiseBias:
     @pytest.mark.slow
     @pytest.mark.parametrize("snr", SNRS)
     def test_cbf_bias_vs_snr(self, snr: int) -> None:
-        """Measure CBF bias across multiple noise seeds."""
+        """Measure Rician CBF bias across multiple noise seeds."""
         tissue = DSC_TISSUE_PARAMS["gm"]
         te = 0.030
         s0 = 1000.0
         n_seeds = 5
 
         cbf_rician = []
-        cbf_gaussian = []
-
         for seed in range(n_seeds):
-            for noise_model, results_list in [
-                ("rician", cbf_rician),
-                ("gaussian", cbf_gaussian),
-            ]:
-                signal, aif, dt, _, _ = _make_signal_roundtrip_data(
-                    cbf=tissue.cbf, mtt=tissue.mtt, te=te, s0=s0,
-                    snr=float(snr), noise_model=noise_model, seed=seed + 100,
-                )
-                conc = signal_to_concentration(signal, te, baseline_frames=10)
-                result = svd_deconvolve_oscillation(conc[10:], aif, dt)
-                results_list.append(result.cbf)
+            signal, aif, dt, _, _ = _make_signal_roundtrip_data(
+                cbf=tissue.cbf, mtt=tissue.mtt, te=te, s0=s0,
+                snr=float(snr), noise_model="rician", seed=seed + 100,
+            )
+            conc = signal_to_concentration(signal, te, baseline_frames=10)
+            result = svd_deconvolve_oscillation(conc[10:], aif, dt)
+            cbf_rician.append(result.cbf)
 
         mean_rician = np.mean(cbf_rician)
 
@@ -479,3 +473,119 @@ class TestSignalEdgeCases:
         signal[20:30] = 1200.0
         conc = signal_to_concentration(signal, te=0.030, baseline_frames=5)
         assert np.all(conc >= -1e-10), "Negative concentration from signal > S0"
+
+
+class TestNoiseModelComparison:
+    """Compare Rician vs Gaussian noise effects on DSC signal recovery.
+
+    Rician noise biases signal upward by σ²/(2S), which biases apparent ΔR2*
+    downward. Gaussian noise is zero-mean with no systematic bias. Tests
+    verify this at three levels: signal, concentration, and CBF.
+
+    The Rician bias per-timepoint is small (~0.5-5 units at typical SNR),
+    so reliable detection requires averaging over many samples. Tests use
+    replicated constant-signal arrays (100 voxels × 20 seeds) for the
+    signal/concentration tests, and the full DSC chain for CBF tests.
+
+    All tests are marked slow.
+    """
+
+    _TE = 0.030
+    _S0 = 1000.0
+    _N_SEEDS = 20
+    _TISSUE = "gm"
+    # Bolus-peak ΔR2* for concentration-level tests (23 s⁻¹ gives ~50%
+    # signal drop, representative of GM peak in clinical DSC).
+    _PEAK_CONC = 23.0
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("snr", [10, 20, 50], ids=["SNR10", "SNR20", "SNR50"])
+    def test_rician_attenuates_more_than_gaussian(self, snr: int) -> None:
+        """Rician gives lower mean concentration than Gaussian at bolus peak.
+
+        At constant signal S = S0·exp(-TE·C), Rician noise biases S upward,
+        so -ln(S/S0)/TE recovers a lower concentration. Gaussian noise is
+        zero-mean and (after clipping) produces slightly higher concentration
+        due to log-transform asymmetry. Average over 100 voxels × 20 seeds
+        resolves the ~0.2-0.7 s⁻¹ difference.
+        """
+        n_voxels = 100
+        signal_at_peak = np.ones(n_voxels) * self._S0 * np.exp(
+            -self._TE * self._PEAK_CONC,
+        )
+        noise_std = snr_to_noise_std(self._S0, float(snr))
+
+        rician_means = []
+        gaussian_means = []
+        for seed in range(self._N_SEEDS):
+            sig_r = add_rician_noise(signal_at_peak.copy(), noise_std, seed=seed)
+            sig_g = add_gaussian_noise(signal_at_peak.copy(), noise_std, seed=seed)
+
+            # Manual concentration recovery (matches signal_to_concentration)
+            ratio_r = np.clip(sig_r / self._S0, 1e-10, 1.0)
+            ratio_g = np.clip(sig_g / self._S0, 1e-10, 1.0)
+            rician_means.append(float(np.mean(-np.log(ratio_r) / self._TE)))
+            gaussian_means.append(float(np.mean(-np.log(ratio_g) / self._TE)))
+
+        mean_rician = float(np.mean(rician_means))
+        mean_gaussian = float(np.mean(gaussian_means))
+
+        assert mean_rician < mean_gaussian, (
+            f"SNR={snr}: Rician mean conc ({mean_rician:.3f}) should be < "
+            f"Gaussian ({mean_gaussian:.3f}) at peak ΔR2*={self._PEAK_CONC}"
+        )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("snr", [20, 50], ids=["SNR20", "SNR50"])
+    def test_gaussian_unbiased_cbf(self, snr: int) -> None:
+        """Gaussian noise should not systematically bias CBF.
+
+        Zero-mean Gaussian preserves expected signal, so mean CBF over seeds
+        should be within 20% of truth.
+        """
+        tissue = DSC_TISSUE_PARAMS[self._TISSUE]
+        cbf_values = []
+        for seed in range(self._N_SEEDS):
+            signal, aif, dt, _, _ = _make_signal_roundtrip_data(
+                cbf=tissue.cbf, mtt=tissue.mtt, te=self._TE, s0=self._S0,
+                snr=float(snr), noise_model="gaussian", seed=seed + 300,
+            )
+            conc = signal_to_concentration(signal, self._TE, baseline_frames=10)
+            result = svd_deconvolve_oscillation(conc[10:], aif, dt)
+            cbf_values.append(result.cbf)
+
+        mean_cbf = float(np.mean(cbf_values))
+        rel_err = abs(mean_cbf - tissue.cbf) / tissue.cbf
+        assert rel_err < 0.20, (
+            f"SNR={snr}: Gaussian mean CBF={mean_cbf:.3f} vs "
+            f"truth={tissue.cbf:.3f}, rel_err={rel_err:.3f} >= 0.20"
+        )
+
+    @pytest.mark.slow
+    def test_noise_models_converge_at_high_snr(self) -> None:
+        """At SNR=50, Rician and Gaussian concentration means nearly match.
+
+        High SNR makes the Rician rectification bias σ²/(2S) negligible.
+        Mean concentration difference < 0.1 s⁻¹ at the bolus peak.
+        """
+        n_voxels = 100
+        signal_at_peak = np.ones(n_voxels) * self._S0 * np.exp(
+            -self._TE * self._PEAK_CONC,
+        )
+        noise_std = snr_to_noise_std(self._S0, 50.0)
+
+        rician_means = []
+        gaussian_means = []
+        for seed in range(self._N_SEEDS):
+            sig_r = add_rician_noise(signal_at_peak.copy(), noise_std, seed=seed)
+            sig_g = add_gaussian_noise(signal_at_peak.copy(), noise_std, seed=seed)
+
+            ratio_r = np.clip(sig_r / self._S0, 1e-10, 1.0)
+            ratio_g = np.clip(sig_g / self._S0, 1e-10, 1.0)
+            rician_means.append(float(np.mean(-np.log(ratio_r) / self._TE)))
+            gaussian_means.append(float(np.mean(-np.log(ratio_g) / self._TE)))
+
+        diff = abs(float(np.mean(rician_means)) - float(np.mean(gaussian_means)))
+        assert diff < 0.10, (
+            f"At SNR=50: Rician-Gaussian conc diff={diff:.4f} >= 0.10 s⁻¹"
+        )

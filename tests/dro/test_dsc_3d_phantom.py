@@ -18,6 +18,7 @@ from pmriprep.utils.dsc_deconvolution import (
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
     svd_deconvolve_standard_batch,
+    tikhonov_deconvolve,
 )
 from pmriprep.utils.dsc_preload import apply_k2_correction
 from pmriprep.utils.dsc_signal import (
@@ -309,3 +310,132 @@ class TestK2CorrectionInChain:
         assert np.all(np.isfinite(
             result.concentration_corrected[masks["brain"]]
         ))
+
+
+class TestCrossMethodAgreement3D:
+    """Compare sSVD, oSVD, and Tikhonov on the same noiseless 3D phantom.
+
+    All three methods are non-parametric deconvolution approaches that should
+    agree on CBF/CBV/MTT within regularization differences when applied to
+    noiseless data. With threshold=0.001 for sSVD (matching zero-noise
+    convention from test_dsc_recovery.py), all singular values carry signal
+    and cross-method agreement improves to 15% for CBF/CBV and 25% for MTT.
+
+    Physics justification: Ostergaard et al. (MRM 1996) — SVD threshold
+    should match noise level; zero noise implies near-zero threshold.
+    """
+
+    METHODS = {
+        "ssvd": svd_deconvolve_standard,
+        "osvd": svd_deconvolve_oscillation,
+        "tikhonov": tikhonov_deconvolve,
+    }
+
+    @staticmethod
+    def _deconvolve_per_tissue(
+        volume: np.ndarray,
+        masks: dict,
+        aif_post: np.ndarray,
+    ) -> dict:
+        """Run all 3 methods on per-tissue median curves.
+
+        For sSVD, passes threshold=0.001 to match the zero-noise convention
+        (Liu et al., MRM 1999). For oSVD, threshold_min defaults to a low
+        value and the oscillation index selects the appropriate threshold.
+
+        Returns dict of {method_name: {tissue: result}}.
+        """
+        results: dict = {}
+        for method_name, method_fn in TestCrossMethodAgreement3D.METHODS.items():
+            results[method_name] = {}
+            for tissue_key in ["gm", "wm", "tumor"]:
+                curves = volume[masks[tissue_key], _BASELINE:]
+                median_curve = np.median(curves, axis=0)
+                if method_name == "ssvd":
+                    results[method_name][tissue_key] = method_fn(
+                        median_curve, aif_post, _DT, threshold=0.001,
+                    )
+                else:
+                    results[method_name][tissue_key] = method_fn(
+                        median_curve, aif_post, _DT,
+                    )
+        return results
+
+    def test_cbf_agreement_across_methods(self) -> None:
+        """CBF should agree within 15% pairwise across all 3 methods."""
+        volume, masks, aif_full = _build_full_chain_phantom()
+        aif_post = aif_full[_BASELINE:]
+        results = self._deconvolve_per_tissue(volume, masks, aif_post)
+
+        import itertools
+        method_names = list(self.METHODS.keys())
+        for tissue_key in ["gm", "wm", "tumor"]:
+            for m1, m2 in itertools.combinations(method_names, 2):
+                cbf1 = results[m1][tissue_key].cbf
+                cbf2 = results[m2][tissue_key].cbf
+                mean_cbf = (cbf1 + cbf2) / 2.0
+                if mean_cbf > 0:
+                    rel_diff = abs(cbf1 - cbf2) / mean_cbf
+                    assert rel_diff < 0.15, (
+                        f"CBF {tissue_key}: {m1}={cbf1:.1f} vs "
+                        f"{m2}={cbf2:.1f}, rel_diff={rel_diff:.3f} >= 0.15"
+                    )
+
+    def test_cbv_agreement_across_methods(self) -> None:
+        """CBV should agree within 15% pairwise across all 3 methods."""
+        volume, masks, aif_full = _build_full_chain_phantom()
+        aif_post = aif_full[_BASELINE:]
+        results = self._deconvolve_per_tissue(volume, masks, aif_post)
+
+        import itertools
+        method_names = list(self.METHODS.keys())
+        for tissue_key in ["gm", "wm", "tumor"]:
+            for m1, m2 in itertools.combinations(method_names, 2):
+                cbv1 = results[m1][tissue_key].cbv
+                cbv2 = results[m2][tissue_key].cbv
+                mean_cbv = (cbv1 + cbv2) / 2.0
+                if mean_cbv > 0:
+                    rel_diff = abs(cbv1 - cbv2) / mean_cbv
+                    assert rel_diff < 0.15, (
+                        f"CBV {tissue_key}: {m1}={cbv1:.2f} vs "
+                        f"{m2}={cbv2:.2f}, rel_diff={rel_diff:.3f} >= 0.15"
+                    )
+
+    def test_mtt_agreement_across_methods(self) -> None:
+        """MTT should agree within 25% pairwise (MTT compounds CBV/CBF)."""
+        volume, masks, aif_full = _build_full_chain_phantom()
+        aif_post = aif_full[_BASELINE:]
+        results = self._deconvolve_per_tissue(volume, masks, aif_post)
+
+        import itertools
+        method_names = list(self.METHODS.keys())
+        for tissue_key in ["gm", "wm", "tumor"]:
+            for m1, m2 in itertools.combinations(method_names, 2):
+                mtt1 = results[m1][tissue_key].mtt
+                mtt2 = results[m2][tissue_key].mtt
+                mean_mtt = (mtt1 + mtt2) / 2.0
+                if mean_mtt > 0:
+                    rel_diff = abs(mtt1 - mtt2) / mean_mtt
+                    assert rel_diff < 0.25, (
+                        f"MTT {tissue_key}: {m1}={mtt1:.2f}s vs "
+                        f"{m2}={mtt2:.2f}s, rel_diff={rel_diff:.3f} >= 0.25"
+                    )
+
+    def test_tissue_ordering_all_methods(self) -> None:
+        """All 3 methods should agree: tumor CBF > GM CBF > WM CBF."""
+        volume, masks, aif_full = _build_full_chain_phantom()
+        aif_post = aif_full[_BASELINE:]
+        results = self._deconvolve_per_tissue(volume, masks, aif_post)
+
+        for method_name in self.METHODS:
+            cbf_tumor = results[method_name]["tumor"].cbf
+            cbf_gm = results[method_name]["gm"].cbf
+            cbf_wm = results[method_name]["wm"].cbf
+            assert cbf_tumor > cbf_gm, (
+                f"{method_name}: tumor CBF ({cbf_tumor:.1f}) should > "
+                f"GM CBF ({cbf_gm:.1f})"
+            )
+            assert cbf_gm > cbf_wm, (
+                f"{method_name}: GM CBF ({cbf_gm:.1f}) should > "
+                f"WM CBF ({cbf_wm:.1f})"
+            )

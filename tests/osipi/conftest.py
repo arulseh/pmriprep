@@ -8,6 +8,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -806,6 +807,9 @@ skip_no_perfplus_dro = pytest.mark.skipif(
     reason="Perf-plus DRO validation JSON not found",
 )
 
+# OSIPI DSC DRO data path
+OSIPI_DSC_DRO_CSV = OSIPI_GT_ROOT / "dsc_data.csv"
+
 # OSIPI ground truth AIF path
 OSIPI_AIF_PATH = OSIPI_GT_ROOT / "AIF.npz"
 
@@ -830,3 +834,75 @@ def load_osipi_aif() -> Optional[NDArray[np.floating]]:
 
     npz = np.load(str(OSIPI_AIF_PATH))
     return np.asarray(npz["Cp"], dtype=np.float64)
+
+
+# ---------------------------------------------------------------------------
+# OSIPI DSC DRO loading
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class OSIPIDSCCase:
+    """A single OSIPI DSC DRO test case.
+
+    Attributes:
+        label: Test case label from CSV.
+        c_tis: Tissue concentration time course (1D).
+        c_aif: AIF concentration time course (1D).
+        cbv: Ground truth CBV in ml/100ml.
+        cbf: Ground truth CBF in ml/100ml/min.
+        tr: Repetition time in seconds.
+    """
+
+    label: str
+    c_tis: NDArray[np.floating]
+    c_aif: NDArray[np.floating]
+    cbv: float
+    cbf: float
+    tr: float
+
+
+def load_osipi_dsc_dro() -> Optional[list]:
+    """Load OSIPI DSC DRO test cases from CSV.
+
+    Parses ``sourcedata/osipi/dsc_data.csv`` (from OSIPI Code Collection
+    commit a55b83d8, 2022-04-21). Contains 14 concentration-domain test
+    cases with known CBV/CBF ground truth and gamma-variate residue (λ=3).
+
+    Returns:
+        List of OSIPIDSCCase, or None if CSV not found.
+    """
+    import csv
+
+    if not OSIPI_DSC_DRO_CSV.exists():
+        return None
+
+    cases = []
+    with open(OSIPI_DSC_DRO_CSV) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            c_tis = np.array(
+                [float(x) for x in row["C_tis"].strip().split()],
+                dtype=np.float64,
+            )
+            c_aif = np.array(
+                [float(x) for x in row["C_aif"].strip().split()],
+                dtype=np.float64,
+            )
+            cases.append(
+                OSIPIDSCCase(
+                    label=row["label"].strip(),
+                    c_tis=c_tis,
+                    c_aif=c_aif,
+                    cbv=float(row["cbv"]),
+                    cbf=float(row["cbf"]),
+                    tr=float(row["tr"]),
+                )
+            )
+    return cases
+
+
+skip_no_osipi_dsc_dro = pytest.mark.skipif(
+    not OSIPI_DSC_DRO_CSV.exists(),
+    reason="OSIPI DSC DRO CSV not found (sourcedata/osipi/dsc_data.csv)",
+)

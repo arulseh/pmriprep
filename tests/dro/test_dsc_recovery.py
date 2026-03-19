@@ -270,10 +270,10 @@ CPI_PARAMS = [
 ]
 
 # CPI uses PCHIP spline through 6 control points to approximate an
-# exponential residue. The spline approximation introduces ~15-20%
-# error even at zero noise — this is inherent to the method.
+# exponential residue. The spline approximation introduces ~1-26% CBF
+# error even at zero noise (worst case: long MTT, Mehndiratta MRM 2013).
 CPI_NOISE_LEVELS = [
-    pytest.param(0.0, 0.40, 0.32, id="zero"),
+    pytest.param(0.0, 0.30, 0.25, id="zero"),
     pytest.param(0.02, 0.63, 0.48, id="low"),
     pytest.param(0.05, 0.68, 0.54, id="medium"),
 ]
