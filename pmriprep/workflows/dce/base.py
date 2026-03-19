@@ -3027,6 +3027,24 @@ def _transform_b1_to_vfa(b1_map_file=None, vfa_ref_file=None):
     b1_img = nib.load(b1_map_file)
     ref_img = nib.load(vfa_ref_file)
 
+    # Uniform B1+ maps (e.g., synthetic unity map when no B1+ data exists)
+    # can be created directly in target space, avoiding nilearn's
+    # "Resampling binary images" warning from out-of-FOV zeros.
+    b1_data = b1_img.get_fdata()
+    unique_vals = np.unique(b1_data[b1_data != 0])
+    if len(unique_vals) == 1:
+        import logging
+
+        logging.getLogger("nipype.workflow").info(
+            "Uniform B1+ map (value=%.2f) — creating directly in VFA space",
+            float(unique_vals[0]),
+        )
+        uniform_val = float(unique_vals[0])
+        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)
+        out_file = str(Path.cwd() / "b1_map_vfa_space.nii.gz")
+        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)
+        return out_file
+
     # Check if already in the same space (same shape + affine)
     if b1_img.shape[:3] == ref_img.shape[:3]:
         affine_diff = float(np.abs(b1_img.affine - ref_img.affine).max())
@@ -3063,6 +3081,24 @@ def _transform_b1_to_dce(b1_map_file=None, reference_file=None):
 
     b1_img = nib.load(b1_map_file)
     ref_img = nib.load(reference_file)
+
+    # Uniform B1+ maps (e.g., synthetic unity map when no B1+ data exists)
+    # can be created directly in target space, avoiding nilearn's
+    # "Resampling binary images" warning from out-of-FOV zeros.
+    b1_data = b1_img.get_fdata()
+    unique_vals = np.unique(b1_data[b1_data != 0])
+    if len(unique_vals) == 1:
+        import logging
+
+        logging.getLogger("nipype.workflow").info(
+            "Uniform B1+ map (value=%.2f) — creating directly in DCE space",
+            float(unique_vals[0]),
+        )
+        uniform_val = float(unique_vals[0])
+        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)
+        out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
+        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)
+        return out_file
 
     # Check if already in the same space
     if b1_img.shape[:3] == ref_img.shape[:3]:
