@@ -1789,7 +1789,19 @@ class T1Mapping(SimpleInterface):
             wm_probseg_arr = wm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             gm_probseg_arr = gm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
 
-        b1_corrected = isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map)
+        # A B1 map file may exist but be a synthetic uniform map (skip_b1=True,
+        # no AFI data). Check for actual spatial variation — std=0 means no
+        # real B1 correction was applied.
+        if isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map):
+            b1_std = float(np.std(b1_map[brain_mask]))
+            b1_corrected = b1_std > 1e-6
+            if not b1_corrected:
+                logger.info(
+                    "B1 map provided but uniform (std=%.2e) — treating as uncorrected",
+                    b1_std,
+                )
+        else:
+            b1_corrected = False
 
         t1_map_arr, correction_result = apply_t1_correction(
             t1_map,
