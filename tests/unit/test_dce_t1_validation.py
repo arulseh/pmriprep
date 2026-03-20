@@ -1454,3 +1454,106 @@ class TestVFAConditioningGate:
         assert result.correction_applied == "fallback"
         assert result.fallback_value_ms == T1_TISSUE_REFERENCE[3.0]["default"]
         assert "no tissue maps" in result.reason
+
+    def test_conditioning_gate_fills_entire_brain(
+        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Gate fallback must fill ALL brain voxels, not just valid VFA ones.
+
+        Regression test: before fix, fallback only filled valid_mask (37% of
+        brain) leaving 63% as NaN → no PK fit for those voxels.
+        """
+        t1_map = np.full((10, 10, 10), np.nan)
+        # Only 37% of brain voxels have valid T1 (simulating ill-conditioned VFA)
+        brain_voxels = np.argwhere(brain_mask)
+        n_brain = len(brain_voxels)
+        n_valid = int(0.37 * n_brain)
+        rng = np.random.default_rng(42)
+        valid_idx = rng.choice(n_brain, n_valid, replace=False)
+        for idx in valid_idx:
+            i, j, k = brain_voxels[idx]
+            t1_map[i, j, k] = 1090.0
+
+        wm, gm = probsegs
+
+        t1_corr, result = apply_t1_correction(
+            t1_map, field_strength=3.0, correction_mode="auto",
+            brain_mask=brain_mask,
+            e1_median=0.998, b1_corrected=False,
+            wm_probseg=wm, gm_probseg=gm,
+        )
+        assert result.correction_applied == "tissue_segmented"
+
+        # ALL brain voxels should be filled (not NaN)
+        brain_t1 = t1_corr[brain_mask]
+        n_nan_in_brain = np.sum(np.isnan(brain_t1))
+        assert n_nan_in_brain == 0, (
+            f"{n_nan_in_brain}/{np.sum(brain_mask)} brain voxels still NaN after fallback"
+        )
+
+    def test_uniform_fallback_fills_entire_brain(
+        self, brain_mask: np.ndarray,
+    ) -> None:
+        """Uniform fallback (no tissue maps) fills all brain voxels."""
+        t1_map = np.full((10, 10, 10), np.nan)
+        # Only some brain voxels have valid T1
+        brain_voxels = np.argwhere(brain_mask)
+        for idx in brain_voxels[:len(brain_voxels) // 3]:
+            i, j, k = idx
+            t1_map[i, j, k] = 1090.0
+
+        t1_corr, result = apply_t1_correction(
+            t1_map, field_strength=3.0, correction_mode="auto",
+            brain_mask=brain_mask,
+            e1_median=0.998, b1_corrected=False,
+            # No tissue maps → uniform fallback
+        )
+        assert result.correction_applied == "fallback"
+
+        brain_t1 = t1_corr[brain_mask]
+        n_nan_in_brain = np.sum(np.isnan(brain_t1))
+        assert n_nan_in_brain == 0, (
+            f"{n_nan_in_brain} brain voxels still NaN after uniform fallback"
+        )
+
+    def test_explicit_fallback_fills_entire_brain(self) -> None:
+        """Explicit fallback mode fills all brain voxels, not just valid ones."""
+        shape = (5, 5, 5)
+        mask = np.ones(shape, dtype=bool)
+        # Half the voxels are NaN (simulating failed VFA fit)
+        t1_map = np.full(shape, np.nan)
+        t1_map[:3] = 1050.0
+
+        t1_corr, result = apply_t1_correction(
+            t1_map, field_strength=3.0, correction_mode="fallback",
+            brain_mask=mask,
+        )
+        assert result.correction_applied == "fallback"
+        # ALL brain voxels should have the fallback value
+        assert not np.any(np.isnan(t1_corr[mask]))
+        np.testing.assert_allclose(
+            t1_corr[mask], T1_TISSUE_REFERENCE[3.0]["default"],
+        )
+
+    def test_hard_reject_fills_entire_brain(
+        self, brain_mask: np.ndarray,
+    ) -> None:
+        """Hard reject uniform fallback fills all brain voxels."""
+        t1_map = np.full((10, 10, 10), np.nan)
+        # Only some brain voxels have valid but out-of-range T1
+        brain_voxels = np.argwhere(brain_mask)
+        for idx in brain_voxels[:len(brain_voxels) // 3]:
+            i, j, k = idx
+            t1_map[i, j, k] = 400.0  # below reject_min at 3T (600)
+
+        t1_corr, result = apply_t1_correction(
+            t1_map, field_strength=3.0, correction_mode="auto",
+            brain_mask=brain_mask,
+        )
+        assert result.correction_applied == "fallback"
+
+        brain_t1 = t1_corr[brain_mask]
+        n_nan_in_brain = np.sum(np.isnan(brain_t1))
+        assert n_nan_in_brain == 0, (
+            f"{n_nan_in_brain} brain voxels still NaN after hard reject fallback"
+        )

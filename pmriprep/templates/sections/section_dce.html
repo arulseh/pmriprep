@@ -246,6 +246,33 @@
                 <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.t1_mapping.fraction_valid * 100) }}%</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.t1_mapping.t1_correction is defined %}
+            <div class="metric">
+                <div class="metric-label">T1 Source</div>
+                <div class="metric-value">
+                    {% if dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "tissue_segmented" %}
+                        Tissue-segmented (literature)
+                    {% elif dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "fallback" %}
+                        Uniform ({{ dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms | default(dce.qc_metrics.t1_mapping.median_t1_ms, true) | int }}ms)
+                    {% elif dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "offset" %}
+                        VFA (offset {{ "%+.0f"|format(dce.qc_metrics.t1_mapping.t1_correction.offset_ms) }}ms)
+                    {% else %}
+                        VFA
+                    {% endif %}
+                </div>
+            </div>
+            {% elif dce.qc_metrics.t1_mapping.skipped is defined and dce.qc_metrics.t1_mapping.skipped %}
+            <div class="metric">
+                <div class="metric-label">T1 Source</div>
+                <div class="metric-value">
+                    {% if dce.qc_metrics.t1_mapping.tissue_t1_used | default(false) %}
+                        Tissue-segmented (literature)
+                    {% else %}
+                        Uniform ({{ dce.qc_metrics.t1_mapping.mean_t1_wm_ms | int }}ms)
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
         {% if dce.images.t1 %}

@@ -535,7 +535,8 @@ def apply_t1_correction(
         return t1_map, result
 
     elif correction_mode == "fallback":
-        t1_corrected = np.where(valid_mask, t1_ref["default"], t1_map)
+        fill = (brain_mask > 0.5) if brain_mask is not None else valid_mask
+        t1_corrected = np.where(fill, t1_ref["default"], np.nan)
         result.correction_applied = "fallback"
         result.reason = "User requested fallback to literature value"
         result.fallback_value_ms = t1_ref["default"]
@@ -563,6 +564,7 @@ def apply_t1_correction(
             field_strength=field_strength,
             e1_median=e1_median,
             b1_corrected=b1_corrected,
+            brain_mask=brain_mask,
         )
 
     else:
@@ -585,6 +587,7 @@ def _auto_correct_t1(
     field_strength: float = 3.0,
     e1_median: Optional[float] = None,
     b1_corrected: bool = False,
+    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Auto-mode T1 correction logic.
 
@@ -599,6 +602,11 @@ def _auto_correct_t1(
     """
     expected_median = t1_ref["expected_median"]
     result.nan_fraction = nan_fraction
+
+    # Fallback fill mask: entire brain, not just valid VFA voxels.
+    # valid_mask excludes NaN/non-positive VFA voxels, but fallbacks
+    # should cover all brain tissue for downstream PK fitting.
+    fill_mask = (brain_mask > 0.5) if brain_mask is not None else valid_mask
 
     # Compute E1-dependent NaN abandon threshold
     nan_abandon = get_nan_abandon_threshold(e1_median) if e1_median is not None else VFA_NAN_FRACTION_TISSUE_FALLBACK
@@ -624,13 +632,13 @@ def _auto_correct_t1(
 
             if wm_probseg is not None and gm_probseg is not None:
                 t1_corrected = build_tissue_t1_map(wm_probseg, gm_probseg, field_strength)
-                t1_corrected = np.where(valid_mask, t1_corrected, np.nan)
+                t1_corrected = np.where(fill_mask, t1_corrected, np.nan)
                 result.correction_applied = "tissue_segmented"
                 result.tissue_t1_used = True
                 result.reason = f"VFA conditioning gate: {'; '.join(reason_parts)}"
                 result.median_t1_corrected = expected_median
             else:
-                t1_corrected = np.where(valid_mask, t1_ref["default"], t1_map)
+                t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
                 result.correction_applied = "fallback"
                 result.reason = f"VFA conditioning gate (no tissue maps): {'; '.join(reason_parts)}"
                 result.fallback_value_ms = t1_ref["default"]
@@ -659,7 +667,7 @@ def _auto_correct_t1(
                 wm_probseg, gm_probseg, field_strength,
             )
             # Preserve NaN outside brain (downstream code uses NaN for masking)
-            t1_corrected = np.where(valid_mask, t1_corrected, np.nan)
+            t1_corrected = np.where(fill_mask, t1_corrected, np.nan)
             result.correction_applied = "tissue_segmented"
             result.tissue_t1_used = True
             result.reason = (
@@ -674,7 +682,7 @@ def _auto_correct_t1(
             "falling back to literature value (%.0fms)",
             median_t1, direction, threshold, t1_ref["default"],
         )
-        t1_corrected = np.where(valid_mask, t1_ref["default"], t1_map)
+        t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
         result.correction_applied = "fallback"
         result.reason = (
             f"Median T1 {direction} reject threshold ({threshold}ms)"

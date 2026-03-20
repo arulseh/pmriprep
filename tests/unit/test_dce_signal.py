@@ -8,9 +8,12 @@ from pmriprep.utils.dce_signal import (
     e1_to_r1,
     ernst_signal_model,
     plasma_to_blood_concentration,
+    signal_to_concentration,
+    signal_to_concentration_simple,
     solve_e1_from_signal_ratio,
 )
 from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1, HEMATOCRIT
+from pmriprep.utils.dce_t1_validation import T1_TISSUE_REFERENCE
 
 
 class TestErnstSignalModel:
@@ -141,3 +144,70 @@ class TestConcentrationConversions:
         c_plasma = concentration_to_plasma(c_blood, hematocrit=hct)
         expected = 1.0 / (1.0 - hct)
         np.testing.assert_allclose(c_plasma[0], expected, rtol=1e-10)
+
+
+class TestFieldStrengthDefaultT1:
+    """Tests for field-strength-aware default T1 when no T1 map provided."""
+
+    @pytest.fixture
+    def simple_signal(self) -> np.ndarray:
+        """1D DCE signal with 20 timepoints, baseline + enhancement."""
+        rng = np.random.default_rng(0)
+        signal = np.ones(20) * 500.0
+        signal[10:] = 600.0  # simple enhancement
+        signal += rng.normal(0, 5, 20)
+        return signal
+
+    def test_default_t1_at_1_5t(self, simple_signal: np.ndarray) -> None:
+        """At 1.5T with no T1 map, default T1 should be 900ms."""
+        result = signal_to_concentration(
+            simple_signal, flip_angle_deg=15.0, tr=0.005,
+            t1_map=None, t1_default_ms=None, field_strength=1.5,
+        )
+        # R1_baseline = 1/T1 = 1/0.9 ≈ 1.111 s^-1
+        expected_r1 = 1.0 / (T1_TISSUE_REFERENCE[1.5]["default"] / 1000.0)
+        np.testing.assert_allclose(result.r1_baseline, expected_r1, rtol=1e-6)
+
+    def test_default_t1_at_3t(self, simple_signal: np.ndarray) -> None:
+        """At 3T with no T1 map, default T1 should be 1200ms."""
+        result = signal_to_concentration(
+            simple_signal, flip_angle_deg=15.0, tr=0.005,
+            t1_map=None, t1_default_ms=None, field_strength=3.0,
+        )
+        expected_r1 = 1.0 / (T1_TISSUE_REFERENCE[3.0]["default"] / 1000.0)
+        np.testing.assert_allclose(result.r1_baseline, expected_r1, rtol=1e-6)
+
+    def test_default_t1_at_7t(self, simple_signal: np.ndarray) -> None:
+        """At 7T with no T1 map, default T1 should be 1700ms."""
+        result = signal_to_concentration(
+            simple_signal, flip_angle_deg=15.0, tr=0.005,
+            t1_map=None, t1_default_ms=None, field_strength=7.0,
+        )
+        expected_r1 = 1.0 / (T1_TISSUE_REFERENCE[7.0]["default"] / 1000.0)
+        np.testing.assert_allclose(result.r1_baseline, expected_r1, rtol=1e-6)
+
+    def test_explicit_t1_overrides_field_strength(
+        self, simple_signal: np.ndarray,
+    ) -> None:
+        """Explicit t1_default_ms takes precedence over field-strength lookup."""
+        result = signal_to_concentration(
+            simple_signal, flip_angle_deg=15.0, tr=0.005,
+            t1_map=None, t1_default_ms=1000.0, field_strength=1.5,
+        )
+        expected_r1 = 1.0 / (1000.0 / 1000.0)
+        np.testing.assert_allclose(result.r1_baseline, expected_r1, rtol=1e-6)
+
+    def test_simple_wrapper_field_strength_default(
+        self, simple_signal: np.ndarray,
+    ) -> None:
+        """signal_to_concentration_simple uses field-strength default when t1_pre_ms=None."""
+        conc_15t = signal_to_concentration_simple(
+            simple_signal, flip_angle_deg=15.0, tr=0.005,
+            t1_pre_ms=None, field_strength=1.5,
+        )
+        conc_3t = signal_to_concentration_simple(
+            simple_signal, flip_angle_deg=15.0, tr=0.005,
+            t1_pre_ms=None, field_strength=3.0,
+        )
+        # Different field strengths → different concentrations
+        assert not np.allclose(conc_15t, conc_3t)

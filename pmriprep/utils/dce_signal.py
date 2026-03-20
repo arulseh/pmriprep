@@ -189,7 +189,7 @@ def signal_to_concentration(
     flip_angle_deg: float,
     tr: float,
     t1_map: Optional[npt.NDArray[np.floating]] = None,
-    t1_default_ms: float = DEFAULT_T1_MS,
+    t1_default_ms: Optional[float] = None,
     b1_map: Optional[npt.NDArray[np.floating]] = None,
     r1_relaxivity: Optional[float] = None,
     field_strength: float = 3.0,
@@ -215,7 +215,8 @@ def signal_to_concentration(
         t1_map: 3D pre-contrast T1 map in milliseconds. If None, uses
             t1_default_ms for all voxels.
         t1_default_ms: Default T1 value in milliseconds when t1_map is None.
-            Default is 1200ms (typical gray matter at 3T).
+            If None, uses field-strength-appropriate literature value
+            from T1_TISSUE_REFERENCE (e.g., 900ms at 1.5T, 1200ms at 3T).
         b1_map: Optional 3D B1+ correction map (relative flip angle).
             Values typically 0.8-1.2. If provided, actual flip angle =
             nominal flip angle × B1+.
@@ -340,7 +341,14 @@ def signal_to_concentration(
         # T1 map provided (in ms)
         t1_seconds = t1_map / 1000.0
     else:
-        # Use default T1 value
+        # Use default T1 value (field-strength-aware if not specified)
+        if t1_default_ms is None:
+            from pmriprep.utils.dce_t1_validation import (
+                T1_TISSUE_REFERENCE,
+                get_field_strength_key,
+            )
+            field_key = get_field_strength_key(field_strength)
+            t1_default_ms = T1_TISSUE_REFERENCE[field_key]["default"]
         t1_seconds = t1_default_ms / 1000.0  # type: ignore[assignment]
 
     # Ensure T1 is positive
@@ -467,7 +475,7 @@ def signal_to_concentration_simple(
     signal: npt.NDArray[np.floating],
     flip_angle_deg: float,
     tr: float,
-    t1_pre_ms: float = DEFAULT_T1_MS,
+    t1_pre_ms: Optional[float] = None,
     r1_relaxivity: Optional[float] = None,
     field_strength: float = 3.0,
     baseline_frames: int = DEFAULT_BASELINE_FRAMES,
@@ -482,7 +490,8 @@ def signal_to_concentration_simple(
         signal: DCE signal array (1D or 4D).
         flip_angle_deg: Flip angle in degrees.
         tr: Repetition time in seconds.
-        t1_pre_ms: Pre-contrast T1 value in milliseconds.
+        t1_pre_ms: Pre-contrast T1 value in milliseconds. If None,
+            uses field-strength-appropriate literature value.
         r1_relaxivity: Longitudinal relaxivity in s^-1/mM.
         field_strength: Field strength in Tesla for r1 lookup.
         baseline_frames: Number of baseline frames.
@@ -561,7 +570,7 @@ def signal_to_concentration_from_files(
     flip_angle_deg: float,
     tr: float,
     t1_map_file: Optional[Union[str, Path]] = None,
-    t1_default_ms: float = DEFAULT_T1_MS,
+    t1_default_ms: Optional[float] = None,
     b1_map_file: Optional[Union[str, Path]] = None,
     r1_relaxivity: Optional[float] = None,
     field_strength: float = 3.0,
@@ -579,7 +588,8 @@ def signal_to_concentration_from_files(
         flip_angle_deg: Flip angle in degrees.
         tr: Repetition time in seconds.
         t1_map_file: Optional path to T1 map NIfTI file (in ms).
-        t1_default_ms: Default T1 value in ms if no T1 map.
+        t1_default_ms: Default T1 value in ms if no T1 map. If None,
+            uses field-strength-appropriate literature value.
         b1_map_file: Optional path to B1+ map NIfTI file.
         r1_relaxivity: Longitudinal relaxivity in s^-1/mM.
         field_strength: Field strength in Tesla.

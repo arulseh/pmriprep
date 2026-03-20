@@ -2068,24 +2068,29 @@ class T1Mapping(SimpleInterface):
         out_img = nib.Nifti1Image(t1_map, affine, header)
         nib.save(out_img, out_file)
 
-        # Generate QC plot
+        # Generate QC plot — suppress when VFA was abandoned (gate/reject fallback)
+        # because showing VFA data alongside a fallback T1 map is misleading.
         qc_plot_path: Optional[str] = None
-        try:
-            from pmriprep.utils.dce_qc_plots import generate_vfa_t1_qc_plot
+        show_t1_qc = correction_result.correction_applied not in (
+            "fallback", "tissue_segmented",
+        )
+        if show_t1_qc:
+            try:
+                from pmriprep.utils.dce_qc_plots import generate_vfa_t1_qc_plot
 
-            vfa_data_list = [signal_data[i] for i in range(n_fa)]
-            qc_plot_path = generate_vfa_t1_qc_plot(
-                vfa_data=vfa_data_list,
-                flip_angles=flip_angles_deg.tolist(),
-                t1_map=t1_map,
-                brain_mask=brain_mask,
-                field_strength=field_strength,
-                correction_info=correction_info,
-                subject_id=self.inputs.subject_id,
-                session_id=self.inputs.session_id,
-            )
-        except Exception as e:
-            logger.warning("Failed to generate VFA T1 QC plot: %s", e, exc_info=True)
+                vfa_data_list = [signal_data[i] for i in range(n_fa)]
+                qc_plot_path = generate_vfa_t1_qc_plot(
+                    vfa_data=vfa_data_list,
+                    flip_angles=flip_angles_deg.tolist(),
+                    t1_map=t1_map,
+                    brain_mask=brain_mask,
+                    field_strength=field_strength,
+                    correction_info=correction_info,
+                    subject_id=self.inputs.subject_id,
+                    session_id=self.inputs.session_id,
+                )
+            except Exception as e:
+                logger.warning("Failed to generate VFA T1 QC plot: %s", e, exc_info=True)
 
         # Set outputs
         self._results["out_file"] = out_file
