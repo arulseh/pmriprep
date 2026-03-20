@@ -1789,6 +1789,8 @@ class T1Mapping(SimpleInterface):
             wm_probseg_arr = wm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             gm_probseg_arr = gm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
 
+        b1_corrected = isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map)
+
         t1_map_arr, correction_result = apply_t1_correction(
             t1_map,
             field_strength=field_strength,
@@ -1799,6 +1801,7 @@ class T1Mapping(SimpleInterface):
             wm_probseg=wm_probseg_arr,
             gm_probseg=gm_probseg_arr,
             e1_median=e1_median,
+            b1_corrected=b1_corrected,
         )
         t1_map = t1_map_arr.astype(np.float32)
         correction_info = correction_result.to_dict()
@@ -1898,7 +1901,7 @@ class T1Mapping(SimpleInterface):
         fraction_valid = float(len(valid_t1)) / max(1, int(np.sum(brain_mask)))
 
         # Build QC metrics dictionary
-        has_b1 = isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map)
+        has_b1 = b1_corrected
         qc_metrics: dict[str, Any] = {
             "mean_t1_wm_ms": wm_t1_estimate,
             "mean_t1_gm_ms": gm_t1_estimate,
@@ -1989,9 +1992,21 @@ class T1Mapping(SimpleInterface):
             field_key = get_field_strength_key(field_strength)
             assumed_t1_s = T1_TISSUE_REFERENCE[field_key]["expected_median"] / 1000.0
             e1_expected = np.exp(-tr_s / assumed_t1_s)
+
+            # Select optimal FA pair: widest angular separation
+            flip_angles_deg = np.degrees(flip_angles_rad)
+            best_i, best_j = 0, 1
+            max_sep = 0.0
+            for ii in range(n_fa):
+                for jj in range(ii + 1, n_fa):
+                    sep = abs(flip_angles_deg[jj] - flip_angles_deg[ii])
+                    if sep > max_sep:
+                        max_sep = sep
+                        best_i, best_j = ii, jj
+
             # Ernst equation: S ∝ sin(α)(1-E1) / (1-E1·cos(α))
-            fa1_rad = flip_angles_rad[0]
-            fa2_rad = flip_angles_rad[1]
+            fa1_rad = flip_angles_rad[best_i]
+            fa2_rad = flip_angles_rad[best_j]
             s1_expected = (
                 np.sin(fa1_rad) * (1 - e1_expected)
                 / (1 - e1_expected * np.cos(fa1_rad))
@@ -2003,8 +2018,8 @@ class T1Mapping(SimpleInterface):
             ratio_expected = float(s2_expected / s1_expected) if s1_expected > 0 else 1.0
 
             # Observed median S2/S1 ratio within brain mask
-            s1_brain = signal_data[0][brain_mask]
-            s2_brain = signal_data[1][brain_mask]
+            s1_brain = signal_data[best_i][brain_mask]
+            s2_brain = signal_data[best_j][brain_mask]
             valid = s1_brain > 0
             if np.any(valid):
                 ratio_observed = float(np.median(s2_brain[valid] / s1_brain[valid]))
@@ -2016,14 +2031,16 @@ class T1Mapping(SimpleInterface):
 
             if not validation_pass:
                 logger.warning(
-                    "Flip angle validation: observed S2/S1 ratio %.3f differs from "
+                    "Flip angle validation: observed S[%d°]/S[%d°] ratio %.3f differs from "
                     "expected %.3f by %.1f%% (threshold 20%%). Check flip angles.",
+                    flip_angles_deg[best_i], flip_angles_deg[best_j],
                     ratio_observed, ratio_expected, ratio_error_pct,
                 )
             else:
                 logger.info(
-                    "Flip angle validation: observed S2/S1 ratio %.3f vs expected "
+                    "Flip angle validation: observed S[%d°]/S[%d°] ratio %.3f vs expected "
                     "%.3f (error %.1f%%)",
+                    flip_angles_deg[best_i], flip_angles_deg[best_j],
                     ratio_observed, ratio_expected, ratio_error_pct,
                 )
 
@@ -2032,6 +2049,7 @@ class T1Mapping(SimpleInterface):
                 "ratio_expected": round(ratio_expected, 4),
                 "ratio_error_pct": round(ratio_error_pct, 1),
                 "validation_pass": validation_pass,
+                "fa_pair_deg": [round(flip_angles_deg[best_i], 1), round(flip_angles_deg[best_j], 1)],
             }
 
         # Save output T1 map
@@ -2683,10 +2701,20 @@ class VFAPreprocess(SimpleInterface):
         field_key = get_field_strength_key(field_strength)
         t1_assumed = T1_TISSUE_REFERENCE[field_key]["default"]
 
-        s1 = vfa_data[0]
-        s2 = vfa_data[1]
-        a1 = flip_angles[0]
-        a2 = flip_angles[1]
+        # Select optimal FA pair: widest angular separation
+        best_i, best_j = 0, 1
+        max_sep = 0.0
+        for ii in range(len(flip_angles)):
+            for jj in range(ii + 1, len(flip_angles)):
+                sep = abs(flip_angles[jj] - flip_angles[ii])
+                if sep > max_sep:
+                    max_sep = sep
+                    best_i, best_j = ii, jj
+
+        s1 = vfa_data[best_i]
+        s2 = vfa_data[best_j]
+        a1 = flip_angles[best_i]
+        a2 = flip_angles[best_j]
 
         # Use central brain voxels
         nz, ny, nx = s1.shape
@@ -2719,6 +2747,7 @@ class VFAPreprocess(SimpleInterface):
             "ratio_expected": ratio_expected,
             "ratio_error_pct": ratio_error * 100,
             "flip_angles_deg": [a1, a2],
+            "fa_pair_deg": [a1, a2],
             "t1_assumed_ms": t1_assumed,
         }
 

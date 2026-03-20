@@ -28,7 +28,7 @@ improved segmentation and T1-mapping at high field." NeuroImage.
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Final, Optional, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -46,6 +46,14 @@ B1_FAIL_BIAS_THRESHOLD_MS: float = 100.0
 VFA_NAN_FRACTION_GOOD: float = 0.20
 # Above this (for well-conditioned VFA): abandon VFA entirely.
 VFA_NAN_FRACTION_TISSUE_FALLBACK: float = 0.40
+
+# VFA conditioning thresholds (Deoni SCL et al. MRM 2003).
+# VFA condition number = E1/(1-E1); higher means 1% B1 error
+# propagates to larger T1 error.
+# E1 > 0.997 → cond > 332 → fallback unconditionally
+_E1_UNCONDITIONAL_FALLBACK: Final[float] = 0.997
+# E1 > 0.993 → cond > 141 → fallback unless B1-corrected & B1 QC passed
+_E1_CONDITIONAL_FALLBACK: Final[float] = 0.993
 
 # ============================================================================
 # T1 Tissue Reference Values by Field Strength
@@ -441,6 +449,7 @@ def apply_t1_correction(
     wm_probseg: Optional[npt.NDArray[np.floating]] = None,
     gm_probseg: Optional[npt.NDArray[np.floating]] = None,
     e1_median: Optional[float] = None,
+    b1_corrected: bool = False,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Apply T1 map correction based on median T1 validation.
 
@@ -478,6 +487,9 @@ def apply_t1_correction(
     e1_median : float, optional
         Median E1 = exp(-TR/T1) from VFA data. Used by auto-mode to
         adjust the NaN abandon threshold for ill-conditioned VFA.
+    b1_corrected : bool
+        Whether B1 field mapping was applied. At severe VFA conditioning,
+        absence of B1 correction triggers tissue-segmented fallback.
 
     Returns
     -------
@@ -550,6 +562,7 @@ def apply_t1_correction(
             gm_probseg=gm_probseg,
             field_strength=field_strength,
             e1_median=e1_median,
+            b1_corrected=b1_corrected,
         )
 
     else:
@@ -571,18 +584,59 @@ def _auto_correct_t1(
     gm_probseg: Optional[npt.NDArray[np.floating]] = None,
     field_strength: float = 3.0,
     e1_median: Optional[float] = None,
+    b1_corrected: bool = False,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Auto-mode T1 correction logic.
 
     Decides between no correction, offset, tissue-segmented fallback,
     or uniform fallback based on median T1 deviation and NaN fraction.
     The NaN abandon threshold is adjusted for VFA conditioning (E1).
+
+    When VFA conditioning is severe (E1 close to 1), tissue-segmented
+    T1 is more reliable than any VFA-derived T1, even after offset
+    correction, because errors are spatially heterogeneous and nonlinear
+    (Deoni SCL et al. MRM 2003).
     """
     expected_median = t1_ref["expected_median"]
     result.nan_fraction = nan_fraction
 
     # Compute E1-dependent NaN abandon threshold
     nan_abandon = get_nan_abandon_threshold(e1_median) if e1_median is not None else VFA_NAN_FRACTION_TISSUE_FALLBACK
+
+    # Conditioning gate: VFA T1 is unreliable when E1 approaches 1
+    if e1_median is not None and e1_median > _E1_CONDITIONAL_FALLBACK:
+        unconditional = e1_median > _E1_UNCONDITIONAL_FALLBACK
+        b1_insufficient = not b1_corrected or not b1_qc_pass
+
+        if unconditional or b1_insufficient:
+            cond_number = e1_median / (1.0 - e1_median) if e1_median < 1.0 else float("inf")
+            reason_parts: list[str] = []
+            if unconditional:
+                reason_parts.append(f"E1={e1_median:.4f} above unconditional threshold")
+            if b1_insufficient:
+                reason_parts.append("B1 correction absent or failed")
+
+            logger.warning(
+                "VFA conditioning gate: E1=%.4f (cond=%.0f), %s "
+                "— falling back to tissue-segmented T1",
+                e1_median, cond_number, "; ".join(reason_parts),
+            )
+
+            if wm_probseg is not None and gm_probseg is not None:
+                t1_corrected = build_tissue_t1_map(wm_probseg, gm_probseg, field_strength)
+                t1_corrected = np.where(valid_mask, t1_corrected, np.nan)
+                result.correction_applied = "tissue_segmented"
+                result.tissue_t1_used = True
+                result.reason = f"VFA conditioning gate: {'; '.join(reason_parts)}"
+                result.median_t1_corrected = expected_median
+            else:
+                t1_corrected = np.where(valid_mask, t1_ref["default"], t1_map)
+                result.correction_applied = "fallback"
+                result.reason = f"VFA conditioning gate (no tissue maps): {'; '.join(reason_parts)}"
+                result.fallback_value_ms = t1_ref["default"]
+                result.median_t1_corrected = t1_ref["default"]
+
+            return t1_corrected, result
 
     # Case 1: Hard reject - impossible values
     # With high NaN fraction, prefer tissue-segmented T1 over uniform fallback
