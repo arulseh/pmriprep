@@ -659,12 +659,23 @@
                     {%- else %} poor{% endif %}">{{ xval.status }}</div>
             </div>
             {% endif %}
+            {% if xval.metrics is defined %}
             {% if xval.circular is defined and xval.circular %}
             <div class="metric">
-                <div class="metric-value" style="font-size: 0.85em; font-style: italic;">Hard-constrained &mdash; cross-validation is circular</div>
+                <div class="metric-label">vp/CBV Ratio</div>
+                <div class="metric-value">N/A</div>
+            </div>
+            {% if xval.metrics.expected_ratio is defined and xval.metrics.expected_ratio > 0 %}
+            <div class="metric">
+                <div class="metric-label">Expected</div>
+                <div class="metric-value">{{ "%.3f"|format(xval.metrics.expected_ratio) }}</div>
             </div>
             {% endif %}
-            {% if xval.metrics is defined %}
+            <div class="metric">
+                <div class="metric-label">Correlation (r)</div>
+                <div class="metric-value">N/A</div>
+            </div>
+            {% else %}
             {% if xval.metrics.median_ratio is defined and xval.metrics.median_ratio > 0 %}
             <div class="metric">
                 <div class="metric-label">vp/CBV Ratio</div>
@@ -692,11 +703,12 @@
                 <div class="metric-value">{{ "%.0f"|format(xval.metrics.fraction_valid * 100) }}%</div>
             </div>
             {% endif %}
-            {% if xval.correction_factor is defined and xval.status != 'PASS' and xval.status != 'CIRCULAR' %}
+            {% if xval.correction_factor is defined and xval.status != 'PASS' %}
             <div class="metric">
                 <div class="metric-label">Correction</div>
                 <div class="metric-value warn">{{ "%.2f"|format(xval.correction_factor) }}x</div>
             </div>
+            {% endif %}
             {% endif %}
             {% endif %}
             {% if xval.constraint_mode is defined and xval.constraint_mode %}

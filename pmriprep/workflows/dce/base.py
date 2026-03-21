@@ -2919,6 +2919,8 @@ def _dsc_dce_xval_plot_node(
         return None
     if validation_result and validation_result.get("skipped"):
         return None
+    if validation_result and validation_result.get("circular"):
+        return None
 
     # Extract constraint mode from pk_qc dict if needed
     resolved_mode = None

@@ -5,8 +5,8 @@ Generates a 3-panel QC figure for DSC-DCE cross-validation:
   Panel 2: Bland-Altman plot (in CBV-equivalent units)
   Panel 3: Spatial ratio map (axial slice, diverging colormap)
 
-When constraint_mode is "hard", panels 1-2 display informational text
-instead of scatter/BA (since vp is deterministically derived from CBV).
+When the cross-validation is circular (vp deterministically derived from
+CBV), all three panels display informational text instead of plots.
 
 Uses the colorblind-safe palette from qc_standards.py.
 """
@@ -98,15 +98,15 @@ def generate_xval_plot(
         fontweight="bold",
     )
 
-    is_hard = constraint_mode == "hard"
+    is_circular = validation_result.get("circular", False)
 
     # ---- Panel 1: Scatter (vp-derived CBV vs DSC CBV) ----
     ax = axes[0]
-    if is_hard or len(vp_valid) < 10:
+    if is_circular or len(vp_valid) < 10:
         ax.text(
             0.5, 0.5,
-            "vp hard-constrained from CBV\nscatter not informative"
-            if is_hard else "Insufficient valid voxels",
+            "vp derived from CBV\nscatter not informative"
+            if is_circular else "Insufficient valid voxels",
             transform=ax.transAxes, ha="center", va="center",
             fontsize=10, style="italic",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
@@ -150,11 +150,11 @@ def generate_xval_plot(
 
     # ---- Panel 2: Bland-Altman ----
     ax = axes[1]
-    if is_hard or len(vp_valid) < 10:
+    if is_circular or len(vp_valid) < 10:
         ax.text(
             0.5, 0.5,
-            "vp hard-constrained from CBV\nBland-Altman not informative"
-            if is_hard else "Insufficient valid voxels",
+            "vp derived from CBV\nBland-Altman not informative"
+            if is_circular else "Insufficient valid voxels",
             transform=ax.transAxes, ha="center", va="center",
             fontsize=10, style="italic",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
@@ -201,46 +201,58 @@ def generate_xval_plot(
 
     # ---- Panel 3: Spatial ratio map ----
     ax = axes[2]
-    ratio_3d = np.full(vp_data.shape, np.nan)
-    valid_3d = (
-        mask_bool
-        & (vp_data > MIN_VP_FOR_VALIDATION)
-        & (cbv_data > MIN_CBV_FOR_VALIDATION)
-        & np.isfinite(vp_data)
-        & np.isfinite(cbv_data)
-    )
-    cbv_safe = np.maximum(cbv_data, MIN_CBV_FOR_VALIDATION)
-    ratio_3d[valid_3d] = (vp_data[valid_3d] * 100.0) / cbv_safe[valid_3d]
-
-    # Get axial slice with most valid voxels
-    n_valid_per_slice = np.sum(valid_3d, axis=(0, 1))
-    if np.any(n_valid_per_slice > 0):
-        best_slice = int(np.argmax(n_valid_per_slice))
+    if is_circular or len(vp_valid) < 10:
+        ax.text(
+            0.5, 0.5,
+            "vp derived from CBV\nratio map uniform by construction"
+            if is_circular else "Insufficient valid voxels",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=10, style="italic",
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
+        )
+        ax.set_title("Ratio Map", fontsize=10)
+        ax.axis("off")
     else:
-        best_slice = ratio_3d.shape[2] // 2  # type: ignore[misc]
+        ratio_3d = np.full(vp_data.shape, np.nan)
+        valid_3d = (
+            mask_bool
+            & (vp_data > MIN_VP_FOR_VALIDATION)
+            & (cbv_data > MIN_CBV_FOR_VALIDATION)
+            & np.isfinite(vp_data)
+            & np.isfinite(cbv_data)
+        )
+        cbv_safe = np.maximum(cbv_data, MIN_CBV_FOR_VALIDATION)
+        ratio_3d[valid_3d] = (vp_data[valid_3d] * 100.0) / cbv_safe[valid_3d]
 
-    slice_2d = get_radiological_slice(ratio_3d, axis=2, slice_idx=best_slice)
+        # Get axial slice with most valid voxels
+        n_valid_per_slice = np.sum(valid_3d, axis=(0, 1))
+        if np.any(n_valid_per_slice > 0):
+            best_slice = int(np.argmax(n_valid_per_slice))
+        else:
+            best_slice = ratio_3d.shape[2] // 2  # type: ignore[misc]
 
-    # Diverging colormap centered at expected ratio
-    # Set NaN (background) to black so it's distinct from coolwarm's
-    # near-white center (RGB ~0.87), which represents the expected ratio.
-    cmap = plt.get_cmap("coolwarm").copy()
-    cmap.set_bad(color="black")
-    vmin = max(0, expected_ratio - 0.5)
-    vmax = expected_ratio + 0.5
-    norm = TwoSlopeNorm(vcenter=expected_ratio, vmin=vmin, vmax=vmax)
-    im = ax.imshow(
-        slice_2d,
-        cmap=cmap,
-        norm=norm,
-        aspect="equal",
-        interpolation="nearest",
-    )
-    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("(vp*100)/CBV ratio", fontsize=8)
+        slice_2d = get_radiological_slice(ratio_3d, axis=2, slice_idx=best_slice)
 
-    ax.set_title(f"Ratio Map (z={best_slice})", fontsize=10)
-    ax.axis("off")
+        # Diverging colormap centered at expected ratio
+        # Set NaN (background) to black so it's distinct from coolwarm's
+        # near-white center (RGB ~0.87), which represents the expected ratio.
+        cmap = plt.get_cmap("coolwarm").copy()
+        cmap.set_bad(color="black")
+        vmin = max(0, expected_ratio - 0.5)
+        vmax = expected_ratio + 0.5
+        norm = TwoSlopeNorm(vcenter=expected_ratio, vmin=vmin, vmax=vmax)
+        im = ax.imshow(
+            slice_2d,
+            cmap=cmap,
+            norm=norm,
+            aspect="equal",
+            interpolation="nearest",
+        )
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("(vp*100)/CBV ratio", fontsize=8)
+
+        ax.set_title(f"Ratio Map (z={best_slice})", fontsize=10)
+        ax.axis("off")
 
     plt.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
