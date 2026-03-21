@@ -284,16 +284,21 @@ def _fit_single_voxel(
                 )
                 constrained = True
 
-        # SOFT constraint with NLLS: fall back to hard constraint
+        # SOFT constraint with NLLS: tighten vp bounds around DSC value
         elif (
             fixed_vp is not None
             and constraint_mode == ConstraintMode.SOFT
             and bayesian == "none"
-            and hasattr(model, "fit_constrained")
         ):
-            result = model.fit_constrained(
-                prepared_curve, aif, time_points, fixed_vp=fixed_vp,
+            sigma = constraint_vp_uncertainty if constraint_vp_uncertainty > 0 else 0.2
+            vp_lo = max(fixed_vp * (1.0 - sigma), VP_BOUNDS.min)
+            vp_hi = min(fixed_vp * (1.0 + sigma), VP_BOUNDS.max)
+            if vp_lo >= vp_hi:
+                vp_lo, vp_hi = VP_BOUNDS.min, VP_BOUNDS.max
+            result = model.fit(
+                prepared_curve, aif, time_points,
                 weights=motion_weights,
+                vp_bounds=(vp_lo, vp_hi),
             )
             constrained = True
 

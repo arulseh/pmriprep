@@ -240,6 +240,7 @@ class ExtendedToftsModel(PKModel):
         time_points: npt.NDArray[np.floating],
         initial_guess: Optional[Sequence[float]] = None,
         weights: Optional[npt.NDArray[np.floating]] = None,
+        vp_bounds: Optional[tuple[float, float]] = None,
     ) -> FitResult:
         """Fit the Extended Tofts model to observed tissue concentration data.
 
@@ -268,6 +269,11 @@ class ExtendedToftsModel(PKModel):
 
         # Get bounds for optimization
         bounds = self.get_bounds()
+        if vp_bounds is not None:
+            bounds = self._apply_vp_bounds_override(bounds, vp_bounds)
+            # Clamp initial guess vp to new bounds
+            vp_idx = self.get_parameter_names().index("vp")
+            x0[vp_idx] = float(np.clip(x0[vp_idx], vp_bounds[0], vp_bounds[1]))
         lower_bounds = [b[0] for b in bounds]
         upper_bounds = [b[1] for b in bounds]
 

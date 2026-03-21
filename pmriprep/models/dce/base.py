@@ -367,6 +367,27 @@ class PKModel(ABC):
         """
         return [p.bounds for p in self.get_parameter_definitions()]
 
+    def _apply_vp_bounds_override(
+        self,
+        bounds: list[tuple[float, float]],
+        vp_bounds: tuple[float, float],
+    ) -> list[tuple[float, float]]:
+        """Override vp bounds in a bounds list.
+
+        Args:
+            bounds: List of (lo, hi) per parameter from get_bounds().
+            vp_bounds: New (lo, hi) for the vp parameter.
+
+        Returns:
+            Modified bounds list with vp entry replaced.
+        """
+        names = self.get_parameter_names()
+        if "vp" in names:
+            idx = names.index("vp")
+            bounds = list(bounds)
+            bounds[idx] = vp_bounds
+        return bounds
+
     def get_initial_guess(self) -> list[float]:
         """Get initial parameter guess from prior means.
 

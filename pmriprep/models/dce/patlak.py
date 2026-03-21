@@ -374,6 +374,7 @@ class PatlakModel(PKModel):
         initial_guess: Optional[Sequence[float]] = None,
         weights: Optional[npt.NDArray[np.floating]] = None,
         use_graphical: bool = False,
+        vp_bounds: Optional[tuple[float, float]] = None,
     ) -> FitResult:
         """Fit the Patlak model to observed tissue concentration data.
 
@@ -410,6 +411,10 @@ class PatlakModel(PKModel):
 
         # Get bounds for optimization
         bounds = self.get_bounds()
+        if vp_bounds is not None:
+            bounds = self._apply_vp_bounds_override(bounds, vp_bounds)
+            vp_idx = self.get_parameter_names().index("vp")
+            x0[vp_idx] = float(np.clip(x0[vp_idx], vp_bounds[0], vp_bounds[1]))
         lower_bounds = [b[0] for b in bounds]
         upper_bounds = [b[1] for b in bounds]
 

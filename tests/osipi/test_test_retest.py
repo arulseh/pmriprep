@@ -1,14 +1,15 @@
 """Test-retest reproducibility tests for OSIPI clinical subjects.
 
 OSIPI clinical cohort: sub-0081 through sub-0088. Each subject has two DCE
-sessions acquired on the same scanner. Extended Tofts + Bayesian MAP.
+sessions acquired on the same scanner. model="auto" (BIC selection) + NLLS,
+population AIF.
 
 Tests are parametrized across all 8 subjects. Subjects without processed
 outputs are gracefully skipped; as new subjects are processed, tests
 automatically pick them up.
 
 Tier 1 — Summary statistics (no registration, always runs):
-    Session medians within expected %diff, comparison to perf-plus reference.
+    Session medians within expected %diff.
 
 Tier 2 — Voxel-wise (requires FLIRT registration, skips gracefully):
     Pearson correlation, ICC, DICE, Bland-Altman.
