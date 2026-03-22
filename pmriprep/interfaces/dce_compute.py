@@ -1607,17 +1607,17 @@ class ComputeDCEMaps(BaseInterface):
         )
 
         # New semi-quantitative maps: wash-in slope, wash-out slope, BAT, curve type
-        vol_tr_s = (
+        semiquant_vol_tr_s: Optional[float] = (
             float(self.inputs.volume_tr)
             if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
             else None
         )
         wash_in_slope = compute_wash_in_slope(
             conc_data, time_points, bolus_arrival_frame=baseline_frames,
-            volume_tr_s=vol_tr_s,
+            volume_tr_s=semiquant_vol_tr_s,
         )
         wash_out_slope = compute_wash_out_slope(
-            conc_data, time_points, volume_tr_s=vol_tr_s,
+            conc_data, time_points, volume_tr_s=semiquant_vol_tr_s,
         )
         bat = compute_bolus_arrival_time(
             conc_data, time_points, baseline_frames=baseline_frames,

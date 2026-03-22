@@ -498,6 +498,26 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 3: DCE Preprocessing (motion correction + baseline detection)
     # ==========================================================================
+    # Node 3a-pre: Compute early mean for brain extraction
+    # Mean of first 3 pre-contrast volumes provides a clean structural image
+    # for HD-BET, before motion correction. This gives a DCE-space brain mask
+    # for baseline detection (the anat brain mask is in T1w space and may not
+    # match DCE dimensions for thin-slab acquisitions).
+    # ==========================================================================
+    dce_early_mean = pe.Node(
+        niu.Function(
+            input_names=["dce_file"],
+            output_names=["out_file"],
+            function=_compute_early_mean,
+        ),
+        name="dce_early_mean",
+    )
+
+    workflow.connect([
+        (dce_reorient, dce_early_mean, [("out_file", "dce_file")]),
+    ])
+
+    # ==========================================================================
     dce_preprocess = pe.Node(
         DCEPreprocess(
             baseline_frames=config.baseline_frames,
@@ -506,10 +526,11 @@ def init_dce_preproc_wf(
     )
 
     # Connect DCE preprocessing inputs (using reoriented DCE file)
+    # Brain mask comes from dce_brain_extract (after early mean HD-BET),
+    # not from inputnode (which is in T1w space).
     workflow.connect([
         (dce_reorient, dce_preprocess, [("out_file", "in_file")]),
         (inputnode, dce_preprocess, [
-            ("brain_mask", "brain_mask"),
             ("volume_tr", "volume_tr"),
         ]),
     ])
@@ -551,8 +572,12 @@ def init_dce_preproc_wf(
         name="dce_brain_extract",
     )
 
+    # Brain extraction runs on the early pre-contrast mean (before motion
+    # correction). The mask is then used by DCEPreprocess for baseline
+    # detection and by all downstream nodes.
     workflow.connect([
-        (dce_preprocess, dce_brain_extract, [("baseline_mean_img", "dce_mean")]),
+        (dce_early_mean, dce_brain_extract, [("out_file", "dce_mean")]),
+        (dce_brain_extract, dce_preprocess, [("out_mask", "brain_mask")]),
     ])
 
     # Brain mask filmstrip QC (after brain extraction)
@@ -2894,6 +2919,42 @@ def _dsc_dce_validation_node(
             "status": "error",
             "reason": str(e),
         }
+
+
+def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
+    """Compute mean of first N DCE volumes for brain extraction.
+
+    Provides a pre-contrast structural image for HD-BET before motion
+    correction. The first few frames are guaranteed pre-contrast,
+    producing clean gray/white contrast without gadolinium effects.
+
+    Args:
+        dce_file: Path to reoriented 4D DCE NIfTI.
+        n_frames: Number of early frames to average (default 3).
+
+    Returns:
+        Path to the 3D mean NIfTI file.
+    """
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    img = nib.load(dce_file)
+    data = img.get_fdata()  # type: ignore[attr-defined]
+
+    if data.ndim != 4:
+        raise ValueError(f"Expected 4D DCE data, got {data.ndim}D")
+
+    n = min(n_frames, data.shape[3])
+    mean_vol = np.mean(data[..., :n], axis=3).astype(np.float32)
+
+    out_file = str(Path(dce_file).parent / "early_mean.nii.gz")
+    nib.save(
+        nib.Nifti1Image(mean_vol, img.affine, img.header),  # type: ignore[attr-defined]
+        out_file,
+    )
+    return out_file
 
 
 def _dsc_dce_xval_plot_node(
