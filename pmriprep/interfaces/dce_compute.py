@@ -1298,7 +1298,6 @@ class ComputeDCEMaps(BaseInterface):
         if aif_detection_method == "population":
             from pmriprep.utils.dce_bat_correction import (
                 apply_aif_time_shift,
-                detect_aif_bat,
                 detect_tissue_bat,
             )
 
@@ -1316,7 +1315,16 @@ class ComputeDCEMaps(BaseInterface):
             tissue_bat = detect_tissue_bat(
                 bat_signal_data, mask, time_vector_s, baseline_frames
             )
-            aif_bat = detect_aif_bat(aif, time_vector_s)
+            # Population AIF was pre-aligned to start at baseline_frames
+            # during generation (see _generate_population_aif in dce_aif.py).
+            # Use the known placement rather than re-detecting, which gives
+            # a baseline-dependent result.
+            aif_bat = {
+                "aif_bat_s": float(time_vector_s[baseline_frames]),
+                "aif_bat_frame": int(baseline_frames),
+                "aif_peak_s": float(time_vector_s[int(np.argmax(aif))]),
+                "aif_peak_frame": int(np.argmax(aif)),
+            }
 
             time_shift_s = tissue_bat["tissue_bat_s"] - aif_bat["aif_bat_s"]
 
