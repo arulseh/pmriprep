@@ -565,6 +565,13 @@ LENIENT_T1_RANGE: Final[tuple[float, float]] = (500.0, 2500.0)
 #: Default number of baseline frames for pre-contrast calculation
 DEFAULT_BASELINE_FRAMES: Final[int] = 5
 
+#: Approximate latency (seconds) between Parker AIF t=0 and detectable
+#: tissue enhancement (10% of max). Derived from Parker population AIF
+#: (Parker et al., MRM 2006; Gaussian T1=10.2s, sigma1=3.4s) convolved
+#: with typical Tofts kernel (Ktrans=0.05/min, ve=0.2) at 100ms resolution.
+#: Weakly dependent on PK parameters (<1s variation across Ktrans 0.01-0.3).
+PARKER_TOFTS_LATENCY_S: Final[float] = 7.9
+
 #: Default tSNR threshold for voxel inclusion (0 = fit all brain voxels)
 DEFAULT_TSNR_THRESHOLD: Final[float] = 0.0
 

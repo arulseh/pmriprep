@@ -1287,24 +1287,110 @@ class ComputeDCEMaps(BaseInterface):
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
 
         # =====================================================================
-        # BAT Correction
+        # BAT Correction for Population AIFs
         # =====================================================================
-        # Population AIF is pre-aligned to baseline_frames during generation
-        # (see _generate_population_aif in dce_aif.py). The residual AIF-tissue
-        # timing offset is physiological arterio-capillary transit delay, which
-        # the Tofts convolution model handles naturally. Empirically, BAT
-        # correction degraded R² across test subjects.
-        # Auto-detected AIFs share the same temporal frame as tissue data and
-        # do not require BAT correction.
+        # Population AIF is pre-aligned to baseline_frames during generation.
+        # However, at coarse temporal resolution (TR > 3s), the Tofts
+        # convolution cannot absorb sub-TR timing offsets between AIF and
+        # tissue. We correct using the Parker-Tofts latency: the ~7.9s delay
+        # between Parker t=0 and detectable tissue enhancement.
+        # Auto-detected AIFs share the same temporal frame as tissue data
+        # and do not require BAT correction.
         aif_detection_method = str(self.inputs.aif_detection_method)
         bat_correction: dict[str, Any] = {
             "applied": False,
-            "reason": (
-                "population_aif_pre_aligned"
-                if aif_detection_method == "population"
-                else "not_population_aif"
-            ),
+            "reason": "not_population_aif",
         }
+
+        if aif_detection_method == "population":
+            from pmriprep.utils.dce_bat_correction import (
+                apply_aif_time_shift,
+                detect_tissue_bat,
+            )
+            from pmriprep.utils.dce_constants import PARKER_TOFTS_LATENCY_S
+
+            # Detect tissue BAT from raw signal
+            if isdefined(self.inputs.dce_signal_file):
+                bat_signal_img = nib.load(self.inputs.dce_signal_file)
+                bat_signal_data = bat_signal_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+            else:
+                bat_signal_data = conc_data
+
+            time_vector_s = time_points * 60.0  # minutes -> seconds
+            tissue_bat = detect_tissue_bat(
+                bat_signal_data, mask, time_vector_s, baseline_frames
+            )
+
+            # Use volume_tr from interface input (more reliable than
+            # time vector diff for non-uniform sampling)
+            if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr:
+                vol_tr_s = float(self.inputs.volume_tr)
+            else:
+                vol_tr_s = float(time_vector_s[1] - time_vector_s[0])
+
+            # Optimal AIF placement: tissue BAT minus Parker-Tofts latency.
+            # The Parker AIF at t=0 is at ~1% of peak; combined with Tofts
+            # convolution, tissue enhancement appears ~7.9s after Parker t=0.
+            aif_start_s = tissue_bat["tissue_bat_s"] - PARKER_TOFTS_LATENCY_S
+
+            if aif_start_s < 0:
+                logger.info(
+                    "BAT correction skipped: tissue BAT (%.1fs) < "
+                    "Parker-Tofts latency (%.1fs)",
+                    tissue_bat["tissue_bat_s"],
+                    PARKER_TOFTS_LATENCY_S,
+                )
+                bat_correction = {
+                    "applied": False,
+                    "reason": "tissue_bat_too_early",
+                    "tissue_bat_s": tissue_bat["tissue_bat_s"],
+                    "baseline_frames": baseline_frames,
+                }
+            else:
+                aif_placement_s = baseline_frames * vol_tr_s
+                shift_s = aif_start_s - aif_placement_s
+
+                # Clamp shift to prevent pathological corrections
+                max_advance = 2.0 * vol_tr_s
+                max_delay = 1.0 * vol_tr_s
+                shift_s = float(np.clip(shift_s, -max_advance, max_delay))
+
+                logger.info(
+                    "BAT correction: tissue BAT=%.1fs (frame %d), "
+                    "optimal AIF start=%.1fs, AIF placed at=%.1fs, "
+                    "shift=%.1fs",
+                    tissue_bat["tissue_bat_s"],
+                    tissue_bat["tissue_bat_frame"],
+                    aif_start_s,
+                    aif_placement_s,
+                    shift_s,
+                )
+
+                if abs(shift_s) > 2.0:
+                    aif = apply_aif_time_shift(aif, time_vector_s, shift_s)
+                    bat_correction = {
+                        "applied": True,
+                        "time_shift_s": shift_s,
+                        "tissue_bat_s": tissue_bat["tissue_bat_s"],
+                        "tissue_bat_frame": tissue_bat["tissue_bat_frame"],
+                        "aif_placement_s": aif_placement_s,
+                        "optimal_aif_start_s": aif_start_s,
+                        "parker_tofts_latency_s": PARKER_TOFTS_LATENCY_S,
+                        "detection_confidence": tissue_bat["confidence"],
+                        "baseline_frames": baseline_frames,
+                    }
+                else:
+                    logger.info("BAT shift %.1fs within tolerance, skipping", shift_s)
+                    bat_correction = {
+                        "applied": False,
+                        "time_shift_s": shift_s,
+                        "reason": "shift_within_tolerance",
+                        "baseline_frames": baseline_frames,
+                    }
+
+            # Clean up temporary signal data
+            if isdefined(self.inputs.dce_signal_file):
+                del bat_signal_data
 
         spatial_shape = conc_data.shape[:3]
 
