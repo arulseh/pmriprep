@@ -1287,96 +1287,24 @@ class ComputeDCEMaps(BaseInterface):
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
 
         # =====================================================================
-        # BAT Correction for Population AIFs
+        # BAT Correction
         # =====================================================================
+        # Population AIF is pre-aligned to baseline_frames during generation
+        # (see _generate_population_aif in dce_aif.py). The residual AIF-tissue
+        # timing offset is physiological arterio-capillary transit delay, which
+        # the Tofts convolution model handles naturally. Empirically, BAT
+        # correction degraded R² across test subjects.
+        # Auto-detected AIFs share the same temporal frame as tissue data and
+        # do not require BAT correction.
         aif_detection_method = str(self.inputs.aif_detection_method)
         bat_correction: dict[str, Any] = {
             "applied": False,
-            "reason": "not_population_aif",
+            "reason": (
+                "population_aif_pre_aligned"
+                if aif_detection_method == "population"
+                else "not_population_aif"
+            ),
         }
-
-        if aif_detection_method == "population":
-            from pmriprep.utils.dce_bat_correction import (
-                apply_aif_time_shift,
-                detect_tissue_bat,
-            )
-
-            # Use raw DCE signal for tissue BAT detection (matches perf-plus)
-            if isdefined(self.inputs.dce_signal_file):
-                bat_signal_img = nib.load(self.inputs.dce_signal_file)
-                bat_signal_data = bat_signal_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-            else:
-                # Fallback to concentration data
-                bat_signal_data = conc_data
-
-            # Time vector in seconds for BAT detection
-            time_vector_s = time_points * 60.0  # minutes -> seconds
-
-            tissue_bat = detect_tissue_bat(
-                bat_signal_data, mask, time_vector_s, baseline_frames
-            )
-            # Population AIF was pre-aligned to start at baseline_frames
-            # during generation (see _generate_population_aif in dce_aif.py).
-            # Use the known placement rather than re-detecting, which gives
-            # a baseline-dependent result.
-            aif_bat = {
-                "aif_bat_s": float(time_vector_s[baseline_frames]),
-                "aif_bat_frame": int(baseline_frames),
-                "aif_peak_s": float(time_vector_s[int(np.argmax(aif))]),
-                "aif_peak_frame": int(np.argmax(aif)),
-            }
-
-            time_shift_s = tissue_bat["tissue_bat_s"] - aif_bat["aif_bat_s"]
-
-            logger.info(
-                "BAT correction: tissue BAT=%.1fs (frame %d), AIF BAT=%.1fs "
-                "(frame %d), shift=%.1fs",
-                tissue_bat["tissue_bat_s"],
-                tissue_bat["tissue_bat_frame"],
-                aif_bat["aif_bat_s"],
-                aif_bat["aif_bat_frame"],
-                time_shift_s,
-            )
-
-            if abs(time_shift_s) > 2.0:
-                aif = apply_aif_time_shift(aif, time_vector_s, time_shift_s)
-                new_peak_frame = int(np.argmax(aif))
-                new_peak_s = float(time_vector_s[new_peak_frame])
-                logger.info(
-                    "BAT correction applied: shifted AIF by +%.1fs "
-                    "(new peak at %.1fs, was %.1fs)",
-                    time_shift_s,
-                    new_peak_s,
-                    aif_bat["aif_peak_s"],
-                )
-                if abs(time_shift_s) > 60:
-                    logger.warning(
-                        "Large BAT shift (%.0fs > 60s) — check baseline "
-                        "frames or injection timing",
-                        time_shift_s,
-                    )
-                bat_correction = {
-                    "applied": True,
-                    "time_shift_s": time_shift_s,
-                    "tissue_bat_s": tissue_bat["tissue_bat_s"],
-                    "tissue_bat_frame": tissue_bat["tissue_bat_frame"],
-                    "aif_bat_s": aif_bat["aif_bat_s"],
-                    "aif_peak_s": aif_bat["aif_peak_s"],
-                    "corrected_aif_peak_s": new_peak_s,
-                    "detection_confidence": tissue_bat["confidence"],
-                    "detection_method": tissue_bat["method"],
-                }
-            else:
-                logger.info("BAT shift < 2s, no correction needed")
-                bat_correction = {
-                    "applied": False,
-                    "time_shift_s": time_shift_s,
-                    "reason": "shift_too_small",
-                }
-
-            # Clean up temporary signal data
-            if isdefined(self.inputs.dce_signal_file):
-                del bat_signal_data
 
         spatial_shape = conc_data.shape[:3]
 
