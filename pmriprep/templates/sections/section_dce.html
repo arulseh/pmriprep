@@ -604,26 +604,26 @@
             </div>
         </div>
         {% endif %}
-        {% if dce.qc_metrics.pk_modeling.delta_r2_median is defined %}
+        {% if dce.qc_metrics.pk_modeling.delta_r2_median is defined or dce.qc_metrics.pk_modeling.z_departure_median is defined %}
         <div class="metrics" style="margin-top: 8px;">
+            {% if dce.qc_metrics.pk_modeling.delta_r2_median is defined %}
             <div class="metric">
                 <div class="metric-label">&Delta;R&sup2; Change</div>
                 <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.delta_r2_median) }}</div>
             </div>
+            {% endif %}
             {% if dce.qc_metrics.pk_modeling.frac_positive_delta_r2 is defined %}
             <div class="metric">
                 <div class="metric-label">Improved</div>
                 <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.pk_modeling.frac_positive_delta_r2 * 100) }}%</div>
             </div>
             {% endif %}
-        </div>
-        {% endif %}
-        {% if dce.qc_metrics.pk_modeling.z_departure_median is defined %}
-        <div class="metrics" style="margin-top: 8px;">
+            {% if dce.qc_metrics.pk_modeling.z_departure_median is defined %}
             <div class="metric">
                 <div class="metric-label">Prior Departure</div>
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.pk_modeling.z_departure_median) }}</div>
             </div>
+            {% endif %}
             {% if dce.qc_metrics.pk_modeling.frac_prior_dominated is defined %}
             <div class="metric">
                 <div class="metric-label">Prior-dominated</div>
