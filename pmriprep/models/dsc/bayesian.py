@@ -514,7 +514,7 @@ class BayesianDSCFitter:
             credible_intervals = {}
 
         # Compute fitted curves
-        fitted_residue = self.model.residue_function(fitted_params, time_points)
+        fitted_residue = self.model.compute_fitted_residue(fitted_params, time_points)
         fitted_tissue = self.model.tissue_curve(fitted_params, aif, time_points)
 
         gof = self._compute_gof(concentration, fitted_tissue)
@@ -606,8 +606,10 @@ class BayesianDSCFitter:
             c0 = 1e-3
             s0 = 1e3
 
-        # Initialize posterior mean at prior mean, clipped to bounds
-        m = prior_means.copy()
+        # Initialize posterior mean from model's initial guess (not prior means).
+        # For CPI, get_initial_guess() provides exponential-decay fractions that
+        # are a much better starting point than the prior midpoints.
+        m = np.array(self.model.get_initial_guess(), dtype=np.float64)
         for i in range(n_params):
             m[i] = np.clip(m[i], bounds[i][0], bounds[i][1])
 
@@ -768,7 +770,7 @@ class BayesianDSCFitter:
         uncertainties["noise_std"] = noise_std_posterior
 
         # Compute fitted curves
-        fitted_residue = self.model.residue_function(fitted_params, time_points)
+        fitted_residue = self.model.compute_fitted_residue(fitted_params, time_points)
         fitted_tissue = self.model.tissue_curve(fitted_params, aif, time_points)
 
         gof = self._compute_gof(concentration, fitted_tissue)
@@ -958,7 +960,7 @@ class BayesianDSCFitter:
         converged = all_rhat_ok and all_ess_ok
 
         # Fitted curves using posterior mean of model params
-        fitted_residue = self.model.residue_function(posterior_mean, time_points)
+        fitted_residue = self.model.compute_fitted_residue(posterior_mean, time_points)
         fitted_tissue = self.model.tissue_curve(posterior_mean, aif, time_points)
 
         gof = self._compute_gof(concentration, fitted_tissue)

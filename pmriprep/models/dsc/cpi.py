@@ -81,7 +81,7 @@ class CPIModel(DSCModel):
         - Parameters: [cbf, r1, r2, r3, r4, r5]
         - cbf = flow scaling (max of unnormalized residue)
         - R(0) = 1.0 (fixed, not a parameter)
-        - Control point times: evenly spaced from 0 to t_max
+        - Control point times: uniformly spaced from 0 to t_max
 
     References:
         Mehndiratta A, et al. (2013). "A control point interpolation method
@@ -109,7 +109,7 @@ class CPIModel(DSCModel):
         # Set time range for control point placement
         self._time_range = time_range if time_range is not None else (0.0, 30.0)
 
-        # Pre-compute control point times (evenly spaced)
+        # Pre-compute control point times (uniform spacing, per Mehndiratta 2013)
         self._control_point_times = np.linspace(
             self._time_range[0],
             self._time_range[1],
@@ -156,25 +156,32 @@ class CPIModel(DSCModel):
         params = []
 
         # CBF scaling parameter (relative units, s⁻¹)
-        # Bounds are data-scale appropriate for ΔR2* concentration
+        # Actual CPI CBF values are 25-100 (same scale as SVD methods),
+        # matching VascularModel CBF_BOUNDS=(0, 200).
         params.append(
             DSCModelParameter(
                 name="cbf",
-                bounds=(0.0, 1.0),
-                typical_range=(0.0, 0.5),
+                bounds=(0.0, 200.0),
+                typical_range=(10.0, 100.0),
                 log_transform=False,
                 description="CBF scaling (relative)",
                 units="s⁻¹",
             )
         )
 
-        for i in range(1, self._n_control_points):
+        # Per-fraction priors follow exponential decay matching
+        # the expected residue shape, with ±0.35 width for each.
+        n_cp = self._n_control_points
+        for i in range(1, n_cp):
             t = self._control_point_times[i]
+            frac = float(np.exp(-i / (n_cp / 2.0)))
+            lo = max(0.0, frac - 0.35)
+            hi = min(1.0, frac + 0.35)
             params.append(
                 DSCModelParameter(
                     name=f"r{i}",
                     bounds=(0.0, 1.0),
-                    typical_range=(0.0, 1.0),
+                    typical_range=(lo, hi),
                     log_transform=False,
                     description=f"Control point fraction at t={t:.1f}s",
                     units="fraction",
@@ -192,7 +199,7 @@ class CPIModel(DSCModel):
             relative ΔR2* units. Exponential decay matches cerebral
             physiology better than the linear midpoint default.
         """
-        x0: list[float] = [0.1]  # CBF initial guess (relative s⁻¹)
+        x0: list[float] = [55.0]  # CBF initial guess (midpoint of typical_range)
         tau = self._n_control_points / 2.0
         for i in range(1, self._n_control_points):
             x0.append(float(np.exp(-i / tau)))
@@ -319,6 +326,27 @@ class CPIModel(DSCModel):
                     residue[beyond_mask] = r_last * np.exp(-decay_rate * t_excess)
 
         return residue
+
+    def compute_fitted_residue(
+        self,
+        params: ParamsLike,
+        time_points: npt.NDArray[np.floating],
+    ) -> npt.NDArray[np.floating]:
+        """Compute CBF-scaled residue for Bayesian fitted_residue output.
+
+        CPI's residue_function() returns dimensionless R(t) in [0,1],
+        but downstream code expects fitted_residue = CBF × R(t) so that
+        CBF = max(residue) and CBV = trapezoid(residue, dx=dt).
+
+        Args:
+            params: Parameter values [cbf, r1, ..., r(N-1)].
+            time_points: Time points (seconds).
+
+        Returns:
+            CBF-scaled residue function (CBF × R_norm).
+        """
+        cbf = max(float(params[0]), 0.0)
+        return cbf * self.residue_function(params, time_points)
 
     def tissue_curve(
         self,

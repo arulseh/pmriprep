@@ -319,6 +319,26 @@ class DSCModel(ABC):
         """
         pass
 
+    def compute_fitted_residue(
+        self,
+        params: ParamsLike,
+        time_points: npt.NDArray[np.floating],
+    ) -> npt.NDArray[np.floating]:
+        """Compute the residue function for fitted output storage.
+
+        By default returns residue_function() directly. Models where
+        residue_function() returns a dimensionless form (e.g. CPI) should
+        override this to include the appropriate scaling (e.g. CBF × R).
+
+        Args:
+            params: Parameter values.
+            time_points: Time points (seconds).
+
+        Returns:
+            Residue function suitable for downstream CBF/CBV extraction.
+        """
+        return self.residue_function(params, time_points)
+
     def get_bounds(self) -> list[tuple[float, float]]:
         """Get parameter bounds for optimization.
 
