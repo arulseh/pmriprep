@@ -327,6 +327,35 @@ class CPIModel(DSCModel):
 
         return residue
 
+    def compute_nlls_seed(
+        self,
+        concentration: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+    ) -> npt.NDArray[np.floating] | None:
+        """Compute NLLS seed for Bayesian VI initialization.
+
+        CPI's high-dimensional spline space requires a good starting point
+        for VI to prevent noise precision collapse. Runs a quick L-BFGS-B
+        fit and returns the parameter array.
+
+        Args:
+            concentration: Measured tissue concentration curve.
+            aif: Arterial input function.
+            time_points: Time points (seconds).
+
+        Returns:
+            Parameter array from NLLS fit, or None if fitting failed.
+        """
+        result = _fit_cpi_simple(
+            self, concentration, aif, time_points, sloppy=True
+        )
+        if result is not None and (result.converged or result.r_squared > 0.5):
+            return np.array(
+                self.dict_to_params(result.parameters), dtype=np.float64
+            )
+        return None
+
     def compute_fitted_residue(
         self,
         params: ParamsLike,

@@ -592,31 +592,50 @@ class BayesianDSCFitter:
         prior_stds = np.array([p.std for p in self.priors], dtype=np.float64)
         prior_prec = np.diag(1.0 / (prior_stds**2))  # Λ₀
 
-        # Noise precision prior: Gamma(c0, s0) with E[tau] = c0 * s0
-        # Following FABBER convention: Gamma parameterized so E[tau] = c/s
+        # Noise precision prior: Gamma(c0, s0) in shape-scale form.
+        # E[tau] = c0 * s0. Update: 1/s_new = 1/s_0 + 0.5 * data_term.
         if noise_prior is not None:
             c0, s0 = noise_prior
         elif self.noise_std is not None:
             # Informative prior centered on provided noise_std
             tau_prior = 1.0 / (self.noise_std**2)
             c0 = 10.0
-            s0 = c0 / tau_prior  # so E[tau] = c0/s0 = tau_prior
+            s0 = tau_prior / c0  # so E[tau] = c0 * s0 = tau_prior
         else:
             # Non-informative prior
             c0 = 1e-3
             s0 = 1e3
 
-        # Initialize posterior mean from model's initial guess (not prior means).
-        # For CPI, get_initial_guess() provides exponential-decay fractions that
-        # are a much better starting point than the prior midpoints.
+        # Initialize posterior mean from model's initial guess.
+        # For CPI, get_initial_guess() provides exponential-decay fractions
+        # that are a better starting point than the prior midpoints.
         m = np.array(self.model.get_initial_guess(), dtype=np.float64)
         for i in range(n_params):
             m[i] = np.clip(m[i], bounds[i][0], bounds[i][1])
 
+        # Seed from NLLS if model provides one (e.g. CPI). This prevents
+        # tau collapse when the default initial guess is far from truth.
+        nlls_seed = self.model.compute_nlls_seed(y, aif, time_points)
+        if nlls_seed is not None:
+            m = nlls_seed.copy()
+            for i in range(n_params):
+                m[i] = np.clip(m[i], bounds[i][0], bounds[i][1])
+
         # Initialize noise posterior
         c = c0
         s = s0
-        tau_exp = c / s  # E[tau] = c/s
+        tau_exp = c * s  # E[tau] = shape * scale
+
+        # If NLLS-seeded, initialize tau from residual variance to prevent
+        # the Gamma update from collapsing tau on the first iteration.
+        if nlls_seed is not None:
+            try:
+                g_init = self.model.tissue_curve(m, aif, time_points)
+                init_var = float(np.sum((y - np.asarray(g_init))**2)) / n_obs
+                if init_var > 1e-20:
+                    tau_exp = 1.0 / init_var
+            except (ValueError, RuntimeError):
+                pass
 
         # Best free energy tracking for trial mode
         best_free_energy = float("-inf")

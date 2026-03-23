@@ -319,6 +319,29 @@ class DSCModel(ABC):
         """
         pass
 
+    def compute_nlls_seed(
+        self,
+        concentration: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+    ) -> npt.NDArray[np.floating] | None:
+        """Compute NLLS parameter seed for Bayesian methods.
+
+        Models with expensive or high-dimensional parameterizations can
+        override this to provide a quick NLLS fit as a starting point for
+        VI/MAP, preventing poor initialization from collapsing the noise
+        precision estimate.
+
+        Args:
+            concentration: Measured tissue concentration curve.
+            aif: Arterial input function.
+            time_points: Time points (seconds).
+
+        Returns:
+            Parameter array from NLLS fit, or None if not available.
+        """
+        return None
+
     def compute_fitted_residue(
         self,
         params: ParamsLike,
