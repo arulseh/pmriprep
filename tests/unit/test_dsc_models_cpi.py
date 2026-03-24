@@ -73,21 +73,39 @@ class TestResidueFunction:
 
 
 class TestEnforceConstraints:
-    """Tests for monotonicity enforcement on control points."""
+    """Tests for constraint enforcement on control points."""
 
-    def test_non_monotonic_enforced(self) -> None:
-        """Violating fractions (r2 > r1) are capped to enforce monotonicity."""
+    def test_soft_clips_to_01(self) -> None:
+        """Default (soft) enforce_constraints clips to [0,1], no monotonicity."""
         model = CPIModel(n_control_points=6, time_range=(0, 30))
-        # r2=0.9 > r1=0.8 violates monotonicity
+        # r2=0.9 > r1=0.8 — allowed in soft mode
         params = [0.1, 0.8, 0.9, 0.5, 0.3, 0.2]
         constrained = model.enforce_constraints(params)
-        # First value is always 1.0
         assert constrained[0] == pytest.approx(1.0)
-        # Each subsequent value <= previous
+        assert constrained[2] == pytest.approx(0.9)  # NOT capped to 0.8
+        # All values in [0, 1]
+        for i in range(len(constrained)):
+            assert 0.0 <= constrained[i] <= 1.0
+
+    def test_hard_enforces_monotonicity(self) -> None:
+        """Hard mode caps fractions to enforce monotonic non-increase."""
+        model = CPIModel(n_control_points=6, time_range=(0, 30))
+        params = [0.1, 0.8, 0.9, 0.5, 0.3, 0.2]
+        constrained = model.enforce_constraints_hard(params)
+        assert constrained[0] == pytest.approx(1.0)
         for i in range(1, len(constrained)):
-            assert constrained[i] <= constrained[i - 1] + 1e-15, (
-                f"constrained[{i}]={constrained[i]} > constrained[{i-1}]={constrained[i-1]}"
-            )
+            assert constrained[i] <= constrained[i - 1] + 1e-15
+
+    def test_monotonicity_prior_penalizes_violations(self) -> None:
+        """Soft monotonicity prior penalizes violations more than decrements."""
+        model = CPIModel(n_control_points=6, time_range=(0, 30))
+        # Monotonic (good)
+        params_good = [0.1, 0.8, 0.6, 0.4, 0.2, 0.1]
+        # Non-monotonic (bad) — r2=0.9 > r1=0.8
+        params_bad = [0.1, 0.8, 0.9, 0.4, 0.2, 0.1]
+        lp_good = model.compute_monotonicity_prior(params_good)
+        lp_bad = model.compute_monotonicity_prior(params_bad)
+        assert lp_good > lp_bad, "Monotonic should have higher log-prior"
 
 
 class TestTissueCurve:

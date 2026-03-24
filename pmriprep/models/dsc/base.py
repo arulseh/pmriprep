@@ -342,6 +342,45 @@ class DSCModel(ABC):
         """
         return None
 
+    def compute_monotonicity_prior(
+        self,
+        params: ParamsLike,
+        sigma_delta: float = 0.15,
+        violation_scale: float = 10.0,
+    ) -> float:
+        """Compute soft monotonicity log-prior for Bayesian fitting.
+
+        Returns 0.0 by default (no monotonicity constraint). Override in
+        models with non-parametric residue functions (e.g. CPI) where
+        monotonicity should be softly enforced via the prior.
+
+        Args:
+            params: Parameter values.
+            sigma_delta: Prior std for expected decrement.
+            violation_scale: Penalty multiplier for violations.
+
+        Returns:
+            Log-prior contribution.
+        """
+        return 0.0
+
+    def compute_monotonicity_precision(
+        self,
+        sigma_delta: float = 0.15,
+    ) -> npt.NDArray[np.floating] | None:
+        """Build monotonicity prior precision matrix for VI.
+
+        Returns None by default (no monotonicity structure). Override in
+        models that need pairwise penalties on adjacent parameters.
+
+        Args:
+            sigma_delta: Prior std for decrement penalty.
+
+        Returns:
+            n_parameters x n_parameters precision matrix, or None.
+        """
+        return None
+
     def compute_fitted_residue(
         self,
         params: ParamsLike,

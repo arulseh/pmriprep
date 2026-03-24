@@ -120,6 +120,10 @@ class CPIModel(DSCModel):
         self._toeplitz_cache: npt.NDArray[np.floating] | None = None
         self._toeplitz_aif_id: int | None = None
 
+        # When True, enforce_constraints uses hard monotonicity projection.
+        # Set by _fit_cpi_simple for NLLS fitting; False for Bayesian paths.
+        self._hard_monotonicity: bool = False
+
     @property
     def name(self) -> str:
         """Model name for identification."""
@@ -169,19 +173,16 @@ class CPIModel(DSCModel):
             )
         )
 
-        # Per-fraction priors follow exponential decay matching
-        # the expected residue shape, with ±0.35 width for each.
-        n_cp = self._n_control_points
-        for i in range(1, n_cp):
+        # Weakly informative priors on fractions — monotonicity is enforced
+        # by a separate soft prior (compute_monotonicity_prior), not by
+        # biasing each fraction's marginal toward an exponential template.
+        for i in range(1, self._n_control_points):
             t = self._control_point_times[i]
-            frac = float(np.exp(-i / (n_cp / 2.0)))
-            lo = max(0.0, frac - 0.35)
-            hi = min(1.0, frac + 0.35)
             params.append(
                 DSCModelParameter(
                     name=f"r{i}",
                     bounds=(0.0, 1.0),
-                    typical_range=(lo, hi),
+                    typical_range=(0.0, 1.0),
                     log_transform=False,
                     description=f"Control point fraction at t={t:.1f}s",
                     units="fraction",
@@ -218,34 +219,51 @@ class CPIModel(DSCModel):
     ) -> npt.NDArray[np.floating]:
         """Convert fraction parameterization to dimensionless R(t) values.
 
-        Input params: [cbf, frac1, frac2, ..., frac_{N-1}]
-        Output: [1.0, frac1, frac2, ...] with monotonicity enforced
-        (dimensionless control point values with R(0)=1.0).
+        In Bayesian mode (default): clips to [0, 1] only. Monotonicity
+        is handled by the soft prior (compute_monotonicity_prior).
 
-        CBF is NOT included in the output — it is a separate scaling
-        parameter applied in tissue_curve().
-
-        Each fraction is clipped to [0, 1], then capped at the previous
-        control point to enforce monotonic non-increase.
+        In NLLS mode (_hard_monotonicity=True): also enforces monotonic
+        non-increase via sequential capping.
 
         Args:
             params: [cbf, frac1, frac2, ...] where cbf is the scaling
                 parameter and frac_i are fractions of R(0)=1.0.
 
         Returns:
-            Dimensionless control point values (R(0)=1.0, monotonically
-            non-increasing), length = n_control_points.
+            Dimensionless control point values (R(0)=1.0), length =
+            n_control_points.
         """
-        control_values = np.zeros(self._n_control_points, dtype=np.float64)
+        if self._hard_monotonicity:
+            return self.enforce_constraints_hard(params)
 
-        # R(0) = 1.0 (fixed, dimensionless)
+        control_values = np.zeros(self._n_control_points, dtype=np.float64)
         control_values[0] = 1.0
 
-        # Convert fractions to dimensionless values, enforce monotonicity
+        for i in range(1, self._n_control_points):
+            control_values[i] = float(np.clip(params[i], 0.0, 1.0))
+
+        return control_values
+
+    def enforce_constraints_hard(
+        self, params: ParamsLike
+    ) -> npt.NDArray[np.floating]:
+        """Convert fractions to R(t) values with hard monotonicity projection.
+
+        Used by _fit_cpi_simple (NLLS) where hard projection is appropriate
+        for L-BFGS-B box-constrained optimization.
+
+        Args:
+            params: [cbf, frac1, frac2, ...].
+
+        Returns:
+            Monotonically non-increasing control point values.
+        """
+        control_values = np.zeros(self._n_control_points, dtype=np.float64)
+        control_values[0] = 1.0
+
         prev_r = 1.0
         for i in range(1, self._n_control_points):
             frac = float(np.clip(params[i], 0.0, 1.0))
-            # Enforce monotonicity: r_i <= prev_r
             control_values[i] = min(frac, prev_r)
             prev_r = control_values[i]
 
@@ -294,8 +312,9 @@ class CPIModel(DSCModel):
                 control_values,
             )
 
-        # Enforce non-negativity on output (numerical safety)
-        residue = np.maximum(residue, 0.0)
+        # Clip to [0, 1] — PCHIP can overshoot above 1.0 when control
+        # points are non-monotonic (soft monotonicity allows this).
+        residue = np.clip(residue, 0.0, 1.0)
 
         # Handle extrapolation beyond control point range
         # For t > t_max: extrapolate towards zero
@@ -326,6 +345,73 @@ class CPIModel(DSCModel):
                     residue[beyond_mask] = r_last * np.exp(-decay_rate * t_excess)
 
         return residue
+
+    def compute_monotonicity_prior(
+        self,
+        params: ParamsLike,
+        sigma_delta: float = 0.15,
+        violation_scale: float = 10.0,
+    ) -> float:
+        """Soft monotonicity prior on CPI control point fractions.
+
+        Penalizes violations (r_i > r_{i-1}) more steeply than normal
+        decrements. Used by the Bayesian fitter in the log-posterior.
+
+        Args:
+            params: Parameter values [cbf, r1, ..., r(N-1)].
+            sigma_delta: Prior std for expected decrement between points.
+            violation_scale: How much more steeply to penalize violations.
+
+        Returns:
+            Log-prior contribution (negative for violations).
+        """
+        log_p = 0.0
+        prev = 1.0  # R(0) = 1.0
+        for i in range(1, self._n_control_points):
+            ri = float(np.clip(params[i], 0.0, 1.0))
+            delta = prev - ri  # Should be >= 0 for monotonicity
+            if delta >= 0:
+                log_p -= 0.5 * (delta / sigma_delta) ** 2
+            else:
+                # Violations penalized violation_scale^2 times more steeply
+                log_p -= 0.5 * (delta / (sigma_delta / violation_scale)) ** 2
+            prev = ri
+        return log_p
+
+    def compute_monotonicity_precision(
+        self,
+        sigma_delta: float = 0.15,
+    ) -> npt.NDArray[np.floating]:
+        """Build symmetric monotonicity prior precision matrix for VI.
+
+        The symmetric penalty sum((r_{i-1} - r_i)^2 / sigma_delta^2)
+        expands to a tridiagonal matrix on the fraction parameters only
+        (CBF row/column is zero).
+
+        Args:
+            sigma_delta: Prior std for decrement penalty.
+
+        Returns:
+            n_parameters x n_parameters precision matrix.
+        """
+        n = self._n_control_points  # = n_parameters
+        lam = np.zeros((n, n), dtype=np.float64)
+        tau = 1.0 / (sigma_delta ** 2)
+
+        # First pair: R(0)=1.0 (fixed) vs r1. Since R(0) is not a
+        # parameter, the penalty (1 - r1)^2 / sigma^2 adds tau to
+        # position [1,1] (the r1 diagonal).
+        lam[1, 1] += tau
+
+        # Subsequent pairs: (r_{i-1} - r_i)^2 / sigma^2
+        for i in range(2, n):
+            lam[i - 1, i - 1] += tau
+            lam[i, i] += tau
+            lam[i - 1, i] -= tau
+            lam[i, i - 1] -= tau
+
+        # CBF (index 0) has no monotonicity penalty
+        return lam
 
     def compute_nlls_seed(
         self,
@@ -657,8 +743,8 @@ def _fit_cpi_simple(
     """Least-squares fit of CPI model using L-BFGS-B.
 
     L-BFGS-B handles box bounds natively. Monotonicity is enforced via
-    enforce_constraints() inside the model's residue_function(), which
-    projects fractions to monotonically non-increasing values.
+    hard projection in enforce_constraints() (enabled by setting
+    _hard_monotonicity=True for the duration of the fit).
 
     The CBF upper bound is set adaptively based on the data scale
     (10 × max tissue concentration) to ensure the optimizer can reach
@@ -698,6 +784,9 @@ def _fit_cpi_simple(
 
     x0 = model.get_initial_guess()
     x0[0] = cbf_init
+
+    # Enable hard monotonicity for NLLS fitting
+    model._hard_monotonicity = True
 
     def objective(params: npt.NDArray[np.floating]) -> float:
         """Weighted residual sum of squares objective."""
@@ -752,5 +841,7 @@ def _fit_cpi_simple(
 
     except (ValueError, RuntimeError):
         pass
+    finally:
+        model._hard_monotonicity = False
 
     return None

@@ -209,7 +209,12 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 cbv_val = float(np.trapezoid(res, dx=dt))
                 out["cbv"] = cbv_val
                 out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
-                out["tmax"] = float(np.argmax(res)) * dt
+                # CPI does not model delay; Vascular delay is in parameters.
+                # Use argmax only for Vascular; CPI tmax is always 0.
+                if method == "vascular":
+                    out["tmax"] = float(np.argmax(res)) * dt
+                else:
+                    out["tmax"] = 0.0
             else:
                 out["cbv"] = 0.0
                 out["mtt"] = 0.0

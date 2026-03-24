@@ -157,7 +157,10 @@ class BayesianDSCFitter:
         Returns:
             Log prior probability (unnormalized).
         """
-        return compute_log_prior(params, self.priors)
+        lp = compute_log_prior(params, self.priors)
+        # Add soft monotonicity prior (non-zero for CPI, zero for others)
+        lp += self.model.compute_monotonicity_prior(params)
+        return lp
 
     def _log_likelihood(
         self,
@@ -454,7 +457,6 @@ class BayesianDSCFitter:
         try:
             peak_conc = float(np.max(concentration))
             if peak_conc > 0:
-                # Scale CBF-like parameters based on peak concentration
                 param_names = self.model.get_parameter_names()
                 for i, name in enumerate(param_names):
                     if "cbf" in name.lower():
@@ -462,42 +464,62 @@ class BayesianDSCFitter:
         except (ValueError, IndexError):
             pass
 
-        # Clip start points to bounds
         x0_prior = np.clip(x0_prior, lower, upper)
         x0_data = np.clip(x0_data, lower, upper)
 
-        # Objective: negative log posterior
-        def neg_log_posterior(params: npt.NDArray[np.floating]) -> float:
-            val = -self._log_posterior(
-                params, concentration, aif, time_points, noise_std,
-                weights=weights,
-            )
-            return min(val, 1e20)
-
-        # Multi-start optimization (matching DCE approach)
+        n_obs = len(concentration)
+        n_sigma_iter = 1 if sloppy else 3
         best_fun = float("inf")
         converged = False
         fitted_params = x0_prior
 
-        for x0 in [x0_prior, x0_data]:
-            try:
-                result = optimize.minimize(
-                    neg_log_posterior,
-                    x0,
-                    method="L-BFGS-B",
-                    bounds=bounds,
-                    options={
-                        "maxiter": max_iter,
-                        "disp": False,
-                        "ftol": 1e-3 if sloppy else 1e-6,
-                    },
+        for sigma_iter in range(n_sigma_iter):
+            # Objective uses current noise_std
+            _noise_std = noise_std  # capture for closure
+
+            def neg_log_posterior(params: npt.NDArray[np.floating]) -> float:
+                val = -self._log_posterior(
+                    params, concentration, aif, time_points, _noise_std,
+                    weights=weights,
                 )
-                if result.fun < best_fun:
-                    best_fun = result.fun
-                    converged = result.success and result.fun < 1e20
-                    fitted_params = np.array(result.x, dtype=np.float64)
-            except (ValueError, RuntimeError):
-                continue
+                return min(val, 1e20)
+
+            # Multi-start trials
+            starts = [x0_prior, x0_data]
+            if sigma_iter > 0:
+                # Warm-start from previous best
+                starts.append(fitted_params.copy())
+
+            for x0 in starts:
+                try:
+                    result = optimize.minimize(
+                        neg_log_posterior,
+                        x0,
+                        method="L-BFGS-B",
+                        bounds=bounds,
+                        options={
+                            "maxiter": max_iter,
+                            "disp": False,
+                            "ftol": 1e-3 if sloppy else 1e-6,
+                        },
+                    )
+                    if result.fun < best_fun:
+                        best_fun = result.fun
+                        converged = result.success and result.fun < 1e20
+                        fitted_params = np.array(result.x, dtype=np.float64)
+                except (ValueError, RuntimeError):
+                    continue
+
+            # Profile likelihood: update noise_std from residuals
+            if sigma_iter < n_sigma_iter - 1:
+                try:
+                    fitted_tissue = self.model.tissue_curve(
+                        fitted_params, aif, time_points
+                    )
+                    rss = float(np.sum((concentration - fitted_tissue) ** 2))
+                    noise_std = max(np.sqrt(rss / n_obs), 1e-7)
+                except (ValueError, RuntimeError):
+                    pass
 
         # Clip to bounds
         fitted_params = np.array(
@@ -587,10 +609,15 @@ class BayesianDSCFitter:
         param_names = self.model.get_parameter_names()
         y = np.asarray(concentration, dtype=np.float64)
 
-        # Prior precision matrix (diagonal, from prior stds)
+        # Prior precision matrix (diagonal from prior stds + monotonicity)
         prior_means = np.array([p.mean for p in self.priors], dtype=np.float64)
         prior_stds = np.array([p.std for p in self.priors], dtype=np.float64)
-        prior_prec = np.diag(1.0 / (prior_stds**2))  # Λ₀
+        prior_prec = np.diag(1.0 / (prior_stds**2))  # Λ_diag
+
+        # Add symmetric monotonicity penalty for CPI (tridiagonal structure)
+        mono_prec = self.model.compute_monotonicity_precision()
+        if mono_prec is not None:
+            prior_prec = prior_prec + mono_prec  # Λ_combined
 
         # Noise precision prior: Gamma(c0, s0) in shape-scale form.
         # E[tau] = c0 * s0. Update: 1/s_new = 1/s_0 + 0.5 * data_term.
@@ -732,9 +759,11 @@ class BayesianDSCFitter:
             #     - N log(<tau>) + ...]  (up to constants)
             dm = m_new - prior_means
             sign_cov, logdet_cov = np.linalg.slogdet(post_cov)
-            sign_prior, logdet_prior_cov = np.linalg.slogdet(
-                np.diag(prior_stds**2)
-            )
+            # Use combined prior precision (includes monotonicity if present)
+            sign_prior_prec, logdet_prior_prec = np.linalg.slogdet(prior_prec)
+            # log|Σ₀| = log|Λ₀⁻¹| = -log|Λ₀|
+            logdet_prior_cov = -logdet_prior_prec
+            sign_prior = sign_prior_prec
 
             free_energy = (
                 0.5 * n_obs * (np.log(tau_exp) - np.log(2 * np.pi))
