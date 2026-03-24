@@ -2885,7 +2885,7 @@ def init_dsc_preproc_wf(
             ("out_beta", "beta_map"),
             ("out_cth", "cth_map"),
         ]),
-        # Bayesian uncertainty maps (optional — undefined when bayesian=none)
+        # Bayesian uncertainty maps (only for parametric methods: cpi, vascular)
         (compute_maps, outputnode, [
             ("out_cbf_std", "cbf_std_map"),
             ("out_cbv_std", "cbv_std_map"),

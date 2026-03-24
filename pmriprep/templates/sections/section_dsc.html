@@ -347,7 +347,7 @@
                 <div class="metric-value">{{ dsc.qc_metrics.deconvolution.method }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.bayesian is defined and dsc.qc_metrics.deconvolution.bayesian != "none" %}
+            {% if dsc.qc_metrics.deconvolution.method is defined and dsc.qc_metrics.deconvolution.method in ["cpi", "vascular"] %}
             <div class="metric">
                 <div class="metric-label">Bayesian</div>
                 <div class="metric-value">{{ dsc.qc_metrics.deconvolution.bayesian }}</div>

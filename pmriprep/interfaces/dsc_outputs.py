@@ -682,7 +682,7 @@ class DSCDerivativeWriter(BaseInterface):
             config_dict = self.inputs.config_dict
             if isdefined(config_dict) and config_dict:
                 sidecar["DeconvolutionMethod"] = config_dict.get("method", "unknown")
-                sidecar["BayesianInference"] = config_dict.get("bayesian", "none")
+                sidecar["BayesianInference"] = config_dict.get("bayesian", "map")
                 sidecar["PreBolus"] = config_dict.get("pre_bolus", 5)
 
         return sidecar

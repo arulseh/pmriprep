@@ -148,7 +148,6 @@ def _dsc_init_worker(
 def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
     """Fit a single voxel — called from pool workers."""
     from pmriprep.models.dsc import fit_dsc_model
-    from pmriprep.models.dsc.cpi import _fit_cpi_simple
 
     x, y, z, tissue_curve = voxel_data
 
@@ -167,38 +166,17 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
     try:
         model_instance = _dsc_worker_ctx["model_factory"]()
 
-        if bayesian == "none" and method == "cpi":
-            # Fast path: direct NLLS without Bayesian prior/noise overhead
-            result = _fit_cpi_simple(
-                model_instance, tissue_curve, aif, time_points,
-                weights=motion_weights,
-                sloppy=sloppy,
-            )
-            if result is None:
-                return {"coords": (x, y, z), "failed": True}
-        elif bayesian == "none":
-            result = fit_dsc_model(
-                model=model_instance,
-                concentration=tissue_curve,
-                aif=aif,
-                time_points=time_points,
-                method="map",
-                compute_uncertainties=False,
-                weights=motion_weights,
-                sloppy=sloppy,
-            )
-        else:
-            result = fit_dsc_model(
-                model=model_instance,
-                concentration=tissue_curve,
-                aif=aif,
-                time_points=time_points,
-                method=bayesian,
-                mcmc_samples=_dsc_worker_ctx["mcmc_samples"],
-                compute_uncertainties=not sloppy,
-                weights=motion_weights,
-                sloppy=sloppy,
-            )
+        result = fit_dsc_model(
+            model=model_instance,
+            concentration=tissue_curve,
+            aif=aif,
+            time_points=time_points,
+            method=bayesian,
+            mcmc_samples=_dsc_worker_ctx["mcmc_samples"],
+            compute_uncertainties=not sloppy,
+            weights=motion_weights,
+            sloppy=sloppy,
+        )
 
         out: dict[str, Any] = {"coords": (x, y, z), "failed": False}
         cbf_val = result.parameters.get("cbf", result.parameters.get("CBF", 0.0))
@@ -276,7 +254,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 out["cbv_ci95_upper"] = 0.0
 
         out["r_squared"] = result.r_squared
-        out["converged"] = (bayesian != "none" and result.passes_convergence())
+        out["converged"] = result.passes_convergence()
 
         # Flag poor fits for oSVD fallback (perf-plus falls back when R² < 0.5)
         if result.r_squared < 0.5 or not result.converged:
@@ -393,14 +371,14 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Number of tail frames for PSR calculation",
     )
 
-    # Bayesian options
+    # Bayesian options (parametric methods only — SVD methods ignore this)
     bayesian = traits.Enum(
-        "none",
         "map",
         "vi",
         "mcmc",
         usedefault=True,
-        desc="Bayesian inference method: none, map, vi, or mcmc",
+        desc="Bayesian inference for parametric methods (cpi, vascular): "
+             "map, vi, or mcmc. SVD methods ignore this option.",
     )
     mcmc_samples = traits.Int(
         500,
@@ -966,8 +944,8 @@ class ComputeDSCMaps(BaseInterface):
         alpha_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         beta_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cth_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
-        cbf_std_map = np.zeros(spatial_shape, dtype=np.float64) if bayesian != "none" else None
-        cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if bayesian != "none" else None
+        cbf_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
+        cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
         has_ci = bayesian in ("vi", "mcmc")
         cbf_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
         cbf_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
@@ -1121,7 +1099,7 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["r_squared_mean"] = float(np.mean(r_squared_list))
             qc_metrics["r_squared_std"] = float(np.std(r_squared_list))
 
-        if bayesian != "none":
+        if method in ("cpi", "vascular"):
             qc_metrics["n_converged"] = n_converged
             qc_metrics["convergence_rate"] = n_converged / max(1, n_voxels)
 
@@ -1158,7 +1136,7 @@ class ComputeDSCMaps(BaseInterface):
             mask_bool: 3D boolean brain mask.
             dt: Temporal resolution in seconds.
             method: Deconvolution method ('vascular' or 'cpi').
-            bayesian: Bayesian method ('none', 'map', 'vi', 'mcmc').
+            bayesian: Bayesian method ('map', 'vi', 'mcmc').
             mcmc_samples: Number of MCMC samples.
             cpi_control_points: Number of CPI control points (0=auto).
             signal_data: 4D raw signal data (optional, for QC plot).
@@ -1228,28 +1206,15 @@ class ComputeDSCMaps(BaseInterface):
                 model_instance = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
 
             # Fit the QC voxel
-            if bayesian == "none" and method == "cpi":
-                from pmriprep.models.dsc.cpi import _fit_cpi_simple
-                result = _fit_cpi_simple(model_instance, tissue_curve, aif, time_points)
-            elif bayesian == "none":
-                result = fit_dsc_model(
-                    model=model_instance,
-                    concentration=tissue_curve,
-                    aif=aif,
-                    time_points=time_points,
-                    method="map",
-                    compute_uncertainties=False,
-                )
-            else:
-                result = fit_dsc_model(
-                    model=model_instance,
-                    concentration=tissue_curve,
-                    aif=aif,
-                    time_points=time_points,
-                    method=bayesian,
-                    mcmc_samples=mcmc_samples,
-                    compute_uncertainties=False,
-                )
+            result = fit_dsc_model(
+                model=model_instance,
+                concentration=tissue_curve,
+                aif=aif,
+                time_points=time_points,
+                method=bayesian,
+                mcmc_samples=mcmc_samples,
+                compute_uncertainties=False,
+            )
 
             if result is None:
                 return
@@ -1483,14 +1448,13 @@ class ComputeDSCMaps(BaseInterface):
 
         # SVD methods are direct matrix decompositions — bayesian inference
         # only applies to parametric fitting (cpi, vascular).
-        if method in ("sSVD", "cSVD", "oSVD", "tikhonov") and bayesian != "none":
-            logger.warning(
-                "bayesian='%s' has no effect with SVD-based method '%s'. "
-                "Bayesian inference is only supported for parametric methods "
-                "(cpi, vascular). Proceeding with standard %s deconvolution.",
-                bayesian, method, method,
+        if method in ("sSVD", "cSVD", "oSVD", "tikhonov"):
+            logger.info(
+                "Bayesian option '%s' ignored for SVD method '%s'. "
+                "Bayesian inference only applies to parametric methods "
+                "(cpi, vascular).",
+                bayesian, method,
             )
-            bayesian = "none"
 
         baseline_frames = int(self.inputs.baseline_frames)
         tail_frames = int(self.inputs.tail_frames)
@@ -1939,8 +1903,8 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["qc_voxel_cbv"] = round(float(rel_cbv[vx, vy, vz]), 4)
             qc_metrics["qc_voxel_r2"] = round(_fit.get("r_squared", 0.0), 4)
 
-        # Save Bayesian uncertainty maps
-        if bayesian != "none":
+        # Save Bayesian uncertainty maps (parametric methods only)
+        if method in ("cpi", "vascular"):
             if cbf_std_map is not None:  # type: ignore[possibly-undefined]
                 cbf_std_map = np.where(mask_bool, cbf_std_map, 0.0)
                 self._results["out_cbf_std"] = _save_map(cbf_std_map, "_cbf_std")

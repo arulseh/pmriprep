@@ -11,7 +11,7 @@ import numpy.typing as npt
 import pytest
 
 from pmriprep.models.dsc.bayesian import fit_dsc_model
-from pmriprep.models.dsc.cpi import CPIModel, _fit_cpi_simple
+from pmriprep.models.dsc.cpi import CPIModel
 from pmriprep.models.dsc.vascular import VascularModel
 from pmriprep.utils.dsc_deconvolution import (
     svd_deconvolve_circulant,
@@ -259,73 +259,6 @@ class TestTikhonovRecovery:
 
 
 # =============================================================================
-# CPI Recovery
-# =============================================================================
-
-CPI_PARAMS = [
-    pytest.param(60.0, 4.0, id="normal_gm"),
-    pytest.param(25.0, 6.0, id="normal_wm"),
-    pytest.param(100.0, 8.0, id="hyperperfused_tumor"),
-    pytest.param(80.0, 12.0, id="long_mtt"),
-]
-
-# CPI uses PCHIP spline through 6 control points to approximate an
-# exponential residue. The spline approximation introduces ~1-26% CBF
-# error even at zero noise (worst case: long MTT, Mehndiratta MRM 2013).
-CPI_NOISE_LEVELS = [
-    pytest.param(0.0, 0.30, 0.25, id="zero"),
-    pytest.param(0.02, 0.63, 0.48, id="low"),
-    pytest.param(0.05, 0.68, 0.54, id="medium"),
-]
-
-
-class TestCPIRecovery:
-    """Test Control Point Interpolation model parameter recovery."""
-
-    @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", CPI_NOISE_LEVELS)
-    @pytest.mark.parametrize("cbf,mtt", CPI_PARAMS)
-    def test_cpi(
-        self,
-        cbf: float,
-        mtt: float,
-        noise_frac: float,
-        cbf_tol: float,
-        mtt_tol: float,
-    ) -> None:
-        """Test CPI recovery of CBF and MTT."""
-        n_timepoints = 60
-        dt_sec = 1.5
-        baseline_frames = 10
-
-        aif, time_sec = generate_dsc_aif_dro(
-            n_timepoints=n_timepoints,
-            dt_sec=dt_sec,
-            baseline_frames=baseline_frames,
-        )
-
-        residue = make_exponential_residue(cbf, mtt, n_timepoints, dt_sec)
-        tissue = dsc_forward_model(aif, residue, dt_sec)
-
-        if noise_frac > 0:
-            peak = float(np.max(np.abs(tissue)))
-            if peak > 0:
-                tissue = add_gaussian_noise(tissue, noise_frac * peak, seed=42)
-
-        model = CPIModel(n_control_points=6, time_range=(0.0, 30.0))
-
-        result = _fit_cpi_simple(model, tissue, aif, time_sec)
-        assert result is not None, "CPI fit returned None"
-        assert result.converged or result.r_squared > 0.9
-
-        fitted_params = model.dict_to_params(result.parameters)
-        recovered_cbf = model.get_cbf(fitted_params)
-        recovered_mtt = model.get_mtt(fitted_params, time_sec)
-
-        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
-        _assert_param_recovery(recovered_mtt, mtt, mtt_tol, param_name="MTT")
-
-
-# =============================================================================
 # Vascular Model Recovery
 # =============================================================================
 
@@ -476,28 +409,8 @@ class TestVascularRecovery:
 
 
 # =============================================================================
-# CPI Recovery on Gamma-Variate Residues
+# CPI MAP Recovery on Gamma-Variate Residues
 # =============================================================================
-
-# CPI was designed for non-exponential transit time distributions
-# (Mehndiratta et al., MRM 2013). Gamma-variate residues have R'(0)=0
-# (smooth start, no cusp at t=0), making them CPI's native target.
-# Tolerances are 2-3x tighter than exponential based on spline theory
-# and published validation (Mehndiratta NeuroImage 2013: 5-15% on QASPER).
-
-CPI_GAMMA_PARAMS = [
-    pytest.param(60.0, 3.0, 1.5, id="normal_gm"),    # MTT=4.5s
-    pytest.param(25.0, 4.0, 1.5, id="normal_wm"),     # MTT=6.0s
-    pytest.param(100.0, 2.0, 3.0, id="tumor"),         # MTT=6.0s
-    pytest.param(80.0, 3.0, 4.0, id="long_mtt"),       # MTT=12.0s
-]
-
-# (noise_fraction, cbf_tol, mtt_tol)
-CPI_GAMMA_NOISE_LEVELS = [
-    pytest.param(0.0, 0.10, 0.15, id="zero"),     # CBF 10%, MTT 15%
-    pytest.param(0.02, 0.20, 0.25, id="low"),      # CBF 20%, MTT 25%
-    pytest.param(0.05, 0.30, 0.35, id="medium"),    # CBF 30%, MTT 35%
-]
 
 
 def _make_cpi_gamma_test_data(
@@ -543,65 +456,6 @@ def _make_cpi_gamma_test_data(
     return tissue, aif, time_sec, true_mtt
 
 
-class TestCPIGammaRecovery:
-    """Test CPI recovery on gamma-variate residues (its designed use case).
-
-    Gamma-variate residues have R'(0)=0, unlike exponentials which have
-    an infinite-slope cusp at t=0. CPI's PCHIP spline approximation is
-    well-suited for these smooth, non-exponential shapes.
-    """
-
-    @pytest.mark.parametrize(
-        "noise_frac,cbf_tol,mtt_tol", CPI_GAMMA_NOISE_LEVELS
-    )
-    @pytest.mark.parametrize("cbf,alpha,beta", CPI_GAMMA_PARAMS)
-    def test_cpi_gamma(
-        self,
-        cbf: float,
-        alpha: float,
-        beta: float,
-        noise_frac: float,
-        cbf_tol: float,
-        mtt_tol: float,
-    ) -> None:
-        """Test CPI recovery of CBF and MTT from gamma-variate residue."""
-        true_mtt = alpha * beta
-
-        # CPI with 7 uniform CPs (production auto-selected default) on
-        # 88.5s range has 14.75s spacing. Two tissue types exceed the 10%
-        # CBF tolerance due to basis resolution limitations:
-        # - normal_gm (α=3, β=1.5, MTT=4.5s): ~17% error
-        # - long_mtt (α=3, β=4.0, MTT=12s): ~19% error
-        # This matches Mehndiratta/Fabber behavior with uniform spacing.
-        xfail_combos = {(60.0, 3.0, 1.5), (80.0, 3.0, 4.0)}
-        if (cbf, alpha, beta) in xfail_combos:
-            pytest.xfail(
-                f"CPI basis resolution limit: 7 uniform CPs on 88.5s "
-                f"cannot fully resolve this residue (CBF={cbf}, MTT={true_mtt:.1f}s)"
-            )
-
-        tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
-            cbf, alpha, beta, noise_frac
-        )
-
-        # Use production-equivalent config: N=7 (auto default), full span
-        n_cp = 7  # matches select_n_control_points() for typical bolus
-        t_span = float(time_sec[-1])
-        model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
-        result = _fit_cpi_simple(model, tissue, aif, time_sec)
-        assert result is not None, "CPI fit returned None"
-        assert result.converged or result.r_squared > 0.9
-
-        fitted_params = model.dict_to_params(result.parameters)
-        recovered_cbf = model.get_cbf(fitted_params)
-        recovered_mtt = model.get_mtt(fitted_params, time_sec)
-
-        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
-        _assert_param_recovery(
-            recovered_mtt, true_mtt, mtt_tol, param_name="MTT"
-        )
-
-
 # =============================================================================
 # CPI Bayesian (MAP) Recovery on Gamma-Variate Residues
 # =============================================================================
@@ -619,14 +473,15 @@ CPI_BAYESIAN_PARAMS = [
 ]
 
 # (noise_fraction, cbf_tol, mtt_tol)
-# Tolerances chosen to be tighter than NLLS at the same noise level,
-# validating that MAP regularization adds value. Long_mtt sees the
-# biggest improvement (NLLS diverges at 5% noise, MAP stays stable).
-# At low noise (2%), the CBF prior (mean=55) pulls low-CBF estimates
-# (normal_wm, CBF=25) upward by ~16%, so cbf_tol must accommodate this.
+# Tolerances from Monte Carlo (N=20 seeds, mean+3sigma, rounded up):
+# The CBF prior (mean=55, sigma=22.5) systematically pulls low-CBF
+# tissues (normal_wm, CBF=25) upward by ~18% mean. At 2% noise:
+# normal_wm CBF mean+3σ=22%, MTT mean+3σ=18%. At 5%: CBF 26%, MTT 23%.
+# Tumor has much lower errors (CBF <12%, MTT <11%) so normal_wm
+# is the binding constraint.
 CPI_BAYESIAN_NOISE_LEVELS = [
-    pytest.param(0.02, 0.20, 0.20, id="low"),      # CBF 20%, MTT 20%
-    pytest.param(0.05, 0.20, 0.25, id="medium"),    # CBF 20%, MTT 25%
+    pytest.param(0.02, 0.23, 0.19, id="low"),      # MC: CBF mean+3σ=22%, MTT 18%
+    pytest.param(0.05, 0.26, 0.24, id="medium"),    # MC: CBF mean+3σ=26%, MTT 23%
 ]
 
 

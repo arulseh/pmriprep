@@ -241,10 +241,11 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-bayesian",
-        choices=["none", "map", "vi", "mcmc"],
+        choices=["map", "vi", "mcmc"],
         default=None,
-        help="Bayesian inference method for DSC: none, map (maximum a posteriori), "
-        "vi (variational), mcmc (Markov chain Monte Carlo). Default: none.",
+        help="Bayesian inference for parametric methods (cpi, vascular): "
+        "map (default, maximum a posteriori), vi (variational), "
+        "mcmc (Markov chain Monte Carlo). SVD methods ignore this option.",
     )
     dsc_group.add_argument(
         "--dsc-preload",

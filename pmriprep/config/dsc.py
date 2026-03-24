@@ -83,7 +83,7 @@ class DSCConfig:
 
     # Deconvolution settings
     method: str = "oSVD"
-    bayesian: str = "none"
+    bayesian: str = "map"
     mcmc_samples: int = 500
     cpi_control_points: int = 0  # 0 = auto-select
 
