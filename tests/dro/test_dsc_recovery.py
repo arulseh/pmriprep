@@ -460,27 +460,25 @@ def _make_cpi_gamma_test_data(
 # CPI Bayesian (MAP) Recovery on Gamma-Variate Residues
 # =============================================================================
 
-# MAP regularization helps CPI at nonzero noise by preventing noise-amplified
-# overfitting. At 5% noise, MAP reduces long_mtt CBF error from 60% (NLLS) to
-# ~15%. Only MAP is tested, not VI: linearized VB cannot match L-BFGS-B on
-# CPI's high-dimensional spline space (Chappell 2009 limitation).
+# CPI MAP with soft monotonicity + wide priors (Fabber-harmonized).
+# VI is now competitive with MAP (within 2%) after harmonization.
 
 CPI_BAYESIAN_PARAMS = [
     pytest.param(60.0, 3.0, 1.5, id="normal_gm"),    # MTT=4.5s
     pytest.param(25.0, 4.0, 1.5, id="normal_wm"),     # MTT=6.0s
     pytest.param(100.0, 2.0, 3.0, id="tumor"),         # MTT=6.0s
+    pytest.param(15.0, 3.5, 2.0, id="low_flow"),       # MTT=7.0s
     pytest.param(80.0, 3.0, 4.0, id="long_mtt"),       # MTT=12.0s
 ]
 
 # (noise_fraction, cbf_tol, mtt_tol)
 # Tolerances from Monte Carlo (N=20 seeds, mean+3sigma, rounded up):
-# The CBF prior (mean=55, sigma=22.5) systematically pulls low-CBF
-# tissues (normal_wm, CBF=25) upward by ~18% mean. At 2% noise:
-# normal_wm CBF mean+3σ=22%, MTT mean+3σ=18%. At 5%: CBF 26%, MTT 23%.
-# Tumor has much lower errors (CBF <12%, MTT <11%) so normal_wm
-# is the binding constraint.
+# The CBF prior (mean=55) systematically pulls low-CBF tissues upward.
+# Normal_wm (CBF=25) is the binding constraint at noise>0.
+# Zero-noise tolerances cover basis resolution limits.
 CPI_BAYESIAN_NOISE_LEVELS = [
-    pytest.param(0.02, 0.23, 0.19, id="low"),      # MC: CBF mean+3σ=22%, MTT 18%
+    pytest.param(0.0, 0.20, 0.16, id="zero"),      # Basis resolution: CBF 18%, MTT 15%
+    pytest.param(0.02, 0.23, 0.19, id="low"),       # MC: CBF mean+3σ=22%, MTT 18%
     pytest.param(0.05, 0.26, 0.24, id="medium"),    # MC: CBF mean+3σ=26%, MTT 23%
 ]
 
@@ -488,12 +486,9 @@ CPI_BAYESIAN_NOISE_LEVELS = [
 class TestCPIBayesianGammaRecovery:
     """Test CPI MAP recovery on gamma-variate residues with noise.
 
-    MAP (Maximum A Posteriori) uses informative priors on CBF and control
-    point fractions to regularize noise amplification. This is particularly
-    valuable for long-MTT tissues where NLLS overfits to noise.
-
-    Only MAP is tested: linearized VB (VI) cannot match nonlinear
-    optimization for CPI's high-dimensional spline parameterization.
+    MAP with soft monotonicity prior and wide fraction priors
+    (Fabber-harmonized). Tested on gamma-variate residues at 0%, 2%,
+    and 5% noise.
     """
 
     @pytest.mark.parametrize(
@@ -509,17 +504,20 @@ class TestCPIBayesianGammaRecovery:
         cbf_tol: float,
         mtt_tol: float,
     ) -> None:
-        """Test CPI MAP recovery of CBF and MTT at nonzero noise."""
+        """Test CPI MAP recovery of CBF and MTT."""
         true_mtt = alpha * beta
 
-        # CPI basis resolution limits persist at nonzero noise for
-        # normal_gm (MTT=4.5s) and long_mtt (MTT=12s) with 7 uniform
-        # CPs on the production time range.
+        # CPI basis resolution limits for normal_gm and long_mtt.
+        # Low_flow: CBF prior (mean=55) overwhelms CBF=15 signal.
         xfail_combos = {(60.0, 3.0, 1.5), (80.0, 3.0, 4.0)}
         if (cbf, alpha, beta) in xfail_combos:
             pytest.xfail(
                 f"CPI basis resolution limit: 7 uniform CPs cannot fully "
                 f"resolve this residue (CBF={cbf}, MTT={true_mtt:.1f}s)"
+            )
+        if cbf <= 15:
+            pytest.xfail(
+                f"CBF prior (mean=55) overwhelms low-flow signal (CBF={cbf})"
             )
 
         tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
@@ -530,9 +528,9 @@ class TestCPIBayesianGammaRecovery:
         t_span = float(time_sec[-1]) * 0.9  # production config
         model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
 
-        # Pass noise_std to give the prior meaningful influence
+        # Pass noise_std; use 1% of peak as floor for zero-noise DRO
         peak = float(np.max(np.abs(tissue)))
-        noise_std = noise_frac * peak if peak > 0 else 1.0
+        noise_std = max(noise_frac * peak, 0.01 * peak) if peak > 0 else 1.0
 
         result = fit_dsc_model(
             model, tissue, aif, time_sec, method="map",
@@ -548,6 +546,88 @@ class TestCPIBayesianGammaRecovery:
         _assert_param_recovery(
             recovered_mtt, true_mtt, mtt_tol, param_name="MTT"
         )
+
+
+# =============================================================================
+# SVD Recovery on Gamma-Variate Residues (cross-residue validation)
+# =============================================================================
+
+# SVD methods are model-free and should generalize across residue shapes.
+# Gamma-variate residues have a plateau before decay (R'(0)=0 for alpha>1),
+# which SVD regularization can truncate, causing higher CBF overestimation
+# than on exponential residues.
+
+SVD_GAMMA_PARAMS = [
+    pytest.param(60.0, 3.0, 1.5, id="normal_gm"),    # MTT=4.5s
+    pytest.param(25.0, 4.0, 1.5, id="normal_wm"),     # MTT=6.0s
+    pytest.param(100.0, 2.0, 3.0, id="tumor"),         # MTT=6.0s
+    pytest.param(80.0, 3.0, 4.0, id="long_mtt"),       # MTT=12.0s
+]
+
+# Tolerances wider than exponential: SVD regularization truncates the
+# gamma-variate plateau, causing systematic CBF overestimation.
+# Zero-noise: deterministic — sSVD long_mtt has 19% CBF, 15% MTT from
+# threshold truncating the gamma plateau. MTT 15.1% sets the floor.
+# 5% noise: MC N=20, mean+3σ. Binding: oSVD long_mtt CBF 56%,
+# oSVD normal_gm MTT 85%. Large MTT errors are inherent to SVD on
+# non-exponential residues (Mouridsen 2006).
+SVD_GAMMA_NOISE_LEVELS = [
+    pytest.param(0.0, 0.20, 0.16, id="zero"),     # CBF 19%, MTT 15.1% (deterministic)
+    pytest.param(0.05, 0.57, 0.86, id="medium"),   # MC: CBF m+3σ=56%, MTT m+3σ=85%
+]
+
+
+class TestSVDGammaRecovery:
+    """Test SVD deconvolution on gamma-variate residues.
+
+    Validates that model-free SVD methods generalize beyond the exponential
+    residues they are traditionally benchmarked on. This matches fig2
+    panel b data.
+    """
+
+    @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", SVD_GAMMA_NOISE_LEVELS)
+    @pytest.mark.parametrize("cbf,alpha,beta", SVD_GAMMA_PARAMS)
+    def test_ssvd_gamma(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        noise_frac: float,
+        cbf_tol: float,
+        mtt_tol: float,
+    ) -> None:
+        """Test sSVD recovery of CBF and MTT from gamma-variate residue."""
+        tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
+            cbf, alpha, beta, noise_frac
+        )
+
+        dt = float(time_sec[1] - time_sec[0])
+        result = svd_deconvolve_standard(tissue, aif, dt, threshold=0.05)
+
+        _assert_param_recovery(result.cbf, cbf, cbf_tol, param_name="CBF")
+        _assert_param_recovery(result.mtt, true_mtt, mtt_tol, param_name="MTT")
+
+    @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", SVD_GAMMA_NOISE_LEVELS)
+    @pytest.mark.parametrize("cbf,alpha,beta", SVD_GAMMA_PARAMS)
+    def test_osvd_gamma(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        noise_frac: float,
+        cbf_tol: float,
+        mtt_tol: float,
+    ) -> None:
+        """Test oSVD recovery of CBF and MTT from gamma-variate residue."""
+        tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
+            cbf, alpha, beta, noise_frac
+        )
+
+        dt = float(time_sec[1] - time_sec[0])
+        result = svd_deconvolve_oscillation(tissue, aif, dt, threshold_min=0.01)
+
+        _assert_param_recovery(result.cbf, cbf, cbf_tol, param_name="CBF")
+        _assert_param_recovery(result.mtt, true_mtt, mtt_tol, param_name="MTT")
 
 
 # =============================================================================
