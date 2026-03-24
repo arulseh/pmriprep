@@ -741,14 +741,30 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     logger.log(IMPORTANT, f"BIDS directory: {args.bids_dir}")
     logger.log(IMPORTANT, f"Output directory: {args.output_dir}")
 
-    # Set per-process thread limits (OMP/ITK) before any computation
-    if args.omp_nthreads is not None:
-        import os
+    # Set per-process thread limits (OMP/ITK/MKL) before any computation.
+    # Without this, OMP defaults to cpu_count per worker — with nprocs=32
+    # on a 112-CPU machine, that's 3584 OMP threads total, exceeding
+    # thread limits and causing pthread_create EAGAIN.
+    import os
 
-        omp = str(args.omp_nthreads)
-        os.environ["OMP_NUM_THREADS"] = omp
-        os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = omp
-        logger.info("Per-process threads: OMP_NUM_THREADS=%s", omp)
+    if args.omp_nthreads is not None:
+        omp = args.omp_nthreads
+    else:
+        n_cpus = os.cpu_count() or 1
+        omp = max(1, min(8, n_cpus // max(1, args.nprocs)))
+        logger.info(
+            "Auto-calculated per-process threads: %d (cpus=%d, nprocs=%d)",
+            omp, n_cpus, args.nprocs,
+        )
+
+    os.environ["OMP_NUM_THREADS"] = str(omp)
+    os.environ["MKL_NUM_THREADS"] = str(omp)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(omp)
+    os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(omp)
+    # nnU-Net multiprocessing workers (process count, NOT thread count —
+    # not governed by OMP). Must be 1 to prevent fork storms in HD-BET/HD-GLIO.
+    os.environ["nnUNet_def_n_proc"] = "1"
+    logger.info("Per-process threads: OMP_NUM_THREADS=%s", omp)
 
     # Set random seed for reproducibility (numpy + stdlib random)
     if args.random_seed is not None:

@@ -3688,13 +3688,6 @@ class DCEBrainExtract(SimpleInterface):
         else:
             cmd = hdbet_args
 
-        # Limit nnU-Net/PyTorch worker threads when running on GPU
-        _env = None
-        if self.inputs.use_gpu:
-            from pmriprep.utils.subprocess_env import get_nnunet_subprocess_env
-
-            _env = get_nnunet_subprocess_env()
-
         try:
             result = subprocess.run(
                 cmd,
@@ -3702,7 +3695,6 @@ class DCEBrainExtract(SimpleInterface):
                 capture_output=True,
                 text=True,
                 timeout=300,  # 5 minute timeout
-                env=_env,
             )
             logger.info("HD-BET completed successfully")
 

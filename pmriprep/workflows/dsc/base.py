@@ -298,19 +298,12 @@ def _hdbet_dsc_brain(
         # No conda env — try direct first, then fall back (no env name)
         cmd_prefixes = [[], ]
 
-    # Limit nnU-Net/PyTorch worker threads when running on GPU
-    _env = None
-    if use_gpu:
-        from pmriprep.utils.subprocess_env import get_nnunet_subprocess_env
-
-        _env = get_nnunet_subprocess_env()
-
     for cmd_prefix in cmd_prefixes:
         if hdbet_succeeded:
             break
         try:
             hdbet_cmd = cmd_prefix + hdbet_args
-            subprocess.run(hdbet_cmd, check=True, capture_output=True, env=_env)
+            subprocess.run(hdbet_cmd, check=True, capture_output=True)
             hdbet_succeeded = True
         except (subprocess.CalledProcessError, FileNotFoundError, OSError):
             continue
