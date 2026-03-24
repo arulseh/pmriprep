@@ -73,15 +73,26 @@ def init(
     for lgr in (cli, workflow, interface, utils):
         lgr.setLevel(logging.DEBUG)
 
-    # PMRIPrep-level FileHandler (the key missing piece).
+    # FileHandlers for pmriprep.log — captures cli + interface messages.
     # Close any existing FileHandlers from a previous subject before adding new.
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_dir / "pmriprep.log", mode="w")
+        fh.setFormatter(logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATEFMT))
+        fh.setLevel(logging.DEBUG)  # capture everything to file
+
+        # cli logger (named "cli", not under pmriprep hierarchy)
         for h in cli.handlers[:]:
             if isinstance(h, logging.FileHandler):
                 h.close()
                 cli.removeHandler(h)
-        fh = logging.FileHandler(log_dir / "pmriprep.log", mode="w")
-        fh.setFormatter(logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATEFMT))
-        fh.setLevel(logging.DEBUG)  # capture everything to file
         cli.addHandler(fh)
+
+        # pmriprep parent logger — captures pmriprep.interfaces.*, pmriprep.utils.*, etc.
+        pmriprep_logger = logging.getLogger("pmriprep")
+        pmriprep_logger.setLevel(logging.DEBUG)
+        for h in pmriprep_logger.handlers[:]:
+            if isinstance(h, logging.FileHandler):
+                h.close()
+                pmriprep_logger.removeHandler(h)
+        pmriprep_logger.addHandler(fh)

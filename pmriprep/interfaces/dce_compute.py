@@ -33,7 +33,7 @@ from pmriprep.utils.dce_constants import (
 )
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
-logger = logging.getLogger("nipype.interface")
+logger = logging.getLogger(__name__)
 
 
 class VoxelInput(NamedTuple):

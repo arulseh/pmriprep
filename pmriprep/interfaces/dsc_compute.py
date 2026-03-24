@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-logger = logging.getLogger("nipype.interface")
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import numpy.typing as npt
@@ -1453,11 +1453,9 @@ class ComputeDSCMaps(BaseInterface):
 
         # SVD methods are direct matrix decompositions — bayesian inference
         # only applies to parametric fitting (cpi, vascular).
-        if method in ("sSVD", "cSVD", "oSVD", "tikhonov"):
-            logger.info(
-                "Bayesian option '%s' ignored for SVD method '%s'. "
-                "Bayesian inference only applies to parametric methods "
-                "(cpi, vascular).",
+        if method in ("sSVD", "cSVD", "oSVD", "tikhonov") and bayesian != "map":
+            logger.warning(
+                "Bayesian option '%s' ignored for SVD method '%s'.",
                 bayesian, method,
             )
 

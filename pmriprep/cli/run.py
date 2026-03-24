@@ -751,7 +751,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         omp = args.omp_nthreads
     else:
         n_cpus = os.cpu_count() or 1
-        omp = max(1, min(8, n_cpus // max(1, args.nprocs)))
+        omp = max(1, min(8, max(n_cpus // max(1, args.nprocs), 4)))
         logger.info(
             "Auto-calculated per-process threads: %d (cpus=%d, nprocs=%d)",
             omp, n_cpus, args.nprocs,
