@@ -3515,6 +3515,11 @@ class DCEBrainExtractInputSpec(BaseInterfaceInputSpec):
         desc="Conda environment name for HD-BET. When set, HD-BET is invoked "
         "via 'conda run -n <env>'. When empty, HD-BET is called directly.",
     )
+    use_gpu = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Whether this node uses GPU (for nipype scheduling)",
+    )
 
 
 class DCEBrainExtractOutputSpec(TraitedSpec):
@@ -3683,6 +3688,13 @@ class DCEBrainExtract(SimpleInterface):
         else:
             cmd = hdbet_args
 
+        # Limit nnU-Net/PyTorch worker threads when running on GPU
+        _env = None
+        if self.inputs.use_gpu:
+            from pmriprep.utils.subprocess_env import get_nnunet_subprocess_env
+
+            _env = get_nnunet_subprocess_env()
+
         try:
             result = subprocess.run(
                 cmd,
@@ -3690,6 +3702,7 @@ class DCEBrainExtract(SimpleInterface):
                 capture_output=True,
                 text=True,
                 timeout=300,  # 5 minute timeout
+                env=_env,
             )
             logger.info("HD-BET completed successfully")
 

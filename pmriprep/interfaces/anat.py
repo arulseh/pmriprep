@@ -543,6 +543,11 @@ class BrainExtractionInputSpec(CommandLineInputSpec):
         exists=True,
         desc="ANTs brain probability mask (for ants tool)",
     )
+    use_gpu = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Whether this node uses GPU (for nipype scheduling)",
+    )
 
 
 class BrainExtractionOutputSpec(TraitedSpec):
@@ -694,7 +699,21 @@ class BrainExtraction(CommandLine):
                 f"hd-bet -i {in_file} -o {out_file} "
                 f"-device {device} --disable_tta"
             )
-            if isdefined(self.inputs.conda_env) and self.inputs.conda_env:
+
+            # Limit nnU-Net/PyTorch worker threads when running on GPU
+            # to prevent pthread_create exhaustion with concurrent jobs
+            if self.inputs.use_gpu:
+                from pmriprep.utils.subprocess_env import NNUNET_THREAD_ENV_STR
+
+                if isdefined(self.inputs.conda_env) and self.inputs.conda_env:
+                    hdbet_cmd = (
+                        f"conda run -n {self.inputs.conda_env} "
+                        f"--no-capture-output "
+                        f"env {NNUNET_THREAD_ENV_STR} {hdbet_base}"
+                    )
+                else:
+                    hdbet_cmd = f"env {NNUNET_THREAD_ENV_STR} {hdbet_base}"
+            elif isdefined(self.inputs.conda_env) and self.inputs.conda_env:
                 hdbet_cmd = (
                     f"conda run -n {self.inputs.conda_env} "
                     f"--no-capture-output {hdbet_base}"

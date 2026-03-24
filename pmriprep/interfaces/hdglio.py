@@ -417,6 +417,11 @@ class HDGLIOSegmentInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Validate that output contains tumor voxels (default: True)",
     )
+    use_gpu = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Whether this node uses GPU (for nipype scheduling)",
+    )
 
 
 class HDGLIOSegmentOutputSpec(TraitedSpec):
@@ -732,6 +737,13 @@ class HDGLIOSegment(BaseInterface):
         # Build and run the command
         cmd = self._build_command()
 
+        # Limit nnU-Net/PyTorch worker threads when running on GPU
+        _env = None
+        if self.inputs.use_gpu:
+            from pmriprep.utils.subprocess_env import get_nnunet_subprocess_env
+
+            _env = get_nnunet_subprocess_env()
+
         # Execute HD-GLIO with proper signal handling
         # Use Popen to allow Ctrl+C to propagate to child process
         process = subprocess.Popen(
@@ -741,6 +753,7 @@ class HDGLIOSegment(BaseInterface):
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=False,  # Keep in same process group for signal forwarding
+            env=_env,
         )
         try:
             stdout, stderr = process.communicate()

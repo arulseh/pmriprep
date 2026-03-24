@@ -416,7 +416,13 @@ def init_tumor_seg_wf(
     # - Run hd_glio_predict with config.device (cuda/mps/cpu)
     # - Output labels: 0=background, 1=non-enhancing, 2=enhancing
     # -------------------------------------------------------------------
-    segment_kwargs: dict[str, Any] = {"device": config.device}
+    # Resolve device at build time for nipype GPU scheduling
+    from pmriprep.utils.device import resolve_device_uses_gpu
+
+    segment_kwargs: dict[str, Any] = {
+        "device": config.device,
+        "use_gpu": resolve_device_uses_gpu(config.device),
+    }
     if config.conda_env:
         segment_kwargs["conda_env"] = config.conda_env
     tumor_seg_segment = pe.Node(

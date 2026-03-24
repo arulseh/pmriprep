@@ -637,11 +637,15 @@ def init_anat_preproc_wf(
     # Step 5: Brain Extraction
     # Extract brain using HD-BET (default) or ANTs
     # -------------------------------------------------------------------
+    # Resolve device at build time for nipype GPU scheduling
+    from pmriprep.utils.device import resolve_device_uses_gpu
+
     brain_extract = pe.Node(
         BrainExtraction(
             tool=config.tool,
             device=config.hdbet_device,
             conda_env=config.hdbet_conda_env or "",
+            use_gpu=resolve_device_uses_gpu(config.hdbet_device),
         ),
         name="brain_extract",
     )

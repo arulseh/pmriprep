@@ -561,6 +561,9 @@ def init_dce_preproc_wf(
     # 1. Accurately reflects the DCE field of view
     # 2. Avoids registration-induced edge artifacts
     # 3. Matches perf-plus behavior (lines 360-382)
+    # Resolve device at build time for nipype GPU scheduling
+    from pmriprep.utils.device import resolve_device_uses_gpu
+
     dce_brain_extract = pe.Node(
         DCEBrainExtract(
             method="hdbet",  # Prefer HD-BET, fallback to BET
@@ -568,6 +571,7 @@ def init_dce_preproc_wf(
             fill_holes=True,
             hdbet_device=config.hdbet_device,
             hdbet_conda_env=config.hdbet_conda_env or "",
+            use_gpu=resolve_device_uses_gpu(config.hdbet_device),
         ),
         name="dce_brain_extract",
     )

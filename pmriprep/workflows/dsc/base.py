@@ -234,7 +234,12 @@ def _create_perfusion_brain_mask_filmstrip(mean_file, brain_mask_file):
     return output_path
 
 
-def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto", hdbet_conda_env=""):
+def _hdbet_dsc_brain(
+    dsc_mean_file,
+    hdbet_device="auto",
+    hdbet_conda_env="",
+    use_gpu=False,
+):
     """Extract DSC brain using HD-BET for improved registration quality.
 
     HD-BET produces a brain-extracted DSC image that yields better
@@ -251,6 +256,10 @@ def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto", hdbet_conda_env=""):
             HD-BET is invoked via ``conda run -n <env>``. When empty (the
             default), HD-BET is called directly first, with a ``conda run``
             fallback.
+        use_gpu: Used for two purposes: (1) nipype's ``is_gpu_node()``
+            detects this as a GPU job for scheduling, and (2) gates
+            thread-limiting env vars on the HD-BET subprocess.
+            DO NOT REMOVE.
 
     Returns:
         Tuple of (dsc_brain_file, dsc_brain_mask_file).
@@ -289,12 +298,19 @@ def _hdbet_dsc_brain(dsc_mean_file, hdbet_device="auto", hdbet_conda_env=""):
         # No conda env — try direct first, then fall back (no env name)
         cmd_prefixes = [[], ]
 
+    # Limit nnU-Net/PyTorch worker threads when running on GPU
+    _env = None
+    if use_gpu:
+        from pmriprep.utils.subprocess_env import get_nnunet_subprocess_env
+
+        _env = get_nnunet_subprocess_env()
+
     for cmd_prefix in cmd_prefixes:
         if hdbet_succeeded:
             break
         try:
             hdbet_cmd = cmd_prefix + hdbet_args
-            subprocess.run(hdbet_cmd, check=True, capture_output=True)
+            subprocess.run(hdbet_cmd, check=True, capture_output=True, env=_env)
             hdbet_succeeded = True
         except (subprocess.CalledProcessError, FileNotFoundError, OSError):
             continue
@@ -1788,7 +1804,9 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     hdbet_dsc = pe.Node(
         niu.Function(
-            input_names=["dsc_mean_file", "hdbet_device", "hdbet_conda_env"],
+            input_names=[
+                "dsc_mean_file", "hdbet_device", "hdbet_conda_env", "use_gpu",
+            ],
             output_names=["dsc_brain_file", "dsc_brain_mask_file"],
             function=_hdbet_dsc_brain,
         ),
@@ -1796,6 +1814,11 @@ def init_dsc_preproc_wf(
     )
     hdbet_dsc.inputs.hdbet_device = config.hdbet_device
     hdbet_dsc.inputs.hdbet_conda_env = config.hdbet_conda_env or ""
+
+    # Resolve device at build time for nipype GPU scheduling
+    from pmriprep.utils.device import resolve_device_uses_gpu
+
+    hdbet_dsc.inputs.use_gpu = resolve_device_uses_gpu(config.hdbet_device)
 
     # -------------------------------------------------------------------
     # Node 1b2: Histogram Match T1w to DSC (for FLIRT convergence)

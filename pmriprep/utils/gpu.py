@@ -46,24 +46,39 @@ def is_cupy_available() -> bool:
 
 
 def detect_gpu_count() -> int:
-    """Detect the number of CUDA GPUs via the CUDA runtime API.
+    """Detect the number of GPUs via runtime APIs.
 
-    Uses ``cupy.cuda.runtime.getDeviceCount()`` which talks directly to
-    ``libcuda.so`` — unlike ``nvidia-smi``, this works inside containers
-    (Apptainer ``--contain``, Docker, etc.) as long as the CUDA driver
-    library is visible.
+    Tries CuPy CUDA first, then PyTorch CUDA, then PyTorch MPS.
+    Works inside containers without ``nvidia-smi`` as long as the
+    CUDA driver library (``libcuda.so``) is visible.
 
     Returns:
-        Number of CUDA devices, or 0 if CuPy is unavailable or any
-        runtime error occurs (missing driver, ``/sys`` not bound, etc.).
+        Number of GPU devices, or 0 if no GPU is detected.
     """
-    if not _CUPY_AVAILABLE:
-        return 0
+    # CuPy CUDA (available when --use-gpu dependencies installed)
+    if _CUPY_AVAILABLE:
+        try:
+            count = int(_cupy_module.cuda.runtime.getDeviceCount())
+            if count > 0:
+                return count
+        except Exception:
+            pass
 
+    # PyTorch fallback (available when HD-BET installed)
     try:
-        return int(_cupy_module.cuda.runtime.getDeviceCount())
+        import torch
     except Exception:
         return 0
+
+    # PyTorch CUDA
+    if torch.cuda.is_available():
+        return torch.cuda.device_count()
+
+    # PyTorch MPS (macOS Apple Silicon — single compute device)
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return 1
+
+    return 0
 
 
 def get_array_module(

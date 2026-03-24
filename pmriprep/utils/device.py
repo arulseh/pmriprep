@@ -1,9 +1,24 @@
 """Torch device detection utilities for PMRIPrep."""
 
 import logging
+import platform
 import sys
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_device_uses_gpu(device_str: str) -> bool:
+    """Resolve ``'auto'`` device and return whether it uses GPU.
+
+    Args:
+        device_str: Device string (``'auto'``, ``'cuda'``, ``'mps'``, or ``'cpu'``).
+
+    Returns:
+        True if the resolved device is a GPU (CUDA or MPS).
+    """
+    if device_str == "auto":
+        device_str = detect_torch_device()
+    return device_str in ("cuda", "mps")
 
 
 def detect_torch_device() -> str:

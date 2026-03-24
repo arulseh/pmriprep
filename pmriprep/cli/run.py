@@ -1055,23 +1055,37 @@ def _run_workflow(
             # Convert GB to bytes for nipype
             plugin_args["memory_gb"] = args.mem_gb
 
-        # Tell nipype how many GPU slots are available when --use-gpu is set.
+        # Tell nipype how many GPU slots are available when any node uses GPU.
+        # GPU nodes include: HD-BET brain extraction (--hdbet-device cuda/mps),
+        # HD-GLIO tumor segmentation, and CuPy-accelerated DCE/DSC (--use-gpu).
         # nipype's gpu_count() relies on nvidia-smi which may not be on PATH
         # inside containers (e.g., Apptainer --contain).  Without this,
         # MultiProc._prerun_check raises "Insufficient GPU resources" because
         # n_gpu_procs defaults to 0 while nodes with use_gpu=True are present.
-        if getattr(args, "use_gpu", False):
+        from pmriprep.utils.device import resolve_device_uses_gpu
+
+        _needs_gpu = (
+            getattr(args, "use_gpu", False)  # CuPy for DCE/DSC modeling
+            or resolve_device_uses_gpu(
+                getattr(args, "hdbet_device", None) or "cpu"
+            )  # HD-BET brain extraction
+            or resolve_device_uses_gpu(
+                getattr(args, "tumor_seg_device", None) or "cpu"
+            )  # HD-GLIO tumor segmentation
+        )
+
+        if _needs_gpu:
             from pmriprep.utils.gpu import detect_gpu_count
 
             n_gpus = detect_gpu_count()
             if n_gpus > 0:
                 plugin_args["n_gpu_procs"] = n_gpus
-                logger.info("Detected %d GPU(s) via CUDA runtime", n_gpus)
+                logger.info("Detected %d GPU(s) for scheduling", n_gpus)
             else:
                 plugin_args["n_gpu_procs"] = 1
                 logger.warning(
-                    "GPU detection failed (no CUDA driver visible), but "
-                    "--use-gpu was requested; defaulting to 1 GPU slot"
+                    "GPU detection returned 0 but GPU nodes are present; "
+                    "defaulting to 1 GPU slot"
                 )
 
         logger.info(f"Running workflow with {args.nprocs} processors")
