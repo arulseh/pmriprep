@@ -1805,7 +1805,8 @@ def init_dsc_preproc_wf(
     hdbet_dsc = pe.Node(
         niu.Function(
             input_names=[
-                "dsc_mean_file", "hdbet_device", "hdbet_conda_env", "use_gpu",
+                "dsc_mean_file", "hdbet_device", "hdbet_conda_env",
+                "use_gpu",  # nipype is_gpu_node() checks this trait name
             ],
             output_names=["dsc_brain_file", "dsc_brain_mask_file"],
             function=_hdbet_dsc_brain,

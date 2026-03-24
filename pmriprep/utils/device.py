@@ -45,9 +45,9 @@ def detect_torch_device() -> str:
     except ImportError:
         pass
 
-    # Fallback: check platform for macOS (likely has MPS)
-    if sys.platform == "darwin":
-        logger.info("Torch device: macOS detected, assuming MPS")
+    # Fallback: check platform for Apple Silicon macOS (likely has MPS)
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        logger.info("Torch device: Apple Silicon detected, assuming MPS")
         return "mps"
 
     logger.info("Torch device: No GPU detected, using CPU")

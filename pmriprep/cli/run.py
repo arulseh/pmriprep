@@ -1062,16 +1062,18 @@ def _run_workflow(
         # inside containers (e.g., Apptainer --contain).  Without this,
         # MultiProc._prerun_check raises "Insufficient GPU resources" because
         # n_gpu_procs defaults to 0 while nodes with use_gpu=True are present.
+        # Check if any GPU nodes will be present. CLI arg defaults are None
+        # while config defaults are "auto"/"cuda", so use the CLI value when
+        # explicitly set, otherwise fall back to "auto" (the config default).
         from pmriprep.utils.device import resolve_device_uses_gpu
+
+        _hdbet_device = getattr(args, "hdbet_device", None) or "auto"
+        _tumor_device = getattr(args, "tumor_seg_device", None) or "auto"
 
         _needs_gpu = (
             getattr(args, "use_gpu", False)  # CuPy for DCE/DSC modeling
-            or resolve_device_uses_gpu(
-                getattr(args, "hdbet_device", None) or "cpu"
-            )  # HD-BET brain extraction
-            or resolve_device_uses_gpu(
-                getattr(args, "tumor_seg_device", None) or "cpu"
-            )  # HD-GLIO tumor segmentation
+            or resolve_device_uses_gpu(_hdbet_device)  # HD-BET brain extraction
+            or resolve_device_uses_gpu(_tumor_device)  # HD-GLIO tumor seg
         )
 
         if _needs_gpu:
