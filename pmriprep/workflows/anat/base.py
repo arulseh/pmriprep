@@ -556,6 +556,18 @@ def init_anat_preproc_wf(
     ])
 
     # -------------------------------------------------------------------
+    # Step 2b: Conform T1w — downsample sub-millimeter voxels to 1mm
+    # Prevents excessive memory/compute on high-res acquisitions (e.g. 0.49mm).
+    # Passthrough if voxels are already >= 1mm.
+    # -------------------------------------------------------------------
+    from pmriprep.interfaces.anat import ConformT1w
+
+    conform = pe.Node(ConformT1w(), name="conform")
+    workflow.connect([
+        (bias_correct, conform, [("out_file", "in_file")]),
+    ])
+
+    # -------------------------------------------------------------------
     # Step 3-4: Secondary modality preprocessing and coregistration
     # Only create nodes for modalities that are available
     # -------------------------------------------------------------------
@@ -573,7 +585,7 @@ def init_anat_preproc_wf(
             (inputnode, reorient_postcon, [("t1w_postcon", "in_file")]),
             (reorient_postcon, bias_correct_postcon, [("out_file", "in_file")]),
             (bias_correct_postcon, coreg_postcon, [("out_file", "in_file")]),
-            (bias_correct, coreg_postcon, [("out_file", "reference")]),
+            (conform, coreg_postcon, [("out_file", "reference")]),
         ]
         workflow.connect(coreg_postcon_conns)
 
@@ -592,7 +604,7 @@ def init_anat_preproc_wf(
             (inputnode, reorient_t2w, [("t2w", "in_file")]),
             (reorient_t2w, bias_correct_t2w, [("out_file", "in_file")]),
             (bias_correct_t2w, coreg_t2w, [("out_file", "in_file")]),
-            (bias_correct, coreg_t2w, [("out_file", "reference")]),
+            (conform, coreg_t2w, [("out_file", "reference")]),
         ]
         workflow.connect(coreg_t2w_conns)
 
@@ -611,7 +623,7 @@ def init_anat_preproc_wf(
             (inputnode, reorient_flair, [("flair", "in_file")]),
             (reorient_flair, bias_correct_flair, [("out_file", "in_file")]),
             (bias_correct_flair, coreg_flair, [("out_file", "in_file")]),
-            (bias_correct, coreg_flair, [("out_file", "reference")]),
+            (conform, coreg_flair, [("out_file", "reference")]),
         ]
         workflow.connect(coreg_flair_conns)
 
@@ -630,7 +642,7 @@ def init_anat_preproc_wf(
             (inputnode, reorient_flair_postcon, [("flair_postcon", "in_file")]),
             (reorient_flair_postcon, bias_correct_flair_postcon, [("out_file", "in_file")]),
             (bias_correct_flair_postcon, coreg_flair_postcon, [("out_file", "in_file")]),
-            (bias_correct, coreg_flair_postcon, [("out_file", "reference")]),
+            (conform, coreg_flair_postcon, [("out_file", "reference")]),
         ]
         workflow.connect(coreg_flair_postcon_conns)
 
@@ -654,7 +666,7 @@ def init_anat_preproc_wf(
     )
 
     workflow.connect([
-        (bias_correct, brain_extract, [("out_file", "in_file")]),
+        (conform, brain_extract, [("out_file", "in_file")]),
     ])
 
     # -------------------------------------------------------------------
@@ -908,7 +920,7 @@ def init_anat_preproc_wf(
         (determine_mode, hybrid_fast_chain, [
             ("is_postcon_ref", "is_postcon_ref"),
         ]),
-        (bias_correct, hybrid_fast_chain, [("out_file", "reference_file")]),
+        (conform, hybrid_fast_chain, [("out_file", "reference_file")]),
         (brain_extract, hybrid_fast_chain, [("out_mask", "brain_mask")]),
     ])
 
@@ -947,7 +959,7 @@ def init_anat_preproc_wf(
         # Use FLIRT-coregistered postcon image
         workflow.connect([
             (coreg_postcon, create_subtraction, [("out_file", "postcon_file")]),
-            (bias_correct, create_subtraction, [("out_file", "precon_file")]),
+            (conform, create_subtraction, [("out_file", "precon_file")]),
             (brain_extract, create_subtraction, [("out_mask", "brain_mask")]),
         ])
 
@@ -997,7 +1009,7 @@ def init_anat_preproc_wf(
         name="brain_mask_filmstrip",
     )
     workflow.connect([
-        (bias_correct, brain_mask_filmstrip, [("out_file", "t1w_file")]),
+        (conform, brain_mask_filmstrip, [("out_file", "t1w_file")]),
         (brain_extract, brain_mask_filmstrip, [("out_mask", "brain_mask_file")]),
     ])
 

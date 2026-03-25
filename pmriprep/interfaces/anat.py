@@ -9,9 +9,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
+    BaseInterface,
+    BaseInterfaceInputSpec,
     CommandLine,
     CommandLineInputSpec,
     File,
+    SimpleInterface,
     TraitedSpec,
     isdefined,
     traits,
@@ -323,6 +326,91 @@ class BiasCorrection(CommandLine):
             return self._gen_outfilename()
         return None
 
+
+class ConformT1wInputSpec(BaseInterfaceInputSpec):
+    """Input specification for ConformT1w interface."""
+
+    in_file = File(exists=True, mandatory=True, desc="Input T1w image")
+
+
+class ConformT1wOutputSpec(TraitedSpec):
+    """Output specification for ConformT1w interface."""
+
+    out_file = File(exists=True, desc="Conformed T1w image (or passthrough)")
+    conformed = traits.Bool(desc="Whether resampling was applied")
+
+
+class ConformT1w(SimpleInterface):
+    """Downsample sub-millimeter T1w voxels to 1mm minimum.
+
+    Only downsamples axes with voxel size < 1mm. Never upsamples.
+    Skips resampling entirely if all voxels are already >= 1mm,
+    returning the input file unchanged to avoid interpolation artifacts.
+    """
+
+    input_spec = ConformT1wInputSpec
+    output_spec = ConformT1wOutputSpec
+
+    def _run_interface(self, runtime):  # type: ignore[override]
+        import logging
+        import shutil
+
+        import nibabel as nib
+        import numpy as np
+        from nibabel.processing import resample_from_to
+
+        logger = logging.getLogger(__name__)
+
+        in_file = str(self.inputs.in_file)
+        img = nib.load(in_file)
+        zooms = np.array(img.header.get_zooms()[:3], dtype=float)
+
+        # Only downsample axes < 1mm
+        if np.all(zooms >= 1.0 - 1e-3):
+            # All voxels >= 1mm — passthrough without resampling
+            out_path = Path.cwd() / Path(in_file).name
+            if not out_path.exists() or str(out_path) != in_file:
+                shutil.copy2(in_file, out_path)
+            self._results["out_file"] = str(out_path)
+            self._results["conformed"] = False
+            logger.info(
+                "T1w voxels already >= 1mm (%s), skipping conform",
+                "×".join(f"{z:.2f}" for z in zooms),
+            )
+            return runtime
+
+        new_zooms = np.maximum(zooms, 1.0)
+        new_shape = np.ceil(
+            np.array(img.shape[:3]) * zooms / new_zooms
+        ).astype(int)
+
+        # Build target affine: same orientation, new voxel size
+        target_affine = img.affine.copy()
+        # Scale the voxel-size columns of the affine
+        for ax in range(3):
+            scale = new_zooms[ax] / zooms[ax]
+            target_affine[:3, ax] *= scale
+
+        target_img = nib.Nifti1Image(
+            np.zeros(new_shape, dtype=np.float32),
+            target_affine,
+        )
+        conformed = resample_from_to(img, target_img, order=3)
+
+        out_name = Path(in_file).name.replace(".nii", "_conformed.nii")
+        out_path = Path.cwd() / out_name
+        nib.save(conformed, out_path)
+
+        self._results["out_file"] = str(out_path)
+        self._results["conformed"] = True
+        logger.info(
+            "T1w conformed from %s (%.2f×%.2f×%.2fmm) to %s (%.2f×%.2f×%.2fmm)",
+            "×".join(str(s) for s in img.shape[:3]),
+            *zooms,
+            "×".join(str(s) for s in new_shape),
+            *new_zooms,
+        )
+        return runtime
 
 class CoregistrationInputSpec(CommandLineInputSpec):
     """Input specification for Coregistration interface."""
