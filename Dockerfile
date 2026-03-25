@@ -90,7 +90,12 @@ RUN mamba install -y -c conda-forge python=3.10 pip && mamba clean -afy
 RUN mamba install -y \
     -c https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/public/ \
     -c conda-forge \
-    fsl-avwutils fsl-bet2 fsl-fast4 fsl-flirt fsl-mcflirt fsl-cluster \
+    fsl-avwutils=2209.3 \
+    fsl-bet2=2111.8 \
+    fsl-fast4=2111.3 \
+    fsl-flirt=2111.4 \
+    fsl-mcflirt=2111.0 \
+    fsl-cluster=2201.0 \
     fsl-data_standard \
     && mamba clean -afy
 
