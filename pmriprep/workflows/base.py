@@ -834,6 +834,30 @@ def init_pmriprep_wf(
         if session_data.modalities.dce else cap_mem_gb(6.0, mem_limit_gb)
     )
 
+    # Warn on console if memory may be insufficient
+    from pmriprep.utils.mem import _system_ram_gb
+
+    _cli_log = logging.getLogger("cli")
+    if not _cli_log.handlers:
+        _cli_log = logging.getLogger("pmriprep.workflows")
+    _sys_ram = _system_ram_gb()
+    for label, est in [("DSC", dsc_mem_gb), ("DCE", dce_mem_gb)]:
+        if mem_limit_gb is not None and est >= mem_limit_gb * 0.9:
+            _cli_log.warning(
+                "%s estimated peak memory (%.1f GB) approaches --mem-gb "
+                "limit (%.1f GB). Heavy processing steps will run one at "
+                "a time, which may be slow. Consider increasing --mem-gb "
+                "or reducing --nprocs to free memory.",
+                label, est, mem_limit_gb,
+            )
+        elif est >= _sys_ram * 0.8:
+            _cli_log.warning(
+                "%s estimated peak memory (%.1f GB) may exceed available "
+                "system RAM (%.1f GB). Consider reducing --nprocs or "
+                "running on a machine with more memory.",
+                label, est, _sys_ram,
+            )
+
     # Decide which pipelines to run
     decision = decide_pipelines(session_data, skip_flags, tumor_seg_config)
 
