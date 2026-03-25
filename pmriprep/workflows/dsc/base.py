@@ -1496,6 +1496,7 @@ def init_dsc_preproc_wf(
     config: Optional[DSCConfig] = None,
     random_seed: Optional[int] = None,
     mem_gb: Optional[float] = None,
+    mem_limit_gb: Optional[float] = None,
     name: str = "dsc_preproc_wf",
 ) -> pe.Workflow:
     """Initialize DSC perfusion preprocessing workflow.
@@ -1736,6 +1737,12 @@ def init_dsc_preproc_wf(
         name="outputnode",
     )
 
+    # Cap static mem_gb values to respect --mem-gb
+    from pmriprep.utils.mem import cap_mem_gb
+
+    _static_mem = cap_mem_gb(2.0, mem_limit_gb)
+    _heavy_mem = mem_gb if mem_gb is not None else cap_mem_gb(4.0, mem_limit_gb)
+
     # -------------------------------------------------------------------
     # Node 0: Reorient DSC to RAS orientation
     # -------------------------------------------------------------------
@@ -1757,7 +1764,7 @@ def init_dsc_preproc_wf(
             motion_thresh=config.motion_thresh,
         ),
         name="motion_correct",
-        mem_gb=mem_gb or 4.0,
+        mem_gb=_heavy_mem,
     )
 
     # -------------------------------------------------------------------
@@ -1807,7 +1814,7 @@ def init_dsc_preproc_wf(
             function=_hdbet_dsc_brain,
         ),
         name="hdbet_dsc",
-        mem_gb=2.0,
+        mem_gb=_static_mem,
     )
     hdbet_dsc.inputs.hdbet_device = config.hdbet_device
     hdbet_dsc.inputs.hdbet_conda_env = config.hdbet_conda_env or ""
@@ -1858,7 +1865,7 @@ def init_dsc_preproc_wf(
             function=_signal_to_concentration,
         ),
         name="signal_to_conc",
-        mem_gb=mem_gb or 4.0,
+        mem_gb=_heavy_mem,
     )
     signal_to_conc.inputs.baseline_frames = config.pre_bolus
 
@@ -1909,7 +1916,7 @@ def init_dsc_preproc_wf(
             function=_detect_and_correct_preload,
         ),
         name="preload_correct",
-        mem_gb=mem_gb or 4.0,
+        mem_gb=_heavy_mem,
     )
     preload_correct.inputs.preload_present = config.preload_present if config.preload_present is not None else None
     preload_correct.inputs.baseline_frames = config.pre_bolus
@@ -1947,7 +1954,7 @@ def init_dsc_preproc_wf(
     compute_maps = pe.Node(
         ComputeDSCMaps(**dsc_map_kwargs),
         name="compute_maps",
-        mem_gb=mem_gb or 4.0,
+        mem_gb=_heavy_mem,
     )
 
     # -------------------------------------------------------------------
@@ -1960,7 +1967,7 @@ def init_dsc_preproc_wf(
             cost="normmi",
         ),
         name="register",
-        mem_gb=2.0,
+        mem_gb=_static_mem,
     )
 
     # -------------------------------------------------------------------

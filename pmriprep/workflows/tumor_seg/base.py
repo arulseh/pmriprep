@@ -262,6 +262,7 @@ def init_tumor_seg_wf(
     subject_id: str,
     session_id: Optional[str] = None,
     config: Optional[TumorSegConfig] = None,
+    mem_limit_gb: Optional[float] = None,
     name: str = "tumor_seg_wf",
 ) -> pe.Workflow:
     """Initialize HD-GLIO tumor segmentation workflow.
@@ -425,10 +426,12 @@ def init_tumor_seg_wf(
     }
     if config.conda_env:
         segment_kwargs["conda_env"] = config.conda_env
+    from pmriprep.utils.mem import cap_mem_gb
+
     tumor_seg_segment = pe.Node(
         HDGLIOSegment(**segment_kwargs),
         name="tumor_seg_segment",
-        mem_gb=4.0,
+        mem_gb=cap_mem_gb(4.0, mem_limit_gb),
     )
 
     # Connect prepped images to segmentation node

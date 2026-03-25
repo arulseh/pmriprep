@@ -35,6 +35,7 @@ def init_dce_preproc_wf(
     has_tissue_seg: bool = True,
     random_seed: Optional[int] = None,
     mem_gb: Optional[float] = None,
+    mem_limit_gb: Optional[float] = None,
     name: str = "dce_preproc_wf",
 ) -> pe.Workflow:
     """Initialize the DCE (Dynamic Contrast Enhanced) preprocessing workflow.
@@ -356,6 +357,12 @@ def init_dce_preproc_wf(
 
     # ==========================================================================
     # Node 0: Reorient all raw BIDS inputs to RAS orientation
+    # Cap static mem_gb values to respect --mem-gb
+    from pmriprep.utils.mem import cap_mem_gb
+
+    _static_mem = cap_mem_gb(2.0, mem_limit_gb)
+    _heavy_mem = mem_gb if mem_gb is not None else cap_mem_gb(6.0, mem_limit_gb)
+
     # ==========================================================================
     # DCE timeseries (4D) - required input
     dce_reorient = pe.Node(
@@ -524,7 +531,7 @@ def init_dce_preproc_wf(
             baseline_frames=config.baseline_frames,
         ),
         name="dce_preprocess",
-        mem_gb=mem_gb or 6.0,
+        mem_gb=_heavy_mem,
     )
 
     # Connect DCE preprocessing inputs (using reoriented DCE file)
@@ -576,7 +583,7 @@ def init_dce_preproc_wf(
             use_gpu=resolve_device_uses_gpu(config.hdbet_device),
         ),
         name="dce_brain_extract",
-        mem_gb=2.0,
+        mem_gb=_static_mem,
     )
 
     # Brain extraction runs on the early pre-contrast mean (before motion
@@ -646,7 +653,7 @@ def init_dce_preproc_wf(
     dce_registration = pe.Node(
         DCERegistration(),
         name="dce_registration",
-        mem_gb=2.0,
+        mem_gb=_static_mem,
     )
 
     # Connect registration inputs
@@ -896,7 +903,7 @@ def init_dce_preproc_wf(
             function=_signal_to_concentration_node,
         ),
         name="signal_to_concentration",
-        mem_gb=mem_gb or 6.0,
+        mem_gb=_heavy_mem,
     )
 
     # Pass config.no_t1 to the node
@@ -1014,7 +1021,7 @@ def init_dce_preproc_wf(
     pk_modeling = pe.Node(
         ComputeDCEMaps(**pk_kwargs),
         name="pk_modeling",
-        mem_gb=mem_gb or 6.0,
+        mem_gb=_heavy_mem,
     )
 
     workflow.connect([

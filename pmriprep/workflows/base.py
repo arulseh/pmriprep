@@ -823,15 +823,15 @@ def init_pmriprep_wf(
     session_data = discover_session_data(bids_dir, subject_id, session_id)
 
     # Estimate memory requirements from image dimensions
-    from pmriprep.utils.mem import estimate_4d_mem_gb
+    from pmriprep.utils.mem import cap_mem_gb, estimate_4d_mem_gb
 
     dsc_mem_gb = (
         estimate_4d_mem_gb(session_data.modalities.dsc, n_buffers=4, mem_limit_gb=mem_limit_gb)
-        if session_data.modalities.dsc else 4.0
+        if session_data.modalities.dsc else cap_mem_gb(4.0, mem_limit_gb)
     )
     dce_mem_gb = (
         estimate_4d_mem_gb(session_data.modalities.dce, n_buffers=5, mem_limit_gb=mem_limit_gb)
-        if session_data.modalities.dce else 6.0
+        if session_data.modalities.dce else cap_mem_gb(6.0, mem_limit_gb)
     )
 
     # Decide which pipelines to run
@@ -1097,6 +1097,7 @@ def init_pmriprep_wf(
             has_t2w=session_data.modalities.t2w is not None,
             has_flair=session_data.modalities.flair is not None,
             has_flair_postcon=session_data.modalities.flair_postcon is not None,
+            mem_limit_gb=mem_limit_gb,
             name="anat_wf",
         )
 
@@ -1288,6 +1289,7 @@ def init_pmriprep_wf(
             subject_id=subject_id,
             session_id=session_id,
             config=tumor_seg_config,
+            mem_limit_gb=mem_limit_gb,
             name="tumor_seg_wf",
         )
 
@@ -1406,6 +1408,7 @@ def init_pmriprep_wf(
             config=dsc_config,
             random_seed=random_seed,
             mem_gb=dsc_mem_gb,
+            mem_limit_gb=mem_limit_gb,
             name="dsc_wf",
         )
 
@@ -1885,6 +1888,7 @@ def init_pmriprep_wf(
             has_tissue_seg=bool(session_data.modalities.t1w_pre),
             random_seed=random_seed,
             mem_gb=dce_mem_gb,
+            mem_limit_gb=mem_limit_gb,
             name="dce_wf",
         )
 

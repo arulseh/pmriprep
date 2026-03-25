@@ -16,6 +16,21 @@ def _system_ram_gb() -> float:
         return 16.0  # conservative fallback
 
 
+def cap_mem_gb(value: float, mem_limit_gb: Optional[float] = None) -> float:
+    """Cap a mem_gb value so the node is schedulable by nipype.
+
+    Args:
+        value: Desired mem_gb for the node.
+        mem_limit_gb: User-specified ``--mem-gb``. When None, caps at
+            90% of system RAM.
+
+    Returns:
+        mem_gb clamped to [0.5, limit].
+    """
+    limit = mem_limit_gb if mem_limit_gb is not None else (_system_ram_gb() * 0.9)
+    return max(0.5, min(value, limit))
+
+
 def estimate_4d_mem_gb(
     nifti_path: Path,
     n_buffers: int = 4,
@@ -46,15 +61,17 @@ def estimate_4d_mem_gb(
 
     # Warn before capping so user sees the true requirement
     sys_ram_gb = _system_ram_gb()
-    if raw_estimate > sys_ram_gb * 0.8:
+    if mem_limit_gb is not None and raw_estimate > mem_limit_gb:
+        logger.warning(
+            "Dataset estimated to need ~%.1f GB per heavy node but "
+            "--mem-gb is %.1f GB. Processing may run out of memory.",
+            raw_estimate, mem_limit_gb,
+        )
+    elif raw_estimate > sys_ram_gb * 0.8:
         logger.warning(
             "Dataset requires ~%.1f GB but system has %.1f GB. "
             "Consider --nprocs 1 or a machine with more RAM.",
             raw_estimate, sys_ram_gb,
         )
 
-    # Cap so the node is always schedulable
-    cap = (mem_limit_gb * 0.9) if mem_limit_gb else (sys_ram_gb * 0.9)
-    estimated = min(raw_estimate, cap)
-
-    return max(estimated, 0.5)  # floor at 0.5 GB
+    return cap_mem_gb(raw_estimate, mem_limit_gb)

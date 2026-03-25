@@ -325,6 +325,7 @@ def init_anat_preproc_wf(
     has_t2w: bool = False,
     has_flair: bool = False,
     has_flair_postcon: bool = False,
+    mem_limit_gb: Optional[float] = None,
     name: str = "anat_preproc_wf",
 ) -> pe.Workflow:
     """Initialize anatomical preprocessing workflow.
@@ -639,6 +640,7 @@ def init_anat_preproc_wf(
     # -------------------------------------------------------------------
     # Resolve device at build time for nipype GPU scheduling
     from pmriprep.utils.device import resolve_device_uses_gpu
+    from pmriprep.utils.mem import cap_mem_gb
 
     brain_extract = pe.Node(
         BrainExtraction(
@@ -648,7 +650,7 @@ def init_anat_preproc_wf(
             use_gpu=resolve_device_uses_gpu(config.hdbet_device),
         ),
         name="brain_extract",
-        mem_gb=2.0,
+        mem_gb=cap_mem_gb(2.0, mem_limit_gb),
     )
 
     workflow.connect([
