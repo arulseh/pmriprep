@@ -563,8 +563,11 @@ def init_anat_preproc_wf(
     from pmriprep.interfaces.anat import ConformT1w
 
     conform = pe.Node(ConformT1w(), name="conform")
+    # Raw conform for HD-GLIO: same grid, no bias correction
+    conform_raw = pe.Node(ConformT1w(), name="conform_raw")
     workflow.connect([
         (bias_correct, conform, [("out_file", "in_file")]),
+        (reorient, conform_raw, [("out_file", "in_file")]),
     ])
 
     # -------------------------------------------------------------------
@@ -713,7 +716,7 @@ def init_anat_preproc_wf(
         # T1w pre: reoriented → mask with brain_extract mask
         tumor_seg_mask_t1w = pe.Node(ApplyMask(), name="tumor_seg_mask_t1w")
         workflow.connect([
-            (reorient, tumor_seg_mask_t1w, [("out_file", "in_file")]),
+            (conform_raw, tumor_seg_mask_t1w, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_t1w, [("out_mask", "mask_file")]),
             (tumor_seg_mask_t1w, outputnode, [("out_file", "tumor_seg_t1w_pre")]),
         ])
@@ -725,7 +728,7 @@ def init_anat_preproc_wf(
         tumor_seg_mask_postcon = pe.Node(ApplyMask(), name="tumor_seg_mask_postcon")
         workflow.connect([
             (reorient_postcon, tumor_seg_xfm_postcon, [("out_file", "in_file")]),
-            (reorient, tumor_seg_xfm_postcon, [("out_file", "reference")]),
+            (conform_raw, tumor_seg_xfm_postcon, [("out_file", "reference")]),
             (coreg_postcon, tumor_seg_xfm_postcon, [("out_matrix", "in_matrix")]),
             (tumor_seg_xfm_postcon, tumor_seg_mask_postcon, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_postcon, [("out_mask", "mask_file")]),
@@ -739,7 +742,7 @@ def init_anat_preproc_wf(
         tumor_seg_mask_t2w = pe.Node(ApplyMask(), name="tumor_seg_mask_t2w")
         workflow.connect([
             (reorient_t2w, tumor_seg_xfm_t2w, [("out_file", "in_file")]),
-            (reorient, tumor_seg_xfm_t2w, [("out_file", "reference")]),
+            (conform_raw, tumor_seg_xfm_t2w, [("out_file", "reference")]),
             (coreg_t2w, tumor_seg_xfm_t2w, [("out_matrix", "in_matrix")]),
             (tumor_seg_xfm_t2w, tumor_seg_mask_t2w, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_t2w, [("out_mask", "mask_file")]),
@@ -751,7 +754,7 @@ def init_anat_preproc_wf(
         tumor_seg_mask_flair = pe.Node(ApplyMask(), name="tumor_seg_mask_flair")
         workflow.connect([
             (reorient_flair, tumor_seg_xfm_flair, [("out_file", "in_file")]),
-            (reorient, tumor_seg_xfm_flair, [("out_file", "reference")]),
+            (conform_raw, tumor_seg_xfm_flair, [("out_file", "reference")]),
             (coreg_flair, tumor_seg_xfm_flair, [("out_matrix", "in_matrix")]),
             (tumor_seg_xfm_flair, tumor_seg_mask_flair, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_flair, [("out_mask", "mask_file")]),
