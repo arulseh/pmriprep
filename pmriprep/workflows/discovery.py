@@ -1088,6 +1088,32 @@ def discover_session_data(
     if perf_dir.is_dir():
         modalities.dsc = _find_dsc(perf_dir)
         modalities.dce = _find_dce(perf_dir, anat_dir if anat_dir.is_dir() else None)
+
+        # Validate perfusion files are 4D timeseries
+        import nibabel as nib
+
+        if modalities.dsc:
+            _shape = nib.load(modalities.dsc).header.get_data_shape()
+            if len(_shape) < 4 or _shape[3] < 2:
+                logger.error(
+                    "DSC file %s is %dD with shape %s. "
+                    "Expected 4D timeseries (>1 volume). "
+                    "Skipping DSC — check DICOM conversion.",
+                    modalities.dsc.name, len(_shape), _shape,
+                )
+                modalities.dsc = None
+
+        if modalities.dce:
+            _shape = nib.load(modalities.dce).header.get_data_shape()
+            if len(_shape) < 4 or _shape[3] < 2:
+                logger.error(
+                    "DCE file %s is %dD with shape %s. "
+                    "Expected 4D timeseries (>1 volume). "
+                    "Skipping DCE — check DICOM conversion.",
+                    modalities.dce.name, len(_shape), _shape,
+                )
+                modalities.dce = None
+
         # Also check perf for VFA/B1
         if anat_dir.is_dir():
             modalities.vfa = _find_vfa(anat_dir, perf_dir)
