@@ -3624,74 +3624,29 @@ class DCEBrainExtract(SimpleInterface):
         return runtime
 
     def _run_hdbet(self, dce_mean: Path, out_brain: str, out_mask: str) -> bool:
-        """Run HD-BET brain extraction, optionally via conda environment."""
-        import subprocess
+        """Run HD-BET brain extraction via shared utility."""
+        import shutil
 
         from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
-        # HD-BET requires output to end with .nii.gz
-        # It creates <output>.nii.gz (brain) and <output>_mask.nii.gz (mask)
-        hdbet_out = out_brain  # Already ends with .nii.gz
+        from pmriprep.utils.hdbet import run_hdbet
 
-        # Get device setting
-        device = self.inputs.hdbet_device
-        if device == "auto":
-            # Auto-detect: try cuda first, then mps, then cpu
-            device = self._detect_hdbet_device()
-
-        hdbet_args = [
-            "hd-bet",
-            "-i", str(dce_mean),
-            "-o", hdbet_out,
-            "-device", device,
-            "--disable_tta",
-        ]
         conda_env = (
             self.inputs.hdbet_conda_env
             if isdefined(self.inputs.hdbet_conda_env)
             else ""
         )
-        if conda_env:
-            cmd = [
-                "conda", "run", "-n", conda_env, "--no-capture-output",
-            ] + hdbet_args
-        else:
-            cmd = hdbet_args
 
-        try:
-            result = subprocess.run(
-                cmd,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=300,  # 5 minute timeout
-            )
-            logger.info("HD-BET completed successfully")
-
-            # HD-BET writes brain-extracted image directly to out_brain
-            if not Path(out_brain).exists():
-                logger.warning("HD-BET brain not found at expected location")
-                return False
-
-            # Derive mask by binarizing the brain-extracted output
-            import nibabel as nib
-            brain_img = nib.load(out_brain)
-            brain_data = brain_img.get_fdata()  # type: ignore[attr-defined]
-            mask_data = (brain_data > 0).astype(np.uint8)
-            mask_img = nib.Nifti1Image(mask_data, brain_img.affine, brain_img.header)  # type: ignore[attr-defined]
-            nib.save(mask_img, out_mask)
-
-            return True
-
-        except subprocess.CalledProcessError as e:
-            logger.warning("HD-BET failed: %s", e.stderr if e.stderr else str(e))
-            return False
-        except subprocess.TimeoutExpired:
-            logger.warning("HD-BET timed out after 5 minutes")
-            return False
-        except FileNotFoundError:
-            logger.warning("HD-BET executable not found")
-            return False
+        succeeded, mask_path = run_hdbet(
+            in_file=str(dce_mean),
+            out_brain=out_brain,
+            device=self.inputs.hdbet_device,
+            conda_env=conda_env,
+        )
+        if succeeded and mask_path:
+            if str(mask_path) != out_mask:
+                shutil.copy2(mask_path, out_mask)
+        return succeeded
 
     def _detect_hdbet_device(self) -> str:
         """Auto-detect best device for HD-BET.

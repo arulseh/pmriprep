@@ -234,128 +234,6 @@ def _create_perfusion_brain_mask_filmstrip(mean_file, brain_mask_file):
     return output_path
 
 
-def _hdbet_dsc_brain(
-    dsc_mean_file,
-    hdbet_device="auto",
-    hdbet_conda_env="",
-    use_gpu=False,
-):
-    """Extract DSC brain using HD-BET for improved registration quality.
-
-    HD-BET produces a brain-extracted DSC image that yields better
-    T1w-to-DSC registration. The final processing mask comes from
-    transforming the T1w brain mask through that registration (see
-    _transform_brain_mask_to_dsc).
-
-    Fallback: intensity-based thresholding if HD-BET is unavailable.
-
-    Args:
-        dsc_mean_file: Path to pre-bolus mean DSC image.
-        hdbet_device: Device for HD-BET inference.
-        hdbet_conda_env: Conda environment name for HD-BET. When non-empty,
-            HD-BET is invoked via ``conda run -n <env>``. When empty (the
-            default), HD-BET is called directly first, with a ``conda run``
-            fallback.
-        use_gpu: Used for two purposes: (1) nipype's ``is_gpu_node()``
-            detects this as a GPU job for scheduling, and (2) gates
-            thread-limiting env vars on the HD-BET subprocess.
-            DO NOT REMOVE.
-
-    Returns:
-        Tuple of (dsc_brain_file, dsc_brain_mask_file).
-    """
-    import subprocess
-    import numpy as np
-    import nibabel as nib
-    from pathlib import Path
-
-    out_dir = Path.cwd()
-    dsc_brain_file = str(out_dir / "dsc_brain.nii.gz")
-    dsc_brain_mask_file = str(out_dir / "dsc_brain_mask.nii.gz")
-
-    hdbet_succeeded = False
-
-    # Resolve HD-BET device
-    if hdbet_device == "auto":
-        from pmriprep.utils.device import detect_torch_device
-        hdbet_device = detect_torch_device()
-
-    hdbet_args = [
-        "hd-bet",
-        "-i", dsc_mean_file,
-        "-o", dsc_brain_file,
-        "-device", hdbet_device,
-        "--disable_tta",
-    ]
-
-    if hdbet_conda_env:
-        # Explicit conda env requested — try it, then fall back to direct
-        cmd_prefixes = [
-            ["conda", "run", "-n", hdbet_conda_env, "--no-capture-output"],
-            [],
-        ]
-    else:
-        # No conda env — try direct first, then fall back (no env name)
-        cmd_prefixes = [[], ]
-
-    for cmd_prefix in cmd_prefixes:
-        if hdbet_succeeded:
-            break
-        try:
-            hdbet_cmd = cmd_prefix + hdbet_args
-            subprocess.run(hdbet_cmd, check=True, capture_output=True)
-            hdbet_succeeded = True
-        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-            continue
-
-    if hdbet_succeeded:
-        # HD-BET writes brain at -o path and mask with _mask suffix.
-        # With -o dsc_brain.nii.gz, mask lands at dsc_brain_mask.nii.gz
-        # which is exactly our target path — no move needed.
-        hdbet_mask_path = Path(dsc_brain_file.replace(".nii.gz", "_mask.nii.gz"))
-        if not hdbet_mask_path.is_file():
-            # Derive mask from brain-extracted image
-            brain_img = nib.load(dsc_brain_file)
-            brain_data = brain_img.get_fdata()
-            mask_data = (brain_data > 0).astype(np.uint8)
-            nib.save(
-                nib.Nifti1Image(mask_data, brain_img.affine, brain_img.header),
-                dsc_brain_mask_file,
-            )
-        elif str(hdbet_mask_path) != dsc_brain_mask_file:
-            import shutil
-            shutil.move(str(hdbet_mask_path), dsc_brain_mask_file)
-    else:
-        # Fallback: intensity-based brain extraction
-        import logging as _logging
-        _logging.getLogger("pmriprep.workflows.dsc").warning(
-            "HD-BET unavailable. Falling back to intensity-based "
-            "DSC brain extraction."
-        )
-        dsc_img = nib.load(dsc_mean_file)
-        dsc_data = dsc_img.get_fdata()
-
-        nonzero = dsc_data[dsc_data > 0]
-        if len(nonzero) > 0:
-            threshold = np.percentile(nonzero, 10)
-        else:
-            threshold = 0.0
-
-        mask_data = (dsc_data > threshold).astype(np.uint8)
-        brain_data = dsc_data * mask_data
-
-        nib.save(
-            nib.Nifti1Image(brain_data.astype(np.float32), dsc_img.affine, dsc_img.header),
-            dsc_brain_file,
-        )
-        nib.save(
-            nib.Nifti1Image(mask_data, dsc_img.affine, dsc_img.header),
-            dsc_brain_mask_file,
-        )
-
-    return dsc_brain_file, dsc_brain_mask_file
-
-
 def _transform_brain_mask_to_dsc(
     brain_mask_file,
     reference_file,
@@ -1804,24 +1682,16 @@ def init_dsc_preproc_wf(
     # images on both sides. The final processing mask comes from
     # transforming the T1w brain mask through the registration.
     # -------------------------------------------------------------------
+    from pmriprep.interfaces.dsc_brain import DSCBrainExtract
+    from pmriprep.utils.device import resolve_device_uses_gpu
+
     hdbet_dsc = pe.Node(
-        niu.Function(
-            input_names=[
-                "dsc_mean_file", "hdbet_device", "hdbet_conda_env",
-                "use_gpu",  # nipype is_gpu_node() checks this trait name
-            ],
-            output_names=["dsc_brain_file", "dsc_brain_mask_file"],
-            function=_hdbet_dsc_brain,
-        ),
+        DSCBrainExtract(),
         name="hdbet_dsc",
         mem_gb=_static_mem,
     )
     hdbet_dsc.inputs.hdbet_device = config.hdbet_device
     hdbet_dsc.inputs.hdbet_conda_env = config.hdbet_conda_env or ""
-
-    # Resolve device at build time for nipype GPU scheduling
-    from pmriprep.utils.device import resolve_device_uses_gpu
-
     hdbet_dsc.inputs.use_gpu = resolve_device_uses_gpu(config.hdbet_device)
 
     # -------------------------------------------------------------------
