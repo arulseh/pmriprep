@@ -428,6 +428,7 @@ def init_tumor_seg_wf(
     tumor_seg_segment = pe.Node(
         HDGLIOSegment(**segment_kwargs),
         name="tumor_seg_segment",
+        mem_gb=4.0,
     )
 
     # Connect prepped images to segmentation node

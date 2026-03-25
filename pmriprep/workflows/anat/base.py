@@ -648,6 +648,7 @@ def init_anat_preproc_wf(
             use_gpu=resolve_device_uses_gpu(config.hdbet_device),
         ),
         name="brain_extract",
+        mem_gb=2.0,
     )
 
     workflow.connect([

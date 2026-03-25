@@ -903,6 +903,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     dce_config=dce_config,
                     work_dir=work_dir,
                     random_seed=args.random_seed,
+                    mem_limit_gb=args.mem_gb,
                     name=f"pmriprep_sub{subject_id}_{session_str}_wf",
                 )
 

@@ -34,6 +34,7 @@ def init_dce_preproc_wf(
     config: Optional[DCEConfig] = None,
     has_tissue_seg: bool = True,
     random_seed: Optional[int] = None,
+    mem_gb: Optional[float] = None,
     name: str = "dce_preproc_wf",
 ) -> pe.Workflow:
     """Initialize the DCE (Dynamic Contrast Enhanced) preprocessing workflow.
@@ -523,6 +524,7 @@ def init_dce_preproc_wf(
             baseline_frames=config.baseline_frames,
         ),
         name="dce_preprocess",
+        mem_gb=mem_gb or 6.0,
     )
 
     # Connect DCE preprocessing inputs (using reoriented DCE file)
@@ -574,6 +576,7 @@ def init_dce_preproc_wf(
             use_gpu=resolve_device_uses_gpu(config.hdbet_device),
         ),
         name="dce_brain_extract",
+        mem_gb=2.0,
     )
 
     # Brain extraction runs on the early pre-contrast mean (before motion
@@ -643,6 +646,7 @@ def init_dce_preproc_wf(
     dce_registration = pe.Node(
         DCERegistration(),
         name="dce_registration",
+        mem_gb=2.0,
     )
 
     # Connect registration inputs
@@ -892,6 +896,7 @@ def init_dce_preproc_wf(
             function=_signal_to_concentration_node,
         ),
         name="signal_to_concentration",
+        mem_gb=mem_gb or 6.0,
     )
 
     # Pass config.no_t1 to the node
@@ -1009,6 +1014,7 @@ def init_dce_preproc_wf(
     pk_modeling = pe.Node(
         ComputeDCEMaps(**pk_kwargs),
         name="pk_modeling",
+        mem_gb=mem_gb or 6.0,
     )
 
     workflow.connect([

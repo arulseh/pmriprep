@@ -1495,6 +1495,7 @@ def init_dsc_preproc_wf(
     session_id: Optional[str] = None,
     config: Optional[DSCConfig] = None,
     random_seed: Optional[int] = None,
+    mem_gb: Optional[float] = None,
     name: str = "dsc_preproc_wf",
 ) -> pe.Workflow:
     """Initialize DSC perfusion preprocessing workflow.
@@ -1756,6 +1757,7 @@ def init_dsc_preproc_wf(
             motion_thresh=config.motion_thresh,
         ),
         name="motion_correct",
+        mem_gb=mem_gb or 4.0,
     )
 
     # -------------------------------------------------------------------
@@ -1805,6 +1807,7 @@ def init_dsc_preproc_wf(
             function=_hdbet_dsc_brain,
         ),
         name="hdbet_dsc",
+        mem_gb=2.0,
     )
     hdbet_dsc.inputs.hdbet_device = config.hdbet_device
     hdbet_dsc.inputs.hdbet_conda_env = config.hdbet_conda_env or ""
@@ -1855,6 +1858,7 @@ def init_dsc_preproc_wf(
             function=_signal_to_concentration,
         ),
         name="signal_to_conc",
+        mem_gb=mem_gb or 4.0,
     )
     signal_to_conc.inputs.baseline_frames = config.pre_bolus
 
@@ -1905,6 +1909,7 @@ def init_dsc_preproc_wf(
             function=_detect_and_correct_preload,
         ),
         name="preload_correct",
+        mem_gb=mem_gb or 4.0,
     )
     preload_correct.inputs.preload_present = config.preload_present if config.preload_present is not None else None
     preload_correct.inputs.baseline_frames = config.pre_bolus
@@ -1942,6 +1947,7 @@ def init_dsc_preproc_wf(
     compute_maps = pe.Node(
         ComputeDSCMaps(**dsc_map_kwargs),
         name="compute_maps",
+        mem_gb=mem_gb or 4.0,
     )
 
     # -------------------------------------------------------------------
@@ -1954,6 +1960,7 @@ def init_dsc_preproc_wf(
             cost="normmi",
         ),
         name="register",
+        mem_gb=2.0,
     )
 
     # -------------------------------------------------------------------
