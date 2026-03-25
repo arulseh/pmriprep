@@ -8,6 +8,7 @@ tissue segmentation, and ACPC alignment.
 from pathlib import Path
 from typing import Any, Optional
 
+from pmriprep.utils.nifti import nifti_gz_name
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterface,
     BaseInterfaceInputSpec,
@@ -86,19 +87,7 @@ class ReorientAndCrop(CommandLine):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        # Handle .nii.gz extension
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
-
-        return str(Path.cwd() / f"{base}_reoriented{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_reoriented"))
 
     @property
     def cmdline(self) -> str:
@@ -112,7 +101,7 @@ class ReorientAndCrop(CommandLine):
 
         # Create intermediate filename for reorient step
         in_path = Path(in_file)
-        ext = ".nii.gz" if in_path.name.endswith(".nii.gz") else ".nii"
+        ext = ".nii.gz"
         intermediate = str(Path(out_file).parent / f"_tmp_reoriented{ext}")
 
         # Chain: fslreorient2std -> robustfov
@@ -518,18 +507,7 @@ class Coregistration(CommandLine):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
-
-        return str(Path.cwd() / f"{base}_coreg{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_coreg"))
 
     def _gen_matfilename(self) -> str:
         """Generate output matrix filename if not specified."""
@@ -725,36 +703,14 @@ class BrainExtraction(CommandLine):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
-
-        return str(Path.cwd() / f"{base}_brain{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_brain"))
 
     def _gen_maskfilename(self) -> str:
         """Generate output brain mask filename if not specified."""
         if self.inputs.out_mask:
             return str(self.inputs.out_mask)
 
-        out_file = Path(self._gen_outfilename())
-        if out_file.name.endswith(".nii.gz"):
-            base = out_file.name[:-7]
-            ext = ".nii.gz"
-        elif out_file.name.endswith(".nii"):
-            base = out_file.stem
-            ext = ".nii"
-        else:
-            base = out_file.stem
-            ext = out_file.suffix
-
-        return str(out_file.parent / f"{base}_mask{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_brain_mask"))
 
     def _get_hdbet_device(self) -> str:
         """Get HD-BET device string based on settings and architecture."""
@@ -778,10 +734,6 @@ class BrainExtraction(CommandLine):
 
         if tool == "hdbet":
             device = self._get_hdbet_device()
-
-            # Ensure output has .nii.gz extension (HD-BET requirement)
-            if not out_file.endswith(".nii.gz"):
-                out_file = out_file + ".nii.gz"
 
             hdbet_base = (
                 f"hd-bet -i {in_file} -o {out_file} "
@@ -1254,18 +1206,7 @@ class BBRRefinement(CommandLine):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
-
-        return str(Path.cwd() / f"{base}_bbr{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_bbr"))
 
     def _gen_matfilename(self) -> str:
         """Generate output matrix filename if not specified."""
@@ -1400,18 +1341,7 @@ class T1wSubtraction(CommandLine):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        precon_file = Path(self.inputs.precon_file)
-        if precon_file.name.endswith(".nii.gz"):
-            base = precon_file.name[:-7]
-            ext = ".nii.gz"
-        elif precon_file.name.endswith(".nii"):
-            base = precon_file.stem
-            ext = ".nii"
-        else:
-            base = precon_file.stem
-            ext = precon_file.suffix
-
-        return str(Path.cwd() / f"{base}_subtraction{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.precon_file, "_subtraction"))
 
     @property
     def cmdline(self) -> str:
@@ -1503,18 +1433,7 @@ class ApplyMask(CommandLine):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
-
-        return str(Path.cwd() / f"{base}_masked{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_masked"))
 
     @property
     def cmdline(self) -> str:
@@ -1617,18 +1536,7 @@ class ApplyTransform(CommandLine):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
-
-        return str(Path.cwd() / f"{base}_xfm{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_xfm"))
 
     @property
     def cmdline(self) -> str:
@@ -1772,18 +1680,7 @@ class ACPCAlignment(CommandLine):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
-
-        return str(Path.cwd() / f"{base}_acpc{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_acpc"))
 
     def _gen_matfilename(self) -> str:
         """Generate output matrix filename if not specified."""

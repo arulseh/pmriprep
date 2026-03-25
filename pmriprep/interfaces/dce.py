@@ -47,18 +47,10 @@ def _reorient_to_ras(in_file: Optional[str]) -> Optional[str]:
     if not in_path.exists():
         return None
 
-    # Generate output filename in current working directory
-    if in_path.name.endswith(".nii.gz"):
-        base = in_path.name[:-7]
-        ext = ".nii.gz"
-    elif in_path.name.endswith(".nii"):
-        base = in_path.stem
-        ext = ".nii"
-    else:
-        base = in_path.stem
-        ext = in_path.suffix
+    # Generate output filename (always .nii.gz — FSLOUTPUTTYPE=NIFTI_GZ)
+    from pmriprep.utils.nifti import nifti_gz_name
 
-    out_file = str(Path.cwd() / f"{base}_reoriented{ext}")
+    out_file = str(Path.cwd() / nifti_gz_name(in_file, "_reoriented"))
 
     # Run fslreorient2std
     cmd = ["fslreorient2std", str(in_file), out_file]
@@ -3402,48 +3394,25 @@ class DCEPreprocess(SimpleInterface):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        return str(Path.cwd() / f"{base}_moco{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_moco"))
 
     def _gen_params_filename(self) -> str:
         """Generate motion parameters filename."""
         if self.inputs.out_params:
             return str(self.inputs.out_params)
 
-        out_file = Path(self._gen_outfilename())
-        if out_file.name.endswith(".nii.gz"):
-            base = out_file.name[:-7]
-        elif out_file.name.endswith(".nii"):
-            base = out_file.stem
-        else:
-            base = out_file.stem
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        return str(out_file.parent / f"{base}.par")
+        base = nifti_gz_name(self.inputs.in_file, "_moco")[:-7]
+        return str(Path.cwd() / f"{base}.par")
 
     def _gen_mean_filename(self) -> str:
         """Generate mean image filename."""
-        out_file = Path(self._gen_outfilename())
-        if out_file.name.endswith(".nii.gz"):
-            base = out_file.name[:-7]
-            ext = ".nii.gz"
-        elif out_file.name.endswith(".nii"):
-            base = out_file.stem
-            ext = ".nii"
-        else:
-            base = out_file.stem
-            ext = out_file.suffix
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        return str(out_file.parent / f"{base}_mean_reg{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_moco_mean_reg"))
 
     def _gen_baseline_mean_filename(self) -> str:
         """Generate baseline mean image filename."""
@@ -4463,18 +4432,9 @@ class DCERegistration(SimpleInterface):
         if isdefined(self.inputs.out_file):
             return str(self.inputs.out_file)
 
-        t1w_file = Path(self.inputs.t1w_file)
-        if t1w_file.name.endswith(".nii.gz"):
-            base = t1w_file.name[:-7]
-            ext = ".nii.gz"
-        elif t1w_file.name.endswith(".nii"):
-            base = t1w_file.stem
-            ext = ".nii"
-        else:
-            base = t1w_file.stem
-            ext = t1w_file.suffix
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        return str(Path.cwd() / f"{base}_dce{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.t1w_file, "_dce"))
 
     def _gen_matfilename(self) -> str:
         """Generate output matrix filename if not specified.
@@ -4485,12 +4445,7 @@ class DCERegistration(SimpleInterface):
         if isdefined(self.inputs.out_matrix):
             return str(self.inputs.out_matrix)
 
-        out_file = Path(self._gen_outfilename())
-        if out_file.name.endswith(".nii.gz"):
-            base = out_file.name[:-7]
-        elif out_file.name.endswith(".nii"):
-            base = out_file.stem
-        else:
-            base = out_file.stem
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        return str(out_file.parent / f"{base}.mat")
+        base = nifti_gz_name(self.inputs.t1w_file, "_dce")[:-7]
+        return str(Path.cwd() / f"{base}.mat")

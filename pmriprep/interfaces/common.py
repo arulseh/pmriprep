@@ -44,18 +44,10 @@ def reorient_to_ras(in_file=None):
     if not in_path.exists():
         return None
 
-    # Generate output filename
-    if in_path.name.endswith(".nii.gz"):
-        base = in_path.name[:-7]
-        ext = ".nii.gz"
-    elif in_path.name.endswith(".nii"):
-        base = in_path.stem
-        ext = ".nii"
-    else:
-        base = in_path.stem
-        ext = in_path.suffix
+    # Generate output filename (always .nii.gz — FSLOUTPUTTYPE=NIFTI_GZ)
+    from pmriprep.utils.nifti import nifti_gz_name
 
-    out_file = str(_Path.cwd() / f"{base}_reoriented{ext}")
+    out_file = str(_Path.cwd() / nifti_gz_name(in_file, "_reoriented"))
 
     # Run fslreorient2std
     cmd = ["fslreorient2std", str(in_file), out_file]
@@ -115,15 +107,9 @@ def reorient_list_to_ras(in_files=None):
         # Generate output filename
         if in_path.name.endswith(".nii.gz"):
             base = in_path.name[:-7]
-            ext = ".nii.gz"
-        elif in_path.name.endswith(".nii"):
-            base = in_path.stem
-            ext = ".nii"
-        else:
-            base = in_path.stem
-            ext = in_path.suffix
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        out_file = str(_Path.cwd() / f"{base}_reoriented{ext}")
+        out_file = str(_Path.cwd() / nifti_gz_name(in_file, "_reoriented"))
 
         # Run fslreorient2std
         cmd = ["fslreorient2std", str(in_file), out_file]
@@ -207,19 +193,9 @@ class Reorient(CommandLine):
         if isdefined(self.inputs.out_file) and self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        # Handle .nii.gz extension
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        return str(Path.cwd() / f"{base}_reoriented{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_reoriented"))
 
     @property
     def cmdline(self) -> str:

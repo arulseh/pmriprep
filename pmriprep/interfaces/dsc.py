@@ -198,50 +198,26 @@ class MotionCorrection(CommandLine):
         if self.inputs.out_file:
             return str(self.inputs.out_file)
 
-        in_file = Path(self.inputs.in_file)
-        # Handle .nii.gz extension
-        if in_file.name.endswith(".nii.gz"):
-            base = in_file.name[:-7]
-            ext = ".nii.gz"
-        elif in_file.name.endswith(".nii"):
-            base = in_file.stem
-            ext = ".nii"
-        else:
-            base = in_file.stem
-            ext = in_file.suffix
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        return str(Path.cwd() / f"{base}_moco{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_moco"))
 
     def _gen_params_filename(self) -> str:
         """Generate motion parameters filename."""
         if self.inputs.out_params:
             return str(self.inputs.out_params)
 
-        # mcflirt outputs {basename}.par
-        out_file = Path(self._gen_outfilename())
-        if out_file.name.endswith(".nii.gz"):
-            base = out_file.name[:-7]
-        elif out_file.name.endswith(".nii"):
-            base = out_file.stem
-        else:
-            base = out_file.stem
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        return str(out_file.parent / f"{base}.par")
+        # mcflirt outputs {basename}.par
+        base = nifti_gz_name(self.inputs.in_file, "_moco")[:-7]  # strip .nii.gz
+        return str(Path.cwd() / f"{base}.par")
 
     def _gen_mean_filename(self) -> str:
         """Generate mean image filename."""
-        out_file = Path(self._gen_outfilename())
-        if out_file.name.endswith(".nii.gz"):
-            base = out_file.name[:-7]
-            ext = ".nii.gz"
-        elif out_file.name.endswith(".nii"):
-            base = out_file.stem
-            ext = ".nii"
-        else:
-            base = out_file.stem
-            ext = out_file.suffix
+        from pmriprep.utils.nifti import nifti_gz_name
 
-        return str(out_file.parent / f"{base}_mean_reg{ext}")
+        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_moco_mean_reg"))
 
     def _compute_pre_bolus_mean(self) -> str:
         """Compute pre-bolus mean reference image and return its path."""
