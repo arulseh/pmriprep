@@ -131,11 +131,12 @@ def generate_xval_plot(
                 color=COLORBLIND_PALETTE.error, linewidth=1,
                 label="identity")
 
-        # Annotate correlation
+        # Annotate correlations (Spearman primary, Pearson supplementary)
         metrics = validation_result.get("metrics", {})
-        corr = metrics.get("correlation", 0.0)
+        rho = metrics.get("correlation", 0.0)
+        r_pearson = metrics.get("pearson_correlation", 0.0)
         ax.text(
-            0.05, 0.92, f"r = {corr:.3f}",
+            0.05, 0.92, f"\u03c1 = {rho:.3f} (r = {r_pearson:.3f})",
             transform=ax.transAxes, fontsize=9,
             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
         )

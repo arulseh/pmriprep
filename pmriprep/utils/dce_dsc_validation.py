@@ -73,8 +73,8 @@ MAX_VP_FOR_VALIDATION: float = 0.15
 #: Maximum CBV for validation (above = likely large vessel partial volume effect)
 MAX_CBV_FOR_VALIDATION: float = 8.0
 
-#: Correlation thresholds for unconstrained vp-CBV validation.
-#: Voxel-wise DCE-DSC correlation is inherently modest (r~0.3-0.6) due to
+#: Spearman rank correlation thresholds for unconstrained vp-CBV validation.
+#: Voxel-wise DCE-DSC correlation is inherently modest (ρ ~0.3-0.6) due to
 #: different contrast mechanisms (T1 vs T2*), spatial resolution, and PSF.
 #: Ref: Quarles et al., NMR Biomed 2009; Shin et al., JMRI 2013.
 CORRELATION_PASS_UNCONSTRAINED: float = 0.30
@@ -123,7 +123,12 @@ class ValidationMetrics:
         n_valid_voxels: Number of voxels included in validation.
         n_total_voxels: Total number of voxels in mask.
         fraction_valid: Fraction of voxels with valid values.
-        correlation: Pearson correlation between vp and CBV.
+        correlation: Spearman rank correlation between vp and CBV.
+            Robust to outliers and non-linear monotonic relationships,
+            which is the expected vp-CBV relationship (different contrast
+            mechanisms: T1 vs T2*).
+        pearson_correlation: Supplementary Pearson correlation.
+            Discrepancy with Spearman indicates outlier leverage inflation.
         mean_vp: Mean vp value in valid voxels (fraction).
         mean_cbv: Mean CBV value in valid voxels (mL/100g).
         expected_ratio: Expected ratio based on hematocrit and tissue density.
@@ -138,6 +143,7 @@ class ValidationMetrics:
     n_total_voxels: int = 0
     fraction_valid: float = 0.0
     correlation: float = 0.0
+    pearson_correlation: float = 0.0
     mean_vp: float = 0.0
     mean_cbv: float = 0.0
     expected_ratio: float = 0.0
@@ -154,6 +160,7 @@ class ValidationMetrics:
             "n_total_voxels": self.n_total_voxels,
             "fraction_valid": self.fraction_valid,
             "correlation": self.correlation,
+            "pearson_correlation": self.pearson_correlation,
             "mean_vp": self.mean_vp,
             "mean_cbv": self.mean_cbv,
             "expected_ratio": self.expected_ratio,
@@ -386,13 +393,25 @@ def validate_vp_cbv(
     metrics.mean_vp = float(np.mean(vp_valid))
     metrics.mean_cbv = float(np.mean(cbv_valid))
 
-    # Calculate correlation with NaN guard
+    # Calculate correlations with NaN guard.
+    # Spearman (rank) is the primary metric — robust to outliers and
+    # non-linear monotonic relationships (vp-CBV uses different contrast
+    # mechanisms: T1 vs T2*).  Pearson is supplementary; discrepancy
+    # with Spearman indicates outlier leverage inflation.
     if len(vp_valid) > 2:
-        correlation_matrix = np.corrcoef(vp_valid, cbv_valid)
-        corr_val = correlation_matrix[0, 1]
-        metrics.correlation = float(corr_val) if np.isfinite(corr_val) else 0.0
+        from scipy.stats import spearmanr
+
+        rho, _ = spearmanr(vp_valid, cbv_valid)
+        metrics.correlation = float(rho) if np.isfinite(rho) else 0.0
+
+        pearson_matrix = np.corrcoef(vp_valid, cbv_valid)
+        pearson_val = pearson_matrix[0, 1]
+        metrics.pearson_correlation = (
+            float(pearson_val) if np.isfinite(pearson_val) else 0.0
+        )
     else:
         metrics.correlation = 0.0
+        metrics.pearson_correlation = 0.0
 
     # Calculate correction factor based on median ratio
     result.correction_factor = calculate_correction_factor(
@@ -451,28 +470,28 @@ def validate_vp_cbv(
     if metrics.correlation < 0:
         corr_status = QCStatus.POOR
         interpretations.append(
-            f"Negative vp-CBV correlation (r={metrics.correlation:.3f}): "
+            f"Negative vp-CBV correlation (\u03c1={metrics.correlation:.3f}): "
             "physically implausible"
         )
     elif metrics.correlation < corr_warn:
         corr_status = QCStatus.POOR
         interpretations.append(
-            f"No meaningful vp-CBV correlation (r={metrics.correlation:.3f})"
+            f"No meaningful vp-CBV correlation (\u03c1={metrics.correlation:.3f})"
         )
     elif metrics.correlation < corr_pass:
         corr_status = QCStatus.WARN
         interpretations.append(
-            f"Weak vp-CBV correlation (r={metrics.correlation:.3f})"
+            f"Weak vp-CBV correlation (\u03c1={metrics.correlation:.3f})"
         )
     elif metrics.correlation > 0.7:
         corr_status = QCStatus.PASS
         interpretations.append(
-            f"Strong vp-CBV correlation (r={metrics.correlation:.3f})"
+            f"Strong vp-CBV correlation (\u03c1={metrics.correlation:.3f})"
         )
     else:
         corr_status = QCStatus.PASS
         interpretations.append(
-            f"Moderate vp-CBV correlation (r={metrics.correlation:.3f})"
+            f"Moderate vp-CBV correlation (\u03c1={metrics.correlation:.3f})"
         )
 
     # --- Coverage status (constraint-mode-dependent thresholds) ---
@@ -508,7 +527,8 @@ def validate_vp_cbv(
         f"DSC-DCE Validation: status={result.status}, "
         f"preload_effect_detected={result.preload_effect_detected}, "
         f"median_ratio={metrics.median_ratio:.3f}, "
-        f"correlation={metrics.correlation:.3f}"
+        f"spearman={metrics.correlation:.3f}, "
+        f"pearson={metrics.pearson_correlation:.3f}"
     )
 
     return result

@@ -56,6 +56,9 @@ class TestCorrelationStatus:
         vp, cbv, mask = _make_data(correlation=0.6)
         result = validate_vp_cbv(vp, cbv, mask)
         assert result.status == QCStatus.PASS
+        # Verify both Spearman and Pearson are populated
+        assert result.metrics.correlation > 0.3  # Spearman
+        assert result.metrics.pearson_correlation > 0.3  # Pearson
 
     def test_weak_correlation_warns(self):
         vp, cbv, mask = _make_data(correlation=0.2)
