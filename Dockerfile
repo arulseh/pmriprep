@@ -26,7 +26,7 @@
 #     pmriprep:latest \
 #     /data /out participant --use-gpu
 
-FROM condaforge/miniforge3:latest
+FROM condaforge/miniforge3:24.11.3-2
 
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
@@ -99,7 +99,7 @@ RUN mamba install -y \
     fsl-data_standard \
     && mamba clean -afy
 
-RUN mamba install -y -c conda-forge ants && mamba clean -afy
+RUN mamba install -y -c conda-forge ants=2.6.5 && mamba clean -afy
 
 # FSLDIR = conda prefix; FSL data lands at $CONDA_DIR/data/standard/
 ENV FSLDIR=${CONDA_DIR}
@@ -116,13 +116,13 @@ RUN mkdir -p ${nnUNet_raw_data_base}/nnUNet_raw_data \
 # Install PyTorch with CUDA 12.1 support (GPU-accelerated tumor segmentation)
 # The preflight check in decide_pipelines() auto-skips tumor seg at runtime
 # if no GPU is detected, so shipping GPU PyTorch is always safe.
-RUN pip install --no-cache-dir torch torchvision \
+RUN pip install --no-cache-dir torch==2.5.1+cu121 torchvision==0.20.1+cu121 \
     --index-url https://download.pytorch.org/whl/cu121
 
 # Install HD-BET for brain extraction and pre-download model weights.
 # Overwrite paths.py so weights live at /opt/ (not $HOME) — Apptainer
 # auto-binds host $HOME over the container's, hiding baked-in weights.
-RUN pip install --no-cache-dir hd-bet && \
+RUN pip install --no-cache-dir hd-bet==2.0.1 && \
     HDBET_LOC=$(pip show hd-bet 2>/dev/null | grep -i "^Location:" | awk '{print $2}') && \
     [ -n "$HDBET_LOC" ] || { echo "ERROR: hd-bet not installed"; exit 1; } && \
     HDBET_PATHS="${HDBET_LOC}/HD_BET/paths.py" && \
@@ -135,7 +135,7 @@ RUN pip install --no-cache-dir hd-bet && \
 
 # Install HD-GLIO for glioma segmentation and pre-download model weights.
 # Same /opt/ relocation as HD-BET above — Apptainer-safe.
-RUN (pip install --no-cache-dir HD-GLIO || \
+RUN (pip install --no-cache-dir HD-GLIO==2.0 || \
      pip install --no-cache-dir git+https://github.com/CCI-Bonn/HD-GLIO.git) && \
     HDGLIO_LOC=$(pip show hd-glio 2>/dev/null | grep -i "^Location:" | awk '{print $2}') && \
     [ -n "$HDGLIO_LOC" ] || { echo "ERROR: hd-glio not installed"; exit 1; } && \
@@ -148,7 +148,7 @@ RUN (pip install --no-cache-dir HD-GLIO || \
 
 # Install CuPy (GPU-accelerated deconvolution) — prebuilt CUDA 12.x wheel,
 # same pattern as PyTorch above (generic `cupy` has no prebuilt wheels).
-RUN pip install --no-cache-dir cupy-cuda12x
+RUN pip install --no-cache-dir cupy-cuda12x==14.0.1
 
 # Copy source and install pmriprep
 COPY --chown=1000:1000 . /src/pmriprep
