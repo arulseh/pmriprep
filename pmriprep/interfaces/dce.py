@@ -3224,15 +3224,54 @@ class DCEPreprocess(SimpleInterface):
 
         return runtime
 
+    def _brain_signal_timecourse(
+        self,
+        dce_data: np.ndarray,
+        brain_mask: Optional[np.ndarray],
+    ) -> np.ndarray:
+        """Compute brain signal time course for bolus detection.
+
+        Uses the 95th percentile across brain voxels to capture
+        arterial/early-enhancing timing without the ~1-frame transit
+        delay that affects the mean brain signal.  Falls back to mean
+        when the mask has too few voxels for a stable percentile.
+
+        Args:
+            dce_data: 4D DCE data array (x, y, z, t).
+            brain_mask: Optional 3D boolean brain mask.
+
+        Returns:
+            1D signal time course of length n_volumes.
+        """
+        n_volumes = dce_data.shape[3]
+
+        if brain_mask is not None:
+            brain_voxels = dce_data[brain_mask]  # (n_voxels, n_volumes)
+            if brain_voxels.shape[0] > 100:
+                return np.percentile(brain_voxels, 95, axis=0)
+            # Small mask: mean is more stable
+            return np.array([
+                np.mean(dce_data[..., t][brain_mask])
+                for t in range(n_volumes)
+            ])
+
+        # No mask: mean of non-zero voxels
+        return np.array([
+            np.mean(dce_data[..., t][dce_data[..., t] > 0])
+            for t in range(n_volumes)
+        ])
+
     def _auto_detect_baseline(
         self,
         dce_data: np.ndarray,
         brain_mask: Optional[np.ndarray],
     ) -> tuple[int, int]:
-        """Auto-detect baseline frames from global signal time course.
+        """Auto-detect baseline frames from brain signal time course.
 
         For DCE with gadolinium, signal INCREASES at bolus arrival due to
-        T1-shortening effect. We detect the first significant increase.
+        T1-shortening effect. We detect the first significant increase
+        using the 95th percentile signal, which captures arterial timing
+        without the transit delay that makes the mean lag by 0-1 frames.
 
         Args:
             dce_data: 4D DCE data array (x, y, z, t)
@@ -3241,32 +3280,11 @@ class DCEPreprocess(SimpleInterface):
         Returns:
             Tuple of (baseline_frames, bolus_arrival_frame)
         """
-        from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
-
-        n_volumes = dce_data.shape[3]
-
-        # Compute global mean signal time course
-        if brain_mask is not None:
-            # Use mean within brain mask
-            signal = np.array([
-                np.mean(dce_data[..., t][brain_mask])
-                for t in range(n_volumes)
-            ])
-        else:
-            # Use global mean (all non-zero voxels)
-            signal = np.array([
-                np.mean(dce_data[..., t][dce_data[..., t] > 0])
-                for t in range(n_volumes)
-            ])
-
-        # Detect bolus arrival
+        signal = self._brain_signal_timecourse(dce_data, brain_mask)
         bolus_frame = self._detect_bolus_arrival_from_signal(signal)
 
-        # Baseline is everything before bolus arrival, minus a 1-frame
-        # safety margin.  Mean-brain detection lags arterial arrival by
-        # ~1 frame (tissue transit delay), matching the DSC pattern at
-        # dsc_signal.py:249 (max(2, arrival_idx - 1)).
-        baseline_frames = max(3, bolus_frame - 1)
+        # No safety margin needed — p95 tracks arterial timing directly
+        baseline_frames = bolus_frame
 
         return baseline_frames, bolus_frame
 
@@ -3284,20 +3302,7 @@ class DCEPreprocess(SimpleInterface):
         Returns:
             Bolus arrival frame index
         """
-        n_volumes = dce_data.shape[3]
-
-        # Compute global mean signal
-        if brain_mask is not None:
-            signal = np.array([
-                np.mean(dce_data[..., t][brain_mask])
-                for t in range(n_volumes)
-            ])
-        else:
-            signal = np.array([
-                np.mean(dce_data[..., t][dce_data[..., t] > 0])
-                for t in range(n_volumes)
-            ])
-
+        signal = self._brain_signal_timecourse(dce_data, brain_mask)
         return self._detect_bolus_arrival_from_signal(signal)
 
     def _detect_bolus_arrival_from_signal(self, signal: np.ndarray) -> int:
