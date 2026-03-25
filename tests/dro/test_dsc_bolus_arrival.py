@@ -11,7 +11,10 @@ Exercises:
 import numpy as np
 import pytest
 
-from pmriprep.utils.dsc_signal import detect_bolus_arrival
+from pmriprep.utils.dsc_signal import (
+    detect_bolus_arrival,
+    detect_bolus_arrival_gradient,
+)
 
 from .conftest import (
     add_gaussian_noise,
@@ -250,3 +253,234 @@ class TestBolusArrivalEdgeCases:
 
         assert arrival_idx >= 0
         assert n_baseline >= 2
+
+
+# =============================================================================
+# Gradient-based detection tests
+# =============================================================================
+
+
+def _make_preloaded_curve(
+    n_timepoints: int = 120,
+    dt_sec: float = 1.5,
+    preload_amplitude: float = 2.0,
+    washout_tau: float = 30.0,
+    bolus_arrival: int = 42,
+    peak_delta_r2: float = 15.0,
+    noise_frac: float = 0.0,
+    seed: int = 42,
+) -> tuple[np.ndarray, int]:
+    """Generate a preloaded DSC concentration curve.
+
+    Exponentially decaying preload baseline with a gamma-variate bolus
+    superimposed at ``bolus_arrival``.
+
+    Returns (concentration_curve, true_arrival_idx).
+    """
+    t = np.arange(n_timepoints) * dt_sec
+    # Exponential washout from preload
+    curve = preload_amplitude * np.exp(-t / washout_tau)
+
+    # Add bolus at arrival
+    bolus_part, _ = generate_dsc_aif_dro(
+        n_timepoints=n_timepoints - bolus_arrival,
+        dt_sec=dt_sec,
+        baseline_frames=0,
+        peak_delta_r2=peak_delta_r2,
+    )
+    curve[bolus_arrival:] += bolus_part
+
+    if noise_frac > 0:
+        peak = float(np.max(np.abs(curve)))
+        if peak > 0:
+            curve = add_gaussian_noise(curve, noise_frac * peak, seed=seed)
+
+    return curve, bolus_arrival
+
+
+class TestBolusArrivalGradient:
+    """Test gradient-based bolus arrival detection."""
+
+    def test_preloaded_decaying_baseline(self) -> None:
+        """Preloaded washout + bolus at frame 42 should be detected."""
+        curve, true_arrival = _make_preloaded_curve(
+            bolus_arrival=42, noise_frac=0.0,
+        )
+
+        arrival_idx, n_baseline = detect_bolus_arrival_gradient(
+            curve, baseline_window=20, n_consecutive=2,
+        )
+
+        assert abs(arrival_idx - true_arrival) <= 2, (
+            f"Arrival detected at {arrival_idx}, true={true_arrival}"
+        )
+        assert n_baseline >= 2
+
+    def test_preloaded_noisy_washout(self) -> None:
+        """Noisy preloaded washout should still detect real bolus."""
+        curve, true_arrival = _make_preloaded_curve(
+            bolus_arrival=42, noise_frac=0.05,
+        )
+
+        arrival_idx, n_baseline = detect_bolus_arrival_gradient(
+            curve, baseline_window=20, n_consecutive=2,
+        )
+
+        assert abs(arrival_idx - true_arrival) <= 3, (
+            f"Arrival detected at {arrival_idx}, true={true_arrival}"
+        )
+
+    def test_nonpreloaded_zero_baseline(self) -> None:
+        """Flat-zero baseline with bolus — EPSILON floor handles sigma=0."""
+        curve, true_arrival = _make_concentration_with_arrival(
+            baseline_frames=10, noise_frac=0.0,
+        )
+
+        arrival_idx, n_baseline = detect_bolus_arrival_gradient(
+            curve, baseline_window=10, n_consecutive=2,
+        )
+
+        assert abs(arrival_idx - true_arrival) <= 2
+        assert n_baseline >= 2
+
+    def test_nonpreloaded_matches_original(self) -> None:
+        """Zero baseline: gradient method agrees with amplitude method."""
+        curve, true_arrival = _make_concentration_with_arrival(
+            baseline_frames=15, noise_frac=0.0,
+        )
+
+        arr_amp, _ = detect_bolus_arrival(curve, baseline_frames=3)
+        arr_grad, _ = detect_bolus_arrival_gradient(
+            curve, baseline_window=10, n_consecutive=2,
+        )
+
+        assert abs(arr_amp - arr_grad) <= 2, (
+            f"Amplitude={arr_amp}, Gradient={arr_grad}"
+        )
+
+    def test_gradient_rejects_slow_drift(self) -> None:
+        """Linear drift + bolus at frame 30 should detect ~30, not drift."""
+        curve = np.zeros(80, dtype=np.float64)
+        # Slow linear drift
+        curve += np.linspace(0, 0.5, 80)
+        # Real bolus at frame 30
+        bolus, _ = generate_dsc_aif_dro(
+            n_timepoints=50, dt_sec=1.5, baseline_frames=0, peak_delta_r2=10.0,
+        )
+        curve[30:] += bolus
+
+        arrival_idx, _ = detect_bolus_arrival_gradient(
+            curve, baseline_window=20, n_consecutive=2,
+        )
+
+        assert abs(arrival_idx - 30) <= 3, (
+            f"Drift test: arrival={arrival_idx}, expected ~30"
+        )
+
+    def test_gradient_flat_line_fallback(self) -> None:
+        """Flat input returns fallback without crash."""
+        curve = np.ones(60, dtype=np.float64) * 5.0
+
+        arrival_idx, n_baseline = detect_bolus_arrival_gradient(
+            curve, baseline_window=15,
+        )
+
+        # Should return fallback index
+        assert arrival_idx >= 0
+        assert n_baseline >= 2
+
+    def test_short_baseline_minimum_guard(self) -> None:
+        """Very short curve triggers minimum sample guard."""
+        curve = np.array([0.0, 1.0, 5.0, 10.0, 8.0, 3.0], dtype=np.float64)
+
+        arrival_idx, n_baseline = detect_bolus_arrival_gradient(
+            curve, baseline_window=10, n_consecutive=2,
+        )
+
+        # With 6 values, len//4 = 1 < 4 → minimum guard triggers fallback
+        assert arrival_idx >= 0
+        assert arrival_idx < len(curve)
+        assert n_baseline >= 2
+
+    @pytest.mark.parametrize(
+        "tr,n_consec",
+        [
+            pytest.param(1.0, 3, id="TR1.0"),
+            pytest.param(1.5, 2, id="TR1.5"),
+            pytest.param(2.0, 2, id="TR2.0"),
+            pytest.param(2.5, 1, id="TR2.5"),
+        ],
+    )
+    def test_tr_sweep(self, tr: float, n_consec: int) -> None:
+        """Detection works across TR range with adaptive n_consecutive."""
+        n_tp = int(120 / tr)  # ~120 s acquisition
+        bolus_frame = int(42 * 1.5 / tr)  # Same temporal position
+
+        curve, true_arrival = _make_preloaded_curve(
+            n_timepoints=n_tp, dt_sec=tr, bolus_arrival=bolus_frame,
+        )
+
+        arrival_idx, _ = detect_bolus_arrival_gradient(
+            curve, baseline_window=min(20, n_tp // 4),
+            n_consecutive=n_consec,
+        )
+
+        tol = max(2, int(3.0 / tr))  # Frame tolerance scales with TR
+        assert abs(arrival_idx - true_arrival) <= tol, (
+            f"TR={tr}: arrival={arrival_idx}, true={true_arrival}, tol={tol}"
+        )
+
+    def test_amplitude_validation_rejects_spurious(self) -> None:
+        """Gradient spike without sustained concentration rise is rejected."""
+        # Flat baseline with a single-frame gradient blip (no real bolus)
+        curve = np.ones(60, dtype=np.float64) * 2.0
+        # Tiny blip: +0.001 for 1 frame then back to baseline
+        curve[20] = 2.001
+        curve[21] = 2.001
+
+        arrival_idx, n_baseline = detect_bolus_arrival_gradient(
+            curve, baseline_window=15, n_consecutive=1,
+        )
+
+        # Should NOT detect frame 20 as bolus (amplitude check fails)
+        # Should return fallback instead
+        assert arrival_idx != 20, (
+            "Spurious gradient blip should be rejected by amplitude check"
+        )
+
+
+class TestFWHMMinimumGuard:
+    """Test that the FWHM minimum guard rejects sub-TR noise spikes."""
+
+    def test_fwhm_below_minimum_rejected(self) -> None:
+        """FWHM = 1.5s (1 TR at TR=1.5s) should be rejected at all levels."""
+        from pmriprep.interfaces.dsc_aif import AIFDetection
+
+        detector = AIFDetection.__new__(AIFDetection)
+
+        metrics = {
+            "ttp": 10.0,
+            "ph": 50.0,
+            "psr": 90.0,
+            "s0": 100.0,
+            "peak_conc": 20.0,
+            "baseline_return_ratio": 10.0,
+            "peak_to_baseline_ratio": 5.0,
+            "secondary_peak_ratio": 30.0,
+            "post_peak_monotonicity": 80.0,
+            "fwhm": 1.5,  # 1 TR at TR=1.5s — too narrow
+            "baseline_conc": 0.1,
+            "dt": 1.5,
+            "pre_bolus_frames": 5,
+            "scan_duration": 180.0,
+            "max_allowed_ttp": 144.0,
+        }
+
+        for criteria in ["strict", "relaxed", "permissive", "degraded"]:
+            cost = detector._score_candidate_cost(
+                metrics, criteria, median_s0=None,
+            )
+            assert cost == float("inf"), (
+                f"FWHM=1.5s should be rejected at '{criteria}' level, "
+                f"got cost={cost}"
+            )

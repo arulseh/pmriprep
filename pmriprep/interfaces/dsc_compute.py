@@ -678,46 +678,28 @@ class ComputeDSCMaps(BaseInterface):
 
             if aif_is_synthetic and concentration_data is not None and mask is not None:
                 # Synthetic AIF: detect bolus onset from mean brain
-                # concentration using z-score detection (scale-invariant,
-                # self-calibrating to noise level). The previous 5%-of-max-
-                # gradient method was a scale-dependent heuristic easily
-                # triggered by baseline noise when the true bolus gradient
-                # is large.
+                # concentration using gradient z-score detection.
+                from pmriprep.utils.dsc_signal import detect_bolus_arrival_gradient
+
                 mask_bool = mask > 0
                 mean_conc = np.mean(concentration_data[mask_bool], axis=0)
                 if len(mean_conc) >= 7:
-                    grad = np.gradient(mean_conc)
+                    arrival_idx, n_baseline = detect_bolus_arrival_gradient(
+                        mean_conc,
+                        baseline_window=min(20, len(mean_conc) // 4),
+                        n_consecutive=3,
+                    )
+                    # Enforce minimum floor at configured baseline
+                    n_baseline = max(n_baseline, configured_baseline)
 
-                    # Z-score: baseline stats from first N frames
-                    baseline_window = min(20, len(grad) // 4)
-                    baseline_grad = grad[:baseline_window]
-                    mu = np.mean(baseline_grad)
-                    sigma = float(np.std(baseline_grad))
-                    z_thresh = 3.0  # 3 standard deviations
-
-                    if sigma > 0:
-                        z_scores = (grad - mu) / sigma
-                        above = z_scores > z_thresh
-
-                        # Find first run of 3 consecutive frames exceeding
-                        # z-score threshold (prevents single-frame noise)
-                        n_baseline = len(grad)  # fallback: entire series
-                        for i in range(len(above) - 2):
-                            if above[i] and above[i + 1] and above[i + 2]:
-                                n_baseline = i
-                                break
-
-                        # Enforce minimum floor at configured baseline
-                        n_baseline = max(n_baseline, configured_baseline)
-
-                        if 2 <= n_baseline <= len(aif) // 2:
-                            info.update(
-                                baseline_detection_method="auto_conc_zscore",
-                                baseline_frames_detected=n_baseline,
-                                arrival_index=n_baseline,
-                                aif_synthetic=True,
-                            )
-                            return n_baseline, info
+                    if 2 <= n_baseline <= len(aif) // 2:
+                        info.update(
+                            baseline_detection_method="auto_conc_zscore",
+                            baseline_frames_detected=n_baseline,
+                            arrival_index=int(arrival_idx),
+                            aif_synthetic=True,
+                        )
+                        return n_baseline, info
 
             # Real AIF: detect arrival directly on the loaded AIF.
             # The AIF saved by AIFDetection is already savgol-smoothed

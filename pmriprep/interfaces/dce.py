@@ -3262,10 +3262,11 @@ class DCEPreprocess(SimpleInterface):
         # Detect bolus arrival
         bolus_frame = self._detect_bolus_arrival_from_signal(signal)
 
-        # Baseline is everything before bolus arrival.
-        # _detect_bolus_arrival_from_signal already returns DEFAULT_BASELINE_FRAMES
-        # on detection failure and enforces min_baseline=3, so trust its result.
-        baseline_frames = bolus_frame
+        # Baseline is everything before bolus arrival, minus a 1-frame
+        # safety margin.  Mean-brain detection lags arterial arrival by
+        # ~1 frame (tissue transit delay), matching the DSC pattern at
+        # dsc_signal.py:249 (max(2, arrival_idx - 1)).
+        baseline_frames = max(3, bolus_frame - 1)
 
         return baseline_frames, bolus_frame
 

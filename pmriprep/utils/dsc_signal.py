@@ -249,6 +249,102 @@ def detect_bolus_arrival(
     return arrival_idx, max(2, arrival_idx - 1)
 
 
+def detect_bolus_arrival_gradient(
+    concentration_curve: npt.NDArray[np.floating],
+    baseline_window: int = 20,
+    z_threshold: float = 3.0,
+    n_consecutive: int = 3,
+) -> Tuple[int, int]:
+    """Detect bolus arrival using gradient z-score thresholding.
+
+    Operates on the first derivative (gradient) of the concentration curve
+    rather than raw values.  This makes detection robust to preloaded
+    acquisitions where the baseline is elevated or slowly decaying —
+    situations where the amplitude-based ``detect_bolus_arrival`` triggers
+    on washout noise.
+
+    The gradient of a slowly-decaying preload baseline is a small negative
+    constant, while the gradient at true bolus arrival is a large positive
+    spike.  Z-scoring the gradient cleanly separates these two regimes at
+    any baseline elevation.
+
+    Args:
+        concentration_curve: 1D concentration time course.
+        baseline_window: Maximum number of initial frames used to estimate
+            gradient baseline statistics.  Clipped to ``len // 4`` so it
+            never exceeds one quarter of the curve.  Default 20 provides
+            stable mean/std for most acquisition lengths.
+        z_threshold: Number of standard deviations above baseline gradient
+            mean to count as significant.  Default 3.0.
+        n_consecutive: Number of consecutive above-threshold gradient
+            frames required.  Should be TR-adaptive at the call site
+            (e.g. ``max(1, min(3, int(4.0 / tr)))``).
+
+    Returns:
+        Tuple of (arrival_idx, n_baseline_frames):
+            - arrival_idx: Frame index where bolus arrives.
+            - n_baseline_frames: Usable pre-bolus frames (always >= 2).
+    """
+    n = len(concentration_curve)
+
+    # Compute first derivative via central differences
+    grad = np.gradient(concentration_curve)
+
+    # Baseline window: at most 1/4 of the curve
+    bl = min(baseline_window, n // 4)
+
+    # Minimum sample guard — need at least 4 gradient values for
+    # a reliable mean/std estimate; otherwise return fallback.
+    if bl < 4:
+        fallback = min(baseline_window, max(0, n - 1))
+        return fallback, max(2, fallback - 1)
+
+    # Baseline gradient statistics with EPSILON floor on sigma to
+    # handle flat/zero curves where np.gradient returns exact zeros.
+    mu = float(np.mean(grad[:bl]))
+    sigma = float(np.std(grad[:bl]))
+    sigma = max(sigma, EPSILON_CONCENTRATION)
+
+    z_scores = (grad - mu) / sigma
+
+    n_consecutive = max(1, n_consecutive)
+    # Require BOTH z-score above threshold AND positive gradient.
+    # Bolus arrival always produces positive dC/dt (concentration
+    # increasing).  Preload washout has negative dC/dt throughout,
+    # but its z-score drifts upward as the gradient decays toward
+    # zero.  The positivity check eliminates these false triggers.
+    above = (z_scores > z_threshold) & (grad > 0)
+
+    # Find first run of n_consecutive frames above threshold
+    arrival_idx: Optional[int] = None
+    for i in range(len(above) - n_consecutive + 1):
+        if all(above[i : i + n_consecutive]):
+            arrival_idx = i
+            break
+
+    if arrival_idx is None:
+        # No sustained gradient spike found — return fallback
+        fallback = min(baseline_window, max(0, n - 1))
+        return fallback, max(2, fallback - 1)
+
+    # Post-detection amplitude validation: verify concentration actually
+    # rose in a small window after the gradient spike.  np.gradient uses
+    # central differences so the gradient fires 1-2 frames before the
+    # amplitude crosses threshold.
+    lookahead = max(n_consecutive, 2)
+    window_end = min(arrival_idx + lookahead, n)
+    amp_baseline_mean = float(np.mean(concentration_curve[:bl]))
+    amp_baseline_std = float(np.std(concentration_curve[:bl]))
+    amp_threshold = amp_baseline_mean + 2.0 * max(amp_baseline_std, EPSILON_CONCENTRATION)
+
+    if float(np.max(concentration_curve[arrival_idx:window_end])) < amp_threshold:
+        # Gradient spike without sustained concentration rise — spurious
+        fallback = min(baseline_window, max(0, n - 1))
+        return fallback, max(2, fallback - 1)
+
+    return arrival_idx, max(2, arrival_idx - 1)
+
+
 def compute_psr(
     signal: npt.NDArray[np.floating],
     baseline_frames: int = 10,

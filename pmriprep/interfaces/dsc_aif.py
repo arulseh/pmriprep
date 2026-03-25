@@ -984,6 +984,19 @@ class AIFDetection(BaseInterface):
         if not np.isnan(fwhm) and fwhm > fwhm_max.get(criteria, 40.0):
             return float("inf")
 
+        # 5c. FWHM min — reject sub-TR spikes (not physiological).
+        # Arterial first-pass FWHM is typically 4-8 s; anything below
+        # ~2 s is noise or intravoxel dephasing artifact.
+        dt = metrics.get("dt", 1.5)
+        fwhm_min = {
+            "strict": 3.0,
+            "relaxed": 2.5,
+            "permissive": 2.0,
+            "degraded": max(2.0, 1.5 * dt),
+        }
+        if not np.isnan(fwhm) and fwhm < fwhm_min.get(criteria, 1.5 * dt):
+            return float("inf")
+
         # 6. S0 partial volume rejection
         if median_s0 is not None and not np.isnan(metrics.get("s0", float("nan"))):
             s0_factor = {"strict": 0.40, "relaxed": 0.60, "permissive": 0.80, "degraded": 0.95}
@@ -2042,17 +2055,23 @@ class AIFDetection(BaseInterface):
         # Use 99th percentile across brain voxels — naturally selects arterial
         # timing without transit delay (avoids GAP 6 problem where mean brain
         # concentration detects tissue arrival 4-12 s later than arteries).
+        # Gradient z-score detection is robust to preloaded acquisitions where
+        # the baseline is elevated/decaying from a prior contrast injection.
         brain_conc_all = conc_data[brain_mask > 0.5]
         if (
             brain_conc_all.ndim > 1
             and brain_conc_all.shape[0] > 100
             and aif_method != "synthetic"
         ):
+            from pmriprep.utils.dsc_signal import detect_bolus_arrival_gradient
+
             p99_curve = np.percentile(brain_conc_all, 99, axis=0)
-            detected_arrival, detected_baseline = detect_bolus_arrival(
+            safe_tr = max(tr, 0.1)  # guard against malformed BIDS metadata
+            n_consec = max(1, min(3, int(4.0 / safe_tr)))  # TR-adaptive ~4s
+            detected_arrival, detected_baseline = detect_bolus_arrival_gradient(
                 p99_curve,
-                baseline_frames=min(5, n_timepoints // 4),
-                n_consecutive=3,
+                baseline_window=min(20, n_timepoints // 4),
+                n_consecutive=n_consec,
             )
             aif_baseline_frames = max(
                 max(5, int(10.0 / tr)),  # floor: at least 10 s or 5 frames
