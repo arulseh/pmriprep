@@ -557,7 +557,7 @@
     <!-- CBV Constraint -->
     {% if dce.qc_metrics.pk_modeling is defined and dce.qc_metrics.pk_modeling.dsc_cbv_constraint is defined %}
     {% set cbv_c = dce.qc_metrics.pk_modeling.dsc_cbv_constraint %}
-    {% if cbv_c.mode is defined and cbv_c.mode != 'skip' %}
+    {% if cbv_c.mode is defined %}
     <div class="section">
         <h3>DSC CBV Constraint</h3>
         <div class="metrics">
@@ -566,12 +566,28 @@
                 <div class="metric-value
                     {%- if cbv_c.mode == 'hard' %} pass
                     {%- elif cbv_c.mode == 'soft' %} warn
+                    {%- elif cbv_c.mode == 'skip' %} poor
                     {%- else %} unknown{% endif %}">{{ cbv_c.mode }}</div>
             </div>
             {% if cbv_c.dsc_cbv_confidence is defined %}
             <div class="metric">
                 <div class="metric-label">DSC Quality</div>
                 <div class="metric-value">{{ cbv_c.dsc_cbv_confidence }}</div>
+            </div>
+            {% endif %}
+            {% if cbv_c.detection_level is defined and cbv_c.detection_level %}
+            <div class="metric">
+                <div class="metric-label">AIF Level</div>
+                <div class="metric-value
+                    {%- if cbv_c.detection_level in ['synthetic', 'brain_degraded'] %} poor
+                    {%- elif 'permissive' in cbv_c.detection_level|default('') %} warn
+                    {%- else %} pass{% endif %}">{{ cbv_c.detection_level }}</div>
+            </div>
+            {% endif %}
+            {% if cbv_c.reason is defined %}
+            <div class="metric">
+                <div class="metric-label">Reason</div>
+                <div class="metric-value">{{ cbv_c.reason }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.pk_modeling.n_constrained is defined %}

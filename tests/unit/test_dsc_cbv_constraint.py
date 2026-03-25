@@ -128,6 +128,99 @@ class TestAssessDSCCBVQuality:
         assert len(result.reasons) > 0
         assert any("negative" in r.lower() for r in result.reasons)
 
+    def test_synthetic_aif_downgrades_to_low(self) -> None:
+        """Synthetic AIF should downgrade to low even with good shape metrics."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "detection_level": "synthetic",
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "low"
+        assert result.use_constraint is False
+
+    def test_brain_degraded_downgrades_to_low(self) -> None:
+        """brain_degraded AIF should downgrade to low."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "detection_level": "brain_degraded",
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "low"
+
+    def test_atlas_permissive_downgrades_to_moderate(self) -> None:
+        """atlas_permissive AIF should downgrade to moderate (FWHM up to 25s)."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "detection_level": "atlas_permissive",
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "moderate"
+
+    def test_atlas_strict_no_downgrade(self) -> None:
+        """atlas_strict AIF should not downgrade from detection level alone."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "detection_level": "atlas_strict",
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "high"
+
+    def test_single_candidate_downgrades_to_low(self) -> None:
+        """1 AIF voxel (no averaging) should downgrade to low."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "detection_level": "atlas_strict",
+            "n_aif_voxels_used": 1,
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "low"
+
+    def test_two_candidates_downgrades_to_moderate(self) -> None:
+        """2 AIF voxels should downgrade to moderate."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "detection_level": "atlas_strict",
+            "n_aif_voxels_used": 2,
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "moderate"
+
+    def test_detection_level_in_output(self) -> None:
+        """detection_level and n_aif_voxels should appear in output."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "detection_level": "atlas_relaxed",
+            "n_aif_voxels_used": 5,
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.detection_level == "atlas_relaxed"
+        assert result.n_aif_voxels == 5
+
+    def test_missing_detection_keys_no_crash(self) -> None:
+        """Missing detection_level and n_aif_voxels should not crash or downgrade."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        # No downgrade from detection level (empty string) or candidates (default 3)
+        assert result.confidence == "high"
+
 
 # =============================================================================
 # Constraint Mode Determination

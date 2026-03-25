@@ -124,6 +124,8 @@ class CBVQualityAssessment:
     cbv_median: Optional[float] = None
     cbv_negative_fraction: Optional[float] = None
     preload_status: Optional[str] = None
+    detection_level: Optional[str] = None
+    n_aif_voxels: Optional[int] = None
     reasons: list[str] = field(default_factory=list)
 
 
@@ -302,6 +304,48 @@ def assess_dsc_cbv_quality(
         confidence = _downgrade_confidence(confidence, "moderate")
         result.reasons.append(
             f"CNR coverage {cnr_coverage:.2f} < {CNR_COVERAGE_HIGH}"
+        )
+
+    # --- AIF Detection Level ---
+    # A degraded or synthetic AIF produces unreliable CBV regardless of
+    # shape metrics.  atlas_permissive allows FWHM up to 25 s (4-6x wider
+    # than physiological arterial first-pass), so it warrants moderate.
+    _AIF_LEVELS_LOW = {"synthetic", "brain_degraded"}
+    _AIF_LEVELS_MODERATE = {"brain_permissive", "brain_relaxed", "atlas_permissive"}
+
+    detection_level = str(aif_qc_data.get("detection_level", ""))
+    result.detection_level = detection_level or None
+
+    if detection_level in _AIF_LEVELS_LOW:
+        confidence = _downgrade_confidence(confidence, "low")
+        result.reasons.append(
+            f"AIF detection level '{detection_level}' — CBV unreliable"
+        )
+    elif detection_level in _AIF_LEVELS_MODERATE:
+        confidence = _downgrade_confidence(confidence, "moderate")
+        result.reasons.append(
+            f"AIF detection level '{detection_level}' — CBV quality uncertain"
+        )
+
+    # --- AIF Candidate Count ---
+    # Single-voxel AIF has no noise averaging; AIF SNR < 20 degrades
+    # SVD deconvolution (Wu et al. MRM 2003).  Default 3 when key is
+    # absent for backward compatibility (no penalty).
+    n_candidates = int(aif_qc_data.get(
+        "n_aif_voxels_used",
+        aif_qc_data.get("n_candidates_effective", 3),
+    ))
+    result.n_aif_voxels = n_candidates
+
+    if n_candidates < 2:
+        confidence = _downgrade_confidence(confidence, "low")
+        result.reasons.append(
+            f"Only {n_candidates} AIF voxel(s) — no noise averaging"
+        )
+    elif n_candidates < 3:
+        confidence = _downgrade_confidence(confidence, "moderate")
+        result.reasons.append(
+            f"Only {n_candidates} AIF voxels — limited averaging"
         )
 
     # --- AIF Peak Height ---
@@ -656,6 +700,8 @@ def prepare_vp_constraint_from_data(
         "cnr_coverage": quality.cnr_coverage,
         "aif_peak_height": quality.aif_peak_height,
         "aif_baseline_return": quality.aif_baseline_return,
+        "detection_level": quality.detection_level,
+        "n_aif_voxels": quality.n_aif_voxels,
         "hematocrit": hematocrit,
     }
 
