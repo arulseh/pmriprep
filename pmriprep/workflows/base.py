@@ -825,14 +825,19 @@ def init_pmriprep_wf(
     # Estimate memory requirements from image dimensions
     from pmriprep.utils.mem import cap_mem_gb, estimate_4d_mem_gb
 
-    dsc_mem_gb = (
-        estimate_4d_mem_gb(session_data.modalities.dsc, n_buffers=4, mem_limit_gb=mem_limit_gb)
-        if session_data.modalities.dsc else cap_mem_gb(4.0, mem_limit_gb)
-    )
-    dce_mem_gb = (
-        estimate_4d_mem_gb(session_data.modalities.dce, n_buffers=5, mem_limit_gb=mem_limit_gb)
-        if session_data.modalities.dce else cap_mem_gb(6.0, mem_limit_gb)
-    )
+    if session_data.modalities.dsc:
+        dsc_mem_gb, dsc_mem_raw = estimate_4d_mem_gb(
+            session_data.modalities.dsc, n_buffers=4, mem_limit_gb=mem_limit_gb,
+        )
+    else:
+        dsc_mem_gb, dsc_mem_raw = cap_mem_gb(4.0, mem_limit_gb), 4.0
+
+    if session_data.modalities.dce:
+        dce_mem_gb, dce_mem_raw = estimate_4d_mem_gb(
+            session_data.modalities.dce, n_buffers=5, mem_limit_gb=mem_limit_gb,
+        )
+    else:
+        dce_mem_gb, dce_mem_raw = cap_mem_gb(6.0, mem_limit_gb), 6.0
 
     # Warn on console if memory may be insufficient
     from pmriprep.utils.mem import _system_ram_gb
@@ -841,21 +846,18 @@ def init_pmriprep_wf(
     if not _cli_log.handlers:
         _cli_log = logging.getLogger("pmriprep.workflows")
     _sys_ram = _system_ram_gb()
-    for label, est in [("DSC", dsc_mem_gb), ("DCE", dce_mem_gb)]:
-        if mem_limit_gb is not None and est >= mem_limit_gb * 0.9:
+    for label, raw, capped in [("DSC", dsc_mem_raw, dsc_mem_gb), ("DCE", dce_mem_raw, dce_mem_gb)]:
+        if mem_limit_gb is not None and capped >= mem_limit_gb * 0.9:
             _cli_log.warning(
-                "%s estimated peak memory (%.1f GB) approaches --mem-gb "
-                "limit (%.1f GB). Heavy processing steps will run one at "
-                "a time, which may be slow. Consider increasing --mem-gb "
-                "or reducing --nprocs to free memory.",
-                label, est, mem_limit_gb,
+                "%s processing needs ~%.1f GB but --mem-gb is %.1f GB. "
+                "Consider setting --mem-gb to at least %.0f.",
+                label, raw, mem_limit_gb, raw + 1,
             )
-        elif est >= _sys_ram * 0.8:
+        elif raw >= _sys_ram * 0.8:
             _cli_log.warning(
-                "%s estimated peak memory (%.1f GB) may exceed available "
-                "system RAM (%.1f GB). Consider reducing --nprocs or "
-                "running on a machine with more memory.",
-                label, est, _sys_ram,
+                "%s processing needs ~%.1f GB but system has %.1f GB RAM. "
+                "This dataset may require a machine with more memory.",
+                label, raw, _sys_ram,
             )
 
     # Decide which pipelines to run

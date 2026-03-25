@@ -35,7 +35,7 @@ def estimate_4d_mem_gb(
     nifti_path: Path,
     n_buffers: int = 4,
     mem_limit_gb: Optional[float] = None,
-) -> float:
+) -> tuple[float, float]:
     """Estimate peak memory for processing a 4D NIfTI.
 
     Reads only the NIfTI header (no data loaded). Assumes float64
@@ -50,7 +50,9 @@ def estimate_4d_mem_gb(
             When None, caps at 90% of system RAM.
 
     Returns:
-        Estimated memory in GB, capped so the node is always schedulable.
+        Tuple of (capped_estimate, raw_estimate) in GB.
+        capped_estimate is used for nipype scheduling.
+        raw_estimate is the true memory requirement for user warnings.
     """
     import nibabel as nib
 
@@ -59,19 +61,4 @@ def estimate_4d_mem_gb(
     n_timepoints = shape[3] if len(shape) > 3 else 1
     raw_estimate = (n_voxels * n_timepoints * 8 * n_buffers) / 1e9
 
-    # Warn before capping so user sees the true requirement
-    sys_ram_gb = _system_ram_gb()
-    if mem_limit_gb is not None and raw_estimate > mem_limit_gb:
-        logger.warning(
-            "Dataset estimated to need ~%.1f GB per heavy node but "
-            "--mem-gb is %.1f GB. Processing may run out of memory.",
-            raw_estimate, mem_limit_gb,
-        )
-    elif raw_estimate > sys_ram_gb * 0.8:
-        logger.warning(
-            "Dataset requires ~%.1f GB but system has %.1f GB. "
-            "Consider --nprocs 1 or a machine with more RAM.",
-            raw_estimate, sys_ram_gb,
-        )
-
-    return cap_mem_gb(raw_estimate, mem_limit_gb)
+    return cap_mem_gb(raw_estimate, mem_limit_gb), raw_estimate
