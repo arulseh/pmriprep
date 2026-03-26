@@ -339,6 +339,9 @@ class AIFDetectionOutputSpec(TraitedSpec):
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
     candidate_count = traits.Int(desc="Number of candidate voxels evaluated")
     gamma_fit_applied = traits.Bool(desc="Whether gamma-variate fitting was applied")
+    aif_baseline_frames = traits.Int(
+        desc="Detected pre-bolus baseline frames for downstream use",
+    )
     qc_metrics = traits.Dict(desc="Detailed QC metrics dictionary")
 
 
@@ -1923,6 +1926,7 @@ class AIFDetection(BaseInterface):
             "quality_score": quality_score,
             "candidate_count": 0,
             "gamma_fit_applied": False,
+            "aif_baseline_frames": int(self.inputs.baseline_frames),
             "qc_metrics": qc_metrics,
         }
 
@@ -2063,19 +2067,16 @@ class AIFDetection(BaseInterface):
             and brain_conc_all.shape[0] > 100
             and aif_method != "synthetic"
         ):
-            from pmriprep.utils.dsc_signal import detect_bolus_arrival_gradient
+            from pmriprep.utils.baseline_detection import detect_baseline_ensemble
 
             p99_curve = np.percentile(brain_conc_all, 99, axis=0)
-            safe_tr = max(tr, 0.1)  # guard against malformed BIDS metadata
-            n_consec = max(1, min(3, int(4.0 / safe_tr)))  # TR-adaptive ~4s
-            detected_arrival, detected_baseline = detect_bolus_arrival_gradient(
-                p99_curve,
-                baseline_window=min(20, n_timepoints // 4),
-                n_consecutive=n_consec,
+            detected_arrival, bl_diag = detect_baseline_ensemble(
+                p99_curve, tr=tr, min_baseline=max(5, int(10.0 / max(tr, 0.1))),
             )
-            aif_baseline_frames = max(
-                max(5, int(10.0 / tr)),  # floor: at least 10 s or 5 frames
-                detected_baseline,
+            aif_baseline_frames = detected_arrival
+            _logger.debug(
+                "Ensemble baseline detection on p99: arrival=%d, method=%s",
+                detected_arrival, bl_diag.get("method", "unknown"),
             )
         else:
             aif_baseline_frames = baseline_frames  # fallback to configured
@@ -2332,6 +2333,7 @@ class AIFDetection(BaseInterface):
             "quality_score": quality_score,
             "candidate_count": n_cand,
             "gamma_fit_applied": gamma_fit_applied,
+            "aif_baseline_frames": aif_baseline_frames,
             "qc_metrics": qc_metrics,
         }
 

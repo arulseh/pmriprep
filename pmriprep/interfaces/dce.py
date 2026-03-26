@@ -3280,10 +3280,14 @@ class DCEPreprocess(SimpleInterface):
         Returns:
             Tuple of (baseline_frames, bolus_arrival_frame)
         """
-        signal = self._brain_signal_timecourse(dce_data, brain_mask)
-        bolus_frame = self._detect_bolus_arrival_from_signal(signal)
+        from pmriprep.utils.baseline_detection import detect_baseline_ensemble
+        from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
 
-        # No safety margin needed — p95 tracks arterial timing directly
+        signal = self._brain_signal_timecourse(dce_data, brain_mask)
+        volume_tr = self.inputs.volume_tr if self.inputs.volume_tr > 0 else 7.0
+        bolus_frame, _ = detect_baseline_ensemble(
+            signal, tr=volume_tr, min_baseline=DEFAULT_BASELINE_FRAMES,
+        )
         baseline_frames = bolus_frame
 
         return baseline_frames, bolus_frame
@@ -3302,8 +3306,15 @@ class DCEPreprocess(SimpleInterface):
         Returns:
             Bolus arrival frame index
         """
+        from pmriprep.utils.baseline_detection import detect_baseline_ensemble
+        from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
+
         signal = self._brain_signal_timecourse(dce_data, brain_mask)
-        return self._detect_bolus_arrival_from_signal(signal)
+        volume_tr = self.inputs.volume_tr if self.inputs.volume_tr > 0 else 7.0
+        bolus_frame, _ = detect_baseline_ensemble(
+            signal, tr=volume_tr, min_baseline=DEFAULT_BASELINE_FRAMES,
+        )
+        return bolus_frame
 
     def _detect_bolus_arrival_from_signal(self, signal: np.ndarray) -> int:
         """Detect bolus arrival from global signal time course.

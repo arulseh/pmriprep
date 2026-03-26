@@ -1815,7 +1815,8 @@ def init_dsc_preproc_wf(
         mcmc_samples=config.mcmc_samples,
         use_gpu=config.use_gpu,
         n_procs=config.num_processes if config.num_processes > 0 else 1,
-        baseline_frames=config.pre_bolus,
+        # baseline_frames wired dynamically from aif_detect.aif_baseline_frames
+        fallback_baseline_frames=config.pre_bolus,
         tail_frames=5,  # Post-bolus frames for PSR (Cha et al. AJNR 2002)
         sloppy=config.sloppy,
     )
@@ -2342,6 +2343,7 @@ def init_dsc_preproc_wf(
             ("out_aif_mask", "aif_mask_file"),
             ("out_aif_coord", "aif_best_coord"),
             ("detection_level", "aif_detection_level"),
+            ("aif_baseline_frames", "baseline_frames"),
         ]),
         (hdbet_dsc, compute_maps, [
             ("dsc_brain_mask_file", "brain_mask_file"),

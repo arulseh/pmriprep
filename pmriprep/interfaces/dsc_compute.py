@@ -368,7 +368,12 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     baseline_frames = traits.Int(
         5,
         usedefault=True,
-        desc="Number of pre-bolus baseline frames",
+        desc="Pre-bolus baseline frames (wired from AIF detection)",
+    )
+    fallback_baseline_frames = traits.Int(
+        5,
+        usedefault=True,
+        desc="Fallback baseline when AIF-detected value is unavailable",
     )
     tail_frames = traits.Int(
         5,
@@ -630,119 +635,92 @@ class ComputeDSCMaps(BaseInterface):
             base = in_file.stem
         return str(Path.cwd() / f"{base}{suffix}.nii.gz")
 
-    @staticmethod
     def _detect_baseline_frames(
+        self,
         aif: npt.NDArray[Any],
         configured_baseline: int,
         concentration_data: Optional[npt.NDArray[Any]] = None,
         mask: Optional[npt.NDArray[Any]] = None,
     ) -> tuple[int, dict[str, Any]]:
-        """Detect pre-bolus baseline frames from the AIF or concentration data.
+        """Validate and refine baseline using the AIF-detected value.
 
-        For real AIFs, applies Savitzky-Golay smoothing then 3-sigma threshold
-        detection, mirroring the perf-plus pipeline. For synthetic AIFs (detected
-        by leading zeros), falls back to peak-fraction detection on the mean
-        brain concentration curve.
+        The primary baseline comes from AIF detection (ensemble on p99
+        brain concentration, wired via ``baseline_frames`` input).  This
+        function cross-validates by running the ensemble on the AIF curve
+        itself.  Falls back to the configured ``pre_bolus`` value when the
+        primary is unavailable (e.g., synthetic AIF).
 
         Args:
             aif: 1D AIF concentration curve.
-            configured_baseline: Fallback baseline frame count.
+            configured_baseline: AIF-detected baseline (or pre_bolus fallback).
             concentration_data: Optional 4D concentration array for fallback.
             mask: Optional 3D brain mask for fallback.
 
         Returns:
             Tuple of (n_baseline, detection_info dict).
         """
-        from pmriprep.utils.dsc_signal import detect_bolus_arrival
+        import logging as _logging
 
+        from pmriprep.utils.baseline_detection import detect_baseline_ensemble
+
+        logger = _logging.getLogger(__name__)
+        fallback = int(self.inputs.fallback_baseline_frames)
         info: dict[str, Any] = {"baseline_frames_configured": configured_baseline}
 
         if len(aif) < 3:
             info.update(
                 baseline_detection_method="fallback_short_aif",
-                baseline_frames_detected=configured_baseline,
+                baseline_frames_detected=fallback,
             )
-            return configured_baseline, info
+            return fallback, info
 
+        # Primary: use AIF-detected value (from p99 ensemble upstream)
+        primary = configured_baseline
+
+        # Cross-validate: run ensemble on the AIF curve itself
         try:
-            from scipy.signal import savgol_filter  # type: ignore[import-untyped]
-
-            # Check if AIF is synthetic (leading zeros then abrupt rise)
-            n_leading_zeros = 0
-            for val in aif:
-                if val == 0.0:
-                    n_leading_zeros += 1
-                else:
-                    break
-            aif_is_synthetic = n_leading_zeros >= 2 and aif[n_leading_zeros] > 0.5
-
-            if aif_is_synthetic and concentration_data is not None and mask is not None:
-                # Synthetic AIF: detect bolus onset from mean brain
-                # concentration using gradient z-score detection.
-                from pmriprep.utils.dsc_signal import detect_bolus_arrival_gradient
-
-                mask_bool = mask > 0
-                mean_conc = np.mean(concentration_data[mask_bool], axis=0)
-                if len(mean_conc) >= 7:
-                    arrival_idx, n_baseline = detect_bolus_arrival_gradient(
-                        mean_conc,
-                        baseline_window=min(20, len(mean_conc) // 4),
-                        n_consecutive=3,
-                    )
-                    # Enforce minimum floor at configured baseline
-                    n_baseline = max(n_baseline, configured_baseline)
-
-                    if 2 <= n_baseline <= len(aif) // 2:
-                        info.update(
-                            baseline_detection_method="auto_conc_zscore",
-                            baseline_frames_detected=n_baseline,
-                            arrival_index=int(arrival_idx),
-                            aif_synthetic=True,
-                        )
-                        return n_baseline, info
-
-            # Real AIF: detect arrival directly on the loaded AIF.
-            # The AIF saved by AIFDetection is already savgol-smoothed
-            # (dsc_aif.py line 1237), so re-smoothing here would double-
-            # smooth and shift the detected arrival earlier.  Perf-plus
-            # smooths once during AIF detection and uses the auto-detected
-            # baseline for all subsequent processing (lines 5172-5223).
-            aif_clean = np.maximum(aif, 0.0)
-            # Use configured baseline window (not hardcoded 3) for robust
-            # z-score estimation, and require 3 consecutive frames above
-            # threshold to reject isolated noise spikes in preloaded
-            # acquisitions with noisy elevated baselines.
-            baseline_window = min(
-                configured_baseline, max(2, len(aif_clean) // 3)
-            )
-            arrival_idx, n_baseline = detect_bolus_arrival(
-                aif_clean,
-                baseline_frames=baseline_window,
-                n_consecutive=3,
+            tr = float(self.inputs.tr) if hasattr(self.inputs, "tr") else 1.5
+            validation, val_diag = detect_baseline_ensemble(
+                np.maximum(aif, 0.0), tr=tr, min_baseline=2,
             )
 
-            # Sanity: at least 2, at most half the acquisition
-            if n_baseline < 2 or n_baseline > len(aif) // 2:
-                info.update(
-                    baseline_detection_method="fallback_range",
-                    baseline_frames_detected=configured_baseline,
-                    arrival_index=int(arrival_idx),
+            info["validation_arrival"] = validation
+            info["validation_method"] = val_diag.get("method", "unknown")
+            info["validation_per_method"] = val_diag.get("per_method", {})
+
+            # Asymmetric disagreement (per physics review):
+            # AIF earlier than primary: expected (arteries arrive first)
+            # AIF later than primary + 3 frames: suspicious
+            if validation > primary + 3:
+                logger.warning(
+                    "Baseline validation disagrees: AIF ensemble=%d, "
+                    "primary (p99)=%d — using primary",
+                    validation, primary,
                 )
-                return configured_baseline, info
 
-            info.update(
-                baseline_detection_method="auto_aif",
-                baseline_frames_detected=int(n_baseline),
-                arrival_index=int(arrival_idx),
-            )
-            return int(n_baseline), info
+            # If primary is very small (pre_bolus default, no AIF detection),
+            # use validation result instead
+            if primary <= fallback and validation > fallback:
+                primary = validation
+                info["baseline_detection_method"] = "auto_aif_ensemble"
+            else:
+                info["baseline_detection_method"] = "primary_aif_detected"
 
         except Exception:
+            info["baseline_detection_method"] = "primary_no_validation"
+
+        # Sanity: at least 2, at most half the acquisition
+        if primary < 2 or primary > len(aif) // 2:
             info.update(
-                baseline_detection_method="fallback_error",
-                baseline_frames_detected=configured_baseline,
+                baseline_detection_method="fallback_range",
+                baseline_frames_detected=fallback,
+                arrival_index=primary,
             )
-            return configured_baseline, info
+            return fallback, info
+
+        info["baseline_frames_detected"] = primary
+        info["arrival_index"] = primary
+        return primary, info
 
     def _deconvolve_svd(
         self,
@@ -1451,10 +1429,12 @@ class ComputeDSCMaps(BaseInterface):
 
         te = float(self.inputs.te)
 
-        # Match perf-plus: re-compute S0/concentration with detected baseline
-        # when it differs from configured baseline (perf-plus lines 5177-5205)
+        # Re-compute S0/concentration with detected baseline when it differs
+        # from the signal_to_conc baseline (which used config.pre_bolus).
+        # This handles both shorter (earlier arrival) and longer (preloaded)
+        # baselines.  Matches perf-plus lines 5177-5205.
         recomputed_raw_conc: Optional[npt.NDArray[Any]] = None
-        if detected_baseline < baseline_frames and signal_data is not None:
+        if detected_baseline != baseline_frames and signal_data is not None:
             new_s0 = np.mean(
                 signal_data[..., :detected_baseline], axis=-1, keepdims=True
             )
