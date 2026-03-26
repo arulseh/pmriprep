@@ -560,6 +560,7 @@
     {% if cbv_c.mode is defined %}
     <div class="section">
         <h3>DSC CBV Constraint</h3>
+        {# Primary row: constraint decision + reason + outcome #}
         <div class="metrics">
             <div class="metric">
                 <div class="metric-label">Constraint</div>
@@ -569,63 +570,10 @@
                     {%- elif cbv_c.mode == 'skip' %} poor
                     {%- else %} unknown{% endif %}">{{ cbv_c.mode }}</div>
             </div>
-            {% if cbv_c.dsc_cbv_confidence is defined %}
-            <div class="metric">
-                <div class="metric-label">DSC Quality</div>
-                <div class="metric-value">{{ cbv_c.dsc_cbv_confidence }}</div>
-            </div>
-            {% endif %}
-            {% if cbv_c.detection_level is defined and cbv_c.detection_level %}
-            <div class="metric">
-                <div class="metric-label">AIF Level</div>
-                <div class="metric-value
-                    {%- if cbv_c.detection_level in ['synthetic', 'brain_degraded'] %} poor
-                    {%- elif 'permissive' in cbv_c.detection_level|default('') %} warn
-                    {%- else %} pass{% endif %}">{{ cbv_c.detection_level }}</div>
-            </div>
-            {% endif %}
             {% if cbv_c.reason is defined %}
-            <div class="metric">
+            <div class="metric" style="max-width: 300px;">
                 <div class="metric-label">Reason</div>
                 <div class="metric-value">{{ cbv_c.reason }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.pk_modeling.n_constrained is defined %}
-            <div class="metric">
-                <div class="metric-label">Constrained</div>
-                <div class="metric-value">{{ dce.qc_metrics.pk_modeling.n_constrained }} voxels</div>
-            </div>
-            {% endif %}
-            {% if cbv_c.downgrade_from is defined %}
-            <div class="metric">
-                <div class="metric-label">Downgraded</div>
-                <div class="metric-value"><span class="pass">{{ cbv_c.downgrade_from }}</span> &rarr; <span class="warn">{{ cbv_c.mode }}</span></div>
-            </div>
-            {% endif %}
-            {% if cbv_c.cbv_negative_fraction is defined %}
-            <div class="metric">
-                <div class="metric-label">CBV Negative</div>
-                <div class="metric-value
-                    {%- if cbv_c.cbv_negative_fraction < 0.01 %} pass
-                    {%- elif cbv_c.cbv_negative_fraction < 0.05 %} warn
-                    {%- else %} poor{% endif %}">{{ "%.1f"|format(cbv_c.cbv_negative_fraction * 100) }}%</div>
-            </div>
-            {% endif %}
-        </div>
-        {% if cbv_c.scale_mismatch is defined %}
-        <div class="metrics" style="margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label">Scale Mismatch</div>
-                <div class="metric-value warn">{{ "%.0f"|format(cbv_c.scale_mismatch.overshoot_fraction * 100) }}% vp overshoot</div>
-            </div>
-        </div>
-        {% endif %}
-        {% if dce.qc_metrics.pk_modeling.delta_r2_median is defined or dce.qc_metrics.pk_modeling.z_departure_median is defined %}
-        <div class="metrics" style="margin-top: 8px;">
-            {% if dce.qc_metrics.pk_modeling.delta_r2_median is defined %}
-            <div class="metric">
-                <div class="metric-label">&Delta;R&sup2; Change</div>
-                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.delta_r2_median) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.pk_modeling.frac_positive_delta_r2 is defined %}
@@ -634,22 +582,41 @@
                 <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.pk_modeling.frac_positive_delta_r2 * 100) }}%</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.pk_modeling.z_departure_median is defined %}
+        </div>
+        {# Conditional alerts: only shown when something needs attention #}
+        {% set has_alerts = (cbv_c.mode == 'skip' and cbv_c.detection_level is defined and cbv_c.detection_level)
+            or (cbv_c.downgrade_from is defined)
+            or (cbv_c.cbv_negative_fraction is defined and cbv_c.cbv_negative_fraction > 0.01)
+            or (cbv_c.scale_mismatch is defined) %}
+        {% if has_alerts %}
+        <div class="metrics" style="margin-top: 8px;">
+            {% if cbv_c.mode == 'skip' and cbv_c.detection_level is defined and cbv_c.detection_level %}
             <div class="metric">
-                <div class="metric-label">Prior Departure</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.pk_modeling.z_departure_median) }}</div>
+                <div class="metric-label">AIF Level</div>
+                <div class="metric-value
+                    {%- if cbv_c.detection_level in ['synthetic', 'brain_degraded'] %} poor
+                    {%- elif 'permissive' in cbv_c.detection_level|default('') %} warn
+                    {%- else %} pass{% endif %}">{{ cbv_c.detection_level }}</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.pk_modeling.frac_prior_dominated is defined %}
+            {% if cbv_c.downgrade_from is defined %}
             <div class="metric">
-                <div class="metric-label">Prior-dominated</div>
-                <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.pk_modeling.frac_prior_dominated * 100) }}%</div>
+                <div class="metric-label">Downgraded</div>
+                <div class="metric-value"><span class="pass">{{ cbv_c.downgrade_from }}</span> &rarr; <span class="warn">{{ cbv_c.mode }}</span></div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.pk_modeling.frac_strong_departure is defined %}
+            {% if cbv_c.cbv_negative_fraction is defined and cbv_c.cbv_negative_fraction > 0.01 %}
             <div class="metric">
-                <div class="metric-label">Prior Override</div>
-                <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.pk_modeling.frac_strong_departure * 100) }}%</div>
+                <div class="metric-label">CBV Negative</div>
+                <div class="metric-value
+                    {%- if cbv_c.cbv_negative_fraction < 0.05 %} warn
+                    {%- else %} poor{% endif %}">{{ "%.1f"|format(cbv_c.cbv_negative_fraction * 100) }}%</div>
+            </div>
+            {% endif %}
+            {% if cbv_c.scale_mismatch is defined %}
+            <div class="metric">
+                <div class="metric-label">Scale Mismatch</div>
+                <div class="metric-value warn">{{ "%.0f"|format(cbv_c.scale_mismatch.overshoot_fraction * 100) }}% vp overshoot</div>
             </div>
             {% endif %}
         </div>
