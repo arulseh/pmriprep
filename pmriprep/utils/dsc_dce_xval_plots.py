@@ -40,6 +40,7 @@ def generate_xval_plot(
     output_path: Optional[str] = None,
     constraint_mode: Optional[str] = None,
     hematocrit: float = HEMATOCRIT_VP_CBV,
+    model_selection: Optional[npt.NDArray[Any]] = None,
 ) -> str:
     """Generate a 3-panel cross-validation QC figure.
 
@@ -53,6 +54,9 @@ def generate_xval_plot(
         output_path: Output PNG path. If None, uses cwd.
         constraint_mode: CBV constraint mode (hard/soft/skip/None).
         hematocrit: Hematocrit for unit conversion.
+        model_selection: Optional 3D model selection map (int8).
+            When provided, scatter points are colored by model
+            (0=unfitted, 1=Patlak, 2=Tofts, 3=ExtTofts, 4=2CXM).
 
     Returns:
         Path to saved PNG file.
@@ -86,6 +90,11 @@ def generate_xval_plot(
     vp_valid = vp_masked[valid]
     cbv_valid = cbv_masked[valid]
 
+    # Extract model selection for valid voxels (if provided)
+    model_sel_valid: Optional[npt.NDArray[Any]] = None
+    if model_selection is not None:
+        model_sel_valid = model_selection[mask_bool][valid]
+
     # Convert vp to CBV-equivalent units: cbv_from_vp = vp * 100 / ((1-Hct) * rho)
     # But since CBV is already in mL/100g and vp*100 is in mL/100mL,
     # the conversion is: cbv_from_vp = vp * 100 / expected_ratio
@@ -118,11 +127,33 @@ def generate_xval_plot(
         rng = np.random.default_rng(42)
         idx = rng.choice(len(cbv_valid), size=n_pts, replace=False)
 
-        ax.scatter(
-            cbv_valid[idx], cbv_from_vp[idx],
-            s=2, alpha=0.3, color=COLORBLIND_PALETTE.primary,
-            rasterized=True,
-        )
+        if model_sel_valid is not None:
+            # Color by DCE model selection (model=auto)
+            from pmriprep.utils.qc_standards import EXTENDED_PALETTE
+
+            _MODEL_NAMES = {1: "Patlak", 2: "Tofts", 3: "Ext. Tofts", 4: "2CXM"}
+            _MODEL_COLORS = {
+                1: EXTENDED_PALETTE[0],
+                2: EXTENDED_PALETTE[2],
+                3: EXTENDED_PALETTE[4],
+                4: EXTENDED_PALETTE[5],
+            }
+            ms_sub = model_sel_valid[idx]
+            for code, name in _MODEL_NAMES.items():
+                sel = ms_sub == code
+                if np.any(sel):
+                    ax.scatter(
+                        cbv_valid[idx][sel], cbv_from_vp[idx][sel],
+                        s=2, alpha=0.3, color=_MODEL_COLORS[code],
+                        label=name, rasterized=True,
+                    )
+            ax.legend(fontsize=7, markerscale=3, loc="lower right")
+        else:
+            ax.scatter(
+                cbv_valid[idx], cbv_from_vp[idx],
+                s=2, alpha=0.3, color=COLORBLIND_PALETTE.primary,
+                rasterized=True,
+            )
 
         # Identity line
         lim_max = max(np.percentile(cbv_valid[idx], 98),
@@ -169,11 +200,31 @@ def generate_xval_plot(
         ba_mean = (cbv_from_vp[idx] + cbv_valid[idx]) / 2.0
         ba_diff = cbv_from_vp[idx] - cbv_valid[idx]
 
-        ax.scatter(
-            ba_mean, ba_diff,
-            s=2, alpha=0.3, color=COLORBLIND_PALETTE.primary,
-            rasterized=True,
-        )
+        if model_sel_valid is not None:
+            from pmriprep.utils.qc_standards import EXTENDED_PALETTE
+
+            _MODEL_NAMES = {1: "Patlak", 2: "Tofts", 3: "Ext. Tofts", 4: "2CXM"}
+            _MODEL_COLORS = {
+                1: EXTENDED_PALETTE[0],
+                2: EXTENDED_PALETTE[2],
+                3: EXTENDED_PALETTE[4],
+                4: EXTENDED_PALETTE[5],
+            }
+            ms_sub = model_sel_valid[idx]
+            for code, name in _MODEL_NAMES.items():
+                sel = ms_sub == code
+                if np.any(sel):
+                    ax.scatter(
+                        ba_mean[sel], ba_diff[sel],
+                        s=2, alpha=0.3, color=_MODEL_COLORS[code],
+                        rasterized=True,
+                    )
+        else:
+            ax.scatter(
+                ba_mean, ba_diff,
+                s=2, alpha=0.3, color=COLORBLIND_PALETTE.primary,
+                rasterized=True,
+            )
 
         # Mean bias and limits of agreement
         mean_bias = float(np.mean(ba_diff))

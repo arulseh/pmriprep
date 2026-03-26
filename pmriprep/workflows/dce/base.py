@@ -1306,6 +1306,7 @@ def init_dce_preproc_wf(
                 "subject_id",
                 "session_id",
                 "constraint_mode",
+                "model_selection_file",
             ],
             output_names=["plot_file"],
             function=_dsc_dce_xval_plot_node,
@@ -1314,6 +1315,7 @@ def init_dce_preproc_wf(
     )
     dsc_dce_xval_plot.inputs.subject_id = subject_id
     dsc_dce_xval_plot.inputs.session_id = session_id or ""
+    dsc_dce_xval_plot.inputs.model_selection_file = None
 
     workflow.connect([
         (pk_modeling, dsc_dce_xval_plot, [
@@ -1330,6 +1332,12 @@ def init_dce_preproc_wf(
             ("validation_result", "validation_result"),
         ]),
     ])
+
+    # Color scatter by model when model selection is auto
+    if config.model == "auto":
+        workflow.connect([(pk_modeling, dsc_dce_xval_plot, [
+            ("out_model_selection", "model_selection_file"),
+        ])])
 
     # ==========================================================================
     # Node 9a2: DCE PK QC Plots (lightweight wrappers over saved NIfTIs)
@@ -2982,6 +2990,7 @@ def _dsc_dce_xval_plot_node(
     subject_id="",
     session_id="",
     constraint_mode=None,
+    model_selection_file=None,
 ):
     """Function node for DSC-DCE cross-validation plot generation.
 
@@ -3025,6 +3034,13 @@ def _dsc_dce_xval_plot_node(
             nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]
         )
 
+        model_sel = None
+        if model_selection_file:
+            model_sel = np.asarray(
+                nib.load(model_selection_file).get_fdata(),  # type: ignore[attr-defined]
+                dtype=np.int8,
+            )
+
         return generate_xval_plot(
             vp_data=vp_data,
             cbv_data=cbv_data,
@@ -3033,6 +3049,7 @@ def _dsc_dce_xval_plot_node(
             subject_id=subject_id,
             session_id=session_id,
             constraint_mode=resolved_mode,
+            model_selection=model_sel,
         )
     except Exception:
         import logging
