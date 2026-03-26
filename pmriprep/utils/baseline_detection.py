@@ -53,32 +53,41 @@ def _detect_max_slope_backtrack(
         if n < 5:
             return None
 
-        deriv = np.diff(signal.astype(np.float64))
+        raw_deriv = np.diff(signal.astype(np.float64))
 
         # 3-frame boxcar smoothing to reject single-frame motion spikes
-        if len(deriv) >= 3:
+        deriv_smooth = raw_deriv.copy()
+        if len(deriv_smooth) >= 3:
             kernel = np.ones(3) / 3.0
-            deriv = np.convolve(deriv, kernel, mode="same")
+            deriv_smooth = np.convolve(deriv_smooth, kernel, mode="same")
 
         # Skip first 2 frames (T1 recovery artifacts)
         search_start = min(2, n - 4)
-        deriv_search = deriv[search_start:]
+        deriv_search = deriv_smooth[search_start:]
 
         if len(deriv_search) == 0 or np.max(deriv_search) <= 0:
             return None
 
+        # Find peak on smoothed (motion-spike resistant)
         peak_idx = int(np.argmax(deriv_search)) + search_start
-        max_deriv = float(deriv[peak_idx])
-        backtrack_thresh = backtrack_fraction * max_deriv
+        backtrack_thresh = backtrack_fraction * float(deriv_smooth[peak_idx])
 
-        # Walk backward from peak
+        # Walk backward from peak on smoothed derivative
         arrival = peak_idx
         for i in range(peak_idx - 1, min_baseline - 1, -1):
-            if deriv[i] < backtrack_thresh:
+            if deriv_smooth[i] < backtrack_thresh:
                 arrival = i + 1
                 break
         else:
             arrival = min_baseline
+
+        # Forward-only raw verification: the boxcar can bleed the bolus
+        # derivative 1-2 frames backward.  Advance while the raw
+        # derivative is below threshold.  Can only move FORWARD (toward
+        # the bolus), never backward past motion spikes.
+        raw_thresh = backtrack_fraction * float(raw_deriv[peak_idx])
+        while arrival < peak_idx and raw_deriv[arrival] < raw_thresh:
+            arrival += 1
 
         return max(arrival, min_baseline)
     except Exception:
@@ -264,6 +273,14 @@ def _detect_single_signal(
         # Phase 1 and Phase 2 agree within a few frames → high confidence
         confidence = "high"
         return max(refined, min_baseline), confidence, diag
+
+    # Z-score methods have inherent 1-2 frame detection lag.  If 2+
+    # methods detect 1-3 frames LATER, this confirms the anchor with
+    # expected latency — upgrade confidence but don't move the anchor.
+    later_confirming = [v for v in valid_p2.values() if 0 < v - anchor <= 3]
+    if len(later_confirming) >= 2:
+        diag["phase2_action"] = "confirmed_by_lagged_zscore"
+        return max(anchor, min_baseline), "high", diag
 
     # Check agreement: how many Phase 2 methods are within ±2 of anchor?
     near_anchor = [v for v in valid_p2.values() if abs(v - anchor) <= 2]

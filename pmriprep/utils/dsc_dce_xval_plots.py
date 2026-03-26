@@ -217,8 +217,9 @@ def generate_xval_plot(
                     ax.scatter(
                         ba_mean[sel], ba_diff[sel],
                         s=2, alpha=0.3, color=_MODEL_COLORS[code],
-                        rasterized=True,
+                        label=name, rasterized=True,
                     )
+            ax.legend(fontsize=7, markerscale=3, loc="lower right")
         else:
             ax.scatter(
                 ba_mean, ba_diff,

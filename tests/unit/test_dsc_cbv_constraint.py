@@ -523,7 +523,7 @@ class TestPreloadAwareUncertainty:
         )
         assert config.mode == ConstraintMode.SOFT
         assert config.vp_uncertainty == pytest.approx(0.12)
-        assert "tightened" in config.reason
+        assert "preload" in config.reason.lower()
 
     def test_no_preload_high_k2_widens_soft(self) -> None:
         """No preload + high leaky → uncertainty=0.30."""
@@ -535,7 +535,7 @@ class TestPreloadAwareUncertainty:
         )
         assert config.mode == ConstraintMode.SOFT
         assert config.vp_uncertainty == pytest.approx(0.30)
-        assert "widened" in config.reason
+        assert "k2" in config.reason.lower()
 
     def test_default_uncertainty_unchanged(self) -> None:
         """No preload info → uncertainty=0.20."""

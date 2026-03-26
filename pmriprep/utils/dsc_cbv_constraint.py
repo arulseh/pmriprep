@@ -540,7 +540,7 @@ def determine_constraint_mode(
         return ConstraintConfig(
             mode=ConstraintMode.HARD,
             vp_uncertainty=0.0,
-            reason="High-quality DSC CBV: fixing vp (hard constraint)",
+            reason="high DSC quality",
         )
     elif confidence == "moderate":
         uncertainty = 0.2
@@ -550,24 +550,22 @@ def determine_constraint_mode(
         )
         if is_preloaded and well_suppressed:
             uncertainty = 0.12
-            reason_suffix = " (tightened: preload + low K2)"
+            reason_suffix = " + preload suppressed"
         elif not is_preloaded and high_correction:
             uncertainty = 0.30
-            reason_suffix = " (widened: no preload + high K2 correction)"
+            reason_suffix = " + high K2"
 
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,
             vp_uncertainty=uncertainty,
-            reason=f"Moderate-quality DSC CBV: Bayesian prior on vp{reason_suffix}",
+            reason=f"moderate DSC{reason_suffix}",
         )
     else:
+        # Keep detail for skip — it's the diagnostic breadcrumb
         return ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
-            reason=(
-                "Low-quality DSC CBV: constraint skipped. "
-                + "; ".join(dsc_quality.reasons)
-            ),
+            reason="; ".join(dsc_quality.reasons) if dsc_quality.reasons else "low DSC quality",
         )
 
 
