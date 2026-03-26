@@ -2069,14 +2069,23 @@ class AIFDetection(BaseInterface):
         ):
             from pmriprep.utils.baseline_detection import detect_baseline_ensemble
 
-            p99_curve = np.percentile(brain_conc_all, 99, axis=0)
+            # Compute multiple percentiles for multi-signal consensus
+            p90_curve, p99_curve = np.percentile(
+                brain_conc_all, [90, 99], axis=0,
+            )
+            mean_curve = np.mean(brain_conc_all, axis=0)
+
             detected_arrival, bl_diag = detect_baseline_ensemble(
-                p99_curve, tr=tr, min_baseline=max(5, int(10.0 / max(tr, 0.1))),
+                p99_curve, tr=tr,
+                min_baseline=max(5, int(10.0 / max(tr, 0.1))),
+                additional_signals=[p90_curve, mean_curve],
             )
             aif_baseline_frames = detected_arrival
             _logger.debug(
-                "Ensemble baseline detection on p99: arrival=%d, method=%s",
-                detected_arrival, bl_diag.get("method", "unknown"),
+                "Ensemble baseline detection: arrival=%d, conf=%s, method=%s",
+                detected_arrival,
+                bl_diag.get("confidence", "unknown"),
+                bl_diag.get("method", "unknown"),
             )
         else:
             aif_baseline_frames = baseline_frames  # fallback to configured

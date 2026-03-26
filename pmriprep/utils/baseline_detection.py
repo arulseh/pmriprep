@@ -1,17 +1,23 @@
-"""Ensemble baseline detection for DSC and DCE perfusion MRI.
+"""Derivative-anchored baseline detection for DSC and DCE perfusion MRI.
 
-Combines five orthogonal bolus-arrival detectors into a robust consensus
-estimate of the pre-bolus baseline length.  Each detector targets a
-different failure mode:
+Two-pass approach that solves the circular dependency problem: z-score
+methods need a baseline_window, but choosing the window requires knowing
+where the baseline ends.
 
-    A. Amplitude z-score — clean non-preloaded data
-    B. Gradient z-score — preloaded/elevated baselines
-    C. CUSUM — gradual onset (cumulative evidence)
-    D. Variance ratio — detects variance explosion at bolus
-    E. Max-slope backtrack — anchored to peak, immune to early noise
+**Phase 1 — Derivative Anchor:** Find bolus arrival from the largest
+derivative event (max-slope backtrack + 2nd derivative peak).  These
+methods need NO baseline_window and are immune to preload washout.
 
-All detectors are scale-invariant, so the same function works on DSC
-ΔR2* concentration (0–50 s⁻¹) and DCE raw signal (100–2000 AU).
+**Phase 2 — Z-Score Refinement:** Use the Phase 1 anchor to safely
+set ``baseline_window = anchor - 2``, then run z-score methods to
+refine ±1-2 frames.  Asymmetric: earlier detection is useful (catches
+gradual onset); much later detection is suspicious (preload noise).
+
+**Phase 3 — Multi-Signal Consensus:** When multiple signal
+representations are available (p99, p90, mean), run Phase 1+2 on each
+and take the median.
+
+**Phase 4 — Confidence:** Report HIGH/MEDIUM/LOW for QC.
 """
 
 import logging
@@ -26,7 +32,96 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Individual detectors — each returns Optional[int] (arrival frame or None)
+# Phase 1 detectors — no baseline_window needed
+# ---------------------------------------------------------------------------
+
+
+def _detect_max_slope_backtrack(
+    signal: npt.NDArray[np.floating],
+    min_baseline: int = 3,
+    backtrack_fraction: float = 0.1,
+) -> Optional[int]:
+    """Find bolus arrival by backtracking from the largest derivative.
+
+    Smooths the derivative with a 3-frame boxcar to reject motion spikes,
+    skips the first 2 frames (T1 recovery artifacts), then walks backward
+    from the peak slope to where the derivative drops below
+    ``backtrack_fraction`` of the maximum.
+    """
+    try:
+        n = len(signal)
+        if n < 5:
+            return None
+
+        deriv = np.diff(signal.astype(np.float64))
+
+        # 3-frame boxcar smoothing to reject single-frame motion spikes
+        if len(deriv) >= 3:
+            kernel = np.ones(3) / 3.0
+            deriv = np.convolve(deriv, kernel, mode="same")
+
+        # Skip first 2 frames (T1 recovery artifacts)
+        search_start = min(2, n - 4)
+        deriv_search = deriv[search_start:]
+
+        if len(deriv_search) == 0 or np.max(deriv_search) <= 0:
+            return None
+
+        peak_idx = int(np.argmax(deriv_search)) + search_start
+        max_deriv = float(deriv[peak_idx])
+        backtrack_thresh = backtrack_fraction * max_deriv
+
+        # Walk backward from peak
+        arrival = peak_idx
+        for i in range(peak_idx - 1, min_baseline - 1, -1):
+            if deriv[i] < backtrack_thresh:
+                arrival = i + 1
+                break
+        else:
+            arrival = min_baseline
+
+        return max(arrival, min_baseline)
+    except Exception:
+        return None
+
+
+def _detect_second_derivative_peak(
+    signal: npt.NDArray[np.floating],
+    min_baseline: int = 3,
+) -> Optional[int]:
+    """Find bolus onset from the peak of the 2nd derivative (acceleration).
+
+    The 2nd derivative peaks where the bolus curve accelerates most —
+    typically 1-2 frames before the maximum slope.  Only reliable when
+    the bolus rising edge spans >= 3 frames (FWHM/TR >= 2).
+    """
+    try:
+        n = len(signal)
+        if n < 6:
+            return None
+
+        deriv = np.diff(signal.astype(np.float64))
+
+        # 3-frame boxcar smoothing (same as max-slope detector)
+        if len(deriv) >= 3:
+            kernel = np.ones(3) / 3.0
+            deriv = np.convolve(deriv, kernel, mode="same")
+
+        deriv2 = np.diff(deriv)
+        search_start = min(2, len(deriv2) - 1)
+        d2_search = deriv2[search_start:]
+
+        if len(d2_search) == 0 or np.max(d2_search) <= 0:
+            return None
+
+        peak = int(np.argmax(d2_search)) + search_start
+        return max(peak, min_baseline)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 detectors — require baseline_window (derived from Phase 1)
 # ---------------------------------------------------------------------------
 
 
@@ -35,7 +130,7 @@ def _detect_amplitude_zscore(
     baseline_window: int,
     n_consecutive: int,
 ) -> Optional[int]:
-    """Detector A: amplitude z-score (existing method)."""
+    """Amplitude z-score detection (3-sigma above baseline mean)."""
     from pmriprep.utils.dsc_signal import detect_bolus_arrival
 
     try:
@@ -54,7 +149,7 @@ def _detect_gradient_zscore(
     baseline_window: int,
     n_consecutive: int,
 ) -> Optional[int]:
-    """Detector B: gradient z-score (existing method)."""
+    """Gradient z-score detection (z-score of first derivative)."""
     from pmriprep.utils.dsc_signal import detect_bolus_arrival_gradient
 
     try:
@@ -73,12 +168,7 @@ def _detect_cusum(
     baseline_window: int,
     threshold: float = 5.0,
 ) -> Optional[int]:
-    """Detector C: cumulative sum (CUSUM) change-point detection.
-
-    Computes the cumulative sum of z-scored deviations from the baseline
-    mean.  Triggers when the cumsum exceeds ``threshold``.  Scale-invariant
-    because deviations are normalized by baseline std.
-    """
+    """CUSUM change-point detection (cumulative sum of z-scored deviations)."""
     try:
         n = len(signal)
         bl = min(baseline_window, n // 4)
@@ -100,98 +190,107 @@ def _detect_cusum(
         return None
 
 
-def _detect_variance_ratio(
+# ---------------------------------------------------------------------------
+# Core: single-signal Phase 1 + Phase 2
+# ---------------------------------------------------------------------------
+
+_TR_THRESHOLD_2ND_DERIV = 4.0  # seconds — below this, 2nd derivative is useful
+
+
+def _detect_single_signal(
     signal: npt.NDArray[np.floating],
-    baseline_window: int,
-    window_size: int = 5,
-    threshold: float = 3.0,
-) -> Optional[int]:
-    """Detector D: sliding-window variance ratio.
+    tr: float,
+    min_baseline: int,
+) -> tuple[int, str, dict[str, Any]]:
+    """Run Phase 1 + Phase 2 on a single signal.
 
-    Compares variance in a sliding window to baseline variance.  Triggers
-    when the ratio exceeds ``threshold``.  Scale-invariant because the
-    ratio cancels absolute scale.
+    Returns (arrival_frame, confidence, phase_diagnostics).
     """
-    try:
-        n = len(signal)
-        bl = min(baseline_window, n // 4)
-        if bl < 3:
-            return None
+    n = len(signal)
+    diag: dict[str, Any] = {}
 
-        bl_var = float(np.var(signal[:bl]))
-        bl_var = max(bl_var, EPSILON_CONCENTRATION ** 2)
+    # --- Phase 1: Derivative Anchor ---
+    anchor_slope = _detect_max_slope_backtrack(signal, min_baseline=min_baseline)
 
-        ws = min(window_size, max(2, bl // 2))
-
-        for i in range(bl, n - ws + 1):
-            win_var = float(np.var(signal[i : i + ws]))
-            if win_var / bl_var > threshold:
-                return i
-        return None
-    except Exception:
-        return None
-
-
-def _detect_max_slope_backtrack(
-    signal: npt.NDArray[np.floating],
-    min_baseline: int = 3,
-    backtrack_fraction: float = 0.1,
-) -> Optional[int]:
-    """Detector E: max-slope backtrack.
-
-    Finds the frame with the largest derivative, then walks backward to
-    where the derivative first drops below ``backtrack_fraction`` of the
-    maximum.  Anchored to the bolus peak, immune to early noise.
-    Scale-invariant because the fraction is relative.
-    """
-    try:
-        n = len(signal)
-        if n < 4:
-            return None
-
-        deriv = np.diff(signal)
-        if np.max(deriv) <= 0:
-            return None
-
-        peak_idx = int(np.argmax(deriv))
-        max_deriv = float(deriv[peak_idx])
-        backtrack_thresh = backtrack_fraction * max_deriv
-
-        # Walk backward from peak
-        arrival = peak_idx
-        for i in range(peak_idx - 1, min_baseline - 1, -1):
-            if deriv[i] < backtrack_thresh:
-                arrival = i + 1
-                break
+    if tr < _TR_THRESHOLD_2ND_DERIV:
+        anchor_d2 = _detect_second_derivative_peak(signal, min_baseline=min_baseline)
+        if anchor_slope is not None and anchor_d2 is not None:
+            # Only accept 2nd derivative if within 10 frames of max-slope.
+            # Larger gap suggests the d2 peak is from a motion artifact,
+            # not the same bolus event.
+            if abs(anchor_slope - anchor_d2) <= 10:
+                anchor = min(anchor_slope, anchor_d2)
+            else:
+                anchor = anchor_slope
         else:
-            arrival = min_baseline
+            anchor = anchor_slope or anchor_d2
+    else:
+        # Long TR: 2nd derivative unreliable (FWHM/TR < 2)
+        anchor = anchor_slope
+        anchor_d2 = None
 
-        return max(arrival, min_baseline)
-    except Exception:
-        return None
+    diag["phase1_max_slope"] = anchor_slope
+    diag["phase1_d2_peak"] = anchor_d2
+    diag["phase1_tr_rule"] = "min" if tr < _TR_THRESHOLD_2ND_DERIV else "slope_only"
+
+    if anchor is None:
+        diag["phase1_anchor"] = None
+        return min_baseline, "low", diag
+
+    anchor = max(anchor, min_baseline)
+    diag["phase1_anchor"] = anchor
+
+    # --- Phase 2: Z-Score Refinement ---
+    # baseline_window derived from anchor — guaranteed no bolus contamination
+    bl_window = max(3, anchor - 2)
+    n_consec = max(1, min(3, int(4.0 / max(tr, 0.1))))
+
+    phase2: dict[str, Optional[int]] = {
+        "amplitude_zscore": _detect_amplitude_zscore(signal, bl_window, n_consec),
+        "gradient_zscore": _detect_gradient_zscore(signal, bl_window, n_consec),
+        "cusum": _detect_cusum(signal, bl_window),
+    }
+    diag["phase2"] = {k: v for k, v in phase2.items()}
+
+    valid_p2 = {k: v for k, v in phase2.items() if v is not None}
+
+    # Asymmetric refinement:
+    # - 2+ methods detect EARLIER by 1-3 frames → refine (gradient onset)
+    # - 2+ methods detect LATER by >3 frames → keep anchor (preload noise)
+    earlier = [v for v in valid_p2.values() if 0 < anchor - v <= 3]
+    if len(earlier) >= 2:
+        refined = max(earlier)  # latest of the earlier estimates
+        diag["phase2_action"] = f"refined_earlier_to_{refined}"
+        # Phase 1 and Phase 2 agree within a few frames → high confidence
+        confidence = "high"
+        return max(refined, min_baseline), confidence, diag
+
+    # Check agreement: how many Phase 2 methods are within ±2 of anchor?
+    near_anchor = [v for v in valid_p2.values() if abs(v - anchor) <= 2]
+
+    if len(near_anchor) >= 2:
+        confidence = "high"
+        diag["phase2_action"] = "confirmed_anchor"
+    elif len(valid_p2) == 0:
+        confidence = "medium"
+        diag["phase2_action"] = "no_phase2_data"
+    else:
+        # Phase 2 disagrees — check if max derivative is strong enough
+        deriv = np.diff(signal.astype(np.float64))
+        max_d = float(np.max(deriv)) if len(deriv) > 0 else 0
+        med_d = float(np.median(np.abs(deriv))) if len(deriv) > 0 else 0
+        if med_d > 0 and max_d / med_d >= 3.0:
+            confidence = "medium"
+            diag["phase2_action"] = "anchor_strong_derivative"
+        else:
+            confidence = "low"
+            diag["phase2_action"] = "anchor_weak_derivative"
+
+    return max(anchor, min_baseline), confidence, diag
 
 
 # ---------------------------------------------------------------------------
-# Weighted median helper
-# ---------------------------------------------------------------------------
-
-
-def _weighted_median(values: list[int], weights: list[float]) -> int:
-    """Compute weighted median of integer values."""
-    if not values:
-        return 0
-    pairs = sorted(zip(values, weights))
-    total = sum(weights)
-    cumulative = 0.0
-    for val, w in pairs:
-        cumulative += w
-        if cumulative >= total / 2.0:
-            return val
-    return pairs[-1][0]
-
-
-# ---------------------------------------------------------------------------
-# Ensemble function
+# Public API
 # ---------------------------------------------------------------------------
 
 
@@ -199,148 +298,113 @@ def detect_baseline_ensemble(
     signal: npt.NDArray[np.floating],
     tr: float = 1.5,
     min_baseline: int = 3,
-    cusum_threshold: float = 5.0,
-    variance_ratio_threshold: float = 3.0,
+    additional_signals: Optional[list[npt.NDArray[np.floating]]] = None,
 ) -> tuple[int, dict[str, Any]]:
-    """Detect bolus arrival using an ensemble of 5 orthogonal methods.
+    """Detect bolus arrival via derivative-anchored two-pass ensemble.
 
-    Runs amplitude z-score, gradient z-score, CUSUM, sliding-window
-    variance ratio, and max-slope backtrack on the input signal.
-    Combines results via outlier rejection and weighted median, with
-    a conservative bias toward longer baselines when confidence is low.
+    **Phase 1:** Derivative-based anchor (max-slope backtrack + 2nd
+    derivative peak).  Needs no baseline_window.  Immune to preload.
 
-    Works on both DSC ΔR2* concentration and DCE raw signal — all
-    detectors are scale-invariant.
+    **Phase 2:** Z-score refinement using Phase 1 baseline window.
+    Asymmetric: earlier detection refines; much later is suspicious.
+
+    **Phase 3:** Multi-signal consensus (when ``additional_signals``
+    provided).  Median of per-signal Phase 1+2 results.
+
+    **Phase 4:** Confidence scoring (HIGH/MEDIUM/LOW).
 
     Args:
         signal: 1D signal time course (positive bolus polarity).
-        tr: Repetition time in seconds (for TR-adaptive parameters).
+        tr: Repetition time in seconds.
         min_baseline: Minimum allowed baseline frames.
-        cusum_threshold: CUSUM trigger threshold in baseline-std units.
-        variance_ratio_threshold: Variance ratio trigger threshold.
+        additional_signals: Optional list of additional signal curves
+            (e.g., p90, mean) for multi-signal consensus.
 
     Returns:
-        Tuple of ``(arrival_frame, diagnostics)``:
-            - *arrival_frame*: Consensus bolus arrival frame (>= min_baseline).
-            - *diagnostics*: Dict with per-method estimates, confidence,
-              outlier flags, and consensus method.
+        Tuple of ``(arrival_frame, diagnostics)`` where diagnostics
+        includes ``"confidence"`` (high/medium/low), per-phase details,
+        and per-signal results when multi-signal is used.
     """
     n = len(signal)
     diag: dict[str, Any] = {"n_timepoints": n, "tr": tr}
 
     # Edge case guards
     if n < max(6, min_baseline + 3):
-        diag["method"] = "fallback_short"
+        diag.update(method="fallback_short", confidence="low")
         return min_baseline, diag
 
     if np.all(~np.isfinite(signal)):
-        diag["method"] = "fallback_nan"
+        diag.update(method="fallback_nan", confidence="low")
         return min_baseline, diag
 
     # Replace NaN with 0 for robustness
     signal = np.where(np.isfinite(signal), signal, 0.0)
 
     if float(np.std(signal)) < EPSILON_CONCENTRATION:
-        diag["method"] = "fallback_constant"
+        diag.update(method="fallback_constant", confidence="low")
         return min_baseline, diag
 
-    # TR-adaptive parameters
-    safe_tr = max(tr, 0.1)
-    n_consec = max(1, min(3, int(4.0 / safe_tr)))
-
-    # Two baseline windows:
-    # - Small (5 frames) for amplitude-based methods to avoid bolus
-    #   contamination when the baseline is short.
-    # - Large (20 frames) for gradient/CUSUM/variance methods that
-    #   need more frames to characterize preload washout dynamics.
-    #   These methods are immune to bolus contamination because they
-    #   operate on derivatives or z-scores of the gradient.
-    bl_small = min(5, n // 4)
-    bl_large = min(20, n // 4)
-
-    # Run all 5 detectors
-    estimates: dict[str, Optional[int]] = {
-        "amplitude_zscore": _detect_amplitude_zscore(
-            signal, bl_small, n_consec,
-        ),
-        "gradient_zscore": _detect_gradient_zscore(
-            signal, bl_large, n_consec,
-        ),
-        "cusum": _detect_cusum(signal, bl_small, cusum_threshold),
-        "variance_ratio": _detect_variance_ratio(
-            signal, bl_small, threshold=variance_ratio_threshold,
-        ),
-        "max_slope_backtrack": _detect_max_slope_backtrack(
-            signal, min_baseline=min_baseline,
-        ),
-    }
-    diag["per_method"] = {k: v for k, v in estimates.items()}
-
-    # Collect non-None results
-    valid = {k: v for k, v in estimates.items() if v is not None}
-    diag["n_valid_methods"] = len(valid)
-
-    if len(valid) < 2:
-        diag["method"] = "fallback_insufficient_methods"
-        # Use the single valid estimate if available, else min_baseline
-        if len(valid) == 1:
-            result = max(list(valid.values())[0], min_baseline)
-            diag["method"] = f"single_method_{list(valid.keys())[0]}"
-            return result, diag
-        return min_baseline, diag
-
-    values = list(valid.values())
-    method_names = list(valid.keys())
-
-    # IQR outlier rejection
-    q1 = float(np.percentile(values, 25))
-    q3 = float(np.percentile(values, 75))
-    iqr = q3 - q1
-    median_val = float(np.median(values))
-
-    if iqr > 0:
-        inlier_mask = [
-            abs(v - median_val) <= 2.0 * iqr for v in values
-        ]
-    else:
-        # All values are close — no outliers
-        inlier_mask = [True] * len(values)
-
-    inlier_values = [v for v, m in zip(values, inlier_mask) if m]
-    inlier_names = [n for n, m in zip(method_names, inlier_mask) if m]
-    outlier_names = [n for n, m in zip(method_names, inlier_mask) if not m]
-    diag["outlier_methods"] = outlier_names
-
-    if len(inlier_values) < 2:
-        # Outlier rejection removed too many — use all valid
-        inlier_values = values
-        inlier_names = method_names
-
-    # Weighted median (B and C get 1.5x weight)
-    weight_map = {
-        "gradient_zscore": 1.5,
-        "cusum": 1.5,
-        "amplitude_zscore": 1.0,
-        "variance_ratio": 1.0,
-        "max_slope_backtrack": 1.0,
-    }
-    weights = [weight_map.get(n, 1.0) for n in inlier_names]
-    consensus = _weighted_median(inlier_values, weights)
-
-    # Conservative bias: if low agreement, take latest (longest baseline)
-    n_agreeing = sum(
-        1 for v in inlier_values if abs(v - consensus) <= 3
+    # --- Phase 1 + 2 on primary signal ---
+    primary_arrival, primary_conf, primary_diag = _detect_single_signal(
+        signal, tr, min_baseline,
     )
-    diag["n_agreeing"] = n_agreeing
-    diag["consensus_raw"] = consensus
+    diag["primary"] = primary_diag
+    diag["primary_arrival"] = primary_arrival
+    diag["primary_confidence"] = primary_conf
 
-    if n_agreeing < 3 and len(inlier_values) >= 3:
-        # Low confidence — take the latest (most conservative) estimate
-        consensus = max(inlier_values)
-        diag["method"] = "conservative_latest"
-    else:
-        diag["method"] = "weighted_median"
+    # --- Phase 3: Multi-signal consensus ---
+    if additional_signals:
+        all_arrivals = [(primary_arrival, primary_conf)]
 
-    result = max(consensus, min_baseline)
-    diag["arrival_frame"] = result
-    return result, diag
+        for i, extra_signal in enumerate(additional_signals):
+            extra = np.where(np.isfinite(extra_signal), extra_signal, 0.0)
+            if float(np.std(extra)) < EPSILON_CONCENTRATION:
+                continue
+            arr, conf, sig_diag = _detect_single_signal(extra, tr, min_baseline)
+            all_arrivals.append((arr, conf))
+            diag[f"signal_{i}"] = sig_diag
+            diag[f"signal_{i}_arrival"] = arr
+            diag[f"signal_{i}_confidence"] = conf
+
+        # Weighted median: halve weight of low-confidence signals
+        values = [a for a, _ in all_arrivals]
+        weights = [0.5 if c == "low" else 1.0 for _, c in all_arrivals]
+
+        if len(values) > 1:
+            # Sort and compute weighted median
+            pairs = sorted(zip(values, weights))
+            total = sum(weights)
+            cumulative = 0.0
+            consensus = pairs[-1][0]
+            for val, w in pairs:
+                cumulative += w
+                if cumulative >= total / 2.0:
+                    consensus = val
+                    break
+
+            primary_arrival = max(consensus, min_baseline)
+            diag["phase3_consensus"] = primary_arrival
+            diag["phase3_all_arrivals"] = [
+                {"arrival": a, "confidence": c} for a, c in all_arrivals
+            ]
+
+            # Upgrade confidence if all signals agree
+            arrivals_only = [a for a, _ in all_arrivals]
+            spread = max(arrivals_only) - min(arrivals_only)
+            if spread <= 3 and primary_conf != "low":
+                primary_conf = "high"
+            elif spread > 5:
+                primary_conf = "medium" if primary_conf == "high" else primary_conf
+
+    # --- Phase 4: Confidence ---
+    diag["confidence"] = primary_conf
+    diag["method"] = "derivative_anchored"
+    diag["arrival_frame"] = primary_arrival
+
+    if primary_conf == "low":
+        logger.warning(
+            "Low-confidence baseline detection: arrival=%d, tr=%.1f",
+            primary_arrival, tr,
+        )
+
+    return primary_arrival, diag

@@ -684,25 +684,39 @@ class ComputeDSCMaps(BaseInterface):
                 np.maximum(aif, 0.0), tr=tr, min_baseline=2,
             )
 
+            aif_confidence = val_diag.get("confidence", "low")
             info["validation_arrival"] = validation
+            info["validation_confidence"] = aif_confidence
             info["validation_method"] = val_diag.get("method", "unknown")
-            info["validation_per_method"] = val_diag.get("per_method", {})
 
-            # Asymmetric disagreement (per physics review):
-            # AIF earlier than primary: expected (arteries arrive first)
-            # AIF later than primary + 3 frames: suspicious
-            if validation > primary + 3:
-                logger.warning(
-                    "Baseline validation disagrees: AIF ensemble=%d, "
-                    "primary (p99)=%d — using primary",
-                    validation, primary,
-                )
-
-            # If primary is very small (pre_bolus default, no AIF detection),
-            # use validation result instead
+            # Confidence-based override: AIF curve has cleaner bolus
+            # signature than p99 brain concentration for preloaded data.
             if primary <= fallback and validation > fallback:
+                # Primary was at default (no real detection) — use AIF
                 primary = validation
                 info["baseline_detection_method"] = "auto_aif_ensemble"
+            elif (
+                aif_confidence == "high"
+                and abs(validation - primary) > 5
+            ):
+                # AIF strongly disagrees with high confidence — override.
+                # The AIF curve is a clean arterial signal; p99 can be
+                # fooled by preload washout fluctuations.
+                logger.info(
+                    "AIF ensemble overrides p99: AIF=%d (conf=%s), "
+                    "p99=%d",
+                    validation, aif_confidence, primary,
+                )
+                primary = validation
+                info["baseline_detection_method"] = "auto_aif_override"
+            elif validation > primary + 3:
+                # Moderate disagreement — log but keep primary
+                logger.warning(
+                    "Baseline validation disagrees: AIF=%d, p99=%d "
+                    "— keeping primary",
+                    validation, primary,
+                )
+                info["baseline_detection_method"] = "primary_aif_detected"
             else:
                 info["baseline_detection_method"] = "primary_aif_detected"
 
