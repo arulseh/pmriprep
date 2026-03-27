@@ -2097,13 +2097,14 @@ class AIFDetection(BaseInterface):
         # Use 99th percentile across brain voxels — naturally selects arterial
         # timing without transit delay (avoids GAP 6 problem where mean brain
         # concentration detects tissue arrival 4-12 s later than arteries).
-        # Gradient z-score detection is robust to preloaded acquisitions where
-        # the baseline is elevated/decaying from a prior contrast injection.
+        # Derivative-anchored detection operates on tissue signals and needs
+        # no AIF voxels — runs even for synthetic AIF.  Skipping it would
+        # default to pre_bolus (often 5), catastrophic for long baselines
+        # and misaligning synthetic AIF bolus timing with the actual data.
         brain_conc_all = conc_data[brain_mask > 0.5]
         if (
             brain_conc_all.ndim > 1
             and brain_conc_all.shape[0] > 100
-            and aif_method != "synthetic"
         ):
             from pmriprep.utils.baseline_detection import detect_baseline_ensemble
 
