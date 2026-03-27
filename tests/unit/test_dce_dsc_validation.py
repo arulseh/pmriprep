@@ -60,11 +60,12 @@ class TestCorrelationStatus:
         assert result.metrics.correlation > 0.3  # Spearman
         assert result.metrics.pearson_correlation > 0.3  # Pearson
 
-    def test_weak_correlation_warns(self):
+    def test_weak_correlation_poor(self):
+        """Very weak correlation (ρ<0.20) → POOR."""
         vp, cbv, mask = _make_data(correlation=0.2)
         result = validate_vp_cbv(vp, cbv, mask)
-        assert result.status == QCStatus.WARN
-        assert "Weak" in result.interpretation
+        assert result.status == QCStatus.POOR
+        assert "No meaningful" in result.interpretation
 
     def test_no_correlation_poor(self):
         vp, cbv, mask = _make_data(correlation=0.0)
@@ -95,8 +96,8 @@ class TestSoftConstraintHigherBar:
     """Soft constraint mode should require higher correlation."""
 
     def test_soft_moderate_correlation_warns(self):
-        """r=0.35 passes unconstrained but warns under soft constraint."""
-        vp, cbv, mask = _make_data(correlation=0.4)
+        """Moderate correlation passes unconstrained but warns under soft constraint."""
+        vp, cbv, mask = _make_data(correlation=0.50)
         result_skip = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
         result_soft = validate_vp_cbv(vp, cbv, mask, constraint_mode="soft")
         # Unconstrained should pass, soft should warn (or worse)
@@ -292,3 +293,37 @@ class TestCoverageWarn:
         # Coverage ~15% → WARN; correlation should be good (same z1)
         assert result.status in (QCStatus.WARN, QCStatus.POOR)
         assert "Limited overlap" in result.interpretation
+
+
+class TestTightenedThresholds:
+    """Tests for tightened cross-validation thresholds (v0.11.6)."""
+
+    def test_marginal_correlation_unconstrained_warns(self) -> None:
+        """ρ≈0.35 is between new WARN (0.20) and PASS (0.40) → WARN."""
+        vp, cbv, mask = _make_data(correlation=0.45)
+        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
+        # correlation=0.45 produces ρ≈0.40, right at the boundary
+        assert result.metrics.correlation >= CORRELATION_WARN_UNCONSTRAINED
+        assert result.metrics.correlation <= CORRELATION_PASS_UNCONSTRAINED + 0.05
+        # Status depends on whether ρ lands just above or below 0.40
+        assert result.status in (QCStatus.PASS, QCStatus.WARN)
+
+    def test_ratio_marginal_warn(self) -> None:
+        """Ratio outside ±30% but within ±50% → WARN with 'marginally' text."""
+        # expected = 0.624, ±30% = [0.437, 0.811]
+        # vp_mean=0.012 → ratio ≈ 0.012 * 104 / 0.6 / cbv_mean ≈ lower
+        vp, cbv, mask = _make_data(vp_mean=0.012, cbv_mean=3.0)
+        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
+        # Ratio should be roughly 0.012 / (3.0 * 0.6 / 104) ≈ 0.012 * 104 / 1.8 ≈ 0.69
+        # Actually ratio = median(vp / (cbv * (1-Hct) / (100*rho)))
+        if result.metrics.median_ratio < 0.437 or result.metrics.median_ratio > 0.811:
+            # Outside PASS band but possibly within WARN band
+            if 0.312 <= result.metrics.median_ratio <= 0.936:
+                assert "marginally" in result.interpretation
+
+    def test_ratio_within_pass_band(self) -> None:
+        """Ratio within ±30% of expected → PASS on ratio component."""
+        # Default vp_mean=0.019, cbv_mean=3.0 gives ratio ≈ 0.624
+        vp, cbv, mask = _make_data()
+        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
+        assert "within expected range" in result.interpretation

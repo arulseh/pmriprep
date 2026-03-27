@@ -655,7 +655,7 @@
             </div>
             {% endif %}
             <div class="metric">
-                <div class="metric-label">Correlation (r)</div>
+                <div class="metric-label">Correlation (ρ)</div>
                 <div class="metric-value">N/A</div>
             </div>
             {% else %}
@@ -673,7 +673,7 @@
             {% endif %}
             {% if xval.metrics.correlation is defined and xval.metrics.correlation != 0 %}
             <div class="metric">
-                <div class="metric-label">Correlation (r)</div>
+                <div class="metric-label">Correlation (ρ)</div>
                 <div class="metric-value
                     {%- if xval.metrics.correlation >= 0.7 %} pass
                     {%- elif xval.metrics.correlation >= 0.4 %} warn

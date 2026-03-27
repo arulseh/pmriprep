@@ -57,9 +57,12 @@ logger = logging.getLogger(__name__)
 #: Ref: Levin et al., MRM 2004; 51:735-742.
 HEMATOCRIT_VP_CBV: float = 0.40
 
-#: Tolerance for ratio validation (±)
-#: Acceptable range: expected × (1 ± 0.5)
-RATIO_TOLERANCE_FRACTION: float = 0.5
+#: Two-tier ratio tolerance for validation.
+#: PASS band: expected × (1 ± 0.30). WARN band: expected × (1 ± 0.50).
+#: ±50% (3:1 range) is too generous for PASS; ±30% captures clinically
+#: meaningful deviation while allowing for systematic Hct/density uncertainty.
+RATIO_TOLERANCE_PASS: float = 0.30
+RATIO_TOLERANCE_WARN: float = 0.50
 
 #: Minimum vp value to include in validation (avoid numerical instability)
 MIN_VP_FOR_VALIDATION: float = 0.001
@@ -74,11 +77,10 @@ MAX_VP_FOR_VALIDATION: float = 0.15
 MAX_CBV_FOR_VALIDATION: float = 8.0
 
 #: Spearman rank correlation thresholds for unconstrained vp-CBV validation.
-#: Voxel-wise DCE-DSC correlation is inherently modest (ρ ~0.3-0.6) due to
-#: different contrast mechanisms (T1 vs T2*), spatial resolution, and PSF.
-#: Ref: Quarles et al., NMR Biomed 2009; Shin et al., JMRI 2013.
-CORRELATION_PASS_UNCONSTRAINED: float = 0.30
-CORRELATION_WARN_UNCONSTRAINED: float = 0.15
+#: ρ=0.40 → ~16% shared variance, "moderate" in literature (Quarles et al.,
+#: NMR Biomed 2009; Shin et al., JMRI 2013). ρ<0.20 is effectively noise.
+CORRELATION_PASS_UNCONSTRAINED: float = 0.40
+CORRELATION_WARN_UNCONSTRAINED: float = 0.20
 
 #: Correlation thresholds for soft-constrained validation.
 #: Higher bar because Bayesian prior from CBV should inflate correlation.
@@ -93,9 +95,10 @@ CORRELATION_WARN_SOFT: float = 0.30
 #: subset for cross-validation.
 #: Unconstrained fitting has wider scatter → 35-60% expected coverage.
 
-# Unconstrained or skip: most tissue voxels should have valid vp
-FRACTION_VALID_PASS_UNCONSTRAINED: float = 0.20
-FRACTION_VALID_WARN_UNCONSTRAINED: float = 0.10
+# Unconstrained or skip: 30%+ valid ensures representative brain sample.
+# 70% filtered means validation operates on a non-representative subset.
+FRACTION_VALID_PASS_UNCONSTRAINED: float = 0.30
+FRACTION_VALID_WARN_UNCONSTRAINED: float = 0.15
 
 # Soft constraint: Bayesian prior concentrates vp, reducing valid fraction
 FRACTION_VALID_PASS_SOFT: float = 0.05
@@ -323,9 +326,11 @@ def validate_vp_cbv(
     expected_ratio = get_expected_ratio(hematocrit, tissue_density)
     metrics.expected_ratio = expected_ratio
 
-    # Compute thresholds dynamically from expected ratio
-    ratio_preload_threshold = expected_ratio * (1.0 - RATIO_TOLERANCE_FRACTION)
-    ratio_high_threshold = expected_ratio * (1.0 + RATIO_TOLERANCE_FRACTION)
+    # Compute two-tier ratio thresholds from expected ratio
+    ratio_pass_low = expected_ratio * (1.0 - RATIO_TOLERANCE_PASS)
+    ratio_pass_high = expected_ratio * (1.0 + RATIO_TOLERANCE_PASS)
+    ratio_warn_low = expected_ratio * (1.0 - RATIO_TOLERANCE_WARN)
+    ratio_warn_high = expected_ratio * (1.0 + RATIO_TOLERANCE_WARN)
 
     # Extract values within mask
     vp_masked = vp_data[mask]
@@ -421,8 +426,8 @@ def validate_vp_cbv(
     # Determine status from ratio, correlation, and coverage
     interpretations: list[str] = []
 
-    # --- Ratio status ---
-    if metrics.median_ratio < ratio_preload_threshold:
+    # --- Ratio status (two-tier: PASS within ±30%, WARN within ±50%) ---
+    if metrics.median_ratio < ratio_warn_low:
         ratio_status = QCStatus.WARN
         result.preload_effect_detected = True
         interpretations.append(
@@ -434,7 +439,7 @@ def validate_vp_cbv(
         interpretations.append(
             f"Suggested correction factor: {result.correction_factor:.2f}"
         )
-    elif metrics.median_ratio > ratio_high_threshold:
+    elif metrics.median_ratio > ratio_warn_high:
         ratio_status = QCStatus.WARN
         result.preload_effect_detected = False
         interpretations.append(
@@ -446,6 +451,14 @@ def validate_vp_cbv(
         interpretations.append(
             f"Suggested correction factor: {result.correction_factor:.2f}"
         )
+    elif (metrics.median_ratio < ratio_pass_low
+            or metrics.median_ratio > ratio_pass_high):
+        ratio_status = QCStatus.WARN
+        result.preload_effect_detected = False
+        interpretations.append(
+            f"vp/CBV ratio ({metrics.median_ratio:.3f}) marginally outside "
+            f"expected range [{ratio_pass_low:.3f}, {ratio_pass_high:.3f}]"
+        )
     else:
         ratio_status = QCStatus.PASS
         result.preload_effect_detected = False
@@ -453,7 +466,7 @@ def validate_vp_cbv(
             f"vp/CBV ratio ({metrics.median_ratio:.3f}) within expected range"
         )
         interpretations.append(
-            f"Expected: {expected_ratio:.3f}, tolerance: +/-{RATIO_TOLERANCE_FRACTION*100:.0f}%"
+            f"Expected: {expected_ratio:.3f}, tolerance: +/-{RATIO_TOLERANCE_PASS*100:.0f}%"
         )
 
     # --- Correlation status ---
