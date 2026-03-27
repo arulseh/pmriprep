@@ -1,12 +1,15 @@
 """Tests for AIF cascade minimum candidate acceptance logic."""
 
 import math
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
 from pmriprep.interfaces.dsc_aif import (
+    GAMMA_PEAK_RATIO_CASCADE_MAX,
+    GAMMA_PEAK_RATIO_CASCADE_MIN,
     MIN_AIF_CANDIDATES_ACCEPT,
     _CASCADE_N_CANDIDATES_FRACTION,
 )
@@ -187,3 +190,162 @@ class TestGraduatedNCandidates:
         assert level == "atlas_strict"
         assert len(cands) == 2
         assert broke is False
+
+
+class TestCascadeQualityGate:
+    """Test cascade quality gate based on gamma peak ratio.
+
+    When a tier meets MIN_AIF_CANDIDATES_ACCEPT but has a bad peak ratio,
+    the cascade continues once to the next tier. The better peak ratio wins.
+    """
+
+    @staticmethod
+    def _run_cascade_with_quality(
+        level_results: dict[str, tuple[list, Optional[float]]],
+    ) -> tuple[str, list, bool, bool]:
+        """Simulate cascade loop with quality gate.
+
+        Args:
+            level_results: mapping from level_name to (scored, peak_ratio).
+                peak_ratio=None means gamma fit failed for that tier.
+
+        Returns:
+            (detection_level, top_candidates, broke_early, quality_gate_triggered)
+        """
+        detection_level = "synthetic"
+        top_candidates: list = []
+        quality_stash: Optional[tuple[list, str, Optional[float]]] = None
+        broke_early = False
+        quality_gate_triggered = False
+
+        for level_name, (scored, peak_ratio) in level_results.items():
+            if not scored:
+                continue
+
+            if len(scored) >= MIN_AIF_CANDIDATES_ACCEPT:
+                # Quality gate: check peak ratio before accepting
+                if quality_stash is None:
+                    if (peak_ratio is not None
+                            and (peak_ratio < GAMMA_PEAK_RATIO_CASCADE_MIN
+                                 or peak_ratio > GAMMA_PEAK_RATIO_CASCADE_MAX)):
+                        quality_stash = (scored, level_name, peak_ratio)
+                        quality_gate_triggered = True
+                        continue
+
+                if quality_stash is not None:
+                    # Compare with stashed
+                    stashed_pr = quality_stash[2]
+                    use_current = (
+                        peak_ratio is not None
+                        and (stashed_pr is None
+                             or abs(peak_ratio - 1.0) < abs(stashed_pr - 1.0))
+                    )
+                    if use_current:
+                        top_candidates = scored
+                        detection_level = level_name
+                    else:
+                        top_candidates = quality_stash[0]
+                        detection_level = quality_stash[1]
+                    broke_early = True
+                    break
+
+                # Good quality — accept
+                top_candidates = scored
+                detection_level = level_name
+                broke_early = True
+                break
+            elif len(scored) > len(top_candidates):
+                top_candidates = scored
+                detection_level = level_name
+
+        # Post-loop: use stash if loop exhausted
+        if quality_stash is not None and (
+            not top_candidates
+            or len(top_candidates) < MIN_AIF_CANDIDATES_ACCEPT
+        ):
+            top_candidates = quality_stash[0]
+            detection_level = quality_stash[1]
+
+        return detection_level, top_candidates, broke_early, quality_gate_triggered
+
+    def test_bad_peak_ratio_continues_to_next_tier(self) -> None:
+        """Strict with bad peak ratio → continues to relaxed with good ratio."""
+        levels = {
+            "atlas_strict": (_make_scored(3), 0.84),
+            "atlas_relaxed": (_make_scored(6), 0.96),
+        }
+        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
+        assert level == "atlas_relaxed"
+        assert len(cands) == 6
+        assert triggered is True
+
+    def test_good_peak_ratio_breaks_normally(self) -> None:
+        """Strict with good peak ratio → breaks at strict (no change)."""
+        levels = {
+            "atlas_strict": (_make_scored(3), 0.95),
+            "atlas_relaxed": (_make_scored(6), 0.96),
+        }
+        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
+        assert level == "atlas_strict"
+        assert len(cands) == 3
+        assert broke is True
+        assert triggered is False
+
+    def test_bad_both_tiers_uses_closer_to_one(self) -> None:
+        """Both tiers bad → picks whichever has peak ratio closer to 1.0."""
+        levels = {
+            "atlas_strict": (_make_scored(3), 0.84),
+            "atlas_relaxed": (_make_scored(6), 0.82),
+        }
+        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
+        # 0.84 is closer to 1.0 than 0.82
+        assert level == "atlas_strict"
+        assert len(cands) == 3
+        assert triggered is True
+
+    def test_bad_strict_no_relaxed_candidates_uses_stashed(self) -> None:
+        """Strict bad, relaxed has 0 candidates → uses stashed strict."""
+        levels = {
+            "atlas_strict": (_make_scored(3), 0.84),
+            "atlas_relaxed": ([], None),
+        }
+        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
+        assert level == "atlas_strict"
+        assert len(cands) == 3
+        assert triggered is True
+
+    def test_quality_gate_triggers_only_once(self) -> None:
+        """Gate triggers at strict, compares with relaxed, never reaches permissive."""
+        levels = {
+            "atlas_strict": (_make_scored(3), 0.84),
+            "atlas_relaxed": (_make_scored(4), 0.86),
+            "atlas_permissive": (_make_scored(10), 0.98),
+        }
+        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
+        # Compares strict (0.84) vs relaxed (0.86), picks relaxed (closer to 1.0)
+        assert level == "atlas_relaxed"
+        assert len(cands) == 4
+        assert triggered is True
+
+    def test_fewer_candidates_better_ratio_still_wins(self) -> None:
+        """Strict 3 cands pr=0.96 vs relaxed 6 cands — strict wins (good ratio)."""
+        levels = {
+            "atlas_strict": (_make_scored(3), 0.96),
+            "atlas_relaxed": (_make_scored(6), 0.98),
+        }
+        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
+        # Good peak ratio at strict → breaks immediately, no quality gate
+        assert level == "atlas_strict"
+        assert len(cands) == 3
+        assert triggered is False
+
+    def test_high_side_peak_ratio_triggers_gate(self) -> None:
+        """Peak ratio 1.15 (above 1.12) triggers cascade continuation."""
+        levels = {
+            "atlas_strict": (_make_scored(3), 1.15),
+            "atlas_relaxed": (_make_scored(5), 0.98),
+        }
+        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
+        assert level == "atlas_relaxed"
+        assert len(cands) == 5
+        assert triggered is True

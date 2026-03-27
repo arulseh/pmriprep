@@ -31,6 +31,10 @@ import numpy.typing as npt
 from pmriprep.utils.dce_constants import (
     TISSUE_DENSITY,
 )
+from pmriprep.utils.dsc_aif import (
+    GAMMA_PEAK_RATIO_MIN,
+    GAMMA_PEAK_RATIO_MAX,
+)
 
 
 # =============================================================================
@@ -82,6 +86,13 @@ K2_MEDIAN_CORRECTION: float = 0.005  # s⁻¹, above with no preload = large K2 
                                       # (effectively dead for current data where no-preload
                                       # k2_median=0.0; safety net for diffuse enhancement)
 
+# Gamma peak ratio thresholds for constraint quality gating.
+# Moderate band [0.90, 1.10] imported from dsc_aif.py (single source of truth).
+# Wider low-confidence band captures severe AIF corruption.
+# Ref: peak error >12% exceeds normal CBF CoV (~10%, Mutsaerts JCBFM 2015).
+GAMMA_PEAK_RATIO_LOW_MIN: float = 0.80
+GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
+
 
 # =============================================================================
 # Enums and Dataclasses
@@ -113,6 +124,7 @@ class CBVQualityAssessment:
         aif_baseline_return: AIF baseline return ratio (0-1).
         cbv_median: Median CBV in brain (mL/100g), or None if not assessed.
         cbv_negative_fraction: Fraction of negative CBV values, or None.
+        gamma_peak_ratio: Gamma-variate peak ratio (fitted/measured), or None.
         reasons: List of reasons for quality decisions.
     """
 
@@ -126,6 +138,7 @@ class CBVQualityAssessment:
     preload_status: Optional[str] = None
     detection_level: Optional[str] = None
     n_aif_voxels: Optional[int] = None
+    gamma_peak_ratio: Optional[float] = None
     reasons: list[str] = field(default_factory=list)
 
 
@@ -182,6 +195,14 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
         Dictionary with normalized keys suitable for assess_dsc_cbv_quality.
     """
     data = dict(aif_qc_data)
+
+    # --- Gamma peak ratio from auto-fit metrics ---
+    # Extract before the early return since gamma_fit_auto_metrics is present
+    # in both normalized and raw formats.
+    if "gamma_peak_ratio" not in data:
+        auto_metrics = data.get("gamma_fit_auto_metrics", {})
+        if isinstance(auto_metrics, dict) and "peak_ratio" in auto_metrics:
+            data["gamma_peak_ratio"] = auto_metrics["peak_ratio"]
 
     # Already in expected format
     if "aif_peak_height" in data or "cnr_whole_brain" in data:
@@ -377,6 +398,28 @@ def assess_dsc_cbv_quality(
         result.reasons.append(
             f"AIF baseline return {baseline_return:.2f} > {AIF_BASELINE_RETURN_MARGINAL}"
         )
+
+    # --- Gamma Peak Ratio ---
+    # Peak ratio = gamma_fit_peak / measured_peak. Values far from 1.0
+    # indicate AIF shape corruption (motion, partial volume, truncation).
+    # A corrupted AIF produces biased CBV for vp constraint.
+    gamma_peak_ratio = aif_qc_data.get("gamma_peak_ratio")
+    if gamma_peak_ratio is not None:
+        result.gamma_peak_ratio = gamma_peak_ratio
+        if (gamma_peak_ratio < GAMMA_PEAK_RATIO_LOW_MIN
+                or gamma_peak_ratio > GAMMA_PEAK_RATIO_LOW_MAX):
+            confidence = _downgrade_confidence(confidence, "low")
+            result.reasons.append(
+                f"Gamma peak ratio {gamma_peak_ratio:.3f} outside "
+                f"[{GAMMA_PEAK_RATIO_LOW_MIN}, {GAMMA_PEAK_RATIO_LOW_MAX}]"
+            )
+        elif (gamma_peak_ratio < GAMMA_PEAK_RATIO_MIN
+                or gamma_peak_ratio > GAMMA_PEAK_RATIO_MAX):
+            confidence = _downgrade_confidence(confidence, "moderate")
+            result.reasons.append(
+                f"Gamma peak ratio {gamma_peak_ratio:.3f} outside "
+                f"[{GAMMA_PEAK_RATIO_MIN}, {GAMMA_PEAK_RATIO_MAX}]"
+            )
 
     # --- CBV Value Range (if map provided) ---
     if cbv_data is not None:
@@ -700,6 +743,7 @@ def prepare_vp_constraint_from_data(
         "aif_baseline_return": quality.aif_baseline_return,
         "detection_level": quality.detection_level,
         "n_aif_voxels": quality.n_aif_voxels,
+        "gamma_peak_ratio": quality.gamma_peak_ratio,
         "hematocrit": hematocrit,
     }
 

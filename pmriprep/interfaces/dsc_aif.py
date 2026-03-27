@@ -44,6 +44,14 @@ _FP_GAP_SECONDS: float = 3.0
 # criteria to build a larger candidate pool (quality gating is downstream).
 MIN_AIF_CANDIDATES_ACCEPT: int = 3
 
+#: Gamma peak ratio band for cascade quality gate.
+#: If averaged AIF peak ratio falls outside this range, continue cascading
+#: to the next tier (keeping the current result as fallback).
+#: Physics: >12% AIF peak error exceeds normal CBF CoV (~10%,
+#: Mutsaerts et al., JCBFM 2015).
+GAMMA_PEAK_RATIO_CASCADE_MIN: float = 0.88
+GAMMA_PEAK_RATIO_CASCADE_MAX: float = 1.12
+
 # Fraction of user-configured n_candidates to keep at each criteria level.
 # As criteria relax, candidate quality drops — fewer candidates concentrates
 # on the best-scoring voxels from a noisier pool.
@@ -176,6 +184,36 @@ def compute_aif_fwhm_frames(
 
     fwhm = falling_idx - rising_idx
     return max(0, fwhm)
+
+
+def _compute_aif_peak_ratio(
+    aif_curve: npt.NDArray[Any],
+    baseline_frames: int,
+    tr: float,
+) -> Optional[float]:
+    """Compute gamma peak ratio for an averaged AIF curve.
+
+    Fits a gamma-variate model and returns peak_fit / peak_orig.
+    Used by the cascade quality gate to assess AIF shape fidelity.
+
+    Args:
+        aif_curve: Averaged AIF concentration-time curve.
+        baseline_frames: Number of pre-bolus baseline frames.
+        tr: Repetition time in seconds.
+
+    Returns:
+        Peak ratio (fitted/measured), or None if gamma fit fails.
+    """
+    from pmriprep.utils.dsc_aif import fit_gamma_variate
+
+    result = fit_gamma_variate(aif_curve, baseline_frames=baseline_frames, tr=tr)
+    if not result.fit_converged or result.r_squared < 0.5:
+        return None
+    peak_orig = float(np.max(aif_curve[baseline_frames:]))
+    peak_fit = float(np.max(result.fitted_curve[baseline_frames:]))
+    if peak_orig < 1e-6:
+        return None
+    return peak_fit / peak_orig
 
 
 def compute_baseline_stability(
@@ -2096,6 +2134,11 @@ class AIFDetection(BaseInterface):
         n_available = 0
         filter_meta: dict[str, Any] = {}
         cascade_initial_level: Optional[str] = None
+        # Quality gate stash: if an accepted tier has bad peak ratio,
+        # stash it and continue cascading once to find a better AIF.
+        quality_stash: Optional[
+            tuple[list, int, str, dict[str, Any], Optional[float]]
+        ] = None  # (scored, n_avail, level_name, f_meta, peak_ratio)
 
         if aif_method == "synthetic":
             pass  # Go directly to synthetic
@@ -2171,19 +2214,79 @@ class AIFDetection(BaseInterface):
                     cascade_initial_level = level_name
 
                 if len(scored) >= MIN_AIF_CANDIDATES_ACCEPT:
+                    # Quality gate: check gamma peak ratio before accepting
+                    if quality_stash is None:
+                        temp_aif, _ = self._compute_roi_averaged_aif(
+                            scored, conc_data, brain_mask
+                        )
+                        temp_aif, _, _, _ = self._validate_averaged_aif(
+                            temp_aif, scored, conc_data, brain_mask,
+                            tr, aif_baseline_frames,
+                        )
+                        pr = _compute_aif_peak_ratio(
+                            temp_aif, aif_baseline_frames, tr
+                        )
+                        if (pr is not None
+                                and (pr < GAMMA_PEAK_RATIO_CASCADE_MIN
+                                     or pr > GAMMA_PEAK_RATIO_CASCADE_MAX)):
+                            # Bad quality — stash and continue to next tier
+                            quality_stash = (
+                                scored, n_avail, level_name, f_meta, pr,
+                            )
+                            continue
+
+                    if quality_stash is not None:
+                        # Second tier with >= MIN — compare with stashed
+                        temp_aif2, _ = self._compute_roi_averaged_aif(
+                            scored, conc_data, brain_mask
+                        )
+                        temp_aif2, _, _, _ = self._validate_averaged_aif(
+                            temp_aif2, scored, conc_data, brain_mask,
+                            tr, aif_baseline_frames,
+                        )
+                        pr2 = _compute_aif_peak_ratio(
+                            temp_aif2, aif_baseline_frames, tr
+                        )
+                        stashed_pr = quality_stash[4]
+                        # Pick whichever has peak ratio closer to 1.0
+                        use_current = (
+                            pr2 is not None
+                            and (stashed_pr is None
+                                 or abs(pr2 - 1.0) < abs(stashed_pr - 1.0))
+                        )
+                        if use_current:
+                            top_candidates = scored
+                            n_available = n_avail
+                            detection_level = level_name
+                            filter_meta = f_meta
+                        else:
+                            (top_candidates, n_available,
+                             detection_level, filter_meta, _) = quality_stash
+                        break
+
+                    # Good quality — accept normally
                     top_candidates = scored
                     n_available = n_avail
                     detection_level = level_name
                     filter_meta = f_meta
                     break
                 elif len(scored) > len(top_candidates):
-                    # Stash best-so-far but keep cascading for more candidates.
+                    # Below MIN — stash best-so-far but keep cascading.
                     # With variable level_n_candidates, equal counts across levels
                     # favor the stricter (earlier) level by design.
                     top_candidates = scored
                     n_available = n_avail
                     detection_level = level_name
                     filter_meta = f_meta
+
+            # If quality gate stashed a result but loop exhausted without
+            # finding a better tier, use the stashed (>= MIN) result.
+            if quality_stash is not None and (
+                not top_candidates
+                or len(top_candidates) < MIN_AIF_CANDIDATES_ACCEPT
+            ):
+                (top_candidates, n_available,
+                 detection_level, filter_meta, _) = quality_stash
 
             if top_candidates and len(top_candidates) < MIN_AIF_CANDIDATES_ACCEPT:
                 import logging
@@ -2249,6 +2352,12 @@ class AIFDetection(BaseInterface):
                 )
                 qc_metrics["cascade_initial_level"] = cascade_initial_level
                 qc_metrics["cascade_final_level"] = detection_level
+            if quality_stash is not None:
+                qc_metrics["cascade_quality_gate_triggered"] = True
+                qc_metrics["cascade_stashed_level"] = quality_stash[2]
+                qc_metrics["cascade_stashed_peak_ratio"] = quality_stash[4]
+            else:
+                qc_metrics["cascade_quality_gate_triggered"] = False
             qc_metrics.update(validation_qc)
 
         elif not disable_fallback:

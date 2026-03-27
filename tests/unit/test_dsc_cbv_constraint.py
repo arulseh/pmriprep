@@ -221,6 +221,66 @@ class TestAssessDSCCBVQuality:
         # No downgrade from detection level (empty string) or candidates (default 3)
         assert result.confidence == "high"
 
+    def test_bad_gamma_peak_ratio_downgrades_to_moderate(self) -> None:
+        """Peak ratio 0.843 (outside [0.90, 1.10]) downgrades to moderate."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "gamma_fit_auto_metrics": {"peak_ratio": 0.843},
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "moderate"
+        assert result.gamma_peak_ratio == pytest.approx(0.843)
+        assert any("peak ratio" in r.lower() for r in result.reasons)
+
+    def test_severe_gamma_peak_ratio_downgrades_to_low(self) -> None:
+        """Peak ratio 0.75 (outside [0.80, 1.20]) downgrades to low."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "gamma_fit_auto_metrics": {"peak_ratio": 0.75},
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "low"
+        assert result.use_constraint is False
+
+    def test_good_gamma_peak_ratio_no_downgrade(self) -> None:
+        """Peak ratio 0.95 (within [0.90, 1.10]) does not downgrade."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "gamma_fit_auto_metrics": {"peak_ratio": 0.95},
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "high"
+        assert result.gamma_peak_ratio == pytest.approx(0.95)
+
+    def test_missing_gamma_peak_ratio_no_downgrade(self) -> None:
+        """Missing gamma_fit_auto_metrics does not downgrade (backward compat)."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "high"
+        assert result.gamma_peak_ratio is None
+
+    def test_gamma_peak_ratio_high_side_downgrade(self) -> None:
+        """Peak ratio 1.15 (above 1.10) downgrades to moderate."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+            "gamma_fit_auto_metrics": {"peak_ratio": 1.15},
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "moderate"
+        assert any("peak ratio" in r.lower() for r in result.reasons)
+
 
 # =============================================================================
 # Constraint Mode Determination
@@ -343,6 +403,20 @@ class TestNormalizeAifQcKeys:
         assert result["best_psr"] == 94.6
         assert result["best_brr"] == 7.17
         assert result["extra_field"] == 42
+
+    def test_normalize_extracts_gamma_peak_ratio(self) -> None:
+        """gamma_fit_auto_metrics.peak_ratio is promoted to top-level key."""
+        data = {"gamma_fit_auto_metrics": {"peak_ratio": 0.843}}
+        result = _normalize_aif_qc_keys(data)
+
+        assert result["gamma_peak_ratio"] == pytest.approx(0.843)
+
+    def test_normalize_no_gamma_metrics_no_key(self) -> None:
+        """Missing gamma_fit_auto_metrics does not create gamma_peak_ratio."""
+        data = {"best_psr": 94.6}
+        result = _normalize_aif_qc_keys(data)
+
+        assert "gamma_peak_ratio" not in result
 
 
 # =============================================================================
