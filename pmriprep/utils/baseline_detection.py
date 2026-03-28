@@ -30,6 +30,17 @@ from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION
 
 logger = logging.getLogger(__name__)
 
+#: Minimum fractional signal change to accept Phase 2 earlier refinement.
+#: At clinical Gd doses (0.1 mmol/kg), first-frame tissue enhancement
+#: is 5-15%. 1.5% is conservatively below this for low-dose/saturated cases.
+#: Ref: physics expert review (2026-03-28).
+_MIN_FRACTIONAL_CHANGE: float = 0.015
+
+#: Minimum baseline frames for reliable z-score estimation.
+#: With N<8, std has >28% coefficient of variation (chi-distribution),
+#: making 3-sigma thresholds unreliable for detecting bolus onset.
+_MIN_BASELINE_ZSCORE: int = 8
+
 
 # ---------------------------------------------------------------------------
 # Phase 1 detectors — no baseline_window needed
@@ -266,13 +277,38 @@ def _detect_single_signal(
     # Asymmetric refinement:
     # - 2+ methods detect EARLIER by 1-3 frames → refine (gradient onset)
     # - 2+ methods detect LATER by >3 frames → keep anchor (preload noise)
+    #
+    # Two guards prevent false early detection:
+    # 1. Short-baseline skip: z-score std has >35% CV with <8 samples
+    # 2. Magnitude guard: signal change must exceed 1.5% (physiological minimum)
+    skip_earlier = bl_window < _MIN_BASELINE_ZSCORE
     earlier = [v for v in valid_p2.values() if 0 < anchor - v <= 3]
-    if len(earlier) >= 2:
+    if len(earlier) >= 2 and not skip_earlier:
         refined = max(earlier)  # latest of the earlier estimates
-        diag["phase2_action"] = f"refined_earlier_to_{refined}"
-        # Phase 1 and Phase 2 agree within a few frames → high confidence
-        confidence = "high"
-        return max(refined, min_baseline), confidence, diag
+
+        # Magnitude guard: verify signal change is physiologically meaningful
+        bl_mean = float(np.mean(signal[:bl_window]))
+        if abs(bl_mean) > 1e-6:
+            frac_change = abs(float(signal[refined]) - bl_mean) / abs(bl_mean)
+        else:
+            # Near-zero baseline (e.g., DSC concentration domain):
+            # any detectable change above noise is meaningful
+            frac_change = (
+                float("inf") if abs(float(signal[refined])) > 1e-6 else 0.0
+            )
+
+        if frac_change >= _MIN_FRACTIONAL_CHANGE:
+            diag["phase2_action"] = f"refined_earlier_to_{refined}"
+            # Phase 1 and Phase 2 agree within a few frames → high confidence
+            confidence = "high"
+            return max(refined, min_baseline), confidence, diag
+        else:
+            diag["phase2_action"] = (
+                f"earlier_rejected_low_magnitude_{frac_change:.4f}"
+            )
+            # Fall through to confirmation/anchor logic below
+    elif len(earlier) >= 2 and skip_earlier:
+        diag["phase2_action"] = "earlier_skipped_short_baseline"
 
     # Z-score methods have inherent 1-2 frame detection lag.  If 2+
     # methods detect 1-3 frames LATER, this confirms the anchor with

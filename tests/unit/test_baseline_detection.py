@@ -292,3 +292,95 @@ class TestRegression:
         assert abs(arr_amp - arr_ens) <= 3, (
             f"Amplitude={arr_amp}, Ensemble={arr_ens}"
         )
+
+
+# =============================================================================
+# Short Baseline Magnitude Guard (sub-0092 regression fix)
+# =============================================================================
+
+
+class TestShortBaselineMagnitudeGuard:
+    """Tests for magnitude guard on Phase 2 earlier refinement.
+
+    Prevents false early detection when z-score std is unreliable
+    (short baselines) and signal drift is small (<1.5%).
+    """
+
+    def test_short_baseline_with_drift_no_false_early(self) -> None:
+        """OSIPI sub-0092 scenario: 8 baseline frames, 0.7% drift, bolus at frame 8.
+
+        Should detect frame 7-8, NOT frame 5-6.
+        """
+        n = 20
+        signal = np.zeros(n, dtype=np.float64)
+        # Baseline with small upward drift (0.5-1% over 8 frames)
+        baseline_level = 100.0
+        for i in range(8):
+            signal[i] = baseline_level + 0.08 * i  # ~0.08% per frame
+        # Bolus at frame 8+
+        for i in range(8, n):
+            t = i - 8
+            rise = 1.0 / (1.0 + np.exp(-(t - 1.0) / 0.5))
+            decay = np.exp(-max(0, t - 3) / 6.0)
+            signal[i] = baseline_level + 0.64 + 30.0 * rise * decay
+
+        arrival, diag = detect_baseline_ensemble(signal, tr=7.5, min_baseline=3)
+        # Should detect at frame 7 or 8 (derivative anchor), NOT 5-6
+        assert arrival >= 7, (
+            f"arrival={arrival}, expected >=7. "
+            f"action={diag.get('primary', {}).get('phase2_action')}"
+        )
+
+    def test_magnitude_guard_rejects_low_change(self) -> None:
+        """Verify the magnitude guard rejects <1.5% earlier detection."""
+        n = 30
+        signal = np.zeros(n, dtype=np.float64)
+        baseline_level = 50.0
+        # Baseline with tiny drift at frame 8 (~0.5%)
+        for i in range(12):
+            signal[i] = baseline_level + 0.03 * i
+        # Sharp bolus at frame 12
+        for i in range(12, n):
+            t = i - 12
+            rise = 1.0 / (1.0 + np.exp(-(t - 1.0) / 0.5))
+            decay = np.exp(-max(0, t - 3) / 6.0)
+            signal[i] = baseline_level + 0.36 + 20.0 * rise * decay
+
+        arrival, diag = detect_baseline_ensemble(signal, tr=1.5, min_baseline=3)
+        action = diag.get("primary", {}).get("phase2_action", "")
+        # Should NOT have refined_earlier (magnitude too low or skipped)
+        assert "refined_earlier_to" not in action, (
+            f"Should not refine earlier, got action={action}"
+        )
+
+    def test_genuine_onset_passes_magnitude_guard(self) -> None:
+        """Gradual onset with >1.5% enhancement should still be detected early."""
+        n = 30
+        signal = np.zeros(n, dtype=np.float64)
+        baseline_level = 50.0
+        for i in range(10):
+            signal[i] = baseline_level
+        # Gradual onset starting frame 10: 3% enhancement (above 1.5% guard)
+        signal[10] = baseline_level * 1.03
+        signal[11] = baseline_level * 1.06
+        # Then sharp bolus
+        for i in range(12, n):
+            t = i - 12
+            rise = 1.0 / (1.0 + np.exp(-(t - 0.5) / 0.3))
+            signal[i] = baseline_level * 1.06 + 25.0 * rise
+
+        arrival, diag = detect_baseline_ensemble(signal, tr=1.5, min_baseline=3)
+        # Should detect early onset (frame 10-11), not wait for frame 12
+        assert arrival <= 12, (
+            f"arrival={arrival}, expected <=12 (gradual onset should be caught)"
+        )
+
+    def test_long_baseline_unchanged(self) -> None:
+        """Long baseline (40+ frames) should work identically to before."""
+        signal, expected_bl = _make_bolus_curve(
+            n=120, baseline_frames=42, peak=15.0
+        )
+        arrival, diag = detect_baseline_ensemble(signal, tr=1.5, min_baseline=3)
+        assert abs(arrival - expected_bl) <= 2, (
+            f"arrival={arrival}, expected ~{expected_bl}"
+        )
