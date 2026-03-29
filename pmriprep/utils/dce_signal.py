@@ -206,7 +206,9 @@ def signal_to_concentration(
     2. For each timepoint, solve for E1(t) from signal ratio
     3. Convert E1(t) to R1(t) = -ln(E1)/TR
     4. Compute concentration: C(t) = (R1(t) - R1(0)) / r1
-    5. Optionally convert to plasma concentration
+    5. Subtract per-voxel baseline concentration (mean of pre-bolus frames)
+    6. Clip to non-negative
+    7. Optionally convert to plasma concentration
 
     Args:
         signal: 4D DCE signal array (x, y, z, time) or 1D time series.
@@ -451,9 +453,18 @@ def signal_to_concentration(
         else:
             concentration = (r1_dynamic - r1_baseline) / effective_r1
 
-    # Ensure non-negative concentration (negative values are non-physical)
-    # Small negative values can occur due to noise before contrast arrival
-    # We clip to zero to maintain physical meaning
+    # Subtract per-voxel baseline concentration before clipping to avoid
+    # positive bias from rectifying pre-bolus noise.  Without this, the
+    # half-normal bias (~0.8 × σ_C) inflates Ktrans for low-permeability
+    # tissue (NAWM) by 15-50% of true enhancement.
+    # This effectively replaces the single-timepoint R1(0) from the T1 map
+    # with the temporal mean of pre-bolus R1, which is more accurate and
+    # corrects any systematic offset between VFA and dynamic acquisitions.
+    # Works for both 4D (x,y,z,t) and 1D (t,) arrays via axis=-1.
+    baseline_conc = np.nanmean(
+        concentration[..., :baseline_frames], axis=-1, keepdims=True,
+    )
+    concentration = concentration - baseline_conc
     concentration = np.maximum(concentration, 0.0)
 
     # Convert to plasma concentration if requested

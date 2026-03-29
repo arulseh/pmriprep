@@ -211,3 +211,47 @@ class TestFieldStrengthDefaultT1:
         )
         # Different field strengths → different concentrations
         assert not np.allclose(conc_15t, conc_3t)
+
+
+class TestBaselineSubtraction:
+    """Tests for pre-bolus baseline subtraction in concentration conversion."""
+
+    def test_pre_bolus_concentration_unbiased(self) -> None:
+        """Pre-bolus concentration mean should be ~0, not biased positive."""
+        rng = np.random.default_rng(42)
+        n_time = 30
+        baseline_frames = 10
+        # Simulate a 1D signal: constant baseline + enhancement after frame 15
+        s0 = 500.0
+        signal = np.full(n_time, s0)
+        signal[15:] = 600.0  # 20% enhancement
+        signal = signal + rng.normal(0, 10, n_time)  # noise
+
+        result = signal_to_concentration(
+            signal, flip_angle_deg=15.0, tr=0.005,
+            t1_default_ms=1000.0, baseline_frames=baseline_frames,
+            convert_to_plasma=False,
+        )
+        # Pre-bolus frames (after baseline subtraction + clip) should be ~0
+        pre_bolus = result.concentration[:baseline_frames]
+        assert np.mean(pre_bolus) < 0.005, (
+            f"Pre-bolus mean {np.mean(pre_bolus):.4f} is biased positive"
+        )
+
+    def test_enhancement_preserved_after_baseline_subtraction(self) -> None:
+        """Post-bolus enhancement should still be positive and non-trivial."""
+        n_time = 30
+        baseline_frames = 10
+        signal = np.full(n_time, 500.0)
+        signal[15:] = 700.0  # 40% enhancement
+        result = signal_to_concentration(
+            signal, flip_angle_deg=15.0, tr=0.005,
+            t1_default_ms=1000.0, baseline_frames=baseline_frames,
+            convert_to_plasma=False,
+        )
+        # Post-enhancement concentration should be clearly positive
+        post_bolus = result.concentration[15:]
+        assert np.all(post_bolus > 0), "Enhancement lost after baseline subtraction"
+        assert np.mean(post_bolus) > np.mean(result.concentration[:baseline_frames]), (
+            "Enhancement not larger than baseline"
+        )

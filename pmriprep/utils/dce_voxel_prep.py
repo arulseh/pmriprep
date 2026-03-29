@@ -69,9 +69,9 @@ def prepare_voxel_for_fitting(
             )
 
     # Subtract baseline concentration and clip to non-negative.
-    # Matches perf-plus (dce_pk_modeling.py:1586-1587): the baseline mean is
-    # removed so the pre-bolus timepoints sit at zero, preventing the bolus
-    # arrival spike from dominating R² when the model cannot capture it.
+    # Since v0.11.9, signal_to_concentration() performs baseline subtraction
+    # before clipping, so baseline_mean here is ~0. This step is kept for
+    # safety and to match perf-plus (dce_pk_modeling.py:1586-1587).
     prepared = tissue_curve - baseline_mean
     prepared = np.maximum(prepared, 0.0)
 
