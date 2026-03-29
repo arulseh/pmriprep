@@ -1354,10 +1354,10 @@ class TestVFAConditioningGate:
         assert result.tissue_t1_used is True
         assert "unconditional" in result.reason
 
-    def test_conditional_fallback_no_b1(
+    def test_conditional_zone_no_b1_low_nan_falls_through(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """E1 in 0.993-0.997 without B1 correction triggers fallback."""
+        """E1 in 0.993-0.997 without B1 but manageable NaN falls through."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -1366,15 +1366,16 @@ class TestVFAConditioningGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.995, b1_corrected=False,
+            nan_fraction=0.15,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "tissue_segmented"
-        assert "B1 correction absent" in result.reason
+        # Falls through to Case 2: median 1090 is within 3T warn range → none
+        assert result.correction_applied == "none"
 
-    def test_conditional_fallback_b1_fail(
+    def test_conditional_zone_b1_fail_low_nan_falls_through(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """E1 in 0.993-0.997 with B1 QC failure triggers fallback."""
+        """E1 in 0.993-0.997 with B1 QC failure but manageable NaN falls through."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -1383,10 +1384,11 @@ class TestVFAConditioningGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.995, b1_corrected=True, b1_qc_pass=False,
+            nan_fraction=0.15,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "tissue_segmented"
-        assert "B1 correction absent or failed" in result.reason
+        # Falls through to Case 2: median 1090 is within 3T warn range → none
+        assert result.correction_applied == "none"
 
     def test_conditional_no_fallback_good_b1(
         self, brain_mask: np.ndarray,
@@ -1558,61 +1560,61 @@ class TestVFAConditioningGate:
             f"{n_nan_in_brain} brain voxels still NaN after hard reject fallback"
         )
 
-    def test_low_nrmse_bypasses_gate(
+    def test_conditional_zone_no_b1_falls_through_to_offset(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Low VFA fit NRMSE bypasses conditioning gate (retains VFA T1)."""
-        t1_map = np.full((10, 10, 10), 1090.0)
+        """Conditional zone without B1 falls through to offset correction."""
+        # T1=1200ms at 3T: above warn_high (1290 at 3T? no, 1290), triggers offset
+        t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
 
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            vfa_fit_nrmse=0.015,  # 1.5% — below 3% threshold
+            nan_fraction=0.15,  # manageable
         )
-        # Should NOT fall back — VFA T1 retained via NRMSE gate bypass
-        assert result.correction_applied != "fallback"
-        assert result.correction_applied != "tissue_segmented"
-        assert result.nrmse_gate_bypassed is True
-        assert result.vfa_fit_nrmse == pytest.approx(0.015)
+        # Should NOT fall back — should get offset correction
+        assert result.correction_applied == "offset"
 
-    def test_high_nrmse_falls_back(
+    def test_conditional_zone_high_nan_forces_fallback(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """High VFA fit NRMSE still triggers fallback."""
-        t1_map = np.full((10, 10, 10), 1090.0)
+        """Conditional zone with high NaN fraction forces fallback (safety net)."""
+        t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
 
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            vfa_fit_nrmse=0.08,  # 8% — above 3% threshold
+            nan_fraction=0.60,  # exceeds nan_abandon (~0.28 at E1=0.996)
         )
         assert result.correction_applied == "fallback"
-        assert result.nrmse_gate_bypassed is False
 
-    def test_nrmse_none_falls_back(
+    def test_conditional_zone_high_nan_with_tissue_maps(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """None NRMSE (n_fa=2, degenerate) triggers normal fallback."""
-        t1_map = np.full((10, 10, 10), 1090.0)
+        """Conditional zone + high NaN + tissue maps → tissue-segmented."""
+        t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
+        wm = np.where(brain_mask, 0.6, 0.0).astype(np.float32)
+        gm = np.where(brain_mask, 0.4, 0.0).astype(np.float32)
 
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            vfa_fit_nrmse=None,
+            nan_fraction=0.60,
+            wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "fallback"
-        assert result.nrmse_gate_bypassed is False
+        assert result.correction_applied == "tissue_segmented"
+        assert result.tissue_t1_used is True
 
-    def test_unconditional_ignores_nrmse(
+    def test_unconditional_zone_always_falls_back(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Unconditional zone (E1>0.997) ignores NRMSE — always falls back."""
+        """Unconditional zone (E1>0.997) always falls back, even with low NaN."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1620,15 +1622,31 @@ class TestVFAConditioningGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.998, b1_corrected=False, b1_qc_pass=False,
-            vfa_fit_nrmse=0.01,  # 1% — would pass, but unconditional ignores it
+            nan_fraction=0.05,  # very low NaN, but unconditional ignores it
         )
         assert result.correction_applied == "fallback"
-        assert result.nrmse_gate_bypassed is False
 
-    def test_nrmse_in_result_dict(
+    def test_conditional_zone_warn_range_bias_triggers_offset(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """NRMSE and bypass flag appear in to_dict() output."""
+        """Conditional zone with T1 in warn range but biased → offset via Case 2."""
+        # At 3T: warn_low=850, warn_high=1290, expected=1090
+        # T1=950ms is within warn range but biased 140ms from expected (>100ms B1 threshold)
+        t1_map = np.full((10, 10, 10), 950.0)
+        t1_map[~brain_mask] = np.nan
+
+        _, result = apply_t1_correction(
+            t1_map, field_strength=3.0, correction_mode="auto",
+            brain_mask=brain_mask,
+            e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
+            nan_fraction=0.15,
+        )
+        assert result.correction_applied == "offset"
+
+    def test_nrmse_gate_bypassed_not_in_dict(
+        self, brain_mask: np.ndarray,
+    ) -> None:
+        """nrmse_gate_bypassed field is removed from to_dict() output."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1636,9 +1654,19 @@ class TestVFAConditioningGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            vfa_fit_nrmse=0.015,
+            nan_fraction=0.15,
+        )
+        d = result.to_dict()
+        assert "nrmse_gate_bypassed" not in d
+
+    def test_vfa_fit_nrmse_preserved_in_dict(
+        self, brain_mask: np.ndarray,
+    ) -> None:
+        """vfa_fit_nrmse appears in to_dict() when set (QC audit trail)."""
+        result = T1CorrectionResult(
+            correction_applied="offset",
+            vfa_fit_nrmse=0.065,
         )
         d = result.to_dict()
         assert "vfa_fit_nrmse" in d
-        assert "nrmse_gate_bypassed" in d
-        assert d["nrmse_gate_bypassed"] is True
+        assert d["vfa_fit_nrmse"] == pytest.approx(0.065)

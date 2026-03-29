@@ -1846,7 +1846,6 @@ class T1Mapping(SimpleInterface):
             gm_probseg=gm_probseg_arr,
             e1_median=e1_median,
             b1_corrected=b1_corrected,
-            vfa_fit_nrmse=vfa_fit_nrmse,
         )
         t1_map = t1_map_arr.astype(np.float32)
         correction_info = correction_result.to_dict()
