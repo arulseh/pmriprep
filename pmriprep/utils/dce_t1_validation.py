@@ -55,6 +55,17 @@ _E1_UNCONDITIONAL_FALLBACK: Final[float] = 0.997
 # E1 > 0.993 → cond > 141 → fallback unless B1-corrected & B1 QC passed
 _E1_CONDITIONAL_FALLBACK: Final[float] = 0.993
 
+#: VFA fit NRMSE threshold for conditioning gate bypass (n_fa >= 3 only).
+#: Per-voxel NRMSE measures model misfit immune to T1 heterogeneity
+#: (Deoni et al., MRM 2003). Low residual → SPGR model fits well with
+#: nominal flip angles → B1 is close to nominal.
+#: Expected: ~1-2% at SNR 100 with no B1 error. With B1 map applied
+#: but bad correction (sub-0022, 25% error) → 10-16% NRMSE.
+#: Note: smooth B1 error WITHOUT a B1 map is invisible to this metric
+#: (fundamental VFA limitation). Biased VFA T1 is still better than
+#: constant fallback for Ktrans estimation (B1 error cancels in tissue/AIF ratio).
+_VFA_NRMSE_GATE_THRESHOLD: Final[float] = 0.03  # 3%
+
 # ============================================================================
 # T1 Tissue Reference Values by Field Strength
 # ============================================================================
@@ -178,6 +189,8 @@ class T1CorrectionResult:
     deviation_type: Optional[str] = None
     nan_fraction: Optional[float] = None
     tissue_t1_used: bool = False
+    vfa_fit_nrmse: Optional[float] = None
+    nrmse_gate_bypassed: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
@@ -200,6 +213,9 @@ class T1CorrectionResult:
         if self.nan_fraction is not None:
             d["nan_fraction"] = self.nan_fraction
         d["tissue_t1_used"] = self.tissue_t1_used
+        if self.vfa_fit_nrmse is not None:
+            d["vfa_fit_nrmse"] = self.vfa_fit_nrmse
+        d["nrmse_gate_bypassed"] = self.nrmse_gate_bypassed
         return d
 
 
@@ -450,6 +466,7 @@ def apply_t1_correction(
     gm_probseg: Optional[npt.NDArray[np.floating]] = None,
     e1_median: Optional[float] = None,
     b1_corrected: bool = False,
+    vfa_fit_nrmse: Optional[float] = None,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Apply T1 map correction based on median T1 validation.
 
@@ -490,6 +507,11 @@ def apply_t1_correction(
     b1_corrected : bool
         Whether B1 field mapping was applied. At severe VFA conditioning,
         absence of B1 correction triggers tissue-segmented fallback.
+    vfa_fit_nrmse : float, optional
+        Median per-voxel VFA fit NRMSE (0-1). When below
+        ``_VFA_NRMSE_GATE_THRESHOLD`` in the conditional E1 zone,
+        bypasses the conditioning gate (retains VFA T1 without
+        tissue-segmented fallback). Only meaningful for n_fa >= 3.
 
     Returns
     -------
@@ -565,6 +587,7 @@ def apply_t1_correction(
             e1_median=e1_median,
             b1_corrected=b1_corrected,
             brain_mask=brain_mask,
+            vfa_fit_nrmse=vfa_fit_nrmse,
         )
 
     else:
@@ -588,6 +611,7 @@ def _auto_correct_t1(
     e1_median: Optional[float] = None,
     b1_corrected: bool = False,
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
+    vfa_fit_nrmse: Optional[float] = None,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Auto-mode T1 correction logic.
 
@@ -624,27 +648,51 @@ def _auto_correct_t1(
             if b1_insufficient:
                 reason_parts.append("B1 correction absent or failed")
 
-            logger.warning(
-                "VFA conditioning gate: E1=%.4f (cond=%.0f), %s "
-                "— falling back to tissue-segmented T1",
-                e1_median, cond_number, "; ".join(reason_parts),
-            )
-
-            if wm_probseg is not None and gm_probseg is not None:
-                t1_corrected = build_tissue_t1_map(wm_probseg, gm_probseg, field_strength)
-                t1_corrected = np.where(fill_mask, t1_corrected, np.nan)
-                result.correction_applied = "tissue_segmented"
-                result.tissue_t1_used = True
-                result.reason = f"VFA conditioning gate: {'; '.join(reason_parts)}"
-                result.median_t1_corrected = expected_median
+            # NRMSE gate bypass: for n_fa >= 3, low fit residual means
+            # the SPGR model fits well with nominal angles → B1 is OK.
+            # Only bypass in conditional zone (not unconditional).
+            if (
+                not unconditional
+                and vfa_fit_nrmse is not None
+                and vfa_fit_nrmse < _VFA_NRMSE_GATE_THRESHOLD
+            ):
+                logger.info(
+                    "VFA fit residual low (NRMSE=%.2f%% < %.0f%%) despite "
+                    "no B1 correction — retaining VFA T1",
+                    vfa_fit_nrmse * 100,
+                    _VFA_NRMSE_GATE_THRESHOLD * 100,
+                )
+                result.reason = (
+                    f"VFA conditioning gate bypassed: NRMSE={vfa_fit_nrmse*100:.1f}% "
+                    f"< {_VFA_NRMSE_GATE_THRESHOLD*100:.0f}% threshold"
+                )
+                result.vfa_fit_nrmse = vfa_fit_nrmse
+                result.nrmse_gate_bypassed = True
+                # Fall through to normal correction logic below
             else:
-                t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
-                result.correction_applied = "fallback"
-                result.reason = f"VFA conditioning gate (no tissue maps): {'; '.join(reason_parts)}"
-                result.fallback_value_ms = t1_ref["default"]
-                result.median_t1_corrected = t1_ref["default"]
+                if vfa_fit_nrmse is not None:
+                    result.vfa_fit_nrmse = vfa_fit_nrmse
+                logger.warning(
+                    "VFA conditioning gate: E1=%.4f (cond=%.0f), %s "
+                    "— falling back to tissue-segmented T1",
+                    e1_median, cond_number, "; ".join(reason_parts),
+                )
 
-            return t1_corrected, result
+                if wm_probseg is not None and gm_probseg is not None:
+                    t1_corrected = build_tissue_t1_map(wm_probseg, gm_probseg, field_strength)
+                    t1_corrected = np.where(fill_mask, t1_corrected, np.nan)
+                    result.correction_applied = "tissue_segmented"
+                    result.tissue_t1_used = True
+                    result.reason = f"VFA conditioning gate: {'; '.join(reason_parts)}"
+                    result.median_t1_corrected = expected_median
+                else:
+                    t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
+                    result.correction_applied = "fallback"
+                    result.reason = f"VFA conditioning gate (no tissue maps): {'; '.join(reason_parts)}"
+                    result.fallback_value_ms = t1_ref["default"]
+                    result.median_t1_corrected = t1_ref["default"]
+
+                return t1_corrected, result
 
     # Case 1: Hard reject - impossible values
     # With high NaN fraction, prefer tissue-segmented T1 over uniform fallback

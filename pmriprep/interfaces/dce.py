@@ -1594,6 +1594,46 @@ class T1Mapping(SimpleInterface):
             threshold = np.percentile(signal_data[0][signal_data[0] > 0], 10)
             brain_mask = signal_data[0] > threshold
 
+        # --- VFA Fit Residual (NRMSE) for conditioning gate ---
+        # For n_fa >= 3, compute per-voxel NRMSE to assess VFA fit quality.
+        # Low NRMSE means the SPGR model with nominal flip angles fits the
+        # multi-FA data well, implying B1 is close to nominal.
+        # For n_fa = 2, the system is exactly determined (NRMSE ≡ 0).
+        # Smooth B1 error without a B1 map is invisible to this metric —
+        # fundamental VFA limitation (Deoni et al., MRM 2003).
+        vfa_fit_nrmse: Optional[float] = None
+        if n_fa >= 3:
+            t1_s = t1_map / 1000.0  # back to seconds for E1
+            valid_nrmse = (t1_s > 0) & np.isfinite(t1_s) & brain_mask
+            e1_fit = np.exp(-tr_s / np.where(valid_nrmse, t1_s, 1.0))
+
+            # S0 from closed-form LS: S_i = S0·f_i → S0 = Σ(S·f)/Σ(f²)
+            f_all = np.array([
+                np.sin(fa) * (1 - e1_fit) / (1 - e1_fit * np.cos(fa))
+                for fa in flip_angles_rad
+            ])
+            f2_sum = np.sum(f_all ** 2, axis=0)
+            f2_sum = np.where(f2_sum > 1e-20, f2_sum, 1e-20)  # guard
+            s0_fit = np.sum(signal_data * f_all, axis=0) / f2_sum
+
+            s_pred = s0_fit[np.newaxis] * f_all
+            s_mean = np.mean(signal_data, axis=0)
+            s_mean = np.where(s_mean > 1e-10, s_mean, 1e-10)  # guard
+            nrmse_map = (
+                np.sqrt(np.mean((signal_data - s_pred) ** 2, axis=0)) / s_mean
+            )
+            nrmse_valid = nrmse_map[valid_nrmse]
+            if len(nrmse_valid) > 0:
+                vfa_fit_nrmse = float(np.nanmedian(nrmse_valid))
+                p25 = float(np.nanpercentile(nrmse_valid, 25))
+                p75 = float(np.nanpercentile(nrmse_valid, 75))
+                logger.info(
+                    "VFA fit NRMSE: median=%.2f%%, IQR=[%.2f%%, %.2f%%] "
+                    "(n_fa=%d, %d voxels)",
+                    vfa_fit_nrmse * 100, p25 * 100, p75 * 100,
+                    n_fa, len(nrmse_valid),
+                )
+
         # Set background voxels to NaN BEFORE median filter to prevent
         # finite T1 values from E1-clipped background from contaminating
         # brain-boundary voxels through the 3x3x3 kernel.
@@ -1806,6 +1846,7 @@ class T1Mapping(SimpleInterface):
             gm_probseg=gm_probseg_arr,
             e1_median=e1_median,
             b1_corrected=b1_corrected,
+            vfa_fit_nrmse=vfa_fit_nrmse,
         )
         t1_map = t1_map_arr.astype(np.float32)
         correction_info = correction_result.to_dict()
@@ -1947,6 +1988,8 @@ class T1Mapping(SimpleInterface):
             "conditioning": vfa_conditioning,
             "tr_ms": tr_ms,
             "nan_fraction": round(nan_fraction, 4),
+            "vfa_fit_nrmse": round(vfa_fit_nrmse, 5) if vfa_fit_nrmse is not None else None,
+            "n_flip_angles": n_fa,
         }
 
         # Hemispheric asymmetry: detect systematic left/right coverage loss
