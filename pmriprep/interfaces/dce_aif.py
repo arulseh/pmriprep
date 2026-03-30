@@ -2752,6 +2752,16 @@ class AIFDetection(BaseInterface):
                 )
                 bat_override = True
 
+            # Scale population AIF to match pipeline's internal AIF convention.
+            # The detected AIF path applies /(1-Hct) to convert blood-voxel
+            # ΔR1/r1 to true plasma concentration C_p (line 2612).
+            # Parker (2006) derived AIF parameters from ΔR1/r1 in blood voxels
+            # WITHOUT Hct correction. Under FXL, ΔR1/r1 = (1-Hct) × C_p,
+            # so Parker's reported "C_p" values are effectively in (1-Hct)*C_p
+            # units. Dividing by (1-Hct) brings the population AIF into the
+            # same true-plasma scale as the Hct-corrected detected AIF.
+            aif_curve = aif_curve / (1.0 - HEMATOCRIT)
+
             detection_method = "population"
             quality_score = 0.5  # Moderate score for population AIF
 
