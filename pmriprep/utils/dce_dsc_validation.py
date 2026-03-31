@@ -233,7 +233,7 @@ def calculate_vp_cbv_ratio(
     # Avoid division by zero
     cbv_safe = np.maximum(cbv, MIN_CBV_FOR_VALIDATION)
     ratio = (vp * 100.0) / cbv_safe
-    return ratio  # type: ignore[return-value]
+    return np.asarray(ratio)
 
 
 def get_expected_ratio(

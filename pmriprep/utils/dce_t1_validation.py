@@ -351,7 +351,7 @@ def build_tissue_t1_map(
         sigma = smooth_fwhm_vox / 2.3548
         t1_map = gaussian_filter(t1_map, sigma=sigma)
 
-    return t1_map.astype(np.float32)
+    return np.asarray(t1_map, dtype=np.float32)
 
 
 # ============================================================================

@@ -231,6 +231,7 @@ def _detect_single_signal(
 
     # --- Phase 1: Derivative Anchor ---
     anchor_slope = _detect_max_slope_backtrack(signal, min_baseline=min_baseline)
+    anchor: int | None
 
     if tr < _TR_THRESHOLD_2ND_DERIV:
         anchor_d2 = _detect_second_derivative_peak(signal, min_baseline=min_baseline)
@@ -243,7 +244,7 @@ def _detect_single_signal(
             else:
                 anchor = anchor_slope
         else:
-            anchor = anchor_slope or anchor_d2
+            anchor = anchor_slope if anchor_slope is not None else anchor_d2
     else:
         # Long TR: 2nd derivative unreliable (FWHM/TR < 2)
         anchor = anchor_slope

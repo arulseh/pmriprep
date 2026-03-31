@@ -442,9 +442,7 @@ class BayesianDSCFitter:
         self._validate_inputs(concentration, aif, time_points)
 
         # Estimate noise if not provided
-        noise_std = self.noise_std
-        if noise_std is None:
-            noise_std = self._estimate_noise_std(concentration)
+        noise_std: float = self.noise_std if self.noise_std is not None else self._estimate_noise_std(concentration)
 
         # Initial guesses for multi-start optimization
         x0_prior = np.array(self.model.get_initial_guess(), dtype=np.float64)

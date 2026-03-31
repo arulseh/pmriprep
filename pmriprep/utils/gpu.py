@@ -72,7 +72,7 @@ def detect_gpu_count() -> int:
 
     # PyTorch CUDA
     if torch.cuda.is_available():
-        return torch.cuda.device_count()
+        return int(torch.cuda.device_count())
 
     # PyTorch MPS (macOS Apple Silicon — single compute device)
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():

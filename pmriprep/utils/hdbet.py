@@ -98,7 +98,7 @@ def run_hdbet(
 
     # Empty brain guard: HD-BET may exit 0 but produce all-zero output
     brain_img = nib.load(str(brain_path))
-    brain_data = brain_img.get_fdata()
+    brain_data = brain_img.get_fdata()  # type: ignore[attr-defined]
     if np.max(brain_data) == 0:
         logger.warning("HD-BET produced all-zero brain output")
         return False, None
@@ -111,7 +111,7 @@ def run_hdbet(
         / brain_path.name.replace(".nii.gz", "_mask.nii.gz")
     )
     nib.save(
-        nib.Nifti1Image(mask_data, brain_img.affine, brain_img.header),
+        nib.Nifti1Image(mask_data, brain_img.affine, brain_img.header),  # type: ignore[attr-defined]
         mask_path,
     )
 

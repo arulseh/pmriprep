@@ -438,7 +438,6 @@ def init_dce_preproc_wf(
         vfa_preprocess = pe.Node(
             VFAPreprocess(
                 skip_coregistration=False,
-                skip_flip_validation=config.skip_flip_validation,
             ),
             name="vfa_preprocess",
         )

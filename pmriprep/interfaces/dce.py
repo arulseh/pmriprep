@@ -1557,6 +1557,8 @@ class T1Mapping(SimpleInterface):
             else:
                 rough_mask = signal_data[0] > np.percentile(positive_signal, 10)
             needs_refinement = (e1_map > NLLS_REFINEMENT_E1_THRESHOLD) & rough_mask
+            assert needs_refinement is not None  # narrowed inside hybrid branch
+            assert rough_mask is not None
 
             if np.any(needs_refinement):
                 n_refine = int(needs_refinement.sum())
@@ -2036,7 +2038,8 @@ class T1Mapping(SimpleInterface):
             )
 
             field_key = get_field_strength_key(field_strength)
-            assumed_t1_s = T1_TISSUE_REFERENCE[field_key]["expected_median"] / 1000.0
+            assumed_t1_ms = T1_TISSUE_REFERENCE[field_key]["expected_median"]
+            assumed_t1_s = assumed_t1_ms / 1000.0
             e1_expected = np.exp(-tr_s / assumed_t1_s)
 
             # Select optimal FA pair: widest angular separation
@@ -2063,7 +2066,9 @@ class T1Mapping(SimpleInterface):
             )
             ratio_expected = float(s2_expected / s1_expected) if s1_expected > 0 else 1.0
 
-            # Observed median S2/S1 ratio within brain mask
+            # Observed per-voxel median(S2/S1) within brain mask.
+            # Per-voxel ratios are more robust to spatially varying B1+
+            # than ratio-of-medians (median(S2)/median(S1)).
             s1_brain = signal_data[best_i][brain_mask]
             s2_brain = signal_data[best_j][brain_mask]
             valid = s1_brain > 0
@@ -2073,21 +2078,47 @@ class T1Mapping(SimpleInterface):
                 ratio_observed = 1.0
 
             ratio_error_pct = abs(ratio_observed - ratio_expected) / ratio_expected * 100.0
-            validation_pass = ratio_error_pct < 20.0
+
+            # Tiered tolerance: short-TR VFA is inherently noisier because
+            # E1→1 amplifies the ratio's sensitivity to T1 variability
+            tr_ms = float(self.inputs.tr)
+            tolerance_pct = 50.0 if tr_ms < 10 else 35.0
+
+            if ratio_error_pct < 20.0:
+                validation_pass = True
+                fa_confidence = "high"
+                fa_status = "nominal_angles_correct"
+            elif ratio_error_pct < tolerance_pct:
+                validation_pass = True
+                fa_confidence = "medium"
+                fa_status = "nominal_angles_accepted"
+            else:
+                validation_pass = False
+                fa_confidence = "low"
+                fa_status = "large_ratio_error"
+                # Symmetric swap detection: check if 1/ratio is closer
+                if ratio_observed > 0:
+                    error_swapped_pct = (
+                        abs(1.0 / ratio_observed - ratio_expected)
+                        / ratio_expected * 100
+                    )
+                    if error_swapped_pct < 30.0:
+                        fa_status = "images_may_be_swapped"
+                        fa_confidence = "medium"
 
             if not validation_pass:
                 logger.warning(
                     "Flip angle validation: observed S[%d°]/S[%d°] ratio %.3f differs from "
-                    "expected %.3f by %.1f%% (threshold 20%%). Check flip angles.",
+                    "expected %.3f by %.1f%% (tolerance %.0f%%). Check flip angles.",
                     flip_angles_deg[best_i], flip_angles_deg[best_j],
-                    ratio_observed, ratio_expected, ratio_error_pct,
+                    ratio_observed, ratio_expected, ratio_error_pct, tolerance_pct,
                 )
             else:
                 logger.info(
                     "Flip angle validation: observed S[%d°]/S[%d°] ratio %.3f vs expected "
-                    "%.3f (error %.1f%%)",
+                    "%.3f (error %.1f%%, %s)",
                     flip_angles_deg[best_i], flip_angles_deg[best_j],
-                    ratio_observed, ratio_expected, ratio_error_pct,
+                    ratio_observed, ratio_expected, ratio_error_pct, fa_status,
                 )
 
             qc_metrics["flip_angle_validation"] = {
@@ -2095,6 +2126,9 @@ class T1Mapping(SimpleInterface):
                 "ratio_expected": round(ratio_expected, 4),
                 "ratio_error_pct": round(ratio_error_pct, 1),
                 "validation_pass": validation_pass,
+                "confidence": fa_confidence,
+                "status": fa_status,
+                "t1_assumed_ms": round(assumed_t1_ms, 1),
                 "fa_pair_deg": [round(flip_angles_deg[best_i], 1), round(flip_angles_deg[best_j], 1)],
             }
 
@@ -2464,13 +2498,8 @@ class VFAPreprocessInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Magnetic field strength in Tesla for flip angle validation",
     )
-    skip_flip_validation = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Skip flip angle validation",
-    )
     tr = traits.Float(
-        desc="Repetition time in milliseconds (for flip angle validation)",
+        desc="Repetition time in milliseconds",
     )
 
 
@@ -2511,11 +2540,9 @@ class VFAPreprocess(SimpleInterface):
     skip_coregistration : bool
         If True, skip FLIRT coregistration.
     field_strength : float
-        Field strength in Tesla for flip angle validation.
-    skip_flip_validation : bool
-        If True, skip flip angle validation.
+        Field strength in Tesla.
     tr : float, optional
-        Repetition time in ms for flip angle validation.
+        Repetition time in ms.
 
     Returns
     -------
@@ -2700,17 +2727,6 @@ class VFAPreprocess(SimpleInterface):
 
             # Note: registration_qc_plot left undefined when no coregistration (File traits cannot be None)
 
-        # Flip angle validation
-        if (
-            not self.inputs.skip_flip_validation
-            and n_fa >= 2
-            and isdefined(self.inputs.tr)
-        ):
-            fa_validation = self._validate_flip_angles(
-                vfa_data, flip_angles, self.inputs.tr, self.inputs.field_strength,
-            )
-            qc_metrics["flip_angle_validation"] = fa_validation
-
         # Set outputs
         self._results["out_files"] = out_files
         self._results["reference_file"] = out_files[ref_idx]
@@ -2718,118 +2734,6 @@ class VFAPreprocess(SimpleInterface):
         self._results["qc_metrics"] = qc_metrics
 
         return runtime
-
-    def _validate_flip_angles(
-        self,
-        vfa_data: list[np.ndarray],
-        flip_angles: list[float],
-        tr_ms: float,
-        field_strength: float,
-    ) -> dict[str, Any]:
-        """Validate flip angles by comparing observed vs theoretical signal ratio.
-
-        Parameters
-        ----------
-        vfa_data : list of ndarray
-            VFA signal arrays.
-        flip_angles : list of float
-            Nominal flip angles in degrees.
-        tr_ms : float
-            Repetition time in milliseconds.
-        field_strength : float
-            Field strength in Tesla.
-
-        Returns
-        -------
-        dict
-            Validation results with confidence level.
-        """
-        from pmriprep.utils.dce_t1_validation import (
-            T1_TISSUE_REFERENCE,
-            get_field_strength_key,
-        )
-
-        field_key = get_field_strength_key(field_strength)
-        t1_assumed = T1_TISSUE_REFERENCE[field_key]["default"]
-
-        # Select optimal FA pair: widest angular separation
-        best_i, best_j = 0, 1
-        max_sep = 0.0
-        for ii in range(len(flip_angles)):
-            for jj in range(ii + 1, len(flip_angles)):
-                sep = abs(flip_angles[jj] - flip_angles[ii])
-                if sep > max_sep:
-                    max_sep = sep
-                    best_i, best_j = ii, jj
-
-        s1 = vfa_data[best_i]
-        s2 = vfa_data[best_j]
-        a1 = flip_angles[best_i]
-        a2 = flip_angles[best_j]
-
-        # Use central brain voxels
-        nz, ny, nx = s1.shape
-        z_sl = slice(int(nz * 0.3), int(nz * 0.7))
-        y_sl = slice(int(ny * 0.3), int(ny * 0.7))
-        x_sl = slice(int(nx * 0.3), int(nx * 0.7))
-        center_mask = np.zeros_like(s1, dtype=bool)
-        center_mask[z_sl, y_sl, x_sl] = (
-            (s1[z_sl, y_sl, x_sl] > 0) & (s2[z_sl, y_sl, x_sl] > 0)
-        )
-
-        if np.sum(center_mask) < 100:
-            return {"confidence": "low", "reason": "Insufficient voxels"}
-
-        ratio_observed = float(np.median(s2[center_mask]) / np.median(s1[center_mask]))
-
-        E1 = np.exp(-tr_ms / t1_assumed)
-        a1_rad = np.radians(a1)
-        a2_rad = np.radians(a2)
-
-        ratio_expected = (
-            (np.sin(a2_rad) / np.sin(a1_rad))
-            * ((1 - E1 * np.cos(a1_rad)) / (1 - E1 * np.cos(a2_rad)))
-        )
-
-        ratio_error = abs(ratio_observed - ratio_expected) / max(ratio_expected, 1e-6)
-
-        result: dict[str, Any] = {
-            "ratio_observed": ratio_observed,
-            "ratio_expected": ratio_expected,
-            "ratio_error_pct": ratio_error * 100,
-            "flip_angles_deg": [a1, a2],
-            "fa_pair_deg": [a1, a2],
-            "t1_assumed_ms": t1_assumed,
-        }
-
-        # Short TR tolerance
-        tolerance = 0.50 if tr_ms < 10 else 0.35
-
-        if ratio_error < 0.20:
-            result["confidence"] = "high"
-            result["status"] = "nominal_angles_correct"
-        elif ratio_error < tolerance:
-            result["confidence"] = "high"
-            result["status"] = "nominal_angles_accepted"
-        else:
-            result["confidence"] = "low"
-            result["status"] = "large_ratio_error"
-            # Check for swapped images
-            if ratio_observed < 0.8 and ratio_expected > 1.5:
-                ratio_swapped = 1.0 / ratio_observed
-                error_swapped = abs(ratio_swapped - ratio_expected) / ratio_expected
-                if error_swapped < 0.30:
-                    result["status"] = "images_may_be_swapped"
-                    result["confidence"] = "medium"
-
-            logger.warning(
-                "Flip angle validation: large ratio error (%.1f%%) "
-                "- T1 values may be unreliable",
-                ratio_error * 100,
-            )
-
-        return result
-
 
 class DCEPreprocessInputSpec(BaseInterfaceInputSpec):
     """Input specification for DCEPreprocess interface."""
@@ -3290,7 +3194,7 @@ class DCEPreprocess(SimpleInterface):
         if brain_mask is not None:
             brain_voxels = dce_data[brain_mask]  # (n_voxels, n_volumes)
             if brain_voxels.shape[0] > 100:
-                return np.percentile(brain_voxels, 95, axis=0)
+                return np.asarray(np.percentile(brain_voxels, 95, axis=0))
             # Small mask: mean is more stable
             return np.array([
                 np.mean(dce_data[..., t][brain_mask])
