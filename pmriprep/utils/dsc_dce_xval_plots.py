@@ -18,8 +18,8 @@ from typing import Any, Optional
 import numpy as np
 import numpy.typing as npt
 
+from pmriprep.utils.dce_constants import HEMATOCRIT_ARTERIAL
 from pmriprep.utils.dce_dsc_validation import (
-    HEMATOCRIT_VP_CBV,
     MAX_CBV_FOR_VALIDATION,
     MAX_VP_FOR_VALIDATION,
     MIN_CBV_FOR_VALIDATION,
@@ -39,7 +39,7 @@ def generate_xval_plot(
     session_id: str = "",
     output_path: Optional[str] = None,
     constraint_mode: Optional[str] = None,
-    hematocrit: float = HEMATOCRIT_VP_CBV,
+    hematocrit: float = HEMATOCRIT_ARTERIAL,
     model_selection: Optional[npt.NDArray[Any]] = None,
 ) -> str:
     """Generate a 3-panel cross-validation QC figure.

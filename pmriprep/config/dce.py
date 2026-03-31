@@ -114,7 +114,7 @@ class DCEConfig:
 
     # DSC CBV constraint settings
     cbv_constraint_mode: str = "auto"  # "auto", "hard", "soft", "skip"
-    hematocrit: float = 0.40  # Blood hematocrit for CBV-to-vp conversion
+    hematocrit: float = 0.42  # Arterial hematocrit (from blood draw)
 
     # Resource settings
     num_processes: int = 0  # 0 = use system default

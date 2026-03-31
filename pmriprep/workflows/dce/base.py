@@ -959,6 +959,7 @@ def init_dce_preproc_wf(
             lesion_distance=config.lesion_distance,
             baseline_frames=config.baseline_frames,
             dose=config.dose,
+            hematocrit=config.hematocrit,
         ),
         name="aif_detection",
     )

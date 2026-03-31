@@ -242,9 +242,33 @@ def get_tissue_t1_ranges(field_strength: float) -> TissueT1Ranges:
 # Hematocrit Constant
 # =============================================================================
 
-#: Default hematocrit value (whole blood Gd correction)
+#: Default arterial hematocrit for AIF blood-to-plasma conversion.
+#: QIBA DCE-MRI v2.0 recommendation. Configurable via config YAML.
 #: Used for: C_plasma = C_blood / (1 - hematocrit)
-HEMATOCRIT: Final[float] = 0.42
+HEMATOCRIT_ARTERIAL: Final[float] = 0.42
+
+#: Backwards-compat alias
+HEMATOCRIT = HEMATOCRIT_ARTERIAL
+
+#: Fåhræus ratio: capillary Hct / arterial Hct.
+#: Red blood cells travel faster than plasma in small vessels,
+#: reducing capillary hematocrit relative to arterial.
+#: MRI CBV includes arterioles + capillaries + venules.
+#: Refs: Lipowsky, Microcirculation 2005; Levin et al., MRM 2004;
+#: Boxerman et al., MRM 1995. Literature range: 0.80-0.90.
+FAHRAEUS_RATIO: Final[float] = 0.85
+
+
+def capillary_hematocrit(hct_arterial: float = HEMATOCRIT_ARTERIAL) -> float:
+    """Derive capillary hematocrit from arterial via Fåhræus effect.
+
+    Args:
+        hct_arterial: Arterial hematocrit (default 0.42).
+
+    Returns:
+        Capillary hematocrit (default 0.42 × 0.85 = 0.357).
+    """
+    return hct_arterial * FAHRAEUS_RATIO
 
 
 # =============================================================================

@@ -254,7 +254,7 @@ dce:
 | `no_tortuosity` | bool | `false` | Skip DWI-based tortuosity correction |
 | `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation |
 | `cbv_constraint_mode` | str | `"auto"` | DSC CBV constraint: `auto`, `hard`, `soft`, `skip` |
-| `hematocrit` | float | `0.40` | Blood hematocrit for CBV-to-vp conversion |
+| `hematocrit` | float | `0.42` | Arterial hematocrit (from blood draw). Used for AIF plasma correction; capillary Hct derived via Fåhræus ratio (0.85) |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |

@@ -23,14 +23,14 @@ from pmriprep.utils.qc_standards import QCStatus
 def _make_data(
     n: int = 5000,
     correlation: float = 0.5,
-    vp_mean: float = 0.019,
+    vp_mean: float = 0.020,
     cbv_mean: float = 3.0,
     seed: int = 42,
 ):
     """Generate correlated vp and CBV arrays with a 3D mask.
 
-    Default vp_mean=0.019 and cbv_mean=3.0 give a median ratio near the
-    expected 0.624 = (1 - 0.40) * 1.04.
+    Default vp_mean=0.020 and cbv_mean=3.0 give a median ratio near the
+    expected 0.669 = (1 - 0.357) * 1.04 (capillary Hct = 0.42 * 0.85).
 
     Returns (vp_data, cbv_data, mask) where vp_data and cbv_data are 3D
     arrays of shape (n, 1, 1) and mask is a boolean array.
@@ -310,20 +310,18 @@ class TestTightenedThresholds:
 
     def test_ratio_marginal_warn(self) -> None:
         """Ratio outside ±30% but within ±50% → WARN with 'marginally' text."""
-        # expected = 0.624, ±30% = [0.437, 0.811]
-        # vp_mean=0.012 → ratio ≈ 0.012 * 104 / 0.6 / cbv_mean ≈ lower
+        # expected = 0.669, ±30% = [0.468, 0.870]
+        # vp_mean=0.012 → ratio below expected range
         vp, cbv, mask = _make_data(vp_mean=0.012, cbv_mean=3.0)
         result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
-        # Ratio should be roughly 0.012 / (3.0 * 0.6 / 104) ≈ 0.012 * 104 / 1.8 ≈ 0.69
-        # Actually ratio = median(vp / (cbv * (1-Hct) / (100*rho)))
-        if result.metrics.median_ratio < 0.437 or result.metrics.median_ratio > 0.811:
+        if result.metrics.median_ratio < 0.468 or result.metrics.median_ratio > 0.870:
             # Outside PASS band but possibly within WARN band
-            if 0.312 <= result.metrics.median_ratio <= 0.936:
+            if 0.335 <= result.metrics.median_ratio <= 1.004:
                 assert "marginally" in result.interpretation
 
     def test_ratio_within_pass_band(self) -> None:
         """Ratio within ±30% of expected → PASS on ratio component."""
-        # Default vp_mean=0.019, cbv_mean=3.0 gives ratio ≈ 0.624
+        # Default vp_mean=0.020, cbv_mean=3.0 gives ratio ≈ 0.669
         vp, cbv, mask = _make_data()
         result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
         assert "within expected range" in result.interpretation

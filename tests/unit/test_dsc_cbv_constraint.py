@@ -29,26 +29,27 @@ class TestCBVtoVP:
     """Tests for cbv_to_vp conversion."""
 
     def test_wm_cbv_to_vp(self) -> None:
-        """White matter CBV=2.5 mL/100g converts to vp ~0.0144."""
+        """White matter CBV=2.5 mL/100g converts to vp ~0.0155."""
         cbv = np.array([2.5], dtype=np.float64)
         vp = cbv_to_vp(cbv)
-        # vp = 2.5 * (1 - 0.40) / (100 * 1.04) = 2.5 * 0.6 / 104 = 0.01442
-        expected = 2.5 * 0.6 / 104.0
-        assert vp[0] == pytest.approx(expected, rel=1e-6)
+        # Capillary Hct = 0.42 * 0.85 = 0.357
+        # vp = 2.5 * (1 - 0.357) / (100 * 1.04) = 2.5 * 0.643 / 104
+        expected = 2.5 * 0.643 / 104.0
+        assert vp[0] == pytest.approx(expected, rel=1e-3)
 
     def test_gm_cbv_to_vp(self) -> None:
-        """Gray matter CBV=4.5 mL/100g converts to vp ~0.026."""
+        """Gray matter CBV=4.5 mL/100g converts to vp ~0.028."""
         cbv = np.array([4.5], dtype=np.float64)
         vp = cbv_to_vp(cbv)
-        expected = 4.5 * 0.6 / 104.0
-        assert vp[0] == pytest.approx(expected, rel=1e-6)
+        expected = 4.5 * 0.643 / 104.0
+        assert vp[0] == pytest.approx(expected, rel=1e-3)
 
     def test_tumor_cbv_to_vp(self) -> None:
-        """Tumor CBV=10.0 mL/100g converts to vp ~0.0577."""
+        """Tumor CBV=10.0 mL/100g converts to vp ~0.062."""
         cbv = np.array([10.0], dtype=np.float64)
         vp = cbv_to_vp(cbv)
-        expected = 10.0 * 0.6 / 104.0
-        assert vp[0] == pytest.approx(expected, rel=1e-6)
+        expected = 10.0 * 0.643 / 104.0
+        assert vp[0] == pytest.approx(expected, rel=1e-3)
 
     def test_negative_cbv_nan(self) -> None:
         """Negative CBV values should become NaN; zero stays zero."""

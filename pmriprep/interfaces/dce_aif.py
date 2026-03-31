@@ -48,7 +48,7 @@ from pmriprep.utils.dce_constants import (
     DCE_AIF_EXPECTED_FULL_DOSE,
     EPSILON_CONCENTRATION,
     EPSILON_T1,
-    HEMATOCRIT,
+    HEMATOCRIT_ARTERIAL,
     LESION_EXCLUSION_DISTANCE_MM,
     MIDLINE_EXCLUSION_FRACTION,
     PARKER_R1_REFERENCE,
@@ -482,6 +482,11 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Standard clinical dose for this agent in mmol/kg "
              "(0.1 for most agents, 0.05 for Vueway/gadopiclenol).",
+    )
+    hematocrit = traits.Float(
+        HEMATOCRIT_ARTERIAL,
+        usedefault=True,
+        desc="Arterial hematocrit for blood-to-plasma AIF correction",
     )
 
     # Output files
@@ -2664,7 +2669,7 @@ class AIFDetection(BaseInterface):
             # Convert measured AIF from blood to plasma concentration
             # (tissue conc is in blood units; AIF must be in plasma units
             #  for Tofts model: plasma = blood / (1 - Hct))
-            aif_curve = aif_curve / (1.0 - HEMATOCRIT)
+            aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
             quality_score = float(np.mean(scores))
 
             # Aggregate QC metrics
@@ -2815,7 +2820,7 @@ class AIFDetection(BaseInterface):
             # so Parker's reported "C_p" values are effectively in (1-Hct)*C_p
             # units. Dividing by (1-Hct) brings the population AIF into the
             # same true-plasma scale as the Hct-corrected detected AIF.
-            aif_curve = aif_curve / (1.0 - HEMATOCRIT)
+            aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
 
             detection_method = "population"
             quality_score = 0.5  # Moderate score for population AIF

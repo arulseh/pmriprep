@@ -4,12 +4,12 @@ Post-hoc comparison of DCE-derived vp (plasma volume fraction) with DSC-derived
 CBV (cerebral blood volume) to validate quantification and detect preload effects.
 
 The expected relationship between vp and CBV accounts for:
-- Hematocrit (0.40): vp measures plasma, CBV measures whole blood
-  (microvascular Hct, reduced from large-vessel ~0.45 by Fahraeus-Lindqvist effect)
+- Hematocrit: vp measures plasma, CBV measures whole blood.
+  Capillary Hct derived from arterial (0.42) via Fåhræus ratio (0.85) = 0.357.
 - Tissue density (1.04 g/mL): converts mL/100mL to mL/100g
 
 Expected ratio at 3T with full dose:
-    (vp × 100) / CBV ≈ (1 - Hct) × ρ ≈ 0.624
+    (vp × 100) / CBV ≈ (1 - Hct_capillary) × ρ ≈ 0.669
 
 where:
     vp is in fraction (0-1)
@@ -36,7 +36,11 @@ from typing import Any, Optional, Union
 import numpy as np
 import numpy.typing as npt
 
-from pmriprep.utils.dce_constants import TISSUE_DENSITY
+from pmriprep.utils.dce_constants import (
+    HEMATOCRIT_ARTERIAL,
+    TISSUE_DENSITY,
+    capillary_hematocrit,
+)
 from pmriprep.utils.qc_standards import QCStatus
 
 
@@ -51,11 +55,6 @@ logger = logging.getLogger(__name__)
 # Constants
 # =============================================================================
 
-#: Microvascular hematocrit for vp/CBV comparison.
-#: Uses tissue/capillary Hct (0.40), reduced from large-vessel Hct (~0.45) by the
-#: Fahraeus-Lindqvist effect. Matches dsc_cbv_constraint.py HEMATOCRIT_TISSUE.
-#: Ref: Levin et al., MRM 2004; 51:735-742.
-HEMATOCRIT_VP_CBV: float = 0.40
 
 #: Two-tier ratio tolerance for validation.
 #: PASS band: expected × (1 ± 0.30). WARN band: expected × (1 ± 0.50).
@@ -237,25 +236,25 @@ def calculate_vp_cbv_ratio(
 
 
 def get_expected_ratio(
-    hematocrit: float = HEMATOCRIT_VP_CBV,
+    hematocrit: float = HEMATOCRIT_ARTERIAL,
     tissue_density: float = TISSUE_DENSITY,
 ) -> float:
     """Calculate expected vp/CBV ratio from physiological parameters.
 
     The expected ratio relates plasma volume (vp) to whole blood volume (CBV):
-        expected_ratio = (1 - hematocrit) * tissue_density
+        expected_ratio = (1 - Hct_capillary) * tissue_density
+
+    Capillary hematocrit is derived from arterial via Fåhræus ratio (0.85).
 
     Args:
-        hematocrit: Hematocrit value (default: 0.40).
+        hematocrit: Arterial hematocrit (default: 0.42).
         tissue_density: Tissue density in g/mL (default: 1.04).
 
     Returns:
         Expected (vp * 100) / CBV ratio.
     """
-    # vp measures plasma, CBV measures whole blood
-    # vp = CBV * (1 - hematocrit) * tissue_density
-    # (vp * 100) / CBV = (1 - hematocrit) * tissue_density
-    return (1.0 - hematocrit) * tissue_density
+    hct_cap = capillary_hematocrit(hematocrit)
+    return (1.0 - hct_cap) * tissue_density
 
 
 def calculate_correction_factor(
@@ -290,7 +289,7 @@ def validate_vp_cbv(
     vp_data: npt.NDArray[np.floating[npt.NBitBase]],
     cbv_data: npt.NDArray[np.floating[npt.NBitBase]],
     mask: npt.NDArray[np.bool_],
-    hematocrit: float = HEMATOCRIT_VP_CBV,
+    hematocrit: float = HEMATOCRIT_ARTERIAL,
     tissue_density: float = TISSUE_DENSITY,
     constraint_mode: Optional[str] = None,
     dsc_preload_configured: Optional[bool] = None,
@@ -551,7 +550,7 @@ def validate_vp_cbv_from_files(
     vp_path: Union[str, Path],
     cbv_path: Union[str, Path],
     mask_path: Union[str, Path],
-    hematocrit: float = HEMATOCRIT_VP_CBV,
+    hematocrit: float = HEMATOCRIT_ARTERIAL,
     tissue_density: float = TISSUE_DENSITY,
     constraint_mode: Optional[str] = None,
     dsc_preload_configured: Optional[bool] = None,

@@ -29,7 +29,9 @@ import numpy as np
 import numpy.typing as npt
 
 from pmriprep.utils.dce_constants import (
+    HEMATOCRIT_ARTERIAL,
     TISSUE_DENSITY,
+    capillary_hematocrit,
 )
 from pmriprep.utils.dsc_aif import (
     GAMMA_PEAK_RATIO_MIN,
@@ -41,11 +43,6 @@ from pmriprep.utils.dsc_aif import (
 # Constants
 # =============================================================================
 
-#: Tissue hematocrit for CBV-to-vp conversion.
-#: Brain tissue effective hematocrit (~0.40) is lower than arterial hematocrit
-#: (~0.42) due to Fåhraeus-Lindqvist effect in capillaries.
-#: Ref: Levin et al. MRM 2004; 51:735-742
-HEMATOCRIT_TISSUE: float = 0.40
 
 #: Maximum physiological vp value (brain tissue)
 VP_MAX_PHYSIOLOGICAL: float = 0.2
@@ -490,29 +487,34 @@ def assess_dsc_cbv_quality(
 
 def cbv_to_vp(
     cbv_data: npt.NDArray[np.floating],
-    hematocrit: float = HEMATOCRIT_TISSUE,
+    hematocrit: float = HEMATOCRIT_ARTERIAL,
     tissue_density: float = TISSUE_DENSITY,
 ) -> npt.NDArray[np.floating]:
     """Convert DSC-derived CBV map to plasma volume fraction (vp).
 
-    Formula: vp = CBV * (1 - Hct) / (100 * rho)
+    Formula: vp = CBV * (1 - Hct_capillary) / (100 * rho)
+
+    Capillary hematocrit is derived from arterial via Fåhræus ratio (0.85).
 
     Unit analysis:
         (mL/100g) * (1) / (100 * g/mL) = mL/mL = dimensionless
 
-    Typical brain values (Hct=0.40, rho=1.04):
-        WM CBV 2.5 mL/100g -> vp ~0.014
-        GM CBV 4.5 mL/100g -> vp ~0.026
-        Tumor 5-15 mL/100g -> vp ~0.029-0.087
+    Typical brain values (arterial Hct=0.42, capillary=0.357, rho=1.04):
+        WM CBV 2.5 mL/100g -> vp ~0.015
+        GM CBV 4.5 mL/100g -> vp ~0.028
+        Tumor 5-15 mL/100g -> vp ~0.031-0.093
 
     Args:
         cbv_data: 3D CBV map in mL/100g.
-        hematocrit: Tissue hematocrit fraction (default 0.40).
+        hematocrit: Arterial hematocrit (default 0.42). Capillary Hct
+            derived internally via Fåhræus ratio.
         tissue_density: Tissue density in g/mL (default 1.04).
 
     Returns:
         3D vp map (dimensionless, 0-0.2). Invalid values set to NaN.
     """
+    hct_cap = capillary_hematocrit(hematocrit)
+
     # Guard invalid input values
     cbv_safe = np.where(
         np.isfinite(cbv_data) & (cbv_data >= 0),
@@ -521,7 +523,7 @@ def cbv_to_vp(
     )
 
     # Apply conversion
-    vp = cbv_safe * (1.0 - hematocrit) / (100.0 * tissue_density)
+    vp = cbv_safe * (1.0 - hct_cap) / (100.0 * tissue_density)
 
     # Clip to physiological range; out-of-range -> NaN
     vp = np.where(
@@ -622,7 +624,7 @@ def prepare_vp_constraint(
     aif_qc_file: Union[str, Path],
     brain_mask_file: Union[str, Path],
     mode_override: Optional[str] = None,
-    hematocrit: float = HEMATOCRIT_TISSUE,
+    hematocrit: float = HEMATOCRIT_ARTERIAL,
     preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
 ) -> VpConstraintResult:
@@ -671,7 +673,7 @@ def prepare_vp_constraint_from_data(
     aif_qc_data: dict[str, Any],
     brain_mask_file: Union[str, Path],
     mode_override: Optional[str] = None,
-    hematocrit: float = HEMATOCRIT_TISSUE,
+    hematocrit: float = HEMATOCRIT_ARTERIAL,
     preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
 ) -> VpConstraintResult:

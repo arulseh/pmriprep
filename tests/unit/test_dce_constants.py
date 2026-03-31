@@ -5,7 +5,10 @@ import pytest
 from pmriprep.utils.dce_constants import (
     EPSILON_T1,
     EPSILON_VE,
+    FAHRAEUS_RATIO,
     HEMATOCRIT,
+    HEMATOCRIT_ARTERIAL,
+    capillary_hematocrit,
     KTRANS_BOUNDS,
     MAX_KEP,
     VE_BOUNDS,
@@ -147,6 +150,10 @@ class TestConstantValues:
     def test_constants_values(self) -> None:
         """Verify key constant values match expected."""
         assert HEMATOCRIT == 0.42
+        assert HEMATOCRIT_ARTERIAL == 0.42
+        assert FAHRAEUS_RATIO == 0.85
+        assert abs(capillary_hematocrit() - 0.357) < 1e-6
+        assert abs(capillary_hematocrit(0.30) - 0.255) < 1e-6  # anemia
         assert EPSILON_T1 == 0.01
         assert MAX_KEP == 1000.0
 
