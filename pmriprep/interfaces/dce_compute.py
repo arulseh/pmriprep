@@ -29,6 +29,7 @@ from pmriprep.utils.dce_constants import (
     KTRANS_BOUNDS,
     MIN_ENHANCEMENT_MM,
     PS_BOUNDS,
+    TOFTS_ENHANCEMENT_GATE_MM,
     VE_BOUNDS,
     VP_BOUNDS,
 )
@@ -171,6 +172,32 @@ def _init_worker(
     _worker_ctx["BayesianPKFitter"] = BayesianPKFitter
     _worker_ctx["create_vp_prior_from_dsc"] = create_vp_prior_from_dsc
     _worker_ctx["ConstraintMode"] = ConstraintMode
+
+
+def _gate_bic_candidates(
+    max_enhancement: float,
+    bic_candidates: dict[str, Any],
+    threshold: float = TOFTS_ENHANCEMENT_GATE_MM,
+) -> dict[str, Any]:
+    """Exclude Standard Tofts from BIC candidates at low enhancement.
+
+    At low enhancement, the intravascular contribution vp×Cp(t) dominates
+    tissue concentration. Standard Tofts (which lacks a vp term) confounds
+    this with Ktrans, causing ~70x overestimation (Sourbron & Buckley MRM
+    2011). Extended Tofts (has vp) and Patlak (has vp) are structurally
+    sound and remain candidates.
+
+    Args:
+        max_enhancement: Maximum tissue concentration in mM.
+        bic_candidates: Dict of candidate name → model instance.
+        threshold: Enhancement gate in mM (default 0.05).
+
+    Returns:
+        Filtered candidate dict with Standard Tofts removed if below threshold.
+    """
+    if max_enhancement < threshold and "tofts" in bic_candidates:
+        return {k: v for k, v in bic_candidates.items() if k != "tofts"}
+    return bic_candidates
 
 
 def _fit_single_voxel(
@@ -332,8 +359,14 @@ def _fit_single_voxel(
 
         # N-model BIC selection (auto mode)
         bic_candidates = _worker_ctx.get("bic_candidates", {})
+        tofts_gated = False
 
         if is_auto and bic_candidates:
+            orig_candidates = bic_candidates
+            bic_candidates = _gate_bic_candidates(
+                float(np.max(prepared_curve)), bic_candidates,
+            )
+            tofts_gated = len(bic_candidates) < len(orig_candidates)
             all_results = [result]  # primary model already fitted
 
             for cname, cmodel in bic_candidates.items():
@@ -474,6 +507,7 @@ def _fit_single_voxel(
             "selected_model_name": selected_model_name,
             "delta_bic": float(delta_bic) if is_auto else np.nan,
             "tofts_r_squared": float(tofts_r2) if is_auto else np.nan,
+            "tofts_gated": tofts_gated,
         }
 
     except Exception:
@@ -1616,6 +1650,7 @@ class ComputeDCEMaps(BaseInterface):
         n_constrained = 0
         n_unconstrained_fallback = 0
         n_rejected_postfit = 0
+        n_tofts_gated = 0
         r2_list: list[float] = []
         failure_reason_counts: dict[str, int] = {}
         mcmc_rhat_lists: dict[str, list[float]] = {}
@@ -1881,6 +1916,8 @@ class ComputeDCEMaps(BaseInterface):
                 z = abs(vp_fitted - vp_prior) / prior_sigma
                 z_departure_list.append(z)
 
+            if res.get("tofts_gated", False):
+                n_tofts_gated += 1
             if res["converged"]:
                 n_converged += 1
                 r2_list.append(res["r_squared"])
@@ -1906,6 +1943,7 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["n_rejected_postfit"] = n_rejected_postfit
         qc_metrics["failure_reasons"] = failure_reason_counts
 
+        qc_metrics["n_tofts_gated"] = n_tofts_gated
         qc_metrics["model_selection"] = "auto" if is_auto else "fixed"
 
         # Per-model selection stats (auto mode)
@@ -2483,6 +2521,17 @@ class ComputeDCEMaps(BaseInterface):
         for cname, result in gpu_results.items():
             if cname in bic_arrays:
                 bic_arrays[cname][~result.converged] = np.inf
+
+        # Enhancement gate: exclude Standard Tofts for low-enhancement voxels
+        # where its lack of vp term confounds intravascular signal with Ktrans.
+        if "tofts" in bic_arrays:
+            baseline_means = tissue_curves[:, :baseline_frames].mean(axis=1)
+            max_enh = (tissue_curves - baseline_means[:, np.newaxis]).max(axis=1)
+            low_enh = max_enh < TOFTS_ENHANCEMENT_GATE_MM
+            bic_arrays["tofts"][low_enh] = np.inf
+            n_tofts_gated = int(low_enh.sum())
+        else:
+            n_tofts_gated = 0
 
         # Select min-BIC model per voxel
         cand_list = [c for c in candidate_names if c in gpu_results]
