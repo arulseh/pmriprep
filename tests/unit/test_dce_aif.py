@@ -365,3 +365,82 @@ class TestFinalWashoutQC:
 
         washout = compute_dce_aif_washout(curve, baseline_frames)
         assert washout > 0.9, f"Expected washout ~1.0, got {washout:.3f}"
+
+
+# =============================================================================
+# Rescue Score Tests
+# =============================================================================
+
+
+class TestComputeRescueScore:
+    """Tests for _compute_rescue_score — venous AIF rejection in whole-brain mode."""
+
+    def test_rescue_rejects_subthreshold_peak_wholebrain(self) -> None:
+        """Whole-brain: peak below floor (1.07 < 1.5 mM) → rejected."""
+        score = AIFDetection._compute_rescue_score(
+            candidate_peak=1.07, peak_min_expected=5.0, peak_floor=1.5,
+            tier_used=1, is_likely_venous=False, atlas_constrained=False,
+        )
+        assert score == 0.0
+
+    def test_rescue_adequacy_scaling_wholebrain(self) -> None:
+        """Whole-brain: marginal peak gets adequacy penalty.
+
+        peak_adequacy = 2.0/5.0 = 0.4, score = 1.0 * 0.4 = 0.4.
+        Note: 0.4 < _MIN_CANDIDATE_SCORE (0.5), so downstream filter
+        would reject this candidate — intentional conservative behavior.
+        """
+        score = AIFDetection._compute_rescue_score(
+            candidate_peak=2.0, peak_min_expected=5.0, peak_floor=1.5,
+            tier_used=1, is_likely_venous=False, atlas_constrained=False,
+        )
+        assert abs(score - 0.4) < 1e-6
+
+    def test_rescue_venous_stacks_wholebrain(self) -> None:
+        """Whole-brain + venous: both penalties stack.
+
+        base=1.0, venous=0.3, adequacy=3.0/5.0=0.6 → 1.0*0.3*0.6=0.18.
+        """
+        score = AIFDetection._compute_rescue_score(
+            candidate_peak=3.0, peak_min_expected=5.0, peak_floor=1.5,
+            tier_used=1, is_likely_venous=True, atlas_constrained=False,
+        )
+        assert abs(score - 0.18) < 1e-6
+
+    def test_rescue_atlas_no_adequacy_penalty(self) -> None:
+        """Atlas-constrained: no peak adequacy penalty (low peaks expected)."""
+        score = AIFDetection._compute_rescue_score(
+            candidate_peak=1.0, peak_min_expected=5.0, peak_floor=0.75,
+            tier_used=1, is_likely_venous=False, atlas_constrained=True,
+        )
+        # base_score=1.0, peak_adequacy=1.0 (atlas skips scaling)
+        assert abs(score - 1.0) < 1e-6
+
+    def test_rescue_atlas_keeps_low_floor(self) -> None:
+        """Atlas-constrained: 0.9 mM passes the 0.75 mM floor."""
+        score = AIFDetection._compute_rescue_score(
+            candidate_peak=0.9, peak_min_expected=5.0, peak_floor=0.75,
+            tier_used=1, is_likely_venous=False, atlas_constrained=True,
+        )
+        assert score > 0.0
+
+    def test_rescue_zero_peak(self) -> None:
+        """Zero peak is always rejected regardless of mode."""
+        for atlas in (True, False):
+            score = AIFDetection._compute_rescue_score(
+                candidate_peak=0.0, peak_min_expected=5.0, peak_floor=0.75,
+                tier_used=1, is_likely_venous=False, atlas_constrained=atlas,
+            )
+            assert score == 0.0
+
+    def test_rescue_half_dose_wholebrain(self) -> None:
+        """Half-dose whole-brain: 1.5 mM peak passes floor and quality filter.
+
+        peak_min=2.5 (half dose), floor=0.75, adequacy=1.5/2.5=0.6.
+        score = 1.0 * 0.6 = 0.6 (passes _MIN_CANDIDATE_SCORE=0.5).
+        """
+        score = AIFDetection._compute_rescue_score(
+            candidate_peak=1.5, peak_min_expected=2.5, peak_floor=0.75,
+            tier_used=1, is_likely_venous=False, atlas_constrained=False,
+        )
+        assert abs(score - 0.6) < 1e-6

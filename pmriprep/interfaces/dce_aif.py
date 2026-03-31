@@ -1405,6 +1405,57 @@ class AIFDetection(BaseInterface):
         return min(1.0, score), metrics
 
     # -----------------------------------------------------------------
+    # Rescue Scoring
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _compute_rescue_score(
+        candidate_peak: float,
+        peak_min_expected: float,
+        peak_floor: float,
+        tier_used: int,
+        is_likely_venous: bool,
+        atlas_constrained: bool,
+    ) -> float:
+        """Compute rescue score for a candidate that scored 0 from the main scorer.
+
+        When the arterial cascade accepts a candidate but the scorer rejects it
+        (e.g., due to FWHM/CNR), this determines whether to rescue it with a
+        tier-based fallback score, scaled by peak adequacy for whole-brain mode.
+
+        Atlas-constrained detection skips peak adequacy scaling because low
+        measured peaks (0.8-1.3 mM at full dose) are expected from temporal
+        undersampling + partial volume in known arterial territory.
+
+        Args:
+            candidate_peak: Candidate's peak concentration in mM.
+            peak_min_expected: Expected minimum arterial peak for this dose.
+            peak_floor: Minimum peak to allow rescue (criteria/mode-dependent).
+            tier_used: Arterial cascade tier (1=strict, 7=last resort).
+            is_likely_venous: Whether timing-based venous flag was set.
+            atlas_constrained: Whether detection used atlas spatial constraint.
+
+        Returns:
+            Rescue score (0.0 if rejected, else tier-based score x peak adequacy).
+        """
+        if candidate_peak < peak_floor:
+            return 0.0
+        base_score = max(0.1, round(1.0 - (tier_used - 1) * 0.1, 2))
+        # For whole-brain detection, scale by peak adequacy to penalize
+        # sub-arterial peaks (venous contamination risk without spatial prior).
+        # Atlas-constrained detection skips this — low peaks are expected
+        # from temporal undersampling + partial volume in known arterial territory.
+        if atlas_constrained:
+            peak_adequacy = 1.0
+        else:
+            # Guard against zero peak_min_expected (e.g., missing dose metadata);
+            # min(1.0, ...) caps adequacy so the guard only prevents division by zero.
+            peak_adequacy = min(1.0, candidate_peak / max(peak_min_expected, 1e-6))
+        if is_likely_venous:
+            return base_score * 0.3 * peak_adequacy
+        return base_score * peak_adequacy
+
+    # -----------------------------------------------------------------
     # Spatial Exclusions (unchanged from original)
     # -----------------------------------------------------------------
 
@@ -1745,9 +1796,16 @@ class AIFDetection(BaseInterface):
         # Pass tissue TTP so timing is factored into scoring
         # Precompute physiological peak floor (loop-invariant)
         peak_min_expected, _ = self._get_expected_peak_range()
-        # Most permissive floor: 15% of minimum expected arterial peak
-        # (matches peak_tol for permissive/degraded criteria in _score_dce_candidate)
-        peak_floor = peak_min_expected * 0.15
+        # Whole-brain: higher floor (match scorer's peak_tol) to reject venous
+        # candidates that lack a spatial prior.
+        # Atlas-constrained: keep permissive floor — low peaks (0.8-1.3 mM at
+        # full dose) are expected from temporal undersampling + partial volume
+        # in known arterial territory (ICA/MCA).
+        if atlas_constrained:
+            peak_floor = peak_min_expected * 0.15  # 0.75 mM at full dose
+        else:
+            peak_tol_for_rescue = 0.3 if criteria in ("strict", "relaxed") else 0.15
+            peak_floor = peak_min_expected * peak_tol_for_rescue  # 1.5 mM at full dose strict
 
         scores: list[float] = []
         for idx, (x, y, z) in enumerate(candidates):
@@ -1762,22 +1820,18 @@ class AIFDetection(BaseInterface):
             # If score is 0, check whether peak is physiologically plausible
             # before applying tier-based fallback
             if score <= 0:
-                # The arterial cascade uses relative (percentile) thresholds,
-                # so tissue/vein peaks can pass. The scorer correctly rejects
-                # them; don't override when peak is non-physiological.
                 candidate_peak = all_metrics[idx].get("peak_mm", 0.0)
-
-                if candidate_peak < peak_floor:
-                    # Peak far below expected arterial range - keep rejected
-                    score = 0.0
-                else:
-                    # Score=0 due to other criteria (FWHM, CNR, etc.) -
-                    # tier-based fallback is appropriate
-                    base_score = max(0.1, round(1.0 - (tier_used - 1) * 0.1, 2))
-                    if all_metrics[idx].get("is_likely_venous", False):
-                        score = base_score * 0.3
-                    else:
-                        score = base_score
+                score = self._compute_rescue_score(
+                    candidate_peak, peak_min_expected, peak_floor,
+                    tier_used, all_metrics[idx].get("is_likely_venous", False),
+                    atlas_constrained,
+                )
+                if score <= 0:
+                    logger.debug(
+                        "Rescue rejected voxel %d: peak %.2f mM < floor %.2f mM "
+                        "(criteria=%s, atlas=%s)",
+                        idx, candidate_peak, peak_floor, criteria, atlas_constrained,
+                    )
             scores.append(score)
 
         # ----- Peak timing validation (40% cutoff) -----
@@ -2493,6 +2547,7 @@ class AIFDetection(BaseInterface):
                         conc_data, search_mask, n_candidates, tr,
                         baseline_frames, crit,
                         tissue_ttp_frame=tissue_ttp_frame,
+                        atlas_constrained=False,
                     )
                     if candidates:
                         detection_method = "automatic"
@@ -2793,6 +2848,20 @@ class AIFDetection(BaseInterface):
                 scaling_factor = target / current_peak
                 aif_curve = aif_curve * scaling_factor
 
+                if scaling_factor > 3.0:
+                    logger.warning(
+                        "AIF scaling factor %.2f > 3.0 — detected AIF peak "
+                        "(%.2f mM) is far below expected arterial range. "
+                        "Results may be unreliable.",
+                        scaling_factor, current_peak,
+                    )
+                elif scaling_factor > 2.0:
+                    logger.warning(
+                        "AIF scaling factor %.2f > 2.0 — detected AIF peak "
+                        "(%.2f mM) is substantially below expected range.",
+                        scaling_factor, current_peak,
+                    )
+
         # Compute final AIF metrics
         final_peak = compute_dce_aif_peak_concentration(aif_curve)
         final_fwhm = compute_dce_aif_fwhm_seconds(aif_curve, tr, baseline_frames)
@@ -2827,6 +2896,7 @@ class AIFDetection(BaseInterface):
                 "blood_t1_seconds": blood_t1,
                 "field_strength_t": field_strength,
                 "scaling_factor": scaling_factor,
+                "scaling_factor_warning": scaling_factor > 2.0,
                 "detection_method": detection_method,
                 "quality_score": quality_score,
                 "baseline_frames": baseline_frames,
