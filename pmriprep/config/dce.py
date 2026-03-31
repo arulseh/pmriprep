@@ -46,10 +46,6 @@ class DCEConfig:
         tfl_b1map (pre-computed flip angle map), none (skip B1+ correction).
     no_t1 : bool
         Skip T1 mapping (use field-strength-appropriate default T1).
-    skip_flip_validation : bool
-        Skip flip angle validation in VFA T1 mapping.
-    lenient_t1_qc : bool
-        Use lenient T1 QC ranges (500-2500ms vs strict).
     no_tortuosity : bool
         Skip DWI-based tortuosity correction.
     no_dsc_validation : bool
@@ -97,9 +93,7 @@ class DCEConfig:
     # T1 mapping settings
     b1_method: Literal["auto", "afi", "tfl_b1map", "none"] = "auto"
     no_t1: bool = False
-    skip_flip_validation: bool = False
-    lenient_t1_qc: bool = False
-    t1_correction: Literal["auto", "none", "offset", "fallback"] = "auto"
+    t1_correction_mode: Literal["auto", "none", "offset", "fallback"] = "auto"
     t1_method: Literal["hybrid", "wlls", "nlls"] = "hybrid"
     t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
     # Processing settings

@@ -1230,11 +1230,6 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Skip T1 mapping (return uniform T1=1200ms map)",
     )
-    lenient_qc = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Use lenient T1 QC ranges (500-2500ms) for clinical variability",
-    )
     field_strength = traits.Float(
         3.0,
         usedefault=True,
@@ -1327,8 +1322,6 @@ class T1Mapping(SimpleInterface):
         Brain mask for QC calculations
     skip_t1 : bool
         If True, skip T1 mapping and return uniform T1=1200ms map
-    lenient_qc : bool
-        If True, use expanded QC range (500-2500ms) for clinical cases
     field_strength : float
         Magnetic field strength in Tesla for QC range lookup
 
@@ -1377,8 +1370,8 @@ class T1Mapping(SimpleInterface):
         T1 = -TR / ln(E1)
 
     QC ranges by field strength (3T):
-        - WM T1: 800-1000ms (lenient: 500-2500ms)
-        - GM T1: 1200-1600ms (lenient: 500-2500ms)
+        - WM T1: 800-1000ms
+        - GM T1: 1200-1600ms
 
     References
     ----------
@@ -1402,7 +1395,6 @@ class T1Mapping(SimpleInterface):
         from pmriprep.utils.dce_constants import (
             DEFAULT_T1_MS,
             EPSILON_TRIG,
-            LENIENT_T1_RANGE,
             NLLS_REFINEMENT_E1_THRESHOLD,
             SLAB_EROSION_MAX_SLICES,
             get_b1_thresholds,
@@ -1918,13 +1910,8 @@ class T1Mapping(SimpleInterface):
         # Calculate QC metrics
         qc_ranges = get_tissue_t1_ranges(field_strength)
 
-        # Use lenient range if specified
-        if self.inputs.lenient_qc:
-            wm_range = LENIENT_T1_RANGE
-            gm_range = LENIENT_T1_RANGE
-        else:
-            wm_range = (qc_ranges.white_matter.min, qc_ranges.white_matter.max)
-            gm_range = (qc_ranges.gray_matter.min, qc_ranges.gray_matter.max)
+        wm_range = (qc_ranges.white_matter.min, qc_ranges.white_matter.max)
+        gm_range = (qc_ranges.gray_matter.min, qc_ranges.gray_matter.max)
 
         # Estimate WM and GM mean T1 from T1 distribution in brain
         t1_in_brain = t1_map[brain_mask]
@@ -1964,7 +1951,6 @@ class T1Mapping(SimpleInterface):
             "field_strength_t": field_strength,
             "wm_range_ms": wm_range,
             "gm_range_ms": gm_range,
-            "lenient_qc": self.inputs.lenient_qc,
             "csf_excluded": csf_excluded,
             "median_filtered": True,
             "t1_method": t1_method,

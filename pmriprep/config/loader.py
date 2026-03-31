@@ -135,7 +135,6 @@ def merge_cli_config(
         "dce_b1_method": ("dce", "b1_method"),
         "dce_no_t1": ("dce", "no_t1"),
         "dce_t1_map": ("dce", "t1_map_file"),
-        "dce_t1_method": ("dce", "t1_method"),
         "dce_dose": ("dce", "dose"),
         "dce_r1": ("dce", "r1_relaxivity"),
         # Anatomical options

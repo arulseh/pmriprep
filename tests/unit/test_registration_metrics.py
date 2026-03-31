@@ -86,8 +86,12 @@ class TestCalculateCorrelation:
 
     def test_constant_arrays_return_zero(self) -> None:
         """Constant arrays (zero variance) return 0.0 instead of NaN."""
+        import warnings
+
         image = np.ones((10, 10), dtype=np.float64)
-        assert calculate_correlation(image, image) == pytest.approx(0.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            assert calculate_correlation(image, image) == pytest.approx(0.0)
 
 
 class TestCalculateNMI:

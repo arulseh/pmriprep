@@ -554,9 +554,6 @@ NLLS_REFINEMENT_E1_THRESHOLD: Final[float] = 0.995
 #: Default T1 value (ms) when T1 mapping is skipped
 DEFAULT_T1_MS: Final[float] = 1200.0
 
-#: Lenient T1 QC range (ms) for clinical variability
-LENIENT_T1_RANGE: Final[tuple[float, float]] = (500.0, 2500.0)
-
 
 # =============================================================================
 # DCE Processing Defaults

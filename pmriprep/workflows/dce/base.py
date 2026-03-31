@@ -474,8 +474,7 @@ def init_dce_preproc_wf(
         t1_mapping = pe.Node(
             T1Mapping(
                 skip_t1=False,
-                lenient_qc=config.lenient_t1_qc,
-                t1_correction_mode=config.t1_correction,
+                t1_correction_mode=config.t1_correction_mode,
                 t1_method=config.t1_method,
             ),
             name="t1_mapping",
