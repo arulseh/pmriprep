@@ -528,7 +528,7 @@ class AIFDetection(BaseInterface):
 
     The detection follows a multi-level cascade:
     1. Atlas-based search (strict → relaxed → permissive)
-    2. Automatic whole-brain search (relaxed → permissive → degraded)
+    2. Automatic whole-brain search (relaxed only)
     3. Parker population AIF as fallback
 
     Enhanced search includes:
@@ -1273,6 +1273,7 @@ class AIFDetection(BaseInterface):
         baseline_frames: int,
         criteria: str,
         tissue_ttp_frame: float | None = None,
+        atlas_constrained: bool = False,
     ) -> tuple[float, dict[str, float]]:
         """Score a candidate DCE AIF curve.
 
@@ -1335,8 +1336,15 @@ class AIFDetection(BaseInterface):
             return 0.0, metrics
 
         # 3. Peak concentration (must be physiological)
-        # Allow tolerance scaling with criteria level
-        peak_tol = 0.3 if criteria in ("strict", "relaxed") else 0.15
+        # Whole-brain: stricter peak gate (no spatial prior to compensate).
+        # 0.5 × 5.0 mM = 2.5 mM floor at full dose. At TR=4.76s, a true
+        # artery sampled at ~60% of peak ≈ 3.6 mM still passes.
+        # Atlas-constrained: lower gate — low peaks expected from temporal
+        # undersampling + partial volume in known arterial territory.
+        if atlas_constrained:
+            peak_tol = 0.3 if criteria in ("strict", "relaxed") else 0.15
+        else:
+            peak_tol = 0.5 if criteria in ("strict", "relaxed") else 0.3
         peak_ceiling = 3.0 if criteria in ("strict", "relaxed") else 5.0
         if peak < peak_min * peak_tol or peak > peak_max * peak_ceiling:
             return 0.0, metrics
@@ -1809,8 +1817,8 @@ class AIFDetection(BaseInterface):
         if atlas_constrained:
             peak_floor = peak_min_expected * 0.15  # 0.75 mM at full dose
         else:
-            peak_tol_for_rescue = 0.3 if criteria in ("strict", "relaxed") else 0.15
-            peak_floor = peak_min_expected * peak_tol_for_rescue  # 1.5 mM at full dose strict
+            peak_tol_for_rescue = 0.5 if criteria in ("strict", "relaxed") else 0.3
+            peak_floor = peak_min_expected * peak_tol_for_rescue  # 2.5 mM at full dose strict
 
         scores: list[float] = []
         for idx, (x, y, z) in enumerate(candidates):
@@ -1818,6 +1826,7 @@ class AIFDetection(BaseInterface):
             score, scored_metrics = self._score_dce_candidate(
                 curve, tr, baseline_frames, criteria,
                 tissue_ttp_frame=tissue_ttp_computed,
+                atlas_constrained=atlas_constrained,
             )
             # Update metrics with timing score if computed
             if "timing_score" in scored_metrics:

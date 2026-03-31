@@ -376,9 +376,9 @@ class TestComputeRescueScore:
     """Tests for _compute_rescue_score — venous AIF rejection in whole-brain mode."""
 
     def test_rescue_rejects_subthreshold_peak_wholebrain(self) -> None:
-        """Whole-brain: peak below floor (1.07 < 1.5 mM) → rejected."""
+        """Whole-brain: peak below floor (1.858 < 2.5 mM) → rejected."""
         score = AIFDetection._compute_rescue_score(
-            candidate_peak=1.07, peak_min_expected=5.0, peak_floor=1.5,
+            candidate_peak=1.858, peak_min_expected=5.0, peak_floor=2.5,
             tier_used=1, is_likely_venous=False, atlas_constrained=False,
         )
         assert score == 0.0
@@ -386,15 +386,13 @@ class TestComputeRescueScore:
     def test_rescue_adequacy_scaling_wholebrain(self) -> None:
         """Whole-brain: marginal peak gets adequacy penalty.
 
-        peak_adequacy = 2.0/5.0 = 0.4, score = 1.0 * 0.4 = 0.4.
-        Note: 0.4 < _MIN_CANDIDATE_SCORE (0.5), so downstream filter
-        would reject this candidate — intentional conservative behavior.
+        peak_adequacy = 3.0/5.0 = 0.6, score = 1.0 * 0.6 = 0.6.
         """
         score = AIFDetection._compute_rescue_score(
-            candidate_peak=2.0, peak_min_expected=5.0, peak_floor=1.5,
+            candidate_peak=3.0, peak_min_expected=5.0, peak_floor=2.5,
             tier_used=1, is_likely_venous=False, atlas_constrained=False,
         )
-        assert abs(score - 0.4) < 1e-6
+        assert abs(score - 0.6) < 1e-6
 
     def test_rescue_venous_stacks_wholebrain(self) -> None:
         """Whole-brain + venous: both penalties stack.
@@ -402,7 +400,7 @@ class TestComputeRescueScore:
         base=1.0, venous=0.3, adequacy=3.0/5.0=0.6 → 1.0*0.3*0.6=0.18.
         """
         score = AIFDetection._compute_rescue_score(
-            candidate_peak=3.0, peak_min_expected=5.0, peak_floor=1.5,
+            candidate_peak=3.0, peak_min_expected=5.0, peak_floor=2.5,
             tier_used=1, is_likely_venous=True, atlas_constrained=False,
         )
         assert abs(score - 0.18) < 1e-6
@@ -426,21 +424,21 @@ class TestComputeRescueScore:
 
     def test_rescue_zero_peak(self) -> None:
         """Zero peak is always rejected regardless of mode."""
-        for atlas in (True, False):
+        for atlas, floor in ((True, 0.75), (False, 2.5)):
             score = AIFDetection._compute_rescue_score(
-                candidate_peak=0.0, peak_min_expected=5.0, peak_floor=0.75,
+                candidate_peak=0.0, peak_min_expected=5.0, peak_floor=floor,
                 tier_used=1, is_likely_venous=False, atlas_constrained=atlas,
             )
             assert score == 0.0
 
     def test_rescue_half_dose_wholebrain(self) -> None:
-        """Half-dose whole-brain: 1.5 mM peak passes floor and quality filter.
+        """Half-dose whole-brain: 1.5 mM peak passes floor (1.25) and quality filter.
 
-        peak_min=2.5 (half dose), floor=0.75, adequacy=1.5/2.5=0.6.
+        peak_min=2.5 (half dose), floor=1.25 (0.5×2.5), adequacy=1.5/2.5=0.6.
         score = 1.0 * 0.6 = 0.6 (passes _MIN_CANDIDATE_SCORE=0.5).
         """
         score = AIFDetection._compute_rescue_score(
-            candidate_peak=1.5, peak_min_expected=2.5, peak_floor=0.75,
+            candidate_peak=1.5, peak_min_expected=2.5, peak_floor=1.25,
             tier_used=1, is_likely_venous=False, atlas_constrained=False,
         )
         assert abs(score - 0.6) < 1e-6
