@@ -52,14 +52,6 @@ MIN_SIGNAL_STD: Final[float] = 0.01
 #: Minimum enhancement in mM for voxel to be considered valid
 MIN_ENHANCEMENT_MM: Final[float] = 1e-8
 
-#: Enhancement gate for Standard Tofts candidacy in BIC model selection.
-#: Below this threshold, the intravascular contribution vp×Cp(t) dominates
-#: tissue concentration. Standard Tofts (which lacks a vp term) confounds
-#: this with Ktrans, causing ~70x overestimation. Patlak and Extended
-#: Tofts (both have vp) remain candidates and are unaffected.
-#: Threshold corresponds to Ktrans ~0.025 min⁻¹ with standard AIF.
-#: Refs: Sourbron & Buckley MRM 2011; QIBA DCE Profile v2.0.
-TOFTS_ENHANCEMENT_GATE_MM: Final[float] = 0.05
 
 #: Maximum number of slices for 2D per-slice erosion.
 #: 3D VIBE thin slabs (≤30 slices) have well-defined slice profile —

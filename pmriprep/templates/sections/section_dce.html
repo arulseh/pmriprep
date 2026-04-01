@@ -576,12 +576,6 @@
                 <div class="metric-value">{{ cbv_c.reason }}</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.pk_modeling.frac_positive_delta_r2 is defined %}
-            <div class="metric">
-                <div class="metric-label">Improved</div>
-                <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.pk_modeling.frac_positive_delta_r2 * 100) }}%</div>
-            </div>
-            {% endif %}
         </div>
         {# Conditional alerts: only shown when something needs attention #}
         {% set has_alerts = (cbv_c.mode == 'skip' and cbv_c.detection_level is defined and cbv_c.detection_level)

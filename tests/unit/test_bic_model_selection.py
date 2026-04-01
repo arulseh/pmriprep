@@ -289,7 +289,7 @@ class TestBICRunsWhenConstrained:
     def test_bic_runs_when_constrained_and_auto(self) -> None:
         """is_auto + candidates → BIC runs regardless of constraint."""
         is_auto = True
-        bic_candidates = {"patlak": PatlakModel(), "tofts": ToftsModel()}
+        bic_candidates = {"patlak": PatlakModel(), "extended_tofts": ExtendedToftsModel()}
 
         should_do_bic = is_auto and bool(bic_candidates)
         assert should_do_bic, "BIC should run for constrained voxels in auto mode"
@@ -311,21 +311,24 @@ class TestBuildCandidateSet:
     """Candidate set depends on volume TR."""
 
     def test_fast_tr_includes_all(self) -> None:
-        """TR=2s should include all 4 models."""
-        # Simulate _build_candidate_set logic
+        """TR=2s should include Patlak, Extended Tofts, and 2CXM."""
+        # Simulate _build_candidate_set logic (Standard Tofts excluded
+        # from auto: vp=0 assumption invalid in brain, Sourbron & Buckley
+        # MRM 2011)
         volume_tr = 2.0
-        candidates = ["patlak", "tofts"]
+        candidates = ["patlak"]
         if volume_tr <= 10.0:
             candidates.append("extended_tofts")
         if volume_tr <= 3.0:
             candidates.append("2cxm")
 
-        assert candidates == ["patlak", "tofts", "extended_tofts", "2cxm"]
+        assert candidates == ["patlak", "extended_tofts", "2cxm"]
+        assert "tofts" not in candidates
 
     def test_moderate_tr_excludes_2cxm(self) -> None:
         """TR=7.6s should exclude 2CXM but include ETofts."""
         volume_tr = 7.6
-        candidates = ["patlak", "tofts"]
+        candidates = ["patlak"]
         if volume_tr <= 10.0:
             candidates.append("extended_tofts")
         if volume_tr <= 3.0:
@@ -333,18 +336,19 @@ class TestBuildCandidateSet:
 
         assert "2cxm" not in candidates
         assert "extended_tofts" in candidates
-        assert candidates == ["patlak", "tofts", "extended_tofts"]
+        assert candidates == ["patlak", "extended_tofts"]
 
-    def test_coarse_tr_only_patlak_tofts(self) -> None:
-        """TR=15s should only have Patlak and Tofts."""
+    def test_coarse_tr_only_patlak(self) -> None:
+        """TR=15s should only have Patlak."""
         volume_tr = 15.0
-        candidates = ["patlak", "tofts"]
+        candidates = ["patlak"]
         if volume_tr <= 10.0:
             candidates.append("extended_tofts")
         if volume_tr <= 3.0:
             candidates.append("2cxm")
 
-        assert candidates == ["patlak", "tofts"]
+        assert candidates == ["patlak"]
+        assert "tofts" not in candidates
 
 
 # ---------------------------------------------------------------------------
@@ -354,12 +358,11 @@ class TestBuildCandidateSet:
 class TestNModelBIC:
     """N-model BIC comparison selects the best model."""
 
-    def test_three_model_bic_patlak_generated(
+    def test_auto_bic_patlak_generated(
         self, time_points: np.ndarray, aif: np.ndarray
     ) -> None:
-        """Patlak-generated data: Patlak should win 3-model BIC."""
+        """Patlak-generated data: Patlak should win auto BIC (Patlak vs ETofts)."""
         patlak = PatlakModel()
-        tofts = ToftsModel()
         etofts = ExtendedToftsModel()
 
         tissue_curve = patlak.evaluate([0.005, 0.02], aif, time_points)
@@ -369,18 +372,16 @@ class TestNModelBIC:
 
         results = [
             patlak.fit(tissue_curve, aif, time_points),
-            tofts.fit(tissue_curve, aif, time_points),
             etofts.fit(tissue_curve, aif, time_points),
         ]
         best = min(results, key=lambda r: r.bic if np.isfinite(r.bic) else np.inf)
         assert best.model_name == "patlak"
 
-    def test_three_model_bic_etofts_generated(
+    def test_auto_bic_etofts_generated(
         self, time_points: np.ndarray, aif: np.ndarray
     ) -> None:
-        """ETofts-generated data: ETofts should win 3-model BIC."""
+        """ETofts-generated data: ETofts should win auto BIC."""
         patlak = PatlakModel()
-        tofts = ToftsModel()
         etofts = ExtendedToftsModel()
 
         tissue_curve = etofts.evaluate([0.15, 0.4, 0.05], aif, time_points)
@@ -390,21 +391,20 @@ class TestNModelBIC:
 
         results = [
             patlak.fit(tissue_curve, aif, time_points),
-            tofts.fit(tissue_curve, aif, time_points),
             etofts.fit(tissue_curve, aif, time_points),
         ]
         best = min(results, key=lambda r: r.bic if np.isfinite(r.bic) else np.inf)
         assert best.model_name == "extended_tofts"
 
-    def test_three_model_bic_tofts_generated(
+    def test_auto_bic_backflux_data(
         self, time_points: np.ndarray, aif: np.ndarray
     ) -> None:
-        """Tofts-generated data: Tofts should win or tie with ETofts."""
-        tofts = ToftsModel()
+        """Data with backflux (washout): ETofts should win over Patlak."""
         patlak = PatlakModel()
         etofts = ExtendedToftsModel()
+        tofts = ToftsModel()
 
-        # Pure Tofts: Ktrans, ve (no vp contribution)
+        # Generate data with clear washout (kep = Ktrans/ve = 0.1/0.3 = 0.33)
         tissue_curve = tofts.evaluate([0.1, 0.3], aif, time_points)
         rng = np.random.default_rng(55)
         tissue_curve += rng.normal(0, 0.005, size=tissue_curve.shape)
@@ -412,12 +412,11 @@ class TestNModelBIC:
 
         results = [
             patlak.fit(tissue_curve, aif, time_points),
-            tofts.fit(tissue_curve, aif, time_points),
             etofts.fit(tissue_curve, aif, time_points),
         ]
         best = min(results, key=lambda r: r.bic if np.isfinite(r.bic) else np.inf)
-        # Tofts should win, or ETofts may tie (vp≈0)
-        assert best.model_name in ("tofts", "extended_tofts")
+        # ETofts should capture the washout; Patlak can't
+        assert best.model_name == "extended_tofts"
 
 
 # ---------------------------------------------------------------------------
@@ -611,18 +610,11 @@ class TestNaNParameterMaps:
         has_ve = model_code not in (_MODEL_SELECTION_CODES["patlak"],)
         assert not has_ve, "Patlak should not have ve"
 
-    def test_tofts_voxel_has_nan_vp(self) -> None:
-        """Tofts voxels should have NaN vp (no plasma term)."""
-        model_code = _MODEL_SELECTION_CODES["tofts"]
-        has_vp = model_code not in (_MODEL_SELECTION_CODES["tofts"],)
-        assert not has_vp, "Tofts should not have vp"
-
     def test_etofts_voxel_has_all_params(self) -> None:
         """Extended Tofts voxels should have all params (Ktrans, ve, vp)."""
         model_code = _MODEL_SELECTION_CODES["extended_tofts"]
         has_ve = model_code not in (_MODEL_SELECTION_CODES["patlak"],)
-        has_vp = model_code not in (_MODEL_SELECTION_CODES["tofts"],)
-        assert has_ve and has_vp
+        assert has_ve
 
     def test_nan_safe_qc_mask_volume_fraction(self) -> None:
         """QC mask should handle NaN in ve+vp check."""

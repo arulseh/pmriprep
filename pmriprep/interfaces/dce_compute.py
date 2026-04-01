@@ -29,7 +29,6 @@ from pmriprep.utils.dce_constants import (
     KTRANS_BOUNDS,
     MIN_ENHANCEMENT_MM,
     PS_BOUNDS,
-    TOFTS_ENHANCEMENT_GATE_MM,
     VE_BOUNDS,
     VP_BOUNDS,
 )
@@ -174,32 +173,6 @@ def _init_worker(
     _worker_ctx["ConstraintMode"] = ConstraintMode
 
 
-def _gate_bic_candidates(
-    max_enhancement: float,
-    bic_candidates: dict[str, Any],
-    threshold: float = TOFTS_ENHANCEMENT_GATE_MM,
-) -> dict[str, Any]:
-    """Exclude Standard Tofts from BIC candidates at low enhancement.
-
-    At low enhancement, the intravascular contribution vp×Cp(t) dominates
-    tissue concentration. Standard Tofts (which lacks a vp term) confounds
-    this with Ktrans, causing ~70x overestimation (Sourbron & Buckley MRM
-    2011). Extended Tofts (has vp) and Patlak (has vp) are structurally
-    sound and remain candidates.
-
-    Args:
-        max_enhancement: Maximum tissue concentration in mM.
-        bic_candidates: Dict of candidate name → model instance.
-        threshold: Enhancement gate in mM (default 0.05).
-
-    Returns:
-        Filtered candidate dict with Standard Tofts removed if below threshold.
-    """
-    if max_enhancement < threshold and "tofts" in bic_candidates:
-        return {k: v for k, v in bic_candidates.items() if k != "tofts"}
-    return bic_candidates
-
-
 def _fit_single_voxel(
     voxel_data: VoxelInput,
 ) -> dict[str, Any]:
@@ -253,7 +226,6 @@ def _fit_single_voxel(
         fixed_vp: Optional[float] = None
         vp_prior = None  # Hoisted for BIC winner MAP refinement
         delta_bic = np.nan
-        tofts_r2 = np.nan  # Tofts R² for delta-R² metric
 
         # Determine constraint state
         if voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
@@ -288,8 +260,7 @@ def _fit_single_voxel(
                         prepared_curve, aif, time_points, fixed_vp=fixed_vp,
                         weights=motion_weights,
                     )
-                # Flag constrained even if ceiling model has no vp (e.g. Tofts)
-                # so BIC candidates WITH vp (Patlak, ETofts) get constrained
+                # Flag constrained so all BIC candidates get constrained vp
                 constrained = True
             elif bayesian == "map":
                 soft_fitter = BayesianPKFitter(
@@ -359,14 +330,8 @@ def _fit_single_voxel(
 
         # N-model BIC selection (auto mode)
         bic_candidates = _worker_ctx.get("bic_candidates", {})
-        tofts_gated = False
 
         if is_auto and bic_candidates:
-            orig_candidates = bic_candidates
-            bic_candidates = _gate_bic_candidates(
-                float(np.max(prepared_curve)), bic_candidates,
-            )
-            tofts_gated = len(bic_candidates) < len(orig_candidates)
             all_results = [result]  # primary model already fitted
 
             for cname, cmodel in bic_candidates.items():
@@ -377,7 +342,7 @@ def _fit_single_voxel(
                             weights=motion_weights,
                         )
                     elif constrained and not hasattr(cmodel, "fit_constrained"):
-                        # Model has no vp to constrain (e.g. Tofts) — fit unconstrained
+                        # Model has no vp to constrain — fit unconstrained
                         cand_result = cmodel.fit(
                             prepared_curve, aif, time_points,
                             weights=motion_weights,
@@ -413,13 +378,6 @@ def _fit_single_voxel(
                 if len(sorted_bics) > 1
                 else np.nan
             )
-
-            # Extract Tofts R² for delta-R² metric (constraint benefit)
-            tofts_r2 = np.nan
-            for ar in all_results:
-                if ar.model_name == "tofts":
-                    tofts_r2 = ar.r_squared
-                    break
 
             # MAP refinement of BIC winner
             if bayesian == "map":
@@ -506,8 +464,6 @@ def _fit_single_voxel(
             "constrained": constrained,
             "selected_model_name": selected_model_name,
             "delta_bic": float(delta_bic) if is_auto else np.nan,
-            "tofts_r_squared": float(tofts_r2) if is_auto else np.nan,
-            "tofts_gated": tofts_gated,
         }
 
     except Exception:
@@ -1195,13 +1151,21 @@ class ComputeDCEMaps(BaseInterface):
     def _build_candidate_set(self, volume_tr: float) -> list[str]:
         """Build BIC candidate model set gated by temporal resolution.
 
+        Standard Tofts is excluded from auto selection because its vp=0
+        assumption is never valid in brain tissue. The intravascular
+        contribution vp×Cp(t) is absorbed into Ktrans, causing systematic
+        overestimation (Sourbron & Buckley MRM 2011). Patlak (2 params,
+        has vp) and Extended Tofts (3 params, has vp) form a complete
+        nested hierarchy for brain DCE. Standard Tofts remains available
+        via explicit ``model=tofts`` selection.
+
         Args:
             volume_tr: Volume TR in seconds.
 
         Returns:
             List of candidate model names, ordered by complexity.
         """
-        candidates = ["patlak", "tofts"]
+        candidates = ["patlak"]
         if volume_tr <= self._MAX_VOLUME_TR_ETOFTS:
             candidates.append("extended_tofts")
         if volume_tr <= self._MAX_VOLUME_TR_2CXM:
@@ -1589,9 +1553,6 @@ class ComputeDCEMaps(BaseInterface):
         kep = np.full(spatial_shape, fill_val, dtype=np.float64)
         r2_map = np.zeros(spatial_shape, dtype=np.float64)
 
-        # Delta-R² map: R²(winner) - R²(Tofts) for constraint benefit (auto only)
-        delta_r2_map = np.full(spatial_shape, np.nan, dtype=np.float32)
-
         # 2CXM-specific (only if 2CXM is in candidates or explicitly selected)
         save_2cxm = (is_auto and "2cxm" in candidate_names) or model_name == "2cxm"
         fp_map = np.zeros(spatial_shape, dtype=np.float64)
@@ -1650,7 +1611,6 @@ class ComputeDCEMaps(BaseInterface):
         n_constrained = 0
         n_unconstrained_fallback = 0
         n_rejected_postfit = 0
-        n_tofts_gated = 0
         r2_list: list[float] = []
         failure_reason_counts: dict[str, int] = {}
         mcmc_rhat_lists: dict[str, list[float]] = {}
@@ -1854,14 +1814,6 @@ class ComputeDCEMaps(BaseInterface):
                 kep[x, y, z] = params.get("kep", 0.0)
             r2_map[x, y, z] = res["r_squared"]
 
-            # Delta-R²: R²(winner) - R²(Tofts) for constraint benefit
-            if is_auto:
-                t_r2 = res.get("tofts_r_squared", np.nan)
-                if effective_model_name == "tofts":
-                    delta_r2_map[x, y, z] = 0.0
-                elif np.isfinite(t_r2):
-                    delta_r2_map[x, y, z] = res["r_squared"] - t_r2
-
             if self._has_vp(effective_model_name):
                 vp[x, y, z] = params.get("vp", 0.0)
 
@@ -1916,8 +1868,6 @@ class ComputeDCEMaps(BaseInterface):
                 z = abs(vp_fitted - vp_prior) / prior_sigma
                 z_departure_list.append(z)
 
-            if res.get("tofts_gated", False):
-                n_tofts_gated += 1
             if res["converged"]:
                 n_converged += 1
                 r2_list.append(res["r_squared"])
@@ -1943,7 +1893,6 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["n_rejected_postfit"] = n_rejected_postfit
         qc_metrics["failure_reasons"] = failure_reason_counts
 
-        qc_metrics["n_tofts_gated"] = n_tofts_gated
         qc_metrics["model_selection"] = "auto" if is_auto else "fixed"
 
         # Per-model selection stats (auto mode)
@@ -1988,21 +1937,6 @@ class ComputeDCEMaps(BaseInterface):
                     np.mean(arr < QC_ESS_MIN)
                 )
             qc_metrics["mcmc_diagnostics"] = mcmc_diag
-
-        # Delta-R² stats: constraint benefit assessment (auto mode)
-        if is_auto:
-            dr2_valid = delta_r2_map[fitting_mask]
-            dr2_finite = dr2_valid[np.isfinite(dr2_valid)]
-            if len(dr2_finite) > 0:
-                qc_metrics["delta_r2_mean"] = float(np.mean(dr2_finite))
-                qc_metrics["delta_r2_median"] = float(np.median(dr2_finite))
-                qc_metrics["frac_positive_delta_r2"] = float(
-                    np.mean(dr2_finite > 0)
-                )
-                # Count Tofts winners (delta_r2 == 0.0 exactly)
-                qc_metrics["n_tofts_winner"] = int(
-                    np.sum(model_selection_map == _MODEL_SELECTION_CODES.get("tofts", 0))
-                )
 
         # z_departure stats: soft constraint prior departure
         if z_departure_list:
@@ -2289,14 +2223,13 @@ class ComputeDCEMaps(BaseInterface):
 
         # Model-specific constraints (per-voxel model-aware for BIC selection)
         is_patlak_voxel = model_selection_map == _MODEL_SELECTION_CODES.get("patlak", -1)
-        is_tofts_voxel = model_selection_map == _MODEL_SELECTION_CODES.get("tofts", -1)
         if is_auto or model_name in ["extended_tofts", "2cxm"]:
             # Volume fraction constraint: ve+vp < 0.95
-            # NaN-safe: treat NaN as 0 so Patlak/Tofts voxels pass
+            # NaN-safe: treat NaN as 0 so Patlak voxels pass
             ve_safe = np.where(np.isfinite(ve), ve, 0.0)
             vp_safe = np.where(np.isfinite(vp), vp, 0.0)
             etofts_volume_ok = (ve_safe + vp_safe) < 0.95
-            qc_mask &= (etofts_volume_ok | is_patlak_voxel | is_tofts_voxel)
+            qc_mask &= (etofts_volume_ok | is_patlak_voxel)
         if is_auto or model_name != "patlak":
             # kep check: NaN kep is fine for Patlak voxels (kep undefined)
             kep_ok = np.where(np.isfinite(kep), kep > 0.001, True)
@@ -2522,17 +2455,6 @@ class ComputeDCEMaps(BaseInterface):
             if cname in bic_arrays:
                 bic_arrays[cname][~result.converged] = np.inf
 
-        # Enhancement gate: exclude Standard Tofts for low-enhancement voxels
-        # where its lack of vp term confounds intravascular signal with Ktrans.
-        if "tofts" in bic_arrays:
-            baseline_means = tissue_curves[:, :baseline_frames].mean(axis=1)
-            max_enh = (tissue_curves - baseline_means[:, np.newaxis]).max(axis=1)
-            low_enh = max_enh < TOFTS_ENHANCEMENT_GATE_MM
-            bic_arrays["tofts"][low_enh] = np.inf
-            n_tofts_gated = int(low_enh.sum())
-        else:
-            n_tofts_gated = 0
-
         # Select min-BIC model per voxel
         cand_list = [c for c in candidate_names if c in gpu_results]
         bic_stack = np.stack([bic_arrays[c] for c in cand_list], axis=0)
@@ -2578,11 +2500,6 @@ class ComputeDCEMaps(BaseInterface):
             if save_fitted_curves and winner_result.fitted_curves is not None:
                 fitted_curve = winner_result.fitted_curves[i]
 
-            # Extract Tofts R² for delta-R² metric
-            gpu_tofts_r2 = np.nan
-            if "tofts" in gpu_results:
-                gpu_tofts_r2 = float(gpu_results["tofts"].r_squared[i])
-
             results.append({
                 "coords": (x, y, z),
                 "params": params_out,
@@ -2598,7 +2515,6 @@ class ComputeDCEMaps(BaseInterface):
                 "constrained": is_constrained,
                 "selected_model_name": winner_name,
                 "delta_bic": float(delta_bic[i]),
-                "tofts_r_squared": gpu_tofts_r2,
             })
 
         # MAP refinement of BIC winners
