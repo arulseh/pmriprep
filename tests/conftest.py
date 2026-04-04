@@ -969,7 +969,7 @@ def sample_dsc_config() -> Dict[str, Any]:
         "preload_present": False,
         "dose": 1.0,
         "method": "sSVD",
-        "bayesian": "map",
+        "bayesian": "vi",
         "aif_criteria": "strict",
         "n_aif_candidates": 10,
         "pre_bolus": 5,

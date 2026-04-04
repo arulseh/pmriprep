@@ -8,7 +8,7 @@ PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and 
 
 - **DSC Processing**: Six deconvolution methods (sSVD, cSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction
 - **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps
-- **Bayesian Inference**: MAP fitting by default for parametric methods (CPI, Vascular), with optional VI or MCMC and uncertainty quantification
+- **Bayesian Inference**: VI fitting by default for parametric methods (CPI, Vascular), with optional MAP or MCMC and uncertainty quantification
 - **Automatic AIF Detection**: Multi-level arterial input function detection with population fallback, or user-supplied external AIF
 - **T1 Mapping**: Variable flip angle T1 mapping with optional B1+ correction
 - **Tumor Segmentation**: HD-GLIO integration for glioma segmentation
@@ -133,7 +133,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | Flag | Description |
 |------|-------------|
 | `--dsc-deconv-method {sSVD,cSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
-| `--dsc-bayesian {map,vi,mcmc}` | Bayesian inference for parametric methods (default: map) |
+| `--dsc-bayesian {vi,map,mcmc}` | Bayesian inference for parametric methods (default: vi) |
 | `--dsc-preload` | Indicate contrast preload is present |
 | `--dsc-dose DOSE` | Contrast agent dose: named preset (`half`, `full`, `double`) or float multiplier (e.g. `0.75`). Default: `full` (1.0) |
 | `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
@@ -187,7 +187,7 @@ pmriprep /path/to/bids /path/to/output participant \
 ```yaml
 dsc:
   method: cpi
-  bayesian: map
+  bayesian: vi
   aif_criteria: relaxed
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
@@ -208,7 +208,7 @@ dce:
 | `preload_present` | bool | `false` | Contrast preload present |
 | `dose` | float | `1.0` | Dose multiplier: named preset (`half`=0.5, `full`=1.0, `double`=2.0) or any positive float |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
-| `bayesian` | str | `"map"` | Bayesian mode: `map`, `vi`, `mcmc` (parametric methods only; SVD ignores) |
+| `bayesian` | str | `"vi"` | Bayesian mode: `vi`, `map`, `mcmc` (parametric methods only; SVD ignores) |
 | `mcmc_samples` | int | `500` | MCMC samples if bayesian=mcmc |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
 | `aif_criteria` | str | `"strict"` | AIF selection: `strict`, `relaxed` |

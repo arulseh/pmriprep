@@ -383,12 +383,12 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
 
     # Bayesian options (parametric methods only — SVD methods ignore this)
     bayesian = traits.Enum(
-        "map",
         "vi",
+        "map",
         "mcmc",
         usedefault=True,
         desc="Bayesian inference for parametric methods (cpi, vascular): "
-             "map, vi, or mcmc. SVD methods ignore this option.",
+             "vi, map, or mcmc. SVD methods ignore this option.",
     )
     mcmc_samples = traits.Int(
         500,
@@ -1427,8 +1427,8 @@ class ComputeDSCMaps(BaseInterface):
 
         # SVD methods are direct matrix decompositions — bayesian inference
         # only applies to parametric fitting (cpi, vascular).
-        if method in ("sSVD", "cSVD", "oSVD", "tikhonov") and bayesian != "map":
-            logger.warning(
+        if method in ("sSVD", "cSVD", "oSVD", "tikhonov") and bayesian != "vi":
+            logger.debug(
                 "Bayesian option '%s' ignored for SVD method '%s'.",
                 bayesian, method,
             )

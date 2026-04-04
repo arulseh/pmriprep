@@ -244,7 +244,7 @@ Examples:
         choices=["map", "vi", "mcmc"],
         default=None,
         help="Bayesian inference for parametric methods (cpi, vascular): "
-        "map (default, maximum a posteriori), vi (variational), "
+        "vi (default, variational inference), map (maximum a posteriori), "
         "mcmc (Markov chain Monte Carlo). SVD methods ignore this option.",
     )
     dsc_group.add_argument(
