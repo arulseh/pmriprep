@@ -303,10 +303,10 @@ Examples:
     )
     dce_group.add_argument(
         "--dce-bayesian",
-        choices=["none", "map", "vi", "mcmc"],
+        choices=["none", "vi", "map"],
         default=None,
-        help="Bayesian inference method for DCE: none, map (maximum a posteriori), "
-        "vi (variational), mcmc (Markov chain Monte Carlo). Default: none.",
+        help="Bayesian inference method for DCE: none (default, NLLS), "
+        "vi (recommended, variational), map (maximum a posteriori).",
     )
     dce_group.add_argument(
         "--dce-aif-method",

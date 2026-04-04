@@ -262,6 +262,16 @@ def _fit_single_voxel(
                     )
                 # Flag constrained so all BIC candidates get constrained vp
                 constrained = True
+            elif bayesian == "vi":
+                soft_fitter = BayesianPKFitter(
+                    model, vp_prior_override=vp_prior
+                )
+                result = soft_fitter.fit_vi(
+                    prepared_curve, aif, time_points,
+                    weights=motion_weights,
+                    sloppy=sloppy,
+                )
+                constrained = True
             elif bayesian == "map":
                 soft_fitter = BayesianPKFitter(
                     model, vp_prior_override=vp_prior
@@ -273,7 +283,7 @@ def _fit_single_voxel(
                     sloppy=sloppy,
                 )
                 constrained = True
-            else:  # mcmc
+            elif bayesian == "mcmc":
                 soft_fitter = BayesianPKFitter(
                     model, vp_prior_override=vp_prior
                 )
@@ -308,6 +318,12 @@ def _fit_single_voxel(
                 result = model.fit(
                     prepared_curve, aif, time_points,
                     weights=motion_weights,
+                )
+            elif bayesian == "vi" and fitter is not None:
+                result = fitter.fit_vi(
+                    prepared_curve, aif, time_points,
+                    weights=motion_weights,
+                    sloppy=sloppy,
                 )
             elif bayesian == "map" and fitter is not None:
                 result = fitter.fit_map(
@@ -379,8 +395,29 @@ def _fit_single_voxel(
                 else np.nan
             )
 
-            # MAP refinement of BIC winner
-            if bayesian == "map":
+            # Bayesian refinement of BIC winner
+            if bayesian == "vi":
+                model_map = _worker_ctx.get("model_map", {})
+                winner_model_cls = model_map.get(best.model_name)
+                if winner_model_cls is not None:
+                    winner_model = winner_model_cls()
+                    vp_prior_kw = (
+                        {"vp_prior_override": vp_prior}
+                        if vp_prior is not None else {}
+                    )
+                    winner_fitter = BayesianPKFitter(winner_model, **vp_prior_kw)
+                    try:
+                        best = winner_fitter.fit_vi(
+                            prepared_curve, aif, time_points,
+                            weights=motion_weights, sloppy=sloppy,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "VI refinement failed at (%d,%d,%d), keeping NLLS",
+                            x, y, z, exc_info=True,
+                        )
+
+            elif bayesian == "map":
                 model_map = _worker_ctx.get("model_map", {})
                 winner_model_cls = model_map.get(best.model_name)
                 if winner_model_cls is not None:
@@ -402,7 +439,6 @@ def _fit_single_voxel(
                             x, y, z, exc_info=True,
                         )
 
-            # MCMC refinement of BIC winner
             elif bayesian == "mcmc":
                 model_map = _worker_ctx.get("model_map", {})
                 winner_model_cls = model_map.get(best.model_name)
@@ -702,10 +738,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     # Bayesian options
     bayesian = traits.Enum(
         "none",
+        "vi",
         "map",
-        "mcmc",
         usedefault=True,
-        desc="Bayesian inference method: none (NLLS), map, or mcmc",
+        desc="Bayesian inference method: none (NLLS), vi, or map",
     )
     mcmc_samples = traits.Int(
         500,
@@ -1284,6 +1320,15 @@ class ComputeDCEMaps(BaseInterface):
         mcmc_samples = int(self.inputs.mcmc_samples)
         use_gpu = bool(self.inputs.use_gpu)
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
+
+        # 2CXM parameter identifiability warning (all fitting methods)
+        if model_name == "2cxm":
+            logger.warning(
+                "2CXM individual parameter estimates (especially PS) may be "
+                "unreliable due to PS/ve coupling degeneracy (Sourbron & "
+                "Buckley, MRM 2011). Consider Extended Tofts if Ktrans is "
+                "the primary parameter of interest."
+            )
 
         # =====================================================================
         # BAT Correction

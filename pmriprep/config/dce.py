@@ -62,7 +62,7 @@ class DCEConfig:
         Pharmacokinetic model: auto (per-voxel BIC selection),
         tofts, extended_tofts, patlak, or 2cxm.
     bayesian : str
-        Bayesian inference method: none, map, vi, or mcmc.
+        Bayesian inference method: none, vi (recommended), or map.
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
     num_processes : int

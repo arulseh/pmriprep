@@ -1306,7 +1306,7 @@ def fit_pk_model(
     tissue_curve: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
-    method: str = "map",
+    method: str = "vi",
     mcmc_samples: int = DEFAULT_MCMC_SAMPLES,
     noise_std: float | None = None,
     sloppy: bool = False,
