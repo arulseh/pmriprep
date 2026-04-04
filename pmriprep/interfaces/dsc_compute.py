@@ -385,10 +385,9 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     bayesian = traits.Enum(
         "vi",
         "map",
-        "mcmc",
         usedefault=True,
         desc="Bayesian inference for parametric methods (cpi, vascular): "
-             "vi, map, or mcmc. SVD methods ignore this option.",
+             "vi or map. SVD methods ignore this option.",
     )
     mcmc_samples = traits.Int(
         500,

@@ -8,7 +8,7 @@ PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and 
 
 - **DSC Processing**: Six deconvolution methods (sSVD, cSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction
 - **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps
-- **Bayesian Inference**: VI fitting by default for parametric methods (CPI, Vascular), with optional MAP or MCMC and uncertainty quantification
+- **Bayesian Inference**: Variational inference (VI) for parametric methods (DSC: CPI, Vascular; DCE: Tofts, Extended Tofts, Patlak, 2CXM) with uncertainty quantification
 - **Automatic AIF Detection**: Multi-level arterial input function detection with population fallback, or user-supplied external AIF
 - **T1 Mapping**: Variable flip angle T1 mapping with optional B1+ correction
 - **Tumor Segmentation**: HD-GLIO integration for glioma segmentation
@@ -133,7 +133,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | Flag | Description |
 |------|-------------|
 | `--dsc-deconv-method {sSVD,cSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
-| `--dsc-bayesian {vi,map,mcmc}` | Bayesian inference for parametric methods (default: vi) |
+| `--dsc-bayesian {vi,map}` | Bayesian inference for parametric methods (default: vi) |
 | `--dsc-preload` | Indicate contrast preload is present |
 | `--dsc-dose DOSE` | Contrast agent dose: named preset (`half`, `full`, `double`) or float multiplier (e.g. `0.75`). Default: `full` (1.0) |
 | `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
@@ -208,8 +208,7 @@ dce:
 | `preload_present` | bool | `false` | Contrast preload present |
 | `dose` | float | `1.0` | Dose multiplier: named preset (`half`=0.5, `full`=1.0, `double`=2.0) or any positive float |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
-| `bayesian` | str | `"vi"` | Bayesian mode: `vi`, `map`, `mcmc` (parametric methods only; SVD ignores) |
-| `mcmc_samples` | int | `500` | MCMC samples if bayesian=mcmc |
+| `bayesian` | str | `"vi"` | Bayesian mode: `vi`, `map` (parametric methods only; SVD ignores) |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
 | `aif_criteria` | str | `"strict"` | AIF selection: `strict`, `relaxed` |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
@@ -233,7 +232,6 @@ dce:
 |-----------|------|---------|-------------|
 | `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection. Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
 | `bayesian` | str | `"none"` | Bayesian mode: `none`, `vi` (recommended), `map` |
-| `mcmc_samples` | int | `500` | MCMC samples if bayesian=mcmc |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
 | `aif_file` | path | `null` | External AIF curve file (`.txt` or `.npz` with `Cp`/`aif` key); plasma concentration in mM, temporally aligned with DCE volumes. Bypasses AIF detection |
 | `scale_aif` | bool | `true` | Scale AIF to population reference |

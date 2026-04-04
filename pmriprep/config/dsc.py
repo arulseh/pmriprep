@@ -28,7 +28,7 @@ class DSCConfig:
     method : str
         Deconvolution method: sSVD, cSVD, oSVD, tikhonov, vascular, or cpi.
     bayesian : str
-        Bayesian inference method: none, map, vi, or mcmc.
+        Bayesian inference method: vi (default) or map.
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
     cpi_control_points : int
