@@ -867,6 +867,7 @@ class BayesianPKFitter:
         step_scale = 1.0
 
         converged = False
+        fe_plateau_count = 0
 
         for iteration in range(n_iterations):
             # Inverse-transform m to natural space for forward model
@@ -885,27 +886,19 @@ class BayesianPKFitter:
             # 2. Compute Jacobian via central finite differences in
             # transformed space
             J = np.zeros((n_obs, n_params), dtype=np.float64)
+            deltas = np.maximum(np.abs(m) * 1e-5, 1e-10)
             for j in range(n_params):
-                delta = max(abs(m[j]) * 1e-5, 1e-10)
-                m_plus = m.copy()
-                m_minus = m.copy()
-                m_plus[j] += delta
-                m_minus[j] -= delta
-                # NO CLIPPING — transformed space is unconstrained
-                m_plus_nat = np.array([
-                    float(from_transformed(m_plus[k], transforms[k], upper_bounds_t[k]))
-                    for k in range(n_params)
-                ])
-                m_minus_nat = np.array([
-                    float(from_transformed(m_minus[k], transforms[k], upper_bounds_t[k]))
-                    for k in range(n_params)
-                ])
+                # Only inverse-transform the perturbed param (not all n_params)
+                p_nat = m_nat.copy()
+                n_nat = m_nat.copy()
+                p_nat[j] = float(from_transformed(m[j] + deltas[j], transforms[j], upper_bounds_t[j]))
+                n_nat[j] = float(from_transformed(m[j] - deltas[j], transforms[j], upper_bounds_t[j]))
                 try:
-                    g_plus = self.model.evaluate(list(m_plus_nat), aif, time_points)
-                    g_minus = self.model.evaluate(list(m_minus_nat), aif, time_points)
+                    g_plus = self.model.evaluate(list(p_nat), aif, time_points)
+                    g_minus = self.model.evaluate(list(n_nat), aif, time_points)
                 except (ValueError, RuntimeError):
                     continue
-                J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / (2 * delta)
+                J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / (2 * deltas[j])
 
             # Residual
             k_res = y - g_m
@@ -987,6 +980,18 @@ class BayesianPKFitter:
                     converged = True
                     m = m_new
                     break
+                # Free energy convergence: 2 consecutive negligible improvements
+                if (iteration > 2
+                        and best_free_energy > float("-inf")
+                        and abs(free_energy - best_free_energy)
+                        < 1e-4 * abs(best_free_energy)):
+                    fe_plateau_count += 1
+                    if fe_plateau_count >= 2:
+                        converged = True
+                        m = m_new
+                        break
+                else:
+                    fe_plateau_count = 0
 
             m = m_new
 

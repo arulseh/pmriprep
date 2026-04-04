@@ -767,6 +767,7 @@ class BayesianDSCFitter:
         step_scale = 1.0
 
         converged = False
+        fe_plateau_count = 0
 
         for iteration in range(n_iterations):
             # Inverse-transform m to fitting-space natural params
@@ -789,35 +790,30 @@ class BayesianDSCFitter:
             # transformed space. Perturb m' (transformed), inverse-transform,
             # convert to model space, evaluate forward model.
             J = np.zeros((n_obs, n_params), dtype=np.float64)
+            deltas = np.maximum(np.abs(m) * 1e-5, 1e-10)
             for j in range(n_params):
-                delta = max(abs(m[j]) * 1e-5, 1e-10)
-                m_plus = m.copy()
-                m_minus = m.copy()
-                m_plus[j] += delta
-                m_minus[j] -= delta
+                # Perturb only param j in transformed space
+                m_plus_j = m[j] + deltas[j]
+                m_minus_j = m[j] - deltas[j]
                 # For IDENTITY params, clip perturbations to natural bounds.
                 # LOG/LOG_LOGIT are unconstrained in transformed space.
                 if transforms[j] == TransformType.IDENTITY:
-                    m_plus[j] = min(m_plus[j], bounds[j][1])
-                    m_minus[j] = max(m_minus[j], bounds[j][0])
-                # Inverse transform to fitting-space natural params
-                m_plus_nat = np.array([
-                    float(from_transformed(m_plus[k], transforms[k], upper_bounds[k]))
-                    for k in range(n_params)
-                ])
-                m_minus_nat = np.array([
-                    float(from_transformed(m_minus[k], transforms[k], upper_bounds[k]))
-                    for k in range(n_params)
-                ])
+                    m_plus_j = min(m_plus_j, bounds[j][1])
+                    m_minus_j = max(m_minus_j, bounds[j][0])
+                # Only inverse-transform the perturbed param (not all n_params)
+                p_nat = m_nat.copy()
+                n_nat = m_nat.copy()
+                p_nat[j] = float(from_transformed(m_plus_j, transforms[j], upper_bounds[j]))
+                n_nat[j] = float(from_transformed(m_minus_j, transforms[j], upper_bounds[j]))
                 # Convert to model space for tissue_curve
-                m_plus_model = self.model.fitting_to_model_params(m_plus_nat)
-                m_minus_model = self.model.fitting_to_model_params(m_minus_nat)
+                m_plus_model = self.model.fitting_to_model_params(p_nat)
+                m_minus_model = self.model.fitting_to_model_params(n_nat)
                 try:
                     g_plus = self.model.tissue_curve(m_plus_model, aif, time_points)
                     g_minus = self.model.tissue_curve(m_minus_model, aif, time_points)
                 except (ValueError, RuntimeError):
                     continue
-                actual_delta = m_plus[j] - m_minus[j]
+                actual_delta = m_plus_j - m_minus_j
                 if actual_delta > 0:
                     J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / actual_delta
 
@@ -930,6 +926,18 @@ class BayesianDSCFitter:
                     converged = True
                     m = m_new
                     break
+                # Free energy convergence: 2 consecutive negligible improvements
+                if (iteration > 2
+                        and best_free_energy > float("-inf")
+                        and abs(free_energy - best_free_energy)
+                        < 1e-4 * abs(best_free_energy)):
+                    fe_plateau_count += 1
+                    if fe_plateau_count >= 2:
+                        converged = True
+                        m = m_new
+                        break
+                else:
+                    fe_plateau_count = 0
 
             m = m_new
 

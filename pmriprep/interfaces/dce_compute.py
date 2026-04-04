@@ -112,6 +112,9 @@ def _init_worker(
     candidate_names: Optional[list[str]] = None,
 ) -> None:
     """Initialize per-worker model and fitter objects (called once per process)."""
+    from pmriprep.utils.parallel import limit_worker_threads
+    limit_worker_threads()
+
     import warnings
 
     from pmriprep.models.dce import BayesianPKFitter

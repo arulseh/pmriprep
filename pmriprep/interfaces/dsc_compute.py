@@ -110,6 +110,9 @@ def _dsc_init_worker(
     random_seed: Optional[int] = None,
 ) -> None:
     """Initialise shared state once per worker process."""
+    from pmriprep.utils.parallel import limit_worker_threads
+    limit_worker_threads()
+
     from pmriprep.models.dsc import (
         VascularModel,
         CPIModel,
@@ -1890,19 +1893,18 @@ class ComputeDSCMaps(BaseInterface):
                 cbv_std_map = np.where(mask_bool, cbv_std_map, 0.0)
                 self._results["out_cbv_std"] = _save_map(cbv_std_map, "_cbv_std")
 
-            # Compute CV = std / |mean|, guarded for near-zero denominators
+            # Compute CV = std / |mean|, guarded for near-zero denominators.
+            # Use np.divide with where= to avoid RuntimeWarning on zero division.
             if cbf_std_map is not None:  # type: ignore[possibly-undefined]
-                cbf_cv = np.where(
-                    np.abs(rel_cbf) > EPSILON_CONCENTRATION,
-                    cbf_std_map / np.abs(rel_cbf), 0.0,
-                )
+                cbf_cv = np.zeros_like(cbf_std_map)
+                valid_cbf = np.abs(rel_cbf) > EPSILON_CONCENTRATION
+                np.divide(cbf_std_map, np.abs(rel_cbf), out=cbf_cv, where=valid_cbf)
                 cbf_cv = np.where(mask_bool, cbf_cv, 0.0)
                 self._results["out_cbf_cv"] = _save_map(cbf_cv, "_cbf_cv")
             if cbv_std_map is not None:  # type: ignore[possibly-undefined]
-                cbv_cv = np.where(
-                    np.abs(rel_cbv) > EPSILON_CONCENTRATION,
-                    cbv_std_map / np.abs(rel_cbv), 0.0,
-                )
+                cbv_cv = np.zeros_like(cbv_std_map)
+                valid_cbv = np.abs(rel_cbv) > EPSILON_CONCENTRATION
+                np.divide(cbv_std_map, np.abs(rel_cbv), out=cbv_cv, where=valid_cbv)
                 cbv_cv = np.where(mask_bool, cbv_cv, 0.0)
                 self._results["out_cbv_cv"] = _save_map(cbv_cv, "_cbv_cv")
 
