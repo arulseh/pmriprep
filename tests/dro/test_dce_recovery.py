@@ -180,6 +180,103 @@ class TestToftsRecovery:
         _assert_param_recovery(result.parameters["Ktrans"], ktrans, tol, param_name="Ktrans")
         _assert_param_recovery(result.parameters["ve"], ve, tol, param_name="ve")
 
+    @pytest.mark.parametrize("noise_frac,tol", NOISE_LEVELS_STANDARD)
+    @pytest.mark.parametrize("ktrans,ve", TOFTS_PARAMS[:2])
+    def test_vi(
+        self,
+        ktrans: float,
+        ve: float,
+        noise_frac: float,
+        tol: float,
+        dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
+    ) -> None:
+        """Test VI recovery of Tofts parameters.
+
+        Uses same tolerances as MAP. Low-permeability case (Ktrans=0.01)
+        excluded: VI prior mean ~0.1 is 10x higher, causing ~3-6% prior
+        shrinkage even at 0% noise. This is expected Bayesian behavior,
+        not a fitting bug.
+        """
+        aif, time_min = dce_aif_and_time
+        model = ToftsModel()
+
+        curve = model.evaluate([ktrans, ve], aif, time_min)
+        peak = float(np.max(np.abs(curve)))
+
+        if noise_frac > 0 and peak > 0:
+            curve = add_gaussian_noise(curve, noise_frac * peak, seed=42)
+
+        result = fit_pk_model(model, curve, aif, time_min, method="vi")
+        assert result.converged
+
+        _assert_param_recovery(result.parameters["Ktrans"], ktrans, tol, param_name="Ktrans")
+        _assert_param_recovery(result.parameters["ve"], ve, tol, param_name="ve")
+
+
+# =============================================================================
+# VI Prior Shrinkage Direction
+# =============================================================================
+
+
+class TestVIPriorShrinkage:
+    """Verify that VI exhibits expected prior shrinkage direction.
+
+    When the true parameter is far from the prior mean, the VI posterior
+    mean should be pulled toward the prior. This is a fundamental property
+    of Bayesian estimation (Lindley & Smith, 1972, JRSS-B).
+
+    These are not recovery tests — they validate a statistical identity
+    of the algorithm: estimates shrink toward the prior mean.
+    """
+
+    def test_low_ktrans_overestimated(
+        self,
+        dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
+    ) -> None:
+        """Low Ktrans should be overestimated (pulled toward prior mean).
+
+        Tofts prior mean ~0.1 min^-1 (from typical_range midpoint).
+        True Ktrans=0.01 is 4.7 sigma below prior mean in log-space.
+        VI should overestimate (shrink toward prior), with <10% bias.
+        """
+        aif, time_min = dce_aif_and_time
+        model = ToftsModel()
+        true_ktrans = 0.01
+
+        curve = model.evaluate([true_ktrans, 0.1], aif, time_min)
+        result = fit_pk_model(model, curve, aif, time_min, method="vi")
+        assert result is not None
+
+        recovered = result.parameters["Ktrans"]
+        assert recovered > true_ktrans, (
+            f"Expected shrinkage toward prior (Ktrans_vi > {true_ktrans}), "
+            f"got {recovered:.6f}"
+        )
+        assert recovered < true_ktrans * 1.10, (
+            f"Shrinkage too large: {recovered:.6f} > {true_ktrans * 1.10:.6f} "
+            f"(>10% bias at 0% noise)"
+        )
+
+    def test_low_ktrans_etofts_overestimated(
+        self,
+        dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
+    ) -> None:
+        """Extended Tofts: low Ktrans should also shrink toward prior."""
+        aif, time_min = dce_aif_and_time
+        model = ExtendedToftsModel()
+        true_ktrans = 0.01
+
+        curve = model.evaluate([true_ktrans, 0.1, 0.01], aif, time_min)
+        result = fit_pk_model(model, curve, aif, time_min, method="vi")
+        assert result is not None
+
+        recovered = result.parameters["Ktrans"]
+        assert recovered > true_ktrans, (
+            f"Expected shrinkage toward prior (Ktrans_vi > {true_ktrans}), "
+            f"got {recovered:.6f}"
+        )
+        assert recovered < true_ktrans * 1.10
+
 
 # =============================================================================
 # Extended Tofts Recovery
@@ -267,6 +364,39 @@ class TestExtendedToftsRecovery:
         _assert_param_recovery(result.parameters["Ktrans"], ktrans, tol, param_name="Ktrans")
         # ve is poorly constrained when Ktrans is low (MC calibration:
         # low_permeability ve mean+3sigma = 0.23-1.72 vs tolerance 0.10-0.40)
+        if ktrans > 0.02:
+            _assert_param_recovery(result.parameters["ve"], ve, tol, param_name="ve")
+        _assert_param_recovery(result.parameters["vp"], vp, tol, param_name="vp")
+
+    @pytest.mark.parametrize("noise_frac,tol", NOISE_LEVELS_ETOFTS)
+    @pytest.mark.parametrize("ktrans,ve,vp", ETOFTS_PARAMS[:2])
+    def test_vi(
+        self,
+        ktrans: float,
+        ve: float,
+        vp: float,
+        noise_frac: float,
+        tol: float,
+        dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
+    ) -> None:
+        """Test VI recovery of Extended Tofts parameters.
+
+        Uses same tolerances as MAP. Low-permeability case excluded:
+        VI prior shrinkage on Ktrans=0.01 (see TestToftsRecovery.test_vi).
+        """
+        aif, time_min = dce_aif_and_time
+        model = ExtendedToftsModel()
+
+        curve = model.evaluate([ktrans, ve, vp], aif, time_min)
+        peak = float(np.max(np.abs(curve)))
+
+        if noise_frac > 0 and peak > 0:
+            curve = add_gaussian_noise(curve, noise_frac * peak, seed=42)
+
+        result = fit_pk_model(model, curve, aif, time_min, method="vi")
+        assert result.converged
+
+        _assert_param_recovery(result.parameters["Ktrans"], ktrans, tol, param_name="Ktrans")
         if ktrans > 0.02:
             _assert_param_recovery(result.parameters["ve"], ve, tol, param_name="ve")
         _assert_param_recovery(result.parameters["vp"], vp, tol, param_name="vp")
