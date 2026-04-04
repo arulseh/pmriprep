@@ -136,6 +136,87 @@ class VascularModel(DSCModel):
         """
         return ["cbf", "alpha", "beta", "delay"]
 
+    def get_fitting_parameter_definitions(self) -> list[DSCModelParameter]:
+        """Get parameter definitions for fitting space (CBF, MTT, alpha, delay).
+
+        The Bayesian fitter works in this reparameterized space where MTT
+        replaces beta. This breaks the banana-shaped (alpha, beta) degeneracy
+        since MTT = alpha * beta is directly identifiable from the residue
+        function area, while alpha captures only the shape.
+
+        Returns:
+            List of DSCModelParameter objects for CBF, MTT, alpha, delay.
+        """
+        from pmriprep.models.bayesian_utils import TransformType
+
+        return [
+            DSCModelParameter(
+                name="cbf",
+                bounds=(CBF_BOUNDS.min, CBF_BOUNDS.max),
+                typical_range=(10.0, 100.0),
+                transform=TransformType.LOG,
+                transformed_prior_sigma=1.0,
+                description="Cerebral blood flow",
+                units="mL/100g/min",
+            ),
+            DSCModelParameter(
+                name="mtt",
+                bounds=(0.5, 30.0),
+                typical_range=(2.0, 8.0),  # mean=5.0s, Ostergaard 1996
+                transform=TransformType.LOG,
+                transformed_prior_sigma=1.0,
+                description="Mean transit time",
+                units="s",
+            ),
+            DSCModelParameter(
+                name="alpha",
+                bounds=(VASCULAR_ALPHA_BOUNDS.min, VASCULAR_ALPHA_BOUNDS.max),
+                typical_range=(1.5, 6.0),
+                transform=TransformType.LOG,
+                transformed_prior_sigma=1.0,  # FABBER convention: uniform width
+                description="Gamma shape parameter",
+                units="",
+            ),
+            DSCModelParameter(
+                name="delay",
+                bounds=(VASCULAR_DELAY_BOUNDS.min, VASCULAR_DELAY_BOUNDS.max),
+                typical_range=(-1.0, 5.0),
+                transform=TransformType.IDENTITY,
+                description="Bolus arrival delay",
+                units="s",
+            ),
+        ]
+
+    def fitting_to_model_params(
+        self, fitting_params: npt.NDArray[np.floating]
+    ) -> npt.NDArray[np.float64]:
+        """Convert fitting-space (CBF, MTT, alpha, delay) to model-space (CBF, alpha, beta, delay).
+
+        Args:
+            fitting_params: [cbf, mtt, alpha, delay] in fitting space.
+
+        Returns:
+            [cbf, alpha, beta, delay] in model space.
+        """
+        cbf, mtt, alpha, delay = fitting_params
+        beta = mtt / max(float(alpha), 1e-10)
+        return np.array([cbf, alpha, beta, delay], dtype=np.float64)
+
+    def model_to_fitting_params(
+        self, model_params: npt.NDArray[np.floating]
+    ) -> npt.NDArray[np.float64]:
+        """Convert model-space (CBF, alpha, beta, delay) to fitting-space (CBF, MTT, alpha, delay).
+
+        Args:
+            model_params: [cbf, alpha, beta, delay] in model space.
+
+        Returns:
+            [cbf, mtt, alpha, delay] in fitting space.
+        """
+        cbf, alpha, beta, delay = model_params
+        mtt = float(alpha) * float(beta)
+        return np.array([cbf, mtt, alpha, delay], dtype=np.float64)
+
     def get_initial_guess(self) -> list[float]:
         """Get initial parameter guess for optimization.
 

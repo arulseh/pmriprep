@@ -92,8 +92,12 @@ class BayesianDSCFitter:
         self.model = model
         self.noise_std = noise_std
 
-        # Build priors from model parameter definitions
-        self.priors = build_priors_from_params(model.get_parameter_definitions())
+        # Build priors from fitting-space parameter definitions.
+        # For models without reparameterization (e.g. CPI), this is identical
+        # to get_parameter_definitions(). For VascularModel, this uses the
+        # (CBF, MTT, alpha, delay) parameterization instead of (CBF, alpha,
+        # beta, delay).
+        self.priors = build_priors_from_params(model.get_fitting_parameter_definitions())
 
     @staticmethod
     def _validate_inputs(
@@ -190,9 +194,13 @@ class BayesianDSCFitter:
         Returns:
             Log likelihood (unnormalized).
         """
+        # Convert fitting-space params to model-space for tissue_curve.
+        # For non-reparameterized models this is identity (no-op).
+        params_model = self.model.fitting_to_model_params(params)
+
         # Compute model prediction
         try:
-            predicted = self.model.tissue_curve(params, aif, time_points)
+            predicted = self.model.tissue_curve(params_model, aif, time_points)
         except (ValueError, RuntimeError):
             return float("-inf")
 
@@ -233,8 +241,11 @@ class BayesianDSCFitter:
         Returns:
             Log posterior probability (unnormalized).
         """
-        # Check bounds
-        if not self.model.validate_params(params):
+        # Check bounds in fitting space
+        fitting_defs = self.model.get_fitting_parameter_definitions()
+        if len(params) != len(fitting_defs):
+            return float("-inf")
+        if not all(d.is_valid(float(p)) for d, p in zip(fitting_defs, params)):
             return float("-inf")
 
         log_prior = self._log_prior(params)
@@ -336,17 +347,21 @@ class BayesianDSCFitter:
 
         The Laplace approximation uses the inverse Hessian at the MAP
         estimate as an approximation to the posterior covariance.
+        Parameters and Hessian are in fitting space; names and bounds
+        use fitting-space definitions.
 
         Args:
-            params: MAP parameter estimates.
-            objective: Negative log posterior function.
+            params: MAP parameter estimates (fitting space).
+            objective: Negative log posterior function (fitting space).
 
         Returns:
             Tuple of:
-                - uncertainties: dict mapping param names to std deviations
-                - credible_intervals: dict mapping param names to 95% CIs
+                - uncertainties: dict mapping fitting param names to std deviations
+                - credible_intervals: dict mapping fitting param names to 95% CIs
         """
-        names = self.model.get_parameter_names()
+        fitting_defs = self.model.get_fitting_parameter_definitions()
+        names = [p.name for p in fitting_defs]
+        fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
         uncertainties: dict[str, float] = {}
         credible_intervals: dict[str, tuple[float, float]] = {}
 
@@ -373,21 +388,19 @@ class BayesianDSCFitter:
                 ci_low = float(params[i] - 1.96 * std)
                 ci_high = float(params[i] + 1.96 * std)
 
-                # Clip to bounds
-                bounds = self.model.get_bounds()
-                ci_low = max(ci_low, bounds[i][0])
-                ci_high = min(ci_high, bounds[i][1])
+                # Clip to fitting-space bounds
+                ci_low = max(ci_low, fitting_bounds[i][0])
+                ci_high = min(ci_high, fitting_bounds[i][1])
 
                 credible_intervals[name] = (ci_low, ci_high)
 
         except np.linalg.LinAlgError:
             # Hessian not invertible; return large uncertainties
-            bounds = self.model.get_bounds()
             for i, name in enumerate(names):
                 # Use prior std as uncertainty estimate
                 uncertainties[name] = self.priors[i].std
-                ci_low = bounds[i][0]
-                ci_high = bounds[i][1]
+                ci_low = fitting_bounds[i][0]
+                ci_high = fitting_bounds[i][1]
                 credible_intervals[name] = (ci_low, ci_high)
 
         return uncertainties, credible_intervals
@@ -447,24 +460,29 @@ class BayesianDSCFitter:
         # Estimate noise if not provided
         noise_std: float = self.noise_std if self.noise_std is not None else self._estimate_noise_std(concentration)
 
-        # Build transform info
+        # Build transform info from fitting-space priors
         transforms = [p.transform for p in self.priors]
         upper_bounds_t = [p.upper_bound for p in self.priors]
-        n_params = self.model.n_parameters
+        fitting_defs = self.model.get_fitting_parameter_definitions()
+        n_params = len(fitting_defs)
 
-        # Initial guesses for multi-start optimization (natural space)
-        x0_prior_nat = np.array(self.model.get_initial_guess(), dtype=np.float64)
-        bounds = self.model.get_bounds()
+        # Fitting-space bounds
+        bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
         lower = np.array([b[0] for b in bounds])
         upper = np.array([b[1] for b in bounds])
+        fitting_param_names = [p.name for p in fitting_defs]
+
+        # Initial guesses: convert model-space guess to fitting space
+        x0_prior_nat = self.model.model_to_fitting_params(
+            np.array(self.model.get_initial_guess(), dtype=np.float64)
+        )
 
         # Data-driven initial guess from concentration curve
         x0_data_nat = x0_prior_nat.copy()
         try:
             peak_conc = float(np.max(concentration))
             if peak_conc > 0:
-                param_names = self.model.get_parameter_names()
-                for i, name in enumerate(param_names):
+                for i, name in enumerate(fitting_param_names):
                     if "cbf" in name.lower():
                         x0_data_nat[i] = min(peak_conc * 10.0, upper[i])
         except (ValueError, IndexError):
@@ -494,7 +512,7 @@ class BayesianDSCFitter:
             _noise_std = noise_std
 
             def neg_log_posterior_t(params_t: npt.NDArray[np.floating]) -> float:
-                # Inverse-transform to natural space
+                # Inverse-transform to fitting-space natural values
                 params_nat = np.array([
                     float(from_transformed(params_t[i], transforms[i], upper_bounds_t[i]))
                     for i in range(n_params)
@@ -512,7 +530,14 @@ class BayesianDSCFitter:
                     ))
                 return min(val, 1e20)
 
-            # Multi-start trials (in transformed space, no bounds)
+            # Multi-start trials. LOG/LOG_LOGIT params are unconstrained
+            # in transformed space; IDENTITY params need explicit bounds.
+            opt_bounds = [
+                (bounds[i][0], bounds[i][1])
+                if transforms[i] == TransformType.IDENTITY
+                else (None, None)
+                for i in range(n_params)
+            ]
             starts = [x0_prior_t, x0_data_t]
             if sigma_iter > 0:
                 starts.append(fitted_params_t.copy())
@@ -523,6 +548,7 @@ class BayesianDSCFitter:
                         neg_log_posterior_t,
                         x0,
                         method="L-BFGS-B",
+                        bounds=opt_bounds,
                         options={
                             "maxiter": max_iter,
                             "disp": False,
@@ -545,26 +571,30 @@ class BayesianDSCFitter:
             # Profile likelihood: update noise_std from residuals
             if sigma_iter < n_sigma_iter - 1:
                 try:
+                    fitted_model_params = self.model.fitting_to_model_params(fitted_params)
                     fitted_tissue = self.model.tissue_curve(
-                        fitted_params, aif, time_points
+                        fitted_model_params, aif, time_points
                     )
                     rss = float(np.sum((concentration - fitted_tissue) ** 2))
                     noise_std = max(np.sqrt(rss / n_obs), 1e-7)
                 except (ValueError, RuntimeError):
                     pass
 
-        # Final inverse-transform (no clipping needed)
-        fitted_params = np.array([
+        # Final inverse-transform to fitting space (no clipping needed)
+        fitted_fitting_params = np.array([
             float(from_transformed(fitted_params_t[i], transforms[i], upper_bounds_t[i]))
             for i in range(n_params)
         ], dtype=np.float64)
 
-        # Compute Laplace approximation uncertainties (in natural space)
+        # Convert fitting-space params to model-space for output
+        fitted_model_params = self.model.fitting_to_model_params(fitted_fitting_params)
+
+        # Compute Laplace approximation uncertainties (in fitting space)
         if compute_uncertainties:
-            # Build natural-space objective for Hessian computation
+            # Build fitting-space objective for Hessian computation
             _final_noise = noise_std
 
-            def _neg_log_post_nat(params: npt.NDArray[np.floating]) -> float:
+            def _neg_log_post_fitting(params: npt.NDArray[np.floating]) -> float:
                 val = -self._log_posterior(
                     params, concentration, aif, time_points, _final_noise,
                     weights=weights,
@@ -572,20 +602,20 @@ class BayesianDSCFitter:
                 return min(val, 1e20)
 
             uncertainties, credible_intervals = self._compute_laplace_uncertainties(
-                fitted_params, _neg_log_post_nat
+                fitted_fitting_params, _neg_log_post_fitting
             )
         else:
             uncertainties = {}
             credible_intervals = {}
 
-        # Compute fitted curves
-        fitted_residue = self.model.compute_fitted_residue(fitted_params, time_points)
-        fitted_tissue = self.model.tissue_curve(fitted_params, aif, time_points)
+        # Compute fitted curves using model-space params
+        fitted_residue = self.model.compute_fitted_residue(fitted_model_params, time_points)
+        fitted_tissue = self.model.tissue_curve(fitted_model_params, aif, time_points)
 
         gof = self._compute_gof(concentration, fitted_tissue)
 
         return DSCFitResult(
-            parameters=self.model.params_to_dict(fitted_params),
+            parameters=self.model.params_to_dict(fitted_model_params),
             uncertainties=uncertainties,
             credible_intervals=credible_intervals,
             r_squared=gof["r_squared"],
@@ -646,10 +676,11 @@ class BayesianDSCFitter:
             n_iterations = 5
         self._validate_inputs(concentration, aif, time_points)
 
-        n_params = self.model.n_parameters
+        fitting_defs = self.model.get_fitting_parameter_definitions()
+        n_params = len(fitting_defs)
         n_obs = len(concentration)
-        bounds = self.model.get_bounds()
-        param_names = self.model.get_parameter_names()
+        bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+        param_names = [p.name for p in fitting_defs]
         y = np.asarray(concentration, dtype=np.float64)
 
         # Build transform info from priors
@@ -666,8 +697,8 @@ class BayesianDSCFitter:
         prior_prec = np.diag(1.0 / (prior_stds_t**2))  # Λ_diag
 
         # Add symmetric monotonicity penalty for CPI (tridiagonal structure).
-        # Logit is monotone, so logit-space monotonicity = natural-space
-        # monotonicity. Apply unscaled.
+        # CPI control points use IDENTITY transform, so the penalty operates
+        # directly in natural space. Apply unscaled.
         mono_prec = self.model.compute_monotonicity_precision()
         if mono_prec is not None:
             prior_prec = prior_prec + mono_prec  # Λ_combined
@@ -686,18 +717,21 @@ class BayesianDSCFitter:
             c0 = 1e-3
             s0 = 1e3
 
-        # Initialize posterior mean from model's initial guess (natural space).
-        # For CPI, get_initial_guess() provides exponential-decay fractions
-        # that are a better starting point than the prior midpoints.
-        m_nat = np.array(self.model.get_initial_guess(), dtype=np.float64)
+        # Initialize posterior mean from model's initial guess, converted to
+        # fitting space. For CPI, get_initial_guess() provides exponential-decay
+        # fractions; fitting_to_model is identity so no conversion needed.
+        m_nat = self.model.model_to_fitting_params(
+            np.array(self.model.get_initial_guess(), dtype=np.float64)
+        )
         for i in range(n_params):
             m_nat[i] = np.clip(m_nat[i], bounds[i][0], bounds[i][1])
 
         # Seed from NLLS if model provides one (e.g. CPI). This prevents
         # tau collapse when the default initial guess is far from truth.
+        # NLLS seed is in model space; convert to fitting space.
         nlls_seed = self.model.compute_nlls_seed(y, aif, time_points)
         if nlls_seed is not None:
-            m_nat = nlls_seed.copy()
+            m_nat = self.model.model_to_fitting_params(nlls_seed)
             for i in range(n_params):
                 m_nat[i] = np.clip(m_nat[i], bounds[i][0], bounds[i][1])
 
@@ -716,7 +750,8 @@ class BayesianDSCFitter:
         # the Gamma update from collapsing tau on the first iteration.
         if nlls_seed is not None:
             try:
-                g_init = self.model.tissue_curve(m_nat, aif, time_points)
+                m_nat_model = self.model.fitting_to_model_params(m_nat)
+                g_init = self.model.tissue_curve(m_nat_model, aif, time_points)
                 init_var = float(np.sum((y - np.asarray(g_init))**2)) / n_obs
                 if init_var > 1e-20:
                     tau_exp = 1.0 / init_var
@@ -734,22 +769,25 @@ class BayesianDSCFitter:
         converged = False
 
         for iteration in range(n_iterations):
-            # Inverse-transform m to natural space for forward model
+            # Inverse-transform m to fitting-space natural params
             m_nat = np.array([
                 float(from_transformed(m[k], transforms[k], upper_bounds[k]))
                 for k in range(n_params)
             ], dtype=np.float64)
 
+            # Convert fitting-space to model-space for forward model
+            m_model = self.model.fitting_to_model_params(m_nat)
+
             # 1. Evaluate forward model at current mean
             try:
-                g_m = self.model.tissue_curve(m_nat, aif, time_points)
+                g_m = self.model.tissue_curve(m_model, aif, time_points)
             except (ValueError, RuntimeError):
                 break
             g_m = np.asarray(g_m, dtype=np.float64)
 
             # 2. Compute Jacobian via central finite differences in
             # transformed space. Perturb m' (transformed), inverse-transform,
-            # evaluate forward model.
+            # convert to model space, evaluate forward model.
             J = np.zeros((n_obs, n_params), dtype=np.float64)
             for j in range(n_params):
                 delta = max(abs(m[j]) * 1e-5, 1e-10)
@@ -757,8 +795,12 @@ class BayesianDSCFitter:
                 m_minus = m.copy()
                 m_plus[j] += delta
                 m_minus[j] -= delta
-                # NO CLIPPING — transformed space is unconstrained
-                # Inverse transform to natural space for forward model
+                # For IDENTITY params, clip perturbations to natural bounds.
+                # LOG/LOG_LOGIT are unconstrained in transformed space.
+                if transforms[j] == TransformType.IDENTITY:
+                    m_plus[j] = min(m_plus[j], bounds[j][1])
+                    m_minus[j] = max(m_minus[j], bounds[j][0])
+                # Inverse transform to fitting-space natural params
                 m_plus_nat = np.array([
                     float(from_transformed(m_plus[k], transforms[k], upper_bounds[k]))
                     for k in range(n_params)
@@ -767,12 +809,17 @@ class BayesianDSCFitter:
                     float(from_transformed(m_minus[k], transforms[k], upper_bounds[k]))
                     for k in range(n_params)
                 ])
+                # Convert to model space for tissue_curve
+                m_plus_model = self.model.fitting_to_model_params(m_plus_nat)
+                m_minus_model = self.model.fitting_to_model_params(m_minus_nat)
                 try:
-                    g_plus = self.model.tissue_curve(m_plus_nat, aif, time_points)
-                    g_minus = self.model.tissue_curve(m_minus_nat, aif, time_points)
+                    g_plus = self.model.tissue_curve(m_plus_model, aif, time_points)
+                    g_minus = self.model.tissue_curve(m_minus_model, aif, time_points)
                 except (ValueError, RuntimeError):
                     continue
-                J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / (2 * delta)
+                actual_delta = m_plus[j] - m_minus[j]
+                if actual_delta > 0:
+                    J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / actual_delta
 
             # Residual
             k_res = y - g_m  # k = y - g(m)
@@ -800,18 +847,23 @@ class BayesianDSCFitter:
                 rhs = prior_prec @ prior_means_t + tau_exp * J.T @ (k_res + J @ m)
             m_new = post_cov @ rhs
 
-            # NO CLIPPING — transformed space is unconstrained
+            # For LOG/LOG_LOGIT, transformed space is unconstrained (bounds
+            # enforced by inverse transform). For IDENTITY, clip to bounds.
+            for i in range(n_params):
+                if transforms[i] == TransformType.IDENTITY:
+                    m_new[i] = np.clip(m_new[i], bounds[i][0], bounds[i][1])
 
             # 6. Update noise precision posterior: Gamma(c, s)
             # c = c₀ + N/2
             c = c0 + n_obs / 2.0
-            # Residual at new mean (inverse-transform first)
+            # Residual at new mean (inverse-transform, then convert to model space)
             m_new_nat = np.array([
                 float(from_transformed(m_new[k], transforms[k], upper_bounds[k]))
                 for k in range(n_params)
             ], dtype=np.float64)
+            m_new_model = self.model.fitting_to_model_params(m_new_nat)
             try:
-                g_new = self.model.tissue_curve(m_new_nat, aif, time_points)
+                g_new = self.model.tissue_curve(m_new_model, aif, time_points)
             except (ValueError, RuntimeError):
                 g_new = g_m
             k_new = y - np.asarray(g_new, dtype=np.float64)
@@ -867,6 +919,9 @@ class BayesianDSCFitter:
                 if step_scale < 1e-4:
                     break  # give up
                 m_new = m + step_scale * (m_new - m)
+                for i in range(n_params):
+                    if transforms[i] == TransformType.IDENTITY:
+                        m_new[i] = np.clip(m_new[i], bounds[i][0], bounds[i][1])
 
             # Convergence check
             if iteration > 0:
@@ -878,16 +933,19 @@ class BayesianDSCFitter:
 
             m = m_new
 
-        # Inverse-transform best parameters to natural space
-        fitted_params = np.array([
+        # Inverse-transform best parameters to fitting-space natural params
+        fitted_fitting_params = np.array([
             float(from_transformed(best_m[k], transforms[k], upper_bounds[k]))
             for k in range(n_params)
         ], dtype=np.float64)
 
+        # Convert to model-space for output
+        fitted_model_params = self.model.fitting_to_model_params(fitted_fitting_params)
+
         fitted_stds_t = np.sqrt(np.maximum(np.diag(best_cov), 0.0))
         noise_std_posterior = 1.0 / np.sqrt(max(best_c * best_s, 1e-300))
 
-        # Build uncertainties and credible intervals.
+        # Build uncertainties and credible intervals in fitting space.
         # Back-transform covariance using delta method:
         # std_natural ≈ std_transformed * |dtheta/dtheta'|
         uncertainties: dict[str, float] = {}
@@ -895,7 +953,7 @@ class BayesianDSCFitter:
 
         for i, name in enumerate(param_names):
             std_t = float(fitted_stds_t[i])
-            theta_nat = float(fitted_params[i])
+            theta_nat = float(fitted_fitting_params[i])
             jac = float(np.exp(log_jacobian_det(
                 theta_nat, transforms[i], upper_bounds[i]
             )))
@@ -908,14 +966,14 @@ class BayesianDSCFitter:
         # Add noise std to uncertainties for diagnostics
         uncertainties["noise_std"] = noise_std_posterior
 
-        # Compute fitted curves
-        fitted_residue = self.model.compute_fitted_residue(fitted_params, time_points)
-        fitted_tissue = self.model.tissue_curve(fitted_params, aif, time_points)
+        # Compute fitted curves using model-space params
+        fitted_residue = self.model.compute_fitted_residue(fitted_model_params, time_points)
+        fitted_tissue = self.model.tissue_curve(fitted_model_params, aif, time_points)
 
         gof = self._compute_gof(concentration, fitted_tissue)
 
         return DSCFitResult(
-            parameters=self.model.params_to_dict(fitted_params),
+            parameters=self.model.params_to_dict(fitted_model_params),
             uncertainties=uncertainties,
             credible_intervals=credible_intervals,
             r_squared=gof["r_squared"],
@@ -971,11 +1029,12 @@ class BayesianDSCFitter:
         if noise_std_baseline is None:
             noise_std_baseline = self._estimate_noise_std(concentration)
 
-        n_model_params = self.model.n_parameters
-        # Total sampled dimensions: model params + log_sigma
-        n_dims = n_model_params + 1
-        bounds = self.model.get_bounds()
-        param_names = self.model.get_parameter_names()
+        fitting_defs = self.model.get_fitting_parameter_definitions()
+        n_fitting_params = len(fitting_defs)
+        # Total sampled dimensions: fitting params + log_sigma
+        n_dims = n_fitting_params + 1
+        bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+        fitting_param_names = [p.name for p in fitting_defs]
 
         # Set defaults
         if n_walkers is None:
@@ -986,24 +1045,27 @@ class BayesianDSCFitter:
         n_total = n_samples + n_burnin
 
         # Log posterior including sampled sigma
-        # State vector: [model_params..., log_sigma]
+        # State vector: [fitting_params..., log_sigma]
         def log_prob_with_sigma(
             state: npt.NDArray[np.floating],
         ) -> float:
-            model_params = state[:n_model_params]
-            log_sigma = state[n_model_params]
+            fitting_params = state[:n_fitting_params]
+            log_sigma = state[n_fitting_params]
             sigma = np.exp(log_sigma)
 
-            # Check model parameter bounds
-            if not self.model.validate_params(model_params):
+            # Check fitting-space parameter bounds
+            if not all(
+                d.is_valid(float(p))
+                for d, p in zip(fitting_defs, fitting_params)
+            ):
                 return float("-inf")
 
             # sigma must be positive (guaranteed by exp) but guard extremes
             if sigma < 1e-15 or sigma > 1e6:
                 return float("-inf")
 
-            # Prior on model parameters
-            log_p = self._log_prior(model_params)
+            # Prior on fitting-space parameters
+            log_p = self._log_prior(fitting_params)
             if not np.isfinite(log_p):
                 return float("-inf")
 
@@ -1012,36 +1074,40 @@ class BayesianDSCFitter:
             log_p -= (sigma**2) / (2.0 * noise_std_baseline**2)
             log_p += log_sigma  # Jacobian |d(sigma)/d(log_sigma)| = sigma
 
-            # Likelihood with sampled sigma
+            # Likelihood with sampled sigma (fitting_to_model conversion
+            # happens inside _log_likelihood)
             log_lik = self._log_likelihood(
-                model_params, concentration, aif, time_points, sigma,
+                fitting_params, concentration, aif, time_points, sigma,
                 weights=weights,
             )
 
             return log_p + log_lik  # type: ignore[no-any-return]
 
-        # Initialize walkers near MAP estimate
+        # Initialize walkers near MAP estimate (already in model space)
         map_result = self.fit_map(
             concentration, aif, time_points, max_iter=100,
             compute_uncertainties=False, weights=weights,
         )
-        map_params_list = self.model.dict_to_params(map_result.parameters)
-        map_params = np.array(map_params_list, dtype=np.float64)
+        # Convert MAP result (model space) to fitting space for initialization
+        map_model_params = np.array(
+            self.model.dict_to_params(map_result.parameters), dtype=np.float64
+        )
+        map_fitting_params = self.model.model_to_fitting_params(map_model_params)
 
-        # Bounds for sampler: model bounds + log_sigma bounds
+        # Bounds for sampler: fitting bounds + log_sigma bounds
         sampler_bounds = bounds + [(-15.0, 15.0)]  # log_sigma
 
-        # Initialize walkers with small perturbations
+        # Initialize walkers with small perturbations in fitting space
         init_positions = np.zeros((n_walkers, n_dims))
         log_sigma_init = np.log(noise_std_baseline)
         for i in range(n_walkers):
-            for j in range(n_model_params):
+            for j in range(n_fitting_params):
                 scale = self.priors[j].std * 0.1
-                perturbed = map_params[j] + scale * np.random.randn()
+                perturbed = map_fitting_params[j] + scale * np.random.randn()
                 perturbed = np.clip(perturbed, bounds[j][0], bounds[j][1])
                 init_positions[i, j] = perturbed
             # log_sigma: small perturbation around baseline estimate
-            init_positions[i, n_model_params] = (
+            init_positions[i, n_fitting_params] = (
                 log_sigma_init + 0.1 * np.random.randn()
             )
 
@@ -1056,23 +1122,29 @@ class BayesianDSCFitter:
         # Flatten chains for analysis
         flat_samples = samples.reshape(-1, n_dims)
 
-        # Separate model params and sigma
-        model_samples = flat_samples[:, :n_model_params]
-        sigma_samples = np.exp(flat_samples[:, n_model_params])
+        # Separate fitting params and sigma
+        fitting_samples = flat_samples[:, :n_fitting_params]
+        sigma_samples = np.exp(flat_samples[:, n_fitting_params])
+
+        # Convert each sample from fitting space to model space
+        model_samples = np.array([
+            self.model.fitting_to_model_params(s) for s in fitting_samples
+        ])
 
         # Posterior summaries for model parameters
-        posterior_mean = np.mean(model_samples, axis=0)
-        posterior_std = np.std(model_samples, axis=0)
+        posterior_mean_model = np.mean(model_samples, axis=0)
+        posterior_std_model = np.std(model_samples, axis=0)
         ci_low = np.percentile(model_samples, 2.5, axis=0)
         ci_high = np.percentile(model_samples, 97.5, axis=0)
 
+        model_param_names = self.model.get_parameter_names()
         parameters: dict[str, float] = {}
         uncertainties: dict[str, float] = {}
         credible_intervals: dict[str, tuple[float, float]] = {}
 
-        for i, name in enumerate(param_names):
-            parameters[name] = float(posterior_mean[i])
-            uncertainties[name] = float(posterior_std[i])
+        for i, name in enumerate(model_param_names):
+            parameters[name] = float(posterior_mean_model[i])
+            uncertainties[name] = float(posterior_std_model[i])
             credible_intervals[name] = (float(ci_low[i]), float(ci_high[i]))
 
         # Add sigma posterior summary
@@ -1089,7 +1161,7 @@ class BayesianDSCFitter:
 
         rhat_dict: dict[str, float] = {}
         ess_dict: dict[str, int] = {}
-        all_names = param_names + ["log_sigma"]
+        all_names = fitting_param_names + ["log_sigma"]
         for i, name in enumerate(all_names):
             rhat_dict[name] = float(rhat[i])
             ess_dict[name] = int(ess[i])
@@ -1099,8 +1171,12 @@ class BayesianDSCFitter:
         converged = all_rhat_ok and all_ess_ok
 
         # Fitted curves using posterior mean of model params
-        fitted_residue = self.model.compute_fitted_residue(posterior_mean, time_points)
-        fitted_tissue = self.model.tissue_curve(posterior_mean, aif, time_points)
+        fitted_residue = self.model.compute_fitted_residue(
+            posterior_mean_model, time_points
+        )
+        fitted_tissue = self.model.tissue_curve(
+            posterior_mean_model, aif, time_points
+        )
 
         gof = self._compute_gof(concentration, fitted_tissue)
 

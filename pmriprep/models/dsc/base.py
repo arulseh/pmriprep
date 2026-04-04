@@ -328,6 +328,48 @@ class DSCModel(ABC):
         """
         pass
 
+    def get_fitting_parameter_definitions(self) -> Sequence['DSCModelParameter']:
+        """Parameter definitions for Bayesian fitting space.
+
+        Override when the fitting parameterization differs from the model
+        parameterization (e.g., VascularModel: alpha/beta -> MTT/alpha).
+        Default: returns get_parameter_definitions() (no reparameterization).
+
+        Returns:
+            Sequence of DSCModelParameter objects for fitting-space parameters.
+        """
+        return self.get_parameter_definitions()
+
+    def fitting_to_model_params(
+        self, fitting_params: npt.NDArray[np.floating]
+    ) -> npt.NDArray[np.float64]:
+        """Convert fitting-space parameters to model-space parameters.
+
+        Default: identity (no conversion).
+
+        Args:
+            fitting_params: Parameter values in fitting space.
+
+        Returns:
+            Parameter values in model space.
+        """
+        return np.asarray(fitting_params, dtype=np.float64)
+
+    def model_to_fitting_params(
+        self, model_params: npt.NDArray[np.floating]
+    ) -> npt.NDArray[np.float64]:
+        """Convert model-space parameters to fitting-space parameters.
+
+        Default: identity (no conversion).
+
+        Args:
+            model_params: Parameter values in model space.
+
+        Returns:
+            Parameter values in fitting space.
+        """
+        return np.asarray(model_params, dtype=np.float64)
+
     def compute_nlls_seed(
         self,
         concentration: npt.NDArray[np.floating],

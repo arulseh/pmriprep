@@ -644,7 +644,7 @@ class BayesianPKFitter:
                 val -= float(log_jacobian_det(
                     params_nat[i], transforms[i], upper_bounds_t[i]
                 ))
-            return val
+            return min(val, 1e30)
 
         # Multi-start: try NLLS warm-start, prior mean, and data-driven guess.
         # Use Nelder-Mead (gradient-free) because the profile likelihood

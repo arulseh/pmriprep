@@ -184,7 +184,7 @@ class CPIModel(DSCModel):
                     name=f"r{i}",
                     bounds=(0.0, 1.0),
                     typical_range=(0.0, 1.0),
-                    transform=TransformType.LOG_LOGIT,
+                    transform=TransformType.IDENTITY,
                     description=f"Control point fraction at t={t:.1f}s",
                     units="fraction",
                 )

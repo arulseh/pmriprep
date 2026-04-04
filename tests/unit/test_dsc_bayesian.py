@@ -53,10 +53,10 @@ class TestBayesianConstruction:
         assert len(fitter.priors) == model.n_parameters
 
     def test_prior_mean_std(self) -> None:
-        """Prior means match model parameter definitions."""
+        """Prior means match model fitting-space parameter definitions."""
         model = VascularModel()
         fitter = BayesianDSCFitter(model)
-        definitions = model.get_parameter_definitions()
+        definitions = model.get_fitting_parameter_definitions()
         for i, defn in enumerate(definitions):
             assert fitter.priors[i].mean == pytest.approx(defn.get_prior_mean())
             assert fitter.priors[i].std == pytest.approx(defn.get_prior_sigma())
