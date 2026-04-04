@@ -36,12 +36,16 @@ from scipy.optimize import Bounds  # type: ignore[import-untyped]
 
 from pmriprep.models.bayesian_utils import (
     BayesianPrior,
+    TransformType,
     build_priors_from_params,
     compute_goodness_of_fit,
     compute_log_prior,
     compute_per_walker_ess,
     compute_split_rhat,
+    from_transformed,
+    log_jacobian_det,
     run_ensemble_sampler,
+    to_transformed,
     validate_bayesian_inputs,
 )
 from pmriprep.models.dce.base import (
@@ -615,65 +619,83 @@ class BayesianPKFitter:
         noise_std = 1.0  # Unused; profile likelihood estimates from residuals
 
         bounds = self.model.get_bounds()
+        n_params = self.model.n_parameters
 
-        # Objective: negative log posterior
-        # Cap at large finite value instead of inf so that Nelder-Mead's
-        # convergence check (fsim[0] - fsim[1:]) never computes inf - inf = NaN
-        def neg_log_posterior(params: npt.NDArray[np.floating]) -> float:
+        # Build transform info
+        transforms = [p.transform for p in self.priors]
+        upper_bounds_t = [p.upper_bound for p in self.priors]
+
+        # Objective in transformed space
+        def neg_log_posterior_t(params_t: npt.NDArray[np.floating]) -> float:
+            # Inverse-transform to natural space
+            params_nat = np.array([
+                float(from_transformed(params_t[i], transforms[i], upper_bounds_t[i]))
+                for i in range(n_params)
+            ], dtype=np.float64)
             lp = self._log_posterior(
-                params, tissue_curve, aif, time_points, noise_std,
+                params_nat, tissue_curve, aif, time_points, noise_std,
                 weights=weights,
             )
             if not np.isfinite(lp):
                 return 1e30
-            return -lp
+            val = -lp
+            # Subtract log-Jacobian for correct MAP in transformed space
+            for i in range(n_params):
+                val -= float(log_jacobian_det(
+                    params_nat[i], transforms[i], upper_bounds_t[i]
+                ))
+            return val
 
         # Multi-start: try NLLS warm-start, prior mean, and data-driven guess.
         # Use Nelder-Mead (gradient-free) because the profile likelihood
         # has non-smooth gradients that cause L-BFGS-B to stall.
-        x0_prior = np.array(self.model.get_initial_guess(), dtype=np.float64)
-        x0_data = np.array(
+        x0_prior_nat = np.array(self.model.get_initial_guess(), dtype=np.float64)
+        x0_data_nat = np.array(
             self.model.estimate_initial_guess(tissue_curve, aif, time_points),
             dtype=np.float64,
         )
 
         # NLLS warm-start: use model.fit() (curve_fit TRF) as third start point
-        x0_nlls = x0_prior.copy()  # fallback if NLLS fails
+        x0_nlls_nat = x0_prior_nat.copy()
         try:
             nlls_result = self.model.fit(
                 tissue_curve, aif, time_points, weights=weights,
             )
             if nlls_result.converged:
                 param_names = self.model.get_parameter_names()
-                x0_nlls = np.array(
-                    [nlls_result.parameters.get(p, x0_prior[i])
+                x0_nlls_nat = np.array(
+                    [nlls_result.parameters.get(p, x0_prior_nat[i])
                      for i, p in enumerate(param_names)],
                     dtype=np.float64,
                 )
         except (ValueError, RuntimeError, np.linalg.LinAlgError):
             pass
 
-        # Build scipy Bounds for Nelder-Mead (supported since scipy 1.7)
+        # Clip natural-space start points, then transform to unconstrained space
         lower = np.array([b[0] for b in bounds])
         upper = np.array([b[1] for b in bounds])
-        nm_bounds = Bounds(lower, upper)
 
-        # Clip all start points to bounds to avoid OptimizeWarning
-        x0_nlls = np.clip(x0_nlls, lower, upper)
-        x0_prior = np.clip(x0_prior, lower, upper)
-        x0_data = np.clip(x0_data, lower, upper)
+        def _to_t(x_nat: npt.NDArray) -> npt.NDArray:
+            x_nat = np.clip(x_nat, lower, upper)
+            return np.array([
+                float(to_transformed(x_nat[i], transforms[i], upper_bounds_t[i]))
+                for i in range(n_params)
+            ], dtype=np.float64)
+
+        x0_nlls_t = _to_t(x0_nlls_nat)
+        x0_prior_t = _to_t(x0_prior_nat)
+        x0_data_t = _to_t(x0_data_nat)
 
         best_fun = float("inf")
         converged = False
-        fitted_params = x0_prior
+        fitted_params_t = x0_prior_t
 
-        for x0 in [x0_nlls, x0_prior, x0_data]:
+        for x0 in [x0_nlls_t, x0_prior_t, x0_data_t]:
             try:
                 result = optimize.minimize(
-                    neg_log_posterior,
+                    neg_log_posterior_t,
                     x0,
                     method="Nelder-Mead",
-                    bounds=nm_bounds,
                     options={
                         "maxiter": max_iter,
                         "xatol": 1e-3 if sloppy else 1e-6,
@@ -682,24 +704,33 @@ class BayesianPKFitter:
                 )
                 if result.fun < best_fun:
                     best_fun = result.fun
-                    # Reject spurious convergence: if all objective
-                    # evaluations hit the 1e30 cap, result.success may
-                    # be True but the fit is meaningless
                     converged = result.success and result.fun < 1e20
-                    fitted_params = np.array(result.x, dtype=np.float64)
+                    fitted_params_t = np.array(result.x, dtype=np.float64)
             except (ValueError, RuntimeError):
                 continue
 
-        # Apply volume constraint and clip to bounds
-        fitted_params = self._apply_volume_constraint(fitted_params)  # type: ignore[assignment]
-        fitted_params = np.array(
-            self.model.clip_params(list(fitted_params)), dtype=np.float64
-        )
+        # Inverse-transform to natural space
+        fitted_params = np.array([
+            float(from_transformed(fitted_params_t[i], transforms[i], upper_bounds_t[i]))
+            for i in range(n_params)
+        ], dtype=np.float64)
 
-        # Compute Laplace approximation uncertainties
+        # Apply volume constraint (natural space, no clipping)
+        fitted_params = self._apply_volume_constraint(fitted_params)  # type: ignore[assignment]
+
+        # Compute Laplace approximation uncertainties (natural space)
         if compute_uncertainties:
+            def _neg_log_post_nat(params: npt.NDArray[np.floating]) -> float:
+                lp = self._log_posterior(
+                    params, tissue_curve, aif, time_points, noise_std,
+                    weights=weights,
+                )
+                if not np.isfinite(lp):
+                    return 1e30
+                return -lp
+
             uncertainties, credible_intervals = self._compute_laplace_uncertainties(
-                fitted_params, neg_log_posterior
+                fitted_params, _neg_log_post_nat
             )
         else:
             uncertainties = {}
@@ -786,53 +817,73 @@ class BayesianPKFitter:
         param_names = self.model.get_parameter_names()
         y = np.asarray(tissue_curve, dtype=np.float64)
 
-        # Prior precision matrix (diagonal, from prior stds)
-        prior_means = np.array([p.mean for p in self.priors], dtype=np.float64)
-        prior_stds = np.array([p.std for p in self.priors], dtype=np.float64)
-        prior_prec = np.diag(1.0 / (prior_stds**2))  # Λ₀
+        # Build transform info from priors
+        transforms = [p.transform for p in self.priors]
+        upper_bounds_t = [p.upper_bound for p in self.priors]
 
-        # Noise precision prior: Gamma(c0, s0)
-        # Following FABBER convention: Gamma parameterized so E[tau] = c/s
+        # Prior precision matrix in transformed space
+        prior_means_t = np.array(
+            [p.mean_transformed for p in self.priors], dtype=np.float64
+        )
+        prior_stds_t = np.array(
+            [p.std_transformed for p in self.priors], dtype=np.float64
+        )
+        prior_prec = np.diag(1.0 / (prior_stds_t**2))  # Λ₀
+
+        # Noise precision prior: Gamma(c0, s0) in shape-scale form.
+        # E[tau] = c0 * s0 (matching DSC convention).
         if noise_prior is not None:
             c0, s0 = noise_prior
         elif self.noise_std is not None:
             tau_prior = 1.0 / (self.noise_std**2)
             c0 = 10.0
-            s0 = c0 / tau_prior
+            s0 = tau_prior / c0  # so E[tau] = c0 * s0 = tau_prior
         else:
             c0 = 1e-3
             s0 = 1e3
 
-        # Initialize posterior mean at prior mean, clipped to bounds
-        m = prior_means.copy()
+        # Initialize posterior mean at prior mean (natural), clipped to bounds,
+        # then transform to fitting space
+        m_nat = np.array([p.mean for p in self.priors], dtype=np.float64)
         for i in range(n_params):
-            m[i] = np.clip(m[i], bounds[i][0], bounds[i][1])
+            m_nat[i] = np.clip(m_nat[i], bounds[i][0], bounds[i][1])
+
+        m = np.array([
+            float(to_transformed(m_nat[i], transforms[i], upper_bounds_t[i]))
+            for i in range(n_params)
+        ], dtype=np.float64)
 
         # Initialize noise posterior
         c = c0
         s = s0
-        tau_exp = c / s
+        tau_exp = c * s  # E[tau] = shape * scale
 
-        # Best free energy tracking for trial mode
+        # Best free energy tracking with step-size reduction
         best_free_energy = float("-inf")
         best_m = m.copy()
-        best_cov = np.diag(prior_stds**2)
+        best_cov = np.diag(prior_stds_t**2)
         best_c = c
         best_s = s
-        n_trials = 0
-        max_trials = 10
+        step_scale = 1.0
 
         converged = False
 
         for iteration in range(n_iterations):
+            # Inverse-transform m to natural space for forward model
+            m_nat = np.array([
+                float(from_transformed(m[k], transforms[k], upper_bounds_t[k]))
+                for k in range(n_params)
+            ], dtype=np.float64)
+
             # 1. Evaluate forward model at current mean
             try:
-                g_m = self.model.evaluate(list(m), aif, time_points)
+                g_m = self.model.evaluate(list(m_nat), aif, time_points)
             except (ValueError, RuntimeError):
                 break
             g_m = np.asarray(g_m, dtype=np.float64)
 
-            # 2. Compute Jacobian via central finite differences
+            # 2. Compute Jacobian via central finite differences in
+            # transformed space
             J = np.zeros((n_obs, n_params), dtype=np.float64)
             for j in range(n_params):
                 delta = max(abs(m[j]) * 1e-5, 1e-10)
@@ -840,17 +891,21 @@ class BayesianPKFitter:
                 m_minus = m.copy()
                 m_plus[j] += delta
                 m_minus[j] -= delta
-                m_plus[j] = np.clip(m_plus[j], bounds[j][0], bounds[j][1])
-                m_minus[j] = np.clip(m_minus[j], bounds[j][0], bounds[j][1])
-                actual_delta = m_plus[j] - m_minus[j]
-                if actual_delta < 1e-15:
-                    continue
+                # NO CLIPPING — transformed space is unconstrained
+                m_plus_nat = np.array([
+                    float(from_transformed(m_plus[k], transforms[k], upper_bounds_t[k]))
+                    for k in range(n_params)
+                ])
+                m_minus_nat = np.array([
+                    float(from_transformed(m_minus[k], transforms[k], upper_bounds_t[k]))
+                    for k in range(n_params)
+                ])
                 try:
-                    g_plus = self.model.evaluate(list(m_plus), aif, time_points)
-                    g_minus = self.model.evaluate(list(m_minus), aif, time_points)
+                    g_plus = self.model.evaluate(list(m_plus_nat), aif, time_points)
+                    g_minus = self.model.evaluate(list(m_minus_nat), aif, time_points)
                 except (ValueError, RuntimeError):
                     continue
-                J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / actual_delta
+                J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / (2 * delta)
 
             # Residual
             k_res = y - g_m
@@ -866,21 +921,20 @@ class BayesianPKFitter:
                 post_prec += 1e-6 * np.eye(n_params)
                 post_cov = np.linalg.inv(post_prec)
 
-            # 5. Update posterior mean
-            rhs = prior_prec @ prior_means + tau_exp * J.T @ (k_res + J @ m)
+            # 5. Update posterior mean (in transformed space)
+            rhs = prior_prec @ prior_means_t + tau_exp * J.T @ (k_res + J @ m)
             m_new = post_cov @ rhs
 
-            # Clip to bounds
-            for i in range(n_params):
-                m_new[i] = np.clip(m_new[i], bounds[i][0], bounds[i][1])
-
-            # Apply volume constraint after mean update
-            m_new = self._apply_volume_constraint(m_new)
+            # NO CLIPPING — transformed space is unconstrained
 
             # 6. Update noise precision posterior
             c = c0 + n_obs / 2.0
+            m_new_nat = np.array([
+                float(from_transformed(m_new[k], transforms[k], upper_bounds_t[k]))
+                for k in range(n_params)
+            ], dtype=np.float64)
             try:
-                g_new = self.model.evaluate(list(m_new), aif, time_points)
+                g_new = self.model.evaluate(list(m_new_nat), aif, time_points)
             except (ValueError, RuntimeError):
                 g_new = g_m
             k_new = y - np.asarray(g_new, dtype=np.float64)
@@ -889,11 +943,11 @@ class BayesianPKFitter:
             tau_exp = c * s
 
             # 7. Compute free energy (analytic ELBO)
-            dm = m_new - prior_means
+            dm = m_new - prior_means_t
             sign_cov, logdet_cov = np.linalg.slogdet(post_cov)
-            sign_prior, logdet_prior_cov = np.linalg.slogdet(
-                np.diag(prior_stds**2)
-            )
+            sign_prior_prec, logdet_prior_prec = np.linalg.slogdet(prior_prec)
+            logdet_prior_cov = -logdet_prior_prec
+            sign_prior = sign_prior_prec
 
             free_energy = (
                 0.5 * n_obs * (np.log(tau_exp) - np.log(2 * np.pi))
@@ -905,18 +959,26 @@ class BayesianPKFitter:
                 + 0.5 * n_params
             )
 
-            # Trial mode: revert if free energy decreased
+            # Gamma KL: -KL(q(tau) || p(tau)) for shape-scale Gamma
+            from scipy.special import digamma, gammaln
+            gamma_kl = -((c - c0) * digamma(c) - gammaln(c) + gammaln(c0)
+                          + c0 * (np.log(s) - np.log(s0))
+                          + c * (s0 / s - 1.0))
+            free_energy += gamma_kl
+
+            # Step-size reduction: if free energy decreased, interpolate
             if free_energy > best_free_energy:
                 best_free_energy = free_energy
                 best_m = m_new.copy()
                 best_cov = post_cov.copy()
                 best_c = c
                 best_s = s
-                n_trials = 0
+                step_scale = 1.0
             else:
-                n_trials += 1
-                if n_trials >= max_trials:
+                step_scale *= 0.5
+                if step_scale < 1e-4:
                     break
+                m_new = m + step_scale * (m_new - m)
 
             # Convergence check
             if iteration > 0:
@@ -928,20 +990,31 @@ class BayesianPKFitter:
 
             m = m_new
 
-        # Use best parameters found
-        fitted_params = best_m
-        fitted_stds = np.sqrt(np.maximum(np.diag(best_cov), 0.0))
+        # Inverse-transform best parameters to natural space
+        fitted_params = np.array([
+            float(from_transformed(best_m[k], transforms[k], upper_bounds_t[k]))
+            for k in range(n_params)
+        ], dtype=np.float64)
+
+        fitted_stds_t = np.sqrt(np.maximum(np.diag(best_cov), 0.0))
         noise_std_posterior = 1.0 / np.sqrt(max(best_c * best_s, 1e-300))
 
-        # Build uncertainties and credible intervals
+        # Build uncertainties and credible intervals.
+        # Back-transform covariance using delta method:
+        # std_natural ≈ std_transformed * |dtheta/dtheta'|
         uncertainties: dict[str, float] = {}
         credible_intervals: dict[str, tuple[float, float]] = {}
 
         for i, name in enumerate(param_names):
-            std = float(fitted_stds[i])
-            uncertainties[name] = std
-            ci_low = max(float(fitted_params[i] - 1.96 * std), bounds[i][0])
-            ci_high = min(float(fitted_params[i] + 1.96 * std), bounds[i][1])
+            std_t = float(fitted_stds_t[i])
+            theta_nat = float(fitted_params[i])
+            jac = float(np.exp(log_jacobian_det(
+                theta_nat, transforms[i], upper_bounds_t[i]
+            )))
+            std_nat = std_t * jac
+            uncertainties[name] = std_nat
+            ci_low = max(float(theta_nat - 1.96 * std_nat), bounds[i][0])
+            ci_high = min(float(theta_nat + 1.96 * std_nat), bounds[i][1])
             credible_intervals[name] = (ci_low, ci_high)
 
         uncertainties["noise_std"] = noise_std_posterior
@@ -970,7 +1043,7 @@ class BayesianPKFitter:
             model_name=self.model.name,
             n_parameters=self.model.n_parameters,
             n_observations=n_obs,
-            converged=converged or n_trials < max_trials,
+            converged=converged or step_scale >= 1e-4,
             fitting_method="vi",
             fitted_curve=fitted_curve,
         )
@@ -1212,10 +1285,19 @@ def create_vp_prior_from_dsc(
         BayesianPrior with informative mean and std for vp.
     """
     std = max(vp_value * relative_uncertainty, 0.001)
+    # vp uses LOG_LOGIT transform; compute transformed prior stats
+    from pmriprep.models.bayesian_utils import transform_prior
+    ub = 0.3  # VP_BOUNDS.max default
+    t_mean, t_std = transform_prior(
+        max(vp_value, 1e-10), std, TransformType.LOG_LOGIT, ub
+    )
     return BayesianPrior(
         mean=vp_value,
         std=std,
-        log_transform=False,
+        transform=TransformType.LOG_LOGIT,
+        upper_bound=ub,
+        mean_transformed=t_mean,
+        std_transformed=t_std,
     )
 
 

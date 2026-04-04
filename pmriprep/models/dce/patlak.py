@@ -26,6 +26,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.optimize import curve_fit
 
+from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.utils.dce_constants import (
     KTRANS_BOUNDS,
@@ -111,7 +112,7 @@ class PatlakModel(PKModel):
                 name="Ktrans",
                 bounds=(0.0, 5.0),  # Match perf-plus Patlak bounds
                 typical_range=(0.001, 0.1),
-                log_transform=False,
+                transform=TransformType.LOG,
                 description="Volume transfer constant (influx)",
                 units="min^-1",
             ),
@@ -119,7 +120,7 @@ class PatlakModel(PKModel):
                 name="vp",
                 bounds=(VP_BOUNDS.min, VP_BOUNDS.max),
                 typical_range=(0.01, 0.2),
-                log_transform=False,
+                transform=TransformType.LOG_LOGIT,
                 description="Plasma volume fraction",
                 units="",
             ),

@@ -90,12 +90,15 @@ class VascularModel(DSCModel):
         Returns:
             List of DSCModelParameter objects for CBF, alpha, beta, delay.
         """
+        from pmriprep.models.bayesian_utils import TransformType
+
         return [
             DSCModelParameter(
                 name="cbf",
                 bounds=(CBF_BOUNDS.min, CBF_BOUNDS.max),
                 typical_range=(10.0, 100.0),  # Typical gray/white matter range
-                log_transform=False,
+                transform=TransformType.LOG,
+                transformed_prior_sigma=1.0,  # FABBER convention: wide log-space prior
                 description="Cerebral blood flow",
                 units="mL/100g/min",
             ),
@@ -103,7 +106,7 @@ class VascularModel(DSCModel):
                 name="alpha",
                 bounds=(VASCULAR_ALPHA_BOUNDS.min, VASCULAR_ALPHA_BOUNDS.max),
                 typical_range=(1.5, 6.0),  # perf-plus: prior_mean=3.75
-                log_transform=False,  # perf-plus uses linear prior for alpha
+                transform=TransformType.LOG,
                 description="Gamma shape parameter",
                 units="",
             ),
@@ -111,7 +114,7 @@ class VascularModel(DSCModel):
                 name="beta",
                 bounds=(VASCULAR_BETA_BOUNDS.min, VASCULAR_BETA_BOUNDS.max),
                 typical_range=(0.5, 5.0),  # perf-plus: prior_mean=2.75
-                log_transform=False,  # log_transform ignored in _log_prior
+                transform=TransformType.LOG,
                 description="Gamma scale parameter",
                 units="s",
             ),
@@ -119,7 +122,7 @@ class VascularModel(DSCModel):
                 name="delay",
                 bounds=(VASCULAR_DELAY_BOUNDS.min, VASCULAR_DELAY_BOUNDS.max),
                 typical_range=(-1.0, 5.0),  # perf-plus: prior_mean=2.0
-                log_transform=False,  # Can be negative
+                transform=TransformType.IDENTITY,  # Can be negative
                 description="Bolus arrival delay",
                 units="s",
             ),

@@ -30,6 +30,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy import interpolate  # type: ignore[import-untyped]
 
+from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dsc.base import (
     DSCFitResult,
     DSCModel,
@@ -167,7 +168,7 @@ class CPIModel(DSCModel):
                 name="cbf",
                 bounds=(0.0, 200.0),
                 typical_range=(10.0, 100.0),
-                log_transform=False,
+                transform=TransformType.LOG,
                 description="CBF scaling (relative)",
                 units="s⁻¹",
             )
@@ -183,7 +184,7 @@ class CPIModel(DSCModel):
                     name=f"r{i}",
                     bounds=(0.0, 1.0),
                     typical_range=(0.0, 1.0),
-                    log_transform=False,
+                    transform=TransformType.LOG_LOGIT,
                     description=f"Control point fraction at t={t:.1f}s",
                     units="fraction",
                 )

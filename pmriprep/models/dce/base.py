@@ -12,6 +12,8 @@ from typing import Final, Optional, Sequence, Union
 import numpy as np
 import numpy.typing as npt
 
+from pmriprep.models.bayesian_utils import TransformType
+
 # Type alias for parameter arrays (accepts both list and ndarray)
 ParamsType = Union[Sequence[float], npt.NDArray[np.floating]]
 
@@ -29,8 +31,11 @@ class ModelParameter:
         bounds: Tuple of (lower, upper) hard bounds for the parameter.
         typical_range: Tuple of (low, high) values representing the typical
             physiological range. Used for prior construction in Bayesian fitting.
-        log_transform: Whether to use log-transformation during fitting.
-            Useful for parameters that span orders of magnitude (e.g., Ktrans).
+        transform: Parameter space transform for Bayesian fitting.
+            LOG for strictly positive params, LOG_LOGIT for bounded fractions,
+            IDENTITY for params that can be negative.
+        transformed_prior_sigma: Optional override for the prior standard
+            deviation in transformed space. See DSCModelParameter for details.
         description: Human-readable description of the parameter.
         units: Physical units of the parameter.
     """
@@ -38,7 +43,8 @@ class ModelParameter:
     name: str
     bounds: tuple[float, float]
     typical_range: tuple[float, float]
-    log_transform: bool = False
+    transform: TransformType = TransformType.IDENTITY
+    transformed_prior_sigma: float | None = None
     description: str = ""
     units: str = ""
 

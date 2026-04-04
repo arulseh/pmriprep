@@ -277,7 +277,8 @@ class TestCreateVpPriorFromDSC:
 
         assert prior.mean == 0.05
         assert np.isclose(prior.std, 0.01)  # 0.05 * 0.2 = 0.01
-        assert prior.log_transform is False
+        from pmriprep.models.bayesian_utils import TransformType
+        assert prior.transform == TransformType.LOG_LOGIT
 
     def test_create_vp_prior_from_dsc_min_std(self) -> None:
         """When vp is very small, minimum std of 0.001 should kick in."""
@@ -286,7 +287,8 @@ class TestCreateVpPriorFromDSC:
         assert prior.mean == 0.001
         # 0.001 * 0.2 = 0.0002, but min is 0.001
         assert np.isclose(prior.std, 0.001)
-        assert prior.log_transform is False
+        from pmriprep.models.bayesian_utils import TransformType
+        assert prior.transform == TransformType.LOG_LOGIT
 
 
 # ---------------------------------------------------------------------------

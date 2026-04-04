@@ -7,6 +7,7 @@ import pytest
 
 from pmriprep.models.bayesian_utils import (
     BayesianPrior,
+    TransformType,
     build_priors_from_params,
     compute_goodness_of_fit,
     compute_log_prior,
@@ -25,9 +26,11 @@ from pmriprep.models.bayesian_utils import (
 class _MockParameter:
     """Minimal mock satisfying ParameterDef protocol."""
 
-    log_transform: bool
+    transform: TransformType
+    bounds: tuple[float, float]
     _mean: float
     _sigma: float
+    transformed_prior_sigma: float | None = None
 
     def get_prior_mean(self) -> float:
         return self._mean
@@ -44,16 +47,16 @@ class TestBayesianPrior:
     """Tests for the BayesianPrior dataclass."""
 
     def test_attributes_accessible(self) -> None:
-        """BayesianPrior exposes mean, std, and log_transform attributes."""
-        prior = BayesianPrior(mean=0.5, std=0.1, log_transform=True)
+        """BayesianPrior exposes mean, std, and transform attributes."""
+        prior = BayesianPrior(mean=0.5, std=0.1, transform=TransformType.LOG)
         assert prior.mean == 0.5
         assert prior.std == 0.1
-        assert prior.log_transform is True
+        assert prior.transform == TransformType.LOG
 
     def test_defaults(self) -> None:
-        """log_transform defaults to False when not specified."""
+        """transform defaults to IDENTITY when not specified."""
         prior = BayesianPrior(mean=1.0, std=0.2)
-        assert prior.log_transform is False
+        assert prior.transform == TransformType.IDENTITY
 
 
 # ---------------------------------------------------------------------------
@@ -93,18 +96,24 @@ class TestBuildPriorsFromParams:
     def test_correct_prior_means_and_stds(self) -> None:
         """ModelParameter list produces priors with correct mean and std."""
         params = [
-            _MockParameter(log_transform=False, _mean=0.1, _sigma=0.05),
-            _MockParameter(log_transform=True, _mean=0.5, _sigma=0.1),
+            _MockParameter(
+                transform=TransformType.IDENTITY, bounds=(0.0, 1.0),
+                _mean=0.1, _sigma=0.05,
+            ),
+            _MockParameter(
+                transform=TransformType.LOG, bounds=(0.0, 10.0),
+                _mean=0.5, _sigma=0.1,
+            ),
         ]
         priors = build_priors_from_params(params)
 
         assert len(priors) == 2
         assert priors[0].mean == pytest.approx(0.1)
         assert priors[0].std == pytest.approx(0.05)
-        assert priors[0].log_transform is False
+        assert priors[0].transform == TransformType.IDENTITY
         assert priors[1].mean == pytest.approx(0.5)
         assert priors[1].std == pytest.approx(0.1)
-        assert priors[1].log_transform is True
+        assert priors[1].transform == TransformType.LOG
 
 
 # ---------------------------------------------------------------------------

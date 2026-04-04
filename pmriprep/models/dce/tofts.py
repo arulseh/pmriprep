@@ -21,6 +21,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.optimize import curve_fit
 
+from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.models.dce.initialization import estimate_ktrans_patlak, estimate_ve_late_phase
 from pmriprep.utils.dce_constants import EPSILON_VE, KTRANS_BOUNDS, MAX_KEP, VE_BOUNDS
@@ -81,7 +82,7 @@ class ToftsModel(PKModel):
                 name="Ktrans",
                 bounds=(KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
                 typical_range=(0.001, 0.2),
-                log_transform=False,
+                transform=TransformType.LOG,
                 description="Volume transfer constant",
                 units="min^-1",
             ),
@@ -89,7 +90,7 @@ class ToftsModel(PKModel):
                 name="ve",
                 bounds=(VE_BOUNDS.min, VE_BOUNDS.max),
                 typical_range=(0.01, 0.4),
-                log_transform=False,
+                transform=TransformType.LOG_LOGIT,
                 description="Extravascular extracellular volume fraction",
                 units="",
             ),

@@ -29,6 +29,7 @@ import numpy.typing as npt
 from scipy import optimize
 from scipy.optimize import curve_fit
 
+from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.utils.dce_constants import (
     EPSILON_EIGENVALUE,
@@ -144,7 +145,7 @@ class TwoCompartmentExchangeModel(PKModel):
                 name="Fp",
                 bounds=(FP_BOUNDS.min, FP_BOUNDS.max),
                 typical_range=(20.0, 100.0),
-                log_transform=False,
+                transform=TransformType.LOG,
                 description="Plasma flow rate",
                 units="mL/min/100mL",
             ),
@@ -152,7 +153,7 @@ class TwoCompartmentExchangeModel(PKModel):
                 name="PS",
                 bounds=(PS_BOUNDS.min, PS_BOUNDS.max),
                 typical_range=(5.0, 50.0),
-                log_transform=False,
+                transform=TransformType.LOG,
                 description="Permeability-surface area product",
                 units="mL/min/100mL",
             ),
@@ -160,7 +161,7 @@ class TwoCompartmentExchangeModel(PKModel):
                 name="ve",
                 bounds=(0.01, 0.8),  # Restricted to 0.8 for 2CXM
                 typical_range=(0.1, 0.5),
-                log_transform=False,
+                transform=TransformType.LOG_LOGIT,
                 description="Extravascular extracellular volume fraction",
                 units="",
             ),
@@ -168,7 +169,7 @@ class TwoCompartmentExchangeModel(PKModel):
                 name="vp",
                 bounds=(VP_BOUNDS.min, VP_BOUNDS.max),
                 typical_range=(0.01, 0.1),
-                log_transform=False,
+                transform=TransformType.LOG_LOGIT,
                 description="Plasma volume fraction",
                 units="",
             ),
