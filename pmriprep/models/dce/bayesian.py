@@ -778,6 +778,7 @@ class BayesianPKFitter:
         time_points: npt.NDArray[np.floating],
         n_iterations: int = 20,
         noise_prior: tuple[float, float] | None = None,
+        weights: npt.NDArray[np.floating] | None = None,
         sloppy: bool = False,
     ) -> FitResult:
         """Fit model using FABBER-style linearized Variational Bayes.
@@ -797,6 +798,9 @@ class BayesianPKFitter:
                 tau = 1/sigma^2. If None, uses non-informative prior.
                 If noise_std was provided to the constructor, uses an
                 informative prior centered on that value.
+            weights: Optional per-frame motion weights (1.0 = full weight).
+                Weights modify data fidelity terms (J^T W J, k^T W k) but
+                NOT the observation count in Gamma shape/ELBO (Chappell 2009).
             sloppy: Use fast, low-quality settings for testing.
 
         Returns:
@@ -816,6 +820,12 @@ class BayesianPKFitter:
         bounds = self.model.get_bounds()
         param_names = self.model.get_parameter_names()
         y = np.asarray(tissue_curve, dtype=np.float64)
+
+        # Motion weights for data fidelity terms
+        if weights is not None:
+            w = np.asarray(weights, dtype=np.float64)
+        else:
+            w = None
 
         # Build transform info from priors
         transforms = [p.transform for p in self.priors]
@@ -903,9 +913,12 @@ class BayesianPKFitter:
             # Residual
             k_res = y - g_m
 
-            # 3. Update posterior precision: Λ = Λ₀ + <τ> J^T J
-            JtJ = J.T @ J
-            post_prec = prior_prec + tau_exp * JtJ
+            # 3. Update posterior precision: Λ = Λ₀ + <τ> J^T W J
+            if w is not None:
+                JtWJ = J.T @ (w[:, np.newaxis] * J)
+            else:
+                JtWJ = J.T @ J
+            post_prec = prior_prec + tau_exp * JtWJ
 
             # 4. Update posterior covariance
             try:
@@ -915,7 +928,10 @@ class BayesianPKFitter:
                 post_cov = np.linalg.inv(post_prec)
 
             # 5. Update posterior mean (in transformed space)
-            rhs = prior_prec @ prior_means_t + tau_exp * J.T @ (k_res + J @ m)
+            if w is not None:
+                rhs = prior_prec @ prior_means_t + tau_exp * J.T @ (w * (k_res + J @ m))
+            else:
+                rhs = prior_prec @ prior_means_t + tau_exp * J.T @ (k_res + J @ m)
             m_new = post_cov @ rhs
 
             # NO CLIPPING — transformed space is unconstrained
@@ -931,8 +947,12 @@ class BayesianPKFitter:
             except (ValueError, RuntimeError):
                 g_new = g_m
             k_new = y - np.asarray(g_new, dtype=np.float64)
-            trace_term = float(np.trace(post_cov @ JtJ))
-            s = 1.0 / (1.0 / s0 + 0.5 * (float(k_new @ k_new) + trace_term))
+            trace_term = float(np.trace(post_cov @ JtWJ))
+            if w is not None:
+                weighted_kk = float(k_new @ (w * k_new))
+            else:
+                weighted_kk = float(k_new @ k_new)
+            s = 1.0 / (1.0 / s0 + 0.5 * (weighted_kk + trace_term))
             tau_exp = c * s
 
             # 7. Compute free energy (analytic ELBO)
@@ -944,7 +964,7 @@ class BayesianPKFitter:
 
             free_energy = (
                 0.5 * n_obs * (np.log(tau_exp) - np.log(2 * np.pi))
-                - 0.5 * tau_exp * (float(k_new @ k_new) + trace_term)
+                - 0.5 * tau_exp * (weighted_kk + trace_term)
                 - 0.5 * float(dm @ prior_prec @ dm)
                 - 0.5 * float(np.trace(prior_prec @ post_cov))
                 + 0.5 * logdet_cov * sign_cov

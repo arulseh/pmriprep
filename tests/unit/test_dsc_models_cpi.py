@@ -155,16 +155,16 @@ class TestComputeFittedResidue:
     def test_fitted_residue_scales_by_cbf(self) -> None:
         """compute_fitted_residue returns CBF × R(t), not dimensionless R(t)."""
         model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [50.0, 0.8, 0.6, 0.4, 0.2, 0.05]
+        params = [0.08, 0.8, 0.6, 0.4, 0.2, 0.05]
         t = np.linspace(0, 30, 50)
         residue_norm = model.residue_function(params, t)
         fitted_residue = model.compute_fitted_residue(params, t)
-        np.testing.assert_allclose(fitted_residue, 50.0 * residue_norm, rtol=1e-10)
+        np.testing.assert_allclose(fitted_residue, 0.08 * residue_norm, rtol=1e-10)
 
     def test_fitted_residue_peak_equals_cbf(self) -> None:
         """Peak of compute_fitted_residue equals CBF (since R(0)=1)."""
         model = CPIModel(n_control_points=6, time_range=(0, 30))
-        cbf = 75.0
+        cbf = 0.12
         params = [cbf, 0.8, 0.6, 0.4, 0.2, 0.05]
         t = np.linspace(0, 30, 50)
         fitted_residue = model.compute_fitted_residue(params, t)

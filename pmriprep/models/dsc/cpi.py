@@ -38,6 +38,7 @@ from pmriprep.models.dsc.base import (
     ParamsLike,
 )
 from pmriprep.utils.dsc_constants import (
+    CBF_BOUNDS,
     EPSILON_CONCENTRATION,
 )
 
@@ -160,14 +161,14 @@ class CPIModel(DSCModel):
         """
         params = []
 
-        # CBF scaling parameter (relative units, s⁻¹)
-        # Actual CPI CBF values are 25-100 (same scale as SVD methods),
-        # matching VascularModel CBF_BOUNDS=(0, 200).
+        # CBF scaling parameter (relative s⁻¹, same as oSVD max(R(t))).
+        # Field strength, TE, dose cancel in deconvolution (r2* scales
+        # both tissue and AIF equally). Typical 3T: 0.04-0.08 s⁻¹.
         params.append(
             DSCModelParameter(
                 name="cbf",
-                bounds=(0.0, 200.0),
-                typical_range=(10.0, 100.0),
+                bounds=(CBF_BOUNDS.min, CBF_BOUNDS.max),
+                typical_range=(0.01, 0.15),
                 transform=TransformType.LOG,
                 description="CBF scaling (relative)",
                 units="s⁻¹",
@@ -201,7 +202,7 @@ class CPIModel(DSCModel):
             relative ΔR2* units. Exponential decay matches cerebral
             physiology better than the linear midpoint default.
         """
-        x0: list[float] = [55.0]  # CBF initial guess (midpoint of typical_range)
+        x0: list[float] = [0.08]  # CBF initial guess (midpoint of typical_range)
         tau = self._n_control_points / 2.0
         for i in range(1, self._n_control_points):
             x0.append(float(np.exp(-i / tau)))

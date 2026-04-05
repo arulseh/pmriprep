@@ -96,11 +96,11 @@ class VascularModel(DSCModel):
             DSCModelParameter(
                 name="cbf",
                 bounds=(CBF_BOUNDS.min, CBF_BOUNDS.max),
-                typical_range=(10.0, 100.0),  # Typical gray/white matter range
+                typical_range=(0.01, 0.15),  # Relative s⁻¹; 3T typical 0.04-0.08
                 transform=TransformType.LOG,
                 transformed_prior_sigma=1.0,  # FABBER convention: wide log-space prior
                 description="Cerebral blood flow",
-                units="mL/100g/min",
+                units="s⁻¹",
             ),
             DSCModelParameter(
                 name="alpha",
@@ -153,11 +153,11 @@ class VascularModel(DSCModel):
             DSCModelParameter(
                 name="cbf",
                 bounds=(CBF_BOUNDS.min, CBF_BOUNDS.max),
-                typical_range=(10.0, 100.0),
+                typical_range=(0.01, 0.15),  # Relative s⁻¹; 3T typical 0.04-0.08
                 transform=TransformType.LOG,
                 transformed_prior_sigma=1.0,
                 description="Cerebral blood flow",
-                units="mL/100g/min",
+                units="s⁻¹",
             ),
             DSCModelParameter(
                 name="mtt",
@@ -220,14 +220,13 @@ class VascularModel(DSCModel):
     def get_initial_guess(self) -> list[float]:
         """Get initial parameter guess for optimization.
 
-        Uses perf-plus default values rather than prior means.  The prior
-        means (midpoints of typical_range) give MTT ≈ 10.3s which is too
-        broad; perf-plus starts at CBF=50, alpha=3, beta=2 (MTT=6s).
+        CBF=0.08 is the midpoint of typical_range in relative s⁻¹ units.
+        Alpha=3, beta=2 gives MTT=6s (physiologically reasonable).
 
         Returns:
             List of initial parameter values [CBF, alpha, beta, delay].
         """
-        return [50.0, 3.0, 2.0, 0.0]
+        return [0.08, 3.0, 2.0, 0.0]
 
     def residue_function(
         self,
@@ -348,8 +347,7 @@ class VascularModel(DSCModel):
 
         Derived parameters:
             mtt: Mean transit time = α × β (seconds)
-            cbv: Cerebral blood volume = CBF × MTT / 60 (mL/100g)
-                 Conversion factor of 60 from CBF in mL/100g/min to mL/100g
+            cbv: Cerebral blood volume = CBF × MTT (relative, dimensionless)
             cth: Capillary transit heterogeneity = β × √α (seconds)
                  Standard deviation of transit time distribution
             rcth: Relative CTH = 1/√α (dimensionless)
@@ -371,9 +369,8 @@ class VascularModel(DSCModel):
         mtt = alpha * beta
 
         # CBV from central volume theorem: CBV = CBF × MTT
-        # CBF is in mL/100g/min, MTT is in seconds
-        # CBV should be in mL/100g, so divide by 60 (seconds per minute)
-        cbv = (cbf * mtt) / 60.0
+        # CBF is in relative s⁻¹ (ΔR2* deconvolution units), MTT in seconds
+        cbv = cbf * mtt
 
         # Capillary transit heterogeneity: CTH = β × √α
         # This is the standard deviation of the gamma distribution

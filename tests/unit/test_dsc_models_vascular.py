@@ -104,8 +104,8 @@ class TestDSCFitResult:
 
     def test_get_parameter(self) -> None:
         """get_parameter returns value for known keys, default for missing."""
-        result = DSCFitResult(parameters={"cbf": 50.0, "alpha": 3.0})
-        assert result.get_parameter("cbf") == pytest.approx(50.0)
+        result = DSCFitResult(parameters={"cbf": 0.08, "alpha": 3.0})
+        assert result.get_parameter("cbf") == pytest.approx(0.08)
         assert result.get_parameter("missing") == pytest.approx(0.0)
 
 
@@ -121,11 +121,11 @@ class TestVascularModel:
         """Residue starts at CBF and decays monotonically for delay=0."""
         model = VascularModel()
         t = np.arange(0, 30, 0.5, dtype=np.float64)
-        params = [50.0, 3.0, 2.0, 0.0]  # CBF, alpha, beta, delay
+        params = [0.08, 3.0, 2.0, 0.0]  # CBF, alpha, beta, delay
         residue = model.residue_function(params, t)
 
         # Starts at CBF
-        assert residue[0] == pytest.approx(50.0, rel=1e-6)
+        assert residue[0] == pytest.approx(0.08, rel=1e-6)
         # Monotonically non-increasing (allow tiny numerical noise)
         diffs = np.diff(residue)
         assert np.all(diffs <= 1e-10), "Residue should decay monotonically"
@@ -134,7 +134,7 @@ class TestVascularModel:
         """R(0) equals CBF when delay=0."""
         model = VascularModel()
         t = np.linspace(0, 20, 50, dtype=np.float64)
-        cbf = 75.0
+        cbf = 0.12
         params = [cbf, 4.0, 1.5, 0.0]
         residue = model.residue_function(params, t)
         assert residue[0] == pytest.approx(cbf, rel=1e-10)
@@ -149,21 +149,21 @@ class TestVascularModel:
         aif = (t / 5.0) * np.exp(-t / 8.0)
         aif[0] = 0.0
 
-        params = [50.0, 3.0, 2.0, 0.0]
+        params = [0.08, 3.0, 2.0, 0.0]
         tissue = model.tissue_curve(params, aif, t)
         assert np.all(tissue >= -1e-10), "Tissue curve should be non-negative"
 
     def test_compute_derived_parameters(self) -> None:
         """Derived parameters match analytical formulas."""
         model = VascularModel()
-        cbf, alpha, beta, delay = 50.0, 3.0, 2.0, 0.0
+        cbf, alpha, beta, delay = 0.08, 3.0, 2.0, 0.0
         params = [cbf, alpha, beta, delay]
         derived = model.compute_derived_parameters(params)
 
         # MTT = alpha * beta = 3 * 2 = 6
         assert derived["mtt"] == pytest.approx(6.0, rel=1e-10)
-        # CBV = CBF * MTT / 60 = 50 * 6 / 60 = 5.0
-        assert derived["cbv"] == pytest.approx(5.0, rel=1e-10)
+        # CBV = CBF * MTT = 0.08 * 6 = 0.48 (relative units, no /60)
+        assert derived["cbv"] == pytest.approx(0.48, rel=1e-10)
         # CTH = beta * sqrt(alpha) = 2 * sqrt(3)
         assert derived["cth"] == pytest.approx(2.0 * np.sqrt(3.0), rel=1e-10)
         # RCTH = 1 / sqrt(alpha) = 1 / sqrt(3)
@@ -185,8 +185,8 @@ class TestVascularModel:
     def test_validate_params(self) -> None:
         """Parameters within bounds are valid; out-of-bounds are not."""
         model = VascularModel()
-        assert model.validate_params([50.0, 3.0, 2.0, 0.0]) is True
-        # CBF bounds are (0.0, 200.0) — negative CBF is out of bounds
+        assert model.validate_params([0.08, 3.0, 2.0, 0.0]) is True
+        # CBF bounds are (0.0, 1.0) — negative CBF is out of bounds
         assert model.validate_params([-1.0, 3.0, 2.0, 0.0]) is False
 
     def test_get_parameter_names(self) -> None:

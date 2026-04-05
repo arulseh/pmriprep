@@ -92,11 +92,11 @@ def _make_dsc_test_data(
 # =============================================================================
 
 DSC_PARAMS = [
-    pytest.param(60.0, 4.0, id="normal_gm"),
-    pytest.param(25.0, 6.0, id="normal_wm"),
-    pytest.param(100.0, 8.0, id="hyperperfused_tumor"),
-    pytest.param(10.0, 3.0, id="low_flow"),
-    pytest.param(80.0, 12.0, id="long_mtt"),
+    pytest.param(0.10, 4.0, id="normal_gm"),
+    pytest.param(0.04, 6.0, id="normal_wm"),
+    pytest.param(0.16, 8.0, id="hyperperfused_tumor"),
+    pytest.param(0.015, 3.0, id="low_flow"),
+    pytest.param(0.13, 12.0, id="long_mtt"),
 ]
 
 
@@ -134,7 +134,7 @@ class TestSSVDRecovery:
         """Test sSVD recovery of CBF and MTT."""
         # SVD regularization systematically inflates MTT for low-CBF residues
         # (MC N=100: low_flow mtt mean+3sigma = 1.22-1.66).
-        if cbf <= 10 and noise_frac > 0:
+        if cbf <= 0.015 and noise_frac > 0:
             pytest.xfail("SVD regularization inflates MTT for low-CBF residues")
 
         tissue, aif, dt, time_sec = _make_dsc_test_data(cbf, mtt, noise_frac)
@@ -167,7 +167,7 @@ class TestCSVDRecovery:
     )
     def test_csvd_delay_preserves_shape(self, delay_frames: int) -> None:
         """Test that cSVD recovers a reasonable residue with delayed data."""
-        cbf, mtt = 60.0, 4.0
+        cbf, mtt = 0.10, 4.0
         tissue, aif, dt, time_sec = _make_dsc_test_data(cbf, mtt, noise_frac=0.0)
 
         # Shift tissue curve to simulate delay
@@ -216,7 +216,7 @@ class TestOSVDRecovery:
         """Test oSVD recovery of CBF and MTT."""
         # SVD regularization systematically inflates MTT for low-CBF residues
         # (MC N=100: low_flow mtt mean+3sigma = 0.88-1.91).
-        if cbf <= 10 and noise_frac > 0:
+        if cbf <= 0.015 and noise_frac > 0:
             pytest.xfail("SVD regularization inflates MTT for low-CBF residues")
 
         tissue, aif, dt, time_sec = _make_dsc_test_data(cbf, mtt, noise_frac)
@@ -264,19 +264,17 @@ class TestTikhonovRecovery:
 
 # (cbf, alpha, beta, delay)
 VASCULAR_PARAMS = [
-    pytest.param(60.0, 3.0, 1.5, 0.0, id="normal_gm"),
-    pytest.param(25.0, 4.0, 1.5, 0.0, id="normal_wm"),
-    pytest.param(100.0, 2.0, 3.0, 0.0, id="tumor"),
-    pytest.param(15.0, 3.5, 2.0, 0.0, id="low_flow"),
-    pytest.param(60.0, 3.0, 1.5, 3.0, id="delayed"),
+    pytest.param(0.10, 3.0, 1.5, 0.0, id="normal_gm"),
+    pytest.param(0.04, 4.0, 1.5, 0.0, id="normal_wm"),
+    pytest.param(0.16, 2.0, 3.0, 0.0, id="tumor"),
+    pytest.param(0.02, 3.5, 2.0, 0.0, id="low_flow"),
+    pytest.param(0.10, 3.0, 1.5, 3.0, id="delayed"),
 ]
 
 # (noise_fraction, cbf_tol, mtt_tol)
 # CBF and MTT tolerances (relative). MAP uses informative priors, so
-# at high noise the prior (CBF mean ~55) pulls low-flow estimates upward.
-# The low_flow combo (CBF=15) is xfailed at high noise because the prior
-# overwhelms the data — that tests prior behavior, not fitting quality.
-# High-noise tolerances cover normal_wm (CBF=25, ~25-35% error).
+# at high noise the prior pulls low-flow estimates toward prior mean.
+# High-noise tolerances cover normal_wm (~25-35% error).
 VASCULAR_NOISE_LEVELS = [
     pytest.param(0.0, 0.07, 0.08, id="zero"),
     pytest.param(0.02, 0.29, 0.37, id="low"),
@@ -360,16 +358,15 @@ class TestVascularRecovery:
         mtt_tol: float,
     ) -> None:
         """Test vascular model recovery of CBF and MTT."""
-        # CBF=15 is near the 2.5th percentile of the prior N(55, 22.5^2),
-        # so at 10% noise the prior overwhelms the data — tests prior
-        # behavior, not fitting quality.
-        if cbf < 20 and noise_frac >= 0.10:
+        # CBF=0.02 is near the edge of the log-space prior, so at 10%
+        # noise the prior overwhelms the data.
+        if cbf < 0.03 and noise_frac >= 0.10:
             pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
 
-        # MAP prior N(55, 22.5^2) systematically pulls CBF=25 upward at all
-        # noise levels (MC N=100: normal_wm cbf mean+3sigma = 0.25-0.75).
-        if cbf <= 25 and noise_frac > 0:
-            pytest.xfail("MAP prior bias pulls CBF=25 upward at all noise levels")
+        # MAP prior systematically pulls low-CBF tissues toward prior mean
+        # at all noise levels.
+        if cbf <= 0.04 and noise_frac > 0:
+            pytest.xfail("MAP prior bias pulls low CBF toward prior mean")
 
         tissue, aif, time_sec = _make_vascular_test_data(
             cbf, alpha, beta, delay, noise_frac
@@ -464,17 +461,16 @@ def _make_cpi_gamma_test_data(
 # VI is now competitive with MAP (within 2%) after harmonization.
 
 CPI_BAYESIAN_PARAMS = [
-    pytest.param(60.0, 3.0, 1.5, id="normal_gm"),    # MTT=4.5s
-    pytest.param(25.0, 4.0, 1.5, id="normal_wm"),     # MTT=6.0s
-    pytest.param(100.0, 2.0, 3.0, id="tumor"),         # MTT=6.0s
-    pytest.param(15.0, 3.5, 2.0, id="low_flow"),       # MTT=7.0s
-    pytest.param(80.0, 3.0, 4.0, id="long_mtt"),       # MTT=12.0s
+    pytest.param(0.10, 3.0, 1.5, id="normal_gm"),    # MTT=4.5s
+    pytest.param(0.04, 4.0, 1.5, id="normal_wm"),     # MTT=6.0s
+    pytest.param(0.16, 2.0, 3.0, id="tumor"),         # MTT=6.0s
+    pytest.param(0.02, 3.5, 2.0, id="low_flow"),      # MTT=7.0s
+    pytest.param(0.13, 3.0, 4.0, id="long_mtt"),      # MTT=12.0s
 ]
 
 # (noise_fraction, cbf_tol, mtt_tol)
 # Tolerances from Monte Carlo (N=20 seeds, mean+3sigma, rounded up):
-# The CBF prior (mean=55) systematically pulls low-CBF tissues upward.
-# Normal_wm (CBF=25) is the binding constraint at noise>0.
+# The CBF log-space prior systematically pulls low-CBF tissues upward.
 # Zero-noise tolerances cover basis resolution limits.
 CPI_BAYESIAN_NOISE_LEVELS = [
     pytest.param(0.0, 0.20, 0.16, id="zero"),      # Basis resolution: CBF 18%, MTT 15%
@@ -508,16 +504,15 @@ class TestCPIBayesianGammaRecovery:
         true_mtt = alpha * beta
 
         # CPI basis resolution limits for normal_gm and long_mtt.
-        # Low_flow: CBF prior (mean=55) overwhelms CBF=15 signal.
-        xfail_combos = {(60.0, 3.0, 1.5), (80.0, 3.0, 4.0)}
+        xfail_combos = {(0.10, 3.0, 1.5), (0.13, 3.0, 4.0)}
         if (cbf, alpha, beta) in xfail_combos:
             pytest.xfail(
                 f"CPI basis resolution limit: 7 uniform CPs cannot fully "
                 f"resolve this residue (CBF={cbf}, MTT={true_mtt:.1f}s)"
             )
-        if cbf <= 15:
+        if cbf <= 0.02:
             pytest.xfail(
-                f"CBF prior (mean=55) overwhelms low-flow signal (CBF={cbf})"
+                f"CBF prior overwhelms low-flow signal (CBF={cbf})"
             )
 
         tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
@@ -558,10 +553,10 @@ class TestCPIBayesianGammaRecovery:
 # than on exponential residues.
 
 SVD_GAMMA_PARAMS = [
-    pytest.param(60.0, 3.0, 1.5, id="normal_gm"),    # MTT=4.5s
-    pytest.param(25.0, 4.0, 1.5, id="normal_wm"),     # MTT=6.0s
-    pytest.param(100.0, 2.0, 3.0, id="tumor"),         # MTT=6.0s
-    pytest.param(80.0, 3.0, 4.0, id="long_mtt"),       # MTT=12.0s
+    pytest.param(0.10, 3.0, 1.5, id="normal_gm"),    # MTT=4.5s
+    pytest.param(0.04, 4.0, 1.5, id="normal_wm"),     # MTT=6.0s
+    pytest.param(0.16, 2.0, 3.0, id="tumor"),         # MTT=6.0s
+    pytest.param(0.13, 3.0, 4.0, id="long_mtt"),      # MTT=12.0s
 ]
 
 # Tolerances wider than exponential: SVD regularization truncates the
@@ -644,7 +639,7 @@ class TestDSCEdgeCases:
         dt = 1.5
         aif, time_sec = generate_dsc_aif_dro(n, dt)
 
-        cbf = 50.0
+        cbf = 0.08
         residue = np.zeros(n, dtype=np.float64)
         residue[0] = cbf
 
@@ -662,29 +657,29 @@ class TestDSCEdgeCases:
         tissue = np.zeros(n, dtype=np.float64)
         result = svd_deconvolve_standard(tissue, aif, dt, threshold=0.001)
 
-        assert result.cbf < 0.1, f"CBF for zero tissue: {result.cbf:.4f}"
+        assert result.cbf < 1e-4, f"CBF for zero tissue: {result.cbf:.6f}"
 
     def test_short_mtt(self) -> None:
         """Short MTT (near-delta) should be recoverable."""
         tissue, aif, dt, time_sec = _make_dsc_test_data(
-            cbf=60.0, mtt=1.0, noise_frac=0.0
+            cbf=0.10, mtt=1.0, noise_frac=0.0
         )
         result = svd_deconvolve_standard(tissue, aif, dt, threshold=0.001)
-        _assert_param_recovery(result.cbf, 60.0, 0.10, param_name="CBF")
+        _assert_param_recovery(result.cbf, 0.10, 0.10, param_name="CBF")
 
     def test_long_mtt(self) -> None:
         """Long MTT should be recoverable."""
         tissue, aif, dt, time_sec = _make_dsc_test_data(
-            cbf=40.0, mtt=15.0, noise_frac=0.0
+            cbf=0.065, mtt=15.0, noise_frac=0.0
         )
         result = svd_deconvolve_standard(tissue, aif, dt, threshold=0.001)
-        _assert_param_recovery(result.cbf, 40.0, 0.10, param_name="CBF")
+        _assert_param_recovery(result.cbf, 0.065, 0.10, param_name="CBF")
         _assert_param_recovery(result.mtt, 15.0, 0.15, param_name="MTT")
 
     def test_ssvd_osvd_tikhonov_agreement(self) -> None:
         """sSVD, oSVD, and Tikhonov should agree at zero noise."""
         tissue, aif, dt, time_sec = _make_dsc_test_data(
-            cbf=60.0, mtt=4.0, noise_frac=0.0
+            cbf=0.10, mtt=4.0, noise_frac=0.0
         )
 
         r_ssvd = svd_deconvolve_standard(tissue, aif, dt, threshold=0.001)

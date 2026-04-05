@@ -66,8 +66,10 @@ class ParameterBounds(NamedTuple):
     max: float
 
 
-#: CBF bounds in mL/100g/min
-CBF_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 200.0)
+#: CBF bounds in relative s⁻¹ (ΔR2* deconvolution units).
+#: Field strength, TE, dose, and contrast agent all cancel in the
+#: deconvolution (r2* scales both tissue and AIF equally).
+CBF_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 1.0)
 
 #: CBV bounds in mL/100g
 CBV_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 20.0)

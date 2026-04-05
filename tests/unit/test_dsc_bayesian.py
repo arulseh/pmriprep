@@ -11,7 +11,7 @@ from pmriprep.models.dsc.vascular import VascularModel
 
 
 def _make_synthetic_data(
-    cbf: float = 50.0,
+    cbf: float = 0.08,
     alpha: float = 3.0,
     beta: float = 2.0,
     delay: float = 0.0,
@@ -75,7 +75,7 @@ class TestLogPosteriorComponents:
 
         # Evaluate at a point far from the means (still within bounds)
         offset = means.copy()
-        offset[0] = 10.0  # CBF far from typical center
+        offset[0] = 0.5  # CBF far from typical center
         offset[1] = 0.6  # alpha far from typical center
         log_prior_at_offset = fitter._log_prior(offset)
 
@@ -87,14 +87,14 @@ class TestLogPosteriorComponents:
         fitter = BayesianDSCFitter(model)
         concentration, aif, t = _make_synthetic_data(noise_std=0.01)
 
-        true_params = np.array([50.0, 3.0, 2.0, 0.0], dtype=np.float64)
+        true_params = np.array([0.08, 3.0, 2.0, 0.0], dtype=np.float64)
         noise_std = 0.5
 
         # Good fit (true params)
         ll_good = fitter._log_likelihood(true_params, concentration, aif, t, noise_std)
 
         # Bad fit (wrong params)
-        bad_params = np.array([5.0, 8.0, 0.5, 3.0], dtype=np.float64)
+        bad_params = np.array([0.5, 8.0, 0.5, 3.0], dtype=np.float64)
         ll_bad = fitter._log_likelihood(bad_params, concentration, aif, t, noise_std)
 
         assert ll_good > ll_bad
@@ -105,7 +105,7 @@ class TestLogPosteriorComponents:
         fitter = BayesianDSCFitter(model)
         concentration, aif, t = _make_synthetic_data(noise_std=0.01)
 
-        params = np.array([50.0, 3.0, 2.0, 0.0], dtype=np.float64)
+        params = np.array([0.08, 3.0, 2.0, 0.0], dtype=np.float64)
         noise_std = 0.5
 
         log_prior = fitter._log_prior(params)
@@ -122,7 +122,7 @@ class TestMAPFitting:
         """MAP recovers CBF within 50% from synthetic vascular data."""
         model = VascularModel()
         concentration, aif, t = _make_synthetic_data(
-            cbf=50.0, alpha=3.0, beta=2.0, delay=0.0, noise_std=0.1
+            cbf=0.08, alpha=3.0, beta=2.0, delay=0.0, noise_std=0.1
         )
 
         fitter = BayesianDSCFitter(model)
@@ -130,8 +130,8 @@ class TestMAPFitting:
 
         assert result.fitting_method == "map"
         fitted_cbf = result.parameters["cbf"]
-        assert fitted_cbf == pytest.approx(50.0, rel=0.5), (
-            f"Fitted CBF={fitted_cbf}, expected ~50.0"
+        assert fitted_cbf == pytest.approx(0.08, rel=0.5), (
+            f"Fitted CBF={fitted_cbf}, expected ~0.08"
         )
 
     def test_fit_map_uncertainties(self) -> None:
@@ -159,7 +159,7 @@ class TestMAPFitting:
         result = fitter.fit_map(concentration, aif, t, compute_uncertainties=False)
 
         fitted_cbf = result.parameters["cbf"]
-        assert fitted_cbf < 10.0, f"CBF should be near 0 for flat data, got {fitted_cbf}"
+        assert fitted_cbf < 0.05, f"CBF should be near 0 for flat data, got {fitted_cbf}"
 
 
 class TestVIFitting:
@@ -169,7 +169,7 @@ class TestVIFitting:
         """VI recovers CBF within 50% from synthetic vascular data."""
         model = VascularModel()
         concentration, aif, t = _make_synthetic_data(
-            cbf=50.0, alpha=3.0, beta=2.0, delay=0.0, noise_std=0.1
+            cbf=0.08, alpha=3.0, beta=2.0, delay=0.0, noise_std=0.1
         )
 
         fitter = BayesianDSCFitter(model)
@@ -177,8 +177,8 @@ class TestVIFitting:
 
         assert result.fitting_method == "vi"
         fitted_cbf = result.parameters["cbf"]
-        assert fitted_cbf == pytest.approx(50.0, rel=0.5), (
-            f"VI fitted CBF={fitted_cbf}, expected ~50.0"
+        assert fitted_cbf == pytest.approx(0.08, rel=0.5), (
+            f"VI fitted CBF={fitted_cbf}, expected ~0.08"
         )
 
     def test_fit_vi_has_uncertainties(self) -> None:
