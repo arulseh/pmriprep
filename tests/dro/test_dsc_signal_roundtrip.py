@@ -464,15 +464,18 @@ class TestSignalEdgeCases:
         assert np.max(conc[1, 1, 1, 10:20]) > 0
         assert np.max(np.abs(conc[0, 0, 0, :])) < 1e-6
 
-    def test_signal_above_baseline_clips(self) -> None:
-        """Signal above baseline should clip to zero concentration.
+    def test_signal_above_baseline_produces_negative(self) -> None:
+        """Signal above baseline produces negative ΔR2* (no upper clipping).
 
-        S(t)/S0 > 1.0 is clipped to 1.0 -> -ln(1.0)/TE = 0.
+        S(t)/S0 = 1.2 -> ΔR2* = -ln(1.2)/TE < 0. Preserves symmetric
+        noise in post-bolus frames.
         """
         signal = np.ones(60, dtype=np.float64) * 1000.0
         signal[20:30] = 1200.0
         conc = signal_to_concentration(signal, te=0.030, baseline_frames=5)
-        assert np.all(conc >= -1e-10), "Negative concentration from signal > S0"
+        expected = -np.log(1.2) / 0.030
+        assert conc[25] == pytest.approx(expected, rel=1e-6)
+        assert conc[25] < 0, "Signal > S0 should give negative ΔR2*"
 
 
 class TestNoiseModelComparison:

@@ -1456,7 +1456,7 @@ class ComputeDSCMaps(BaseInterface):
             )
             new_s0 = np.maximum(new_s0, EPSILON_SIGNAL)
             signal_ratio = signal_data / new_s0
-            signal_ratio = np.clip(signal_ratio, EPSILON_SIGNAL, 1.0)
+            signal_ratio = np.maximum(signal_ratio, EPSILON_SIGNAL)
             recomputed_raw_conc = -np.log(signal_ratio) / te
 
             # Re-extract AIF from updated concentration to maintain S0
@@ -1481,7 +1481,9 @@ class ComputeDSCMaps(BaseInterface):
                             aif = savgol_filter(
                                 aif, window_length=5, polyorder=2
                             )
-                        aif = np.clip(aif, 0.0, None)
+                        # No non-negative clip: AIF can have negative noise
+                        # in post-bolus frames. Baseline subtraction (below)
+                        # zeros the baseline; symmetric noise is correct.
 
             # Re-apply K2 correction to updated concentration
             from pmriprep.utils.dsc_preload import apply_k2_correction
@@ -1491,6 +1493,7 @@ class ComputeDSCMaps(BaseInterface):
                 concentration=recomputed_raw_conc,
                 brain_mask=mask.astype(bool),
                 tr=dt,
+                baseline_frames=detected_baseline,
             )
             conc_data = k2_result.concentration_corrected
 
@@ -1517,6 +1520,23 @@ class ComputeDSCMaps(BaseInterface):
         ):
             # No recomputation — pass through the preload_correct K2 map
             k2_map_out_path = str(self.inputs.k2_map_input_file)
+
+        # Baseline-subtract AIF and concentration for deconvolution.
+        # Change 1 (in apply_k2_correction) zeroed conc baseline before K2,
+        # so conc subtraction is a no-op when K2 ran. AIF from file still
+        # has its offset; this removes it. Also catches edge cases where
+        # K2 was skipped. Unconditional: for non-preloaded data, baseline
+        # is approximately zero (no-op).
+        # Ref: Ostergaard MRM 1996, Boxerman AJNR 2006.
+        n_bl = max(detected_baseline, 4)
+        aif_bl_offset = float(np.mean(aif[:n_bl]))
+        aif = aif - aif_bl_offset
+        conc_bl_offset = np.mean(conc_data[..., :n_bl], axis=-1, keepdims=True)
+        conc_data = conc_data - conc_bl_offset
+        baseline_detection_info["aif_baseline_offset"] = round(aif_bl_offset, 4)
+        baseline_detection_info["conc_median_baseline_offset"] = round(
+            float(np.median(conc_bl_offset[mask > 0])), 4
+        )
 
         # Run deconvolution based on method
         delay: Optional[npt.NDArray[Any]] = None

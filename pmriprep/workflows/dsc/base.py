@@ -461,6 +461,7 @@ def _detect_and_correct_preload(
         concentration=conc_data,
         brain_mask=brain_mask,
         tr=tr,
+        baseline_frames=baseline_frames,
     )
 
     corrected_conc = correction_result.concentration_corrected

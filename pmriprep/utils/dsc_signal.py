@@ -44,8 +44,9 @@ def signal_to_concentration(
         ValueError: If baseline_frames exceeds signal length.
 
     Notes:
-        - Signal ratio is clipped to (EPSILON_SIGNAL, 1.0) before log
-          to prevent numerical issues with zero or negative values.
+        - Signal ratio is lower-bounded at EPSILON_SIGNAL to prevent
+          log(0). No upper bound: S(t)/S0 > 1 produces negative ΔR2*,
+          which preserves symmetric noise in post-bolus frames.
         - Baseline S0 is computed as mean of first baseline_frames.
         - For 4D input, baseline is computed per-voxel.
     """
@@ -87,10 +88,11 @@ def signal_to_concentration(
     s0_safe = np.maximum(s0, EPSILON_SIGNAL)
     signal_ratio = signal / s0_safe
 
-    # Clip signal ratio to (EPSILON_SIGNAL, 1.0) before log
-    # Upper bound of 1.0 prevents log of values > 1 (which would give negative ΔR2*)
-    # Lower bound prevents log(0) or log(negative)
-    signal_ratio_clipped = np.clip(signal_ratio, EPSILON_SIGNAL, 1.0)
+    # Lower-bound signal ratio to prevent log(0). No upper bound:
+    # S(t)/S0 > 1.0 produces negative ΔR2*, preserving symmetric noise
+    # in post-bolus frames. Clipping to 1.0 creates half-rectified noise
+    # with positive bias (Calamante 1999, Willats 2006).
+    signal_ratio_clipped = np.maximum(signal_ratio, EPSILON_SIGNAL)
 
     # Compute ΔR2* = -ln(S/S0) / TE
     # Note: negative of log because signal decreases with contrast

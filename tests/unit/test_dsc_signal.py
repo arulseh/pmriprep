@@ -55,16 +55,21 @@ class TestSignalToConcentration:
         assert conc[0, 0, 0, 10] == pytest.approx(expected, rel=1e-6)
         assert conc[1, 1, 1, 15] == pytest.approx(expected, rel=1e-6)
 
-    def test_clipping_no_negative_concentration(self) -> None:
-        """Signal > S0 is clipped to ratio=1.0, giving DR2*=0."""
+    def test_signal_above_baseline_produces_negative_dr2(self) -> None:
+        """Signal > S0 produces negative ΔR2* (no upper clipping).
+
+        Negative ΔR2* preserves symmetric noise in post-bolus frames,
+        avoiding half-rectified positive bias from clipping to zero.
+        """
         signal = np.array([1000.0] * 5 + [1200.0] * 15, dtype=np.float64)
         te = 0.03
 
         conc = signal_to_concentration(signal, te=te, baseline_frames=5)
 
-        # Signal above baseline should be clipped to 0 concentration
+        # Signal above baseline: S/S0 = 1.2, ΔR2* = -ln(1.2)/0.03 < 0
+        expected = -np.log(1.2) / te
         for i in range(5, 20):
-            assert conc[i] == pytest.approx(0.0, abs=1e-9)
+            assert conc[i] == pytest.approx(expected, rel=1e-6)
 
     def test_validation_empty_array(self) -> None:
         """Empty array raises ValueError."""

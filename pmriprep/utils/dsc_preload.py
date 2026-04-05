@@ -731,6 +731,7 @@ def apply_k2_correction(
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
     tr: float = 1.5,
     k2_map: Optional[npt.NDArray[np.floating]] = None,
+    baseline_frames: int = 5,
 ) -> K2CorrectionResult:
     """Apply K2 leakage correction using the BSW method with mean brain reference.
 
@@ -743,11 +744,17 @@ def apply_k2_correction(
     K2 is estimated from the reference scale, so correction must use the
     same reference. Using AIF would produce wrong magnitudes (AIF >> C̄).
 
+    Baseline subtraction is applied before K2 estimation to ensure the
+    BSW model assumption C(t)=0 at baseline is satisfied. This is critical
+    for preloaded acquisitions where residual Gd creates a DC offset.
+
     Args:
         concentration: 4D concentration array (x, y, z, time).
         brain_mask: Optional 3D brain mask for voxel selection.
         tr: Repetition time in seconds for integration.
         k2_map: Pre-computed K2 map. If None, K2 is estimated per voxel.
+        baseline_frames: Number of pre-bolus baseline frames for
+            baseline subtraction. Default: 5.
 
     Returns:
         K2CorrectionResult with corrected concentration and K2 map.
@@ -757,6 +764,14 @@ def apply_k2_correction(
     """
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
+
+    # Baseline-subtract before K2 estimation. The BSW model assumes
+    # C(t)=0 at baseline; non-zero offset biases the cumulative integral
+    # in K2 regression. For non-preloaded data, baseline ≈ 0 (no-op).
+    # Ref: Ostergaard MRM 1996, Boxerman AJNR 2006.
+    n_bl = max(baseline_frames, 4)
+    conc_bl = np.mean(concentration[..., :n_bl], axis=-1, keepdims=True)
+    concentration = concentration - conc_bl
 
     # Compute AUC before any early returns (needed for QC regardless)
     cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
@@ -801,8 +816,8 @@ def apply_k2_correction(
     # T1 leakage reduces apparent ΔR2*, so we ADD back the leaked component.
     concentration_corrected = concentration + k2_expanded * cumsum_ref_4d
 
-    # Ensure non-negative concentration (clip at zero)
-    concentration_corrected = np.maximum(concentration_corrected, 0.0)
+    # Allow negative values after baseline subtraction — symmetric noise
+    # around zero preserves the mean and avoids positive bias from clipping.
 
     # Compute QC metrics
     qc_metrics = _compute_k2_qc_metrics(k2_map, brain_mask, auc_tissue)
