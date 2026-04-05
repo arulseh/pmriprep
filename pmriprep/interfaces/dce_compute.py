@@ -398,6 +398,24 @@ def _fit_single_voxel(
                 else np.nan
             )
 
+            # Require strong BIC evidence to upgrade from simplest model.
+            # Kass & Raftery (1995): ΔBIC ≥ 6 = "strong evidence".
+            # Prevents noise-driven model selection in low-enhancement
+            # voxels where complex models have unidentifiable parameters.
+            # Refs: Bagher-Ebadian MRM 2012, Sourbron & Buckley MRM 2013.
+            _MIN_DELTA_BIC_UPGRADE = 6.0
+            simplest = min(all_results, key=lambda r: r.n_parameters)
+            if (best.model_name != simplest.model_name
+                    and simplest.converged
+                    and delta_bic < _MIN_DELTA_BIC_UPGRADE):
+                logger.debug(
+                    "delta-BIC guard: %s -> %s (ΔBIC=%.2f < %.1f)"
+                    " at (%d,%d,%d)",
+                    best.model_name, simplest.model_name, delta_bic,
+                    _MIN_DELTA_BIC_UPGRADE, x, y, z,
+                )
+                best = simplest
+
             # Bayesian refinement of BIC winner
             if bayesian == "vi":
                 model_map = _worker_ctx.get("model_map", {})
