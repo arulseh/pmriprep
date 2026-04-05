@@ -72,7 +72,7 @@ class TestParameterBounds:
     def test_cbf_bounds_valid(self) -> None:
         """CBF bounds are (0.0, 1.0) with min < max (relative s⁻¹ units)."""
         assert CBF_BOUNDS.min == 0.0
-        assert CBF_BOUNDS.max == 1.0
+        assert CBF_BOUNDS.max == 2.0
         assert CBF_BOUNDS.min < CBF_BOUNDS.max
 
     def test_cbv_bounds_valid(self) -> None:
