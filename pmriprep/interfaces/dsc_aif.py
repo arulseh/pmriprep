@@ -1402,8 +1402,10 @@ class AIFDetection(BaseInterface):
         if len(aif_curve) >= 5:
             aif_curve = savgol_filter(aif_curve, window_length=5, polyorder=2)
 
-        # Clip negative to zero
-        aif_curve = np.clip(aif_curve, 0.0, None)
+        # Negative ΔR2* is physically valid (symmetric noise, T1 recirculation).
+        # Do NOT clip to zero — it biases the AIF integral, corrupts the SVD
+        # Toeplitz matrix, and disables the gamma-fit defect detector.
+        # (Calamante MRM 1999, Willats NMR Biomed 2006)
 
         return aif_curve, aif_mask
 
@@ -1864,13 +1866,20 @@ class AIFDetection(BaseInterface):
                 "All values must be finite."
             )
 
-        # Validate non-negative
+        # Warn about negative values (expected for ΔR2* noise)
         if np.any(aif_curve < 0):
             n_neg = int(np.sum(aif_curve < 0))
-            _logger.warning(
-                "External AIF has %d negative values; clipping to zero.", n_neg
-            )
-            aif_curve = np.clip(aif_curve, 0.0, None)
+            neg_frac = n_neg / len(aif_curve)
+            if neg_frac > 0.3:
+                _logger.warning(
+                    "External AIF has %d negative values (%.0f%%) — check "
+                    "baseline subtraction.", n_neg, neg_frac * 100,
+                )
+            else:
+                _logger.info(
+                    "External AIF has %d negative values (%.0f%%, normal "
+                    "post-bolus noise).", n_neg, neg_frac * 100,
+                )
 
         # Validate length
         if len(aif_curve) != n_timepoints:
