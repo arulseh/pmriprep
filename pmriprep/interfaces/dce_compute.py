@@ -816,11 +816,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Number of parallel processes for voxel fitting (1 = serial)",
     )
-    use_gpu = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Use GPU acceleration when available",
-    )
     save_fitted_curves = traits.Bool(
         False,
         usedefault=True,
@@ -985,8 +980,6 @@ class ComputeDCEMaps(BaseInterface):
         tSNR threshold for voxel inclusion (0 = no threshold). Default: 0.
     baseline_frames : int
         Baseline frames for tSNR calculation (0 = auto-detect). Default: 0.
-    use_gpu : bool
-        Use GPU acceleration. Default: False.
     save_fitted_curves : bool
         Save fitted curves. Default: False.
 
@@ -1339,7 +1332,6 @@ class ComputeDCEMaps(BaseInterface):
         # Parameters
         bayesian = str(self.inputs.bayesian)
         mcmc_samples = int(self.inputs.mcmc_samples)
-        use_gpu = bool(self.inputs.use_gpu)
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
 
         # 2CXM parameter identifiability warning (all fitting methods)
@@ -1745,45 +1737,29 @@ class ComputeDCEMaps(BaseInterface):
 
         n_procs = max(1, int(self.inputs.n_procs))
 
-        if use_gpu:
-            results = self._fit_gpu_batched(
-                conc_data=conc_data,
-                mask_coords=mask_coords,
-                aif=aif,
-                time_points=time_points,
-                model_name=model_name,
-                bayesian=bayesian,
-                is_auto=is_auto,
-                candidate_names=candidate_names,
-                vp_constraint_map=vp_constraint_map,
-                constraint_mode=constraint_mode,
-                constraint_vp_uncertainty=constraint_vp_uncertainty,
-                motion_weights=motion_weights,
-                save_fitted_curves=save_fitted_curves,
-                sloppy=sloppy,
-                mcmc_samples=mcmc_samples,
-                baseline_frames=baseline_frames,
-                n_procs=n_procs,
-                random_seed=random_seed,
-                init_args=init_args,
-                voxel_data_list=voxel_data_list,
-            )
-        elif n_procs > 1:
-            from concurrent.futures import ProcessPoolExecutor
-
-            chunk_size = max(1, n_voxels // (n_procs * 10))
-            with ProcessPoolExecutor(
-                max_workers=n_procs,
-                initializer=_init_worker,
-                initargs=init_args,
-            ) as executor:
-                results = list(executor.map(
-                    _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
-                ))
-        else:
-            # Serial path (n_procs=1): avoid multiprocessing overhead
-            _init_worker(*init_args)
-            results = [_fit_single_voxel(vd) for vd in voxel_data_list]
+        # Always use batched fitting (vectorized operations)
+        results = self._fit_gpu_batched(
+            conc_data=conc_data,
+            mask_coords=mask_coords,
+            aif=aif,
+            time_points=time_points,
+            model_name=model_name,
+            bayesian=bayesian,
+            is_auto=is_auto,
+            candidate_names=candidate_names,
+            vp_constraint_map=vp_constraint_map,
+            constraint_mode=constraint_mode,
+            constraint_vp_uncertainty=constraint_vp_uncertainty,
+            motion_weights=motion_weights,
+            save_fitted_curves=save_fitted_curves,
+            sloppy=sloppy,
+            mcmc_samples=mcmc_samples,
+            baseline_frames=baseline_frames,
+            n_procs=n_procs,
+            random_seed=random_seed,
+            init_args=init_args,
+            voxel_data_list=voxel_data_list,
+        )
 
         # Clear worker state to avoid stale references across runs
         _worker_ctx.clear()

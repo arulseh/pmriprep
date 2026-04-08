@@ -1814,7 +1814,6 @@ def init_dsc_preproc_wf(
         cpi_control_points=config.cpi_control_points,
         bayesian=config.bayesian,
         mcmc_samples=config.mcmc_samples,
-        use_gpu=config.use_gpu,
         n_procs=config.num_processes if config.num_processes > 0 else 1,
         # baseline_frames wired dynamically from aif_detect.aif_baseline_frames
         fallback_baseline_frames=config.pre_bolus,

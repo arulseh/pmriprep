@@ -152,11 +152,6 @@ def merge_cli_config(
                 result[section] = {}
             result[section][config_key] = cli_args[cli_key]
 
-    # --use-gpu sets use_gpu on both DSC and DCE configs
-    if cli_args.get("use_gpu"):
-        result.setdefault("dsc", {})["use_gpu"] = True
-        result.setdefault("dce", {})["use_gpu"] = True
-
     # --hdbet-device sets hdbet_device on DSC, DCE, and anat configs
     if cli_args.get("hdbet_device") is not None:
         result.setdefault("dsc", {})["hdbet_device"] = cli_args["hdbet_device"]

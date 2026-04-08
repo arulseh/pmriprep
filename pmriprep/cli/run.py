@@ -222,12 +222,6 @@ Examples:
         default=None,
         help=argparse.SUPPRESS,
     )
-    device_group.add_argument(
-        "--use-gpu",
-        action="store_true",
-        default=False,
-        help="Enable GPU acceleration for DSC and DCE processing.",
-    )
     # DSC options
     dsc_group = parser.add_argument_group(
         "DSC options",
@@ -1063,8 +1057,8 @@ def _run_workflow(
             plugin_args["memory_gb"] = args.mem_gb
 
         # Tell nipype how many GPU slots are available when any node uses GPU.
-        # GPU nodes include: HD-BET brain extraction (--hdbet-device cuda/mps),
-        # HD-GLIO tumor segmentation, and CuPy-accelerated DCE/DSC (--use-gpu).
+        # GPU nodes include: HD-BET brain extraction (--hdbet-device cuda/mps)
+        # and HD-GLIO tumor segmentation (--tumor-seg-device cuda/mps).
         # nipype's gpu_count() relies on nvidia-smi which may not be on PATH
         # inside containers (e.g., Apptainer --contain).  Without this,
         # MultiProc._prerun_check raises "Insufficient GPU resources" because
@@ -1078,8 +1072,7 @@ def _run_workflow(
         _tumor_device = getattr(args, "tumor_seg_device", None) or "auto"
 
         _needs_gpu = (
-            getattr(args, "use_gpu", False)  # CuPy for DCE/DSC modeling
-            or resolve_device_uses_gpu(_hdbet_device)  # HD-BET brain extraction
+            resolve_device_uses_gpu(_hdbet_device)  # HD-BET brain extraction
             or resolve_device_uses_gpu(_tumor_device)  # HD-GLIO tumor seg
         )
 

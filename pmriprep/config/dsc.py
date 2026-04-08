@@ -69,8 +69,6 @@ class DSCConfig:
         AIF detection auto-detects actual bolus arrival independently.
     num_processes : int
         Number of parallel processes (0 = use system default).
-    use_gpu : bool
-        Enable GPU acceleration.
     hdbet_device : Literal["auto", "cuda", "mps", "cpu"]
         Device for HD-BET brain extraction: auto, cuda, mps, or cpu.
     aif_method : Literal["auto", "synthetic"]
@@ -111,7 +109,6 @@ class DSCConfig:
 
     # Resource settings
     num_processes: int = 0  # 0 = use system default
-    use_gpu: bool = False
     hdbet_device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
     hdbet_conda_env: Optional[str] = None
 

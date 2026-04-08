@@ -404,11 +404,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Number of parallel processes for voxel fitting (1 = serial)",
     )
-    use_gpu = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Use GPU acceleration when available",
-    )
     save_residue = traits.Bool(
         False,
         usedefault=True,
@@ -571,8 +566,6 @@ class ComputeDSCMaps(BaseInterface):
         Bayesian inference: none, map, vi, mcmc. Default: 'none'.
     mcmc_samples : int
         MCMC samples for Bayesian. Default: 500.
-    use_gpu : bool
-        Use GPU acceleration. Default: False.
     save_residue : bool
         Save residue functions. Default: False.
 
@@ -747,7 +740,6 @@ class ComputeDSCMaps(BaseInterface):
         dt: float,
         threshold: float,
         oi_threshold: float,
-        use_gpu: bool,
     ) -> tuple[
         npt.NDArray[Any],  # cbf
         npt.NDArray[Any],  # cbv
@@ -766,64 +758,12 @@ class ComputeDSCMaps(BaseInterface):
         )
 
         spatial_shape = concentration_data.shape[:3]
-        n_timepoints = concentration_data.shape[3]
         qc_metrics: dict[str, Any] = {"method": method}
 
         # Initialize output arrays
-        cbf = np.zeros(spatial_shape, dtype=np.float64)
-        cbv = np.zeros(spatial_shape, dtype=np.float64)
-        mtt = np.zeros(spatial_shape, dtype=np.float64)
-        tmax = np.zeros(spatial_shape, dtype=np.float64)
         delay: Optional[npt.NDArray[Any]] = None
         residues: Optional[npt.NDArray[Any]] = None
 
-        # Check for GPU deconvolution
-        if use_gpu and method in ("sSVD", "cSVD"):
-            try:
-                from pmriprep.models.dsc.gpu_deconvolution import (
-                    batched_svd_deconvolve_standard,
-                    batched_svd_deconvolve_circulant,
-                )
-
-                if method == "sSVD":
-                    result = batched_svd_deconvolve_standard(
-                        concentration_data,
-                        aif,
-                        dt=dt,
-                        threshold=threshold,
-                        mask=mask.astype(bool),
-                        return_residues=False,
-                    )
-                    cbf = result.cbf  # type: ignore[assignment]
-                    cbv = result.cbv  # type: ignore[assignment]
-                    mtt = result.mtt  # type: ignore[assignment]
-                    tmax = result.tmax  # type: ignore[assignment]
-                    qc_metrics["used_gpu"] = True
-
-                elif method == "cSVD":
-                    result = batched_svd_deconvolve_circulant(
-                        concentration_data,
-                        aif,
-                        dt=dt,
-                        threshold=threshold,
-                        mask=mask.astype(bool),
-                        return_residues=False,
-                    )
-                    cbf = result.cbf  # type: ignore[assignment]
-                    cbv = result.cbv  # type: ignore[assignment]
-                    mtt = result.mtt  # type: ignore[assignment]
-                    tmax = result.tmax  # type: ignore[assignment]
-                    delay = result.delay
-                    qc_metrics["used_gpu"] = True
-
-                return cbf, cbv, mtt, tmax, delay, residues, qc_metrics
-
-            except (ImportError, RuntimeError):
-                # Fall back to CPU
-                qc_metrics["used_gpu"] = False
-
-        # CPU-based deconvolution
-        qc_metrics["used_gpu"] = False
         mask_bool = mask.astype(bool)
 
         if method == "sSVD":
@@ -1651,7 +1591,6 @@ class ComputeDSCMaps(BaseInterface):
         cpi_control_points = int(self.inputs.cpi_control_points)
         bayesian = str(self.inputs.bayesian)
         mcmc_samples = int(self.inputs.mcmc_samples)
-        use_gpu = bool(self.inputs.use_gpu)
 
         # SVD methods are direct matrix decompositions — bayesian inference
         # only applies to parametric fitting (cpi, vascular).
@@ -1808,7 +1747,7 @@ class ComputeDSCMaps(BaseInterface):
 
         if method in ("sSVD", "cSVD", "oSVD", "tikhonov"):
             cbf, cbv, mtt, tmax, delay, residues, qc_metrics = self._deconvolve_svd(
-                conc_data, aif, mask, method, dt, threshold, oi_threshold, use_gpu
+                conc_data, aif, mask, method, dt, threshold, oi_threshold
             )
         else:  # vascular or cpi
             (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map,

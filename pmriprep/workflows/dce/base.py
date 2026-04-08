@@ -1009,7 +1009,6 @@ def init_dce_preproc_wf(
         bayesian=config.bayesian,
         mcmc_samples=config.mcmc_samples,
         tsnr_threshold=config.tsnr_threshold,
-        use_gpu=config.use_gpu,
         constraint_mode=config.cbv_constraint_mode,
         hematocrit=config.hematocrit,
         n_procs=max(1, config.num_processes),
