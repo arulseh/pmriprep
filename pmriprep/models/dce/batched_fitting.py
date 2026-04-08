@@ -1,13 +1,16 @@
-"""GPU-accelerated batched Levenberg-Marquardt solver for DCE PK fitting.
+"""Batched Levenberg-Marquardt solver for DCE PK fitting.
 
-This module provides a generic batched LM optimizer that uses GPU-accelerated
+This module provides a generic batched LM optimizer that uses vectorized
 forward models to fit all voxels in parallel. It supports all four DCE PK
 models (Tofts, Extended Tofts, Patlak, 2CXM) with proper constraint handling,
 weighted least squares, and uncertainty estimation.
 
 The key insight is that while each LM iteration requires solving a small
 per-voxel normal equation (2-4 unknowns), the forward model evaluations
-(the expensive part) can be batched across all voxels on the GPU.
+(the expensive part) can be batched across all voxels.
+
+Uses CuPy for GPU acceleration when available, with automatic fallback to
+NumPy on CPU.
 
 References:
     Marquardt DW. An algorithm for least-squares estimation of nonlinear
@@ -23,7 +26,7 @@ from typing import Optional
 import numpy as np
 import numpy.typing as npt
 
-from pmriprep.models.dce.gpu_convolution import evaluate_model_gpu
+from pmriprep.models.dce.batched_models import evaluate_model
 from pmriprep.utils.dce_constants import (
     EPSILON_VE,
     EPSILON_VP,
@@ -63,8 +66,8 @@ _PARAM_FD_FLOORS: dict[str, float] = {
 
 
 @dataclass
-class GPUFitResult:
-    """Result from GPU batched fitting.
+class FitResult:
+    """Result from batched fitting.
 
     Attributes:
         params: Parameter arrays, param_name → (N,).
@@ -110,7 +113,7 @@ def _build_param_dict(
     params_matrix: npt.NDArray[np.floating],
     param_names: list[str],
 ) -> dict[str, npt.NDArray[np.floating]]:
-    """Convert (N, P) params matrix to a dict for evaluate_model_gpu.
+    """Convert (N, P) params matrix to a dict for evaluate_model.
 
     Args:
         model_name: Model name.
@@ -164,7 +167,7 @@ def batched_patlak_lstsq(
     weights: Optional[npt.NDArray[np.floating]] = None,
     save_fitted_curves: bool = False,
     compute_uncertainties: bool = False,
-) -> GPUFitResult:
+) -> FitResult:
     """Fit Patlak model using linear least squares.
 
     Uses np.linalg.lstsq (QR-based) for numerical stability.
@@ -180,7 +183,7 @@ def batched_patlak_lstsq(
         compute_uncertainties: Whether to compute parameter uncertainties.
 
     Returns:
-        GPUFitResult with fitted Patlak parameters.
+        FitResult with fitted Patlak parameters.
     """
     tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -239,7 +242,7 @@ def batched_patlak_lstsq(
                 uncertainties["ktrans"] = np.full(n_voxels, np.nan)
                 uncertainties["vp"] = np.full(n_voxels, np.nan)
 
-    return GPUFitResult(
+    return FitResult(
         params={"ktrans": ktrans, "vp": vp_out},
         r_squared=r_squared,
         converged=converged,
@@ -340,12 +343,12 @@ def batched_lm_fit(
     xtol: float = 1e-5,
     save_fitted_curves: bool = False,
     compute_uncertainties: bool = False,
-) -> GPUFitResult:
+) -> FitResult:
     """Batched Levenberg-Marquardt fitting for any DCE PK model.
 
-    Fits all voxels simultaneously using GPU-accelerated forward model
+    Fits all voxels simultaneously using vectorized forward model
     evaluations. The LM normal equations are solved on CPU (small per-voxel
-    systems), while the expensive forward model calls are batched on GPU.
+    systems), while the expensive forward model calls are batched.
 
     Args:
         model_name: Model to fit ('tofts', 'extended_tofts', 'patlak', '2cxm').
@@ -364,7 +367,7 @@ def batched_lm_fit(
             from the final Jacobian.
 
     Returns:
-        GPUFitResult with fitted parameters, R², and convergence flags.
+        FitResult with fitted parameters, R², and convergence flags.
     """
     tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -441,7 +444,7 @@ def batched_lm_fit(
     ) -> npt.NDArray[np.floating]:
         """Evaluate forward model, using global indices for fixed_vp lookup."""
         param_dict = _build_full_params_idx(free_params, global_indices)
-        predicted = evaluate_model_gpu(
+        predicted = evaluate_model(
             model_name, param_dict, aif, time_points, use_gpu=False,
         ).tissue_curves
         if vp_subtracted and fixed_vp is not None:
@@ -575,18 +578,18 @@ def batched_lm_fit(
 
         if iteration % 20 == 0:
             logger.info(
-                "GPU LM iter %d: %d/%d active, %d converged",
+                "Batched LM iter %d: %d/%d active, %d converged",
                 iteration, int(np.sum(active)), n_voxels, int(np.sum(converged_flags)),
             )
 
     logger.info(
-        "GPU LM finished after %d iters: %d/%d converged",
+        "Batched LM finished after %d iters: %d/%d converged",
         last_iteration + 1, int(np.sum(converged_flags)), n_voxels,
     )
 
     # Final evaluation for all voxels
     all_param_dict = _build_full_params_idx(params, np.arange(n_voxels))
-    all_predicted = evaluate_model_gpu(
+    all_predicted = evaluate_model(
         model_name, all_param_dict, aif, time_points, use_gpu=False,
     ).tissue_curves
 
@@ -667,7 +670,7 @@ def batched_lm_fit(
             if fixed_vp is not None and "vp" in uncertainties:
                 uncertainties["vp"][:] = 0.0
 
-    return GPUFitResult(
+    return FitResult(
         params=output_params,
         r_squared=final_r2,
         converged=converged_flags,

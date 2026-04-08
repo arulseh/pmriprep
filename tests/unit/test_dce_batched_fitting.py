@@ -1,4 +1,4 @@
-"""Unit tests for GPU batched Levenberg-Marquardt fitting.
+"""Unit tests for batched Levenberg-Marquardt fitting.
 
 Tests verify parameter recovery, convergence, constraint handling,
 auto-mode BIC selection, and result format for all four DCE PK models.
@@ -9,16 +9,16 @@ All tests use numpy fallback (no CuPy required).
 import numpy as np
 import pytest
 
-from pmriprep.models.dce.gpu_convolution import (
-    GPUModelResult,
-    batched_2cxm_model_gpu,
-    batched_extended_tofts_model_gpu,
-    batched_patlak_model_gpu,
-    batched_tofts_model_gpu,
-    evaluate_model_gpu,
+from pmriprep.models.dce.batched_models import (
+    ModelResult,
+    batched_2cxm_model,
+    batched_extended_tofts_model,
+    batched_patlak_model,
+    batched_tofts_model,
+    evaluate_model,
 )
-from pmriprep.models.dce.gpu_fitting import (
-    GPUFitResult,
+from pmriprep.models.dce.batched_fitting import (
+    FitResult,
     _MODEL_PARAMS,
     batched_lm_fit,
     batched_patlak_lstsq,
@@ -48,7 +48,7 @@ def _generate_tofts_data(aif, time_points, n_voxels=1000, noise_level=0.01):
     ktrans_true = rng.uniform(0.01, 0.3, n_voxels)
     ve_true = rng.uniform(0.1, 0.5, n_voxels)
 
-    result = batched_tofts_model_gpu(
+    result = batched_tofts_model(
         ktrans_true, ve_true, aif, time_points, use_gpu=False,
     )
     tissue = result.tissue_curves
@@ -65,7 +65,7 @@ def _generate_etofts_data(aif, time_points, n_voxels=1000, noise_level=0.01):
     ve_true = rng.uniform(0.1, 0.5, n_voxels)
     vp_true = rng.uniform(0.01, 0.1, n_voxels)
 
-    result = batched_extended_tofts_model_gpu(
+    result = batched_extended_tofts_model(
         ktrans_true, ve_true, vp_true, aif, time_points, use_gpu=False,
     )
     tissue = result.tissue_curves
@@ -80,7 +80,7 @@ def _generate_patlak_data(aif, time_points, n_voxels=1000):
     ktrans_true = rng.uniform(0.01, 0.2, n_voxels)
     vp_true = rng.uniform(0.01, 0.15, n_voxels)
 
-    result = batched_patlak_model_gpu(
+    result = batched_patlak_model(
         ktrans_true, vp_true, aif, time_points, use_gpu=False,
     )
     return result.tissue_curves, ktrans_true, vp_true
@@ -94,7 +94,7 @@ def _generate_2cxm_data(aif, time_points, n_voxels=1000, noise_level=0.01):
     ve_true = rng.uniform(0.1, 0.5, n_voxels)
     vp_true = rng.uniform(0.01, 0.1, n_voxels)
 
-    result = batched_2cxm_model_gpu(
+    result = batched_2cxm_model(
         fp_true, ps_true, ve_true, vp_true, aif, time_points, use_gpu=False,
     )
     tissue = result.tissue_curves
@@ -118,7 +118,7 @@ class TestToftsRecovery:
             max_iter=50, save_fitted_curves=True,
         )
 
-        assert isinstance(result, GPUFitResult)
+        assert isinstance(result, FitResult)
         assert result.model_name == "tofts"
         assert result.params["ktrans"].shape == (1000,)
 
@@ -227,7 +227,7 @@ class TestVpConstraint:
         ve_true = rng.uniform(0.1, 0.4, n)
         vp_true = rng.uniform(0.02, 0.08, n)
 
-        result_fwd = batched_extended_tofts_model_gpu(
+        result_fwd = batched_extended_tofts_model(
             ktrans_true, ve_true, vp_true, aif, time_points, use_gpu=False,
         )
         tissue = result_fwd.tissue_curves + 0.005 * rng.randn(*result_fwd.tissue_curves.shape)
@@ -271,14 +271,14 @@ class TestAutoModeBIC:
         # Tofts data (no vp contribution)
         kt_tofts = rng.uniform(0.05, 0.2, n_per)
         ve_tofts = rng.uniform(0.15, 0.4, n_per)
-        tofts_curves = batched_tofts_model_gpu(
+        tofts_curves = batched_tofts_model(
             kt_tofts, ve_tofts, aif, time_points, use_gpu=False,
         ).tissue_curves
 
         # Patlak data (distinct linear accumulation pattern)
         kt_patlak = rng.uniform(0.05, 0.15, n_per)
         vp_patlak = rng.uniform(0.05, 0.15, n_per)
-        patlak_curves = batched_patlak_model_gpu(
+        patlak_curves = batched_patlak_model(
             kt_patlak, vp_patlak, aif, time_points, use_gpu=False,
         ).tissue_curves
 
@@ -322,23 +322,23 @@ class TestAutoModeBIC:
 
 
 # ---------------------------------------------------------------------------
-# Test 7: GPU vs CPU consistency
+# Test 7: CPU consistency
 # ---------------------------------------------------------------------------
 
-class TestGPUCPUConsistency:
-    def test_tofts_gpu_cpu_r2_match(self, aif_and_time):
-        """Same data through GPU LM and CPU should give similar R² distributions."""
+class TestCPUConsistency:
+    def test_tofts_r2_quality(self, aif_and_time):
+        """Same data through batched LM should give good R² distributions."""
         aif, time_points = aif_and_time
         tissue, ktrans_true, ve_true = _generate_tofts_data(
             aif, time_points, n_voxels=200,
         )
 
-        gpu_result = batched_lm_fit(
+        result = batched_lm_fit(
             "tofts", tissue, aif, time_points, max_iter=50,
         )
 
-        # Both should have good R²
-        assert np.median(gpu_result.r_squared[gpu_result.converged]) > 0.9
+        # Should have good R²
+        assert np.median(result.r_squared[result.converged]) > 0.9
 
 
 # ---------------------------------------------------------------------------
@@ -366,8 +366,8 @@ class TestConvergenceUnderNoise:
 # ---------------------------------------------------------------------------
 
 class TestResultDictFormat:
-    def test_gpu_fit_result_fields(self, aif_and_time):
-        """GPUFitResult has all required fields."""
+    def test_fit_result_fields(self, aif_and_time):
+        """FitResult has all required fields."""
         aif, time_points = aif_and_time
         tissue, _, _ = _generate_tofts_data(aif, time_points, n_voxels=50)
 
@@ -376,7 +376,7 @@ class TestResultDictFormat:
             save_fitted_curves=True, compute_uncertainties=True,
         )
 
-        assert isinstance(result, GPUFitResult)
+        assert isinstance(result, FitResult)
         assert "ktrans" in result.params
         assert "ve" in result.params
         assert result.r_squared.shape == (50,)
@@ -403,7 +403,7 @@ class TestConstrainedAutoMode:
         ve = rng.uniform(0.15, 0.4, n)
         vp = rng.uniform(0.02, 0.08, n)
 
-        tissue = batched_extended_tofts_model_gpu(
+        tissue = batched_extended_tofts_model(
             kt, ve, vp, aif, time_points, use_gpu=False,
         ).tissue_curves
 
@@ -481,12 +481,12 @@ class TestWeightedFitting:
 
 
 # ---------------------------------------------------------------------------
-# Test 12-14: GPU convolution forward model tests
+# Test 12-14: Batched convolution forward model tests
 # ---------------------------------------------------------------------------
 
 class TestPatlakForwardModel:
-    def test_patlak_gpu_matches_cpu(self, aif_and_time):
-        """GPU Patlak forward model matches CPU PatlakModel.evaluate()."""
+    def test_patlak_batched_matches_cpu(self, aif_and_time):
+        """Batched Patlak forward model matches CPU PatlakModel.evaluate()."""
         from pmriprep.models.dce.patlak import PatlakModel
 
         aif, time_points = aif_and_time
@@ -496,20 +496,20 @@ class TestPatlakForwardModel:
         ktrans = rng.uniform(0.01, 0.2, n)
         vp = rng.uniform(0.01, 0.15, n)
 
-        gpu_result = batched_patlak_model_gpu(
+        result = batched_patlak_model(
             ktrans, vp, aif, time_points, use_gpu=False,
         )
 
         for i in range(n):
             cpu_curve = model.evaluate([ktrans[i], vp[i]], aif, time_points)
             np.testing.assert_allclose(
-                gpu_result.tissue_curves[i], cpu_curve, atol=1e-10,
+                result.tissue_curves[i], cpu_curve, atol=1e-10,
             )
 
 
 class TestTwoCXMForwardModel:
-    def test_2cxm_gpu_matches_cpu(self, aif_and_time):
-        """GPU 2CXM matches CPU TwoCompartmentExchangeModel.evaluate()."""
+    def test_2cxm_batched_matches_cpu(self, aif_and_time):
+        """Batched 2CXM matches CPU TwoCompartmentExchangeModel.evaluate()."""
         from pmriprep.models.dce.two_compartment_exchange import TwoCompartmentExchangeModel
 
         aif, time_points = aif_and_time
@@ -521,14 +521,14 @@ class TestTwoCXMForwardModel:
         ve = rng.uniform(0.1, 0.5, n)
         vp = rng.uniform(0.01, 0.1, n)
 
-        gpu_result = batched_2cxm_model_gpu(
+        result = batched_2cxm_model(
             fp, ps, ve, vp, aif, time_points, use_gpu=False,
         )
 
         for i in range(n):
             cpu_curve = model.evaluate([fp[i], ps[i], ve[i], vp[i]], aif, time_points)
             np.testing.assert_allclose(
-                gpu_result.tissue_curves[i], cpu_curve, atol=1e-8,
+                result.tissue_curves[i], cpu_curve, atol=1e-8,
                 err_msg=f"Voxel {i}: Fp={fp[i]:.1f}, PS={ps[i]:.1f}",
             )
 
@@ -545,14 +545,14 @@ class TestTwoCXMForwardModel:
         ve = np.array([0.2, 0.3])
         vp = np.array([0.05, 0.05])
 
-        gpu_result = batched_2cxm_model_gpu(
+        result = batched_2cxm_model(
             fp, ps, ve, vp, aif, time_points, use_gpu=False,
         )
 
         for i in range(2):
             cpu_curve = model.evaluate([fp[i], ps[i], ve[i], vp[i]], aif, time_points)
             np.testing.assert_allclose(
-                gpu_result.tissue_curves[i], cpu_curve, atol=1e-6,
+                result.tissue_curves[i], cpu_curve, atol=1e-6,
                 err_msg=f"Degenerate voxel {i}",
             )
 
@@ -566,7 +566,7 @@ class TestTwoCXMForwardModel:
         ve = np.array([0.2])
         vp = np.array([0.05])
 
-        result = batched_2cxm_model_gpu(
+        result = batched_2cxm_model(
             fp, ps, ve, vp, aif, time_points, use_gpu=False,
         )
 
@@ -576,21 +576,21 @@ class TestTwoCXMForwardModel:
         assert peak < aif_peak * 2, f"Peak {peak:.1f} >> AIF peak {aif_peak:.1f}"
 
 
-class TestEvaluateModelGPU:
+class TestEvaluateModel:
     def test_dispatcher_all_models(self, aif_and_time):
-        """evaluate_model_gpu dispatches to all 4 models."""
+        """evaluate_model dispatches to all 4 models."""
         aif, time_points = aif_and_time
         n = 10
 
         # Tofts
-        r = evaluate_model_gpu("tofts", {"ktrans": np.ones(n) * 0.1,
+        r = evaluate_model("tofts", {"ktrans": np.ones(n) * 0.1,
                                           "ve": np.ones(n) * 0.2},
                                 aif, time_points, use_gpu=False)
         assert r.model_type == "tofts"
         assert r.tissue_curves.shape == (n, len(aif))
 
         # Extended Tofts
-        r = evaluate_model_gpu("extended_tofts",
+        r = evaluate_model("extended_tofts",
                                 {"ktrans": np.ones(n) * 0.1,
                                  "ve": np.ones(n) * 0.2,
                                  "vp": np.ones(n) * 0.05},
@@ -598,14 +598,14 @@ class TestEvaluateModelGPU:
         assert r.model_type == "extended_tofts"
 
         # Patlak
-        r = evaluate_model_gpu("patlak",
+        r = evaluate_model("patlak",
                                 {"ktrans": np.ones(n) * 0.1,
                                  "vp": np.ones(n) * 0.05},
                                 aif, time_points, use_gpu=False)
         assert r.model_type == "patlak"
 
         # 2CXM
-        r = evaluate_model_gpu("2cxm",
+        r = evaluate_model("2cxm",
                                 {"fp": np.ones(n) * 60,
                                  "ps": np.ones(n) * 10,
                                  "ve": np.ones(n) * 0.2,
@@ -617,11 +617,4 @@ class TestEvaluateModelGPU:
         """Unknown model name raises ValueError."""
         aif, time_points = aif_and_time
         with pytest.raises(ValueError, match="Unknown model"):
-            evaluate_model_gpu("unknown", {}, aif, time_points, use_gpu=False)
-
-
-class TestGPUModelResultCompat:
-    def test_backward_compat_alias(self):
-        """GPUToftsResult is an alias for GPUModelResult."""
-        from pmriprep.models.dce.gpu_convolution import GPUToftsResult
-        assert GPUToftsResult is GPUModelResult
+            evaluate_model("unknown", {}, aif, time_points, use_gpu=False)

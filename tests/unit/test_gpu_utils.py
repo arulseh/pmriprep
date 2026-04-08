@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from pmriprep.utils.gpu import (
-    GPUVoxelProcessor,
+    BatchedVoxelProcessor,
     array_on_device,
     ensure_contiguous,
     get_array_module,
@@ -123,15 +123,15 @@ class TestEnsureContiguous:
 
 
 # ---------------------------------------------------------------------------
-# GPUVoxelProcessor
+# BatchedVoxelProcessor
 # ---------------------------------------------------------------------------
 
-class TestGPUVoxelProcessor:
+class TestBatchedVoxelProcessor:
     """Tests for the GPU batch processor."""
 
     def test_construction_sets_attributes(self) -> None:
         """Valid constructor arguments are stored as attributes."""
-        proc = GPUVoxelProcessor(
+        proc = BatchedVoxelProcessor(
             n_voxels=5000,
             n_timepoints=60,
             memory_fraction=0.4,
@@ -145,21 +145,21 @@ class TestGPUVoxelProcessor:
     def test_zero_voxels_raises(self) -> None:
         """n_voxels=0 raises ValueError."""
         with pytest.raises(ValueError, match="n_voxels must be positive"):
-            GPUVoxelProcessor(n_voxels=0)
+            BatchedVoxelProcessor(n_voxels=0)
 
     def test_negative_memory_fraction_raises(self) -> None:
         """Negative memory_fraction raises ValueError."""
         with pytest.raises(ValueError, match="memory_fraction"):
-            GPUVoxelProcessor(n_voxels=100, memory_fraction=-0.1)
+            BatchedVoxelProcessor(n_voxels=100, memory_fraction=-0.1)
 
     def test_cpu_optimal_batch_size_equals_n_voxels(self) -> None:
         """On CPU, optimal batch size equals total voxels (no memory limit)."""
-        proc = GPUVoxelProcessor(n_voxels=10000, device="cpu")
+        proc = BatchedVoxelProcessor(n_voxels=10000, device="cpu")
         assert proc.get_optimal_batch_size() == 10000
 
     def test_iter_batches_correct_splits(self) -> None:
         """100 voxels with batch_size=30 yields 4 batches of 30,30,30,10."""
-        proc = GPUVoxelProcessor(n_voxels=100, device="cpu")
+        proc = BatchedVoxelProcessor(n_voxels=100, device="cpu")
         data = np.arange(100, dtype=np.float64)
 
         batches = list(proc.iter_batches(data, batch_size=30))
@@ -177,7 +177,7 @@ class TestGPUVoxelProcessor:
 
     def test_process_in_batches_identity(self) -> None:
         """Identity function through process_in_batches reproduces input."""
-        proc = GPUVoxelProcessor(n_voxels=50, device="cpu")
+        proc = BatchedVoxelProcessor(n_voxels=50, device="cpu")
         data = np.linspace(0, 1, 50)
 
         result = proc.process_in_batches(

@@ -543,13 +543,13 @@ _K2_QC_KEYS = {
 
 
 def _normalize_param_name(pname: str) -> str:
-    """Normalize GPU param name to output format.
+    """Normalize batched result param name to output format.
 
     Args:
-        pname: Raw parameter name from GPU result (e.g. 'ktrans', 'fp', 'ps').
+        pname: Raw parameter name from batched result (e.g. 'ktrans', 'fp', 'ps').
 
     Returns:
-        Normalized name matching CPU output format.
+        Normalized name matching output format.
     """
     if pname == "ktrans":
         return "Ktrans"
@@ -583,7 +583,7 @@ def _compute_derived_params(
         params_out["kep"] = params_out["Ktrans"] / max(ve_val, EPSILON_VE)
 
 
-def _merge_gpu_fit_results(
+def _merge_fit_results(
     r_const: Any,
     const_idx: npt.NDArray[np.intp],
     r_free: Any,
@@ -591,22 +591,22 @@ def _merge_gpu_fit_results(
     n_voxels: int,
     model_name: str,
 ) -> Any:
-    """Merge two GPUFitResult objects at original indices.
+    """Merge two FitResult objects at original indices.
 
     Scatters constrained and free results back into full (N,) arrays.
 
     Args:
-        r_const: GPUFitResult for constrained voxels.
+        r_const: FitResult for constrained voxels.
         const_idx: Global indices of constrained voxels.
-        r_free: GPUFitResult for free (unconstrained) voxels.
+        r_free: FitResult for free (unconstrained) voxels.
         free_idx: Global indices of free voxels.
         n_voxels: Total number of voxels.
         model_name: Model name for the merged result.
 
     Returns:
-        Merged GPUFitResult with all voxels at their original positions.
+        Merged FitResult with all voxels at their original positions.
     """
-    from pmriprep.models.dce.gpu_fitting import GPUFitResult
+    from pmriprep.models.dce.batched_fitting import FitResult
 
     # Merge params
     params: dict[str, npt.NDArray[np.floating]] = {}
@@ -657,7 +657,7 @@ def _merge_gpu_fit_results(
 
     n_iterations = max(r_const.n_iterations, r_free.n_iterations)
 
-    return GPUFitResult(
+    return FitResult(
         params=params,
         r_squared=r_squared,
         converged=converged,
@@ -690,7 +690,7 @@ def _fit_with_split_constraint(
         **fit_kwargs: Additional kwargs passed to fit_fn.
 
     Returns:
-        GPUFitResult with all voxels correctly handled.
+        FitResult with all voxels correctly handled.
     """
     if fixed_vp is None or model_name not in _MODEL_HAS_VP:
         return fit_fn(tissue_curves, fixed_vp=None, **fit_kwargs)
@@ -706,7 +706,7 @@ def _fit_with_split_constraint(
     free_idx = np.where(~has_constraint)[0]
     r_const = fit_fn(tissue_curves[const_idx], fixed_vp=fixed_vp[const_idx], **fit_kwargs)
     r_free = fit_fn(tissue_curves[free_idx], fixed_vp=None, **fit_kwargs)
-    return _merge_gpu_fit_results(
+    return _merge_fit_results(
         r_const, const_idx, r_free, free_idx, n_voxels, model_name,
     )
 
@@ -1738,7 +1738,7 @@ class ComputeDCEMaps(BaseInterface):
         n_procs = max(1, int(self.inputs.n_procs))
 
         # Always use batched fitting (vectorized operations)
-        results = self._fit_gpu_batched(
+        results = self._fit_batched(
             conc_data=conc_data,
             mask_coords=mask_coords,
             aif=aif,
@@ -2305,7 +2305,7 @@ class ComputeDCEMaps(BaseInterface):
 
         return runtime
 
-    def _fit_gpu_batched(
+    def _fit_batched(
         self,
         conc_data: npt.NDArray[Any],
         mask_coords: tuple[npt.NDArray[Any], ...],
@@ -2328,9 +2328,9 @@ class ComputeDCEMaps(BaseInterface):
         init_args: tuple[Any, ...],
         voxel_data_list: list[VoxelInput],
     ) -> list[dict[str, Any]]:
-        """GPU-accelerated batched fitting path.
+        """Batched fitting path.
 
-        Fits all voxels simultaneously using batched LM/lstsq on GPU,
+        Fits all voxels simultaneously using batched LM/lstsq,
         then optionally refines with CPU-based MAP/MCMC.
 
         Args:
@@ -2358,8 +2358,8 @@ class ComputeDCEMaps(BaseInterface):
         Returns:
             List of result dicts matching _fit_single_voxel output format.
         """
-        from pmriprep.models.dce.gpu_fitting import (
-            GPUFitResult,
+        from pmriprep.models.dce.batched_fitting import (
+            FitResult,
             batched_lm_fit,
             batched_patlak_lstsq,
         )
@@ -2370,7 +2370,7 @@ class ComputeDCEMaps(BaseInterface):
 
         # VI/MCMC: fall through to CPU multiprocessing (unchanged)
         if bayesian in ("vi", "mcmc"):
-            logger.info("GPU mode with %s: falling through to CPU multiprocessing", bayesian)
+            logger.info("Batched mode with %s: falling through to CPU multiprocessing", bayesian)
             _init_worker(*init_args)
             if n_procs > 1:
                 from concurrent.futures import ProcessPoolExecutor
@@ -2402,70 +2402,70 @@ class ComputeDCEMaps(BaseInterface):
         results: list[dict[str, Any]] = []
 
         if not is_auto:
-            # Single-model GPU fit with split constraint handling
+            # Single-model batched fit with split constraint handling
             if model_name == "patlak":
-                def _patlak_fit(tc: npt.NDArray[np.floating], **kw: Any) -> GPUFitResult:
+                def _patlak_fit(tc: npt.NDArray[np.floating], **kw: Any) -> FitResult:
                     return batched_patlak_lstsq(
                         tc, aif, time_points, **kw,
                     )
-                gpu_result = _fit_with_split_constraint(
+                fit_result = _fit_with_split_constraint(
                     _patlak_fit, tissue_curves, fixed_vp, model_name, n_voxels,
                     weights=motion_weights,
                     save_fitted_curves=save_fitted_curves,
                     compute_uncertainties=bayesian == "none",
                 )
             else:
-                def _lm_fit(tc: npt.NDArray[np.floating], **kw: Any) -> GPUFitResult:
+                def _lm_fit(tc: npt.NDArray[np.floating], **kw: Any) -> FitResult:
                     return batched_lm_fit(
                         model_name, tc, aif, time_points, **kw,
                     )
-                gpu_result = _fit_with_split_constraint(
+                fit_result = _fit_with_split_constraint(
                     _lm_fit, tissue_curves, fixed_vp, model_name, n_voxels,
                     weights=motion_weights,
                     save_fitted_curves=save_fitted_curves or bayesian == "map",
                     compute_uncertainties=bayesian == "none",
                 )
 
-            results = self._gpu_result_to_dicts(
-                gpu_result, coords, model_name,
+            results = self._fit_result_to_dicts(
+                fit_result, coords, model_name,
                 fixed_vp=fixed_vp,
             )
 
-            # MAP refinement: use GPU fit as warm-start for CPU MAP
+            # MAP refinement: use batched fit as warm-start for CPU MAP
             if bayesian == "map":
-                results = self._refine_map_from_gpu(
+                results = self._refine_map_from_batched(
                     results, voxel_data_list, init_args, n_procs,
                 )
 
             return results
 
-        # Auto mode: fit ALL candidate models on GPU, select via BIC
+        # Auto mode: fit ALL candidate models using batched fitting, select via BIC
         from pmriprep.models.dce.base import EPSILON_RSS
 
-        gpu_results: dict[str, GPUFitResult] = {}
+        fit_results: dict[str, FitResult] = {}
         for cname in candidate_names:
             try:
                 if cname == "patlak":
-                    def _patlak_auto(tc: npt.NDArray[np.floating], **kw: Any) -> GPUFitResult:
+                    def _patlak_auto(tc: npt.NDArray[np.floating], **kw: Any) -> FitResult:
                         return batched_patlak_lstsq(tc, aif, time_points, **kw)
-                    gpu_results[cname] = _fit_with_split_constraint(
+                    fit_results[cname] = _fit_with_split_constraint(
                         _patlak_auto, tissue_curves, fixed_vp, cname, n_voxels,
                         weights=motion_weights,
                         save_fitted_curves=True,
                     )
                 else:
-                    def _lm_auto(tc: npt.NDArray[np.floating], *, _model: str = cname, **kw: Any) -> GPUFitResult:
+                    def _lm_auto(tc: npt.NDArray[np.floating], *, _model: str = cname, **kw: Any) -> FitResult:
                         return batched_lm_fit(_model, tc, aif, time_points, **kw)
-                    gpu_results[cname] = _fit_with_split_constraint(
+                    fit_results[cname] = _fit_with_split_constraint(
                         _lm_auto, tissue_curves, fixed_vp, cname, n_voxels,
                         weights=motion_weights,
                         save_fitted_curves=True,
                     )
             except Exception:
-                logger.warning("GPU auto-mode: model %s failed", cname, exc_info=True)
+                logger.warning("Batched auto-mode: model %s failed", cname, exc_info=True)
 
-        if not gpu_results:
-            logger.warning("All GPU auto-mode models failed, falling to CPU")
+        if not fit_results:
+            logger.warning("All batched auto-mode models failed, falling to CPU")
             _init_worker(*init_args)
             return [_fit_single_voxel(vd) for vd in voxel_data_list]
 
@@ -2476,7 +2476,7 @@ class ComputeDCEMaps(BaseInterface):
         }
 
         bic_arrays: dict[str, npt.NDArray[np.floating]] = {}
-        for cname, result in gpu_results.items():
+        for cname, result in fit_results.items():
             if result.fitted_curves is None:
                 bic_arrays[cname] = np.full(n_voxels, np.inf)
                 continue
@@ -2493,12 +2493,12 @@ class ComputeDCEMaps(BaseInterface):
             bic_arrays[cname] = T * np.log(rss_safe / T) + k_arr * np.log(T)
 
         # Filter non-converged → BIC = inf
-        for cname, result in gpu_results.items():
+        for cname, result in fit_results.items():
             if cname in bic_arrays:
                 bic_arrays[cname][~result.converged] = np.inf
 
         # Select min-BIC model per voxel
-        cand_list = [c for c in candidate_names if c in gpu_results]
+        cand_list = [c for c in candidate_names if c in fit_results]
         bic_stack = np.stack([bic_arrays[c] for c in cand_list], axis=0)
         winner_idx = np.argmin(bic_stack, axis=0)
 
@@ -2531,7 +2531,7 @@ class ComputeDCEMaps(BaseInterface):
         # Only downgrade if simplest model actually converged
         weak_evidence = (delta_bic < _MIN_DELTA_BIC_UPGRADE) | ~np.isfinite(delta_bic)
         not_simplest = winner_idx != simplest_idx
-        simplest_converged = gpu_results[cand_list[simplest_idx]].converged
+        simplest_converged = fit_results[cand_list[simplest_idx]].converged
         downgrade_mask = weak_evidence & not_simplest & simplest_converged
 
         n_downgraded = int(downgrade_mask.sum())
@@ -2549,7 +2549,7 @@ class ComputeDCEMaps(BaseInterface):
         results = []
         for i in range(n_voxels):
             winner_name = cand_list[winner_idx[i]]
-            winner_result = gpu_results[winner_name]
+            winner_result = fit_results[winner_name]
 
             x, y, z = int(coords[i, 0]), int(coords[i, 1]), int(coords[i, 2])
 
@@ -2596,26 +2596,26 @@ class ComputeDCEMaps(BaseInterface):
 
         # MAP refinement of BIC winners
         if bayesian == "map":
-            results = self._refine_map_from_gpu(
+            results = self._refine_map_from_batched(
                 results, voxel_data_list, init_args, n_procs,
             )
 
         return results
 
-    def _gpu_result_to_dicts(
+    def _fit_result_to_dicts(
         self,
-        gpu_result: Any,
+        fit_result: Any,
         coords: npt.NDArray[Any],
         model_name: str,
         fixed_vp: Optional[npt.NDArray[np.floating]] = None,
     ) -> list[dict[str, Any]]:
-        """Convert GPUFitResult to list of per-voxel dicts.
+        """Convert FitResult to list of per-voxel dicts.
 
         Computes derived parameters (kep, E, Ktrans_derived) and builds
         dicts matching _fit_single_voxel output format.
 
         Args:
-            gpu_result: GPUFitResult from batched fitting.
+            fit_result: FitResult from batched fitting.
             coords: Voxel coordinates, shape (N, 3).
             model_name: Model name.
             fixed_vp: Fixed vp values or None.
@@ -2637,32 +2637,32 @@ class ComputeDCEMaps(BaseInterface):
 
             # Build params dict with normalized names
             params_out: dict[str, float] = {}
-            for pname, parr in gpu_result.params.items():
+            for pname, parr in fit_result.params.items():
                 params_out[_normalize_param_name(pname)] = float(parr[i])
 
             _compute_derived_params(params_out, model_name)
 
             # Uncertainties
             uncertainties: dict[str, float] = {}
-            if gpu_result.uncertainties:
-                for pname, uarr in gpu_result.uncertainties.items():
+            if fit_result.uncertainties:
+                for pname, uarr in fit_result.uncertainties.items():
                     uncertainties[_normalize_param_name(pname)] = float(uarr[i])
 
             fitted_curve = None
-            if gpu_result.fitted_curves is not None:
-                fitted_curve = gpu_result.fitted_curves[i]
+            if fit_result.fitted_curves is not None:
+                fitted_curve = fit_result.fitted_curves[i]
 
             results.append({
                 "coords": (x, y, z),
                 "params": params_out,
-                "r_squared": float(gpu_result.r_squared[i]),
-                "converged": bool(gpu_result.converged[i]),
+                "r_squared": float(fit_result.r_squared[i]),
+                "converged": bool(fit_result.converged[i]),
                 "uncertainties": uncertainties,
                 "fitted_curve": fitted_curve,
-                "quality_flag": "good" if gpu_result.converged[i] else "poor_convergence",
+                "quality_flag": "good" if fit_result.converged[i] else "poor_convergence",
                 "rhat": {},
                 "ess": {},
-                "failed": not bool(gpu_result.converged[i]) and float(gpu_result.r_squared[i]) < -0.5,
+                "failed": not bool(fit_result.converged[i]) and float(fit_result.r_squared[i]) < -0.5,
                 "failure_reason": None,
                 "constrained": is_constrained,
                 "selected_model_name": model_name,
@@ -2671,25 +2671,25 @@ class ComputeDCEMaps(BaseInterface):
 
         return results
 
-    def _refine_map_from_gpu(
+    def _refine_map_from_batched(
         self,
-        gpu_results: list[dict[str, Any]],
+        batched_results: list[dict[str, Any]],
         voxel_data_list: list[VoxelInput],
         init_args: tuple[Any, ...],
         n_procs: int,
     ) -> list[dict[str, Any]]:
         """Runs CPU MAP fitting on all voxels.
 
-        Uses CPU MAP where it converges, falling back to GPU NLLS otherwise.
+        Uses CPU MAP where it converges, falling back to batched NLLS otherwise.
 
         Args:
-            gpu_results: Per-voxel result dicts from GPU fitting.
+            batched_results: Per-voxel result dicts from batched fitting.
             voxel_data_list: VoxelInput list for CPU fitting.
             init_args: Worker initialization args.
             n_procs: Number of CPU processes.
 
         Returns:
-            Refined result dicts (CPU MAP where converged, GPU NLLS otherwise).
+            Refined result dicts (CPU MAP where converged, batched NLLS otherwise).
         """
         # CPU MAP refinement using multiprocessing
         _init_worker(*init_args)
@@ -2709,13 +2709,13 @@ class ComputeDCEMaps(BaseInterface):
         else:
             cpu_results = [_fit_single_voxel(vd) for vd in voxel_data_list]
 
-        # Use CPU MAP results where they converged, GPU NLLS otherwise
+        # Use CPU MAP results where they converged, batched NLLS otherwise
         final_results = []
-        for gpu_res, cpu_res in zip(gpu_results, cpu_results):
+        for fit_res, cpu_res in zip(batched_results, cpu_results):
             if cpu_res.get("converged", False) and not cpu_res.get("failed", True):
                 final_results.append(cpu_res)
             else:
-                final_results.append(gpu_res)
+                final_results.append(fit_res)
 
         return final_results
 

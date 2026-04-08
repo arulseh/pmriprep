@@ -58,7 +58,7 @@ from pmriprep.utils.tumor_seg import (
 )
 from pmriprep.utils.device import detect_torch_device
 from pmriprep.utils.gpu import (
-    GPUVoxelProcessor,
+    BatchedVoxelProcessor,
     array_on_device,
     clear_gpu_memory,
     detect_gpu_count,
@@ -137,7 +137,7 @@ __all__ = [
     # device
     "detect_torch_device",
     # gpu
-    "GPUVoxelProcessor",
+    "BatchedVoxelProcessor",
     "array_on_device",
     "clear_gpu_memory",
     "detect_gpu_count",

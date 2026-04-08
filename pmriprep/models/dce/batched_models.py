@@ -1,13 +1,16 @@
-"""GPU-accelerated batched DCE pharmacokinetic model evaluation.
+"""Batched DCE pharmacokinetic model evaluation.
 
-This module provides GPU-accelerated pharmacokinetic model evaluation for
+This module provides vectorized pharmacokinetic model evaluation for
 DCE-MRI analysis. The key optimization is using FFT-based convolution for
 efficient batch processing across many voxels.
 
+Uses CuPy for GPU acceleration when available, with automatic fallback to
+NumPy on CPU.
+
 Performance characteristics:
-- 20-100x speedup for >5000 voxels compared to CPU batch processing
-- Memory efficient: processes voxels in batches based on available GPU memory
-- Graceful fallback: automatically uses CPU if CuPy is unavailable
+- 20-100x speedup for >5000 voxels when using CuPy GPU acceleration
+- Memory efficient: processes voxels in batches based on available memory
+- Graceful fallback: automatically uses CPU (NumPy) if CuPy is unavailable
 
 Supported models:
 - Standard Tofts: C_t(t) = Ktrans * [Cp ⊗ exp(-kep*t)]
@@ -60,31 +63,27 @@ from pmriprep.utils.gpu import (
 
 
 @dataclass
-class GPUModelResult:
-    """Result from GPU batched model evaluation.
+class ModelResult:
+    """Result from batched model evaluation.
 
-    Contains tissue concentration curves computed via GPU-accelerated
+    Contains tissue concentration curves computed via vectorized
     FFT-based convolution.
 
     Attributes:
         tissue_curves: Computed tissue concentration curves.
             Shape: (n_voxels, n_timepoints).
-        n_voxels_processed: Number of voxels processed on GPU.
-        used_gpu: Whether GPU was actually used (False if fallback to CPU).
+        n_voxels_processed: Number of voxels processed.
+        used_cupy: Whether CuPy GPU acceleration was used (False = NumPy CPU).
         model_type: Model used ('tofts', 'extended_tofts', 'patlak', or '2cxm').
     """
 
     tissue_curves: npt.NDArray[np.floating]
     n_voxels_processed: int
-    used_gpu: bool
+    used_cupy: bool
     model_type: str
 
 
-# Backward compatibility alias
-GPUToftsResult = GPUModelResult
-
-
-def _fft_convolve_gpu(
+def _fft_convolve(
     aif: ArrayLike,
     exp_kernel: ArrayLike,
     dt: float,
@@ -136,7 +135,7 @@ def _fft_convolve_gpu(
     return conv_result[:, :n_timepoints] * dt
 
 
-def _build_exp_kernel_gpu(
+def _build_exp_kernel(
     kep: ArrayLike,
     time_points: ArrayLike,
     xp: Any,
@@ -194,15 +193,15 @@ def _validate_uniform_time_points(
     return dt
 
 
-def batched_tofts_model_gpu(
+def batched_tofts_model(
     ktrans: npt.NDArray[np.floating],
     ve: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     use_gpu: bool = True,
     batch_size: Optional[int] = None,
-) -> GPUModelResult:
-    """GPU-accelerated batched Standard Tofts model evaluation.
+) -> ModelResult:
+    """Batched Standard Tofts model evaluation.
 
     Computes tissue concentration curves for multiple voxels using
     FFT-based convolution on GPU.
@@ -222,7 +221,7 @@ def batched_tofts_model_gpu(
             based on available GPU memory. Default None.
 
     Returns:
-        GPUModelResult containing tissue concentration curves and metadata.
+        ModelResult containing tissue concentration curves and metadata.
 
     Raises:
         ValueError: If ktrans and ve have different shapes.
@@ -247,10 +246,10 @@ def batched_tofts_model_gpu(
 
     # Handle edge case
     if n_voxels == 0:
-        return GPUModelResult(
+        return ModelResult(
             tissue_curves=np.zeros((0, n_timepoints), dtype=np.float64),
             n_voxels_processed=0,
-            used_gpu=False,
+            used_cupy=False,
             model_type="tofts",
         )
 
@@ -296,10 +295,10 @@ def batched_tofts_model_gpu(
         kep = ktrans_device / ve_safe
 
         # Build exponential kernels
-        exp_kernel = _build_exp_kernel_gpu(kep, time_device, xp)
+        exp_kernel = _build_exp_kernel(kep, time_device, xp)
 
         # FFT-based convolution
-        conv_result = _fft_convolve_gpu(aif_device, exp_kernel, dt, xp)
+        conv_result = _fft_convolve(aif_device, exp_kernel, dt, xp)
 
         # Apply Ktrans scaling: C_t = Ktrans * convolution
         tissue_batch = ktrans_device[:, None] * conv_result
@@ -312,15 +311,15 @@ def batched_tofts_model_gpu(
             synchronize()
             clear_gpu_memory()
 
-    return GPUModelResult(
+    return ModelResult(
         tissue_curves=tissue_curves,
         n_voxels_processed=n_voxels,
-        used_gpu=use_gpu_actual,
+        used_cupy=use_gpu_actual,
         model_type="tofts",
     )
 
 
-def batched_extended_tofts_model_gpu(
+def batched_extended_tofts_model(
     ktrans: npt.NDArray[np.floating],
     ve: npt.NDArray[np.floating],
     vp: npt.NDArray[np.floating],
@@ -328,8 +327,8 @@ def batched_extended_tofts_model_gpu(
     time_points: npt.NDArray[np.floating],
     use_gpu: bool = True,
     batch_size: Optional[int] = None,
-) -> GPUModelResult:
-    """GPU-accelerated batched Extended Tofts model evaluation.
+) -> ModelResult:
+    """Batched Extended Tofts model evaluation.
 
     Computes tissue concentration curves for multiple voxels using
     FFT-based convolution on GPU. Includes the vascular plasma volume
@@ -351,7 +350,7 @@ def batched_extended_tofts_model_gpu(
             based on available GPU memory. Default None.
 
     Returns:
-        GPUModelResult containing tissue concentration curves and metadata.
+        ModelResult containing tissue concentration curves and metadata.
 
     Raises:
         ValueError: If ktrans, ve, and vp have different shapes.
@@ -377,10 +376,10 @@ def batched_extended_tofts_model_gpu(
 
     # Handle edge case
     if n_voxels == 0:
-        return GPUModelResult(
+        return ModelResult(
             tissue_curves=np.zeros((0, n_timepoints), dtype=np.float64),
             n_voxels_processed=0,
-            used_gpu=False,
+            used_cupy=False,
             model_type="extended_tofts",
         )
 
@@ -431,10 +430,10 @@ def batched_extended_tofts_model_gpu(
         kep = ktrans_device / ve_safe
 
         # Build exponential kernels
-        exp_kernel = _build_exp_kernel_gpu(kep, time_device, xp)
+        exp_kernel = _build_exp_kernel(kep, time_device, xp)
 
         # FFT-based convolution
-        conv_result = _fft_convolve_gpu(aif_device, exp_kernel, dt, xp)
+        conv_result = _fft_convolve(aif_device, exp_kernel, dt, xp)
 
         # Apply Ktrans scaling: extravasation = Ktrans * convolution
         extravasation_term = ktrans_device[:, None] * conv_result
@@ -450,23 +449,23 @@ def batched_extended_tofts_model_gpu(
             synchronize()
             clear_gpu_memory()
 
-    return GPUModelResult(
+    return ModelResult(
         tissue_curves=tissue_curves,
         n_voxels_processed=n_voxels,
-        used_gpu=use_gpu_actual,
+        used_cupy=use_gpu_actual,
         model_type="extended_tofts",
     )
 
 
-def batched_patlak_model_gpu(
+def batched_patlak_model(
     ktrans: npt.NDArray[np.floating],
     vp: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     use_gpu: bool = True,
     batch_size: Optional[int] = None,
-) -> GPUModelResult:
-    """GPU-accelerated batched Patlak model evaluation.
+) -> ModelResult:
+    """Batched Patlak model evaluation.
 
     Computes tissue concentration curves for multiple voxels using
     the Patlak model (no backflux assumption).
@@ -486,7 +485,7 @@ def batched_patlak_model_gpu(
             vectorizable with minimal memory.
 
     Returns:
-        GPUModelResult containing tissue concentration curves and metadata.
+        ModelResult containing tissue concentration curves and metadata.
 
     Raises:
         ValueError: If ktrans and vp have different shapes.
@@ -509,10 +508,10 @@ def batched_patlak_model_gpu(
     n_timepoints = len(aif)
 
     if n_voxels == 0:
-        return GPUModelResult(
+        return ModelResult(
             tissue_curves=np.zeros((0, n_timepoints), dtype=np.float64),
             n_voxels_processed=0,
-            used_gpu=False,
+            used_cupy=False,
             model_type="patlak",
         )
 
@@ -543,15 +542,15 @@ def batched_patlak_model_gpu(
         synchronize()
         clear_gpu_memory()
 
-    return GPUModelResult(
+    return ModelResult(
         tissue_curves=tissue_curves,
         n_voxels_processed=n_voxels,
-        used_gpu=use_gpu_actual,
+        used_cupy=use_gpu_actual,
         model_type="patlak",
     )
 
 
-def batched_2cxm_model_gpu(
+def batched_2cxm_model(
     fp: npt.NDArray[np.floating],
     ps: npt.NDArray[np.floating],
     ve: npt.NDArray[np.floating],
@@ -560,8 +559,8 @@ def batched_2cxm_model_gpu(
     time_points: npt.NDArray[np.floating],
     use_gpu: bool = True,
     batch_size: Optional[int] = None,
-) -> GPUModelResult:
-    """GPU-accelerated batched Two-Compartment Exchange Model (2CXM) evaluation.
+) -> ModelResult:
+    """Batched Two-Compartment Exchange Model (2CXM) evaluation.
 
     Computes tissue concentration curves using eigenvalue decomposition
     and FFT-based convolution.
@@ -587,7 +586,7 @@ def batched_2cxm_model_gpu(
         batch_size: Number of voxels per GPU batch. If None, auto-determined.
 
     Returns:
-        GPUModelResult containing tissue concentration curves and metadata.
+        ModelResult containing tissue concentration curves and metadata.
 
     Raises:
         ValueError: If parameter arrays have different shapes.
@@ -615,10 +614,10 @@ def batched_2cxm_model_gpu(
     n_timepoints = len(aif)
 
     if n_voxels == 0:
-        return GPUModelResult(
+        return ModelResult(
             tissue_curves=np.zeros((0, n_timepoints), dtype=np.float64),
             n_voxels_processed=0,
-            used_gpu=False,
+            used_cupy=False,
             model_type="2cxm",
         )
 
@@ -701,10 +700,10 @@ def batched_2cxm_model_gpu(
         )
 
         # Two FFT convolutions
-        exp1 = _build_exp_kernel_gpu(k1_final, time_device, xp)
-        exp2 = _build_exp_kernel_gpu(k2_used, time_device, xp)
-        conv1 = _fft_convolve_gpu(aif_device, exp1, dt, xp)
-        conv2 = _fft_convolve_gpu(aif_device, exp2, dt, xp)
+        exp1 = _build_exp_kernel(k1_final, time_device, xp)
+        exp2 = _build_exp_kernel(k2_used, time_device, xp)
+        conv1 = _fft_convolve(aif_device, exp1, dt, xp)
+        conv2 = _fft_convolve(aif_device, exp2, dt, xp)
 
         tissue_batch = a1[:, None] * conv1 + a2[:, None] * conv2
 
@@ -714,10 +713,10 @@ def batched_2cxm_model_gpu(
             synchronize()
             clear_gpu_memory()
 
-    return GPUModelResult(
+    return ModelResult(
         tissue_curves=tissue_curves,
         n_voxels_processed=n_voxels,
-        used_gpu=use_gpu_actual,
+        used_cupy=use_gpu_actual,
         model_type="2cxm",
     )
 
@@ -783,18 +782,18 @@ def get_optimal_batch_size(
     return _get_optimal_batch_size(n_timepoints, safety_factor, multiplier)
 
 
-def evaluate_model_gpu(
+def evaluate_model(
     model_name: str,
     params: dict[str, npt.NDArray[np.floating]],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     use_gpu: bool = True,
     batch_size: Optional[int] = None,
-) -> GPUModelResult:
-    """Evaluate a DCE model on GPU using the appropriate batched function.
+) -> ModelResult:
+    """Evaluate a DCE model using the appropriate batched function.
 
     This is a convenience wrapper that dispatches to the appropriate
-    GPU-accelerated model evaluation function based on the model name.
+    batched model evaluation function based on the model name.
 
     Args:
         model_name: Model to evaluate ('tofts', 'extended_tofts', 'patlak',
@@ -810,14 +809,14 @@ def evaluate_model_gpu(
         batch_size: Number of voxels per GPU batch. Auto-determined if None.
 
     Returns:
-        GPUModelResult containing tissue concentration curves.
+        ModelResult containing tissue concentration curves.
 
     Raises:
         ValueError: If model_name is not recognized.
         KeyError: If required parameters are missing from params dict.
     """
     if model_name == "tofts":
-        return batched_tofts_model_gpu(
+        return batched_tofts_model(
             ktrans=params["ktrans"],
             ve=params["ve"],
             aif=aif,
@@ -826,7 +825,7 @@ def evaluate_model_gpu(
             batch_size=batch_size,
         )
     elif model_name == "extended_tofts":
-        return batched_extended_tofts_model_gpu(
+        return batched_extended_tofts_model(
             ktrans=params["ktrans"],
             ve=params["ve"],
             vp=params["vp"],
@@ -836,7 +835,7 @@ def evaluate_model_gpu(
             batch_size=batch_size,
         )
     elif model_name == "patlak":
-        return batched_patlak_model_gpu(
+        return batched_patlak_model(
             ktrans=params["ktrans"],
             vp=params["vp"],
             aif=aif,
@@ -845,7 +844,7 @@ def evaluate_model_gpu(
             batch_size=batch_size,
         )
     elif model_name == "2cxm":
-        return batched_2cxm_model_gpu(
+        return batched_2cxm_model(
             fp=params["fp"],
             ps=params["ps"],
             ve=params["ve"],

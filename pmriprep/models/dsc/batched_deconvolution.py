@@ -1,14 +1,16 @@
-"""GPU-accelerated batched SVD deconvolution for DSC-MRI.
+"""Batched SVD deconvolution for DSC-MRI.
 
-This module provides GPU-accelerated deconvolution for DSC perfusion
+This module provides vectorized deconvolution for DSC perfusion
 analysis. The key optimization is computing the SVD decomposition of
-the AIF convolution matrix once and applying it to all voxels in parallel
-on the GPU.
+the AIF convolution matrix once and applying it to all voxels in parallel.
+
+Uses CuPy for GPU acceleration when available, with automatic fallback to
+NumPy on CPU.
 
 Performance characteristics:
-- 10-50x speedup for >1000 voxels compared to CPU batch processing
-- Memory efficient: processes voxels in batches based on available GPU memory
-- Graceful fallback: automatically uses CPU if CuPy is unavailable
+- 10-50x speedup for >1000 voxels when using CuPy GPU acceleration
+- Memory efficient: processes voxels in batches based on available memory
+- Graceful fallback: automatically uses CPU (NumPy) if CuPy is unavailable
 
 Supported methods:
 - Standard SVD (sSVD): Toeplitz matrix deconvolution
@@ -49,11 +51,11 @@ from pmriprep.utils.gpu import (
 
 
 @dataclass
-class GPUDeconvolutionResult:
-    """Result from GPU batched deconvolution.
+class DeconvolutionResult:
+    """Result from batched deconvolution.
 
     Contains perfusion parameter maps and optional residue functions
-    computed via GPU-accelerated SVD deconvolution.
+    computed via vectorized SVD deconvolution.
 
     Attributes:
         cbf: Cerebral blood flow map, max(R(t)) per voxel.
@@ -63,8 +65,8 @@ class GPUDeconvolutionResult:
         residues: Optional residue functions, shape (n_voxels, n_timepoints).
             Only returned if return_residues=True.
         delay: Optional delay map (seconds), only for circulant method.
-        n_voxels_processed: Number of voxels processed on GPU.
-        used_gpu: Whether GPU was actually used (False if fallback to CPU).
+        n_voxels_processed: Number of voxels processed.
+        used_cupy: Whether CuPy GPU acceleration was used (False = NumPy CPU).
         threshold_used: SVD truncation threshold applied.
         n_singular_values_retained: Number of singular values retained.
     """
@@ -76,12 +78,12 @@ class GPUDeconvolutionResult:
     residues: npt.NDArray[np.floating] | None
     delay: npt.NDArray[np.floating] | None
     n_voxels_processed: int
-    used_gpu: bool
+    used_cupy: bool
     threshold_used: float
     n_singular_values_retained: int
 
 
-def _build_toeplitz_matrix_gpu(
+def _build_toeplitz_matrix(
     aif: ArrayLike,
     dt: float,
     xp: Any,
@@ -116,7 +118,7 @@ def _build_toeplitz_matrix_gpu(
     return matrix
 
 
-def _build_circulant_matrix_gpu(
+def _build_circulant_matrix(
     aif: ArrayLike,
     dt: float,
     xp: Any,
@@ -151,7 +153,7 @@ def _build_circulant_matrix_gpu(
     return matrix
 
 
-def _compute_svd_gpu(
+def _compute_svd(
     matrix: ArrayLike,
     xp: Any,
 ) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
@@ -175,7 +177,7 @@ def _compute_svd_gpu(
         return xp.linalg.svd(matrix, full_matrices=False)  # type: ignore[no-any-return]
 
 
-def _trapezoid_gpu(
+def _trapezoid(
     y: ArrayLike,
     dx: float,
     axis: int,
@@ -216,8 +218,8 @@ def batched_svd_deconvolve(
     use_gpu: bool = True,
     return_residues: bool = False,
     batch_size: int | None = None,
-) -> GPUDeconvolutionResult:
-    """GPU-accelerated batched SVD deconvolution.
+) -> DeconvolutionResult:
+    """Batched SVD deconvolution.
 
     Performs SVD deconvolution for multiple voxels by computing the SVD
     decomposition of the AIF convolution matrix once and applying it to
@@ -260,7 +262,7 @@ def batched_svd_deconvolve(
             based on available GPU memory. Default None.
 
     Returns:
-        GPUDeconvolutionResult containing perfusion maps and metadata.
+        DeconvolutionResult containing perfusion maps and metadata.
 
     Raises:
         ValueError: If tissue_curves and aif have incompatible shapes.
@@ -273,14 +275,14 @@ def batched_svd_deconvolve(
 
     Example:
         >>> import numpy as np
-        >>> from pmriprep.models.dsc.gpu_deconvolution import batched_svd_deconvolve
+        >>> from pmriprep.models.dsc.batched_deconvolution import batched_svd_deconvolve
         >>> # Generate test data
         >>> n_voxels, n_time = 10000, 60
         >>> tissue = np.random.rand(n_voxels, n_time)
         >>> aif = np.random.rand(n_time)
-        >>> # GPU deconvolution
+        >>> # Batched deconvolution
         >>> result = batched_svd_deconvolve(tissue, aif, use_gpu=True)
-        >>> print(f"CBF shape: {result.cbf.shape}, used GPU: {result.used_gpu}")
+        >>> print(f"CBF shape: {result.cbf.shape}, used CuPy: {result.used_cupy}")
 
     See Also:
         svd_deconvolve_standard: Single-voxel sSVD deconvolution.
@@ -366,7 +368,7 @@ def batched_svd_deconvolve(
             if delay_out is not None:
                 delay_out = delay_out.reshape(spatial_shape)  # type: ignore[assignment]
 
-        return GPUDeconvolutionResult(
+        return DeconvolutionResult(
             cbf=cbf,
             cbv=cbv,
             mtt=mtt,
@@ -374,7 +376,7 @@ def batched_svd_deconvolve(
             residues=residues_out,
             delay=delay_out,
             n_voxels_processed=0,
-            used_gpu=use_gpu_actual,
+            used_cupy=use_gpu_actual,
             threshold_used=threshold,
             n_singular_values_retained=0,
         )
@@ -383,14 +385,14 @@ def batched_svd_deconvolve(
     aif_device = to_device(aif, "gpu" if use_gpu_actual else "cpu")
 
     if method == "circulant":
-        matrix = _build_circulant_matrix_gpu(aif_device, dt, xp)
+        matrix = _build_circulant_matrix(aif_device, dt, xp)
         matrix_dim = 2 * n_timepoints - 1
     else:
-        matrix = _build_toeplitz_matrix_gpu(aif_device, dt, xp)
+        matrix = _build_toeplitz_matrix(aif_device, dt, xp)
         matrix_dim = n_timepoints
 
     # Compute SVD once (shared across all voxels)
-    u, s, vh = _compute_svd_gpu(matrix, xp)
+    u, s, vh = _compute_svd(matrix, xp)
 
     # Truncate singular values
     s_host = to_host(s) if use_gpu_actual else s
@@ -466,7 +468,7 @@ def batched_svd_deconvolve(
             time_idx = (peak_indices[:, None] + xp.arange(n_timepoints)[None, :]) % matrix_dim
             causal_residues = residues_batch[vox_idx, time_idx]  # (batch_n, N)
             cbf_batch = xp.max(causal_residues, axis=1)
-            cbv_batch = _trapezoid_gpu(causal_residues, dt, axis=-1, xp=xp)
+            cbv_batch = _trapezoid(causal_residues, dt, axis=-1, xp=xp)
             # Store delay
             delay_batch_host = to_host(delay_batch)
             delay_out[batch_indices] = delay_batch_host  # type: ignore[index]
@@ -474,7 +476,7 @@ def batched_svd_deconvolve(
             # sSVD path
             cbf_batch = xp.max(residues_batch, axis=1)
             tmax_batch = xp.argmax(residues_batch, axis=1).astype(xp.float64) * dt
-            cbv_batch = _trapezoid_gpu(residues_batch, dt, axis=-1, xp=xp)
+            cbv_batch = _trapezoid(residues_batch, dt, axis=-1, xp=xp)
 
         # MTT = CBV / CBF with safe denominator
         eps = EPSILON_CONCENTRATION
@@ -513,7 +515,7 @@ def batched_svd_deconvolve(
         if delay_out is not None:
             delay_out = delay_out.reshape(spatial_shape)  # type: ignore[assignment]
 
-    return GPUDeconvolutionResult(
+    return DeconvolutionResult(
         cbf=cbf,
         cbv=cbv,
         mtt=mtt,
@@ -521,7 +523,7 @@ def batched_svd_deconvolve(
         residues=residues_out,
         delay=delay_out,
         n_voxels_processed=n_masked,
-        used_gpu=use_gpu_actual,
+        used_cupy=use_gpu_actual,
         threshold_used=threshold,
         n_singular_values_retained=n_retained,
     )
@@ -537,8 +539,8 @@ def batched_svd_deconvolve_standard(
     use_gpu: bool = True,
     return_residues: bool = False,
     batch_size: int | None = None,
-) -> GPUDeconvolutionResult:
-    """GPU-accelerated standard SVD (sSVD) deconvolution.
+) -> DeconvolutionResult:
+    """Batched standard SVD (sSVD) deconvolution.
 
     Convenience wrapper for batched_svd_deconvolve with method="standard".
 
@@ -557,7 +559,7 @@ def batched_svd_deconvolve_standard(
         batch_size: Voxels per GPU batch. Auto-determined if None.
 
     Returns:
-        GPUDeconvolutionResult with perfusion maps.
+        DeconvolutionResult with perfusion maps.
 
     See Also:
         batched_svd_deconvolve: Main function with all options.
@@ -587,8 +589,8 @@ def batched_svd_deconvolve_circulant(
     use_gpu: bool = True,
     return_residues: bool = False,
     batch_size: int | None = None,
-) -> GPUDeconvolutionResult:
-    """GPU-accelerated circulant SVD (cSVD) deconvolution.
+) -> DeconvolutionResult:
+    """Batched circulant SVD (cSVD) deconvolution.
 
     Convenience wrapper for batched_svd_deconvolve with method="circulant".
 
@@ -607,7 +609,7 @@ def batched_svd_deconvolve_circulant(
         batch_size: Voxels per GPU batch. Auto-determined if None.
 
     Returns:
-        GPUDeconvolutionResult with perfusion maps and delay estimates.
+        DeconvolutionResult with perfusion maps and delay estimates.
 
     See Also:
         batched_svd_deconvolve: Main function with all options.

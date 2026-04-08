@@ -23,8 +23,8 @@ from pmriprep.models.dsc.cpi import (
     select_n_by_bic,
     select_n_control_points,
 )
-from pmriprep.models.dsc.gpu_deconvolution import (
-    GPUDeconvolutionResult,
+from pmriprep.models.dsc.batched_deconvolution import (
+    DeconvolutionResult,
     batched_svd_deconvolve,
     batched_svd_deconvolve_circulant,
     batched_svd_deconvolve_standard,
@@ -47,7 +47,7 @@ __all__ = [
     "DSCModel",
     "DSCModelParameter",
     "ParamsLike",
-    "GPUDeconvolutionResult",
+    "DeconvolutionResult",
     "VascularModel",
     "batched_cpi_forward",
     "batched_dsc_vi_fit",

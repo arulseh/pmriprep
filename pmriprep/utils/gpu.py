@@ -278,7 +278,7 @@ def ensure_contiguous(arr: ArrayLike) -> ArrayLike:
     return xp.ascontiguousarray(arr)
 
 
-class GPUVoxelProcessor:
+class BatchedVoxelProcessor:
     """GPU memory management for large-scale voxel-wise processing.
 
     This class provides automatic batch size optimization based on available
@@ -299,7 +299,7 @@ class GPUVoxelProcessor:
         device: Target device ("gpu", "cuda", or "cpu").
 
     Example:
-        >>> processor = GPUVoxelProcessor(
+        >>> processor = BatchedVoxelProcessor(
         ...     n_voxels=100000,
         ...     n_timepoints=60,
         ...     memory_fraction=0.5,
@@ -539,7 +539,7 @@ class GPUVoxelProcessor:
                 - batch_data: Batch on target device (GPU or CPU array)
 
         Example:
-            >>> processor = GPUVoxelProcessor(n_voxels=100000, n_timepoints=60)
+            >>> processor = BatchedVoxelProcessor(n_voxels=100000, n_timepoints=60)
             >>> results = np.zeros(100000)
             >>> for start, end, batch in processor.iter_batches(data):
             ...     batch_result = some_gpu_function(batch)
@@ -677,7 +677,7 @@ class GPUVoxelProcessor:
     def __repr__(self) -> str:
         """Return string representation of the processor."""
         return (
-            f"GPUVoxelProcessor(n_voxels={self.n_voxels}, "
+            f"BatchedVoxelProcessor(n_voxels={self.n_voxels}, "
             f"n_timepoints={self.n_timepoints}, "
             f"device={'GPU' if self._use_gpu else 'CPU'}, "
             f"optimal_batch_size={self.get_optimal_batch_size()})"

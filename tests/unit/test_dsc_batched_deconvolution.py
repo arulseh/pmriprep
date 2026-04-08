@@ -1,10 +1,10 @@
-"""Unit tests for GPU/batched SVD deconvolution."""
+"""Unit tests for batched SVD deconvolution."""
 
 import numpy as np
 import pytest
 
-from pmriprep.models.dsc.gpu_deconvolution import (
-    GPUDeconvolutionResult,
+from pmriprep.models.dsc.batched_deconvolution import (
+    DeconvolutionResult,
     batched_svd_deconvolve,
     batched_svd_deconvolve_circulant,
     batched_svd_deconvolve_standard,
@@ -47,7 +47,7 @@ def _make_synthetic_batch(
 
 
 class TestStandardMethod:
-    """Tests for standard (sSVD) GPU batched deconvolution."""
+    """Tests for standard (sSVD) batched deconvolution."""
 
     def test_standard_method_shapes(self) -> None:
         """Output shapes match n_voxels for standard method."""
@@ -61,11 +61,11 @@ class TestStandardMethod:
         assert result.cbv.shape == (5,)
         assert result.mtt.shape == (5,)
         assert result.tmax.shape == (5,)
-        assert result.used_gpu is False
+        assert result.used_cupy is False
         assert result.delay is None  # Standard method has no delay
 
     def test_standard_matches_cpu_batch(self) -> None:
-        """GPU standard deconvolution (CPU fallback) matches CPU batch results."""
+        """Batched standard deconvolution (CPU fallback) matches CPU batch results."""
         tissue, aif, dt = _make_synthetic_batch(n_voxels=5, n_timepoints=30)
         threshold = 0.2
 
@@ -74,18 +74,18 @@ class TestStandardMethod:
             tissue, aif, dt=dt, threshold=threshold,
         )
 
-        # GPU function with CPU fallback
-        gpu_result = batched_svd_deconvolve_standard(
+        # Batched function with CPU fallback
+        batched_result = batched_svd_deconvolve_standard(
             tissue, aif, dt=dt, threshold=threshold, use_gpu=False,
         )
 
-        np.testing.assert_allclose(gpu_result.cbf, cpu_cbf, rtol=1e-10)
-        np.testing.assert_allclose(gpu_result.cbv, cpu_cbv, rtol=1e-10)
-        np.testing.assert_allclose(gpu_result.mtt, cpu_mtt, rtol=1e-10)
+        np.testing.assert_allclose(batched_result.cbf, cpu_cbf, rtol=1e-10)
+        np.testing.assert_allclose(batched_result.cbv, cpu_cbv, rtol=1e-10)
+        np.testing.assert_allclose(batched_result.mtt, cpu_mtt, rtol=1e-10)
 
 
 class TestCirculantMethod:
-    """Tests for circulant (cSVD) GPU batched deconvolution."""
+    """Tests for circulant (cSVD) batched deconvolution."""
 
     def test_circulant_method_has_delay(self) -> None:
         """Circulant method returns delay estimates."""
@@ -99,7 +99,7 @@ class TestCirculantMethod:
         assert result.delay.shape == (5,)
 
     def test_circulant_matches_cpu_batch(self) -> None:
-        """GPU circulant deconvolution (CPU fallback) matches CPU batch results."""
+        """Batched circulant deconvolution (CPU fallback) matches CPU batch results."""
         tissue, aif, dt = _make_synthetic_batch(n_voxels=5, n_timepoints=30)
         threshold = 0.2
 
@@ -108,14 +108,14 @@ class TestCirculantMethod:
             tissue, aif, dt=dt, threshold=threshold,
         )
 
-        # GPU function with CPU fallback
-        gpu_result = batched_svd_deconvolve_circulant(
+        # Batched function with CPU fallback
+        batched_result = batched_svd_deconvolve_circulant(
             tissue, aif, dt=dt, threshold=threshold, use_gpu=False,
         )
 
-        np.testing.assert_allclose(gpu_result.cbf, cpu_cbf, rtol=1e-10)
-        np.testing.assert_allclose(gpu_result.cbv, cpu_cbv, rtol=1e-10)
-        np.testing.assert_allclose(gpu_result.mtt, cpu_mtt, rtol=1e-10)
+        np.testing.assert_allclose(batched_result.cbf, cpu_cbf, rtol=1e-10)
+        np.testing.assert_allclose(batched_result.cbv, cpu_cbv, rtol=1e-10)
+        np.testing.assert_allclose(batched_result.mtt, cpu_mtt, rtol=1e-10)
 
     def test_csvd_tmax_equals_delay(self) -> None:
         """For cSVD, Tmax should equal delay (Calamante, Stroke 2010)."""
@@ -176,12 +176,12 @@ class TestBatchSize:
         assert batch_size >= 100
 
 
-class TestGPUDeconvolutionResultDataclass:
-    """Tests for the GPUDeconvolutionResult dataclass."""
+class TestDeconvolutionResultDataclass:
+    """Tests for the DeconvolutionResult dataclass."""
 
-    def test_gpu_result_dataclass(self) -> None:
+    def test_result_dataclass(self) -> None:
         """All fields are accessible on a manually constructed result."""
-        result = GPUDeconvolutionResult(
+        result = DeconvolutionResult(
             cbf=np.array([1.0, 2.0]),
             cbv=np.array([0.5, 1.0]),
             mtt=np.array([3.0, 4.0]),
@@ -189,14 +189,14 @@ class TestGPUDeconvolutionResultDataclass:
             residues=None,
             delay=None,
             n_voxels_processed=2,
-            used_gpu=False,
+            used_cupy=False,
             threshold_used=0.2,
             n_singular_values_retained=10,
         )
 
         assert result.cbf.shape == (2,)
         assert result.n_voxels_processed == 2
-        assert result.used_gpu is False
+        assert result.used_cupy is False
         assert result.threshold_used == pytest.approx(0.2)
         assert result.n_singular_values_retained == 10
         assert result.residues is None

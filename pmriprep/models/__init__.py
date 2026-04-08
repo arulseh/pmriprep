@@ -1,11 +1,11 @@
 """PMRIPrep parametric models.
 
 This package contains parametric models for DSC and DCE perfusion MRI
-analysis, including Bayesian fitting capabilities and GPU-accelerated
+analysis, including Bayesian fitting capabilities and batched
 deconvolution.
 
 Subpackages:
-    dsc: DSC perfusion models (vascular, CPI, Bayesian fitting, GPU deconvolution)
+    dsc: DSC perfusion models (vascular, CPI, Bayesian fitting, batched deconvolution)
     dce: DCE pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM)
 """
 
@@ -16,7 +16,7 @@ from pmriprep.models.dsc import (
     DSCFitResult,
     DSCModel,
     DSCModelParameter,
-    GPUDeconvolutionResult,
+    DeconvolutionResult,
     VascularModel,
     batched_svd_deconvolve,
     batched_svd_deconvolve_circulant,
@@ -42,7 +42,7 @@ __all__ = [
     "DSCFitResult",
     "DSCModel",
     "DSCModelParameter",
-    "GPUDeconvolutionResult",
+    "DeconvolutionResult",
     "VascularModel",
     "batched_svd_deconvolve",
     "batched_svd_deconvolve_circulant",
