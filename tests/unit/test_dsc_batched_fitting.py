@@ -116,7 +116,7 @@ class TestBatchedCPIForward:
         aif, tp = dsc_aif_and_time
         dt = tp[1] - tp[0]
         n_cp = 7
-        t_span = tp[-1] * 0.9
+        t_span = 30.0  # production config: covers ~3x max physiological MTT
         model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
         cp_times = np.array(model._control_point_times, dtype=np.float64)
         toeplitz = build_toeplitz_matrix(aif, dt)
@@ -254,7 +254,7 @@ class TestBatchedCPIVIFit:
 
         dt = tp[1] - tp[0]
         n_cp = 7
-        t_span = tp[-1] * 0.9
+        t_span = 30.0  # production config: covers ~3x max physiological MTT
         model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
         fitting_defs = model.get_fitting_parameter_definitions()
         priors = build_priors_from_params(fitting_defs)

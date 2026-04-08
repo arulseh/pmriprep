@@ -503,13 +503,7 @@ class TestCPIBayesianGammaRecovery:
         """Test CPI MAP recovery of CBF and MTT."""
         true_mtt = alpha * beta
 
-        # CPI basis resolution limits for normal_gm and long_mtt.
-        xfail_combos = {(0.10, 3.0, 1.5), (0.13, 3.0, 4.0)}
-        if (cbf, alpha, beta) in xfail_combos:
-            pytest.xfail(
-                f"CPI basis resolution limit: 7 uniform CPs cannot fully "
-                f"resolve this residue (CBF={cbf}, MTT={true_mtt:.1f}s)"
-            )
+        # With t_span=30s, 7 CPs have ~5s spacing - sufficient for all MTTs tested
         if cbf <= 0.02:
             pytest.xfail(
                 f"CBF prior overwhelms low-flow signal (CBF={cbf})"
@@ -520,7 +514,7 @@ class TestCPIBayesianGammaRecovery:
         )
 
         n_cp = 7
-        t_span = float(time_sec[-1]) * 0.9  # production config
+        t_span = 30.0  # production config: covers ~3x max physiological MTT
         model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
 
         # Pass noise_std; use 1% of peak as floor for zero-noise DRO

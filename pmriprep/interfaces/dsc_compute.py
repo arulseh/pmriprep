@@ -141,8 +141,9 @@ def _dsc_init_worker(
         n_cp = cpi_control_points
         if n_cp == 0:
             n_cp = select_n_control_points(bolus_duration_frames, dt)
-        # Match perf-plus: control points span 90% of acquisition time
-        t_span = float(time_points[-1]) * 0.9 if len(time_points) > 1 else 30.0
+        # Control point span: 30s covers ~3x max physiological MTT (10s),
+        # ensuring residue decays to ~0 within the fitted window.
+        t_span = 30.0
         _dsc_worker_ctx["model_factory"] = lambda _ncp=n_cp, _tr=(0.0, t_span): CPIModel(
             n_control_points=_ncp, time_range=_tr
         )
@@ -1107,7 +1108,9 @@ class ComputeDSCMaps(BaseInterface):
             n_cp = cpi_control_points
             if n_cp == 0:
                 n_cp = select_n_control_points(bolus_duration_frames, dt)
-            t_span = float(time_points[-1]) * 0.9 if len(time_points) > 1 else 30.0
+            # Control point span: 30s covers ~3x max physiological MTT (10s),
+            # ensuring residue decays to ~0 within the fitted window.
+            t_span = 30.0
             cpi_model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
             fitting_defs = list(cpi_model.get_fitting_parameter_definitions())
             priors = build_priors_from_params(fitting_defs)
@@ -1349,7 +1352,9 @@ class ComputeDSCMaps(BaseInterface):
                 n_cp = cpi_control_points
                 if n_cp == 0:
                     n_cp = select_n_control_points(bolus_duration_frames, dt)
-                t_span = float(time_points[-1]) * 0.9 if len(time_points) > 1 else 30.0
+                # Control point span: 30s covers ~3x max physiological MTT (10s),
+                # ensuring residue decays to ~0 within the fitted window.
+                t_span = 30.0
                 model_instance = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
 
             # Fit the QC voxel
