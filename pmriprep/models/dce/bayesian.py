@@ -776,7 +776,7 @@ class BayesianPKFitter:
         tissue_curve: npt.NDArray[np.floating],
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
-        n_iterations: int = 20,
+        n_iterations: int = 30,
         noise_prior: tuple[float, float] | None = None,
         weights: npt.NDArray[np.floating] | None = None,
         sloppy: bool = False,
@@ -812,7 +812,7 @@ class BayesianPKFitter:
             IEEE Trans Med Imaging 28(1):94-104.
         """
         if sloppy:
-            n_iterations = 5
+            n_iterations = 8
         self._validate_inputs(tissue_curve, aif, time_points)
 
         n_params = self.model.n_parameters
@@ -996,7 +996,7 @@ class BayesianPKFitter:
             # Convergence check
             if iteration > 0:
                 param_change = float(np.max(np.abs(m_new - m)))
-                if param_change < 1e-6:
+                if param_change < 1e-3:  # 0.1% relative for log-params
                     converged = True
                     m = m_new
                     break

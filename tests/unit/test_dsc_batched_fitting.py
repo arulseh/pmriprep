@@ -239,7 +239,7 @@ class TestBatchedDSCVIFit:
             means, stds, transforms, ubs, names, bounds,
             sloppy=True,
         )
-        assert result.n_iterations <= 5
+        assert result.n_iterations <= 8
 
 
 class TestBatchedCPIVIFit:

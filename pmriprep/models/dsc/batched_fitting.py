@@ -364,7 +364,7 @@ def batched_dsc_vi_fit(
     prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
     prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
     weights: Optional[npt.NDArray[np.floating]] = None,
-    n_iterations: int = 20,
+    n_iterations: int = 30,
     sloppy: bool = False,
     save_fitted_curves: bool = False,
 ) -> DSCBatchedFitResult:
@@ -396,7 +396,7 @@ def batched_dsc_vi_fit(
             shape (P,). Must be provided alongside prior_means_transformed.
         weights: Per-frame motion weights, shape (T,). None = uniform.
         n_iterations: Maximum VB iterations (default 20).
-        sloppy: Use fast, low-quality settings (5 iterations).
+        sloppy: Use fast, low-quality settings (8 iterations).
         save_fitted_curves: Whether to store fitted curves in result.
 
     Returns:
@@ -409,7 +409,7 @@ def batched_dsc_vi_fit(
     n_params = len(fitting_param_names)
 
     if sloppy:
-        n_iterations = 5
+        n_iterations = 8
 
     # Pre-filter: exclude voxels with negligible signal
     voxel_max = np.max(np.abs(tissue_curves), axis=1)
@@ -718,7 +718,8 @@ def batched_dsc_vi_fit(
         # 10. Convergence checks
         if iteration > 0:
             param_change = np.max(np.abs(m_new - m_a), axis=1)
-            param_conv = param_change < 1e-6
+            # 1e-3 tolerance: 0.1% relative change for log-CBF, ~0.005s MTT effect
+            param_conv = param_change < 1e-3
 
             if iteration > 2:
                 fe_near = (
