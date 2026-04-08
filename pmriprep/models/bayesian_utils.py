@@ -96,6 +96,67 @@ def from_transformed(
     return theta_prime  # IDENTITY
 
 
+def to_transformed_batch(
+    values: npt.NDArray[np.floating],
+    transform: TransformType,
+    upper_bound: float | None = None,
+) -> npt.NDArray[np.float64]:
+    """Vectorized forward transform for (N,) array of one parameter.
+
+    Maps from natural parameter space to unconstrained transformed space,
+    with NaN guards for numerical safety in batched fitting.
+
+    Args:
+        values: Parameter values in natural space, shape (N,).
+        transform: Transform type for this parameter.
+        upper_bound: Upper bound for LOG_LOGIT (required).
+
+    Returns:
+        Parameter values in transformed space, shape (N,).
+    """
+    if transform == TransformType.LOG:
+        result = np.log(np.maximum(values, 1e-20))
+    elif transform == TransformType.LOG_LOGIT:
+        if upper_bound is None:
+            raise ValueError("upper_bound required for LOG_LOGIT transform")
+        t = np.clip(values, 1e-10, upper_bound - 1e-10)
+        result = np.log(t / (upper_bound - t))
+    else:
+        result = np.asarray(values, dtype=np.float64)
+    return np.nan_to_num(np.asarray(result, dtype=np.float64), nan=0.0)
+
+
+def from_transformed_batch(
+    values: npt.NDArray[np.floating],
+    transform: TransformType,
+    upper_bound: float | None = None,
+) -> npt.NDArray[np.float64]:
+    """Vectorized inverse transform for (N,) array of one parameter.
+
+    Maps from unconstrained transformed space to natural parameter space,
+    with NaN guards for numerical safety in batched fitting.
+
+    Args:
+        values: Parameter values in transformed space, shape (N,).
+        transform: Transform type for this parameter.
+        upper_bound: Upper bound for LOG_LOGIT (required).
+
+    Returns:
+        Parameter values in natural space, shape (N,).
+    """
+    if transform == TransformType.LOG:
+        clipped = np.clip(values, -500, 500)
+        result = np.exp(clipped)
+    elif transform == TransformType.LOG_LOGIT:
+        if upper_bound is None:
+            raise ValueError("upper_bound required for LOG_LOGIT transform")
+        clipped = np.clip(values, -500, 500)
+        result = upper_bound * expit(clipped)
+    else:
+        result = np.asarray(values, dtype=np.float64)
+    return np.nan_to_num(np.asarray(result, dtype=np.float64), nan=0.0)
+
+
 def log_jacobian_det(
     theta: float | npt.NDArray[np.floating],
     transform: TransformType,

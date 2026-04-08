@@ -970,7 +970,22 @@ class ComputeDSCMaps(BaseInterface):
 
         n_procs = max(1, int(self.inputs.n_procs))
 
-        if n_procs > 1:
+        # Batched VI path: vectorized Variational Bayes in single process
+        if bayesian == "vi":
+            results = self._dsc_fit_batched_vi(
+                concentration_data=concentration_data,
+                mask_coords=mask_coords,
+                aif=aif,
+                time_points=time_points,
+                method=method,
+                dt=dt,
+                n_voxels=n_voxels,
+                cpi_control_points=cpi_control_points,
+                bolus_duration_frames=bolus_duration_frames,
+                motion_weights=motion_weights,
+                sloppy=sloppy,
+            )
+        elif n_procs > 1:
             from concurrent.futures import ProcessPoolExecutor
 
             chunk_size = max(1, n_voxels // (n_procs * 10))
@@ -1089,6 +1104,217 @@ class ComputeDSCMaps(BaseInterface):
         return (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map,
                 cbf_std_map, cbv_std_map,
                 cbf_ci_lower_map, cbf_ci_upper_map, cbv_ci_lower_map, cbv_ci_upper_map)
+
+    def _dsc_fit_batched_vi(
+        self,
+        concentration_data: npt.NDArray[Any],
+        mask_coords: tuple[npt.NDArray[Any], ...],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+        method: str,
+        dt: float,
+        n_voxels: int,
+        cpi_control_points: int,
+        bolus_duration_frames: int,
+        motion_weights: Optional[npt.NDArray[np.floating]],
+        sloppy: bool,
+    ) -> list[dict[str, Any]]:
+        """Batched VI for DSC parametric models.
+
+        Extracts priors from model definitions and calls batched_dsc_vi_fit.
+        Runs in a single process with vectorized numpy operations.
+
+        Args:
+            concentration_data: Concentration data, shape (X, Y, Z, T).
+            mask_coords: Tuple of coordinate arrays.
+            aif: AIF, shape (T,).
+            time_points: Time points (seconds), shape (T,).
+            method: 'cpi' or 'vascular'.
+            dt: Time step (seconds).
+            n_voxels: Number of voxels.
+            cpi_control_points: Number of CPI control points.
+            bolus_duration_frames: Bolus duration in frames.
+            motion_weights: Per-frame weights or None.
+            sloppy: Whether to use sloppy mode.
+
+        Returns:
+            List of per-voxel result dicts.
+        """
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc import CPIModel, VascularModel, select_n_control_points
+        from pmriprep.models.dsc.batched_fitting import (
+            _batched_pchip,
+            batched_dsc_vi_fit,
+        )
+        from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+
+        tissue_curves = concentration_data[
+            mask_coords[0], mask_coords[1], mask_coords[2], :
+        ]
+        tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Build model and extract priors
+        if method == "vascular":
+            model = VascularModel()
+            fitting_defs = model.get_fitting_parameter_definitions()
+            priors = build_priors_from_params(fitting_defs)
+            fitting_names = [p.name for p in fitting_defs]
+            fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+            mono_prec = None
+            cp_times = None
+            toeplitz = None
+        else:  # cpi
+            n_cp = cpi_control_points
+            if n_cp == 0:
+                n_cp = select_n_control_points(bolus_duration_frames, dt)
+            t_span = float(time_points[-1]) * 0.9 if len(time_points) > 1 else 30.0
+            model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+            fitting_defs = model.get_fitting_parameter_definitions()
+            priors = build_priors_from_params(fitting_defs)
+            fitting_names = [p.name for p in fitting_defs]
+            fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+            mono_prec = model.compute_monotonicity_precision()
+            cp_times = np.array(model._control_point_times, dtype=np.float64)
+            toeplitz = build_toeplitz_matrix(aif, dt)
+
+        means_nat = np.array([p.mean for p in priors], dtype=np.float64)
+        stds_nat = np.array([p.std for p in priors], dtype=np.float64)
+        # Pre-transformed priors preserve transformed_prior_sigma overrides
+        # (e.g., FABBER sigma=1.0 for Vascular LOG params)
+        means_t = np.array([p.mean_transformed for p in priors], dtype=np.float64)
+        stds_t = np.array([p.std_transformed for p in priors], dtype=np.float64)
+        transforms = [p.transform for p in priors]
+        ubs: list[float | None] = [p.upper_bound for p in priors]
+
+        logger.info("DSC batched VI: fitting %s on %d voxels", method, n_voxels)
+
+        batched_result = batched_dsc_vi_fit(
+            model_type=method,
+            tissue_curves=tissue_curves,
+            aif=aif,
+            time_points=time_points,
+            prior_means_nat=means_nat,
+            prior_stds_nat=stds_nat,
+            transforms=transforms,
+            upper_bounds=ubs,
+            fitting_param_names=fitting_names,
+            fitting_bounds=fitting_bounds,
+            mono_prec=mono_prec,
+            control_point_times=cp_times,
+            toeplitz_matrix=toeplitz,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+            weights=motion_weights,
+            sloppy=sloppy,
+            save_fitted_curves=True,
+        )
+
+        # Convert batched results to per-voxel dicts
+        results: list[dict[str, Any]] = []
+
+        for i in range(n_voxels):
+            x = int(mask_coords[0][i])
+            y = int(mask_coords[1][i])
+            z = int(mask_coords[2][i])
+
+            out: dict[str, Any] = {
+                "coords": (x, y, z),
+                "failed": False,
+            }
+
+            if method == "vascular":
+                cbf_val = float(batched_result.params["cbf"][i])
+                mtt_val = float(batched_result.params["mtt"][i])
+                alpha_val = float(batched_result.params["alpha"][i])
+                delay_val = float(batched_result.params["delay"][i])
+                beta_val = mtt_val / max(alpha_val, 1e-10)
+
+                out["cbf"] = cbf_val
+                out["cbv"] = cbf_val * mtt_val  # CBV = CBF × MTT
+                out["mtt"] = mtt_val
+                out["tmax"] = delay_val
+                out["alpha"] = alpha_val
+                out["beta"] = beta_val
+                out["cth"] = beta_val * np.sqrt(alpha_val)
+            else:  # cpi
+                cbf_val = float(batched_result.params["cbf"][i])
+                out["cbf"] = cbf_val
+                # Compute CBV from residue function (NOT tissue curve).
+                # CBV = CBF * integral(R_norm, dt) where R_norm is the
+                # normalized PCHIP residue from control point params.
+                if cbf_val > EPSILON_CONCENTRATION and cp_times is not None:
+                    n_cp_local = len(cp_times)
+                    cp_vals_i = np.ones((1, n_cp_local))
+                    for k in range(1, n_cp_local):
+                        cp_vals_i[0, k] = np.clip(
+                            float(batched_result.params[f"r{k}"][i]), 0.0, 1.0,
+                        )
+                    # Use _batched_pchip for consistency with forward model
+                    # (same exponential decay extrapolation beyond last knot)
+                    r_norm = np.clip(
+                        _batched_pchip(cp_times, cp_vals_i, time_points)[0], 0.0, 1.0
+                    )
+                    cbv_val = cbf_val * float(np.trapezoid(r_norm, dx=dt))
+                else:
+                    cbv_val = 0.0
+                out["cbv"] = cbv_val
+                out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
+                out["tmax"] = 0.0
+
+            # Uncertainties and CI95
+            cbf_std_val = 0.0
+            if batched_result.uncertainties:
+                cbf_std_val = float(batched_result.uncertainties.get(
+                    "cbf", np.zeros(n_voxels))[i])
+                out["cbf_std"] = cbf_std_val
+
+                if method == "vascular":
+                    sig_cbf = cbf_std_val
+                    sig_mtt = float(batched_result.uncertainties.get(
+                        "mtt", np.zeros(n_voxels))[i])
+                    # CBV = CBF * MTT; propagate: σ_CBV = √((MTT·σ_CBF)² + (CBF·σ_MTT)²)
+                    out["cbv_std"] = float(np.sqrt(
+                        (mtt_val * sig_cbf) ** 2 + (cbf_val * sig_mtt) ** 2
+                    ))
+                else:
+                    out["cbv_std"] = 0.0
+
+            # CI95 bounds (mean ± 1.96 * std)
+            out["cbf_ci95_lower"] = max(cbf_val - 1.96 * cbf_std_val, 0.0)
+            out["cbf_ci95_upper"] = cbf_val + 1.96 * cbf_std_val
+
+            if method == "vascular":
+                # Propagate CBV CI from fitting-space uncertainties
+                sig_alpha = float(batched_result.uncertainties.get(
+                    "alpha", np.zeros(n_voxels))[i]) if batched_result.uncertainties else 0.0
+                sig_mtt_ci = float(batched_result.uncertainties.get(
+                    "mtt", np.zeros(n_voxels))[i]) if batched_result.uncertainties else 0.0
+                # Conservative: CBV = CBF*MTT, CI from ±1.96σ of each
+                alpha_lo = max(alpha_val - 1.96 * sig_alpha, 0.5)
+                alpha_hi = alpha_val + 1.96 * sig_alpha
+                beta_lo = max(mtt_val - 1.96 * sig_mtt_ci, 0.1) / max(alpha_hi, 1e-10)
+                beta_hi = (mtt_val + 1.96 * sig_mtt_ci) / max(alpha_lo, 1e-10)
+                out["cbv_ci95_lower"] = alpha_lo * beta_lo
+                out["cbv_ci95_upper"] = alpha_hi * beta_hi
+            else:
+                out["cbv_ci95_lower"] = 0.0
+                out["cbv_ci95_upper"] = 0.0
+
+            out["r_squared"] = float(batched_result.r_squared[i])
+            out["converged"] = bool(batched_result.converged[i])
+            # Flag poor fits for oSVD fallback (matches CPU path: R² < 0.5 or not converged)
+            out["needs_fallback"] = (
+                float(batched_result.r_squared[i]) < 0.5
+                or not bool(batched_result.converged[i])
+            )
+            out["failed"] = (
+                not bool(batched_result.converged[i])
+                and float(batched_result.r_squared[i]) < -0.5
+            )
+
+            results.append(out)
+
+        return results
 
     def _save_qc_fit_data(
         self,
