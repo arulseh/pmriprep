@@ -2503,12 +2503,20 @@ class ComputeDCEMaps(BaseInterface):
         winner_idx = np.argmin(bic_stack, axis=0)
 
         # Compute delta-BIC (margin over runner-up)
+        # Non-converged fits have BIC=inf. When computing delta-BIC,
+        # inf - finite = inf, which breaks percentile calculations.
+        # Convert to nan for cleaner downstream handling.
         sorted_bics = np.sort(bic_stack, axis=0)
-        delta_bic = np.where(
-            sorted_bics.shape[0] > 1,
-            sorted_bics[1] - sorted_bics[0],
-            np.nan,
-        )
+        if sorted_bics.shape[0] > 1:
+            # Both winner and runner-up must be finite for meaningful delta
+            both_finite = np.isfinite(sorted_bics[0]) & np.isfinite(sorted_bics[1])
+            delta_bic = np.where(
+                both_finite,
+                sorted_bics[1] - sorted_bics[0],
+                np.nan,
+            )
+        else:
+            delta_bic = np.full(n_voxels, np.nan)
 
         # Assemble per-voxel results from winners
         results = []

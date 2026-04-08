@@ -760,7 +760,7 @@ def generate_model_selection_qc_plot(
 
     dbic_display = delta_bic_map.astype(float).copy()
     dbic_display[~mask_bool] = np.nan
-    brain_dbic = delta_bic_map[mask_bool & (delta_bic_map > 0)]
+    brain_dbic = delta_bic_map[mask_bool & (delta_bic_map > 0) & np.isfinite(delta_bic_map)]
     if len(brain_dbic) > 0:
         dbic_vmax = float(min(float(np.percentile(brain_dbic, 95)), 20.0))
     else:
