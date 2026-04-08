@@ -164,7 +164,6 @@ pmriprep bids_dir output_dir {participant} [options]
 
 | Flag | Description |
 |------|-------------|
-| `--use-gpu` | Enable GPU acceleration for DSC and DCE |
 | `--report-only` | Regenerate HTML QC reports from existing outputs |
 | `--sloppy` | Use fast, low-quality settings for testing (not for production) |
 | `--random-seed SEED` | Initialize random seed for reproducibility |
