@@ -293,7 +293,7 @@ def _batched_pchip(
     d1 = d[:, indices + 1] * h[indices]
 
     # Evaluate: result = h00*y0 + h10*d0 + h01*y1 + h11*d1
-    result = (
+    result: npt.NDArray[np.floating] = (
         h00[None, :] * y0
         + h10[None, :] * d0
         + h01[None, :] * y1
@@ -342,7 +342,8 @@ def _compute_r_squared(
     ss_res = np.sum((observed - predicted) ** 2, axis=1)
     ss_tot = np.sum((observed - observed.mean(axis=1, keepdims=True)) ** 2, axis=1)
     r2 = 1.0 - ss_res / np.maximum(ss_tot, 1e-30)
-    return np.clip(r2, -1.0, 1.0)
+    result: npt.NDArray[np.floating] = np.clip(r2, -1.0, 1.0)
+    return result
 
 
 def batched_dsc_vi_fit(

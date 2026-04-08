@@ -1108,13 +1108,13 @@ class ComputeDSCMaps(BaseInterface):
             if n_cp == 0:
                 n_cp = select_n_control_points(bolus_duration_frames, dt)
             t_span = float(time_points[-1]) * 0.9 if len(time_points) > 1 else 30.0
-            model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
-            fitting_defs = model.get_fitting_parameter_definitions()
+            cpi_model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+            fitting_defs = list(cpi_model.get_fitting_parameter_definitions())
             priors = build_priors_from_params(fitting_defs)
             fitting_names = [p.name for p in fitting_defs]
             fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-            mono_prec = model.compute_monotonicity_precision()
-            cp_times = np.array(model._control_point_times, dtype=np.float64)
+            mono_prec = cpi_model.compute_monotonicity_precision()
+            cp_times = np.array(cpi_model._control_point_times, dtype=np.float64)
             toeplitz = build_toeplitz_matrix(aif, dt)
 
         means_nat = np.array([p.mean for p in priors], dtype=np.float64)

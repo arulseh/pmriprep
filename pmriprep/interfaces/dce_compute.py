@@ -2518,6 +2518,33 @@ class ComputeDCEMaps(BaseInterface):
         else:
             delta_bic = np.full(n_voxels, np.nan)
 
+        # Kass & Raftery guard: require strong BIC evidence to upgrade
+        # from simplest model. ΔBIC >= 6 = "strong evidence".
+        # Refs: Kass & Raftery (1995), Bagher-Ebadian MRM 2012.
+        _MIN_DELTA_BIC_UPGRADE = 6.0
+
+        # Find simplest model (minimum parameters) using existing _N_PARAMS dict
+        n_params_arr = np.array([_N_PARAMS[c] for c in cand_list])
+        simplest_idx = int(np.argmin(n_params_arr))
+
+        # Apply guard: downgrade to simplest if evidence is weak
+        # Only downgrade if simplest model actually converged
+        weak_evidence = (delta_bic < _MIN_DELTA_BIC_UPGRADE) | ~np.isfinite(delta_bic)
+        not_simplest = winner_idx != simplest_idx
+        simplest_converged = gpu_results[cand_list[simplest_idx]].converged
+        downgrade_mask = weak_evidence & not_simplest & simplest_converged
+
+        n_downgraded = int(downgrade_mask.sum())
+        if n_downgraded > 0:
+            logger.debug(
+                "Kass-Raftery guard: downgraded %d voxels to %s (delta-BIC < %.1f)",
+                n_downgraded, cand_list[simplest_idx], _MIN_DELTA_BIC_UPGRADE,
+            )
+            winner_idx[downgrade_mask] = simplest_idx
+
+        # Downgraded voxels have no meaningful delta-BIC
+        delta_bic[downgrade_mask] = np.nan
+
         # Assemble per-voxel results from winners
         results = []
         for i in range(n_voxels):

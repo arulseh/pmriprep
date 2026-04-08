@@ -61,12 +61,14 @@ def to_transformed(
         Parameter value(s) in transformed space.
     """
     if transform == TransformType.LOG:
-        return np.log(np.maximum(theta, 1e-20))
+        result: float | npt.NDArray[np.floating] = np.log(np.maximum(theta, 1e-20))
+        return result
     elif transform == TransformType.LOG_LOGIT:
         if upper_bound is None:
             raise ValueError("upper_bound required for LOG_LOGIT transform")
         t = np.clip(theta, 1e-10, upper_bound - 1e-10)
-        return np.log(t / (upper_bound - t))
+        result = np.log(t / (upper_bound - t))
+        return result
     return theta  # IDENTITY
 
 
@@ -87,12 +89,14 @@ def from_transformed(
     """
     if transform == TransformType.LOG:
         # Overflow protection: exp(709) ≈ 8.2e307, exp(710) overflows
-        return np.exp(np.clip(theta_prime, -500, 500))
+        result: float | npt.NDArray[np.floating] = np.exp(np.clip(theta_prime, -500, 500))
+        return result
     elif transform == TransformType.LOG_LOGIT:
         if upper_bound is None:
             raise ValueError("upper_bound required for LOG_LOGIT transform")
         # Numerically stable sigmoid via scipy.special.expit
-        return upper_bound * expit(np.clip(theta_prime, -500, 500))
+        result = upper_bound * expit(np.clip(theta_prime, -500, 500))
+        return result
     return theta_prime  # IDENTITY
 
 
@@ -179,12 +183,14 @@ def log_jacobian_det(
         Log absolute Jacobian determinant.
     """
     if transform == TransformType.LOG:
-        return np.log(np.maximum(np.abs(theta), 1e-20))
+        result: float | npt.NDArray[np.floating] = np.log(np.maximum(np.abs(theta), 1e-20))
+        return result
     elif transform == TransformType.LOG_LOGIT:
         if upper_bound is None:
             raise ValueError("upper_bound required for LOG_LOGIT transform")
         t = np.clip(theta, 1e-10, upper_bound - 1e-10)
-        return np.log(t) + np.log(upper_bound - t) - np.log(upper_bound)
+        result = np.log(t) + np.log(upper_bound - t) - np.log(upper_bound)
+        return result
     return 0.0  # IDENTITY
 
 
