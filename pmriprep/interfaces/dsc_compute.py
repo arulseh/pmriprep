@@ -1919,6 +1919,14 @@ class ComputeDSCMaps(BaseInterface):
         rel_auc_raw = auc_raw
         rel_auc_corr = auc_corr
 
+        # Convert CBF uncertainty maps from s⁻¹ to min⁻¹ (match rel_cbf units)
+        if cbf_std_map is not None:
+            cbf_std_map = cbf_std_map * 60.0  # s⁻¹ → min⁻¹
+        if cbf_ci_lower_map is not None:
+            cbf_ci_lower_map = cbf_ci_lower_map * 60.0  # s⁻¹ → min⁻¹
+        if cbf_ci_upper_map is not None:
+            cbf_ci_upper_map = cbf_ci_upper_map * 60.0  # s⁻¹ → min⁻¹
+
         # -----------------------------------------------------------
         # Mask all outputs
         # -----------------------------------------------------------
