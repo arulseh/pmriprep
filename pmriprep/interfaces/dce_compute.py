@@ -2375,14 +2375,20 @@ class ComputeDCEMaps(BaseInterface):
             if n_procs > 1:
                 from concurrent.futures import ProcessPoolExecutor
                 chunk_size = max(1, n_voxels // (n_procs * 10))
-                with ProcessPoolExecutor(
+                executor = ProcessPoolExecutor(
                     max_workers=n_procs,
                     initializer=_init_worker,  # type: ignore[arg-type]
                     initargs=init_args,
-                ) as executor:
+                )
+                try:
                     return list(executor.map(
                         _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
                     ))
+                except (KeyboardInterrupt, SystemExit):
+                    logger.warning("Interrupted during parallel DCE fitting, cancelling workers")
+                    raise
+                finally:
+                    executor.shutdown(wait=False, cancel_futures=True)
             return [_fit_single_voxel(vd) for vd in voxel_data_list]
 
         # Build batched arrays
@@ -2698,14 +2704,20 @@ class ComputeDCEMaps(BaseInterface):
         if n_procs > 1:
             from concurrent.futures import ProcessPoolExecutor
             chunk_size = max(1, n_voxels // (n_procs * 10))
-            with ProcessPoolExecutor(
+            executor = ProcessPoolExecutor(
                 max_workers=n_procs,
                 initializer=_init_worker,  # type: ignore[arg-type]
                 initargs=init_args,
-            ) as executor:
+            )
+            try:
                 cpu_results = list(executor.map(
                     _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
                 ))
+            except (KeyboardInterrupt, SystemExit):
+                logger.warning("Interrupted during hybrid DCE refinement, cancelling workers")
+                raise
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
         else:
             cpu_results = [_fit_single_voxel(vd) for vd in voxel_data_list]
 
