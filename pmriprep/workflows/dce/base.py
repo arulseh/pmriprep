@@ -2120,10 +2120,10 @@ def init_dce_preproc_wf(
 
 
 def _transform_mask_to_dce(
-    mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+    mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str | None:
     """Transform brain mask from T1w space to DCE space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -2212,10 +2212,10 @@ def _transform_mask_to_dce(
 
 
 def _transform_probseg_to_dce(
-    probseg_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+    probseg_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str | None:
     """Transform a probability segmentation map from T1w space to DCE space.
 
     Uses FSL FLIRT with trilinear interpolation (appropriate for continuous
@@ -2298,10 +2298,10 @@ def _transform_probseg_to_dce(
 
 
 def _transform_lesion_mask_to_dce(
-    lesion_mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+    lesion_mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str | None:
     """Transform lesion mask from T1w space to DCE space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -2350,9 +2350,9 @@ def _transform_lesion_mask_to_dce(
 
 
 def _create_aif_search_mask(
-    t1w_mask_in_dce=None,
-    dce_native_mask=None,
-):
+    t1w_mask_in_dce: str | None = None,
+    dce_native_mask: str | None = None,
+) -> str | None:
     """Create conservative AIF search mask (Gap 5).
 
     Creates an intersection of T1w-transformed mask with the native DCE
@@ -3098,7 +3098,9 @@ def _collect_qc_metrics(
     return qc_metrics
 
 
-def _transform_b1_to_vfa(b1_map_file=None, vfa_ref_file=None):
+def _transform_b1_to_vfa(
+    b1_map_file: str | None = None, vfa_ref_file: str | None = None
+) -> str | None:
     """Resample B1+ map from AFI space to VFA space.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -3154,7 +3156,9 @@ def _transform_b1_to_vfa(b1_map_file=None, vfa_ref_file=None):
     return out_file
 
 
-def _transform_b1_to_dce(b1_map_file=None, reference_file=None):
+def _transform_b1_to_dce(
+    b1_map_file: str | None = None, reference_file: str | None = None
+) -> str | None:
     """Resample B1+ map to DCE space for signal-to-concentration.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -3435,7 +3439,9 @@ def _register_dwi_to_dce(
     return dwi_in_dce, dwi_to_dce_xfm
 
 
-def _transform_t1_to_dce(t1_map_file=None, reference_file=None):
+def _transform_t1_to_dce(
+    t1_map_file: str | None = None, reference_file: str | None = None
+) -> str | None:
     """Resample T1 map from VFA space to DCE space.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -3486,7 +3492,9 @@ def _transform_t1_to_dce(t1_map_file=None, reference_file=None):
     return out_file
 
 
-def _transform_external_t1_to_dce(t1_map_file=None, reference_file=None):
+def _transform_external_t1_to_dce(
+    t1_map_file: str | None = None, reference_file: str | None = None
+) -> str | None:
     """Resample external T1 map to DCE space with unit validation.
 
     Validates that T1 values are in milliseconds (expected units for the
@@ -3544,11 +3552,11 @@ def _transform_external_t1_to_dce(t1_map_file=None, reference_file=None):
 
 
 def _transform_structural_to_dce(
-    structural_file=None,
-    reference_file=None,
-    transform_matrix=None,
-    output_name="structural_in_dce.nii.gz",
-):
+    structural_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    output_name: str = "structural_in_dce.nii.gz",
+) -> str | None:
     """Transform structural image from T1w space to DCE space via FLIRT.
 
     Args:

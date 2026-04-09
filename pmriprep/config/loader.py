@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Union
 import yaml  # type: ignore[import-untyped]
 
 from .anat import AnatConfig
+from .constants import DOSE_PRESETS
 from .dce import DCEConfig
 from .dsc import DSCConfig
 from .tumor_seg import TumorSegConfig
@@ -200,18 +201,14 @@ def _coerce_float(d: Dict[str, Any], key: str) -> None:
             pass  # Leave as-is if conversion fails
 
 
-# Named dose presets for resolving YAML string values to floats
-_DOSE_PRESETS: Dict[str, float] = {"half": 0.5, "full": 1.0, "double": 2.0}
-
-
 def _coerce_dose(d: Dict[str, Any], key: str = "dose") -> None:
     """Resolve a dose value (string preset or numeric) to float in-place."""
     if key not in d or d[key] is None:
         return
     val = d[key]
     if isinstance(val, str):
-        if val in _DOSE_PRESETS:
-            d[key] = _DOSE_PRESETS[val]
+        if val in DOSE_PRESETS:
+            d[key] = DOSE_PRESETS[val]
         else:
             try:
                 d[key] = float(val)

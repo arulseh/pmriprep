@@ -3003,10 +3003,10 @@ class DCEPreprocess(SimpleInterface):
         else:
             out_base = str(out_path)
 
-        cmd_parts = [
+        cmd_parts: list[str] = [
             "mcflirt",
-            f"-in {in_file}",
-            f"-out {out_base}",
+            "-in", in_file,
+            "-out", out_base,
             "-plots",  # Output motion parameters
             "-stats",  # Output mean volume
             "-mats",  # Output transformation matrices
@@ -3014,14 +3014,14 @@ class DCEPreprocess(SimpleInterface):
 
         # Reference volume
         if ref_vol == "baseline_mean" and ref_file:
-            cmd_parts.append(f"-reffile {ref_file}")
+            cmd_parts.extend(["-reffile", ref_file])
         elif ref_vol == "mean":
             cmd_parts.append("-meanvol")
         elif ref_vol_index is not None:
-            cmd_parts.append(f"-refvol {ref_vol_index}")
+            cmd_parts.extend(["-refvol", str(ref_vol_index)])
 
         # Cost function
-        cmd_parts.append(f"-cost {self.inputs.cost}")
+        cmd_parts.extend(["-cost", self.inputs.cost])
 
         # Interpolation
         interp = self.inputs.interpolation
@@ -3031,11 +3031,10 @@ class DCEPreprocess(SimpleInterface):
             cmd_parts.append("-spline_final")
 
         # Stages (default 4)
-        cmd_parts.append("-stages 4")
+        cmd_parts.extend(["-stages", "4"])
 
         # Run mcflirt
-        cmd = " ".join(cmd_parts)
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd_parts, capture_output=True, text=True)
 
         if result.returncode != 0:
             raise RuntimeError(f"mcflirt failed: {result.stderr}")

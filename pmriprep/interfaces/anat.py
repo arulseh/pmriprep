@@ -5,6 +5,7 @@ including reorientation, bias correction, coregistration, brain extraction,
 tissue segmentation, and ACPC alignment.
 """
 
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -340,7 +341,7 @@ class ConformT1w(SimpleInterface):
     input_spec = ConformT1wInputSpec
     output_spec = ConformT1wOutputSpec
 
-    def _run_interface(self, runtime):  # type: ignore[override]
+    def _run_interface(self, runtime: Any) -> Any:  # type: ignore[override]
         import logging
         import shutil
 
@@ -757,9 +758,11 @@ class BrainExtraction(CommandLine):
             ants_prob_mask = getattr(self.inputs, "ants_probability_mask", None)
 
             if not ants_template:
-                ants_template = "/usr/share/ants/OASIS_template/T_template0.nii.gz"
+                ants_dir = os.environ.get("ANTSPATH", "/usr/share/ants")
+                ants_template = f"{ants_dir}/OASIS_template/T_template0.nii.gz"
             if not ants_prob_mask:
-                ants_prob_mask = "/usr/share/ants/OASIS_template/T_template0_BrainCerebellumProbabilityMask.nii.gz"
+                ants_dir = os.environ.get("ANTSPATH", "/usr/share/ants")
+                ants_prob_mask = f"{ants_dir}/OASIS_template/T_template0_BrainCerebellumProbabilityMask.nii.gz"
 
             out_path = Path(out_file)
             ants_prefix = str(out_path.parent / "ants_brain_")

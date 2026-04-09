@@ -5,10 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Literal, Optional
 
+from .constants import DOSE_PRESETS
+
 logger = logging.getLogger(__name__)
 
-# Named dose presets resolved to float multipliers
-_DOSE_PRESETS: dict[str, float] = {"half": 0.5, "full": 1.0, "double": 2.0}
+# Alias for backwards compatibility within this module
+_DOSE_PRESETS = DOSE_PRESETS
 
 
 @dataclass

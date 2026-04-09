@@ -14,13 +14,14 @@ import toml  # type: ignore[import-untyped]
 from pmriprep import __version__
 from pmriprep.cli import logging as plogger
 from pmriprep.cli.logging import IMPORTANT
+from pmriprep.config import DOSE_PRESETS
 
 # Module-level logger — uses the centralized ``cli`` logger for top-level
 # messages that should be IMPORTANT-level by default.
 logger = plogger.cli
 
-# Named dose presets resolved to float multipliers
-_DOSE_PRESETS: dict[str, float] = {"half": 0.5, "full": 1.0, "double": 2.0}
+# Alias for backwards compatibility within this module
+_DOSE_PRESETS = DOSE_PRESETS
 
 
 def _dose_type(value: str) -> float:

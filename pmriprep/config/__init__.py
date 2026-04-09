@@ -1,6 +1,7 @@
 """Configuration modules for PMRIPrep."""
 
 from .anat import AnatConfig
+from .constants import DOSE_PRESETS
 from .dce import DCEConfig
 from .dsc import DSCConfig
 from .tumor_seg import TumorSegConfig
@@ -17,6 +18,7 @@ from .loader import (
 __all__ = [
     "AnatConfig",
     "DCEConfig",
+    "DOSE_PRESETS",
     "DSCConfig",
     "TumorSegConfig",
     "build_all_configs",

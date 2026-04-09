@@ -842,7 +842,7 @@ def _create_registration_filmstrip(
     return output_path
 
 
-def _extract_preload_class(qc_dict):
+def _extract_preload_class(qc_dict: dict | None) -> str:
     """Extract preload classification from preload_correct QC dict.
 
     Args:
@@ -856,7 +856,9 @@ def _extract_preload_class(qc_dict):
     return qc_dict.get("preload_classification", "none")
 
 
-def _generate_motion_qc_plot(motion_params_file, tr, subject_id="", session_id=""):
+def _generate_motion_qc_plot(
+    motion_params_file: str, tr: float, subject_id: str = "", session_id: str = ""
+) -> tuple[str, dict]:
     """Generate motion QC plot from motion parameters.
 
     Creates a three-panel figure showing raw motion parameters and

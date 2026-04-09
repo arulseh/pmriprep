@@ -728,6 +728,7 @@ class HDGLIOSegment(BaseInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute the interface."""
+        import shlex
         import subprocess
 
         # Ensure output directory exists
@@ -739,9 +740,9 @@ class HDGLIOSegment(BaseInterface):
 
         # Execute HD-GLIO with proper signal handling
         # Use Popen to allow Ctrl+C to propagate to child process
+        # Use shlex.split for safe command parsing without shell=True
         process = subprocess.Popen(
-            cmd,
-            shell=True,
+            shlex.split(cmd),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
