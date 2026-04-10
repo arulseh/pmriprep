@@ -889,7 +889,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     work_dir=work_dir,
                     random_seed=args.random_seed,
                     mem_limit_gb=args.mem_gb,
-                    name=f"pmriprep_sub{subject_id}_{session_str}_wf",
+                    name=f"pmriprep_sub_{subject_id}_ses_{session_id}_wf" if session_id else f"pmriprep_sub_{subject_id}_wf",
                 )
 
                 # Log pipeline summary
@@ -904,10 +904,11 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                 if args.write_graph:
                     try:
                         workflow.write_graph(
-                            graph2use="colored", dotfilename="graph"
+                            graph2use="colored", dotfilename="graph.dot"
                         )
-                    except Exception as e:
-                        logger.warning(f"Failed to write workflow graph: {e}")
+                    except OSError as e:
+                        # graphviz not installed - dot file was still written
+                        logger.warning(f"Workflow graph .dot written but PNG failed: {e}")
 
                 # Run the workflow
                 logger.log(
