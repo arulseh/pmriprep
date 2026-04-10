@@ -892,12 +892,6 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     name=f"pmriprep_sub{subject_id}_{session_str}_wf",
                 )
 
-                # Write workflow graph if requested
-                if args.write_graph:
-                    workflow.write_graph(
-                        graph2use="colored", dotfilename="graph"
-                    )
-
                 # Log pipeline summary
                 summary = get_pipeline_summary(workflow)
                 for line in summary.split("\n"):
@@ -905,6 +899,15 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
 
                 # Set working directory
                 workflow.base_dir = str(work_dir)
+
+                # Write workflow graph if requested (after base_dir is set)
+                if args.write_graph:
+                    try:
+                        workflow.write_graph(
+                            graph2use="colored", dotfilename="graph"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to write workflow graph: {e}")
 
                 # Run the workflow
                 logger.log(
