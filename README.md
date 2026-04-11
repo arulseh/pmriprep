@@ -224,6 +224,8 @@ dce:
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
 | `underlays` | list | `[]` | Structural images to transform to DSC space for QC overlays: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
+| `leakage_method` | str | `"bsw"` | K2 leakage correction: `bsw` (standard), `bidirectional` (Leu 2016) |
+| `kep` | float | `0.005` | EES efflux rate for bidirectional correction (s⁻¹); ignored for bsw |
 
 ### DCE Configuration
 

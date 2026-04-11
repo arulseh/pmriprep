@@ -30,6 +30,25 @@ EPSILON_CONCENTRATION: Final[float] = 1e-10
 #: treats K2 > 0.5 as "severe leakage."
 K2_UPPER_BOUND: Final[float] = 0.5
 
+# Bidirectional K2 (Leu et al. AJNR 2016, PMID 27079371)
+# kep = EES efflux rate in s^-1 (NOT min^-1 like DCE literature).
+# Using s^-1 for consistency with K2 units and Leu 2016 convention.
+# To convert from DCE (min^-1): kep_s = kep_min / 60.0
+#
+# Leu 2016 measured GBM values:
+#   DCE kep: 0.0050 ± 0.0018 s^-1 (= 0.30 ± 0.11 min^-1)
+#   DSC kep: 0.0057 ± 0.0042 s^-1 (= 0.34 ± 0.25 min^-1)
+# Figure 3D scatter: DCE 0-0.03, DSC 0-0.05 s^-1
+
+#: Default kep for bidirectional K2 correction (s⁻¹), GBM mean from Leu 2016
+KEP_DSC_DEFAULT: Final[float] = 0.005
+
+#: Lower bound for kep (s⁻¹), below this ≈ standard BSW
+KEP_DSC_LOWER: Final[float] = 0.001
+
+#: Upper bound for kep (s⁻¹), Leu Fig 3D upper range
+KEP_DSC_UPPER: Final[float] = 0.05
+
 
 # =============================================================================
 # SVD Deconvolution Thresholds

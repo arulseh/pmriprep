@@ -18,6 +18,9 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_DELTA_R2,
     EPSILON_SIGNAL,
     K2_UPPER_BOUND,
+    KEP_DSC_DEFAULT,
+    KEP_DSC_LOWER,
+    KEP_DSC_UPPER,
 )
 
 logger = logging.getLogger(__name__)
@@ -530,6 +533,8 @@ class K2CorrectionResult:
         auc_tissue: Area under tissue curve before correction (3D).
         correction_applied: Boolean indicating if correction was applied.
         qc_metrics: QC metrics from correction.
+        method: Leakage correction method ("bsw" or "bidirectional").
+        kep_used: kep value used for bidirectional correction (s⁻¹), or None.
     """
 
     concentration_corrected: npt.NDArray[np.floating]
@@ -537,6 +542,8 @@ class K2CorrectionResult:
     auc_tissue: npt.NDArray[np.floating]
     correction_applied: bool = True
     qc_metrics: Optional[dict[str, Any]] = None
+    method: str = "bsw"
+    kep_used: Optional[float] = None
 
 
 def _compute_mean_brain_reference(
@@ -803,6 +810,7 @@ def apply_k2_correction(
             k2_map=k2_map,
             auc_tissue=auc_tissue,
             correction_applied=False,
+            method="bsw",
         )
 
     # Compute cumulative integral of mean brain reference
@@ -821,6 +829,7 @@ def apply_k2_correction(
 
     # Compute QC metrics
     qc_metrics = _compute_k2_qc_metrics(k2_map, brain_mask, auc_tissue)
+    qc_metrics["k2_method"] = "bsw"
 
     return K2CorrectionResult(
         concentration_corrected=concentration_corrected,
@@ -828,6 +837,7 @@ def apply_k2_correction(
         auc_tissue=auc_tissue,
         correction_applied=True,
         qc_metrics=qc_metrics,
+        method="bsw",
     )
 
 
@@ -901,6 +911,259 @@ def _compute_k2_qc_metrics(
         "n_brain_voxels": int(k2_values.size),
         "auc_mean": float(np.mean(auc_values)) if auc_values.size > 0 else 0.0,
     }
+
+
+# =============================================================================
+# Bidirectional K2 Leakage Correction (Leu et al. 2016)
+# =============================================================================
+
+
+def _compute_ees_concentration(
+    c_bar: npt.NDArray[np.floating],
+    kep: float,
+    tr: float,
+) -> npt.NDArray[np.floating]:
+    """Compute instantaneous EES concentration with washout.
+
+    Convolves the mean brain reference C̄(t) with an exponential washout
+    kernel to model contrast agent efflux from the extravascular
+    extracellular space (EES).
+
+    C_e(t) = C̄(t) ⊗ exp(-kep × t)
+
+    where ⊗ denotes convolution and kep is the EES efflux rate constant.
+
+    When kep → 0, exp(-kep × t) → 1, and C_e(t) → cumsum(C̄) × TR
+    (approaches standard BSW cumulative integral).
+
+    Args:
+        c_bar: Mean brain reference curve, shape (n_timepoints,).
+        kep: EES efflux rate constant in s⁻¹.
+        tr: Repetition time in seconds.
+
+    Returns:
+        Instantaneous EES concentration C_e(t), shape (n_timepoints,).
+
+    References:
+        Leu K et al. AJNR 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759
+    """
+    n_tp = len(c_bar)
+    time = np.arange(n_tp) * tr
+
+    # Exponential washout kernel
+    exp_kernel = np.exp(-kep * time)
+
+    # Convolve and scale by TR (rectangular integration)
+    c_e = np.convolve(c_bar, exp_kernel, mode="full")[:n_tp] * tr
+
+    return np.asarray(c_e, dtype=np.float64)
+
+
+def estimate_k2_bidirectional(
+    concentration: npt.NDArray[np.floating],
+    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
+    tr: float = 1.5,
+    kep: float = KEP_DSC_DEFAULT,
+) -> npt.NDArray[np.floating]:
+    """Estimate K2 leakage parameter using bidirectional model.
+
+    Extends the BSW model to account for contrast agent washout from
+    the EES using a two-regressor design matrix:
+
+        C_voxel(t) = K1 × C̄(t) + K2_reg × C_e(t)
+
+    where C_e(t) = C̄(t) ⊗ exp(-kep × t) is the instantaneous EES
+    concentration accounting for washout.
+
+    Args:
+        concentration: 4D concentration array (x, y, z, time).
+        brain_mask: Optional 3D brain mask.
+        tr: Repetition time in seconds for integration.
+        kep: EES efflux rate constant in s⁻¹.
+
+    Returns:
+        3D K2 map with leakage rate per voxel (s⁻¹).
+
+    References:
+        Leu K et al. AJNR 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759
+    """
+    if concentration.ndim != 4:
+        raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
+
+    n_timepoints = concentration.shape[3]
+    k2_map = np.zeros(concentration.shape[:3], dtype=np.float64)
+
+    # Compute mean brain reference curve C̄(t)
+    c_bar = _compute_mean_brain_reference(concentration, brain_mask)
+    if c_bar is None:
+        return k2_map
+
+    # Compute instantaneous EES concentration with washout
+    c_e = _compute_ees_concentration(c_bar, kep, tr)
+
+    # Derive regression start from C̄ peak (2 frames after peak)
+    regression_start = int(np.argmax(c_bar)) + 2
+    if regression_start >= n_timepoints - 2:
+        logger.warning(
+            "Mean reference peak at frame %d of %d — too late for regression",
+            regression_start - 2, n_timepoints,
+        )
+        return k2_map
+
+    # Build design matrix: [C̄(t), C_e(t)]
+    c_bar_post = c_bar[regression_start:]
+    c_e_post = c_e[regression_start:]
+
+    X = np.column_stack([c_bar_post, c_e_post])  # (n_post, 2)
+
+    # Condition check on shared design matrix
+    if np.linalg.cond(X) > 1e8:
+        logger.warning("Bidirectional K2 design matrix ill-conditioned")
+        return k2_map
+
+    # Determine valid voxels
+    if brain_mask is not None:
+        valid_mask = brain_mask
+    else:
+        max_conc = np.max(concentration, axis=-1)
+        valid_mask = max_conc > EPSILON_CONCENTRATION
+
+    valid_indices = np.where(valid_mask)
+    n_voxels = len(valid_indices[0])
+
+    if n_voxels == 0:
+        return k2_map
+
+    # Vectorized solve: extract all valid voxel time courses
+    Y = concentration[
+        valid_indices[0], valid_indices[1], valid_indices[2], regression_start:
+    ]  # (n_voxels, n_post)
+
+    # lstsq: X @ coeffs = Y.T → coeffs shape (2, n_voxels)
+    coeffs, _, _, _ = np.linalg.lstsq(X, Y.T, rcond=None)
+
+    # NEGATE: K2_physical = -K2_regression (T1 leakage gives negative K2_reg)
+    # Clip: only correct T1-dominant leakage (positive K2_phys)
+    k2_values = np.clip(-coeffs[1, :], 0.0, K2_UPPER_BOUND)
+
+    k2_map[valid_indices] = k2_values
+
+    return k2_map
+
+
+def apply_k2_correction_bidirectional(
+    concentration: npt.NDArray[np.floating],
+    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
+    tr: float = 1.5,
+    kep: Optional[float] = None,
+    k2_map: Optional[npt.NDArray[np.floating]] = None,
+    baseline_frames: int = 5,
+) -> K2CorrectionResult:
+    """Apply bidirectional K2 leakage correction (Leu et al. 2016).
+
+    Extends the standard BSW model to account for contrast agent washout
+    from the EES:
+
+        C_corrected(t) = C_tissue(t) + K2 × C_e(t)
+
+    where C_e(t) = C̄(t) ⊗ exp(-kep × t) is the instantaneous EES
+    concentration with exponential washout.
+
+    Key difference from standard BSW:
+    - BSW uses cumulative integral ∫C̄(τ)dτ (no washout, always increases)
+    - Bidirectional uses C_e(t) (accounts for washout, can decrease)
+
+    This produces ~16.6% lower rCBV in high-grade gliomas because standard
+    BSW overcorrects late timepoints (Leu 2016).
+
+    Args:
+        concentration: 4D concentration array (x, y, z, time).
+        brain_mask: Optional 3D brain mask for voxel selection.
+        tr: Repetition time in seconds.
+        kep: EES efflux rate in s⁻¹. If None, uses KEP_DSC_DEFAULT (0.005).
+        k2_map: Pre-computed K2 map. If None, K2 is estimated per voxel.
+        baseline_frames: Number of pre-bolus baseline frames.
+
+    Returns:
+        K2CorrectionResult with corrected concentration and K2 map.
+
+    References:
+        Leu K et al. AJNR 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759
+    """
+    if concentration.ndim != 4:
+        raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
+
+    if kep is None:
+        kep = KEP_DSC_DEFAULT
+
+    # Validate kep range
+    if not (KEP_DSC_LOWER <= kep <= KEP_DSC_UPPER):
+        logger.warning(
+            "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1 (Leu 2016)",
+            kep, KEP_DSC_LOWER, KEP_DSC_UPPER,
+        )
+
+    # Baseline-subtract before K2 estimation
+    n_bl = max(baseline_frames, 4)
+    conc_bl = np.mean(concentration[..., :n_bl], axis=-1, keepdims=True)
+    concentration = concentration - conc_bl
+
+    # Compute AUC before any early returns (needed for QC)
+    cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
+    auc_tissue = cumsum_tissue[..., -1].copy()
+
+    # Estimate K2 if not provided
+    if k2_map is None:
+        k2_map = estimate_k2_bidirectional(
+            concentration=concentration,
+            brain_mask=brain_mask,
+            tr=tr,
+            kep=kep,
+        )
+
+    # Gate K2: voxels with negligible leakage are left uncorrected
+    K2_THRESHOLD = 1e-4  # s⁻¹
+    k2_map = np.where(k2_map > K2_THRESHOLD, k2_map, 0.0)
+
+    # Compute mean brain reference for correction
+    c_bar = _compute_mean_brain_reference(concentration, brain_mask)
+    if c_bar is None:
+        logger.warning(
+            "Bidirectional K2 correction skipped: insufficient brain voxels"
+        )
+        return K2CorrectionResult(
+            concentration_corrected=concentration.copy(),
+            k2_map=k2_map,
+            auc_tissue=auc_tissue,
+            correction_applied=False,
+            method="bidirectional",
+            kep_used=kep,
+        )
+
+    # Compute instantaneous EES concentration with washout
+    c_e = _compute_ees_concentration(c_bar, kep, tr)
+    c_e_4d = c_e[np.newaxis, np.newaxis, np.newaxis, :]
+
+    # Expand K2 map for broadcasting
+    k2_expanded = k2_map[..., np.newaxis]
+
+    # Apply correction: C_corrected(t) = C_tissue(t) + K2 × C_e(t)
+    concentration_corrected = concentration + k2_expanded * c_e_4d
+
+    # Compute QC metrics
+    qc_metrics = _compute_k2_qc_metrics(k2_map, brain_mask, auc_tissue)
+    qc_metrics["k2_method"] = "bidirectional"
+    qc_metrics["kep_used"] = kep
+
+    return K2CorrectionResult(
+        concentration_corrected=concentration_corrected,
+        k2_map=k2_map,
+        auc_tissue=auc_tissue,
+        correction_applied=True,
+        qc_metrics=qc_metrics,
+        method="bidirectional",
+        kep_used=kep,
+    )
 
 
 def estimate_preload_correction_factor(

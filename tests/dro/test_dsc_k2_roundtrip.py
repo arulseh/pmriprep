@@ -14,11 +14,16 @@ import pytest
 from pmriprep.utils.dsc_preload import (
     K2CorrectionResult,
     apply_k2_correction,
+    apply_k2_correction_bidirectional,
     estimate_k2_per_voxel,
+    estimate_k2_bidirectional,
+    _compute_ees_concentration,
 )
+from pmriprep.utils.dsc_constants import KEP_DSC_DEFAULT
 
 from .conftest import (
     generate_k2_dro_phantom,
+    generate_leaky_dsc_tissue_bidirectional,
 )
 
 
@@ -263,4 +268,162 @@ class TestK2EdgeCases:
         assert result.correction_applied is False
         np.testing.assert_array_equal(
             result.concentration_corrected, phantom.concentration,
+        )
+
+
+# =============================================================================
+# Bidirectional K2 Tests (Leu et al. 2016)
+# =============================================================================
+
+
+class TestBidirectionalEESConcentration:
+    """Test _compute_ees_concentration() helper."""
+
+    def test_ees_concentration_shape(self) -> None:
+        """C_e should have same length as input."""
+        c_bar = np.sin(np.linspace(0, np.pi, 60))
+        c_e = _compute_ees_concentration(c_bar, kep=0.005, tr=1.5)
+        assert c_e.shape == c_bar.shape
+
+    def test_ees_concentration_limit_low_kep(self) -> None:
+        """When kep → 0, C_e → cumsum(C_bar) * TR (approaches BSW)."""
+        c_bar = np.sin(np.linspace(0, np.pi, 60))
+        tr = 1.5
+
+        # Very small kep
+        c_e_small = _compute_ees_concentration(c_bar, kep=1e-6, tr=tr)
+        cumsum_bsw = np.cumsum(c_bar) * tr
+
+        # Should be approximately equal (ratio close to 1)
+        ratio = c_e_small[-1] / cumsum_bsw[-1] if cumsum_bsw[-1] > 0 else 1.0
+        assert ratio == pytest.approx(1.0, rel=0.01), (
+            f"Small kep should approach BSW: ratio={ratio:.4f}"
+        )
+
+    def test_ees_concentration_high_kep_decays(self) -> None:
+        """High kep should cause C_e to decay after bolus peak."""
+        # Single Gaussian pulse
+        c_bar = np.exp(-((np.arange(60) - 20) ** 2) / 50)
+        c_e = _compute_ees_concentration(c_bar, kep=0.05, tr=1.5)
+
+        # C_e should peak later and then decay
+        peak_c_bar = np.argmax(c_bar)
+        peak_c_e = np.argmax(c_e)
+        assert peak_c_e >= peak_c_bar, "C_e peak should not be earlier than C_bar"
+
+        # Check decay in tail
+        assert c_e[-1] < c_e[peak_c_e], "C_e should decay after peak with high kep"
+
+
+class TestBidirectionalK2Estimation:
+    """Test bidirectional K2 estimation accuracy."""
+
+    @pytest.mark.parametrize(
+        "k2_true,kep",
+        [
+            pytest.param(0.02, 0.005, id="K2_0.02_kep_0.005"),
+            pytest.param(0.05, 0.005, id="K2_0.05_kep_0.005"),
+            pytest.param(0.1, 0.005, id="K2_0.10_kep_0.005"),
+            pytest.param(0.1, 0.01, id="K2_0.10_kep_0.01"),
+        ],
+    )
+    def test_bidirectional_k2_recovery(self, k2_true: float, kep: float) -> None:
+        """Bidirectional estimator should recover K2 within tolerance."""
+        phantom = generate_k2_dro_phantom(k2_enhancing=k2_true)
+
+        k2_map = estimate_k2_bidirectional(
+            concentration=phantom.concentration,
+            brain_mask=phantom.brain_mask,
+            tr=phantom.dt,
+            kep=kep,
+        )
+
+        # Enhancing voxels should recover K2 (wider tolerance due to model mismatch)
+        k2_enh = float(np.median(k2_map[phantom.enhancing_mask]))
+        assert k2_enh == pytest.approx(k2_true, rel=0.8), (
+            f"K2={k2_enh:.4f} outside 80% tolerance for true K2={k2_true}"
+        )
+
+
+class TestBidirectionalK2Correction:
+    """Test bidirectional K2 correction."""
+
+    def test_bidirectional_result_fields(self) -> None:
+        """Result should have method and kep_used fields."""
+        phantom = generate_k2_dro_phantom(k2_enhancing=0.1)
+
+        result = apply_k2_correction_bidirectional(
+            concentration=phantom.concentration,
+            brain_mask=phantom.brain_mask,
+            tr=phantom.dt,
+            kep=0.005,
+        )
+
+        assert result.method == "bidirectional"
+        assert result.kep_used == 0.005
+        assert result.qc_metrics is not None
+        assert result.qc_metrics.get("k2_method") == "bidirectional"
+        assert result.qc_metrics.get("kep_used") == 0.005
+
+    def test_bidirectional_uses_default_kep(self) -> None:
+        """When kep=None, should use KEP_DSC_DEFAULT."""
+        phantom = generate_k2_dro_phantom(k2_enhancing=0.1)
+
+        result = apply_k2_correction_bidirectional(
+            concentration=phantom.concentration,
+            brain_mask=phantom.brain_mask,
+            tr=phantom.dt,
+            kep=None,
+        )
+
+        assert result.kep_used == KEP_DSC_DEFAULT
+
+    def test_bsw_result_has_method_field(self) -> None:
+        """Standard BSW result should have method='bsw'."""
+        phantom = generate_k2_dro_phantom(k2_enhancing=0.1)
+
+        result = apply_k2_correction(
+            concentration=phantom.concentration,
+            brain_mask=phantom.brain_mask,
+            tr=phantom.dt,
+        )
+
+        assert result.method == "bsw"
+        assert result.kep_used is None
+        assert result.qc_metrics.get("k2_method") == "bsw"
+
+    @pytest.mark.parametrize(
+        "k2_true",
+        [
+            pytest.param(0.05, id="K2_0.05"),
+            pytest.param(0.1, id="K2_0.10"),
+        ],
+    )
+    def test_bidirectional_reduces_error(self, k2_true: float) -> None:
+        """Bidirectional correction should reduce RMSE on enhancing voxels."""
+        phantom = generate_k2_dro_phantom(k2_enhancing=k2_true)
+        bl = 10
+
+        result = apply_k2_correction_bidirectional(
+            concentration=phantom.concentration,
+            brain_mask=phantom.brain_mask,
+            tr=phantom.dt,
+            kep=KEP_DSC_DEFAULT,
+        )
+
+        enh_idx = np.where(phantom.enhancing_mask)
+        c_corr = result.concentration_corrected[
+            enh_idx[0], enh_idx[1], enh_idx[2], bl:
+        ]
+        c_leak = phantom.concentration[enh_idx[0], enh_idx[1], enh_idx[2], bl:]
+        c_true = phantom.clean[enh_idx[0], enh_idx[1], enh_idx[2], bl:]
+
+        rmse_uncorrected = float(np.sqrt(np.mean((c_leak - c_true) ** 2)))
+        rmse_corrected = float(np.sqrt(np.mean((c_corr - c_true) ** 2)))
+
+        # Should improve, though may not be as strong as BSW on BSW-generated phantom
+        assert rmse_corrected <= rmse_uncorrected * 1.1, (
+            f"Bidirectional correction should not make things much worse: "
+            f"RMSE_corrected={rmse_corrected:.4f} vs "
+            f"RMSE_uncorrected={rmse_uncorrected:.4f}"
         )

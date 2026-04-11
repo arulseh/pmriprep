@@ -368,6 +368,8 @@ def _detect_and_correct_preload(
     preload_present,
     signal_file=None,
     baseline_frames=5,
+    leakage_method="bsw",
+    kep=None,
 ):
     """Detect preload and apply K2 correction if needed.
 
@@ -381,6 +383,10 @@ def _detect_and_correct_preload(
         field_strength: Magnetic field strength in Tesla.
         tr: Repetition time in seconds.
         preload_present: User-specified preload flag (True/False/None for auto).
+        signal_file: Optional path to raw signal NIfTI for preload detection.
+        baseline_frames: Number of pre-bolus baseline frames.
+        leakage_method: K2 correction method ("bsw" or "bidirectional").
+        kep: EES efflux rate in s⁻¹ (bidirectional only).
 
     Returns:
         Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
@@ -392,6 +398,7 @@ def _detect_and_correct_preload(
 
     from pmriprep.utils.dsc_preload import (
         apply_k2_correction,
+        apply_k2_correction_bidirectional,
     )
 
     # Load concentration data
@@ -456,13 +463,22 @@ def _detect_and_correct_preload(
     # Voxels with K2 < 1e-4 are effectively unchanged.
     qc_metrics["preload_correction_applied"] = True
 
-    # Apply K2 leakage correction
-    correction_result = apply_k2_correction(
-        concentration=conc_data,
-        brain_mask=brain_mask,
-        tr=tr,
-        baseline_frames=baseline_frames,
-    )
+    # Apply K2 leakage correction (dispatch based on method)
+    if leakage_method == "bidirectional":
+        correction_result = apply_k2_correction_bidirectional(
+            concentration=conc_data,
+            brain_mask=brain_mask,
+            tr=tr,
+            kep=kep,
+            baseline_frames=baseline_frames,
+        )
+    else:
+        correction_result = apply_k2_correction(
+            concentration=conc_data,
+            brain_mask=brain_mask,
+            tr=tr,
+            baseline_frames=baseline_frames,
+        )
 
     corrected_conc = correction_result.concentration_corrected
     k2_map = correction_result.k2_map
@@ -1792,6 +1808,8 @@ def init_dsc_preproc_wf(
                 "preload_present",
                 "signal_file",
                 "baseline_frames",
+                "leakage_method",
+                "kep",
             ],
             output_names=["corrected_concentration_file", "k2_map_file", "qc_dict"],
             function=_detect_and_correct_preload,
@@ -1801,6 +1819,8 @@ def init_dsc_preproc_wf(
     )
     preload_correct.inputs.preload_present = config.preload_present if config.preload_present is not None else None
     preload_correct.inputs.baseline_frames = config.pre_bolus
+    preload_correct.inputs.leakage_method = config.leakage_method
+    preload_correct.inputs.kep = config.kep
 
     # -------------------------------------------------------------------
     # Node 4b: Extract preload classification from QC dict

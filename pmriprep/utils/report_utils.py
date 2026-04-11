@@ -194,6 +194,13 @@ _REFERENCES: dict[str, str] = {
         "N4ITK: improved N3 bias correction. "
         "IEEE Trans Med Imaging. 2010;29(6):1310-1320. doi:10.1109/TMI.2010.2046908"
     ),
+    "leu_2016": (
+        "Leu K, Boxerman JL, Cloughesy TF, et al. "
+        "Improved leakage correction for single-echo dynamic susceptibility contrast "
+        "perfusion MRI estimates of relative cerebral blood volume in high-grade gliomas "
+        "by accounting for bidirectional contrast agent exchange. "
+        "AJNR Am J Neuroradiol. 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759"
+    ),
     "weisskoff_1994": (
         "Weisskoff RM, Boxerman JL, Sorensen AG, Kulke SM, Campbell TA, Rosen BR. "
         "Simultaneous blood volume and permeability mapping using a single Gd-based contrast injection. "
@@ -430,11 +437,19 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
     # Leakage correction
     preload = dsc_qc.get("preload", {})
     if preload.get("preload_correction_applied"):
-        sentences.append(
-            "K2 leakage correction was applied to account for contrast "
-            "extravasation (Weisskoff et al., 1994; Boxerman et al., 2006)."
-        )
-        refs.update(["weisskoff_1994", "boxerman_2006"])
+        k2_method = preload.get("k2_method", "bsw")
+        if k2_method == "bidirectional":
+            sentences.append(
+                "Bidirectional K2 leakage correction was applied to account for "
+                "contrast extravasation and washout (Leu et al., 2016)."
+            )
+            refs.add("leu_2016")
+        else:
+            sentences.append(
+                "K2 leakage correction was applied to account for contrast "
+                "extravasation (Weisskoff et al., 1994; Boxerman et al., 2006)."
+            )
+            refs.update(["weisskoff_1994", "boxerman_2006"])
 
     return " ".join(sentences), refs
 

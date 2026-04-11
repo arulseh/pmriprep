@@ -308,7 +308,17 @@ class DSCDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"k2_map"):
             fname = f"{prefix}_{spatial}_desc-dsc_k2"
             copy_derivative(self.inputs.k2_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "K2 leakage correction map", "Units": "1/s"}
+            # Build K2 sidecar with method info from preload QC
+            preload_qc = self.inputs.preload_qc if isdefined(self.inputs.preload_qc) else {}
+            sidecar = {
+                **base_sidecar,
+                "Description": "K2 leakage correction map",
+                "Units": "1/s",
+                "LeakageCorrectionMethod": preload_qc.get("k2_method", "bsw"),
+            }
+            if preload_qc.get("kep_used") is not None:
+                sidecar["KepUsed"] = preload_qc["kep_used"]
+                sidecar["KepUnits"] = "1/s"
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

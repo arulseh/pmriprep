@@ -231,6 +231,49 @@ def generate_leaky_dsc_tissue(
     return np.asarray(c_leaky, dtype=np.float64)
 
 
+def generate_leaky_dsc_tissue_bidirectional(
+    c_tissue_noleak: npt.NDArray[np.floating],
+    reference_curve: npt.NDArray[np.floating],
+    k2: float,
+    kep: float,
+    dt: float,
+) -> npt.NDArray[np.floating]:
+    """Apply bidirectional leakage model to a pre-computed clean tissue curve.
+
+    Uses the Leu 2016 model which accounts for EES washout:
+        C_leaky(t) = C_noleak(t) - K2 * C_e(t)
+
+    where C_e(t) = reference_curve ⊗ exp(-kep*t) (instantaneous with washout).
+
+    Args:
+        c_tissue_noleak: Clean tissue concentration (1D, no leakage).
+        reference_curve: Reference curve for leakage (1D, same length).
+        k2: K2 leakage rate parameter.
+        kep: EES efflux rate constant in s⁻¹.
+        dt: Time step in seconds.
+
+    Returns:
+        Leaky tissue concentration (1D).
+
+    References:
+        Leu K et al. AJNR 2016;37(8):1440-1446.
+    """
+    if len(c_tissue_noleak) != len(reference_curve):
+        raise ValueError(
+            f"Tissue ({len(c_tissue_noleak)}) and reference ({len(reference_curve)}) "
+            f"must have same length"
+        )
+    n_tp = len(reference_curve)
+    time = np.arange(n_tp) * dt
+    exp_kernel = np.exp(-kep * time)
+
+    # Convolve and scale by dt (rectangular integration)
+    c_e = np.convolve(reference_curve, exp_kernel, mode="full")[:n_tp] * dt
+
+    c_leaky = c_tissue_noleak - k2 * c_e
+    return np.asarray(c_leaky, dtype=np.float64)
+
+
 class K2DROPhantom(NamedTuple):
     """Result of generate_k2_dro_phantom()."""
 
