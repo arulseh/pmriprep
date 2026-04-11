@@ -1,0 +1,29 @@
+<!-- Methods Section -->
+<section id="methods">
+    <h2>Methods</h2>
+    <div class="section">
+        <p style="font-size: 0.85em; color: #666; margin-bottom: 10px;">
+            The following text is provided under CC0 license for use in manuscripts.
+            <button onclick="copyMethods()" class="copy-btn"
+                    style="font-size: 0.9em; padding: 2px 8px; margin-left: 10px;
+                           background: #4477AA; color: white; border: none;
+                           border-radius: 4px; cursor: pointer;">
+                Copy
+            </button>
+        </p>
+        <div id="methods-text" style="background: #fafafa; padding: 15px;
+             border-radius: 4px; font-family: Georgia, serif; line-height: 1.7;
+             font-size: 0.95em; border: 1px solid #eee; white-space: pre-wrap;">{{ boilerplate_text }}</div>
+    </div>
+</section>
+
+<script>
+function copyMethods() {
+    const text = document.getElementById('methods-text').innerText;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = document.querySelector('.copy-btn');
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 2000);
+    });
+}
+</script>
