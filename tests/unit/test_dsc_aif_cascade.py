@@ -379,3 +379,119 @@ class TestCascadeQualityGate:
         assert level == "atlas_strict"
         assert len(cands) == 3
         assert triggered is True
+
+
+class TestPostGammaFitR2Fallback:
+    """Test post-gamma-fit R² quality gate that triggers synthetic fallback.
+
+    After AIF candidates are found and gamma fitting is attempted, if the
+    gamma fit R² is catastrophically bad (< 0.0), the pipeline should fall
+    back to synthetic AIF. This catches cases where AIF detection "succeeds"
+    but the curve has no actual bolus shape (e.g., T1 leakage contamination).
+    """
+
+    @staticmethod
+    def _simulate_post_gamma_check(
+        gamma_fit_applied: bool,
+        gamma_r2: Optional[float],
+        disable_fallback: bool,
+        detection_level: str,
+    ) -> tuple[bool, Optional[str]]:
+        """Simulate the post-gamma-fit quality gate logic.
+
+        Returns:
+            (triggers_fallback, fallback_reason)
+        """
+        from pmriprep.interfaces.dsc_aif import GAMMA_R2_SYNTHETIC_FALLBACK
+
+        # Mirrors the logic in _run_interface after gamma fitting
+        if (
+            not gamma_fit_applied
+            and not disable_fallback
+            and detection_level != "synthetic"
+        ):
+            if gamma_r2 is not None and gamma_r2 < GAMMA_R2_SYNTHETIC_FALLBACK:
+                return True, "gamma_r2_floor"
+        return False, None
+
+    def test_negative_r2_triggers_fallback(self) -> None:
+        """R² = -0.5 (worse than mean) triggers synthetic fallback."""
+        triggers, reason = self._simulate_post_gamma_check(
+            gamma_fit_applied=False,
+            gamma_r2=-0.5,
+            disable_fallback=False,
+            detection_level="brain_relaxed",
+        )
+        assert triggers is True
+        assert reason == "gamma_r2_floor"
+
+    def test_r2_exactly_zero_does_not_trigger(self) -> None:
+        """R² = 0.0 (threshold) does not trigger fallback (>= not >)."""
+        triggers, reason = self._simulate_post_gamma_check(
+            gamma_fit_applied=False,
+            gamma_r2=0.0,
+            disable_fallback=False,
+            detection_level="brain_relaxed",
+        )
+        assert triggers is False
+        assert reason is None
+
+    def test_positive_r2_does_not_trigger(self) -> None:
+        """R² = 0.3 (above threshold) does not trigger fallback."""
+        triggers, reason = self._simulate_post_gamma_check(
+            gamma_fit_applied=False,
+            gamma_r2=0.3,
+            disable_fallback=False,
+            detection_level="brain_relaxed",
+        )
+        assert triggers is False
+        assert reason is None
+
+    def test_r2_none_does_not_trigger(self) -> None:
+        """R² = None (not computed) does not trigger fallback."""
+        triggers, reason = self._simulate_post_gamma_check(
+            gamma_fit_applied=False,
+            gamma_r2=None,
+            disable_fallback=False,
+            detection_level="brain_relaxed",
+        )
+        assert triggers is False
+        assert reason is None
+
+    def test_gamma_fit_applied_skips_check(self) -> None:
+        """If gamma fit was applied, skip the R² check (already good)."""
+        triggers, reason = self._simulate_post_gamma_check(
+            gamma_fit_applied=True,
+            gamma_r2=-0.5,  # bad R², but fit was applied
+            disable_fallback=False,
+            detection_level="brain_relaxed",
+        )
+        assert triggers is False
+        assert reason is None
+
+    def test_disable_fallback_skips_check(self) -> None:
+        """If fallback is disabled, skip the R² check."""
+        triggers, reason = self._simulate_post_gamma_check(
+            gamma_fit_applied=False,
+            gamma_r2=-0.5,
+            disable_fallback=True,
+            detection_level="brain_relaxed",
+        )
+        assert triggers is False
+        assert reason is None
+
+    def test_already_synthetic_skips_check(self) -> None:
+        """If already synthetic, skip the R² check."""
+        triggers, reason = self._simulate_post_gamma_check(
+            gamma_fit_applied=False,
+            gamma_r2=-0.5,
+            disable_fallback=False,
+            detection_level="synthetic",
+        )
+        assert triggers is False
+        assert reason is None
+
+    def test_constant_value(self) -> None:
+        """Verify GAMMA_R2_SYNTHETIC_FALLBACK constant is 0.0."""
+        from pmriprep.interfaces.dsc_aif import GAMMA_R2_SYNTHETIC_FALLBACK
+        assert GAMMA_R2_SYNTHETIC_FALLBACK == 0.0

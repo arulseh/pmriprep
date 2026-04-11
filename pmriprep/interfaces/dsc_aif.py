@@ -52,6 +52,11 @@ MIN_AIF_CANDIDATES_ACCEPT: int = 3
 GAMMA_PEAK_RATIO_CASCADE_MIN: float = 0.88
 GAMMA_PEAK_RATIO_CASCADE_MAX: float = 1.12
 
+#: Gamma R² floor for synthetic fallback.
+#: R² < 0 means gamma fit is worse than mean — curve has no bolus shape.
+#: A true arterial bolus will never fit worse than a horizontal line.
+GAMMA_R2_SYNTHETIC_FALLBACK: float = 0.0
+
 # Fraction of user-configured n_candidates to keep at each criteria level.
 # As criteria relax, candidate quality drops — fewer candidates concentrates
 # on the best-scoring voxels from a noisier pool.
@@ -995,10 +1000,16 @@ class AIFDetection(BaseInterface):
         if metrics["ttp"] > metrics.get("max_allowed_ttp", float("inf")):
             return float("inf")
 
-        # 2. BRR
+        # 2. BRR range check — valid arterial BRR should be 5-35%
+        # Negative BRR indicates T1 leakage contamination (tail > baseline)
         brr = metrics.get("baseline_return_ratio", float("nan"))
-        brr_thresh = {"strict": 30, "relaxed": 40, "permissive": 50}
-        if not np.isnan(brr) and brr > brr_thresh.get(criteria, 50):
+        brr_range: dict[str, tuple[float, float]] = {
+            "strict": (5.0, 30.0),      # strict: clear arterial recirculation
+            "relaxed": (0.0, 40.0),     # relaxed: reject obvious T1 contamination
+            "permissive": (-10.0, 50.0),  # permissive: allow some noise margin
+        }
+        brr_lo, brr_hi = brr_range.get(criteria, (-10.0, 50.0))
+        if not np.isnan(brr) and not (brr_lo < brr < brr_hi):
             return float("inf")
 
         # 3. PBR
@@ -1560,6 +1571,36 @@ class AIFDetection(BaseInterface):
     # -----------------------------------------------------------------
     # Synthetic AIF (perf-plus calibrated gamma-variate)
     # -----------------------------------------------------------------
+
+    def _compute_tissue_max_for_synthetic(
+        self,
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+    ) -> Optional[float]:
+        """Compute tissue max ΔR2* for synthetic AIF amplitude scaling.
+
+        Parameters
+        ----------
+        conc_data : ndarray
+            4D concentration data (x, y, z, t).
+        brain_mask : ndarray
+            3D brain mask.
+
+        Returns
+        -------
+        float or None
+            95th percentile of max ΔR2* across brain voxels, or None if
+            no brain voxels available.
+        """
+        brain_conc = conc_data[brain_mask > 0.5]
+        if brain_conc.size == 0:
+            return None
+        max_per_voxel = (
+            brain_conc.max(axis=-1)
+            if brain_conc.ndim > 1
+            else float(brain_conc.max())
+        )
+        return float(np.percentile(max_per_voxel, 95))
 
     def _generate_synthetic_aif(
         self,
@@ -2368,17 +2409,8 @@ class AIFDetection(BaseInterface):
             qc_metrics.update(validation_qc)
 
         elif not disable_fallback:
-            # Compute tissue max ΔR2* for amplitude scaling
-            brain_conc = conc_data[brain_mask > 0.5]
-            tissue_max: Optional[float] = None
-            if brain_conc.size > 0:
-                max_per_voxel = (
-                    brain_conc.max(axis=-1)
-                    if brain_conc.ndim > 1
-                    else float(brain_conc.max())
-                )
-                tissue_max = float(np.percentile(max_per_voxel, 95))
-
+            # Synthetic fallback: no candidates found at any cascade level
+            tissue_max = self._compute_tissue_max_for_synthetic(conc_data, brain_mask)
             aif_curve, synth_metrics = self._generate_synthetic_aif(
                 n_timepoints, tr, aif_baseline_frames,
                 tissue_max_delta_r2star=tissue_max,
@@ -2389,6 +2421,7 @@ class AIFDetection(BaseInterface):
                 "synthetic": True,
                 "n_aif_voxels_used": 0,
                 "n_aif_voxels_available": 0,
+                "synthetic_fallback_reason": "no_candidates",
             }
             qc_metrics.update(synth_metrics)
         else:
@@ -2428,6 +2461,44 @@ class AIFDetection(BaseInterface):
         elif gamma_fit_mode != "off" and detection_level == "synthetic":
             qc_metrics["gamma_fit_applied"] = False
             qc_metrics["gamma_fit_rejected_reason"] = "synthetic_aif"
+
+        # Post-gamma-fit quality gate: reject AIF if gamma fit is catastrophically bad
+        # R² < 0 means the gamma model fits worse than a horizontal line — no bolus shape.
+        if (
+            not gamma_fit_applied
+            and not disable_fallback
+            and detection_level != "synthetic"
+        ):
+            gamma_r2 = qc_metrics.get("gamma_fit_r_squared")
+            if gamma_r2 is not None and gamma_r2 < GAMMA_R2_SYNTHETIC_FALLBACK:
+                _logger.warning(
+                    "Gamma fit R²=%.3f < %.1f; falling back to synthetic AIF",
+                    gamma_r2,
+                    GAMMA_R2_SYNTHETIC_FALLBACK,
+                )
+                # Synthetic fallback: gamma fit catastrophically bad
+                tissue_max = self._compute_tissue_max_for_synthetic(conc_data, brain_mask)
+                aif_curve, synth_metrics = self._generate_synthetic_aif(
+                    n_timepoints, tr, aif_baseline_frames,
+                    tissue_max_delta_r2star=tissue_max,
+                )
+                detection_level = "synthetic"
+                quality_score = 0.3
+                aif_mask_arr[:] = 0  # Clear AIF mask (no voxels used)
+                # Update QC metrics
+                qc_metrics["detection_level"] = detection_level
+                qc_metrics["synthetic"] = True
+                qc_metrics["n_aif_voxels_used"] = 0
+                qc_metrics["n_aif_voxels_available"] = 0
+                qc_metrics["synthetic_fallback_reason"] = "gamma_r2_floor"
+                qc_metrics["gamma_r2_at_fallback"] = gamma_r2
+                qc_metrics.update(synth_metrics)
+                qc_metrics["synthetic_aif_warnings"] = [
+                    "Synthetic AIF used - gamma fit R² below threshold",
+                    "Relative quantification only (rCBV, rCBF normalized to contralateral)",
+                    "TTP and Tmax are valid (timing independent of AIF amplitude)",
+                    "Manual AIF selection recommended for clinical use",
+                ]
 
         # Save outputs
         out_aif_curve = self._gen_outfilename("_aif_curve.txt")
