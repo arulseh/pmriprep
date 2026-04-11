@@ -463,8 +463,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     argv : list of str, optional
         Command line arguments. If None, uses sys.argv[1:].
     """
+    import shlex
+
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    # Reconstruct CLI command for QC report reproducibility
+    cmd_parts = sys.argv.copy() if argv is None else ["pmriprep"] + list(argv)
+    cmd_parts[0] = "pmriprep"  # Normalize entry point (not container path)
+    args.command_string = shlex.join(cmd_parts)
 
     # Validate bids_dir exists
     if not args.bids_dir.is_dir():
@@ -694,6 +701,7 @@ def _run_report_only(
                 ses_dir=str(ses_dir),
                 figures_dir=str(figures_dir),
                 ran_pipelines=ran_pipelines,
+                command_string="(report regenerated)",
             )
 
             logger.log(IMPORTANT, "Report written: %s", output_path)
@@ -889,6 +897,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     work_dir=work_dir,
                     random_seed=args.random_seed,
                     mem_limit_gb=args.mem_gb,
+                    command_string=args.command_string,
                     name=f"pmriprep_sub_{subject_id}_ses_{session_id}_wf" if session_id else f"pmriprep_sub_{subject_id}_wf",
                 )
 

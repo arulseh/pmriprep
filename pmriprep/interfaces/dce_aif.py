@@ -2371,6 +2371,7 @@ class AIFDetection(BaseInterface):
         qc_metrics: dict[str, Any] = {
             "external_aif": True,
             "external_aif_file": str(ext_path),
+            "aif_source": "external",  # For boilerplate text generation
             "final_peak_mm": final_peak,
             "final_fwhm_seconds": final_fwhm,
             "final_auc": final_auc,
@@ -2689,6 +2690,7 @@ class AIFDetection(BaseInterface):
                     np.mean([m.get("fwhm_frames", 0.0) for m in metrics_list])
                 )
                 qc_metrics = {
+                    "aif_source": "auto",  # For boilerplate text generation
                     "peak_mm_mean": float(np.mean([m["peak_mm"] for m in metrics_list])),
                     "fwhm_seconds_mean": float(
                         np.mean([m["fwhm_seconds"] for m in metrics_list])
@@ -2836,6 +2838,7 @@ class AIFDetection(BaseInterface):
 
             qc_metrics = {
                 "population_aif": True,
+                "aif_source": "population",  # For boilerplate text generation
                 "dose_factor": dose_factor,
                 "n_aif_voxels": 0,
                 "bat_seconds": bat_shift,

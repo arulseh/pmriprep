@@ -11,6 +11,45 @@
                 <div class="metric-label">Processing Date</div>
                 <div class="metric-value">{{ processing_date }}</div>
             </div>
+            {% if command_string %}
+            <div class="metric" style="grid-column: 1 / -1;">
+                <div class="metric-label">Command</div>
+                <div class="metric-value" style="font-family: monospace; font-size: 0.85em; word-break: break-all;">
+                    {{ command_string }}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Methods Boilerplate -->
+    <div class="section">
+        <h3>Methods
+            <button onclick="copyMethods()" class="copy-btn"
+                    style="font-size: 0.7em; padding: 2px 8px; margin-left: 10px;
+                           background: #4477AA; color: white; border: none;
+                           border-radius: 4px; cursor: pointer;">
+                Copy
+            </button>
+        </h3>
+        <p style="font-size: 0.85em; color: #666; margin-bottom: 10px;">
+            The following text is provided under CC0 license for use in manuscripts.
+        </p>
+        <div id="methods-text" style="background: #fafafa; padding: 15px;
+             border-radius: 4px; font-family: Georgia, serif; line-height: 1.7;
+             font-size: 0.95em; border: 1px solid #eee;">
+            {{ boilerplate_text | replace('\n\n', '</p><p style="margin-top: 1em;">') | safe }}
         </div>
     </div>
 </section>
+
+<script>
+function copyMethods() {
+    const text = document.getElementById('methods-text').innerText;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = document.querySelector('.copy-btn');
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 2000);
+    });
+}
+</script>

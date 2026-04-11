@@ -739,6 +739,7 @@ def init_pmriprep_wf(
     work_dir: Optional[Union[str, Path]] = None,
     random_seed: Optional[int] = None,
     mem_limit_gb: Optional[float] = None,
+    command_string: str = "",
     name: str = "pmriprep_wf",
 ) -> pe.Workflow:
     """Initialize the master PMRIPrep workflow.
@@ -1094,6 +1095,7 @@ def init_pmriprep_wf(
             ran_tumor_seg=decision.run_tumor_seg,
             ran_dsc=decision.run_dsc,
             ran_dce=decision.run_dce,
+            command_string=command_string,
         ),
         name="unified_report",
     )

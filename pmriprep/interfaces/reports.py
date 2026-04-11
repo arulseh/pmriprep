@@ -38,6 +38,9 @@ class GenerateUnifiedReportInputSpec(BaseInterfaceInputSpec):
     dsc_done = traits.Str("", usedefault=True, desc="Barrier from dsc writer")
     dce_done = traits.Str("", usedefault=True, desc="Barrier from dce writer")
 
+    # CLI command for reproducibility
+    command_string = traits.Str("", usedefault=True, desc="CLI command used to run PMRIPrep")
+
 
 class GenerateUnifiedReportOutputSpec(TraitedSpec):
     """Output specification for GenerateUnifiedReport."""
@@ -96,6 +99,7 @@ class GenerateUnifiedReport(BaseInterface):
             ses_dir=str(ses_dir),
             figures_dir=figures_dir,
             ran_pipelines=ran_pipelines,
+            command_string=self.inputs.command_string,
         )
 
         return runtime

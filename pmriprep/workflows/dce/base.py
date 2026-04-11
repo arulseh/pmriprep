@@ -1658,12 +1658,19 @@ def init_dce_preproc_wf(
                 "preproc_display",
                 "pk_fit_qc_metrics",
                 "pk_maps_qc_metrics",
+                "use_external_t1",
+                "no_t1",
+                "b1_method",
             ],
             output_names=["qc_metrics"],
             function=_collect_qc_metrics,
         ),
         name="collect_qc_metrics",
     )
+    # Set T1/B1 config flags for boilerplate text generation
+    collect_qc.inputs.use_external_t1 = use_external_t1
+    collect_qc.inputs.no_t1 = config.no_t1
+    collect_qc.inputs.b1_method = config.b1_method
 
     if use_vfa_t1:
         workflow.connect([
@@ -3068,14 +3075,59 @@ def _collect_qc_metrics(
     preproc_display=None,
     pk_fit_qc_metrics=None,
     pk_maps_qc_metrics=None,
+    use_external_t1=False,
+    no_t1=False,
+    b1_method="auto",
 ):
-    """Collect all QC metrics into a single dictionary."""
+    """Collect all QC metrics into a single dictionary.
+
+    Args:
+        b1_qc: B1+ mapping QC metrics (None if not performed).
+        t1_qc: T1 mapping QC metrics (None if external or no_t1).
+        preprocess_qc: Preprocessing QC metrics.
+        registration_qc: Registration QC metrics.
+        aif_qc: AIF detection QC metrics.
+        pk_qc: Pharmacokinetic modeling QC metrics.
+        validation_result: DSC-DCE validation result.
+        preproc_display: Preprocessing display stats.
+        pk_fit_qc_metrics: PK fit QC metrics from plot node.
+        pk_maps_qc_metrics: PK maps QC metrics from plot node.
+        use_external_t1: Whether external T1 map was used.
+        no_t1: Whether T1 mapping was skipped (assumed T1).
+        b1_method: B1 correction method used.
+
+    Returns:
+        Combined QC metrics dictionary.
+    """
     qc_metrics = {}
 
     if b1_qc is not None:
         qc_metrics["b1_mapping"] = b1_qc
+
+    # T1 mapping section - handle VFA, external, and assumed cases
     if t1_qc is not None:
-        qc_metrics["t1_mapping"] = t1_qc
+        # VFA T1 fitting was performed - t1_method already in qc
+        t1_mapping = dict(t1_qc)
+        # Add B1 correction method for boilerplate
+        if b1_qc is not None:
+            b1_correction = b1_qc.get("method", b1_method)
+        else:
+            b1_correction = "none"
+        t1_mapping["b1_correction"] = b1_correction
+        qc_metrics["t1_mapping"] = t1_mapping
+    elif use_external_t1:
+        # External T1 map was provided
+        qc_metrics["t1_mapping"] = {
+            "method": "external",
+            "b1_correction": b1_method if b1_method != "none" else "none",
+        }
+    elif no_t1:
+        # No T1 mapping - using assumed literature values
+        qc_metrics["t1_mapping"] = {
+            "method": "assumed",
+            "b1_correction": "none",
+        }
+
     if preprocess_qc is not None:
         qc_metrics["preprocessing"] = preprocess_qc
     if registration_qc is not None:

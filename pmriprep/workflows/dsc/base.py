@@ -1225,6 +1225,8 @@ def _merge_qc_metrics(
     motion_summary=None,
     aif_metrics=None,
     preprocessing_stats=None,
+    aif_source="auto",
+    registration_bbr=False,
 ):
     """Merge all QC metrics into a single dictionary.
 
@@ -1238,6 +1240,8 @@ def _merge_qc_metrics(
         motion_summary: Motion summary dict from plot_motion_qc (optional).
         aif_metrics: AIF metrics dict from AIFQCPlot (optional).
         preprocessing_stats: Preprocessing stats dict (optional).
+        aif_source: AIF source type ("auto", "synthetic", or "external").
+        registration_bbr: Whether BBR refinement was used for registration.
 
     Returns:
         Combined QC metrics dictionary.
@@ -1259,6 +1263,10 @@ def _merge_qc_metrics(
         "deconvolution": deconv_qc if deconv_qc else {},
         "registration": registration_qc if registration_qc else {},
         "normalization_factor": normalization_factor,
+        "config": {
+            "aif_source": aif_source,
+            "registration_bbr": registration_bbr,
+        },
     }
     if preprocessing_stats:
         merged["preprocessing"] = preprocessing_stats
@@ -2019,6 +2027,14 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     # Node 8: Merge QC Metrics
     # -------------------------------------------------------------------
+    # Determine AIF source for boilerplate text generation
+    if config.aif_file is not None:
+        aif_source = "external"
+    elif config.aif_method == "synthetic":
+        aif_source = "synthetic"
+    else:
+        aif_source = "auto"
+
     merge_qc = pe.Node(
         niu.Function(
             input_names=[
@@ -2031,12 +2047,16 @@ def init_dsc_preproc_wf(
                 "motion_summary",
                 "aif_metrics",
                 "preprocessing_stats",
+                "aif_source",
+                "registration_bbr",
             ],
             output_names=["merged_qc"],
             function=_merge_qc_metrics,
         ),
         name="merge_qc",
     )
+    merge_qc.inputs.aif_source = aif_source
+    merge_qc.inputs.registration_bbr = config.registration == "flirt_bbr"
 
     # -------------------------------------------------------------------
     # Node 9: Registration QC Filmstrip

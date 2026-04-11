@@ -794,7 +794,9 @@ class BrainExtraction(CommandLine):
         outputs["out_mask"] = self._gen_maskfilename()
 
         # Compute QC metrics after execution
-        qc_metrics: dict[str, Any] = {}
+        qc_metrics: dict[str, Any] = {
+            "tool": self.inputs.tool,  # hdbet or ants
+        }
         warnings_list: list[str] = []
 
         try:

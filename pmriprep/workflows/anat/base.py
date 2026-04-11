@@ -23,13 +23,15 @@ from pmriprep.interfaces.anat import (
 )
 
 
-def _merge_qc_metrics(brain_qc):
+def _merge_qc_metrics(brain_qc, denoising=False):
     """Merge QC metrics from preprocessing steps.
 
     Parameters
     ----------
     brain_qc : dict
         QC metrics from brain extraction.
+    denoising : bool
+        Whether denoising was applied during preprocessing.
 
     Returns
     -------
@@ -41,6 +43,11 @@ def _merge_qc_metrics(brain_qc):
     # Add brain extraction QC
     if brain_qc:
         merged["brain_extraction"] = brain_qc
+
+    # Add preprocessing settings
+    merged["preprocessing"] = {
+        "denoising": denoising,
+    }
 
     return merged
 
@@ -985,12 +992,13 @@ def init_anat_preproc_wf(
     # -------------------------------------------------------------------
     merge_qc = pe.Node(
         niu.Function(
-            input_names=["brain_qc"],
+            input_names=["brain_qc", "denoising"],
             output_names=["qc_metrics"],
             function=_merge_qc_metrics,
         ),
         name="merge_qc",
     )
+    merge_qc.inputs.denoising = config.denoise
 
     workflow.connect([
         (brain_extract, merge_qc, [("qc_metrics", "brain_qc")]),
