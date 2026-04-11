@@ -169,15 +169,12 @@ class TestGraduatedNCandidates:
         """Permissive uses ceil(0.4 * 10) = 4."""
         assert self._level_n("permissive", 10) == 4
 
-    def test_fraction_degraded(self) -> None:
-        """Degraded floors at MIN_AIF_CANDIDATES_ACCEPT = 3."""
-        assert self._level_n("degraded", 10) == MIN_AIF_CANDIDATES_ACCEPT
+    # Note: test_fraction_degraded removed in v0.19.16 (degraded tier removed)
 
     def test_small_n_floors(self) -> None:
-        """n_candidates=5 → relaxed=3, permissive=3, degraded=3."""
+        """n_candidates=5 → relaxed=3, permissive=3 (floor at MIN)."""
         assert self._level_n("relaxed", 5) == 3
         assert self._level_n("permissive", 5) == 3
-        assert self._level_n("degraded", 5) == MIN_AIF_CANDIDATES_ACCEPT
 
     def test_cascade_prefers_stricter_at_equal_count(self) -> None:
         """2 strict stashed, 2 relaxed doesn't replace (not >)."""
@@ -225,9 +222,10 @@ class TestCascadeQualityGate:
             if len(scored) >= MIN_AIF_CANDIDATES_ACCEPT:
                 # Quality gate: check peak ratio before accepting
                 if quality_stash is None:
-                    if (peak_ratio is not None
-                            and (peak_ratio < GAMMA_PEAK_RATIO_CASCADE_MIN
-                                 or peak_ratio > GAMMA_PEAK_RATIO_CASCADE_MAX)):
+                    if (peak_ratio is None
+                            or peak_ratio < GAMMA_PEAK_RATIO_CASCADE_MIN
+                            or peak_ratio > GAMMA_PEAK_RATIO_CASCADE_MAX):
+                        # Bad quality (gamma fit failed or peak ratio out of band)
                         quality_stash = (scored, level_name, peak_ratio)
                         quality_gate_triggered = True
                         continue
@@ -348,4 +346,36 @@ class TestCascadeQualityGate:
         level, cands, broke, triggered = self._run_cascade_with_quality(levels)
         assert level == "atlas_relaxed"
         assert len(cands) == 5
+        assert triggered is True
+
+    def test_gamma_fit_failure_triggers_cascade_continuation(self) -> None:
+        """peak_ratio=None (gamma fit failed) triggers cascade continuation.
+
+        Regression test for v0.19.16 fix: previously, pr=None bypassed the
+        quality gate entirely, accepting garbage AIFs as 'good quality'.
+        """
+        levels = {
+            "atlas_strict": (_make_scored(3), None),  # gamma fit failed
+            "atlas_relaxed": (_make_scored(5), 0.98),  # good ratio
+        }
+        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
+        # Should continue to relaxed due to gamma fit failure at strict
+        assert level == "atlas_relaxed"
+        assert len(cands) == 5
+        assert triggered is True
+
+    def test_gamma_fit_failure_at_all_levels_uses_stashed(self) -> None:
+        """Gamma fit failure at all levels keeps the stashed (stricter) tier.
+
+        When comparing two tiers both with pr=None, keep the stashed one
+        since we can't determine which is better.
+        """
+        levels = {
+            "atlas_strict": (_make_scored(3), None),  # gamma fit failed
+            "atlas_relaxed": (_make_scored(5), None),  # also failed
+        }
+        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
+        # Both failed - keep stashed strict (can't compare when both None)
+        assert level == "atlas_strict"
+        assert len(cands) == 3
         assert triggered is True

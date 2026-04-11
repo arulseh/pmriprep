@@ -141,19 +141,11 @@ class TestAssessDSCCBVQuality:
         assert result.confidence == "low"
         assert result.use_constraint is False
 
-    def test_brain_degraded_downgrades_to_low(self) -> None:
-        """brain_degraded AIF should downgrade to low."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "detection_level": "brain_degraded",
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "low"
+    # Note: test_brain_degraded_downgrades_to_low removed in v0.19.16
+    # because brain_degraded tier was removed from the cascade.
 
     def test_atlas_permissive_downgrades_to_moderate(self) -> None:
-        """atlas_permissive AIF should downgrade to moderate (FWHM up to 25s)."""
+        """atlas_permissive AIF should downgrade to moderate (FWHM up to 18 frames)."""
         aif_qc_data = {
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
             "aif_peak_height": 0.4,

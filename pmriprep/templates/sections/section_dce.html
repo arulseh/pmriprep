@@ -588,7 +588,7 @@
             <div class="metric">
                 <div class="metric-label">AIF Level</div>
                 <div class="metric-value
-                    {%- if cbv_c.detection_level in ['synthetic', 'brain_degraded'] %} poor
+                    {%- if cbv_c.detection_level == 'synthetic' %} poor
                     {%- elif 'permissive' in cbv_c.detection_level|default('') %} warn
                     {%- else %} pass{% endif %}">{{ cbv_c.detection_level }}</div>
             </div>

@@ -325,10 +325,10 @@ def assess_dsc_cbv_quality(
         )
 
     # --- AIF Detection Level ---
-    # A degraded or synthetic AIF produces unreliable CBV regardless of
-    # shape metrics.  atlas_permissive allows FWHM up to 25 s (4-6x wider
-    # than physiological arterial first-pass), so it warrants moderate.
-    _AIF_LEVELS_LOW = {"synthetic", "brain_degraded"}
+    # A synthetic AIF produces unreliable CBV regardless of shape metrics.
+    # Note: brain_degraded removed in v0.19.16 - cascade now falls through
+    # to synthetic when permissive fails.
+    _AIF_LEVELS_LOW = {"synthetic"}
     _AIF_LEVELS_MODERATE = {"brain_permissive", "brain_relaxed", "atlas_permissive"}
 
     detection_level = str(aif_qc_data.get("detection_level", ""))

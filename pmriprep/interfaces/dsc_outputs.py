@@ -719,8 +719,7 @@ class DSCDerivativeWriter(BaseInterface):
             aif_rec = QCRecommendation(QCAction.INCLUDE, f"AIF detected ({detection_level})", 0)
         elif detection_level in ("atlas_permissive", "brain_relaxed", "brain_permissive"):
             aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF detection marginal ({detection_level})", 1)
-        elif detection_level == "brain_degraded":
-            aif_rec = QCRecommendation(QCAction.EXCLUDE, f"AIF detection degraded ({detection_level})", 3)
+        # Note: brain_degraded removed in v0.19.16 - cascade now goes to synthetic
         elif detection_level == "external":
             aif_rec = QCRecommendation(QCAction.REVIEW, "External AIF provided; verify curve quality", 1)
         elif detection_level == "synthetic":

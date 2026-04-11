@@ -59,7 +59,7 @@ _CASCADE_N_CANDIDATES_FRACTION: dict[str, float] = {
     "strict": 1.0,
     "relaxed": 0.6,
     "permissive": 0.4,
-    "degraded": 0.0,  # uses MIN_AIF_CANDIDATES_ACCEPT
+    # Note: "degraded" removed in v0.19.16
 }
 
 
@@ -372,7 +372,7 @@ class AIFDetectionOutputSpec(TraitedSpec):
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values")
     detection_level = traits.Str(
         desc="Detection level: 'atlas_strict', 'atlas_relaxed', 'atlas_permissive', "
-             "'brain_relaxed', 'brain_permissive', 'brain_degraded', 'synthetic', or 'external'"
+             "'brain_relaxed', 'brain_permissive', 'synthetic', or 'external'"
     )
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
     candidate_count = traits.Int(desc="Number of candidate voxels evaluated")
@@ -393,7 +393,7 @@ class AIFDetection(BaseInterface):
     - Tissue TTP cross-validation
     - Cost-function scoring (lower = better) with S0-dominant weighting
     - 3x3x3 ROI averaging with Savitzky-Golay smoothing
-    - Multi-level fallback: atlas strict/relaxed -> brain strict->degraded -> synthetic
+    - Multi-level fallback: atlas strict/relaxed/permissive -> brain relaxed/permissive -> synthetic
     """
 
     input_spec = AIFDetectionInputSpec
@@ -973,7 +973,7 @@ class AIFDetection(BaseInterface):
         metrics : dict
             Output of ``_calculate_candidate_metrics``.
         criteria : str
-            One of 'strict', 'relaxed', 'permissive', 'degraded'.
+            One of 'strict', 'relaxed', 'permissive'.
         median_s0 : float or None
             Median baseline signal for S0 partial-volume rejection.
 
@@ -997,51 +997,46 @@ class AIFDetection(BaseInterface):
 
         # 2. BRR
         brr = metrics.get("baseline_return_ratio", float("nan"))
-        brr_thresh = {"strict": 30, "relaxed": 40, "permissive": 50, "degraded": 70}
-        if not np.isnan(brr) and brr > brr_thresh.get(criteria, 70):
+        brr_thresh = {"strict": 30, "relaxed": 40, "permissive": 50}
+        if not np.isnan(brr) and brr > brr_thresh.get(criteria, 50):
             return float("inf")
 
         # 3. PBR
         pbr = metrics.get("peak_to_baseline_ratio", float("nan"))
-        pbr_thresh = {"strict": 3.0, "relaxed": 2.0, "permissive": 1.5, "degraded": 1.2}
-        if not np.isnan(pbr) and pbr < pbr_thresh.get(criteria, 1.2):
+        pbr_thresh = {"strict": 3.0, "relaxed": 2.0, "permissive": 2.0}
+        if not np.isnan(pbr) and pbr < pbr_thresh.get(criteria, 2.0):
             return float("inf")
 
         # 4. SPR
         spr = metrics.get("secondary_peak_ratio", 0.0)
-        spr_thresh = {"strict": 70, "relaxed": 85, "permissive": 100, "degraded": 150}
-        if spr > spr_thresh.get(criteria, 150):
+        spr_thresh = {"strict": 70, "relaxed": 85, "permissive": 100}
+        if spr > spr_thresh.get(criteria, 100):
             return float("inf")
 
         # 5. PMI
         pmi = metrics.get("post_peak_monotonicity", float("nan"))
-        pmi_thresh = {"strict": 60, "relaxed": 55, "permissive": 40, "degraded": 30}
-        if not np.isnan(pmi) and pmi < pmi_thresh.get(criteria, 30):
+        pmi_thresh = {"strict": 60, "relaxed": 55, "permissive": 40}
+        if not np.isnan(pmi) and pmi < pmi_thresh.get(criteria, 40):
             return float("inf")
 
         # 5b. FWHM max
         fwhm = metrics.get("fwhm", float("nan"))
-        fwhm_max = {"strict": 10.0, "relaxed": 12.0, "permissive": 25.0, "degraded": 40.0}
-        if not np.isnan(fwhm) and fwhm > fwhm_max.get(criteria, 40.0):
+        fwhm_max = {"strict": 10.0, "relaxed": 12.0, "permissive": 18.0}
+        if not np.isnan(fwhm) and fwhm > fwhm_max.get(criteria, 18.0):
             return float("inf")
 
         # 5c. FWHM min — reject sub-TR spikes (not physiological).
         # Arterial first-pass FWHM is typically 4-8 s; anything below
         # ~2 s is noise or intravoxel dephasing artifact.
         dt = metrics.get("dt", 1.5)
-        fwhm_min = {
-            "strict": 3.0,
-            "relaxed": 2.5,
-            "permissive": 2.0,
-            "degraded": max(2.0, 1.5 * dt),
-        }
-        if not np.isnan(fwhm) and fwhm < fwhm_min.get(criteria, 1.5 * dt):
+        fwhm_min = {"strict": 3.0, "relaxed": 2.5, "permissive": 2.0}
+        if not np.isnan(fwhm) and fwhm < fwhm_min.get(criteria, 2.0):
             return float("inf")
 
         # 6. S0 partial volume rejection
         if median_s0 is not None and not np.isnan(metrics.get("s0", float("nan"))):
-            s0_factor = {"strict": 0.40, "relaxed": 0.60, "permissive": 0.80, "degraded": 0.95}
-            s0_threshold = median_s0 * s0_factor.get(criteria, 0.95)
+            s0_factor = {"strict": 0.40, "relaxed": 0.60, "permissive": 0.80}
+            s0_threshold = median_s0 * s0_factor.get(criteria, 0.80)
             if metrics["s0"] > s0_threshold:
                 return float("inf")
 
@@ -1049,28 +1044,27 @@ class AIFDetection(BaseInterface):
         ttp_ranges: dict[str, tuple[float, float]] = {
             "strict": (5.0, 40.0),
             "relaxed": (3.0, 40.0),
-            "permissive": (2.0, 60.0),
-            "degraded": (1.0, 70.0),
+            "permissive": (2.0, 45.0),
         }
-        min_ttp, max_ttp = ttp_ranges.get(criteria, (1.0, 70.0))
+        min_ttp, max_ttp = ttp_ranges.get(criteria, (2.0, 45.0))
         if not (min_ttp <= ttp_after_baseline <= max_ttp):
             return float("inf")
 
         # 8. PH min
         ph = metrics.get("ph", float("nan"))
-        ph_min = {"strict": 25, "relaxed": 15, "permissive": 10, "degraded": 5}
-        if not np.isnan(ph) and ph < ph_min.get(criteria, 5):
+        ph_min = {"strict": 25, "relaxed": 15, "permissive": 12}
+        if not np.isnan(ph) and ph < ph_min.get(criteria, 12):
             return float("inf")
 
         # 9. PSR max
         psr = metrics.get("psr", float("nan"))
-        psr_max = {"strict": 110, "relaxed": 120, "permissive": 130, "degraded": 150}
-        if not np.isnan(psr) and psr > psr_max.get(criteria, 150):
+        psr_max = {"strict": 110, "relaxed": 120, "permissive": 130}
+        if not np.isnan(psr) and psr > psr_max.get(criteria, 130):
             return float("inf")
 
         # 9b. PSR min (signal never recovers → venous/leakage contamination)
-        psr_min = {"strict": 40, "relaxed": 30, "permissive": 20, "degraded": 10}
-        if not np.isnan(psr) and psr < psr_min.get(criteria, 10):
+        psr_min = {"strict": 40, "relaxed": 30, "permissive": 20}
+        if not np.isnan(psr) and psr < psr_min.get(criteria, 20):
             return float("inf")
 
         # --- Continuous scoring ---
@@ -1988,7 +1982,7 @@ class AIFDetection(BaseInterface):
 
         Pipeline mirrors perf-plus ``find_aif`` / ``_find_aif_single_attempt``:
         1. Build attempts list: atlas (strict/relaxed/permissive) then
-           brain (relaxed/permissive/degraded).
+           brain (relaxed/permissive).
         2. Each attempt: prepare mask -> find candidates -> score ->
            post-scoring filters (distance + contralateral).
         3. On success, finalize metrics and break.
@@ -2155,7 +2149,7 @@ class AIFDetection(BaseInterface):
         else:
             # --- GAP 7: Unified attempts loop ---
             # Build full attempts list, then filter by initial_criteria
-            criteria_order = ["strict", "relaxed", "permissive", "degraded"]
+            criteria_order = ["strict", "relaxed", "permissive"]
             try:
                 start_idx = criteria_order.index(initial_criteria)
             except ValueError:
@@ -2169,7 +2163,9 @@ class AIFDetection(BaseInterface):
             has_roi_constraint = atlas_mask is not None
             strict_roi = bool(self.inputs.strict_roi_constraint)
             if not (has_roi_constraint and strict_roi):
-                for crit in ["relaxed", "permissive", "degraded"]:
+                # Note: brain_degraded removed (v0.19.16) - thresholds too loose,
+                # admitted non-arterial curves. Synthetic fallback is more reliable.
+                for crit in ["relaxed", "permissive"]:
                     all_attempts.append((crit, None, f"brain_{crit}"))
 
             # Skip attempts with criteria stricter than initial_criteria
@@ -2236,10 +2232,11 @@ class AIFDetection(BaseInterface):
                         pr = _compute_aif_peak_ratio(
                             temp_aif, aif_baseline_frames, tr
                         )
-                        if (pr is not None
-                                and (pr < GAMMA_PEAK_RATIO_CASCADE_MIN
-                                     or pr > GAMMA_PEAK_RATIO_CASCADE_MAX)):
-                            # Bad quality — stash and continue to next tier
+                        if (pr is None
+                                or pr < GAMMA_PEAK_RATIO_CASCADE_MIN
+                                or pr > GAMMA_PEAK_RATIO_CASCADE_MAX):
+                            # Bad quality (gamma fit failed or peak ratio out of band)
+                            # — stash and continue to next tier
                             quality_stash = (
                                 scored, n_avail, level_name, f_meta, pr,
                             )
@@ -2416,13 +2413,8 @@ class AIFDetection(BaseInterface):
                 "TTP and Tmax are valid (timing independent of AIF amplitude)",
                 "Manual AIF selection recommended for clinical use",
             ]
-        elif "degraded" in detection_level:
-            qc_metrics["degraded_aif_warnings"] = [
-                "AIF quality is DEGRADED - quantification unreliable",
-                "Relative CBV may have 30-50% error vs optimal AIF",
-                "Use TTP/Tmax for timing analysis (unaffected by AIF quality)",
-                "Consider manual AIF selection for publication-quality results",
-            ]
+        # Note: brain_degraded tier removed in v0.19.16 - cascade now goes
+        # directly from brain_permissive to synthetic AIF.
 
         # Gamma-variate fitting
         gamma_fit_applied = False
