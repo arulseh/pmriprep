@@ -28,8 +28,8 @@ class DSCConfig:
     dose : float
         Contrast agent dose multiplier (0.5 = half, 1.0 = full, 2.0 = double).
     agent_standard_dose : float
-        Agent's standard recommended dose in mmol Gd/kg. Default 0.1 (standard
-        GBCA). Use 0.05 for Vueway (gadopiclenol), 0.04 for gadoquatrane.
+        Agent's recommended dose in mmol Gd/kg. Default 0.1 (standard).
+        Use 0.05 for gadopiclenol, 0.04 for gadoquatrane.
     method : str
         Deconvolution method: sSVD, cSVD, oSVD, tikhonov, vascular, or cpi.
     bayesian : str
@@ -91,7 +91,7 @@ class DSCConfig:
     # Preload settings
     preload_present: bool = False
     dose: float = 1.0
-    agent_standard_dose: float = 0.1  # mmol Gd/kg (0.1=GBCA, 0.05=Vueway, 0.04=gadoquatrane)
+    agent_standard_dose: float = 0.1  # mmol Gd/kg (0.1=standard, 0.05=gadopiclenol, 0.04=gadoquatrane)
 
     # Deconvolution settings
     method: str = "oSVD"

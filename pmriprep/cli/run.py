@@ -263,8 +263,8 @@ Examples:
         type=float,
         default=None,
         metavar="DOSE",
-        help="Agent's standard recommended dose in mmol Gd/kg. "
-        "Default 0.1 (standard GBCA). Use 0.05 for Vueway, 0.04 for gadoquatrane.",
+        help="Agent's recommended dose in mmol Gd/kg. "
+        "Default 0.1 (standard). Use 0.05 for gadopiclenol, 0.04 for gadoquatrane.",
     )
     dsc_group.add_argument(
         "--dsc-aif-method",

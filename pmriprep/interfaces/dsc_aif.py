@@ -361,8 +361,8 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
     agent_standard_dose = traits.Float(
         0.1,
         usedefault=True,
-        desc="Agent's standard recommended dose in mmol Gd/kg "
-             "(0.1=standard GBCA, 0.05=Vueway, 0.04=gadoquatrane)",
+        desc="Agent's recommended dose in mmol Gd/kg "
+             "(0.1=standard, 0.05=gadopiclenol, 0.04=gadoquatrane)",
     )
 
     # Output file

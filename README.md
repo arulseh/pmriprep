@@ -136,6 +136,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dsc-bayesian {vi,map}` | Bayesian inference for parametric methods (default: vi) |
 | `--dsc-preload` | Indicate contrast preload is present |
 | `--dsc-dose DOSE` | Contrast agent dose: named preset (`half`, `full`, `double`) or float multiplier (e.g. `0.75`). Default: `full` (1.0) |
+| `--dsc-agent-standard-dose DOSE` | Agent's recommended dose in mmol Gd/kg. Default: `0.1` (standard GBCA). Use `0.05` for gadopiclenol, `0.04` for gadoquatrane |
 | `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
 | `--dsc-aif-file FILE` | External AIF curve file (ΔR2* in s⁻¹); bypasses detection |
 
@@ -206,6 +207,7 @@ dce:
 |-----------|------|---------|-------------|
 | `preload_present` | bool | `false` | Contrast preload present |
 | `dose` | float | `1.0` | Dose multiplier: named preset (`half`=0.5, `full`=1.0, `double`=2.0) or any positive float |
+| `agent_standard_dose` | float | `0.1` | Agent's recommended dose in mmol Gd/kg (0.1=standard, 0.05=gadopiclenol, 0.04=gadoquatrane) |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
 | `bayesian` | str | `"vi"` | Bayesian mode: `vi`, `map` (parametric methods only; SVD ignores) |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
