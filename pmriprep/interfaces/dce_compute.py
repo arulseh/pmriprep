@@ -796,6 +796,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="DSC preload + K2 QC metrics dict from preload_correct node",
     )
+    dsc_preprocessing_stats = traits.Dict(
+        mandatory=False,
+        desc="DSC preprocessing QC stats (fraction_cnr_gt_4, mean_cnr)",
+    )
     constraint_mode = traits.Enum(
         "auto",
         "hard",
@@ -1388,10 +1392,21 @@ class ComputeDCEMaps(BaseInterface):
             try:
                 # Get AIF QC dict if available
                 aif_qc_data = (
-                    self.inputs.dsc_aif_qc
+                    dict(self.inputs.dsc_aif_qc)
                     if isdefined(self.inputs.dsc_aif_qc)
                     else {}
                 )
+
+                # Inject CNR coverage from preprocessing stats
+                # Enables assess_dsc_cbv_quality() to use actual computed CNR
+                if isdefined(self.inputs.dsc_preprocessing_stats):
+                    prep_stats = self.inputs.dsc_preprocessing_stats
+                    if prep_stats and "fraction_cnr_gt_4" in prep_stats:
+                        aif_qc_data["cnr_whole_brain"] = {
+                            "fraction_cnr_gt_4": prep_stats["fraction_cnr_gt_4"],
+                            "mean_cnr": prep_stats.get("mean_cnr"),
+                        }
+
                 preload_qc = (
                     dict(self.inputs.dsc_preload_qc)
                     if isdefined(self.inputs.dsc_preload_qc) else {}

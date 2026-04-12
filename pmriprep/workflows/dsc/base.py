@@ -1630,6 +1630,7 @@ def init_dsc_preproc_wf(
                 # QC metrics
                 "qc_metrics",
                 "preload_qc",
+                "preprocessing_stats",
                 # Masks in DSC space
                 "brain_mask_dsc",
                 "nawm_mask_dsc",
@@ -2900,7 +2901,10 @@ def init_dsc_preproc_wf(
         # Motion QC plot
         (motion_qc_plot, outputnode, [("plot_file", "motion_qc_plot")]),
         # DSC QC plots
-        (dsc_preproc_qc, outputnode, [("plot_file", "dsc_preprocessing_qc_plot")]),
+        (dsc_preproc_qc, outputnode, [
+            ("plot_file", "dsc_preprocessing_qc_plot"),
+            ("stats", "preprocessing_stats"),
+        ]),
         (dsc_param_maps_qc, outputnode, [("plot_file", "dsc_param_maps_qc_plot")]),
         (dsc_leakage_qc, outputnode, [("plot_file", "dsc_leakage_qc_plot")]),
         # Brain mask filmstrip

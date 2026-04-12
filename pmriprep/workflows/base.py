@@ -676,7 +676,7 @@ def _find_previous_dsc_outputs(
         session_id: BIDS session ID (without 'ses-' prefix), or None.
 
     Returns:
-        Dict with keys: rel_cbv_map, dsc_to_t1w_xfm, aif_qc.
+        Dict with keys: rel_cbv_map, dsc_to_t1w_xfm, aif_qc, preload_qc, preprocessing_stats.
         Values are file paths (str) or None if not found.
     """
     outputs: dict[str, Optional[str]] = {
@@ -684,6 +684,7 @@ def _find_previous_dsc_outputs(
         "dsc_to_t1w_xfm": None,
         "aif_qc": None,
         "preload_qc": None,
+        "preprocessing_stats": None,
     }
 
     ses_label = f"ses-{session_id}" if session_id else ""
@@ -720,6 +721,8 @@ def _find_previous_dsc_outputs(
                 outputs["aif_qc"] = qc_data["aif"]
             if "preload" in qc_data:
                 outputs["preload_qc"] = qc_data["preload"]
+            if "preprocessing" in qc_data:
+                outputs["preprocessing_stats"] = qc_data["preprocessing"]
         except Exception:
             pass
 
@@ -2463,6 +2466,8 @@ def init_pmriprep_wf(
                         # AIF QC is a JSON file, no spatial resampling needed
                         ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc"),
                         ("outputnode.preload_qc", "pk_modeling.dsc_preload_qc"),
+                        # CNR coverage for CBV quality assessment
+                        ("outputnode.preprocessing_stats", "pk_modeling.dsc_preprocessing_stats"),
                     ]),
                 ])
 
@@ -2497,6 +2502,8 @@ def init_pmriprep_wf(
                     dce_wf.inputs.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
                 if prev_dsc.get("preload_qc"):
                     dce_wf.inputs.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
+                if prev_dsc.get("preprocessing_stats"):
+                    dce_wf.inputs.pk_modeling.dsc_preprocessing_stats = prev_dsc["preprocessing_stats"]
                 if not prev_dsc["aif_qc"]:
                     _log.warning(
                         "skip-dsc: AIF QC not found in previous DSC outputs; "

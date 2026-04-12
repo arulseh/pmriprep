@@ -8,6 +8,9 @@ import pytest
 from pmriprep.utils.dsc_cbv_constraint import (
     CBVQualityAssessment,
     CNR_COVERAGE_HIGH,
+    CNR_COVERAGE_MODERATE,
+    CNR_COVERAGE_SKIP,
+    CNR_MEAN_MINIMUM,
     ConstraintConfig,
     ConstraintMode,
     VP_MAX_PHYSIOLOGICAL,
@@ -274,6 +277,28 @@ class TestAssessDSCCBVQuality:
         assert result.confidence == "moderate"
         assert any("peak ratio" in r.lower() for r in result.reasons)
 
+    def test_mean_cnr_below_minimum_downgrades_to_low(self) -> None:
+        """Mean CNR below Rose criterion (3.0) triggers low confidence."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.95, "mean_cnr": 2.5},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "low"
+        assert any("inadequate contrast" in r for r in result.reasons)
+
+    def test_cnr_coverage_below_skip_downgrades_to_low(self) -> None:
+        """CNR coverage below 0.70 triggers low confidence (>30% unreliable)."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.65, "mean_cnr": 25.0},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+        }
+        result = assess_dsc_cbv_quality(aif_qc_data)
+        assert result.confidence == "low"
+        assert any(">30% unreliable" in r for r in result.reasons)
+
 
 # =============================================================================
 # Constraint Mode Determination
@@ -342,7 +367,8 @@ class TestNormalizeAifQcKeys:
         assert result["aif_peak_height"] == pytest.approx(0.946, rel=1e-6)
         assert result["baseline_return_ratio"] == pytest.approx(0.0717, rel=1e-6)
         assert "cnr_whole_brain" in result
-        assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == CNR_COVERAGE_HIGH
+        # Default is now MODERATE (conservative) when CNR is not wired
+        assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == CNR_COVERAGE_MODERATE
 
     def test_already_normalized_passthrough(self) -> None:
         """Already-normalized data passes through unchanged."""
@@ -358,13 +384,13 @@ class TestNormalizeAifQcKeys:
         assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == 0.995
 
     def test_missing_keys_safe_defaults(self) -> None:
-        """Missing keys get safe defaults that don't cause false downgrades."""
+        """Missing keys get conservative defaults (MODERATE, not HIGH)."""
         data = {}
         result = _normalize_aif_qc_keys(data)
 
-        # CNR should get high default
+        # CNR defaults to MODERATE (conservative) when not wired from preprocessing
         assert "cnr_whole_brain" in result
-        assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == CNR_COVERAGE_HIGH
+        assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == CNR_COVERAGE_MODERATE
         # Other keys should remain absent (handled by assess_dsc_cbv_quality defaults)
         assert "aif_peak_height" not in result
         assert "baseline_return_ratio" not in result
@@ -377,10 +403,13 @@ class TestNormalizeAifQcKeys:
         assert result["aif_peak_height"] == pytest.approx(0.85, rel=1e-6)
         assert result["baseline_return_ratio"] == pytest.approx(0.10, rel=1e-6)
 
-    def test_sub0011_actual_data_high_confidence(self) -> None:
-        """Sub-0011's actual DSC AIF QC data produces high confidence."""
-        # Actual values from sub-0011 DSC AIF detection
-        aif_qc_data = {"best_psr": 94.6, "best_brr": 7.17}
+    def test_good_aif_with_cnr_high_confidence(self) -> None:
+        """Good AIF metrics with CNR coverage produces high confidence."""
+        aif_qc_data = {
+            "best_psr": 94.6,
+            "best_brr": 7.17,
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.95, "mean_cnr": 25.0},
+        }
         result = assess_dsc_cbv_quality(aif_qc_data)
 
         assert result.confidence == "high"

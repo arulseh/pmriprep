@@ -20,6 +20,7 @@ References:
 """
 
 import json
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -27,6 +28,8 @@ from typing import Any, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
+
+logger = logging.getLogger(__name__)
 
 from pmriprep.utils.dce_constants import (
     HEMATOCRIT_ARTERIAL,
@@ -37,6 +40,7 @@ from pmriprep.utils.dsc_aif import (
     GAMMA_PEAK_RATIO_MIN,
     GAMMA_PEAK_RATIO_MAX,
 )
+from pmriprep.utils.dsc_constants import QC_MEAN_CNR_MINIMUM
 
 
 # =============================================================================
@@ -47,11 +51,20 @@ from pmriprep.utils.dsc_aif import (
 #: Maximum physiological vp value (brain tissue)
 VP_MAX_PHYSIOLOGICAL: float = 0.2
 
-#: Minimum CNR coverage fraction for high-quality DSC
-CNR_COVERAGE_HIGH: float = 0.99
+#: Minimum CNR coverage fraction for high-quality DSC (relaxed from 0.99)
+#: Allow 5% low-CNR voxels due to sinuses, edge effects
+CNR_COVERAGE_HIGH: float = 0.95
 
 #: Minimum CNR coverage fraction for moderate-quality DSC
 CNR_COVERAGE_MODERATE: float = 0.84
+
+#: Minimum CNR coverage fraction before skipping constraint
+#: Below this, >30% of brain has unreliable CBV
+CNR_COVERAGE_SKIP: float = 0.70
+
+#: Minimum mean CNR for CBV constraint (Rose criterion)
+#: Imported from dsc_constants for consistency
+CNR_MEAN_MINIMUM: float = QC_MEAN_CNR_MINIMUM
 
 #: Minimum AIF peak height fraction for acceptable quality
 AIF_PEAK_HEIGHT_MIN: float = 0.15
@@ -201,8 +214,19 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(auto_metrics, dict) and "peak_ratio" in auto_metrics:
             data["gamma_peak_ratio"] = auto_metrics["peak_ratio"]
 
-    # Already in expected format
-    if "aif_peak_height" in data or "cnr_whole_brain" in data:
+    # Helper to set CNR default with warning (avoids duplication)
+    def _set_cnr_default(d: dict[str, Any]) -> None:
+        if "cnr_whole_brain" not in d:
+            logger.warning(
+                "CNR coverage not in AIF QC data; defaulting to %.2f (moderate). "
+                "CBV constraint quality assessment may be optimistic.",
+                CNR_COVERAGE_MODERATE,
+            )
+            d["cnr_whole_brain"] = {"fraction_cnr_gt_4": CNR_COVERAGE_MODERATE}
+
+    # Already in expected format (skip PSR/BRR conversion if aif_peak_height present)
+    if "aif_peak_height" in data:
+        _set_cnr_default(data)
         return data
 
     # --- AIF peak height from PSR ---
@@ -220,12 +244,8 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
     if "best_brr" in data and "baseline_return_ratio" not in data:
         data["baseline_return_ratio"] = data["best_brr"] / 100.0
 
-    # --- CNR coverage: skip if not available ---
-    # CNR coverage comes from preprocessing, not AIF detection.
-    # Don't penalize when it's simply not in the AIF QC dict.
-    # Set to high threshold to avoid false downgrades.
-    if "cnr_whole_brain" not in data:
-        data["cnr_whole_brain"] = {"fraction_cnr_gt_4": CNR_COVERAGE_HIGH}
+    # --- CNR coverage: default to moderate if not available ---
+    _set_cnr_default(data)
 
     return data
 
@@ -305,15 +325,28 @@ def assess_dsc_cbv_quality(
     result = CBVQualityAssessment()
     confidence = "high"
 
-    # --- CNR Coverage ---
+    # --- CNR Coverage and Mean CNR ---
     cnr_info = aif_qc_data.get("cnr_whole_brain", {})
     if isinstance(cnr_info, dict):
         cnr_coverage = cnr_info.get("fraction_cnr_gt_4", 0.0)
+        mean_cnr = cnr_info.get("mean_cnr")
     else:
         cnr_coverage = 0.0
+        mean_cnr = None
     result.cnr_coverage = cnr_coverage
 
-    if cnr_coverage < CNR_COVERAGE_MODERATE:
+    # Mean CNR failsafe: catch total acquisition failures (Rose criterion)
+    if mean_cnr is not None and mean_cnr < CNR_MEAN_MINIMUM:
+        confidence = _downgrade_confidence(confidence, "low")
+        result.reasons.append(
+            f"Mean CNR {mean_cnr:.1f} < {CNR_MEAN_MINIMUM} (inadequate contrast)"
+        )
+    elif cnr_coverage < CNR_COVERAGE_SKIP:
+        confidence = _downgrade_confidence(confidence, "low")
+        result.reasons.append(
+            f"CNR coverage {cnr_coverage:.2f} < {CNR_COVERAGE_SKIP} (>30% unreliable)"
+        )
+    elif cnr_coverage < CNR_COVERAGE_MODERATE:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
             f"CNR coverage {cnr_coverage:.2f} < {CNR_COVERAGE_MODERATE}"
