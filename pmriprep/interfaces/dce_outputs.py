@@ -933,7 +933,7 @@ class DCEDerivativeWriter(BaseInterface):
             elif motion_status == QCStatus.WARN:
                 motion_rec = QCRecommendation(QCAction.REVIEW, f"Motion marginal {detail}", 1)
             elif motion_status == QCStatus.POOR:
-                motion_rec = QCRecommendation(QCAction.EXCLUDE, f"Excessive motion {detail}", 3)
+                motion_rec = QCRecommendation(QCAction.REVIEW, f"Excessive motion {detail}", 2)
             else:
                 motion_rec = None
             if motion_rec is not None:
