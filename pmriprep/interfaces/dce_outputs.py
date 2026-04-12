@@ -939,12 +939,14 @@ class DCEDerivativeWriter(BaseInterface):
             if motion_rec is not None:
                 recommendations.append(motion_rec)
 
-        # Evaluate signal quality (peak enhancement, baseline tSNR)
+        # Evaluate signal quality (peak enhancement, baseline tSNR, B1+ bias)
         from pmriprep.utils.dce_constants import (
-            QC_PEAK_ENHANCEMENT_MIN,
-            QC_PEAK_ENHANCEMENT_WARN,
+            QC_B1_MEAN_HIGH,
+            QC_B1_MEAN_LOW,
             QC_DCE_BASELINE_TSNR_MIN,
             QC_DCE_BASELINE_TSNR_WARN,
+            QC_PEAK_ENHANCEMENT_MIN,
+            QC_PEAK_ENHANCEMENT_WARN,
         )
 
         peak_enh = preprocessing_qc.get("peak_enh_pct")
@@ -993,6 +995,18 @@ class DCEDerivativeWriter(BaseInterface):
                     1,
                 )
                 recommendations.append(tsnr_rec)
+
+        # Evaluate B1+ bias if available
+        b1_qc = qc_metrics.get("b1_mapping", {})
+        mean_b1 = b1_qc.get("mean_b1")
+        if mean_b1 is not None:
+            if mean_b1 < QC_B1_MEAN_LOW or mean_b1 > QC_B1_MEAN_HIGH:
+                b1_rec = QCRecommendation(
+                    QCAction.REVIEW,
+                    f"B1+ bias outside expected range (mean={mean_b1:.2f}, expected {QC_B1_MEAN_LOW}-{QC_B1_MEAN_HIGH})",
+                    1,
+                )
+                recommendations.append(b1_rec)
 
         # Evaluate DSC-DCE cross-validation if available
         xval = qc_metrics.get("dsc_dce_validation", {})

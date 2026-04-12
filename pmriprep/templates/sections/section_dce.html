@@ -163,7 +163,9 @@
             {% if dce.qc_metrics.b1_mapping.mean_b1 is defined %}
             <div class="metric">
                 <div class="metric-label">Mean B1+</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.b1_mapping.mean_b1) }}</div>
+                <div class="metric-value
+                    {%- if dce.qc_metrics.b1_mapping.mean_b1 >= 0.7 and dce.qc_metrics.b1_mapping.mean_b1 <= 1.3 %} pass
+                    {%- else %} warn{% endif %}">{{ "%.2f"|format(dce.qc_metrics.b1_mapping.mean_b1) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.b1_mapping.median_b1 is defined %}

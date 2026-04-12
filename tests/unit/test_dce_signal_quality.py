@@ -7,6 +7,8 @@ recommendation system (v0.22.0).
 import pytest
 
 from pmriprep.utils.dce_constants import (
+    QC_B1_MEAN_HIGH,
+    QC_B1_MEAN_LOW,
     QC_DCE_BASELINE_TSNR_MIN,
     QC_DCE_BASELINE_TSNR_WARN,
     QC_PEAK_ENHANCEMENT_MIN,
@@ -27,6 +29,11 @@ class TestDCESignalQualityConstants:
         """Baseline tSNR thresholds match physics-validated values."""
         assert QC_DCE_BASELINE_TSNR_MIN == 3.0
         assert QC_DCE_BASELINE_TSNR_WARN == 8.0
+
+    def test_b1_bias_thresholds(self) -> None:
+        """B1+ bias thresholds match 1.5T extreme values."""
+        assert QC_B1_MEAN_LOW == 0.7
+        assert QC_B1_MEAN_HIGH == 1.3
 
 
 class TestPeakEnhancementGating:
@@ -216,3 +223,96 @@ class TestCombinedGating:
         # NaN should not trigger EXCLUDE or REVIEW for tSNR
         rec = result["recommendation"]
         assert rec["action"] == QCAction.INCLUDE
+
+
+class TestB1BiasGating:
+    """Tests for B1+ bias QC gating."""
+
+    @staticmethod
+    def _build_qc_metrics(mean_b1: float | None) -> dict:
+        """Build minimal QC metrics dict for testing."""
+        return {
+            "preprocessing": {},
+            "aif_detection": {},
+            "pk_modeling": {},
+            "b1_mapping": {
+                "mean_b1": mean_b1,
+            },
+        }
+
+    def test_b1_low_triggers_review(self) -> None:
+        """Mean B1+ < 0.7 triggers REVIEW."""
+        from pmriprep.interfaces.dce_outputs import DCEDerivativeWriter
+
+        qc = self._build_qc_metrics(mean_b1=0.65)
+        result = DCEDerivativeWriter._add_qc_recommendation(qc)
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.REVIEW
+        assert "B1+" in rec["reason"]
+
+    def test_b1_high_triggers_review(self) -> None:
+        """Mean B1+ > 1.3 triggers REVIEW."""
+        from pmriprep.interfaces.dce_outputs import DCEDerivativeWriter
+
+        qc = self._build_qc_metrics(mean_b1=1.4)
+        result = DCEDerivativeWriter._add_qc_recommendation(qc)
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.REVIEW
+        assert "B1+" in rec["reason"]
+
+    def test_b1_normal_no_gating(self) -> None:
+        """Mean B1+ within [0.7, 1.3] does not trigger gating."""
+        from pmriprep.interfaces.dce_outputs import DCEDerivativeWriter
+
+        qc = self._build_qc_metrics(mean_b1=1.0)
+        result = DCEDerivativeWriter._add_qc_recommendation(qc)
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.INCLUDE
+
+    def test_b1_at_boundary_low_no_gating(self) -> None:
+        """Mean B1+ exactly at 0.7 does not trigger gating."""
+        from pmriprep.interfaces.dce_outputs import DCEDerivativeWriter
+
+        qc = self._build_qc_metrics(mean_b1=0.7)
+        result = DCEDerivativeWriter._add_qc_recommendation(qc)
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.INCLUDE
+
+    def test_b1_at_boundary_high_no_gating(self) -> None:
+        """Mean B1+ exactly at 1.3 does not trigger gating."""
+        from pmriprep.interfaces.dce_outputs import DCEDerivativeWriter
+
+        qc = self._build_qc_metrics(mean_b1=1.3)
+        result = DCEDerivativeWriter._add_qc_recommendation(qc)
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.INCLUDE
+
+    def test_b1_missing_no_crash(self) -> None:
+        """Missing B1+ metrics does not crash."""
+        from pmriprep.interfaces.dce_outputs import DCEDerivativeWriter
+
+        qc = self._build_qc_metrics(mean_b1=None)
+        result = DCEDerivativeWriter._add_qc_recommendation(qc)
+
+        assert "recommendation" in result
+        assert result["recommendation"]["action"] == QCAction.INCLUDE
+
+    def test_b1_mapping_absent_no_crash(self) -> None:
+        """Entirely missing b1_mapping section does not crash."""
+        from pmriprep.interfaces.dce_outputs import DCEDerivativeWriter
+
+        qc = {
+            "preprocessing": {},
+            "aif_detection": {},
+            "pk_modeling": {},
+            # b1_mapping key absent entirely
+        }
+        result = DCEDerivativeWriter._add_qc_recommendation(qc)
+
+        assert "recommendation" in result
+        assert result["recommendation"]["action"] == QCAction.INCLUDE

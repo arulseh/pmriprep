@@ -728,6 +728,13 @@ QC_DCE_BASELINE_TSNR_MIN: Final[float] = 3.0
 #: Tofts JMRI 2010: Ktrans CV ~20% at tSNR=8
 QC_DCE_BASELINE_TSNR_WARN: Final[float] = 8.0
 
+#: B1+ mean acceptable range for QC gating
+#: Values outside this range trigger REVIEW (not EXCLUDE — B1 bias is correctable)
+#: Uses 1.5T extreme thresholds as conservative bound across field strengths
+#: Ref: B1_THRESHOLDS_BY_FIELD extreme_low/extreme_high at 1.5T
+QC_B1_MEAN_LOW: Final[float] = 0.7
+QC_B1_MEAN_HIGH: Final[float] = 1.3
+
 #: Strict arterial FWHM upper bound in seconds.
 AIF_FWHM_MAX_STRICT_SECONDS: Final[float] = 25.0
 
