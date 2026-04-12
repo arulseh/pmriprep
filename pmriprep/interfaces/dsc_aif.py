@@ -353,6 +353,17 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Repetition time in seconds (0 = auto-detect from NIfTI header)",
     )
+    dose = traits.Float(
+        1.0,
+        usedefault=True,
+        desc="Contrast agent dose multiplier (0.5=half, 1.0=full, 2.0=double)",
+    )
+    agent_standard_dose = traits.Float(
+        0.1,
+        usedefault=True,
+        desc="Agent's standard recommended dose in mmol Gd/kg "
+             "(0.1=standard GBCA, 0.05=Vueway, 0.04=gadoquatrane)",
+    )
 
     # Output file
     out_aif_curve = File(
@@ -1066,6 +1077,32 @@ class AIFDetection(BaseInterface):
         ph_min = {"strict": 25, "relaxed": 15, "permissive": 12}
         if not np.isnan(ph) and ph < ph_min.get(criteria, 12):
             return float("inf")
+
+        # 8b. Peak concentration bounds — dose-scaled artifact rejection
+        # Calibrated from 20+ subjects: valid AIFs have peak_conc 5-50 s^-1 at
+        # effective_dose=1.0 (standard GBCA full). Artifact example: 486 s^-1.
+        peak_conc = metrics.get("peak_conc", float("nan"))
+        if not np.isnan(peak_conc):
+            BASE_PEAK_FLOOR = 5.0  # s^-1 (deltaR2* units)
+            BASE_PEAK_CEILING = 120.0  # s^-1 (raised to avoid false positive at 27.92)
+
+            # Compute effective dose (Gd-normalized, same formula as DCE)
+            dose_val = float(self.inputs.dose) if isdefined(self.inputs.dose) else 1.0
+            agent_std = (
+                float(self.inputs.agent_standard_dose)
+                if isdefined(self.inputs.agent_standard_dose)
+                else 0.1
+            )
+            effective_dose = (agent_std * dose_val) / 0.1
+
+            # Clamp to prevent pathological thresholds
+            effective_dose = np.clip(effective_dose, 0.2, 3.0)
+
+            peak_floor = BASE_PEAK_FLOOR * effective_dose
+            peak_ceiling = BASE_PEAK_CEILING * effective_dose
+
+            if peak_conc < peak_floor or peak_conc > peak_ceiling:
+                return float("inf")
 
         # 9. PSR max
         psr = metrics.get("psr", float("nan"))

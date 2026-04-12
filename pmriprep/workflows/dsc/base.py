@@ -1791,6 +1791,8 @@ def init_dsc_preproc_wf(
             gamma_fit=config.gamma_fit,
             disable_fallback=config.disable_aif_fallback,
             baseline_frames=config.pre_bolus,
+            dose=config.dose,
+            agent_standard_dose=config.agent_standard_dose,
         ),
         name="aif_detect",
     )

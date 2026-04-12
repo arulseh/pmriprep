@@ -27,6 +27,9 @@ class DSCConfig:
         Whether contrast preload is present (e.g., prior DCE injection).
     dose : float
         Contrast agent dose multiplier (0.5 = half, 1.0 = full, 2.0 = double).
+    agent_standard_dose : float
+        Agent's standard recommended dose in mmol Gd/kg. Default 0.1 (standard
+        GBCA). Use 0.05 for Vueway (gadopiclenol), 0.04 for gadoquatrane.
     method : str
         Deconvolution method: sSVD, cSVD, oSVD, tikhonov, vascular, or cpi.
     bayesian : str
@@ -88,6 +91,7 @@ class DSCConfig:
     # Preload settings
     preload_present: bool = False
     dose: float = 1.0
+    agent_standard_dose: float = 0.1  # mmol Gd/kg (0.1=GBCA, 0.05=Vueway, 0.04=gadoquatrane)
 
     # Deconvolution settings
     method: str = "oSVD"
@@ -177,6 +181,25 @@ class DSCConfig:
                 "DSC dose=%.2f is outside typical range [0.2, 3.0]. "
                 "Values <0.2 may have insufficient SNR; >3.0 risk signal saturation.",
                 self.dose,
+            )
+
+        # Coerce agent_standard_dose: validate range
+        try:
+            self.agent_standard_dose = float(self.agent_standard_dose)
+        except (ValueError, TypeError) as e:
+            raise TypeError(
+                f"agent_standard_dose must be a number, got {self.agent_standard_dose!r}"
+            ) from e
+        if not math.isfinite(self.agent_standard_dose) or self.agent_standard_dose <= 0:
+            raise ValueError(
+                f"agent_standard_dose must be a finite positive number, "
+                f"got {self.agent_standard_dose}"
+            )
+        if self.agent_standard_dose < 0.01 or self.agent_standard_dose > 0.2:
+            logger.warning(
+                "agent_standard_dose=%.3f outside typical range [0.01, 0.2]. "
+                "Use 0.1 for standard GBCA, 0.05 for Vueway, 0.04 for gadoquatrane.",
+                self.agent_standard_dose,
             )
 
         # Coerce float fields (these have non-None defaults)
