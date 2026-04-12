@@ -112,13 +112,25 @@
             {% if dce.qc_metrics.preprocessing.peak_enh_pct is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Enhancement</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.preprocessing.peak_enh_pct) }}%</div>
+                <div class="metric-value
+                    {%- if dce.qc_metrics.preprocessing.peak_enh_pct >= 20 %} pass
+                    {%- elif dce.qc_metrics.preprocessing.peak_enh_pct >= 5 %} warn
+                    {%- else %} poor{% endif %}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.peak_enh_pct) }}%</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.preprocessing.mean_tsnr is defined %}
             <div class="metric">
                 <div class="metric-label">Mean tSNR</div>
                 <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.preprocessing.mean_tsnr) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.baseline_tsnr is defined %}
+            <div class="metric">
+                <div class="metric-label">Baseline tSNR</div>
+                <div class="metric-value
+                    {%- if dce.qc_metrics.preprocessing.baseline_tsnr >= 8 %} pass
+                    {%- elif dce.qc_metrics.preprocessing.baseline_tsnr >= 3 %} warn
+                    {%- else %} poor{% endif %}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
             </div>
             {% endif %}
         </div>
