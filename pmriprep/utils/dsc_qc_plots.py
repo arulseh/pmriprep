@@ -18,6 +18,8 @@ from typing import Any, Optional
 import numpy as np
 import numpy.typing as npt
 
+from pmriprep.utils.dsc_constants import QC_CNR_THRESHOLD
+
 logger = logging.getLogger("nipype.interface")
 
 
@@ -114,7 +116,7 @@ def generate_dsc_preprocessing_qc_plot(
 
     Returns:
         Tuple of (path to saved QC plot PNG, stats dict with
-        ``peak_drop_pct``, ``mean_tsnr``, ``mean_cnr``).
+        ``peak_drop_pct``, ``mean_tsnr``, ``mean_cnr``, ``fraction_cnr_gt_4``).
     """
     import matplotlib.pyplot as plt
     from matplotlib.gridspec import GridSpec
@@ -229,6 +231,12 @@ def generate_dsc_preprocessing_qc_plot(
         cnr = np.where(baseline_std_3d > 1e-6, peak_drop_3d / baseline_std_3d, 0.0)
     cnr[~mask_bool] = np.nan
     mean_cnr = float(np.nanmean(cnr[mask_bool]))
+    # CNR coverage metric: fraction of brain voxels with CNR > threshold (Rose criterion)
+    n_brain_voxels = np.sum(mask_bool)
+    if n_brain_voxels > 0:
+        fraction_cnr_gt_4 = float(np.sum(cnr[mask_bool] > QC_CNR_THRESHOLD) / n_brain_voxels)
+    else:
+        fraction_cnr_gt_4 = 0.0
     cnr_slice = get_radiological_slice(cnr, axis=2)
     cnr_vmax = float(np.nanpercentile(cnr[mask_bool], 95)) if np.any(mask_bool) else 50.0
     im = ax.imshow(cnr_slice, cmap="hot", vmin=0, vmax=cnr_vmax, aspect="equal")
@@ -247,6 +255,7 @@ def generate_dsc_preprocessing_qc_plot(
         "peak_drop_pct": round(peak_drop_pct, 1),
         "mean_tsnr": round(mean_tsnr, 1),
         "mean_cnr": round(mean_cnr, 1),
+        "fraction_cnr_gt_4": round(fraction_cnr_gt_4, 3),
         "tr_ms": round(volume_tr_s * 1000, 2),
         "te_ms": round(te_s * 1000, 2) if te_s is not None else None,
         "n_volumes": n_volumes,

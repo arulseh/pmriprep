@@ -713,6 +713,7 @@ class DSCDerivativeWriter(BaseInterface):
         Returns:
             Enhanced QC metrics with 'recommendation' field added.
         """
+        from pmriprep.utils.dsc_constants import QC_MEAN_CNR_MINIMUM
         from pmriprep.utils.qc_standards import (
             QCAction,
             QCRecommendation,
@@ -768,10 +769,20 @@ class DSCDerivativeWriter(BaseInterface):
             if motion_rec is not None:
                 recommendations.append(motion_rec)
 
-        # Evaluate CNR if available
-        cnr_qc = qc_metrics.get("cnr_whole_brain", {})
-        cnr_fraction = cnr_qc.get("fraction_cnr_gt_4")
-        if cnr_fraction is not None:
+        # Evaluate CNR if available (from preprocessing stats)
+        preprocessing = qc_metrics.get("preprocessing", {})
+        cnr_fraction = preprocessing.get("fraction_cnr_gt_4")
+        mean_cnr = preprocessing.get("mean_cnr")
+
+        # Defense-in-depth: catch total failures via mean CNR (Rose criterion)
+        if mean_cnr is not None and mean_cnr < QC_MEAN_CNR_MINIMUM:
+            cnr_rec = QCRecommendation(
+                QCAction.EXCLUDE,
+                f"Mean CNR critically low ({mean_cnr:.1f} < {QC_MEAN_CNR_MINIMUM}, possible failed injection)",
+                3,
+            )
+            recommendations.append(cnr_rec)
+        elif cnr_fraction is not None:
             if cnr_fraction >= 0.84:
                 cnr_rec = QCRecommendation(QCAction.INCLUDE, f"CNR excellent ({cnr_fraction:.0%})", 0)
             elif cnr_fraction >= 0.65:

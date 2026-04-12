@@ -132,8 +132,12 @@ QC_RHAT_MAX: Final[float] = 1.1
 #: Minimum effective sample size for MCMC convergence
 QC_ESS_MIN: Final[int] = 100
 
-#: Minimum CNR for reliable perfusion quantification
+#: Minimum CNR for reliable perfusion quantification (Rose criterion: CNR > 3-5)
 QC_CNR_THRESHOLD: Final[float] = 4.0
+
+#: Minimum mean CNR for excluding total failures (failed injection, extravasation)
+#: Below this threshold, data is unusable regardless of coverage
+QC_MEAN_CNR_MINIMUM: Final[float] = 3.0
 
 
 # =============================================================================
