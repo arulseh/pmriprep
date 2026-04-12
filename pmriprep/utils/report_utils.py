@@ -172,6 +172,11 @@ _REFERENCES: dict[str, str] = {
         "Graphical evaluation of blood-to-brain transfer constants from multiple-time uptake data. "
         "J Cereb Blood Flow Metab. 1983;3(1):1-7. doi:10.1038/jcbfm.1983.1"
     ),
+    "rulseh_inprep": (
+        "Rulseh AM, et al. "
+        "PMRIPrep: A standardized preprocessing pipeline for perfusion and permeability MRI. "
+        "In preparation."
+    ),
     "sourbron_2011": (
         "Sourbron SP, Buckley DL. "
         "On the scope and interpretation of the Tofts models for DCE-MRI. "
@@ -268,12 +273,13 @@ def _generate_boilerplate_text(
         Formatted methods text with references section.
     """
     sentences: list[str] = []
-    used_refs: set[str] = {"gorgolewski_2011"}  # Always include Nipype
+    used_refs: set[str] = {"gorgolewski_2011", "rulseh_inprep"}  # Always include Nipype and PMRIPrep
 
     # Opening sentence
     sentences.append(
-        f"Data were preprocessed using PMRIPrep version {version}, "
-        "a Nipype-based (Gorgolewski et al., 2011) tool for perfusion MRI analysis."
+        f"Data were preprocessed using PMRIPrep version {version} "
+        "(Rulseh et al., in preparation), a Nipype-based (Gorgolewski et al., 2011) "
+        "tool for MRI perfusion and permeability analysis."
     )
 
     # Anatomical preprocessing
@@ -401,8 +407,8 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
         sentences.append("A user-supplied arterial input function was used.")
     else:
         sentences.append(
-            "The arterial input function (AIF) was automatically detected "
-            "using atlas-based voxel selection (CITATION PLACEHOLDER)."
+            "The DSC arterial input function (AIF) was automatically detected "
+            "using atlas-based voxel selection (Rulseh et al., in preparation)."
         )
 
     # Deconvolution method
@@ -511,8 +517,8 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
         sentences.append("A user-supplied arterial input function was used.")
     else:
         sentences.append(
-            "The arterial input function was automatically detected using "
-            "atlas-based candidate selection (CITATION PLACEHOLDER)."
+            "The DCE arterial input function (AIF) was automatically detected using "
+            "atlas-based candidate selection (Rulseh et al., in preparation)."
         )
 
     # Pharmacokinetic modeling
