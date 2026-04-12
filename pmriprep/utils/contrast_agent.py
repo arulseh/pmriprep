@@ -44,6 +44,7 @@ CONTRAST_AGENTS: Final[dict[str, AgentRelaxivity]] = {
 
     # High-relaxivity agents
     "gadopiclenol": AgentRelaxivity(r1_1_5T=12.8, r1_3_0T=11.6), # Elucirem (newest)
+    "gadoquatrane": AgentRelaxivity(r1_1_5T=11.8, r1_3_0T=10.5), # Ambelvist (tetrameric)
     "gadobenate": AgentRelaxivity(r1_1_5T=6.3, r1_3_0T=5.5),     # MultiHance
     "gd-bopta": AgentRelaxivity(r1_1_5T=6.3, r1_3_0T=5.5),       # MultiHance (generic)
     "gadoxetate": AgentRelaxivity(r1_1_5T=6.9, r1_3_0T=6.2),     # Eovist/Primovist
@@ -61,6 +62,7 @@ AGENT_ALIASES: Final[dict[str, str]] = {
     "gadovist": "gadobutrol",
     "vueway": "gadopiclenol",
     "elucirem": "gadopiclenol",
+    "ambelvist": "gadoquatrane",
     "multihance": "gadobenate",
     "eovist": "gadoxetate",
     "primovist": "gadoxetate",
@@ -90,6 +92,7 @@ AGENT_STANDARD_DOSES: Final[dict[str, float]] = {
     "gd-hp-do3a": 0.1,
     "gadobutrol": 0.1,
     "gadopiclenol": 0.05,    # Vueway/Elucirem — high relaxivity
+    "gadoquatrane": 0.04,    # Ambelvist — tetrameric
     "gadobenate": 0.1,
     "gd-bopta": 0.1,
     "gadoxetate": 0.025,     # Eovist/Primovist — hepatobiliary
@@ -113,6 +116,7 @@ AGENT_CONCENTRATIONS: Final[dict[str, float]] = {
     "gd-hp-do3a": 0.5,
     "gadobutrol": 1.0,       # Higher concentration (1 M)
     "gadopiclenol": 0.5,
+    "gadoquatrane": 0.5,
     "gadobenate": 0.5,
     "gd-bopta": 0.5,
     "gadoxetate": 0.25,      # Lower concentration (0.25 M)

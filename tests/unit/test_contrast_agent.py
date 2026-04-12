@@ -92,6 +92,20 @@ class TestLookupR1:
             lookup_r1("gadobutrol", 3.0)
         )
 
+    def test_gadoquatrane_3t(self) -> None:
+        """Gadoquatrane at 3T returns 10.5 L/(mmol*s)."""
+        assert lookup_r1("gadoquatrane", 3.0) == pytest.approx(10.5)
+
+    def test_gadoquatrane_1_5t(self) -> None:
+        """Gadoquatrane at 1.5T returns 11.8 L/(mmol*s)."""
+        assert lookup_r1("gadoquatrane", 1.5) == pytest.approx(11.8)
+
+    def test_ambelvist_alias_resolves(self) -> None:
+        """Brand name 'Ambelvist' resolves to gadoquatrane."""
+        assert lookup_r1("ambelvist", 3.0) == pytest.approx(
+            lookup_r1("gadoquatrane", 3.0)
+        )
+
     def test_unknown_agent_raises(self) -> None:
         """Unknown agent 'fakium' raises ValueError listing available agents."""
         with pytest.raises(ValueError, match="Available agents"):
@@ -120,6 +134,14 @@ class TestLookupStandardDose:
     def test_gadopiclenol_half_dose(self) -> None:
         """Gadopiclenol (Vueway/Elucirem) standard dose is 0.05 mmol/kg."""
         assert lookup_standard_dose("gadopiclenol") == pytest.approx(0.05)
+
+    def test_gadoquatrane_dose(self) -> None:
+        """Gadoquatrane (Ambelvist) standard dose is 0.04 mmol/kg (tetrameric)."""
+        assert lookup_standard_dose("gadoquatrane") == pytest.approx(0.04)
+
+    def test_ambelvist_alias_dose(self) -> None:
+        """Brand name 'Ambelvist' resolves to gadoquatrane for dose lookup."""
+        assert lookup_standard_dose("ambelvist") == pytest.approx(0.04)
 
 
 class TestGetAvailableAgents:
