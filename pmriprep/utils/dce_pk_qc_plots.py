@@ -286,10 +286,19 @@ def generate_preprocessing_qc_plot(
     fig.savefig(out, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
+    # CNR_DCE: combined signal quality metric
+    # CNR = (peak_enh_pct / 100) × baseline_tSNR
+    # Represents contrast-to-noise ratio for DCE signal change detection
+    if np.isnan(mean_baseline_tsnr) or np.isnan(peak_enh_pct):
+        cnr_dce: float | None = None
+    else:
+        cnr_dce = round((peak_enh_pct / 100.0) * mean_baseline_tsnr, 2)
+
     stats = {
         "peak_enh_pct": round(peak_enh_pct, 1),
         "mean_tsnr": round(mean_tsnr, 1),
         "baseline_tsnr": round(mean_baseline_tsnr, 1),
+        "cnr_dce": cnr_dce,
     }
     return str(out), stats
 

@@ -133,6 +133,12 @@
                     {%- else %} poor{% endif %}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.preprocessing.cnr_dce is defined %}
+            <div class="metric">
+                <div class="metric-label">CNR<sub>DCE</sub></div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.cnr_dce) }}</div>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
         <div class="figure-container" style="margin-top: 20px;">
