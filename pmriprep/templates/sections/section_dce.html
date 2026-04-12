@@ -34,120 +34,6 @@
     </div>
     {% endif %}
 
-    <!-- Motion QC -->
-    {% if dce.images.motion or dce.qc_metrics.preprocessing %}
-    <div class="section">
-        <h3>Motion Quality Control</h3>
-        {% if dce.qc_metrics.preprocessing %}
-        <div class="metrics">
-            {% if dce.qc_metrics.preprocessing.motion_status is defined %}
-            <div class="metric">
-                <div class="metric-label">Motion Status</div>
-                <div class="metric-value {{ dce.qc_metrics.preprocessing.motion_status | lower }}">{{ dce.qc_metrics.preprocessing.motion_status }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.fd_mean is defined %}
-            <div class="metric">
-                <div class="metric-label">Mean FD</div>
-                <div class="metric-value">{{ "%.3f"|format(dce.qc_metrics.preprocessing.fd_mean) }} mm</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.fd_max is defined %}
-            <div class="metric">
-                <div class="metric-label">Max FD</div>
-                <div class="metric-value">{{ "%.3f"|format(dce.qc_metrics.preprocessing.fd_max) }} mm</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.n_outliers is defined and dce.qc_metrics.preprocessing.percent_outliers is defined %}
-            <div class="metric">
-                <div class="metric-label">Outlier Frames</div>
-                <div class="metric-value
-                    {%- if dce.qc_metrics.preprocessing.percent_outliers < 5 %} pass
-                    {%- elif dce.qc_metrics.preprocessing.percent_outliers < 10 %} warn
-                    {%- else %} poor{% endif %}">{{ dce.qc_metrics.preprocessing.n_outliers }} ({{ "%.1f"|format(dce.qc_metrics.preprocessing.percent_outliers) }}%)</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.baseline_frames is defined %}
-            <div class="metric">
-                <div class="metric-label">Baseline Frames</div>
-                <div class="metric-value">{{ dce.qc_metrics.preprocessing.baseline_frames }}</div>
-            </div>
-            {% endif %}
-        </div>
-        {% endif %}
-        {% if dce.images.motion %}
-        <div class="figure-container" style="margin-top: 20px;">
-            <img src="{{ dce.images.motion }}" alt="Motion QC">
-            <a href="{{ dce.images.motion }}" download class="figure-download">Save</a>
-        </div>
-        {% endif %}
-    </div>
-    {% endif %}
-
-    <!-- DCE Preprocessing QC -->
-    {% if dce.images.preprocessing_qc %}
-    <div class="section">
-        <h3>DCE Preprocessing QC</h3>
-        <p>Signal quality, enhancement, tSNR, and temporal variability.</p>
-        {% if dce.qc_metrics.preprocessing %}
-        <div class="metrics">
-            {% if dce.qc_metrics.preprocessing.tr_ms is defined %}
-            <div class="metric">
-                <div class="metric-label">TR (pulse)</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.tr_ms) }} ms</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.volume_tr_s is defined %}
-            <div class="metric">
-                <div class="metric-label">Volume TR</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.volume_tr_s) }} s</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.n_volumes is defined %}
-            <div class="metric">
-                <div class="metric-label">Volumes</div>
-                <div class="metric-value">{{ dce.qc_metrics.preprocessing.n_volumes }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.peak_enh_pct is defined %}
-            <div class="metric">
-                <div class="metric-label">Peak Enhancement</div>
-                <div class="metric-value
-                    {%- if dce.qc_metrics.preprocessing.peak_enh_pct >= 20 %} pass
-                    {%- elif dce.qc_metrics.preprocessing.peak_enh_pct >= 5 %} warn
-                    {%- else %} poor{% endif %}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.peak_enh_pct) }}%</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.mean_tsnr is defined %}
-            <div class="metric">
-                <div class="metric-label">Mean tSNR</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.preprocessing.mean_tsnr) }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.baseline_tsnr is defined %}
-            <div class="metric">
-                <div class="metric-label">Baseline tSNR</div>
-                <div class="metric-value
-                    {%- if dce.qc_metrics.preprocessing.baseline_tsnr >= 8 %} pass
-                    {%- elif dce.qc_metrics.preprocessing.baseline_tsnr >= 3 %} warn
-                    {%- else %} poor{% endif %}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.cnr_dce is defined %}
-            <div class="metric">
-                <div class="metric-label">CNR<sub>DCE</sub></div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.cnr_dce) }}</div>
-            </div>
-            {% endif %}
-        </div>
-        {% endif %}
-        <div class="figure-container" style="margin-top: 20px;">
-            <img src="{{ dce.images.preprocessing_qc }}" alt="DCE Preprocessing QC">
-            <a href="{{ dce.images.preprocessing_qc }}" download class="figure-download">Save</a>
-        </div>
-    </div>
-    {% endif %}
-
     <!-- B1+ Mapping -->
     {% if dce.qc_metrics.b1_mapping or dce.images.b1 %}
     <div class="section">
@@ -169,9 +55,7 @@
             {% if dce.qc_metrics.b1_mapping.mean_b1 is defined %}
             <div class="metric">
                 <div class="metric-label">Mean B1+</div>
-                <div class="metric-value
-                    {%- if dce.qc_metrics.b1_mapping.mean_b1 >= 0.7 and dce.qc_metrics.b1_mapping.mean_b1 <= 1.3 %} pass
-                    {%- else %} warn{% endif %}">{{ "%.2f"|format(dce.qc_metrics.b1_mapping.mean_b1) }}</div>
+                <div class="metric-value {{ dce.display_status.b1_bias }}">{{ "%.2f"|format(dce.qc_metrics.b1_mapping.mean_b1) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.b1_mapping.median_b1 is defined %}
@@ -195,10 +79,7 @@
             {% if dce.qc_metrics.b1_mapping.pct_correction_gt_20 is defined %}
             <div class="metric">
                 <div class="metric-label">&gt;20% Correction</div>
-                <div class="metric-value
-                    {%- if dce.qc_metrics.b1_mapping.pct_correction_gt_20 < 10 %} pass
-                    {%- elif dce.qc_metrics.b1_mapping.pct_correction_gt_20 < 30 %} warn
-                    {%- else %} poor{% endif %}">{{ "%.1f"|format(dce.qc_metrics.b1_mapping.pct_correction_gt_20) }}%</div>
+                <div class="metric-value {{ dce.display_status.b1_correction }}">{{ "%.1f"|format(dce.qc_metrics.b1_mapping.pct_correction_gt_20) }}%</div>
             </div>
             {% endif %}
         </div>
@@ -301,6 +182,111 @@
             <a href="{{ dce.images.t1 }}" download class="figure-download">Save</a>
         </div>
         {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Motion QC -->
+    {% if dce.images.motion or dce.qc_metrics.preprocessing %}
+    <div class="section">
+        <h3>Motion Quality Control</h3>
+        {% if dce.qc_metrics.preprocessing %}
+        <div class="metrics">
+            {% if dce.qc_metrics.preprocessing.motion_status is defined %}
+            <div class="metric">
+                <div class="metric-label">Motion Status</div>
+                <div class="metric-value {{ dce.qc_metrics.preprocessing.motion_status | lower }}">{{ dce.qc_metrics.preprocessing.motion_status }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.fd_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean FD</div>
+                <div class="metric-value">{{ "%.3f"|format(dce.qc_metrics.preprocessing.fd_mean) }} mm</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.fd_max is defined %}
+            <div class="metric">
+                <div class="metric-label">Max FD</div>
+                <div class="metric-value">{{ "%.3f"|format(dce.qc_metrics.preprocessing.fd_max) }} mm</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.n_outliers is defined and dce.qc_metrics.preprocessing.percent_outliers is defined %}
+            <div class="metric">
+                <div class="metric-label">Outlier Frames</div>
+                <div class="metric-value {{ dce.display_status.outliers }}">{{ dce.qc_metrics.preprocessing.n_outliers }} ({{ "%.1f"|format(dce.qc_metrics.preprocessing.percent_outliers) }}%)</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.baseline_frames is defined %}
+            <div class="metric">
+                <div class="metric-label">Baseline Frames</div>
+                <div class="metric-value">{{ dce.qc_metrics.preprocessing.baseline_frames }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if dce.images.motion %}
+        <div class="figure-container" style="margin-top: 20px;">
+            <img src="{{ dce.images.motion }}" alt="Motion QC">
+            <a href="{{ dce.images.motion }}" download class="figure-download">Save</a>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- DCE Preprocessing QC -->
+    {% if dce.images.preprocessing_qc %}
+    <div class="section">
+        <h3>DCE Preprocessing QC</h3>
+        <p>Signal quality, enhancement, tSNR, and temporal variability.</p>
+        {% if dce.qc_metrics.preprocessing %}
+        <div class="metrics">
+            {% if dce.qc_metrics.preprocessing.tr_ms is defined %}
+            <div class="metric">
+                <div class="metric-label">TR (pulse)</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.tr_ms) }} ms</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.volume_tr_s is defined %}
+            <div class="metric">
+                <div class="metric-label">Volume TR</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.volume_tr_s) }} s</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.n_volumes is defined %}
+            <div class="metric">
+                <div class="metric-label">Volumes</div>
+                <div class="metric-value">{{ dce.qc_metrics.preprocessing.n_volumes }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.peak_enh_pct is defined %}
+            <div class="metric">
+                <div class="metric-label">Peak Enhancement</div>
+                <div class="metric-value {{ dce.display_status.peak_enh }}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.peak_enh_pct) }}%</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.mean_tsnr is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean tSNR</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.preprocessing.mean_tsnr) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.baseline_tsnr is defined %}
+            <div class="metric">
+                <div class="metric-label">Baseline tSNR</div>
+                <div class="metric-value {{ dce.display_status.baseline_tsnr }}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.cnr_dce is defined %}
+            <div class="metric">
+                <div class="metric-label">CNR<sub>DCE</sub></div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.cnr_dce) }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        <div class="figure-container" style="margin-top: 20px;">
+            <img src="{{ dce.images.preprocessing_qc }}" alt="DCE Preprocessing QC">
+            <a href="{{ dce.images.preprocessing_qc }}" download class="figure-download">Save</a>
+        </div>
     </div>
     {% endif %}
 
@@ -433,73 +419,72 @@
             </div>
             {% endif %}
         </div>
+    </div>
+    {% endif %}
 
-        {% if dce.images.pk_param_maps_qc %}
-        <div style="margin-top: 20px;">
-            <h4>Parameter Maps</h4>
-            <div class="figure-container">
-                <img src="{{ dce.images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
-                <a href="{{ dce.images.pk_param_maps_qc }}" download class="figure-download">Save</a>
+    <!-- Example Voxel Fit -->
+    {% if dce.images.pk_modeling_qc %}
+    <div class="section">
+        <h3>Example Voxel Fit</h3>
+        {% if dce.qc_metrics.pk_modeling.qc_voxel is defined %}
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-label">Voxel</div>
+                <div class="metric-value">{{ dce.qc_metrics.pk_modeling.qc_voxel }}</div>
             </div>
-        </div>
-        {% endif %}
-
-        {% if dce.images.pk_modeling_qc %}
-        <div style="margin-top: 20px;">
-            <h4>Example Voxel Fit</h4>
-            {% if dce.qc_metrics.pk_modeling.qc_voxel is defined %}
-            <div class="metrics">
-                <div class="metric">
-                    <div class="metric-label">Voxel</div>
-                    <div class="metric-value">{{ dce.qc_metrics.pk_modeling.qc_voxel }}</div>
-                </div>
-                {% if dce.qc_metrics.pk_modeling.qc_voxel_ktrans is defined and dce.qc_metrics.pk_modeling.qc_voxel_ktrans is not none %}
-                <div class="metric">
-                    <div class="metric-label">Ktrans</div>
-                    <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_ktrans) }} min<sup>-1</sup></div>
-                </div>
-                {% endif %}
-                {% if dce.qc_metrics.pk_modeling.qc_voxel_ve is defined and dce.qc_metrics.pk_modeling.qc_voxel_ve is not none %}
-                <div class="metric">
-                    <div class="metric-label">ve</div>
-                    <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_ve) }}</div>
-                </div>
-                {% endif %}
-                {% if dce.qc_metrics.pk_modeling.qc_voxel_vp is defined and dce.qc_metrics.pk_modeling.qc_voxel_vp is not none %}
-                <div class="metric">
-                    <div class="metric-label">vp</div>
-                    <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_vp) }}</div>
-                </div>
-                {% endif %}
-                {% if dce.qc_metrics.pk_modeling.qc_voxel_fp is defined and dce.qc_metrics.pk_modeling.qc_voxel_fp is not none %}
-                <div class="metric">
-                    <div class="metric-label">Fp</div>
-                    <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_fp) }} mL/100g/min</div>
-                </div>
-                {% endif %}
-                {% if dce.qc_metrics.pk_modeling.qc_voxel_ps is defined and dce.qc_metrics.pk_modeling.qc_voxel_ps is not none %}
-                <div class="metric">
-                    <div class="metric-label">PS</div>
-                    <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_ps) }} mL/100g/min</div>
-                </div>
-                {% endif %}
-                {% if dce.qc_metrics.pk_modeling.qc_voxel_fit_r2 is defined %}
-                <div class="metric">
-                    <div class="metric-label">Fit R&sup2;</div>
-                    <div class="metric-value
-                        {%- if dce.qc_metrics.pk_modeling.qc_voxel_fit_r2 >= 0.9 %} pass
-                        {%- elif dce.qc_metrics.pk_modeling.qc_voxel_fit_r2 >= 0.7 %} warn
-                        {%- else %} poor{% endif %}">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_fit_r2) }}</div>
-                </div>
-                {% endif %}
+            {% if dce.qc_metrics.pk_modeling.qc_voxel_ktrans is defined and dce.qc_metrics.pk_modeling.qc_voxel_ktrans is not none %}
+            <div class="metric">
+                <div class="metric-label">Ktrans</div>
+                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_ktrans) }} min<sup>-1</sup></div>
             </div>
             {% endif %}
-            <div class="figure-container" style="margin-top: 10px;">
-                <img src="{{ dce.images.pk_modeling_qc }}" alt="PK Modeling QC">
-                <a href="{{ dce.images.pk_modeling_qc }}" download class="figure-download">Save</a>
+            {% if dce.qc_metrics.pk_modeling.qc_voxel_ve is defined and dce.qc_metrics.pk_modeling.qc_voxel_ve is not none %}
+            <div class="metric">
+                <div class="metric-label">ve</div>
+                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_ve) }}</div>
             </div>
+            {% endif %}
+            {% if dce.qc_metrics.pk_modeling.qc_voxel_vp is defined and dce.qc_metrics.pk_modeling.qc_voxel_vp is not none %}
+            <div class="metric">
+                <div class="metric-label">vp</div>
+                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_vp) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.pk_modeling.qc_voxel_fp is defined and dce.qc_metrics.pk_modeling.qc_voxel_fp is not none %}
+            <div class="metric">
+                <div class="metric-label">Fp</div>
+                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_fp) }} mL/100g/min</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.pk_modeling.qc_voxel_ps is defined and dce.qc_metrics.pk_modeling.qc_voxel_ps is not none %}
+            <div class="metric">
+                <div class="metric-label">PS</div>
+                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_ps) }} mL/100g/min</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.pk_modeling.qc_voxel_fit_r2 is defined %}
+            <div class="metric">
+                <div class="metric-label">Fit R&sup2;</div>
+                <div class="metric-value {{ dce.display_status.fit_r2 }}">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_fit_r2) }}</div>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
+        <div class="figure-container" style="margin-top: 10px;">
+            <img src="{{ dce.images.pk_modeling_qc }}" alt="PK Modeling QC">
+            <a href="{{ dce.images.pk_modeling_qc }}" download class="figure-download">Save</a>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- DCE Permeability Maps -->
+    {% if dce.images.pk_param_maps_qc %}
+    <div class="section">
+        <h3>DCE Permeability Maps</h3>
+        <div class="figure-container">
+            <img src="{{ dce.images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
+            <a href="{{ dce.images.pk_param_maps_qc }}" download class="figure-download">Save</a>
+        </div>
     </div>
     {% endif %}
 
@@ -622,9 +607,7 @@
             {% if cbv_c.cbv_negative_fraction is defined and cbv_c.cbv_negative_fraction > 0.01 %}
             <div class="metric">
                 <div class="metric-label">CBV Negative</div>
-                <div class="metric-value
-                    {%- if cbv_c.cbv_negative_fraction < 0.05 %} warn
-                    {%- else %} poor{% endif %}">{{ "%.1f"|format(cbv_c.cbv_negative_fraction * 100) }}%</div>
+                <div class="metric-value {{ dce.display_status.cbv_negative }}">{{ "%.1f"|format(cbv_c.cbv_negative_fraction * 100) }}%</div>
             </div>
             {% endif %}
             {% if cbv_c.scale_mismatch is defined %}
@@ -688,10 +671,7 @@
             {% if xval.metrics.correlation is defined and xval.metrics.correlation != 0 %}
             <div class="metric">
                 <div class="metric-label">Correlation (ρ)</div>
-                <div class="metric-value
-                    {%- if xval.metrics.correlation >= 0.7 %} pass
-                    {%- elif xval.metrics.correlation >= 0.4 %} warn
-                    {%- else %} poor{% endif %}">{{ "%.3f"|format(xval.metrics.correlation) }}</div>
+                <div class="metric-value {{ dce.display_status.xval_correlation }}">{{ "%.3f"|format(xval.metrics.correlation) }}</div>
             </div>
             {% endif %}
             {% if xval.metrics.fraction_valid is defined %}

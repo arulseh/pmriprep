@@ -5,13 +5,24 @@ with external figure files, following NiPreps conventions for visual
 quality control.
 """
 
+import base64
 import json
 import logging
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
 from jinja2 import Environment, PackageLoader
+
+from pmriprep.utils.dce_constants import (
+    QC_B1_MEAN_HIGH,
+    QC_B1_MEAN_LOW,
+    QC_DCE_BASELINE_TSNR_MIN,
+    QC_DCE_BASELINE_TSNR_WARN,
+    QC_PEAK_ENHANCEMENT_MIN,
+    QC_PEAK_ENHANCEMENT_WARN,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -687,16 +698,30 @@ def figure_filename(
     return "_".join(parts)
 
 
+def _encode_image(path: Path) -> str:
+    """Encode image file as base64 data URI.
+
+    Args:
+        path: Path to PNG image file.
+
+    Returns:
+        Base64 data URI string for embedding in HTML.
+    """
+    data = path.read_bytes()
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:image/png;base64,{b64}"
+
+
 def _collect_pipeline_images(
     subject_id: str,
     session_id: str,
     pipeline: str,
     figures_dir: Path,
 ) -> dict[str, str]:
-    """Collect figure paths for a single pipeline.
+    """Collect and embed figures for a single pipeline.
 
-    Scans figures_dir for matching files and returns relative paths
-    (``figures/<filename>``).
+    Scans figures_dir for matching files and returns base64-encoded
+    data URIs for self-contained HTML reports (NiPreps pattern).
 
     Args:
         subject_id: BIDS subject ID.
@@ -705,14 +730,81 @@ def _collect_pipeline_images(
         figures_dir: Absolute path to figures directory.
 
     Returns:
-        Dict mapping image key to relative path string.
+        Dict mapping image key to base64 data URI string.
     """
     images: dict[str, str] = {}
     for key in _PIPELINE_FIGURE_KEYS.get(pipeline, []):
         fname = figure_filename(subject_id, session_id, key, pipeline)
-        if (figures_dir / fname).exists():
-            images[key] = f"figures/{fname}"
+        fpath = figures_dir / fname
+        if fpath.exists():
+            images[key] = _encode_image(fpath)
     return images
+
+
+def _classify_metric(
+    value: float | None,
+    warn_threshold: float,
+    min_threshold: float,
+) -> str:
+    """Classify a QC metric as pass/warn/poor for template display.
+
+    Args:
+        value: Metric value (or None/NaN if unavailable).
+        warn_threshold: Values >= this are "pass".
+        min_threshold: Values >= this (but < warn) are "warn".
+
+    Returns:
+        Status string: "pass", "warn", "poor", or "na".
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "na"
+    if value >= warn_threshold:
+        return "pass"
+    if value >= min_threshold:
+        return "warn"
+    return "poor"
+
+
+def _classify_b1(value: float | None, low: float, high: float) -> str:
+    """Classify B1+ bias as pass/warn for template display.
+
+    Args:
+        value: Mean B1+ value (or None/NaN if unavailable).
+        low: Lower acceptable bound (inclusive).
+        high: Upper acceptable bound (inclusive).
+
+    Returns:
+        Status string: "pass", "warn", or "na".
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "na"
+    if low <= value <= high:
+        return "pass"
+    return "warn"
+
+
+def _classify_metric_inverse(
+    value: float | None,
+    warn_threshold: float,
+    poor_threshold: float,
+) -> str:
+    """Classify a QC metric where lower is better for template display.
+
+    Args:
+        value: Metric value (or None/NaN if unavailable).
+        warn_threshold: Values < this are "pass".
+        poor_threshold: Values < this (but >= warn) are "warn".
+
+    Returns:
+        Status string: "pass", "warn", "poor", or "na".
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "na"
+    if value < warn_threshold:
+        return "pass"
+    if value < poor_threshold:
+        return "warn"
+    return "poor"
 
 
 def _load_qc_json(ses_dir: Path, prefix: str, pipeline: str) -> dict[str, Any]:
@@ -845,9 +937,76 @@ def generate_unified_report(
         images = _collect_pipeline_images(
             subject_id, session_id, pipeline_name, fig_path,
         )
+
+        # Compute display status for metrics (NiPreps: logic in Python, not templates)
+        display_status = None
+        if pipeline_name == "dce" and qc_metrics:
+            preproc = qc_metrics.get("preprocessing", {})
+            b1 = qc_metrics.get("b1_mapping", {})
+            pk = qc_metrics.get("pk_modeling", {})
+            xval = qc_metrics.get("cross_validation", {})
+            cbv_c = qc_metrics.get("cbv_constraint", {})
+            display_status = {
+                # Signal quality
+                "peak_enh": _classify_metric(
+                    preproc.get("peak_enh_pct"),
+                    QC_PEAK_ENHANCEMENT_WARN,
+                    QC_PEAK_ENHANCEMENT_MIN,
+                ),
+                "baseline_tsnr": _classify_metric(
+                    preproc.get("baseline_tsnr"),
+                    QC_DCE_BASELINE_TSNR_WARN,
+                    QC_DCE_BASELINE_TSNR_MIN,
+                ),
+                "b1_bias": _classify_b1(
+                    b1.get("mean_b1"),
+                    QC_B1_MEAN_LOW,
+                    QC_B1_MEAN_HIGH,
+                ),
+                # Motion outliers (lower is better)
+                "outliers": _classify_metric_inverse(
+                    preproc.get("percent_outliers"), 5, 10
+                ),
+                # B1 correction extent (lower is better)
+                "b1_correction": _classify_metric_inverse(
+                    b1.get("pct_correction_gt_20"), 10, 30
+                ),
+                # PK fit quality
+                "fit_r2": _classify_metric(pk.get("qc_voxel_fit_r2"), 0.9, 0.7),
+                # Cross-validation correlation
+                "xval_correlation": _classify_metric(
+                    xval.get("metrics", {}).get("correlation"), 0.7, 0.4
+                ),
+                # CBV constraint negative fraction (lower is better)
+                "cbv_negative": _classify_metric_inverse(
+                    cbv_c.get("cbv_negative_fraction"), 0.01, 0.05
+                ),
+            }
+        elif pipeline_name == "dsc" and qc_metrics:
+            motion = qc_metrics.get("motion", {})
+            preload = qc_metrics.get("preload", {})
+            deconv = qc_metrics.get("deconvolution", {})
+            display_status = {
+                # Motion outliers (lower is better)
+                "outliers": _classify_metric_inverse(
+                    motion.get("percent_outliers"), 5, 10
+                ),
+                # Leaky voxels (lower is better)
+                "leaky_voxels": _classify_metric_inverse(
+                    preload.get("percent_leaky_voxels"), 5, 20
+                ),
+                # Deconvolution fit quality
+                "fit_r2": _classify_metric(deconv.get("qc_voxel_r2"), 0.9, 0.7),
+                # Convergence rate
+                "convergence": _classify_metric(
+                    deconv.get("convergence_rate"), 0.9, 0.7
+                ),
+            }
+
         pipeline_data[pipeline_name] = {
             "qc_metrics": qc_metrics,
             "images": images,
+            "display_status": display_status,
         }
 
     # Build template context

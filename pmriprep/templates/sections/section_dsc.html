@@ -61,10 +61,7 @@
             {% if dsc.qc_metrics.motion.n_outliers is defined and dsc.qc_metrics.motion.percent_outliers is defined %}
             <div class="metric">
                 <div class="metric-label">Outlier Frames</div>
-                <div class="metric-value
-                    {%- if dsc.qc_metrics.motion.percent_outliers < 5 %} pass
-                    {%- elif dsc.qc_metrics.motion.percent_outliers < 10 %} warn
-                    {%- else %} poor{% endif %}">{{ dsc.qc_metrics.motion.n_outliers }} ({{ "%.1f"|format(dsc.qc_metrics.motion.percent_outliers) }}%)</div>
+                <div class="metric-value {{ dsc.display_status.outliers }}">{{ dsc.qc_metrics.motion.n_outliers }} ({{ "%.1f"|format(dsc.qc_metrics.motion.percent_outliers) }}%)</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.motion.n_volumes is defined %}
@@ -267,10 +264,7 @@
             {% if dsc.qc_metrics.preload.percent_leaky_voxels is defined %}
             <div class="metric">
                 <div class="metric-label">Leaky Voxels</div>
-                <div class="metric-value
-                    {%- if dsc.qc_metrics.preload.percent_leaky_voxels < 5 %} pass
-                    {%- elif dsc.qc_metrics.preload.percent_leaky_voxels < 20 %} warn
-                    {%- else %} poor{% endif %}">{{ "%.1f"|format(dsc.qc_metrics.preload.percent_leaky_voxels) }}%</div>
+                <div class="metric-value {{ dsc.display_status.leaky_voxels }}">{{ "%.1f"|format(dsc.qc_metrics.preload.percent_leaky_voxels) }}%</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.percent_severe_leakage is defined %}
@@ -307,10 +301,10 @@
     </div>
     {% endif %}
 
-    <!-- Deconvolution Fit -->
+    <!-- Example Voxel Fit -->
     {% if dsc.images.dsc_fit_qc %}
     <div class="section">
-        <h3>Deconvolution Fit</h3>
+        <h3>Example Voxel Fit</h3>
         {% if dsc.qc_metrics.deconvolution is defined and dsc.qc_metrics.deconvolution.qc_voxel is defined %}
         <div class="metrics">
             <div class="metric">
@@ -326,10 +320,7 @@
             {% if dsc.qc_metrics.deconvolution.qc_voxel_r2 is defined %}
             <div class="metric">
                 <div class="metric-label">Fit R&sup2;</div>
-                <div class="metric-value
-                    {%- if dsc.qc_metrics.deconvolution.qc_voxel_r2 >= 0.9 %} pass
-                    {%- elif dsc.qc_metrics.deconvolution.qc_voxel_r2 >= 0.7 %} warn
-                    {%- else %} poor{% endif %}">{{ "%.4f"|format(dsc.qc_metrics.deconvolution.qc_voxel_r2) }}</div>
+                <div class="metric-value {{ dsc.display_status.fit_r2 }}">{{ "%.4f"|format(dsc.qc_metrics.deconvolution.qc_voxel_r2) }}</div>
             </div>
             {% endif %}
         </div>
@@ -416,10 +407,7 @@
             {% if dsc.qc_metrics.deconvolution.convergence_rate is defined %}
             <div class="metric">
                 <div class="metric-label">Convergence Rate</div>
-                <div class="metric-value
-                    {%- if dsc.qc_metrics.deconvolution.convergence_rate >= 0.9 %} pass
-                    {%- elif dsc.qc_metrics.deconvolution.convergence_rate >= 0.7 %} warn
-                    {%- else %} poor{% endif %}">{{ "%.1f"|format(dsc.qc_metrics.deconvolution.convergence_rate * 100) }}%</div>
+                <div class="metric-value {{ dsc.display_status.convergence }}">{{ "%.1f"|format(dsc.qc_metrics.deconvolution.convergence_rate * 100) }}%</div>
             </div>
             {% endif %}
         </div>
