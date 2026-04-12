@@ -1807,6 +1807,7 @@ def init_pmriprep_wf(
                 ("outputnode.cbv_ci95_upper_map", "cbv_ci95_upper_map"),
                 # Leakage correction
                 ("outputnode.k2_map", "k2_map"),
+                ("outputnode.preload_qc", "preload_qc"),
                 # Motion-corrected data
                 ("outputnode.dsc_moco", "dsc_moco"),
                 ("outputnode.dsc_mean", "dsc_mean"),

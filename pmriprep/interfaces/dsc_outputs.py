@@ -74,6 +74,7 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
 
     # Leakage correction (optional)
     k2_map = traits.Either(traits.Str, None, desc="K2 leakage correction map path")
+    preload_qc = traits.Dict(desc="Preload/K2 QC metrics dictionary")
 
     # Motion-corrected data
     dsc_moco = traits.Either(traits.Str, None, desc="Motion-corrected 4D DSC path")

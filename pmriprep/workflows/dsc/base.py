@@ -1010,6 +1010,7 @@ def _generate_dsc_leakage_qc(
     tr=1.5,
     subject_id="",
     session_id="",
+    preload_qc=None,
 ):
     """Generate DSC leakage correction QC plot.
 
@@ -1025,6 +1026,7 @@ def _generate_dsc_leakage_qc(
         tr: Repetition time in seconds.
         subject_id: Subject identifier.
         session_id: Session identifier.
+        preload_qc: Preload/K2 QC metrics dict (optional).
 
     Returns:
         Path to the generated QC plot PNG, or empty string if K2 unavailable.
@@ -1056,6 +1058,13 @@ def _generate_dsc_leakage_qc(
     if psr_file and _P(psr_file).is_file():
         psr_data = nib.load(psr_file).get_fdata()
 
+    # Extract method and kep_used from preload_qc dict
+    method = "bsw"
+    kep_used = None
+    if preload_qc:
+        method = preload_qc.get("k2_method", "bsw")
+        kep_used = preload_qc.get("kep_used")
+
     plot_path = generate_dsc_leakage_qc_plot(
         k2_map=k2_data,
         auc_raw=auc_raw_data,
@@ -1068,6 +1077,8 @@ def _generate_dsc_leakage_qc(
         tr=tr,
         subject_id=subject_id,
         session_id=session_id,
+        method=method,
+        kep_used=kep_used,
     )
     return plot_path
 
@@ -2151,6 +2162,7 @@ def init_dsc_preproc_wf(
                 "auc_diff_file", "brain_mask_file",
                 "concentration_file", "corrected_concentration_file",
                 "psr_file", "tr", "subject_id", "session_id",
+                "preload_qc",
             ],
             output_names=["plot_file"],
             function=_generate_dsc_leakage_qc,
@@ -2551,7 +2563,10 @@ def init_dsc_preproc_wf(
         ]),
         (hdbet_dsc, dsc_leakage_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
         (signal_to_conc, dsc_leakage_qc, [("concentration_file", "concentration_file")]),
-        (preload_correct, dsc_leakage_qc, [("corrected_concentration_file", "corrected_concentration_file")]),
+        (preload_correct, dsc_leakage_qc, [
+            ("corrected_concentration_file", "corrected_concentration_file"),
+            ("qc_dict", "preload_qc"),
+        ]),
         (inputnode, dsc_leakage_qc, [("tr", "tr")]),
     ])
 
