@@ -331,22 +331,28 @@ class TestApplyT1CorrectionAuto:
         )
         assert result.correction_applied == "tissue_segmented"
 
-    def test_well_conditioned_e1_requires_higher_nan(
+    def test_reject_threshold_uses_tissue_regardless_of_nan(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """Well-conditioned E1 keeps threshold at 0.40, so 30% NaN → uniform fallback."""
+        """When median T1 exceeds reject threshold, use tissue fallback if available.
+
+        NaN fraction is not a gate for tissue fallback in the reject threshold path.
+        If VFA T1 is physiologically impossible (>1800ms), tissue-segmented T1 is
+        always preferred over uniform fallback when probsegs are available.
+        """
         t1_map = np.full((10, 10, 10), 2000.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
 
-        # E1=0.95 → threshold=0.40, so 30% NaN < threshold → uniform fallback
+        # Low NaN fraction (30%) + probsegs available → tissue_segmented
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             nan_fraction=0.30, wm_probseg=wm, gm_probseg=gm,
             e1_median=0.95,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "tissue_segmented"
+        assert result.tissue_t1_used is True
 
 
 # ============================================================================

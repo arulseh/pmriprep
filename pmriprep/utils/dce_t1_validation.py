@@ -598,19 +598,28 @@ def _auto_correct_t1(
     """Auto-mode T1 correction logic.
 
     Decides between no correction, offset, tissue-segmented fallback,
-    or uniform fallback based on median T1 deviation and NaN fraction.
-    The NaN abandon threshold is adjusted for VFA conditioning (E1).
+    or uniform fallback based on median T1 deviation and VFA conditioning.
 
-    Conditioning gate behavior:
-    - **Unconditional zone** (E1 > 0.997, cond > 332): VFA signal surface
-      is flat in the T1 direction; VFA T1 is abandoned for tissue-segmented
-      or uniform fallback regardless of B1 status.
-    - **Conditional zone** (E1 0.993-0.997, cond 141-332): VFA T1 is biased
-      but retains spatial information. Without B1 correction, offset
-      correction is preferred over fallback when NaN fraction is manageable,
-      as it preserves spatial variation while fixing the median bias
-      (Deoni SCL et al. MRM 2003). When NaN fraction exceeds the E1-adaptive
-      abandon threshold, fallback is used instead.
+    Decision hierarchy:
+
+    1. **Reject threshold** (median T1 outside physiological range):
+       When median T1 < reject_min or > reject_max, VFA T1 is definitively
+       wrong regardless of NaN fraction. Tissue-segmented T1 is used if
+       WM/GM probsegs are available; otherwise uniform fallback is applied.
+
+    2. **Conditioning gate** (VFA E1 approaching 1):
+       - *Unconditional zone* (E1 > 0.997, cond > 332): VFA signal surface
+         is flat in the T1 direction; VFA T1 is abandoned for tissue-segmented
+         or uniform fallback regardless of B1 status.
+       - *Conditional zone* (E1 0.993-0.997, cond 141-332): VFA T1 is biased
+         but retains spatial information. Without B1 correction, offset
+         correction is preferred over fallback when NaN fraction is manageable,
+         as it preserves spatial variation while fixing the median bias
+         (Deoni SCL et al. MRM 2003). When NaN fraction exceeds the E1-adaptive
+         abandon threshold, fallback is used instead.
+
+    3. **Offset correction**: Applied when median T1 deviates from expected
+       but is within acceptable range.
     """
     expected_median = t1_ref["expected_median"]
     result.nan_fraction = nan_fraction
@@ -698,21 +707,17 @@ def _auto_correct_t1(
             )
 
     # Case 1: Hard reject - impossible values
-    # With high NaN fraction, prefer tissue-segmented T1 over uniform fallback
+    # When median T1 exceeds reject threshold, VFA is fundamentally wrong.
+    # Prefer tissue-segmented T1 (preserves WM/GM contrast) over uniform fallback.
     if median_t1 < t1_ref["reject_min"] or median_t1 > t1_ref["reject_max"]:
         direction = "below" if median_t1 < t1_ref["reject_min"] else "above"
         threshold = t1_ref["reject_min"] if direction == "below" else t1_ref["reject_max"]
 
-        if (
-            nan_fraction is not None
-            and nan_fraction > nan_abandon
-            and wm_probseg is not None
-            and gm_probseg is not None
-        ):
+        if wm_probseg is not None and gm_probseg is not None:
             logger.warning(
-                "Median T1 (%.0fms) %s reject threshold (%.0fms) with "
-                "%.1f%% NaN voxels - using tissue-segmented T1 map",
-                median_t1, direction, threshold, nan_fraction * 100,
+                "Median T1 (%.0fms) %s reject threshold (%.0fms) - "
+                "using tissue-segmented T1 map",
+                median_t1, direction, threshold,
             )
             t1_corrected = build_tissue_t1_map(
                 wm_probseg, gm_probseg, field_strength,
@@ -722,21 +727,22 @@ def _auto_correct_t1(
             result.correction_applied = "tissue_segmented"
             result.tissue_t1_used = True
             result.reason = (
-                f"Median T1 {direction} reject threshold ({threshold}ms), "
-                f"NaN fraction {nan_fraction:.1%} - tissue-segmented fallback"
+                f"Median T1 {direction} reject threshold ({threshold}ms) - "
+                "tissue-segmented fallback"
             )
             result.median_t1_corrected = expected_median
             return t1_corrected, result
 
         logger.warning(
             "Median T1 (%.0fms) %s reject threshold (%.0fms) - "
-            "falling back to literature value (%.0fms)",
+            "falling back to literature value (%.0fms) (no tissue maps)",
             median_t1, direction, threshold, t1_ref["default"],
         )
         t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
         result.correction_applied = "fallback"
         result.reason = (
-            f"Median T1 {direction} reject threshold ({threshold}ms)"
+            f"Median T1 {direction} reject threshold ({threshold}ms), "
+            "no tissue maps available"
         )
         result.fallback_value_ms = t1_ref["default"]
         result.median_t1_corrected = t1_ref["default"]
