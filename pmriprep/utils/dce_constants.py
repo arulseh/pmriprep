@@ -706,6 +706,28 @@ AIF_TIMING_TARGET_SECONDS: Final[float] = 4.0
 #: TR threshold above which timing-based discrimination is unreliable.
 AIF_LOW_TR_THRESHOLD: Final[float] = 5.0
 
+
+# =============================================================================
+# DCE Signal Quality QC Thresholds
+# =============================================================================
+
+#: Minimum peak enhancement for reliable DCE quantification (%)
+#: 5% ≈ 2σ above noise floor; failed injection shows <3%
+#: Heye et al., NMR Biomed 2016: WM enhancement can be 15% in elderly
+QC_PEAK_ENHANCEMENT_MIN: Final[float] = 5.0
+
+#: Peak enhancement below this triggers REVIEW (%)
+#: Half-dose standard Gd-DTPA shows 10-20% in WM
+QC_PEAK_ENHANCEMENT_WARN: Final[float] = 20.0
+
+#: Minimum baseline tSNR for reliable PK fitting
+#: Tofts JMRI 2010: Ktrans CV >50% at tSNR<3
+QC_DCE_BASELINE_TSNR_MIN: Final[float] = 3.0
+
+#: Baseline tSNR below this triggers REVIEW
+#: Tofts JMRI 2010: Ktrans CV ~20% at tSNR=8
+QC_DCE_BASELINE_TSNR_WARN: Final[float] = 8.0
+
 #: Strict arterial FWHM upper bound in seconds.
 AIF_FWHM_MAX_STRICT_SECONDS: Final[float] = 25.0
 

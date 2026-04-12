@@ -973,11 +973,14 @@ class AIFDetection(BaseInterface):
     # Step 7: Cost-function scoring  (perf-plus score_aif_candidate)
     # -----------------------------------------------------------------
 
-    @staticmethod
     def _score_candidate_cost(
+        self,
         metrics: dict[str, float],
         criteria: str = "strict",
         median_s0: Optional[float] = None,
+        *,
+        dose: Optional[float] = None,
+        agent_standard_dose: Optional[float] = None,
     ) -> float:
         """Score a candidate with perf-plus cost function.
 
@@ -992,6 +995,10 @@ class AIFDetection(BaseInterface):
             One of 'strict', 'relaxed', 'permissive'.
         median_s0 : float or None
             Median baseline signal for S0 partial-volume rejection.
+        dose : float or None
+            Contrast agent dose multiplier (default 1.0).
+        agent_standard_dose : float or None
+            Standard dose in mmol/kg (default 0.1).
 
         Returns
         -------
@@ -1087,12 +1094,19 @@ class AIFDetection(BaseInterface):
             BASE_PEAK_CEILING = 120.0  # s^-1 (raised to avoid false positive at 27.92)
 
             # Compute effective dose (Gd-normalized, same formula as DCE)
-            dose_val = float(self.inputs.dose) if isdefined(self.inputs.dose) else 1.0
-            agent_std = (
-                float(self.inputs.agent_standard_dose)
-                if isdefined(self.inputs.agent_standard_dose)
-                else 0.1
-            )
+            # Use explicit parameters if provided, else fall back to interface inputs
+            if dose is not None:
+                dose_val = dose
+            else:
+                dose_val = float(self.inputs.dose) if isdefined(self.inputs.dose) else 1.0
+            if agent_standard_dose is not None:
+                agent_std = agent_standard_dose
+            else:
+                agent_std = (
+                    float(self.inputs.agent_standard_dose)
+                    if isdefined(self.inputs.agent_standard_dose)
+                    else 0.1
+                )
             effective_dose = (agent_std * dose_val) / 0.1
 
             # Clamp to prevent pathological thresholds

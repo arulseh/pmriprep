@@ -352,11 +352,11 @@ class ConformT1w(SimpleInterface):
         logger = logging.getLogger(__name__)
 
         in_file = str(self.inputs.in_file)
-        img = nib.load(in_file)
+        img: nib.Nifti1Image = nib.load(in_file)  # type: ignore[assignment]
         zooms = np.array(img.header.get_zooms()[:3], dtype=float)
 
         # Only downsample axes < 1mm
-        if np.all(zooms >= 1.0 - 1e-3):
+        if np.all(zooms >= 1.0 - 1e-3):  # type: ignore[operator]
             # All voxels >= 1mm — passthrough without resampling
             out_path = Path.cwd() / Path(in_file).name
             if not out_path.exists() or str(out_path) != in_file:

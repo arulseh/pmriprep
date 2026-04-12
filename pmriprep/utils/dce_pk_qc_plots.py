@@ -246,6 +246,21 @@ def generate_preprocessing_qc_plot(
         tsnr = np.where(temporal_std > 1e-6, temporal_mean / temporal_std, 0.0)
     tsnr[~mask_bool] = np.nan
     mean_tsnr = float(np.nanmean(tsnr[mask_bool]))
+
+    # Baseline tSNR (pre-contrast frames only) - avoids contrast signal contamination
+    # Full-timeseries tSNR is contaminated by enhancement-induced variance
+    # Require at least 2 frames to compute meaningful std; otherwise return NaN
+    n_baseline = max(1, baseline_frames)
+    if n_baseline >= 2:
+        baseline_data = dce_signal_4d[..., :n_baseline]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            baseline_mean = np.mean(baseline_data, axis=3)
+            baseline_std = np.std(baseline_data, axis=3)
+            baseline_tsnr_map = np.where(baseline_std > 1e-6, baseline_mean / baseline_std, 0.0)
+        mean_baseline_tsnr = float(np.nanmean(baseline_tsnr_map[mask_bool]))
+    else:
+        # Cannot compute tSNR from single frame
+        mean_baseline_tsnr = float("nan")
     tsnr_slice = get_radiological_slice(tsnr, axis=2)
     tsnr_vmax = float(np.nanpercentile(tsnr[mask_bool], 95)) if np.any(mask_bool) else 50.0
     im = ax.imshow(tsnr_slice, cmap="hot", vmin=0, vmax=tsnr_vmax, aspect="equal")
@@ -274,6 +289,7 @@ def generate_preprocessing_qc_plot(
     stats = {
         "peak_enh_pct": round(peak_enh_pct, 1),
         "mean_tsnr": round(mean_tsnr, 1),
+        "baseline_tsnr": round(mean_baseline_tsnr, 1),
     }
     return str(out), stats
 

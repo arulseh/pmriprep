@@ -235,6 +235,11 @@ class TestFirstPassGap:
 class TestPSRLowerBound:
     """Tests for PSR lower bound rejection in _score_candidate_cost."""
 
+    @pytest.fixture
+    def aif_interface(self) -> AIFDetection:
+        """Create minimal AIFDetection instance for testing."""
+        return AIFDetection()
+
     def _make_metrics(self, psr: float = 80.0) -> dict:
         """Create minimal candidate metrics dict."""
         return {
@@ -252,42 +257,42 @@ class TestPSRLowerBound:
             "max_allowed_ttp": 100.0,
         }
 
-    def test_psr_below_strict_threshold_rejected(self) -> None:
+    def test_psr_below_strict_threshold_rejected(self, aif_interface: AIFDetection) -> None:
         """PSR < 40% rejected at strict level."""
         metrics = self._make_metrics(psr=30.0)
-        cost = AIFDetection._score_candidate_cost(
+        cost = aif_interface._score_candidate_cost(
             metrics, criteria="strict", median_s0=200.0,
         )
         assert cost == float("inf")
 
-    def test_psr_above_strict_threshold_passes(self) -> None:
+    def test_psr_above_strict_threshold_passes(self, aif_interface: AIFDetection) -> None:
         """PSR = 50% passes at strict level."""
         metrics = self._make_metrics(psr=50.0)
-        cost = AIFDetection._score_candidate_cost(
+        cost = aif_interface._score_candidate_cost(
             metrics, criteria="strict", median_s0=200.0,
         )
         assert cost < float("inf")
 
-    def test_psr_below_relaxed_threshold_rejected(self) -> None:
+    def test_psr_below_relaxed_threshold_rejected(self, aif_interface: AIFDetection) -> None:
         """PSR < 30% rejected at relaxed level."""
         metrics = self._make_metrics(psr=20.0)
-        cost = AIFDetection._score_candidate_cost(
+        cost = aif_interface._score_candidate_cost(
             metrics, criteria="relaxed", median_s0=200.0,
         )
         assert cost == float("inf")
 
-    def test_psr_nan_not_rejected(self) -> None:
+    def test_psr_nan_not_rejected(self, aif_interface: AIFDetection) -> None:
         """PSR = NaN should not trigger rejection."""
         metrics = self._make_metrics(psr=float("nan"))
-        cost = AIFDetection._score_candidate_cost(
+        cost = aif_interface._score_candidate_cost(
             metrics, criteria="strict", median_s0=200.0,
         )
         assert cost < float("inf")
 
-    def test_psr_above_max_still_rejected(self) -> None:
+    def test_psr_above_max_still_rejected(self, aif_interface: AIFDetection) -> None:
         """PSR > 110% still rejected at strict (existing PSR max check)."""
         metrics = self._make_metrics(psr=120.0)
-        cost = AIFDetection._score_candidate_cost(
+        cost = aif_interface._score_candidate_cost(
             metrics, criteria="strict", median_s0=200.0,
         )
         assert cost == float("inf")

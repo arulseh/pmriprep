@@ -939,6 +939,61 @@ class DCEDerivativeWriter(BaseInterface):
             if motion_rec is not None:
                 recommendations.append(motion_rec)
 
+        # Evaluate signal quality (peak enhancement, baseline tSNR)
+        from pmriprep.utils.dce_constants import (
+            QC_PEAK_ENHANCEMENT_MIN,
+            QC_PEAK_ENHANCEMENT_WARN,
+            QC_DCE_BASELINE_TSNR_MIN,
+            QC_DCE_BASELINE_TSNR_WARN,
+        )
+
+        peak_enh = preprocessing_qc.get("peak_enh_pct")
+        baseline_tsnr = preprocessing_qc.get("baseline_tsnr")
+        aif_source = aif_qc.get("aif_source", "")
+
+        # Peak enhancement gating
+        if peak_enh is not None:
+            if peak_enh < QC_PEAK_ENHANCEMENT_MIN:
+                enh_rec = QCRecommendation(
+                    QCAction.EXCLUDE,
+                    f"Peak enhancement critically low ({peak_enh:.1f}% < {QC_PEAK_ENHANCEMENT_MIN}%, possible failed injection)",
+                    3,
+                )
+                recommendations.append(enh_rec)
+            elif peak_enh < QC_PEAK_ENHANCEMENT_WARN:
+                enh_rec = QCRecommendation(
+                    QCAction.REVIEW,
+                    f"Peak enhancement marginal ({peak_enh:.1f}%)",
+                    1,
+                )
+                recommendations.append(enh_rec)
+                # Population AIF cannot verify injection quality
+                if aif_source == "population":
+                    recommendations.append(
+                        QCRecommendation(
+                            QCAction.REVIEW,
+                            "Injection quality cannot be verified with population AIF",
+                            1,
+                        )
+                    )
+
+        # Baseline tSNR gating
+        if baseline_tsnr is not None:
+            if baseline_tsnr < QC_DCE_BASELINE_TSNR_MIN:
+                tsnr_rec = QCRecommendation(
+                    QCAction.EXCLUDE,
+                    f"Baseline tSNR critically low ({baseline_tsnr:.1f} < {QC_DCE_BASELINE_TSNR_MIN})",
+                    3,
+                )
+                recommendations.append(tsnr_rec)
+            elif baseline_tsnr < QC_DCE_BASELINE_TSNR_WARN:
+                tsnr_rec = QCRecommendation(
+                    QCAction.REVIEW,
+                    f"Baseline tSNR marginal ({baseline_tsnr:.1f})",
+                    1,
+                )
+                recommendations.append(tsnr_rec)
+
         # Evaluate DSC-DCE cross-validation if available
         xval = qc_metrics.get("dsc_dce_validation", {})
         if (
