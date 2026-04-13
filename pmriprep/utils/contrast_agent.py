@@ -913,10 +913,9 @@ def collect_default_warnings(
                     "preload_classification", "unknown"
                 )
                 delta_r2 = preload_qc.get("baseline_delta_r2")
-            detail = f" (detected: {classification}"
+            detail = ""
             if delta_r2 is not None:
-                detail += f", baseline \u0394R2*={delta_r2:.3f} s\u207b\u00b9"
-            detail += ")"
+                detail = f" (baseline \u0394R2*={delta_r2:.3f} s\u207b\u00b9)"
             warnings.append(
                 f"DSC preload not user-specified; auto-detected from "
                 f"baseline \u0394R2*{detail}. Use --dsc-preload to specify."

@@ -5,7 +5,7 @@ with external figure files, following NiPreps conventions for visual
 quality control.
 """
 
-import base64
+
 import json
 import logging
 import math
@@ -698,30 +698,16 @@ def figure_filename(
     return "_".join(parts)
 
 
-def _encode_image(path: Path) -> str:
-    """Encode image file as base64 data URI.
-
-    Args:
-        path: Path to PNG image file.
-
-    Returns:
-        Base64 data URI string for embedding in HTML.
-    """
-    data = path.read_bytes()
-    b64 = base64.b64encode(data).decode("ascii")
-    return f"data:image/png;base64,{b64}"
-
-
 def _collect_pipeline_images(
     subject_id: str,
     session_id: str,
     pipeline: str,
     figures_dir: Path,
 ) -> dict[str, str]:
-    """Collect and embed figures for a single pipeline.
+    """Collect figure relative paths for a single pipeline.
 
-    Scans figures_dir for matching files and returns base64-encoded
-    data URIs for self-contained HTML reports (NiPreps pattern).
+    Scans *figures_dir* for matching files and returns relative paths
+    suitable for ``<img src="...">`` in the HTML report (NiPreps pattern).
 
     Args:
         subject_id: BIDS subject ID.
@@ -730,14 +716,15 @@ def _collect_pipeline_images(
         figures_dir: Absolute path to figures directory.
 
     Returns:
-        Dict mapping image key to base64 data URI string.
+        Dict mapping image key to relative path string
+        (e.g. ``figures/sub-01_ses-01_desc-brainmask_dsc.png``).
     """
     images: dict[str, str] = {}
     for key in _PIPELINE_FIGURE_KEYS.get(pipeline, []):
         fname = figure_filename(subject_id, session_id, key, pipeline)
         fpath = figures_dir / fname
         if fpath.exists():
-            images[key] = _encode_image(fpath)
+            images[key] = f"figures/{fname}"
     return images
 
 
