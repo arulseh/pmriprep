@@ -183,7 +183,7 @@ def _histogram_match_t1w_to_dsc(
     return out_file
 
 
-def _create_perfusion_brain_mask_filmstrip(mean_file, brain_mask_file):
+def _create_perfusion_brain_mask_filmstrip(mean_file, brain_mask_file, subject_id="", session_id=""):
     """Create brain extraction QC filmstrip for DSC or DCE perfusion data.
 
     Overlays the brain mask contour (solid red line) on the mean perfusion
@@ -207,7 +207,7 @@ def _create_perfusion_brain_mask_filmstrip(mean_file, brain_mask_file):
     import nibabel as nib
     import numpy as np
 
-    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip, qc_figure_title
 
     out_dir = Path.cwd()
     output_path = str(out_dir / "brain_mask_qc_filmstrip.png")
@@ -225,7 +225,7 @@ def _create_perfusion_brain_mask_filmstrip(mean_file, brain_mask_file):
         label_masks=label_masks,
         output_path=output_path,
         mask=mask_data,
-        title="Brain Extraction QC",
+        title=qc_figure_title(subject_id, session_id, "Brain Extraction QC"),
         voxel_sizes=voxel_sizes,
     )
 
@@ -2312,12 +2312,14 @@ def init_dsc_preproc_wf(
     # Brain mask filmstrip QC (after HD-BET)
     dsc_brain_mask_qc = pe.Node(
         niu.Function(
-            input_names=["mean_file", "brain_mask_file"],
+            input_names=["mean_file", "brain_mask_file", "subject_id", "session_id"],
             output_names=["out_file"],
             function=_create_perfusion_brain_mask_filmstrip,
         ),
         name="dsc_brain_mask_qc",
     )
+    dsc_brain_mask_qc.inputs.subject_id = subject_id
+    dsc_brain_mask_qc.inputs.session_id = session_id or ""
     workflow.connect([
         (prebolus_mean, dsc_brain_mask_qc, [
             ("prebolus_mean_file", "mean_file"),

@@ -81,7 +81,7 @@ def _determine_processing_mode(t1w_precon=None, t1w_postcon=None):
     return reference_t1w, is_postcon_ref
 
 
-def _create_brain_mask_filmstrip(t1w_file, brain_mask_file):
+def _create_brain_mask_filmstrip(t1w_file, brain_mask_file, subject_id="", session_id=""):
     """Create brain extraction QC filmstrip showing mask boundary on T1w.
 
     Loads bias-corrected T1w as background and overlays the brain mask
@@ -107,7 +107,10 @@ def _create_brain_mask_filmstrip(t1w_file, brain_mask_file):
     import nibabel as nib
     import numpy as np
 
-    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+    from pmriprep.utils.qc_utils import (
+        plot_segmentation_qc_filmstrip,
+        qc_figure_title,
+    )
 
     out_dir = Path.cwd()
     output_path = str(out_dir / "brain_mask_qc_filmstrip.png")
@@ -125,14 +128,14 @@ def _create_brain_mask_filmstrip(t1w_file, brain_mask_file):
         label_masks=label_masks,
         output_path=output_path,
         mask=mask_data,
-        title="Brain Extraction QC",
+        title=qc_figure_title(subject_id, session_id, "Brain Extraction QC"),
         voxel_sizes=voxel_sizes,
     )
 
     return output_path
 
 
-def _create_acpc_registration_filmstrip(t1w_acpc_file):
+def _create_acpc_registration_filmstrip(t1w_acpc_file, subject_id="", session_id=""):
     """Create ACPC-to-MNI registration QC filmstrip.
 
     Shows ACPC-aligned T1w as background with MNI template edges overlaid
@@ -153,7 +156,10 @@ def _create_acpc_registration_filmstrip(t1w_acpc_file):
 
     import nibabel as nib
 
-    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+    from pmriprep.utils.qc_utils import (
+        plot_registration_qc_filmstrip,
+        qc_figure_title,
+    )
 
     out_dir = Path.cwd()
     output_path = str(out_dir / "acpc_qc_filmstrip.png")
@@ -175,14 +181,15 @@ def _create_acpc_registration_filmstrip(t1w_acpc_file):
         moving=mni_data,
         output_path=output_path,
         mask=mask,
-        title="ACPC-MNI Alignment QC",
+        title=qc_figure_title(subject_id, session_id, "ACPC-MNI Alignment QC"),
         voxel_sizes=voxel_sizes,
     )
 
     return output_path
 
 
-def _create_coreg_qc_filmstrip(coregistered_file, reference_file, brain_mask_file, title):
+def _create_coreg_qc_filmstrip(coregistered_file, reference_file, brain_mask_file, title,
+                               subject_id="", session_id=""):
     """Create cross-modal coregistration QC filmstrip.
 
     Shows masked coregistered image as background with brain-extracted T1w
@@ -208,7 +215,7 @@ def _create_coreg_qc_filmstrip(coregistered_file, reference_file, brain_mask_fil
 
     import nibabel as nib
 
-    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip
+    from pmriprep.utils.qc_utils import plot_registration_qc_filmstrip, qc_figure_title
 
     # Use a sanitized title for the filename
     safe_name = title.lower().replace(" ", "_").replace("-", "_")
@@ -226,14 +233,15 @@ def _create_coreg_qc_filmstrip(coregistered_file, reference_file, brain_mask_fil
         moving=ref_data,
         output_path=output_path,
         mask=mask_data,
-        title=title,
+        title=qc_figure_title(subject_id, session_id, title),
         voxel_sizes=voxel_sizes,
     )
 
     return output_path
 
 
-def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf_probseg_file):
+def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf_probseg_file,
+                                 subject_id="", session_id=""):
     """Create tissue segmentation QC filmstrip showing WM/GM/CSF contours on T1w.
 
     Thresholds each probability map at p>0.5 to create binary masks,
@@ -263,7 +271,10 @@ def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf
     import nibabel as nib
     import numpy as np
 
-    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+    from pmriprep.utils.qc_utils import (
+        plot_segmentation_qc_filmstrip,
+        qc_figure_title,
+    )
 
     out_dir = Path.cwd()
     output_path = str(out_dir / "tissue_seg_qc_filmstrip.png")
@@ -289,7 +300,7 @@ def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf
         label_masks=label_masks,
         output_path=output_path,
         mask=(t1w_data > 0),
-        title="Tissue Segmentation QC",
+        title=qc_figure_title(subject_id, session_id, "Tissue Segmentation QC"),
         voxel_sizes=voxel_sizes,
     )
 
@@ -1013,12 +1024,14 @@ def init_anat_preproc_wf(
     # Brain mask filmstrip (always)
     brain_mask_filmstrip = pe.Node(
         niu.Function(
-            input_names=["t1w_file", "brain_mask_file"],
+            input_names=["t1w_file", "brain_mask_file", "subject_id", "session_id"],
             output_names=["filmstrip_file"],
             function=_create_brain_mask_filmstrip,
         ),
         name="brain_mask_filmstrip",
     )
+    brain_mask_filmstrip.inputs.subject_id = subject_id
+    brain_mask_filmstrip.inputs.session_id = session_id or ""
     workflow.connect([
         (conform, brain_mask_filmstrip, [("out_file", "t1w_file")]),
         (brain_extract, brain_mask_filmstrip, [("out_mask", "brain_mask_file")]),
@@ -1028,12 +1041,14 @@ def init_anat_preproc_wf(
     tissue_seg_filmstrip_node = pe.Node(
         niu.Function(
             input_names=["t1w_file", "wm_probseg_file", "gm_probseg_file",
-                         "csf_probseg_file"],
+                         "csf_probseg_file", "subject_id", "session_id"],
             output_names=["filmstrip_file"],
             function=_create_tissue_seg_filmstrip,
         ),
         name="tissue_seg_filmstrip",
     )
+    tissue_seg_filmstrip_node.inputs.subject_id = subject_id
+    tissue_seg_filmstrip_node.inputs.session_id = session_id or ""
     workflow.connect([
         (brain_extract, tissue_seg_filmstrip_node, [("out_file", "t1w_file")]),
         (tissue_segment, tissue_seg_filmstrip_node, [
@@ -1046,12 +1061,14 @@ def init_anat_preproc_wf(
     # ACPC alignment filmstrip
     acpc_filmstrip_node = pe.Node(
         niu.Function(
-            input_names=["t1w_acpc_file"],
+            input_names=["t1w_acpc_file", "subject_id", "session_id"],
             output_names=["filmstrip_file"],
             function=_create_acpc_registration_filmstrip,
         ),
         name="acpc_filmstrip",
     )
+    acpc_filmstrip_node.inputs.subject_id = subject_id
+    acpc_filmstrip_node.inputs.session_id = session_id or ""
     workflow.connect([
         (acpc_align, acpc_filmstrip_node, [("out_file", "t1w_acpc_file")]),
     ])
@@ -1065,13 +1082,16 @@ def init_anat_preproc_wf(
         coreg_qc_postcon = pe.Node(
             niu.Function(
                 input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title"],
+                             "brain_mask_file", "title", "subject_id",
+                             "session_id"],
                 output_names=["filmstrip_file"],
                 function=_create_coreg_qc_filmstrip,
             ),
             name="coreg_qc_postcon",
         )
         coreg_qc_postcon.inputs.title = "T1w PostCon to T1w"
+        coreg_qc_postcon.inputs.subject_id = subject_id
+        coreg_qc_postcon.inputs.session_id = session_id or ""
         workflow.connect([
             (mask_postcon, coreg_qc_postcon, [("out_file", "coregistered_file")]),
             (brain_extract, coreg_qc_postcon, [
@@ -1084,13 +1104,16 @@ def init_anat_preproc_wf(
         coreg_qc_t2w = pe.Node(
             niu.Function(
                 input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title"],
+                             "brain_mask_file", "title", "subject_id",
+                             "session_id"],
                 output_names=["filmstrip_file"],
                 function=_create_coreg_qc_filmstrip,
             ),
             name="coreg_qc_t2w",
         )
         coreg_qc_t2w.inputs.title = "T2w to T1w"
+        coreg_qc_t2w.inputs.subject_id = subject_id
+        coreg_qc_t2w.inputs.session_id = session_id or ""
         workflow.connect([
             (mask_t2w, coreg_qc_t2w, [("out_file", "coregistered_file")]),
             (brain_extract, coreg_qc_t2w, [
@@ -1103,13 +1126,16 @@ def init_anat_preproc_wf(
         coreg_qc_flair = pe.Node(
             niu.Function(
                 input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title"],
+                             "brain_mask_file", "title", "subject_id",
+                             "session_id"],
                 output_names=["filmstrip_file"],
                 function=_create_coreg_qc_filmstrip,
             ),
             name="coreg_qc_flair",
         )
         coreg_qc_flair.inputs.title = "FLAIR to T1w"
+        coreg_qc_flair.inputs.subject_id = subject_id
+        coreg_qc_flair.inputs.session_id = session_id or ""
         workflow.connect([
             (mask_flair, coreg_qc_flair, [("out_file", "coregistered_file")]),
             (brain_extract, coreg_qc_flair, [
@@ -1122,13 +1148,16 @@ def init_anat_preproc_wf(
         coreg_qc_flair_postcon = pe.Node(
             niu.Function(
                 input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title"],
+                             "brain_mask_file", "title", "subject_id",
+                             "session_id"],
                 output_names=["filmstrip_file"],
                 function=_create_coreg_qc_filmstrip,
             ),
             name="coreg_qc_flair_postcon",
         )
         coreg_qc_flair_postcon.inputs.title = "FLAIR PostCon to T1w"
+        coreg_qc_flair_postcon.inputs.subject_id = subject_id
+        coreg_qc_flair_postcon.inputs.session_id = session_id or ""
         workflow.connect([
             (mask_flair_postcon, coreg_qc_flair_postcon, [("out_file", "coregistered_file")]),
             (brain_extract, coreg_qc_flair_postcon, [

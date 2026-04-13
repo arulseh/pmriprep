@@ -133,13 +133,15 @@ def _create_tumor_on_postcon_filmstrip(
     enhancing_mask_file,
     non_enhancing_mask_file,
     brain_mask_file,
+    subject_id="",
+    session_id="",
 ):
     """Create tumor segmentation filmstrip on T1w post-contrast background."""
     import nibabel as nib
     import numpy as np
     import os
 
-    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip, qc_figure_title
 
     bg_img = nib.load(t1w_postcon_file)
     bg_data = np.asarray(bg_img.dataobj)
@@ -157,7 +159,7 @@ def _create_tumor_on_postcon_filmstrip(
         ],
         output_path=output_path,
         mask=brain_mask,
-        title="Tumor Segmentation on T1w Post-Contrast",
+        title=qc_figure_title(subject_id, session_id, "Tumor Segmentation on T1w Post-Contrast"),
         voxel_sizes=voxel_sizes,
     )
     return output_path
@@ -168,13 +170,15 @@ def _create_tumor_on_flair_filmstrip(
     enhancing_mask_file,
     non_enhancing_mask_file,
     brain_mask_file,
+    subject_id="",
+    session_id="",
 ):
     """Create tumor segmentation filmstrip on FLAIR background."""
     import nibabel as nib
     import numpy as np
     import os
 
-    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip, qc_figure_title
 
     bg_img = nib.load(flair_file)
     bg_data = np.asarray(bg_img.dataobj)
@@ -192,7 +196,7 @@ def _create_tumor_on_flair_filmstrip(
         ],
         output_path=output_path,
         mask=brain_mask,
-        title="Tumor Segmentation on FLAIR",
+        title=qc_figure_title(subject_id, session_id, "Tumor Segmentation on FLAIR"),
         voxel_sizes=voxel_sizes,
     )
     return output_path
@@ -203,13 +207,15 @@ def _create_nawm_on_flair_filmstrip(
     nawm_mask_file,
     whole_tumor_mask_file,
     brain_mask_file,
+    subject_id="",
+    session_id="",
 ):
     """Create NAWM ROI filmstrip on FLAIR background."""
     import nibabel as nib
     import numpy as np
     import os
 
-    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip
+    from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip, qc_figure_title
 
     bg_img = nib.load(flair_file)
     bg_data = np.asarray(bg_img.dataobj)
@@ -227,7 +233,7 @@ def _create_nawm_on_flair_filmstrip(
         ],
         output_path=output_path,
         mask=brain_mask,
-        title="NAWM ROI on FLAIR",
+        title=qc_figure_title(subject_id, session_id, "NAWM ROI on FLAIR"),
         voxel_sizes=voxel_sizes,
     )
     return output_path
@@ -607,12 +613,16 @@ def init_tumor_seg_wf(
                 "enhancing_mask_file",
                 "non_enhancing_mask_file",
                 "brain_mask_file",
+                "subject_id",
+                "session_id",
             ],
             output_names=["filmstrip_path"],
             function=_create_tumor_on_postcon_filmstrip,
         ),
         name="tumor_postcon_filmstrip",
     )
+    tumor_postcon_filmstrip.inputs.subject_id = subject_id
+    tumor_postcon_filmstrip.inputs.session_id = session_id or ""
 
     workflow.connect([
         (inputnode, tumor_postcon_filmstrip, [
@@ -638,12 +648,16 @@ def init_tumor_seg_wf(
                 "enhancing_mask_file",
                 "non_enhancing_mask_file",
                 "brain_mask_file",
+                "subject_id",
+                "session_id",
             ],
             output_names=["filmstrip_path"],
             function=_create_tumor_on_flair_filmstrip,
         ),
         name="tumor_flair_filmstrip",
     )
+    tumor_flair_filmstrip.inputs.subject_id = subject_id
+    tumor_flair_filmstrip.inputs.session_id = session_id or ""
 
     workflow.connect([
         (inputnode, tumor_flair_filmstrip, [
@@ -669,12 +683,16 @@ def init_tumor_seg_wf(
                 "nawm_mask_file",
                 "whole_tumor_mask_file",
                 "brain_mask_file",
+                "subject_id",
+                "session_id",
             ],
             output_names=["filmstrip_path"],
             function=_create_nawm_on_flair_filmstrip,
         ),
         name="nawm_flair_filmstrip",
     )
+    nawm_flair_filmstrip.inputs.subject_id = subject_id
+    nawm_flair_filmstrip.inputs.session_id = session_id or ""
 
     workflow.connect([
         (inputnode, nawm_flair_filmstrip, [

@@ -975,7 +975,7 @@ def generate_unified_report(
             preproc = qc_metrics.get("preprocessing", {})
             b1 = qc_metrics.get("b1_mapping", {})
             pk = qc_metrics.get("pk_modeling", {})
-            xval = qc_metrics.get("cross_validation", {})
+            xval = qc_metrics.get("dsc_dce_validation", {})
             cbv_c = qc_metrics.get("cbv_constraint", {})
             display_status = {
                 # Signal quality

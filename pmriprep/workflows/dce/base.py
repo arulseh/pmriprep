@@ -548,12 +548,14 @@ def init_dce_preproc_wf(
     # ==========================================================================
     motion_qc_plot = pe.Node(
         niu.Function(
-            input_names=["motion_params_file", "tr"],
+            input_names=["motion_params_file", "tr", "subject_id", "session_id"],
             output_names=["plot_file"],
             function=_generate_dce_motion_qc_plot,
         ),
         name="motion_qc_plot",
     )
+    motion_qc_plot.inputs.subject_id = subject_id
+    motion_qc_plot.inputs.session_id = session_id or ""
     # Connect motion QC plot
     workflow.connect([
         (dce_preprocess, motion_qc_plot, [("out_params", "motion_params_file")]),
@@ -597,12 +599,14 @@ def init_dce_preproc_wf(
 
     dce_brain_mask_qc = pe.Node(
         niu.Function(
-            input_names=["mean_file", "brain_mask_file"],
+            input_names=["mean_file", "brain_mask_file", "subject_id", "session_id"],
             output_names=["out_file"],
             function=_create_perfusion_brain_mask_filmstrip,
         ),
         name="dce_brain_mask_qc",
     )
+    dce_brain_mask_qc.inputs.subject_id = subject_id
+    dce_brain_mask_qc.inputs.session_id = session_id or ""
     workflow.connect([
         (dce_preprocess, dce_brain_mask_qc, [
             ("baseline_mean_img", "mean_file"),
@@ -3651,7 +3655,7 @@ def _transform_structural_to_dce(
     return out_file
 
 
-def _generate_dce_motion_qc_plot(motion_params_file, tr):
+def _generate_dce_motion_qc_plot(motion_params_file, tr, subject_id="", session_id=""):
     """Generate motion QC plot from DCE motion parameters.
 
     Creates a two-panel figure showing raw motion parameters and
@@ -3670,7 +3674,7 @@ def _generate_dce_motion_qc_plot(motion_params_file, tr):
 
     motion_params = np.loadtxt(motion_params_file)
     out_path = Path.cwd() / "dce_motion_qc.png"
-    plot_motion_qc(motion_params, out_path, tr=tr, title="DCE Motion QC")
+    plot_motion_qc(motion_params, out_path, tr=tr, title="DCE Motion QC", subject_id=subject_id, session_id=session_id)
     return str(out_path)
 
 
