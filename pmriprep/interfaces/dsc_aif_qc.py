@@ -2,8 +2,6 @@
 
 This module implements Nipype interfaces for generating QC plots of the
 detected AIF: a curve time series plot and a 3-pane location overlay.
-
-Matches perf-plus ``plot_aif`` and ``plot_aif_location_overlay`` outputs.
 """
 
 from pathlib import Path
@@ -210,8 +208,7 @@ class AIFQCPlot(BaseInterface):
         """Plot AIF concentration curve with quality annotations.
 
         When gamma-variate fitting was applied, overlays the raw AIF behind
-        the fitted curve for visual comparison (similar to perf-plus
-        ``_gammafit.png``).
+        the fitted curve for visual comparison.
         """
         import matplotlib.pyplot as plt  # type: ignore[import-untyped]
         from pmriprep.utils.qc_standards import COLORBLIND_PALETTE
@@ -329,10 +326,7 @@ class AIFQCPlot(BaseInterface):
         session_id: str,
         output_path: str,
     ) -> None:
-        """Plot 3-pane AIF location overlay on temporal mean DSC.
-
-        Matches perf-plus ``plot_aif_location_overlay`` output style.
-        """
+        """Plot 3-pane AIF location overlay on temporal mean DSC."""
         import matplotlib.pyplot as plt  # type: ignore[import-untyped]
         from pmriprep.utils.qc_utils import get_radiological_slice
 
@@ -413,7 +407,7 @@ class AIFQCPlot(BaseInterface):
                 ax_plt.axhline(y=cross_y, color="cyan", linestyle="--", linewidth=0.8, alpha=0.5)
                 ax_plt.axvline(x=cross_x, color="cyan", linestyle="--", linewidth=0.8, alpha=0.5)
 
-                # Candidate markers (perf-plus style: numbered circles)
+                # Candidate markers (numbered circles)
                 all_coords = qc.get("all_candidate_coords", [])
                 if len(all_coords) > 0:
                     candidate_colors = [

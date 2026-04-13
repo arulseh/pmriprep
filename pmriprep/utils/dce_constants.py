@@ -28,16 +28,16 @@ EPSILON_VP: Final[float] = 0.001
 EPSILON_B1: Final[float] = 1e-6
 
 #: E1 upper bound offset (E1 clipped to [EPSILON_T1, 1.0 - EPSILON_E1_UPPER])
-#: perf-plus uses 1e-4 giving upper bound 0.9999 to avoid clipping long-T1 voxels
+#: Upper bound offset 1e-4 gives E1 <= 0.9999, preserving long-T1 voxels
 EPSILON_E1_UPPER: Final[float] = 1e-4
 
 #: Minimum value for sin/tan of corrected flip angles to prevent division by zero
 EPSILON_TRIG: Final[float] = 1e-6
 
-#: Signal epsilon for baseline guard (matches perf-plus EPSILON_SIGNAL)
+#: Signal epsilon for baseline guard
 EPSILON_SIGNAL: Final[float] = 1e-9
 
-#: Epsilon for signal ratio denominators (matches perf-plus EPSILON_RATIO)
+#: Epsilon for signal ratio denominators
 EPSILON_RATIO: Final[float] = 1e-10
 
 #: Minimum baseline concentration noise for CNR computation (mM)
@@ -399,8 +399,8 @@ KEP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 10.0)
 
 #: Maximum kep (efflux rate) for the forward model. Must be high enough to
 #: avoid biasing the optimizer — capping in evaluate() flattens the objective
-#: surface for Ktrans/ve combinations where true kep > cap. Perf-plus uses
-#: no cap at all. 1000.0 is effectively uncapped for physiological parameters
+#: surface for Ktrans/ve combinations where true kep > cap. 1000.0 is
+#: effectively uncapped for physiological parameters
 #: while still guarding against degenerate numerics.
 MAX_KEP: Final[float] = 1000.0
 
@@ -633,7 +633,7 @@ MIDLINE_EXCLUSION_FRACTION: Final[float] = 0.10
 #: Avoids cortical vein drainage zone.
 SUPERIOR_EXCLUSION_FRACTION: Final[float] = 0.75
 
-# NOTE: Posterior exclusion REMOVED - perf-plus does NOT have posterior exclusion.
+# NOTE: No posterior exclusion applied.
 # Only midline and superior exclusions are applied. The ISS is adequately
 # excluded by the midline exclusion since it runs along the falx cerebri.
 
@@ -653,7 +653,7 @@ AIF_PEAK_TIMING_FRACTION: Final[float] = 0.4
 
 
 # =============================================================================
-# AIF FWHM Thresholds (Frame-Based, from perf-plus)
+# AIF FWHM Thresholds (Frame-Based)
 # =============================================================================
 #: These are used in the 7-tier arterial criteria cascade.
 
@@ -765,7 +765,7 @@ def compute_timing_margin_frames(tr: float) -> int:
 def compute_fwhm_threshold_frames(tr: float, strict: bool = True) -> float:
     """Compute TR-adaptive FWHM threshold in frames.
 
-    Takes the minimum of the frame-based threshold (from perf-plus) and
+    Takes the minimum of the frame-based threshold and
     a seconds-based threshold converted to frames. This ensures the
     threshold is meaningful at any TR:
     - At TR=2s: min(5, 25/2=12.5) = 5 frames (frame-based dominates)

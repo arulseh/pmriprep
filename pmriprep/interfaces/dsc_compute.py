@@ -195,7 +195,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
             beta = result.parameters.get("beta", 1.0)
             delay = result.parameters.get("delay", 0.0)
 
-            # Compute residue for derived parameters (perf-plus approach):
+            # Compute residue for derived parameters:
             # CBV = integral of residue, MTT = CBV / CBF (central volume theorem)
             model = _dsc_worker_ctx["model_factory"]()
             residue = model.residue_function(
@@ -265,7 +265,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         out["r_squared"] = result.r_squared
         out["converged"] = result.passes_convergence()
 
-        # Flag poor fits for oSVD fallback (perf-plus falls back when R² < 0.5)
+        # Flag poor fits for oSVD fallback (R² < 0.5 threshold)
         if result.r_squared < 0.5 or not result.converged:
             out["needs_fallback"] = True
 
@@ -849,7 +849,7 @@ class ComputeDSCMaps(BaseInterface):
     ]:
         """Run parametric model deconvolution (vascular, CPI).
 
-        Uses multiprocessing.Pool when n_procs > 1 (matching perf-plus).
+        Uses multiprocessing.Pool when n_procs > 1.
         """
 
         from pmriprep.models.dsc import estimate_bolus_duration
@@ -989,8 +989,8 @@ class ComputeDSCMaps(BaseInterface):
                 n_converged += 1
 
         # Fallback: run oSVD for voxels where parametric fit failed or R² < 0.5
-        # Perf-plus falls back to oSVD for poor vascular fits; the ground truth
-        # maps likely contain oSVD-derived values for many voxels.
+        # Fall back to oSVD for poor vascular fits; ground truth maps
+        # likely contain oSVD-derived values for many voxels.
         from pmriprep.utils.dsc_deconvolution import svd_deconvolve_oscillation
 
         fallback_coords = [
@@ -1614,7 +1614,7 @@ class ComputeDSCMaps(BaseInterface):
         baseline_frames = int(self.inputs.baseline_frames)
         tail_frames = int(self.inputs.tail_frames)
 
-        # Auto-detect baseline frames from AIF (matches perf-plus)
+        # Auto-detect baseline frames from AIF
         detected_baseline, baseline_detection_info = self._detect_baseline_frames(
             aif, baseline_frames, concentration_data=conc_data, mask=mask
         )
@@ -1624,7 +1624,7 @@ class ComputeDSCMaps(BaseInterface):
         # Re-compute S0/concentration with detected baseline when it differs
         # from the signal_to_conc baseline (which used config.pre_bolus).
         # This handles both shorter (earlier arrival) and longer (preloaded)
-        # baselines.  Matches perf-plus lines 5177-5205.
+        # baselines.
         recomputed_raw_conc: Optional[npt.NDArray[Any]] = None
         if detected_baseline != baseline_frames and signal_data is not None:
             new_s0 = np.mean(
@@ -1636,10 +1636,9 @@ class ComputeDSCMaps(BaseInterface):
             recomputed_raw_conc = -np.log(signal_ratio) / te
 
             # Re-extract AIF from updated concentration to maintain S0
-            # consistency (perf-plus dsc_compute_maps.py lines 5199-5205).
-            # Unlike perf-plus (single voxel), we re-extract from the full
-            # AIF ROI and re-smooth — matching the initial AIF quality while
-            # using the updated S0 baseline.
+            # consistency. Unlike single-voxel extraction, we re-extract
+            # from the full AIF ROI and re-smooth — matching the initial
+            # AIF quality while using the updated S0 baseline.
             if (
                 isdefined(self.inputs.aif_mask_file)
                 and self.inputs.aif_mask_file
@@ -1860,9 +1859,9 @@ class ComputeDSCMaps(BaseInterface):
         # -----------------------------------------------------------
         # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
         # -----------------------------------------------------------
-        # Rectangular integration (np.sum * dt) matches perf-plus ground
-        # truth and is algebraically consistent with the rectangular
-        # Toeplitz matrix used for deconvolution CBV (Ostergaard 1996).
+        # Rectangular integration (np.sum * dt) is algebraically consistent
+        # with the rectangular Toeplitz matrix used for deconvolution CBV
+        # (Ostergaard 1996).
         # For future absolute quantification, trapezoidal (O(dt^2)) can
         # be used instead:
         #   auc_corr = np.trapezoid(conc_data, dx=dt, axis=-1)
@@ -1871,7 +1870,7 @@ class ComputeDSCMaps(BaseInterface):
         auc_diff = auc_raw - auc_corr
 
         # CNR: peak concentration / baseline std per voxel (from raw conc)
-        # perf-plus uses ddof=0 (default) and full-timeseries peak
+        # Uses ddof=0 (default) and full-timeseries peak
         # Suppress RuntimeWarnings from np.where eagerly evaluating both
         # branches (division in true branch, guard in condition).
         baseline_std = np.std(raw_conc_data[..., :detected_baseline], axis=-1)
@@ -1904,7 +1903,7 @@ class ComputeDSCMaps(BaseInterface):
             tsnr = np.zeros(spatial_shape, dtype=np.float64)
 
         # -----------------------------------------------------------
-        # Clip maps to physiological ranges (matches perf-plus)
+        # Clip maps to physiological ranges
         # -----------------------------------------------------------
         psr = np.clip(psr, 0.0, 200.0)
         ph = np.clip(ph, 0.0, 100.0)

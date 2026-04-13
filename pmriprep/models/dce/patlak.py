@@ -110,7 +110,7 @@ class PatlakModel(PKModel):
         return [
             ModelParameter(
                 name="Ktrans",
-                bounds=(0.0, 5.0),  # Match perf-plus Patlak bounds
+                bounds=(0.0, 5.0),  # Standard Patlak bounds
                 typical_range=(0.001, 0.1),
                 transform=TransformType.LOG,
                 description="Volume transfer constant (influx)",
@@ -379,7 +379,7 @@ class PatlakModel(PKModel):
     ) -> FitResult:
         """Fit the Patlak model to observed tissue concentration data.
 
-        By default, uses nonlinear least squares (matching perf-plus).
+        By default, uses nonlinear least squares.
         Can optionally use graphical (linear regression) method.
 
         Args:

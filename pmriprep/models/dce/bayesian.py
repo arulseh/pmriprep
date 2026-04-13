@@ -197,8 +197,7 @@ class BayesianPKFitter:
     ) -> float:
         """Compute log prior probability.
 
-        Uses simple Gaussian priors for all parameters (no log transform),
-        matching perf-plus behavior.
+        Uses simple Gaussian priors for all parameters (no log transform).
 
         Args:
             params: Parameter values.
@@ -269,7 +268,7 @@ class BayesianPKFitter:
         """Compute log likelihood using profile likelihood noise estimation.
 
         Noise standard deviation is estimated from residuals at each
-        evaluation (profile likelihood), matching perf-plus behavior.
+        evaluation (profile likelihood).
         This self-tunes as the model approaches the data, giving a
         balanced likelihood-prior tradeoff.
 
@@ -280,7 +279,6 @@ class BayesianPKFitter:
         Note: With profile likelihood, the log-likelihood reduces to
         -n * log(std(residuals)) + const, equivalent to penalized least
         squares with the Gaussian prior providing L2 regularization.
-        This is intentional and matches the perf-plus reference pipeline.
         Laplace approximation uncertainties are approximate under profile
         likelihood -- use for relative voxel comparison, not calibrated CIs.
 

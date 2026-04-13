@@ -145,8 +145,8 @@ class BayesianDSCFitter:
         noise_std = float(np.std(baseline))
 
         # Minimum noise level for numerical stability
-        # perf-plus uses EPSILON_SIGNAL * 100 = 1e-7; the 1e-10 floor
-        # (EPSILON_CONCENTRATION) makes the likelihood overwhelm the prior
+        # 1e-7 floor (EPSILON_SIGNAL * 100) prevents the likelihood from
+        # overwhelming the prior (1e-10 EPSILON_CONCENTRATION is too small)
         return max(noise_std, 1e-7)
 
     def _log_prior(

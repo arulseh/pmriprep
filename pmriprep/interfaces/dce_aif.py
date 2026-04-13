@@ -753,7 +753,7 @@ class AIFDetection(BaseInterface):
         }
 
     # -----------------------------------------------------------------
-    # Arterial Criteria Cascade (perf-plus exact port)
+    # Arterial Criteria Cascade
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -1015,7 +1015,7 @@ class AIFDetection(BaseInterface):
         if z_superior < nz:
             search_mask[:, :, z_superior:] = 0
 
-        # NOTE: Posterior exclusion REMOVED - perf-plus does NOT have posterior exclusion.
+        # NOTE: No posterior exclusion applied.
         # The ISS is adequately excluded by the midline exclusion since it runs
         # along the falx cerebri (midline structure).
 
@@ -1667,7 +1667,7 @@ class AIFDetection(BaseInterface):
         )
 
     # -----------------------------------------------------------------
-    # Vectorized Candidate Search with perf-plus Arterial Cascade
+    # Vectorized Candidate Search with Arterial Cascade
     # -----------------------------------------------------------------
 
     def _find_candidates_in_mask(
@@ -1681,9 +1681,8 @@ class AIFDetection(BaseInterface):
         tissue_ttp_frame: float | None = None,
         atlas_constrained: bool = False,
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
-        """Find candidate AIF voxels using perf-plus 7-tier arterial cascade.
+        """Find candidate AIF voxels using 7-tier arterial cascade.
 
-        This is an exact port of perf-plus dce_aif_detection.py apply_arterial_criteria().
         Uses vectorized boolean operations with 7-tier fallback cascade:
         1. Strict: high_peak & arterial_timing & rapid_uptake & has_washout & narrow_bolus & steep_upstroke
         2. Relax timing to early_arrival
@@ -1904,7 +1903,7 @@ class AIFDetection(BaseInterface):
 
         When ``roi_size=1`` (default), each candidate contributes only its own
         voxel curve — no spatial expansion into neighboring tissue.  This
-        matches perf-plus behavior and avoids tissue contamination that
+        avoids tissue contamination that
         broadens the AIF at high spatial resolution.
 
         Args:
@@ -1971,7 +1970,7 @@ class AIFDetection(BaseInterface):
         # At TR > 5s, the acquisition itself low-pass filters the signal
         # and the first-pass peak spans only 1-3 frames. SG would
         # destructively broaden the peak (e.g., 44% attenuation at TR=7.6s).
-        # Perf-plus does NOT smooth DCE AIF by default.
+        # Do not smooth DCE AIF by default at long TR.
         if len(aif_curve) >= 5 and tr <= 5.0:
             sg_window = min(5, len(aif_curve))
             sg_poly = 2
@@ -2781,8 +2780,7 @@ class AIFDetection(BaseInterface):
             dose_factor = self._get_dose_factor()
             t = np.arange(n_timepoints) * tr
 
-            # For population AIF, use baseline_frames * TR as BAT (matches
-            # perf-plus dce_aif_detection.py:2618-2619). Data-driven BAT
+            # For population AIF, use baseline_frames * TR as BAT. Data-driven BAT
             # detection on mean brain concentration detects tissue transit
             # delay, not arterial arrival.
             bat_shift = baseline_frames * tr
@@ -2792,7 +2790,7 @@ class AIFDetection(BaseInterface):
             # Parker AIF was calibrated with Gd-DTPA (r1=4.1). Tissue
             # concentrations use the actual agent's r1 (e.g. 11.6 for Vueway).
             # The correction ensures AIF and tissue are in the same
-            # "relaxivity space" (perf-plus dce_aif_detection.py:2641-2649).
+            # "relaxivity space".
             r1_arg: float | None = None
             if bool(self.inputs.agent_r1_known):
                 r1_relaxivity = float(self.inputs.r1_relaxivity)

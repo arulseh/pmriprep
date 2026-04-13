@@ -196,7 +196,7 @@ class ExtendedToftsModel(PKModel):
 
         dt = float(time_points[1] - time_points[0])
 
-        # Compute convolution using np.convolve (matches perf-plus)
+        # Compute convolution using np.convolve
         # C_t(t) = vp × Cp(t) + Ktrans × [Cp ⊗ exp(-kep×t)] × dt
         exp_kernel = np.exp(-kep * dt * np.arange(n_times))
         conv_term = np.convolve(aif, exp_kernel, mode="full")[:n_times] * dt * ktrans

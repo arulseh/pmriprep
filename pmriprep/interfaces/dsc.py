@@ -230,7 +230,7 @@ class MotionCorrection(CommandLine):
         img = nib.load(in_file)
         data = img.get_fdata()  # type: ignore[attr-defined]
         n_timepoints = data.shape[-1]
-        # Match perf-plus: use first 5 volumes for reference (fixed),
+        # Use first 5 volumes for reference (fixed),
         # regardless of configured pre_bolus_frames.
         n_frames = min(5, n_timepoints)
         n_frames = max(1, n_frames)

@@ -132,12 +132,10 @@ def _histogram_match_t1w_to_dsc(
 
     T1w and DSC have inverted contrasts (bright WM vs bright GM).
     Without histogram matching, FLIRT's normcorr coarse-search stage
-    converges to a different local optimum. This matches perf-plus
-    registration_utils.py:161-208.
+    converges to a different local optimum.
 
     The T1w is brain-extracted via *brain_mask_file* before matching so
     that skull/scalp/background voxels do not distort the histogram.
-    Perf-plus uses ``$T1W_BRAIN`` (brain-extracted) for this step.
 
     Args:
         t1w_file: Path to whole-head bias-corrected T1w image.
@@ -1737,7 +1735,7 @@ def init_dsc_preproc_wf(
     # Node 1b2: Histogram Match T1w to DSC (for FLIRT convergence)
     # T1w and DSC have inverted contrasts. Without histogram matching,
     # FLIRT's normcorr coarse-search converges to a wrong local optimum.
-    # Matches perf-plus registration_utils.py:161-208.
+    # Histogram matching improves cross-contrast FLIRT convergence.
     # -------------------------------------------------------------------
     hist_match_t1w = pe.Node(
         niu.Function(
@@ -2424,7 +2422,7 @@ def init_dsc_preproc_wf(
     ])
 
     # Histogram match T1w to DSC for registration convergence
-    # Brain mask applied to T1w before matching (perf-plus uses $T1W_BRAIN)
+    # Brain mask applied to T1w before matching
     workflow.connect([
         (inputnode, hist_match_t1w, [
             ("t1w_reference", "t1w_file"),

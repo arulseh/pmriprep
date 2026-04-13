@@ -203,8 +203,6 @@ def detect_bolus_arrival(
     any constant scaling factor, so detection returns the same frame
     whether input is in ΔR2* (s⁻¹) or concentration (mM).
 
-    Ported from perf-plus perfusion_utils.detect_bolus_arrival().
-
     Args:
         concentration_curve: 1D concentration time course (positive values
             indicate contrast arrival in concentration space).
@@ -385,10 +383,10 @@ def compute_psr(
 
     Notes:
         - This is the physics-correct version for post-integration expert
-          review. The legacy version (compute_psr_legacy) matches perf-plus
-          ground truth and uses the Cha et al. (AJNR 2002) formula.
+          review. The legacy version (compute_psr_legacy) uses the
+          Cha et al. (AJNR 2002) formula for validation ground truth.
         - s_min uses post-baseline frames only (signal[..., baseline_frames:])
-          to avoid baseline contamination, matching the perf-plus convention.
+          to avoid baseline contamination.
         - PSR can exceed 100% in cases where the signal overshoots baseline
           after bolus passage (rare, usually indicates motion artifact).
         - PSR can be negative if signal never recovers (very high leakage
@@ -419,7 +417,7 @@ def compute_psr(
 
     # Compute signal components
     # S_min uses post-baseline frames only to find minimum during/after bolus,
-    # avoiding spurious baseline noise minima (matches perf-plus convention)
+    # avoiding spurious baseline noise minima
     if signal.ndim == 1:
         # 1D time series
         s_baseline = float(np.mean(signal[:baseline_frames]))
@@ -454,7 +452,7 @@ def compute_psr_legacy(
     baseline_frames: int = 5,
     tail_frames: int = 5,
 ) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute PSR using the perf-plus legacy formula.
+    """Compute PSR using the legacy formula (Cha et al., AJNR 2002).
 
     Legacy formula (Cha et al., AJNR 2002):
         PSR = 100 × (S1 - Smin) / (S0 - Smin)
@@ -462,7 +460,7 @@ def compute_psr_legacy(
     Smin = minimum signal in post-baseline frames.
 
     Returns percentage (~0-100+ range). Kept for integration test
-    compatibility with perf-plus ground truth.
+    compatibility with validation ground truth.
 
     Args:
         signal: DSC signal array (1D or 4D).
@@ -528,10 +526,10 @@ def compute_peak_height(
 
     Notes:
         - This is the physics-correct version for post-integration expert
-          review. The legacy version (compute_peak_height_legacy) matches
-          perf-plus ground truth.
+          review. The legacy version (compute_peak_height_legacy) is kept
+          for validation ground truth.
         - s_min uses post-baseline frames only (signal[..., baseline_frames:])
-          to avoid baseline contamination, matching the perf-plus convention.
+          to avoid baseline contamination.
         - PH is always positive when computed from valid DSC signal
           (signal drops during bolus passage).
         - PH can exceed 100% if signal drops below zero (artifact).
@@ -555,7 +553,7 @@ def compute_peak_height(
 
     # Compute signal components
     # S_min uses post-baseline frames only to find minimum during/after bolus,
-    # avoiding spurious baseline noise minima (matches perf-plus convention)
+    # avoiding spurious baseline noise minima
     if signal.ndim == 1:
         # 1D time series
         s_baseline = float(np.mean(signal[:baseline_frames]))
@@ -585,7 +583,7 @@ def compute_peak_height_legacy(
     signal: npt.NDArray[np.floating],
     baseline_frames: int = 5,
 ) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute peak height using the perf-plus legacy formula.
+    """Compute peak height using the legacy formula.
 
     Legacy formula (standard % signal drop):
         PH = 100 × (S0 - Smin) / S0
@@ -593,7 +591,7 @@ def compute_peak_height_legacy(
     post-baseline frames only.
 
     Returns percentage (0-100 range). Kept for integration test
-    compatibility with perf-plus ground truth.
+    compatibility with validation ground truth.
 
     Args:
         signal: DSC signal array (1D or 4D).
@@ -651,7 +649,7 @@ def compute_ttp_legacy(
     pre_bolus_frames: int,
     dt: float,
 ) -> npt.NDArray[np.floating]:
-    """Compute TTP using the perf-plus legacy method.
+    """Compute TTP using the legacy method.
 
     Finds time to peak concentration using unsmoothed post-bolus argmax.
     Returns unclipped TTP so callers can compute derived maps (TTPc, rTTP)

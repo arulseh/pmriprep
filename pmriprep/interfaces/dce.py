@@ -483,7 +483,7 @@ class B1Mapping(SimpleInterface):
                 tr1_img, tr2_img = tr2_img, tr1_img
                 tr1_file, tr2_file = tr2_file, tr1_file
 
-            # Coregister TR2 → TR1 if affines differ (Gap 5, matches perf-plus).
+            # Coregister TR2 → TR1 if affines differ (Gap 5).
             # Separate 3D AFI acquisitions may have slight inter-scan motion.
             coreg_info: dict[str, Any] = {"coregistered": False}  # type: ignore[no-redef]
             s1_original = s1.copy()
@@ -622,7 +622,7 @@ class B1Mapping(SimpleInterface):
         # -----------------------------------------------------------------
         # Signal masking: only compute B1+ where both signals are above
         # noise floor. Uses 5th-percentile threshold to preserve
-        # low-signal dropout regions (Gap 4, matches perf-plus).
+        # low-signal dropout regions (Gap 4).
         # -----------------------------------------------------------------
         positive_signals = np.concatenate([
             s1[s1 > 0].ravel(), s2[s2 > 0].ravel(),
@@ -643,7 +643,7 @@ class B1Mapping(SimpleInterface):
 
         # -----------------------------------------------------------------
         # Ratio validation + denominator stability (Gaps 1, 9).
-        # perf-plus: ratio in (0.05, 1.5) and |n - r| > 0.1
+        # Ratio validity bounds: (0.05, 1.5) and |n - r| > 0.1
         # -----------------------------------------------------------------
         ratio_valid = (
             (r > B1_RATIO_VALID_RANGE[0]) & (r < B1_RATIO_VALID_RANGE[1])
@@ -693,7 +693,7 @@ class B1Mapping(SimpleInterface):
             )
 
         # -----------------------------------------------------------------
-        # Normalized convolution smoothing (Gap 3, matches perf-plus).
+        # Normalized convolution smoothing (Gap 3).
         # smooth(B1*mask) / smooth(mask) averages only within brain
         # voxels and avoids bias at brain edges.
         # -----------------------------------------------------------------
@@ -766,7 +766,7 @@ class B1Mapping(SimpleInterface):
 
         # Load brain mask for QC if provided.
         # Brain mask may be in T1w space (different resolution from AFI).
-        # Following perf-plus: require exact shape+affine match, ignore mask
+        # Require exact shape+affine match, ignore mask
         # entirely if mismatched (no resampling for QC).
         mask: Optional[np.ndarray] = None
         if self.inputs.brain_mask:
@@ -1641,7 +1641,7 @@ class T1Mapping(SimpleInterface):
         # After filtering, original NaN positions are restored.
         # Applied BEFORE CSF exclusion to avoid introducing artificial zeros
         # that would contaminate periventricular tissue during filtering.
-        # Matches perf-plus order: median filter → CSF exclusion → range clipping.
+        # Order: median filter → CSF exclusion → range clipping.
         from scipy.ndimage import median_filter  # type: ignore[import-untyped]
 
         nan_mask = np.isnan(t1_map)
@@ -3253,7 +3253,7 @@ class DCEPreprocess(SimpleInterface):
         Uses derivative-based onset detection: computes smoothed first
         derivative and finds where rate-of-change first exceeds threshold.
         Detects bolus ONSET (when contrast first arrives), not accumulated
-        effect (matching perf-plus dce_preprocess.py:216-236).
+        effect.
         """
         from scipy.ndimage import gaussian_filter1d
         from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
@@ -3263,7 +3263,7 @@ class DCEPreprocess(SimpleInterface):
             return DEFAULT_BASELINE_FRAMES
 
         min_baseline = DEFAULT_BASELINE_FRAMES
-        n_baseline_noise = 5  # Frames for noise estimation (matches perf-plus)
+        n_baseline_noise = 5  # Frames for noise estimation
 
         # TR-adaptive sigma: at volume_tr=7.4s, sigma=2.0 smoothes over
         # ~14.8s — wider than the bolus FWHM — causing Gaussian bleed-back
@@ -3467,8 +3467,7 @@ class DCEBrainExtract(SimpleInterface):
     2. FSL BET (traditional, robust) - if HD-BET unavailable
     3. Threshold-based (simple, fast) - if both fail
 
-    This matches the perf-plus approach which runs HD-BET on the DCE reference
-    image (see perf-plus lines 360-382).
+    Runs HD-BET on the DCE reference image.
 
     Parameters
     ----------

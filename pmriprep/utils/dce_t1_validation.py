@@ -4,8 +4,7 @@ This module provides field-strength-dependent tissue T1 reference values,
 T1 map correction strategies (auto/offset/fallback), and cross-validation
 of field strength from measured T1 distributions.
 
-Ported from perf-plus dce_vfa_t1_mapping.py with adaptations for
-NiPreps-style dataclasses and logging.
+Adapted for NiPreps-style dataclasses and logging.
 
 References
 ----------

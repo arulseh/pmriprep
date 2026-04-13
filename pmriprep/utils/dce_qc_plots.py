@@ -8,8 +8,7 @@ Row 3: T1 histogram, M0 histogram, T1 vs M0 scatter
 
 Uses the colorblind-safe palette from qc_standards.py.
 
-Ported from perf-plus dce_vfa_t1_mapping.py with adaptations for
-NiPreps-style visualization conventions.
+Adapted for NiPreps-style visualization conventions.
 """
 
 import logging

@@ -4,8 +4,7 @@ This module implements Nipype interfaces for AIF detection in DSC perfusion
 processing, with multi-level detection strategies (atlas-based, relaxed
 criteria, synthetic fallback) and comprehensive quality metrics.
 
-Ported from perf-plus ``dsc_compute_maps.py`` AIF pipeline to match its
-search-mask preparation, adaptive-percentile candidate pre-filtering,
+Implements search-mask preparation, adaptive-percentile candidate pre-filtering,
 SSS/edge spatial exclusions, tissue-TTP cross-validation, cost-function
 scoring, 3x3x3 ROI averaging, and Savitzky-Golay smoothing.
 """
@@ -402,7 +401,7 @@ class AIFDetectionOutputSpec(TraitedSpec):
 class AIFDetection(BaseInterface):
     """Arterial Input Function (AIF) detection for DSC-MRI.
 
-    Implements the perf-plus AIF detection pipeline with:
+    Implements the AIF detection pipeline with:
     - Brain mask erosion (4 iterations) to exclude cortical veins
     - Adaptive percentile candidate pre-filtering (99.5% -> 95%)
     - SSS / edge-slice spatial exclusions
@@ -431,7 +430,7 @@ class AIFDetection(BaseInterface):
         return str(Path.cwd() / f"{base}{suffix}")
 
     # -----------------------------------------------------------------
-    # Step 2: Search mask preparation  (perf-plus _prepare_aif_search_mask)
+    # Step 2: Search mask preparation
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -443,10 +442,9 @@ class AIFDetection(BaseInterface):
     ) -> npt.NDArray[Any]:
         """Prepare binary search mask with erosion and exclusion.
 
-        Matches perf-plus ``_prepare_aif_search_mask``: erosion for
-        cortical vein exclusion, optional ROI intersection, and binary
-        lesion exclusion.  Distance-based lesion filtering happens
-        *after* scoring (see ``_apply_post_scoring_filters``).
+        Erosion for cortical vein exclusion, optional ROI intersection,
+        and binary lesion exclusion.  Distance-based lesion filtering
+        happens *after* scoring (see ``_apply_post_scoring_filters``).
 
         Parameters
         ----------
@@ -504,7 +502,6 @@ class AIFDetection(BaseInterface):
 
     # -----------------------------------------------------------------
     # Step 2b: World-coordinate hemisphere methods
-    # (perf-plus determine_tumor_laterality + filter_aif_candidates_by_hemisphere)
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -687,7 +684,7 @@ class AIFDetection(BaseInterface):
         return selected
 
     # -----------------------------------------------------------------
-    # Step 3: Spatial exclusions  (perf-plus _apply_spatial_exclusions)
+    # Step 3: Spatial exclusions
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -740,7 +737,6 @@ class AIFDetection(BaseInterface):
 
     # -----------------------------------------------------------------
     # Step 4: Adaptive percentile candidate finder
-    # (perf-plus _find_aif_candidate_voxels)
     # -----------------------------------------------------------------
 
     def _find_aif_candidate_voxels(
@@ -804,7 +800,6 @@ class AIFDetection(BaseInterface):
 
     # -----------------------------------------------------------------
     # Step 5: Tissue TTP reference
-    # (perf-plus _calculate_tissue_ttp_reference)
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -848,8 +843,7 @@ class AIFDetection(BaseInterface):
         return float(np.median(peak_time_map[brain_mask > 0.5]))
 
     # -----------------------------------------------------------------
-    # Step 6: perf-plus metric calculation
-    # (perf-plus calculate_aif_quality_metrics + calculate_signal_metrics)
+    # Step 6: Candidate metric calculation
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -860,8 +854,6 @@ class AIFDetection(BaseInterface):
         baseline_frames: int,
     ) -> Optional[dict[str, float]]:
         """Compute comprehensive AIF quality metrics for one candidate.
-
-        Matches perf-plus ``calculate_aif_quality_metrics`` output dict.
 
         Returns None if the curve is too short or degenerate.
         """
@@ -970,7 +962,7 @@ class AIFDetection(BaseInterface):
         }
 
     # -----------------------------------------------------------------
-    # Step 7: Cost-function scoring  (perf-plus score_aif_candidate)
+    # Step 7: Cost-function scoring
     # -----------------------------------------------------------------
 
     def _score_candidate_cost(
@@ -982,7 +974,7 @@ class AIFDetection(BaseInterface):
         dose: Optional[float] = None,
         agent_standard_dose: Optional[float] = None,
     ) -> float:
-        """Score a candidate with perf-plus cost function.
+        """Score a candidate with the AIF cost function.
 
         Lower is better.  Returns ``inf`` for physiologically implausible
         candidates (hard rejection).
@@ -1156,7 +1148,6 @@ class AIFDetection(BaseInterface):
 
     # -----------------------------------------------------------------
     # Step 8: Score + select candidates
-    # (perf-plus _score_and_select_candidates)
     # -----------------------------------------------------------------
 
     def _score_and_select_candidates(
@@ -1249,7 +1240,6 @@ class AIFDetection(BaseInterface):
 
     # -----------------------------------------------------------------
     # Step 8b: Post-scoring filters (distance + contralateral)
-    # (perf-plus steps 4.5 + 4.6 in _find_aif_single_attempt)
     # -----------------------------------------------------------------
 
     def _apply_post_scoring_filters(
@@ -1378,7 +1368,6 @@ class AIFDetection(BaseInterface):
 
     # -----------------------------------------------------------------
     # Step 9: ROI averaging + smoothing
-    # (perf-plus _compute_weighted_aif + _finalize_aif_metrics)
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -1620,7 +1609,7 @@ class AIFDetection(BaseInterface):
         return retry2_curve, retry2_mask, best_only, validation_qc
 
     # -----------------------------------------------------------------
-    # Synthetic AIF (perf-plus calibrated gamma-variate)
+    # Synthetic AIF (calibrated gamma-variate)
     # -----------------------------------------------------------------
 
     def _compute_tissue_max_for_synthetic(
@@ -1662,8 +1651,7 @@ class AIFDetection(BaseInterface):
     ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
         """Generate synthetic AIF using physiologically calibrated gamma-variate.
 
-        Ported from perf-plus ``dsc_compute_maps.py:generate_synthetic_aif``
-        (lines 2363-2523). Uses ΔR2*-scaled peak amplitude with recirculation
+        Uses ΔR2*-scaled peak amplitude with recirculation
         component for more realistic bolus shape.
 
         Parameters
@@ -1685,7 +1673,7 @@ class AIFDetection(BaseInterface):
         metrics : dict
             QC metadata describing the synthetic AIF parameters.
         """
-        # --- First-pass gamma-variate parameters (perf-plus defaults) ---
+        # --- First-pass gamma-variate parameters ---
         alpha = 4.0
         time_to_peak = 4.5  # seconds after arrival
         arrival_frame = baseline_frames + 2
@@ -1752,7 +1740,6 @@ class AIFDetection(BaseInterface):
 
     # -----------------------------------------------------------------
     # Step 9b: Finalize AIF metrics
-    # (perf-plus _finalize_aif_metrics)
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -2070,9 +2057,8 @@ class AIFDetection(BaseInterface):
     # -----------------------------------------------------------------
 
     def _run_interface(self, runtime: Any) -> Any:
-        """Execute AIF detection with perf-plus pipeline.
+        """Execute the AIF detection pipeline.
 
-        Pipeline mirrors perf-plus ``find_aif`` / ``_find_aif_single_attempt``:
         1. Build attempts list: atlas (strict/relaxed/permissive) then
            brain (relaxed/permissive).
         2. Each attempt: prepare mask -> find candidates -> score ->

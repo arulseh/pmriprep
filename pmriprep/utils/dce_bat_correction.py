@@ -1,7 +1,7 @@
 """Bolus Arrival Time (BAT) correction for DCE population AIFs.
 
-Ported from perf-plus dce_pk_modeling.py:898-1083. When using a population
-AIF (Parker model), the AIF timing is generic and may not match the actual
+When using a population AIF (Parker model), the AIF timing is generic
+and may not match the actual
 tissue enhancement onset. This module detects the mismatch and applies a
 time shift to align the AIF with tissue data before PK fitting.
 """
@@ -14,7 +14,7 @@ from scipy.interpolate import interp1d
 
 logger = logging.getLogger("nipype.interface")
 
-# Minimum signal value to avoid division by zero (matches perf-plus)
+# Minimum signal value to avoid division by zero
 _EPSILON_SIGNAL = 1e-9
 
 

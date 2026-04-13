@@ -552,7 +552,7 @@ def plot_motion_qc(
     subject_id: str = "",
     session_id: str = "",
 ) -> tuple[Path, dict[str, Any]]:
-    """Create a 3-panel motion QC plot matching perf-plus layout.
+    """Create a 3-panel motion QC plot.
 
     Generates a three-panel figure showing:
     1. Top panel: Translation parameters (mm)
@@ -596,7 +596,7 @@ def plot_motion_qc(
     fd = calculate_framewise_displacement(params, radius=radius)
     fd_threshold = MOTION_FD_THRESHOLDS.warn_threshold  # 0.5mm
 
-    # Perf-plus color scheme
+    # Color scheme
     color_1 = "#EE7733"  # Orange
     color_2 = "#0077BB"  # Blue
     color_3 = "#009988"  # Teal

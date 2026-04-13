@@ -209,7 +209,7 @@ def _fit_single_voxel(
     is_auto = _worker_ctx.get("is_auto", False)
 
     # Validate voxel (skip concentration-based variation check — raw signal
-    # variation is filtered upstream in ComputeDCEMaps, matching perf-plus)
+    # variation is filtered upstream in ComputeDCEMaps)
     prep = prepare_voxel_for_fitting(
         tissue_curve, baseline_frames, skip_variation_check=True
     )
@@ -1291,14 +1291,14 @@ class ComputeDCEMaps(BaseInterface):
             baseline_frames = self._detect_baseline_frames(conc_data, mask)
 
         # Always compute tSNR for QC (even if threshold is 0)
-        # Use raw DCE signal for tSNR when available (matches perf-plus)
+        # Use raw DCE signal for tSNR when available
         tsnr_threshold = float(self.inputs.tsnr_threshold)
         signal_std_map: Optional[npt.NDArray[Any]] = None
         if isdefined(self.inputs.dce_signal_file):
             signal_img = nib.load(self.inputs.dce_signal_file)
             signal_data = signal_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             tsnr_map = self._compute_tsnr(signal_data, mask, baseline_frames)
-            # Raw signal variation map (matches perf-plus dce_pk_modeling.py:1576)
+            # Raw signal variation map
             signal_std_map = np.std(signal_data, axis=-1)
             # Peak enhancement must use raw signal (concentration baseline ~0
             # by definition → division by near-zero → overflow)
@@ -1320,7 +1320,7 @@ class ComputeDCEMaps(BaseInterface):
         else:
             fitting_mask = mask_bool
 
-        # Raw signal variation filter (perf-plus: std(S_voxel) >= 1.0)
+        # Raw signal variation filter: std(S_voxel) >= 1.0
         if signal_std_map is not None:
             fitting_mask = fitting_mask & (signal_std_map >= 1.0)
 
@@ -1328,7 +1328,7 @@ class ComputeDCEMaps(BaseInterface):
         # Concentration-domain CNR is degraded by Ernst equation noise amplification
         # (~1/(E1*TR)), making CNR > 3 reject 50-66% of brain tissue with adequate
         # signal-domain tSNR. Quality gating deferred to post-fit QC mask (R² >= 0.5,
-        # tSNR >= 10, physiological bounds). Matches perf-plus approach.
+        # tSNR >= 10, physiological bounds).
         # Ref: Buckley MRM 2002 CNR guideline is informational, not a hard cutoff.
         enhancement_mask = np.max(conc_data, axis=-1) > MIN_ENHANCEMENT_MM
         fitting_mask = fitting_mask & enhancement_mask
@@ -2268,11 +2268,11 @@ class ComputeDCEMaps(BaseInterface):
         nib.save(tsnr_img, out_tsnr)  # type: ignore[attr-defined]
         self._results["out_tsnr"] = out_tsnr
 
-        # Create QC mask using physiological bounds (matches perf-plus)
+        # Create QC mask using physiological bounds
         # Include voxels with: good R², physiological parameter values, adequate SNR
         qc_mask = np.ones(spatial_shape, dtype=bool)
         qc_mask &= fitting_mask  # Within brain mask
-        qc_mask &= (tsnr_map >= 10)  # Adequate tSNR (perf-plus threshold)
+        qc_mask &= (tsnr_map >= 10)  # Adequate tSNR
         if peak_enh is not None:
             qc_mask &= (peak_enh >= 10)  # Visible enhancement
         qc_mask &= (ktrans > 0) & (ktrans < 5.0)  # Physiological Ktrans

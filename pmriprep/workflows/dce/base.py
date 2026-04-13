@@ -567,7 +567,7 @@ def init_dce_preproc_wf(
     # This provides a native DCE-space brain mask that:
     # 1. Accurately reflects the DCE field of view
     # 2. Avoids registration-induced edge artifacts
-    # 3. Matches perf-plus behavior (lines 360-382)
+    # 3. Works directly in DCE native space
     # Resolve device at build time for nipype GPU scheduling
     from pmriprep.utils.device import resolve_device_uses_gpu
 
@@ -1040,7 +1040,7 @@ def init_dce_preproc_wf(
             ("tr", "tr"),
             ("volume_tr", "volume_tr"),  # For model auto-selection
         ]),
-        # Raw DCE signal for tSNR computation (matches perf-plus)
+        # Raw DCE signal for tSNR computation
         # Also wire baseline_frames so pk_modeling uses the same value
         # as signal_to_concentration (avoids re-auto-detection mismatch)
         (dce_preprocess, pk_modeling, [
@@ -1089,7 +1089,7 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # DSC CBV (128x128x19, 1.88mm) is in DSC native space, but DCE processing
     # operates in DCE native space (256x256x26, 0.94mm). Resample DSC CBV
-    # via: DSC → T1w (existing xfm) → DCE (existing xfm), matching perf-plus.
+    # via: DSC → T1w (existing xfm) → DCE (existing xfm).
     resample_dsc_cbv = pe.Node(
         niu.Function(
             input_names=[
@@ -3276,8 +3276,6 @@ def _resample_dsc_cbv_to_dce(
     Chains two existing transforms: DSC→T1w + T1w→DCE = DSC→DCE,
     then applies the combined transform with trilinear interpolation
     (not spline, to avoid negative CBV values).
-
-    This matches the perf-plus approach (dce_pipeline.sh:2664-2688).
 
     Args:
         dsc_cbv_file: Path to DSC-derived relative CBV map (DSC native space).

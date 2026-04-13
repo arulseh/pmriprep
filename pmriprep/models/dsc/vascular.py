@@ -105,7 +105,7 @@ class VascularModel(DSCModel):
             DSCModelParameter(
                 name="alpha",
                 bounds=(VASCULAR_ALPHA_BOUNDS.min, VASCULAR_ALPHA_BOUNDS.max),
-                typical_range=(1.5, 6.0),  # perf-plus: prior_mean=3.75
+                typical_range=(1.5, 6.0),  # prior_mean=3.75
                 transform=TransformType.LOG,
                 description="Gamma shape parameter",
                 units="",
@@ -113,7 +113,7 @@ class VascularModel(DSCModel):
             DSCModelParameter(
                 name="beta",
                 bounds=(VASCULAR_BETA_BOUNDS.min, VASCULAR_BETA_BOUNDS.max),
-                typical_range=(0.5, 5.0),  # perf-plus: prior_mean=2.75
+                typical_range=(0.5, 5.0),  # prior_mean=2.75
                 transform=TransformType.LOG,
                 description="Gamma scale parameter",
                 units="s",
@@ -121,7 +121,7 @@ class VascularModel(DSCModel):
             DSCModelParameter(
                 name="delay",
                 bounds=(VASCULAR_DELAY_BOUNDS.min, VASCULAR_DELAY_BOUNDS.max),
-                typical_range=(-1.0, 5.0),  # perf-plus: prior_mean=2.0
+                typical_range=(-1.0, 5.0),  # prior_mean=2.0
                 transform=TransformType.IDENTITY,  # Can be negative
                 description="Bolus arrival delay",
                 units="s",
@@ -288,7 +288,7 @@ class VascularModel(DSCModel):
 
         C_tissue(t) = AIF(t) ⊗ R(t)
 
-        Uses FFT convolution with post-hoc delay shift (matching perf-plus).
+        Uses FFT convolution with post-hoc delay shift.
         The residue is computed without delay, then the convolved result is
         shifted by delay_samples to apply the arrival time offset.
 
@@ -312,11 +312,11 @@ class VascularModel(DSCModel):
         cbf, alpha, beta, delay = params
         dt = float(time_points[1] - time_points[0])
 
-        # Compute residue WITHOUT delay (perf-plus approach)
+        # Compute residue WITHOUT delay
         params_no_delay = [cbf, alpha, beta, 0.0]
         R = self.residue_function(params_no_delay, time_points)
 
-        # FFT convolution (matches perf-plus fftconvolve)
+        # FFT convolution
         conv = fftconvolve(aif, R, mode='full')[:n_times] * dt
 
         # Apply delay as post-hoc shift with linear interpolation

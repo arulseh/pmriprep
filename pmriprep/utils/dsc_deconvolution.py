@@ -856,7 +856,7 @@ def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
     diff = np.abs(np.diff(residue))
 
     # Sum of absolute differences normalized by length and maximum
-    # This matches perf-plus: OI = sum(diff) / (N * max_residue)
+    # OI = sum(diff) / (N * max_residue)
     # Using len(residue) (not len(diff)) as the normalizer
     oi = float(np.sum(diff)) / (len(residue) * max_residue)
 
@@ -944,8 +944,7 @@ def svd_deconvolve_oscillation(
         OI = (1/N) × Σ|R(t+1) - R(t)| / max(R)
 
     A linear search from low to high threshold is used to find the first
-    threshold that achieves OI ≤ oi_target, matching the perf-plus
-    implementation.
+    threshold that achieves OI ≤ oi_target.
 
     Strategy:
         - Lower threshold = more singular values retained = more detail but more noise
@@ -1011,7 +1010,7 @@ def svd_deconvolve_oscillation(
     matrix = build_toeplitz_matrix(aif, dt)
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Linear search for optimal threshold (matches perf-plus)
+    # Linear search for optimal threshold
     # Search from LOW to HIGH, take the FIRST threshold where OI ≤ oi_target.
     # This finds the lowest acceptable threshold (least regularization).
     n_steps = max_iterations

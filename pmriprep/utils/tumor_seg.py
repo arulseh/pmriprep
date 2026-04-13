@@ -258,9 +258,8 @@ def erode_mask_from_array(
 ) -> npt.NDArray[np.bool_]:
     """Erode a binary mask using a single-pass spherical structuring element.
 
-    Matches the perf-plus ``erode_mask_mm`` approach: a single erosion pass
-    with an ellipsoidal kernel of the given physical radius, rather than
-    iterative 1-voxel erosions.
+    Uses a single erosion pass with an ellipsoidal kernel of the given
+    physical radius, rather than iterative 1-voxel erosions.
 
     Parameters
     ----------
@@ -481,7 +480,7 @@ def _analyze_tumor_anatomy(
             centroid_mni=None,
         )
 
-    # MNI tentorium z-threshold (matches source perf-plus)
+    # MNI tentorium z-threshold
     MNI_TENTORIUM_Z = -15.0
 
     # Get centroid in voxel coordinates
@@ -793,7 +792,7 @@ def create_nawm_roi(
     just the contralateral hemisphere, preventing cerebellar WM from contaminating
     NAWM estimates for supratentorial tumors.
 
-    The order of operations follows the perf-plus reference pipeline:
+    The order of operations follows the reference implementation:
     brain_mask -> WM threshold -> region mask -> tumor exclusion -> erosion,
     with an erosion-only adaptive fallback (2 -> 1 -> 0 voxels).
 
@@ -860,7 +859,7 @@ def create_nawm_roi(
 
     Notes
     -----
-    The NAWM selection algorithm (matching perf-plus order of operations):
+    The NAWM selection algorithm:
 
     1. Base mask: brain_mask (if provided) or np.ones()
     2. WM threshold: intersect with wm_data >= 0.9
@@ -957,7 +956,7 @@ def create_nawm_roi(
                         tmp_atlas.unlink()
 
     # ---------------------------------------------------------------
-    # Sequential order of operations (matching perf-plus)
+    # Sequential order of operations
     # ---------------------------------------------------------------
     qc_steps: dict[str, int] = {}
 

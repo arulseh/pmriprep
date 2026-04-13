@@ -39,7 +39,7 @@ def detect_bolus_arrival_time(
     2. Gradient: first time the derivative exceeds 3*std(derivative_baseline)
     3. Default: 10% of total acquisition time
 
-    Uses adaptive baseline frame count (perf-plus style) and MAD-based outlier
+    Uses adaptive baseline frame count and MAD-based outlier
     detection to handle frame 0 artifacts.
 
     Args:
@@ -64,7 +64,7 @@ def detect_bolus_arrival_time(
     peak_idx = int(np.argmax(curve))
     peak_seconds = float(time_sec[peak_idx])
 
-    # Adaptive baseline frame count (perf-plus style)
+    # Adaptive baseline frame count
     n_baseline = min(baseline_frames, n // 4)
     n_baseline = max(2, n_baseline)
 

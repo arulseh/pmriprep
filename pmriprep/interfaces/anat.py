@@ -226,7 +226,7 @@ class BiasCorrection(CommandLine):
 
     Notes
     -----
-    Default N4 parameters match the perf-plus pipeline:
+    Default N4 parameters:
     - Shrink factor 4 for speed without quality loss
     - 4-level multi-resolution: 50 iterations per level
     - Convergence threshold 0.0001

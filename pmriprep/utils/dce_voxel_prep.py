@@ -47,7 +47,7 @@ def prepare_voxel_for_fitting(
         baseline_frames: Number of baseline frames for quality checks.
         skip_variation_check: If True, skip concentration-based variation check.
             Set True when raw signal variation filtering is done upstream
-            (matches perf-plus which checks raw signal std >= 1.0).
+            (raw signal std >= 1.0).
 
     Returns:
         VoxelPrepResult with validation outcome and prepared curve.
@@ -55,8 +55,7 @@ def prepare_voxel_for_fitting(
     baseline_mean = float(np.mean(tissue_curve[:baseline_frames]))
 
     # Check 1: Signal variation (on raw concentration)
-    # Skipped when raw signal variation is checked upstream in ComputeDCEMaps,
-    # matching perf-plus behavior (dce_pk_modeling.py:1576).
+    # Skipped when raw signal variation is checked upstream in ComputeDCEMaps.
     if not skip_variation_check:
         curve_std = float(np.std(tissue_curve))
         if curve_std < MIN_SIGNAL_STD:
@@ -71,14 +70,13 @@ def prepare_voxel_for_fitting(
     # Subtract baseline concentration and clip to non-negative.
     # Since v0.11.9, signal_to_concentration() performs baseline subtraction
     # before clipping, so baseline_mean here is ~0. This step is kept for
-    # safety and to match perf-plus (dce_pk_modeling.py:1586-1587).
+    # safety (baseline mean is ~0 after upstream subtraction).
     prepared = tissue_curve - baseline_mean
     prepared = np.maximum(prepared, 0.0)
 
     enhancement_max = float(np.max(prepared))
 
-    # Check 2: Enhancement above threshold (after baseline subtraction,
-    # matching perf-plus order: dce_pk_modeling.py:1590)
+    # Check 2: Enhancement above threshold (after baseline subtraction)
     if enhancement_max < MIN_ENHANCEMENT_MM:
         return VoxelPrepResult(
             concentration=prepared,
