@@ -793,6 +793,11 @@ class AIFDetection(BaseInterface):
         peak_threshold = float(np.percentile(chars["peak_values"], percentile_threshold))
         high_peak = (chars["peak_values"] > peak_threshold) & (~spatial_exclude)
 
+        # 1b. Relaxed peak gate for lower tiers (P95 admits smaller-caliber
+        # arterial candidates like pericallosal artery that fall below P98)
+        peak_threshold_relaxed = float(np.percentile(chars["peak_values"], 95.0))
+        high_peak_relaxed = (chars["peak_values"] > peak_threshold_relaxed) & (~spatial_exclude)
+
         # 2. Tissue reference timing (median TTP of 25th-75th percentile enhancement voxels)
         enh_values = chars["enhancement"]
         p25 = float(np.percentile(enh_values, 25))
@@ -872,13 +877,13 @@ class AIFDetection(BaseInterface):
             candidate_indices = np.where(candidates_mask)[0]
             tier_used = 4
 
-        # TIER 5: Relax FWHM
+        # TIER 5: Relax FWHM + peak gate (P95 admits smaller arterial branches)
         if len(candidate_indices) < min_candidates:
             fwhm_relaxed = compute_fwhm_threshold_frames(tr, strict=False)
             narrow_bolus_relaxed = chars["fwhm_frames"] < fwhm_relaxed
             has_washout_relaxed = chars["washout_fraction"] > AIF_WASHOUT_THRESHOLD_RELAXED
             candidates_mask = (
-                high_peak & early_arrival & has_washout_relaxed & narrow_bolus_relaxed
+                high_peak_relaxed & early_arrival & has_washout_relaxed & narrow_bolus_relaxed
             )
             candidate_indices = np.where(candidates_mask)[0]
             tier_used = 5
@@ -887,9 +892,9 @@ class AIFDetection(BaseInterface):
         # at normal TR, use relaxed timing + FWHM
         if len(candidate_indices) < 10:
             if low_tr:
-                candidates_mask = high_peak & narrow_bolus
+                candidates_mask = high_peak_relaxed & narrow_bolus
             else:
-                candidates_mask = high_peak & arterial_timing_relaxed & narrow_bolus
+                candidates_mask = high_peak_relaxed & arterial_timing_relaxed & narrow_bolus
             candidate_indices = np.where(candidates_mask)[0]
             tier_used = 6
 
@@ -897,9 +902,9 @@ class AIFDetection(BaseInterface):
         # at normal TR, peak + relaxed timing
         if len(candidate_indices) < 10:
             if low_tr:
-                candidates_mask = high_peak
+                candidates_mask = high_peak_relaxed
             else:
-                candidates_mask = high_peak & arterial_timing_relaxed
+                candidates_mask = high_peak_relaxed & arterial_timing_relaxed
             candidate_indices = np.where(candidates_mask)[0]
             tier_used = 7
 

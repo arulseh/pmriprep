@@ -3670,13 +3670,14 @@ def _generate_dce_motion_qc_plot(motion_params_file, tr, subject_id="", session_
     """
     import numpy as np
     from pathlib import Path
-    from pmriprep.utils.qc_utils import plot_motion_qc
-
-    from pmriprep.utils.qc_utils import qc_figure_title
+    from pmriprep.utils.qc_utils import plot_motion_qc, qc_figure_title
 
     motion_params = np.loadtxt(motion_params_file)
     out_path = Path.cwd() / "dce_motion_qc.png"
-    plot_motion_qc(motion_params, out_path, tr=tr, title=qc_figure_title(subject_id, session_id, "DCE Motion QC"))
+    plot_motion_qc(
+        motion_params, out_path, tr=tr,
+        title=qc_figure_title(subject_id, session_id, "DCE Motion QC"),
+    )
     return str(out_path)
 
 
