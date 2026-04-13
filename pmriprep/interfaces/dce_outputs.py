@@ -835,37 +835,18 @@ class DCEDerivativeWriter(BaseInterface):
             except (ValueError, TypeError):
                 sidecar["Sources"] = [str(source_dce)]
 
-        # Add perfusion-specific config (only for perfusion maps)
-        if not minimal:
-            if pk_model:
-                sidecar["PharmacokineticModel"] = pk_model
-
-            config_dict = self.inputs.config_dict
-            if isdefined(config_dict) and config_dict:
-                sidecar["BayesianInference"] = config_dict.get("bayesian", "none")
-                if config_dict.get("model") == "auto":
-                    selection_info: dict[str, Any] = {
-                        "Method": "per-voxel BIC comparison",
-                    }
-                    qc = self.inputs.qc_metrics
-                    if isdefined(qc) and qc and "pk_modeling" in qc:
-                        pk_qc = qc["pk_modeling"]
-                        candidates = pk_qc.get("candidate_models", [])
-                        if candidates:
-                            selection_info["CandidateModels"] = candidates
-                        dist = {}
-                        for mn in candidates:
-                            frac = pk_qc.get(f"{mn}_fraction")
-                            if frac is not None:
-                                dist[mn] = round(frac, 4)
-                        if dist:
-                            selection_info["ModelDistribution"] = dist
-                    sidecar["ModelSelection"] = selection_info
-
         # Add physics provenance (PerfusionProcessing namespace)
         provenance = self.inputs.provenance_dict
         if isdefined(provenance) and provenance:
             sidecar.update(provenance)
+
+        # Enrich with dynamic QC data (only for perfusion maps)
+        if not minimal:
+            qc = self.inputs.qc_metrics
+            if isdefined(provenance) and provenance and isdefined(qc) and qc:
+                from pmriprep.utils.provenance import enrich_provenance_from_qc
+                enriched = enrich_provenance_from_qc(sidecar, qc, "DCE")
+                sidecar.update(enriched)
 
         return sidecar
 

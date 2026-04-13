@@ -23,6 +23,37 @@ from pmriprep.utils.outputs import copy_derivative, has_input, write_json_sideca
 logger = logging.getLogger(__name__)
 
 
+def _extract_contrast_agent(source_nifti_path: str) -> str | None:
+    """Extract contrast agent name from a BIDS source sidecar.
+
+    Args:
+        source_nifti_path: Path to a raw BIDS NIfTI file.
+
+    Returns:
+        Generic agent name (e.g., "gadobutrol") or None if not found.
+    """
+    import json
+
+    src = Path(source_nifti_path)
+    sidecar_path = src.with_name(
+        src.name.replace(".nii.gz", ".json").replace(".nii", ".json")
+    )
+    if not sidecar_path.exists():
+        return None
+
+    try:
+        with open(sidecar_path) as f:
+            meta = json.load(f)
+        raw_agent = meta.get("ContrastBolusAgent", "")
+        if not raw_agent or not raw_agent.strip():
+            return None
+        from pmriprep.utils.contrast_agent import parse_contrast_agent_string
+        parsed = parse_contrast_agent_string(raw_agent)
+        return parsed.get("agent_name") or None
+    except Exception:
+        return None
+
+
 class AnatDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     """Input specification for AnatDerivativeWriter."""
 
@@ -212,11 +243,13 @@ class AnatDerivativeWriter(BaseInterface):
             )
             source_postcon = self._get_source_path("source_t1w_postcon")
             if source_postcon:
+                agent_name = _extract_contrast_agent(source_postcon)
                 sidecar = build_preproc_sidecar(
                     description="Preprocessed and brain-extracted post-contrast T1w image in native space",
                     source_path=source_postcon,
                     bids_dir=bids_dir,
                     skull_stripped=True,
+                    contrast_agent=agent_name,
                 )
                 write_json_sidecar(
                     sidecar,
@@ -269,11 +302,13 @@ class AnatDerivativeWriter(BaseInterface):
             )
             source_flair_postcon = self._get_source_path("source_flair_postcon")
             if source_flair_postcon:
+                agent_name = _extract_contrast_agent(source_flair_postcon)
                 sidecar = build_preproc_sidecar(
                     description="Preprocessed and brain-extracted post-contrast FLAIR image in native anat space",
                     source_path=source_flair_postcon,
                     bids_dir=bids_dir,
                     skull_stripped=True,
+                    contrast_agent=agent_name,
                 )
                 write_json_sidecar(
                     sidecar,
@@ -288,11 +323,13 @@ class AnatDerivativeWriter(BaseInterface):
             )
             source_postcon = self._get_source_path("source_t1w_postcon")
             if source_postcon:
+                agent_name = _extract_contrast_agent(source_postcon)
                 sidecar = build_preproc_sidecar(
                     description="Post-contrast minus pre-contrast subtraction map",
                     source_path=source_postcon,
                     bids_dir=bids_dir,
                     skull_stripped=True,
+                    contrast_agent=agent_name,
                 )
                 write_json_sidecar(
                     sidecar,

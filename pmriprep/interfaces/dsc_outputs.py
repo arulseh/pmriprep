@@ -551,7 +551,9 @@ class DSCDerivativeWriter(BaseInterface):
             provenance = self.inputs.provenance_dict
             if isdefined(provenance) and provenance:
                 from pmriprep.utils.contrast_agent import collect_default_warnings
-                prov_warnings = collect_default_warnings(provenance, "DSC")
+                prov_warnings = collect_default_warnings(
+                    provenance, "DSC", qc_metrics=qc_metrics,
+                )
                 if prov_warnings:
                     qc_metrics["provenance_warnings"] = prov_warnings
             # Add NiPreps-style recommendation to QC metrics
@@ -696,20 +698,18 @@ class DSCDerivativeWriter(BaseInterface):
             except (ValueError, TypeError):
                 sidecar["Sources"] = [str(source_dsc)]
 
-        # Add config summary (only for perfusion maps)
-        if not minimal:
-            config_dict = self.inputs.config_dict
-            if isdefined(config_dict) and config_dict:
-                method = config_dict.get("method", "unknown")
-                sidecar["DeconvolutionMethod"] = method
-                if method in ("cpi", "vascular"):
-                    sidecar["BayesianInference"] = config_dict.get("bayesian")
-                sidecar["PreBolus"] = config_dict.get("pre_bolus", 5)
-
         # Add physics provenance (PerfusionProcessing namespace)
         provenance = self.inputs.provenance_dict
         if isdefined(provenance) and provenance:
             sidecar.update(provenance)
+
+        # Enrich with dynamic QC data (only for perfusion maps)
+        if not minimal:
+            qc = self.inputs.qc_metrics
+            if isdefined(provenance) and provenance and isdefined(qc) and qc:
+                from pmriprep.utils.provenance import enrich_provenance_from_qc
+                enriched = enrich_provenance_from_qc(sidecar, qc, "DSC")
+                sidecar.update(enriched)
 
         return sidecar
 

@@ -726,6 +726,7 @@ def build_dsc_provenance(
     agent_standard_dose_source: str = ParameterSource.DEFAULT_FALLBACK,
     preload_source: str = ParameterSource.AUTO_DETECTED,
     deconv_method: str = "oSVD",
+    bayesian: Optional[str] = None,
     leakage_method: str = "bsw",
 ) -> dict[str, Any]:
     """Build DSC provenance dict for output JSON sidecars.
@@ -741,12 +742,17 @@ def build_dsc_provenance(
         agent_standard_dose_source: How agent std dose was determined.
         preload_source: How preload was determined (user_specified or auto_detected).
         deconv_method: Deconvolution method name.
+        bayesian: Bayesian inference method (for CPI/vascular methods).
         leakage_method: Leakage correction method name.
 
     Returns:
         Dict with PerfusionProcessing namespace containing ContrastDose,
         Deconvolution, and LeakageCorrection sub-dicts.
     """
+    deconv_block: dict[str, Any] = {"method": str(deconv_method)}
+    if bayesian is not None and deconv_method in ("cpi", "vascular"):
+        deconv_block["bayesian_inference"] = str(bayesian)
+
     return {
         "PerfusionProcessing": {
             "ContrastDose": {
@@ -755,9 +761,7 @@ def build_dsc_provenance(
                 "Source": str(dose_source),
                 "AgentStandardDoseSource": str(agent_standard_dose_source),
             },
-            "Deconvolution": {
-                "method": str(deconv_method),
-            },
+            "Deconvolution": deconv_block,
             "LeakageCorrection": {
                 "method": str(leakage_method),
             },
@@ -771,6 +775,7 @@ def build_dsc_provenance(
 def collect_default_warnings(
     provenance_dict: dict[str, Any],
     modality: str,
+    qc_metrics: Optional[dict[str, Any]] = None,
 ) -> list[str]:
     """Generate human-readable warnings for defaulted parameters.
 
@@ -781,6 +786,8 @@ def collect_default_warnings(
         provenance_dict: Provenance dict from build_dce_provenance or
             build_dsc_provenance.
         modality: "DCE" or "DSC".
+        qc_metrics: Optional QC metrics dict for enriching preload
+            warnings with detection results.
 
     Returns:
         List of warning strings. Empty if all parameters were
@@ -838,9 +845,21 @@ def collect_default_warnings(
         # Check preload source
         preload = perf.get("PreloadDetection", {})
         if preload.get("Source") == ParameterSource.AUTO_DETECTED:
+            classification = "unknown"
+            delta_r2 = None
+            if qc_metrics:
+                preload_qc = qc_metrics.get("preload", {})
+                classification = preload_qc.get(
+                    "preload_classification", "unknown"
+                )
+                delta_r2 = preload_qc.get("baseline_delta_r2")
+            detail = f" (detected: {classification}"
+            if delta_r2 is not None:
+                detail += f", baseline \u0394R2*={delta_r2:.3f} s\u207b\u00b9"
+            detail += ")"
             warnings.append(
-                "DSC preload not user-specified; auto-detected from "
-                "baseline deltaR2*. Use --dsc-preload to specify."
+                f"DSC preload not user-specified; auto-detected from "
+                f"baseline \u0394R2*{detail}. Use --dsc-preload to specify."
             )
 
     return warnings

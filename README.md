@@ -355,6 +355,8 @@ Required: `RepetitionTime`, `EchoTime`, `FlipAngle`. Optional: `MagneticFieldStr
 ```
 Required: `FlipAngle`. For 3D sequences (VIBE/LAVA/THRIVE), both `RepetitionTime` (volume TR) and `RepetitionTimeExcitation` (pulse TR) are required. For 2D sequences, `RepetitionTime` serves as both. Optional: `MagneticFieldStrength`, `ContrastBolusAgent`.
 
+> **Note:** If `ContrastBolusAgent` is not provided, the pipeline defaults to Gd-DTPA (r1=3.8 s⁻¹/mM at 3T). For high-relaxivity agents (gadopiclenol, gadoquatrane), this default produces incorrect quantitative DCE parameters. The pipeline warns about defaults in the HTML QC report and records assumed values in output JSON sidecars under `PerfusionProcessing`. Use `--dce-r1` to override.
+
 **VFA sidecar (`*_VFA.json`):**
 ```json
 {

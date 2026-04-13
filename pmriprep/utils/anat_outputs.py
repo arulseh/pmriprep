@@ -152,6 +152,7 @@ def build_preproc_sidecar(
     source_path: Union[str, Path],
     bids_dir: Union[str, Path],
     skull_stripped: bool = True,
+    contrast_agent: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a JSON sidecar dict for a preprocessed anatomical image.
 
@@ -165,16 +166,21 @@ def build_preproc_sidecar(
         BIDS dataset root directory.
     skull_stripped : bool
         Whether the image is skull-stripped.
+    contrast_agent : str, optional
+        Generic contrast agent name for post-contrast images.
 
     Returns
     -------
     dict
         JSON-serializable sidecar dictionary.
     """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
     source_uri = make_bids_source_uri(source_path, bids_dir)
     resolution = compute_original_resolution(source_path)
 
-    return {
+    sidecar: Dict[str, Any] = {
+        **get_bids_derivative_provenance(),
         "Description": description,
         "SkullStripped": skull_stripped,
         "SpatialReference": "anat",
@@ -189,6 +195,16 @@ def build_preproc_sidecar(
         ],
         "SoftwareVersions": get_imaging_software_versions(),
     }
+
+    if contrast_agent is not None:
+        from pmriprep.utils.contrast_agent import get_brand_name
+        agent_block: Dict[str, str] = {"GenericName": contrast_agent}
+        brand = get_brand_name(contrast_agent)
+        if brand:
+            agent_block["BrandName"] = brand
+        sidecar["PerfusionProcessing"] = {"ContrastAgent": agent_block}
+
+    return sidecar
 
 
 def build_probseg_sidecar(
@@ -212,10 +228,13 @@ def build_probseg_sidecar(
     dict
         JSON-serializable sidecar dictionary.
     """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
     source_uri = make_bids_source_uri(source_path, bids_dir)
     fsl_version = get_fsl_version()
 
     return {
+        **get_bids_derivative_provenance(),
         "Description": f"{tissue_type} probability map from FAST tissue segmentation",
         "Sources": [source_uri],
         "ReferenceContrastType": "precon",
@@ -255,10 +274,13 @@ def build_mask_sidecar(
     dict
         JSON-serializable sidecar dictionary.
     """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
     source_uri = make_bids_source_uri(source_path, bids_dir)
     resolution = compute_original_resolution(source_path)
 
     return {
+        **get_bids_derivative_provenance(),
         "Description": description,
         "SkullStripped": False,
         "SpatialReference": "anat",

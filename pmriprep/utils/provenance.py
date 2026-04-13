@@ -2,11 +2,14 @@
 
 import datetime
 import json
+import logging
 import platform
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import pmriprep
+
+logger = logging.getLogger(__name__)
 
 
 def get_software_versions() -> Dict[str, str]:
@@ -182,3 +185,231 @@ def get_bids_derivative_provenance(
         generated_by["Description"] = description
 
     return {"GeneratedBy": [generated_by]}
+
+
+def _round(value: Any, decimals: int = 4) -> Any:
+    """Round a value if it's a float, otherwise return as-is."""
+    if isinstance(value, float):
+        return round(value, decimals)
+    return value
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    """Convert to Python float or return None."""
+    if value is None:
+        return None
+    try:
+        return round(float(value), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def enrich_provenance_from_qc(
+    sidecar: Dict[str, Any],
+    qc_metrics: Dict[str, Any],
+    modality: Literal["DCE", "DSC"],
+) -> Dict[str, Any]:
+    """Enrich sidecar PerfusionProcessing with dynamic QC metrics.
+
+    Merges processing parameters from QC metrics into the existing
+    PerfusionProcessing namespace in the sidecar. Missing QC keys
+    are silently skipped.
+
+    Args:
+        sidecar: Existing sidecar dict (must contain PerfusionProcessing
+            from Phase 1 static provenance).
+        qc_metrics: QC metrics dict from the writer's qc_metrics input.
+        modality: "DCE" or "DSC".
+
+    Returns:
+        Dict with updated PerfusionProcessing to merge into sidecar.
+    """
+    perf = sidecar.get("PerfusionProcessing", {})
+    if not perf:
+        return {}
+
+    result: Dict[str, Any] = {"PerfusionProcessing": dict(perf)}
+    out = result["PerfusionProcessing"]
+
+    if modality == "DCE":
+        _enrich_dce(out, qc_metrics)
+    elif modality == "DSC":
+        _enrich_dsc(out, qc_metrics)
+
+    return result
+
+
+def _enrich_dce(
+    perf: Dict[str, Any],
+    qc: Dict[str, Any],
+) -> None:
+    """Enrich DCE PerfusionProcessing in-place from QC metrics."""
+    # T1Mapping
+    t1 = qc.get("t1_mapping")
+    if t1 and isinstance(t1, dict):
+        t1_block: Dict[str, Any] = {}
+        if "method" in t1:
+            t1_block["method"] = str(t1["method"])
+        if "b1_correction" in t1:
+            t1_block["B1_correction"] = str(t1["b1_correction"])
+        if t1.get("method") == "assumed":
+            t1_block["tissue_segmented"] = bool(t1.get("tissue_t1_used", False))
+            if "mean_t1_wm_ms" in t1:
+                t1_block["T1_WM_ms"] = _safe_float(t1["mean_t1_wm_ms"])
+            if "mean_t1_gm_ms" in t1:
+                t1_block["T1_GM_ms"] = _safe_float(t1["mean_t1_gm_ms"])
+        if t1_block:
+            perf["T1Mapping"] = t1_block
+
+    # AIF detection
+    aif = qc.get("aif_detection")
+    if aif and isinstance(aif, dict):
+        aif_block: Dict[str, Any] = {}
+        if "aif_source" in aif:
+            aif_block["method"] = str(aif["aif_source"])
+        if "n_aif_voxels" in aif:
+            aif_block["n_voxels"] = int(aif["n_aif_voxels"])
+        peak = aif.get("peak_mm_mean") or aif.get("final_peak_mm")
+        if peak is not None:
+            aif_block["peak_mM"] = _safe_float(peak)
+        fwhm = aif.get("fwhm_seconds_mean") or aif.get("final_fwhm_seconds")
+        if fwhm is not None:
+            aif_block["fwhm_s"] = _safe_float(fwhm)
+        if "quality_score" in aif:
+            aif_block["quality_score"] = _safe_float(aif["quality_score"])
+        if "arterial_cascade_tier" in aif:
+            aif_block["arterial_cascade_tier"] = int(aif["arterial_cascade_tier"])
+        if "hemisphere_coverage" in aif:
+            aif_block["hemisphere_coverage"] = str(aif["hemisphere_coverage"])
+        if aif.get("population_aif"):
+            aif_block["population_model"] = "parker"
+            if "dose_factor" in aif:
+                aif_block["dose_factor"] = _safe_float(aif["dose_factor"])
+        if aif_block:
+            perf["AIF"] = aif_block
+
+        # BloodT1 from AIF detection
+        if "blood_t1_seconds" in aif and aif["blood_t1_seconds"]:
+            fs = perf.get("Relaxivity", {}).get("field_strength_T")
+            if fs is None:
+                fs = _safe_float(aif.get("field_strength_t"))
+            perf["BloodT1"] = {
+                "value_s": _safe_float(aif["blood_t1_seconds"]),
+                "Source": "literature_lookup",
+            }
+            if fs is not None:
+                perf["BloodT1"]["field_strength_T"] = fs
+
+    # Hematocrit
+    from pmriprep.utils.dce_constants import HEMATOCRIT_ARTERIAL
+    perf["Hematocrit"] = {
+        "value": float(HEMATOCRIT_ARTERIAL),
+        "Source": "default_population_average",
+    }
+
+    # PK Modeling (consolidates former top-level PharmacokineticModel,
+    # BayesianInference, ModelSelection)
+    pk = qc.get("pk_modeling")
+    if pk and isinstance(pk, dict):
+        pk_block: Dict[str, Any] = {}
+        if "model" in pk:
+            pk_block["model"] = str(pk["model"])
+        if "bayesian" in pk:
+            pk_block["bayesian_inference"] = str(pk["bayesian"])
+        if pk.get("model") == "auto":
+            selection: Dict[str, Any] = {"Method": "per-voxel BIC comparison"}
+            candidates = pk.get("candidate_models", [])
+            if candidates:
+                selection["CandidateModels"] = candidates
+                dist = {}
+                for mn in candidates:
+                    frac = pk.get(f"{mn}_fraction")
+                    if frac is not None:
+                        dist[mn] = round(float(frac), 4)
+                if dist:
+                    selection["ModelDistribution"] = dist
+            pk_block["model_selection"] = selection
+        if "convergence_rate" in pk:
+            pk_block["convergence_rate"] = _safe_float(pk["convergence_rate"])
+        if "r2_median" in pk:
+            pk_block["r2_median"] = _safe_float(pk["r2_median"])
+        if pk_block:
+            perf["PKModeling"] = pk_block
+
+
+def _enrich_dsc(
+    perf: Dict[str, Any],
+    qc: Dict[str, Any],
+) -> None:
+    """Enrich DSC PerfusionProcessing in-place from QC metrics."""
+    # Deconvolution details
+    deconv = qc.get("deconvolution")
+    if deconv and isinstance(deconv, dict):
+        deconv_block = perf.get("Deconvolution", {})
+        if "threshold_mean" in deconv:
+            deconv_block["threshold_mean"] = _safe_float(deconv["threshold_mean"])
+        if "oi_mean" in deconv:
+            deconv_block["oscillation_index_mean"] = _safe_float(deconv["oi_mean"])
+        if "lambda_mean" in deconv:
+            deconv_block["lambda_mean"] = _safe_float(deconv["lambda_mean"])
+        if "convergence_rate" in deconv:
+            deconv_block["convergence_rate"] = _safe_float(deconv["convergence_rate"])
+        perf["Deconvolution"] = deconv_block
+
+    # Leakage correction details
+    preload = qc.get("preload")
+    if preload and isinstance(preload, dict):
+        leak_block = perf.get("LeakageCorrection", {})
+        if "preload_correction_applied" in preload:
+            leak_block["applied"] = bool(preload["preload_correction_applied"])
+        if "k2_median" in preload:
+            leak_block["K2_median"] = _safe_float(preload["k2_median"])
+        perf["LeakageCorrection"] = leak_block
+
+        # PreloadDetection enrichment
+        preload_det = perf.get("PreloadDetection", {})
+        if "preload_classification" in preload:
+            preload_det["classification"] = str(preload["preload_classification"])
+        if "baseline_delta_r2" in preload:
+            preload_det["baseline_delta_r2"] = _safe_float(preload["baseline_delta_r2"])
+        perf["PreloadDetection"] = preload_det
+
+    # AIF
+    aif = qc.get("aif")
+    if aif and isinstance(aif, dict):
+        aif_block: Dict[str, Any] = {}
+        if "detection_level" in aif:
+            aif_block["method"] = str(aif["detection_level"])
+            aif_block["synthetic"] = aif["detection_level"] == "synthetic"
+        if "n_aif_voxels_used" in aif:
+            aif_block["n_voxels"] = int(aif["n_aif_voxels_used"])
+        if "quality_score" in aif:
+            aif_block["quality_score"] = _safe_float(aif["quality_score"])
+        if "best_fwhm" in aif:
+            aif_block["fwhm_frames"] = _safe_float(aif["best_fwhm"])
+        if "arrival_time_seconds" in aif:
+            aif_block["arrival_time_s"] = _safe_float(aif["arrival_time_seconds"])
+        if aif_block:
+            perf["AIF"] = aif_block
+
+    # Quantification mode (always relative for DSC)
+    perf["QuantificationMode"] = "relative"
+
+    # Normalization reference (conditional on actual normalization)
+    norm_factor = qc.get("normalization_factor")
+    if norm_factor is not None:
+        perf["NormalizationReference"] = {
+            "tissue": "NAWM",
+            "cbv_factor": _safe_float(norm_factor),
+        }
+
+    # Baseline frames
+    aif = qc.get("aif", {})
+    if isinstance(aif, dict):
+        baseline_block: Dict[str, Any] = {}
+        if "baseline_frames_used" in aif:
+            baseline_block["n_frames"] = int(aif["baseline_frames_used"])
+        if "baseline_detection_method" in aif:
+            baseline_block["detection_method"] = str(aif["baseline_detection_method"])
+        if baseline_block:
+            perf["BaselineFrames"] = baseline_block

@@ -1781,6 +1781,7 @@ def init_pmriprep_wf(
                 else ParameterSource.AUTO_DETECTED
             ),
             deconv_method=dsc_config.method,
+            bayesian=dsc_config.bayesian,
             leakage_method=dsc_config.leakage_method,
         )
 

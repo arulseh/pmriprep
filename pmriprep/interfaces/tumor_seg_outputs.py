@@ -130,8 +130,12 @@ class TumorSegDerivativeWriter(BaseInterface):
             self.inputs.segmentation,
             anat_dir / f"{prefix}_space-anat_desc-tumorseg_dseg.nii.gz",
         )
+        from pmriprep.utils.provenance import get_bids_derivative_provenance
+        _gen_by = get_bids_derivative_provenance()
+
         write_json_sidecar(
             {
+                **_gen_by,
                 "Description": "Deep learning tumor segmentation",
                 "Manual": False,
                 "SegmentationLabels": {
@@ -151,6 +155,7 @@ class TumorSegDerivativeWriter(BaseInterface):
         )
         write_json_sidecar(
             {
+                **_gen_by,
                 "Description": "Binary mask of enhancing tumor (label 2)",
                 "Type": "Brain",
                 "Method": "Derived from tumor segmentation",
@@ -165,6 +170,7 @@ class TumorSegDerivativeWriter(BaseInterface):
         )
         write_json_sidecar(
             {
+                **_gen_by,
                 "Description": "Binary mask of non-enhancing tumor (label 1)",
                 "Type": "Brain",
                 "Method": "Derived from tumor segmentation",
@@ -179,6 +185,7 @@ class TumorSegDerivativeWriter(BaseInterface):
         )
         write_json_sidecar(
             {
+                **_gen_by,
                 "Description": "Binary mask of whole tumor (labels 1+2)",
                 "Type": "Brain",
                 "Method": "Derived from tumor segmentation",
@@ -197,6 +204,7 @@ class TumorSegDerivativeWriter(BaseInterface):
         )
         write_json_sidecar(
             {
+                **_gen_by,
                 "Description": "Lesion mask from whole tumor segmentation",
                 "Type": "Brain",
                 "Method": "Tumor segmentation (labels 1+2)",
@@ -211,6 +219,7 @@ class TumorSegDerivativeWriter(BaseInterface):
         )
         write_json_sidecar(
             {
+                **_gen_by,
                 "Description": "Contralateral normal-appearing white matter mask for CBV normalization",
                 "Type": "Brain",
                 "Method": "Contralateral WM thresholded at p>=0.9, excluding tumor margin",

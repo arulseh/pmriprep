@@ -247,7 +247,8 @@ Examples:
         action="store_const",
         const=True,
         default=None,
-        help="Indicate contrast preload is present (e.g., prior DCE injection).",
+        help="Indicate contrast preload is present (e.g., prior DCE injection). "
+        "If not specified, auto-detected from baseline deltaR2*.",
     )
     dsc_group.add_argument(
         "--dsc-dose",
@@ -256,7 +257,8 @@ Examples:
         metavar="DOSE",
         help="Contrast agent dose for DSC: a named preset "
         "(half, full, double) or a positive float multiplier "
-        "(e.g. 0.75). Default: full (1.0).",
+        "(e.g. 0.75). Default: full (1.0). "
+        "Affects AIF detection peak thresholds.",
     )
     dsc_group.add_argument(
         "--dsc-agent-standard-dose",
@@ -333,7 +335,8 @@ Examples:
         metavar="DOSE",
         help="Contrast agent dose for DCE: a named preset "
         "(half, full, double) or a positive float multiplier "
-        "(e.g. 0.75). Default: full (1.0).",
+        "(e.g. 0.75). Default: full (1.0). "
+        "Affects population AIF scaling.",
     )
     dce_group.add_argument(
         "--dce-r1",
@@ -343,6 +346,8 @@ Examples:
         help=(
             "Override r1 relaxivity (s^-1/mM) for DCE concentration "
             "conversion. Bypasses contrast-agent lookup from BIDS sidecar. "
+            "If not specified, looked up from ContrastBolusAgent in BIDS "
+            "sidecar; falls back to Gd-DTPA (3.8 at 3T) if agent unknown. "
             "Typical values: Gd-DTPA 3.8, Gadovist 5.0 at 3T."
         ),
     )
