@@ -742,7 +742,7 @@ class AIFDetection(BaseInterface):
         return np.array(kept)
 
     # -----------------------------------------------------------------
-    # Step 4: Adaptive percentile candidate finder
+    # Step 4: Percentile candidate finder
     # -----------------------------------------------------------------
 
     def _find_aif_candidate_voxels(
@@ -750,9 +750,14 @@ class AIFDetection(BaseInterface):
         conc_data: npt.NDArray[Any],
         search_mask: npt.NDArray[Any],
         baseline_frames: int,
-        min_candidates: int = 20,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
-        """Find initial candidate voxels via adaptive percentile thresholding.
+        """Find initial candidate voxels via percentile thresholding.
+
+        Collects all voxels in the top 10% of peak concentration within
+        *search_mask*.  Downstream scoring handles ranking; a broad pool
+        prevents valid arterial candidates (e.g. pericallosal artery at
+        P95) from being excluded when larger basal vessels dominate the
+        top percentile.
 
         Parameters
         ----------
@@ -762,8 +767,6 @@ class AIFDetection(BaseInterface):
             3D boolean mask.
         baseline_frames : int
             Number of pre-bolus frames.
-        min_candidates : int
-            Desired minimum number of candidates.
 
         Returns
         -------
@@ -785,16 +788,10 @@ class AIFDetection(BaseInterface):
         if len(valid_peaks) == 0:
             return np.empty((0, 3), dtype=int), peak_conc_map
 
-        percentiles = [98.0, 97.0, 95.0, 93.0, 90.0]
-        candidates: Optional[npt.NDArray[Any]] = None
+        thresh = float(np.nanpercentile(valid_peaks, 90.0))
+        candidates = np.argwhere(peak_conc_map >= thresh)
 
-        for pct in percentiles:
-            thresh = float(np.nanpercentile(valid_peaks, pct))
-            candidates = np.argwhere(peak_conc_map >= thresh)
-            if candidates.shape[0] >= min_candidates:
-                break
-
-        if candidates is None or candidates.shape[0] == 0:
+        if candidates.shape[0] == 0:
             return np.empty((0, 3), dtype=int), peak_conc_map
 
         # Apply spatial exclusions
