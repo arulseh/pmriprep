@@ -1,13 +1,16 @@
 """Contrast agent utilities for DCE-MRI processing.
 
-Provides relaxivity lookups for common gadolinium-based contrast agents
-and dose calculation utilities.
+Provides relaxivity lookups for common gadolinium-based contrast agents,
+dose calculation utilities, and provenance tracking for output sidecars.
 """
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any, Final, NamedTuple, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -602,3 +605,242 @@ def classify_dose(dose_mmol_per_kg: float) -> str:
         return "double"
     else:
         return "high"
+
+
+# =============================================================================
+# Provenance Source Tracking
+# =============================================================================
+
+
+class ParameterSource:
+    """Constants for tracking where processing parameters originated.
+
+    Used in provenance dicts to record whether a parameter was explicitly
+    provided by the user, auto-detected from BIDS metadata, or fell back
+    to a pipeline default.
+    """
+
+    USER_OVERRIDE = "user_override"
+    BIDS_SIDECAR = "bids_sidecar"
+    DEFAULT_FALLBACK = "default_fallback"
+    USER_SPECIFIED = "user_specified"
+    AUTO_DETECTED = "auto_detected"
+
+
+#: Canonical brand names for each generic agent (deterministic, not
+#: dependent on AGENT_ALIASES iteration order).
+_PRIMARY_BRANDS: Final[dict[str, str]] = {
+    "gd-dtpa": "Magnevist",
+    "gadopentetate": "Magnevist",
+    "gd-dtpa-bma": "Omniscan",
+    "gadoterate": "Dotarem",
+    "gd-dota": "Dotarem",
+    "gadoteridol": "ProHance",
+    "gd-hp-do3a": "ProHance",
+    "gadobutrol": "Gadavist",
+    "gadopiclenol": "Vueway",
+    "gadoquatrane": "Elucirem",
+    "gadobenate": "MultiHance",
+    "gd-bopta": "MultiHance",
+    "gadoxetate": "Eovist",
+}
+
+
+def get_brand_name(generic_name: str) -> Optional[str]:
+    """Reverse lookup: generic agent name to primary brand name.
+
+    Args:
+        generic_name: Generic or chemical agent name (e.g., "gadobutrol").
+
+    Returns:
+        Primary brand name (e.g., "Gadavist"), or None if unknown.
+    """
+    return _PRIMARY_BRANDS.get(generic_name.lower().strip())
+
+
+def build_dce_provenance(
+    *,
+    contrast_agent: Optional[str] = None,
+    agent_source: str = ParameterSource.DEFAULT_FALLBACK,
+    r1_relaxivity: float = 3.8,
+    field_strength: float = 3.0,
+    dose_multiplier: float = 1.0,
+    dose_source: str = ParameterSource.DEFAULT_FALLBACK,
+    agent_standard_dose: float = 0.1,
+    bids_agent_string: Optional[str] = None,
+) -> dict[str, Any]:
+    """Build DCE provenance dict for output JSON sidecars.
+
+    All values are explicitly cast to Python scalars to ensure
+    consistent nipype hashing and JSON serialization.
+
+    Args:
+        contrast_agent: Generic agent name (e.g., "gadobutrol").
+        agent_source: How the agent was determined (ParameterSource constant).
+        r1_relaxivity: R1 relaxivity in s^-1/mM.
+        field_strength: Magnetic field strength in Tesla.
+        dose_multiplier: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
+        dose_source: How the dose was determined (ParameterSource constant).
+        agent_standard_dose: Standard clinical dose in mmol/kg.
+        bids_agent_string: Raw ContrastBolusAgent string from BIDS sidecar.
+
+    Returns:
+        Dict with PerfusionProcessing namespace containing ContrastAgent,
+        Relaxivity, and ContrastDose sub-dicts.
+    """
+    agent_name = str(contrast_agent) if contrast_agent else DEFAULT_AGENT
+    brand = get_brand_name(agent_name)
+
+    agent_dict: dict[str, Any] = {
+        "GenericName": str(agent_name),
+        "Source": str(agent_source),
+    }
+    if brand is not None:
+        agent_dict["BrandName"] = str(brand)
+    if bids_agent_string is not None:
+        agent_dict["OriginalString"] = str(bids_agent_string)
+
+    return {
+        "PerfusionProcessing": {
+            "ContrastAgent": agent_dict,
+            "Relaxivity": {
+                "r1": float(r1_relaxivity),
+                "units": "s-1.mM-1",
+                "field_strength_T": float(field_strength),
+                "Source": str(agent_source),
+            },
+            "ContrastDose": {
+                "standard_dose_mmol_kg": float(agent_standard_dose),
+                "dose_multiplier": float(dose_multiplier),
+                "Source": str(dose_source),
+            },
+        },
+    }
+
+
+def build_dsc_provenance(
+    *,
+    dose_multiplier: float = 1.0,
+    dose_source: str = ParameterSource.DEFAULT_FALLBACK,
+    agent_standard_dose: float = 0.1,
+    agent_standard_dose_source: str = ParameterSource.DEFAULT_FALLBACK,
+    preload_source: str = ParameterSource.AUTO_DETECTED,
+    deconv_method: str = "oSVD",
+    leakage_method: str = "bsw",
+) -> dict[str, Any]:
+    """Build DSC provenance dict for output JSON sidecars.
+
+    DSC quantification uses relative metrics (r2* cancels in CBV/CBF),
+    so contrast agent relaxivity is not included. Dose and preload
+    affect AIF detection thresholds and leakage correction.
+
+    Args:
+        dose_multiplier: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
+        dose_source: How the dose was determined (ParameterSource constant).
+        agent_standard_dose: Standard clinical dose in mmol/kg.
+        agent_standard_dose_source: How agent std dose was determined.
+        preload_source: How preload was determined (user_specified or auto_detected).
+        deconv_method: Deconvolution method name.
+        leakage_method: Leakage correction method name.
+
+    Returns:
+        Dict with PerfusionProcessing namespace containing ContrastDose,
+        Deconvolution, and LeakageCorrection sub-dicts.
+    """
+    return {
+        "PerfusionProcessing": {
+            "ContrastDose": {
+                "standard_dose_mmol_kg": float(agent_standard_dose),
+                "dose_multiplier": float(dose_multiplier),
+                "Source": str(dose_source),
+                "AgentStandardDoseSource": str(agent_standard_dose_source),
+            },
+            "Deconvolution": {
+                "method": str(deconv_method),
+            },
+            "LeakageCorrection": {
+                "method": str(leakage_method),
+            },
+            "PreloadDetection": {
+                "Source": str(preload_source),
+            },
+        },
+    }
+
+
+def collect_default_warnings(
+    provenance_dict: dict[str, Any],
+    modality: str,
+) -> list[str]:
+    """Generate human-readable warnings for defaulted parameters.
+
+    Inspects Source fields in the provenance dict and returns warning
+    strings for any parameters that fell back to pipeline defaults.
+
+    Args:
+        provenance_dict: Provenance dict from build_dce_provenance or
+            build_dsc_provenance.
+        modality: "DCE" or "DSC".
+
+    Returns:
+        List of warning strings. Empty if all parameters were
+        user-specified or BIDS-detected.
+    """
+    warnings: list[str] = []
+    perf = provenance_dict.get("PerfusionProcessing", {})
+
+    if modality == "DCE":
+        # Check contrast agent source
+        agent = perf.get("ContrastAgent", {})
+        if agent.get("Source") == ParameterSource.DEFAULT_FALLBACK:
+            r1_info = perf.get("Relaxivity", {})
+            r1_val = r1_info.get("r1", "?")
+            fs_val = r1_info.get("field_strength_T", "?")
+            agent_name = agent.get("GenericName", DEFAULT_AGENT)
+            brand = agent.get("BrandName", "")
+            brand_str = f" ({brand})" if brand else ""
+            warnings.append(
+                f"Contrast agent defaulted to {agent_name}{brand_str} "
+                f"(r1={r1_val} s-1/mM at {fs_val}T). "
+                f"Specify ContrastBolusAgent in BIDS sidecar or use --dce-r1."
+            )
+
+        # Check dose source
+        dose = perf.get("ContrastDose", {})
+        if dose.get("Source") == ParameterSource.DEFAULT_FALLBACK:
+            mult = dose.get("dose_multiplier", 1.0)
+            std = dose.get("standard_dose_mmol_kg", 0.1)
+            warnings.append(
+                f"DCE contrast dose assumed standard "
+                f"({mult}x, {std} mmol/kg). Use --dce-dose to specify."
+            )
+
+    elif modality == "DSC":
+        # Check dose source
+        dose = perf.get("ContrastDose", {})
+        if dose.get("Source") == ParameterSource.DEFAULT_FALLBACK:
+            mult = dose.get("dose_multiplier", 1.0)
+            std = dose.get("standard_dose_mmol_kg", 0.1)
+            warnings.append(
+                f"DSC contrast dose assumed standard "
+                f"({mult}x, {std} mmol/kg). Use --dsc-dose to specify."
+            )
+
+        # Check agent standard dose source
+        if dose.get("AgentStandardDoseSource") == ParameterSource.DEFAULT_FALLBACK:
+            std = dose.get("standard_dose_mmol_kg", 0.1)
+            warnings.append(
+                f"DSC agent standard dose assumed {std} mmol/kg. "
+                f"Use --dsc-agent-standard-dose for non-standard agents "
+                f"(e.g., 0.05 for Vueway)."
+            )
+
+        # Check preload source
+        preload = perf.get("PreloadDetection", {})
+        if preload.get("Source") == ParameterSource.AUTO_DETECTED:
+            warnings.append(
+                "DSC preload not user-specified; auto-detected from "
+                "baseline deltaR2*. Use --dsc-preload to specify."
+            )
+
+    return warnings

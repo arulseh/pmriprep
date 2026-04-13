@@ -97,6 +97,7 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
 
     # Processing config for sidecar
     config_dict = traits.Dict(desc="DSC processing config as dictionary")
+    provenance_dict = traits.Dict(desc="Physics provenance metadata for output sidecars")
 
     # Smoothed map dicts (optional — each is a dict of name->filepath)
     smooth_hemodynamic = traits.Dict(desc="Smoothed hemodynamic maps (CBF, CBV, MTT, nCBF, nCBV)")
@@ -543,9 +544,16 @@ class DSCDerivativeWriter(BaseInterface):
         qc_metrics = self.inputs.qc_metrics
         self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
+            qc_metrics = dict(qc_metrics)
             if warnings:
-                qc_metrics = dict(qc_metrics)
                 qc_metrics["warnings"] = warnings
+            # Add provenance warnings (structurally separate from data warnings)
+            provenance = self.inputs.provenance_dict
+            if isdefined(provenance) and provenance:
+                from pmriprep.utils.contrast_agent import collect_default_warnings
+                prov_warnings = collect_default_warnings(provenance, "DSC")
+                if prov_warnings:
+                    qc_metrics["provenance_warnings"] = prov_warnings
             # Add NiPreps-style recommendation to QC metrics
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
             qc_json_path = ses_dir / f"{prefix}_desc-dscQC_quality.json"
@@ -697,6 +705,11 @@ class DSCDerivativeWriter(BaseInterface):
                 if method in ("cpi", "vascular"):
                     sidecar["BayesianInference"] = config_dict.get("bayesian")
                 sidecar["PreBolus"] = config_dict.get("pre_bolus", 5)
+
+        # Add physics provenance (PerfusionProcessing namespace)
+        provenance = self.inputs.provenance_dict
+        if isdefined(provenance) and provenance:
+            sidecar.update(provenance)
 
         return sidecar
 

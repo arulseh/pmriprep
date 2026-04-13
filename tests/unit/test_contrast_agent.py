@@ -3,12 +3,17 @@
 import pytest
 
 from pmriprep.utils.contrast_agent import (
+    ParameterSource,
     _normalize_agent_name,
+    build_dce_provenance,
+    build_dsc_provenance,
     calculate_dose_from_volume,
     calculate_volume_for_dose,
     classify_dose,
+    collect_default_warnings,
     get_agent_info,
     get_available_agents,
+    get_brand_name,
     get_r1_from_sidecar_dict,
     lookup_r1,
     lookup_r1_safe,
@@ -240,3 +245,186 @@ class TestGetR1FromSidecarDict:
         assert result["r1"] == pytest.approx(5.0)
         assert result["source"] == "dicom_lookup"
         assert result["volume_ml"] == pytest.approx(3.5)
+
+
+class TestGetBrandName:
+    """Tests for get_brand_name reverse lookup."""
+
+    def test_known_generics(self) -> None:
+        """Known generic names return correct brand names."""
+        assert get_brand_name("gadobutrol") == "Gadavist"
+        assert get_brand_name("gadopiclenol") == "Vueway"
+        assert get_brand_name("gd-dtpa") == "Magnevist"
+        assert get_brand_name("gadoterate") == "Dotarem"
+        assert get_brand_name("gadoxetate") == "Eovist"
+
+    def test_unknown_generic(self) -> None:
+        """Unknown generic name returns None."""
+        assert get_brand_name("unknown_agent") is None
+        assert get_brand_name("ferumoxytol") is None
+
+    def test_case_insensitive(self) -> None:
+        """Lookup is case-insensitive."""
+        assert get_brand_name("Gadobutrol") == "Gadavist"
+        assert get_brand_name("GD-DTPA") == "Magnevist"
+
+
+class TestBuildDceProvenance:
+    """Tests for build_dce_provenance."""
+
+    def test_user_override_r1(self) -> None:
+        """User-supplied r1 records user_override source."""
+        prov = build_dce_provenance(
+            agent_source=ParameterSource.USER_OVERRIDE,
+            r1_relaxivity=5.0,
+            field_strength=3.0,
+        )
+        perf = prov["PerfusionProcessing"]
+        assert perf["ContrastAgent"]["Source"] == "user_override"
+        assert perf["Relaxivity"]["r1"] == 5.0
+        assert perf["Relaxivity"]["Source"] == "user_override"
+
+    def test_bids_detected_agent(self) -> None:
+        """BIDS-detected agent includes brand name and original string."""
+        prov = build_dce_provenance(
+            contrast_agent="gadobutrol",
+            agent_source=ParameterSource.BIDS_SIDECAR,
+            r1_relaxivity=5.0,
+            field_strength=3.0,
+            bids_agent_string="Gadavist 7ml",
+        )
+        agent = prov["PerfusionProcessing"]["ContrastAgent"]
+        assert agent["GenericName"] == "gadobutrol"
+        assert agent["BrandName"] == "Gadavist"
+        assert agent["OriginalString"] == "Gadavist 7ml"
+        assert agent["Source"] == "bids_sidecar"
+
+    def test_default_fallback(self) -> None:
+        """Default fallback uses Gd-DTPA with default_fallback source."""
+        prov = build_dce_provenance()
+        agent = prov["PerfusionProcessing"]["ContrastAgent"]
+        assert agent["GenericName"] == "gd-dtpa"
+        assert agent["BrandName"] == "Magnevist"
+        assert agent["Source"] == "default_fallback"
+
+    def test_dose_source_tracking(self) -> None:
+        """Dose source is recorded correctly."""
+        prov = build_dce_provenance(
+            dose_multiplier=0.5,
+            dose_source=ParameterSource.USER_SPECIFIED,
+        )
+        dose = prov["PerfusionProcessing"]["ContrastDose"]
+        assert dose["dose_multiplier"] == 0.5
+        assert dose["Source"] == "user_specified"
+
+    def test_values_are_python_scalars(self) -> None:
+        """All numeric values are Python floats, not numpy."""
+        prov = build_dce_provenance(r1_relaxivity=5.0, field_strength=3.0)
+        perf = prov["PerfusionProcessing"]
+        assert type(perf["Relaxivity"]["r1"]) is float
+        assert type(perf["Relaxivity"]["field_strength_T"]) is float
+        assert type(perf["ContrastDose"]["dose_multiplier"]) is float
+
+
+class TestBuildDscProvenance:
+    """Tests for build_dsc_provenance."""
+
+    def test_default_values(self) -> None:
+        """Default provenance has expected structure."""
+        prov = build_dsc_provenance()
+        perf = prov["PerfusionProcessing"]
+        assert "ContrastDose" in perf
+        assert "Deconvolution" in perf
+        assert "LeakageCorrection" in perf
+        assert "PreloadDetection" in perf
+
+    def test_dose_tracking(self) -> None:
+        """Dose source recorded correctly."""
+        prov = build_dsc_provenance(
+            dose_multiplier=0.5,
+            dose_source=ParameterSource.USER_SPECIFIED,
+            agent_standard_dose=0.05,
+            agent_standard_dose_source=ParameterSource.USER_SPECIFIED,
+        )
+        dose = prov["PerfusionProcessing"]["ContrastDose"]
+        assert dose["dose_multiplier"] == 0.5
+        assert dose["standard_dose_mmol_kg"] == 0.05
+        assert dose["Source"] == "user_specified"
+        assert dose["AgentStandardDoseSource"] == "user_specified"
+
+    def test_preload_auto_detected(self) -> None:
+        """Preload auto-detected is the default."""
+        prov = build_dsc_provenance()
+        preload = prov["PerfusionProcessing"]["PreloadDetection"]
+        assert preload["Source"] == "auto_detected"
+
+    def test_preload_user_specified(self) -> None:
+        """Preload user-specified recorded correctly."""
+        prov = build_dsc_provenance(
+            preload_source=ParameterSource.USER_SPECIFIED,
+        )
+        preload = prov["PerfusionProcessing"]["PreloadDetection"]
+        assert preload["Source"] == "user_specified"
+
+
+class TestCollectDefaultWarnings:
+    """Tests for collect_default_warnings."""
+
+    def test_no_warnings_when_all_specified(self) -> None:
+        """No warnings when all sources are user-specified."""
+        prov = build_dce_provenance(
+            contrast_agent="gadobutrol",
+            agent_source=ParameterSource.BIDS_SIDECAR,
+            r1_relaxivity=5.0,
+            dose_source=ParameterSource.USER_SPECIFIED,
+        )
+        warnings = collect_default_warnings(prov, "DCE")
+        assert warnings == []
+
+    def test_dce_agent_default_warning(self) -> None:
+        """Warning when DCE agent falls back to default."""
+        prov = build_dce_provenance(
+            agent_source=ParameterSource.DEFAULT_FALLBACK,
+            r1_relaxivity=3.8,
+            field_strength=3.0,
+        )
+        warnings = collect_default_warnings(prov, "DCE")
+        assert len(warnings) >= 1
+        assert "defaulted" in warnings[0].lower() or "Gd-DTPA" in warnings[0]
+
+    def test_dce_dose_default_warning(self) -> None:
+        """Warning when DCE dose is defaulted."""
+        prov = build_dce_provenance(
+            agent_source=ParameterSource.BIDS_SIDECAR,
+            contrast_agent="gadobutrol",
+            dose_source=ParameterSource.DEFAULT_FALLBACK,
+        )
+        warnings = collect_default_warnings(prov, "DCE")
+        assert any("dose" in w.lower() for w in warnings)
+
+    def test_dsc_dose_default_warning(self) -> None:
+        """Warning when DSC dose is defaulted."""
+        prov = build_dsc_provenance(
+            dose_source=ParameterSource.DEFAULT_FALLBACK,
+            agent_standard_dose_source=ParameterSource.DEFAULT_FALLBACK,
+        )
+        warnings = collect_default_warnings(prov, "DSC")
+        assert any("dose" in w.lower() for w in warnings)
+
+    def test_dsc_preload_auto_warning(self) -> None:
+        """Warning when DSC preload is auto-detected."""
+        prov = build_dsc_provenance(
+            preload_source=ParameterSource.AUTO_DETECTED,
+        )
+        warnings = collect_default_warnings(prov, "DSC")
+        assert any("preload" in w.lower() for w in warnings)
+
+    def test_dsc_no_preload_warning_when_specified(self) -> None:
+        """No preload warning when user-specified."""
+        prov = build_dsc_provenance(
+            dose_source=ParameterSource.USER_SPECIFIED,
+            agent_standard_dose_source=ParameterSource.USER_SPECIFIED,
+            preload_source=ParameterSource.USER_SPECIFIED,
+        )
+        warnings = collect_default_warnings(prov, "DSC")
+        assert warnings == []

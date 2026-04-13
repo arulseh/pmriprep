@@ -144,6 +144,7 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Processing config for sidecar (optional)
     pk_model = traits.Either(traits.Str, None, desc="Pharmacokinetic model name")
     config_dict = traits.Dict(desc="DCE processing config as dictionary")
+    provenance_dict = traits.Dict(desc="Physics provenance metadata for output sidecars")
 
     # QC plots (optional)
     brain_mask_filmstrip = traits.Either(traits.Str, None, desc="Brain mask QC filmstrip PNG path")
@@ -723,9 +724,16 @@ class DCEDerivativeWriter(BaseInterface):
         qc_metrics = self.inputs.qc_metrics
         self._qc_json = ""
         if isdefined(qc_metrics) and qc_metrics:
+            qc_metrics = dict(qc_metrics)
             if warnings:
-                qc_metrics = dict(qc_metrics)
                 qc_metrics["warnings"] = warnings
+            # Add provenance warnings (structurally separate from data warnings)
+            provenance = self.inputs.provenance_dict
+            if isdefined(provenance) and provenance:
+                from pmriprep.utils.contrast_agent import collect_default_warnings
+                prov_warnings = collect_default_warnings(provenance, "DCE")
+                if prov_warnings:
+                    qc_metrics["provenance_warnings"] = prov_warnings
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
             qc_json_path = ses_dir / f"{prefix}_desc-dceQC_quality.json"
             write_json_sidecar(enhanced_qc, qc_json_path)
@@ -853,6 +861,11 @@ class DCEDerivativeWriter(BaseInterface):
                         if dist:
                             selection_info["ModelDistribution"] = dist
                     sidecar["ModelSelection"] = selection_info
+
+        # Add physics provenance (PerfusionProcessing namespace)
+        provenance = self.inputs.provenance_dict
+        if isdefined(provenance) and provenance:
+            sidecar.update(provenance)
 
         return sidecar
 

@@ -822,6 +822,29 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     # Merge CLI args with file config (CLI takes precedence)
     merged_config = merge_cli_config(cli_args, file_config)
 
+    # Track which parameters were explicitly specified by the user
+    # (via CLI or config file) vs falling back to pipeline defaults.
+    # Key presence in cli_args (non-None) or file_config counts as
+    # user-specified, even if the value equals the pipeline default.
+    user_specified: dict[str, bool] = {
+        "dce_dose": (
+            cli_args.get("dce_dose") is not None
+            or "dose" in file_config.get("dce", {})
+        ),
+        "dsc_dose": (
+            cli_args.get("dsc_dose") is not None
+            or "dose" in file_config.get("dsc", {})
+        ),
+        "dsc_agent_standard_dose": (
+            cli_args.get("dsc_agent_standard_dose") is not None
+            or "agent_standard_dose" in file_config.get("dsc", {})
+        ),
+        "dsc_preload": (
+            cli_args.get("dsc_preload") is not None
+            or "preload_present" in file_config.get("dsc", {})
+        ),
+    }
+
     # Build configuration objects
     dsc_config = build_dsc_config(merged_config)
     dce_config = build_dce_config(merged_config)
@@ -906,6 +929,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     random_seed=args.random_seed,
                     mem_limit_gb=args.mem_gb,
                     command_string=args.command_string,
+                    user_specified=user_specified,
                     name=f"pmriprep_sub_{subject_id}_ses_{session_id}_wf" if session_id else f"pmriprep_sub_{subject_id}_wf",
                 )
 

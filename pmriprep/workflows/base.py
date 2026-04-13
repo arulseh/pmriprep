@@ -450,6 +450,7 @@ def _read_bids_sidecar(
         "flip_angle": None,
         "r1_relaxivity": None,
         "contrast_agent": None,
+        "bids_agent_string": None,  # Original ContrastBolusAgent from sidecar
         "agent_standard_dose": 0.1,  # Default standard dose (mmol/kg)
     }
 
@@ -494,6 +495,8 @@ def _read_bids_sidecar(
     if r1_info["r1"] is not None:
         result["r1_relaxivity"] = r1_info["r1"]
         result["contrast_agent"] = r1_info["agent_name"]
+    if r1_info.get("agent_string"):
+        result["bids_agent_string"] = r1_info["agent_string"]
 
     # Look up agent-specific standard clinical dose
     if r1_info["agent_name"] is not None:
@@ -743,6 +746,7 @@ def init_pmriprep_wf(
     random_seed: Optional[int] = None,
     mem_limit_gb: Optional[float] = None,
     command_string: str = "",
+    user_specified: Optional[dict[str, bool]] = None,
     name: str = "pmriprep_wf",
 ) -> pe.Workflow:
     """Initialize the master PMRIPrep workflow.
@@ -778,6 +782,10 @@ def init_pmriprep_wf(
     random_seed : int, optional
         Random seed for reproducibility. Passed to ProcessPoolExecutor
         workers for deterministic Bayesian fitting.
+    user_specified : dict, optional
+        Tracks which parameters were explicitly provided by the user
+        (via CLI or config file) vs falling back to pipeline defaults.
+        Keys: dce_dose, dce_r1, dsc_dose, dsc_agent_standard_dose, dsc_preload.
     name : str
         Workflow name (default: "pmriprep_wf").
 
@@ -1748,6 +1756,50 @@ def init_pmriprep_wf(
         ])
 
         # -------------------------------------------------------------------
+        # Build DSC provenance dict for output sidecars
+        from pmriprep.utils.contrast_agent import (
+            ParameterSource,
+            build_dsc_provenance,
+        )
+        _user_spec_dsc = user_specified or {}
+        dsc_provenance = build_dsc_provenance(
+            dose_multiplier=dsc_config.dose,
+            dose_source=(
+                ParameterSource.USER_SPECIFIED
+                if _user_spec_dsc.get("dsc_dose")
+                else ParameterSource.DEFAULT_FALLBACK
+            ),
+            agent_standard_dose=dsc_config.agent_standard_dose,
+            agent_standard_dose_source=(
+                ParameterSource.USER_SPECIFIED
+                if _user_spec_dsc.get("dsc_agent_standard_dose")
+                else ParameterSource.DEFAULT_FALLBACK
+            ),
+            preload_source=(
+                ParameterSource.USER_SPECIFIED
+                if _user_spec_dsc.get("dsc_preload")
+                else ParameterSource.AUTO_DETECTED
+            ),
+            deconv_method=dsc_config.method,
+            leakage_method=dsc_config.leakage_method,
+        )
+
+        # DSC fallback logging warnings (parity with DCE warnings)
+        _dsc_logger = logging.getLogger("pmriprep.workflows")
+        if not _user_spec_dsc.get("dsc_dose"):
+            _dsc_logger.warning(
+                "DSC contrast dose not specified. Using default=%.1f. "
+                "Use --dsc-dose to specify.",
+                dsc_config.dose,
+            )
+        if not _user_spec_dsc.get("dsc_agent_standard_dose"):
+            _dsc_logger.info(
+                "DSC agent standard dose not specified. Using default=%.3f mmol/kg. "
+                "Use --dsc-agent-standard-dose for non-standard agents "
+                "(e.g., 0.05 for Vueway).",
+                dsc_config.agent_standard_dose,
+            )
+
         # DSCDerivativeWriter: Write BIDS-compliant DSC outputs
         # -------------------------------------------------------------------
         from pmriprep.interfaces.dsc_outputs import DSCDerivativeWriter
@@ -1771,6 +1823,9 @@ def init_pmriprep_wf(
             ),
             name="dsc_writer",
         )
+        # Set provenance dict for output JSON sidecars
+        if dsc_provenance:
+            dsc_writer.inputs.provenance_dict = dsc_provenance
 
         # Connect perfusion maps to writer
         workflow.connect([
@@ -1930,6 +1985,7 @@ def init_pmriprep_wf(
         ])
 
         # Read acquisition parameters from DCE BIDS sidecar JSON
+        dce_provenance: dict[str, Any] = {}
         if session_data.modalities.dce:
             dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
             if dce_sidecar["te"] is not None:
@@ -1949,8 +2005,25 @@ def init_pmriprep_wf(
             # 2. Agent-specific lookup from BIDS sidecar
             # 3. Generic Gd-DTPA for known field strength
             # 4. Hardcoded Gd-DTPA at 3T fallback (3.8 s^-1/mM)
+            from pmriprep.utils.contrast_agent import (
+                ParameterSource,
+                build_dce_provenance,
+            )
+
             logger = logging.getLogger("pmriprep.workflows")
+            _resolved_r1: float = 3.8
+            _resolved_fs: float = (
+                dce_sidecar["field_strength"]
+                if dce_sidecar["field_strength"] is not None
+                else 3.0
+            )
+            _agent_source = ParameterSource.DEFAULT_FALLBACK
+            _agent_name: Optional[str] = None
+            _bids_agent_string: Optional[str] = None
+
             if dce_config.r1_relaxivity is not None:
+                _resolved_r1 = dce_config.r1_relaxivity
+                _agent_source = ParameterSource.USER_OVERRIDE
                 dce_wf.inputs.inputnode.r1_relaxivity = dce_config.r1_relaxivity
                 dce_wf.inputs.inputnode.agent_r1_known = True
                 logger.info(
@@ -1958,6 +2031,10 @@ def init_pmriprep_wf(
                     f"s^-1/mM (overrides sidecar lookup)"
                 )
             elif dce_sidecar["r1_relaxivity"] is not None:
+                _resolved_r1 = dce_sidecar["r1_relaxivity"]
+                _agent_source = ParameterSource.BIDS_SIDECAR
+                _agent_name = dce_sidecar.get("contrast_agent")
+                _bids_agent_string = dce_sidecar.get("bids_agent_string")
                 dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
                 dce_wf.inputs.inputnode.agent_r1_known = True
                 logger.info(
@@ -1968,6 +2045,7 @@ def init_pmriprep_wf(
                 # Fallback to generic Gd-DTPA r1 for field strength
                 from pmriprep.utils.dce_constants import get_r1_relaxivity
                 fallback_r1 = get_r1_relaxivity(dce_sidecar["field_strength"])
+                _resolved_r1 = fallback_r1
                 dce_wf.inputs.inputnode.r1_relaxivity = fallback_r1
                 logger.warning(
                     "ContrastBolusAgent not found in BIDS JSON or unknown agent. "
@@ -1979,7 +2057,8 @@ def init_pmriprep_wf(
             else:
                 # Default to 3T value
                 from pmriprep.utils.dce_constants import get_r1_relaxivity
-                dce_wf.inputs.inputnode.r1_relaxivity = get_r1_relaxivity(3.0)
+                _resolved_r1 = get_r1_relaxivity(3.0)
+                dce_wf.inputs.inputnode.r1_relaxivity = _resolved_r1
                 logger.warning(
                     "ContrastBolusAgent and field strength not found in BIDS JSON. "
                     "Using default Gd-DTPA r1=3.8 s^-1/mM at 3.0T. "
@@ -1989,6 +2068,24 @@ def init_pmriprep_wf(
 
             # Set agent-specific standard dose (e.g. 0.05 for Vueway)
             dce_wf.inputs.inputnode.agent_standard_dose = dce_sidecar["agent_standard_dose"]
+
+            # Build DCE provenance dict for output sidecars
+            _user_spec_dce = user_specified or {}
+            _dce_dose_source = (
+                ParameterSource.USER_SPECIFIED
+                if _user_spec_dce.get("dce_dose")
+                else ParameterSource.DEFAULT_FALLBACK
+            )
+            dce_provenance = build_dce_provenance(
+                contrast_agent=_agent_name,
+                agent_source=_agent_source,
+                r1_relaxivity=_resolved_r1,
+                field_strength=_resolved_fs,
+                dose_multiplier=dce_config.dose,
+                dose_source=_dce_dose_source,
+                agent_standard_dose=dce_sidecar["agent_standard_dose"],
+                bids_agent_string=_bids_agent_string,
+            )
 
         # Determine DCE structural reference from confidence-scored selection
         dce_ref_output = "outputnode.t1w_preproc"  # default
@@ -2551,6 +2648,9 @@ def init_pmriprep_wf(
             ),
             name="dce_writer",
         )
+        # Set provenance dict for output JSON sidecars
+        if dce_provenance:
+            dce_writer.inputs.provenance_dict = dce_provenance
 
         # Connect DCE outputs to writer
         workflow.connect([

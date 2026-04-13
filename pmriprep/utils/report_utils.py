@@ -889,6 +889,37 @@ def _collect_all_warnings(
     return all_warnings
 
 
+def _collect_provenance_warnings(
+    pipeline_data: dict[str, Optional[dict[str, Any]]],
+) -> dict[str, list[str]]:
+    """Collect provenance warnings for dedicated HTML banner.
+
+    Reads the ``provenance_warnings`` key from QC metrics (written by
+    :func:`~pmriprep.utils.contrast_agent.collect_default_warnings`),
+    which is structurally separate from data-quality warnings.
+
+    Args:
+        pipeline_data: Dict of pipeline name to data dict (or None).
+
+    Returns:
+        Dict mapping pipeline display name to list of provenance warning
+        strings. Empty dict if no provenance warnings exist.
+    """
+    result: dict[str, list[str]] = {}
+    display_names = {
+        "dsc": "DSC Perfusion",
+        "dce": "DCE Perfusion",
+    }
+    for name in ("dsc", "dce"):
+        data = pipeline_data.get(name)
+        if data is None:
+            continue
+        prov_w = data.get("qc_metrics", {}).get("provenance_warnings", [])
+        if prov_w:
+            result[display_names[name]] = prov_w
+    return result
+
+
 def generate_unified_report(
     subject_id: str,
     session_id: str,
@@ -1012,6 +1043,7 @@ def generate_unified_report(
     # Build template context
     overall_rec = _compute_overall_recommendation(pipeline_data)
     all_warnings = _collect_all_warnings(pipeline_data)
+    provenance_warnings = _collect_provenance_warnings(pipeline_data)
     boilerplate_text = _generate_boilerplate_text(
         pmriprep.__version__, ran_pipelines, pipeline_data
     )
@@ -1031,6 +1063,7 @@ def generate_unified_report(
         "ran_pipelines": ran_pipelines,
         "overall_recommendation": overall_rec,
         "all_warnings": all_warnings,
+        "provenance_warnings": provenance_warnings,
         # Boilerplate methods text
         "boilerplate_text": boilerplate_text,
     }

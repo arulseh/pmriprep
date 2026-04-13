@@ -10,6 +10,27 @@
     </div>
     {% endif %}
 
+    <!-- Default parameter warnings (contrast agent, dose, preload) -->
+    {% if provenance_warnings %}
+    <div class="section review provenance-warning">
+        <h3>&#9888; Default Parameter Warning</h3>
+        <p>The following parameters were <strong>not explicitly specified</strong> and use assumed defaults.
+        Quantitative results may be inaccurate if actual values differ.</p>
+        {% for pipeline_name, warnings in provenance_warnings.items() %}
+        <h4>{{ pipeline_name }}</h4>
+        <ul>
+            {% for warning in warnings %}
+            <li>{{ warning }}</li>
+            {% endfor %}
+        </ul>
+        {% endfor %}
+        <p class="hint">
+            Specify via CLI (<code>--dce-r1</code>, <code>--dce-dose</code>, <code>--dsc-dose</code>)
+            or add <code>ContrastBolusAgent</code> to BIDS JSON sidecar.
+        </p>
+    </div>
+    {% endif %}
+
     <!-- Pipelines that ran -->
     <div class="section">
         <h3>Pipelines</h3>
