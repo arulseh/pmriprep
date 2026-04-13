@@ -1006,8 +1006,20 @@ def init_pmriprep_wf(
     preflight_vfa_flip_angles: Optional[list[float]] = None
     preflight_vfa_trs: Optional[list[Optional[float]]] = None
 
+    _dsc_agent_dose_source: Optional[str] = None
+
     if decision.run_dsc and session_data.modalities.dsc:
         dsc_sidecar = _read_bids_sidecar(session_data.modalities.dsc)
+
+        from pmriprep.utils.contrast_agent import ParameterSource
+        _user_spec = user_specified or {}
+        if _user_spec.get("dsc_agent_standard_dose"):
+            _dsc_agent_dose_source = ParameterSource.USER_SPECIFIED
+        elif dsc_sidecar.get("contrast_agent") is not None:
+            dsc_config.agent_standard_dose = dsc_sidecar["agent_standard_dose"]
+            _dsc_agent_dose_source = ParameterSource.BIDS_SIDECAR
+        else:
+            _dsc_agent_dose_source = ParameterSource.DEFAULT_FALLBACK
 
     if decision.run_dce and session_data.modalities.dce:
         dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
@@ -1770,11 +1782,7 @@ def init_pmriprep_wf(
                 else ParameterSource.DEFAULT_FALLBACK
             ),
             agent_standard_dose=dsc_config.agent_standard_dose,
-            agent_standard_dose_source=(
-                ParameterSource.USER_SPECIFIED
-                if _user_spec_dsc.get("dsc_agent_standard_dose")
-                else ParameterSource.DEFAULT_FALLBACK
-            ),
+            agent_standard_dose_source=_dsc_agent_dose_source or ParameterSource.DEFAULT_FALLBACK,
             preload_source=(
                 ParameterSource.USER_SPECIFIED
                 if _user_spec_dsc.get("dsc_preload")
@@ -1793,11 +1801,17 @@ def init_pmriprep_wf(
                 "Use --dsc-dose to specify.",
                 dsc_config.dose,
             )
-        if not _user_spec_dsc.get("dsc_agent_standard_dose"):
+        if _dsc_agent_dose_source == ParameterSource.DEFAULT_FALLBACK:
             _dsc_logger.info(
                 "DSC agent standard dose not specified. Using default=%.3f mmol/kg. "
                 "Use --dsc-agent-standard-dose for non-standard agents "
                 "(e.g., 0.05 for Vueway).",
+                dsc_config.agent_standard_dose,
+            )
+        elif _dsc_agent_dose_source == ParameterSource.BIDS_SIDECAR:
+            _dsc_logger.info(
+                "DSC agent standard dose resolved from BIDS sidecar: %s -> %.3f mmol/kg.",
+                dsc_sidecar.get("contrast_agent", "unknown") if dsc_sidecar else "unknown",
                 dsc_config.agent_standard_dose,
             )
 
