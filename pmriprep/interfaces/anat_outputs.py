@@ -51,6 +51,7 @@ def _extract_contrast_agent(source_nifti_path: str) -> str | None:
         parsed = parse_contrast_agent_string(raw_agent)
         return parsed.get("agent_name") or None
     except Exception:
+        logger.debug("Could not extract contrast agent from %s", source_nifti_path)
         return None
 
 

@@ -785,7 +785,7 @@ def init_pmriprep_wf(
     user_specified : dict, optional
         Tracks which parameters were explicitly provided by the user
         (via CLI or config file) vs falling back to pipeline defaults.
-        Keys: dce_dose, dce_r1, dsc_dose, dsc_agent_standard_dose, dsc_preload.
+        Keys: dce_dose, dsc_dose, dsc_agent_standard_dose, dsc_preload.
     name : str
         Workflow name (default: "pmriprep_wf").
 

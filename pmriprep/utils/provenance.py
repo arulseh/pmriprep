@@ -187,13 +187,6 @@ def get_bids_derivative_provenance(
     return {"GeneratedBy": [generated_by]}
 
 
-def _round(value: Any, decimals: int = 4) -> Any:
-    """Round a value if it's a float, otherwise return as-is."""
-    if isinstance(value, float):
-        return round(value, decimals)
-    return value
-
-
 def _safe_float(value: Any) -> Optional[float]:
     """Convert to Python float or return None."""
     if value is None:
@@ -269,10 +262,14 @@ def _enrich_dce(
             aif_block["method"] = str(aif["aif_source"])
         if "n_aif_voxels" in aif:
             aif_block["n_voxels"] = int(aif["n_aif_voxels"])
-        peak = aif.get("peak_mm_mean") or aif.get("final_peak_mm")
+        peak = aif.get("peak_mm_mean")
+        if peak is None:
+            peak = aif.get("final_peak_mm")
         if peak is not None:
             aif_block["peak_mM"] = _safe_float(peak)
-        fwhm = aif.get("fwhm_seconds_mean") or aif.get("final_fwhm_seconds")
+        fwhm = aif.get("fwhm_seconds_mean")
+        if fwhm is None:
+            fwhm = aif.get("final_fwhm_seconds")
         if fwhm is not None:
             aif_block["fwhm_s"] = _safe_float(fwhm)
         if "quality_score" in aif:
@@ -374,7 +371,7 @@ def _enrich_dsc(
             preload_det["baseline_delta_r2"] = _safe_float(preload["baseline_delta_r2"])
         perf["PreloadDetection"] = preload_det
 
-    # AIF
+    # AIF and baseline frames (both from qc["aif"])
     aif = qc.get("aif")
     if aif and isinstance(aif, dict):
         aif_block: Dict[str, Any] = {}
@@ -392,6 +389,15 @@ def _enrich_dsc(
         if aif_block:
             perf["AIF"] = aif_block
 
+        # Baseline frames (also from aif sub-dict)
+        baseline_block: Dict[str, Any] = {}
+        if "baseline_frames_used" in aif:
+            baseline_block["n_frames"] = int(aif["baseline_frames_used"])
+        if "baseline_detection_method" in aif:
+            baseline_block["detection_method"] = str(aif["baseline_detection_method"])
+        if baseline_block:
+            perf["BaselineFrames"] = baseline_block
+
     # Quantification mode (always relative for DSC)
     perf["QuantificationMode"] = "relative"
 
@@ -402,14 +408,3 @@ def _enrich_dsc(
             "tissue": "NAWM",
             "cbv_factor": _safe_float(norm_factor),
         }
-
-    # Baseline frames
-    aif = qc.get("aif", {})
-    if isinstance(aif, dict):
-        baseline_block: Dict[str, Any] = {}
-        if "baseline_frames_used" in aif:
-            baseline_block["n_frames"] = int(aif["baseline_frames_used"])
-        if "baseline_detection_method" in aif:
-            baseline_block["detection_method"] = str(aif["baseline_detection_method"])
-        if baseline_block:
-            perf["BaselineFrames"] = baseline_block
