@@ -1121,7 +1121,7 @@ class AIFDetection(BaseInterface):
             effective_dose = np.clip(effective_dose, 0.2, 3.0)
 
             peak_floor = BASE_PEAK_FLOOR * effective_dose
-            peak_ceiling = BASE_PEAK_CEILING * effective_dose
+            peak_ceiling = max(BASE_PEAK_CEILING * effective_dose, 60.0)
 
             if peak_conc < peak_floor or peak_conc > peak_ceiling:
                 return float("inf")
@@ -2360,10 +2360,17 @@ class AIFDetection(BaseInterface):
                             n_available = n_avail
                             detection_level = level_name
                             filter_meta = f_meta
+                            break
+                        elif pr2 is None and stashed_pr is None:
+                            if len(scored) > len(quality_stash[0]):
+                                quality_stash = (
+                                    scored, n_avail, level_name, f_meta, pr2,
+                                )
+                            continue
                         else:
                             (top_candidates, n_available,
                              detection_level, filter_meta, _) = quality_stash
-                        break
+                            break
 
                     # Good quality — accept normally
                     top_candidates = scored
