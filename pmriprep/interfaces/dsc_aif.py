@@ -1089,10 +1089,11 @@ class AIFDetection(BaseInterface):
         # effective_dose=1.0 (standard GBCA full). Artifact example: 486 s^-1.
         peak_conc = metrics.get("peak_conc", float("nan"))
         if not np.isnan(peak_conc):
-            BASE_PEAK_FLOOR = 5.0  # s^-1 (deltaR2* units)
-            BASE_PEAK_CEILING = 120.0  # s^-1 (raised to avoid false positive at 27.92)
+            BASE_PEAK_FLOOR = 5.0  # s^-1 — tissue contamination floor (dose-independent)
+            BASE_PEAK_CEILING = 120.0  # s^-1 — susceptibility artifact ceiling
 
-            # Compute effective Gd dose for susceptibility-based thresholds.
+            # Effective dose only raises the ceiling for high-Gd agents (gadoquatrane);
+            # peak_floor is fixed regardless of dose.
             # DSC ΔR2* scales with total Gd3+ ions, so multiply by gd_multiplicity
             # for tetrameric agents (gadoquatrane: 4 Gd per molecule).
             if dose is not None:
@@ -1120,8 +1121,8 @@ class AIFDetection(BaseInterface):
             # Clamp to prevent pathological thresholds
             effective_dose = np.clip(effective_dose, 0.2, 3.0)
 
-            peak_floor = BASE_PEAK_FLOOR * effective_dose
-            peak_ceiling = max(BASE_PEAK_CEILING * effective_dose, 60.0)
+            peak_floor = BASE_PEAK_FLOOR
+            peak_ceiling = max(BASE_PEAK_CEILING * effective_dose, BASE_PEAK_CEILING)
 
             if peak_conc < peak_floor or peak_conc > peak_ceiling:
                 return float("inf")
