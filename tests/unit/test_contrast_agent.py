@@ -15,6 +15,7 @@ from pmriprep.utils.contrast_agent import (
     get_available_agents,
     get_brand_name,
     get_r1_from_sidecar_dict,
+    lookup_gd_multiplicity,
     lookup_r1,
     lookup_r1_safe,
     lookup_standard_dose,
@@ -147,6 +148,28 @@ class TestLookupStandardDose:
     def test_ambelvist_alias_dose(self) -> None:
         """Brand name 'Ambelvist' resolves to gadoquatrane for dose lookup."""
         assert lookup_standard_dose("ambelvist") == pytest.approx(0.04)
+
+
+class TestLookupGdMultiplicity:
+    """Tests for Gd3+ ion count per molecule lookup."""
+
+    def test_gadoquatrane_tetrameric(self) -> None:
+        """Gadoquatrane has 4 Gd3+ ions per molecule."""
+        assert lookup_gd_multiplicity("gadoquatrane") == 4
+
+    def test_ambelvist_alias(self) -> None:
+        """Brand name resolves to gadoquatrane multiplicity."""
+        assert lookup_gd_multiplicity("ambelvist") == 4
+
+    def test_standard_agents_monomeric(self) -> None:
+        """Standard monomeric agents return 1."""
+        assert lookup_gd_multiplicity("gadobutrol") == 1
+        assert lookup_gd_multiplicity("gd-dtpa") == 1
+        assert lookup_gd_multiplicity("gadopiclenol") == 1
+
+    def test_unknown_agent_defaults_to_1(self) -> None:
+        """Unknown agent returns 1 (monomeric default)."""
+        assert lookup_gd_multiplicity("unknown_agent") == 1
 
 
 class TestGetAvailableAgents:
@@ -407,6 +430,22 @@ class TestBuildDscProvenance:
         assert "ContrastAgent" not in perf
         assert "ContrastDose" in perf
         assert "Deconvolution" in perf
+
+    def test_gd_multiplicity_recorded(self) -> None:
+        """Tetrameric agent records gd_ions_per_molecule and effective Gd dose."""
+        prov = build_dsc_provenance(
+            agent_standard_dose=0.04,
+            gd_multiplicity=4,
+        )
+        dose = prov["PerfusionProcessing"]["ContrastDose"]
+        assert dose["gd_ions_per_molecule"] == 4
+        assert dose["effective_gd_dose_mmol_kg"] == pytest.approx(0.16)
+
+    def test_gd_multiplicity_omitted_for_monomeric(self) -> None:
+        """Monomeric agent does not record gd_ions_per_molecule."""
+        prov = build_dsc_provenance(agent_standard_dose=0.1, gd_multiplicity=1)
+        dose = prov["PerfusionProcessing"]["ContrastDose"]
+        assert "gd_ions_per_molecule" not in dose
 
     def test_bayesian_cpi_included(self) -> None:
         """Bayesian inference recorded for CPI deconvolution."""

@@ -1411,6 +1411,7 @@ def init_dsc_preproc_wf(
     random_seed: Optional[int] = None,
     mem_gb: Optional[float] = None,
     mem_limit_gb: Optional[float] = None,
+    gd_multiplicity: int = 1,
     name: str = "dsc_preproc_wf",
 ) -> pe.Workflow:
     """Initialize DSC perfusion preprocessing workflow.
@@ -1792,6 +1793,7 @@ def init_dsc_preproc_wf(
             baseline_frames=config.pre_bolus,
             dose=config.dose,
             agent_standard_dose=config.agent_standard_dose,
+            gd_multiplicity=gd_multiplicity,
         ),
         name="aif_detect",
     )

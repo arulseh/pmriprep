@@ -21,9 +21,11 @@ class AgentRelaxivity(NamedTuple):
     """R1 relaxivity values at different field strengths.
 
     Values are in L/(mmol·s) or equivalently s^-1 per mM.
+    All values are per millimole of molecule (not per Gd3+ ion).
     """
     r1_1_5T: float  # R1 relaxivity at 1.5T
     r1_3_0T: float  # R1 relaxivity at 3.0T
+    gd_ions: int = 1  # Gd3+ ions per molecule (4 for tetrameric gadoquatrane)
 
 
 #: R1 relaxivity values for common gadolinium-based contrast agents
@@ -47,7 +49,7 @@ CONTRAST_AGENTS: Final[dict[str, AgentRelaxivity]] = {
 
     # High-relaxivity agents
     "gadopiclenol": AgentRelaxivity(r1_1_5T=12.8, r1_3_0T=11.6), # Elucirem (newest)
-    "gadoquatrane": AgentRelaxivity(r1_1_5T=11.8, r1_3_0T=10.5), # Ambelvist (tetrameric)
+    "gadoquatrane": AgentRelaxivity(r1_1_5T=11.8, r1_3_0T=10.5, gd_ions=4), # Ambelvist (tetrameric)
     "gadobenate": AgentRelaxivity(r1_1_5T=6.3, r1_3_0T=5.5),     # MultiHance
     "gd-bopta": AgentRelaxivity(r1_1_5T=6.3, r1_3_0T=5.5),       # MultiHance (generic)
     "gadoxetate": AgentRelaxivity(r1_1_5T=6.9, r1_3_0T=6.2),     # Eovist/Primovist
@@ -396,6 +398,26 @@ def lookup_standard_dose(agent: str) -> float:
     return AGENT_STANDARD_DOSES.get(name, 0.1)
 
 
+def lookup_gd_multiplicity(agent: str) -> int:
+    """Look up Gd3+ ion count per molecule for a contrast agent.
+
+    Most GBCAs are monomeric (1 Gd per molecule). Gadoquatrane is
+    tetrameric (4 Gd per molecule). This affects DSC susceptibility
+    scaling but NOT DCE (where per-molecule r1 already accounts for
+    all Gd ions).
+
+    Args:
+        agent: Contrast agent name (brand name, generic, or abbreviation).
+
+    Returns:
+        Number of Gd3+ ions per molecule (1 for most agents, 4 for
+        gadoquatrane).
+    """
+    name = _normalize_agent_name(agent)
+    relaxivity = CONTRAST_AGENTS.get(name)
+    return relaxivity.gd_ions if relaxivity else 1
+
+
 def lookup_r1(
     agent: str = DEFAULT_AGENT,
     field_strength: float = 3.0,
@@ -639,7 +661,7 @@ _PRIMARY_BRANDS: Final[dict[str, str]] = {
     "gd-hp-do3a": "ProHance",
     "gadobutrol": "Gadavist",
     "gadopiclenol": "Vueway",
-    "gadoquatrane": "Elucirem",
+    "gadoquatrane": "Ambelvist",
     "gadobenate": "MultiHance",
     "gd-bopta": "MultiHance",
     "gadoxetate": "Eovist",
@@ -727,6 +749,7 @@ def build_dsc_provenance(
     dose_source: str = ParameterSource.DEFAULT_FALLBACK,
     agent_standard_dose: float = 0.1,
     agent_standard_dose_source: str = ParameterSource.DEFAULT_FALLBACK,
+    gd_multiplicity: int = 1,
     preload_source: str = ParameterSource.AUTO_DETECTED,
     deconv_method: str = "oSVD",
     bayesian: Optional[str] = None,
@@ -745,8 +768,10 @@ def build_dsc_provenance(
         bids_agent_string: Raw ContrastBolusAgent string from BIDS sidecar.
         dose_multiplier: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
         dose_source: How the dose was determined (ParameterSource constant).
-        agent_standard_dose: Standard clinical dose in mmol/kg.
+        agent_standard_dose: Standard clinical molecular dose in mmol/kg.
         agent_standard_dose_source: How agent std dose was determined.
+        gd_multiplicity: Gd3+ ions per molecule (1 for monomeric, 4 for
+            gadoquatrane). Recorded in provenance when != 1.
         preload_source: How preload was determined (user_specified or auto_detected).
         deconv_method: Deconvolution method name.
         bayesian: Bayesian inference method (for CPI/vascular methods).
@@ -776,12 +801,18 @@ def build_dsc_provenance(
             agent_dict["OriginalString"] = str(bids_agent_string)
         perf["ContrastAgent"] = agent_dict
 
-    perf["ContrastDose"] = {
+    dose_dict: dict[str, Any] = {
         "standard_dose_mmol_kg": float(agent_standard_dose),
         "dose_multiplier": float(dose_multiplier),
         "Source": str(dose_source),
         "AgentStandardDoseSource": str(agent_standard_dose_source),
     }
+    if gd_multiplicity != 1:
+        dose_dict["gd_ions_per_molecule"] = int(gd_multiplicity)
+        dose_dict["effective_gd_dose_mmol_kg"] = float(
+            agent_standard_dose * dose_multiplier * gd_multiplicity
+        )
+    perf["ContrastDose"] = dose_dict
     perf["Deconvolution"] = deconv_block
     perf["LeakageCorrection"] = {"method": str(leakage_method)}
     perf["PreloadDetection"] = {"Source": str(preload_source)}

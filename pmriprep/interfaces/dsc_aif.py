@@ -360,8 +360,14 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
     agent_standard_dose = traits.Float(
         0.1,
         usedefault=True,
-        desc="Agent's recommended dose in mmol Gd/kg "
+        desc="Agent's recommended molecular dose in mmol/kg "
              "(0.1=standard, 0.05=gadopiclenol, 0.04=gadoquatrane)",
+    )
+    gd_multiplicity = traits.Int(
+        1,
+        usedefault=True,
+        desc="Gd3+ ions per molecule (1=monomeric, 4=gadoquatrane). "
+             "Affects DSC susceptibility scaling for AIF peak thresholds.",
     )
 
     # Output file
@@ -973,6 +979,7 @@ class AIFDetection(BaseInterface):
         *,
         dose: Optional[float] = None,
         agent_standard_dose: Optional[float] = None,
+        gd_multiplicity: Optional[int] = None,
     ) -> float:
         """Score a candidate with the AIF cost function.
 
@@ -990,7 +997,10 @@ class AIFDetection(BaseInterface):
         dose : float or None
             Contrast agent dose multiplier (default 1.0).
         agent_standard_dose : float or None
-            Standard dose in mmol/kg (default 0.1).
+            Standard molecular dose in mmol/kg (default 0.1).
+        gd_multiplicity : int or None
+            Gd3+ ions per molecule (1=monomeric, 4=gadoquatrane).
+            Falls back to self.inputs.gd_multiplicity if None.
 
         Returns
         -------
@@ -1085,8 +1095,9 @@ class AIFDetection(BaseInterface):
             BASE_PEAK_FLOOR = 5.0  # s^-1 (deltaR2* units)
             BASE_PEAK_CEILING = 120.0  # s^-1 (raised to avoid false positive at 27.92)
 
-            # Compute effective dose (Gd-normalized, same formula as DCE)
-            # Use explicit parameters if provided, else fall back to interface inputs
+            # Compute effective Gd dose for susceptibility-based thresholds.
+            # DSC ΔR2* scales with total Gd3+ ions, so multiply by gd_multiplicity
+            # for tetrameric agents (gadoquatrane: 4 Gd per molecule).
             if dose is not None:
                 dose_val = dose
             else:
@@ -1099,7 +1110,15 @@ class AIFDetection(BaseInterface):
                     if isdefined(self.inputs.agent_standard_dose)
                     else 0.1
                 )
-            effective_dose = (agent_std * dose_val) / 0.1
+            if gd_multiplicity is not None:
+                gd_mult = gd_multiplicity
+            else:
+                gd_mult = (
+                    int(self.inputs.gd_multiplicity)
+                    if isdefined(self.inputs.gd_multiplicity)
+                    else 1
+                )
+            effective_dose = (agent_std * dose_val * gd_mult) / 0.1
 
             # Clamp to prevent pathological thresholds
             effective_dose = np.clip(effective_dose, 0.2, 3.0)

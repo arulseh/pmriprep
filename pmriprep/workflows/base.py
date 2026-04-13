@@ -1008,6 +1008,7 @@ def init_pmriprep_wf(
 
     _dsc_agent_dose_source: Optional[str] = None
     _dsc_agent_source: Optional[str] = None
+    _gd_multiplicity: int = 1
 
     if decision.run_dsc and session_data.modalities.dsc:
         dsc_sidecar = _read_bids_sidecar(session_data.modalities.dsc)
@@ -1026,6 +1027,13 @@ def init_pmriprep_wf(
             _dsc_agent_source = ParameterSource.BIDS_SIDECAR
         else:
             _dsc_agent_source = ParameterSource.DEFAULT_FALLBACK
+
+        from pmriprep.utils.contrast_agent import lookup_gd_multiplicity
+        _gd_multiplicity = (
+            lookup_gd_multiplicity(dsc_sidecar["contrast_agent"])
+            if dsc_sidecar.get("contrast_agent") is not None
+            else 1
+        )
 
     if decision.run_dce and session_data.modalities.dce:
         dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
@@ -1466,6 +1474,7 @@ def init_pmriprep_wf(
             random_seed=random_seed,
             mem_gb=dsc_mem_gb,
             mem_limit_gb=mem_limit_gb,
+            gd_multiplicity=_gd_multiplicity,
             name="dsc_wf",
         )
 
@@ -1791,6 +1800,7 @@ def init_pmriprep_wf(
             ),
             agent_standard_dose=dsc_config.agent_standard_dose,
             agent_standard_dose_source=_dsc_agent_dose_source or ParameterSource.DEFAULT_FALLBACK,
+            gd_multiplicity=_gd_multiplicity,
             preload_source=(
                 ParameterSource.USER_SPECIFIED
                 if _user_spec_dsc.get("dsc_preload")
