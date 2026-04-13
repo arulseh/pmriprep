@@ -720,6 +720,9 @@ def build_dce_provenance(
 
 def build_dsc_provenance(
     *,
+    contrast_agent: Optional[str] = None,
+    agent_source: str = ParameterSource.DEFAULT_FALLBACK,
+    bids_agent_string: Optional[str] = None,
     dose_multiplier: float = 1.0,
     dose_source: str = ParameterSource.DEFAULT_FALLBACK,
     agent_standard_dose: float = 0.1,
@@ -732,10 +735,14 @@ def build_dsc_provenance(
     """Build DSC provenance dict for output JSON sidecars.
 
     DSC quantification uses relative metrics (r2* cancels in CBV/CBF),
-    so contrast agent relaxivity is not included. Dose and preload
-    affect AIF detection thresholds and leakage correction.
+    so contrast agent relaxivity is not included. Agent identity is
+    recorded for reproducibility; dose and preload affect AIF detection
+    thresholds and leakage correction.
 
     Args:
+        contrast_agent: Generic agent name (e.g., "gadopiclenol").
+        agent_source: How the agent was determined (ParameterSource constant).
+        bids_agent_string: Raw ContrastBolusAgent string from BIDS sidecar.
         dose_multiplier: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
         dose_source: How the dose was determined (ParameterSource constant).
         agent_standard_dose: Standard clinical dose in mmol/kg.
@@ -746,30 +753,40 @@ def build_dsc_provenance(
         leakage_method: Leakage correction method name.
 
     Returns:
-        Dict with PerfusionProcessing namespace containing ContrastDose,
-        Deconvolution, and LeakageCorrection sub-dicts.
+        Dict with PerfusionProcessing namespace containing ContrastAgent
+        (when agent is known), ContrastDose, Deconvolution, and
+        LeakageCorrection sub-dicts.
     """
     deconv_block: dict[str, Any] = {"method": str(deconv_method)}
     if bayesian is not None and deconv_method in ("cpi", "vascular"):
         deconv_block["bayesian_inference"] = str(bayesian)
 
-    return {
-        "PerfusionProcessing": {
-            "ContrastDose": {
-                "standard_dose_mmol_kg": float(agent_standard_dose),
-                "dose_multiplier": float(dose_multiplier),
-                "Source": str(dose_source),
-                "AgentStandardDoseSource": str(agent_standard_dose_source),
-            },
-            "Deconvolution": deconv_block,
-            "LeakageCorrection": {
-                "method": str(leakage_method),
-            },
-            "PreloadDetection": {
-                "Source": str(preload_source),
-            },
-        },
+    perf: dict[str, Any] = {}
+
+    if contrast_agent is not None:
+        agent_name = str(contrast_agent)
+        brand = get_brand_name(agent_name)
+        agent_dict: dict[str, Any] = {
+            "GenericName": str(agent_name),
+            "Source": str(agent_source),
+        }
+        if brand is not None:
+            agent_dict["BrandName"] = str(brand)
+        if bids_agent_string is not None:
+            agent_dict["OriginalString"] = str(bids_agent_string)
+        perf["ContrastAgent"] = agent_dict
+
+    perf["ContrastDose"] = {
+        "standard_dose_mmol_kg": float(agent_standard_dose),
+        "dose_multiplier": float(dose_multiplier),
+        "Source": str(dose_source),
+        "AgentStandardDoseSource": str(agent_standard_dose_source),
     }
+    perf["Deconvolution"] = deconv_block
+    perf["LeakageCorrection"] = {"method": str(leakage_method)}
+    perf["PreloadDetection"] = {"Source": str(preload_source)}
+
+    return {"PerfusionProcessing": perf}
 
 
 def collect_default_warnings(
@@ -823,6 +840,18 @@ def collect_default_warnings(
             )
 
     elif modality == "DSC":
+        # Check contrast agent source (DSC omits ContrastAgent when unknown,
+        # unlike DCE which always includes it — guard against empty dict)
+        agent = perf.get("ContrastAgent", {})
+        if agent and agent.get("Source") == ParameterSource.DEFAULT_FALLBACK:
+            agent_name = agent.get("GenericName", DEFAULT_AGENT)
+            brand = agent.get("BrandName", "")
+            brand_str = f" ({brand})" if brand else ""
+            warnings.append(
+                f"DSC contrast agent defaulted to {agent_name}{brand_str}. "
+                f"Specify ContrastBolusAgent in BIDS sidecar."
+            )
+
         # Check dose source
         dose = perf.get("ContrastDose", {})
         if dose.get("Source") == ParameterSource.DEFAULT_FALLBACK:

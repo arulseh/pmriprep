@@ -366,6 +366,62 @@ class TestBuildDscProvenance:
         preload = prov["PerfusionProcessing"]["PreloadDetection"]
         assert preload["Source"] == "user_specified"
 
+    def test_agent_identity_from_sidecar(self) -> None:
+        """BIDS-detected agent includes generic name, brand, and original string."""
+        prov = build_dsc_provenance(
+            contrast_agent="gadopiclenol",
+            agent_source=ParameterSource.BIDS_SIDECAR,
+            bids_agent_string="Vueway",
+        )
+        agent = prov["PerfusionProcessing"]["ContrastAgent"]
+        assert agent["GenericName"] == "gadopiclenol"
+        assert agent["BrandName"] == "Vueway"
+        assert agent["OriginalString"] == "Vueway"
+        assert agent["Source"] == "bids_sidecar"
+
+    def test_agent_identity_omitted_by_default(self) -> None:
+        """No ContrastAgent block when agent is not provided."""
+        prov = build_dsc_provenance()
+        assert "ContrastAgent" not in prov["PerfusionProcessing"]
+
+    def test_agent_without_bids_string(self) -> None:
+        """Agent without bids_agent_string omits OriginalString."""
+        prov = build_dsc_provenance(
+            contrast_agent="gadobutrol",
+            agent_source=ParameterSource.BIDS_SIDECAR,
+        )
+        agent = prov["PerfusionProcessing"]["ContrastAgent"]
+        assert agent["GenericName"] == "gadobutrol"
+        assert agent["BrandName"] == "Gadavist"
+        assert "OriginalString" not in agent
+
+    def test_backward_compat_no_new_params(self) -> None:
+        """Existing callers without new params get identical output."""
+        prov = build_dsc_provenance(
+            dose_multiplier=0.5,
+            dose_source=ParameterSource.USER_SPECIFIED,
+            agent_standard_dose=0.05,
+            agent_standard_dose_source=ParameterSource.USER_SPECIFIED,
+        )
+        perf = prov["PerfusionProcessing"]
+        assert "ContrastAgent" not in perf
+        assert "ContrastDose" in perf
+        assert "Deconvolution" in perf
+
+    def test_bayesian_cpi_included(self) -> None:
+        """Bayesian inference recorded for CPI deconvolution."""
+        prov = build_dsc_provenance(deconv_method="cpi", bayesian="vi")
+        deconv = prov["PerfusionProcessing"]["Deconvolution"]
+        assert deconv["method"] == "cpi"
+        assert deconv["bayesian_inference"] == "vi"
+
+    def test_bayesian_ignored_for_osvd(self) -> None:
+        """Bayesian inference not recorded for non-CPI methods."""
+        prov = build_dsc_provenance(deconv_method="oSVD", bayesian="vi")
+        deconv = prov["PerfusionProcessing"]["Deconvolution"]
+        assert deconv["method"] == "oSVD"
+        assert "bayesian_inference" not in deconv
+
 
 class TestCollectDefaultWarnings:
     """Tests for collect_default_warnings."""
@@ -445,3 +501,38 @@ class TestCollectDefaultWarnings:
         )
         warnings = collect_default_warnings(prov, "DSC")
         assert warnings == []
+
+    def test_dsc_no_agent_warning_when_sidecar(self) -> None:
+        """No agent warning when DSC agent is BIDS-detected."""
+        prov = build_dsc_provenance(
+            contrast_agent="gadopiclenol",
+            agent_source=ParameterSource.BIDS_SIDECAR,
+            dose_source=ParameterSource.USER_SPECIFIED,
+            agent_standard_dose_source=ParameterSource.BIDS_SIDECAR,
+            preload_source=ParameterSource.USER_SPECIFIED,
+        )
+        warnings = collect_default_warnings(prov, "DSC")
+        assert warnings == []
+
+    def test_dsc_agent_default_warning(self) -> None:
+        """Warning when DSC agent falls back to default."""
+        prov = build_dsc_provenance(
+            contrast_agent="gd-dtpa",
+            agent_source=ParameterSource.DEFAULT_FALLBACK,
+            dose_source=ParameterSource.USER_SPECIFIED,
+            agent_standard_dose_source=ParameterSource.USER_SPECIFIED,
+            preload_source=ParameterSource.USER_SPECIFIED,
+        )
+        warnings = collect_default_warnings(prov, "DSC")
+        assert len(warnings) == 1
+        assert "defaulted" in warnings[0].lower() or "gd-dtpa" in warnings[0].lower()
+
+    def test_dsc_no_agent_block_no_agent_warning(self) -> None:
+        """No agent-identity warning when ContrastAgent block is absent."""
+        prov = build_dsc_provenance(
+            dose_source=ParameterSource.USER_SPECIFIED,
+            agent_standard_dose_source=ParameterSource.USER_SPECIFIED,
+            preload_source=ParameterSource.USER_SPECIFIED,
+        )
+        warnings = collect_default_warnings(prov, "DSC")
+        assert not any("agent" in w.lower() and "dose" not in w.lower() for w in warnings)

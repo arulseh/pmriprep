@@ -1007,19 +1007,25 @@ def init_pmriprep_wf(
     preflight_vfa_trs: Optional[list[Optional[float]]] = None
 
     _dsc_agent_dose_source: Optional[str] = None
+    _dsc_agent_source: Optional[str] = None
 
     if decision.run_dsc and session_data.modalities.dsc:
         dsc_sidecar = _read_bids_sidecar(session_data.modalities.dsc)
 
         from pmriprep.utils.contrast_agent import ParameterSource
-        _user_spec = user_specified or {}
-        if _user_spec.get("dsc_agent_standard_dose"):
+        _user_spec_dsc = user_specified or {}
+        if _user_spec_dsc.get("dsc_agent_standard_dose"):
             _dsc_agent_dose_source = ParameterSource.USER_SPECIFIED
         elif dsc_sidecar.get("contrast_agent") is not None:
             dsc_config.agent_standard_dose = dsc_sidecar["agent_standard_dose"]
             _dsc_agent_dose_source = ParameterSource.BIDS_SIDECAR
         else:
             _dsc_agent_dose_source = ParameterSource.DEFAULT_FALLBACK
+
+        if dsc_sidecar.get("contrast_agent") is not None:
+            _dsc_agent_source = ParameterSource.BIDS_SIDECAR
+        else:
+            _dsc_agent_source = ParameterSource.DEFAULT_FALLBACK
 
     if decision.run_dce and session_data.modalities.dce:
         dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
@@ -1773,8 +1779,10 @@ def init_pmriprep_wf(
             ParameterSource,
             build_dsc_provenance,
         )
-        _user_spec_dsc = user_specified or {}
         dsc_provenance = build_dsc_provenance(
+            contrast_agent=dsc_sidecar.get("contrast_agent") if dsc_sidecar else None,
+            agent_source=_dsc_agent_source or ParameterSource.DEFAULT_FALLBACK,
+            bids_agent_string=dsc_sidecar.get("bids_agent_string") if dsc_sidecar else None,
             dose_multiplier=dsc_config.dose,
             dose_source=(
                 ParameterSource.USER_SPECIFIED
@@ -1813,6 +1821,11 @@ def init_pmriprep_wf(
                 "DSC agent standard dose resolved from BIDS sidecar: %s -> %.3f mmol/kg.",
                 dsc_sidecar.get("contrast_agent", "unknown") if dsc_sidecar else "unknown",
                 dsc_config.agent_standard_dose,
+            )
+        if _dsc_agent_source == ParameterSource.BIDS_SIDECAR:
+            _dsc_logger.info(
+                "DSC contrast agent identified from BIDS sidecar: %s.",
+                dsc_sidecar.get("contrast_agent", "unknown") if dsc_sidecar else "unknown",
             )
 
         # DSCDerivativeWriter: Write BIDS-compliant DSC outputs
