@@ -867,7 +867,7 @@ def _extract_preload_class(qc_dict: dict | None) -> str:
     """
     if not qc_dict:
         return "none"
-    return qc_dict.get("preload_classification", "none")
+    return qc_dict.get("preload_classification", "none")  # type: ignore[no-any-return]
 
 
 def _generate_motion_qc_plot(

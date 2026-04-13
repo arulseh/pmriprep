@@ -56,7 +56,7 @@ def estimate_4d_mem_gb(
     """
     import nibabel as nib
 
-    shape = nib.load(nifti_path).header.get_data_shape()
+    shape = nib.load(nifti_path).header.get_data_shape()  # type: ignore[attr-defined]
     n_voxels = shape[0] * shape[1] * shape[2]
     n_timepoints = shape[3] if len(shape) > 3 else 1
     raw_estimate = (n_voxels * n_timepoints * 8 * n_buffers) / 1e9

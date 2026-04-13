@@ -172,11 +172,11 @@ class DSCBrainExtract(SimpleInterface):
             # Derive mask by binarizing brain output
             if Path(out_brain).exists():
                 brain_img = nib.load(out_brain)
-                brain_data = brain_img.get_fdata()
+                brain_data = brain_img.get_fdata()  # type: ignore[attr-defined]
                 mask_data = (brain_data > 0).astype(np.uint8)
                 nib.save(
                     nib.Nifti1Image(
-                        mask_data, brain_img.affine, brain_img.header,
+                        mask_data, brain_img.affine, brain_img.header,  # type: ignore[attr-defined]
                     ),
                     out_mask,
                 )
@@ -203,7 +203,7 @@ class DSCBrainExtract(SimpleInterface):
         logger.info("Using threshold-based brain extraction (fallback)")
 
         dsc_img = nib.load(str(dsc_mean))
-        dsc_data = dsc_img.get_fdata()
+        dsc_data = dsc_img.get_fdata()  # type: ignore[attr-defined]
 
         nonzero = dsc_data[dsc_data > 0]
         threshold = float(np.percentile(nonzero, 10)) if len(nonzero) > 0 else 0.0
@@ -213,11 +213,11 @@ class DSCBrainExtract(SimpleInterface):
 
         nib.save(
             nib.Nifti1Image(
-                brain_data.astype(np.float32), dsc_img.affine, dsc_img.header,
+                brain_data.astype(np.float32), dsc_img.affine, dsc_img.header,  # type: ignore[attr-defined]
             ),
             out_brain,
         )
         nib.save(
-            nib.Nifti1Image(mask_data, dsc_img.affine, dsc_img.header),
+            nib.Nifti1Image(mask_data, dsc_img.affine, dsc_img.header),  # type: ignore[attr-defined]
             out_mask,
         )

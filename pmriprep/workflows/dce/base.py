@@ -2173,8 +2173,8 @@ def _transform_mask_to_dce(
     # Same-space shortcut (Gap 10): skip transform if already aligned
     mask_img = nib.load(mask_file)
     ref_img = nib.load(reference_file)
-    if mask_img.shape[:3] == ref_img.shape[:3]:
-        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+    if mask_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
+        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())  # type: ignore[attr-defined]
         if affine_diff < 1e-4:
             # Already in same space, just copy with hole-filling
             mask_data = mask_img.get_fdata()  # type: ignore[attr-defined]
@@ -2184,7 +2184,7 @@ def _transform_mask_to_dce(
             from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
             mask_filled = binary_fill_holes(mask_bin).astype(np.int16)
             # Save
-            out_img = nib.Nifti1Image(mask_filled, ref_img.affine)
+            out_img = nib.Nifti1Image(mask_filled, ref_img.affine)  # type: ignore[attr-defined]
             nib.save(out_img, out_file)
             return out_file
 
@@ -2265,13 +2265,13 @@ def _transform_probseg_to_dce(
     # Same-space shortcut: skip transform if already aligned
     probseg_img = nib.load(probseg_file)
     ref_img = nib.load(reference_file)
-    if probseg_img.shape[:3] == ref_img.shape[:3]:
-        affine_diff = float(np.abs(probseg_img.affine - ref_img.affine).max())
+    if probseg_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
+        affine_diff = float(np.abs(probseg_img.affine - ref_img.affine).max())  # type: ignore[attr-defined]
         if affine_diff < 1e-4:
             # Already in same space, just copy (clip to [0, 1])
             data = probseg_img.get_fdata()  # type: ignore[attr-defined]
             data = np.clip(data, 0.0, 1.0).astype(np.float32)
-            out_img = nib.Nifti1Image(data, ref_img.affine)
+            out_img = nib.Nifti1Image(data, ref_img.affine)  # type: ignore[attr-defined]
             nib.save(out_img, out_file)
             return out_file
 
@@ -2292,7 +2292,7 @@ def _transform_probseg_to_dce(
     tmp_img = nib.load(tmp_file)
     data = tmp_img.get_fdata()  # type: ignore[attr-defined]
     data = np.clip(data, 0.0, 1.0).astype(np.float32)
-    out_img = nib.Nifti1Image(data, tmp_img.affine)
+    out_img = nib.Nifti1Image(data, tmp_img.affine)  # type: ignore[attr-defined]
     nib.save(out_img, out_file)
 
     # Clean up temp file
@@ -3179,7 +3179,7 @@ def _transform_b1_to_vfa(
     # Uniform B1+ maps (e.g., synthetic unity map when no B1+ data exists)
     # can be created directly in target space, avoiding nilearn's
     # "Resampling binary images" warning from out-of-FOV zeros.
-    b1_data = b1_img.get_fdata()
+    b1_data = b1_img.get_fdata()  # type: ignore[attr-defined]
     unique_vals = np.unique(b1_data[b1_data != 0])
     if len(unique_vals) == 1:
         import logging
@@ -3189,14 +3189,14 @@ def _transform_b1_to_vfa(
             float(unique_vals[0]),
         )
         uniform_val = float(unique_vals[0])
-        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)
+        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)  # type: ignore[attr-defined]
         out_file = str(Path.cwd() / "b1_map_vfa_space.nii.gz")
-        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)
+        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)  # type: ignore[attr-defined]
         return out_file
 
     # Check if already in the same space (same shape + affine)
-    if b1_img.shape[:3] == ref_img.shape[:3]:
-        affine_diff = float(np.abs(b1_img.affine - ref_img.affine).max())
+    if b1_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
+        affine_diff = float(np.abs(b1_img.affine - ref_img.affine).max())  # type: ignore[attr-defined]
         if affine_diff < 1e-4:
             return b1_map_file
 
@@ -3236,7 +3236,7 @@ def _transform_b1_to_dce(
     # Uniform B1+ maps (e.g., synthetic unity map when no B1+ data exists)
     # can be created directly in target space, avoiding nilearn's
     # "Resampling binary images" warning from out-of-FOV zeros.
-    b1_data = b1_img.get_fdata()
+    b1_data = b1_img.get_fdata()  # type: ignore[attr-defined]
     unique_vals = np.unique(b1_data[b1_data != 0])
     if len(unique_vals) == 1:
         import logging
@@ -3246,14 +3246,14 @@ def _transform_b1_to_dce(
             float(unique_vals[0]),
         )
         uniform_val = float(unique_vals[0])
-        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)
+        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)  # type: ignore[attr-defined]
         out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
-        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)
+        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)  # type: ignore[attr-defined]
         return out_file
 
     # Check if already in the same space
-    if b1_img.shape[:3] == ref_img.shape[:3]:
-        affine_diff = float(np.abs(b1_img.affine - ref_img.affine).max())
+    if b1_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
+        affine_diff = float(np.abs(b1_img.affine - ref_img.affine).max())  # type: ignore[attr-defined]
         if affine_diff < 1e-4:
             return b1_map_file
 
@@ -3517,8 +3517,8 @@ def _transform_t1_to_dce(
     ref_img = nib.load(reference_file)
 
     # Check if already in the same space
-    if t1_img.shape[:3] == ref_img.shape[:3]:
-        affine_diff = float(np.abs(t1_img.affine - ref_img.affine).max())
+    if t1_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
+        affine_diff = float(np.abs(t1_img.affine - ref_img.affine).max())  # type: ignore[attr-defined]
         if affine_diff < 1e-4:
             return t1_map_file
 
@@ -3570,7 +3570,7 @@ def _transform_external_t1_to_dce(
     logger = logging.getLogger("pmriprep.workflows.dce")
 
     t1_img = nib.load(t1_map_file)
-    t1_data = t1_img.get_fdata()
+    t1_data = t1_img.get_fdata()  # type: ignore[attr-defined]
     valid = t1_data[t1_data > 0]
     if len(valid) == 0:
         logger.warning("External T1 map has no positive values.")
@@ -3586,7 +3586,7 @@ def _transform_external_t1_to_dce(
         )
         t1_data = t1_data * 1000.0
         t1_img = nib.Nifti1Image(
-            t1_data.astype(np.float32), t1_img.affine, t1_img.header,
+            t1_data.astype(np.float32), t1_img.affine, t1_img.header,  # type: ignore[attr-defined]
         )
         corrected = str(Path.cwd() / "external_t1_ms.nii.gz")
         nib.save(t1_img, corrected)

@@ -1093,7 +1093,7 @@ def discover_session_data(
         import nibabel as nib
 
         if modalities.dsc:
-            _shape = nib.load(modalities.dsc).header.get_data_shape()
+            _shape = nib.load(modalities.dsc).header.get_data_shape()  # type: ignore[attr-defined]
             if len(_shape) < 4 or _shape[3] < 2:
                 logger.error(
                     "DSC file %s is %dD with shape %s. "
@@ -1104,7 +1104,7 @@ def discover_session_data(
                 modalities.dsc = None
 
         if modalities.dce:
-            _shape = nib.load(modalities.dce).header.get_data_shape()
+            _shape = nib.load(modalities.dce).header.get_data_shape()  # type: ignore[attr-defined]
             if len(_shape) < 4 or _shape[3] < 2:
                 logger.error(
                     "DCE file %s is %dD with shape %s. "
