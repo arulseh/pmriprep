@@ -319,10 +319,7 @@ def get_dsc_clinical_context() -> Dict[str, Any]:
     """
     return {
         "nCBV_threshold_high_grade": 1.75,
-        "nCBV_interpretation": "nCBV > 1.75 suggests high-grade glioma (WHO III-IV)",
         "nCBF_threshold_high_grade": 2.0,
-        "nCBF_interpretation": "nCBF > 2.0 suggests high-grade glioma",
-        "reference": "Law et al. Radiology 2003; Boxerman et al. Neuro-Oncology 2020",
     }
 
 
@@ -334,10 +331,7 @@ def get_dce_clinical_context() -> Dict[str, Any]:
     """
     return {
         "Ktrans_threshold_high_grade": 0.1,
-        "Ktrans_interpretation": "Ktrans > 0.1 min^-1 suggests high-grade glioma",
         "nIAUC60_threshold_high_grade": 2.0,
-        "nIAUC60_interpretation": "nIAUC60 > 2.0 suggests high-grade glioma",
-        "reference": "Zhang et al. Radiology 2014",
     }
 
 
@@ -373,17 +367,10 @@ def compute_dsc_derived_metrics(
                 "nCBV_above_1.75": frac_175,
                 "nCBV_above_2.5": frac_25,
                 "nCBV_above_4.0": frac_40,
-                "interpretation": {
-                    "nCBV_above_1.75": "Fraction suggesting high-grade features",
-                    "nCBV_above_2.5": "Fraction with aggressive tumor characteristics",
-                    "nCBV_above_4.0": "Fraction with highly vascular tumor",
-                },
             }
 
     # Hotspot summary (90th percentile values)
-    hotspots: Dict[str, Any] = {
-        "description": "90th percentile values representing most aggressive tumor regions",
-    }
+    hotspots: Dict[str, Any] = {}
     if ncbv_data is not None:
         val = compute_hotspot_value(ncbv_data, mask, 90.0)
         if val is not None:
@@ -401,7 +388,7 @@ def compute_dsc_derived_metrics(
         if val is not None:
             hotspots["cbf_p90"] = val
 
-    if len(hotspots) > 1:  # More than just description
+    if hotspots:
         derived["hotspot_summary"] = hotspots
 
     return derived if derived else {}
@@ -437,16 +424,10 @@ def compute_dce_derived_metrics(
             derived["fractional_volumes"] = {
                 "Ktrans_above_0.1": frac_01,
                 "Ktrans_above_0.2": frac_02,
-                "interpretation": {
-                    "Ktrans_above_0.1": "Fraction suggesting high-grade features",
-                    "Ktrans_above_0.2": "Fraction with aggressive tumor characteristics",
-                },
             }
 
     # Hotspot summary
-    hotspots: Dict[str, Any] = {
-        "description": "90th percentile values representing most aggressive tumor regions",
-    }
+    hotspots: Dict[str, Any] = {}
     if ktrans_data is not None:
         val = compute_hotspot_value(ktrans_data, mask, 90.0)
         if val is not None:
@@ -464,7 +445,7 @@ def compute_dce_derived_metrics(
         if val is not None:
             hotspots["vp_p90"] = val
 
-    if len(hotspots) > 1:
+    if hotspots:
         derived["hotspot_summary"] = hotspots
 
     return derived if derived else {}
