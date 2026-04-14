@@ -1351,55 +1351,18 @@ def _write_pipeline_provenance(
     config_dict,
     dsc_file,
 ):
-    """Write QC JSON and provenance JSON to derivatives directory.
+    """Write DSC QC JSON and provenance JSON to derivatives directory."""
+    from pmriprep.utils.provenance import write_modality_provenance
 
-    Args:
-        merged_qc: Merged QC metrics dictionary from all pipeline steps.
-        derivatives_dir: Path to BIDS derivatives directory.
-        subject_id: Subject ID (without 'sub-' prefix).
-        session_id: Session ID (without 'ses-' prefix), or None.
-        config_dict: DSC config as a dictionary.
-        dsc_file: Path to the source DSC file.
-
-    Returns:
-        Tuple of (qc_json_path, provenance_json_path).
-    """
-    from pathlib import Path
-    from pmriprep.utils.outputs import write_qc_json
-    from pmriprep.utils.provenance import create_provenance_dict, write_provenance_json
-
-    # Build output directory
-    sub_dir = f"sub-{subject_id}"
-    ses_part = f"ses-{session_id}" if session_id else ""
-    if ses_part:
-        out_dir = Path(derivatives_dir) / "pmriprep" / sub_dir / ses_part / "perf"
-    else:
-        out_dir = Path(derivatives_dir) / "pmriprep" / sub_dir / "perf"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Write QC JSON
-    qc_path = out_dir / f"{sub_dir}{'_' + ses_part if ses_part else ''}_desc-dsc_qc.json"
-    qc_json_path = str(write_qc_json(
-        output_path=qc_path,
-        metrics=merged_qc if merged_qc else {},
-        subject=subject_id,
-        session=session_id,
-        pipeline_step="dsc",
-    ))
-
-    # Write provenance JSON
-    provenance = create_provenance_dict(
-        source_files=[dsc_file] if dsc_file else None,
-        processing_description="DSC perfusion pipeline (PMRIPrep)",
-        config_used=config_dict if config_dict else None,
+    return write_modality_provenance(
+        modality="dsc",
+        qc_metrics=merged_qc,
+        derivatives_dir=derivatives_dir,
+        subject_id=subject_id,
+        session_id=session_id,
+        config_dict=config_dict,
+        source_file=dsc_file,
     )
-    prov_path = out_dir / f"{sub_dir}{'_' + ses_part if ses_part else ''}_desc-dsc_provenance.json"
-    prov_json_path = str(write_provenance_json(
-        output_path=prov_path,
-        provenance=provenance,
-    ))
-
-    return qc_json_path, prov_json_path
 
 
 def init_dsc_preproc_wf(

@@ -461,6 +461,7 @@ class DCEDerivativeWriter(BaseInterface):
             sidecar = {
                 **base_sidecar,
                 "Description": "Ktrans normalized by NAWM (normal-appearing white matter) mean",
+                "Units": "ratio",
             }
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
@@ -470,6 +471,7 @@ class DCEDerivativeWriter(BaseInterface):
             sidecar = {
                 **base_sidecar,
                 "Description": "IAUC at 60s normalized by NAWM (normal-appearing white matter) mean",
+                "Units": "ratio",
             }
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
@@ -817,7 +819,7 @@ class DCEDerivativeWriter(BaseInterface):
         """
         sidecar: dict[str, Any] = {
             **get_bids_derivative_provenance(),
-            "Space": "DCE (native perfusion space)",
+            "SpatialReference": "orig",
             "Resolution": [float(v) for v in voxel_sizes[:3]],
         }
 

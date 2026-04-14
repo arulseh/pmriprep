@@ -74,20 +74,10 @@ def make_bids_source_uri(
     source_path = Path(source_path).resolve()
     bids_dir = Path(bids_dir).resolve()
 
-    # bids_dir may be the rawdata dir itself, or its parent
-    # Try to make relative to bids_dir parent first (to include "rawdata/")
-    try:
-        rel = source_path.relative_to(bids_dir.parent)
-        return f"bids::{rel}"
-    except ValueError:
-        pass
-
-    # If bids_dir IS the rawdata directory
     try:
         rel = source_path.relative_to(bids_dir)
-        return f"bids::rawdata/{rel}"
+        return f"bids::{rel}"
     except ValueError:
-        # Fallback: just use the filename
         return f"bids::{source_path.name}"
 
 
@@ -282,7 +272,7 @@ def build_mask_sidecar(
     return {
         **get_bids_derivative_provenance(),
         "Description": description,
-        "SkullStripped": False,
+        "SkullStripped": True,
         "SpatialReference": "anat",
         "Sources": [source_uri],
         "OriginalResolution": resolution,

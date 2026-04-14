@@ -214,7 +214,7 @@ class HDGLIOPrep(BaseInterface):
             details[name] = {
                 "shape": shape,
                 "zooms": tuple(float(z) for z in zooms),
-                "file": filepath,
+                "file": Path(filepath).name,
             }
             shapes.append(shape)
             affines.append(affine)
@@ -767,8 +767,11 @@ class HDGLIOSegment(BaseInterface):
         segmentation_file = self._find_segmentation_output()
 
         # Validate output if requested
+        # Strip absolute paths from command for portable QC JSON
+        import re
+        cmd_portable = re.sub(r'/[^\s]+/([^\s/]+)', r'\1', cmd)
         qc_metrics: dict[str, Any] = {
-            "command": cmd,
+            "command": cmd_portable,
             "device": self._get_device_flag(),
         }
 

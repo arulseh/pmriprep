@@ -393,28 +393,28 @@ class DSCDerivativeWriter(BaseInterface):
             # Smoothed hemodynamic maps: CBF, CBV, MTT, nCBF, nCBV
             smooth_hemo = self.inputs.smooth_hemodynamic
             if isdefined(smooth_hemo) and smooth_hemo:
-                hemo_descriptions: dict[str, tuple[str, str, str]] = {
-                    # key: (description, desc_prefix, bids_suffix)
+                hemo_descriptions: dict[str, tuple[str, str, str, str]] = {
+                    # key: (description, desc_prefix, bids_suffix, units)
                     "mtt": ("Mean transit time (smoothed)",
-                            f"dsc{sm_label}", "mtt"),
+                            f"dsc{sm_label}", "mtt", "s"),
                     "rel_cbf": ("Cerebral blood flow, relative (smoothed)",
-                                f"dscRel{sm_label}", "cbf"),
+                                f"dscRel{sm_label}", "cbf", "1/min"),
                     "rel_cbv": ("Cerebral blood volume, relative (smoothed)",
-                                f"dscRel{sm_label}", "cbv"),
+                                f"dscRel{sm_label}", "cbv", "arbitrary"),
                     "ncbf": ("Normalized CBF (smoothed)",
-                             f"dscNawmNorm{sm_label}", "cbf"),
+                             f"dscNawmNorm{sm_label}", "cbf", "ratio"),
                     "ncbv": ("Normalized CBV (smoothed)",
-                             f"dscNawmNorm{sm_label}", "cbv"),
+                             f"dscNawmNorm{sm_label}", "cbv", "ratio"),
                 }
                 for name, filepath in smooth_hemo.items():
                     if filepath and Path(filepath).exists():
                         if name in hemo_descriptions:
-                            desc_text, desc_prefix, map_suffix = hemo_descriptions[name]
+                            desc_text, desc_prefix, map_suffix, units = hemo_descriptions[name]
                         else:
                             desc_text = f"{name} (smoothed)"
                             desc_prefix = f"dsc{sm_label}"
-                            # Strip quantification prefix for BIDS suffix
                             map_suffix = name.replace("rel_", "").replace("abs_", "")
+                            units = ""
                         fname = f"{prefix}_{spatial}_desc-{desc_prefix}_{map_suffix}"
                         copy_derivative(filepath, perf_dir / f"{fname}.nii.gz")
                         sidecar = {**base_sidecar, "Description": desc_text,
@@ -423,6 +423,8 @@ class DSCDerivativeWriter(BaseInterface):
                                    "SmoothingMasked": True,
                                    "IntendedFor": "visualization",
                                    "Note": "Use non-smoothed maps for quantitative ROI analysis"}
+                        if units:
+                            sidecar["Units"] = units
                         write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
             # Smoothed AUC corrected maps (CBV surrogate)
@@ -680,7 +682,7 @@ class DSCDerivativeWriter(BaseInterface):
         """
         sidecar: dict[str, Any] = {
             **get_bids_derivative_provenance(),
-            "Space": "DSC (native perfusion space)",
+            "SpatialReference": "orig",
             "Resolution": [float(v) for v in voxel_sizes],
         }
 

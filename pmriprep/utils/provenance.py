@@ -103,7 +103,6 @@ def create_provenance_dict(
     # Source files
     if source_files:
         provenance["Sources"] = [str(Path(f).name) for f in source_files]
-        provenance["RawSources"] = [str(f) for f in source_files]
 
     # Processing description
     if processing_description:
@@ -154,6 +153,71 @@ def write_provenance_json(
         json.dump(provenance, f, indent=indent, default=str)
 
     return output_path
+
+
+def write_modality_provenance(
+    modality: str,
+    qc_metrics: Optional[Dict[str, Any]],
+    derivatives_dir: str,
+    subject_id: str,
+    session_id: Optional[str],
+    config_dict: Optional[Dict[str, Any]],
+    source_file: Optional[str],
+) -> tuple:
+    """Write QC JSON and provenance JSON for a perfusion modality.
+
+    Shared implementation for DSC and DCE pipelines. Writes two files
+    into the perf/ subdirectory of the BIDS-Derivatives output:
+      - ``desc-{modality}_qc.json`` — comprehensive QC metrics
+      - ``desc-{modality}_provenance.json`` — processing config and versions
+
+    Args:
+        modality: Pipeline modality identifier (``"dsc"`` or ``"dce"``).
+        qc_metrics: Merged QC metrics dictionary from all pipeline steps.
+        derivatives_dir: Path to BIDS derivatives directory.
+        subject_id: Subject ID (without ``sub-`` prefix).
+        session_id: Session ID (without ``ses-`` prefix), or ``None``.
+        config_dict: Processing config as a dictionary.
+        source_file: Path to the source perfusion file.
+
+    Returns:
+        Tuple of ``(qc_json_path, provenance_json_path)``.
+    """
+    from pmriprep.utils.outputs import write_qc_json
+
+    sub_dir = f"sub-{subject_id}"
+    ses_part = f"ses-{session_id}" if session_id else ""
+    if ses_part:
+        out_dir = Path(derivatives_dir) / "pmriprep" / sub_dir / ses_part / "perf"
+    else:
+        out_dir = Path(derivatives_dir) / "pmriprep" / sub_dir / "perf"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    qc_path = out_dir / f"{sub_dir}{'_' + ses_part if ses_part else ''}_desc-{modality}_qc.json"
+    qc_json_path = str(write_qc_json(
+        output_path=qc_path,
+        metrics=qc_metrics if qc_metrics else {},
+        subject=subject_id,
+        session=session_id,
+        pipeline_step=modality,
+    ))
+
+    descriptions = {
+        "dsc": "DSC perfusion pipeline (PMRIPrep)",
+        "dce": "DCE perfusion pipeline (PMRIPrep)",
+    }
+    provenance = create_provenance_dict(
+        source_files=[source_file] if source_file else None,
+        processing_description=descriptions.get(modality, f"{modality} pipeline (PMRIPrep)"),
+        config_used=config_dict if config_dict else None,
+    )
+    prov_path = out_dir / f"{sub_dir}{'_' + ses_part if ses_part else ''}_desc-{modality}_provenance.json"
+    prov_json_path = str(write_provenance_json(
+        output_path=prov_path,
+        provenance=provenance,
+    ))
+
+    return qc_json_path, prov_json_path
 
 
 def get_bids_derivative_provenance(
