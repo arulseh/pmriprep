@@ -971,19 +971,24 @@ class AIFDetection(BaseInterface):
         voxel_sizes: tuple[float, ...],
         lesion_mask: Optional[npt.NDArray[Any]] = None,
         lesion_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
+        skip_midline: bool = False,
     ) -> npt.NDArray[Any]:
         """Prepare the search mask with erosion, slab exclusion, and lesion distance.
 
         Steps:
         1. Erode brain mask (8 iterations) to exclude cortical surface veins.
         2. Exclude inferior/superior slab edges (15mm) to avoid inflow artifacts.
-        3. Exclude voxels within ``lesion_distance_mm`` of any lesion voxel.
+        3. Midline exclusion (skipped when ``skip_midline=True`` for
+           atlas-constrained search where the atlas already excludes sinuses).
+        4. Superior slice exclusion (top 25%).
+        5. Lesion exclusion (binary + distance-based).
 
         Args:
             brain_mask: 3D brain mask.
             voxel_sizes: Voxel dimensions (dx, dy, dz) in mm.
             lesion_mask: Optional 3D lesion mask.
             lesion_distance_mm: Minimum distance (mm) from lesion.
+            skip_midline: Skip midline exclusion for atlas-constrained search.
 
         Returns:
             Prepared 3D search mask.
@@ -1006,23 +1011,16 @@ class AIFDetection(BaseInterface):
                 search_mask[:, :, :edge_slices] = 0
                 search_mask[:, :, -edge_slices:] = 0
 
-        # Step 3: Midline exclusion (central 20%) - avoid SSS, ISS, sagittal sinus
-        # Applied unconditionally to all midline voxels, not just superior regions
-        nx = search_mask.shape[0]
-        x_center = nx // 2
-        x_exclude = int(nx * MIDLINE_EXCLUSION_FRACTION)
-        x_lo = max(0, x_center - x_exclude)
-        x_hi = min(nx, x_center + x_exclude + 1)
-        search_mask[x_lo:x_hi, :, :] = 0
+        # Step 3: Midline exclusion — skip for atlas-constrained search
+        # (MRA-derived atlas already excludes venous structures; midline
+        # exclusion removes 47-68% of atlas voxels including ICA and ACA)
+        if not skip_midline:
+            AIFDetection._apply_midline_exclusion(search_mask)
 
         # Step 4: Superior slice exclusion (top 25%) - avoid cortical vein drainage
         z_superior = int(nz * SUPERIOR_EXCLUSION_FRACTION)
         if z_superior < nz:
             search_mask[:, :, z_superior:] = 0
-
-        # NOTE: No posterior exclusion applied.
-        # The ISS is adequately excluded by the midline exclusion since it runs
-        # along the falx cerebri (midline structure).
 
         # Step 5: Lesion exclusion (binary + distance-based)
         if lesion_mask is not None and np.any(lesion_mask > 0):
@@ -1039,6 +1037,21 @@ class AIFDetection(BaseInterface):
                 search_mask[lesion_distance_map < lesion_distance_mm] = 0
 
         return np.asarray(search_mask)
+
+    @staticmethod
+    def _apply_midline_exclusion(mask: npt.NDArray[Any]) -> None:
+        """Zero out the central midline strip of a search mask (in-place).
+
+        Used for whole-brain AIF search to exclude sagittal sinus.
+        Not needed for atlas-constrained search where the atlas already
+        excludes venous structures.
+        """
+        nx = mask.shape[0]
+        x_center = nx // 2
+        x_exclude = int(nx * MIDLINE_EXCLUSION_FRACTION)
+        x_lo = max(0, x_center - x_exclude)
+        x_hi = min(nx, x_center + x_exclude + 1)
+        mask[x_lo:x_hi, :, :] = 0
 
     # -----------------------------------------------------------------
     # Contralateral Hemisphere Preference (Phase 6)
@@ -2523,13 +2536,20 @@ class AIFDetection(BaseInterface):
         if aif_method == "population":
             pass
         else:
-            # ===== Phase 1: Prepare search mask =====
-            search_mask = self._prepare_search_mask(
+            # ===== Phase 1: Prepare search masks =====
+            # Atlas search: skip midline exclusion (MRA-derived atlas
+            # already excludes venous structures)
+            _lesion_dist = max(lesion_distance, LESION_EXCLUSION_DISTANCE_MM)
+            atlas_search_mask = self._prepare_search_mask(
                 brain_mask,
                 voxel_sizes,
                 lesion_mask=lesion_mask,
-                lesion_distance_mm=max(lesion_distance, LESION_EXCLUSION_DISTANCE_MM),
+                lesion_distance_mm=_lesion_dist,
+                skip_midline=True,
             )
+            # Whole-brain fallback: apply midline exclusion (no spatial prior)
+            wb_search_mask = atlas_search_mask.copy()
+            self._apply_midline_exclusion(wb_search_mask)
 
             # ===== Phase 3: Compute tissue TTP reference =====
             tissue_ttp_frame = self._calculate_tissue_ttp_reference(
@@ -2543,8 +2563,8 @@ class AIFDetection(BaseInterface):
             if atlas_masks:
                 for atlas_idx, atlas_mask in enumerate(atlas_masks):
                     for crit in ("strict", "relaxed", "permissive"):
-                        combined_mask = (search_mask > 0.5) & (atlas_mask > 0.5)
-                        combined_mask = combined_mask.astype(search_mask.dtype)
+                        combined_mask = (atlas_search_mask > 0.5) & (atlas_mask > 0.5)
+                        combined_mask = combined_mask.astype(atlas_search_mask.dtype)
                         candidates, scores, metrics_list = self._find_candidates_in_mask(
                             conc_data, combined_mask, n_candidates, tr,
                             baseline_frames, crit,
@@ -2565,7 +2585,7 @@ class AIFDetection(BaseInterface):
             if not candidates:
                 for crit in ("relaxed",):
                     candidates, scores, metrics_list = self._find_candidates_in_mask(
-                        conc_data, search_mask, n_candidates, tr,
+                        conc_data, wb_search_mask, n_candidates, tr,
                         baseline_frames, crit,
                         tissue_ttp_frame=tissue_ttp_frame,
                         atlas_constrained=False,
