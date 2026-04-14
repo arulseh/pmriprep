@@ -1344,10 +1344,12 @@ class AIFDetection(BaseInterface):
         # Whole-brain: stricter peak gate (no spatial prior to compensate).
         # 0.5 × 5.0 mM = 2.5 mM floor at full dose. At TR=4.76s, a true
         # artery sampled at ~60% of peak ≈ 3.6 mM still passes.
-        # Atlas-constrained: lower gate — low peaks expected from temporal
+        # Atlas-constrained: uniform 0.15 — low peaks expected from temporal
         # undersampling + partial volume in known arterial territory.
+        # Atlas spatial prior compensates; quarter-dose at long TR produces
+        # peaks ~0.2-0.3 mM that need the lower floor.
         if atlas_constrained:
-            peak_tol = 0.3 if criteria in ("strict", "relaxed") else 0.15
+            peak_tol = 0.15
         else:
             peak_tol = 0.5 if criteria in ("strict", "relaxed") else 0.3
         peak_ceiling = 3.0 if criteria in ("strict", "relaxed") else 5.0
