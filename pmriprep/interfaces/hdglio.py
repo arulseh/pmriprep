@@ -13,6 +13,7 @@ HDGLIOSegment
 """
 
 import platform
+import re
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -768,7 +769,6 @@ class HDGLIOSegment(BaseInterface):
 
         # Validate output if requested
         # Strip absolute paths from command for portable QC JSON
-        import re
         cmd_portable = re.sub(r'/[^\s]+/([^\s/]+)', r'\1', cmd)
         qc_metrics: dict[str, Any] = {
             "command": cmd_portable,

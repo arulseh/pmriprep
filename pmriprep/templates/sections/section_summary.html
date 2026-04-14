@@ -24,10 +24,6 @@
             {% endfor %}
         </ul>
         {% endfor %}
-        <p class="hint">
-            Specify via CLI ({% if 'DCE Perfusion' in provenance_warnings %}<code>--dce-r1</code>, <code>--dce-dose</code>{% if 'DSC Perfusion' in provenance_warnings %}, {% endif %}{% endif %}{% if 'DSC Perfusion' in provenance_warnings %}<code>--dsc-dose</code>{% endif %})
-            or add <code>ContrastBolusAgent</code> to BIDS JSON sidecar.
-        </p>
     </div>
     {% endif %}
 

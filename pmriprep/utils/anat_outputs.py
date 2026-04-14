@@ -69,7 +69,7 @@ def make_bids_source_uri(
     Returns
     -------
     str
-        BIDS URI like ``bids::rawdata/sub-XX/ses-XX/...``
+        BIDS URI like ``bids::sub-XX/ses-XX/...``
     """
     source_path = Path(source_path).resolve()
     bids_dir = Path(bids_dir).resolve()

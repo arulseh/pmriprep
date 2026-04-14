@@ -799,11 +799,11 @@ class DSCDerivativeWriter(BaseInterface):
             recommendations.append(cnr_rec)
         elif cnr_fraction is not None:
             if cnr_fraction >= 0.84:
-                cnr_rec = QCRecommendation(QCAction.INCLUDE, f"CNR excellent ({cnr_fraction:.0%})", 0)
+                cnr_rec = QCRecommendation(QCAction.INCLUDE, f"CNR excellent ({cnr_fraction:.0%} >4)", 0)
             elif cnr_fraction >= 0.65:
-                cnr_rec = QCRecommendation(QCAction.REVIEW, f"CNR marginal ({cnr_fraction:.0%})", 1)
+                cnr_rec = QCRecommendation(QCAction.REVIEW, f"CNR marginal ({cnr_fraction:.0%} >4)", 1)
             else:
-                cnr_rec = QCRecommendation(QCAction.EXCLUDE, f"CNR poor ({cnr_fraction:.0%})", 3)
+                cnr_rec = QCRecommendation(QCAction.EXCLUDE, f"CNR poor ({cnr_fraction:.0%} >4)", 3)
             recommendations.append(cnr_rec)
 
         # Aggregate recommendations

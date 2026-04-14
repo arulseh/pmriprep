@@ -559,15 +559,15 @@ class TestPreloadAwareQuality:
         "baseline_return_ratio": 0.15,
     }
 
-    def test_preload_low_k2_adds_well_suppressed_reason(self) -> None:
-        """Preloaded + low K2 adds well-suppressed reason."""
+    def test_preload_low_k2_no_informational_reason(self) -> None:
+        """Preloaded + low K2 does not add informational reason."""
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
         result = assess_dsc_cbv_quality(
             self._HIGH_AIF_QC,
             preload_classification="half_dose",
             k2_metrics=k2,
         )
-        assert any("well-suppressed" in r for r in result.reasons)
+        assert not any("well-suppressed" in r for r in result.reasons)
 
     def test_no_preload_high_k2_adds_substantial_reason(self) -> None:
         """No preload + high leaky adds substantial correction reason."""

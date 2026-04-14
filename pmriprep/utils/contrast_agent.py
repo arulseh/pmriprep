@@ -902,23 +902,25 @@ def collect_default_warnings(
                 f"(e.g., 0.05 for Vueway)."
             )
 
-        # Check preload source
+        # Check preload source — only warn when preload was detected,
+        # not when auto-detection found no preload (the safe default).
         preload = perf.get("PreloadDetection", {})
         if preload.get("Source") == ParameterSource.AUTO_DETECTED:
-            classification = "unknown"
+            classification = ""
             delta_r2 = None
             if qc_metrics:
                 preload_qc = qc_metrics.get("preload", {})
                 classification = preload_qc.get(
-                    "preload_classification", "unknown"
+                    "preload_classification", ""
                 )
                 delta_r2 = preload_qc.get("baseline_delta_r2")
-            detail = ""
-            if delta_r2 is not None:
-                detail = f" (baseline \u0394R2*={delta_r2:.3f} s\u207b\u00b9)"
-            warnings.append(
-                f"DSC preload not user-specified; auto-detected from "
-                f"baseline \u0394R2*{detail}. Use --dsc-preload to specify."
-            )
+            if classification not in ("", "none"):
+                detail = ""
+                if delta_r2 is not None:
+                    detail = f" (baseline \u0394R2*={delta_r2:.3f} s\u207b\u00b9)"
+                warnings.append(
+                    f"DSC preload auto-detected{detail}. "
+                    f"Use --dsc-preload to confirm or override."
+                )
 
     return warnings

@@ -163,7 +163,7 @@ def write_modality_provenance(
     session_id: Optional[str],
     config_dict: Optional[Dict[str, Any]],
     source_file: Optional[str],
-) -> tuple:
+) -> tuple[str, str]:
     """Write QC JSON and provenance JSON for a perfusion modality.
 
     Shared implementation for DSC and DCE pipelines. Writes two files

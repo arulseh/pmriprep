@@ -344,17 +344,17 @@ def assess_dsc_cbv_quality(
     elif cnr_coverage < CNR_COVERAGE_SKIP:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
-            f"CNR coverage {cnr_coverage:.2f} < {CNR_COVERAGE_SKIP} (>30% unreliable)"
+            f"CNR coverage {cnr_coverage:.1%} < {CNR_COVERAGE_SKIP:.0%} (>30% unreliable)"
         )
     elif cnr_coverage < CNR_COVERAGE_MODERATE:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
-            f"CNR coverage {cnr_coverage:.2f} < {CNR_COVERAGE_MODERATE}"
+            f"CNR coverage {cnr_coverage:.1%} < {CNR_COVERAGE_MODERATE:.0%}"
         )
     elif cnr_coverage < CNR_COVERAGE_HIGH:
         confidence = _downgrade_confidence(confidence, "moderate")
         result.reasons.append(
-            f"CNR coverage {cnr_coverage:.2f} < {CNR_COVERAGE_HIGH}"
+            f"CNR coverage {cnr_coverage:.1%} < {CNR_COVERAGE_HIGH:.0%}"
         )
 
     # --- AIF Detection Level ---
@@ -488,14 +488,7 @@ def assess_dsc_cbv_quality(
     is_preloaded, well_suppressed, high_correction = _classify_preload_k2(
         preload_classification, k2_metrics,
     )
-    if is_preloaded and well_suppressed:
-        k2_med = float((k2_metrics or {}).get("k2_median", 0.0))
-        pct_leaky = float((k2_metrics or {}).get("percent_leaky_voxels", 0.0))
-        result.reasons.append(
-            f"Preload present, leakage well-suppressed "
-            f"(K2 median={k2_med:.4f}, leaky={pct_leaky:.1f}%)"
-        )
-    elif not is_preloaded and high_correction:
+    if not is_preloaded and high_correction:
         k2_med = float((k2_metrics or {}).get("k2_median", 0.0))
         pct_leaky = float((k2_metrics or {}).get("percent_leaky_voxels", 0.0))
         result.reasons.append(

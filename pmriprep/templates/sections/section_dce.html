@@ -82,6 +82,18 @@
                 <div class="metric-value {{ dce.display_status.b1_correction }}">{{ "%.1f"|format(dce.qc_metrics.b1_mapping.pct_correction_gt_20) }}%</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.b1_mapping.smoothing_fwhm_mm is defined %}
+            <div class="metric">
+                <div class="metric-label">Smoothing FWHM</div>
+                <div class="metric-value">{{ dce.qc_metrics.b1_mapping.smoothing_fwhm_mm }} mm</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.b1_mapping.clip_low is defined %}
+            <div class="metric">
+                <div class="metric-label">Clip Range</div>
+                <div class="metric-value">[{{ dce.qc_metrics.b1_mapping.clip_low }}, {{ dce.qc_metrics.b1_mapping.clip_high }}]</div>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
         {% if dce.images.b1 %}
@@ -149,27 +161,33 @@
             {% endif %}
             {% if dce.qc_metrics.t1_mapping.t1_correction is defined %}
             <div class="metric">
-                <div class="metric-label">T1 Source</div>
+                <div class="metric-label">T1 Method</div>
                 <div class="metric-value">
                     {% if dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "tissue_segmented" %}
-                        Tissue-segmented (literature)
+                        Tissue-segmented
                     {% elif dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "fallback" %}
-                        Uniform ({{ dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms | default(dce.qc_metrics.t1_mapping.median_t1_ms, true) | int }}ms)
+                        Uniform ({{ dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms | default(dce.qc_metrics.t1_mapping.median_t1_ms, true) | int }} ms)
                     {% elif dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "offset" %}
-                        VFA (offset {{ "%+.0f"|format(dce.qc_metrics.t1_mapping.t1_correction.offset_ms) }}ms)
+                        VFA
                     {% else %}
                         VFA
                     {% endif %}
                 </div>
             </div>
+            {% if dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "offset" and dce.qc_metrics.t1_mapping.t1_correction.offset_ms is defined %}
+            <div class="metric">
+                <div class="metric-label">T1 Offset</div>
+                <div class="metric-value">{{ "%+.0f"|format(dce.qc_metrics.t1_mapping.t1_correction.offset_ms) }} ms</div>
+            </div>
+            {% endif %}
             {% elif dce.qc_metrics.t1_mapping.skipped is defined and dce.qc_metrics.t1_mapping.skipped %}
             <div class="metric">
-                <div class="metric-label">T1 Source</div>
+                <div class="metric-label">T1 Method</div>
                 <div class="metric-value">
                     {% if dce.qc_metrics.t1_mapping.tissue_t1_used | default(false) %}
-                        Tissue-segmented (literature)
+                        Tissue-segmented
                     {% else %}
-                        Uniform ({{ dce.qc_metrics.t1_mapping.mean_t1_wm_ms | int }}ms)
+                        Uniform ({{ dce.qc_metrics.t1_mapping.mean_t1_wm_ms | int }} ms)
                     {% endif %}
                 </div>
             </div>
@@ -271,13 +289,13 @@
             {% endif %}
             {% if dce.qc_metrics.preprocessing.baseline_tsnr is defined %}
             <div class="metric">
-                <div class="metric-label">Baseline tSNR</div>
+                <div class="metric-label">Mean Baseline tSNR</div>
                 <div class="metric-value {{ dce.display_status.baseline_tsnr }}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.preprocessing.cnr_dce is defined %}
             <div class="metric">
-                <div class="metric-label">CNR</div>
+                <div class="metric-label">Mean CNR</div>
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.cnr_dce) }}</div>
             </div>
             {% endif %}
@@ -377,51 +395,6 @@
     </div>
     {% endif %}
 
-    <!-- Pharmacokinetic Modeling -->
-    {% if dce.qc_metrics.pk_modeling %}
-    <div class="section">
-        <h3>Pharmacokinetic Modeling</h3>
-        <div class="metrics">
-            {% if dce.qc_metrics.pk_modeling.model is defined %}
-            <div class="metric">
-                <div class="metric-label">Model</div>
-                <div class="metric-value">{{ dce.qc_metrics.pk_modeling.model }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.pk_modeling.ktrans_median is defined %}
-            <div class="metric">
-                <div class="metric-label">Median Ktrans</div>
-                <div class="metric-value">{% if dce.qc_metrics.pk_modeling.ktrans_median < 0.001 %}{{ "%.2e"|format(dce.qc_metrics.pk_modeling.ktrans_median) }}{% else %}{{ "%.4f"|format(dce.qc_metrics.pk_modeling.ktrans_median) }}{% endif %} min<sup>-1</sup></div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.pk_modeling.ve_median is defined %}
-            <div class="metric">
-                <div class="metric-label">Median ve</div>
-                <div class="metric-value">{{ "%.3f"|format(dce.qc_metrics.pk_modeling.ve_median) }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.pk_modeling.vp_median is defined %}
-            <div class="metric">
-                <div class="metric-label">Median vp</div>
-                <div class="metric-value">{{ "%.3f"|format(dce.qc_metrics.pk_modeling.vp_median) }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.pk_modeling.fp_median is defined %}
-            <div class="metric">
-                <div class="metric-label">Median Fp</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.fp_median) }} mL/100g/min</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.pk_modeling.ps_median is defined %}
-            <div class="metric">
-                <div class="metric-label">Median PS</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.ps_median) }} mL/100g/min</div>
-            </div>
-            {% endif %}
-        </div>
-    </div>
-    {% endif %}
-
     <!-- Example Voxel Fit -->
     {% if dce.images.pk_modeling_qc %}
     <div class="section">
@@ -477,14 +450,58 @@
     </div>
     {% endif %}
 
-    <!-- DCE Permeability Maps -->
-    {% if dce.images.pk_param_maps_qc %}
+    <!-- Pharmacokinetic Modeling -->
+    {% if dce.qc_metrics.pk_modeling or dce.images.pk_param_maps_qc %}
     <div class="section">
-        <h3>DCE Permeability Maps</h3>
-        <div class="figure-container">
+        <h3>Pharmacokinetic Modeling</h3>
+        {% if dce.qc_metrics.pk_modeling %}
+        <div class="metrics">
+            {% if dce.qc_metrics.pk_modeling.model is defined %}
+            <div class="metric">
+                <div class="metric-label">Model</div>
+                <div class="metric-value">{{ dce.qc_metrics.pk_modeling.model }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.pk_modeling.ktrans_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median Ktrans</div>
+                <div class="metric-value">{% if dce.qc_metrics.pk_modeling.ktrans_median < 0.001 %}{{ "%.2e"|format(dce.qc_metrics.pk_modeling.ktrans_median) }}{% else %}{{ "%.4f"|format(dce.qc_metrics.pk_modeling.ktrans_median) }}{% endif %} min<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.pk_modeling.ve_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median ve</div>
+                <div class="metric-value">{{ "%.3f"|format(dce.qc_metrics.pk_modeling.ve_median) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.pk_modeling.vp_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median vp</div>
+                <div class="metric-value">{{ "%.3f"|format(dce.qc_metrics.pk_modeling.vp_median) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.pk_modeling.fp_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median Fp</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.fp_median) }} mL/100g/min</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.pk_modeling.ps_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median PS</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.ps_median) }} mL/100g/min</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if dce.images.pk_param_maps_qc %}
+        <h4>Parameter Maps</h4>
+        <div class="figure-container" style="margin-top: 10px;">
             <img src="{{ dce.images.pk_param_maps_qc }}" alt="PK Parameter Maps QC">
             <a href="{{ dce.images.pk_param_maps_qc }}" download class="figure-download">Save</a>
         </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -565,7 +582,6 @@
     {% if cbv_c.mode is defined %}
     <div class="section">
         <h3>DSC CBV Constraint</h3>
-        {# Primary row: constraint decision #}
         <div class="metrics">
             <div class="metric">
                 <div class="metric-label">Constraint</div>
@@ -575,6 +591,12 @@
                     {%- elif cbv_c.mode == 'skip' %} poor
                     {%- else %} unknown{% endif %}">{{ cbv_c.mode }}</div>
             </div>
+            {% if cbv_c.downgrade_from is defined %}
+            <div class="metric">
+                <div class="metric-label">Downgraded</div>
+                <div class="metric-value"><span class="pass">{{ cbv_c.downgrade_from }}</span> &rarr; <span class="warn">{{ cbv_c.mode }}</span></div>
+            </div>
+            {% endif %}
         </div>
         {% if cbv_c.reason is defined %}
         <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
@@ -582,42 +604,6 @@
                 <div class="metric-label">Reason</div>
                 <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">{{ cbv_c.reason }}</div>
             </div>
-        </div>
-        {% endif %}
-        {# Conditional alerts: only shown when something needs attention #}
-        {% set has_alerts = (cbv_c.mode == 'skip' and cbv_c.detection_level is defined and cbv_c.detection_level)
-            or (cbv_c.downgrade_from is defined)
-            or (cbv_c.cbv_negative_fraction is defined and cbv_c.cbv_negative_fraction > 0.01)
-            or (cbv_c.scale_mismatch is defined) %}
-        {% if has_alerts %}
-        <div class="metrics" style="margin-top: 8px;">
-            {% if cbv_c.mode == 'skip' and cbv_c.detection_level is defined and cbv_c.detection_level %}
-            <div class="metric">
-                <div class="metric-label">AIF Level</div>
-                <div class="metric-value
-                    {%- if cbv_c.detection_level == 'synthetic' %} poor
-                    {%- elif 'permissive' in cbv_c.detection_level|default('') %} warn
-                    {%- else %} pass{% endif %}">{{ cbv_c.detection_level }}</div>
-            </div>
-            {% endif %}
-            {% if cbv_c.downgrade_from is defined %}
-            <div class="metric">
-                <div class="metric-label">Downgraded</div>
-                <div class="metric-value"><span class="pass">{{ cbv_c.downgrade_from }}</span> &rarr; <span class="warn">{{ cbv_c.mode }}</span></div>
-            </div>
-            {% endif %}
-            {% if cbv_c.cbv_negative_fraction is defined and cbv_c.cbv_negative_fraction > 0.01 %}
-            <div class="metric">
-                <div class="metric-label">CBV Negative</div>
-                <div class="metric-value {{ dce.display_status.cbv_negative }}">{{ "%.1f"|format(cbv_c.cbv_negative_fraction * 100) }}%</div>
-            </div>
-            {% endif %}
-            {% if cbv_c.scale_mismatch is defined %}
-            <div class="metric">
-                <div class="metric-label">Scale Mismatch</div>
-                <div class="metric-value warn">{{ "%.0f"|format(cbv_c.scale_mismatch.overshoot_fraction * 100) }}% vp overshoot</div>
-            </div>
-            {% endif %}
         </div>
         {% endif %}
     </div>

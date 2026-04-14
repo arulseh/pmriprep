@@ -232,9 +232,18 @@
         <h3>Preload &amp; Leakage Correction</h3>
         <div class="metrics">
             {% if dsc.qc_metrics.preload.preload_classification is defined %}
+            {% set preload_labels = {
+                'none': 'None Detected',
+                'minimal': 'Minimal',
+                'half_dose': 'Half Dose',
+                'significant': 'Significant',
+                'severe': 'Severe',
+                'user_specified_preload': 'Preload Specified',
+                'user_specified_no_preload': 'No Preload Specified',
+            } %}
             <div class="metric">
                 <div class="metric-label">Classification</div>
-                <div class="metric-value">{{ dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title }}</div>
+                <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_classification] | default(dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title) }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_correction_applied is defined %}
