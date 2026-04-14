@@ -8,7 +8,6 @@ import numpy as np
 from pmriprep.interfaces.dsc_aif import (
     MIN_AIF_CANDIDATES_ACCEPT,
     S0_RATIO_FLOOR,
-    S0_RATIO_SCORE_CAP,
     _CASCADE_N_CANDIDATES_FRACTION,
     AIFDetection,
 )
@@ -61,9 +60,6 @@ class TestS0Constants:
 
     def test_floor_value(self) -> None:
         assert S0_RATIO_FLOOR == 0.10
-
-    def test_cap_value(self) -> None:
-        assert S0_RATIO_SCORE_CAP == 0.20
 
 
 class TestComputeAifSpr:

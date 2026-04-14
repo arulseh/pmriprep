@@ -61,11 +61,6 @@ GAMMA_R2_SYNTHETIC_FALLBACK: float = 0.0
 #: logarithmic ΔR2* conversion is numerically unstable.
 S0_RATIO_FLOOR: float = 0.10
 
-#: S0 ratio score cap: candidates between S0_RATIO_FLOOR and this value
-#: are admitted but capped in the S0 scoring term so marginal-SNR voxels
-#: do not overwhelm shape-quality metrics.
-S0_RATIO_SCORE_CAP: float = 0.20
-
 # Fraction of user-configured n_candidates to keep at each criteria level.
 # As criteria relax, candidate quality drops — fewer candidates concentrates
 # on the best-scoring voxels from a noisier pool.
@@ -1160,12 +1155,13 @@ class AIFDetection(BaseInterface):
         psr_score = abs(psr_val - 100.0) / 10.0
         mono_bonus = (100 - pmi) / 20.0 if not np.isnan(pmi) else 2.5
 
-        # S0 scoring (dominant factor — 5x weight)
-        s0_score = 0.0
-        if median_s0 is not None and not np.isnan(metrics.get("s0", float("nan"))):
-            s0_ratio = metrics["s0"] / (median_s0 + EPSILON_SIGNAL)
-            s0_for_scoring = max(s0_ratio, S0_RATIO_SCORE_CAP)
-            s0_score = (s0_for_scoring - 0.35) * 20.0
+        # Peak concentration bonus — higher peak ΔR2* = better deconvolution SNR.
+        # Log-scale centered at ~10 s⁻¹ (standard single-dose GBCA at 3T).
+        peak_conc = metrics.get("peak_conc", float("nan"))
+        if not np.isnan(peak_conc) and peak_conc > 0:
+            peak_conc_score = -np.log(peak_conc / 10.0)
+        else:
+            peak_conc_score = 5.0
 
         score = (
             1.0 * ttp_score
@@ -1173,7 +1169,7 @@ class AIFDetection(BaseInterface):
             + 2.0 * brr_score
             + 0.3 * psr_score
             + 0.5 * mono_bonus
-            + 5.0 * s0_score
+            + 2.0 * peak_conc_score
         )
 
         return float(score)
@@ -1451,7 +1447,7 @@ class AIFDetection(BaseInterface):
                 aif_curve = conc_data[coord[0], coord[1], coord[2], :]
         else:
             costs = np.array([c for c, _, _ in top_candidates])
-            weights = 1.0 / (costs + 0.1)
+            weights = 1.0 / (costs - costs.min() + 0.1)
             weights /= np.sum(weights)
 
             weighted_aif = np.zeros(nt, dtype=np.float64)
@@ -1518,6 +1514,8 @@ class AIFDetection(BaseInterface):
         fp_peak_abs = fp_start + fp_peak_rel
         fp_peak_val = float(fp_window[fp_peak_rel])
 
+        if baseline_frames < 1:
+            return 0.0, fp_peak_abs, fp_peak_val
         baseline = float(np.mean(curve[:baseline_frames]))
         fp_height = fp_peak_val - baseline
         if fp_height < EPSILON_SIGNAL:
