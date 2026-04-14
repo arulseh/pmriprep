@@ -117,7 +117,7 @@ class FLIRTApplyXFM(CommandLine):
         return outputs
 
 from pmriprep.config.dsc import DSCConfig
-from pmriprep.data import get_arterial_atlas
+from pmriprep.data import get_arterial_atlas, get_arterial_atlas_cascade
 from pmriprep.interfaces.common import Reorient
 from pmriprep.interfaces.dsc import MotionCorrection, DSCRegistration
 from pmriprep.interfaces.dsc_aif import AIFDetection
@@ -1918,14 +1918,31 @@ def init_dsc_preproc_wf(
         ),
         name="transform_atlas",
     )
-    # Set the arterial atlas as input (bundled with pmriprep, FSL MNI152 space)
+    # Set the arterial atlas as input (MCA_ACA_dil — core MCA/ACA with ~2mm margin)
     try:
-        transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm", "dil2"))
-    except FileNotFoundError:
+        atlas_cascade = get_arterial_atlas_cascade("2mm")
+        if len(atlas_cascade) >= 2:
+            transform_atlas.inputs.in_file = str(atlas_cascade[1])  # MCA_ACA_dil
+        else:
+            transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm", "dil2"))
+    except (FileNotFoundError, IndexError):
         import logging as _logging
         _logging.getLogger("pmriprep.workflows.dsc").warning(
             "Arterial atlas not found. AIF detection will use whole-brain search."
         )
+
+    # Transform full arterial atlas (undilated, incl. posterior circulation)
+    transform_full_atlas = pe.Node(
+        FLIRTApplyXFM(
+            apply_xfm=True,
+            interp="nearestneighbour",
+        ),
+        name="transform_full_atlas",
+    )
+    try:
+        transform_full_atlas.inputs.in_file = str(get_arterial_atlas("2mm", ""))
+    except FileNotFoundError:
+        pass
 
     # -------------------------------------------------------------------
     # Node 6c: Transform NAWM mask from T1w to DSC space
@@ -2474,6 +2491,14 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (transform_atlas, aif_detect, [("out_file", "atlas_mask_file")]),
     ])
+
+    # Transform + connect full atlas (posterior circulation tier)
+    if isdefined(transform_full_atlas.inputs.in_file):
+        workflow.connect([
+            (concat_mni_to_dsc, transform_full_atlas, [("out_file", "in_matrix_file")]),
+            (prebolus_mean, transform_full_atlas, [("prebolus_mean_file", "reference")]),
+            (transform_full_atlas, aif_detect, [("out_file", "full_atlas_mask_file")]),
+        ])
 
     # Transform NAWM mask from T1w to DSC space
     workflow.connect([

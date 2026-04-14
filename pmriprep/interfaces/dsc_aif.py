@@ -276,7 +276,12 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
     atlas_mask_file = File(
         exists=True,
         mandatory=False,
-        desc="Optional 3D arterial atlas mask in DSC space",
+        desc="Optional 3D arterial atlas mask in DSC space (MCA/ACA)",
+    )
+    full_atlas_mask_file = File(
+        exists=True,
+        mandatory=False,
+        desc="Optional 3D full arterial atlas mask in DSC space (incl. posterior circulation)",
     )
     aif_mask_file = File(
         exists=True,
@@ -1096,6 +1101,7 @@ class AIFDetection(BaseInterface):
         # 8b. Peak concentration bounds — dose-scaled artifact rejection
         # Calibrated from 20+ subjects: valid AIFs have peak_conc 5-50 s^-1 at
         # effective_dose=1.0 (standard GBCA full). Artifact example: 486 s^-1.
+        effective_dose = 1.0  # default, overwritten below if peak_conc available
         peak_conc = metrics.get("peak_conc", float("nan"))
         if not np.isnan(peak_conc):
             BASE_PEAK_FLOOR = 5.0  # s^-1 — tissue contamination floor (dose-independent)
@@ -1156,10 +1162,14 @@ class AIFDetection(BaseInterface):
         mono_bonus = (100 - pmi) / 20.0 if not np.isnan(pmi) else 2.5
 
         # Peak concentration bonus — higher peak ΔR2* = better deconvolution SNR.
-        # Log-scale centered at ~10 s⁻¹ (standard single-dose GBCA at 3T).
-        peak_conc = metrics.get("peak_conc", float("nan"))
-        if not np.isnan(peak_conc) and peak_conc > 0:
-            peak_conc_score = -np.log(peak_conc / 10.0)
+        # Log-scale centered at ~10 s⁻¹, capped to prevent susceptibility
+        # artifact over-selection.  Cap scales with effective_dose for
+        # high-Gd agents (gadoquatrane).
+        peak_conc_val = metrics.get("peak_conc", float("nan"))
+        if not np.isnan(peak_conc_val) and peak_conc_val > 0:
+            eff = effective_dose
+            cap = 30.0 * max(eff, 1.0)
+            peak_conc_score = -np.log(min(peak_conc_val, cap) / 10.0)
         else:
             peak_conc_score = 5.0
 
@@ -1169,7 +1179,7 @@ class AIFDetection(BaseInterface):
             + 2.0 * brr_score
             + 0.3 * psr_score
             + 0.5 * mono_bonus
-            + 2.0 * peak_conc_score
+            + 3.0 * peak_conc_score
         )
 
         return float(score)
@@ -1585,30 +1595,18 @@ class AIFDetection(BaseInterface):
             ``(aif_curve, aif_mask, roi_size_used, spr, peak_ratio)``
             or None if neither passes.
         """
-        results: list[tuple[npt.NDArray[Any], npt.NDArray[Any], int, float, Optional[float]]] = []
-        for roi_size in (3, 1):
-            curve, mask = self._compute_roi_averaged_aif(
-                candidates, conc_data, brain_mask, roi_size=roi_size,
-            )
-            passes, spr, pr = self._aif_passes_quality(
-                curve, baseline_frames, tr,
-            )
-            if passes:
-                results.append((curve, mask, roi_size, spr, pr))
-
-        if not results:
-            return None
-        if len(results) == 1:
-            return results[0]
-        # Both passed — results[0]=roi_size=3, results[1]=roi_size=1
-        # Pick by (1) lower SPR, (2) peak ratio closer to 1.0
-        # Default to roi_size=3 (more averaging, less noise) when inconclusive
-        r3, r1 = results[0], results[1]
-        if r1[3] < r3[3]:
-            return r1
-        if r3[4] is not None and r1[4] is not None and abs(r1[4] - 1.0) < abs(r3[4] - 1.0):
-            return r1
-        return r3
+        # Use roi_size=1 only — candidate voxels without tissue-contaminated
+        # 3x3x3 neighborhoods.  Noise reduction comes from the inverse-cost
+        # weighted mean across multiple candidates.
+        curve, mask = self._compute_roi_averaged_aif(
+            candidates, conc_data, brain_mask, roi_size=1,
+        )
+        passes, spr, pr = self._aif_passes_quality(
+            curve, baseline_frames, tr,
+        )
+        if passes:
+            return (curve, mask, 1, spr, pr)
+        return None
 
     # -----------------------------------------------------------------
     # Post-averaging AIF validation (legacy — kept for compatibility)
@@ -2258,6 +2256,15 @@ class AIFDetection(BaseInterface):
             atlas_img = nib.load(self.inputs.atlas_mask_file)
             atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
 
+        # Optional full atlas (incl. posterior circulation, undilated)
+        full_atlas_mask: Optional[npt.NDArray[Any]] = None
+        if (
+            isdefined(self.inputs.full_atlas_mask_file)
+            and self.inputs.full_atlas_mask_file
+        ):
+            full_atlas_img = nib.load(self.inputs.full_atlas_mask_file)
+            full_atlas_mask = full_atlas_img.get_fdata()  # type: ignore[attr-defined]
+
         # Optional lesion mask
         lesion_mask: Optional[npt.NDArray[Any]] = None
         if self.inputs.lesion_mask_file:
@@ -2390,6 +2397,13 @@ class AIFDetection(BaseInterface):
             if atlas_mask is not None:
                 for crit in ["strict", "relaxed", "permissive"]:
                     all_attempts.append((crit, atlas_mask, f"atlas_{crit}"))
+
+            # Full atlas tier (posterior circulation, undilated) —
+            # between atlas_permissive and brain-wide search
+            if full_atlas_mask is not None:
+                all_attempts.append(
+                    ("permissive", full_atlas_mask, "full_atlas_permissive")
+                )
 
             has_roi_constraint = atlas_mask is not None
             strict_roi = bool(self.inputs.strict_roi_constraint)
