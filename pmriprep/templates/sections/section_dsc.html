@@ -149,10 +149,16 @@
                     {%- else %} poor{% endif %}">{{ dsc.qc_metrics.aif.detection_level | replace("_", " ") | title }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.best_ph is defined %}
+            {% if dsc.qc_metrics.aif.aif_metrics is defined and dsc.qc_metrics.aif.aif_metrics.peak_conc is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Concentration</div>
-                <div class="metric-value">{{ "%.2f"|format(dsc.qc_metrics.aif.best_ph) }} s<sup>-1</sup></div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.aif_metrics.peak_conc) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.aif.best_ph is defined %}
+            <div class="metric">
+                <div class="metric-label">Peak Height</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.best_ph) }}%</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.aif.best_fwhm is defined %}

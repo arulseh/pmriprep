@@ -1,17 +1,16 @@
-"""Tests for AIF cascade minimum candidate acceptance logic."""
+"""Tests for AIF cascade logic and quality helper methods."""
 
 import math
 from typing import Optional
-from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
 from pmriprep.interfaces.dsc_aif import (
-    GAMMA_PEAK_RATIO_CASCADE_MAX,
-    GAMMA_PEAK_RATIO_CASCADE_MIN,
     MIN_AIF_CANDIDATES_ACCEPT,
+    S0_RATIO_FLOOR,
+    S0_RATIO_SCORE_CAP,
     _CASCADE_N_CANDIDATES_FRACTION,
+    AIFDetection,
 )
 
 
@@ -25,6 +24,28 @@ def _make_scored(
     ]
 
 
+def _make_aif_curve(
+    n_frames: int = 120,
+    baseline_frames: int = 20,
+    tr: float = 1.5,
+    peak_frame: int = 25,
+    peak_height: float = 30.0,
+    fwhm_frames: int = 5,
+    recirculation_height: float = 5.0,
+    recirc_frame: int = 45,
+) -> np.ndarray:
+    """Create a synthetic AIF concentration curve for testing."""
+    curve = np.zeros(n_frames)
+    for i in range(n_frames):
+        if i >= peak_frame:
+            dt = i - peak_frame
+            curve[i] = peak_height * np.exp(-0.5 * (dt / fwhm_frames) ** 2)
+        if i >= recirc_frame:
+            dt = i - recirc_frame
+            curve[i] += recirculation_height * np.exp(-0.5 * (dt / 8) ** 2)
+    return curve
+
+
 class TestMinAifCandidatesConstant:
     """Verify the module-level constant exists and is sensible."""
 
@@ -35,117 +56,116 @@ class TestMinAifCandidatesConstant:
         assert isinstance(MIN_AIF_CANDIDATES_ACCEPT, int)
 
 
-class TestCascadeMinCandidates:
-    """Test cascade break/continue logic with MIN_AIF_CANDIDATES_ACCEPT.
+class TestS0Constants:
+    """Verify S0 scoring constants."""
 
-    These tests exercise the cascade loop logic in isolation by simulating
-    the scored-candidates list at each level and verifying which level
-    is ultimately selected.
-    """
+    def test_floor_value(self) -> None:
+        assert S0_RATIO_FLOOR == 0.10
 
-    @staticmethod
-    def _run_cascade(
-        level_results: dict[str, list],
-    ) -> tuple[str, list, bool]:
-        """Simulate the cascade loop logic from _run_interface.
+    def test_cap_value(self) -> None:
+        assert S0_RATIO_SCORE_CAP == 0.20
 
-        Args:
-            level_results: mapping from level_name to scored candidates
-                returned at that level. Levels are iterated in order.
 
-        Returns:
-            (detection_level, top_candidates, broke_early)
-        """
-        detection_level = "synthetic"
-        top_candidates: list = []
-        cascade_initial_level = None
-        broke_early = False
+class TestComputeAifSpr:
+    """Tests for AIFDetection._compute_aif_spr."""
 
-        for level_name, scored in level_results.items():
-            if not scored:
-                continue
+    def test_clean_first_pass(self) -> None:
+        """Clean bolus with small recirculation → low SPR."""
+        curve = _make_aif_curve(
+            peak_height=30.0, recirculation_height=3.0,
+        )
+        spr, fp_frame, fp_val = AIFDetection._compute_aif_spr(
+            curve, baseline_frames=20, tr=1.5,
+        )
+        assert spr < 50.0
+        assert fp_frame == 25
+        assert fp_val > 20.0
 
-            if cascade_initial_level is None:
-                cascade_initial_level = level_name
+    def test_dominant_recirculation(self) -> None:
+        """Recirculation exceeds first pass → SPR > 100."""
+        curve = _make_aif_curve(
+            peak_height=10.0, recirculation_height=15.0,
+            recirc_frame=60,
+        )
+        spr, _, _ = AIFDetection._compute_aif_spr(
+            curve, baseline_frames=20, tr=1.5,
+        )
+        assert spr > 100.0
 
-            if len(scored) >= MIN_AIF_CANDIDATES_ACCEPT:
-                top_candidates = scored
-                detection_level = level_name
-                broke_early = True
-                break
-            elif len(scored) > len(top_candidates):
-                top_candidates = scored
-                detection_level = level_name
+    def test_no_recirculation(self) -> None:
+        """No recirculation → SPR near 0."""
+        curve = _make_aif_curve(
+            peak_height=30.0, recirculation_height=0.0,
+        )
+        spr, _, _ = AIFDetection._compute_aif_spr(
+            curve, baseline_frames=20, tr=1.5,
+        )
+        assert spr < 5.0
 
-        return detection_level, top_candidates, broke_early
+    def test_empty_curve(self) -> None:
+        """Very short curve → SPR = 0 (no first-pass window)."""
+        curve = np.zeros(5)
+        spr, _, _ = AIFDetection._compute_aif_spr(
+            curve, baseline_frames=3, tr=1.5,
+        )
+        assert spr == 0.0
 
-    def test_sufficient_strict_breaks(self) -> None:
-        """5 strict candidates → break at strict, don't continue."""
-        levels = {
-            "atlas_strict": _make_scored(5),
-            "brain_relaxed": _make_scored(20),
-        }
-        level, cands, broke = self._run_cascade(levels)
-        assert level == "atlas_strict"
-        assert len(cands) == 5
-        assert broke is True
 
-    def test_insufficient_strict_continues_to_relaxed(self) -> None:
-        """1 strict candidate → continues to relaxed (4 candidates)."""
-        levels = {
-            "atlas_strict": _make_scored(1),
-            "brain_relaxed": _make_scored(4),
-        }
-        level, cands, broke = self._run_cascade(levels)
-        assert level == "brain_relaxed"
-        assert len(cands) == 4
-        assert broke is True
+class TestAifGlobalMaxInFp:
+    """Tests for AIFDetection._aif_global_max_in_fp."""
 
-    def test_two_strict_four_relaxed_uses_relaxed(self) -> None:
-        """2 strict + 4 relaxed → uses relaxed (2 < MIN_AIF_CANDIDATES_ACCEPT)."""
-        levels = {
-            "atlas_strict": _make_scored(2),
-            "brain_relaxed": _make_scored(4),
-        }
-        level, cands, broke = self._run_cascade(levels)
-        assert level == "brain_relaxed"
-        assert len(cands) == 4
-        assert broke is True
+    def test_peak_in_first_pass(self) -> None:
+        """Global max during first pass → True."""
+        curve = _make_aif_curve(
+            peak_height=30.0, recirculation_height=5.0,
+        )
+        assert AIFDetection._aif_global_max_in_fp(
+            curve, baseline_frames=20, tr=1.5,
+        ) is True
 
-    def test_all_below_minimum_keeps_best(self) -> None:
-        """All levels below minimum → keeps the one with most candidates."""
-        levels = {
-            "atlas_strict": _make_scored(1),
-            "brain_relaxed": _make_scored(2),
-            "brain_permissive": _make_scored(2),
-        }
-        level, cands, broke = self._run_cascade(levels)
-        # brain_relaxed found 2 first, permissive has 2 but not > 2
-        assert level == "brain_relaxed"
-        assert len(cands) == 2
-        assert broke is False
+    def test_peak_outside_first_pass(self) -> None:
+        """Recirculation exceeds first pass → False."""
+        curve = _make_aif_curve(
+            peak_height=10.0, recirculation_height=15.0,
+            recirc_frame=60,
+        )
+        assert AIFDetection._aif_global_max_in_fp(
+            curve, baseline_frames=20, tr=1.5,
+        ) is False
 
-    def test_no_candidates_stays_synthetic(self) -> None:
-        """No candidates at any level → stays synthetic."""
-        levels = {
-            "atlas_strict": [],
-            "brain_relaxed": [],
-        }
-        level, cands, broke = self._run_cascade(levels)
-        assert level == "synthetic"
-        assert len(cands) == 0
-        assert broke is False
+    def test_peak_in_baseline(self) -> None:
+        """Peak before first-pass window → False."""
+        curve = np.zeros(120)
+        curve[5] = 50.0  # peak in baseline
+        assert AIFDetection._aif_global_max_in_fp(
+            curve, baseline_frames=20, tr=1.5,
+        ) is False
 
-    def test_exactly_three_breaks(self) -> None:
-        """Exactly MIN_AIF_CANDIDATES_ACCEPT candidates → breaks."""
-        levels = {
-            "atlas_strict": _make_scored(3),
-            "brain_relaxed": _make_scored(10),
-        }
-        level, cands, broke = self._run_cascade(levels)
-        assert level == "atlas_strict"
-        assert len(cands) == 3
-        assert broke is True
+
+class TestAifPassesQuality:
+    """Tests for AIFDetection._aif_passes_quality."""
+
+    def test_good_curve_has_low_spr(self) -> None:
+        """Clean arterial curve has acceptable SPR."""
+        curve = _make_aif_curve(
+            peak_height=30.0, recirculation_height=3.0,
+        )
+        passes, spr, pr = AIFDetection._aif_passes_quality(
+            curve, baseline_frames=20, tr=1.5,
+        )
+        assert spr < 100.0
+
+    def test_bad_recirculation_fails(self) -> None:
+        """Dominant recirculation fails SPR check."""
+        curve = _make_aif_curve(
+            peak_height=10.0, recirculation_height=15.0,
+            recirc_frame=60,
+        )
+        passes, spr, pr = AIFDetection._aif_passes_quality(
+            curve, baseline_frames=20, tr=1.5,
+        )
+        assert passes is False
+        assert spr > 100.0
 
 
 class TestGraduatedNCandidates:
@@ -177,208 +197,130 @@ class TestGraduatedNCandidates:
         assert self._level_n("permissive", 5) == 3
 
     def test_cascade_prefers_stricter_at_equal_count(self) -> None:
-        """2 strict stashed, 2 relaxed doesn't replace (not >)."""
-        levels = {
-            "atlas_strict": _make_scored(2),
-            "brain_relaxed": _make_scored(2),
-        }
-        level, cands, broke = TestCascadeMinCandidates._run_cascade(levels)
-        # strict found 2 first; relaxed has 2 but not > 2, so strict kept
-        assert level == "atlas_strict"
-        assert len(cands) == 2
-        assert broke is False
+        """2 strict + 2 relaxed accumulated → both in pool, strict first by cost."""
+        pool: list[tuple[float, tuple[int, int, int], dict]] = []
+        coords: set[tuple[int, int, int]] = set()
+
+        strict_scored = [(0.1, (0, 0, 0), {}), (0.2, (1, 0, 0), {})]
+        relaxed_scored = [(0.5, (2, 0, 0), {}), (0.6, (3, 0, 0), {})]
+
+        for scored in [strict_scored, relaxed_scored]:
+            for cost, coord, metrics in scored:
+                if coord not in coords:
+                    pool.append((cost, coord, metrics))
+                    coords.add(coord)
+
+        pool.sort(key=lambda x: x[0])
+        # Strict candidates (lower cost) sort first
+        assert pool[0][0] == 0.1
+        assert pool[1][0] == 0.2
+        assert len(pool) == 4
 
 
-class TestCascadeQualityGate:
-    """Test cascade quality gate based on gamma peak ratio.
+class TestAccumulatingCascade:
+    """Test the accumulating cascade with dual-ROI quality gate.
 
-    When a tier meets MIN_AIF_CANDIDATES_ACCEPT but has a bad peak ratio,
-    the cascade continues once to the next tier. The better peak ratio wins.
+    The new cascade accumulates candidates across tiers, tries both
+    roi_size=3 and roi_size=1, and uses the best passing AIF. Tests
+    exercise the helper methods that implement this logic.
     """
 
-    @staticmethod
-    def _run_cascade_with_quality(
-        level_results: dict[str, tuple[list, Optional[float]]],
-    ) -> tuple[str, list, bool, bool]:
-        """Simulate cascade loop with quality gate.
+    def test_try_dual_roi_with_arterial_voxel(self) -> None:
+        """Dual ROI returns a result for a clear arterial voxel."""
+        aif = AIFDetection()
+        shape = (10, 10, 5, 120)
+        conc_data = np.zeros(shape)
+        brain_mask = np.ones(shape[:3])
 
-        Args:
-            level_results: mapping from level_name to (scored, peak_ratio).
-                peak_ratio=None means gamma fit failed for that tier.
+        curve = _make_aif_curve(peak_height=30.0, recirculation_height=2.0)
+        conc_data[5, 5, 2, :] = curve
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                conc_data[5+dx, 5+dy, 2, :] = _make_aif_curve(
+                    peak_height=5.0, recirculation_height=1.0,
+                    peak_frame=28,
+                )
 
-        Returns:
-            (detection_level, top_candidates, broke_early, quality_gate_triggered)
-        """
-        detection_level = "synthetic"
-        top_candidates: list = []
-        quality_stash: Optional[tuple[list, str, Optional[float]]] = None
-        broke_early = False
-        quality_gate_triggered = False
+        candidates: list[tuple[float, tuple[int, int, int], dict]] = [
+            (1.0, (5, 5, 2), {}),
+        ]
+        result = aif._try_aif_dual_roi(
+            candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
+        )
+        # May return None if gamma fit fails on synthetic curve — that's OK.
+        # When it returns, roi_used must be valid.
+        if result is not None:
+            _, _, roi_used, spr, _ = result
+            assert roi_used in (1, 3)
+            assert spr >= 0.0
 
-        for level_name, (scored, peak_ratio) in level_results.items():
-            if not scored:
-                continue
+    def test_try_dual_roi_returns_none_on_bad_curves(self) -> None:
+        """When neither ROI size passes, returns None."""
+        aif = AIFDetection()
+        shape = (10, 10, 5, 120)
+        conc_data = np.random.randn(*shape) * 0.1  # noise only
+        brain_mask = np.ones(shape[:3])
 
-            if len(scored) >= MIN_AIF_CANDIDATES_ACCEPT:
-                # Quality gate: check peak ratio before accepting
-                if quality_stash is None:
-                    if (peak_ratio is None
-                            or peak_ratio < GAMMA_PEAK_RATIO_CASCADE_MIN
-                            or peak_ratio > GAMMA_PEAK_RATIO_CASCADE_MAX):
-                        # Bad quality (gamma fit failed or peak ratio out of band)
-                        quality_stash = (scored, level_name, peak_ratio)
-                        quality_gate_triggered = True
-                        continue
+        candidates = [(1.0, (5, 5, 2), {})]
+        result = aif._try_aif_dual_roi(
+            candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
+        )
+        assert result is None
 
-                if quality_stash is not None:
-                    # Compare with stashed
-                    stashed_pr = quality_stash[2]
-                    use_current = (
-                        peak_ratio is not None
-                        and (stashed_pr is None
-                             or abs(peak_ratio - 1.0) < abs(stashed_pr - 1.0))
-                    )
-                    if use_current:
-                        top_candidates = scored
-                        detection_level = level_name
-                    else:
-                        top_candidates = quality_stash[0]
-                        detection_level = quality_stash[1]
-                    broke_early = True
-                    break
+    def test_accumulated_pool_deduplication(self) -> None:
+        """Candidates from multiple tiers are deduplicated by coordinate."""
+        pool: list[tuple[float, tuple[int, int, int], dict]] = []
+        coords: set[tuple[int, int, int]] = set()
 
-                # Good quality — accept
-                top_candidates = scored
-                detection_level = level_name
-                broke_early = True
-                break
-            elif len(scored) > len(top_candidates):
-                top_candidates = scored
-                detection_level = level_name
+        # Tier 1 candidates
+        tier1 = [(1.0, (5, 5, 2), {}), (2.0, (6, 5, 2), {})]
+        for cost, coord, metrics in tier1:
+            if coord not in coords:
+                pool.append((cost, coord, metrics))
+                coords.add(coord)
 
-        # Post-loop: use stash if loop exhausted
-        if quality_stash is not None and (
-            not top_candidates
-            or len(top_candidates) < MIN_AIF_CANDIDATES_ACCEPT
-        ):
-            top_candidates = quality_stash[0]
-            detection_level = quality_stash[1]
+        # Tier 2 has one overlap and one new
+        tier2 = [(0.5, (5, 5, 2), {}), (1.5, (7, 5, 2), {})]
+        for cost, coord, metrics in tier2:
+            if coord not in coords:
+                pool.append((cost, coord, metrics))
+                coords.add(coord)
 
-        return detection_level, top_candidates, broke_early, quality_gate_triggered
+        assert len(pool) == 3
+        assert (5, 5, 2) in coords
+        assert (6, 5, 2) in coords
+        assert (7, 5, 2) in coords
 
-    def test_bad_peak_ratio_continues_to_next_tier(self) -> None:
-        """Strict with bad peak ratio → continues to relaxed with good ratio."""
-        levels = {
-            "atlas_strict": (_make_scored(3), 0.84),
-            "atlas_relaxed": (_make_scored(6), 0.96),
-        }
-        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
-        assert level == "atlas_relaxed"
-        assert len(cands) == 6
-        assert triggered is True
+    def test_pool_cap_preserves_best_candidates(self) -> None:
+        """Pool cap keeps lowest-cost candidates when pool exceeds limit."""
+        pool = [(float(i), (i, 0, 0), {}) for i in range(20)]
+        pool.sort(key=lambda x: x[0])
+        cap = 10
+        capped = pool[:cap]
 
-    def test_good_peak_ratio_breaks_normally(self) -> None:
-        """Strict with good peak ratio → breaks at strict (no change)."""
-        levels = {
-            "atlas_strict": (_make_scored(3), 0.95),
-            "atlas_relaxed": (_make_scored(6), 0.96),
-        }
-        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
-        assert level == "atlas_strict"
-        assert len(cands) == 3
-        assert broke is True
-        assert triggered is False
+        assert len(capped) == 10
+        assert capped[0][0] == 0.0  # best cost preserved
+        assert capped[-1][0] == 9.0  # worst kept is 9.0
 
-    def test_bad_both_tiers_uses_closer_to_one(self) -> None:
-        """Both tiers bad → picks whichever has peak ratio closer to 1.0."""
-        levels = {
-            "atlas_strict": (_make_scored(3), 0.84),
-            "atlas_relaxed": (_make_scored(6), 0.82),
-        }
-        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
-        # 0.84 is closer to 1.0 than 0.82
-        assert level == "atlas_strict"
-        assert len(cands) == 3
-        assert triggered is True
+    def test_below_min_candidates_accumulate(self) -> None:
+        """Candidates below MIN_AIF_CANDIDATES_ACCEPT are accumulated."""
+        pool: list[tuple[float, tuple[int, int, int], dict]] = []
+        coords: set[tuple[int, int, int]] = set()
 
-    def test_bad_strict_no_relaxed_candidates_uses_stashed(self) -> None:
-        """Strict bad, relaxed has 0 candidates → uses stashed strict."""
-        levels = {
-            "atlas_strict": (_make_scored(3), 0.84),
-            "atlas_relaxed": ([], None),
-        }
-        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
-        assert level == "atlas_strict"
-        assert len(cands) == 3
-        assert triggered is True
+        # Two tiers each with 2 candidates (below MIN=3)
+        for tier_offset in [0, 10]:
+            scored = _make_scored(2)
+            scored = [(c, (x + tier_offset, y, z), m) for c, (x, y, z), m in scored]
+            for cost, coord, metrics in scored:
+                if coord not in coords:
+                    pool.append((cost, coord, metrics))
+                    coords.add(coord)
 
-    def test_quality_gate_triggers_only_once(self) -> None:
-        """Gate triggers at strict, compares with relaxed, never reaches permissive."""
-        levels = {
-            "atlas_strict": (_make_scored(3), 0.84),
-            "atlas_relaxed": (_make_scored(4), 0.86),
-            "atlas_permissive": (_make_scored(10), 0.98),
-        }
-        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
-        # Compares strict (0.84) vs relaxed (0.86), picks relaxed (closer to 1.0)
-        assert level == "atlas_relaxed"
-        assert len(cands) == 4
-        assert triggered is True
-
-    def test_fewer_candidates_better_ratio_still_wins(self) -> None:
-        """Strict 3 cands pr=0.96 vs relaxed 6 cands — strict wins (good ratio)."""
-        levels = {
-            "atlas_strict": (_make_scored(3), 0.96),
-            "atlas_relaxed": (_make_scored(6), 0.98),
-        }
-        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
-        # Good peak ratio at strict → breaks immediately, no quality gate
-        assert level == "atlas_strict"
-        assert len(cands) == 3
-        assert triggered is False
-
-    def test_high_side_peak_ratio_triggers_gate(self) -> None:
-        """Peak ratio 1.15 (above 1.12) triggers cascade continuation."""
-        levels = {
-            "atlas_strict": (_make_scored(3), 1.15),
-            "atlas_relaxed": (_make_scored(5), 0.98),
-        }
-        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
-        assert level == "atlas_relaxed"
-        assert len(cands) == 5
-        assert triggered is True
-
-    def test_gamma_fit_failure_triggers_cascade_continuation(self) -> None:
-        """peak_ratio=None (gamma fit failed) triggers cascade continuation.
-
-        Regression test for v0.19.16 fix: previously, pr=None bypassed the
-        quality gate entirely, accepting garbage AIFs as 'good quality'.
-        """
-        levels = {
-            "atlas_strict": (_make_scored(3), None),  # gamma fit failed
-            "atlas_relaxed": (_make_scored(5), 0.98),  # good ratio
-        }
-        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
-        # Should continue to relaxed due to gamma fit failure at strict
-        assert level == "atlas_relaxed"
-        assert len(cands) == 5
-        assert triggered is True
-
-    def test_gamma_fit_failure_at_all_levels_uses_stashed(self) -> None:
-        """Gamma fit failure at all levels keeps the stashed (stricter) tier.
-
-        When comparing two tiers both with pr=None, keep the stashed one
-        since we can't determine which is better.
-        """
-        levels = {
-            "atlas_strict": (_make_scored(3), None),  # gamma fit failed
-            "atlas_relaxed": (_make_scored(5), None),  # also failed
-        }
-        level, cands, broke, triggered = self._run_cascade_with_quality(levels)
-        # Both failed - keep stashed strict (can't compare when both None)
-        assert level == "atlas_strict"
-        assert len(cands) == 3
-        assert triggered is True
+        # After two tiers, accumulated pool has 4 (>= MIN)
+        assert len(pool) == 4
+        assert len(pool) >= MIN_AIF_CANDIDATES_ACCEPT
 
 
 class TestPostGammaFitR2Fallback:

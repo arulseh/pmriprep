@@ -64,7 +64,7 @@ S0_RATIO_FLOOR: float = 0.10
 #: S0 ratio score cap: candidates between S0_RATIO_FLOOR and this value
 #: are admitted but capped in the S0 scoring term so marginal-SNR voxels
 #: do not overwhelm shape-quality metrics.
-S0_RATIO_SCORE_CAP: float = 0.15
+S0_RATIO_SCORE_CAP: float = 0.20
 
 # Fraction of user-configured n_candidates to keep at each criteria level.
 # As criteria relax, candidate quality drops — fewer candidates concentrates
@@ -1487,7 +1487,133 @@ class AIFDetection(BaseInterface):
         return aif_curve, aif_mask
 
     # -----------------------------------------------------------------
-    # Post-averaging AIF validation
+    # AIF quality checks (extracted for use in cascade quality gate)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _compute_aif_spr(
+        curve: npt.NDArray[Any],
+        baseline_frames: int,
+        tr: float,
+    ) -> tuple[float, int, float]:
+        """Compute secondary peak ratio for an AIF curve.
+
+        Returns
+        -------
+        spr : float
+            Secondary peak ratio (%).
+        fp_peak_frame : int
+            First-pass peak frame index.
+        fp_peak_val : float
+            First-pass peak value.
+        """
+        n_time = len(curve)
+        fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
+        fp_end = min(baseline_frames + int(40.0 / tr), n_time)
+        if fp_start >= n_time or fp_end <= fp_start:
+            return 0.0, -1, 0.0
+
+        fp_window = curve[fp_start:fp_end]
+        fp_peak_rel = int(np.argmax(fp_window))
+        fp_peak_abs = fp_start + fp_peak_rel
+        fp_peak_val = float(fp_window[fp_peak_rel])
+
+        baseline = float(np.mean(curve[:baseline_frames]))
+        fp_height = fp_peak_val - baseline
+        if fp_height < EPSILON_SIGNAL:
+            return 0.0, fp_peak_abs, fp_peak_val
+
+        recirc_start = fp_end + max(1, int(15.0 / tr))
+        if recirc_start >= n_time:
+            return 0.0, fp_peak_abs, fp_peak_val
+
+        post_recirc = curve[recirc_start:]
+        spr = (float(np.max(post_recirc)) - baseline) / fp_height * 100.0
+        return spr, fp_peak_abs, fp_peak_val
+
+    @staticmethod
+    def _aif_global_max_in_fp(
+        curve: npt.NDArray[Any],
+        baseline_frames: int,
+        tr: float,
+    ) -> bool:
+        """True if global maximum falls within the first-pass window."""
+        n_time = len(curve)
+        fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
+        fp_end = min(baseline_frames + int(40.0 / tr), n_time)
+        global_max_frame = int(np.argmax(curve))
+        return fp_start <= global_max_frame < fp_end
+
+    @staticmethod
+    def _aif_passes_quality(
+        curve: npt.NDArray[Any],
+        baseline_frames: int,
+        tr: float,
+    ) -> tuple[bool, float, Optional[float]]:
+        """Check if an AIF curve passes SPR and global-max quality checks.
+
+        Returns
+        -------
+        passes : bool
+            True if SPR <= 100 and global max is in first-pass window.
+        spr : float
+            Secondary peak ratio (%).
+        pr : float or None
+            Gamma peak ratio (fitted/measured), None if gamma fit fails.
+        """
+        spr, _, _ = AIFDetection._compute_aif_spr(curve, baseline_frames, tr)
+        gmax_ok = AIFDetection._aif_global_max_in_fp(curve, baseline_frames, tr)
+        pr = _compute_aif_peak_ratio(curve, baseline_frames, tr)
+        pr_ok = (
+            pr is not None
+            and GAMMA_PEAK_RATIO_CASCADE_MIN <= pr <= GAMMA_PEAK_RATIO_CASCADE_MAX
+        )
+        passes = spr <= 100.0 and gmax_ok and pr_ok
+        return passes, spr, pr
+
+    def _try_aif_dual_roi(
+        self,
+        candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        tr: float,
+        baseline_frames: int,
+    ) -> Optional[tuple[npt.NDArray[Any], npt.NDArray[Any], int, float, Optional[float]]]:
+        """Try both roi_size=3 and roi_size=1, return best passing result.
+
+        Returns
+        -------
+        result : tuple or None
+            ``(aif_curve, aif_mask, roi_size_used, spr, peak_ratio)``
+            or None if neither passes.
+        """
+        results: list[tuple[npt.NDArray[Any], npt.NDArray[Any], int, float, Optional[float]]] = []
+        for roi_size in (3, 1):
+            curve, mask = self._compute_roi_averaged_aif(
+                candidates, conc_data, brain_mask, roi_size=roi_size,
+            )
+            passes, spr, pr = self._aif_passes_quality(
+                curve, baseline_frames, tr,
+            )
+            if passes:
+                results.append((curve, mask, roi_size, spr, pr))
+
+        if not results:
+            return None
+        if len(results) == 1:
+            return results[0]
+        # Both passed — results[0]=roi_size=3, results[1]=roi_size=1
+        # Pick by (1) lower SPR, (2) peak ratio closer to 1.0
+        # Default to roi_size=3 (more averaging, less noise) when inconclusive
+        r3, r1 = results[0], results[1]
+        if r1[3] < r3[3]:
+            return r1
+        if r3[4] is not None and r1[4] is not None and abs(r1[4] - 1.0) < abs(r3[4] - 1.0):
+            return r1
+        return r3
+
+    # -----------------------------------------------------------------
+    # Post-averaging AIF validation (legacy — kept for compatibility)
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -2248,17 +2374,14 @@ class AIFDetection(BaseInterface):
         n_available = 0
         filter_meta: dict[str, Any] = {}
         cascade_initial_level: Optional[str] = None
-        # Quality gate stash: if an accepted tier has bad peak ratio,
-        # stash it and continue cascading once to find a better AIF.
-        quality_stash: Optional[
-            tuple[list, int, str, dict[str, Any], Optional[float]]
-        ] = None  # (scored, n_avail, level_name, f_meta, peak_ratio)
+        accepted_aif: Optional[tuple[npt.NDArray[Any], npt.NDArray[Any], int]] = None
+        accumulated_pool: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        accumulated_coords: set[tuple[int, int, int]] = set()
+        tiers_attempted: list[str] = []
 
         if aif_method == "synthetic":
             pass  # Go directly to synthetic
         else:
-            # --- GAP 7: Unified attempts loop ---
-            # Build full attempts list, then filter by initial_criteria
             criteria_order = ["strict", "relaxed", "permissive"]
             try:
                 start_idx = criteria_order.index(initial_criteria)
@@ -2273,12 +2396,9 @@ class AIFDetection(BaseInterface):
             has_roi_constraint = atlas_mask is not None
             strict_roi = bool(self.inputs.strict_roi_constraint)
             if not (has_roi_constraint and strict_roi):
-                # Note: brain_degraded removed (v0.19.16) - thresholds too loose,
-                # admitted non-arterial curves. Synthetic fallback is more reliable.
                 for crit in ["relaxed", "permissive"]:
                     all_attempts.append((crit, None, f"brain_{crit}"))
 
-            # Skip attempts with criteria stricter than initial_criteria
             attempts = [
                 (crit, roi, name)
                 for crit, roi, name in all_attempts
@@ -2312,7 +2432,6 @@ class AIFDetection(BaseInterface):
                 if not scored:
                     continue
 
-                # Post-scoring filters (distance + soft contralateral)
                 scored, f_meta = self._apply_post_scoring_filters(
                     scored, lesion_mask, affine, voxel_sizes,
                     lesion_min_distance_mm=lesion_distance,
@@ -2321,105 +2440,96 @@ class AIFDetection(BaseInterface):
                 if not scored:
                     continue
 
-                # Bilateral balance (always applied)
                 scored = self._ensure_bilateral_balance(
                     scored, affine, level_n_candidates,
                 )
 
                 if cascade_initial_level is None:
                     cascade_initial_level = level_name
+                tiers_attempted.append(level_name)
 
+                # --- Dual-ROI quality gate ---
+                # Step A: try all scored candidates with both ROI sizes
                 if len(scored) >= MIN_AIF_CANDIDATES_ACCEPT:
-                    # Quality gate: check gamma peak ratio before accepting
-                    if quality_stash is None:
-                        temp_aif, _ = self._compute_roi_averaged_aif(
-                            scored, conc_data, brain_mask
-                        )
-                        temp_aif, _, _, _ = self._validate_averaged_aif(
-                            temp_aif, scored, conc_data, brain_mask,
-                            tr, aif_baseline_frames,
-                        )
-                        pr = _compute_aif_peak_ratio(
-                            temp_aif, aif_baseline_frames, tr
-                        )
-                        if (pr is None
-                                or pr < GAMMA_PEAK_RATIO_CASCADE_MIN
-                                or pr > GAMMA_PEAK_RATIO_CASCADE_MAX):
-                            # Bad quality (gamma fit failed or peak ratio out of band)
-                            # — stash and continue to next tier
-                            quality_stash = (
-                                scored, n_avail, level_name, f_meta, pr,
-                            )
-                            continue
+                    result = self._try_aif_dual_roi(
+                        scored, conc_data, brain_mask, tr, aif_baseline_frames,
+                    )
+                    if result is not None:
+                        aif_curve_r, aif_mask_r, roi_used, _, _ = result
+                        accepted_aif = (aif_curve_r, aif_mask_r, roi_used)
+                        top_candidates = scored
+                        n_available = n_avail
+                        detection_level = level_name
+                        filter_meta = f_meta
+                        break
 
-                    if quality_stash is not None:
-                        # Second tier with >= MIN — compare with stashed
-                        temp_aif2, _ = self._compute_roi_averaged_aif(
-                            scored, conc_data, brain_mask
-                        )
-                        temp_aif2, _, _, _ = self._validate_averaged_aif(
-                            temp_aif2, scored, conc_data, brain_mask,
+                    # Step B: try top-N candidates (tier minimum)
+                    top_n = scored[:level_n_candidates]
+                    if len(top_n) >= MIN_AIF_CANDIDATES_ACCEPT:
+                        result = self._try_aif_dual_roi(
+                            top_n, conc_data, brain_mask,
                             tr, aif_baseline_frames,
                         )
-                        pr2 = _compute_aif_peak_ratio(
-                            temp_aif2, aif_baseline_frames, tr
-                        )
-                        stashed_pr = quality_stash[4]
-                        # Pick whichever has peak ratio closer to 1.0
-                        use_current = (
-                            pr2 is not None
-                            and (stashed_pr is None
-                                 or abs(pr2 - 1.0) < abs(stashed_pr - 1.0))
-                        )
-                        if use_current:
-                            top_candidates = scored
+                        if result is not None:
+                            aif_curve_r, aif_mask_r, roi_used, _, _ = result
+                            accepted_aif = (aif_curve_r, aif_mask_r, roi_used)
+                            top_candidates = top_n
                             n_available = n_avail
                             detection_level = level_name
                             filter_meta = f_meta
                             break
-                        elif pr2 is None and stashed_pr is None:
-                            if len(scored) > len(quality_stash[0]):
-                                quality_stash = (
-                                    scored, n_avail, level_name, f_meta, pr2,
-                                )
-                            continue
-                        else:
-                            (top_candidates, n_available,
-                             detection_level, filter_meta, _) = quality_stash
-                            break
 
-                    # Good quality — accept normally
-                    top_candidates = scored
-                    n_available = n_avail
-                    detection_level = level_name
-                    filter_meta = f_meta
-                    break
-                elif len(scored) > len(top_candidates):
-                    # Below MIN — stash best-so-far but keep cascading.
-                    # With variable level_n_candidates, equal counts across levels
-                    # favor the stricter (earlier) level by design.
-                    top_candidates = scored
-                    n_available = n_avail
-                    detection_level = level_name
-                    filter_meta = f_meta
+                # Accumulate good candidates (deduplicate by coordinate)
+                for cost, coord, metrics in scored:
+                    if coord not in accumulated_coords:
+                        accumulated_pool.append((cost, coord, metrics))
+                        accumulated_coords.add(coord)
 
-            # If quality gate stashed a result but loop exhausted without
-            # finding a better tier, use the stashed (>= MIN) result.
-            if quality_stash is not None and (
-                not top_candidates
-                or len(top_candidates) < MIN_AIF_CANDIDATES_ACCEPT
-            ):
-                (top_candidates, n_available,
-                 detection_level, filter_meta, _) = quality_stash
-
-            if top_candidates and len(top_candidates) < MIN_AIF_CANDIDATES_ACCEPT:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "AIF cascade found only %d candidates (minimum %d preferred) "
-                    "at level '%s'. Quantification may be less stable.",
-                    len(top_candidates), MIN_AIF_CANDIDATES_ACCEPT,
-                    detection_level,
+            # --- Post-loop: try accumulated pool ---
+            if accepted_aif is None and accumulated_pool:
+                accumulated_pool.sort(key=lambda x: x[0])
+                # Cap pool to prevent permissive domination
+                pool_cap = max(
+                    2 * n_candidates,
+                    2 * MIN_AIF_CANDIDATES_ACCEPT,
                 )
+                capped_pool = accumulated_pool[:pool_cap]
+
+                if len(capped_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
+                    result = self._try_aif_dual_roi(
+                        capped_pool, conc_data, brain_mask,
+                        tr, aif_baseline_frames,
+                    )
+                    if result is not None:
+                        aif_curve_r, aif_mask_r, roi_used, _, _ = result
+                        accepted_aif = (aif_curve_r, aif_mask_r, roi_used)
+                        top_candidates = capped_pool
+                        n_available = len(accumulated_pool)
+                        detection_level = "accumulated"
+                        filter_meta = {}
+
+                # Single-best fallback: relaxed gate (global_max_in_fp only,
+                # no SPR/PR check). A noisy single-voxel AIF preserves
+                # patient-specific bolus timing — better than synthetic.
+                if accepted_aif is None and capped_pool:
+                    best_only = [capped_pool[0]]
+                    # Prefer roi_size=1 first (pure voxel timing, no tissue dilution)
+                    for roi_size in (1, 3):
+                        curve, mask = self._compute_roi_averaged_aif(
+                            best_only, conc_data, brain_mask,
+                            roi_size=roi_size,
+                        )
+                        if self._aif_global_max_in_fp(curve, aif_baseline_frames, tr):
+                            accepted_aif = (curve, mask, roi_size)
+                            top_candidates = best_only
+                            n_available = len(accumulated_pool)
+                            detection_level = tiers_attempted[-1] if tiers_attempted else "single_best"
+                            filter_meta = {}
+                            _logger.warning(
+                                "AIF cascade: using single-best candidate "
+                                "(accumulated pool failed dual-ROI validation)"
+                            )
+                            break
 
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
@@ -2430,18 +2540,8 @@ class AIFDetection(BaseInterface):
         # Track initial baseline for QC reporting
         baseline_frames_initial = baseline_frames
 
-        if top_candidates:
-            aif_curve, aif_bool_mask = self._compute_roi_averaged_aif(
-                top_candidates, conc_data, brain_mask
-            )
-
-            # Validate averaged AIF (retry with smaller ROI if needed)
-            aif_curve, aif_bool_mask, top_candidates, validation_qc = (
-                self._validate_averaged_aif(
-                    aif_curve, top_candidates, conc_data, brain_mask,
-                    tr, aif_baseline_frames,
-                )
-            )
+        if accepted_aif is not None and top_candidates:
+            aif_curve, aif_bool_mask, accepted_roi_size = accepted_aif
             aif_mask_arr[aif_bool_mask] = 1
             for _, coord, _ in top_candidates:
                 aif_mask_arr[coord[0], coord[1], coord[2]] = 1
@@ -2476,13 +2576,15 @@ class AIFDetection(BaseInterface):
                 )
                 qc_metrics["cascade_initial_level"] = cascade_initial_level
                 qc_metrics["cascade_final_level"] = detection_level
-            if quality_stash is not None:
-                qc_metrics["cascade_quality_gate_triggered"] = True
-                qc_metrics["cascade_stashed_level"] = quality_stash[2]
-                qc_metrics["cascade_stashed_peak_ratio"] = quality_stash[4]
-            else:
-                qc_metrics["cascade_quality_gate_triggered"] = False
-            qc_metrics.update(validation_qc)
+            qc_metrics["cascade_tiers_attempted"] = tiers_attempted
+            qc_metrics["cascade_accumulated_pool_size"] = len(accumulated_pool)
+            qc_metrics["cascade_accepted_roi_size"] = accepted_roi_size
+            spr, fp_frame, _ = self._compute_aif_spr(
+                aif_curve, aif_baseline_frames, tr,
+            )
+            qc_metrics["averaged_aif_spr"] = round(spr, 1)
+            qc_metrics["averaged_aif_fp_peak_frame"] = fp_frame
+            qc_metrics["averaged_aif_final_roi_size"] = accepted_roi_size
 
         elif not disable_fallback:
             # Synthetic fallback: no candidates found at any cascade level
