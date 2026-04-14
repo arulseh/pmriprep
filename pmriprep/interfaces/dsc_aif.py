@@ -56,6 +56,16 @@ GAMMA_PEAK_RATIO_CASCADE_MAX: float = 1.12
 #: A true arterial bolus will never fit worse than a horizontal line.
 GAMMA_R2_SYNTHETIC_FALLBACK: float = 0.0
 
+#: S0 ratio floor: reject candidates with baseline signal below this
+#: fraction of median brain S0.  Below 0.10, baseline SNR < 5 and the
+#: logarithmic ΔR2* conversion is numerically unstable.
+S0_RATIO_FLOOR: float = 0.10
+
+#: S0 ratio score cap: candidates between S0_RATIO_FLOOR and this value
+#: are admitted but capped in the S0 scoring term so marginal-SNR voxels
+#: do not overwhelm shape-quality metrics.
+S0_RATIO_SCORE_CAP: float = 0.15
+
 # Fraction of user-configured n_candidates to keep at each criteria level.
 # As criteria relax, candidate quality drops — fewer candidates concentrates
 # on the best-scoring voxels from a noisier pool.
@@ -1063,9 +1073,13 @@ class AIFDetection(BaseInterface):
 
         # 6. S0 partial volume rejection
         if median_s0 is not None and not np.isnan(metrics.get("s0", float("nan"))):
+            s0_ratio = metrics["s0"] / (median_s0 + EPSILON_SIGNAL)
+
+            if s0_ratio < S0_RATIO_FLOOR:
+                return float("inf")
+
             s0_factor = {"strict": 0.40, "relaxed": 0.60, "permissive": 0.80}
-            s0_threshold = median_s0 * s0_factor.get(criteria, 0.80)
-            if metrics["s0"] > s0_threshold:
+            if s0_ratio > s0_factor.get(criteria, 0.80):
                 return float("inf")
 
         # 7. TTP window
@@ -1150,7 +1164,8 @@ class AIFDetection(BaseInterface):
         s0_score = 0.0
         if median_s0 is not None and not np.isnan(metrics.get("s0", float("nan"))):
             s0_ratio = metrics["s0"] / (median_s0 + EPSILON_SIGNAL)
-            s0_score = (s0_ratio - 0.35) * 20.0
+            s0_for_scoring = max(s0_ratio, S0_RATIO_SCORE_CAP)
+            s0_score = (s0_for_scoring - 0.35) * 20.0
 
         score = (
             1.0 * ttp_score
