@@ -218,7 +218,7 @@ class DSCDerivativeWriter(BaseInterface):
             "auc": ("rel_auc_raw_map", "AUC raw concentration (relative)", "dscRel"),
             "auc_corr": ("rel_auc_corr_map", "AUC corrected concentration (relative)", "dscRelCorrected"),
         }
-        rel_units = {"cbf": "1/min", "cbv": "arbitrary"}
+        rel_units = {"cbf": "1/min", "cbv": "arbitrary", "auc": "arbitrary"}
         for map_suffix, (attr, description, desc_val) in rel_maps.items():
             if has_input(self.inputs,attr):
                 src = getattr(self.inputs, attr)
@@ -445,6 +445,7 @@ class DSCDerivativeWriter(BaseInterface):
                         fname = f"{prefix}_{spatial}_desc-{desc_prefix}_auc"
                         copy_derivative(filepath, perf_dir / f"{fname}.nii.gz")
                         sidecar = {**base_sidecar, "Description": desc_text,
+                                   "Units": "arbitrary",
                                    "SmoothingFWHM": fwhm,
                                    "SmoothingType": "Gaussian",
                                    "SmoothingMasked": True,
@@ -502,7 +503,7 @@ class DSCDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"brain_mask_dsc"):
             fname = f"{prefix}_{spatial}_desc-brain_mask"
             copy_derivative(self.inputs.brain_mask_dsc, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**minimal_sidecar, "Description": "Brain mask in DSC space"}
+            sidecar = {**minimal_sidecar, "Description": "Brain mask in DSC space", "SkullStripped": True}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         if has_input(self.inputs,"nawm_mask_dsc"):

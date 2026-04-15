@@ -108,21 +108,19 @@ def write_dataset_description(pipeline_dir: Path, bids_dir: str) -> None:
     """Write a unified dataset_description.json at the derivative root.
 
     This is the shared implementation used by all four output writers
-    (anat, DSC, DCE, HD-GLIO).  The first writer to run creates the
-    file; subsequent writers skip if it already exists.
+    (anat, DSC, DCE, HD-GLIO). Always overwrites to ensure the version
+    and metadata stay current across pipeline upgrades.
 
     Args:
         pipeline_dir: Path to the ``pmriprep/`` derivative root directory.
         bids_dir: Path to the source BIDS dataset root.
     """
     desc_path = pipeline_dir / "dataset_description.json"
-    if desc_path.exists():
-        return
 
     pipeline_dir.mkdir(parents=True, exist_ok=True)
     description: Dict[str, Any] = {
         "Name": "PMRIPrep - Perfusion MRI Preprocessing Pipeline",
-        "BIDSVersion": "1.8.0",
+        "BIDSVersion": "1.9.0",
         "DatasetType": "derivative",
         "GeneratedBy": [
             {

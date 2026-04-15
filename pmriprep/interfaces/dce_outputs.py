@@ -242,7 +242,7 @@ class DCEDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         fname = f"{prefix}_{spatial}_{model_entity}_desc-dce_Ktrans"
         copy_derivative(self.inputs.ktrans_map, perf_dir / f"{fname}.nii.gz")
-        sidecar = {**base_sidecar, "Description": "Volume transfer constant (min\u207b\u00b9)", "Units": "1/min"}
+        sidecar = {**base_sidecar, "Description": "Volume transfer constant (1/min)", "Units": "1/min"}
         write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         if has_input(self.inputs,"ve_map"):
@@ -254,7 +254,7 @@ class DCEDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"kep_map"):
             fname = f"{prefix}_{spatial}_{model_entity}_desc-dce_kep"
             copy_derivative(self.inputs.kep_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "Efflux rate constant (min\u207b\u00b9)", "Units": "1/min"}
+            sidecar = {**base_sidecar, "Description": "Efflux rate constant (1/min)", "Units": "1/min"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -331,9 +331,9 @@ class DCEDerivativeWriter(BaseInterface):
         # 3d. Model-free maps (IAUC, peak enhancement, TTP, SER)
         # -----------------------------------------------------------
         model_free_maps = {
-            "IAUC60": ("iauc60_map", "Initial Area Under Curve at 60s (mM\u00b7min)", "mM*min"),
-            "IAUC90": ("iauc90_map", "Initial Area Under Curve at 90s (mM\u00b7min)", "mM*min"),
-            "IAUC120": ("iauc120_map", "Initial Area Under Curve at 120s (mM\u00b7min)", "mM*min"),
+            "IAUC60": ("iauc60_map", "Initial Area Under Curve at 60s (mM*min)", "mM*min"),
+            "IAUC90": ("iauc90_map", "Initial Area Under Curve at 90s (mM*min)", "mM*min"),
+            "IAUC120": ("iauc120_map", "Initial Area Under Curve at 120s (mM*min)", "mM*min"),
             "peakEnhancement": ("peak_enhancement_map", "Peak enhancement percentage", "%"),
             "ttp": ("time_to_peak_map", "Time to peak (seconds)", "s"),
             "SER": ("ser_map", "Signal Enhancement Ratio (washout characterization)", "ratio"),
@@ -399,7 +399,7 @@ class DCEDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"r2_map"):
             fname = f"{prefix}_{spatial}_{model_entity}_desc-dce_R2"
             copy_derivative(self.inputs.r2_map, perf_dir / f"{fname}.nii.gz")
-            sidecar = {**base_sidecar, "Description": "R\u00b2 goodness of fit"}
+            sidecar = {**base_sidecar, "Description": "R2 goodness of fit"}
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         if has_input(self.inputs,"quality_flag_map"):
@@ -410,6 +410,8 @@ class DCEDerivativeWriter(BaseInterface):
                 "Description": "Quality flag map (0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty)",
             }
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
+
+        _pk_qc = self.inputs.qc_metrics.get("pk_modeling", {}) if isdefined(self.inputs.qc_metrics) and self.inputs.qc_metrics else {}
 
         if has_input(self.inputs, "model_selection_map"):
             fname = f"{prefix}_{spatial}_{model_entity}_desc-dceModelSelection_dseg"
@@ -425,6 +427,9 @@ class DCEDerivativeWriter(BaseInterface):
                     "4": "2cxm",
                 },
             }
+            _ms_regions = _pk_qc.get("model_selection_regions")
+            if _ms_regions:
+                ms_sidecar["ModelDistribution"] = _ms_regions
             write_json_sidecar(ms_sidecar, perf_dir / f"{fname}.json")
 
         if has_input(self.inputs, "delta_bic_map"):
@@ -438,6 +443,12 @@ class DCEDerivativeWriter(BaseInterface):
                     "(Kass & Raftery 1995)"
                 ),
             }
+            _r2 = _pk_qc.get("r2_median")
+            _conv = _pk_qc.get("convergence_rate")
+            if _r2 is not None:
+                dbic_sidecar["R2Median"] = _r2
+            if _conv is not None:
+                dbic_sidecar["ConvergenceRate"] = _conv
             write_json_sidecar(dbic_sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -502,6 +513,16 @@ class DCEDerivativeWriter(BaseInterface):
                 return f"Sm{m.group(1)}", m.group(1)
             return "SmN", "N"
 
+        _pk_units: dict[str, str] = {
+            "ktrans": "1/min", "ve": "fraction", "kep": "1/min", "vp": "fraction",
+            "fp": "mL/100g/min", "ps": "mL/100g/min",
+        }
+        _mf_units: dict[str, str] = {
+            "iauc60": "mM*min", "iauc90": "mM*min", "iauc120": "mM*min",
+            "peak_enhancement": "%", "ser": "ratio",
+            "wash_in_slope": "mM/min", "wash_out_slope": "mM/min",
+        }
+
         smooth_pk = self.inputs.smooth_pk_maps
         if isdefined(smooth_pk) and smooth_pk:
             for map_name, src_path in smooth_pk.items():
@@ -509,7 +530,8 @@ class DCEDerivativeWriter(BaseInterface):
                     fwhm_str, fwhm_mm = _extract_fwhm(src_path)
                     fname = f"{prefix}_{spatial}_{model_entity}_desc-dce{fwhm_str}_{map_name}"
                     copy_derivative(src_path, perf_dir / f"{fname}.nii.gz")
-                    sidecar = _smoothing_sidecar(f"Smoothed {map_name} map", fwhm_mm)
+                    _extra = {"Units": _pk_units[map_name]} if map_name in _pk_units else None
+                    sidecar = _smoothing_sidecar(f"Smoothed {map_name} map", fwhm_mm, extra=_extra)
                     write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         smooth_mf = self.inputs.smooth_model_free_maps
@@ -519,8 +541,9 @@ class DCEDerivativeWriter(BaseInterface):
                     fwhm_str, fwhm_mm = _extract_fwhm(src_path)
                     fname = f"{prefix}_{spatial}_desc-dce{fwhm_str}_{map_name}"
                     copy_derivative(src_path, perf_dir / f"{fname}.nii.gz")
+                    _extra = {"Units": _mf_units[map_name]} if map_name in _mf_units else None
                     sidecar = _smoothing_sidecar(
-                        f"Smoothed model-free {map_name} map", fwhm_mm,
+                        f"Smoothed model-free {map_name} map", fwhm_mm, extra=_extra,
                     )
                     write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
@@ -533,8 +556,9 @@ class DCEDerivativeWriter(BaseInterface):
                     param = map_name.replace("_std", "")
                     fname = f"{prefix}_{spatial}_{model_entity}_desc-dceUncertainty{fwhm_str}_{param}"
                     copy_derivative(src_path, perf_dir / f"{fname}.nii.gz")
+                    _extra = {"Units": _pk_units[param]} if param in _pk_units else None
                     sidecar = _smoothing_sidecar(
-                        f"Smoothed {map_name} uncertainty map", fwhm_mm,
+                        f"Smoothed {map_name} uncertainty map", fwhm_mm, extra=_extra,
                     )
                     write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
@@ -548,6 +572,7 @@ class DCEDerivativeWriter(BaseInterface):
                     copy_derivative(src_path, perf_dir / f"{fname}.nii.gz")
                     sidecar = _smoothing_sidecar(
                         "Smoothed Ktrans corrected for tissue tortuosity", fwhm_mm,
+                        extra={"Units": "1/min"},
                     )
                     write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
@@ -579,7 +604,7 @@ class DCEDerivativeWriter(BaseInterface):
             anat_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{prefix}_{spatial}_desc-brain_mask"
             copy_derivative(self.inputs.brain_mask, anat_dir / f"{fname}.nii.gz")
-            sidecar = {**minimal_sidecar, "Description": "Brain mask in DCE space"}
+            sidecar = {**minimal_sidecar, "Description": "Brain mask in DCE space", "SkullStripped": True}
             write_json_sidecar(sidecar, anat_dir / f"{fname}.json")
 
         if has_input(self.inputs,"nawm_mask"):

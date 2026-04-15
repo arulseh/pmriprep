@@ -354,8 +354,8 @@ def validate_vp_cbv(
         result.circular = True
         result.status = QCStatus.CIRCULAR
         result.interpretation = (
-            "vp hard-constrained from CBV — cross-validation is circular. "
-            "See delta-R² in pk_qc for constraint benefit assessment."
+            "vp hard-constrained from CBV -- cross-validation is circular. "
+            "See delta-R2 in pk_qc for constraint benefit assessment."
         )
         result.metrics = metrics
         logger.info(
@@ -435,7 +435,7 @@ def validate_vp_cbv(
         result.metrics = metrics
         result.interpretation = (
             f"vp/CBV ratio variance too low (std={metrics.std_ratio:.4f}); "
-            "soft constraint is functionally hard — correlation is circular"
+            "soft constraint is functionally hard -- correlation is circular"
         )
         logger.info(
             "Cross-validation CIRCULAR: std_ratio=%.4f < %.2f "
@@ -495,7 +495,7 @@ def validate_vp_cbv(
         corr_pass = CORRELATION_PASS_SOFT
         corr_warn = CORRELATION_WARN_SOFT
         interpretations.append(
-            "vp soft-constrained — correlation may be inflated"
+            "vp soft-constrained -- correlation may be inflated"
         )
     else:
         corr_pass = CORRELATION_PASS_UNCONSTRAINED
@@ -504,28 +504,28 @@ def validate_vp_cbv(
     if metrics.correlation < 0:
         corr_status = QCStatus.POOR
         interpretations.append(
-            f"Negative vp-CBV correlation (\u03c1={metrics.correlation:.3f}): "
+            f"Negative vp-CBV correlation (rho={metrics.correlation:.3f}): "
             "physically implausible"
         )
     elif metrics.correlation < corr_warn:
         corr_status = QCStatus.POOR
         interpretations.append(
-            f"No meaningful vp-CBV correlation (\u03c1={metrics.correlation:.3f})"
+            f"No meaningful vp-CBV correlation (rho={metrics.correlation:.3f})"
         )
     elif metrics.correlation < corr_pass:
         corr_status = QCStatus.WARN
         interpretations.append(
-            f"Weak vp-CBV correlation (\u03c1={metrics.correlation:.3f})"
+            f"Weak vp-CBV correlation (rho={metrics.correlation:.3f})"
         )
     elif metrics.correlation > 0.7:
         corr_status = QCStatus.PASS
         interpretations.append(
-            f"Strong vp-CBV correlation (\u03c1={metrics.correlation:.3f})"
+            f"Strong vp-CBV correlation (rho={metrics.correlation:.3f})"
         )
     else:
         corr_status = QCStatus.PASS
         interpretations.append(
-            f"Moderate vp-CBV correlation (\u03c1={metrics.correlation:.3f})"
+            f"Moderate vp-CBV correlation (rho={metrics.correlation:.3f})"
         )
 
     # --- Coverage status (constraint-mode-dependent thresholds) ---

@@ -41,7 +41,7 @@ def mock_bids_dir(tmp_path: Path) -> Path:
     bids_dir = tmp_path / "bids"
     bids_dir.mkdir()
     (bids_dir / "dataset_description.json").write_text(
-        '{"Name": "Test", "BIDSVersion": "1.8.0"}'
+        '{"Name": "Test", "BIDSVersion": "1.9.0"}'
     )
     return bids_dir
 

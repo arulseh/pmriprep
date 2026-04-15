@@ -108,9 +108,17 @@ def create_provenance_dict(
     if processing_description:
         provenance["Description"] = processing_description
 
-    # Configuration used
+    # Configuration used (strip internal/runtime fields and None values)
     if config_used:
-        provenance["ProcessingConfiguration"] = config_used
+        _PROVENANCE_EXCLUDE = {
+            "mcmc_samples", "cpi_control_points",
+            "hdbet_device", "hdbet_conda_env",
+            "num_processes",
+        }
+        provenance["ProcessingConfiguration"] = {
+            k: v for k, v in config_used.items()
+            if k not in _PROVENANCE_EXCLUDE and v is not None
+        }
 
     # Software versions
     if include_versions:
