@@ -80,7 +80,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "PMRIPrep: Perfusion MRI Preprocessing Pipeline\n\n"
             "Automated preprocessing and quantification of DSC and DCE\n"
-            "perfusion MRI data. Reads BIDS-formatted input and produces\n"
+            "data. Reads BIDS-formatted input and produces\n"
             "BIDS-Derivatives compliant output with QC reports."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -156,8 +156,7 @@ Examples:
         type=int,
         default=None,
         metavar="N",
-        help="Maximum number of threads per-process for ANTs/FSL. "
-        "Controls OMP_NUM_THREADS and ITK thread settings.",
+        help="Per-process thread limit (OMP/MKL/ITK).",
     )
     parser.add_argument(
         "--mem-gb",
@@ -203,20 +202,17 @@ Examples:
         "--skip-dsc",
         action="store_true",
         default=False,
-        help="Skip DSC (Dynamic Susceptibility Contrast) perfusion pipeline.",
+        help="Skip DSC (Dynamic Susceptibility Contrast) pipeline.",
     )
     skip_group.add_argument(
         "--skip-dce",
         action="store_true",
         default=False,
-        help="Skip DCE (Dynamic Contrast Enhanced) perfusion pipeline.",
+        help="Skip DCE (Dynamic Contrast Enhanced) pipeline.",
     )
 
     # Device options
-    device_group = parser.add_argument_group(
-        "Device options",
-        "Hardware device selection for neural network tools.",
-    )
+    device_group = parser.add_argument_group()
     device_group.add_argument(
         "--hdbet-device",
         choices=["auto", "cuda", "mps", "cpu"],
@@ -226,7 +222,7 @@ Examples:
     # DSC options
     dsc_group = parser.add_argument_group(
         "DSC options",
-        "Options for DSC (Dynamic Susceptibility Contrast) perfusion processing.",
+        "Options for DSC (Dynamic Susceptibility Contrast) processing.",
     )
     dsc_group.add_argument(
         "--dsc-deconv-method",
@@ -255,18 +251,17 @@ Examples:
         type=_dose_type,
         default=None,
         metavar="DOSE",
-        help="Contrast agent dose for DSC: a named preset "
-        "(half, full, double) or a positive float multiplier "
-        "(e.g. 0.75). Default: full (1.0). "
-        "Affects AIF detection peak thresholds.",
+        help="Dose multiplier (default: 1.0). "
+        "Accepts a float or presets: half, full, double.",
     )
     dsc_group.add_argument(
         "--dsc-agent-standard-dose",
         type=float,
         default=None,
         metavar="DOSE",
-        help="Agent's recommended dose in mmol Gd/kg. "
-        "Default 0.1 (standard). Use 0.05 for gadopiclenol, 0.04 for gadoquatrane.",
+        help="Override agent standard dose in mmol Gd/kg "
+        "(auto-detected from ContrastBolusAgent sidecar field when available). "
+        "Default: 0.1.",
     )
     dsc_group.add_argument(
         "--dsc-aif-method",
@@ -294,23 +289,22 @@ Examples:
     # DCE options
     dce_group = parser.add_argument_group(
         "DCE options",
-        "Options for DCE (Dynamic Contrast Enhanced) perfusion processing.",
+        "Options for DCE (Dynamic Contrast Enhanced) processing.",
     )
     dce_group.add_argument(
         "--dce-model",
         choices=["auto", "tofts", "extended_tofts", "patlak", "2cxm"],
         default=None,
         help="Pharmacokinetic model for DCE. 'auto' performs per-voxel BIC "
-        "model selection (candidate set gated by temporal resolution), "
-        "producing a hybrid map where each voxel uses its best-fitting "
-        "model. (default: auto).",
+        "model selection from Patlak, Extended Tofts, and 2CXM "
+        "(default: auto).",
     )
     dce_group.add_argument(
         "--dce-bayesian",
         choices=["none", "vi", "map"],
         default=None,
         help="Bayesian inference method for DCE: none (default, NLLS), "
-        "vi (recommended, variational), map (maximum a posteriori).",
+        "vi (variational inference), map (maximum a posteriori).",
     )
     dce_group.add_argument(
         "--dce-aif-method",
@@ -332,10 +326,8 @@ Examples:
         type=_dose_type,
         default=None,
         metavar="DOSE",
-        help="Contrast agent dose for DCE: a named preset "
-        "(half, full, double) or a positive float multiplier "
-        "(e.g. 0.75). Default: full (1.0). "
-        "Affects population AIF scaling.",
+        help="Dose multiplier (default: 1.0). "
+        "Accepts a float or presets: half, full, double.",
     )
     dce_group.add_argument(
         "--dce-r1",
@@ -396,10 +388,7 @@ Examples:
         help=argparse.SUPPRESS,
     )
     # Tumor segmentation options
-    tumor_seg_group = parser.add_argument_group(
-        "Tumor segmentation options",
-        "Options for tumor segmentation.",
-    )
+    tumor_seg_group = parser.add_argument_group()
     tumor_seg_group.add_argument(
         "--tumor-seg-conda-env",
         type=str,
@@ -422,7 +411,7 @@ Examples:
         "--stop-on-first-crash",
         action="store_true",
         default=False,
-        help="Force stopping on first crash, even if a work directory was specified.",
+        help="Stop on first crash.",
     )
     g_other.add_argument(
         "--write-graph",
@@ -447,7 +436,7 @@ Examples:
         "--clean-workdir",
         action="store_true",
         default=False,
-        help="Delete working directory contents after processing all subjects.",
+        help="Delete working directory after processing.",
     )
     g_other.add_argument(
         "--sloppy",
