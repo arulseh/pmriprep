@@ -2,17 +2,17 @@
 
 **Perfusion MRI Preprocessing Pipeline**
 
-PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and Dynamic Contrast Enhanced (DCE) perfusion MRI data. It follows the [NiPreps](https://www.nipreps.org/) framework conventions and produces BIDS-Derivatives compliant outputs with HTML QC reports.
+PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and Dynamic Contrast Enhanced (DCE) data. It follows the [NiPreps](https://www.nipreps.org/) framework conventions and produces BIDS-Derivatives compliant outputs with HTML QC reports.
 
 ## Features
 
 - **DSC Processing**: Six deconvolution methods (sSVD, cSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction
 - **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps
-- **Bayesian Inference**: Variational inference (VI) for parametric methods (DSC: CPI, Vascular; DCE: Tofts, Extended Tofts, Patlak, 2CXM) with uncertainty quantification
+- **Bayesian Inference**: Variational inference (VI) and MAP estimation with uncertainty quantification
 - **Automatic AIF Detection**: Multi-level arterial input function detection with population fallback, or user-supplied external AIF
 - **T1 Mapping**: Variable flip angle T1 mapping with optional B1+ correction
 - **Tumor Segmentation**: HD-GLIO integration for glioma segmentation
-- **NAWM Normalization**: Relative perfusion metrics using contralateral normal-appearing white matter
+- **NAWM Normalization**: Automatic NAWM ROI derivation for relative perfusion metrics
 - **QC Reports**: Per-session HTML reports with AIF quality, motion, registration, and parameter map visualizations
 
 ## Installation
@@ -113,7 +113,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--participant-label LABEL [...]` | Participant(s) to process (without `sub-` prefix) |
 | `--session-label LABEL [...]` | Session(s) to process (without `ses-` prefix) |
 | `--nprocs N` | Maximum number of parallel processes (default: 1) |
-| `--omp-nthreads N` | Threads per process for ANTs/FSL |
+| `--omp-nthreads N` | Per-process thread limit (OMP/MKL/ITK) |
 | `--mem-gb GB` | Upper bound memory limit in GB |
 | `-w PATH`, `--work-dir PATH` | Working directory for intermediate files |
 | `--config-file PATH` | YAML or JSON configuration file for advanced options |
@@ -135,20 +135,21 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dsc-deconv-method {sSVD,cSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
 | `--dsc-bayesian {vi,map}` | Bayesian inference for parametric methods (default: vi) |
 | `--dsc-preload` | Indicate contrast preload is present |
-| `--dsc-dose DOSE` | Contrast agent dose: named preset (`half`, `full`, `double`) or float multiplier (e.g. `0.75`). Default: `full` (1.0) |
-| `--dsc-agent-standard-dose DOSE` | Agent's recommended dose in mmol Gd/kg. Default: `0.1` (standard GBCA). Use `0.05` for gadopiclenol, `0.04` for gadoquatrane |
+| `--dsc-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
+| `--dsc-agent-standard-dose DOSE` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available). Default: `0.1` |
 | `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
 | `--dsc-aif-file FILE` | External AIF curve file (ΔR2* in s⁻¹); bypasses detection |
+| `--dsc-registration {flirt,flirt_bbr}` | Registration method (default: flirt). `flirt_bbr` adds BBR refinement |
 
 ### DCE Options
 
 | Flag | Description |
 |------|-------------|
-| `--dce-model {auto,tofts,extended_tofts,patlak,2cxm}` | Pharmacokinetic model. `auto` performs per-voxel BIC model selection, where each voxel uses the best-fitting model (default: auto) |
-| `--dce-bayesian {none,vi,map}` | Bayesian inference method (default: none, vi recommended) |
+| `--dce-model {auto,tofts,extended_tofts,patlak,2cxm}` | Pharmacokinetic model. `auto` performs per-voxel BIC model selection from Patlak, Extended Tofts, and 2CXM (default: auto) |
+| `--dce-bayesian {none,vi,map}` | Bayesian inference method (default: none) |
 | `--dce-aif-method {auto,population}` | AIF detection method (default: auto) |
 | `--dce-aif-file FILE` | External AIF curve file (plasma concentration in mM); bypasses detection |
-| `--dce-dose DOSE` | Contrast agent dose: named preset (`half`, `full`, `double`) or float multiplier (e.g. `0.75`). Default: `full` (1.0) |
+| `--dce-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `--dce-r1 R1` | Override r1 relaxivity (s⁻¹/mM) for concentration conversion |
 | `--dce-b1-method {auto,afi,tfl_b1map,none}` | B1+ correction method (default: auto) |
 | `--dce-no-t1` | Skip T1 mapping (use default T1 for field strength) |
@@ -188,14 +189,16 @@ pmriprep /path/to/bids /path/to/output participant \
 dsc:
   method: cpi
   bayesian: vi
-  aif_criteria: relaxed
+  preload_present: true
+  dose: 0.75
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
   underlays: [t1w_postcon, flair]
 
 dce:
   model: extended_tofts
-  bayesian: map
+  bayesian: vi
+  dose: 0.75
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
   underlays: [t1w_postcon, flair]
@@ -206,43 +209,42 @@ dce:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `preload_present` | bool | `false` | Contrast preload present |
-| `dose` | float | `1.0` | Dose multiplier: named preset (`half`=0.5, `full`=1.0, `double`=2.0) or any positive float |
-| `agent_standard_dose` | float | `0.1` | Agent's recommended dose in mmol Gd/kg (0.1=standard, 0.05=gadopiclenol, 0.04=gadoquatrane) |
+| `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
+| `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
 | `bayesian` | str | `"vi"` | Bayesian mode: `vi`, `map` (parametric methods only; SVD ignores) |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
-| `aif_criteria` | str | `"strict"` | AIF selection: `strict`, `relaxed` |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
-| `aif_mask_file` | path | `null` | Custom AIF mask file |
+| `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
 | `gamma_fit` | str | `"auto"` | Gamma-variate AIF fitting: `auto`, `on`, `off` |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |
-| `pre_bolus` | int | `5` | Pre-bolus frames for S0 estimation (AIF timing auto-detected) |
-| `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none) |
+| `pre_bolus` | int | `5` | Initial baseline for motion correction reference image. Baseline is re-estimated after AIF detection |
+| `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
 | `registration` | str | `"flirt"` | Registration method: `flirt`, `flirt_bbr` |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
-| `underlays` | list | `[]` | Structural images to transform to DSC space for QC overlays: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
-| `leakage_method` | str | `"bsw"` | K2 leakage correction: `bsw` (standard), `bidirectional` (Leu 2016) |
+| `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
+| `leakage_method` | str | `"bsw"` | K2 leakage correction: `bsw` (standard), `bidirectional` |
 | `kep` | float | `0.005` | EES efflux rate for bidirectional correction (s⁻¹); ignored for bsw |
 
 ### DCE Configuration
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection. Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
-| `bayesian` | str | `"none"` | Bayesian mode: `none`, `vi` (recommended), `map` |
+| `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection (Patlak, Extended Tofts, 2CXM). Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
+| `bayesian` | str | `"none"` | Bayesian mode: `none`, `vi`, `map` |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
 | `aif_file` | path | `null` | External AIF curve file (`.txt` or `.npz` with `Cp`/`aif` key); plasma concentration in mM, temporally aligned with DCE volumes. Bypasses AIF detection |
 | `scale_aif` | bool | `true` | Scale AIF to population reference |
 | `target_peak` | float | `null` | Target AIF peak (mM); null = field-strength default |
-| `aif_mask_file` | path | `null` | Custom AIF mask file |
+| `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
-| `dose` | float | `1.0` | Dose multiplier: named preset (`half`=0.5, `full`=1.0, `double`=2.0) or any positive float |
+| `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
 | `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `tfl_b1map`, `none` |
 | `no_t1` | bool | `false` | Skip T1 mapping |
@@ -251,7 +253,7 @@ dce:
 | `t1_correction_mode` | str | `"auto"` | T1 correction mode: `auto`, `none`, `offset`, `fallback` |
 | `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect) |
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
-| `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none) |
+| `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `no_tortuosity` | bool | `false` | Skip DWI-based tortuosity correction |
 | `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation |
 | `cbv_constraint_mode` | str | `"auto"` | DSC CBV constraint: `auto`, `hard`, `soft`, `skip` |
@@ -259,7 +261,7 @@ dce:
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
-| `underlays` | list | `[]` | Structural images to transform to DCE space for QC overlays: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
+| `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
 
 ### Anatomical Configuration
 
@@ -295,14 +297,16 @@ bids_dir/
         sub-01_ses-01_run-1_FLAIR.json
         sub-01_ses-01_run-1_T2w.nii.gz
         sub-01_ses-01_run-1_T2w.json
-        sub-01_ses-01_flip-02_run-1_VFA.nii.gz               # VFA T1 mapping
-        sub-01_ses-01_flip-02_run-1_VFA.json
+        sub-01_ses-01_flip-05_run-1_VFA.nii.gz               # VFA T1 mapping
+        sub-01_ses-01_flip-05_run-1_VFA.json
         sub-01_ses-01_flip-15_run-1_VFA.nii.gz
         sub-01_ses-01_flip-15_run-1_VFA.json
+        sub-01_ses-01_flip-25_run-1_VFA.nii.gz
+        sub-01_ses-01_flip-25_run-1_VFA.json
       perf/
-        sub-01_ses-01_ce-GAD_run-1_dsc.nii.gz                # DSC perfusion
+        sub-01_ses-01_ce-GAD_run-1_dsc.nii.gz                # DSC
         sub-01_ses-01_ce-GAD_run-1_dsc.json
-        sub-01_ses-01_ce-GAD_run-1_dce.nii.gz                # DCE perfusion
+        sub-01_ses-01_ce-GAD_run-1_dce.nii.gz                # DCE
         sub-01_ses-01_ce-GAD_run-1_dce.json
       dwi/
         sub-01_ses-01_run-1_dwi.nii.gz                       # DWI (for ADC / tortuosity)
@@ -340,7 +344,7 @@ B1+ correction accepts either AFI (`*_TB1AFI`) or Siemens pre-computed flip angl
   "ContrastBolusAgent": "gadobutrol"
 }
 ```
-Required: `RepetitionTime`, `EchoTime`, `FlipAngle`. Optional: `MagneticFieldStrength` (default 3T), `ContrastBolusAgent`.
+Required: `RepetitionTime`, `EchoTime`, `FlipAngle`, `MagneticFieldStrength`. Recommended: `ContrastBolusAgent` (used for AIF peak threshold scaling).
 
 **DCE sidecar (`*_dce.json`):**
 ```json
@@ -353,9 +357,11 @@ Required: `RepetitionTime`, `EchoTime`, `FlipAngle`. Optional: `MagneticFieldStr
   "ContrastBolusAgent": "gadobutrol"
 }
 ```
-Required: `FlipAngle`. For 3D sequences (VIBE/LAVA/THRIVE), both `RepetitionTime` (volume TR) and `RepetitionTimeExcitation` (pulse TR) are required. For 2D sequences, `RepetitionTime` serves as both. Optional: `MagneticFieldStrength`, `ContrastBolusAgent`.
+Required: `FlipAngle`, `MagneticFieldStrength`. For 3D sequences (VIBE/LAVA/THRIVE), both `RepetitionTime` (volume TR) and `RepetitionTimeExcitation` (pulse TR) are required. For 2D sequences, `RepetitionTime` serves as both. Recommended: `ContrastBolusAgent` (used for relaxivity lookup and AIF peak threshold scaling).
 
 > **Note:** If `ContrastBolusAgent` is not provided, the pipeline defaults to Gd-DTPA (r1=3.8 s⁻¹/mM at 3T). For high-relaxivity agents (gadopiclenol, gadoquatrane), this default produces incorrect quantitative DCE parameters. The pipeline warns about defaults in the HTML QC report and records assumed values in output JSON sidecars under `PerfusionProcessing`. Use `--dce-r1` to override.
+>
+> **Dose:** `--dsc-dose` and `--dce-dose` are multipliers of the agent's recommended dose (e.g., `0.5` for half dose, `1.0` for full). If you administered less than a full dose (common with DSC preload protocols), set the multiplier accordingly. Incorrect dose settings cause AIF detection failure because peak concentration thresholds are scaled by dose.
 
 **VFA sidecar (`*_VFA.json`):**
 ```json
@@ -364,7 +370,7 @@ Required: `FlipAngle`. For 3D sequences (VIBE/LAVA/THRIVE), both `RepetitionTime
   "FlipAngle": 2
 }
 ```
-Required: `RepetitionTime`, `FlipAngle` (per file, minimum 2 distinct angles).
+Required: `RepetitionTime`, `FlipAngle` (per file, minimum 2 distinct angles, 3+ recommended).
 
 **AFI sidecar (`*_TB1AFI.json`):**
 ```json
@@ -395,10 +401,12 @@ output_dir/pmriprep/
     anat/
       sub-01_ses-01_space-anat_desc-preproc_T1w.nii.gz
       sub-01_ses-01_space-anat_desc-brain_mask.nii.gz
+      sub-01_ses-01_space-anat_label-GM_probseg.nii.gz
       sub-01_ses-01_space-anat_label-WM_probseg.nii.gz
+      sub-01_ses-01_space-anat_label-CSF_probseg.nii.gz
       sub-01_ses-01_space-DCE_T1map.nii.gz
       sub-01_ses-01_space-DCE_B1plusmap.nii.gz
-      sub-01_ses-01_space-anat_desc-hdglio_dseg.nii.gz
+      sub-01_ses-01_space-anat_desc-tumorseg_dseg.nii.gz
       sub-01_ses-01_space-anat_desc-enhancing_mask.nii.gz
       sub-01_ses-01_space-anat_desc-nawm_mask.nii.gz
       # ... tissue segmentations, transforms, space-specific masks
@@ -464,7 +472,7 @@ output_dir/pmriprep/
     sub-01_ses-01_desc-anatQC_quality.json
     sub-01_ses-01_desc-dscQC_quality.json
     sub-01_ses-01_desc-dceQC_quality.json
-    sub-01_ses-01_desc-hdglioQC_quality.json
+    sub-01_ses-01_desc-tumorsegQC_quality.json
     sub-01_ses-01_space-DSC_desc-lesionStats.json
     sub-01_ses-01_space-DCE_desc-lesionStats.json
     # HTML report
@@ -486,7 +494,7 @@ output_dir/pmriprep/
 | `*_desc-dscAifCorrected_ttp` | Time to peak, corrected for AIF bolus arrival | seconds |
 | `*_desc-dscNawmRel_ttp` | Time to peak relative to contralateral NAWM | seconds |
 | `*_desc-dsc_k2` | K2 leakage parameter | 1/s |
-| `*_desc-dsc_ph` | Peak height | arbitrary |
+| `*_desc-dsc_ph` | Peak height | % |
 | `*_desc-dsc_psr` | Percent signal recovery | % |
 | `*_desc-dsc_snr` | Signal-to-noise ratio (baseline) | arbitrary |
 | `*_desc-dsc_tsnr` | Temporal signal-to-noise ratio | arbitrary |
@@ -522,7 +530,7 @@ output_dir/pmriprep/
 | `*_desc-dce_washOutSlope` | Linear washout slope (negative=washout) | mM/min |
 | `*_desc-dce_BAT` | Bolus arrival time | seconds |
 | `*_desc-dce_curveType` | Curve type (1=persistent, 2=plateau, 3=washout) | categorical |
-| `*_desc-dce_tsnr` | Temporal signal-to-noise ratio | ratio |
+| `*_desc-dce_tsnr` | Temporal signal-to-noise ratio | arbitrary |
 | `*_desc-dceNawmNorm_Ktrans` | NAWM-normalized Ktrans | ratio |
 | `*_desc-dceNawmNorm_IAUC60` | NAWM-normalized IAUC60 | ratio |
 | `*_desc-dceTortuosityCorr_Ktrans` | Tortuosity-corrected Ktrans (requires DWI) | 1/min |
@@ -540,10 +548,10 @@ All NIfTI outputs have paired `.json` sidecars with descriptions, units, and pro
 
 PMRIPrep generates a per-session HTML report (`sub-XX_ses-XX.html`) in the output directory. The report includes:
 
-- **Anatomical**: Brain mask overlays, tissue segmentation, registration quality
-- **Tumor segmentation**: Segmentation overlays on T1w post-contrast and FLAIR, volume statistics
-- **DSC**: AIF curve and quality metrics, motion parameters, parameter map montages (CBF, CBV, MTT, Tmax), K2 leakage maps
-- **DCE**: AIF curve, T1 map quality, tSNR map, parameter map montages (Ktrans, ve, vp, kep), model-free maps (IAUC, SER, wash-in/out slopes, BAT, curve type), R-squared goodness-of-fit
+- **Anatomical**: Brain mask overlay, tissue segmentation, MNI alignment, cross-modal coregistration (T1w post-contrast, T2w, FLAIR)
+- **Tumor segmentation**: Segmentation overlays on T1w post-contrast and FLAIR, NAWM ROI visualization, volume statistics
+- **DSC**: Brain extraction, registration overlay, motion parameters, preprocessing QC (tSNR, CNR), AIF curve and quality metrics, leakage correction, example voxel fit, parameter map montages (CBF, CBV, MTT, Tmax)
+- **DCE**: Brain extraction, registration overlay, B1+ mapping QC, T1 map quality, motion parameters, preprocessing QC (tSNR, enhancement), AIF curve and quality metrics, example voxel fit, parameter map montages (Ktrans, ve, vp), model selection visualization, DSC-DCE cross-validation
 
 Use `--report-only` to regenerate reports from existing outputs without re-running the pipeline.
 
@@ -567,4 +575,3 @@ If you use PMRIPrep in your research, please cite:
 ## Support
 
 - **Issues**: https://github.com/pmriprep/pmriprep/issues
-- **Documentation**: https://pmriprep.readthedocs.io
