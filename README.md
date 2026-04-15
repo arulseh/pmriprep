@@ -139,7 +139,6 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dsc-agent-standard-dose DOSE` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available). Default: `0.1` |
 | `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
 | `--dsc-aif-file FILE` | External AIF curve file (ΔR2* in s⁻¹); bypasses detection |
-| `--dsc-registration {flirt,flirt_bbr}` | Registration method (default: flirt). `flirt_bbr` adds BBR refinement |
 
 ### DCE Options
 
@@ -223,7 +222,6 @@ dce:
 | `pre_bolus` | int | `5` | Initial baseline for motion correction reference image. Baseline is re-estimated after AIF detection |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
-| `registration` | str | `"flirt"` | Registration method: `flirt`, `flirt_bbr` |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
