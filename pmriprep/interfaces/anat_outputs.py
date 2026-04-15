@@ -130,7 +130,7 @@ class AnatDerivativeWriter(BaseInterface):
                     sub-XX_ses-XX_space-anat_desc-preproc_T1w.nii.gz
                     sub-XX_ses-XX_space-anat_desc-preproc_T1w.json
                     sub-XX_ses-XX_space-anat_desc-brain_mask.nii.gz
-                    from-anat_to-ACPC_mode-image_xfm.mat
+                    from-anat_to-MNI152NLin6Asym_mode-image_xfm.mat
                     ...
                 sub-XX_ses-XX_desc-anatQC_quality.json
                 figures/
@@ -342,7 +342,7 @@ class AnatDerivativeWriter(BaseInterface):
         # ---------------------------------------------------------------
 
         # ACPC transform (always present)
-        acpc_fname = get_xfm_filename(subject, session, "anat", "ACPC")
+        acpc_fname = get_xfm_filename(subject, session, "anat", "MNI152NLin6Asym")
         copy_derivative(self.inputs.acpc_xfm, anat_dir / acpc_fname)
 
         # Optional transforms

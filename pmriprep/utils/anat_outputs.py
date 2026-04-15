@@ -304,7 +304,7 @@ def get_xfm_filename(
     from_space : str
         Source space (e.g., "T1wCE", "T2w", "FLAIR").
     to_space : str
-        Target space (e.g., "anat", "ACPC").
+        Target space (e.g., "anat", "MNI152NLin6Asym").
 
     Returns
     -------
