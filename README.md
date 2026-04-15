@@ -367,7 +367,7 @@ Required: `FlipAngle`, `MagneticFieldStrength`. For 3D sequences (VIBE/LAVA/THRI
 ```json
 {
   "RepetitionTime": 0.00313,
-  "FlipAngle": 2
+  "FlipAngle": 5
 }
 ```
 Required: `RepetitionTime`, `FlipAngle` (per file, minimum 2 distinct angles, 3+ recommended).
