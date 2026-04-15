@@ -47,7 +47,6 @@ from pmriprep.models.dce.batched_models import (
     batched_patlak_model,
     batched_tofts_model,
     evaluate_model,
-    get_optimal_batch_size,
 )
 from pmriprep.models.dce.batched_fitting import (
     FitResult as BatchedFitResult,
@@ -80,5 +79,4 @@ __all__ = [
     "batched_patlak_model",
     "batched_tofts_model",
     "evaluate_model",
-    "get_optimal_batch_size",
 ]

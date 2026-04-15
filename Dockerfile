@@ -24,14 +24,14 @@
 #     -v /path/to/bids_dir:/data:ro \
 #     -v /path/to/output:/out \
 #     pmriprep:latest \
-#     /data /out participant --use-gpu
+#     /data /out participant --hdbet-device cuda --tumor-seg-device cuda
 
 FROM condaforge/miniforge3:24.11.3-2
 
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
-LABEL org.opencontainers.image.version="0.3.0"
+LABEL org.opencontainers.image.version="0.24.4"
 LABEL org.opencontainers.image.source="https://github.com/pmriprep/pmriprep"
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 
@@ -146,10 +146,6 @@ RUN (pip install --no-cache-dir HD-GLIO==2.0 || \
     python -c "from hd_glio.paths import folder_with_parameter_files; assert folder_with_parameter_files.startswith('/opt/'), f'patch failed: {folder_with_parameter_files}'" && \
     python -c "from hd_glio.setup_hd_glio import maybe_download_weights; maybe_download_weights()" && \
     chmod -R a+rX /opt/hd_glio_params
-
-# Install CuPy (GPU-accelerated deconvolution) — prebuilt CUDA 12.x wheel,
-# same pattern as PyTorch above (generic `cupy` has no prebuilt wheels).
-RUN pip install --no-cache-dir cupy-cuda12x==14.0.1
 
 # Copy source and install pmriprep
 COPY --chown=1000:1000 . /src/pmriprep

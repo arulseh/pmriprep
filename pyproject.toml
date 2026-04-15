@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.24.3"
+version = "0.24.4"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
@@ -42,9 +42,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gpu = [
-    "cupy>=12.0.0",
-]
 test = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -54,7 +51,7 @@ dev = [
     "mypy>=1.0.0",
 ]
 all = [
-    "pmriprep[gpu,test,dev]",
+    "pmriprep[test,dev]",
 ]
 
 [project.scripts]

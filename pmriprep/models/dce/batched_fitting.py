@@ -9,9 +9,6 @@ The key insight is that while each LM iteration requires solving a small
 per-voxel normal equation (2-4 unknowns), the forward model evaluations
 (the expensive part) can be batched across all voxels.
 
-Uses CuPy for GPU acceleration when available, with automatic fallback to
-NumPy on CPU.
-
 References:
     Marquardt DW. An algorithm for least-squares estimation of nonlinear
     parameters. J Soc Indust Appl Math. 1963;11(2):431-441.
@@ -445,7 +442,7 @@ def batched_lm_fit(
         """Evaluate forward model, using global indices for fixed_vp lookup."""
         param_dict = _build_full_params_idx(free_params, global_indices)
         predicted = evaluate_model(
-            model_name, param_dict, aif, time_points, use_gpu=False,
+            model_name, param_dict, aif, time_points,
         ).tissue_curves
         if vp_subtracted and fixed_vp is not None:
             predicted = predicted - fixed_vp[global_indices, None] * aif[None, :]
@@ -590,7 +587,7 @@ def batched_lm_fit(
     # Final evaluation for all voxels
     all_param_dict = _build_full_params_idx(params, np.arange(n_voxels))
     all_predicted = evaluate_model(
-        model_name, all_param_dict, aif, time_points, use_gpu=False,
+        model_name, all_param_dict, aif, time_points,
     ).tissue_curves
 
     if vp_subtracted and fixed_vp is not None:

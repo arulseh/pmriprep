@@ -58,18 +58,8 @@ from pmriprep.utils.tumor_seg import (
 )
 from pmriprep.utils.device import detect_torch_device
 from pmriprep.utils.gpu import (
-    BatchedVoxelProcessor,
-    array_on_device,
-    clear_gpu_memory,
     detect_gpu_count,
-    ensure_contiguous,
-    get_array_module,
     get_device_name,
-    get_gpu_memory_info,
-    is_cupy_available,
-    synchronize,
-    to_device,
-    to_host,
 )
 from pmriprep.utils.structural_reference import (
     ApplicationType,
@@ -137,18 +127,8 @@ __all__ = [
     # device
     "detect_torch_device",
     # gpu
-    "BatchedVoxelProcessor",
-    "array_on_device",
-    "clear_gpu_memory",
     "detect_gpu_count",
-    "ensure_contiguous",
-    "get_array_module",
     "get_device_name",
-    "get_gpu_memory_info",
-    "is_cupy_available",
-    "synchronize",
-    "to_device",
-    "to_host",
     # structural_reference
     "ApplicationType",
     "ImageResolutionInfo",

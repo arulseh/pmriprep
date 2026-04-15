@@ -2,8 +2,6 @@
 
 Tests verify parameter recovery, convergence, constraint handling,
 auto-mode BIC selection, and result format for all four DCE PK models.
-
-All tests use numpy fallback (no CuPy required).
 """
 
 import numpy as np
@@ -49,7 +47,7 @@ def _generate_tofts_data(aif, time_points, n_voxels=1000, noise_level=0.01):
     ve_true = rng.uniform(0.1, 0.5, n_voxels)
 
     result = batched_tofts_model(
-        ktrans_true, ve_true, aif, time_points, use_gpu=False,
+        ktrans_true, ve_true, aif, time_points,
     )
     tissue = result.tissue_curves
     noise = noise_level * np.max(tissue, axis=1, keepdims=True) * rng.randn(*tissue.shape)
@@ -66,7 +64,7 @@ def _generate_etofts_data(aif, time_points, n_voxels=1000, noise_level=0.01):
     vp_true = rng.uniform(0.01, 0.1, n_voxels)
 
     result = batched_extended_tofts_model(
-        ktrans_true, ve_true, vp_true, aif, time_points, use_gpu=False,
+        ktrans_true, ve_true, vp_true, aif, time_points,
     )
     tissue = result.tissue_curves
     noise = noise_level * np.max(tissue, axis=1, keepdims=True) * rng.randn(*tissue.shape)
@@ -81,7 +79,7 @@ def _generate_patlak_data(aif, time_points, n_voxels=1000):
     vp_true = rng.uniform(0.01, 0.15, n_voxels)
 
     result = batched_patlak_model(
-        ktrans_true, vp_true, aif, time_points, use_gpu=False,
+        ktrans_true, vp_true, aif, time_points,
     )
     return result.tissue_curves, ktrans_true, vp_true
 
@@ -95,7 +93,7 @@ def _generate_2cxm_data(aif, time_points, n_voxels=1000, noise_level=0.01):
     vp_true = rng.uniform(0.01, 0.1, n_voxels)
 
     result = batched_2cxm_model(
-        fp_true, ps_true, ve_true, vp_true, aif, time_points, use_gpu=False,
+        fp_true, ps_true, ve_true, vp_true, aif, time_points,
     )
     tissue = result.tissue_curves
     noise = noise_level * np.max(tissue, axis=1, keepdims=True) * rng.randn(*tissue.shape)
@@ -228,7 +226,7 @@ class TestVpConstraint:
         vp_true = rng.uniform(0.02, 0.08, n)
 
         result_fwd = batched_extended_tofts_model(
-            ktrans_true, ve_true, vp_true, aif, time_points, use_gpu=False,
+            ktrans_true, ve_true, vp_true, aif, time_points,
         )
         tissue = result_fwd.tissue_curves + 0.005 * rng.randn(*result_fwd.tissue_curves.shape)
 
@@ -272,14 +270,14 @@ class TestAutoModeBIC:
         kt_tofts = rng.uniform(0.05, 0.2, n_per)
         ve_tofts = rng.uniform(0.15, 0.4, n_per)
         tofts_curves = batched_tofts_model(
-            kt_tofts, ve_tofts, aif, time_points, use_gpu=False,
+            kt_tofts, ve_tofts, aif, time_points,
         ).tissue_curves
 
         # Patlak data (distinct linear accumulation pattern)
         kt_patlak = rng.uniform(0.05, 0.15, n_per)
         vp_patlak = rng.uniform(0.05, 0.15, n_per)
         patlak_curves = batched_patlak_model(
-            kt_patlak, vp_patlak, aif, time_points, use_gpu=False,
+            kt_patlak, vp_patlak, aif, time_points,
         ).tissue_curves
 
         # Combine
@@ -404,7 +402,7 @@ class TestConstrainedAutoMode:
         vp = rng.uniform(0.02, 0.08, n)
 
         tissue = batched_extended_tofts_model(
-            kt, ve, vp, aif, time_points, use_gpu=False,
+            kt, ve, vp, aif, time_points,
         ).tissue_curves
 
         # Constrain first half only; second half are unconstrained (zero)
@@ -497,7 +495,7 @@ class TestPatlakForwardModel:
         vp = rng.uniform(0.01, 0.15, n)
 
         result = batched_patlak_model(
-            ktrans, vp, aif, time_points, use_gpu=False,
+            ktrans, vp, aif, time_points,
         )
 
         for i in range(n):
@@ -522,7 +520,7 @@ class TestTwoCXMForwardModel:
         vp = rng.uniform(0.01, 0.1, n)
 
         result = batched_2cxm_model(
-            fp, ps, ve, vp, aif, time_points, use_gpu=False,
+            fp, ps, ve, vp, aif, time_points,
         )
 
         for i in range(n):
@@ -546,7 +544,7 @@ class TestTwoCXMForwardModel:
         vp = np.array([0.05, 0.05])
 
         result = batched_2cxm_model(
-            fp, ps, ve, vp, aif, time_points, use_gpu=False,
+            fp, ps, ve, vp, aif, time_points,
         )
 
         for i in range(2):
@@ -567,7 +565,7 @@ class TestTwoCXMForwardModel:
         vp = np.array([0.05])
 
         result = batched_2cxm_model(
-            fp, ps, ve, vp, aif, time_points, use_gpu=False,
+            fp, ps, ve, vp, aif, time_points,
         )
 
         peak = np.max(result.tissue_curves)
@@ -585,7 +583,7 @@ class TestEvaluateModel:
         # Tofts
         r = evaluate_model("tofts", {"ktrans": np.ones(n) * 0.1,
                                           "ve": np.ones(n) * 0.2},
-                                aif, time_points, use_gpu=False)
+                                aif, time_points)
         assert r.model_type == "tofts"
         assert r.tissue_curves.shape == (n, len(aif))
 
@@ -594,14 +592,14 @@ class TestEvaluateModel:
                                 {"ktrans": np.ones(n) * 0.1,
                                  "ve": np.ones(n) * 0.2,
                                  "vp": np.ones(n) * 0.05},
-                                aif, time_points, use_gpu=False)
+                                aif, time_points)
         assert r.model_type == "extended_tofts"
 
         # Patlak
         r = evaluate_model("patlak",
                                 {"ktrans": np.ones(n) * 0.1,
                                  "vp": np.ones(n) * 0.05},
-                                aif, time_points, use_gpu=False)
+                                aif, time_points)
         assert r.model_type == "patlak"
 
         # 2CXM
@@ -610,11 +608,11 @@ class TestEvaluateModel:
                                  "ps": np.ones(n) * 10,
                                  "ve": np.ones(n) * 0.2,
                                  "vp": np.ones(n) * 0.05},
-                                aif, time_points, use_gpu=False)
+                                aif, time_points)
         assert r.model_type == "2cxm"
 
     def test_dispatcher_unknown_model(self, aif_and_time):
         """Unknown model name raises ValueError."""
         aif, time_points = aif_and_time
         with pytest.raises(ValueError, match="Unknown model"):
-            evaluate_model("unknown", {}, aif, time_points, use_gpu=False)
+            evaluate_model("unknown", {}, aif, time_points)
