@@ -31,7 +31,7 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
-LABEL org.opencontainers.image.version="0.24.4"
+LABEL org.opencontainers.image.version="0.24.5"
 LABEL org.opencontainers.image.source="https://github.com/pmriprep/pmriprep"
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 
@@ -86,7 +86,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python 3.10, FSL, and ANTs via mamba (fast solver)
 # FSL and ANTs are separate installs because the FSL channel does not
 # carry ANTs packages (mixing channels in one solve can confuse the solver).
-RUN mamba install -y -c conda-forge python=3.10 pip && mamba clean -afy
+RUN mamba install -y -c conda-forge python=3.10 pip=24.0 && mamba clean -afy
 
 RUN mamba install -y \
     -c https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/public/ \
@@ -96,13 +96,11 @@ RUN mamba install -y \
     fsl-fast4=2111.3 \
     fsl-flirt=2111.4 \
     fsl-mcflirt=2111.0 \
-    fsl-cluster=2201.0 \
-    fsl-data_standard \
     && mamba clean -afy
 
 RUN mamba install -y -c conda-forge ants=2.6.5 && mamba clean -afy
 
-# FSLDIR = conda prefix; FSL data lands at $CONDA_DIR/data/standard/
+# FSLDIR = conda prefix; needed by FSL command-line tools (flirt, bet, etc.)
 ENV FSLDIR=${CONDA_DIR}
 ENV FSLOUTPUTTYPE=NIFTI_GZ
 
@@ -137,7 +135,7 @@ RUN pip install --no-cache-dir hd-bet==2.0.1 && \
 # Install HD-GLIO for glioma segmentation and pre-download model weights.
 # Same /opt/ relocation as HD-BET above — Apptainer-safe.
 RUN (pip install --no-cache-dir HD-GLIO==2.0 || \
-     pip install --no-cache-dir git+https://github.com/CCI-Bonn/HD-GLIO.git) && \
+     pip install --no-cache-dir git+https://github.com/CCI-Bonn/HD-GLIO.git@d1a37c79cfb0e5a253403b6e35cf66010950752b) && \
     HDGLIO_LOC=$(pip show hd-glio 2>/dev/null | grep -i "^Location:" | awk '{print $2}') && \
     [ -n "$HDGLIO_LOC" ] || { echo "ERROR: hd-glio not installed"; exit 1; } && \
     HDGLIO_PATHS="${HDGLIO_LOC}/hd_glio/paths.py" && \
@@ -156,11 +154,8 @@ RUN pip install --no-cache-dir ".[test,dev]" && pip cache purge
 # Download required TemplateFlow templates to a shared location
 # (not under $HOME, which Apptainer auto-binds from the host)
 ENV TEMPLATEFLOW_HOME="/opt/templateflow"
-RUN python -c "import templateflow; \
-    from templateflow import api as tflow; \
-    tflow.get('MNI152NLin2009cAsym', resolution=1, desc='brain', suffix='mask'); \
-    tflow.get('MNI152NLin2009cAsym', resolution=1, suffix='T1w'); \
-    tflow.get('MNI152NLin6Asym', resolution=1, suffix='T1w')" && \
+RUN python -c "from templateflow import api as tflow; \
+    tflow.get('MNI152NLin6Asym', resolution=1, desc='brain', suffix='T1w')" && \
     chmod -R a+rX ${TEMPLATEFLOW_HOME}
 
 # Build-time validation — fail the build early if something is broken

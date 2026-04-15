@@ -1631,7 +1631,7 @@ class ACPCAlignment(CommandLine):
     in_file : str
         Input brain-extracted T1w image
     mni_template : str, optional
-        MNI T1w template (default: uses FSL's MNI152 template)
+        MNI T1w template (default: TemplateFlow MNI152NLin6Asym)
     dof : int
         Degrees of freedom (default: 6 for rigid body)
     cost : str
@@ -1663,7 +1663,7 @@ class ACPCAlignment(CommandLine):
     native brain shape while aligning to the AC-PC line as approximated
     by the MNI template orientation.
 
-    Requires FSL to be installed and available in PATH.
+    Requires FSL FLIRT to be installed and available in PATH.
 
     See Also
     --------
@@ -1674,11 +1674,6 @@ class ACPCAlignment(CommandLine):
     output_spec = ACPCAlignmentOutputSpec
 
     _cmd = "flirt"
-
-    # Default MNI template path (FSL installation)
-    _DEFAULT_MNI_TEMPLATE = (
-        "/usr/local/fsl/data/standard/MNI152_T1_1mm_brain.nii.gz"
-    )
 
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""
@@ -1703,39 +1698,18 @@ class ACPCAlignment(CommandLine):
         return str(out_file.parent / f"{base}.mat")
 
     def _get_mni_template(self) -> str:
-        """Get MNI template path."""
+        """Get MNI template path.
+
+        Uses the user-supplied ``mni_template`` input if provided,
+        otherwise resolves via TemplateFlow (MNI152NLin6Asym).
+        """
         mni_template = getattr(self.inputs, "mni_template", None)
         if mni_template and Path(mni_template).exists():
             return str(mni_template)
 
-        # Try FSL standard locations
-        import os
+        from pmriprep.data import get_mni_brain_template
 
-        fsldir = os.environ.get("FSLDIR", "/usr/local/fsl")
-        fsl_template = Path(fsldir) / "data/standard/MNI152_T1_1mm_brain.nii.gz"
-        if fsl_template.exists():
-            return str(fsl_template)
-
-        # Try common alternate location
-        alt_template = Path("/usr/share/fsl/data/standard/MNI152_T1_1mm_brain.nii.gz")
-        if alt_template.exists():
-            return str(alt_template)
-
-        # Fallback: use templateflow MNI152NLin6Asym (FSL-equivalent MNI space)
-        try:
-            import templateflow.api as tflow  # type: ignore[import-untyped]
-
-            tf_path = tflow.get(
-                "MNI152NLin6Asym", desc="brain", resolution=1,
-                suffix="T1w", extension=".nii.gz",
-            )
-            if tf_path and Path(str(tf_path)).exists():
-                return str(tf_path)
-        except Exception:
-            pass
-
-        # Use default path (may fail at runtime if not present)
-        return self._DEFAULT_MNI_TEMPLATE
+        return str(get_mni_brain_template())
 
     @property
     def cmdline(self) -> str:

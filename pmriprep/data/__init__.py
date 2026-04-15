@@ -85,6 +85,46 @@ def get_arterial_atlas_cascade(resolution: str = "2mm") -> list[Path]:
     return cascade
 
 
+def get_mni_brain_template() -> Path:
+    """Get path to MNI152NLin6Asym brain-extracted T1w template.
+
+    Uses TemplateFlow (NiPreps standard) to resolve the template path.
+    The template is pre-downloaded into ``$TEMPLATEFLOW_HOME`` at container
+    build time, so no network access is required at runtime.
+
+    Returns
+    -------
+    Path
+        Path to the skull-stripped 1mm MNI T1w template.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the template cannot be resolved via TemplateFlow.
+    """
+    try:
+        import templateflow.api as tflow  # type: ignore[import-untyped]
+
+        tf_path = tflow.get(
+            "MNI152NLin6Asym", resolution=1, desc="brain",
+            suffix="T1w", extension=".nii.gz",
+        )
+        if isinstance(tf_path, Path) and tf_path.exists():
+            return tf_path
+    except Exception as exc:
+        import logging
+
+        logging.getLogger("pmriprep.data").debug(
+            "TemplateFlow lookup failed: %s", exc,
+        )
+
+    raise FileNotFoundError(
+        "MNI152NLin6Asym brain template not found. "
+        "Set TEMPLATEFLOW_HOME to a directory containing the template, "
+        "or pass a custom template via the mni_template input."
+    )
+
+
 def get_lobar_atlas_dir() -> Path:
     """Get path to MNI lobar atlas directory for NAWM region restriction.
 

@@ -151,11 +151,11 @@ def _create_acpc_registration_filmstrip(t1w_acpc_file, subject_id="", session_id
     str
         Path to output filmstrip PNG.
     """
-    import os
     from pathlib import Path
 
     import nibabel as nib
 
+    from pmriprep.data import get_mni_brain_template
     from pmriprep.utils.qc_utils import (
         plot_registration_qc_filmstrip,
         qc_figure_title,
@@ -168,9 +168,7 @@ def _create_acpc_registration_filmstrip(t1w_acpc_file, subject_id="", session_id
     t1w_data = t1w_img.get_fdata()
     voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])
 
-    # Load MNI152 template as the reference
-    fsldir = os.environ.get("FSLDIR", "/usr/local/fsl")
-    mni_path = os.path.join(fsldir, "data", "standard", "MNI152_T1_1mm_brain.nii.gz")
+    mni_path = str(get_mni_brain_template())
     mni_data = nib.as_closest_canonical(nib.load(mni_path)).get_fdata()
 
     # Mask from the T1w data (already brain-extracted)
