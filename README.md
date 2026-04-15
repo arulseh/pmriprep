@@ -219,7 +219,7 @@ dce:
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
 | `gamma_fit` | str | `"auto"` | Gamma-variate AIF fitting: `auto`, `on`, `off` |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |
-| `pre_bolus` | int | `5` | Initial baseline for motion correction reference image. Baseline is re-estimated after AIF detection |
+| `pre_bolus` | int | `5` | Initial baseline for motion correction. Baseline is re-estimated after AIF detection |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
@@ -318,7 +318,7 @@ bids_dir/
         sub-01_ses-01_acq-famp_run-1_TB1TFL.json
 ```
 
-> The `acq-<label>` entity is optional. If your BIDS dataset includes it (e.g., `acq-mprage`, `acq-3d`), it will be recognized automatically. The pipeline discovers files by suffix (`_T1w`, `_FLAIR`, `_dsc`, etc.) and functional entities (`ce-`, `flip-`), not by `acq-` label.
+> The `acq-<label>` entity is optional and ignored during discovery. The pipeline matches files by suffix (`_T1w`, `_FLAIR`, `_dsc`, etc.) and functional entities (`ce-`, `flip-`), not by `acq-` label.
 
 ### Required Files
 
