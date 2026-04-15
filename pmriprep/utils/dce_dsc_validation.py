@@ -106,6 +106,12 @@ FRACTION_VALID_WARN_SOFT: float = 0.02
 #: Absolute minimum valid voxels for statistical reliability.
 MIN_VALID_VOXELS: int = 500
 
+#: Standard deviation threshold for ratio-based circularity detection.
+#: When vp is soft-constrained to DSC CBV with tight bounds, the vp/CBV
+#: ratio becomes near-constant (std < 0.01). Empirically, circular soft
+#: constraints produce std_ratio < 0.001 while genuine fits produce > 0.1.
+CIRCULAR_STD_RATIO_THRESHOLD: float = 0.01
+
 
 # =============================================================================
 # Data Classes
@@ -421,6 +427,22 @@ def validate_vp_cbv(
     result.correction_factor = calculate_correction_factor(
         metrics.median_ratio, expected_ratio
     )
+
+    # Detect near-circularity: soft constraint effectively locking vp to CBV
+    if metrics.std_ratio < CIRCULAR_STD_RATIO_THRESHOLD:
+        result.circular = True
+        result.status = QCStatus.CIRCULAR
+        result.metrics = metrics
+        result.interpretation = (
+            f"vp/CBV ratio variance too low (std={metrics.std_ratio:.4f}); "
+            "soft constraint is functionally hard — correlation is circular"
+        )
+        logger.info(
+            "Cross-validation CIRCULAR: std_ratio=%.4f < %.2f "
+            "(soft constraint effectively hard)",
+            metrics.std_ratio, CIRCULAR_STD_RATIO_THRESHOLD,
+        )
+        return result
 
     # Determine status from ratio, correlation, and coverage
     interpretations: list[str] = []
