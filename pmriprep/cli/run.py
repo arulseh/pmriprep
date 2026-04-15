@@ -288,8 +288,7 @@ Examples:
         "--dsc-registration",
         choices=["flirt", "flirt_bbr"],
         default=None,
-        help="Registration method. 'flirt' (default) uses FLIRT only. "
-             "'flirt_bbr' adds BBR refinement, used only if it improves registration.",
+        help=argparse.SUPPRESS,
     )
 
     # DCE options

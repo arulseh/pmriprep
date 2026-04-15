@@ -177,11 +177,12 @@ def validate_dsc_metadata(sidecar: dict[str, Any]) -> list[PreflightMessage]:
     # Field strength
     if sidecar.get("field_strength") is None:
         msgs.append(PreflightMessage(
-            level="warning",
+            level="error",
             code="DSC_MISSING_FIELD_STRENGTH",
             message=(
                 "MagneticFieldStrength not found in DSC sidecar. "
-                "Defaulting to 3T for TE2-dependent constants."
+                "Required for field-strength-dependent constants. "
+                "Add MagneticFieldStrength to your BIDS sidecar."
             ),
         ))
 
@@ -283,31 +284,22 @@ def validate_dce_metadata(
                 ),
             ))
 
+    # Field strength
+    field_strength = sidecar.get("field_strength")
+    if field_strength is None:
+        msgs.append(PreflightMessage(
+            level="error",
+            code="DCE_MISSING_FIELD_STRENGTH",
+            message=(
+                "MagneticFieldStrength not found in DCE sidecar. "
+                "Required for field-strength-dependent constants. "
+                "Add MagneticFieldStrength to your BIDS sidecar."
+            ),
+        ))
+
     # r1 relaxivity warnings (skip if user supplied override)
     if dce_config.r1_relaxivity is None:
-        field_strength = sidecar.get("field_strength")
         contrast_agent = sidecar.get("contrast_agent")
-
-        if field_strength is None and contrast_agent is not None:
-            msgs.append(PreflightMessage(
-                level="warning",
-                code="DCE_R1_NO_FIELD_STRENGTH",
-                message=(
-                    f"Field strength missing; cannot look up agent-specific "
-                    f"r1 for {contrast_agent}. Falling back to Gd-DTPA "
-                    f"r1=3.8 at 3T. Supply --dce-r1 or add "
-                    f"MagneticFieldStrength to sidecar."
-                ),
-            ))
-        elif field_strength is None:
-            msgs.append(PreflightMessage(
-                level="warning",
-                code="DCE_MISSING_FIELD_STRENGTH",
-                message=(
-                    "MagneticFieldStrength not found in DCE sidecar. "
-                    "Using 3T defaults for r1 relaxivity."
-                ),
-            ))
 
         if contrast_agent is None and field_strength is not None:
             msgs.append(PreflightMessage(

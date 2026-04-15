@@ -1748,7 +1748,7 @@ def init_dsc_preproc_wf(
     aif_detect = pe.Node(
         AIFDetection(
             aif_method=config.aif_method,
-            criteria=config.aif_criteria,
+            criteria="strict",
             n_candidates=config.n_aif_candidates,
             lesion_distance=config.lesion_distance,
             gamma_fit=config.gamma_fit,

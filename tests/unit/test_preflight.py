@@ -228,7 +228,9 @@ class TestValidateDSCMetadata:
         sc = _valid_dsc_sidecar()
         sc["field_strength"] = None
         msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_MISSING_FIELD_STRENGTH" for m in msgs)
+        fs_msgs = [m for m in msgs if m.code == "DSC_MISSING_FIELD_STRENGTH"]
+        assert len(fs_msgs) == 1
+        assert fs_msgs[0].level == "error"
 
 
 # ===========================================================================
@@ -309,7 +311,9 @@ class TestValidateDCEMetadata:
         sc["r1_relaxivity"] = None
         sc["contrast_agent"] = "Gadovist"
         msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_R1_NO_FIELD_STRENGTH" for m in msgs)
+        fs_msgs = [m for m in msgs if m.code == "DCE_MISSING_FIELD_STRENGTH"]
+        assert len(fs_msgs) == 1
+        assert fs_msgs[0].level == "error"
 
     def test_missing_field_strength_no_agent(self):
         sc = _valid_dce_sidecar()
@@ -317,7 +321,9 @@ class TestValidateDCEMetadata:
         sc["r1_relaxivity"] = None
         sc["contrast_agent"] = None
         msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_MISSING_FIELD_STRENGTH" for m in msgs)
+        fs_msgs = [m for m in msgs if m.code == "DCE_MISSING_FIELD_STRENGTH"]
+        assert len(fs_msgs) == 1
+        assert fs_msgs[0].level == "error"
 
     def test_unknown_agent(self):
         sc = _valid_dce_sidecar()
@@ -328,7 +334,7 @@ class TestValidateDCEMetadata:
         assert any(m.code == "DCE_UNKNOWN_AGENT" for m in msgs)
 
     def test_r1_override_skips_agent_warnings(self):
-        """When r1 is user-supplied, no warnings about agents or field strength."""
+        """When r1 is user-supplied, agent warnings are skipped but field strength is still required."""
         sc = _valid_dce_sidecar()
         sc["field_strength"] = None
         sc["r1_relaxivity"] = None
@@ -336,9 +342,8 @@ class TestValidateDCEMetadata:
         cfg = DCEConfig(r1_relaxivity=4.0)
         msgs = validate_dce_metadata(sc, cfg)
         codes = {m.code for m in msgs}
-        assert "DCE_MISSING_FIELD_STRENGTH" not in codes
+        assert "DCE_MISSING_FIELD_STRENGTH" in codes
         assert "DCE_UNKNOWN_AGENT" not in codes
-        assert "DCE_R1_NO_FIELD_STRENGTH" not in codes
 
 
 # ===========================================================================

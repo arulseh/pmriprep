@@ -46,8 +46,6 @@ class DSCConfig:
         Path to custom AIF mask file.
     lesion_distance : float
         Minimum distance (mm) from lesion for AIF candidates.
-    aif_criteria : Literal["strict", "relaxed"]
-        AIF quality criteria threshold.
     n_aif_candidates : int
         Number of AIF candidate voxels to average.
     gamma_fit : str
@@ -103,7 +101,6 @@ class DSCConfig:
     aif_file: Optional[Path] = None
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
-    aif_criteria: Literal["strict", "relaxed"] = "strict"
     n_aif_candidates: int = 10
     gamma_fit: str = "auto"
     disable_aif_fallback: bool = False
