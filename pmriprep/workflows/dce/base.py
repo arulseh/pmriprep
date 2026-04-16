@@ -1672,16 +1672,20 @@ def init_dce_preproc_wf(
                 "use_external_t1",
                 "no_t1",
                 "b1_method",
+                "tortuosity_applied",
+                "nawm_available",
             ],
             output_names=["qc_metrics"],
             function=_collect_qc_metrics,
         ),
         name="collect_qc_metrics",
     )
-    # Set T1/B1 config flags for boilerplate text generation
+    # Set config flags for boilerplate text generation
     collect_qc.inputs.use_external_t1 = use_external_t1
     collect_qc.inputs.no_t1 = config.no_t1
     collect_qc.inputs.b1_method = config.b1_method
+    # tortuosity_applied is wired from the tortuosity node's was_corrected output
+    # nawm_available is wired from the NAWM mask transform node
 
     if use_vfa_t1:
         workflow.connect([
@@ -1728,6 +1732,13 @@ def init_dce_preproc_wf(
         ]),
         (dce_pk_maps_qc, collect_qc, [
             ("model_selection_regions", "pk_maps_qc_metrics"),
+        ]),
+        (tortuosity_corr, collect_qc, [
+            ("was_corrected", "tortuosity_applied"),
+        ]),
+        # out_file is truthy (path) when normalization ran, None otherwise
+        (normalize_ktrans, collect_qc, [
+            ("out_file", "nawm_available"),
         ]),
     ])
 
@@ -3146,6 +3157,8 @@ def _collect_qc_metrics(
     use_external_t1=False,
     no_t1=False,
     b1_method="auto",
+    tortuosity_applied=False,
+    nawm_available=False,
 ):
     """Collect all QC metrics into a single dictionary.
 
@@ -3163,6 +3176,8 @@ def _collect_qc_metrics(
         use_external_t1: Whether external T1 map was used.
         no_t1: Whether T1 mapping was skipped (assumed T1).
         b1_method: B1 correction method used.
+        tortuosity_applied: Whether DWI-based tortuosity correction was applied.
+        nawm_available: Whether NAWM mask was available for normalization.
 
     Returns:
         Combined QC metrics dictionary.
@@ -3214,6 +3229,9 @@ def _collect_qc_metrics(
     # Merge display stats (TR, tSNR, peak enh) into preprocessing metrics
     if preproc_display is not None:
         qc_metrics.setdefault("preprocessing", {}).update(preproc_display)
+
+    qc_metrics["tortuosity_applied"] = tortuosity_applied
+    qc_metrics["nawm_normalization"] = bool(nawm_available)
 
     return qc_metrics
 

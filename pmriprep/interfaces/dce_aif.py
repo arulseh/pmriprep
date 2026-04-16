@@ -2965,6 +2965,7 @@ class AIFDetection(BaseInterface):
                 "quality_score": quality_score,
                 "baseline_frames": baseline_frames,
                 "aif_status": aif_status,
+                "hematocrit": float(self.inputs.hematocrit),
             }
         )
 

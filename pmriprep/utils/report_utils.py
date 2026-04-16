@@ -161,6 +161,11 @@ _REFERENCES: dict[str, str] = {
         "from dynamic susceptibility contrast MRI. "
         "NeuroImage. 2013;64:560-570. doi:10.1016/j.neuroimage.2012.08.083"
     ),
+    "nicholson_1998": (
+        "Nicholson C, Syková E. "
+        "Extracellular space structure revealed by diffusion analysis. "
+        "Trends Neurosci. 1998;21(5):207-215. doi:10.1016/S0166-2236(98)01261-2"
+    ),
     "mouridsen_2006": (
         "Mouridsen K, Friston K, Hjort N, Gyldensted L, Ostergaard L, Kiebel S. "
         "Bayesian estimation of cerebral perfusion using a physiological model of microvasculature. "
@@ -192,6 +197,11 @@ _REFERENCES: dict[str, str] = {
         "Sourbron SP, Buckley DL. "
         "On the scope and interpretation of the Tofts models for DCE-MRI. "
         "Magn Reson Med. 2011;66(3):735-745. doi:10.1002/mrm.22861"
+    ),
+    "tofts_1997": (
+        "Tofts PS. "
+        "Modeling tracer kinetics in dynamic Gd-DTPA MR imaging. "
+        "J Magn Reson Imaging. 1997;7(1):91-101. doi:10.1002/jmri.1880070113"
     ),
     "tofts_1991": (
         "Tofts PS, Kermode AG. "
@@ -306,7 +316,9 @@ def _generate_boilerplate_text(
     if ran_pipelines.get("tumor_seg"):
         sentences.append(
             "Automated lesion segmentation was performed using HD-GLIO "
-            "(Kickingereder et al., 2019)."
+            "(Kickingereder et al., 2019), providing lesion masks for "
+            "AIF candidate exclusion and contralateral NAWM ROI "
+            "lateralization."
         )
         used_refs.add("kickingereder_2019")
 
@@ -379,6 +391,14 @@ def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> tuple[str, set[str]]:
         )
         refs.add("zhang_2001")
 
+    sentences.append(
+        "Secondary structural modalities were coregistered to the "
+        "T1-weighted reference using FLIRT (Jenkinson et al., 2002). "
+        "A rigid-body transform between T1-weighted and MNI152 space "
+        "was computed using FLIRT."
+    )
+    refs.add("jenkinson_2002")
+
     return " ".join(sentences), refs
 
 
@@ -402,6 +422,18 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
     )
     refs.add("jenkinson_2002")
 
+    # Baseline detection
+    sentences.append(
+        "Baseline frames were automatically identified using a "
+        "multi-phase detection algorithm."
+    )
+
+    # Registration
+    sentences.append(
+        "A rigid-body transform between DSC and T1-weighted space "
+        "was computed using FLIRT (Jenkinson et al., 2002)."
+    )
+
     # AIF detection
     aif_info = dsc_qc.get("aif", {})
     config_info = dsc_qc.get("config", {})
@@ -418,8 +450,10 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
         sentences.append("A user-supplied arterial input function was used.")
     else:
         sentences.append(
-            "The DSC arterial input function (AIF) was automatically detected "
-            "using atlas-based voxel selection (Rulseh et al., in preparation)."
+            "The DSC arterial input function (AIF) was automatically "
+            "detected using MRA-atlas-guided voxel selection with a "
+            "multi-level criteria cascade and bilateral hemisphere "
+            "preference (Rulseh et al., in preparation)."
         )
 
     # Deconvolution method
@@ -468,6 +502,15 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
             )
             refs.update(["weisskoff_1994", "boxerman_2006"])
 
+    # NAWM normalization
+    norm_factor = dsc_qc.get("normalization_factor")
+    if norm_factor is not None and norm_factor > 0:
+        sentences.append(
+            "Hemodynamic maps (CBF, CBV) were normalized to "
+            "automatically segmented contralateral normal-appearing "
+            "white matter (NAWM)."
+        )
+
     return " ".join(sentences), refs
 
 
@@ -500,8 +543,19 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
 
     # Combine T1 and B1+ into opening
     if t1_method in ("external", "assumed"):
-        # Short form for external/assumed
-        sentences.append(opening + f" {t1_text}.")
+        t1_correction = t1_info.get("t1_correction", {})
+        tissue_used = (
+            t1_correction.get("tissue_t1_used", False)
+            or t1_info.get("tissue_t1_used", False)
+        )
+        if t1_method == "assumed" and tissue_used:
+            sentences.append(
+                opening + " using a tissue-segmented T1 map constructed "
+                "from WM/GM probability maps with literature T1 values "
+                "(no VFA T1 mapping performed)."
+            )
+        else:
+            sentences.append(opening + f" {t1_text}.")
     else:
         # Full T1 mapping text
         sentences.append(opening + ".")
@@ -514,6 +568,29 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
             refs.add("deoni_2003")
         if b1_method == "afi":
             refs.add("yarnykh_2007")
+
+        # T1 correction status
+        t1_correction = t1_info.get("t1_correction", {})
+        corr_applied = t1_correction.get("correction_applied", "none")
+        if corr_applied == "offset":
+            sentences.append(
+                "An offset correction was applied to the T1 map to "
+                "adjust for systematic overestimation."
+            )
+        elif t1_correction.get("tissue_t1_used", False):
+            sentences.append(
+                "Due to poor VFA conditioning, a tissue-segmented T1 "
+                "map constructed from WM/GM probability maps using "
+                "literature T1 values was used for concentration "
+                "conversion."
+            )
+
+    # Registration
+    sentences.append(
+        "A rigid-body transform between DCE and T1-weighted space "
+        "was computed using FLIRT (Jenkinson et al., 2002)."
+    )
+    refs.add("jenkinson_2002")
 
     # AIF detection
     aif_info = dce_qc.get("aif_detection", {})
@@ -528,8 +605,19 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
         sentences.append("A user-supplied arterial input function was used.")
     else:
         sentences.append(
-            "The DCE arterial input function (AIF) was automatically detected using "
-            "atlas-based candidate selection (Rulseh et al., in preparation)."
+            "The DCE arterial input function (AIF) was automatically "
+            "detected using MRA-atlas-guided candidate selection with "
+            "dose-aware scaling and quality-weighted averaging "
+            "(Rulseh et al., in preparation)."
+        )
+
+    # Hematocrit correction (only for auto-detected AIF; population AIF
+    # already includes hematocrit correction)
+    if aif_source not in ("population", "external"):
+        hct = aif_info.get("hematocrit", 0.42)
+        sentences.append(
+            f"The AIF was corrected from whole-blood to plasma "
+            f"concentration using an assumed hematocrit of {hct}."
         )
 
     # Pharmacokinetic modeling
@@ -585,6 +673,23 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
             refs.add("chappell_2009")
         elif bayesian == "map":
             refs.add("woolrich_2009")
+
+    # Tortuosity correction
+    if dce_qc.get("tortuosity_applied", False):
+        sentences.append(
+            "A tortuosity-corrected Ktrans map was additionally "
+            "computed using DWI-derived ADC "
+            "(Nicholson & Syková, 1998; Tofts, 1997)."
+        )
+        refs.update(["nicholson_1998", "tofts_1997"])
+
+    # NAWM normalization
+    if dce_qc.get("nawm_normalization", False):
+        sentences.append(
+            "Permeability maps (Ktrans, IAUC60) were normalized to "
+            "automatically segmented contralateral normal-appearing "
+            "white matter (NAWM)."
+        )
 
     return " ".join(sentences), refs
 

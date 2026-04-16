@@ -533,7 +533,7 @@ def plot_aif_candidates_glass_brain(
     sub_label = f"sub-{subject_id}" if subject_id else ""
     ses_label = f" | ses-{session_id}" if session_id else ""
     fig.suptitle(
-        f"{sub_label}{ses_label} | {modality} AIF Candidates (n={n})",
+        f"{sub_label}{ses_label} | {modality} AIF Sources (n={n})",
         fontsize=12, color="white", y=0.95,
     )
 
