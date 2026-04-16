@@ -722,7 +722,8 @@ class B1Mapping(SimpleInterface):
             # Only test where interior coverage is reliable.
             # Unreliable locations (thin cortex, brain tips) are left untested.
             has_coverage = s_den > B1_MIN_COVERAGE
-            b1_local = np.where(has_coverage, s_num / s_den, 0.0)
+            b1_local = np.zeros_like(s_num)
+            np.divide(s_num, s_den, out=b1_local, where=has_coverage)
 
             # Flag voxels deviating beyond field-strength-dependent threshold
             # from interior reference (catches CSF/edge artifacts).
@@ -1046,7 +1047,8 @@ class B1Mapping(SimpleInterface):
             s_num = gaussian_filter(b1_map * interior_float, sigma=sigma_wide)
             s_den = gaussian_filter(interior_float, sigma=sigma_wide)
             has_coverage = s_den > B1_MIN_COVERAGE
-            b1_local = np.where(has_coverage, s_num / s_den, 0.0)
+            b1_local = np.zeros_like(s_num)
+            np.divide(s_num, s_den, out=b1_local, where=has_coverage)
 
             outlier = valid_mask & has_coverage & (
                 np.abs(b1_map - b1_local) > b1_thresh.outlier_deviation
