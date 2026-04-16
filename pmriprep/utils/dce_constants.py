@@ -610,6 +610,12 @@ BRAIN_EROSION_MIN_VOXELS: Final[int] = 100
 #: Avoids 3D VIBE inflow artifacts at slab boundaries.
 SLAB_EDGE_EXCLUSION_MM: Final[float] = 15.0
 
+#: Reduced slab edge exclusion (mm) for atlas-constrained search.
+#: The MRA-derived atlas already constrains candidates to known arterial
+#: regions; only a single-partition margin is needed for slab profile
+#: roll-off in 3D VIBE (not true inflow, which is a 2D concern).
+SLAB_EDGE_EXCLUSION_MM_ATLAS: Final[float] = 4.0
+
 #: Minimum distance (mm) from lesion for AIF candidate voxels.
 LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
 
