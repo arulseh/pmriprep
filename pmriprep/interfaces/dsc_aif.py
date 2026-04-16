@@ -76,6 +76,21 @@ _CASCADE_N_CANDIDATES_FRACTION: dict[str, float] = {
 # Top-level helper functions (backward-compatible with utils/dsc_aif.py)
 # ---------------------------------------------------------------------------
 
+
+def _costs_to_scores(costs: list[float]) -> list[float]:
+    """Convert DSC AIF candidate costs (lower=better) to scores (higher=better)."""
+    if not costs:
+        return []
+    min_cost = min(costs)
+    max_cost = max(costs)
+    if max_cost == min_cost:
+        return [1.0] * len(costs)
+    return [
+        float(np.clip(1.0 - (c - min_cost) / (max_cost - min_cost), 0.0, 1.0))
+        for c in costs
+    ]
+
+
 def compute_aif_cnr(
     aif_curve: npt.NDArray[Any],
     baseline_frames: int = 5,
@@ -1996,6 +2011,9 @@ class AIFDetection(BaseInterface):
                 [int(c) for c in coord]
                 for _, coord, _ in top_candidates
             ],
+            "all_candidate_scores": _costs_to_scores(
+                [float(cost) for cost, _, _ in top_candidates]
+            ),
             # Hemisphere distribution
             "n_left_hemisphere": n_left,
             "n_right_hemisphere": n_right,

@@ -322,6 +322,7 @@ def init_dce_preproc_wf(
                 "registration_qc_filmstrip",
                 "aif_curve_qc_plot",
                 "aif_location_qc_plot",
+                "aif_candidates_qc_plot",
                 "vfa_registration_qc_plot",  # optional, only if VFA coregistration occurred
                 "afi_registration_qc_plot",  # optional, only if AFI coregistration occurred
                 "b1_qc_plot",
@@ -1643,7 +1644,13 @@ def init_dce_preproc_wf(
         ]),
         (dce_preprocess, aif_qc_plot, [("out_file", "dce_file")]),
         (dce_brain_extract, aif_qc_plot, [("out_mask", "brain_mask_file")]),
-        (inputnode, aif_qc_plot, [("volume_tr", "tr")]),
+        (inputnode, aif_qc_plot, [
+            ("volume_tr", "tr"),
+            ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
+        ]),
+        (dce_registration, aif_qc_plot, [
+            ("out_matrix", "t1w_to_dce_xfm"),
+        ]),
     ])
 
     # ==========================================================================
@@ -1963,6 +1970,7 @@ def init_dce_preproc_wf(
         (aif_qc_plot, outputnode, [
             ("out_aif_plot", "aif_curve_qc_plot"),
             ("out_aif_location", "aif_location_qc_plot"),
+            ("out_aif_candidates", "aif_candidates_qc_plot"),
         ]),
         # Motion QC plot
         (motion_qc_plot, outputnode, [

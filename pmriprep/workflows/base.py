@@ -1922,6 +1922,7 @@ def init_pmriprep_wf(
                 # AIF QC plots
                 ("outputnode.aif_curve_plot", "aif_curve_plot"),
                 ("outputnode.aif_location_plot", "aif_location_plot"),
+                ("outputnode.aif_candidates_plot", "aif_candidates_plot"),
                 # Motion QC plot
                 ("outputnode.motion_qc_plot", "motion_qc_plot"),
                 # QC metrics
@@ -2761,6 +2762,7 @@ def init_pmriprep_wf(
                 # QC plots
                 ("outputnode.aif_curve_qc_plot", "aif_curve_plot"),
                 ("outputnode.aif_location_qc_plot", "aif_location_plot"),
+                ("outputnode.aif_candidates_qc_plot", "aif_candidates_plot"),
                 ("outputnode.registration_qc_filmstrip", "registration_filmstrip"),
                 ("outputnode.motion_qc_plot", "motion_qc_plot"),
                 # Brain mask filmstrip

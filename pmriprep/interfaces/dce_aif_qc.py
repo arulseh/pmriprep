@@ -25,6 +25,43 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 
+def _voxel_to_mni(
+    coords_vox: npt.NDArray[Any],
+    img: Any,
+    t1w_to_native_xfm: str,
+    t1w_to_mni_xfm: str,
+) -> npt.NDArray[np.floating]:
+    """Transform voxel coordinates to MNI mm via FLIRT matrices.
+
+    Chain: voxel → FSL mm → T1w mm → MNI FSL mm → nilearn MNI mm.
+    """
+    zooms = np.abs(np.array(img.header.get_zooms()[:3]))
+    shape = np.array(img.shape[:3])
+    fsl_v2m = np.diag(list(zooms) + [1.0])
+    if np.linalg.det(img.affine[:3, :3]) > 0:
+        fsl_v2m[0, 0] = -zooms[0]
+        fsl_v2m[0, 3] = (shape[0] - 1) * zooms[0]
+
+    t1w_to_native = np.loadtxt(t1w_to_native_xfm)
+    native_to_t1w = np.linalg.inv(t1w_to_native)
+    t1w_to_mni = np.loadtxt(t1w_to_mni_xfm)
+
+    coords_hom = np.hstack([coords_vox, np.ones((len(coords_vox), 1))])
+    coords_native_mm = (fsl_v2m @ coords_hom.T).T[:, :3]
+    coords_t1w = (
+        native_to_t1w[:3, :3] @ coords_native_mm.T + native_to_t1w[:3, 3:4]
+    ).T
+    coords_mni_fsl = (
+        t1w_to_mni[:3, :3] @ coords_t1w.T + t1w_to_mni[:3, 3:4]
+    ).T
+
+    return np.column_stack([
+        90.0 - coords_mni_fsl[:, 0],
+        coords_mni_fsl[:, 1] - 126.0,
+        coords_mni_fsl[:, 2] - 72.0,
+    ])
+
+
 class DCEAIFQCPlotInputSpec(BaseInterfaceInputSpec):
     """Input specification for DCEAIFQCPlot interface."""
 
@@ -67,6 +104,16 @@ class DCEAIFQCPlotInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Session ID for plot title",
     )
+    t1w_to_dce_xfm = File(
+        exists=True,
+        mandatory=False,
+        desc="FLIRT matrix: T1w to DCE space (for glass brain transform)",
+    )
+    t1w_to_mni_xfm = File(
+        exists=True,
+        mandatory=False,
+        desc="FLIRT matrix: T1w to MNI space (for glass brain transform)",
+    )
 
 
 class DCEAIFQCPlotOutputSpec(TraitedSpec):
@@ -74,6 +121,7 @@ class DCEAIFQCPlotOutputSpec(TraitedSpec):
 
     out_aif_plot = File(exists=True, desc="AIF curve QC plot PNG")
     out_aif_location = File(desc="AIF location overlay PNG (None for population AIF)")
+    out_aif_candidates = File(desc="AIF candidates glass brain PNG")
 
 
 class DCEAIFQCPlot(BaseInterface):
@@ -128,12 +176,37 @@ class DCEAIFQCPlot(BaseInterface):
                 qc, sub, ses, aif_location_path,
             )
 
+        # Generate glass brain candidates plot if transforms are available
+        aif_candidates_path: str | None = None
+        has_xfms = (
+            isdefined(self.inputs.t1w_to_dce_xfm)
+            and isdefined(self.inputs.t1w_to_mni_xfm)
+        )
+        if (
+            detection_method not in ("population", "external")
+            and has_xfms
+            and qc.get("candidate_coords")
+        ):
+            aif_candidates_path = str(out_dir / "aif_candidates_qc.png")
+            plot_aif_candidates_glass_brain(
+                candidate_coords=qc["candidate_coords"],
+                candidate_scores=qc.get("candidate_scores", []),
+                native_img=dce_img,
+                t1w_to_native_xfm=self.inputs.t1w_to_dce_xfm,
+                t1w_to_mni_xfm=self.inputs.t1w_to_mni_xfm,
+                subject_id=sub,
+                session_id=ses,
+                output_path=aif_candidates_path,
+                modality="DCE",
+            )
+
         self._results: dict[str, Any] = {
             "out_aif_plot": aif_plot_path,
         }
-        # Only include location plot if it was generated (not for population AIF)
         if aif_location_path is not None:
             self._results["out_aif_location"] = aif_location_path
+        if aif_candidates_path is not None:
+            self._results["out_aif_candidates"] = aif_candidates_path
 
         return runtime
 
@@ -380,3 +453,93 @@ class DCEAIFQCPlot(BaseInterface):
             fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
         finally:
             plt.close(fig)
+
+def plot_aif_candidates_glass_brain(
+    candidate_coords: list[list[int]],
+    candidate_scores: list[float],
+    native_img: Any,
+    t1w_to_native_xfm: str,
+    t1w_to_mni_xfm: str,
+    subject_id: str,
+    session_id: str,
+    output_path: str,
+    modality: str = "DCE",
+) -> None:
+    """Plot AIF candidates on a glass brain in MNI space.
+
+    Args:
+        candidate_coords: Voxel coordinates [[x, y, z], ...].
+        candidate_scores: Quality scores per candidate (0-1).
+        native_img: NIfTI image in native (DCE/DSC) space.
+        t1w_to_native_xfm: FLIRT matrix file (T1w → native space).
+        t1w_to_mni_xfm: FLIRT matrix file (T1w → MNI space).
+        subject_id: Subject ID for title.
+        session_id: Session ID for title.
+        output_path: Output PNG path.
+        modality: "DCE" or "DSC" for title.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+    import matplotlib.cm as cm
+    import matplotlib.colors as mcolors
+    from nilearn.plotting import plot_markers  # type: ignore[import-untyped]
+
+    coords_vox = np.array(candidate_coords)
+    n = len(coords_vox)
+    if n == 0:
+        return
+
+    scores = np.array(candidate_scores) if candidate_scores else np.ones(n)
+
+    coords_mni = _voxel_to_mni(
+        coords_vox, native_img, t1w_to_native_xfm, t1w_to_mni_xfm,
+    )
+
+    fig = plt.figure(figsize=(14, 5), facecolor="black")
+    gs = GridSpec(
+        1, 4, figure=fig,
+        width_ratios=[1.0, 0.9, 1.1, 0.04], wspace=0.05,
+    )
+
+    for i, mode in enumerate(("z", "y", "x")):
+        ax = fig.add_subplot(gs[i])
+        plot_markers(
+            node_values=scores,
+            node_coords=coords_mni,
+            node_cmap="plasma",
+            node_size=140,
+            display_mode=mode,
+            axes=ax,
+            colorbar=False,
+            radiological=True,
+            black_bg=True,
+            node_vmin=0.0,
+            node_vmax=1.0,
+        )
+
+    cb_height = 0.6
+    cb_bottom = (1.0 - cb_height) / 2.0
+    cb_ax = fig.add_axes([0.92, cb_bottom, 0.012, cb_height])
+    sm = cm.ScalarMappable(
+        cmap=cm.plasma, norm=mcolors.Normalize(0, 1),
+    )
+    sm.set_array([])
+    cb = fig.colorbar(sm, cax=cb_ax)
+    cb.set_label("Quality Score", color="white", fontsize=12)
+    cb.ax.yaxis.set_tick_params(color="white")
+    cb.outline.set_edgecolor("white")
+    plt.setp(cb.ax.yaxis.get_ticklabels(), color="white", fontsize=10)
+
+    sub_label = f"sub-{subject_id}" if subject_id else ""
+    ses_label = f" | ses-{session_id}" if session_id else ""
+    fig.suptitle(
+        f"{sub_label}{ses_label} | {modality} AIF Candidates (n={n})",
+        fontsize=12, color="white", y=0.95,
+    )
+
+    try:
+        fig.savefig(
+            output_path, dpi=150, bbox_inches="tight", facecolor="black",
+        )
+    finally:
+        plt.close(fig)

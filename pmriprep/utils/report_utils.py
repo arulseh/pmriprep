@@ -592,12 +592,13 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
 # Mapping: internal image key -> (desc_label, default_suffix)
 # The suffix is the BIDS modality suffix (dsc, dce, T1w, FLAIR).
 # For keys shared between DSC and DCE (motion, aif_curve, aif_location,
-# registration), the pipeline argument overrides the suffix.
+# aif_candidates, registration), the pipeline argument overrides the suffix.
 FIGURE_NAME_MAP: dict[str, tuple[str, str]] = {
     # DSC
     "motion": ("motion", "dsc"),
     "aif_curve": ("aifcurve", "dsc"),
     "aif_location": ("aiflocation", "dsc"),
+    "aif_candidates": ("aifcandidates", "dsc"),
     "registration": ("registration", "dsc"),
     "dsc_preprocessing_qc": ("preprocessing", "dsc"),
     "dsc_param_maps_qc": ("parammaps", "dsc"),
@@ -631,7 +632,7 @@ FIGURE_NAME_MAP: dict[str, tuple[str, str]] = {
 
 # Keys that are shared between DSC and DCE pipelines.
 # For these, the suffix is determined by the pipeline argument.
-_SHARED_KEYS = {"motion", "aif_curve", "aif_location", "registration"}
+_SHARED_KEYS = {"motion", "aif_curve", "aif_location", "aif_candidates", "registration"}
 
 # Which figure keys belong to each pipeline
 _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
@@ -643,12 +644,12 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
     "tumor_seg": ["seg_postcon", "seg_flair", "nawm_flair"],
     "dsc": [
         "dsc_brain_mask", "motion", "dsc_preprocessing_qc", "aif_curve",
-        "aif_location", "dsc_leakage_qc", "dsc_param_maps_qc", "dsc_fit_qc",
-        "registration",
+        "aif_location", "aif_candidates", "dsc_leakage_qc", "dsc_param_maps_qc",
+        "dsc_fit_qc", "registration",
     ],
     "dce": [
         "dce_brain_mask", "motion", "b1", "t1", "preprocessing_qc",
-        "aif_curve", "aif_location", "pk_modeling_qc", "pk_param_maps_qc",
+        "aif_curve", "aif_location", "aif_candidates", "pk_modeling_qc", "pk_param_maps_qc",
         "model_selection_qc", "dsc_dce_xval", "registration",
     ],
 }

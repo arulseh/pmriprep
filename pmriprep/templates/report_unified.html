@@ -34,6 +34,10 @@
             transition: opacity 0.2s;
         }
         .figure-container:hover .figure-download { opacity: 1; }
+        .aif-layout { display: flex; gap: 20px; margin-top: 20px; align-items: center; }
+        .aif-layout > div { flex: 1; }
+        .aif-layout img { width: 100%; }
+        @media (max-width: 800px) { .aif-layout { flex-direction: column; } }
 
         /* Sticky navigation bar */
         nav.report-nav {

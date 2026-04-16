@@ -72,6 +72,16 @@ class AIFQCPlotInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Whether gamma-variate fitting was applied to the AIF",
     )
+    t1w_to_dsc_xfm = File(
+        exists=True,
+        mandatory=False,
+        desc="FLIRT matrix: T1w to DSC space (for glass brain transform)",
+    )
+    t1w_to_mni_xfm = File(
+        exists=True,
+        mandatory=False,
+        desc="FLIRT matrix: T1w to MNI space (for glass brain transform)",
+    )
 
 
 class AIFQCPlotOutputSpec(TraitedSpec):
@@ -79,6 +89,7 @@ class AIFQCPlotOutputSpec(TraitedSpec):
 
     out_aif_plot = File(exists=True, desc="AIF curve QC plot PNG")
     out_aif_location = File(desc="AIF location overlay PNG (None for synthetic AIF)")
+    out_aif_candidates = File(desc="AIF candidates glass brain PNG")
     out_aif_metrics = traits.Dict(desc="AIF quality metrics for HTML report")
 
 
@@ -174,13 +185,42 @@ class AIFQCPlot(BaseInterface):
             if auc_ratio is not None:
                 aif_metrics["gamma_auc_ratio"] = round(auc_ratio, 3)
 
+        # Generate glass brain candidates plot if transforms are available
+        aif_candidates_path: str | None = None
+        has_xfms = (
+            isdefined(self.inputs.t1w_to_dsc_xfm)
+            and isdefined(self.inputs.t1w_to_mni_xfm)
+        )
+        if (
+            detection_level not in ("synthetic", "external")
+            and has_xfms
+            and qc.get("all_candidate_coords")
+        ):
+            from pmriprep.interfaces.dce_aif_qc import (
+                plot_aif_candidates_glass_brain,
+            )
+
+            aif_candidates_path = str(out_dir / "aif_candidates_qc.png")
+            plot_aif_candidates_glass_brain(
+                candidate_coords=qc["all_candidate_coords"],
+                candidate_scores=qc.get("all_candidate_scores", []),
+                native_img=dsc_img,
+                t1w_to_native_xfm=self.inputs.t1w_to_dsc_xfm,
+                t1w_to_mni_xfm=self.inputs.t1w_to_mni_xfm,
+                subject_id=sub,
+                session_id=ses,
+                output_path=aif_candidates_path,
+                modality="DSC",
+            )
+
         self._results: dict[str, Any] = {
             "out_aif_plot": aif_plot_path,
             "out_aif_metrics": aif_metrics,
         }
-        # Only include location plot if it was generated (not for synthetic AIF)
         if aif_location_path is not None:
             self._results["out_aif_location"] = aif_location_path
+        if aif_candidates_path is not None:
+            self._results["out_aif_candidates"] = aif_candidates_path
 
         return runtime
 

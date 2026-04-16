@@ -113,6 +113,7 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # AIF QC plots
     aif_curve_plot = traits.Either(traits.Str, None, desc="AIF curve QC plot PNG path")
     aif_location_plot = traits.Either(traits.Str, None, desc="AIF location overlay PNG path")
+    aif_candidates_plot = traits.Either(traits.Str, None, desc="AIF candidates glass brain PNG path")
 
     # Brain mask filmstrip
     brain_mask_filmstrip = traits.Either(traits.Str, None, desc="Brain mask QC filmstrip PNG path")
@@ -578,6 +579,7 @@ class DSCDerivativeWriter(BaseInterface):
             "motion": "motion_qc_plot",
             "aif_curve": "aif_curve_plot",
             "aif_location": "aif_location_plot",
+            "aif_candidates": "aif_candidates_plot",
             "registration": "registration_filmstrip",
             "dsc_preprocessing_qc": "dsc_preprocessing_qc_plot",
             "dsc_param_maps_qc": "dsc_param_maps_qc_plot",

@@ -1586,6 +1586,7 @@ def init_dsc_preproc_wf(
                 # AIF QC plots
                 "aif_curve_plot",
                 "aif_location_plot",
+                "aif_candidates_plot",
                 # Smoothed maps (populated only if smooth_fwhm > 0)
                 "smooth_hemodynamic",
                 "smooth_auc",
@@ -2522,7 +2523,13 @@ def init_dsc_preproc_wf(
         (hdbet_dsc, aif_qc_plot, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
-        (inputnode, aif_qc_plot, [("tr", "tr")]),
+        (inputnode, aif_qc_plot, [
+            ("tr", "tr"),
+            ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
+        ]),
+        (register, aif_qc_plot, [
+            ("out_matrix", "t1w_to_dsc_xfm"),
+        ]),
     ])
 
     # DSC Preprocessing QC
@@ -2887,6 +2894,7 @@ def init_dsc_preproc_wf(
         (aif_qc_plot, outputnode, [
             ("out_aif_plot", "aif_curve_plot"),
             ("out_aif_location", "aif_location_plot"),
+            ("out_aif_candidates", "aif_candidates_plot"),
         ]),
         # Motion QC plot
         (motion_qc_plot, outputnode, [("plot_file", "motion_qc_plot")]),

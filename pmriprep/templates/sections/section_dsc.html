@@ -209,17 +209,29 @@
             {% endif %}
         </div>
         {% endif %}
-        <div class="plot-grid" style="margin-top: 20px;">
+        <div class="aif-layout">
             {% if dsc.images.aif_curve %}
-            <div class="figure-container">
-                <img src="{{ dsc.images.aif_curve }}" alt="AIF Curve">
-                <a href="{{ dsc.images.aif_curve }}" download class="figure-download">Save</a>
+            <div>
+                <div class="figure-container">
+                    <img src="{{ dsc.images.aif_curve }}" alt="AIF Curve">
+                    <a href="{{ dsc.images.aif_curve }}" download class="figure-download">Save</a>
+                </div>
             </div>
             {% endif %}
-            {% if dsc.images.aif_location %}
-            <div class="figure-container">
-                <img src="{{ dsc.images.aif_location }}" alt="AIF Location">
-                <a href="{{ dsc.images.aif_location }}" download class="figure-download">Save</a>
+            {% if dsc.images.aif_location or dsc.images.aif_candidates %}
+            <div>
+                {% if dsc.images.aif_location %}
+                <div class="figure-container" style="margin-bottom: 10px;">
+                    <img src="{{ dsc.images.aif_location }}" alt="AIF Location">
+                    <a href="{{ dsc.images.aif_location }}" download class="figure-download">Save</a>
+                </div>
+                {% endif %}
+                {% if dsc.images.aif_candidates %}
+                <div class="figure-container">
+                    <img src="{{ dsc.images.aif_candidates }}" alt="AIF Candidates">
+                    <a href="{{ dsc.images.aif_candidates }}" download class="figure-download">Save</a>
+                </div>
+                {% endif %}
             </div>
             {% endif %}
         </div>
