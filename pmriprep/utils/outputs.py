@@ -127,8 +127,8 @@ def write_dataset_description(pipeline_dir: Path, bids_dir: str) -> None:
                 "Name": "pmriprep",
                 "Version": pmriprep.__version__,
                 "Description": (
-                    "Anatomical preprocessing, DSC/DCE perfusion processing, "
-                    "and HD-GLIO tumor segmentation"
+                    "Automated preprocessing and quantification of "
+                    "DSC and DCE data"
                 ),
             }
         ],
@@ -136,10 +136,10 @@ def write_dataset_description(pipeline_dir: Path, bids_dir: str) -> None:
             {"URL": Path(bids_dir).name},
         ],
         "HowToAcknowledge": (
-            f"Please cite pmriprep (version {pmriprep.__version__}) "
-            "when using these outputs in publications."
+            f"Please cite PMRIPrep (version {pmriprep.__version__}), "
+            "https://github.com/pmriprep/pmriprep"
         ),
-        "License": "CC-BY-4.0",
+        "License": "BSD-3-Clause",
     }
     with open(desc_path, "w") as f:
         json.dump(description, f, indent=2)
