@@ -602,6 +602,11 @@ TISSUE_DENSITY: Final[float] = 1.04
 #: Excludes cortical surface veins that would contaminate the AIF.
 BRAIN_EROSION_ITERATIONS: Final[int] = 8
 
+#: Reduced erosion for atlas-constrained search. The MRA-derived atlas
+#: already excludes cortical veins; minimal erosion suffices to avoid
+#: partial-volume at the brain boundary.
+BRAIN_EROSION_ITERATIONS_ATLAS: Final[int] = 2
+
 #: Minimum number of voxels remaining after erosion; fall back to original
 #: mask if erosion leaves fewer than this.
 BRAIN_EROSION_MIN_VOXELS: Final[int] = 100

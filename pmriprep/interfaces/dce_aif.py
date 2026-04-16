@@ -44,6 +44,7 @@ from pmriprep.utils.dce_constants import (
     AIF_WASHOUT_THRESHOLD_RELAXED,
     AIF_WASHOUT_THRESHOLD_STRICT,
     BRAIN_EROSION_ITERATIONS,
+    BRAIN_EROSION_ITERATIONS_ATLAS,
     BRAIN_EROSION_MIN_VOXELS,
     DCE_AIF_EXPECTED_FULL_DOSE,
     EPSILON_CONCENTRATION,
@@ -974,11 +975,13 @@ class AIFDetection(BaseInterface):
         lesion_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
         skip_midline: bool = False,
         slab_edge_mm: float = SLAB_EDGE_EXCLUSION_MM,
+        erosion_iterations: int = BRAIN_EROSION_ITERATIONS,
     ) -> npt.NDArray[Any]:
         """Prepare the search mask with erosion, slab exclusion, and lesion distance.
 
         Steps:
-        1. Erode brain mask (8 iterations) to exclude cortical surface veins.
+        1. Erode brain mask (``erosion_iterations``) to exclude cortical
+           surface veins.
         2. Exclude inferior/superior slab edges (``slab_edge_mm``) to avoid
            slab profile roll-off artifacts.
         3. Midline exclusion (skipped when ``skip_midline=True`` for
@@ -995,6 +998,9 @@ class AIFDetection(BaseInterface):
             slab_edge_mm: Distance (mm) from inferior/superior slab edges
                 to exclude. Use ``SLAB_EDGE_EXCLUSION_MM_ATLAS`` for
                 atlas-constrained search.
+            erosion_iterations: Number of binary erosion iterations. Use
+                ``BRAIN_EROSION_ITERATIONS_ATLAS`` for atlas-constrained
+                search.
 
         Returns:
             Prepared 3D search mask.
@@ -1003,7 +1009,7 @@ class AIFDetection(BaseInterface):
 
         # Step 1: Erode brain mask
         search_mask = binary_erosion(
-            brain_mask > 0.5, iterations=BRAIN_EROSION_ITERATIONS
+            brain_mask > 0.5, iterations=erosion_iterations
         ).astype(brain_mask.dtype)
         if np.sum(search_mask) < BRAIN_EROSION_MIN_VOXELS:
             search_mask = (brain_mask > 0.5).astype(brain_mask.dtype)
@@ -2554,8 +2560,9 @@ class AIFDetection(BaseInterface):
                 lesion_distance_mm=_lesion_dist,
                 skip_midline=True,
                 slab_edge_mm=SLAB_EDGE_EXCLUSION_MM_ATLAS,
+                erosion_iterations=BRAIN_EROSION_ITERATIONS_ATLAS,
             )
-            # Whole-brain fallback: full slab edge exclusion + midline
+            # Whole-brain fallback: full erosion, slab edge, and midline
             wb_search_mask = self._prepare_search_mask(
                 brain_mask,
                 voxel_sizes,
@@ -2563,6 +2570,7 @@ class AIFDetection(BaseInterface):
                 lesion_distance_mm=_lesion_dist,
                 skip_midline=False,
                 slab_edge_mm=SLAB_EDGE_EXCLUSION_MM,
+                erosion_iterations=BRAIN_EROSION_ITERATIONS,
             )
 
             # ===== Phase 3: Compute tissue TTP reference =====
