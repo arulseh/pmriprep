@@ -503,21 +503,9 @@ class TestShouldApplyGammaFit:
 # =============================================================================
 
 
-class TestDSCConfigGammaFitCoercion:
-    """Tests for DSCConfig gamma_fit bool→str coercion."""
+class TestDSCConfigGammaFitRemoved:
+    """Verify gamma_fit is no longer a DSCConfig field (hardcoded to auto)."""
 
-    def test_true_becomes_on(self) -> None:
-        config = DSCConfig(gamma_fit=True)  # type: ignore[arg-type]
-        assert config.gamma_fit == "on"
-
-    def test_false_becomes_off(self) -> None:
-        config = DSCConfig(gamma_fit=False)  # type: ignore[arg-type]
-        assert config.gamma_fit == "off"
-
-    def test_default_is_auto(self) -> None:
+    def test_no_gamma_fit_field(self) -> None:
         config = DSCConfig()
-        assert config.gamma_fit == "auto"
-
-    def test_invalid_raises_value_error(self) -> None:
-        with pytest.raises(ValueError, match="Invalid gamma_fit"):
-            DSCConfig(gamma_fit="maybe")  # type: ignore[arg-type]
+        assert not hasattr(config, "gamma_fit")

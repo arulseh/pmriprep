@@ -250,12 +250,29 @@
                 'half_dose': 'Half Dose',
                 'significant': 'Significant',
                 'severe': 'Severe',
-                'user_specified_preload': 'Preload Specified',
-                'user_specified_no_preload': 'No Preload Specified',
             } %}
             <div class="metric">
                 <div class="metric-label">Classification</div>
                 <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_classification] | default(dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title) }}</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preload.preload_user_specified_dose is defined %}
+            <div class="metric">
+                <div class="metric-label">User-Specified Dose</div>
+                <div class="metric-value">{{ "%.2f" | format(dsc.qc_metrics.preload.preload_user_specified_dose) }}× administered</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preload.preload_auto_residual_fraction is defined and dsc.qc_metrics.preload.preload_auto_residual_fraction is not none %}
+            <div class="metric">
+                <div class="metric-label">Auto-Detected Residual</div>
+                <div class="metric-value">{{ "%.3f" | format(dsc.qc_metrics.preload.preload_auto_residual_fraction) }}× residual-equivalent</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preload.preload_classification_disagreement is defined %}
+            {% set d = dsc.qc_metrics.preload.preload_classification_disagreement %}
+            <div class="metric warning">
+                <div class="metric-label">⚠ User Override</div>
+                <div class="metric-value">{{ d['user_class'] | replace("_", " ") | title }} (auto-detected: {{ d['auto_class'] | replace("_", " ") | title }})</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_correction_applied is defined %}

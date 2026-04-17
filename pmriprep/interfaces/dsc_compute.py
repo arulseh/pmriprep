@@ -288,6 +288,12 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=True,
         desc="1D text file with AIF concentration curve",
     )
+    measured_aif_file = File(
+        exists=True,
+        mandatory=True,
+        desc="Measured AIF curve (pre-gamma) for full-bolus AUC CBV denominator. "
+             "Required — wiring must connect AIFDetection.out_measured_aif_curve.",
+    )
     brain_mask_file = File(
         exists=True,
         mandatory=True,
@@ -456,7 +462,8 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
 
     # Output files — relative maps (always produced)
     out_rel_cbf = File(genfile=True, desc="Output relative CBF map NIfTI")
-    out_rel_cbv = File(genfile=True, desc="Output relative CBV map NIfTI")
+    out_rel_cbv = File(genfile=True, desc="Output relative CBV map NIfTI (deconvolution)")
+    out_rel_cbv_auc = File(genfile=True, desc="Output AUC-based relative CBV map NIfTI")
     out_rel_auc_raw = File(genfile=True, desc="Output relative AUC raw map NIfTI")
     out_rel_auc_corr = File(genfile=True, desc="Output relative AUC corrected map NIfTI")
 
@@ -485,7 +492,8 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
 
     # Relative maps (always produced)
     out_rel_cbf = File(exists=True, desc="Relative CBF map")
-    out_rel_cbv = File(exists=True, desc="Relative CBV map")
+    out_rel_cbv = File(exists=True, desc="Relative CBV map (deconvolution)")
+    out_rel_cbv_auc = File(exists=True, desc="AUC-based relative CBV map")
     out_rel_auc_raw = File(exists=True, desc="Relative AUC raw map")
     out_rel_auc_corr = File(exists=True, desc="Relative AUC corrected map")
 
@@ -572,7 +580,7 @@ class ComputeDSCMaps(BaseInterface):
 
     Returns
     -------
-    out_rel_cbf, out_rel_cbv, out_rel_auc_raw, out_rel_auc_corr : str
+    out_rel_cbf, out_rel_cbv, out_rel_cbv_auc, out_rel_auc_raw, out_rel_auc_corr : str
         Paths to relative perfusion maps (always produced).
     out_mtt, out_tmax, out_psr, out_ph, out_ttp, out_cnr : str
         Paths to quantification-independent maps.
@@ -1869,6 +1877,59 @@ class ComputeDSCMaps(BaseInterface):
         auc_raw = np.clip(np.sum(raw_conc_data, axis=-1) * dt, 0, 10000)
         auc_diff = auc_raw - auc_corr
 
+        # -----------------------------------------------------------
+        # AUC-based CBV: full bolus passage per ASFNR/NCI/ABTC consensus
+        # (Boxerman Neuro-Oncology 2020; Boxerman AJNR 2006 "nlCBV").
+        # Window: BAT → end of acquisition on K2-corrected tissue ΔR2*;
+        # denominator is measured AIF over the same window. Recirculation
+        # contributes to both integrals and cancels in the ratio.
+        # BAT = first frame of bolus rise (from AIF detection); numerator
+        # and denominator share bolus_slice so any BAT off-by-one shifts
+        # both identically — ratio is robust.
+        # conc_data is already ΔR2* with zero baseline by construction
+        # (upstream baseline subtraction above); only the measured AIF
+        # needs explicit baseline subtraction here.
+        # -----------------------------------------------------------
+        cbv_auc: npt.NDArray[Any]
+        n_timepoints = conc_data.shape[-1]
+        bat = int(baseline_detection_info.get("arrival_index", detected_baseline))
+        bolus_slice = slice(bat, n_timepoints)
+        _preload_class_auc = str(self.inputs.preload_classification)
+
+        if (
+            isdefined(self.inputs.measured_aif_file)
+            and self.inputs.measured_aif_file
+            and Path(str(self.inputs.measured_aif_file)).is_file()
+        ):
+            measured_aif = np.loadtxt(self.inputs.measured_aif_file)
+            aif_for_auc = measured_aif - float(np.mean(measured_aif[:n_bl]))
+            aif_auc = float(np.sum(aif_for_auc[bolus_slice]) * dt)
+            tissue_auc_bolus = np.sum(conc_data[..., bolus_slice], axis=-1) * dt
+
+            if aif_auc < EPSILON_SIGNAL:
+                logger.warning("AIF AUC near-zero (%.6f); AUC CBV unavailable", aif_auc)
+                cbv_auc = np.full(spatial_shape, np.nan, dtype=np.float64)
+            else:
+                cbv_auc = np.clip(tissue_auc_bolus / aif_auc, 0.0, 10.0)
+
+            qc_metrics["cbv_auc_bat_frame"] = bat  # first frame of bolus rise
+            qc_metrics["cbv_auc_end_frame"] = n_timepoints
+            qc_metrics["cbv_auc_aif_integral"] = round(aif_auc, 6)
+        else:
+            logger.warning("Measured AIF not available; AUC CBV set to NaN")
+            cbv_auc = np.full(spatial_shape, np.nan, dtype=np.float64)
+            qc_metrics["cbv_auc_measured_aif_missing"] = True
+
+        # Preload QC warning: full-bolus AUC amplifies residual T1
+        # contamination when K2 tail fit under-corrects on preloaded data.
+        _PRELOAD_INDICATORS = {"half_dose", "significant", "severe"}
+        if _preload_class_auc in _PRELOAD_INDICATORS:
+            qc_metrics["cbv_auc_preload_warning"] = (
+                f"Preload classification '{_preload_class_auc}': K2 tail fit "
+                "may under-correct, biasing full-bolus AUC CBV low. "
+                "Interpret with caution."
+            )
+
         # CNR: peak concentration / baseline std per voxel (from raw conc)
         # Uses ddof=0 (default) and full-timeseries peak
         # Suppress RuntimeWarnings from np.where eagerly evaluating both
@@ -1937,6 +1998,7 @@ class ComputeDSCMaps(BaseInterface):
         # -----------------------------------------------------------
         rel_cbf = np.where(mask_bool, rel_cbf, 0.0)
         rel_cbv = np.where(mask_bool, rel_cbv, 0.0)
+        rel_cbv_auc = np.where(mask_bool, cbv_auc, 0.0)
         mtt = np.where(mask_bool, mtt, 0.0)
         tmax = np.where(mask_bool, tmax, 0.0)
         ttp = np.where(mask_bool, ttp, 0.0)
@@ -1959,10 +2021,12 @@ class ComputeDSCMaps(BaseInterface):
             "cbf_mean": float(np.mean(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
             "cbf_std": float(np.std(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
             "cbv_mean": float(np.mean(rel_cbv[mask_bool])) if np.any(mask_bool) else 0.0,
+            "cbv_auc_mean": float(np.nanmean(rel_cbv_auc[mask_bool])) if np.any(mask_bool) else 0.0,
             "mtt_mean": float(np.mean(mtt[mask_bool])) if np.any(mask_bool) else 0.0,
             "tmax_mean": float(np.mean(tmax[mask_bool])) if np.any(mask_bool) else 0.0,
             "cbf_median": float(np.median(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
             "cbv_median": float(np.median(rel_cbv[mask_bool])) if np.any(mask_bool) else 0.0,
+            "cbv_auc_median": float(np.nanmedian(rel_cbv_auc[mask_bool])) if np.any(mask_bool) else 0.0,
             "mtt_median": float(np.median(mtt[mask_bool])) if np.any(mask_bool) else 0.0,
             "tmax_median": float(np.median(tmax[mask_bool])) if np.any(mask_bool) else 0.0,
             "n_voxels": int(np.sum(mask_bool)),
@@ -2001,6 +2065,7 @@ class ComputeDSCMaps(BaseInterface):
         # Relative maps
         out_rel_cbf = _save_map(rel_cbf, "_rel_cbf")
         out_rel_cbv = _save_map(rel_cbv, "_rel_cbv")
+        out_rel_cbv_auc = _save_map(rel_cbv_auc, "_rel_cbv_auc")
         out_rel_auc_raw = _save_map(rel_auc_raw, "_rel_auc_raw")
         out_rel_auc_corr = _save_map(rel_auc_corr, "_rel_auc_corr")
 
@@ -2025,6 +2090,7 @@ class ComputeDSCMaps(BaseInterface):
             # Relative maps
             "out_rel_cbf": out_rel_cbf,
             "out_rel_cbv": out_rel_cbv,
+            "out_rel_cbv_auc": out_rel_cbv_auc,
             "out_rel_auc_raw": out_rel_auc_raw,
             "out_rel_auc_corr": out_rel_auc_corr,
             # Quality metrics

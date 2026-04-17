@@ -1,11 +1,21 @@
 """DSC (Dynamic Susceptibility Contrast) configuration dataclass."""
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 from .constants import DOSE_PRESETS
+
+#: User-specified preload input: "auto" (detect from signal) or a float
+#: multiplier of the agent's standard administered dose (0.0 = no preload,
+#: 0.5 = half-dose preload, 1.0 = full standard dose administered as preload).
+#: Internally binned to a PreloadClass (utils/dsc_preload.py) for K2
+#: uncertainty tuning. Auto-detection measures residual-equivalent ΔR2* and
+#: uses a separate set of bin edges — user-administered and auto-residual
+#: are physically distinct quantities that share class names but not edges.
+PreloadInput = Union[Literal["auto"], float]
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +33,17 @@ class DSCConfig:
 
     Attributes
     ----------
-    preload_present : bool
-        Whether contrast preload is present (e.g., prior DCE injection).
+    preload : "auto" or float
+        Preload administered dose as a multiplier of the agent's standard
+        single dose. `"auto"` (default) detects from the baseline ΔR2*
+        signal. A float (0.0–2.0) represents the administered fraction:
+        0.0 = no preload, 0.25 = quarter-dose, 0.5 = half-dose, 1.0 = full
+        standard dose, etc. Auto-detection always runs; if a user value is
+        set it is recorded alongside the auto result. User float and
+        auto-detection measure different physical quantities (administered
+        vs residual-equivalent) and use separate bin-edge tables in
+        `dsc_preload.py`, but both map to the same class system for K2
+        uncertainty tuning.
     dose : float
         Contrast agent dose multiplier (0.5 = half, 1.0 = full, 2.0 = double).
     agent_standard_dose : float
@@ -48,8 +67,6 @@ class DSCConfig:
         Minimum distance (mm) from lesion for AIF candidates.
     n_aif_candidates : int
         Number of AIF candidate voxels to average.
-    gamma_fit : str
-        Gamma-variate fitting mode: "auto", "on", or "off".
     disable_aif_fallback : bool
         Disable synthetic AIF fallback when detection fails.
     lesion_mask : Optional[Path]
@@ -87,7 +104,7 @@ class DSCConfig:
     """
 
     # Preload settings
-    preload_present: bool = False
+    preload: PreloadInput = "auto"
     dose: float = 1.0
     agent_standard_dose: float = 0.1  # mmol Gd/kg (0.1=standard, 0.05=gadopiclenol, 0.04=gadoquatrane)
 
@@ -102,7 +119,6 @@ class DSCConfig:
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
     n_aif_candidates: int = 10
-    gamma_fit: str = "auto"
     disable_aif_fallback: bool = False
     aif_method: Literal["auto", "synthetic"] = "auto"
 
@@ -170,7 +186,6 @@ class DSCConfig:
                     ) from e
         else:
             self.dose = float(self.dose)
-        import math
         if not math.isfinite(self.dose) or self.dose <= 0:
             raise ValueError(f"dose must be a finite positive number, got {self.dose}")
         if self.dose < 0.2 or self.dose > 3.0:
@@ -207,9 +222,6 @@ class DSCConfig:
         except (ValueError, TypeError) as e:
             raise TypeError(f"DSCConfig float field has invalid type: {e}") from e
 
-        # Coerce gamma_fit: bool→str for backward compatibility
-        if isinstance(self.gamma_fit, bool):
-            self.gamma_fit = "on" if self.gamma_fit else "off"
         _valid_registration = {"flirt", "flirt_bbr"}
         if self.registration not in _valid_registration:
             raise ValueError(
@@ -217,12 +229,38 @@ class DSCConfig:
                 f"Valid: {sorted(_valid_registration)}"
             )
 
-        _valid_gamma = {"auto", "on", "off"}
-        if self.gamma_fit not in _valid_gamma:
-            raise ValueError(
-                f"Invalid gamma_fit={self.gamma_fit!r}. "
-                f"Valid: {sorted(_valid_gamma)}"
-            )
+        # preload: "auto" or float dose multiplier. Reject enum strings
+        # from the pre-v0.25.0 config (breaking pre-release change).
+        if isinstance(self.preload, str):
+            if self.preload != "auto":
+                raise ValueError(
+                    f"Invalid preload={self.preload!r}. Use 'auto' to "
+                    "auto-detect, or a float dose multiplier (e.g., 0.5 for "
+                    "half-dose preload). The string enum "
+                    "('none'/'minimal'/'half_dose'/...) was removed in "
+                    "v0.25.0 — use a numeric fraction instead."
+                )
+        else:
+            try:
+                self.preload = float(self.preload)
+            except (ValueError, TypeError) as e:
+                raise TypeError(
+                    f"preload must be 'auto' or a number, got {self.preload!r}"
+                ) from e
+            if not math.isfinite(self.preload):
+                raise ValueError(
+                    f"preload must be finite, got {self.preload}"
+                )
+            if not (0.0 <= self.preload <= 2.0):
+                raise ValueError(
+                    f"preload={self.preload} outside valid range [0.0, 2.0]"
+                )
+            if self.preload > 1.5:
+                logger.warning(
+                    "preload=%.2f is unusually high (>1.5x standard); "
+                    "verify this matches the administered preload dose.",
+                    self.preload,
+                )
 
         # Validate leakage correction settings
         _valid_leakage = {"bsw", "bidirectional"}

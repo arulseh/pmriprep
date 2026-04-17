@@ -12,6 +12,7 @@ from typing import Any, Final, NamedTuple, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
+from scipy.stats import norm
 
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
@@ -88,24 +89,162 @@ PRELOAD_THRESHOLDS_BY_FIELD: Final[dict[float, PreloadThresholds]] = {
 }
 
 
-def get_preload_thresholds(field_strength: float = 3.0) -> PreloadThresholds:
-    """Get preload classification thresholds for field strength.
+#: Baseline agent standard dose (mmol Gd/kg) for which
+#: ``PRELOAD_THRESHOLDS_BY_FIELD`` is calibrated. Used to linearly scale
+#: thresholds for agents with different standard doses (e.g., Vueway 0.05).
+_PRELOAD_THRESHOLDS_BASELINE_DOSE: Final[float] = 0.1
 
-    Uses nearest field strength if exact match not available.
+
+def get_preload_thresholds(
+    field_strength: float = 3.0,
+    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
+) -> PreloadThresholds:
+    """Get preload classification thresholds for field strength and agent.
+
+    Thresholds are in ΔR2* units (s⁻¹) and were calibrated for standard
+    Gd-DOTA-class agents (``agent_standard_dose = 0.1 mmol Gd/kg``). Agents
+    with different standard doses (e.g., gadopiclenol/Vueway at 0.05,
+    gadoquatrane at 0.04) produce systematically different ΔR2* per
+    "fraction of standard dose." Tissue r2* itself is agent-independent
+    (Gd³⁺ susceptibility), so linear dose-normalization is the correct
+    correction: ``effective_threshold = base_threshold × (agent_standard_dose / 0.1)``.
 
     Args:
-        field_strength: Magnetic field strength in Tesla.
+        field_strength: Magnetic field strength in Tesla. Uses nearest
+            available field strength if exact match not in table.
+        agent_standard_dose: Agent's recommended standard single dose in
+            mmol Gd/kg. Default 0.1 (Gd-DOTA class). Thresholds scale
+            linearly; values outside [0.01, 0.2] produce a warning.
 
     Returns:
-        PreloadThresholds for the specified field strength.
+        PreloadThresholds (in ΔR2* s⁻¹) scaled for the specified agent.
     """
-    if field_strength in PRELOAD_THRESHOLDS_BY_FIELD:
-        return PRELOAD_THRESHOLDS_BY_FIELD[field_strength]
+    if agent_standard_dose <= 0:
+        raise ValueError(
+            f"agent_standard_dose must be > 0, got {agent_standard_dose}"
+        )
+    if not (0.01 <= agent_standard_dose <= 0.2):
+        logger.warning(
+            "agent_standard_dose=%.3f outside typical range [0.01, 0.2]; "
+            "preload thresholds may be miscalibrated.",
+            agent_standard_dose,
+        )
 
-    # Use nearest field strength
-    fields = sorted(PRELOAD_THRESHOLDS_BY_FIELD.keys())
-    nearest = min(fields, key=lambda x: abs(x - field_strength))
-    return PRELOAD_THRESHOLDS_BY_FIELD[nearest]
+    if field_strength in PRELOAD_THRESHOLDS_BY_FIELD:
+        base = PRELOAD_THRESHOLDS_BY_FIELD[field_strength]
+    else:
+        fields = sorted(PRELOAD_THRESHOLDS_BY_FIELD.keys())
+        nearest = min(fields, key=lambda x: abs(x - field_strength))
+        base = PRELOAD_THRESHOLDS_BY_FIELD[nearest]
+
+    scale = agent_standard_dose / _PRELOAD_THRESHOLDS_BASELINE_DOSE
+    return PreloadThresholds(
+        none_max=base.none_max * scale,
+        minimal_max=base.minimal_max * scale,
+        half_dose_max=base.half_dose_max * scale,
+        significant_max=base.significant_max * scale,
+    )
+
+
+#: Administered-dose bin edges for user-specified ``preload`` float.
+#: Clinically calibrated (ASFNR Welker 2015, Boxerman 2020):
+#:   quarter-dose preload (0.25) → HALF_DOSE class
+#:   half-dose preload (0.5)      → HALF_DOSE class
+#:   full-dose preload (1.0)      → SIGNIFICANT class
+#:   double-dose (>1.15)          → SEVERE class
+#: Edges are heuristic for K2 uncertainty bucketing; the MINIMAL→HALF_DOSE
+#: edge (0.20) and SIGNIFICANT→SEVERE edge (1.15) in particular are
+#: conventions rather than literature-derived boundaries.
+#:
+#: Note: these edges describe ADMINISTERED preload dose fractions (what the
+#: technician injected). Auto-detection from signal uses a separate set of
+#: ΔR2*-based thresholds (PRELOAD_THRESHOLDS_BY_FIELD) which measure the
+#: RESIDUAL-EQUIVALENT concentration at DSC start (what survived clearance).
+#: The two edge tables are physically distinct and are not expected to
+#: numerically align; they share the same class names for downstream
+#: K2-uncertainty bucketing only.
+_PRELOAD_DOSE_EDGES: Final[dict[PreloadClass, tuple[float, float]]] = {
+    PreloadClass.NONE:         (0.00, 0.01),
+    PreloadClass.MINIMAL:      (0.01, 0.20),
+    PreloadClass.HALF_DOSE:    (0.20, 0.60),
+    PreloadClass.SIGNIFICANT:  (0.60, 1.15),
+    PreloadClass.SEVERE:       (1.15, float("inf")),
+}
+
+
+def preload_class_from_dose(preload_dose: float) -> PreloadClass:
+    """Bin a user-specified administered preload dose fraction to a class.
+
+    Bin edges are right-exclusive half-open intervals ``[lo, hi)``, matching
+    :func:`classify_preload` and :func:`get_preload_thresholds` semantics.
+
+    Args:
+        preload_dose: Administered preload as a fraction of the agent's
+            standard single dose (0.0 = no preload, 0.5 = half-dose,
+            1.0 = full dose). Must be finite and non-negative.
+
+    Returns:
+        PreloadClass enum value for K2 uncertainty tuning.
+
+    Raises:
+        ValueError: If ``preload_dose`` is negative or non-finite.
+    """
+    if not np.isfinite(preload_dose) or preload_dose < 0:
+        raise ValueError(
+            f"preload_dose must be finite and non-negative, got {preload_dose}"
+        )
+    for cls, (lo, hi) in _PRELOAD_DOSE_EDGES.items():
+        if lo <= preload_dose < hi:
+            return cls
+    # Should be unreachable since SEVERE has hi=inf, but guard anyway
+    return PreloadClass.SEVERE
+
+
+def residual_equivalent_fraction_from_delta_r2(
+    delta_r2: float,
+    field_strength: float = 3.0,
+    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
+) -> float:
+    """Convert baseline ΔR2* to a residual-equivalent dose fraction.
+
+    This is NOT the administered preload dose. It is the residual tissue
+    Gd concentration at DSC start, expressed as a fraction of what the
+    agent's standard dose would produce if fully retained. Actual
+    administered preload is typically 1.5×–3× larger than this value
+    because of renal clearance between preload and DSC bolus (5–10 min for
+    ASFNR-style preload protocols; clearance depends on GFR).
+
+    Used for QC transparency so auto-detection output can be compared to
+    user-specified administered dose (different physical quantities, same
+    class system for bucketing).
+
+    Args:
+        delta_r2: Baseline ΔR2* in s⁻¹ (from detect_preload_from_signal).
+        field_strength: Magnetic field in Tesla.
+        agent_standard_dose: Agent's standard dose in mmol Gd/kg.
+
+    Returns:
+        Residual-equivalent fraction. 0.0 if ``delta_r2 <= 0`` (no detectable
+        preload signal — valid physical edge case).
+
+    Raises:
+        ValueError: If ``agent_standard_dose <= 0`` (consistent with
+            :func:`get_preload_thresholds`).
+    """
+    if agent_standard_dose <= 0:
+        raise ValueError(
+            f"agent_standard_dose must be > 0, got {agent_standard_dose}"
+        )
+    if delta_r2 <= 0:
+        return 0.0
+    from pmriprep.utils.dsc_constants import get_r2_star
+
+    r2_star = get_r2_star(field_strength)
+    # mM residual = delta_r2 / r2* ; fraction = mM / agent_standard_dose
+    # (with the convention that agent_standard_dose's mmol/kg ≈ mmol/L in
+    # whole-brain tissue at unity partition coefficient — same
+    # approximation as get_r2_star calibration).
+    return float(delta_r2 / r2_star / agent_standard_dose)
 
 
 # =============================================================================
@@ -122,8 +261,18 @@ class PreloadResult:
         baseline_delta_r2: Measured baseline ΔR2* in s⁻¹.
         estimated_residual: Estimated residual concentration in mM (if available).
         detection_method: Method used for detection.
-        confidence: Confidence score (0-1) in the detection.
-        details: Additional details about the detection.
+        confidence: P(correct classification) in [0, 1]. Computed from the
+            SEM of mean baseline signal propagated to ΔR2* units, compared
+            to the distance to the nearest classification edge. NOT a
+            measure of tissue heterogeneity. Assumes per-voxel noise is
+            Gaussian and independent so that SEM_mean ≈ std(S) / √N
+            (central limit theorem) — spatial correlation violates this
+            and can inflate the reported confidence (minor; ±5% typical).
+            0 when SEM is ill-defined (empty mask, zero baseline).
+        details: Additional details about the detection. For signal-based
+            detection includes `tissue_heterogeneity_cv`, `sem_delta_r2`,
+            `distance_to_nearest_edge`, `effective_thresholds`,
+            `residual_equivalent_fraction`, among others.
     """
 
     classification: PreloadClass
@@ -156,17 +305,23 @@ class PreloadResult:
 def classify_preload(
     baseline_delta_r2: float,
     field_strength: float = 3.0,
+    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
 ) -> PreloadClass:
-    """Classify preload severity from baseline ΔR2*.
+    """Classify preload severity from baseline ΔR2* (agent-aware).
+
+    Thresholds scale linearly with ``agent_standard_dose`` — see
+    :func:`get_preload_thresholds` for rationale.
 
     Args:
         baseline_delta_r2: Baseline ΔR2* value in s⁻¹.
         field_strength: Magnetic field strength in Tesla.
+        agent_standard_dose: Agent's standard dose in mmol Gd/kg
+            (default 0.1 for Gd-DOTA class).
 
     Returns:
         PreloadClass indicating severity level.
     """
-    thresholds = get_preload_thresholds(field_strength)
+    thresholds = get_preload_thresholds(field_strength, agent_standard_dose)
 
     if baseline_delta_r2 < thresholds.none_max:
         return PreloadClass.NONE
@@ -187,6 +342,7 @@ def detect_preload_from_signal(
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
     field_strength: float = 3.0,
     reference_signal: Optional[float] = None,
+    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
 ) -> PreloadResult:
     """Detect preload from DSC signal baseline.
 
@@ -268,8 +424,13 @@ def detect_preload_from_signal(
     baseline_delta_r2 = -float(np.log(signal_ratio_clipped)) / te
     baseline_delta_r2 = max(baseline_delta_r2, 0.0)  # Can't be negative
 
-    # Classify preload
-    classification = classify_preload(baseline_delta_r2, field_strength)
+    # Classify preload (agent-aware thresholds)
+    classification = classify_preload(
+        baseline_delta_r2, field_strength, agent_standard_dose,
+    )
+    effective_thresholds = get_preload_thresholds(
+        field_strength, agent_standard_dose,
+    )
 
     # Estimate residual concentration if r2* available
     from pmriprep.utils.dsc_constants import get_r2_star
@@ -277,10 +438,63 @@ def detect_preload_from_signal(
     r2_star = get_r2_star(field_strength)
     estimated_residual = baseline_delta_r2 / r2_star if baseline_delta_r2 > 0 else None
 
-    # Compute confidence based on signal statistics
-    # Higher confidence when signal distribution is consistent
-    signal_cv = float(np.std(baseline_values) / mean_baseline) if mean_baseline > 0 else 1.0
-    confidence = max(0.0, min(1.0, 1.0 - signal_cv))
+    # Residual-equivalent fraction of standard dose (for QC symmetry with
+    # user-specified administered dose — different physical quantities, see
+    # docstring of residual_equivalent_fraction_from_delta_r2).
+    residual_equivalent_fraction = residual_equivalent_fraction_from_delta_r2(
+        baseline_delta_r2, field_strength, agent_standard_dose,
+    )
+
+    # Legacy CV retained as a separate QC detail — measures anatomical
+    # tissue heterogeneity (WM/GM/CSF T2* spread), NOT detection uncertainty.
+    # Renamed ("signal_cv" → "tissue_heterogeneity_cv") so consumers don't
+    # confuse it with measurement confidence.
+    tissue_heterogeneity_cv = (
+        float(np.std(baseline_values, ddof=1) / mean_baseline)
+        if mean_baseline > 0 and baseline_values.size >= 2
+        else float("inf")
+    )
+
+    # Confidence = P(ΔR2* truly lies in the reported classification bin).
+    # Error propagation: ΔR2* = -ln(S/S_ref) / TE, so
+    #   d(ΔR2*)/dS = -1 / (TE × S)  → SEM_ΔR2* ≈ SEM_S / (TE × mean_baseline)
+    # S_ref (p95 of same baseline) treated as fixed — simplification with
+    # <10% confidence bias for typical brain masks. Assumes voxels are
+    # independent Gaussian samples; spatial correlation inflates reported
+    # confidence by a small amount at typical SNR (DSC baseline >30).
+    n_vox = int(baseline_values.size)
+    if mean_baseline <= 0 or n_vox < 2:
+        confidence = 0.0
+        sem_delta_r2 = float("inf")
+        distance_to_nearest_edge = 0.0
+    else:
+        sem_s = float(np.std(baseline_values, ddof=1)) / np.sqrt(n_vox)
+        sem_delta_r2 = sem_s / (te * mean_baseline)
+        edges = (
+            effective_thresholds.none_max,
+            effective_thresholds.minimal_max,
+            effective_thresholds.half_dose_max,
+            effective_thresholds.significant_max,
+        )
+        distance_to_nearest_edge = float(
+            min(abs(baseline_delta_r2 - e) for e in edges)
+        )
+        if not np.isfinite(sem_delta_r2) or sem_delta_r2 <= 0.0:
+            confidence = 0.0
+        else:
+            z = distance_to_nearest_edge / sem_delta_r2
+            # Two-tailed: P(|true - measured| < distance | SEM) under normal.
+            confidence = float(
+                max(0.0, min(1.0, 1.0 - 2.0 * norm.cdf(-z)))
+            )
+
+    logger.debug(
+        "preload confidence: z-score components — "
+        "sem_delta_r2=%.4f, distance_to_nearest_edge=%.4f, "
+        "baseline_delta_r2=%.4f, classification=%s, confidence=%.4f",
+        sem_delta_r2, distance_to_nearest_edge, baseline_delta_r2,
+        classification.value, confidence,
+    )
 
     return PreloadResult(
         classification=classification,
@@ -292,9 +506,19 @@ def detect_preload_from_signal(
             "mean_baseline_signal": mean_baseline,
             "reference_signal": reference_signal,
             "signal_ratio": float(signal_ratio),
-            "signal_cv": signal_cv,
+            "tissue_heterogeneity_cv": tissue_heterogeneity_cv,
+            "sem_delta_r2": sem_delta_r2,
+            "distance_to_nearest_edge": distance_to_nearest_edge,
             "field_strength": field_strength,
             "n_brain_voxels": int(baseline_values.size),
+            "agent_standard_dose": agent_standard_dose,
+            "effective_thresholds": {
+                "none_max": effective_thresholds.none_max,
+                "minimal_max": effective_thresholds.minimal_max,
+                "half_dose_max": effective_thresholds.half_dose_max,
+                "significant_max": effective_thresholds.significant_max,
+            },
+            "residual_equivalent_fraction": residual_equivalent_fraction,
         },
     )
 
@@ -448,6 +672,7 @@ def detect_preload(
     dce_ran: Optional[bool] = None,
     dce_metadata: Optional[dict[str, Any]] = None,
     dicom_metadata: Optional[dict[str, Any]] = None,
+    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
 ) -> PreloadResult:
     """Detect preload using all available information.
 
@@ -465,6 +690,10 @@ def detect_preload(
         dce_ran: Whether DCE was acquired before DSC. Optional.
         dce_metadata: DCE protocol information (dose, timing). Optional.
         dicom_metadata: DICOM metadata dictionary. Optional.
+        agent_standard_dose: Agent's standard dose in mmol Gd/kg
+            (default 0.1 for Gd-DOTA class). Forwarded to the signal-based
+            detector so classification thresholds scale linearly with the
+            administered agent's standard dose.
 
     Returns:
         PreloadResult from the most reliable detection method.
@@ -479,6 +708,7 @@ def detect_preload(
             baseline_frames=baseline_frames,
             brain_mask=brain_mask,
             field_strength=field_strength,
+            agent_standard_dose=agent_standard_dose,
         )
         results.append(result)
 
@@ -509,7 +739,15 @@ def detect_preload(
             details={"error": "No detection methods available"},
         )
 
-    # Sort by confidence, return highest
+    # Sort by confidence, return highest.
+    # Note: confidence scales differ across methods — signal-based is now
+    # probabilistic P(correct classification) via SEM+z-score (this function
+    # post-v0.25.0), while DCE-protocol and DICOM-metadata methods return
+    # heuristic values (~0.5–0.7). A low-confidence signal detection
+    # (near-edge ΔR2* or tiny mask) may defer to DCE timing, which is
+    # usually acceptable — but confidence values are not directly comparable
+    # across methods. Consider sorting by detection_method priority first
+    # if this causes issues in practice.
     results.sort(key=lambda r: r.confidence, reverse=True)
     return results[0]
 

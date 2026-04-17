@@ -134,7 +134,7 @@ pmriprep bids_dir output_dir {participant} [options]
 |------|-------------|
 | `--dsc-deconv-method {sSVD,cSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
 | `--dsc-bayesian {vi,map}` | Bayesian inference for parametric methods (default: vi) |
-| `--dsc-preload` | Indicate contrast preload is present |
+| `--dsc-preload {auto\|FLOAT}` | Preload: `auto` (detect from signal) or float dose multiplier (0.0–2.0, e.g. `0.5` for half-dose preload) |
 | `--dsc-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `--dsc-agent-standard-dose DOSE` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available). Default: `0.1` |
 | `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
@@ -188,7 +188,7 @@ pmriprep /path/to/bids /path/to/output participant \
 dsc:
   method: cpi
   bayesian: vi
-  preload_present: true
+  preload: 0.5        # half-dose preload (administered); or "auto" to detect from signal
   dose: 0.75
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
@@ -207,7 +207,7 @@ dce:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `preload_present` | bool | `false` | Contrast preload present |
+| `preload` | str or float | `"auto"` | Preload administered dose. `"auto"` to detect from signal, or a float multiplier of the agent's standard dose (`0.0` = none, `0.5` = half-dose, `1.0` = full). Auto-detection measures residual-equivalent ΔR2* (different physical quantity from administered dose); both are logged to QC with a disagreement flag when they differ. Auto-detection thresholds are linearly scaled by `agent_standard_dose` so fractional-dose classification is agent-normalized. |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
@@ -217,7 +217,6 @@ dce:
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
-| `gamma_fit` | str | `"auto"` | Gamma-variate AIF fitting: `auto`, `on`, `off` |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |
 | `pre_bolus` | int | `5` | Initial baseline for motion correction. Baseline is re-estimated after AIF detection |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
@@ -412,6 +411,7 @@ output_dir/pmriprep/
       # DSC maps
       sub-01_ses-01_space-DSC_desc-dscRel_cbf.nii.gz
       sub-01_ses-01_space-DSC_desc-dscRel_cbv.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscRelAUC_cbv.nii.gz
       sub-01_ses-01_space-DSC_desc-dscRel_auc.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_mtt.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_tmax.nii.gz
@@ -484,7 +484,8 @@ output_dir/pmriprep/
 | File Pattern | Description | Units |
 |--------------|-------------|-------|
 | `*_desc-dscRel_cbf` | Cerebral blood flow (relative) | 1/min |
-| `*_desc-dscRel_cbv` | Cerebral blood volume (relative) | arbitrary |
+| `*_desc-dscRel_cbv` | Cerebral blood volume (relative, deconvolution) | arbitrary |
+| `*_desc-dscRelAUC_cbv` | Cerebral blood volume (K2-corrected full-bolus AUC, relative) | arbitrary |
 | `*_desc-dscRel_auc` | Relative area under curve | arbitrary |
 | `*_desc-dsc_mtt` | Mean transit time | seconds |
 | `*_desc-dsc_tmax` | Time to maximum of residue function | seconds |

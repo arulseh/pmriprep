@@ -698,11 +698,14 @@ def _find_previous_dsc_outputs(
     if not dsc_dir.exists():
         return outputs
 
-    # Relative CBV map
+    # AUC-based CBV map (primary); fall back to deconv CBV for older outputs
     perf_dir = dsc_dir / "perf"
     if perf_dir.exists():
-        for f in perf_dir.glob("*desc-dscRel_cbv.nii.gz"):
+        for f in perf_dir.glob("*desc-dscRelAUC_cbv.nii.gz"):
             outputs["rel_cbv_map"] = str(f)
+        if outputs["rel_cbv_map"] is None:
+            for f in perf_dir.glob("*desc-dscRel_cbv.nii.gz"):
+                outputs["rel_cbv_map"] = str(f)
 
     # DSC→T1w transform (now in anat/ instead of xfm/)
     anat_dir = dsc_dir / "anat"
@@ -1774,7 +1777,7 @@ def init_pmriprep_wf(
         workflow.connect([
             (dsc_wf, outputnode, [
                 ("outputnode.rel_cbf_map", "dsc_cbf"),
-                ("outputnode.rel_cbv_map", "dsc_cbv"),
+                ("outputnode.rel_cbv_auc_map", "dsc_cbv"),
                 ("outputnode.mtt_map", "dsc_mtt"),
                 ("outputnode.tmax_map", "dsc_tmax"),
                 ("outputnode.aif_qc", "dsc_aif_qc"),
@@ -1883,6 +1886,7 @@ def init_pmriprep_wf(
                 # Relative maps
                 ("outputnode.rel_cbf_map", "rel_cbf_map"),
                 ("outputnode.rel_cbv_map", "rel_cbv_map"),
+                ("outputnode.rel_cbv_auc_map", "rel_cbv_auc_map"),
                 ("outputnode.rel_auc_raw_map", "rel_auc_raw_map"),
                 ("outputnode.rel_auc_corr_map", "rel_auc_corr_map"),
                 # Normalized maps
@@ -2597,7 +2601,7 @@ def init_pmriprep_wf(
                     (dsc_wf, dce_wf, [
                         # Route CBV through DCE inputnode → resample_dsc_cbv node
                         # (DSC native 128x128 must be resampled to DCE native 256x256)
-                        ("outputnode.rel_cbv_map", "inputnode.dsc_cbv_file"),
+                        ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
                         ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                         # AIF QC is a JSON file, no spatial resampling needed
                         ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc"),
@@ -2613,14 +2617,19 @@ def init_pmriprep_wf(
             if dce_config.model == "patlak":
                 workflow.connect([
                     (dsc_wf, dce_wf, [
-                        ("outputnode.rel_cbv_map", "inputnode.dsc_cbv_file"),
+                        ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
                         ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                     ]),
                 ])
 
-            # Pass DSC preload config to validation node
+            # Pass DSC preload config to validation node.
+            # True when user explicitly overrode auto-detection with a
+            # numeric preload dose (any float fraction including 0.0).
+            # `dsc_config.preload` is "auto" or a float; `!= "auto"` matches
+            # every float value, so this comparison is the correct
+            # "user-specified?" check under the new type.
             dce_wf.inputs.dsc_dce_validation.dsc_preload_configured = (
-                dsc_config.preload_present
+                dsc_config.preload != "auto"
             )
 
         elif dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):

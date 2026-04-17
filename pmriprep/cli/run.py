@@ -61,6 +61,48 @@ def _dose_type(value: str) -> float:
     return fval
 
 
+def _preload_type(value: str):
+    """Parse a --dsc-preload argument as 'auto' or a float dose multiplier.
+
+    Parameters
+    ----------
+    value : str
+        Either the literal ``"auto"`` or a float string representing the
+        administered preload as a fraction of the agent's standard dose
+        (e.g., ``"0.5"`` for half-dose preload).
+
+    Returns
+    -------
+    str or float
+        ``"auto"`` unchanged, or the parsed float value in [0.0, 2.0].
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        If *value* is neither ``"auto"`` nor a finite float in [0.0, 2.0].
+    """
+    import math
+
+    if value == "auto":
+        return "auto"
+    try:
+        fval = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--dsc-preload must be 'auto' or a float dose multiplier, "
+            f"got {value!r}. Example: --dsc-preload 0.5 for half-dose preload."
+        )
+    if not math.isfinite(fval):
+        raise argparse.ArgumentTypeError(
+            f"--dsc-preload must be finite, got {fval}"
+        )
+    if not (0.0 <= fval <= 2.0):
+        raise argparse.ArgumentTypeError(
+            f"--dsc-preload must be in [0.0, 2.0], got {fval}"
+        )
+    return fval
+
+
 def _sanitize_for_toml(obj: Any) -> Any:
     """Convert Path objects to strings and drop None values for TOML."""
     if isinstance(obj, dict):
@@ -240,11 +282,13 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-preload",
-        action="store_const",
-        const=True,
+        type=_preload_type,
         default=None,
-        help="Indicate contrast preload is present (e.g., prior DCE injection). "
-        "If not specified, auto-detected from baseline deltaR2*.",
+        metavar="{auto|FLOAT}",
+        help="DSC preload as 'auto' (detect from signal) or a float dose "
+        "multiplier relative to the agent's standard dose (e.g., 0.5 for "
+        "half-dose preload). Accepts 0.0 to 2.0. Internally binned to a "
+        "class for K2 constraint tuning.",
     )
     dsc_group.add_argument(
         "--dsc-dose",
@@ -834,7 +878,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         ),
         "dsc_preload": (
             cli_args.get("dsc_preload") is not None
-            or "preload_present" in file_config.get("dsc", {})
+            or "preload" in file_config.get("dsc", {})
         ),
     }
 

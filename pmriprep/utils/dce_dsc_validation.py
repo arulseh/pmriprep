@@ -182,10 +182,11 @@ class ValidationResult:
     Attributes:
         status: Overall validation status (PASS/WARN/POOR/CIRCULAR).
         preload_effect_detected: Whether preload effect is suspected from
-            vp/CBV ratio analysis. Distinct from DSC config ``preload_present``
-            which records the user/scanner configuration.
-        dsc_preload_configured: Whether DSC preload was configured (from DSC
-            config), or None if unknown.
+            vp/CBV ratio analysis. Distinct from DSC config ``preload`` which
+            records the user/scanner configuration.
+        dsc_preload_configured: True when user explicitly overrode
+            auto-detection with a preload class (i.e., ``preload != "auto"``).
+            None if unknown.
         constraint_mode: CBV constraint mode used (hard/soft/skip/None).
         circular: True when constraint_mode="hard" — vp is deterministically
             derived from CBV, making cross-validation meaningless.

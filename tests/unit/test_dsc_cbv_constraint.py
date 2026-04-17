@@ -500,7 +500,7 @@ class TestClassifyPreloadK2:
     def test_preloaded_well_suppressed(self) -> None:
         """Preloaded with low K2 and low leaky voxels → well_suppressed."""
         k2 = {"k2_median": 0.0005, "percent_leaky_voxels": 3.0}
-        is_pre, well, high = _classify_preload_k2("user_specified_preload", k2)
+        is_pre, well, high = _classify_preload_k2("half_dose", k2)
         assert is_pre is True
         assert well is True
         assert high is False
@@ -508,7 +508,7 @@ class TestClassifyPreloadK2:
     def test_not_preloaded_high_correction(self) -> None:
         """No preload with high leaky voxels → high_correction."""
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
-        is_pre, well, high = _classify_preload_k2("user_specified_no_preload", k2)
+        is_pre, well, high = _classify_preload_k2("none", k2)
         assert is_pre is False
         assert well is False
         assert high is True

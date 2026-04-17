@@ -78,8 +78,11 @@ AIF_BASELINE_RETURN_MAX: float = 0.40
 #: Marginal baseline return ratio
 AIF_BASELINE_RETURN_MARGINAL: float = 0.30
 
-#: CBV median physiological range (mL/100g)
-CBV_MEDIAN_RANGE: tuple[float, float] = (0.5, 10.0)
+#: CBV median acceptable range (relative units, full-bolus AUC scale).
+#: Real clinical data: most medians 0.98-2.45, rare high-grade up to ~3.1.
+#: Lower bound catches failures (bad AIF/NAWM/K2); upper bound flags AIF
+#: partial-volume issues.
+CBV_MEDIAN_RANGE: tuple[float, float] = (0.5, 5.0)
 
 #: Maximum fraction of negative CBV values before quality downgrade
 CBV_NEGATIVE_FRACTION_MAX: float = 0.01
@@ -286,7 +289,7 @@ def _classify_preload_k2(
     pct_leaky = float(k2_metrics.get("percent_leaky_voxels", 0.0))
 
     is_preloaded = preload_classification in (
-        "user_specified_preload", "half_dose", "significant", "severe",
+        "half_dose", "significant", "severe",
     )
     well_suppressed = k2_med < K2_MEDIAN_SUPPRESSED and pct_leaky < LEAKY_VOXELS_LOW
     high_correction = pct_leaky > LEAKY_VOXELS_HIGH or k2_med > K2_MEDIAN_CORRECTION
@@ -585,7 +588,7 @@ def determine_constraint_mode(
         user_override: User-specified mode override ('auto', 'hard', 'soft',
             'skip'). If 'auto' or None, auto-determined from quality.
         preload_classification: DSC preload classification string from QC
-            (e.g., 'user_specified_preload', 'half_dose', 'none').
+            (e.g., 'half_dose', 'significant', 'severe', 'none').
         k2_metrics: K2 leakage correction metrics dict from dsc_preload,
             containing 'k2_median', 'percent_leaky_voxels', etc.
 
@@ -669,7 +672,7 @@ def prepare_vp_constraint(
         mode_override: User-specified constraint mode override.
         hematocrit: Blood hematocrit for CBV-to-vp conversion.
         preload_classification: DSC preload classification string from QC
-            (e.g., 'user_specified_preload', 'half_dose', 'none').
+            (e.g., 'half_dose', 'significant', 'severe', 'none').
         k2_metrics: K2 leakage correction metrics dict from dsc_preload,
             containing 'k2_median', 'percent_leaky_voxels', etc.
 
@@ -715,7 +718,7 @@ def prepare_vp_constraint_from_data(
         mode_override: User-specified constraint mode override.
         hematocrit: Blood hematocrit for CBV-to-vp conversion.
         preload_classification: DSC preload classification string from QC
-            (e.g., 'user_specified_preload', 'half_dose', 'none').
+            (e.g., 'half_dose', 'significant', 'severe', 'none').
         k2_metrics: K2 leakage correction metrics dict from dsc_preload,
             containing 'k2_median', 'percent_leaky_voxels', etc.
 

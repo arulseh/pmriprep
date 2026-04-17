@@ -150,3 +150,296 @@ class TestComputeEESConcentration:
         assert c_e_high[-1] < c_e_low[-1], (
             "High kep should give lower C_e at late timepoints"
         )
+
+
+# =============================================================================
+# Agent-aware thresholds + float preload support
+# =============================================================================
+
+
+class TestAgentNormalizedThresholds:
+    """Thresholds scale linearly with agent_standard_dose."""
+
+    def test_default_agent_matches_baseline_3t(self) -> None:
+        from pmriprep.utils.dsc_preload import PRELOAD_THRESHOLDS_3T
+        baseline = PRELOAD_THRESHOLDS_3T
+        scaled = get_preload_thresholds(3.0, agent_standard_dose=0.1)
+        assert scaled.none_max == pytest.approx(baseline.none_max)
+        assert scaled.minimal_max == pytest.approx(baseline.minimal_max)
+        assert scaled.half_dose_max == pytest.approx(baseline.half_dose_max)
+        assert scaled.significant_max == pytest.approx(baseline.significant_max)
+
+    def test_vueway_thresholds_halved(self) -> None:
+        """Vueway agent_standard_dose=0.05 halves every threshold."""
+        from pmriprep.utils.dsc_preload import PRELOAD_THRESHOLDS_3T
+        baseline = PRELOAD_THRESHOLDS_3T
+        scaled = get_preload_thresholds(3.0, agent_standard_dose=0.05)
+        assert scaled.none_max == pytest.approx(baseline.none_max * 0.5)
+        assert scaled.half_dose_max == pytest.approx(baseline.half_dose_max * 0.5)
+        assert scaled.significant_max == pytest.approx(baseline.significant_max * 0.5)
+
+    def test_gadoquatrane_thresholds_scaled(self) -> None:
+        """Gadoquatrane (0.04 mmol/kg) gives 0.4x thresholds."""
+        from pmriprep.utils.dsc_preload import PRELOAD_THRESHOLDS_3T
+        scaled = get_preload_thresholds(3.0, agent_standard_dose=0.04)
+        assert scaled.half_dose_max == pytest.approx(
+            PRELOAD_THRESHOLDS_3T.half_dose_max * 0.4
+        )
+
+    def test_classify_agent_aware(self) -> None:
+        """Same ΔR2* classifies differently across agent_standard_dose."""
+        delta_r2 = 1.0  # s^-1
+        # At 0.1 (Dotarem): 1.0 falls in MINIMAL [0.5, 2.0)
+        cls_dotarem = classify_preload(delta_r2, 3.0, agent_standard_dose=0.1)
+        assert cls_dotarem == PreloadClass.MINIMAL
+        # At 0.05 (Vueway): thresholds halved → 1.0 falls in HALF_DOSE [1.0, 2.5)
+        cls_vueway = classify_preload(delta_r2, 3.0, agent_standard_dose=0.05)
+        assert cls_vueway == PreloadClass.HALF_DOSE
+
+    def test_invalid_agent_dose_raises(self) -> None:
+        with pytest.raises(ValueError, match="must be > 0"):
+            get_preload_thresholds(3.0, agent_standard_dose=0.0)
+        with pytest.raises(ValueError, match="must be > 0"):
+            get_preload_thresholds(3.0, agent_standard_dose=-0.1)
+
+
+class TestPreloadClassFromDose:
+    """Bin user-specified administered preload fraction to class."""
+
+    def test_zero_is_none(self) -> None:
+        from pmriprep.utils.dsc_preload import preload_class_from_dose
+        assert preload_class_from_dose(0.0) == PreloadClass.NONE
+
+    def test_small_is_minimal(self) -> None:
+        from pmriprep.utils.dsc_preload import preload_class_from_dose
+        assert preload_class_from_dose(0.05) == PreloadClass.MINIMAL
+        assert preload_class_from_dose(0.10) == PreloadClass.MINIMAL
+
+    def test_quarter_dose_is_half_dose(self) -> None:
+        from pmriprep.utils.dsc_preload import preload_class_from_dose
+        assert preload_class_from_dose(0.25) == PreloadClass.HALF_DOSE
+        assert preload_class_from_dose(0.5) == PreloadClass.HALF_DOSE
+
+    def test_full_is_significant(self) -> None:
+        from pmriprep.utils.dsc_preload import preload_class_from_dose
+        assert preload_class_from_dose(1.0) == PreloadClass.SIGNIFICANT
+        assert preload_class_from_dose(0.75) == PreloadClass.SIGNIFICANT
+
+    def test_double_is_severe(self) -> None:
+        from pmriprep.utils.dsc_preload import preload_class_from_dose
+        assert preload_class_from_dose(1.5) == PreloadClass.SEVERE
+        assert preload_class_from_dose(2.0) == PreloadClass.SEVERE
+
+    def test_boundary_edges(self) -> None:
+        """Edges are lower-inclusive: [lo, hi)."""
+        from pmriprep.utils.dsc_preload import preload_class_from_dose
+        assert preload_class_from_dose(0.01) == PreloadClass.MINIMAL
+        assert preload_class_from_dose(0.20) == PreloadClass.HALF_DOSE
+        assert preload_class_from_dose(0.60) == PreloadClass.SIGNIFICANT
+        assert preload_class_from_dose(1.15) == PreloadClass.SEVERE
+
+    def test_negative_raises(self) -> None:
+        from pmriprep.utils.dsc_preload import preload_class_from_dose
+        with pytest.raises(ValueError, match="non-negative"):
+            preload_class_from_dose(-0.1)
+
+    def test_nan_raises(self) -> None:
+        from pmriprep.utils.dsc_preload import preload_class_from_dose
+        with pytest.raises(ValueError, match="finite"):
+            preload_class_from_dose(float("nan"))
+
+
+class TestResidualEquivalentFraction:
+    """Physics of ΔR2* → residual-equivalent fraction inversion."""
+
+    def test_zero_delta_r2_is_zero(self) -> None:
+        from pmriprep.utils.dsc_preload import (
+            residual_equivalent_fraction_from_delta_r2,
+        )
+        assert residual_equivalent_fraction_from_delta_r2(0.0, 3.0, 0.1) == 0.0
+
+    def test_roundtrip_via_r2_star(self) -> None:
+        """Given mM = dose_fraction × agent_std × r2_star_per_mM, invert."""
+        from pmriprep.utils.dsc_preload import (
+            residual_equivalent_fraction_from_delta_r2,
+        )
+        from pmriprep.utils.dsc_constants import get_r2_star
+        field = 3.0
+        agent_std = 0.1
+        r2 = get_r2_star(field)
+        # Pick a dose fraction, compute implied delta_r2, invert
+        for fraction in [0.05, 0.2, 0.5, 1.0]:
+            delta_r2 = fraction * agent_std * r2
+            inferred = residual_equivalent_fraction_from_delta_r2(
+                delta_r2, field, agent_std,
+            )
+            assert inferred == pytest.approx(fraction, rel=1e-6)
+
+    def test_agent_dose_scales_inversion(self) -> None:
+        """Halving agent_standard_dose doubles the inferred fraction."""
+        from pmriprep.utils.dsc_preload import (
+            residual_equivalent_fraction_from_delta_r2,
+        )
+        delta_r2 = 2.0
+        f_std = residual_equivalent_fraction_from_delta_r2(delta_r2, 3.0, 0.1)
+        f_vueway = residual_equivalent_fraction_from_delta_r2(delta_r2, 3.0, 0.05)
+        assert f_vueway == pytest.approx(2 * f_std)
+
+
+class TestPreloadBinningIndependence:
+    """User-float and auto-detection use SEPARATE edge tables by design.
+
+    They measure different physical quantities (administered vs residual)
+    and are not expected to numerically align. Both map to the same class
+    names for downstream K2 bucketing.
+    """
+
+    def test_auto_detection_midpoints_classify_correctly(self) -> None:
+        """ΔR2* at known bin midpoints returns the expected PreloadClass."""
+        from pmriprep.utils.dsc_preload import PRELOAD_THRESHOLDS_3T as t
+        # Midpoint of MINIMAL bin: (0.5 + 2.0) / 2 = 1.25 s^-1
+        assert classify_preload(
+            (t.none_max + t.minimal_max) / 2, 3.0, 0.1
+        ) == PreloadClass.MINIMAL
+        # Midpoint of HALF_DOSE bin
+        assert classify_preload(
+            (t.minimal_max + t.half_dose_max) / 2, 3.0, 0.1
+        ) == PreloadClass.HALF_DOSE
+        # Midpoint of SIGNIFICANT bin
+        assert classify_preload(
+            (t.half_dose_max + t.significant_max) / 2, 3.0, 0.1
+        ) == PreloadClass.SIGNIFICANT
+
+
+class TestAgentDoseFlowsThroughDetectPreload:
+    """detect_preload_from_signal records effective thresholds and agent."""
+
+    def test_signal_detection_logs_effective_thresholds(self) -> None:
+        from pmriprep.utils.dsc_preload import detect_preload_from_signal
+        # Small synthetic 4D volume with near-zero baseline
+        signal = np.full((4, 4, 1, 30), 1000.0, dtype=np.float32)
+        # Add mild signal variation
+        rng = np.random.default_rng(0)
+        signal += rng.normal(0, 10, signal.shape).astype(np.float32)
+        result = detect_preload_from_signal(
+            signal=signal,
+            te=0.03,
+            baseline_frames=5,
+            field_strength=3.0,
+            agent_standard_dose=0.05,
+        )
+        assert result.details is not None
+        assert result.details["agent_standard_dose"] == pytest.approx(0.05)
+        assert "effective_thresholds" in result.details
+        assert "residual_equivalent_fraction" in result.details
+
+
+# =============================================================================
+# Z-score-to-threshold confidence score
+# =============================================================================
+
+
+class TestConfidenceScore:
+    """Confidence is P(correct classification), from SEM vs nearest bin edge."""
+
+    @staticmethod
+    def _signal_with_delta_r2(
+        target_delta_r2: float,
+        reference: float,
+        te: float,
+        std_signal: float,
+        shape: tuple = (8, 8, 2, 20),
+        seed: int = 0,
+    ) -> np.ndarray:
+        """Build a 4D signal whose baseline yields approximately the target ΔR2*.
+
+        Uses S = S_ref * exp(-ΔR2* * TE).
+        """
+        mean_s = reference * np.exp(-target_delta_r2 * te)
+        rng = np.random.default_rng(seed)
+        return rng.normal(mean_s, std_signal, shape).astype(np.float32)
+
+    def test_deep_in_none_bin_high_confidence(self) -> None:
+        from pmriprep.utils.dsc_preload import detect_preload_from_signal
+        # ΔR2* ≈ 0, far from none_max=0.5, low noise → confidence ≈ 1
+        sig = self._signal_with_delta_r2(
+            target_delta_r2=0.0, reference=1000.0, te=0.03,
+            std_signal=1.0,
+        )
+        r = detect_preload_from_signal(
+            sig, te=0.03, baseline_frames=5, reference_signal=1000.0,
+        )
+        assert r.confidence > 0.95
+
+    def test_near_edge_low_confidence(self) -> None:
+        from pmriprep.utils.dsc_preload import detect_preload_from_signal
+        # ΔR2* ≈ 0.5 (right at none_max at 3T) + moderate per-voxel noise
+        sig = self._signal_with_delta_r2(
+            target_delta_r2=0.5, reference=1000.0, te=0.03,
+            std_signal=150.0, shape=(4, 4, 1, 20),
+        )
+        r = detect_preload_from_signal(
+            sig, te=0.03, baseline_frames=5, reference_signal=1000.0,
+        )
+        assert 0.0 <= r.confidence < 0.6
+
+    def test_confidence_scales_with_n_voxels(self) -> None:
+        from pmriprep.utils.dsc_preload import detect_preload_from_signal
+        # Target ΔR2* = 1.25 (middle of MINIMAL bin [0.5, 2.0]; distance to
+        # nearest edge ~0.75). Picked mid-bin so small-mask sampling noise
+        # on the mean doesn't dominate the distance calculation.
+        kwargs = dict(
+            target_delta_r2=1.25, reference=1000.0, te=0.03, std_signal=50.0,
+        )
+        small = self._signal_with_delta_r2(shape=(3, 3, 1, 20), **kwargs)
+        large = self._signal_with_delta_r2(shape=(16, 16, 4, 20), **kwargs)
+        rs = detect_preload_from_signal(
+            small, te=0.03, baseline_frames=5, reference_signal=1000.0,
+        )
+        rl = detect_preload_from_signal(
+            large, te=0.03, baseline_frames=5, reference_signal=1000.0,
+        )
+        # Primary invariant: larger N → smaller SEM (mathematical identity).
+        assert rl.details["sem_delta_r2"] < rs.details["sem_delta_r2"]
+        # Given comparable mid-bin distance-to-edge, larger N → ≥ confidence.
+        assert rl.confidence >= rs.confidence
+
+    def test_zero_mean_baseline_zero_confidence(self) -> None:
+        from pmriprep.utils.dsc_preload import detect_preload_from_signal
+        sig = np.zeros((4, 4, 1, 20), dtype=np.float32)
+        mask = np.ones((4, 4, 1), dtype=bool)
+        r = detect_preload_from_signal(
+            sig, te=0.03, baseline_frames=5, brain_mask=mask,
+            reference_signal=1000.0,
+        )
+        assert r.confidence == 0.0
+
+    def test_details_includes_new_keys(self) -> None:
+        from pmriprep.utils.dsc_preload import detect_preload_from_signal
+        sig = self._signal_with_delta_r2(
+            target_delta_r2=0.0, reference=1000.0, te=0.03, std_signal=5.0,
+        )
+        r = detect_preload_from_signal(
+            sig, te=0.03, baseline_frames=5, reference_signal=1000.0,
+        )
+        assert r.details is not None
+        assert "tissue_heterogeneity_cv" in r.details
+        assert "sem_delta_r2" in r.details
+        assert "distance_to_nearest_edge" in r.details
+        assert "signal_cv" not in r.details
+
+    def test_confidence_in_unit_interval(self) -> None:
+        from pmriprep.utils.dsc_preload import detect_preload_from_signal
+        # Random inputs across a range of parameters; confidence must stay in [0, 1].
+        rng = np.random.default_rng(42)
+        for _ in range(10):
+            target = float(rng.uniform(0.0, 8.0))
+            std = float(rng.uniform(5.0, 200.0))
+            sig = self._signal_with_delta_r2(
+                target_delta_r2=target, reference=1000.0, te=0.03,
+                std_signal=std,
+            )
+            r = detect_preload_from_signal(
+                sig, te=0.03, baseline_frames=5, reference_signal=1000.0,
+            )
+            assert 0.0 <= r.confidence <= 1.0

@@ -49,7 +49,8 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
 
     # Relative maps (always produced)
     rel_cbf_map = traits.Either(traits.Str, None, desc="Relative CBF map path")
-    rel_cbv_map = traits.Either(traits.Str, None, desc="Relative CBV map path")
+    rel_cbv_map = traits.Either(traits.Str, None, desc="Relative CBV map path (deconvolution)")
+    rel_cbv_auc_map = traits.Either(traits.Str, None, desc="AUC-based relative CBV map path")
     rel_auc_raw_map = traits.Either(traits.Str, None, desc="Relative AUC raw map path")
     rel_auc_corr_map = traits.Either(traits.Str, None, desc="Relative AUC corrected map path")
 
@@ -215,21 +216,28 @@ class DSCDerivativeWriter(BaseInterface):
         # -----------------------------------------------------------
         rel_maps = {
             "cbf": ("rel_cbf_map", "Cerebral blood flow (relative)", "dscRel"),
-            "cbv": ("rel_cbv_map", "Cerebral blood volume (relative)", "dscRel"),
+            "cbv": ("rel_cbv_map", "Cerebral blood volume (relative, deconvolution)", "dscRel"),
+            "cbv_auc": ("rel_cbv_auc_map",
+                        "Cerebral blood volume (K2-corrected full-bolus AUC, relative)",
+                        "dscRelAUC"),
             "auc": ("rel_auc_raw_map", "AUC raw concentration (relative)", "dscRel"),
             "auc_corr": ("rel_auc_corr_map", "AUC corrected concentration (relative)", "dscRelCorrected"),
         }
-        rel_units = {"cbf": "1/min", "cbv": "arbitrary", "auc": "arbitrary"}
+        rel_units = {"cbf": "1/min", "cbv": "arbitrary", "cbv_auc": "arbitrary", "auc": "arbitrary"}
+        _bids_suffix_remap = {"auc_corr": "auc", "cbv_auc": "cbv"}
         for map_suffix, (attr, description, desc_val) in rel_maps.items():
             if has_input(self.inputs,attr):
                 src = getattr(self.inputs, attr)
-                # For auc_corr, the BIDS suffix is just "auc"
-                bids_suffix = "auc" if map_suffix == "auc_corr" else map_suffix
+                bids_suffix = _bids_suffix_remap.get(map_suffix, map_suffix)
                 fname = f"{prefix}_{spatial}_desc-{desc_val}_{bids_suffix}"
                 copy_derivative(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": description}
                 if bids_suffix in rel_units:
-                    sidecar["Units"] = rel_units[bids_suffix]
+                    sidecar["Units"] = rel_units[map_suffix]
+                if map_suffix == "cbv":
+                    sidecar["CBVMethod"] = "deconvolution_residue_integral"
+                elif map_suffix == "cbv_auc":
+                    sidecar["CBVMethod"] = "k2_corrected_full_bolus_auc"
                 write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -400,8 +408,8 @@ class DSCDerivativeWriter(BaseInterface):
                             f"dsc{sm_label}", "mtt", "s"),
                     "rel_cbf": ("Cerebral blood flow, relative (smoothed)",
                                 f"dscRel{sm_label}", "cbf", "1/min"),
-                    "rel_cbv": ("Cerebral blood volume, relative (smoothed)",
-                                f"dscRel{sm_label}", "cbv", "arbitrary"),
+                    "rel_cbv": ("Cerebral blood volume, AUC-based (smoothed)",
+                                f"dscRelAUC{sm_label}", "cbv", "arbitrary"),
                     "ncbf": ("Normalized CBF (smoothed)",
                              f"dscNawmNorm{sm_label}", "cbf", "ratio"),
                     "ncbv": ("Normalized CBV (smoothed)",

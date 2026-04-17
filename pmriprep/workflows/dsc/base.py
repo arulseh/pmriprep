@@ -363,11 +363,12 @@ def _detect_and_correct_preload(
     te,
     field_strength,
     tr,
-    preload_present,
+    preload,
     signal_file=None,
     baseline_frames=5,
     leakage_method="bsw",
     kep=None,
+    agent_standard_dose=0.1,
 ):
     """Detect preload and apply K2 correction if needed.
 
@@ -380,11 +381,19 @@ def _detect_and_correct_preload(
         te: Echo time in seconds.
         field_strength: Magnetic field strength in Tesla.
         tr: Repetition time in seconds.
-        preload_present: User-specified preload flag (True/False/None for auto).
+        preload: User-specified preload — "auto" for signal-based detection,
+            or a float administered dose fraction (0.0 = none, 0.5 = half).
+            Auto-detection always runs; user override (if not "auto") takes
+            precedence for the effective class emitted to downstream. User
+            administered fraction is binned separately from auto-detection
+            residual ΔR2* thresholds (different physical quantities, same
+            class names). Disagreement is logged to QC when both exist.
         signal_file: Optional path to raw signal NIfTI for preload detection.
         baseline_frames: Number of pre-bolus baseline frames.
         leakage_method: K2 correction method ("bsw" or "bidirectional").
         kep: EES efflux rate in s⁻¹ (bidirectional only).
+        agent_standard_dose: Agent's standard dose in mmol Gd/kg. Scales
+            auto-detection ΔR2* thresholds linearly.
 
     Returns:
         Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
@@ -423,38 +432,72 @@ def _detect_and_correct_preload(
     qc_metrics: dict = {}
     k2_map_file: str = ""
 
-    # Detect preload for QC classification (does not gate K2 correction)
-    if preload_present is True:
-        qc_metrics["preload_user_specified"] = True
-        qc_metrics["preload_classification"] = "user_specified_preload"
-    elif preload_present is False:
-        qc_metrics["preload_user_specified"] = True
-        qc_metrics["preload_classification"] = "user_specified_no_preload"
-    else:
-        # Auto-detect using full preload detection from utils
-        from pmriprep.utils.dsc_preload import detect_preload
+    # Always run auto-detection (needed for QC transparency and disagreement
+    # logging). Auto-detection result feeds QC unconditionally; effective
+    # classification is the user override when a float is given.
+    from pmriprep.utils.dsc_preload import (
+        detect_preload,
+        preload_class_from_dose,
+    )
 
+    signal_data = None
+    if signal_file:
+        signal_data = nib.load(signal_file).get_fdata()
+
+    preload_result = detect_preload(
+        signal=signal_data,
+        te=te,
+        baseline_frames=baseline_frames,
+        brain_mask=brain_mask,
+        field_strength=field_strength,
+        agent_standard_dose=agent_standard_dose,
+    )
+    auto_class = preload_result.classification.value
+    qc_metrics["preload_auto_detected_classification"] = auto_class
+    qc_metrics["preload_confidence"] = preload_result.confidence
+    qc_metrics["preload_detection_method"] = preload_result.detection_method
+    qc_metrics["baseline_delta_r2"] = preload_result.baseline_delta_r2
+
+    auto_details = preload_result.details or {}
+    qc_metrics["preload_auto_residual_fraction"] = auto_details.get(
+        "residual_equivalent_fraction"
+    )
+    effective_thresholds = auto_details.get("effective_thresholds")
+    if effective_thresholds is not None:
+        qc_metrics["preload_thresholds_effective"] = {
+            **effective_thresholds,
+            "agent_standard_dose": agent_standard_dose,
+        }
+
+    # Interpret user input: "auto" string or numeric dose multiplier
+    if isinstance(preload, str) and preload == "auto":
+        effective_class = auto_class
         qc_metrics["preload_user_specified"] = False
+    else:
+        user_dose = float(preload)
+        user_class = preload_class_from_dose(user_dose).value
+        effective_class = user_class
+        qc_metrics["preload_user_specified"] = True
+        qc_metrics["preload_user_specified_dose"] = user_dose
+        qc_metrics["preload_user_specified_classification"] = user_class
+        if user_class != auto_class:
+            # Disagreement is expected when auto (residual) underestimates
+            # user (administered) due to clearance. Still logged so QC can
+            # flag cases where signal and user input wildly diverge.
+            qc_metrics["preload_classification_disagreement"] = {
+                "user_class": user_class,
+                "user_dose": user_dose,
+                "auto_class": auto_class,
+                "auto_residual_fraction": auto_details.get(
+                    "residual_equivalent_fraction"
+                ),
+            }
 
-        signal_data = None
-        if signal_file:
-            signal_data = nib.load(signal_file).get_fdata()
-
-        preload_result = detect_preload(
-            signal=signal_data,
-            te=te,
-            baseline_frames=baseline_frames,
-            brain_mask=brain_mask,
-            field_strength=field_strength,
-        )
-        qc_metrics["preload_auto_detected"] = preload_result.classification.value not in (
-            "none",
-            "minimal",
-        )
-        qc_metrics["preload_classification"] = preload_result.classification.value
-        qc_metrics["preload_confidence"] = preload_result.confidence
-        qc_metrics["preload_detection_method"] = preload_result.detection_method
-        qc_metrics["baseline_delta_r2"] = preload_result.baseline_delta_r2
+    qc_metrics["preload_classification"] = effective_class
+    # True when auto-detection (independent of user override) flagged preload.
+    # Kept semantically consistent with the pre-rename behavior: this reflects
+    # what the signal-based detector found, not what the effective class is.
+    qc_metrics["preload_auto_detected"] = auto_class not in ("none", "minimal")
 
     # Always apply per-voxel K2 leakage correction (Boxerman 2006).
     # K2 correction addresses BBB disruption regardless of preload status.
@@ -1561,6 +1604,7 @@ def init_dsc_preproc_wf(
                 # Relative maps (always produced)
                 "rel_cbf_map",
                 "rel_cbv_map",
+                "rel_cbv_auc_map",
                 "rel_auc_raw_map",
                 "rel_auc_corr_map",
                 # Quality metrics
@@ -1752,7 +1796,6 @@ def init_dsc_preproc_wf(
             criteria="strict",
             n_candidates=config.n_aif_candidates,
             lesion_distance=config.lesion_distance,
-            gamma_fit=config.gamma_fit,
             disable_fallback=config.disable_aif_fallback,
             baseline_frames=config.pre_bolus,
             dose=config.dose,
@@ -1783,11 +1826,12 @@ def init_dsc_preproc_wf(
                 "te",
                 "field_strength",
                 "tr",
-                "preload_present",
+                "preload",
                 "signal_file",
                 "baseline_frames",
                 "leakage_method",
                 "kep",
+                "agent_standard_dose",
             ],
             output_names=["corrected_concentration_file", "k2_map_file", "qc_dict"],
             function=_detect_and_correct_preload,
@@ -1795,7 +1839,8 @@ def init_dsc_preproc_wf(
         name="preload_correct",
         mem_gb=_heavy_mem,
     )
-    preload_correct.inputs.preload_present = config.preload_present if config.preload_present is not None else None
+    preload_correct.inputs.preload = config.preload
+    preload_correct.inputs.agent_standard_dose = config.agent_standard_dose
     preload_correct.inputs.baseline_frames = config.pre_bolus
     preload_correct.inputs.leakage_method = config.leakage_method
     preload_correct.inputs.kep = config.kep
@@ -2380,6 +2425,7 @@ def init_dsc_preproc_wf(
         ]),
         (aif_detect, compute_maps, [
             ("out_aif_curve", "aif_file"),
+            ("out_measured_aif_curve", "measured_aif_file"),
             ("out_aif_mask", "aif_mask_file"),
             ("out_aif_coord", "aif_best_coord"),
             ("detection_level", "aif_detection_level"),
@@ -2481,7 +2527,7 @@ def init_dsc_preproc_wf(
     # DSC Map Computation to CBV Normalization (uses relative CBV)
     # Use DSC-space brain mask for fallback normalization
     workflow.connect([
-        (compute_maps, normalize, [("out_rel_cbv", "cbv_file")]),
+        (compute_maps, normalize, [("out_rel_cbv_auc", "cbv_file")]),
         (transform_nawm, normalize, [
             ("nawm_mask_dsc_file", "nawm_mask_file"),
         ]),
@@ -2543,7 +2589,7 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (compute_maps, dsc_param_maps_qc, [
             ("out_rel_cbf", "rel_cbf_file"),
-            ("out_rel_cbv", "rel_cbv_file"),
+            ("out_rel_cbv_auc", "rel_cbv_file"),
             ("out_mtt", "mtt_file"),
             ("out_tmax", "tmax_file"),
             ("out_psr", "psr_file"),
@@ -2610,7 +2656,7 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (compute_maps, lesion_stats, [
             ("out_rel_cbf", "cbf_map"),
-            ("out_rel_cbv", "cbv_map"),
+            ("out_rel_cbv_auc", "cbv_map"),
             ("out_mtt", "mtt_map"),
             ("out_tmax", "tmax_map"),
             ("out_psr", "psr_map"),
@@ -2662,7 +2708,7 @@ def init_dsc_preproc_wf(
         (transform_roi, roi_stats, [("lesion_mask_dsc_file", "lesion_mask")]),
         (compute_maps, roi_stats, [
             ("out_rel_cbf", "cbf_map"),
-            ("out_rel_cbv", "cbv_map"),
+            ("out_rel_cbv_auc", "cbv_map"),
             ("out_mtt", "mtt_map"),
             ("out_tmax", "tmax_map"),
             ("out_psr", "psr_map"),
@@ -2747,7 +2793,7 @@ def init_dsc_preproc_wf(
             (compute_maps, build_hemo_dict, [
                 ("out_mtt", "mtt"),
                 ("out_rel_cbf", "rel_cbf"),
-                ("out_rel_cbv", "rel_cbv"),
+                ("out_rel_cbv_auc", "rel_cbv"),
             ]),
             (normalize_cbf, build_hemo_dict, [("ncbf_file", "ncbf")]),
             (normalize, build_hemo_dict, [("ncbv_file", "ncbv")]),
@@ -2831,6 +2877,7 @@ def init_dsc_preproc_wf(
         (compute_maps, outputnode, [
             ("out_rel_cbf", "rel_cbf_map"),
             ("out_rel_cbv", "rel_cbv_map"),
+            ("out_rel_cbv_auc", "rel_cbv_auc_map"),
             ("out_rel_auc_raw", "rel_auc_raw_map"),
             ("out_rel_auc_corr", "rel_auc_corr_map"),
         ]),

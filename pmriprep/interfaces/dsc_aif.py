@@ -350,13 +350,6 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
     )
-    gamma_fit = traits.Enum(
-        "auto",
-        "off",
-        "on",
-        usedefault=True,
-        desc="Gamma-variate fitting mode: 'auto', 'on', or 'off'",
-    )
     disable_fallback = traits.Bool(
         False,
         usedefault=True,
@@ -413,6 +406,14 @@ class AIFDetectionOutputSpec(TraitedSpec):
     out_aif_mask = File(exists=True, desc="AIF voxel mask NIfTI")
     out_raw_aif_curve = traits.Str(
         desc="Pre-gamma-fit raw AIF curve text file (empty if no gamma fit)",
+    )
+    out_gamma_aif_curve = File(
+        desc="Gamma-fitted AIF curve text file (always produced)",
+    )
+    out_measured_aif_curve = File(
+        desc="Measured AIF curve text file (pre-gamma; always produced). "
+             "Consumed by AUC CBV denominator. For external/synthetic "
+             "AIF paths, contains the external/synthetic curve itself.",
     )
     out_aif_coord = traits.List(traits.Int, desc="Best AIF voxel coordinate [x, y, z]")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values")
@@ -2208,9 +2209,20 @@ class AIFDetection(BaseInterface):
             ext_path.name, peak, cnr, quality_score,
         )
 
+        # No gamma fit for external AIF. Save external curve as both gamma
+        # and measured outputs so downstream consumers always find a file.
+        out_gamma_aif = self._gen_outfilename("_gamma_aif_curve.txt")
+        np.savetxt(out_gamma_aif, aif_curve)
+        out_measured_aif = self._gen_outfilename("_measured_aif_curve.txt")
+        np.savetxt(out_measured_aif, aif_curve)
+        qc_metrics["gamma_aif_fallback_to_raw"] = True
+        qc_metrics["cbv_auc_denominator_is_synthetic"] = True  # external is user-supplied
+
         self._results = {
             "out_aif_curve": out_aif_curve,
             "out_aif_mask": out_aif_mask,
+            "out_gamma_aif_curve": out_gamma_aif,
+            "out_measured_aif_curve": out_measured_aif,
             "out_raw_aif_curve": "",
             "out_aif_coord": [0, 0, 0],
             "aif_curve": [float(x) for x in aif_curve],
@@ -2330,7 +2342,7 @@ class AIFDetection(BaseInterface):
         initial_criteria = str(self.inputs.criteria)
         n_candidates = int(self.inputs.n_candidates)
         baseline_frames = int(self.inputs.baseline_frames)
-        gamma_fit_mode = str(self.inputs.gamma_fit)
+        gamma_fit_mode = "auto"
         disable_fallback = bool(self.inputs.disable_fallback)
         lesion_distance = float(self.inputs.lesion_distance)
         n_timepoints = conc_data.shape[3]
@@ -2657,11 +2669,20 @@ class AIFDetection(BaseInterface):
         # Note: brain_degraded tier removed in v0.19.16 - cascade now goes
         # directly from brain_permissive to synthetic AIF.
 
+        # Capture measured AIF in caller scope BEFORE gamma fit (which may
+        # replace aif_curve with the fitted curve in-place). This is the
+        # always-available measured AIF consumed by AUC CBV downstream.
+        # For synthetic AIF path, this is the synthetic curve itself.
+        measured_aif = aif_curve.copy()
+        if detection_level == "synthetic":
+            qc_metrics["cbv_auc_denominator_is_synthetic"] = True
+
         # Gamma-variate fitting
         gamma_fit_applied = False
         raw_aif_curve = None
+        gamma_fitted_curve = None
         if gamma_fit_mode != "off" and detection_level != "synthetic":
-            gamma_fit_applied, raw_aif_curve, aif_curve = (
+            gamma_fit_applied, raw_aif_curve, aif_curve, gamma_fitted_curve = (
                 self._apply_gamma_fit_if_appropriate(
                     aif_curve, gamma_fit_mode, baseline_frames, tr, qc_metrics,
                 )
@@ -2707,6 +2728,11 @@ class AIFDetection(BaseInterface):
                     "TTP and Tmax are valid (timing independent of AIF amplitude)",
                     "Manual AIF selection recommended for clinical use",
                 ]
+                gamma_fitted_curve = None
+                # Overwrite measured AIF with the synthetic curve — consistent
+                # with what deconv sees, and marks AUC denominator as synthetic.
+                measured_aif = aif_curve.copy()
+                qc_metrics["cbv_auc_denominator_is_synthetic"] = True
 
         # Save outputs
         out_aif_curve = self._gen_outfilename("_aif_curve.txt")
@@ -2721,10 +2747,26 @@ class AIFDetection(BaseInterface):
         mask_img = nib.Nifti1Image(aif_mask_arr, affine)  # type: ignore[attr-defined]
         nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
 
+        # Save measured AIF (always, for AUC CBV denominator downstream).
+        # Pre-gamma-replacement; synthetic fallback overwrites this above.
+        out_measured_aif = self._gen_outfilename("_measured_aif_curve.txt")
+        np.savetxt(out_measured_aif, measured_aif)
+
+        # Save gamma-fitted AIF (always, kept for QC overlay and future use).
+        # Falls back to raw AIF when gamma fit failed or was not attempted.
+        out_gamma_aif = self._gen_outfilename("_gamma_aif_curve.txt")
+        if gamma_fitted_curve is not None:
+            np.savetxt(out_gamma_aif, gamma_fitted_curve)
+        else:
+            np.savetxt(out_gamma_aif, aif_curve)
+            qc_metrics["gamma_aif_fallback_to_raw"] = True
+
         n_cand = len(top_candidates) if top_candidates else 0
         self._results = {
             "out_aif_curve": out_aif_curve,
             "out_aif_mask": out_aif_mask,
+            "out_gamma_aif_curve": out_gamma_aif,
+            "out_measured_aif_curve": out_measured_aif,
             "out_raw_aif_curve": out_raw_aif,
             "out_aif_coord": qc_metrics.get("aif_voxel_coord", []),
             "aif_curve": [float(x) for x in aif_curve],
@@ -2745,7 +2787,7 @@ class AIFDetection(BaseInterface):
         baseline_frames: int,
         tr: float,
         qc_metrics: dict[str, Any],
-    ) -> tuple[bool, Optional[npt.NDArray[Any]], npt.NDArray[Any]]:
+    ) -> tuple[bool, Optional[npt.NDArray[Any]], npt.NDArray[Any], Optional[npt.NDArray[Any]]]:
         """Attempt gamma-variate fitting and decide whether to apply it.
 
         Parameters
@@ -2763,10 +2805,12 @@ class AIFDetection(BaseInterface):
 
         Returns
         -------
-        tuple[bool, Optional[np.ndarray], np.ndarray]
-            (gamma_fit_applied, raw_aif_curve, aif_curve)
+        tuple[bool, Optional[np.ndarray], np.ndarray, Optional[np.ndarray]]
+            (gamma_fit_applied, raw_aif_curve, aif_curve, gamma_fitted_curve)
             raw_aif_curve is the original AIF when fit is applied,
             or the fitted curve when fit is rejected (for QC overlay).
+            gamma_fitted_curve is always the fitted curve when fit converges
+            (regardless of accept/reject decision), for AUC CBV computation.
         """
         from pmriprep.utils.dsc_aif import (
             fit_gamma_variate,
@@ -2793,7 +2837,7 @@ class AIFDetection(BaseInterface):
                     qc_metrics["gamma_recirculation_removed"] = (
                         fit_result.recirculation_removed
                     )
-                    return True, original_aif, fit_result.fitted_curve
+                    return True, original_aif, fit_result.fitted_curve, fit_result.fitted_curve
                 else:
                     qc_metrics["gamma_fit_applied"] = False
                     qc_metrics["gamma_fit_mode"] = "on"
@@ -2802,7 +2846,8 @@ class AIFDetection(BaseInterface):
                         if not fit_result.fit_converged
                         else f"low_r_squared_{fit_result.r_squared:.3f}"
                     )
-                    return False, None, aif_curve
+                    gamma_curve = fit_result.fitted_curve if fit_result.fit_converged else None
+                    return False, None, aif_curve, gamma_curve
 
             # Auto mode
             decision, detail_metrics = should_apply_gamma_fit(
@@ -2822,18 +2867,18 @@ class AIFDetection(BaseInterface):
                 qc_metrics["gamma_recirculation_removed"] = (
                     fit_result.recirculation_removed
                 )
-                return True, original_aif, fit_result.fitted_curve
+                return True, original_aif, fit_result.fitted_curve, fit_result.fitted_curve
             else:
                 qc_metrics["gamma_fit_applied"] = False
                 qc_metrics["gamma_fit_rejected_reason"] = decision.reason
                 # Save fitted curve for QC overlay (rejected fit shown dashed)
                 qc_metrics["gamma_fit_rejection_curve_available"] = True
-                return False, fit_result.fitted_curve, aif_curve
+                return False, fit_result.fitted_curve, aif_curve, fit_result.fitted_curve
 
         except Exception:
             qc_metrics["gamma_fit_applied"] = False
             qc_metrics["gamma_fit_rejected_reason"] = "exception"
-            return False, None, aif_curve
+            return False, None, aif_curve, None
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List interface outputs."""
