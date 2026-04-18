@@ -3522,29 +3522,76 @@ def _resample_dsc_ncbv_to_dce(
 ) -> str | None:
     """Resample DSC nCBV to DCE space and clip trilinear-ringing negatives.
 
-    Wraps ``_resample_dsc_cbv_to_dce``. Trilinear interpolation introduces
-    small negative values near high-contrast boundaries (tumor edges,
-    vessels). nCBV=0 is physically meaningful, but negatives would silently
-    become NaN downstream in ``ncbv_to_vp_prior`` (it NaN-masks negatives);
-    that masks useful voxels and also inflates the nan-fraction QC metric.
-    We clip to [0, +inf) and log the fraction of affected voxels.
+    Mirrors ``_resample_dsc_cbv_to_dce`` then clips negatives. Nipype's
+    ``Function`` node runs this in an isolated scope with no access to
+    module-level helpers, so the resample logic is inlined (cannot
+    factor-and-call here).
+
+    Trilinear interpolation introduces small negative values near
+    high-contrast boundaries (tumor edges, vessels). nCBV=0 is physically
+    meaningful, but negatives would silently become NaN downstream in
+    ``ncbv_to_vp_prior`` (it NaN-masks negatives); that masks useful
+    voxels and inflates the nan-fraction QC metric. We clip to [0, +inf)
+    and log the affected fraction.
     """
     import logging
     import os
+    import subprocess
 
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
     _log = logging.getLogger("pmriprep.workflows.dce")
 
-    raw_out = _resample_dsc_cbv_to_dce(
-        dsc_cbv_file=dsc_cbv_file,
-        dsc_to_t1w_xfm=dsc_to_t1w_xfm,
-        t1w_to_dce_xfm=t1w_to_dce_xfm,
-        dce_reference=dce_reference,
+    if not dsc_cbv_file or not os.path.isfile(str(dsc_cbv_file)):
+        return ""
+    if not dsc_to_t1w_xfm or not os.path.isfile(str(dsc_to_t1w_xfm)):
+        return ""
+    if not t1w_to_dce_xfm or not os.path.isfile(str(t1w_to_dce_xfm)):
+        return ""
+    if not dce_reference or not os.path.isfile(str(dce_reference)):
+        return ""
+
+    out_dir = os.getcwd()
+    dsc_to_dce_xfm = os.path.join(out_dir, "dsc_to_dce_ncbv.mat")
+    raw_out = os.path.join(out_dir, "dsc_ncbv_in_dce_raw.nii.gz")
+
+    # Chain: DSC→T1w + T1w→DCE = DSC→DCE
+    result = subprocess.run(
+        [
+            "convert_xfm",
+            "-omat", dsc_to_dce_xfm,
+            "-concat", str(t1w_to_dce_xfm), str(dsc_to_t1w_xfm),
+        ],
+        capture_output=True,
+        text=True,
     )
-    if not raw_out or not os.path.isfile(raw_out):
-        return raw_out
+    if result.returncode != 0:
+        _log.warning(
+            "convert_xfm (nCBV) failed (rc=%d): %s",
+            result.returncode, result.stderr,
+        )
+        return ""
+
+    result = subprocess.run(
+        [
+            "flirt",
+            "-in", str(dsc_cbv_file),
+            "-ref", str(dce_reference),
+            "-out", raw_out,
+            "-init", dsc_to_dce_xfm,
+            "-applyxfm",
+            "-interp", "trilinear",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _log.warning(
+            "FLIRT resampling of DSC nCBV failed (rc=%d): %s",
+            result.returncode, result.stderr,
+        )
+        return ""
 
     img = nib.load(raw_out)
     data = np.asarray(img.get_fdata(), dtype=np.float32)  # type: ignore[attr-defined]
@@ -3560,7 +3607,6 @@ def _resample_dsc_ncbv_to_dce(
         )
     clipped = np.where(finite, np.maximum(data, 0.0), data)
 
-    out_dir = os.getcwd()
     clipped_out = os.path.join(out_dir, "dsc_ncbv_in_dce.nii.gz")
     nib.save(
         nib.Nifti1Image(clipped.astype(np.float32), img.affine, img.header),  # type: ignore[attr-defined]
