@@ -317,9 +317,25 @@ def validate_vp_cbv(
 
     Two calibration modes:
 
-    - **Absolute/relative CBV (default, ``use_ncbv_scale=False``):** CBV in
-      mL/100g (or proxies). Expected ratio = ``(1-Hct_cap)/(100·ρ)`` from
-      Hct. Circular threshold applies to ``std(vp/CBV) < 0.01``.
+    - **Absolute CBV (``use_ncbv_scale=False``):** CBV in mL/100g.
+      Expected ratio = ``(1-Hct_cap)·ρ ≈ 0.669`` (Tofts 1999 conversion
+      of blood-voxel CBV to plasma volume fraction). Circular threshold
+      applies to ``std(vp/CBV) < 0.01``.
+
+      .. warning::
+         pmriprep itself does NOT produce absolute mL/100g CBV — the
+         only DSC CBV outputs are dimensionless ``rel_cbv_auc_map``
+         (AIF-normalized) and ``ncbv_map`` (NAWM-normalized). Against
+         dimensionless rel-AUC-CBV the literature expected ratio 0.669
+         is miscalibrated and this path will emit false POOR labels.
+         The pmriprep workflow skips xval (returns ``status="SKIPPED"``)
+         on subjects without NAWM rather than routing through this
+         path. This code path is retained for external callers that
+         legitimately have absolute CBV (e.g., pipelines with a κ
+         calibration or steady-state reference); no universal
+         ``vp / rel_AUC_CBV`` expected ratio exists without NAWM
+         anchoring (Rempp 1994; Knutsson 2010).
+
     - **nCBV (``use_ncbv_scale=True``):** CBV is NAWM-normalized
       (dimensionless, NAWM=1). Expected ratio = ``NAWM_VP_REFERENCE`` (0.02)
       by construction — vp prior was ``0.02 × nCBV``. Circular threshold

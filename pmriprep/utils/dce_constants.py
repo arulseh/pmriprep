@@ -834,12 +834,18 @@ VP_MAX_PHYSIOLOGICAL: Final[float] = 0.2
 NAWM_VP_REFERENCE: Final[float] = 0.02
 
 #: Physiological plausibility range for DCE vp prior (plasma volume fraction).
-#: WM vp ≈ 0.01–0.02, GM ≈ 0.02–0.04, tumor ≈ 0.03–0.08. Derived vp
-#: medians outside this range indicate a scale or calibration failure
-#: in the DSC→DCE constraint pathway; the constraint should be skipped.
-#: Loose bounds — catches gross errors in the prior before DCE fitting.
-VP_MEDIAN_MIN: Final[float] = 0.005
-VP_MEDIAN_MAX: Final[float] = 0.10
+#: With vp = NAWM_VP_REFERENCE × nCBV and physiological whole-brain nCBV
+#: medians ~0.4–3.0 (NAWM=1 by construction, tumor-heavy subjects up to ~3),
+#: vp_median is algebraically pinned near 0.008–0.06. A scale error in
+#: nCBV or a corrupted NAWM mask breaches this range. For reference, the
+#: pre-v0.25.1 relative-AUC-CBV bug drove vp_median to ~0.2 (clearly caught).
+#: WM vp ≈ 0.01–0.02, GM ≈ 0.02–0.04, tumor ≈ 0.03–0.08.
+#: Tightened from v0.25.3's [0.005, 0.10] per physics-expert 2026-04-18
+#: consult: the NAWM-anchored path no longer needs loose bounds since the
+#: only remaining failure modes (bad NAWM mask, corrupted nCBV scale) all
+#: breach [0.008, 0.06] as well.
+VP_MEDIAN_MIN: Final[float] = 0.008
+VP_MEDIAN_MAX: Final[float] = 0.06
 
 #: Acceptable tolerance on the post-DCE-fit vp / nCBV ratio, used by
 #: cross-validation. Target is NAWM_VP_REFERENCE (0.02). Tolerance is a

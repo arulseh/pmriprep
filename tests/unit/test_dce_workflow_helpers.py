@@ -94,13 +94,10 @@ class TestDscDceValidationNodeDispatch:
         # The key dispatch invariant: no phantom path leaks through.
         assert captured["cbv_path"] is None
 
-    def test_both_files_present_prefers_ncbv(self, tmp_path: Any) -> None:
-        """When both exist, the node passes both paths to the validator and
-        the nCBV path is what drives `use_ncbv_scale` inside the validator.
-
-        This pins the workflow-side preference in place alongside the
-        validator-side semantics, so a future refactor that flips the
-        order fails loudly here rather than silently on a production run.
+    def test_both_files_present_uses_ncbv_only(self, tmp_path: Any) -> None:
+        """v0.25.4: when both exist, the node routes only the nCBV path
+        (cbv_path=None) because the legacy rel-AUC-CBV fallback is
+        miscalibrated against dimensionless rel-AUC-CBV.
         """
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
@@ -133,13 +130,14 @@ class TestDscDceValidationNodeDispatch:
                 brain_mask=mask_file,
             )
 
-        # Both paths are forwarded; validator dispatches on ncbv_path.
-        assert captured["cbv_path"] == cbv_file
+        # Only ncbv_path is forwarded; cbv_path is explicitly None.
+        assert captured["cbv_path"] is None
         assert captured["ncbv_path"] == ncbv_file
 
-    def test_only_cbv_present_uses_legacy_path(self, tmp_path: Any) -> None:
-        """When only absolute CBV exists, the node forwards it and leaves
-        ``ncbv_path=None`` so the validator takes the legacy path."""
+    def test_workflow_skips_xval_on_no_nawm(self, tmp_path: Any) -> None:
+        """v0.25.4: when only rel-AUC-CBV is available (no NAWM → no nCBV),
+        xval is cleanly SKIPPED rather than falling back to the legacy
+        path with miscalibrated expected ratio 0.669."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
         cbv_file = _write_nifti(
@@ -155,21 +153,24 @@ class TestDscDceValidationNodeDispatch:
             0.02 * np.ones((4, 4, 4), dtype=np.float32),
         )
 
+        # Validator should NOT be invoked when ncbv is missing.
         fake_validate, captured = self._capture_validator()
 
         with mock.patch(
             "pmriprep.utils.dce_dsc_validation.validate_vp_cbv_from_files",
             side_effect=fake_validate,
         ):
-            _dsc_dce_validation_node(
+            out = _dsc_dce_validation_node(
                 vp_file=vp_file,
                 dsc_cbv_file=cbv_file,
                 dsc_ncbv_file=None,
                 brain_mask=mask_file,
             )
 
-        assert captured["cbv_path"] == cbv_file
-        assert captured["ncbv_path"] is None
+        assert out["skipped"] is True
+        assert out["status"] == "SKIPPED"
+        assert "NAWM" in out["reason"]
+        assert captured == {}  # validator was not called
 
     def test_no_cbv_no_ncbv_returns_skipped(self, tmp_path: Any) -> None:
         """No CBV source at all → validation is cleanly skipped."""
@@ -188,7 +189,10 @@ class TestDscDceValidationNodeDispatch:
             brain_mask=mask_file,
         )
         assert out["skipped"] is True
-        assert out["status"] == "skipped"
+        # v0.25.4 uses status "SKIPPED" for no-NAWM (upper-case, informational);
+        # "skipped" (lower) is reserved for no_dsc_validation or missing vp_file.
+        assert out["status"] == "SKIPPED"
+        assert "NAWM" in out["reason"]
 
     def test_exception_is_logged_with_traceback(
         self, tmp_path: Any, caplog: pytest.LogCaptureFixture,

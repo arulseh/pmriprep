@@ -252,7 +252,7 @@ dce:
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `no_tortuosity` | bool | `false` | Skip DWI-based tortuosity correction |
-| `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation |
+| `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation. Note: xval requires a NAWM mask to produce the dimensionless nCBV that anchors the expected `vp / nCBV` ratio at 0.02 (Rostrup 2000, Boxerman 2020). When no NAWM is available, xval is automatically SKIPPED (not flagged POOR) since the legacy rel-AUC-CBV fallback has no universal expected ratio (Rempp 1994; Knutsson 2010). At long volume TR (> ~3 s, per Buckley 2002), DCE vp is prior-dominated by design; the QC JSON reports `aif_tissue_overshoot_fraction` + `acquisition_limited_note` to flag this regime without touching the fit. |
 | `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto` (default) emits only `soft` or `skip` — never `hard`, because DSC CBV and DCE vp measure different vascular compartments. `hard` requires explicit user opt-in (unsupported physics claim; biases absolute PK estimates). Uses NAWM-normalized CBV (nCBV) as the prior input. |
 | `hematocrit` | float | `0.42` | Arterial hematocrit (from blood draw). Used for AIF plasma correction; capillary Hct derived via Fåhræus ratio (0.85) |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |

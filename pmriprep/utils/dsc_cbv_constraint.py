@@ -685,6 +685,14 @@ def ncbv_to_vp_prior(
     DCE vp prior, avoiding the unit ambiguities that plague direct
     absolute-CBV → vp conversion with `cbv_to_vp`.
 
+    Hct convention: NAWM_VP_REFERENCE = 0.02 is the capillary-Hct-consistent
+    NAWM plasma volume fraction (Rostrup 2000 reports NAWM CBV ≈ 2.5 mL/100g;
+    with capillary Hct from Fåhræus ratio, vp ≈ (1-Hct_cap)·ρ·CBV/100 ≈ 0.016-
+    0.02). This is distinct from the arterial Hct used in ``dce_aif.py``'s
+    ``/(1-Hct_arterial)`` blood→plasma AIF conversion. The two Hct
+    conventions are physically independent and correctly applied to their
+    respective scales.
+
     Args:
         ncbv_data: 3D nCBV map (CBV / median(CBV_NAWM)), dimensionless.
         nawm_vp_reference: Assumed NAWM vp. Default 0.02.

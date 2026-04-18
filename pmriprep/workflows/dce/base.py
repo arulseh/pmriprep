@@ -3070,28 +3070,42 @@ def _dsc_dce_validation_node(
         resolved_mode = constraint_mode
 
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
-    have_cbv = bool(dsc_cbv_file) and os.path.isfile(str(dsc_cbv_file))
 
-    if no_dsc_validation or not vp_file or not (have_ncbv or have_cbv):
+    if no_dsc_validation or not vp_file:
         return {
             "skipped": True,
             "status": "skipped",
             "reason": "Validation skipped or missing data",
         }
 
+    # v0.25.4: xval requires nCBV (NAWM-normalized). The legacy
+    # rel-AUC-CBV fallback was miscalibrated: get_expected_ratio ≈ 0.669
+    # is derived for absolute mL/100g CBV (Tofts 1999), but pmriprep
+    # only produces dimensionless rel-AUC-CBV. No universal expected
+    # ratio exists for vp / rel_AUC_CBV without NAWM anchoring
+    # (Rempp 1994; Knutsson 2010). Skip cleanly rather than emit
+    # false POOR on subjects with no NAWM mask.
+    if not have_ncbv:
+        return {
+            "skipped": True,
+            "status": "SKIPPED",
+            "reason": (
+                "DSC-DCE xval skipped: nCBV unavailable (no NAWM mask). "
+                "Pipeline does not produce absolute mL/100g CBV, so the "
+                "literature-derived expected ratio against rel-AUC-CBV "
+                "is undefined. Provide a NAWM mask to enable xval."
+            ),
+        }
+
     try:
-        # Pass cbv_path=None (rather than a phantom nCBV alias) when no
-        # absolute CBV is on disk, so validate_vp_cbv_from_files isn't
-        # silently relied on to pick the right one. When ncbv_path is
-        # supplied, the validator ignores cbv_path; this keeps the
-        # contract explicit at the call site.
+        # nCBV is the only valid comparator; cbv_path is unused here.
         result = validate_vp_cbv_from_files(
             vp_path=vp_file,
-            cbv_path=dsc_cbv_file if have_cbv else None,
+            cbv_path=None,
             mask_path=brain_mask,
             constraint_mode=resolved_mode,
             dsc_preload_configured=dsc_preload_configured,
-            ncbv_path=dsc_ncbv_file if have_ncbv else None,
+            ncbv_path=dsc_ncbv_file,
         )
         return result.to_dict()
     except Exception as e:
@@ -3177,8 +3191,9 @@ def _dsc_dce_xval_plot_node(
         return None
 
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
-    have_cbv = bool(dsc_cbv_file) and os.path.isfile(str(dsc_cbv_file))
-    if not (have_ncbv or have_cbv):
+    # v0.25.4: xval plot mirrors _dsc_dce_validation_node — requires nCBV;
+    # the rel-AUC-CBV fallback is miscalibrated, so skip plot when no NAWM.
+    if not have_ncbv:
         return None
 
     resolved_mode = None
@@ -3195,9 +3210,8 @@ def _dsc_dce_xval_plot_node(
 
         from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot
 
-        # Prefer nCBV to keep the plot on the same scale the validation used.
-        use_ncbv_scale = have_ncbv
-        cbv_source = dsc_ncbv_file if have_ncbv else dsc_cbv_file
+        use_ncbv_scale = True
+        cbv_source = dsc_ncbv_file
 
         vp_data = np.asarray(
             nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]

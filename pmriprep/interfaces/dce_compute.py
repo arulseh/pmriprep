@@ -1513,12 +1513,32 @@ class ComputeDCEMaps(BaseInterface):
                         "(informative prior on vp)"
                     )
 
-                # Scale mismatch check: if vp*Cp overshoots tissue
-                # concentration in many voxels, the constraint is
-                # incompatible (e.g., DSC/DCE AIF scale differences,
-                # partial volume, half-dose acquisitions).
-                # For HARD (NLLS): downgrade to SKIP (cannot adapt).
-                # For SOFT (Bayesian): widen uncertainty instead.
+                # Acquisition-limited diagnostic (v0.25.4+, replacing the
+                # v0.25.0 scale-mismatch sigma-widening safeguard).
+                #
+                # The old safeguard checked vp_prior * Cp(peak) > Ct(peak)
+                # and interpreted > 30% overshoot as a scale bug, then
+                # either downgraded HARD→SKIP or widened SOFT σ to 0.5.
+                # Under v0.25.1's NAWM-anchored prior (vp = 0.02 × nCBV)
+                # and v0.25.3's plasma-correct AIF, that test no longer
+                # measures scale. It primarily detects first-pass
+                # temporal undersampling (Buckley MRM 2002, Henderson
+                # MRI 1998): max(Ct_samp) is Jensen-biased by (TR/FWHM)²
+                # so vp·Cp_peak > Ct_samp_peak is expected at any
+                # realistic volume TR even at perfect scale. Widening σ
+                # at long TR is physically backward — vp is
+                # prior-dominated by design in that regime, and killing
+                # the prior makes vp identifiability worse, not better.
+                # Genuine scale breaks (e.g., 10× CBV-unit bug from
+                # v0.25.0) are caught by the VP_MEDIAN magnitude gate
+                # in prepare_vp_constraint_from_data.
+                #
+                # We keep the same arithmetic but emit it as informational
+                # QC only (no mutation of constraint_mode, sigma, or
+                # reason). Also emit peak_alignment_lag_s so a reader
+                # can see whether tissue peak trails AIF peak by the
+                # expected ~1 frame (normal) vs many frames (either
+                # tracer delay or TR-induced aliasing).
                 if (
                     constraint_mode
                     in (ConstraintMode.HARD, ConstraintMode.SOFT)
@@ -1537,74 +1557,68 @@ class ComputeDCEMaps(BaseInterface):
                             vp_cp_peak = (
                                 vp_constraint_map[valid_constrained] * aif_peak
                             )
-                            ct_peak = np.max(
+                            ct_peak_arr = np.max(
                                 conc_data[valid_constrained], axis=-1
                             )
                             overshoot_frac = float(
-                                np.mean(vp_cp_peak > ct_peak)
+                                np.mean(vp_cp_peak > ct_peak_arr)
                             )
-                            if overshoot_frac > 0.3:
-                                median_vp = float(
-                                    np.nanmedian(
-                                        vp_constraint_map[valid_constrained]
-                                    )
+                            median_vp = float(
+                                np.nanmedian(
+                                    vp_constraint_map[valid_constrained]
                                 )
-                                if constraint_mode == ConstraintMode.HARD:
-                                    # NLLS: cannot recover from scale mismatch
-                                    logger.warning(
-                                        "DSC CBV hard constraint incompatible: "
-                                        "vp*Cp_peak exceeds tissue peak in "
-                                        "%.0f%% of voxels (AIF peak=%.3f mM, "
-                                        "median vp=%.4f). Downgrading to "
-                                        "unconstrained fitting.",
-                                        overshoot_frac * 100,
-                                        aif_peak,
-                                        median_vp,
-                                    )
-                                    constraint_qc["downgrade_from"] = (
-                                        constraint_qc.get(
-                                            "downgrade_from",
-                                            constraint_qc.get("mode", "hard"),
-                                        )
-                                    )
-                                    constraint_mode = ConstraintMode.SKIP
-                                    constraint_qc["mode"] = "skip"
-                                    constraint_qc["reason"] = (
-                                        f"Scale mismatch: vp*Cp overshoots "
-                                        f"tissue in {overshoot_frac*100:.0f}% "
-                                        f"of voxels -> skip"
-                                    )
-                                    constraint_qc["scale_mismatch"] = {
-                                        "overshoot_fraction": overshoot_frac,
-                                        "aif_peak_mM": aif_peak,
-                                        "median_vp": median_vp,
-                                        "action": "downgrade_to_skip",
-                                    }
-                                else:
-                                    # Bayesian SOFT: widen prior uncertainty
-                                    # instead of killing constraint
-                                    logger.info(
-                                        "DSC CBV scale mismatch detected "
-                                        "(vp*Cp_peak exceeds tissue peak in "
-                                        "%.0f%% of voxels, AIF peak=%.3f mM, "
-                                        "median vp=%.4f). Widening SOFT prior "
-                                        "uncertainty to 0.5.",
-                                        overshoot_frac * 100,
-                                        aif_peak,
-                                        median_vp,
-                                    )
-                                    constraint_vp_uncertainty = 0.5
-                                    constraint_qc["reason"] = (
-                                        f"Scale mismatch: widened soft prior "
-                                        f"uncertainty to 0.5 "
-                                        f"({overshoot_frac*100:.0f}% overshoot)"
-                                    )
-                                    constraint_qc["scale_mismatch"] = {
-                                        "overshoot_fraction": overshoot_frac,
-                                        "aif_peak_mM": aif_peak,
-                                        "median_vp": median_vp,
-                                        "action": "widen_soft_uncertainty",
-                                    }
+                            )
+                            # Overshoot is TR-modulated, not TR-invariant
+                            # (physics consult 2026-04-18): at long volume
+                            # TR, max(Ct) samples the tissue peak with bias
+                            # ∝ FWHM_tissue/TR, firing overshoot more often
+                            # from sampling asymmetry. Interpret thresholds
+                            # (0.7) conditionally on volume_tr_s.
+                            constraint_qc["aif_tissue_overshoot_fraction"] = (
+                                overshoot_frac
+                            )
+
+                            # Peak-alignment lag: median tissue-peak frame
+                            # minus AIF-peak frame, in seconds. Requires
+                            # volume TR (seconds between DCE volumes).
+                            # self.inputs.tr is the pulse TR (~ms) — wrong
+                            # semantics for volume-level lag — so we emit
+                            # null + a reason code when volume_tr is
+                            # undefined, rather than silently omit
+                            # (keeps downstream QC parsers stable).
+                            if (
+                                isdefined(self.inputs.volume_tr)
+                                and self.inputs.volume_tr is not None
+                                and float(self.inputs.volume_tr) > 0
+                            ):
+                                _vol_tr_s = float(self.inputs.volume_tr)
+                                aif_peak_frame = int(np.argmax(aif))
+                                tissue_peak_frames = np.argmax(
+                                    conc_data[valid_constrained], axis=-1
+                                )
+                                median_tissue_peak_frame = float(
+                                    np.median(tissue_peak_frames)
+                                )
+                                constraint_qc["peak_alignment_lag_s"] = (
+                                    (median_tissue_peak_frame - aif_peak_frame)
+                                    * _vol_tr_s
+                                )
+                                constraint_qc["volume_tr_s"] = _vol_tr_s
+                            else:
+                                constraint_qc["peak_alignment_lag_s"] = None
+                                constraint_qc["peak_alignment_lag_reason"] = (
+                                    "volume_tr_undefined"
+                                )
+                            if overshoot_frac > 0.7:
+                                constraint_qc["acquisition_limited_note"] = (
+                                    "High AIF-to-tissue overshoot (>70%): "
+                                    "observed tissue peak under-samples the "
+                                    "first pass (Buckley MRM 2002 recommends "
+                                    "TR ≲ 2 s for vp identifiability). "
+                                    "Posterior vp is prior-dominated by "
+                                    "design at this acquisition; "
+                                    "informational only — no action taken."
+                                )
             except Exception as exc:
                 constraint_qc = {
                     "mode": "skip",

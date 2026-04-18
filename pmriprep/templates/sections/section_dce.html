@@ -644,7 +644,20 @@
                 <div class="metric-value warn" style="font-size: 1.0em; font-weight: normal;">
                     Derived vp prior median
                     {% if cbv_c.vp_median is defined %}({{ "%.4f"|format(cbv_c.vp_median) }}){% endif %}
-                    fell outside the physiological range [0.005, 0.10]. This indicates a scale or calibration failure in the DSC→DCE pathway (typically an nCBV normalization problem). The constraint was downgraded to SKIP and DCE vp was fit without the DSC-derived prior.
+                    fell outside the physiological range [0.008, 0.06]. This indicates a scale or calibration failure in the DSC→DCE pathway (typically an nCBV normalization problem). The constraint was downgraded to SKIP and DCE vp was fit without the DSC-derived prior.
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        {% if cbv_c.acquisition_limited_note is defined %}
+        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+            <div class="metric">
+                <div class="metric-label">Acquisition-Limited vp</div>
+                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
+                    {{ cbv_c.acquisition_limited_note }}
+                    {% if cbv_c.aif_tissue_overshoot_fraction is defined %}
+                    (overshoot fraction: {{ "%.0f"|format(cbv_c.aif_tissue_overshoot_fraction * 100) }}%{% if cbv_c.peak_alignment_lag_s is defined %}; peak lag: {{ "%.1f"|format(cbv_c.peak_alignment_lag_s) }} s{% endif %})
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -656,7 +669,28 @@
     <!-- DSC-DCE Cross-Validation -->
     {% if dce.qc_metrics.dsc_dce_validation is defined and dce.qc_metrics.dsc_dce_validation %}
     {% set xval = dce.qc_metrics.dsc_dce_validation %}
-    {% if not xval.skipped|default(false) %}
+    {% if xval.skipped|default(false) and xval.status == 'SKIPPED' %}
+    <div class="section">
+        <h3>DSC-DCE Cross-Validation</h3>
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-label">Status</div>
+                <div class="metric-value">Skipped (informational)</div>
+            </div>
+        </div>
+        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+            <div class="metric">
+                <div class="metric-label">Reason</div>
+                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
+                    {{ xval.reason|default('DSC-DCE cross-validation was skipped for this subject.') }}
+                    {% if 'NAWM' in xval.reason|default('') %}
+                    This is expected for bilateral disease or when tumor segmentation provides no contralateral NAWM. vp quantification proceeds without cross-modality validation.
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% elif not xval.skipped|default(false) %}
     <div class="section">
         <h3>DSC-DCE Cross-Validation</h3>
         <div class="metrics">
@@ -667,6 +701,7 @@
                     {%- if xval.status == 'PASS' %} pass
                     {%- elif xval.status == 'CIRCULAR' %}
                     {%- elif xval.status == 'WARN' %} warn
+                    {%- elif xval.status == 'SKIPPED' %}
                     {%- else %} poor{% endif %}">{{ xval.status }}</div>
             </div>
             {% endif %}
