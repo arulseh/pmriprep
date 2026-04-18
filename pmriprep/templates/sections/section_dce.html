@@ -598,10 +598,11 @@
             <div class="metric">
                 <div class="metric-label">Constraint</div>
                 <div class="metric-value
-                    {%- if cbv_c.mode == 'hard' %} pass
-                    {%- elif cbv_c.mode == 'soft' %} warn
-                    {%- elif cbv_c.mode == 'skip' %} poor
-                    {%- else %} unknown{% endif %}">{{ cbv_c.mode }}</div>
+                    {%- if cbv_c.mode == 'hard' %} warn
+                    {%- elif cbv_c.mode == 'soft' %} pass
+                    {%- elif cbv_c.mode == 'skip' %} warn
+                    {%- else %} unknown{% endif %}"
+                    {%- if cbv_c.mode == 'hard' %} title="HARD equality is an unsupported physics claim — DSC CBV and DCE vp measure different vascular compartments. Requires explicit user override."{% endif %}>{{ cbv_c.mode }}</div>
             </div>
             {% if cbv_c.downgrade_from is defined %}
             <div class="metric">
@@ -615,6 +616,36 @@
             <div class="metric">
                 <div class="metric-label">Reason</div>
                 <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">{{ cbv_c.reason }}</div>
+            </div>
+        </div>
+        {% endif %}
+        {% if cbv_c.user_override_warning is defined %}
+        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+            <div class="metric">
+                <div class="metric-label warn">User Override Warning</div>
+                <div class="metric-value warn" style="font-size: 1.0em; font-weight: normal;">{{ cbv_c.user_override_warning }}</div>
+            </div>
+        </div>
+        {% endif %}
+        {% if cbv_c.skip_reason is defined and cbv_c.skip_reason == 'no_nawm_mask' %}
+        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+            <div class="metric">
+                <div class="metric-label">No NAWM Reference</div>
+                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
+                    vp constraint skipped because no NAWM reference mask was available (neither from tumor segmentation nor user-supplied). DCE PK estimates use default priors only; DSC CBV was not integrated into the vp posterior.
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        {% if cbv_c.magnitude_gate_triggered is defined and cbv_c.magnitude_gate_triggered %}
+        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+            <div class="metric">
+                <div class="metric-label warn">vp Magnitude Gate Triggered</div>
+                <div class="metric-value warn" style="font-size: 1.0em; font-weight: normal;">
+                    Derived vp prior median
+                    {% if cbv_c.vp_median is defined %}({{ "%.4f"|format(cbv_c.vp_median) }}){% endif %}
+                    fell outside the physiological range [0.005, 0.10]. This indicates a scale or calibration failure in the DSC→DCE pathway (typically an nCBV normalization problem). The constraint was downgraded to SKIP and DCE vp was fit without the DSC-derived prior.
+                </div>
             </div>
         </div>
         {% endif %}

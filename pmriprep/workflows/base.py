@@ -684,6 +684,7 @@ def _find_previous_dsc_outputs(
     """
     outputs: dict[str, Optional[str]] = {
         "rel_cbv_map": None,
+        "ncbv_map": None,
         "dsc_to_t1w_xfm": None,
         "aif_qc": None,
         "preload_qc": None,
@@ -706,6 +707,21 @@ def _find_previous_dsc_outputs(
         if outputs["rel_cbv_map"] is None:
             for f in perf_dir.glob("*desc-dscRel_cbv.nii.gz"):
                 outputs["rel_cbv_map"] = str(f)
+        # NAWM-normalized CBV (required for v0.25.0+ vp prior path).
+        # Missing → vp constraint cleanly SKIPs in prepare_vp_constraint.
+        for f in perf_dir.glob("*desc-dscNawmNorm_cbv.nii.gz"):
+            outputs["ncbv_map"] = str(f)
+        if outputs["rel_cbv_map"] is not None and outputs["ncbv_map"] is None:
+            # Pre-v0.25.0 derivatives layout. The DCE vp constraint anchors
+            # on nCBV; without it the constraint falls back to SKIP. Warn so
+            # the user knows the skip-DSC run cannot reuse the old
+            # (known-biased) absolute-CBV path for the prior.
+            logging.getLogger("pmriprep.workflows").warning(
+                "Found previous DSC outputs for sub-%s without a NAWM-"
+                "normalized CBV map (no *desc-dscNawmNorm_cbv.nii.gz in %s). "
+                "DCE vp constraint will SKIP. Re-run DSC to obtain nCBV.",
+                subject_id, perf_dir,
+            )
 
     # DSC→T1w transform (now in anat/ instead of xfm/)
     anat_dir = dsc_dir / "anat"
@@ -2599,9 +2615,13 @@ def init_pmriprep_wf(
             if dce_config.model in ("extended_tofts", "2cxm", "auto"):
                 workflow.connect([
                     (dsc_wf, dce_wf, [
-                        # Route CBV through DCE inputnode → resample_dsc_cbv node
-                        # (DSC native 128x128 must be resampled to DCE native 256x256)
+                        # Relative/absolute CBV → cross-validation + QC
+                        # resampling path (DSC 128x128 → DCE 256x256).
                         ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
+                        # NAWM-normalized CBV → vp prior path (v0.25.0+).
+                        # None propagates cleanly when no NAWM mask exists
+                        # (missing-NAWM handling lives in prepare_vp_constraint).
+                        ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
                         ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                         # AIF QC is a JSON file, no spatial resampling needed
                         ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc"),
@@ -2618,6 +2638,7 @@ def init_pmriprep_wf(
                 workflow.connect([
                     (dsc_wf, dce_wf, [
                         ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
+                        ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
                         ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                     ]),
                 ])
@@ -2640,6 +2661,18 @@ def init_pmriprep_wf(
             if prev_dsc["rel_cbv_map"] and prev_dsc["dsc_to_t1w_xfm"]:
                 dce_wf.inputs.inputnode.dsc_cbv_file = prev_dsc["rel_cbv_map"]
                 dce_wf.inputs.inputnode.dsc_to_t1w_xfm = prev_dsc["dsc_to_t1w_xfm"]
+                if prev_dsc.get("ncbv_map"):
+                    dce_wf.inputs.inputnode.dsc_ncbv_file = prev_dsc["ncbv_map"]
+                    _log.info(
+                        "skip-dsc: loaded DSC nCBV from %s", prev_dsc["ncbv_map"]
+                    )
+                else:
+                    _log.warning(
+                        "skip-dsc: nCBV not found in previous DSC outputs "
+                        "(pre-v0.25.0 run or no NAWM mask); vp constraint "
+                        "will cleanly SKIP. Use --no-dsc-validation to avoid "
+                        "cross-validation noise if this is unexpected."
+                    )
                 _log.info(
                     "skip-dsc: loaded DSC CBV from %s", prev_dsc["rel_cbv_map"]
                 )

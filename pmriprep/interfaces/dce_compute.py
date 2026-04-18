@@ -786,7 +786,14 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     # Use traits.Str instead of File: when DSC is unavailable, the upstream
     # resample node returns "" which nipype File trait cannot validate.
     dsc_cbv_file = traits.Str(
-        desc="DSC-derived CBV map for vp constraint (optional, empty when unavailable)",
+        desc="DSC-derived CBV map (relative or absolute units) used for "
+             "cross-validation and QC resampling. NOT used for the vp "
+             "prior — see dsc_ncbv_file for that.",
+    )
+    dsc_ncbv_file = traits.Str(
+        desc="DSC NAWM-normalized CBV (nCBV, dimensionless ratio) used for "
+             "the vp prior via vp = NAWM_VP_REFERENCE × nCBV. Empty string "
+             "when DSC has no NAWM reference → constraint cleanly SKIPs.",
     )
     dsc_aif_qc = traits.Dict(
         mandatory=False,
@@ -1382,9 +1389,21 @@ class ComputeDCEMaps(BaseInterface):
         constraint_vp_uncertainty: float = 0.2
         constraint_qc: dict[str, Any] = {"mode": "skip", "reason": "No DSC CBV provided"}
 
-        has_dsc_cbv = (
+        # Prefer nCBV for the vp prior (NAWM-anchored, v0.25.0+). Falls back
+        # to absolute-CBV pathway only when nCBV is not plumbed (legacy
+        # callers / skip-dsc with pre-v0.25.0 outputs). Missing nCBV with
+        # no absolute fallback → constraint cleanly SKIPs via
+        # prepare_vp_constraint_from_data's missing-NAWM branch.
+        ncbv_available = (
+            isdefined(self.inputs.dsc_ncbv_file)
+            and self.inputs.dsc_ncbv_file
+        )
+        cbv_available = (
             isdefined(self.inputs.dsc_cbv_file)
-            and self.inputs.dsc_cbv_file  # non-empty string
+            and self.inputs.dsc_cbv_file
+        )
+        has_dsc_cbv = (
+            (ncbv_available or cbv_available)
             and (model_name in ("extended_tofts", "2cxm") or is_auto)
         )
 
@@ -1417,8 +1436,13 @@ class ComputeDCEMaps(BaseInterface):
                     or None
                 )
 
+                # Use nCBV if available (physics-correct path); None → SKIP
+                # (missing-NAWM handling lives inside prepare_vp_constraint_from_data).
+                ncbv_for_prior = (
+                    self.inputs.dsc_ncbv_file if ncbv_available else None
+                )
                 vp_result = prepare_vp_constraint_from_data(
-                    cbv_file=self.inputs.dsc_cbv_file,
+                    ncbv_file=ncbv_for_prior,
                     aif_qc_data=aif_qc_data,
                     brain_mask_file=self.inputs.brain_mask_file,
                     mode_override=str(self.inputs.constraint_mode),

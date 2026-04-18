@@ -810,3 +810,69 @@ def is_low_temporal_resolution(tr: float) -> bool:
         True if TR is above the low-TR threshold.
     """
     return tr > AIF_LOW_TR_THRESHOLD
+
+
+# =============================================================================
+# DSC→DCE Cross-Modality vp Constraint Constants (v0.25.0+)
+# =============================================================================
+# Added 2026-04-18 per physics review. Governs how DSC-derived CBV maps into
+# DCE vp priors via NAWM normalization instead of absolute-CBV conversion.
+
+#: Maximum physiological vp value. Absolute upper bound on plasma volume
+#: fraction in any brain voxel; a vp > 0.2 indicates pure-vessel or
+#: catastrophic fit failure, not tissue. Used by ``ncbv_to_vp_prior`` and
+#: ``cbv_to_vp`` to NaN-out out-of-range entries before they enter DCE
+#: fitting. Centralized here alongside the other vp gates so all vp
+#: thresholds live in one module.
+VP_MAX_PHYSIOLOGICAL: Final[float] = 0.2
+
+#: Physiological plasma volume fraction assumed for contralateral NAWM.
+#: Used as the anchor for converting nCBV → vp prior in the DSC→DCE
+#: cross-modality constraint. Sources: Rostrup 2000 (NAWM CBV ~2.5 mL/100g);
+#: Ostergaard 1996; ASFNR consensus Boxerman 2020. With Hct=0.42, ρ=1.04:
+#: true NAWM vp ≈ 0.016–0.02.
+NAWM_VP_REFERENCE: Final[float] = 0.02
+
+#: Physiological plausibility range for DCE vp prior (plasma volume fraction).
+#: WM vp ≈ 0.01–0.02, GM ≈ 0.02–0.04, tumor ≈ 0.03–0.08. Derived vp
+#: medians outside this range indicate a scale or calibration failure
+#: in the DSC→DCE constraint pathway; the constraint should be skipped.
+#: Loose bounds — catches gross errors in the prior before DCE fitting.
+VP_MEDIAN_MIN: Final[float] = 0.005
+VP_MEDIAN_MAX: Final[float] = 0.10
+
+#: Acceptable tolerance on the post-DCE-fit vp / nCBV ratio, used by
+#: cross-validation. Target is NAWM_VP_REFERENCE (0.02). Tolerance is a
+#: factor-of-2 in either direction (log-symmetric) — physics-expert
+#: verified: RSS of Hct ±20%, NAWM CBV ±15%, DCE NLLS noise ±25%,
+#: σ=0.40 posterior spread ±15% is ~40% per-component → factor-of-2
+#: (±100%) is appropriately conservative for a gross-miscalibration
+#: gate, not intended to flag normal biological scatter.
+#: Values outside [0.01, 0.04] indicate the DCE posterior vp and DSC nCBV
+#: don't agree within expected tolerance — flag as validation mismatch.
+VP_NCBV_RATIO_MIN: Final[float] = 0.01
+VP_NCBV_RATIO_MAX: Final[float] = 0.04
+
+#: nCBV input range for cross-validation (per-voxel values to retain).
+#: Upper bound 5.0 covers hypervascular HGG tumor rim (Law 2008, Hu 2009
+#: report rCBV up to 6 in clinical GBM). Voxels beyond 5.0 are likely
+#: vessels or partial-volume artifacts and are excluded from ratio stats.
+MIN_NCBV_FOR_VALIDATION: Final[float] = 0.3
+MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
+
+#: Default soft-prior sigma values for vp constraint, calibrated for
+#: NAWM-normalized rCBV → vp conversion. Widened from prior 0.2/0.12/0.30
+#: per 2026-04 physics review: DSC→DCE scale uncertainty is genuinely
+#: ~40–50% even with NAWM normalization due to compartment differences
+#: between all-vessel CBV and capillary-plasma vp.
+SIGMA_SOFT_DEFAULT: Final[float] = 0.40
+SIGMA_SOFT_PRELOAD_SUPPRESSED: Final[float] = 0.25
+SIGMA_SOFT_HIGH_K2: Final[float] = 0.50
+
+#: Circular-detector std threshold when cross-validation uses nCBV.
+#: Ratio vp/nCBV is centered at NAWM_VP_REFERENCE=0.02; threshold ≈10%
+#: of that center separates "deterministic prior-dominated" (HARD or
+#: tight-SOFT) from "informative DCE posterior" (wide SOFT). Legacy
+#: threshold 0.01 stays for the non-nCBV path (vp/rel_cbv ratio scale).
+CIRCULAR_STD_THRESHOLD_NCBV: Final[float] = 0.002
+CIRCULAR_STD_THRESHOLD_ABS_CBV: Final[float] = 0.01

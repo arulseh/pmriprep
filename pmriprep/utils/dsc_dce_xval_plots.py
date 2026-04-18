@@ -18,7 +18,12 @@ from typing import Any, Optional
 import numpy as np
 import numpy.typing as npt
 
-from pmriprep.utils.dce_constants import HEMATOCRIT_ARTERIAL
+from pmriprep.utils.dce_constants import (
+    HEMATOCRIT_ARTERIAL,
+    MAX_NCBV_FOR_VALIDATION,
+    MIN_NCBV_FOR_VALIDATION,
+    NAWM_VP_REFERENCE,
+)
 from pmriprep.utils.dce_dsc_validation import (
     MAX_CBV_FOR_VALIDATION,
     MAX_VP_FOR_VALIDATION,
@@ -41,22 +46,29 @@ def generate_xval_plot(
     constraint_mode: Optional[str] = None,
     hematocrit: float = HEMATOCRIT_ARTERIAL,
     model_selection: Optional[npt.NDArray[Any]] = None,
+    use_ncbv_scale: bool = False,
 ) -> str:
     """Generate a 3-panel cross-validation QC figure.
 
     Args:
         vp_data: 3D vp map (fraction, 0-1).
-        cbv_data: 3D CBV map (mL/100g).
+        cbv_data: 3D CBV map. If ``use_ncbv_scale=False`` (default), treated
+            as absolute/relative CBV in mL/100g. If True, treated as
+            dimensionless NAWM-normalized CBV (nCBV) and the axes, filtering
+            bounds, identity line and ratio map are switched accordingly.
         mask: 3D brain mask.
         validation_result: Validation result dict from validate_vp_cbv.
         subject_id: BIDS subject ID.
         session_id: BIDS session ID.
         output_path: Output PNG path. If None, uses cwd.
         constraint_mode: CBV constraint mode (hard/soft/skip/None).
-        hematocrit: Hematocrit for unit conversion.
+        hematocrit: Hematocrit for unit conversion (absolute-CBV path only).
         model_selection: Optional 3D model selection map (int8).
             When provided, scatter points are colored by model
             (0=unfitted, 1=Patlak, 2=Tofts, 3=ExtTofts, 4=2CXM).
+        use_ncbv_scale: When True, plot with the nCBV-anchored expected
+            ratio (NAWM_VP_REFERENCE ≈ 0.02) and dimensionless axes to match
+            the validation metrics computed under ``use_ncbv_scale=True``.
 
     Returns:
         Path to saved PNG file.
@@ -72,7 +84,24 @@ def generate_xval_plot(
     if output_path is None:
         output_path = str(Path.cwd() / "dsc_dce_xval.png")
 
-    expected_ratio = get_expected_ratio(hematocrit)
+    if use_ncbv_scale:
+        expected_ratio = NAWM_VP_REFERENCE
+        cbv_min = MIN_NCBV_FOR_VALIDATION
+        cbv_max = MAX_NCBV_FOR_VALIDATION
+        cbv_axis_label = "DSC nCBV (NAWM-normalized)"
+        cbv_from_vp_label = "DCE vp-derived nCBV"
+        mean_axis_label = "Mean nCBV"
+        ratio_label = "vp/nCBV ratio"
+        cbv_unit_factor = 1.0  # vp and nCBV both dimensionless
+    else:
+        expected_ratio = get_expected_ratio(hematocrit)
+        cbv_min = MIN_CBV_FOR_VALIDATION
+        cbv_max = MAX_CBV_FOR_VALIDATION
+        cbv_axis_label = "DSC CBV (mL/100g)"
+        cbv_from_vp_label = "DCE vp-derived CBV (mL/100g)"
+        mean_axis_label = "Mean CBV (mL/100g)"
+        ratio_label = "(vp*100)/CBV ratio"
+        cbv_unit_factor = 100.0  # vp fraction → vp*100 → mL/100mL
 
     # Extract valid voxels
     mask_bool = mask.astype(bool)
@@ -81,9 +110,9 @@ def generate_xval_plot(
 
     valid = (
         (vp_masked > MIN_VP_FOR_VALIDATION)
-        & (cbv_masked > MIN_CBV_FOR_VALIDATION)
+        & (cbv_masked > cbv_min)
         & (vp_masked < MAX_VP_FOR_VALIDATION)
-        & (cbv_masked < MAX_CBV_FOR_VALIDATION)
+        & (cbv_masked < cbv_max)
         & np.isfinite(vp_masked)
         & np.isfinite(cbv_masked)
     )
@@ -95,10 +124,13 @@ def generate_xval_plot(
     if model_selection is not None:
         model_sel_valid = model_selection[mask_bool][valid]
 
-    # Convert vp to CBV-equivalent units: cbv_from_vp = vp * 100 / ((1-Hct) * rho)
-    # But since CBV is already in mL/100g and vp*100 is in mL/100mL,
-    # the conversion is: cbv_from_vp = vp * 100 / expected_ratio
-    cbv_from_vp = vp_valid * 100.0 / expected_ratio if expected_ratio > 0 else vp_valid * 100.0
+    # Project vp onto the CBV scale for scatter/BA comparison.
+    # Absolute path: cbv_equiv = vp * 100 / expected_ratio (mL/100g).
+    # nCBV path:     cbv_equiv = vp / expected_ratio (dimensionless).
+    if expected_ratio > 0:
+        cbv_from_vp = vp_valid * cbv_unit_factor / expected_ratio
+    else:
+        cbv_from_vp = vp_valid * cbv_unit_factor
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     fig.suptitle(
@@ -172,8 +204,8 @@ def generate_xval_plot(
             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
         )
 
-        ax.set_xlabel("DSC CBV (mL/100g)", fontsize=9)
-        ax.set_ylabel("DCE vp-derived CBV (mL/100g)", fontsize=9)
+        ax.set_xlabel(cbv_axis_label, fontsize=9)
+        ax.set_ylabel(cbv_from_vp_label, fontsize=9)
         ax.set_title("vp vs CBV Scatter", fontsize=10)
         ax.set_xlim(0, lim_max * 1.05)
         ax.set_ylim(0, lim_max * 1.05)
@@ -240,7 +272,7 @@ def generate_xval_plot(
                     linewidth=0.8, linestyle="--")
         ax.axhline(0, color="gray", linewidth=0.5, linestyle=":")
 
-        ax.set_xlabel("Mean CBV (mL/100g)", fontsize=9)
+        ax.set_xlabel(mean_axis_label, fontsize=9)
         ax.set_ylabel("Difference (DCE - DSC)", fontsize=9)
         ax.set_title("Bland-Altman", fontsize=10)
 
@@ -270,12 +302,14 @@ def generate_xval_plot(
         valid_3d = (
             mask_bool
             & (vp_data > MIN_VP_FOR_VALIDATION)
-            & (cbv_data > MIN_CBV_FOR_VALIDATION)
+            & (cbv_data > cbv_min)
             & np.isfinite(vp_data)
             & np.isfinite(cbv_data)
         )
-        cbv_safe = np.maximum(cbv_data, MIN_CBV_FOR_VALIDATION)
-        ratio_3d[valid_3d] = (vp_data[valid_3d] * 100.0) / cbv_safe[valid_3d]
+        cbv_safe = np.maximum(cbv_data, cbv_min)
+        ratio_3d[valid_3d] = (
+            vp_data[valid_3d] * cbv_unit_factor
+        ) / cbv_safe[valid_3d]
 
         # Get axial slice with most valid voxels
         n_valid_per_slice = np.sum(valid_3d, axis=(0, 1))
@@ -291,8 +325,12 @@ def generate_xval_plot(
         # near-white center (RGB ~0.87), which represents the expected ratio.
         cmap = plt.get_cmap("coolwarm").copy()
         cmap.set_bad(color="black")
-        vmin = max(0, expected_ratio - 0.5)
-        vmax = expected_ratio + 0.5
+        # Colorbar span is a multiplicative factor of the expected ratio so
+        # it works on both scales (0.669 absolute, 0.02 nCBV) without
+        # saturating one path or compressing the other.
+        half_span = expected_ratio * 0.75
+        vmin = max(0.0, expected_ratio - half_span)
+        vmax = expected_ratio + half_span
         norm = TwoSlopeNorm(vcenter=expected_ratio, vmin=vmin, vmax=vmax)
         im = ax.imshow(
             slice_2d,
@@ -302,7 +340,7 @@ def generate_xval_plot(
             interpolation="nearest",
         )
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label("(vp*100)/CBV ratio", fontsize=8)
+        cbar.set_label(ratio_label, fontsize=8)
 
         ax.set_title(f"Ratio Map (z={best_slice})", fontsize=10)
         ax.axis("off")

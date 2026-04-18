@@ -253,7 +253,7 @@ dce:
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `no_tortuosity` | bool | `false` | Skip DWI-based tortuosity correction |
 | `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation |
-| `cbv_constraint_mode` | str | `"auto"` | DSC CBV constraint: `auto`, `hard`, `soft`, `skip` |
+| `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto` (default) emits only `soft` or `skip` — never `hard`, because DSC CBV and DCE vp measure different vascular compartments. `hard` requires explicit user opt-in (unsupported physics claim; biases absolute PK estimates). Uses NAWM-normalized CBV (nCBV) as the prior input. |
 | `hematocrit` | float | `0.42` | Arterial hematocrit (from blood draw). Used for AIF plasma correction; capillary Hct derived via Fåhræus ratio (0.85) |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |

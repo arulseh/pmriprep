@@ -35,6 +35,13 @@ from pmriprep.utils.dce_constants import (
     HEMATOCRIT_ARTERIAL,
     TISSUE_DENSITY,
     capillary_hematocrit,
+    NAWM_VP_REFERENCE,
+    VP_MAX_PHYSIOLOGICAL,
+    VP_MEDIAN_MIN,
+    VP_MEDIAN_MAX,
+    SIGMA_SOFT_DEFAULT,
+    SIGMA_SOFT_PRELOAD_SUPPRESSED,
+    SIGMA_SOFT_HIGH_K2,
 )
 from pmriprep.utils.dsc_aif import (
     GAMMA_PEAK_RATIO_MIN,
@@ -47,9 +54,6 @@ from pmriprep.utils.dsc_constants import QC_MEAN_CNR_MINIMUM
 # Constants
 # =============================================================================
 
-
-#: Maximum physiological vp value (brain tissue)
-VP_MAX_PHYSIOLOGICAL: float = 0.2
 
 #: Minimum CNR coverage fraction for high-quality DSC (relaxed from 0.99)
 #: Allow 5% low-CNR voxels due to sinuses, edge effects
@@ -78,11 +82,14 @@ AIF_BASELINE_RETURN_MAX: float = 0.40
 #: Marginal baseline return ratio
 AIF_BASELINE_RETURN_MARGINAL: float = 0.30
 
-#: CBV median acceptable range (relative units, full-bolus AUC scale).
-#: Real clinical data: most medians 0.98-2.45, rare high-grade up to ~3.1.
-#: Lower bound catches failures (bad AIF/NAWM/K2); upper bound flags AIF
-#: partial-volume issues.
-CBV_MEDIAN_RANGE: tuple[float, float] = (0.5, 5.0)
+#: nCBV median acceptable range for the vp-constraint feeder (dimensionless,
+#: NAWM-normalized). NAWM=1.0 by construction; normal whole-brain median
+#: ~0.7–1.5; tumor-heavy subjects up to ~2–3. Outside this range, the
+#: normalization reference or the underlying CBV map is compromised.
+#: Note: MAX_NCBV_FOR_VALIDATION=5.0 is a PER-VOXEL upper bound that
+#: accommodates hypervascular HGG tumor-rim (Law 2008, Hu 2009: rCBV up
+#: to 6 in GBM); this median range is for the whole-brain distribution.
+CBV_MEDIAN_RANGE: tuple[float, float] = (0.3, 3.0)
 
 #: Maximum fraction of negative CBV values before quality downgrade
 CBV_NEGATIVE_FRACTION_MAX: float = 0.01
@@ -153,6 +160,12 @@ class CBVQualityAssessment:
     n_aif_voxels: Optional[int] = None
     gamma_peak_ratio: Optional[float] = None
     reasons: list[str] = field(default_factory=list)
+    #: Cached (is_preloaded, well_suppressed, high_correction) triple from
+    #: :func:`_classify_preload_k2`; populated during quality assessment so
+    #: :func:`determine_constraint_mode` can reuse the classification instead
+    #: of recomputing it. Avoids a second source of truth for the "no
+    #: preload + high K2 correction" decision.
+    preload_k2_classification: Optional[tuple[bool, bool, bool]] = None
 
 
 @dataclass
@@ -488,9 +501,11 @@ def assess_dsc_cbv_quality(
                     )
 
     result.preload_status = preload_classification
-    is_preloaded, well_suppressed, high_correction = _classify_preload_k2(
+    classification = _classify_preload_k2(
         preload_classification, k2_metrics,
     )
+    result.preload_k2_classification = classification
+    is_preloaded, _well_suppressed, high_correction = classification
     if not is_preloaded and high_correction:
         k2_med = float((k2_metrics or {}).get("k2_median", 0.0))
         pct_leaky = float((k2_metrics or {}).get("percent_leaky_voxels", 0.0))
@@ -564,6 +579,46 @@ def cbv_to_vp(
     return vp.astype(np.float64)
 
 
+def ncbv_to_vp_prior(
+    ncbv_data: npt.NDArray[np.floating],
+    nawm_vp_reference: float = NAWM_VP_REFERENCE,
+) -> npt.NDArray[np.floating]:
+    """Convert NAWM-normalized CBV (nCBV) to a vp prior map.
+
+    Assumes NAWM vp ≈ 0.02 (Rostrup 2000, ASFNR Boxerman 2020) and scales
+    linearly with the per-voxel nCBV ratio. Because nCBV cancels AIF
+    partial-volume, recirculation, and first-pass-truncation biases (all
+    affect numerator and denominator equally), this is the scientifically
+    defensible conversion from a DSC-derived relative volume measure to a
+    DCE vp prior, avoiding the unit ambiguities that plague direct
+    absolute-CBV → vp conversion with `cbv_to_vp`.
+
+    Args:
+        ncbv_data: 3D nCBV map (CBV / median(CBV_NAWM)), dimensionless.
+        nawm_vp_reference: Assumed NAWM vp. Default 0.02.
+
+    Returns:
+        3D vp prior map (dimensionless), clipped to [0, VP_MAX_PHYSIOLOGICAL].
+
+    References:
+        Rostrup E et al., NeuroImage 2000 (NAWM CBV ~2.5 mL/100g).
+        Boxerman JL et al., Neuro-Oncology 2020 (ASFNR/NCI consensus —
+        contralateral NAWM is the standard normalization reference).
+    """
+    ncbv_safe = np.where(
+        np.isfinite(ncbv_data) & (ncbv_data >= 0),
+        ncbv_data,
+        np.nan,
+    )
+    vp = ncbv_safe * nawm_vp_reference
+    vp = np.where(
+        (vp >= 0) & (vp <= VP_MAX_PHYSIOLOGICAL),
+        vp,
+        np.nan,
+    )
+    return vp.astype(np.float64)
+
+
 # =============================================================================
 # Constraint Mode Determination
 # =============================================================================
@@ -577,11 +632,19 @@ def determine_constraint_mode(
 ) -> ConstraintConfig:
     """Determine constraint mode from DSC quality assessment.
 
-    Decision logic:
-    - User override (if not 'auto') takes priority
-    - high quality -> hard (fix vp)
-    - moderate quality -> soft (Bayesian prior +/- 20%)
-    - low quality -> skip (unconstrained)
+    Decision logic (v0.25.0+ per 2026-04 physics review):
+
+    - User override (if not 'auto') takes priority. Explicit HARD emits a
+      warning because DSC CBV and DCE vp measure subtly different vascular
+      compartments (all-vessel vs capillary-plasma); HARD equality is an
+      unsupported physics claim even when CBV calibration is correct.
+    - **auto never emits HARD.** High quality → tight SOFT (σ=0.20);
+      moderate → SOFT with sigma that depends on preload/K2 status;
+      low → SKIP (unconstrained).
+
+    Soft sigma values (widened from prior 0.2/0.12/0.30 per physics review):
+    DSC→DCE scale uncertainty is genuinely 40–50% from compartment differences
+    plus preload/K2 residuals. See SIGMA_SOFT_* in dce_constants.
 
     Args:
         dsc_quality: Quality assessment from assess_dsc_cbv_quality.
@@ -593,7 +656,9 @@ def determine_constraint_mode(
             containing 'k2_median', 'percent_leaky_voxels', etc.
 
     Returns:
-        ConstraintConfig with mode, uncertainty, and reason.
+        ConstraintConfig with mode, uncertainty, and reason. HARD override
+        additionally annotates the config's ``reason`` with a physics caveat
+        so callers can surface the warning in QC / HTML reports.
     """
     # User override
     if user_override and user_override != "auto":
@@ -601,32 +666,60 @@ def determine_constraint_mode(
             mode = ConstraintMode(user_override)
         except ValueError:
             mode = ConstraintMode.SKIP
-        uncertainty = 0.2 if mode == ConstraintMode.SOFT else 0.0
+        if mode == ConstraintMode.HARD:
+            uncertainty = 0.0
+            logger.warning(
+                "User explicitly requested HARD vp constraint. DSC CBV and "
+                "DCE vp measure different vascular compartments; HARD "
+                "equality is an unsupported physics claim and biases "
+                "absolute PK estimates. Consider 'soft' or 'skip' unless "
+                "fixing vp is required for parameter identifiability."
+            )
+            reason = (
+                f"User override: {user_override} "
+                "(WARNING: HARD equality is unsupported physics; "
+                "biases absolute PK estimates)"
+            )
+        elif mode == ConstraintMode.SOFT:
+            uncertainty = SIGMA_SOFT_DEFAULT
+            reason = f"User override: {user_override}"
+        else:
+            uncertainty = 0.0
+            reason = f"User override: {user_override}"
         return ConstraintConfig(
             mode=mode,
             vp_uncertainty=uncertainty,
-            reason=f"User override: {user_override}",
+            reason=reason,
         )
 
     confidence = dsc_quality.confidence
 
     if confidence == "high":
+        # High quality no longer emits HARD; use tight SOFT instead.
         return ConstraintConfig(
-            mode=ConstraintMode.HARD,
-            vp_uncertainty=0.0,
-            reason="high DSC quality",
+            mode=ConstraintMode.SOFT,
+            vp_uncertainty=0.20,
+            reason="high DSC quality (auto → tight SOFT; HARD deprecated)",
         )
     elif confidence == "moderate":
-        uncertainty = 0.2
+        uncertainty = SIGMA_SOFT_DEFAULT
         reason_suffix = ""
-        is_preloaded, well_suppressed, high_correction = _classify_preload_k2(
-            preload_classification, k2_metrics,
-        )
+        # Reuse the classification cached during quality assessment when
+        # available; fall back to recomputing only if the quality object
+        # predates this field (legacy callers building it by hand).
+        if dsc_quality.preload_k2_classification is not None:
+            is_preloaded, well_suppressed, high_correction = (
+                dsc_quality.preload_k2_classification
+            )
+        else:
+            is_preloaded, well_suppressed, high_correction = (
+                _classify_preload_k2(preload_classification, k2_metrics)
+            )
         if is_preloaded and well_suppressed:
-            uncertainty = 0.12
+            uncertainty = SIGMA_SOFT_PRELOAD_SUPPRESSED
             reason_suffix = " + preload suppressed"
         elif not is_preloaded and high_correction:
-            uncertainty = 0.30
+            uncertainty = SIGMA_SOFT_HIGH_K2
             reason_suffix = " + high K2"
 
         return ConstraintConfig(
@@ -649,7 +742,7 @@ def determine_constraint_mode(
 
 
 def prepare_vp_constraint(
-    cbv_file: Union[str, Path],
+    ncbv_file: Optional[Union[str, Path]],
     aif_qc_file: Union[str, Path],
     brain_mask_file: Union[str, Path],
     mode_override: Optional[str] = None,
@@ -657,20 +750,24 @@ def prepare_vp_constraint(
     preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
 ) -> VpConstraintResult:
-    """Prepare vp constraint map from DSC CBV for DCE PK modeling.
+    """Prepare vp constraint map from DSC NAWM-normalized CBV for DCE PK fitting.
 
     Orchestrates:
-    1. Load CBV map and AIF QC JSON
-    2. Assess DSC CBV quality
-    3. Convert CBV to vp
+    1. Load nCBV map and AIF QC JSON
+    2. Assess DSC CBV quality (on the nCBV distribution)
+    3. Convert nCBV to vp prior via ``ncbv_to_vp_prior`` (vp = 0.02 × nCBV)
     4. Determine constraint mode
+    5. Magnitude gate: downgrade to SKIP if derived vp is outside physiological range
 
     Args:
-        cbv_file: Path to DSC-derived CBV map NIfTI.
+        ncbv_file: Path to DSC-derived NAWM-normalized CBV (nCBV) NIfTI.
+            If None or missing (no NAWM reference available), returns a
+            SKIP result with reason "nCBV unavailable".
         aif_qc_file: Path to DSC AIF QC JSON.
         brain_mask_file: Path to brain mask NIfTI.
         mode_override: User-specified constraint mode override.
-        hematocrit: Blood hematocrit for CBV-to-vp conversion.
+        hematocrit: Blood hematocrit (retained for provenance; not used by
+            the nCBV→vp conversion which anchors on NAWM_VP_REFERENCE).
         preload_classification: DSC preload classification string from QC
             (e.g., 'half_dose', 'significant', 'severe', 'none').
         k2_metrics: K2 leakage correction metrics dict from dsc_preload,
@@ -687,7 +784,7 @@ def prepare_vp_constraint(
         aif_qc_data = {}
 
     return prepare_vp_constraint_from_data(
-        cbv_file=cbv_file,
+        ncbv_file=ncbv_file,
         aif_qc_data=aif_qc_data,
         brain_mask_file=brain_mask_file,
         mode_override=mode_override,
@@ -698,7 +795,7 @@ def prepare_vp_constraint(
 
 
 def prepare_vp_constraint_from_data(
-    cbv_file: Union[str, Path],
+    ncbv_file: Optional[Union[str, Path]],
     aif_qc_data: dict[str, Any],
     brain_mask_file: Union[str, Path],
     mode_override: Optional[str] = None,
@@ -706,41 +803,67 @@ def prepare_vp_constraint_from_data(
     preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
 ) -> VpConstraintResult:
-    """Prepare vp constraint map from DSC CBV for DCE PK modeling.
+    """Prepare vp constraint map from DSC nCBV for DCE PK modeling (data form).
 
-    Same as prepare_vp_constraint but accepts AIF QC data as a dict directly
-    instead of reading from a JSON file.
+    Same as :func:`prepare_vp_constraint` but accepts AIF QC data as a dict
+    directly instead of reading from a JSON file.
+
+    If ``ncbv_file`` is None or does not exist, returns a SKIP result with
+    ``qc_report["skip_reason"] = "no_nawm_mask"``. This is the expected
+    outcome when the upstream DSC workflow could not produce an nCBV map
+    (no NAWM mask from tumor segmentation and none user-supplied).
 
     Args:
-        cbv_file: Path to DSC-derived CBV map NIfTI.
+        ncbv_file: Path to DSC nCBV NIfTI, or None / missing → clean SKIP.
         aif_qc_data: DSC AIF QC metrics dictionary (from workflow).
         brain_mask_file: Path to brain mask NIfTI.
         mode_override: User-specified constraint mode override.
-        hematocrit: Blood hematocrit for CBV-to-vp conversion.
-        preload_classification: DSC preload classification string from QC
-            (e.g., 'half_dose', 'significant', 'severe', 'none').
-        k2_metrics: K2 leakage correction metrics dict from dsc_preload,
-            containing 'k2_median', 'percent_leaky_voxels', etc.
+        hematocrit: Blood hematocrit (retained for provenance).
+        preload_classification: DSC preload classification string from QC.
+        k2_metrics: K2 leakage correction metrics dict from dsc_preload.
 
     Returns:
-        VpConstraintResult with vp_map, config, quality, and qc_report.
+        VpConstraintResult with vp_map (None for SKIP), config, quality,
+        and qc_report with unit keys and (on SKIP) a ``skip_reason`` field.
     """
     import nibabel as nib  # type: ignore[import-untyped]
 
     result = VpConstraintResult()
 
+    # Missing-NAWM handling: if no nCBV file available, cleanly SKIP.
+    if ncbv_file is None or not Path(str(ncbv_file)).is_file():
+        logger.info(
+            "vp constraint skipped: nCBV unavailable (no NAWM reference "
+            "mask). DCE vp will be fit unconstrained."
+        )
+        result.config = ConstraintConfig(
+            mode=ConstraintMode.SKIP,
+            vp_uncertainty=0.0,
+            reason="nCBV unavailable (no NAWM reference)",
+        )
+        result.vp_map = None
+        result.qc_report = {
+            "mode": ConstraintMode.SKIP.value,
+            "reason": result.config.reason,
+            "skip_reason": "no_nawm_mask",
+            "hematocrit": hematocrit,
+        }
+        return result
+
     # Load brain mask
     mask_img = nib.load(str(brain_mask_file))
     mask_data: npt.NDArray[np.floating] = mask_img.get_fdata()  # type: ignore[attr-defined]
 
-    # Load CBV map
-    cbv_img = nib.load(str(cbv_file))
-    cbv_data: npt.NDArray[np.floating] = cbv_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
+    # Load nCBV map (dimensionless, NAWM-normalized)
+    ncbv_img = nib.load(str(ncbv_file))
+    ncbv_data: npt.NDArray[np.floating] = ncbv_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
 
-    # Step 1: Assess quality using provided AIF QC data
+    # Step 1: Assess quality. `assess_dsc_cbv_quality` consumes the CBV
+    # distribution; under the nCBV path it sees a NAWM-anchored ratio
+    # whose median should sit in CBV_MEDIAN_RANGE=(0.3, 3.0).
     quality = assess_dsc_cbv_quality(
         aif_qc_data=aif_qc_data if aif_qc_data else {},
-        cbv_data=cbv_data,
+        cbv_data=ncbv_data,
         brain_mask=mask_data,
         preload_classification=preload_classification,
         k2_metrics=k2_metrics,
@@ -756,8 +879,10 @@ def prepare_vp_constraint_from_data(
     )
     result.config = config
 
-    # Step 3: Convert CBV to vp (even for skip mode, for QC reporting)
-    vp_map = cbv_to_vp(cbv_data, hematocrit=hematocrit)
+    # Step 3: Convert nCBV to vp prior (even for skip mode, for QC reporting).
+    # NAWM-anchored: vp = NAWM_VP_REFERENCE × nCBV. Avoids the absolute-CBV
+    # calibration ambiguity that `cbv_to_vp` has with relative AUC CBV.
+    vp_map = ncbv_to_vp_prior(ncbv_data)
 
     # Build QC report
     mask_bool = mask_data > 0
@@ -776,20 +901,67 @@ def prepare_vp_constraint_from_data(
         "n_aif_voxels": quality.n_aif_voxels,
         "gamma_peak_ratio": quality.gamma_peak_ratio,
         "hematocrit": hematocrit,
+        # Unit annotations so downstream consumers don't conflate scales.
+        "cbv_median_units": "ncbv",
+        "vp_median_units": "fraction",
     }
 
     if len(vp_valid) > 0:
-        qc_report["vp_median"] = float(np.median(vp_valid))
+        vp_median = float(np.median(vp_valid))
+        qc_report["vp_median"] = vp_median
         qc_report["vp_p5"] = float(np.percentile(vp_valid, 5))
         qc_report["vp_p95"] = float(np.percentile(vp_valid, 95))
         qc_report["vp_nan_fraction"] = float(
             np.sum(~np.isfinite(vp_in_brain)) / len(vp_in_brain)
         )
 
+        # Step 4: Magnitude gate (undershoot + overshoot).
+        # Physiological plausibility: WM vp ≈ 0.01–0.02, GM ≈ 0.02–0.04,
+        # tumor up to ~0.08. Values outside [VP_MEDIAN_MIN, VP_MEDIAN_MAX]
+        # indicate a gross calibration failure — downgrade to SKIP rather
+        # than feeding biased priors into DCE fitting. The existing scale-
+        # mismatch guard in dce_compute only catches overshoot, so this
+        # gate adds the undershoot protection.
+        if not (VP_MEDIAN_MIN <= vp_median <= VP_MEDIAN_MAX):
+            logger.warning(
+                "Derived vp median %.4f outside physiological range "
+                "[%.3f, %.2f]; downgrading constraint to SKIP.",
+                vp_median, VP_MEDIAN_MIN, VP_MEDIAN_MAX,
+            )
+            config = ConstraintConfig(
+                mode=ConstraintMode.SKIP,
+                vp_uncertainty=0.0,
+                reason=(
+                    f"vp_median {vp_median:.4f} outside "
+                    f"[{VP_MEDIAN_MIN}, {VP_MEDIAN_MAX}]"
+                ),
+            )
+            # Critical: reassign into result so caller sees consistent
+            # (mode=SKIP, vp_map=None). Without this, the caller sees the
+            # pre-gate mode while vp_map is None → dispatch breaks.
+            result.config = config
+            qc_report["mode"] = config.mode.value
+            qc_report["reason"] = config.reason
+            qc_report["magnitude_gate_triggered"] = True
+            result.vp_map = None
+            result.qc_report = qc_report
+            return result
+
     if quality.cbv_median is not None:
         qc_report["cbv_median"] = quality.cbv_median
     if quality.cbv_negative_fraction is not None:
         qc_report["cbv_negative_fraction"] = quality.cbv_negative_fraction
+
+    # Surface HARD-override physics warning in QC (from determine_constraint_mode)
+    if (
+        config.mode == ConstraintMode.HARD
+        and config.reason.startswith("User override:")
+    ):
+        qc_report["user_override_warning"] = (
+            "User explicitly requested HARD constraint. DSC CBV and DCE vp "
+            "measure different vascular compartments; HARD equality is an "
+            "unsupported physics claim and biases absolute PK estimates."
+        )
 
     result.qc_report = qc_report
 

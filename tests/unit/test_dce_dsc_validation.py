@@ -325,3 +325,66 @@ class TestTightenedThresholds:
         vp, cbv, mask = _make_data()
         result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
         assert "within expected range" in result.interpretation
+
+
+class TestNcbvPathValidation:
+    """Tests for the NAWM-normalized cross-validation path (v0.25.0+)."""
+
+    def test_validation_with_ncbv_uses_nawm_anchored_expected_ratio(
+        self,
+    ) -> None:
+        """use_ncbv_scale=True anchors expected ratio to NAWM_VP_REFERENCE."""
+        from pmriprep.utils.dce_constants import NAWM_VP_REFERENCE
+
+        # Generate nCBV centered at 1.0 (NAWM reference), vp centered at 0.02
+        # with partially independent noise so std(vp/nCBV) > the circular gate.
+        n = 5000
+        rng = np.random.default_rng(7)
+        z1 = rng.standard_normal(n)
+        z2 = rng.standard_normal(n)
+        ncbv_flat = np.clip(1.0 + 0.3 * z1, 0.4, 4.5)
+        vp_flat = np.clip(
+            0.020 + 0.005 * (0.5 * z1 + 0.87 * z2), 0.003, 0.14
+        )
+        ncbv = ncbv_flat.reshape(n, 1, 1)
+        vp = vp_flat.reshape(n, 1, 1)
+        mask = np.ones((n, 1, 1), dtype=bool)
+
+        result = validate_vp_cbv(
+            vp, ncbv, mask, constraint_mode="skip", use_ncbv_scale=True,
+        )
+        # Median vp/nCBV should be near NAWM_VP_REFERENCE (0.02) and inside
+        # the factor-of-2 tolerance band.
+        assert result.metrics.median_ratio == pytest.approx(
+            NAWM_VP_REFERENCE, abs=0.005
+        )
+        assert result.circular is False
+
+    def test_circular_flag_fires_on_hard_override_ncbv_path(self) -> None:
+        """HARD override under nCBV path still triggers CIRCULAR flag."""
+        vp, ncbv, mask = _make_data(vp_mean=0.020, cbv_mean=1.0)
+        result = validate_vp_cbv(
+            vp, ncbv, mask, constraint_mode="hard", use_ncbv_scale=True,
+        )
+        assert result.circular is True
+        assert result.status == QCStatus.CIRCULAR
+
+    def test_widened_soft_does_not_trigger_circular_ncbv_path(self) -> None:
+        """Realistic SOFT posterior spread (> CIRCULAR_STD_THRESHOLD_NCBV)
+        on the nCBV path is NOT flagged circular."""
+        from pmriprep.utils.dce_constants import CIRCULAR_STD_THRESHOLD_NCBV
+
+        # Inject enough vp spread that std(vp/nCBV) clearly exceeds 0.002.
+        n = 5000
+        rng = np.random.default_rng(11)
+        ncbv_flat = np.clip(1.0 + 0.3 * rng.standard_normal(n), 0.4, 4.5)
+        vp_flat = np.clip(0.020 + 0.008 * rng.standard_normal(n), 0.003, 0.14)
+        ncbv = ncbv_flat.reshape(n, 1, 1)
+        vp = vp_flat.reshape(n, 1, 1)
+        mask = np.ones((n, 1, 1), dtype=bool)
+
+        result = validate_vp_cbv(
+            vp, ncbv, mask, constraint_mode="soft", use_ncbv_scale=True,
+        )
+        assert result.metrics.std_ratio > CIRCULAR_STD_THRESHOLD_NCBV
+        assert result.circular is False

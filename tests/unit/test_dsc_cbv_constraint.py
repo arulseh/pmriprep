@@ -5,6 +5,11 @@ from typing import Any
 import numpy as np
 import pytest
 
+from pmriprep.utils.dce_constants import (
+    NAWM_VP_REFERENCE,
+    VP_MEDIAN_MAX,
+    VP_MEDIAN_MIN,
+)
 from pmriprep.utils.dsc_cbv_constraint import (
     CBVQualityAssessment,
     CNR_COVERAGE_HIGH,
@@ -19,6 +24,7 @@ from pmriprep.utils.dsc_cbv_constraint import (
     assess_dsc_cbv_quality,
     cbv_to_vp,
     determine_constraint_mode,
+    ncbv_to_vp_prior,
     prepare_vp_constraint_from_data,
 )
 
@@ -308,19 +314,23 @@ class TestAssessDSCCBVQuality:
 class TestDetermineConstraintMode:
     """Tests for determine_constraint_mode."""
 
-    def test_high_quality_hard(self) -> None:
-        """High confidence produces hard constraint with zero uncertainty."""
+    def test_high_quality_soft_tight(self) -> None:
+        """High confidence in auto mode emits tight SOFT, never HARD (v0.25.0+).
+
+        DSC CBV and DCE vp measure different vascular compartments; HARD
+        equality is an unsupported physics claim, so ``auto`` caps at SOFT.
+        """
         quality = CBVQualityAssessment(
             confidence="high",
             use_constraint=True,
             reasons=["All quality checks passed"],
         )
         config = determine_constraint_mode(quality)
-        assert config.mode == ConstraintMode.HARD
-        assert config.vp_uncertainty == 0.0
+        assert config.mode == ConstraintMode.SOFT
+        assert config.vp_uncertainty == pytest.approx(0.20)
 
     def test_moderate_quality_soft(self) -> None:
-        """Moderate confidence produces soft constraint with 20% uncertainty."""
+        """Moderate confidence produces soft constraint with widened sigma."""
         quality = CBVQualityAssessment(
             confidence="moderate",
             use_constraint=True,
@@ -328,7 +338,7 @@ class TestDetermineConstraintMode:
         )
         config = determine_constraint_mode(quality)
         assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.2)
+        assert config.vp_uncertainty == pytest.approx(0.40)
 
     def test_low_quality_skip(self) -> None:
         """Low confidence produces skip mode."""
@@ -349,6 +359,23 @@ class TestDetermineConstraintMode:
         )
         config = determine_constraint_mode(quality, user_override="hard")
         assert config.mode == ConstraintMode.HARD
+
+    def test_user_override_hard_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Explicit HARD override emits a logger warning about physics assumptions."""
+        import logging
+
+        quality = CBVQualityAssessment(
+            confidence="high",
+            use_constraint=True,
+            reasons=["All quality checks passed"],
+        )
+        with caplog.at_level(logging.WARNING, logger="pmriprep"):
+            determine_constraint_mode(quality, user_override="hard")
+        messages = " ".join(r.message for r in caplog.records)
+        assert "HARD" in messages or "hard" in messages
+        assert "unsupported" in messages.lower() or "compartment" in messages.lower()
 
 
 # =============================================================================
@@ -453,13 +480,14 @@ class TestQcReportSchema:
         """prepare_vp_constraint_from_data returns qc_report with 'mode'/'reason' keys."""
         import nibabel as nib
 
-        cbv_data = np.ones((5, 5, 5), dtype=np.float64) * 3.0
+        # nCBV ≈ 1 (NAWM reference) → vp ≈ 0.02, squarely physiological.
+        ncbv_data = np.ones((5, 5, 5), dtype=np.float64)
         mask_data = np.ones((5, 5, 5), dtype=np.uint8)
         affine = np.eye(4)
 
-        cbv_file = tmp_path / "cbv.nii.gz"
+        ncbv_file = tmp_path / "ncbv.nii.gz"
         mask_file = tmp_path / "mask.nii.gz"
-        nib.Nifti1Image(cbv_data, affine).to_filename(str(cbv_file))
+        nib.Nifti1Image(ncbv_data, affine).to_filename(str(ncbv_file))
         nib.Nifti1Image(mask_data, affine).to_filename(str(mask_file))
 
         aif_qc = {
@@ -469,7 +497,7 @@ class TestQcReportSchema:
         }
 
         result = prepare_vp_constraint_from_data(
-            cbv_file=str(cbv_file),
+            ncbv_file=str(ncbv_file),
             aif_qc_data=aif_qc,
             brain_mask_file=str(mask_file),
         )
@@ -610,7 +638,7 @@ class TestPreloadAwareUncertainty:
     )
 
     def test_preload_low_k2_tightens_soft(self) -> None:
-        """Preload + low K2 → uncertainty=0.12."""
+        """Preload + low K2 → tightened SIGMA_SOFT_PRELOAD_SUPPRESSED (0.25)."""
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
@@ -618,11 +646,11 @@ class TestPreloadAwareUncertainty:
             k2_metrics=k2,
         )
         assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.12)
+        assert config.vp_uncertainty == pytest.approx(0.25)
         assert "preload" in config.reason.lower()
 
     def test_no_preload_high_k2_widens_soft(self) -> None:
-        """No preload + high leaky → uncertainty=0.30."""
+        """No preload + high leaky → widened SIGMA_SOFT_HIGH_K2 (0.50)."""
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
@@ -630,26 +658,26 @@ class TestPreloadAwareUncertainty:
             k2_metrics=k2,
         )
         assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.30)
+        assert config.vp_uncertainty == pytest.approx(0.50)
         assert "k2" in config.reason.lower()
 
     def test_default_uncertainty_unchanged(self) -> None:
-        """No preload info → uncertainty=0.20."""
+        """No preload info → SIGMA_SOFT_DEFAULT (0.40)."""
         config = determine_constraint_mode(self._MODERATE_QUALITY)
-        assert config.vp_uncertainty == pytest.approx(0.20)
+        assert config.vp_uncertainty == pytest.approx(0.40)
 
     def test_preload_high_k2_default_uncertainty(self) -> None:
-        """Preloaded but NOT well-suppressed → default 0.20."""
+        """Preloaded but NOT well-suppressed → default 0.40."""
         k2 = {"k2_median": 0.02, "percent_leaky_voxels": 10.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
             preload_classification="half_dose",
             k2_metrics=k2,
         )
-        assert config.vp_uncertainty == pytest.approx(0.20)
+        assert config.vp_uncertainty == pytest.approx(0.40)
 
-    def test_high_confidence_unaffected(self) -> None:
-        """HARD mode → preload/K2 don't change anything."""
+    def test_high_confidence_caps_at_soft(self) -> None:
+        """High confidence in auto mode emits tight SOFT (0.20), never HARD."""
         quality = CBVQualityAssessment(
             confidence="high", use_constraint=True, reasons=["All quality checks passed"],
         )
@@ -657,8 +685,8 @@ class TestPreloadAwareUncertainty:
         config = determine_constraint_mode(
             quality, preload_classification="half_dose", k2_metrics=k2,
         )
-        assert config.mode == ConstraintMode.HARD
-        assert config.vp_uncertainty == 0.0
+        assert config.mode == ConstraintMode.SOFT
+        assert config.vp_uncertainty == pytest.approx(0.20)
 
     def test_low_confidence_unaffected(self) -> None:
         """SKIP mode → preload/K2 don't change anything."""
@@ -673,7 +701,7 @@ class TestPreloadAwareUncertainty:
         assert config.mode == ConstraintMode.SKIP
 
     def test_user_override_ignores_preload(self) -> None:
-        """User override 'soft' + preload data → default 0.20 (override path)."""
+        """User override 'soft' + preload data → default 0.40 (override path)."""
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
@@ -682,5 +710,172 @@ class TestPreloadAwareUncertainty:
             k2_metrics=k2,
         )
         assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.20)
+        assert config.vp_uncertainty == pytest.approx(0.40)
         assert "User override" in config.reason
+
+
+# =============================================================================
+# NAWM-normalized CBV → vp prior
+# =============================================================================
+
+
+class TestNcbvToVpPrior:
+    """Tests for ncbv_to_vp_prior (NAWM-anchored vp prior)."""
+
+    def test_nawm_value_yields_reference_vp(self) -> None:
+        """nCBV=1 (NAWM reference) → vp = NAWM_VP_REFERENCE."""
+        ncbv = np.array([1.0], dtype=np.float64)
+        vp = ncbv_to_vp_prior(ncbv)
+        assert vp[0] == pytest.approx(NAWM_VP_REFERENCE)
+
+    def test_tumor_elevation_proportional(self) -> None:
+        """nCBV=3 (hypervascular tumor) → vp = 3 × NAWM_VP_REFERENCE."""
+        ncbv = np.array([3.0], dtype=np.float64)
+        vp = ncbv_to_vp_prior(ncbv)
+        assert vp[0] == pytest.approx(3.0 * NAWM_VP_REFERENCE)
+
+    def test_negative_and_nan_return_nan(self) -> None:
+        """Negative and NaN nCBV values produce NaN."""
+        ncbv = np.array([-0.5, np.nan, 1.0], dtype=np.float64)
+        vp = ncbv_to_vp_prior(ncbv)
+        assert np.isnan(vp[0])
+        assert np.isnan(vp[1])
+        assert np.isfinite(vp[2])
+
+    def test_above_physiological_max_clipped_to_nan(self) -> None:
+        """nCBV large enough to exceed VP_MAX_PHYSIOLOGICAL → NaN."""
+        # With NAWM_VP_REFERENCE = 0.02 and VP_MAX_PHYSIOLOGICAL = 0.2,
+        # nCBV = 15 gives vp = 0.30 which is beyond the physiological cap.
+        ncbv = np.array([15.0], dtype=np.float64)
+        vp = ncbv_to_vp_prior(ncbv)
+        assert np.isnan(vp[0])
+
+    def test_custom_reference(self) -> None:
+        """Custom nawm_vp_reference scales the prior accordingly."""
+        ncbv = np.array([1.0, 2.0], dtype=np.float64)
+        vp = ncbv_to_vp_prior(ncbv, nawm_vp_reference=0.015)
+        assert vp[0] == pytest.approx(0.015)
+        assert vp[1] == pytest.approx(0.030)
+
+
+# =============================================================================
+# vp magnitude gate (undershoot / overshoot)
+# =============================================================================
+
+
+def _write_nifti(path: Any, data: np.ndarray) -> str:
+    import nibabel as nib  # type: ignore[import-untyped]
+    img = nib.Nifti1Image(data.astype(np.float32), affine=np.eye(4))
+    nib.save(img, str(path))
+    return str(path)
+
+
+def _synth_aif_qc() -> dict[str, Any]:
+    return {
+        "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+        "aif_peak_height": 0.4,
+        "baseline_return_ratio": 0.15,
+    }
+
+
+class TestVpMagnitudeGate:
+    """Tests for the vp median undershoot/overshoot gate."""
+
+    def test_undershoot_downgrades_to_skip(self, tmp_path: Any) -> None:
+        """vp median below VP_MEDIAN_MIN triggers SKIP + vp_map=None."""
+        # nCBV median far below 1 so vp = 0.02*nCBV falls under VP_MEDIAN_MIN.
+        ncbv = np.full((8, 8, 8), 0.1, dtype=np.float64)
+        mask = np.ones((8, 8, 8), dtype=np.float32)
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", ncbv)
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", mask)
+
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=ncbv_file,
+            aif_qc_data=_synth_aif_qc(),
+            brain_mask_file=mask_file,
+        )
+
+        assert result.config.mode == ConstraintMode.SKIP
+        assert result.vp_map is None
+        assert "vp_median" in result.config.reason
+        assert result.qc_report.get("magnitude_gate_triggered") is True
+
+    def test_overshoot_downgrades_to_skip(self, tmp_path: Any) -> None:
+        """vp median above VP_MEDIAN_MAX triggers SKIP + vp_map=None."""
+        # nCBV median ≈ 8 → vp = 0.16, above VP_MEDIAN_MAX = 0.10.
+        ncbv = np.full((8, 8, 8), 8.0, dtype=np.float64)
+        mask = np.ones((8, 8, 8), dtype=np.float32)
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", ncbv)
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", mask)
+
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=ncbv_file,
+            aif_qc_data=_synth_aif_qc(),
+            brain_mask_file=mask_file,
+        )
+
+        assert result.config.mode == ConstraintMode.SKIP
+        assert result.vp_map is None
+        assert result.qc_report.get("magnitude_gate_triggered") is True
+
+    def test_physiological_range_no_downgrade(self, tmp_path: Any) -> None:
+        """vp median in physiological range preserves constraint mode."""
+        # nCBV ≈ 1 → vp ≈ 0.02, squarely inside [VP_MEDIAN_MIN, VP_MEDIAN_MAX].
+        ncbv = np.full((8, 8, 8), 1.0, dtype=np.float64)
+        mask = np.ones((8, 8, 8), dtype=np.float32)
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", ncbv)
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", mask)
+
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=ncbv_file,
+            aif_qc_data=_synth_aif_qc(),
+            brain_mask_file=mask_file,
+        )
+
+        assert result.config.mode != ConstraintMode.SKIP
+        assert result.vp_map is not None
+        assert result.qc_report.get("magnitude_gate_triggered") is not True
+        assert VP_MEDIAN_MIN <= result.qc_report["vp_median"] <= VP_MEDIAN_MAX
+
+
+# =============================================================================
+# nCBV integration path through prepare_vp_constraint_from_data
+# =============================================================================
+
+
+class TestNcbvIntegration:
+    """End-to-end tests confirming the production path uses ncbv_to_vp_prior."""
+
+    def test_prepare_vp_constraint_uses_ncbv_to_vp_prior(
+        self, tmp_path: Any
+    ) -> None:
+        """nCBV median 1.0 yields vp_map median ≈ NAWM_VP_REFERENCE (0.02)."""
+        ncbv = np.full((6, 6, 6), 1.0, dtype=np.float64)
+        mask = np.ones((6, 6, 6), dtype=np.float32)
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", ncbv)
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", mask)
+
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=ncbv_file,
+            aif_qc_data=_synth_aif_qc(),
+            brain_mask_file=mask_file,
+        )
+
+        assert result.vp_map is not None
+        vp_median = float(np.nanmedian(result.vp_map))
+        assert vp_median == pytest.approx(NAWM_VP_REFERENCE, rel=1e-6)
+
+    def test_missing_ncbv_file_emits_skip(self, tmp_path: Any) -> None:
+        """ncbv_file=None yields SKIP with skip_reason='no_nawm_mask'."""
+        mask = np.ones((4, 4, 4), dtype=np.float32)
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", mask)
+
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=None,
+            aif_qc_data=_synth_aif_qc(),
+            brain_mask_file=mask_file,
+        )
+
+        assert result.config.mode == ConstraintMode.SKIP
+        assert result.vp_map is None
+        assert result.qc_report.get("skip_reason") == "no_nawm_mask"

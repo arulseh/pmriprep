@@ -208,7 +208,8 @@ def init_dce_preproc_wf(
                 "precomputed_b1_file",
                 "b1_nominal_prep_fa",
                 # DSC integration inputs
-                "dsc_cbv_file",
+                "dsc_cbv_file",       # Relative/absolute CBV — cross-validation + QC
+                "dsc_ncbv_file",      # NAWM-normalized CBV (nCBV) — vp prior input (v0.25.0+)
                 "dsc_to_t1w_xfm",
                 "dsc_aif_qc_file",
                 # DWI tortuosity inputs
@@ -245,6 +246,7 @@ def init_dce_preproc_wf(
 
     # Default DSC inputs to None (overridden when DSC workflow is connected)
     inputnode.inputs.dsc_cbv_file = None
+    inputnode.inputs.dsc_ncbv_file = None
     inputnode.inputs.dsc_to_t1w_xfm = None
 
     # Default structural underlay inputs to None
@@ -1120,12 +1122,46 @@ def init_dce_preproc_wf(
         (dce_preprocess, resample_dsc_cbv, [
             ("mean_img", "dce_reference"),
         ]),
-        # Feed resampled CBV to PK modeling (vp constraint)
+        # Feed resampled CBV (absolute/relative) to PK modeling and
+        # cross-validation — NOT used for vp prior (see resample_dsc_ncbv).
         (resample_dsc_cbv, pk_modeling, [
             ("cbv_in_dce", "dsc_cbv_file"),
         ]),
     ])
     # Note: resample_dsc_cbv → dsc_dce_validation connected after Node 9 creation
+
+    # Parallel resample for nCBV (NAWM-normalized). Same transform chain
+    # as the absolute-CBV resample, but the wrapper clips trilinear-ringing
+    # negatives before handing off to the vp prior path.
+    resample_dsc_ncbv = pe.Node(
+        niu.Function(
+            input_names=[
+                "dsc_cbv_file",
+                "dsc_to_t1w_xfm",
+                "t1w_to_dce_xfm",
+                "dce_reference",
+            ],
+            output_names=["cbv_in_dce"],
+            function=_resample_dsc_ncbv_to_dce,
+        ),
+        name="resample_dsc_ncbv",
+    )
+    workflow.connect([
+        (inputnode, resample_dsc_ncbv, [
+            ("dsc_ncbv_file", "dsc_cbv_file"),
+            ("dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
+        ]),
+        (dce_registration, resample_dsc_ncbv, [
+            ("out_matrix", "t1w_to_dce_xfm"),
+        ]),
+        (dce_preprocess, resample_dsc_ncbv, [
+            ("mean_img", "dce_reference"),
+        ]),
+        # Feed resampled nCBV to PK modeling for the vp prior path.
+        (resample_dsc_ncbv, pk_modeling, [
+            ("cbv_in_dce", "dsc_ncbv_file"),
+        ]),
+    ])
 
     # ==========================================================================
     # Node 8: Tortuosity Correction (optional - skip if config.no_tortuosity=True)
@@ -1266,6 +1302,7 @@ def init_dce_preproc_wf(
             input_names=[
                 "vp_file",
                 "dsc_cbv_file",
+                "dsc_ncbv_file",
                 "brain_mask",
                 "no_dsc_validation",
                 "constraint_mode",
@@ -1281,6 +1318,8 @@ def init_dce_preproc_wf(
     # dsc_preload_configured is set from base.py (None when DSC not configured)
     # constraint_mode is connected from pk_modeling.qc_metrics (extracted in function)
     # dsc_cbv_file is provided by resample_dsc_cbv node (None when DSC unavailable)
+    # dsc_ncbv_file is provided by resample_dsc_ncbv (None when NAWM unavailable);
+    # when present, validation uses the nCBV-anchored expected ratio.
 
     workflow.connect([
         (pk_modeling, dsc_dce_validation, [
@@ -1294,6 +1333,9 @@ def init_dce_preproc_wf(
         (resample_dsc_cbv, dsc_dce_validation, [
             ("cbv_in_dce", "dsc_cbv_file"),
         ]),
+        (resample_dsc_ncbv, dsc_dce_validation, [
+            ("cbv_in_dce", "dsc_ncbv_file"),
+        ]),
     ])
 
     # ==========================================================================
@@ -1304,6 +1346,7 @@ def init_dce_preproc_wf(
             input_names=[
                 "vp_file",
                 "dsc_cbv_file",
+                "dsc_ncbv_file",
                 "brain_mask",
                 "validation_result",
                 "subject_id",
@@ -1327,6 +1370,9 @@ def init_dce_preproc_wf(
         ]),
         (resample_dsc_cbv, dsc_dce_xval_plot, [
             ("cbv_in_dce", "dsc_cbv_file"),
+        ]),
+        (resample_dsc_ncbv, dsc_dce_xval_plot, [
+            ("cbv_in_dce", "dsc_ncbv_file"),
         ]),
         (transform_brain_mask, dsc_dce_xval_plot, [
             ("out_file", "brain_mask"),
@@ -2979,6 +3025,7 @@ def _tortuosity_correction_node(
 def _dsc_dce_validation_node(
     vp_file=None,
     dsc_cbv_file=None,
+    dsc_ncbv_file=None,
     brain_mask=None,
     no_dsc_validation=False,
     constraint_mode=None,
@@ -2987,6 +3034,9 @@ def _dsc_dce_validation_node(
     """Function node for DSC-DCE cross-validation.
 
     Args:
+        dsc_ncbv_file: Optional NAWM-normalized CBV. When provided, validation
+            uses the nCBV-anchored expected ratio (NAWM_VP_REFERENCE = 0.02)
+            and the scaled circular-std threshold.
         constraint_mode: Either a string ("hard"/"soft"/"skip") or the full
             pk_qc dict from pk_modeling (from which we extract
             ``dsc_cbv_constraint.mode``).
@@ -2994,9 +3044,10 @@ def _dsc_dce_validation_node(
 
     Returns a dictionary with validation results.
     """
+    import os
+
     from pmriprep.utils.dce_dsc_validation import validate_vp_cbv_from_files
 
-    # Extract constraint mode from pk_qc dict if that's what was passed
     resolved_mode = None
     if isinstance(constraint_mode, dict):
         resolved_mode = constraint_mode.get(
@@ -3005,8 +3056,10 @@ def _dsc_dce_validation_node(
     elif isinstance(constraint_mode, str):
         resolved_mode = constraint_mode
 
-    # If skipping validation or missing data, return empty result
-    if no_dsc_validation or not vp_file or not dsc_cbv_file:
+    have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
+    have_cbv = bool(dsc_cbv_file) and os.path.isfile(str(dsc_cbv_file))
+
+    if no_dsc_validation or not vp_file or not (have_ncbv or have_cbv):
         return {
             "skipped": True,
             "status": "skipped",
@@ -3014,15 +3067,26 @@ def _dsc_dce_validation_node(
         }
 
     try:
+        # Pass cbv_path=None (rather than a phantom nCBV alias) when no
+        # absolute CBV is on disk, so validate_vp_cbv_from_files isn't
+        # silently relied on to pick the right one. When ncbv_path is
+        # supplied, the validator ignores cbv_path; this keeps the
+        # contract explicit at the call site.
         result = validate_vp_cbv_from_files(
             vp_path=vp_file,
-            cbv_path=dsc_cbv_file,
+            cbv_path=dsc_cbv_file if have_cbv else None,
             mask_path=brain_mask,
             constraint_mode=resolved_mode,
             dsc_preload_configured=dsc_preload_configured,
+            ncbv_path=dsc_ncbv_file if have_ncbv else None,
         )
         return result.to_dict()
     except Exception as e:
+        import logging
+
+        logging.getLogger("pmriprep.workflows.dce").warning(
+            "DSC-DCE validation raised: %s", e, exc_info=True
+        )
         return {
             "skipped": True,
             "status": "error",
@@ -3069,6 +3133,7 @@ def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
 def _dsc_dce_xval_plot_node(
     vp_file=None,
     dsc_cbv_file=None,
+    dsc_ncbv_file=None,
     brain_mask=None,
     validation_result=None,
     subject_id="",
@@ -3079,21 +3144,30 @@ def _dsc_dce_xval_plot_node(
     """Function node for DSC-DCE cross-validation plot generation.
 
     Args:
+        dsc_ncbv_file: Optional NAWM-normalized CBV. When provided (and the
+            validation ran under use_ncbv_scale=True), the plot is drawn on
+            the dimensionless nCBV scale with expected ratio =
+            NAWM_VP_REFERENCE (0.02), matching the validation metrics.
         constraint_mode: Either a string or the full pk_qc dict from
             pk_modeling (from which we extract ``dsc_cbv_constraint.mode``).
 
     Returns:
         Path to plot PNG, or None if skipped.
     """
-    # Skip if missing data or validation was skipped
-    if not vp_file or not dsc_cbv_file or not brain_mask:
+    import os
+
+    if not vp_file or not brain_mask:
         return None
     if validation_result and validation_result.get("skipped"):
         return None
     if validation_result and validation_result.get("circular"):
         return None
 
-    # Extract constraint mode from pk_qc dict if needed
+    have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
+    have_cbv = bool(dsc_cbv_file) and os.path.isfile(str(dsc_cbv_file))
+    if not (have_ncbv or have_cbv):
+        return None
+
     resolved_mode = None
     if isinstance(constraint_mode, dict):
         resolved_mode = constraint_mode.get(
@@ -3108,11 +3182,15 @@ def _dsc_dce_xval_plot_node(
 
         from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot
 
+        # Prefer nCBV to keep the plot on the same scale the validation used.
+        use_ncbv_scale = have_ncbv
+        cbv_source = dsc_ncbv_file if have_ncbv else dsc_cbv_file
+
         vp_data = np.asarray(
             nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]
         )
         cbv_data = np.asarray(
-            nib.load(dsc_cbv_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]
+            nib.load(cbv_source).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]
         )
         mask = np.asarray(
             nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]
@@ -3134,6 +3212,7 @@ def _dsc_dce_xval_plot_node(
             session_id=session_id,
             constraint_mode=resolved_mode,
             model_selection=model_sel,
+            use_ncbv_scale=use_ncbv_scale,
         )
     except Exception:
         import logging
@@ -3433,6 +3512,61 @@ def _resample_dsc_cbv_to_dce(
         return ""
 
     return cbv_in_dce
+
+
+def _resample_dsc_ncbv_to_dce(
+    dsc_cbv_file: str | None = None,
+    dsc_to_t1w_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    dce_reference: str | None = None,
+) -> str | None:
+    """Resample DSC nCBV to DCE space and clip trilinear-ringing negatives.
+
+    Wraps ``_resample_dsc_cbv_to_dce``. Trilinear interpolation introduces
+    small negative values near high-contrast boundaries (tumor edges,
+    vessels). nCBV=0 is physically meaningful, but negatives would silently
+    become NaN downstream in ``ncbv_to_vp_prior`` (it NaN-masks negatives);
+    that masks useful voxels and also inflates the nan-fraction QC metric.
+    We clip to [0, +inf) and log the fraction of affected voxels.
+    """
+    import logging
+    import os
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    _log = logging.getLogger("pmriprep.workflows.dce")
+
+    raw_out = _resample_dsc_cbv_to_dce(
+        dsc_cbv_file=dsc_cbv_file,
+        dsc_to_t1w_xfm=dsc_to_t1w_xfm,
+        t1w_to_dce_xfm=t1w_to_dce_xfm,
+        dce_reference=dce_reference,
+    )
+    if not raw_out or not os.path.isfile(raw_out):
+        return raw_out
+
+    img = nib.load(raw_out)
+    data = np.asarray(img.get_fdata(), dtype=np.float32)  # type: ignore[attr-defined]
+    finite = np.isfinite(data)
+    negative = finite & (data < 0)
+    n_neg = int(np.sum(negative))
+    if n_neg:
+        frac = n_neg / max(1, int(np.sum(finite)))
+        _log.info(
+            "Resampled nCBV had %d voxels (%.2f%%) with negative values "
+            "from trilinear ringing; clipped to 0.",
+            n_neg, 100.0 * frac,
+        )
+    clipped = np.where(finite, np.maximum(data, 0.0), data)
+
+    out_dir = os.getcwd()
+    clipped_out = os.path.join(out_dir, "dsc_ncbv_in_dce.nii.gz")
+    nib.save(
+        nib.Nifti1Image(clipped.astype(np.float32), img.affine, img.header),  # type: ignore[attr-defined]
+        clipped_out,
+    )
+    return clipped_out
 
 
 def _register_dwi_to_dce(
