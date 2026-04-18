@@ -1389,25 +1389,23 @@ class ComputeDCEMaps(BaseInterface):
         constraint_vp_uncertainty: float = 0.2
         constraint_qc: dict[str, Any] = {"mode": "skip", "reason": "No DSC CBV provided"}
 
-        # Prefer nCBV for the vp prior (NAWM-anchored, v0.25.0+). Falls back
-        # to absolute-CBV pathway only when nCBV is not plumbed (legacy
-        # callers / skip-dsc with pre-v0.25.0 outputs). Missing nCBV with
-        # no absolute fallback → constraint cleanly SKIPs via
-        # prepare_vp_constraint_from_data's missing-NAWM branch.
+        # vp prior is NAWM-anchored (v0.25.0+): vp = NAWM_VP_REFERENCE · nCBV.
+        # Only nCBV feeds the prior — absolute-CBV is consumed elsewhere
+        # (cross-validation, QC plots) but no longer drives the prior because
+        # the scalar calibration from ΔR2*-derived CBV to DCE vp cannot be
+        # closed robustly (AIF partial-volume, recirculation, first-pass
+        # truncation). When nCBV is missing (pre-v0.25.0 skip-DSC derivatives,
+        # or no NAWM reference), prepare_vp_constraint_from_data emits a
+        # clean SKIP with skip_reason="no_nawm_mask".
         ncbv_available = (
             isdefined(self.inputs.dsc_ncbv_file)
             and self.inputs.dsc_ncbv_file
         )
-        cbv_available = (
-            isdefined(self.inputs.dsc_cbv_file)
-            and self.inputs.dsc_cbv_file
-        )
-        has_dsc_cbv = (
-            (ncbv_available or cbv_available)
-            and (model_name in ("extended_tofts", "2cxm") or is_auto)
+        needs_vp_constraint = (
+            model_name in ("extended_tofts", "2cxm") or is_auto
         )
 
-        if has_dsc_cbv:
+        if needs_vp_constraint:
             try:
                 # Get AIF QC dict if available
                 aif_qc_data = (
@@ -1436,8 +1434,6 @@ class ComputeDCEMaps(BaseInterface):
                     or None
                 )
 
-                # Use nCBV if available (physics-correct path); None → SKIP
-                # (missing-NAWM handling lives inside prepare_vp_constraint_from_data).
                 ncbv_for_prior = (
                     self.inputs.dsc_ncbv_file if ncbv_available else None
                 )

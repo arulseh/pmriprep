@@ -223,7 +223,15 @@ class DSCDerivativeWriter(BaseInterface):
             "auc": ("rel_auc_raw_map", "AUC raw concentration (relative)", "dscRel"),
             "auc_corr": ("rel_auc_corr_map", "AUC corrected concentration (relative)", "dscRelCorrected"),
         }
-        rel_units = {"cbf": "1/min", "cbv": "arbitrary", "cbv_auc": "arbitrary", "auc": "arbitrary"}
+        # Key units by map_suffix (not bids_suffix) so entries for remapped
+        # keys like "cbv_auc" remain reachable after the BIDS-suffix collapse.
+        rel_units = {
+            "cbf": "1/min",
+            "cbv": "arbitrary",
+            "cbv_auc": "arbitrary",
+            "auc": "arbitrary",
+            "auc_corr": "arbitrary",
+        }
         _bids_suffix_remap = {"auc_corr": "auc", "cbv_auc": "cbv"}
         for map_suffix, (attr, description, desc_val) in rel_maps.items():
             if has_input(self.inputs,attr):
@@ -232,7 +240,7 @@ class DSCDerivativeWriter(BaseInterface):
                 fname = f"{prefix}_{spatial}_desc-{desc_val}_{bids_suffix}"
                 copy_derivative(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": description}
-                if bids_suffix in rel_units:
+                if map_suffix in rel_units:
                     sidecar["Units"] = rel_units[map_suffix]
                 if map_suffix == "cbv":
                     sidecar["CBVMethod"] = "deconvolution_residue_integral"
