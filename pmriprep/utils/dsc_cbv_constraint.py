@@ -270,6 +270,15 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _is_auto(user_override: Optional[str]) -> bool:
+    """Return True when the auto-classification branch should be taken.
+
+    Truth table: ``None`` → True; ``""`` → True; ``"auto"`` → True;
+    anything else (e.g. ``"hard"``, ``"soft"``, ``"skip"``) → False.
+    """
+    return not user_override or user_override == "auto"
+
+
 def _downgrade_confidence(current: str, target: str) -> str:
     """Downgrade confidence level but never upgrade.
 
@@ -768,7 +777,7 @@ def determine_constraint_mode(
     from pmriprep.utils.dsc_preload import PreloadClass as _PreloadClass
 
     if (
-        (not user_override or user_override == "auto")
+        _is_auto(user_override)
         and preload_classification == _PreloadClass.UNKNOWN.value
     ):
         return ConstraintConfig(
@@ -781,7 +790,7 @@ def determine_constraint_mode(
         )
 
     # User override
-    if user_override and user_override != "auto":
+    if not _is_auto(user_override):
         try:
             mode = ConstraintMode(user_override)
         except ValueError:

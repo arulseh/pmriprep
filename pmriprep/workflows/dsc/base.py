@@ -543,7 +543,7 @@ def _detect_and_correct_preload(
     qc_metrics["preload_classification"] = effective_class
     # Disagreement between K2-primary and ΔR2* advisory is expected when
     # the advisory hits its tissue-heterogeneity floor; flag for HTML.
-    qc_metrics["preload_detector_disagreement"] = (
+    qc_metrics["preload_k2_vs_advisory_disagreement"] = (
         qc_metrics.get("preload_k2_classification") != advisory_class
     )
 

@@ -292,7 +292,7 @@
                 <div class="metric-value">K2 metrics empty — DCE vp constraint skipped. Check that leakage correction ran successfully.</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.preload.preload_detector_disagreement is defined and dsc.qc_metrics.preload.preload_detector_disagreement and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
+            {% if dsc.qc_metrics.preload.preload_k2_vs_advisory_disagreement is defined and dsc.qc_metrics.preload.preload_k2_vs_advisory_disagreement and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
             <div class="metric warning">
                 <div class="metric-label">ΔR2* ↔ K2 Disagreement</div>
                 <div class="metric-value">Advisory ΔR2* ({{ dsc.qc_metrics.preload.preload_advisory_classification | replace("_", " ") | title }}) disagrees with K2-primary — expected when ΔR2* hits the tissue-heterogeneity floor.</div>
