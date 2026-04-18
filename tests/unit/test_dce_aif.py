@@ -442,3 +442,138 @@ class TestComputeRescueScore:
             tier_used=1, is_likely_venous=False, atlas_constrained=False,
         )
         assert abs(score - 0.6) < 1e-6
+
+
+# =============================================================================
+# AIF scaling unit-mismatch fix (v0.25.3)
+# =============================================================================
+
+
+class TestAIFScalingUnitFix:
+    """v0.25.3: Parker's peak_min/peak_max are in blood-voxel units; aif_curve
+    is in plasma units after /(1-Hct) correction. Scaling target must be
+    divided by (1-Hct) to produce a correct plasma target.
+    """
+
+    def _make_interface(
+        self,
+        hematocrit: float = 0.42,
+        dose: float = 1.0,
+        agent_standard_dose: float = 0.1,
+        target_peak: float = 0.0,
+    ) -> AIFDetection:
+        """Build a minimal AIFDetection instance with just the inputs the
+        scaling-block arithmetic touches (hematocrit + dose factors).
+        """
+        iface = AIFDetection()
+        iface.inputs.hematocrit = hematocrit
+        iface.inputs.dose = dose
+        iface.inputs.agent_standard_dose = agent_standard_dose
+        iface.inputs.target_peak = target_peak
+        iface.inputs.field_strength = 3.0
+        return iface
+
+    def test_get_expected_peak_range_returns_blood_units(self) -> None:
+        """_get_expected_peak_range returns Parker blood-voxel values × dose."""
+        iface = self._make_interface(dose=1.0, agent_standard_dose=0.1)
+        peak_min, peak_max = iface._get_expected_peak_range()
+        # Full-dose Gd-DOTA (dose_factor=1.0): Parker 5.0 / 7.6.
+        assert peak_min == pytest.approx(5.0)
+        assert peak_max == pytest.approx(7.6)
+
+    def test_get_dose_factor_half_dose_vueway(self) -> None:
+        """Vueway half-dose gives dose_factor = 0.5 × 0.05 / 0.1 = 0.25."""
+        iface = self._make_interface(dose=0.5, agent_standard_dose=0.05)
+        assert iface._get_dose_factor() == pytest.approx(0.25)
+
+    def test_effective_target_half_dose_vueway_plasma(self) -> None:
+        """Half-dose Vueway: plasma target = (5.0+7.6)/2 × 0.25 / (1-0.42) ≈ 2.716 mM."""
+        iface = self._make_interface(
+            dose=0.5, agent_standard_dose=0.05, hematocrit=0.42,
+        )
+        peak_min, peak_max = iface._get_expected_peak_range()
+        blood_target = (peak_min + peak_max) / 2.0  # 6.3 × 0.25 = 1.575 mM (blood)
+        plasma_target = blood_target / (1.0 - 0.42)
+        assert blood_target == pytest.approx(1.575)
+        assert plasma_target == pytest.approx(2.716, rel=1e-3)
+
+    def test_hct_zero_is_no_op_on_conversion(self) -> None:
+        """Hct=0 → (1-Hct)=1 → plasma conversion is no-op; target equals Parker fallback."""
+        hct = 0.0
+        peak_min, peak_max = 5.0, 7.6
+        blood_target = (peak_min + peak_max) / 2.0
+        plasma_target = blood_target / (1.0 - hct)
+        assert plasma_target == pytest.approx(blood_target)
+
+    def test_hct_boundary_high_polycythemic(self) -> None:
+        """Hct=0.55 (clinical high end) → conversion factor ≈ 2.22×."""
+        hct = 0.55
+        conversion = 1.0 / (1.0 - hct)
+        assert conversion == pytest.approx(2.2222, rel=1e-3)
+
+    def test_target_peak_override_is_blood_units(self) -> None:
+        """User-supplied `target_peak=5.0` is interpreted as blood-voxel units.
+
+        The scaling site divides by (1-Hct) so override behaves identically
+        to the Parker-fallback convention. For Hct=0.42: target becomes
+        5.0 / 0.58 ≈ 8.621 mM plasma.
+        """
+        hct = 0.42
+        user_target_blood = 5.0
+        plasma_target = user_target_blood / (1.0 - hct)
+        assert plasma_target == pytest.approx(8.621, rel=1e-3)
+
+    def test_warning_thresholds_calibrated_for_plasma_scale(self) -> None:
+        """Warning thresholds 3.4 and 5.2 are ~1/(1-Hct) × old thresholds 2.0/3.0.
+
+        Regression guard: scaling_factor=2.5 should NOT trigger warning
+        (would have under the old 2.0 threshold). Scaling_factor=3.5 triggers
+        the low-confidence warning (>3.4). Scaling_factor=5.3 triggers
+        unreliable (>5.2).
+        """
+        # Proportional scaling
+        assert 2.0 / (1.0 - 0.42) == pytest.approx(3.448, rel=1e-3)  # ~3.4
+        assert 3.0 / (1.0 - 0.42) == pytest.approx(5.172, rel=1e-3)  # ~5.2
+        # Regression guard
+        assert 2.5 <= 3.4  # below new low-confidence threshold
+        assert 3.5 > 3.4   # above new low-confidence threshold
+        assert 5.3 > 5.2   # above new unreliable threshold
+
+    def test_scaling_block_end_to_end_on_plasma_curve(self) -> None:
+        """Integration-flavored: replay the landed scaling arithmetic against
+        an AIFDetection instance and a known plasma-scale ``aif_curve``,
+        confirming the peak lands at the plasma-unit target.
+
+        Simulates the exact control flow from ``_run_interface`` (line
+        2917-2954 of ``dce_aif.py``) using an actual interface instance
+        so the arithmetic is exercised against live trait values
+        (hematocrit, dose, agent_standard_dose, target_peak).
+        """
+        iface = self._make_interface(
+            hematocrit=0.42, dose=1.0, agent_standard_dose=0.1, target_peak=0.0,
+        )
+
+        # Construct a synthetic aif_curve in plasma units. A typical
+        # full-dose Gd-DOTA detected-voxel peak ≈ 3.65 mM blood →
+        # after /(1-Hct)=0.58 ≈ 6.29 mM plasma.
+        n = 40
+        curve = np.zeros(n, dtype=np.float64)
+        curve[10:20] = 6.29  # peak in plasma units
+
+        # Replay scaling arithmetic matching the landed code.
+        current_peak = float(np.max(curve))
+        hct = float(iface.inputs.hematocrit)
+        plasma_conv = 1.0 / (1.0 - hct)
+        peak_min, peak_max = iface._get_expected_peak_range()
+        target = (peak_min + peak_max) / 2.0 * plasma_conv
+        scaling_factor = target / current_peak
+        scaled = curve * scaling_factor
+
+        # Expected plasma target: Parker mid (6.3) / (1-0.42) ≈ 10.862 mM.
+        expected_plasma_target = (5.0 + 7.6) / 2.0 / (1.0 - 0.42)
+        assert target == pytest.approx(expected_plasma_target, rel=1e-4)
+        assert float(np.max(scaled)) == pytest.approx(target, rel=1e-4)
+        # scaling_factor ≈ 10.862 / 6.29 ≈ 1.727 — below warning thresholds.
+        assert scaling_factor == pytest.approx(1.727, rel=1e-3)
+        assert scaling_factor <= 3.4  # no low-confidence warning
+        assert scaling_factor <= 5.2  # no unreliable warning

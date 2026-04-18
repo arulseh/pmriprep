@@ -444,7 +444,12 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
     target_peak = traits.Float(
         0.0,
         usedefault=True,
-        desc="Target peak concentration for scaling (mM). 0 = use field-strength default",
+        desc=(
+            "Target peak concentration (mM) for AIF scaling, in blood-voxel "
+            "units (Parker 2006 convention, i.e. ΔR1/r1 pre-Hct-correction). "
+            "The pipeline divides by (1-Hct) internally to compare against "
+            "the plasma-scale aif_curve. 0 = use field-strength default."
+        ),
     )
     baseline_frames = traits.Int(
         5,
@@ -656,7 +661,15 @@ class AIFDetection(BaseInterface):
         return (std_dose * multiplier) / 0.1
 
     def _get_expected_peak_range(self) -> tuple[float, float]:
-        """Get expected peak concentration range based on dose."""
+        """Get expected peak concentration range based on dose.
+
+        Returns values in **blood-voxel units** (Parker 2006 convention,
+        i.e. ΔR1/r1 without Hct correction). Callers at the scaling site
+        must divide by (1-Hct) to compare against the plasma-scaled
+        aif_curve; per-voxel quality/rescue callers (lines 1357, 1381,
+        1399, 1842) operate on raw blood-voxel peaks and consume these
+        values as-is.
+        """
         dose_factor = self._get_dose_factor()
         base_min = DCE_AIF_EXPECTED_FULL_DOSE.peak_min_mm
         base_max = DCE_AIF_EXPECTED_FULL_DOSE.peak_max_mm
@@ -2873,7 +2886,7 @@ class AIFDetection(BaseInterface):
 
             # Scale population AIF to match pipeline's internal AIF convention.
             # The detected AIF path applies /(1-Hct) to convert blood-voxel
-            # ΔR1/r1 to true plasma concentration C_p (line 2612).
+            # ΔR1/r1 to true plasma concentration C_p (see line 2744).
             # Parker (2006) derived AIF parameters from ΔR1/r1 in blood voxels
             # WITHOUT Hct correction. Under FXL, ΔR1/r1 = (1-Hct) × C_p,
             # so Parker's reported "C_p" values are effectively in (1-Hct)*C_p
@@ -2899,31 +2912,47 @@ class AIFDetection(BaseInterface):
                 qc_metrics.update(_detection_attempt)
 
         # Apply AIF scaling if requested
+        # External AIFs bypass this block: they must be supplied in plasma
+        # [Gd] (mM), Hct-corrected; the pipeline does not re-scale. See README.
         if scale_aif and detection_method not in ("population", "external"):
             current_peak = float(np.max(aif_curve))
             if current_peak > EPSILON_T1:
-                # Determine target peak
+                # Unit convention:
+                # - aif_curve is in PLASMA [Gd] units at this point (detected
+                #   path /(1-Hct) at line 2744, population path at line 2895).
+                # - Parker's peak_min/peak_max (and user-supplied target_peak)
+                #   are in BLOOD-VOXEL units = (1-Hct) × true_plasma_Cp, per
+                #   Parker 2006 derivation (see comment block above population
+                #   Hct-correction for details).
+                # The target must therefore be divided by (1-Hct) so its
+                # scale matches current_peak.
+                hct = float(self.inputs.hematocrit)
+                plasma_conv = 1.0 / (1.0 - hct)
                 if target_peak > 0:
-                    target = target_peak
+                    # User-supplied target interpreted as blood-voxel units
+                    # (matches the fallback convention and Parker-style configs).
+                    target = target_peak * plasma_conv
                 else:
-                    # Use field-strength appropriate value
                     peak_min, peak_max = self._get_expected_peak_range()
-                    target = (peak_min + peak_max) / 2.0
+                    target = (peak_min + peak_max) / 2.0 * plasma_conv
 
                 scaling_factor = target / current_peak
                 aif_curve = aif_curve * scaling_factor
 
-                if scaling_factor > 3.0:
+                # Warning thresholds scaled by 1/(1-Hct) ≈ 1.72 at Hct=0.42
+                # so the same fraction of subjects triggers as pre-fix
+                # (2.0→3.4, 3.0→5.2 at default Hct).
+                if scaling_factor > 5.2:
                     logger.warning(
-                        "AIF scaling factor %.2f > 3.0 — detected AIF peak "
-                        "(%.2f mM) is far below expected arterial range. "
+                        "AIF scaling factor %.2f > 5.2 — detected AIF peak "
+                        "(%.2f mM plasma) is far below expected arterial range. "
                         "Results may be unreliable.",
                         scaling_factor, current_peak,
                     )
-                elif scaling_factor > 2.0:
+                elif scaling_factor > 3.4:
                     logger.warning(
-                        "AIF scaling factor %.2f > 2.0 — detected AIF peak "
-                        "(%.2f mM) is substantially below expected range.",
+                        "AIF scaling factor %.2f > 3.4 — detected AIF peak "
+                        "(%.2f mM plasma) is substantially below expected range.",
                         scaling_factor, current_peak,
                     )
 
@@ -2961,7 +2990,7 @@ class AIFDetection(BaseInterface):
                 "blood_t1_seconds": blood_t1,
                 "field_strength_t": field_strength,
                 "scaling_factor": scaling_factor,
-                "scaling_factor_warning": scaling_factor > 2.0,
+                "scaling_factor_warning": scaling_factor > 3.4,
                 "detection_method": detection_method,
                 "quality_score": quality_score,
                 "baseline_frames": baseline_frames,

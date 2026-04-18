@@ -357,6 +357,29 @@ def _enrich_dce(
         if aif_block:
             perf["AIF"] = aif_block
 
+        # v0.25.3+: explicit unit traceability. The AIF curve consumed by
+        # PK modelling is in true plasma [Gd] (mM) after /(1-Hct); Parker
+        # reference peaks are blood-voxel units pre-Hct. Emit the block
+        # only when at least one concrete measurement (peak or Hct) is
+        # available, to avoid description-only blocks.
+        final_peak_plasma = aif.get("final_peak_mm")
+        hct_used = aif.get("hematocrit")
+        if final_peak_plasma is not None or hct_used is not None:
+            units_block: Dict[str, Any] = {
+                "description": (
+                    "AIF is in true plasma [Gd] (mM) after /(1-Hct) "
+                    "conversion; Parker reference peaks are blood-voxel "
+                    "(pre-Hct)."
+                ),
+            }
+            if final_peak_plasma is not None:
+                units_block["aif_peak_plasma_mM"] = _safe_float(
+                    final_peak_plasma
+                )
+            if hct_used is not None:
+                units_block["hematocrit_used"] = _safe_float(hct_used)
+            perf["AIFUnits"] = units_block
+
         # BloodT1 from AIF detection
         if "blood_t1_seconds" in aif and aif["blood_t1_seconds"]:
             fs = perf.get("Relaxivity", {}).get("field_strength_T")

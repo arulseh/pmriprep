@@ -147,7 +147,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dce-model {auto,tofts,extended_tofts,patlak,2cxm}` | Pharmacokinetic model. `auto` performs per-voxel BIC model selection from Patlak, Extended Tofts, and 2CXM (default: auto) |
 | `--dce-bayesian {none,vi,map}` | Bayesian inference method (default: none) |
 | `--dce-aif-method {auto,population}` | AIF detection method (default: auto) |
-| `--dce-aif-file FILE` | External AIF curve file (plasma concentration in mM); bypasses detection |
+| `--dce-aif-file FILE` | External AIF curve file (true plasma [Gd] in mM, already Hct-corrected); bypasses detection — the pipeline does not re-scale |
 | `--dce-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `--dce-r1 R1` | Override r1 relaxivity (s⁻¹/mM) for concentration conversion |
 | `--dce-b1-method {auto,afi,tfl_b1map,none}` | B1+ correction method (default: auto) |
@@ -235,7 +235,7 @@ dce:
 | `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection (Patlak, Extended Tofts, 2CXM). Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
 | `bayesian` | str | `"none"` | Bayesian mode: `none`, `vi`, `map` |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
-| `aif_file` | path | `null` | External AIF curve file (`.txt` or `.npz` with `Cp`/`aif` key); plasma concentration in mM, temporally aligned with DCE volumes. Bypasses AIF detection |
+| `aif_file` | path | `null` | External AIF curve file (`.txt` or `.npz` with `Cp`/`aif` key); true plasma [Gd] in mM (already Hct-corrected), temporally aligned with DCE volumes. Bypasses AIF detection; the pipeline does not re-scale or re-correct for hematocrit |
 | `scale_aif` | bool | `true` | Scale AIF to population reference |
 | `target_peak` | float | `null` | Target AIF peak (mM); null = field-strength default |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
