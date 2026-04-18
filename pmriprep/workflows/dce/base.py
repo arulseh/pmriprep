@@ -212,6 +212,9 @@ def init_dce_preproc_wf(
                 "dsc_ncbv_file",      # NAWM-normalized CBV (nCBV) — vp prior input (v0.25.0+)
                 "dsc_to_t1w_xfm",
                 "dsc_aif_qc_file",
+                # DSC dose parameters (v0.25.2+) — scale CNR coverage thresholds
+                "dsc_dose",                # bolus dose multiplier
+                "dsc_agent_standard_dose", # standard dose (mmol Gd/kg)
                 # DWI tortuosity inputs
                 "dwi_file",
                 "dwi_bvals",
@@ -248,6 +251,11 @@ def init_dce_preproc_wf(
     inputnode.inputs.dsc_cbv_file = None
     inputnode.inputs.dsc_ncbv_file = None
     inputnode.inputs.dsc_to_t1w_xfm = None
+    # Default dose = 1.0 (full-dose Gd-DOTA) preserves v0.25.1 CNR thresholds
+    # exactly; overridden from config.dsc at the workflows/base.py integration
+    # point when DSC is processed in the same session.
+    inputnode.inputs.dsc_dose = 1.0
+    inputnode.inputs.dsc_agent_standard_dose = 0.1
 
     # Default structural underlay inputs to None
     inputnode.inputs.t1w_underlay = None
@@ -1046,6 +1054,11 @@ def init_dce_preproc_wf(
         (inputnode, pk_modeling, [
             ("tr", "tr"),
             ("volume_tr", "volume_tr"),  # For model auto-selection
+            # DSC dose parameters (v0.25.2+) scale CNR coverage thresholds
+            # in the vp constraint quality gate. Defaults (1.0, 0.1)
+            # preserve v0.25.1 behavior on DCE-only runs.
+            ("dsc_dose", "dsc_dose"),
+            ("dsc_agent_standard_dose", "dsc_agent_standard_dose"),
         ]),
         # Raw DCE signal for tSNR computation
         # Also wire baseline_frames so pk_modeling uses the same value

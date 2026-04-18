@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from typing import Optional
 
 import numpy as np
@@ -60,13 +61,17 @@ class DSCBatchedFitResult:
         uncertainties: Parameter uncertainties, param_name -> (N,).
     """
 
-    params: dict[str, npt.NDArray[np.floating]]
+    # Use Mapping (covariant) rather than dict (invariant) so callers can
+    # pass dicts keyed by narrower numpy dtypes (e.g. float64 at construction)
+    # without mypy rejecting the subtype. All current consumers only read
+    # from params/uncertainties — no write-back needed.
+    params: Mapping[str, npt.NDArray[np.floating]]
     r_squared: npt.NDArray[np.floating]
     converged: npt.NDArray[np.bool_]
     fitted_curves: Optional[npt.NDArray[np.floating]]
     n_iterations: int
     model_name: str
-    uncertainties: dict[str, npt.NDArray[np.floating]] = field(default_factory=dict)
+    uncertainties: Mapping[str, npt.NDArray[np.floating]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

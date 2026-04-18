@@ -47,7 +47,14 @@ from pmriprep.utils.dsc_aif import (
     GAMMA_PEAK_RATIO_MIN,
     GAMMA_PEAK_RATIO_MAX,
 )
-from pmriprep.utils.dsc_constants import QC_MEAN_CNR_MINIMUM
+from pmriprep.utils.dsc_constants import (
+    GD_DOTA_STANDARD_DOSE,
+    K2_SIGMA_CORRECTION,
+    K2_SIGMA_SUPPRESSED,
+    LEAKY_SIGMA_HIGH,
+    LEAKY_SIGMA_LOW,
+    QC_MEAN_CNR_MINIMUM,
+)
 
 
 # =============================================================================
@@ -97,14 +104,11 @@ CBV_NEGATIVE_FRACTION_MAX: float = 0.01
 #: Literature NAWM CBV for normalization (mL/100g)
 CBV_NAWM_LITERATURE: float = 2.5
 
-# Composite K2 criteria for preload-aware uncertainty adjustment.
-# Computed over whole-brain-masked statistics (zeros included).
-K2_MEDIAN_SUPPRESSED: float = 0.01   # s⁻¹, below = focal leakage only (well-suppressed)
-LEAKY_VOXELS_LOW: float = 5.0       # %, below = well-suppressed
-LEAKY_VOXELS_HIGH: float = 15.0     # %, above = substantial correction
-K2_MEDIAN_CORRECTION: float = 0.005  # s⁻¹, above with no preload = large K2 correction
-                                      # (effectively dead for current data where no-preload
-                                      # k2_median=0.0; safety net for diffuse enhancement)
+# Composite K2 criteria for preload-aware uncertainty adjustment (sigma tier).
+# Thresholds colocated in dsc_constants — see K2_SIGMA_* and LEAKY_SIGMA_*
+# there for literature references. This tier is coarser than the primary
+# classification tier (K2_PRIMARY_*) used by classify_preload_adequacy_from_k2;
+# sigma tuning tolerates looser thresholds than discrete class assignment.
 
 # Gamma peak ratio thresholds for constraint quality gating.
 # Moderate band [0.90, 1.10] imported from dsc_aif.py (single source of truth).
@@ -304,10 +308,47 @@ def _classify_preload_k2(
     is_preloaded = preload_classification in (
         "half_dose", "significant", "severe",
     )
-    well_suppressed = k2_med < K2_MEDIAN_SUPPRESSED and pct_leaky < LEAKY_VOXELS_LOW
-    high_correction = pct_leaky > LEAKY_VOXELS_HIGH or k2_med > K2_MEDIAN_CORRECTION
+    well_suppressed = k2_med < K2_SIGMA_SUPPRESSED and pct_leaky < LEAKY_SIGMA_LOW
+    high_correction = pct_leaky > LEAKY_SIGMA_HIGH or k2_med > K2_SIGMA_CORRECTION
 
     return is_preloaded, well_suppressed, high_correction
+
+
+def _bolus_gd_fraction(
+    dose: float = 1.0,
+    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
+) -> float:
+    """Bolus Gd dose as a fraction of the Gd-DOTA reference (0.1 mmol Gd/kg).
+
+    Peak first-pass ΔR2* and CNR scale linearly with the product
+    ``dose × agent_standard_dose`` (Rose criterion; Boxerman AJNR 2006;
+    Welker AJNR 2015). CNR coverage thresholds calibrated at full
+    standard dose must be scaled by this fraction to remain valid on
+    reduced-dose protocols or lower-dose agents.
+
+    Args:
+        dose: Bolus dose multiplier (1.0 = full standard, 0.5 = half).
+            Must be positive.
+        agent_standard_dose: Agent's standard clinical dose in mmol Gd/kg.
+            Must be positive.
+
+    Returns:
+        Effective Gd fraction relative to 0.1 mmol/kg reference.
+
+    Raises:
+        ValueError: If ``dose`` or ``agent_standard_dose`` is non-positive.
+            A zero or negative dose would collapse the CNR gate and let
+            garbage CBV through unchecked — fail loudly instead.
+    """
+    dose_f = float(dose)
+    agent_f = float(agent_standard_dose)
+    if dose_f <= 0:
+        raise ValueError(f"dose must be positive, got {dose_f}")
+    if agent_f <= 0:
+        raise ValueError(
+            f"agent_standard_dose must be positive, got {agent_f}"
+        )
+    return dose_f * agent_f / GD_DOTA_STANDARD_DOSE
 
 
 def assess_dsc_cbv_quality(
@@ -316,6 +357,8 @@ def assess_dsc_cbv_quality(
     brain_mask: Optional[npt.NDArray[np.floating]] = None,
     preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
+    dose: float = 1.0,
+    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> CBVQualityAssessment:
     """Assess DSC CBV quality for use as a vp constraint.
 
@@ -325,6 +368,12 @@ def assess_dsc_cbv_quality(
     - AIF baseline return: how well AIF returns to baseline
     - CBV value ranges: whether median CBV is physiologically plausible
 
+    CNR coverage thresholds scale with the administered Gd dose
+    (``dose × agent_standard_dose`` relative to 0.1 mmol/kg reference).
+    Half-dose protocols and lower-dose agents (gadopiclenol 0.05,
+    gadoquatrane 0.04) produce inherently lower CNR; scaling prevents
+    spurious SKIP decisions on otherwise-adequate acquisitions.
+
     Args:
         aif_qc_data: Dictionary from DSC AIF QC JSON containing metrics
             like cnr_whole_brain, aif_peak_height, baseline_return_ratio.
@@ -332,6 +381,9 @@ def assess_dsc_cbv_quality(
         brain_mask: Optional 3D brain mask for CBV statistics.
         preload_classification: DSC preload classification string.
         k2_metrics: K2 leakage correction metrics from dsc_preload.
+        dose: DSC bolus dose multiplier (1.0 = full standard).
+        agent_standard_dose: Agent's standard dose in mmol Gd/kg
+            (default 0.1 for Gd-DOTA class).
 
     Returns:
         CBVQualityAssessment with confidence tier and detailed metrics.
@@ -340,6 +392,23 @@ def assess_dsc_cbv_quality(
 
     result = CBVQualityAssessment()
     confidence = "high"
+
+    # Scale CNR coverage thresholds by the effective bolus Gd fraction.
+    # Default (full-dose Gd-DOTA) gives eff=1.0 and preserves v0.25.1
+    # thresholds exactly.
+    eff_dose = _bolus_gd_fraction(dose, agent_standard_dose)
+    cnr_skip = CNR_COVERAGE_SKIP * eff_dose
+    cnr_moderate = CNR_COVERAGE_MODERATE * eff_dose
+    cnr_high = CNR_COVERAGE_HIGH * eff_dose
+
+    # AIF detection tier is read here (not from result.detection_level,
+    # which isn't set yet) to allow the AIF-tier fast-pass below to bypass
+    # the CNR-coverage SKIP for high-quality atlas-based AIF detections.
+    _detection_level_for_cnr = str(aif_qc_data.get("detection_level", ""))
+    aif_high_quality = _detection_level_for_cnr in {
+        "atlas_strict",
+        "atlas_relaxed",
+    }
 
     # --- CNR Coverage and Mean CNR ---
     cnr_info = aif_qc_data.get("cnr_whole_brain", {})
@@ -357,20 +426,43 @@ def assess_dsc_cbv_quality(
         result.reasons.append(
             f"Mean CNR {mean_cnr:.1f} < {CNR_MEAN_MINIMUM} (inadequate contrast)"
         )
-    elif cnr_coverage < CNR_COVERAGE_SKIP:
+    elif cnr_coverage < cnr_skip and not aif_high_quality:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
-            f"CNR coverage {cnr_coverage:.1%} < {CNR_COVERAGE_SKIP:.0%} (>30% unreliable)"
+            f"CNR coverage {cnr_coverage:.1%} < {cnr_skip:.1%} "
+            f"(dose-scaled, eff={eff_dose:.2f}); >30% unreliable and AIF "
+            f"tier '{_detection_level_for_cnr}' does not qualify for bypass"
         )
-    elif cnr_coverage < CNR_COVERAGE_MODERATE:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append(
-            f"CNR coverage {cnr_coverage:.1%} < {CNR_COVERAGE_MODERATE:.0%}"
-        )
-    elif cnr_coverage < CNR_COVERAGE_HIGH:
+    elif cnr_coverage < cnr_skip and aif_high_quality:
         confidence = _downgrade_confidence(confidence, "moderate")
         result.reasons.append(
-            f"CNR coverage {cnr_coverage:.1%} < {CNR_COVERAGE_HIGH:.0%}"
+            f"CNR coverage {cnr_coverage:.1%} < {cnr_skip:.1%} "
+            f"(dose-scaled) but AIF tier '{_detection_level_for_cnr}' "
+            f"retained at moderate confidence"
+        )
+    elif cnr_coverage < cnr_moderate and not aif_high_quality:
+        confidence = _downgrade_confidence(confidence, "low")
+        result.reasons.append(
+            f"CNR coverage {cnr_coverage:.1%} < {cnr_moderate:.1%} "
+            f"(dose-scaled, eff={eff_dose:.2f})"
+        )
+    elif cnr_coverage < cnr_moderate and aif_high_quality:
+        # atlas_strict/atlas_relaxed in the [SKIP, MODERATE) band: treat
+        # CNR as informational, keep at moderate confidence rather than
+        # downgrading to low (which would drive SKIP). The bypass applies
+        # across the whole sub-MODERATE CNR range so AIF tier carries the
+        # decision when CNR is marginal.
+        confidence = _downgrade_confidence(confidence, "moderate")
+        result.reasons.append(
+            f"CNR coverage {cnr_coverage:.1%} < {cnr_moderate:.1%} "
+            f"(dose-scaled) but AIF tier '{_detection_level_for_cnr}' "
+            f"retained at moderate confidence"
+        )
+    elif cnr_coverage < cnr_high:
+        confidence = _downgrade_confidence(confidence, "moderate")
+        result.reasons.append(
+            f"CNR coverage {cnr_coverage:.1%} < {cnr_high:.1%} "
+            f"(dose-scaled, eff={eff_dose:.2f})"
         )
 
     # --- AIF Detection Level ---
@@ -660,6 +752,26 @@ def determine_constraint_mode(
         additionally annotates the config's ``reason`` with a physics caveat
         so callers can surface the warning in QC / HTML reports.
     """
+    # UNKNOWN preload → SKIP (physics consult 2026-04-18: more conservative
+    # than defaulting to NONE, which would silently apply a soft prior to
+    # data with no basis for any prior). Short-circuits before quality-
+    # confidence branches and before user override (user can still request
+    # HARD/SOFT/SKIP explicitly; UNKNOWN only bypasses the auto branch).
+    from pmriprep.utils.dsc_preload import PreloadClass as _PreloadClass
+
+    if (
+        (not user_override or user_override == "auto")
+        and preload_classification == _PreloadClass.UNKNOWN.value
+    ):
+        return ConstraintConfig(
+            mode=ConstraintMode.SKIP,
+            vp_uncertainty=0.0,
+            reason=(
+                "K2-primary preload classification unavailable "
+                "(UNKNOWN) — constraint skipped"
+            ),
+        )
+
     # User override
     if user_override and user_override != "auto":
         try:
@@ -749,6 +861,8 @@ def prepare_vp_constraint(
     hematocrit: float = HEMATOCRIT_ARTERIAL,
     preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
+    dose: float = 1.0,
+    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> VpConstraintResult:
     """Prepare vp constraint map from DSC NAWM-normalized CBV for DCE PK fitting.
 
@@ -791,6 +905,8 @@ def prepare_vp_constraint(
         hematocrit=hematocrit,
         preload_classification=preload_classification,
         k2_metrics=k2_metrics,
+        dose=dose,
+        agent_standard_dose=agent_standard_dose,
     )
 
 
@@ -802,6 +918,8 @@ def prepare_vp_constraint_from_data(
     hematocrit: float = HEMATOCRIT_ARTERIAL,
     preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
+    dose: float = 1.0,
+    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> VpConstraintResult:
     """Prepare vp constraint map from DSC nCBV for DCE PK modeling (data form).
 
@@ -867,6 +985,8 @@ def prepare_vp_constraint_from_data(
         brain_mask=mask_data,
         preload_classification=preload_classification,
         k2_metrics=k2_metrics,
+        dose=dose,
+        agent_standard_dose=agent_standard_dose,
     )
     result.quality = quality
 

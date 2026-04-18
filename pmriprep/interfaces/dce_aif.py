@@ -1868,7 +1868,8 @@ class AIFDetection(BaseInterface):
                 candidate_peak = all_metrics[idx].get("peak_mm", 0.0)
                 score = self._compute_rescue_score(
                     candidate_peak, peak_min_expected, peak_floor,
-                    tier_used, all_metrics[idx].get("is_likely_venous", False),
+                    tier_used,
+                    bool(all_metrics[idx].get("is_likely_venous", False)),
                     atlas_constrained,
                 )
                 if score <= 0:

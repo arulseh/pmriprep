@@ -6,6 +6,7 @@ import pytest
 from pmriprep.utils.dsc_preload import (
     PreloadClass,
     classify_preload,
+    classify_preload_adequacy_from_k2,
     get_preload_thresholds,
     _compute_ees_concentration,
 )
@@ -443,3 +444,74 @@ class TestConfidenceScore:
                 sig, te=0.03, baseline_frames=5, reference_signal=1000.0,
             )
             assert 0.0 <= r.confidence <= 1.0
+
+
+# =============================================================================
+# K2-primary preload adequacy classifier (v0.25.2)
+# =============================================================================
+
+
+class TestClassifyPreloadAdequacyFromK2:
+    """K2-primary classifier (dsc_preload.classify_preload_adequacy_from_k2)."""
+
+    def test_cohort_center_is_adequate(self) -> None:
+        """k2_median=0.002, leaky=0.1% (institutional cohort center) → HALF_DOSE."""
+        cls, conf, reason = classify_preload_adequacy_from_k2(
+            {"k2_median": 0.002, "percent_leaky_voxels": 0.1}
+        )
+        assert cls == PreloadClass.HALF_DOSE
+        assert conf >= 0.5
+        assert "adequate" in reason.lower()
+
+    def test_boundary_below_adequate_threshold(self) -> None:
+        """k2_median=0.004 just below 0.005 threshold, leaky=0.5% < 1.0% → HALF_DOSE."""
+        cls, conf, _ = classify_preload_adequacy_from_k2(
+            {"k2_median": 0.004, "percent_leaky_voxels": 0.5}
+        )
+        assert cls == PreloadClass.HALF_DOSE
+        assert conf >= 0.5
+
+    def test_partial_tier(self) -> None:
+        """k2_median=0.007, leaky=2% → MINIMAL (between adequate and inadequate)."""
+        cls, _, reason = classify_preload_adequacy_from_k2(
+            {"k2_median": 0.007, "percent_leaky_voxels": 2.0}
+        )
+        assert cls == PreloadClass.MINIMAL
+        assert "partial" in reason.lower()
+
+    def test_inadequate_k2_high(self) -> None:
+        """k2_median=0.02 exceeds INADEQUATE threshold → NONE."""
+        cls, _, reason = classify_preload_adequacy_from_k2(
+            {"k2_median": 0.02, "percent_leaky_voxels": 0.1}
+        )
+        assert cls == PreloadClass.NONE
+        assert "inadequate" in reason.lower()
+
+    def test_empty_dict_is_unknown(self) -> None:
+        cls, conf, _ = classify_preload_adequacy_from_k2({})
+        assert cls == PreloadClass.UNKNOWN
+        assert conf == 0.0
+
+    def test_none_is_unknown(self) -> None:
+        cls, conf, _ = classify_preload_adequacy_from_k2(None)
+        assert cls == PreloadClass.UNKNOWN
+        assert conf == 0.0
+
+    def test_missing_leaky_key_is_unknown(self) -> None:
+        cls, _, _ = classify_preload_adequacy_from_k2(
+            {"k2_median": 0.002}  # no percent_leaky_voxels
+        )
+        assert cls == PreloadClass.UNKNOWN
+
+
+class TestPreloadClassHasUnknown:
+    """PreloadClass.UNKNOWN was added in v0.25.2."""
+
+    def test_unknown_exists(self) -> None:
+        assert PreloadClass.UNKNOWN.value == "unknown"
+
+    def test_unknown_not_in_dose_edges(self) -> None:
+        from pmriprep.utils.dsc_preload import _PRELOAD_DOSE_EDGES
+        # UNKNOWN is never produced from user dose input — should NOT be
+        # in the dose-to-class binning table.
+        assert PreloadClass.UNKNOWN not in _PRELOAD_DOSE_EDGES

@@ -525,14 +525,15 @@ class TestCollectDefaultWarnings:
         assert not any("preload" in w.lower() for w in warnings)
 
     def test_dsc_preload_warning_with_qc_detail(self) -> None:
-        """Preload warning includes baseline delta_r2 from qc_metrics."""
+        """Preload warning includes baseline ΔR2* advisory from qc_metrics."""
         prov = build_dsc_provenance(
             preload_source=ParameterSource.AUTO_DETECTED,
         )
         qc = {
             "preload": {
                 "preload_classification": "minimal",
-                "baseline_delta_r2": 0.85,
+                # v0.25.2: key renamed to preload_baseline_delta_r2_advisory.
+                "preload_baseline_delta_r2_advisory": 0.85,
             }
         }
         warnings = collect_default_warnings(prov, "DSC", qc_metrics=qc)

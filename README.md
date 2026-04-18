@@ -207,7 +207,7 @@ dce:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `preload` | str or float | `"auto"` | Preload administered dose. `"auto"` to detect from signal, or a float multiplier of the agent's standard dose (`0.0` = none, `0.5` = half-dose, `1.0` = full). Auto-detection measures residual-equivalent ΔR2* (different physical quantity from administered dose); both are logged to QC with a disagreement flag when they differ. Auto-detection thresholds are linearly scaled by `agent_standard_dose` so fractional-dose classification is agent-normalized. |
+| `preload` | str or float | `"auto"` | Preload administered dose. `"auto"` infers adequacy from the K2 residual distribution post-leakage-correction (Boxerman 2006, Leu 2016, Welker 2015), or pass a float multiplier of the agent's standard dose (`0.0` = none, `0.5` = half-dose, `1.0` = full). Low K2 (below `K2_PRIMARY_ADEQUATE = 0.005 s⁻¹`) → adequate/well-suppressed; elevated K2 → partial or inadequate. When K2 metrics are unavailable (e.g., leakage correction disabled), auto-detection returns `unknown` and the DCE vp constraint is SKIPed. Legacy `baseline_delta_r2` is retained as a tissue-heterogeneity-biased advisory metric (motion / S0 baseline QC) only. User override always wins. |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |

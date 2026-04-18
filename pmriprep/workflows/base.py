@@ -2607,6 +2607,17 @@ def init_pmriprep_wf(
                 except Exception as exc:
                     _log.warning("DWI: failed to read b-vectors from %s: %s", bvec_path, exc)
 
+        # DSC dose (bolus multiplier + agent standard dose) flows into the
+        # DCE constraint quality gate so CNR coverage thresholds scale with
+        # administered Gd fraction (v0.25.2). Read from dsc_config unless
+        # DSC is absent, in which case defaults (1.0, 0.1) preserve v0.25.1
+        # CNR behavior.
+        if dsc_config is not None:
+            dce_wf.inputs.inputnode.dsc_dose = float(dsc_config.dose)
+            dce_wf.inputs.inputnode.dsc_agent_standard_dose = float(
+                dsc_config.agent_standard_dose
+            )
+
         # Connect DSC CBV for vp constraint in DCE PK modeling.
         # Models with vp (extended_tofts, 2cxm) use DSC CBV as a fitting constraint.
         # Other models with vp (patlak) fit freely, cross-validate post-hoc.

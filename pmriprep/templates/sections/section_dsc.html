@@ -256,23 +256,46 @@
                 <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_classification] | default(dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title) }}</div>
             </div>
             {% endif %}
+            {% if dsc.qc_metrics.preload.preload_classification_source is defined %}
+            <div class="metric">
+                <div class="metric-label">Source</div>
+                <div class="metric-value">
+                    {%- set src = dsc.qc_metrics.preload.preload_classification_source -%}
+                    {%- if src == 'user_specified' -%}User specified
+                    {%- elif src == 'k2_primary' -%}K2 primary
+                    {%- elif src == 'k2_unavailable' -%}K2 unavailable (constraint SKIP)
+                    {%- else -%}{{ src }}{%- endif -%}
+                </div>
+            </div>
+            {% endif %}
             {% if dsc.qc_metrics.preload.preload_user_specified_dose is defined %}
             <div class="metric">
                 <div class="metric-label">User-Specified Dose</div>
                 <div class="metric-value">{{ "%.2f" | format(dsc.qc_metrics.preload.preload_user_specified_dose) }}× administered</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.preload.preload_auto_residual_fraction is defined and dsc.qc_metrics.preload.preload_auto_residual_fraction is not none %}
+            {% if dsc.qc_metrics.preload.preload_k2_classification is defined and dsc.qc_metrics.preload.preload_classification_source == 'user_specified' %}
             <div class="metric">
-                <div class="metric-label">Auto-Detected Residual</div>
-                <div class="metric-value">{{ "%.3f" | format(dsc.qc_metrics.preload.preload_auto_residual_fraction) }}× residual-equivalent</div>
+                <div class="metric-label">K2-Derived Class (reference)</div>
+                <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_k2_classification] | default(dsc.qc_metrics.preload.preload_k2_classification | replace("_", " ") | title) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.preload.preload_classification_disagreement is defined %}
-            {% set d = dsc.qc_metrics.preload.preload_classification_disagreement %}
+            {% if dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is defined and dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is not none %}
+            <div class="metric">
+                <div class="metric-label">ΔR2* Advisory</div>
+                <div class="metric-value" title="Tissue-heterogeneity biased; acquisition QC only, not used for classification.">{{ "%.2f"|format(dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory) }} s<sup>-1</sup> (advisory)</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preload.preload_classification_source == 'k2_unavailable' %}
             <div class="metric warning">
-                <div class="metric-label">⚠ User Override</div>
-                <div class="metric-value">{{ d['user_class'] | replace("_", " ") | title }} (auto-detected: {{ d['auto_class'] | replace("_", " ") | title }})</div>
+                <div class="metric-label">⚠ K2 Unavailable</div>
+                <div class="metric-value">K2 metrics empty — DCE vp constraint skipped. Check that leakage correction ran successfully.</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preload.preload_detector_disagreement is defined and dsc.qc_metrics.preload.preload_detector_disagreement and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
+            <div class="metric warning">
+                <div class="metric-label">ΔR2* ↔ K2 Disagreement</div>
+                <div class="metric-value">Advisory ΔR2* ({{ dsc.qc_metrics.preload.preload_advisory_classification | replace("_", " ") | title }}) disagrees with K2-primary — expected when ΔR2* hits the tissue-heterogeneity floor.</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_correction_applied is defined %}
@@ -315,12 +338,6 @@
             <div class="metric">
                 <div class="metric-label">Severe Leakage</div>
                 <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.preload.percent_severe_leakage) }}%</div>
-            </div>
-            {% endif %}
-            {% if dsc.qc_metrics.preload.baseline_delta_r2 is defined %}
-            <div class="metric">
-                <div class="metric-label">Baseline Delta R2*</div>
-                <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.preload.baseline_delta_r2) }} s<sup>-1</sup></div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.auc_mean is defined %}

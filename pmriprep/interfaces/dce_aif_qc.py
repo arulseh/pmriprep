@@ -519,15 +519,20 @@ def plot_aif_candidates_glass_brain(
 
     cb_height = 0.6
     cb_bottom = (1.0 - cb_height) / 2.0
-    cb_ax = fig.add_axes([0.92, cb_bottom, 0.012, cb_height])
+    cb_ax = fig.add_axes((0.92, cb_bottom, 0.012, cb_height))
+    # matplotlib.colormaps[...] is the non-deprecated accessor (>=3.7).
+    # cm.get_cmap was scheduled for removal in matplotlib 3.11.
+    import matplotlib as mpl
     sm = cm.ScalarMappable(
-        cmap=cm.plasma, norm=mcolors.Normalize(0, 1),
+        cmap=mpl.colormaps["plasma"],
+        norm=mcolors.Normalize(0, 1),
     )
     sm.set_array([])
     cb = fig.colorbar(sm, cax=cb_ax)
     cb.set_label("Quality Score", color="white", fontsize=12)
     cb.ax.yaxis.set_tick_params(color="white")
-    cb.outline.set_edgecolor("white")
+    if cb.outline is not None:
+        cb.outline.set_edgecolor("white")  # type: ignore[operator]
     plt.setp(cb.ax.yaxis.get_ticklabels(), color="white", fontsize=10)
 
     sub_label = f"sub-{subject_id}" if subject_id else ""

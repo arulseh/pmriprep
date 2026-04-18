@@ -179,7 +179,10 @@ class TestEnrichDSC:
                 "preload_correction_applied": True,
                 "k2_median": 0.008,
                 "preload_classification": "none",
-                "baseline_delta_r2": 0.12,
+                # v0.25.2: key renamed to preload_baseline_delta_r2_advisory.
+                "preload_baseline_delta_r2_advisory": 0.12,
+                "preload_classification_source": "k2_primary",
+                "preload_k2_classification": "none",
             },
             "aif": {
                 "detection_level": "atlas_strict",
@@ -202,7 +205,9 @@ class TestEnrichDSC:
         assert perf["LeakageCorrection"]["K2_median"] == pytest.approx(0.008, abs=0.001)
 
         assert perf["PreloadDetection"]["classification"] == "none"
-        assert perf["PreloadDetection"]["baseline_delta_r2"] == pytest.approx(0.12, abs=0.001)
+        assert perf["PreloadDetection"]["baseline_delta_r2_advisory"] == pytest.approx(0.12, abs=0.001)
+        assert perf["PreloadDetection"]["source"] == "k2_primary"
+        assert perf["PreloadDetection"]["k2_classification"] == "none"
 
         assert perf["AIF"]["method"] == "atlas_strict"
         assert perf["AIF"]["fwhm_frames"] == pytest.approx(4.0)

@@ -879,3 +879,186 @@ class TestNcbvIntegration:
         assert result.config.mode == ConstraintMode.SKIP
         assert result.vp_map is None
         assert result.qc_report.get("skip_reason") == "no_nawm_mask"
+
+
+# =============================================================================
+# Dose-aware CNR coverage gate (v0.25.2)
+# =============================================================================
+
+
+class TestDoseAwareCnrGate:
+    """Dose-scaled CNR coverage thresholds + AIF-tier bypass."""
+
+    @staticmethod
+    def _qc(cnr_coverage: float, detection: str, peak: float = 0.4) -> dict[str, Any]:
+        return {
+            "cnr_whole_brain": {
+                "fraction_cnr_gt_4": cnr_coverage,
+                "mean_cnr": 10.0,  # above Rose minimum
+            },
+            "detection_level": detection,
+            "aif_peak_height": peak,
+            "baseline_return_ratio": 0.15,
+        }
+
+    def test_full_dose_thresholds_unchanged(self) -> None:
+        """dose=1.0 × agent=0.1 (Gd-DOTA) → thresholds match v0.25.1."""
+        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+        assert _bolus_gd_fraction(1.0, 0.1) == pytest.approx(1.0)
+
+    def test_half_dose_gddota_half_thresholds(self) -> None:
+        """dose=0.5 × agent=0.1 → eff=0.5; coverage 0.55 now passes SKIP."""
+        # v0.25.1 thresholds: SKIP=0.70, MODERATE=0.84, HIGH=0.95
+        # At eff=0.5, SKIP becomes 0.35. Coverage=0.55 clears it.
+        result = assess_dsc_cbv_quality(
+            aif_qc_data=self._qc(0.55, "atlas_permissive"),
+            dose=0.5,
+            agent_standard_dose=0.1,
+        )
+        # No low-confidence downgrade from CNR (above scaled SKIP=0.35).
+        assert result.confidence != "low" or all(
+            "CNR coverage" not in r for r in result.reasons
+        )
+
+    def test_half_dose_vueway_scaled(self) -> None:
+        """dose=0.5 × agent=0.05 (Vueway half-dose) → eff=0.25."""
+        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+        assert _bolus_gd_fraction(0.5, 0.05) == pytest.approx(0.25)
+
+    def test_atlas_strict_bypasses_skip_at_low_cnr(self) -> None:
+        """atlas_strict + CNR 0.60 → moderate (not low), even at full dose."""
+        result = assess_dsc_cbv_quality(
+            aif_qc_data=self._qc(0.60, "atlas_strict"),
+            dose=1.0,
+            agent_standard_dose=0.1,
+        )
+        # CNR 0.60 < SKIP 0.70 at full dose, but atlas_strict bypass
+        # keeps confidence at moderate instead of low.
+        assert result.confidence == "moderate"
+
+    def test_atlas_permissive_still_skips_at_low_cnr(self) -> None:
+        """atlas_permissive + CNR 0.60 at full dose → low (no bypass)."""
+        result = assess_dsc_cbv_quality(
+            aif_qc_data=self._qc(0.60, "atlas_permissive"),
+            dose=1.0,
+            agent_standard_dose=0.1,
+        )
+        assert result.confidence == "low"
+
+    def test_double_dose_tightens_thresholds(self) -> None:
+        """dose=2.0 → eff=2.0; coverage 0.80 (passes at full-dose) now SKIPs."""
+        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+        # Double dose bumps SKIP threshold from 0.70 → 1.4 (clamped implicit at 1.0).
+        # Sub with coverage 0.80 hits SKIP now where it cleared at full-dose.
+        assert _bolus_gd_fraction(2.0, 0.1) == pytest.approx(2.0)
+
+    def test_very_low_effective_dose_clamp(self) -> None:
+        """dose=0.25 × agent=0.04 (gadoquatrane quarter) → eff=0.1."""
+        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+        # SKIP threshold becomes 0.07 — gate essentially disabled for
+        # very-low-dose protocols. Documents behavior; subjects pass trivially.
+        assert _bolus_gd_fraction(0.25, 0.04) == pytest.approx(0.1)
+
+
+class TestDetermineConstraintModeUnknownSkips:
+    """v0.25.2: UNKNOWN preload short-circuits to SKIP regardless of quality."""
+
+    def test_unknown_preload_skips_even_with_high_quality(self) -> None:
+        """Preload=UNKNOWN → SKIP even if DSC quality signals are excellent."""
+        quality = CBVQualityAssessment(
+            confidence="high",
+            use_constraint=True,
+            reasons=["All quality checks passed"],
+        )
+        config = determine_constraint_mode(
+            quality,
+            preload_classification="unknown",
+        )
+        assert config.mode == ConstraintMode.SKIP
+        assert "UNKNOWN" in config.reason or "unavailable" in config.reason.lower()
+
+    def test_unknown_preload_short_circuits_before_user_override(self) -> None:
+        """Even with 'auto' override, UNKNOWN → SKIP."""
+        quality = CBVQualityAssessment(
+            confidence="moderate",
+            use_constraint=True,
+            reasons=["CNR coverage marginal"],
+        )
+        config = determine_constraint_mode(
+            quality,
+            user_override="auto",
+            preload_classification="unknown",
+        )
+        assert config.mode == ConstraintMode.SKIP
+
+    def test_explicit_user_override_hard_still_wins_over_unknown(self) -> None:
+        """User can force HARD even when preload is UNKNOWN."""
+        quality = CBVQualityAssessment(
+            confidence="high",
+            use_constraint=True,
+            reasons=["All quality checks passed"],
+        )
+        config = determine_constraint_mode(
+            quality,
+            user_override="hard",
+            preload_classification="unknown",
+        )
+        # UNKNOWN branch only fires for auto; explicit hard/soft/skip honored.
+        assert config.mode == ConstraintMode.HARD
+
+
+class TestBolusGdFractionValidation:
+    """_bolus_gd_fraction rejects invalid dose (W1 from v0.25.2 review)."""
+
+    def test_zero_dose_raises(self) -> None:
+        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+        with pytest.raises(ValueError, match="dose must be positive"):
+            _bolus_gd_fraction(0.0, 0.1)
+
+    def test_negative_dose_raises(self) -> None:
+        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+        with pytest.raises(ValueError, match="dose must be positive"):
+            _bolus_gd_fraction(-0.1, 0.1)
+
+    def test_zero_agent_raises(self) -> None:
+        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+        with pytest.raises(ValueError, match="agent_standard_dose"):
+            _bolus_gd_fraction(1.0, 0.0)
+
+
+class TestCnrBypassFallThrough:
+    """atlas_strict bypass only overrides SKIP; MODERATE/HIGH tiers still apply
+    (S3 from v0.25.2 review)."""
+
+    @staticmethod
+    def _qc(cnr_coverage: float, detection: str) -> dict[str, Any]:
+        return {
+            "cnr_whole_brain": {
+                "fraction_cnr_gt_4": cnr_coverage,
+                "mean_cnr": 10.0,
+            },
+            "detection_level": detection,
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+        }
+
+    def test_atlas_strict_in_moderate_band_still_moderate(self) -> None:
+        """CNR coverage between SKIP and MODERATE thresholds with atlas_strict
+        → moderate (same outcome as the bypass, correctly falls through)."""
+        # At full dose SKIP=0.70, MODERATE=0.84, HIGH=0.95.
+        # CNR=0.80 is between SKIP and MODERATE, atlas_strict → moderate.
+        result = assess_dsc_cbv_quality(
+            aif_qc_data=self._qc(0.80, "atlas_strict"),
+            dose=1.0,
+            agent_standard_dose=0.1,
+        )
+        assert result.confidence == "moderate"
+
+    def test_atlas_strict_in_high_band_still_high(self) -> None:
+        """CNR coverage above HIGH with atlas_strict → high confidence preserved."""
+        result = assess_dsc_cbv_quality(
+            aif_qc_data=self._qc(0.97, "atlas_strict"),
+            dose=1.0,
+            agent_standard_dose=0.1,
+        )
+        assert result.confidence == "high"

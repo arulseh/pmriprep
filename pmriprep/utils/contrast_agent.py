@@ -913,7 +913,8 @@ def collect_default_warnings(
                 classification = preload_qc.get(
                     "preload_classification", ""
                 )
-                delta_r2 = preload_qc.get("baseline_delta_r2")
+                # v0.25.2: renamed to preload_baseline_delta_r2_advisory.
+                delta_r2 = preload_qc.get("preload_baseline_delta_r2_advisory")
             if classification not in ("", "none"):
                 detail = ""
                 if delta_r2 is not None:

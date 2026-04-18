@@ -18,10 +18,15 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_DELTA_R2,
     EPSILON_SIGNAL,
+    GD_DOTA_STANDARD_DOSE,
+    K2_PRIMARY_ADEQUATE,
+    K2_PRIMARY_INADEQUATE,
     K2_UPPER_BOUND,
     KEP_DSC_DEFAULT,
     KEP_DSC_LOWER,
     KEP_DSC_UPPER,
+    LEAKY_PRIMARY_ADEQUATE,
+    LEAKY_PRIMARY_INADEQUATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,25 +38,34 @@ logger = logging.getLogger(__name__)
 
 
 class PreloadClass(str, Enum):
-    """Preload classification levels based on baseline ΔR2*.
+    """Preload classification levels.
 
-    Classification based on residual contrast effects at 3T.
+    Classes describe either residual contrast effects (ΔR2* auto-detect)
+    or administered preload dose (user-specified float). K2-primary
+    classification (v0.25.2+) reuses NONE/MINIMAL/HALF_DOSE as adequacy
+    buckets since low K2 is operationally equivalent to "preload-
+    suppressed or intact BBB" — both cases mean the CBV correction is
+    reliable. UNKNOWN is emitted only when K2 metrics are unavailable.
     """
 
     NONE = "none"
-    """No detectable preload: baseline ΔR2* < 0.5 s⁻¹"""
+    """No detectable preload / K2-inadequate: baseline ΔR2* < 0.5 s⁻¹"""
 
     MINIMAL = "minimal"
-    """Minimal preload: 0.5 ≤ baseline ΔR2* < 2.0 s⁻¹"""
+    """Minimal preload / K2-partial: 0.5 ≤ baseline ΔR2* < 2.0 s⁻¹"""
 
     HALF_DOSE = "half_dose"
-    """Half-dose preload: 2.0 ≤ baseline ΔR2* < 5.0 s⁻¹"""
+    """Half-dose preload / K2-adequate: 2.0 ≤ baseline ΔR2* < 5.0 s⁻¹"""
 
     SIGNIFICANT = "significant"
     """Significant preload: 5.0 ≤ baseline ΔR2* < 10.0 s⁻¹"""
 
     SEVERE = "severe"
     """Severe preload: baseline ΔR2* ≥ 10.0 s⁻¹"""
+
+    UNKNOWN = "unknown"
+    """K2 metrics unavailable and no user override — downstream SKIPs the
+    constraint (more conservative than silently defaulting to NONE)."""
 
 
 class PreloadThresholds(NamedTuple):
@@ -89,15 +103,9 @@ PRELOAD_THRESHOLDS_BY_FIELD: Final[dict[float, PreloadThresholds]] = {
 }
 
 
-#: Baseline agent standard dose (mmol Gd/kg) for which
-#: ``PRELOAD_THRESHOLDS_BY_FIELD`` is calibrated. Used to linearly scale
-#: thresholds for agents with different standard doses (e.g., Vueway 0.05).
-_PRELOAD_THRESHOLDS_BASELINE_DOSE: Final[float] = 0.1
-
-
 def get_preload_thresholds(
     field_strength: float = 3.0,
-    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
+    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> PreloadThresholds:
     """Get preload classification thresholds for field strength and agent.
 
@@ -137,7 +145,7 @@ def get_preload_thresholds(
         nearest = min(fields, key=lambda x: abs(x - field_strength))
         base = PRELOAD_THRESHOLDS_BY_FIELD[nearest]
 
-    scale = agent_standard_dose / _PRELOAD_THRESHOLDS_BASELINE_DOSE
+    scale = agent_standard_dose / GD_DOTA_STANDARD_DOSE
     return PreloadThresholds(
         none_max=base.none_max * scale,
         minimal_max=base.minimal_max * scale,
@@ -203,7 +211,7 @@ def preload_class_from_dose(preload_dose: float) -> PreloadClass:
 def residual_equivalent_fraction_from_delta_r2(
     delta_r2: float,
     field_strength: float = 3.0,
-    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
+    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> float:
     """Convert baseline ΔR2* to a residual-equivalent dose fraction.
 
@@ -302,10 +310,98 @@ class PreloadResult:
 # =============================================================================
 
 
+def classify_preload_adequacy_from_k2(
+    k2_metrics: Optional[dict[str, Any]],
+) -> tuple[PreloadClass, float, str]:
+    """Classify preload adequacy from K2 residual distribution.
+
+    K2 is the direct physical signature of T1-leakage contamination in
+    DSC (Boxerman AJNR 2006; Leu JMRI 2016; Welker ASFNR AJNR 2015). Low
+    K2 means the CBV correction is reliable, regardless of whether preload
+    was physically given (low K2 also occurs in intact-BBB tissue);
+    operationally these are equivalent for the downstream constraint.
+
+    Thresholds from :mod:`pmriprep.utils.dsc_constants` (physics-expert
+    calibrated for BSW K2 at 3T, relaxed from literature 0.003 → 0.005
+    per 2026-04-18 consult to match observed well-suppressed half-dose
+    cohort k2_median 0.0018–0.0048):
+
+    * ``k2_median < K2_PRIMARY_ADEQUATE (0.005)`` AND
+      ``percent_leaky < LEAKY_PRIMARY_ADEQUATE (1.0%)``
+        → ``PreloadClass.HALF_DOSE`` (K2-suppressed; trust CBV — tight sigma)
+    * ``k2_median < K2_PRIMARY_INADEQUATE (0.01)`` AND
+      ``percent_leaky < LEAKY_PRIMARY_INADEQUATE (5.0%)``
+        → ``PreloadClass.MINIMAL`` (partial suppression; default sigma)
+    * otherwise
+        → ``PreloadClass.NONE`` (K2 too high; widen sigma)
+    * empty / missing ``k2_metrics``
+        → ``PreloadClass.UNKNOWN`` (caller SKIPs the constraint)
+
+    The HALF_DOSE label is an *adequacy* heuristic — it cannot distinguish
+    "preload given + suppressed" from "no preload + intact BBB". Both
+    cases mean K2 correction wasn't needed, which is operationally
+    equivalent for sigma selection.
+
+    Args:
+        k2_metrics: QC dict with keys ``k2_median`` (s⁻¹) and
+            ``percent_leaky_voxels`` (%). When `None` or missing either
+            key, returns UNKNOWN.
+
+    Returns:
+        Tuple of (classification, confidence ∈ [0, 1], reason string).
+        Confidence is ~0.9 far from thresholds and drops toward 0.5 at
+        the boundaries.
+    """
+    if not k2_metrics:
+        return (
+            PreloadClass.UNKNOWN,
+            0.0,
+            "k2_metrics empty or missing — cannot classify",
+        )
+    k2_med = k2_metrics.get("k2_median")
+    leaky = k2_metrics.get("percent_leaky_voxels")
+    if k2_med is None or leaky is None:
+        return (
+            PreloadClass.UNKNOWN,
+            0.0,
+            "k2_metrics missing k2_median or percent_leaky_voxels",
+        )
+    k2_med = float(k2_med)
+    leaky = float(leaky)
+    if not (np.isfinite(k2_med) and np.isfinite(leaky)) or k2_med < 0 or leaky < 0:
+        return (
+            PreloadClass.UNKNOWN,
+            0.0,
+            f"k2_metrics invalid: k2_median={k2_med}, percent_leaky={leaky}",
+        )
+
+    if k2_med < K2_PRIMARY_ADEQUATE and leaky < LEAKY_PRIMARY_ADEQUATE:
+        # Log-distance-based confidence: saturates at 0.95 for k2 ≤ K2/4.
+        k2_ratio = max(k2_med, 1e-6) / K2_PRIMARY_ADEQUATE
+        conf = float(np.clip(0.5 + 0.45 * (1.0 - k2_ratio), 0.5, 0.95))
+        return (
+            PreloadClass.HALF_DOSE,
+            conf,
+            f"K2-adequate: k2_median={k2_med:.4f} < {K2_PRIMARY_ADEQUATE}, "
+            f"leaky={leaky:.2f}% < {LEAKY_PRIMARY_ADEQUATE}%",
+        )
+    if k2_med < K2_PRIMARY_INADEQUATE and leaky < LEAKY_PRIMARY_INADEQUATE:
+        return (
+            PreloadClass.MINIMAL,
+            0.6,
+            f"K2-partial: k2_median={k2_med:.4f}, leaky={leaky:.2f}%",
+        )
+    return (
+        PreloadClass.NONE,
+        0.7,
+        f"K2-inadequate: k2_median={k2_med:.4f}, leaky={leaky:.2f}%",
+    )
+
+
 def classify_preload(
     baseline_delta_r2: float,
     field_strength: float = 3.0,
-    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
+    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> PreloadClass:
     """Classify preload severity from baseline ΔR2* (agent-aware).
 
@@ -342,7 +438,7 @@ def detect_preload_from_signal(
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
     field_strength: float = 3.0,
     reference_signal: Optional[float] = None,
-    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
+    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> PreloadResult:
     """Detect preload from DSC signal baseline.
 
@@ -672,7 +768,7 @@ def detect_preload(
     dce_ran: Optional[bool] = None,
     dce_metadata: Optional[dict[str, Any]] = None,
     dicom_metadata: Optional[dict[str, Any]] = None,
-    agent_standard_dose: float = _PRELOAD_THRESHOLDS_BASELINE_DOSE,
+    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> PreloadResult:
     """Detect preload using all available information.
 

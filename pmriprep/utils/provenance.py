@@ -439,8 +439,18 @@ def _enrich_dsc(
         preload_det = perf.get("PreloadDetection", {})
         if "preload_classification" in preload:
             preload_det["classification"] = str(preload["preload_classification"])
-        if "baseline_delta_r2" in preload:
-            preload_det["baseline_delta_r2"] = _safe_float(preload["baseline_delta_r2"])
+        if "preload_classification_source" in preload:
+            preload_det["source"] = str(preload["preload_classification_source"])
+        if "preload_k2_classification" in preload:
+            preload_det["k2_classification"] = str(
+                preload["preload_k2_classification"]
+            )
+        # v0.25.2: key renamed from baseline_delta_r2 → preload_baseline_delta_r2_advisory
+        # (tissue-heterogeneity-biased advisory metric, not used for classification).
+        if "preload_baseline_delta_r2_advisory" in preload:
+            preload_det["baseline_delta_r2_advisory"] = _safe_float(
+                preload["preload_baseline_delta_r2_advisory"]
+            )
         perf["PreloadDetection"] = preload_det
 
     # AIF and baseline frames (both from qc["aif"])

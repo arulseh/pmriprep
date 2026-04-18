@@ -398,6 +398,7 @@ def _detect_and_correct_preload(
     Returns:
         Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
     """
+    import logging
     import numpy as np
     import nibabel as nib  # type: ignore[import-untyped]
     from pathlib import Path
@@ -432,10 +433,15 @@ def _detect_and_correct_preload(
     qc_metrics: dict = {}
     k2_map_file: str = ""
 
-    # Always run auto-detection (needed for QC transparency and disagreement
-    # logging). Auto-detection result feeds QC unconditionally; effective
-    # classification is the user override when a float is given.
+    # v0.25.2: K2-primary is the sole classifier. Run detect_preload() only
+    # for the ΔR2* advisory metric (logged as tissue-heterogeneity-biased
+    # motion/S0-baseline diagnostic; never drives effective_class). K2
+    # correction runs unconditionally (preload-class-agnostic per Boxerman
+    # 2006 / Leu 2016), and the K2 residual distribution is then used to
+    # classify preload adequacy (ADEQUATE / PARTIAL / INADEQUATE / UNKNOWN).
     from pmriprep.utils.dsc_preload import (
+        PreloadClass,
+        classify_preload_adequacy_from_k2,
         detect_preload,
         preload_class_from_dose,
     )
@@ -444,6 +450,7 @@ def _detect_and_correct_preload(
     if signal_file:
         signal_data = nib.load(signal_file).get_fdata()
 
+    # --- Advisory ΔR2* metric (NOT used for classification) -------------
     preload_result = detect_preload(
         signal=signal_data,
         te=te,
@@ -452,16 +459,20 @@ def _detect_and_correct_preload(
         field_strength=field_strength,
         agent_standard_dose=agent_standard_dose,
     )
-    auto_class = preload_result.classification.value
-    qc_metrics["preload_auto_detected_classification"] = auto_class
-    qc_metrics["preload_confidence"] = preload_result.confidence
-    qc_metrics["preload_detection_method"] = preload_result.detection_method
-    qc_metrics["baseline_delta_r2"] = preload_result.baseline_delta_r2
+    advisory_class = preload_result.classification.value
+    # Label keys explicitly "advisory_*" so consumers don't confuse this
+    # with the decision-making classification.
+    qc_metrics["preload_baseline_delta_r2_advisory"] = (
+        preload_result.baseline_delta_r2
+    )
+    qc_metrics["preload_advisory_classification"] = advisory_class
+    qc_metrics["preload_advisory_method"] = preload_result.detection_method
+    qc_metrics["preload_advisory_note"] = (
+        "ΔR2* advisory: tissue-heterogeneity-biased; used for acquisition "
+        "QC (motion, S0 baseline) only. Not used to classify preload."
+    )
 
     auto_details = preload_result.details or {}
-    qc_metrics["preload_auto_residual_fraction"] = auto_details.get(
-        "residual_equivalent_fraction"
-    )
     effective_thresholds = auto_details.get("effective_thresholds")
     if effective_thresholds is not None:
         qc_metrics["preload_thresholds_effective"] = {
@@ -469,42 +480,8 @@ def _detect_and_correct_preload(
             "agent_standard_dose": agent_standard_dose,
         }
 
-    # Interpret user input: "auto" string or numeric dose multiplier
-    if isinstance(preload, str) and preload == "auto":
-        effective_class = auto_class
-        qc_metrics["preload_user_specified"] = False
-    else:
-        user_dose = float(preload)
-        user_class = preload_class_from_dose(user_dose).value
-        effective_class = user_class
-        qc_metrics["preload_user_specified"] = True
-        qc_metrics["preload_user_specified_dose"] = user_dose
-        qc_metrics["preload_user_specified_classification"] = user_class
-        if user_class != auto_class:
-            # Disagreement is expected when auto (residual) underestimates
-            # user (administered) due to clearance. Still logged so QC can
-            # flag cases where signal and user input wildly diverge.
-            qc_metrics["preload_classification_disagreement"] = {
-                "user_class": user_class,
-                "user_dose": user_dose,
-                "auto_class": auto_class,
-                "auto_residual_fraction": auto_details.get(
-                    "residual_equivalent_fraction"
-                ),
-            }
-
-    qc_metrics["preload_classification"] = effective_class
-    # True when auto-detection (independent of user override) flagged preload.
-    # Kept semantically consistent with the pre-rename behavior: this reflects
-    # what the signal-based detector found, not what the effective class is.
-    qc_metrics["preload_auto_detected"] = auto_class not in ("none", "minimal")
-
-    # Always apply per-voxel K2 leakage correction (Boxerman 2006).
-    # K2 correction addresses BBB disruption regardless of preload status.
-    # Voxels with K2 < 1e-4 are effectively unchanged.
+    # --- K2 correction (preload-agnostic, always runs) ------------------
     qc_metrics["preload_correction_applied"] = True
-
-    # Apply K2 leakage correction (dispatch based on method)
     if leakage_method == "bidirectional":
         correction_result = apply_k2_correction_bidirectional(
             concentration=conc_data,
@@ -524,9 +501,51 @@ def _detect_and_correct_preload(
     corrected_conc = correction_result.concentration_corrected
     k2_map = correction_result.k2_map
 
-    # Update QC metrics
+    # Update QC metrics with K2 correction stats (k2_median,
+    # percent_leaky_voxels, etc.). Required for the K2-primary classifier.
     if correction_result.qc_metrics:
         qc_metrics.update(correction_result.qc_metrics)
+
+    # --- Preload classification: user override > K2-primary -------------
+    if isinstance(preload, str) and preload == "auto":
+        k2_class, k2_confidence, k2_reason = (
+            classify_preload_adequacy_from_k2(qc_metrics)
+        )
+        effective_class = k2_class.value
+        qc_metrics["preload_user_specified"] = False
+        qc_metrics["preload_k2_classification"] = effective_class
+        qc_metrics["preload_k2_confidence"] = k2_confidence
+        qc_metrics["preload_k2_reason"] = k2_reason
+        if k2_class == PreloadClass.UNKNOWN:
+            qc_metrics["preload_classification_source"] = "k2_unavailable"
+            logging.getLogger("pmriprep.workflows").warning(
+                "K2-primary preload classification unavailable (%s); "
+                "downstream DCE constraint will SKIP.",
+                k2_reason,
+            )
+        else:
+            qc_metrics["preload_classification_source"] = "k2_primary"
+    else:
+        user_dose = float(preload)
+        user_class = preload_class_from_dose(user_dose).value
+        effective_class = user_class
+        qc_metrics["preload_user_specified"] = True
+        qc_metrics["preload_user_specified_dose"] = user_dose
+        qc_metrics["preload_user_specified_classification"] = user_class
+        qc_metrics["preload_classification_source"] = "user_specified"
+        # Log K2-primary classification for reference (even with user override).
+        k2_class, k2_confidence, _ = classify_preload_adequacy_from_k2(
+            qc_metrics
+        )
+        qc_metrics["preload_k2_classification"] = k2_class.value
+        qc_metrics["preload_k2_confidence"] = k2_confidence
+
+    qc_metrics["preload_classification"] = effective_class
+    # Disagreement between K2-primary and ΔR2* advisory is expected when
+    # the advisory hits its tissue-heterogeneity floor; flag for HTML.
+    qc_metrics["preload_detector_disagreement"] = (
+        qc_metrics.get("preload_k2_classification") != advisory_class
+    )
 
     # Save corrected concentration
     conc_path = Path(concentration_file)

@@ -820,6 +820,25 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Arterial hematocrit. Capillary Hct derived via Fahraeus ratio.",
     )
+    dsc_dose = traits.Float(
+        1.0,
+        usedefault=True,
+        desc=(
+            "DSC bolus dose multiplier relative to the agent's standard "
+            "single dose (1.0 = full, 0.5 = half). Scales CNR coverage "
+            "thresholds in the vp constraint quality gate."
+        ),
+    )
+    dsc_agent_standard_dose = traits.Float(
+        0.1,
+        usedefault=True,
+        desc=(
+            "DSC agent's standard clinical dose in mmol Gd/kg (0.1 = Gd-DOTA "
+            "class, 0.05 = gadopiclenol/Vueway, 0.04 = gadoquatrane). "
+            "Together with dsc_dose sets the effective Gd fraction used to "
+            "scale CNR coverage thresholds."
+        ),
+    )
 
     # Processing options
     n_procs = traits.Int(
@@ -1445,6 +1464,10 @@ class ComputeDCEMaps(BaseInterface):
                     hematocrit=float(self.inputs.hematocrit),
                     preload_classification=preload_class,
                     k2_metrics=k2_metrics,
+                    dose=float(self.inputs.dsc_dose),
+                    agent_standard_dose=float(
+                        self.inputs.dsc_agent_standard_dose
+                    ),
                 )
                 vp_constraint_map = vp_result.vp_map
                 constraint_mode = vp_result.config.mode
