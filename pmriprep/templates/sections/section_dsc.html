@@ -101,8 +101,8 @@
             {% endif %}
             {% if dsc.qc_metrics.preprocessing.voxel_size_mm is defined and dsc.qc_metrics.preprocessing.voxel_size_mm is not none %}
             <div class="metric">
-                <div class="metric-label">Voxel Size (reconstructed)</div>
-                <div class="metric-value">{{ "%.2f × %.2f × %.2f mm"|format(
+                <div class="metric-label">Voxel Size (mm)</div>
+                <div class="metric-value">{{ "%.2f × %.2f × %.2f"|format(
                     dsc.qc_metrics.preprocessing.voxel_size_mm[0],
                     dsc.qc_metrics.preprocessing.voxel_size_mm[1],
                     dsc.qc_metrics.preprocessing.voxel_size_mm[2]) }}</div>

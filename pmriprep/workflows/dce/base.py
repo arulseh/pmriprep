@@ -635,7 +635,7 @@ def init_dce_preproc_wf(
             input_names=[
                 "dce_file", "brain_mask_file",
                 "baseline_frames", "bolus_arrival_frame", "tr_ms",
-                "volume_tr_s", "subject_id", "session_id",
+                "volume_tr_s", "te", "subject_id", "session_id",
             ],
             output_names=["plot_file", "preproc_display_stats"],
             function=_generate_preprocessing_qc,
@@ -657,6 +657,7 @@ def init_dce_preproc_wf(
         (inputnode, preprocessing_qc, [
             ("tr", "tr_ms"),
             ("volume_tr", "volume_tr_s"),
+            ("te", "te"),
         ]),
     ])
 
@@ -4003,6 +4004,7 @@ def _generate_preprocessing_qc(
     bolus_arrival_frame,
     tr_ms,
     volume_tr_s,
+    te=None,
     subject_id="",
     session_id="",
 ):
@@ -4018,6 +4020,7 @@ def _generate_preprocessing_qc(
         bolus_arrival_frame: Bolus arrival frame index.
         tr_ms: Pulse TR in seconds (from inputnode ``tr``).
         volume_tr_s: Volume TR in seconds.
+        te: Echo time in seconds (optional; surfaced as ms in QC row).
         subject_id: Subject identifier.
         session_id: Session identifier.
 
@@ -4039,6 +4042,9 @@ def _generate_preprocessing_qc(
     # Convert TR from seconds (inputnode) to milliseconds
     tr_ms_val = tr_ms * 1000.0 if tr_ms is not None else 0.0
     volume_tr_val = volume_tr_s if volume_tr_s is not None else 1.0
+    # isinstance guard defends against the Nipype ``Undefined`` sentinel,
+    # which is not None but is also not a number — matches DSC's pattern.
+    te_ms_val = te * 1000.0 if isinstance(te, (int, float)) else None
 
     out_path = str(Path(dce_file).parent / "dce_preprocessing_qc.png")
 
@@ -4060,6 +4066,8 @@ def _generate_preprocessing_qc(
         "n_volumes": dce_data.shape[3],
         **stats,
     }
+    if te_ms_val is not None:
+        preproc_display_stats["te_ms"] = te_ms_val
     return plot_file, preproc_display_stats
 
 

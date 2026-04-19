@@ -1,6 +1,6 @@
-<!-- DCE Perfusion Section -->
+<!-- DCE Permeability Section -->
 <section id="dce">
-    <h2>DCE Perfusion</h2>
+    <h2>DCE Permeability</h2>
 
     <!-- Per-pipeline recommendation -->
     {% if dce.qc_metrics.recommendation %}
@@ -269,6 +269,12 @@
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.volume_tr_s) }} s</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.preprocessing.te_ms is defined and dce.qc_metrics.preprocessing.te_ms is not none %}
+            <div class="metric">
+                <div class="metric-label">TE</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.te_ms) }} ms</div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.preprocessing.n_volumes is defined %}
             <div class="metric">
                 <div class="metric-label">Volumes</div>
@@ -277,8 +283,8 @@
             {% endif %}
             {% if dce.qc_metrics.preprocessing.voxel_size_mm is defined and dce.qc_metrics.preprocessing.voxel_size_mm is not none %}
             <div class="metric">
-                <div class="metric-label">Voxel Size (reconstructed)</div>
-                <div class="metric-value">{{ "%.2f × %.2f × %.2f mm"|format(
+                <div class="metric-label">Voxel Size (mm)</div>
+                <div class="metric-value">{{ "%.2f × %.2f × %.2f"|format(
                     dce.qc_metrics.preprocessing.voxel_size_mm[0],
                     dce.qc_metrics.preprocessing.voxel_size_mm[1],
                     dce.qc_metrics.preprocessing.voxel_size_mm[2]) }}</div>
