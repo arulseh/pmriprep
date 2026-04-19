@@ -197,6 +197,10 @@ class ValidationResult:
         correction_factor: Suggested correction factor to align vp with CBV.
         metrics: Detailed validation metrics.
         interpretation: Human-readable interpretation of results.
+        acquisition_limited: True when the AIF-tissue overshoot fraction
+            exceeds the prior-dominance threshold and the nCBV-anchored
+            ratio tolerance was widened (Buckley MRM 2002). Informational
+            flag; does not imply data-quality failure.
     """
 
     status: str = QCStatus.UNKNOWN
@@ -207,6 +211,7 @@ class ValidationResult:
     correction_factor: float = 1.0
     metrics: ValidationMetrics = field(default_factory=ValidationMetrics)
     interpretation: str = ""
+    acquisition_limited: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert result to dictionary for JSON serialization."""
@@ -219,6 +224,7 @@ class ValidationResult:
             "correction_factor": self.correction_factor,
             "metrics": self.metrics.to_dict(),
             "interpretation": self.interpretation,
+            "acquisition_limited": self.acquisition_limited,
         }
 
 
@@ -305,6 +311,8 @@ def validate_vp_cbv(
     constraint_mode: Optional[str] = None,
     dsc_preload_configured: Optional[bool] = None,
     use_ncbv_scale: bool = False,
+    *,
+    aif_tissue_overshoot_fraction: Optional[float] = None,
 ) -> ValidationResult:
     """Validate DCE vp against DSC CBV.
 
@@ -354,16 +362,28 @@ def validate_vp_cbv(
         use_ncbv_scale: When True, interpret ``cbv_data`` as NAWM-normalized
             nCBV and use the NAWM-anchored expected ratio + scaled circular
             threshold. Default False (legacy behavior).
+        aif_tissue_overshoot_fraction: Upstream constraint-block diagnostic
+            (fraction of voxels where ``vp_prior × Cp(peak) > observed
+            C_tissue(peak)``). When greater than
+            ``ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD`` on the nCBV path,
+            vp is prior-dominated by first-pass temporal undersampling
+            (Buckley MRM 2002); the ratio tolerance is widened to
+            [``VP_NCBV_RATIO_MIN_LIMITED``, ``VP_NCBV_RATIO_MAX_LIMITED``]
+            and ``result.acquisition_limited`` is set. Pass ``None`` to
+            skip (legacy tight-band behavior).
 
     Returns:
         ValidationResult with status, preload detection, and metrics.
     """
     from pmriprep.utils.dce_constants import (
+        ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
         NAWM_VP_REFERENCE,
         CIRCULAR_STD_THRESHOLD_NCBV,
         CIRCULAR_STD_THRESHOLD_ABS_CBV,
         MIN_NCBV_FOR_VALIDATION,
         MAX_NCBV_FOR_VALIDATION,
+        VP_NCBV_RATIO_MIN_LIMITED,
+        VP_NCBV_RATIO_MAX_LIMITED,
     )
 
     result = ValidationResult(
@@ -511,8 +531,50 @@ def validate_vp_cbv(
     # Determine status from ratio, correlation, and coverage
     interpretations: list[str] = []
 
+    # Acquisition-limited flag: when the upstream overshoot detector fires
+    # on the nCBV-anchored path, vp is prior-dominated by first-pass
+    # temporal undersampling (Buckley MRM 2002). Widen the ratio band to
+    # the physiological envelope instead of flagging WARN on what is a
+    # physics ceiling, not a data-quality failure.
+    acquisition_limited = (
+        use_ncbv_scale
+        and aif_tissue_overshoot_fraction is not None
+        and aif_tissue_overshoot_fraction > ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD
+    )
+    result.acquisition_limited = acquisition_limited
+
+    if acquisition_limited:
+        # --- Widened ratio band (Pardridge 2011 physiological floor → NAWM ceiling) ---
+        if (VP_NCBV_RATIO_MIN_LIMITED
+                <= metrics.median_ratio
+                <= VP_NCBV_RATIO_MAX_LIMITED):
+            ratio_status = QCStatus.PASS
+            result.preload_effect_detected = False
+            interpretations.append(
+                f"vp/nCBV ratio ({metrics.median_ratio:.3f}) within widened "
+                f"acquisition-limited band "
+                f"[{VP_NCBV_RATIO_MIN_LIMITED:.3f}, {VP_NCBV_RATIO_MAX_LIMITED:.3f}]"
+            )
+        else:
+            ratio_status = QCStatus.WARN
+            result.preload_effect_detected = (
+                metrics.median_ratio < VP_NCBV_RATIO_MIN_LIMITED
+            )
+            interpretations.append(
+                f"vp/nCBV ratio ({metrics.median_ratio:.3f}) outside widened "
+                f"acquisition-limited band "
+                f"[{VP_NCBV_RATIO_MIN_LIMITED:.3f}, {VP_NCBV_RATIO_MAX_LIMITED:.3f}]"
+            )
+        interpretations.append(
+            f"Acquisition-limited regime "
+            f"(aif_tissue_overshoot_fraction={aif_tissue_overshoot_fraction:.2f}"
+            f" > {ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD:.2f}): vp is "
+            "prior-dominated by first-pass temporal undersampling of the AIF "
+            "(Buckley MRM 2002). Widened ratio band applied; magnitude "
+            "validation is informational only."
+        )
     # --- Ratio status (two-tier: PASS within ±30%, WARN within ±50%) ---
-    if metrics.median_ratio < ratio_warn_low:
+    elif metrics.median_ratio < ratio_warn_low:
         ratio_status = QCStatus.WARN
         result.preload_effect_detected = True
         interpretations.append(
@@ -641,6 +703,8 @@ def validate_vp_cbv_from_files(
     constraint_mode: Optional[str] = None,
     dsc_preload_configured: Optional[bool] = None,
     ncbv_path: Optional[Union[str, Path]] = None,
+    *,
+    aif_tissue_overshoot_fraction: Optional[float] = None,
 ) -> ValidationResult:
     """Validate DCE vp against DSC CBV from NIfTI files.
 
@@ -703,4 +767,5 @@ def validate_vp_cbv_from_files(
         constraint_mode=constraint_mode,
         dsc_preload_configured=dsc_preload_configured,
         use_ncbv_scale=use_ncbv_scale,
+        aif_tissue_overshoot_fraction=aif_tissue_overshoot_fraction,
     )

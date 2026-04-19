@@ -882,3 +882,23 @@ SIGMA_SOFT_HIGH_K2: Final[float] = 0.50
 #: threshold 0.01 stays for the non-nCBV path (vp/rel_cbv ratio scale).
 CIRCULAR_STD_THRESHOLD_NCBV: Final[float] = 0.002
 CIRCULAR_STD_THRESHOLD_ABS_CBV: Final[float] = 0.01
+
+#: Overshoot fraction above which vp is prior-dominated and xval tolerance
+#: is widened. Jensen-bias signature of first-pass temporal undersampling
+#: (Buckley MRM 2002). Shared with the constraint-block detector in
+#: ``dce_compute.py`` — single source of truth.
+ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD: Final[float] = 0.7
+
+#: Widened lower edge of the vp/nCBV ratio band, applied only when the
+#: ``acquisition_limited`` flag fires. Pinned at the brain-capillary
+#: physiological floor (Pardridge 2011, vp ≥ 0.005) so it does not
+#: undercut ``VP_MEDIAN_MIN`` — excursions below 0.005 remain a real data
+#: issue even in the prior-dominated regime.
+VP_NCBV_RATIO_MIN_LIMITED: Final[float] = 0.005
+
+#: Widened upper edge of the vp/nCBV ratio band. Aligned with
+#: ``VP_MEDIAN_MAX`` (not the tight ``VP_NCBV_RATIO_MAX``): the widened
+#: band brackets the prior-dominated NAWM posterior envelope and
+#: intentionally spans up to the magnitude-gate ceiling. Scope is NAWM
+#: ratios — tumor-vp excursions are outside the xval domain.
+VP_NCBV_RATIO_MAX_LIMITED: Final[float] = 0.06

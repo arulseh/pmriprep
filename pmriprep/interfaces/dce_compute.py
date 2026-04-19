@@ -22,6 +22,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dce_constants import (
+    ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
     FP_BOUNDS,
@@ -1609,7 +1610,7 @@ class ComputeDCEMaps(BaseInterface):
                                 constraint_qc["peak_alignment_lag_reason"] = (
                                     "volume_tr_undefined"
                                 )
-                            if overshoot_frac > 0.7:
+                            if overshoot_frac > ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD:
                                 constraint_qc["acquisition_limited_note"] = (
                                     "High AIF-to-tissue overshoot (>70%): "
                                     "observed tissue peak under-samples the "

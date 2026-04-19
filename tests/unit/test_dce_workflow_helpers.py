@@ -230,6 +230,50 @@ class TestDscDceValidationNodeDispatch:
             "simulated validation failure" in r.message for r in caplog.records
         )
 
+    def test_validation_node_extracts_overshoot(self, tmp_path: Any) -> None:
+        """pk_qc dict → overshoot extracted from ``dsc_cbv_constraint`` and
+        forwarded to ``validate_vp_cbv_from_files`` as
+        ``aif_tissue_overshoot_fraction``. Catches dict-path typos."""
+        from pmriprep.workflows.dce.base import _dsc_dce_validation_node
+
+        ncbv_file = _write_nifti(
+            tmp_path / "ncbv.nii.gz", np.ones((4, 4, 4))
+        )
+        mask_file = _write_nifti(
+            tmp_path / "mask.nii.gz",
+            np.ones((4, 4, 4), dtype=np.float32),
+        )
+        vp_file = _write_nifti(
+            tmp_path / "vp.nii.gz",
+            0.02 * np.ones((4, 4, 4), dtype=np.float32),
+        )
+
+        fake_validate, captured = self._capture_validator()
+        pk_qc = {
+            "dsc_cbv_constraint": {
+                "mode": "soft",
+                "aif_tissue_overshoot_fraction": 0.94,
+            },
+        }
+
+        with mock.patch(
+            "pmriprep.utils.dce_dsc_validation.validate_vp_cbv_from_files",
+            side_effect=fake_validate,
+        ):
+            _dsc_dce_validation_node(
+                vp_file=vp_file,
+                dsc_cbv_file=None,
+                dsc_ncbv_file=ncbv_file,
+                brain_mask=mask_file,
+                pk_qc=pk_qc,
+            )
+
+        assert captured["constraint_mode"] == "soft"
+        assert captured["aif_tissue_overshoot_fraction"] == 0.94
+        # Guard the dict-vs-string dispatch: ncbv_path must still route through.
+        assert captured["ncbv_path"] == ncbv_file
+        assert captured["cbv_path"] is None
+
 
 # =============================================================================
 # _find_previous_dsc_outputs — skip-DSC glob for nCBV

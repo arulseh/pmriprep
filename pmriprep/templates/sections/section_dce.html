@@ -773,6 +773,23 @@
             </div>
             {% endif %}
         </div>
+        {% if xval.acquisition_limited is defined and xval.acquisition_limited %}
+        {#- Numeric literals below mirror ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
+            VP_NCBV_RATIO_MIN_LIMITED, VP_NCBV_RATIO_MAX_LIMITED in
+            pmriprep/utils/dce_constants.py. Keep in sync if retuned. -#}
+        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+            <div class="metric">
+                <div class="metric-label">Acquisition-Limited xval</div>
+                <div class="metric-value">
+                    vp is prior-dominated by first-pass temporal undersampling
+                    (Buckley MRM 2002; overshoot &gt; 0.7). Ratio tolerance
+                    widened to [0.005, 0.06]; magnitude validation is
+                    informational only. See the constraint-block
+                    acquisition_limited_note above for the upstream diagnostic.
+                </div>
+            </div>
+        </div>
+        {% endif %}
         {% if dce.images.dsc_dce_xval is defined and dce.images.dsc_dce_xval %}
         <div class="figure-container" style="margin-top: 10px;">
             <img src="{{ dce.images.dsc_dce_xval }}" alt="DSC-DCE Cross-Validation">

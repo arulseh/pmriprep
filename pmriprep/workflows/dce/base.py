@@ -1318,7 +1318,7 @@ def init_dce_preproc_wf(
                 "dsc_ncbv_file",
                 "brain_mask",
                 "no_dsc_validation",
-                "constraint_mode",
+                "pk_qc",
                 "dsc_preload_configured",
             ],
             output_names=["validation_result"],
@@ -1329,7 +1329,8 @@ def init_dce_preproc_wf(
 
     dsc_dce_validation.inputs.no_dsc_validation = config.no_dsc_validation
     # dsc_preload_configured is set from base.py (None when DSC not configured)
-    # constraint_mode is connected from pk_modeling.qc_metrics (extracted in function)
+    # pk_qc is the full pk_modeling.qc_metrics dict; the function extracts
+    # dsc_cbv_constraint.mode and dsc_cbv_constraint.aif_tissue_overshoot_fraction.
     # dsc_cbv_file is provided by resample_dsc_cbv node (None when DSC unavailable)
     # dsc_ncbv_file is provided by resample_dsc_ncbv (None when NAWM unavailable);
     # when present, validation uses the nCBV-anchored expected ratio.
@@ -1337,7 +1338,7 @@ def init_dce_preproc_wf(
     workflow.connect([
         (pk_modeling, dsc_dce_validation, [
             ("out_vp", "vp_file"),
-            ("qc_metrics", "constraint_mode"),  # extracts mode inside function
+            ("qc_metrics", "pk_qc"),
         ]),
         (transform_brain_mask, dsc_dce_validation, [
             ("out_file", "brain_mask"),
@@ -1364,7 +1365,7 @@ def init_dce_preproc_wf(
                 "validation_result",
                 "subject_id",
                 "session_id",
-                "constraint_mode",
+                "pk_qc",
                 "model_selection_file",
             ],
             output_names=["plot_file"],
@@ -1379,7 +1380,7 @@ def init_dce_preproc_wf(
     workflow.connect([
         (pk_modeling, dsc_dce_xval_plot, [
             ("out_vp", "vp_file"),
-            ("qc_metrics", "constraint_mode"),
+            ("qc_metrics", "pk_qc"),
         ]),
         (resample_dsc_cbv, dsc_dce_xval_plot, [
             ("cbv_in_dce", "dsc_cbv_file"),
@@ -3041,7 +3042,7 @@ def _dsc_dce_validation_node(
     dsc_ncbv_file=None,
     brain_mask=None,
     no_dsc_validation=False,
-    constraint_mode=None,
+    pk_qc=None,
     dsc_preload_configured=None,
 ):
     """Function node for DSC-DCE cross-validation.
@@ -3050,9 +3051,13 @@ def _dsc_dce_validation_node(
         dsc_ncbv_file: Optional NAWM-normalized CBV. When provided, validation
             uses the nCBV-anchored expected ratio (NAWM_VP_REFERENCE = 0.02)
             and the scaled circular-std threshold.
-        constraint_mode: Either a string ("hard"/"soft"/"skip") or the full
-            pk_qc dict from pk_modeling (from which we extract
-            ``dsc_cbv_constraint.mode``).
+        pk_qc: Full ``pk_modeling.qc_metrics`` dict (or a bare string for
+            backwards compatibility). The function extracts
+            ``dsc_cbv_constraint.mode`` and
+            ``dsc_cbv_constraint.aif_tissue_overshoot_fraction`` — the
+            latter is only emitted for NAWM-anchored auto-mode subjects
+            with ≥100 valid voxels; missing values fall back to legacy
+            tight-band behavior cleanly.
         dsc_preload_configured: Whether DSC preload was configured.
 
     Returns a dictionary with validation results.
@@ -3062,12 +3067,13 @@ def _dsc_dce_validation_node(
     from pmriprep.utils.dce_dsc_validation import validate_vp_cbv_from_files
 
     resolved_mode = None
-    if isinstance(constraint_mode, dict):
-        resolved_mode = constraint_mode.get(
-            "dsc_cbv_constraint", {}
-        ).get("mode")
-    elif isinstance(constraint_mode, str):
-        resolved_mode = constraint_mode
+    overshoot = None
+    if isinstance(pk_qc, dict):
+        cbv_constraint = pk_qc.get("dsc_cbv_constraint", {}) or {}
+        resolved_mode = cbv_constraint.get("mode")
+        overshoot = cbv_constraint.get("aif_tissue_overshoot_fraction")
+    elif isinstance(pk_qc, str):
+        resolved_mode = pk_qc
 
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
 
@@ -3106,6 +3112,7 @@ def _dsc_dce_validation_node(
             constraint_mode=resolved_mode,
             dsc_preload_configured=dsc_preload_configured,
             ncbv_path=dsc_ncbv_file,
+            aif_tissue_overshoot_fraction=overshoot,
         )
         return result.to_dict()
     except Exception as e:
@@ -3165,7 +3172,7 @@ def _dsc_dce_xval_plot_node(
     validation_result=None,
     subject_id="",
     session_id="",
-    constraint_mode=None,
+    pk_qc=None,
     model_selection_file=None,
 ):
     """Function node for DSC-DCE cross-validation plot generation.
@@ -3175,8 +3182,9 @@ def _dsc_dce_xval_plot_node(
             validation ran under use_ncbv_scale=True), the plot is drawn on
             the dimensionless nCBV scale with expected ratio =
             NAWM_VP_REFERENCE (0.02), matching the validation metrics.
-        constraint_mode: Either a string or the full pk_qc dict from
-            pk_modeling (from which we extract ``dsc_cbv_constraint.mode``).
+        pk_qc: Full ``pk_modeling.qc_metrics`` dict (or a bare mode string
+            for backwards compatibility); the function extracts
+            ``dsc_cbv_constraint.mode``.
 
     Returns:
         Path to plot PNG, or None if skipped.
@@ -3191,18 +3199,16 @@ def _dsc_dce_xval_plot_node(
         return None
 
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
-    # v0.25.4: xval plot mirrors _dsc_dce_validation_node — requires nCBV;
-    # the rel-AUC-CBV fallback is miscalibrated, so skip plot when no NAWM.
+    # Plot mirrors _dsc_dce_validation_node — requires nCBV; the rel-AUC-CBV
+    # fallback is miscalibrated, so skip plot when no NAWM.
     if not have_ncbv:
         return None
 
     resolved_mode = None
-    if isinstance(constraint_mode, dict):
-        resolved_mode = constraint_mode.get(
-            "dsc_cbv_constraint", {}
-        ).get("mode")
-    elif isinstance(constraint_mode, str):
-        resolved_mode = constraint_mode
+    if isinstance(pk_qc, dict):
+        resolved_mode = pk_qc.get("dsc_cbv_constraint", {}).get("mode")
+    elif isinstance(pk_qc, str):
+        resolved_mode = pk_qc
 
     try:
         import nibabel as nib  # type: ignore[import-untyped]

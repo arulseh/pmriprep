@@ -388,3 +388,101 @@ class TestNcbvPathValidation:
         )
         assert result.metrics.std_ratio > CIRCULAR_STD_THRESHOLD_NCBV
         assert result.circular is False
+
+
+class TestAcquisitionLimited:
+    """Acquisition-limited flag widens the nCBV ratio tolerance when the
+    upstream ``aif_tissue_overshoot_fraction`` exceeds the prior-domination
+    threshold (Buckley MRM 2002).
+
+    Fixture note: tests on the nCBV-anchored path synthesize data with
+    ``cbv_mean=1.0`` (NAWM-normalized scale, NAWM=1) so that the observed
+    vp/nCBV ratio approximates ``vp_mean`` directly, matching
+    NAWM_VP_REFERENCE=0.02.
+    """
+
+    @staticmethod
+    def _ncbv_data(vp_mean: float, n: int = 5000, seed: int = 7):
+        rng = np.random.default_rng(seed)
+        z1 = rng.standard_normal(n)
+        z2 = rng.standard_normal(n)
+        z_corr = 0.6 * z1 + np.sqrt(1 - 0.6**2) * z2
+        vp_flat = np.clip(vp_mean + 0.008 * z1, 0.002, 0.14)
+        ncbv_flat = np.clip(1.0 + 0.3 * z_corr, 0.4, 4.5)
+        vp = vp_flat.reshape(n, 1, 1)
+        ncbv = ncbv_flat.reshape(n, 1, 1)
+        mask = np.ones((n, 1, 1), dtype=bool)
+        return vp, ncbv, mask
+
+    def test_overshoot_above_threshold_widens_tolerance(self) -> None:
+        """v254 half-dose pattern: overshoot=0.94, ratio≈0.007 → PASS with flag."""
+        vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
+        result = validate_vp_cbv(
+            vp, ncbv, mask,
+            constraint_mode="soft",
+            use_ncbv_scale=True,
+            aif_tissue_overshoot_fraction=0.94,
+        )
+        assert result.acquisition_limited is True
+        assert result.status == QCStatus.PASS
+        assert "Buckley" in result.interpretation
+
+    def test_overshoot_below_threshold_keeps_tight_band(self) -> None:
+        """overshoot=0.3 with low ratio still hits legacy WARN on tight band."""
+        vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
+        result = validate_vp_cbv(
+            vp, ncbv, mask,
+            constraint_mode="soft",
+            use_ncbv_scale=True,
+            aif_tissue_overshoot_fraction=0.3,
+        )
+        assert result.acquisition_limited is False
+        assert result.status == QCStatus.WARN
+
+    def test_overshoot_boundary_exactly_0_7_not_flagged(self) -> None:
+        """Threshold uses strict ``>``; overshoot == 0.7 exactly → legacy path."""
+        vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
+        result = validate_vp_cbv(
+            vp, ncbv, mask,
+            constraint_mode="soft",
+            use_ncbv_scale=True,
+            aif_tissue_overshoot_fraction=0.7,
+        )
+        assert result.acquisition_limited is False
+
+    def test_overshoot_none_uses_tight_band(self) -> None:
+        """Missing overshoot (user-forced mode / no-NAWM path) → legacy tight band."""
+        vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
+        result = validate_vp_cbv(
+            vp, ncbv, mask,
+            constraint_mode="soft",
+            use_ncbv_scale=True,
+            aif_tissue_overshoot_fraction=None,
+        )
+        assert result.acquisition_limited is False
+        # Observed ratio ≈0.007 is outside the tight ±30% band around 0.02,
+        # so the legacy path still WARNs — proving the flag was not applied.
+        assert result.status == QCStatus.WARN
+
+    def test_outside_widened_band_still_warns(self) -> None:
+        """Sub-physiological ratio (< 0.005 floor) warns even with the flag set."""
+        vp, ncbv, mask = self._ncbv_data(vp_mean=0.002)
+        result = validate_vp_cbv(
+            vp, ncbv, mask,
+            constraint_mode="soft",
+            use_ncbv_scale=True,
+            aif_tissue_overshoot_fraction=0.94,
+        )
+        assert result.acquisition_limited is True
+        assert result.status == QCStatus.WARN
+
+    def test_absolute_cbv_path_unaffected(self) -> None:
+        """Flag only applies to NAWM-anchored path (use_ncbv_scale=True)."""
+        vp, cbv, mask = _make_data(correlation=0.6)  # default cbv_mean=3.0 (abs)
+        result = validate_vp_cbv(
+            vp, cbv, mask,
+            constraint_mode="soft",
+            use_ncbv_scale=False,
+            aif_tissue_overshoot_fraction=0.94,
+        )
+        assert result.acquisition_limited is False
