@@ -275,6 +275,21 @@
                 <div class="metric-value">{{ dce.qc_metrics.preprocessing.n_volumes }}</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.preprocessing.voxel_size_mm is defined and dce.qc_metrics.preprocessing.voxel_size_mm is not none %}
+            <div class="metric">
+                <div class="metric-label">Voxel Size (reconstructed)</div>
+                <div class="metric-value">{{ "%.2f × %.2f × %.2f mm"|format(
+                    dce.qc_metrics.preprocessing.voxel_size_mm[0],
+                    dce.qc_metrics.preprocessing.voxel_size_mm[1],
+                    dce.qc_metrics.preprocessing.voxel_size_mm[2]) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.n_brain_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Brain Voxels</div>
+                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.preprocessing.n_brain_voxels) }}</div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.preprocessing.peak_enh_pct is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Enhancement</div>
@@ -713,7 +728,7 @@
             </div>
             {% if xval.metrics.expected_ratio is defined and xval.metrics.expected_ratio > 0 %}
             <div class="metric">
-                <div class="metric-label">Expected</div>
+                <div class="metric-label">Expected vp/CBV Ratio</div>
                 <div class="metric-value">{{ "%.3f"|format(xval.metrics.expected_ratio) }}</div>
             </div>
             {% endif %}
@@ -730,7 +745,7 @@
             {% endif %}
             {% if xval.metrics.expected_ratio is defined and xval.metrics.expected_ratio > 0 %}
             <div class="metric">
-                <div class="metric-label">Expected</div>
+                <div class="metric-label">Expected vp/CBV Ratio</div>
                 <div class="metric-value">{{ "%.3f"|format(xval.metrics.expected_ratio) }}</div>
             </div>
             {% endif %}
@@ -766,12 +781,6 @@
                 <div class="metric-value">{{ "yes" if xval.dsc_preload_configured else "no" }}</div>
             </div>
             {% endif %}
-            {% if xval.preload_effect_detected is defined and xval.preload_effect_detected %}
-            <div class="metric">
-                <div class="metric-label">Preload Effect</div>
-                <div class="metric-value warn">detected</div>
-            </div>
-            {% endif %}
         </div>
         {% if xval.acquisition_limited is defined and xval.acquisition_limited %}
         {#- Numeric literals below mirror ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
@@ -780,12 +789,12 @@
         <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
             <div class="metric">
                 <div class="metric-label">Acquisition-Limited xval</div>
-                <div class="metric-value">
+                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
                     vp is prior-dominated by first-pass temporal undersampling
                     (Buckley MRM 2002; overshoot &gt; 0.7). Ratio tolerance
                     widened to [0.005, 0.06]; magnitude validation is
                     informational only. See the constraint-block
-                    acquisition_limited_note above for the upstream diagnostic.
+                    acquisition-limited note above.
                 </div>
             </div>
         </div>

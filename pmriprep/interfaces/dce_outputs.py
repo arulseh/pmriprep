@@ -1043,7 +1043,7 @@ class DCEDerivativeWriter(BaseInterface):
             if xval_status == QCStatus.WARN:
                 preload = xval.get("preload_effect_detected", False)
                 detail = (
-                    "preload effect suspected"
+                    "low vp/CBV ratio"
                     if preload
                     else "ratio outside range"
                 )

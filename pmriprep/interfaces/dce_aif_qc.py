@@ -506,7 +506,7 @@ def plot_aif_candidates_glass_brain(
         plot_markers(
             node_values=scores,
             node_coords=coords_mni,
-            node_cmap="plasma",
+            node_cmap="autumn",
             node_size=140,
             display_mode=mode,
             axes=ax,
@@ -524,7 +524,7 @@ def plot_aif_candidates_glass_brain(
     # cm.get_cmap was scheduled for removal in matplotlib 3.11.
     import matplotlib as mpl
     sm = cm.ScalarMappable(
-        cmap=mpl.colormaps["plasma"],
+        cmap=mpl.colormaps["autumn"],
         norm=mcolors.Normalize(0, 1),
     )
     sm.set_array([])

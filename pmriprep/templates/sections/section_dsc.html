@@ -99,6 +99,21 @@
                 <div class="metric-value">{{ "%.2f"|format(dsc.qc_metrics.preprocessing.te_ms) }} ms</div>
             </div>
             {% endif %}
+            {% if dsc.qc_metrics.preprocessing.voxel_size_mm is defined and dsc.qc_metrics.preprocessing.voxel_size_mm is not none %}
+            <div class="metric">
+                <div class="metric-label">Voxel Size (reconstructed)</div>
+                <div class="metric-value">{{ "%.2f × %.2f × %.2f mm"|format(
+                    dsc.qc_metrics.preprocessing.voxel_size_mm[0],
+                    dsc.qc_metrics.preprocessing.voxel_size_mm[1],
+                    dsc.qc_metrics.preprocessing.voxel_size_mm[2]) }}</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preprocessing.n_brain_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Brain Voxels</div>
+                <div class="metric-value">{{ "{:,}".format(dsc.qc_metrics.preprocessing.n_brain_voxels) }}</div>
+            </div>
+            {% endif %}
             {% if dsc.qc_metrics.preprocessing.n_volumes is defined %}
             <div class="metric">
                 <div class="metric-label">Volumes</div>
@@ -256,13 +271,13 @@
                 <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_classification] | default(dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.preload.preload_classification_source is defined %}
+            {% if dsc.qc_metrics.preload.preload_classification_source is defined
+                 and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
             <div class="metric">
                 <div class="metric-label">Source</div>
                 <div class="metric-value">
                     {%- set src = dsc.qc_metrics.preload.preload_classification_source -%}
-                    {%- if src == 'user_specified' -%}User specified
-                    {%- elif src == 'k2_primary' -%}K2 primary
+                    {%- if src == 'k2_primary' -%}K2 primary
                     {%- elif src == 'k2_unavailable' -%}K2 unavailable (constraint SKIP)
                     {%- else -%}{{ src }}{%- endif -%}
                 </div>
@@ -271,19 +286,27 @@
             {% if dsc.qc_metrics.preload.preload_user_specified_dose is defined %}
             <div class="metric">
                 <div class="metric-label">User-Specified Dose</div>
-                <div class="metric-value">{{ "%.2f" | format(dsc.qc_metrics.preload.preload_user_specified_dose) }}× administered</div>
+                <div class="metric-value">{{ "%.2f" | format(dsc.qc_metrics.preload.preload_user_specified_dose) }} (fraction of standard dose)</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_k2_classification is defined and dsc.qc_metrics.preload.preload_classification_source == 'user_specified' %}
             <div class="metric">
-                <div class="metric-label">K2-Derived Class (reference)</div>
+                <div class="metric-label">K2-Derived Class</div>
                 <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_k2_classification] | default(dsc.qc_metrics.preload.preload_k2_classification | replace("_", " ") | title) }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is defined and dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is not none %}
             <div class="metric">
                 <div class="metric-label">ΔR2* Advisory</div>
-                <div class="metric-value" title="Tissue-heterogeneity biased; acquisition QC only, not used for classification.">{{ "%.2f"|format(dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory) }} s<sup>-1</sup> (advisory)</div>
+                <div class="metric-value" title="Tissue-heterogeneity biased; acquisition QC only, not used for classification.">{{ "%.2f"|format(dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preload.preload_residual_equivalent_fraction is defined
+               and dsc.qc_metrics.preload.preload_residual_equivalent_fraction is not none
+               and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
+            <div class="metric">
+                <div class="metric-label">Residual Equivalent Fraction</div>
+                <div class="metric-value" title="ΔR2*-based residual dose estimate. Biased by tissue-heterogeneity; sanity-check only.">{{ "%.2f"|format(dsc.qc_metrics.preload.preload_residual_equivalent_fraction) }}× standard dose</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_classification_source == 'k2_unavailable' %}
@@ -296,12 +319,6 @@
             <div class="metric warning">
                 <div class="metric-label">ΔR2* ↔ K2 Disagreement</div>
                 <div class="metric-value">Advisory ΔR2* ({{ dsc.qc_metrics.preload.preload_advisory_classification | replace("_", " ") | title }}) disagrees with K2-primary — expected when ΔR2* hits the tissue-heterogeneity floor.</div>
-            </div>
-            {% endif %}
-            {% if dsc.qc_metrics.preload.preload_correction_applied is defined %}
-            <div class="metric">
-                <div class="metric-label">K2 Correction</div>
-                <div class="metric-value">{{ "Applied" if dsc.qc_metrics.preload.preload_correction_applied else "Not Applied" }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.k2_method is defined %}
@@ -343,13 +360,7 @@
             {% if dsc.qc_metrics.preload.auc_mean is defined %}
             <div class="metric">
                 <div class="metric-label">Mean AUC</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.preload.auc_mean) }}</div>
-            </div>
-            {% endif %}
-            {% if dsc.qc_metrics.preload.n_brain_voxels is defined %}
-            <div class="metric">
-                <div class="metric-label">Brain Voxels</div>
-                <div class="metric-value">{{ "{:,}".format(dsc.qc_metrics.preload.n_brain_voxels) }}</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.preload.auc_mean) }} mM·s</div>
             </div>
             {% endif %}
         </div>

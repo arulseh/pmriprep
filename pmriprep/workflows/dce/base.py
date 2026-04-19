@@ -4010,8 +4010,11 @@ def _generate_preprocessing_qc(
 
     from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
 
-    dce_data = nib.load(dce_file).get_fdata()
+    dce_img = nib.load(dce_file)
+    dce_data = dce_img.get_fdata()
     brain_mask = nib.load(brain_mask_file).get_fdata() > 0.5
+
+    voxel_size_mm = tuple(float(z) for z in dce_img.header.get_zooms()[:3])
 
     # Convert TR from seconds (inputnode) to milliseconds
     tr_ms_val = tr_ms * 1000.0 if tr_ms is not None else 0.0
@@ -4028,6 +4031,7 @@ def _generate_preprocessing_qc(
         subject_id=subject_id,
         session_id=session_id,
         output_path=out_path,
+        voxel_size_mm=voxel_size_mm,
     )
 
     preproc_display_stats = {

@@ -1692,8 +1692,8 @@ class ComputeDCEMaps(BaseInterface):
                                 constraint_qc["acquisition_limited_note"] = (
                                     "High AIF-to-tissue overshoot (>70%): "
                                     "observed tissue peak under-samples the "
-                                    "first pass (Buckley MRM 2002 recommends "
-                                    "TR ≲ 2 s for vp identifiability). "
+                                    "first pass (TR ≲ 2 s recommended for "
+                                    "vp identifiability; Buckley MRM 2002). "
                                     "Posterior vp is prior-dominated by "
                                     "design at this acquisition; "
                                     "informational only — no action taken."

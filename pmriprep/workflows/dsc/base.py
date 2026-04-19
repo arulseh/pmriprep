@@ -480,6 +480,10 @@ def _detect_and_correct_preload(
             "agent_standard_dose": agent_standard_dose,
         }
 
+    residual_equivalent = auto_details.get("residual_equivalent_fraction")
+    if residual_equivalent is not None:
+        qc_metrics["preload_residual_equivalent_fraction"] = residual_equivalent
+
     # --- K2 correction (preload-agnostic, always runs) ------------------
     qc_metrics["preload_correction_applied"] = True
     if leakage_method == "bidirectional":
@@ -991,6 +995,8 @@ def _generate_dsc_preprocessing_qc(
     signal_4d = signal_img.get_fdata()
     mask_data = nib.load(brain_mask_file).get_fdata()
 
+    voxel_size_mm = tuple(float(z) for z in signal_img.header.get_zooms()[:3])
+
     plot_path, stats = generate_dsc_preprocessing_qc_plot(
         dsc_signal_4d=signal_4d,
         brain_mask=mask_data,
@@ -999,6 +1005,7 @@ def _generate_dsc_preprocessing_qc(
         te_s=te,
         subject_id=subject_id,
         session_id=session_id,
+        voxel_size_mm=voxel_size_mm,
     )
     return plot_path, stats
 

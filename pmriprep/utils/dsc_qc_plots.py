@@ -92,7 +92,8 @@ def generate_dsc_preprocessing_qc_plot(
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
-) -> tuple[str, dict[str, float | int | None]]:
+    voxel_size_mm: tuple[float, float, float] | None = None,
+) -> tuple[str, dict[str, Any]]:
     """Generate a 2-row preprocessing QC plot for DSC data.
 
     Layout (GridSpec 2x4, graphs span 2 cols, images span 1):
@@ -251,7 +252,7 @@ def generate_dsc_preprocessing_qc_plot(
     fig.savefig(out, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    stats: dict[str, float | int | None] = {
+    stats: dict[str, Any] = {
         "peak_drop_pct": round(peak_drop_pct, 1),
         "mean_tsnr": round(mean_tsnr, 1),
         "mean_cnr": round(mean_cnr, 1),
@@ -259,6 +260,10 @@ def generate_dsc_preprocessing_qc_plot(
         "tr_ms": round(volume_tr_s * 1000, 2),
         "te_ms": round(te_s * 1000, 2) if te_s is not None else None,
         "n_volumes": n_volumes,
+        "n_brain_voxels": int(mask_bool.sum()),
+        "voxel_size_mm": (
+            [float(v) for v in voxel_size_mm] if voxel_size_mm is not None else None
+        ),
     }
     return str(out), stats
 

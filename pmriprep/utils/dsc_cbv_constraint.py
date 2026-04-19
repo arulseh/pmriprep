@@ -828,7 +828,7 @@ def determine_constraint_mode(
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,
             vp_uncertainty=0.20,
-            reason="high DSC quality (auto → tight SOFT; HARD deprecated)",
+            reason="high DSC quality (auto → tight SOFT)",
         )
     elif confidence == "moderate":
         uncertainty = SIGMA_SOFT_DEFAULT
@@ -980,6 +980,7 @@ def prepare_vp_constraint_from_data(
         result.qc_report = {
             "mode": ConstraintMode.SKIP.value,
             "reason": result.config.reason,
+            "vp_uncertainty": result.config.vp_uncertainty,
             "skip_reason": "no_nawm_mask",
             "hematocrit": hematocrit,
         }
@@ -1029,6 +1030,7 @@ def prepare_vp_constraint_from_data(
     qc_report: dict[str, Any] = {
         "mode": config.mode.value,
         "reason": config.reason,
+        "vp_uncertainty": config.vp_uncertainty,
         "dsc_cbv_confidence": quality.confidence,
         "dsc_cbv_use_constraint": quality.use_constraint,
         "cnr_coverage": quality.cnr_coverage,
@@ -1079,6 +1081,7 @@ def prepare_vp_constraint_from_data(
             result.config = config
             qc_report["mode"] = config.mode.value
             qc_report["reason"] = config.reason
+            qc_report["vp_uncertainty"] = config.vp_uncertainty
             qc_report["magnitude_gate_triggered"] = True
             result.vp_map = None
             result.qc_report = qc_report

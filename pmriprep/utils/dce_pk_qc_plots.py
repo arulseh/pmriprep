@@ -118,7 +118,8 @@ def generate_preprocessing_qc_plot(
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
-) -> tuple[str, dict[str, float]]:
+    voxel_size_mm: tuple[float, float, float] | None = None,
+) -> tuple[str, dict[str, Any]]:
     """Generate a 2-row preprocessing QC plot for DCE data.
 
     Layout (GridSpec 2×4, graphs span 2 cols, images span 1):
@@ -294,11 +295,15 @@ def generate_preprocessing_qc_plot(
     else:
         cnr_dce = round((peak_enh_pct / 100.0) * mean_baseline_tsnr, 2)
 
-    stats = {
+    stats: dict[str, Any] = {
         "peak_enh_pct": round(peak_enh_pct, 1),
         "mean_tsnr": round(mean_tsnr, 1),
         "baseline_tsnr": round(mean_baseline_tsnr, 1),
         "cnr_dce": cnr_dce,
+        "n_brain_voxels": int(mask_bool.sum()),
+        "voxel_size_mm": (
+            [float(v) for v in voxel_size_mm] if voxel_size_mm is not None else None
+        ),
     }
     return str(out), stats
 
