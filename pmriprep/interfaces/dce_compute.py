@@ -1577,9 +1577,10 @@ class ComputeDCEMaps(BaseInterface):
                 # The old safeguard checked vp_prior * Cp(peak) > Ct(peak)
                 # and interpreted > 30% overshoot as a scale bug, then
                 # either downgraded HARD→SKIP or widened SOFT σ to 0.5.
-                # Under v0.25.1's NAWM-anchored prior (vp = 0.02 × nCBV)
-                # and v0.25.3's plasma-correct AIF, that test no longer
-                # measures scale. It primarily detects first-pass
+                # Under the NAWM-anchored prior (vp = NAWM_VP_REFERENCE
+                # × nCBV) and the plasma-corrected AIF convention, that
+                # test no longer measures scale. It primarily detects
+                # first-pass
                 # temporal undersampling (Buckley MRM 2002, Henderson
                 # MRI 1998): max(Ct_samp) is Jensen-biased by (TR/FWHM)²
                 # so vp·Cp_peak > Ct_samp_peak is expected at any

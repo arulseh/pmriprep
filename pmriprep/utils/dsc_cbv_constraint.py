@@ -1067,12 +1067,13 @@ def prepare_vp_constraint_from_data(
         )
 
         # Step 4: Magnitude gate (undershoot + overshoot).
-        # Physiological plausibility: WM vp ≈ 0.01–0.02, GM ≈ 0.02–0.04,
-        # tumor up to ~0.08. Values outside [VP_MEDIAN_MIN, VP_MEDIAN_MAX]
-        # indicate a gross calibration failure — downgrade to SKIP rather
-        # than feeding biased priors into DCE fitting. The existing scale-
-        # mismatch guard in dce_compute only catches overshoot, so this
-        # gate adds the undershoot protection.
+        # Physiological plausibility: WM vp ≈ 0.005–0.015 (Larsson 2009),
+        # GM ≈ 0.015–0.025, tumor up to ~0.05. Values outside
+        # [VP_MEDIAN_MIN, VP_MEDIAN_MAX] indicate a gross calibration
+        # failure — downgrade to SKIP rather than feeding biased priors
+        # into DCE fitting. The existing scale-mismatch guard in
+        # dce_compute only catches overshoot, so this gate adds the
+        # undershoot protection.
         if not (VP_MEDIAN_MIN <= vp_median <= VP_MEDIAN_MAX):
             logger.warning(
                 "Derived vp median %.4f outside physiological range "

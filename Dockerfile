@@ -31,7 +31,7 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
-LABEL org.opencontainers.image.version="0.27.0"
+LABEL org.opencontainers.image.version="0.27.1"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 
@@ -79,6 +79,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxext6 \
     libxrender1 \
     tar \
+    tini \
     unzip \
     wget \
     && rm -rf /var/lib/apt/lists/*
@@ -179,8 +180,11 @@ RUN mkdir -p /home/pmriprep/.cache && \
 WORKDIR /tmp
 USER 1000
 
-# Set up entry point
-ENTRYPOINT ["pmriprep"]
+# Set up entry point. tini is PID 1 and reaps orphaned children from
+# nipype multiproc + nnU-Net worker pools that would otherwise accumulate
+# as zombies (a problem in JupyterHub-singleuser containers where the
+# default init does not call wait() on SIGCHLD).
+ENTRYPOINT ["/usr/bin/tini", "--", "pmriprep"]
 
 # Default help message
 CMD ["--help"]
