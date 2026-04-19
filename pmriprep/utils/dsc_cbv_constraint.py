@@ -123,6 +123,11 @@ GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
 # =============================================================================
 
 
+SKIP_REASON_NO_DSC_RUN = "no_dsc_run"
+SKIP_REASON_NO_NAWM_MASK = "no_nawm_mask"
+NO_DSC_RUN_REASON_STRING = "No DSC data provided"
+
+
 class ConstraintMode(Enum):
     """Mode for applying DSC CBV vp constraint to DCE fitting."""
 
@@ -981,7 +986,7 @@ def prepare_vp_constraint_from_data(
             "mode": ConstraintMode.SKIP.value,
             "reason": result.config.reason,
             "vp_uncertainty": result.config.vp_uncertainty,
-            "skip_reason": "no_nawm_mask",
+            "skip_reason": SKIP_REASON_NO_NAWM_MASK,
             "hematocrit": hematocrit,
         }
         return result

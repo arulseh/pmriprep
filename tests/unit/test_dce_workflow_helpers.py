@@ -173,7 +173,7 @@ class TestDscDceValidationNodeDispatch:
         assert captured == {}  # validator was not called
 
     def test_no_cbv_no_ncbv_returns_skipped(self, tmp_path: Any) -> None:
-        """No CBV source at all → validation is cleanly skipped."""
+        """No CBV + no DSC config at all → skipped with no_dsc_run reason (v0.26.6)."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
         vp_file = _write_nifti(tmp_path / "vp.nii.gz", np.zeros((3, 3, 3)))
@@ -187,10 +187,31 @@ class TestDscDceValidationNodeDispatch:
             dsc_cbv_file=None,
             dsc_ncbv_file=None,
             brain_mask=mask_file,
+            dsc_preload_configured=None,
         )
         assert out["skipped"] is True
-        # v0.25.4 uses status "SKIPPED" for no-NAWM (upper-case, informational);
-        # "skipped" (lower) is reserved for no_dsc_validation or missing vp_file.
+        assert out["status"] == "SKIPPED"
+        assert out["reason"] == "No DSC data provided"
+        assert out["skip_reason"] == "no_dsc_run"
+
+    def test_no_ncbv_but_dsc_configured_returns_nawm_skip(self, tmp_path: Any) -> None:
+        """DSC configured but no nCBV → skipped with NAWM-unavailable reason."""
+        from pmriprep.workflows.dce.base import _dsc_dce_validation_node
+
+        vp_file = _write_nifti(tmp_path / "vp.nii.gz", np.zeros((3, 3, 3)))
+        mask_file = _write_nifti(
+            tmp_path / "mask.nii.gz",
+            np.ones((3, 3, 3), dtype=np.float32),
+        )
+
+        out = _dsc_dce_validation_node(
+            vp_file=vp_file,
+            dsc_cbv_file=None,
+            dsc_ncbv_file=None,
+            brain_mask=mask_file,
+            dsc_preload_configured=True,
+        )
+        assert out["skipped"] is True
         assert out["status"] == "SKIPPED"
         assert "NAWM" in out["reason"]
 

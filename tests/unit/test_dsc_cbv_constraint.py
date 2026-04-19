@@ -1062,3 +1062,17 @@ class TestCnrBypassFallThrough:
             agent_standard_dose=0.1,
         )
         assert result.confidence == "high"
+
+
+class TestSkipReasonConstants:
+    """Shared constants prevent skip_reason drift across modules."""
+
+    def test_constants_expose_expected_values(self) -> None:
+        from pmriprep.utils.dsc_cbv_constraint import (
+            NO_DSC_RUN_REASON_STRING,
+            SKIP_REASON_NO_DSC_RUN,
+            SKIP_REASON_NO_NAWM_MASK,
+        )
+        assert SKIP_REASON_NO_DSC_RUN == "no_dsc_run"
+        assert SKIP_REASON_NO_NAWM_MASK == "no_nawm_mask"
+        assert NO_DSC_RUN_REASON_STRING == "No DSC data provided"

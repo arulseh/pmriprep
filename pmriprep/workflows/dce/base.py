@@ -3065,6 +3065,10 @@ def _dsc_dce_validation_node(
     import os
 
     from pmriprep.utils.dce_dsc_validation import validate_vp_cbv_from_files
+    from pmriprep.utils.dsc_cbv_constraint import (
+        NO_DSC_RUN_REASON_STRING,
+        SKIP_REASON_NO_DSC_RUN,
+    )
 
     resolved_mode = None
     overshoot = None
@@ -3075,13 +3079,25 @@ def _dsc_dce_validation_node(
     elif isinstance(pk_qc, str):
         resolved_mode = pk_qc
 
+    have_cbv = bool(dsc_cbv_file) and os.path.isfile(str(dsc_cbv_file))
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
+    dsc_inputs_present = (
+        have_cbv or have_ncbv or (dsc_preload_configured is not None)
+    )
 
     if no_dsc_validation or not vp_file:
         return {
             "skipped": True,
             "status": "skipped",
             "reason": "Validation skipped or missing data",
+        }
+
+    if not dsc_inputs_present:
+        return {
+            "skipped": True,
+            "status": "SKIPPED",
+            "reason": NO_DSC_RUN_REASON_STRING,
+            "skip_reason": SKIP_REASON_NO_DSC_RUN,
         }
 
     # v0.25.4: xval requires nCBV (NAWM-normalized). The legacy

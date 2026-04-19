@@ -486,3 +486,45 @@ class TestAcquisitionLimited:
             aif_tissue_overshoot_fraction=0.94,
         )
         assert result.acquisition_limited is False
+
+
+class TestDscDceValidationNodeSkipReasons:
+    """_dsc_dce_validation_node distinguishes 'no DSC run' from 'no NAWM'."""
+
+    def _call(self, **kwargs):
+        from pmriprep.workflows.dce.base import _dsc_dce_validation_node
+        return _dsc_dce_validation_node(**kwargs)
+
+    def test_reports_no_dsc_run_when_all_dsc_inputs_absent(self, tmp_path):
+        vp_file = tmp_path / "vp.nii.gz"
+        vp_file.write_bytes(b"dummy")
+        result = self._call(
+            vp_file=str(vp_file),
+            dsc_cbv_file=None,
+            dsc_ncbv_file=None,
+            brain_mask=None,
+            no_dsc_validation=False,
+            pk_qc=None,
+            dsc_preload_configured=None,
+        )
+        assert result["skipped"] is True
+        assert result["status"] == "SKIPPED"
+        assert result["reason"] == "No DSC data provided"
+        assert result["skip_reason"] == "no_dsc_run"
+
+    def test_reports_no_ncbv_when_dsc_configured_but_ncbv_missing(self, tmp_path):
+        vp_file = tmp_path / "vp.nii.gz"
+        vp_file.write_bytes(b"dummy")
+        result = self._call(
+            vp_file=str(vp_file),
+            dsc_cbv_file=None,
+            dsc_ncbv_file=None,
+            brain_mask=None,
+            no_dsc_validation=False,
+            pk_qc=None,
+            dsc_preload_configured=True,
+        )
+        assert result["skipped"] is True
+        assert result["status"] == "SKIPPED"
+        assert "nCBV unavailable" in result["reason"]
+        assert "skip_reason" not in result

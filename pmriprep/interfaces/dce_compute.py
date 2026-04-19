@@ -1336,6 +1336,8 @@ class ComputeDCEMaps(BaseInterface):
         import nibabel as nib  # type: ignore[import-untyped]
 
         from pmriprep.utils.dsc_cbv_constraint import (
+            NO_DSC_RUN_REASON_STRING,
+            SKIP_REASON_NO_DSC_RUN,
             ConstraintMode,
             prepare_vp_constraint_from_data,
         )
@@ -1485,7 +1487,11 @@ class ComputeDCEMaps(BaseInterface):
         vp_constraint_map: Optional[npt.NDArray[Any]] = None
         constraint_mode = ConstraintMode.SKIP
         constraint_vp_uncertainty: float = 0.2
-        constraint_qc: dict[str, Any] = {"mode": "skip", "reason": "No DSC CBV provided"}
+        constraint_qc: dict[str, Any] = {
+            "mode": "skip",
+            "reason": NO_DSC_RUN_REASON_STRING,
+            "skip_reason": SKIP_REASON_NO_DSC_RUN,
+        }
 
         # vp prior is NAWM-anchored (v0.25.0+): vp = NAWM_VP_REFERENCE · nCBV.
         # Only nCBV feeds the prior — absolute-CBV is consumed elsewhere
@@ -1503,7 +1509,19 @@ class ComputeDCEMaps(BaseInterface):
             model_name in ("extended_tofts", "2cxm") or is_auto
         )
 
-        if needs_vp_constraint:
+        dsc_inputs_present = (
+            (isdefined(self.inputs.dsc_ncbv_file) and bool(self.inputs.dsc_ncbv_file))
+            or (isdefined(self.inputs.dsc_aif_qc) and bool(self.inputs.dsc_aif_qc))
+            or (isdefined(self.inputs.dsc_preload_qc) and bool(self.inputs.dsc_preload_qc))
+        )
+
+        if needs_vp_constraint and not dsc_inputs_present:
+            constraint_qc = {
+                "mode": "skip",
+                "reason": NO_DSC_RUN_REASON_STRING,
+                "skip_reason": SKIP_REASON_NO_DSC_RUN,
+            }
+        elif needs_vp_constraint:
             try:
                 # Get AIF QC dict if available
                 aif_qc_data = (

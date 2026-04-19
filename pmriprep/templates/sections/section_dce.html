@@ -603,8 +603,8 @@
     </div>
     {% endif %}
 
-    <!-- CBV Constraint -->
-    {% if dce.qc_metrics.pk_modeling is defined and dce.qc_metrics.pk_modeling.dsc_cbv_constraint is defined %}
+    <!-- CBV Constraint (suppressed on DCE-only runs where no DSC was processed) -->
+    {% if dsc and dce.qc_metrics.pk_modeling is defined and dce.qc_metrics.pk_modeling.dsc_cbv_constraint is defined %}
     {% set cbv_c = dce.qc_metrics.pk_modeling.dsc_cbv_constraint %}
     {% if cbv_c.mode is defined %}
     <div class="section">
@@ -651,6 +651,15 @@
                 </div>
             </div>
         </div>
+        {% elif cbv_c.skip_reason is defined and cbv_c.skip_reason == 'no_dsc_run' %}
+        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+            <div class="metric">
+                <div class="metric-label">No DSC Data</div>
+                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
+                    DSC was not processed for this subject; no CBV available to constrain vp. DCE PK estimates use default priors only.
+                </div>
+            </div>
+        </div>
         {% endif %}
         {% if cbv_c.magnitude_gate_triggered is defined and cbv_c.magnitude_gate_triggered %}
         <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
@@ -681,8 +690,8 @@
     {% endif %}
     {% endif %}
 
-    <!-- DSC-DCE Cross-Validation -->
-    {% if dce.qc_metrics.dsc_dce_validation is defined and dce.qc_metrics.dsc_dce_validation %}
+    <!-- DSC-DCE Cross-Validation (suppressed on DCE-only runs) -->
+    {% if dsc and dce.qc_metrics.dsc_dce_validation is defined and dce.qc_metrics.dsc_dce_validation %}
     {% set xval = dce.qc_metrics.dsc_dce_validation %}
     {% if xval.skipped|default(false) and xval.status == 'SKIPPED' %}
     <div class="section">
