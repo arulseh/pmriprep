@@ -616,3 +616,253 @@ class TestEvaluateModel:
         aif, time_points = aif_and_time
         with pytest.raises(ValueError, match="Unknown model"):
             evaluate_model("unknown", {}, aif, time_points)
+
+
+# ---------------------------------------------------------------------------
+# Chunked multiproc NLLS path — concat_fit_results + _dispatch_batched_chunks
+# ---------------------------------------------------------------------------
+
+
+class TestChunkedMultiproc:
+    """Regression tests for the chunked-multiproc batched NLLS path.
+
+    Guards three invariants:
+    - ``concat_fit_results`` fails fast on inconsistent chunks.
+    - ``_dispatch_batched_chunks`` at ``n_procs=1`` and ``n_procs>1``
+      produces numerically identical FitResults (modulo BLAS reduction
+      ULP drift, covered by ``atol=1e-10``).
+    - The auto-mode BIC loop is untouched by chunked parallelization.
+    """
+
+    @staticmethod
+    def _make_result(
+        n: int,
+        model_name: str = "tofts",
+        seed: int = 0,
+        with_curves: bool = True,
+        with_uncertainties: bool = True,
+    ) -> FitResult:
+        rng = np.random.default_rng(seed)
+        params = {
+            "ktrans": rng.uniform(0.01, 0.3, n),
+            "ve": rng.uniform(0.1, 0.5, n),
+        }
+        fitted_curves = rng.uniform(0, 1, (n, 60)) if with_curves else None
+        uncertainties = (
+            {k: rng.uniform(0, 0.01, n) for k in params} if with_uncertainties else {}
+        )
+        return FitResult(
+            params=params,
+            r_squared=rng.uniform(0.5, 1.0, n),
+            converged=np.ones(n, dtype=bool),
+            fitted_curves=fitted_curves,
+            n_iterations=10,
+            model_name=model_name,
+            uncertainties=uncertainties,
+        )
+
+    # -- concat_fit_results --------------------------------------------
+
+    def test_concat_preserves_voxel_order(self):
+        from pmriprep.models.dce.batched_fitting import concat_fit_results
+
+        r1 = self._make_result(5, seed=0)
+        r2 = self._make_result(7, seed=1)
+        merged = concat_fit_results([r1, r2], n_total=12)
+
+        assert merged.r_squared.shape == (12,)
+        assert merged.params["ktrans"].shape == (12,)
+        np.testing.assert_array_equal(
+            merged.params["ktrans"][:5], r1.params["ktrans"]
+        )
+        np.testing.assert_array_equal(
+            merged.params["ktrans"][5:], r2.params["ktrans"]
+        )
+        assert merged.fitted_curves is not None
+        assert merged.fitted_curves.shape == (12, 60)
+
+    def test_concat_propagates_none_fitted_curves(self):
+        from pmriprep.models.dce.batched_fitting import concat_fit_results
+
+        r1 = self._make_result(3, seed=0, with_curves=False)
+        r2 = self._make_result(4, seed=1, with_curves=False)
+        merged = concat_fit_results([r1, r2], n_total=7)
+        assert merged.fitted_curves is None
+
+    def test_concat_rejects_mismatched_model_name(self):
+        from pmriprep.models.dce.batched_fitting import concat_fit_results
+
+        r1 = self._make_result(3, model_name="tofts")
+        r2 = self._make_result(4, model_name="patlak")
+        with pytest.raises(AssertionError, match="model_name mismatch"):
+            concat_fit_results([r1, r2], n_total=7)
+
+    def test_concat_rejects_mixed_curves_none(self):
+        from pmriprep.models.dce.batched_fitting import concat_fit_results
+
+        r1 = self._make_result(3, seed=0, with_curves=True)
+        r2 = self._make_result(4, seed=1, with_curves=False)
+        with pytest.raises(AssertionError, match="fitted_curves"):
+            concat_fit_results([r1, r2], n_total=7)
+
+    # -- _dispatch_batched_chunks -------------------------------------
+
+    def test_dispatch_n_procs_1_matches_n_procs_4(self, aif_and_time):
+        """Single-process and multi-process yield identical results.
+
+        Above the chunking floor (n_voxels >= max(1000, 4*n_procs))
+        ``n_procs=4`` spins up workers; ``n_procs=1`` goes in-process.
+        Both must return numerically identical FitResults.
+        """
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+
+        aif, time_points = aif_and_time
+        tissue, *_ = _generate_tofts_data(
+            aif, time_points, n_voxels=1500, noise_level=0.02,
+        )
+
+        iface = ComputeDCEMaps()
+        r1 = iface._dispatch_batched_chunks(
+            model_name="tofts",
+            tissue_curves=tissue,
+            aif=aif,
+            time_points=time_points,
+            fixed_vp=None,
+            weights=None,
+            save_fitted_curves=True,
+            compute_uncertainties=False,
+            n_procs=1,
+            n_voxels=1500,
+        )
+        r4 = iface._dispatch_batched_chunks(
+            model_name="tofts",
+            tissue_curves=tissue,
+            aif=aif,
+            time_points=time_points,
+            fixed_vp=None,
+            weights=None,
+            save_fitted_curves=True,
+            compute_uncertainties=False,
+            n_procs=4,
+            n_voxels=1500,
+        )
+        assert r1.model_name == r4.model_name == "tofts"
+        for k in r1.params:
+            np.testing.assert_allclose(
+                r1.params[k], r4.params[k], atol=1e-10, rtol=0,
+            )
+        np.testing.assert_allclose(
+            r1.r_squared, r4.r_squared, atol=1e-10, rtol=0,
+        )
+        np.testing.assert_array_equal(r1.converged, r4.converged)
+        assert r1.fitted_curves is not None and r4.fitted_curves is not None
+        np.testing.assert_allclose(
+            r1.fitted_curves, r4.fitted_curves, atol=1e-10, rtol=0,
+        )
+
+    def test_dispatch_handles_mixed_fixed_vp(self, aif_and_time):
+        """Mixed constrained / unconstrained voxels across chunks."""
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+
+        aif, time_points = aif_and_time
+        tissue, *_ = _generate_etofts_data(
+            aif, time_points, n_voxels=1500, noise_level=0.02,
+        )
+        fixed_vp = np.zeros(1500)
+        # First half constrained at 0.04, second half free.
+        fixed_vp[:750] = 0.04
+
+        iface = ComputeDCEMaps()
+        r_multi = iface._dispatch_batched_chunks(
+            model_name="extended_tofts",
+            tissue_curves=tissue,
+            aif=aif,
+            time_points=time_points,
+            fixed_vp=fixed_vp,
+            weights=None,
+            save_fitted_curves=False,
+            compute_uncertainties=False,
+            n_procs=4,
+            n_voxels=1500,
+        )
+        # Constrained voxels must land exactly at fixed_vp.
+        np.testing.assert_allclose(
+            r_multi.params["vp"][:750], 0.04, atol=1e-10,
+        )
+        # Free voxels should span a plausible range (not pinned to 0.04).
+        free_vp = r_multi.params["vp"][750:]
+        assert np.std(free_vp) > 0.001
+
+    def test_dispatch_auto_mode_bic_chunked_matches_inline(self, aif_and_time):
+        """Auto-mode BIC selection is identical at n_procs=1 and n_procs=4.
+
+        Runs the outer candidate loop at each n_procs setting, stacks
+        the per-candidate BICs (same arithmetic the interface uses at
+        the :argmin step), and asserts the winner index per voxel and
+        the winner params match exactly.
+        """
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+
+        aif, time_points = aif_and_time
+        tissue, *_ = _generate_etofts_data(
+            aif, time_points, n_voxels=1500, noise_level=0.03,
+        )
+
+        iface = ComputeDCEMaps()
+
+        def run_candidates(n_procs: int) -> dict[str, FitResult]:
+            out = {}
+            for cname in ("tofts", "extended_tofts", "patlak"):
+                out[cname] = iface._dispatch_batched_chunks(
+                    model_name=cname,
+                    tissue_curves=tissue,
+                    aif=aif,
+                    time_points=time_points,
+                    fixed_vp=None,
+                    weights=None,
+                    save_fitted_curves=True,
+                    compute_uncertainties=False,
+                    n_procs=n_procs,
+                    n_voxels=1500,
+                )
+            return out
+
+        results_1 = run_candidates(1)
+        results_4 = run_candidates(4)
+
+        # Per-candidate: fitted_curves and params must match between paths.
+        for cname in results_1:
+            r1, r4 = results_1[cname], results_4[cname]
+            for k in r1.params:
+                np.testing.assert_allclose(
+                    r1.params[k], r4.params[k], atol=1e-10, rtol=0,
+                    err_msg=f"{cname}:{k}",
+                )
+            assert r1.fitted_curves is not None and r4.fitted_curves is not None
+            np.testing.assert_allclose(
+                r1.fitted_curves, r4.fitted_curves, atol=1e-10, rtol=0,
+                err_msg=f"{cname}:fitted_curves",
+            )
+
+        # BIC selection should land identical winners.
+        from pmriprep.models.dce.base import EPSILON_RSS
+
+        T = tissue.shape[1]
+        k_map = {"tofts": 2, "extended_tofts": 3, "patlak": 2}
+
+        def bic_winner(results: dict[str, FitResult]) -> np.ndarray:
+            bics = []
+            cnames = list(results.keys())
+            for cname in cnames:
+                rss = np.sum(
+                    (tissue - results[cname].fitted_curves) ** 2, axis=1,
+                )
+                rss_safe = np.maximum(rss, EPSILON_RSS)
+                bics.append(
+                    T * np.log(rss_safe / T) + k_map[cname] * np.log(T),
+                )
+            return np.argmin(np.stack(bics, axis=0), axis=0)
+
+        np.testing.assert_array_equal(
+            bic_winner(results_1), bic_winner(results_4),
+        )

@@ -86,6 +86,86 @@ class FitResult:
     uncertainties: dict[str, npt.NDArray[np.floating]] = field(default_factory=dict)
 
 
+def concat_fit_results(
+    results: list[FitResult],
+    n_total: int,
+) -> FitResult:
+    """Concatenate per-chunk FitResults along the voxel axis.
+
+    Used by the chunked-multiproc NLLS fitting path: workers return a
+    FitResult for their slice of voxels, and the parent stitches them
+    back into one whole-volume FitResult preserving voxel order.
+
+    Invariants (fail-fast via ``assert``):
+    - All chunks share the same ``model_name``.
+    - ``fitted_curves`` is either None on every chunk or non-None on
+      every chunk (mixed → AssertionError, caller bug).
+    - ``uncertainties`` key sets match across chunks.
+    - The concatenated length equals ``n_total``.
+
+    ``n_iterations`` is reported as the max across chunks
+    (representative — logging only; no downstream decision depends on it).
+
+    Args:
+        results: Non-empty list of per-chunk FitResults in voxel order.
+        n_total: Expected total voxel count across all chunks
+            (sanity-checked against the concatenated length).
+
+    Returns:
+        A single FitResult spanning all n_total voxels.
+    """
+    assert len(results) > 0, "concat_fit_results requires at least one chunk"
+    model_name = results[0].model_name
+    first_params_keys = set(results[0].params.keys())
+    first_unc_keys = set(results[0].uncertainties.keys())
+    first_has_curves = results[0].fitted_curves is not None
+    for r in results[1:]:
+        assert r.model_name == model_name, (
+            f"chunk model_name mismatch: {r.model_name} vs {model_name}"
+        )
+        assert set(r.params.keys()) == first_params_keys, (
+            "chunk params key set mismatch"
+        )
+        assert set(r.uncertainties.keys()) == first_unc_keys, (
+            "chunk uncertainties key set mismatch"
+        )
+        assert (r.fitted_curves is not None) == first_has_curves, (
+            "fitted_curves must be either None on all chunks or non-None on all"
+        )
+
+    params = {
+        k: np.concatenate([r.params[k] for r in results]) for k in first_params_keys
+    }
+    r_squared = np.concatenate([r.r_squared for r in results])
+    converged = np.concatenate([r.converged for r in results])
+    fitted_curves: Optional[npt.NDArray[np.floating]]
+    if first_has_curves:
+        fitted_curves = np.concatenate(
+            [r.fitted_curves for r in results], axis=0  # type: ignore[misc]
+        )
+    else:
+        fitted_curves = None
+    uncertainties = {
+        k: np.concatenate([r.uncertainties[k] for r in results])
+        for k in first_unc_keys
+    }
+    n_iterations = max(r.n_iterations for r in results)
+
+    assert r_squared.shape[0] == n_total, (
+        f"concatenated length {r_squared.shape[0]} != expected {n_total}"
+    )
+
+    return FitResult(
+        params=params,
+        r_squared=r_squared,
+        converged=converged,
+        fitted_curves=fitted_curves,
+        n_iterations=n_iterations,
+        model_name=model_name,
+        uncertainties=uncertainties,
+    )
+
+
 def _compute_r_squared(
     observed: npt.NDArray[np.floating],
     predicted: npt.NDArray[np.floating],

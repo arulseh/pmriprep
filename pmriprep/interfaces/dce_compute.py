@@ -712,6 +712,84 @@ def _fit_with_split_constraint(
     )
 
 
+def _init_batched_worker() -> None:
+    """Minimal ProcessPool initializer for batched LM chunk workers.
+
+    Caps BLAS threads to 1 per worker so ``n_procs × OpenBLAS_threads``
+    does not oversubscribe the CPU. Does NOT build models / fitters /
+    priors — those belong to the per-voxel VI/MCMC ``_init_worker``.
+    """
+    from pmriprep.utils.parallel import limit_worker_threads
+
+    limit_worker_threads()
+    import warnings
+
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+
+def _fit_chunk_nlls(
+    args: tuple[
+        str,
+        npt.NDArray[np.floating],
+        npt.NDArray[np.floating],
+        npt.NDArray[np.floating],
+        Optional[npt.NDArray[np.floating]],
+        Optional[npt.NDArray[np.floating]],
+        bool,
+        bool,
+    ],
+) -> Any:
+    """Fit one voxel chunk via batched LM / lstsq with mixed-constraint split.
+
+    Picklable entry point for ``ProcessPoolExecutor``. Deterministic:
+    ``batched_lm_fit`` carries no RNG, so no seed plumbing is needed
+    unless that changes in the future.
+
+    Args tuple:
+        (model_name, tissue_curves_chunk, aif, time_points,
+         fixed_vp_chunk_or_None, weights_or_None, save_fitted_curves,
+         compute_uncertainties)
+
+    Returns:
+        Per-chunk FitResult.
+    """
+    from pmriprep.models.dce.batched_fitting import (
+        batched_lm_fit,
+        batched_patlak_lstsq,
+    )
+
+    (
+        model_name,
+        tissue_curves,
+        aif,
+        time_points,
+        fixed_vp,
+        weights,
+        save_fitted_curves,
+        compute_uncertainties,
+    ) = args
+
+    # Closures are cheap to build inside the worker (not pickled across
+    # processes); aif and time_points have already been transferred.
+    if model_name == "patlak":
+        def fit_fn(tc: npt.NDArray[np.floating], **kw: Any) -> Any:
+            return batched_patlak_lstsq(tc, aif, time_points, **kw)
+    else:
+        def fit_fn(tc: npt.NDArray[np.floating], **kw: Any) -> Any:
+            return batched_lm_fit(model_name, tc, aif, time_points, **kw)
+
+    return _fit_with_split_constraint(
+        fit_fn,
+        tissue_curves,
+        fixed_vp,
+        model_name,
+        len(tissue_curves),
+        weights=weights,
+        save_fitted_curves=save_fitted_curves,
+        compute_uncertainties=compute_uncertainties,
+    )
+
+
 class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDCEMaps interface."""
 
@@ -2378,6 +2456,77 @@ class ComputeDCEMaps(BaseInterface):
 
         return runtime
 
+    def _dispatch_batched_chunks(
+        self,
+        model_name: str,
+        tissue_curves: npt.NDArray[np.floating],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+        fixed_vp: Optional[npt.NDArray[np.floating]],
+        weights: Optional[npt.NDArray[np.floating]],
+        save_fitted_curves: bool,
+        compute_uncertainties: bool,
+        n_procs: int,
+        n_voxels: int,
+    ) -> Any:
+        """Split voxels into n_procs chunks and fit each chunk in parallel.
+
+        Each worker runs batched LM / lstsq on its slice (preserving the
+        NumPy vectorization win) while n_procs workers run in parallel
+        (giving multi-core utilization). The parent concatenates the
+        per-chunk FitResults in voxel order.
+
+        Falls back to a single in-process call when ``n_procs <= 1`` or
+        the voxel count is below ``max(1000, 4 * n_procs)`` — below that
+        threshold, process-spawn overhead (~100 ms) dominates the batched
+        LM runtime and multiproc is a net loss.
+        """
+        from pmriprep.models.dce.batched_fitting import concat_fit_results
+
+        compute_unc = bool(compute_uncertainties)
+        save_curves = bool(save_fitted_curves)
+
+        chunk_floor = max(1000, 4 * n_procs)
+        if n_procs <= 1 or n_voxels < chunk_floor:
+            return _fit_chunk_nlls(
+                (
+                    model_name, tissue_curves, aif, time_points,
+                    fixed_vp, weights, save_curves, compute_unc,
+                )
+            )
+
+        # Contiguous index chunks preserve voxel order across concat.
+        chunk_index_arrays = np.array_split(np.arange(n_voxels), n_procs)
+        chunk_args = []
+        for idx in chunk_index_arrays:
+            tc_chunk = tissue_curves[idx]
+            fvp_chunk = fixed_vp[idx] if fixed_vp is not None else None
+            chunk_args.append(
+                (
+                    model_name, tc_chunk, aif, time_points,
+                    fvp_chunk, weights, save_curves, compute_unc,
+                )
+            )
+
+        from concurrent.futures import ProcessPoolExecutor
+
+        executor = ProcessPoolExecutor(
+            max_workers=n_procs,
+            initializer=_init_batched_worker,
+        )
+        try:
+            chunk_results = list(executor.map(_fit_chunk_nlls, chunk_args))
+        except (KeyboardInterrupt, SystemExit):
+            logger.warning(
+                "Interrupted during parallel DCE batched fitting, "
+                "cancelling workers"
+            )
+            raise
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        return concat_fit_results(chunk_results, n_voxels)
+
     def _fit_batched(
         self,
         conc_data: npt.NDArray[Any],
@@ -2431,11 +2580,7 @@ class ComputeDCEMaps(BaseInterface):
         Returns:
             List of result dicts matching _fit_single_voxel output format.
         """
-        from pmriprep.models.dce.batched_fitting import (
-            FitResult,
-            batched_lm_fit,
-            batched_patlak_lstsq,
-        )
+        from pmriprep.models.dce.batched_fitting import FitResult
         from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
         n_voxels = len(mask_coords[0])
@@ -2481,29 +2626,22 @@ class ComputeDCEMaps(BaseInterface):
         results: list[dict[str, Any]] = []
 
         if not is_auto:
-            # Single-model batched fit with split constraint handling
-            if model_name == "patlak":
-                def _patlak_fit(tc: npt.NDArray[np.floating], **kw: Any) -> FitResult:
-                    return batched_patlak_lstsq(
-                        tc, aif, time_points, **kw,
-                    )
-                fit_result = _fit_with_split_constraint(
-                    _patlak_fit, tissue_curves, fixed_vp, model_name, n_voxels,
-                    weights=motion_weights,
-                    save_fitted_curves=save_fitted_curves,
-                    compute_uncertainties=bayesian == "none",
-                )
-            else:
-                def _lm_fit(tc: npt.NDArray[np.floating], **kw: Any) -> FitResult:
-                    return batched_lm_fit(
-                        model_name, tc, aif, time_points, **kw,
-                    )
-                fit_result = _fit_with_split_constraint(
-                    _lm_fit, tissue_curves, fixed_vp, model_name, n_voxels,
-                    weights=motion_weights,
-                    save_fitted_curves=save_fitted_curves or bayesian == "map",
-                    compute_uncertainties=bayesian == "none",
-                )
+            # Single-model batched fit with split constraint handling,
+            # parallelized across n_procs voxel chunks.
+            fit_result = self._dispatch_batched_chunks(
+                model_name=model_name,
+                tissue_curves=tissue_curves,
+                aif=aif,
+                time_points=time_points,
+                fixed_vp=fixed_vp,
+                weights=motion_weights,
+                save_fitted_curves=(
+                    save_fitted_curves or bayesian == "map"
+                ) if model_name != "patlak" else save_fitted_curves,
+                compute_uncertainties=bayesian == "none",
+                n_procs=n_procs,
+                n_voxels=n_voxels,
+            )
 
             results = self._fit_result_to_dicts(
                 fit_result, coords, model_name,
@@ -2524,22 +2662,18 @@ class ComputeDCEMaps(BaseInterface):
         fit_results: dict[str, FitResult] = {}
         for cname in candidate_names:
             try:
-                if cname == "patlak":
-                    def _patlak_auto(tc: npt.NDArray[np.floating], **kw: Any) -> FitResult:
-                        return batched_patlak_lstsq(tc, aif, time_points, **kw)
-                    fit_results[cname] = _fit_with_split_constraint(
-                        _patlak_auto, tissue_curves, fixed_vp, cname, n_voxels,
-                        weights=motion_weights,
-                        save_fitted_curves=True,
-                    )
-                else:
-                    def _lm_auto(tc: npt.NDArray[np.floating], *, _model: str = cname, **kw: Any) -> FitResult:
-                        return batched_lm_fit(_model, tc, aif, time_points, **kw)
-                    fit_results[cname] = _fit_with_split_constraint(
-                        _lm_auto, tissue_curves, fixed_vp, cname, n_voxels,
-                        weights=motion_weights,
-                        save_fitted_curves=True,
-                    )
+                fit_results[cname] = self._dispatch_batched_chunks(
+                    model_name=cname,
+                    tissue_curves=tissue_curves,
+                    aif=aif,
+                    time_points=time_points,
+                    fixed_vp=fixed_vp,
+                    weights=motion_weights,
+                    save_fitted_curves=True,
+                    compute_uncertainties=False,
+                    n_procs=n_procs,
+                    n_voxels=n_voxels,
+                )
             except Exception:
                 logger.warning("Batched auto-mode: model %s failed", cname, exc_info=True)
 
