@@ -567,10 +567,10 @@ If you use PMRIPrep in your research, please cite:
   title = {PMRIPrep: Perfusion MRI Preprocessing Pipeline},
   author = {PMRIPrep Developers},
   year = {2026},
-  url = {https://github.com/pmriprep/pmriprep}
+  url = {https://github.com/arulseh/pmriprep}
 }
 ```
 
 ## Support
 
-- **Issues**: https://github.com/pmriprep/pmriprep/issues
+- **Issues**: https://github.com/arulseh/pmriprep/issues

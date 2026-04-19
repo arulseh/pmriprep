@@ -2184,6 +2184,37 @@ class ComputeDCEMaps(BaseInterface):
                     qc_metrics["ve_histogram"] = hist_counts_ve.tolist()
                     qc_metrics["ve_histogram_edges"] = hist_edges_ve.tolist()
 
+        # Zero background (outside brain mask) on every float map before
+        # save. Preserves in-brain NaN so auto-mode "parameter not applicable
+        # for the winning model" semantics still reach downstream consumers.
+        ktrans = np.where(mask_bool, ktrans, 0.0)
+        ve = np.where(mask_bool, ve, 0.0)
+        vp = np.where(mask_bool, vp, 0.0)
+        kep = np.where(mask_bool, kep, 0.0)
+        r2_map = np.where(mask_bool, r2_map, 0.0)
+        fp_map = np.where(mask_bool, fp_map, 0.0)
+        ps_map = np.where(mask_bool, ps_map, 0.0)
+        e_map = np.where(mask_bool, e_map, 0.0)
+        delta_bic_map = np.where(mask_bool, delta_bic_map, 0.0)
+        ktrans_std = np.where(mask_bool, ktrans_std, 0.0)
+        ve_std = np.where(mask_bool, ve_std, 0.0)
+        vp_std = np.where(mask_bool, vp_std, 0.0)
+        fp_std = np.where(mask_bool, fp_std, 0.0)
+        ps_std = np.where(mask_bool, ps_std, 0.0)
+        tsnr_map = np.where(mask_bool, tsnr_map, 0.0)
+        iauc60 = np.where(mask_bool, iauc60, 0.0)
+        iauc90 = np.where(mask_bool, iauc90, 0.0)
+        iauc120 = np.where(mask_bool, iauc120, 0.0)
+        ttp = np.where(mask_bool, ttp, 0.0)
+        ser = np.where(mask_bool, ser, 0.0)
+        wash_in_slope = np.where(mask_bool, wash_in_slope, 0.0)
+        wash_out_slope = np.where(mask_bool, wash_out_slope, 0.0)
+        bat = np.where(mask_bool, bat, 0.0)
+        if peak_enh is not None:
+            peak_enh = np.where(mask_bool, peak_enh, 0.0)
+        if fitted_curves is not None:
+            fitted_curves = np.where(mask_bool[..., np.newaxis], fitted_curves, 0.0)
+
         # Generate output filenames
         out_ktrans = self._gen_outfilename("_Ktrans")
         out_r2 = self._gen_outfilename("_R2")
@@ -2236,7 +2267,6 @@ class ComputeDCEMaps(BaseInterface):
             (bat, out_bat_path),
         ]
         if peak_enh is not None:
-            peak_enh[~mask_bool] = 0.0
             save_list.insert(3, (peak_enh, out_peak_enh_path))
         for arr, path in save_list:
             img = nib.Nifti1Image(arr.astype(np.float32), affine, header)  # type: ignore[attr-defined]
@@ -2335,6 +2365,7 @@ class ComputeDCEMaps(BaseInterface):
                 ktrans_cv = np.where(
                     ktrans > EPSILON_VE, ktrans_std / ktrans, cv_fill
                 ).astype(np.float32)
+            ktrans_cv = np.where(mask_bool, ktrans_cv, 0.0)
 
             out_ktrans_cv = self._gen_outfilename("_Ktrans_cv")
             nib.save(nib.Nifti1Image(ktrans_cv, affine, header), out_ktrans_cv)  # type: ignore[attr-defined]
@@ -2345,6 +2376,7 @@ class ComputeDCEMaps(BaseInterface):
                     ve_cv = np.where(
                         ve > EPSILON_VE, ve_std / ve, cv_fill
                     ).astype(np.float32)
+                ve_cv = np.where(mask_bool, ve_cv, 0.0)
                 out_ve_cv = self._gen_outfilename("_ve_cv")
                 nib.save(nib.Nifti1Image(ve_cv, affine, header), out_ve_cv)  # type: ignore[attr-defined]
                 self._results["out_ve_cv"] = out_ve_cv
@@ -2354,6 +2386,7 @@ class ComputeDCEMaps(BaseInterface):
                     vp_cv = np.where(
                         vp > EPSILON_VE, vp_std / vp, cv_fill
                     ).astype(np.float32)
+                vp_cv = np.where(mask_bool, vp_cv, 0.0)
                 out_vp_cv = self._gen_outfilename("_vp_cv")
                 nib.save(nib.Nifti1Image(vp_cv, affine, header), out_vp_cv)  # type: ignore[attr-defined]
                 self._results["out_vp_cv"] = out_vp_cv

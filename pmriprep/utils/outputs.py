@@ -137,7 +137,7 @@ def write_dataset_description(pipeline_dir: Path, bids_dir: str) -> None:
         ],
         "HowToAcknowledge": (
             f"Please cite PMRIPrep (version {pmriprep.__version__}), "
-            "https://github.com/pmriprep/pmriprep"
+            "https://github.com/arulseh/pmriprep"
         ),
         "License": "BSD-3-Clause",
     }
