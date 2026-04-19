@@ -877,6 +877,13 @@ class DCEDerivativeWriter(BaseInterface):
                 enriched = enrich_provenance_from_qc(sidecar, qc, "DCE")
                 sidecar.update(enriched)
 
+            sidecar["KtransConvention"] = "plasma_Tofts1999"
+            hct_used = None
+            if isdefined(qc) and qc:
+                hct_used = qc.get("aif_detection", {}).get("hematocrit")
+            if hct_used is not None:
+                sidecar["KtransConventionHct"] = float(hct_used)
+
         return sidecar
 
     @staticmethod

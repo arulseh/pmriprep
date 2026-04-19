@@ -2884,14 +2884,18 @@ class AIFDetection(BaseInterface):
                 )
                 bat_override = True
 
-            # Scale population AIF to match pipeline's internal AIF convention.
-            # The detected AIF path applies /(1-Hct) to convert blood-voxel
-            # ΔR1/r1 to true plasma concentration C_p (see line 2744).
-            # Parker (2006) derived AIF parameters from ΔR1/r1 in blood voxels
-            # WITHOUT Hct correction. Under FXL, ΔR1/r1 = (1-Hct) × C_p,
-            # so Parker's reported "C_p" values are effectively in (1-Hct)*C_p
-            # units. Dividing by (1-Hct) brings the population AIF into the
-            # same true-plasma scale as the Hct-corrected detected AIF.
+            # Scale population AIF to match pipeline's plasma-Tofts
+            # convention (Tofts 1999 JMRI; QIBA DCE-MRI Profile v2.0).
+            # Parker's published AIF parameters were derived from blood-voxel
+            # ΔR1/r1 in a cohort with Hct = 0.42, so under FXL the published
+            # "C_p" values are effectively (1-Hct) × C_p_true. Dividing by
+            # (1-Hct) brings the population AIF into the same plasma scale
+            # as the Hct-corrected detected AIF (line 2744) — required for
+            # longitudinal consistency when a subject flips between detected
+            # and population across sessions. OSIPI/QIBA DROs distribute
+            # Parker as C_p directly (test-harness convention); pmriprep's
+            # (1-Hct) ≈ 0.58× offset against OSIPI GT is a known harness-vs-
+            # clinical convention mismatch documented in the manuscript.
             aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
 
             detection_method = "population"

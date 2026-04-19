@@ -117,7 +117,7 @@ class DCEConfig:
 
     # DSC CBV constraint settings
     cbv_constraint_mode: str = "auto"  # "auto", "hard", "soft", "skip"
-    hematocrit: float = 0.42  # Arterial hematocrit (from blood draw)
+    hematocrit: float = 0.42  # Arterial Hct; Parker 2006 MRM used 0.42 in the original population-AIF derivation, so using Parker's fallback with 0.42 is internally self-consistent. Closer to GBM-cohort mean (~0.38) than QIBA Profile v2.0's adult-healthy-male 0.45.
 
     # Resource settings
     num_processes: int = 0  # 0 = use system default
