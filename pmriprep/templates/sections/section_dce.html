@@ -619,12 +619,6 @@
                     {%- else %} unknown{% endif %}"
                     {%- if cbv_c.mode == 'hard' %} title="HARD equality is an unsupported physics claim — DSC CBV and DCE vp measure different vascular compartments. Requires explicit user override."{% endif %}>{{ cbv_c.mode }}</div>
             </div>
-            {% if cbv_c.downgrade_from is defined %}
-            <div class="metric">
-                <div class="metric-label">Downgraded</div>
-                <div class="metric-value"><span class="pass">{{ cbv_c.downgrade_from }}</span> &rarr; <span class="warn">{{ cbv_c.mode }}</span></div>
-            </div>
-            {% endif %}
         </div>
         {% if cbv_c.reason is defined %}
         <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">

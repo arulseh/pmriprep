@@ -828,36 +828,37 @@ VP_MAX_PHYSIOLOGICAL: Final[float] = 0.2
 
 #: Physiological plasma volume fraction assumed for contralateral NAWM.
 #: Used as the anchor for converting nCBV → vp prior in the DSC→DCE
-#: cross-modality constraint. Sources: Rostrup 2000 (NAWM CBV ~2.5 mL/100g);
-#: Ostergaard 1996; ASFNR consensus Boxerman 2020. With Hct=0.42, ρ=1.04:
-#: true NAWM vp ≈ 0.016–0.02.
-NAWM_VP_REFERENCE: Final[float] = 0.02
+#: cross-modality constraint. Source: Larsson et al. MRM 2009;62:1270
+#: (direct DCE measurement, NAWM vp = 0.0089 ± 0.0038). Corroborated by
+#: Sourbron & Buckley NMR Biomed 2013;26:1004 (WM vp 0.005–0.02 literature
+#: range).
+#:
+#: Hct closure constraint: this anchor uses the same large-vessel Hct =
+#: 0.42 convention as the AIF-path /(1-Hct) conversion at ``dce_aif.py``.
+#: Mixing capillary-Hct and large-vessel-Hct across the AIF→tissue chain
+#: violates plasma-fraction closure.
+NAWM_VP_REFERENCE: Final[float] = 0.010
 
 #: Physiological plausibility range for DCE vp prior (plasma volume fraction).
 #: With vp = NAWM_VP_REFERENCE × nCBV and physiological whole-brain nCBV
-#: medians ~0.4–3.0 (NAWM=1 by construction, tumor-heavy subjects up to ~3),
-#: vp_median is algebraically pinned near 0.008–0.06. A scale error in
-#: nCBV or a corrupted NAWM mask breaches this range. For reference, the
-#: pre-v0.25.1 relative-AUC-CBV bug drove vp_median to ~0.2 (clearly caught).
-#: WM vp ≈ 0.01–0.02, GM ≈ 0.02–0.04, tumor ≈ 0.03–0.08.
-#: Tightened from v0.25.3's [0.005, 0.10] per physics-expert 2026-04-18
-#: consult: the NAWM-anchored path no longer needs loose bounds since the
-#: only remaining failure modes (bad NAWM mask, corrupted nCBV scale) all
-#: breach [0.008, 0.06] as well.
-VP_MEDIAN_MIN: Final[float] = 0.008
-VP_MEDIAN_MAX: Final[float] = 0.06
+#: medians ~0.4–3.0, vp_median is algebraically pinned near 0.005–0.03.
+#: A scale error in nCBV or a corrupted NAWM mask breaches this range.
+#: WM vp ≈ 0.005–0.015 (Larsson 2009), GM ≈ 0.015–0.025, tumor ≈ 0.02–0.05.
+#: Factor-of-3 band around the NAWM anchor preserves the
+#: gross-miscalibration semantics of the gate.
+VP_MEDIAN_MIN: Final[float] = 0.005
+VP_MEDIAN_MAX: Final[float] = 0.03
 
 #: Acceptable tolerance on the post-DCE-fit vp / nCBV ratio, used by
-#: cross-validation. Target is NAWM_VP_REFERENCE (0.02). Tolerance is a
-#: factor-of-2 in either direction (log-symmetric) — physics-expert
-#: verified: RSS of Hct ±20%, NAWM CBV ±15%, DCE NLLS noise ±25%,
-#: σ=0.40 posterior spread ±15% is ~40% per-component → factor-of-2
-#: (±100%) is appropriately conservative for a gross-miscalibration
-#: gate, not intended to flag normal biological scatter.
-#: Values outside [0.01, 0.04] indicate the DCE posterior vp and DSC nCBV
+#: cross-validation. Target is NAWM_VP_REFERENCE (0.010). Tolerance is a
+#: factor-of-2 in either direction (log-symmetric) — the Hct ±20%, NAWM
+#: CBV ±15%, DCE NLLS noise ±25%, σ=0.40 posterior spread ±15% per-component
+#: RSS is ~40%, so factor-of-2 (±100%) is conservative for a
+#: gross-miscalibration gate rather than a biological-scatter flag.
+#: Values outside [0.005, 0.02] indicate the DCE posterior vp and DSC nCBV
 #: don't agree within expected tolerance — flag as validation mismatch.
-VP_NCBV_RATIO_MIN: Final[float] = 0.01
-VP_NCBV_RATIO_MAX: Final[float] = 0.04
+VP_NCBV_RATIO_MIN: Final[float] = 0.005
+VP_NCBV_RATIO_MAX: Final[float] = 0.02
 
 #: nCBV input range for cross-validation (per-voxel values to retain).
 #: Upper bound 5.0 covers hypervascular HGG tumor rim (Law 2008, Hu 2009
@@ -866,20 +867,23 @@ VP_NCBV_RATIO_MAX: Final[float] = 0.04
 MIN_NCBV_FOR_VALIDATION: Final[float] = 0.3
 MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
 
-#: Default soft-prior sigma values for vp constraint, calibrated for
-#: NAWM-normalized rCBV → vp conversion. Widened from prior 0.2/0.12/0.30
-#: per 2026-04 physics review: DSC→DCE scale uncertainty is genuinely
-#: ~40–50% even with NAWM normalization due to compartment differences
-#: between all-vessel CBV and capillary-plasma vp.
+#: Soft-prior sigma for the DCE vp constraint under NAWM-normalized nCBV.
+#: Unified at 0.40 — the ~40–50% residual scale uncertainty is dominated
+#: by Hct heterogeneity (~15% CoV) and capillary-vs-total-vessel volume
+#: partitioning (~20%), which are biological and do not diminish with
+#: better DSC SNR. Stratifying σ by DSC confidence confuses orthogonal
+#: uncertainties; a single σ = 0.40 is the physical floor. The three
+#: constants below are retained (vs collapsed) as hooks for a future
+#: re-stratification review; all currently equal 0.40.
 SIGMA_SOFT_DEFAULT: Final[float] = 0.40
-SIGMA_SOFT_PRELOAD_SUPPRESSED: Final[float] = 0.25
-SIGMA_SOFT_HIGH_K2: Final[float] = 0.50
+SIGMA_SOFT_PRELOAD_SUPPRESSED: Final[float] = 0.40
+SIGMA_SOFT_HIGH_K2: Final[float] = 0.40
 
 #: Circular-detector std threshold when cross-validation uses nCBV.
-#: Ratio vp/nCBV is centered at NAWM_VP_REFERENCE=0.02; threshold ≈10%
-#: of that center separates "deterministic prior-dominated" (HARD or
-#: tight-SOFT) from "informative DCE posterior" (wide SOFT). Legacy
-#: threshold 0.01 stays for the non-nCBV path (vp/rel_cbv ratio scale).
+#: Ratio vp/nCBV is centered at NAWM_VP_REFERENCE;
+#: threshold ≈10% of that center separates "deterministic prior-dominated"
+#: (HARD or tight-SOFT) from "informative DCE posterior" (wide SOFT).
+#: Legacy threshold 0.01 stays for the non-nCBV path (vp/rel_cbv ratio scale).
 CIRCULAR_STD_THRESHOLD_NCBV: Final[float] = 0.002
 CIRCULAR_STD_THRESHOLD_ABS_CBV: Final[float] = 0.01
 
@@ -892,13 +896,16 @@ ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD: Final[float] = 0.7
 #: Widened lower edge of the vp/nCBV ratio band, applied only when the
 #: ``acquisition_limited`` flag fires. Pinned at the brain-capillary
 #: physiological floor (Pardridge 2011, vp ≥ 0.005) so it does not
-#: undercut ``VP_MEDIAN_MIN`` — excursions below 0.005 remain a real data
-#: issue even in the prior-dominated regime.
+#: undercut the magnitude-plausibility gate. Acquisition-limited CRLB band
+#: from Buckley MRM 2002 first-pass temporal-undersampling analysis —
+#: independent of ``NAWM_VP_REFERENCE`` position (physics-expert 2026-04-19).
+#: Excursions below 0.005 remain a real data issue even in the
+#: prior-dominated regime.
 VP_NCBV_RATIO_MIN_LIMITED: Final[float] = 0.005
 
-#: Widened upper edge of the vp/nCBV ratio band. Aligned with
-#: ``VP_MEDIAN_MAX`` (not the tight ``VP_NCBV_RATIO_MAX``): the widened
-#: band brackets the prior-dominated NAWM posterior envelope and
-#: intentionally spans up to the magnitude-gate ceiling. Scope is NAWM
-#: ratios — tumor-vp excursions are outside the xval domain.
+#: Widened upper edge of the vp/nCBV ratio band. Acquisition-limited CRLB
+#: ceiling from Buckley MRM 2002 — independent of ``NAWM_VP_REFERENCE``.
+#: The widened band brackets the prior-dominated NAWM posterior envelope
+#: and intentionally spans up to the legacy magnitude-gate ceiling. Scope
+#: is NAWM ratios — tumor-vp excursions are outside the xval domain.
 VP_NCBV_RATIO_MAX_LIMITED: Final[float] = 0.06

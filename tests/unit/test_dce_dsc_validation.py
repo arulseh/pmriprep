@@ -336,15 +336,17 @@ class TestNcbvPathValidation:
         """use_ncbv_scale=True anchors expected ratio to NAWM_VP_REFERENCE."""
         from pmriprep.utils.dce_constants import NAWM_VP_REFERENCE
 
-        # Generate nCBV centered at 1.0 (NAWM reference), vp centered at 0.02
-        # with partially independent noise so std(vp/nCBV) > the circular gate.
+        # Generate nCBV centered at 1.0 (NAWM reference), vp centered at
+        # NAWM_VP_REFERENCE with partially independent noise so std(vp/nCBV)
+        # > the circular gate.
         n = 5000
         rng = np.random.default_rng(7)
         z1 = rng.standard_normal(n)
         z2 = rng.standard_normal(n)
         ncbv_flat = np.clip(1.0 + 0.3 * z1, 0.4, 4.5)
         vp_flat = np.clip(
-            0.020 + 0.005 * (0.5 * z1 + 0.87 * z2), 0.003, 0.14
+            NAWM_VP_REFERENCE + 0.003 * (0.5 * z1 + 0.87 * z2),
+            0.002, 0.07,
         )
         ncbv = ncbv_flat.reshape(n, 1, 1)
         vp = vp_flat.reshape(n, 1, 1)
@@ -353,10 +355,10 @@ class TestNcbvPathValidation:
         result = validate_vp_cbv(
             vp, ncbv, mask, constraint_mode="skip", use_ncbv_scale=True,
         )
-        # Median vp/nCBV should be near NAWM_VP_REFERENCE (0.02) and inside
-        # the factor-of-2 tolerance band.
+        # Median vp/nCBV should be near NAWM_VP_REFERENCE and inside the
+        # factor-of-2 tolerance band.
         assert result.metrics.median_ratio == pytest.approx(
-            NAWM_VP_REFERENCE, abs=0.005
+            NAWM_VP_REFERENCE, abs=0.003
         )
         assert result.circular is False
 

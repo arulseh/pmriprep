@@ -1571,45 +1571,6 @@ class ComputeDCEMaps(BaseInterface):
                 constraint_vp_uncertainty = vp_result.config.vp_uncertainty
                 constraint_qc = vp_result.qc_report
 
-                # 2CXM: vp enters nonlinearly (eigenvalues, coefficients).
-                # Hard-fixing vp propagates DSC CBV error into Fp and PS
-                # via k_out=Fp/vp and k_pe=PS/vp. Default to SOFT.
-                if (
-                    model_name == "2cxm"
-                    and constraint_mode == ConstraintMode.HARD
-                    and str(self.inputs.constraint_mode) == "auto"
-                ):
-                    constraint_mode = ConstraintMode.SOFT
-                    constraint_vp_uncertainty = 0.2
-                    constraint_qc["downgrade_from"] = "hard"
-                    constraint_qc["mode"] = "soft"
-                    constraint_qc["reason"] = (
-                        "2CXM model: hard->soft (vp enters nonlinearly)"
-                    )
-
-                # Bayesian (MAP/MCMC): hard constraint bypasses the
-                # Bayesian fitter and uses L-BFGS-B, which converges
-                # non-enhancing voxels to exact bounds (Ktrans=0.0)
-                # triggering mass post-fit rejection. SOFT uses the
-                # Bayesian fitter with an informative DSC prior on vp.
-                # Must run BEFORE scale mismatch so SOFT mode can
-                # widen uncertainty instead of downgrading to SKIP.
-                if (
-                    str(self.inputs.bayesian) != "none"
-                    and constraint_mode == ConstraintMode.HARD
-                    and str(self.inputs.constraint_mode) == "auto"
-                ):
-                    constraint_mode = ConstraintMode.SOFT
-                    constraint_vp_uncertainty = 0.2
-                    constraint_qc["downgrade_from"] = constraint_qc.get(
-                        "downgrade_from", "hard"
-                    )
-                    constraint_qc["mode"] = "soft"
-                    constraint_qc["reason"] = (
-                        "Bayesian fitting: hard->soft "
-                        "(informative prior on vp)"
-                    )
-
                 # Acquisition-limited diagnostic (v0.25.4+, replacing the
                 # v0.25.0 scale-mismatch sigma-widening safeguard).
                 #
@@ -2103,6 +2064,21 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["n_unconstrained_fallback"] = n_unconstrained_fallback
         qc_metrics["n_rejected_postfit"] = n_rejected_postfit
         qc_metrics["failure_reasons"] = failure_reason_counts
+
+        # FXL-suspect whole-brain flag. Tissue Ct peaks above ~0.8 mM
+        # violate the Tofts fast-exchange-limit assumption (Landis MRM
+        # 2000; Li MRM 2005). conc_data is already baseline-subtracted
+        # (C_t = (R1(t) - R1(0))/r1). Tumor-mask-stratified fraction
+        # emitted in _generate_dce_pk_fit_qc. Shutter-speed model is not
+        # viable at this pipeline's clinical TR_vol — report only.
+        _fxl_peak_ct = np.nanmax(conc_data, axis=-1)
+        _in_brain = fitting_mask & np.isfinite(_fxl_peak_ct)
+        if np.any(_in_brain):
+            qc_metrics["frac_fxl_risk_whole_brain"] = float(
+                np.mean(_fxl_peak_ct[_in_brain] > 0.8)
+            )
+        else:
+            qc_metrics["frac_fxl_risk_whole_brain"] = 0.0
 
         qc_metrics["model_selection"] = "auto" if is_auto else "fixed"
 

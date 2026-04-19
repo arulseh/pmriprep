@@ -314,11 +314,14 @@ class TestAssessDSCCBVQuality:
 class TestDetermineConstraintMode:
     """Tests for determine_constraint_mode."""
 
-    def test_high_quality_soft_tight(self) -> None:
-        """High confidence in auto mode emits tight SOFT, never HARD (v0.25.0+).
+    def test_high_quality_soft_uses_unified_sigma(self) -> None:
+        """High confidence in auto mode emits SOFT at unified σ = 0.40 (v0.27.0+).
 
         DSC CBV and DCE vp measure different vascular compartments; HARD
         equality is an unsupported physics claim, so ``auto`` caps at SOFT.
+        σ is unified at 0.40 across confidence tiers because the residual
+        scale uncertainty is biological (Hct heterogeneity + compartment
+        partitioning) and does not reduce with DSC SNR.
         """
         quality = CBVQualityAssessment(
             confidence="high",
@@ -327,7 +330,7 @@ class TestDetermineConstraintMode:
         )
         config = determine_constraint_mode(quality)
         assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.20)
+        assert config.vp_uncertainty == pytest.approx(0.40)
 
     def test_moderate_quality_soft(self) -> None:
         """Moderate confidence produces soft constraint with widened sigma."""
@@ -637,8 +640,13 @@ class TestPreloadAwareUncertainty:
         reasons=["CNR coverage 0.90 < 0.99"],
     )
 
-    def test_preload_low_k2_tightens_soft(self) -> None:
-        """Preload + low K2 → tightened SIGMA_SOFT_PRELOAD_SUPPRESSED (0.25)."""
+    def test_preload_low_k2_uses_unified_sigma(self) -> None:
+        """Preload + low K2 tier uses unified σ = 0.40 (v0.27.0+).
+
+        The preload/K2 tiers still set their reason-string suffix for QC
+        provenance, but σ no longer stratifies — biological uncertainty on
+        vp dominates and is DSC-SNR-independent.
+        """
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
@@ -646,11 +654,14 @@ class TestPreloadAwareUncertainty:
             k2_metrics=k2,
         )
         assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.25)
+        assert config.vp_uncertainty == pytest.approx(0.40)
         assert "preload" in config.reason.lower()
 
-    def test_no_preload_high_k2_widens_soft(self) -> None:
-        """No preload + high leaky → widened SIGMA_SOFT_HIGH_K2 (0.50)."""
+    def test_no_preload_high_k2_uses_unified_sigma(self) -> None:
+        """No preload + high leaky uses unified σ = 0.40 (v0.27.0+).
+
+        Previously stratified to σ=0.50; now unified with default.
+        """
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
@@ -658,7 +669,7 @@ class TestPreloadAwareUncertainty:
             k2_metrics=k2,
         )
         assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.50)
+        assert config.vp_uncertainty == pytest.approx(0.40)
         assert "k2" in config.reason.lower()
 
     def test_default_uncertainty_unchanged(self) -> None:
@@ -677,7 +688,7 @@ class TestPreloadAwareUncertainty:
         assert config.vp_uncertainty == pytest.approx(0.40)
 
     def test_high_confidence_caps_at_soft(self) -> None:
-        """High confidence in auto mode emits tight SOFT (0.20), never HARD."""
+        """High confidence in auto mode emits SOFT at unified σ = 0.40 (v0.27.0+), never HARD."""
         quality = CBVQualityAssessment(
             confidence="high", use_constraint=True, reasons=["All quality checks passed"],
         )
@@ -686,7 +697,7 @@ class TestPreloadAwareUncertainty:
             quality, preload_classification="half_dose", k2_metrics=k2,
         )
         assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.20)
+        assert config.vp_uncertainty == pytest.approx(0.40)
 
     def test_low_confidence_unaffected(self) -> None:
         """SKIP mode → preload/K2 don't change anything."""
@@ -744,9 +755,10 @@ class TestNcbvToVpPrior:
 
     def test_above_physiological_max_clipped_to_nan(self) -> None:
         """nCBV large enough to exceed VP_MAX_PHYSIOLOGICAL → NaN."""
-        # With NAWM_VP_REFERENCE = 0.02 and VP_MAX_PHYSIOLOGICAL = 0.2,
-        # nCBV = 15 gives vp = 0.30 which is beyond the physiological cap.
-        ncbv = np.array([15.0], dtype=np.float64)
+        # With NAWM_VP_REFERENCE = 0.010 (v0.27.0+) and VP_MAX_PHYSIOLOGICAL
+        # = 0.2, nCBV = 25 gives vp = 0.25 which is beyond the physiological
+        # cap.
+        ncbv = np.array([25.0], dtype=np.float64)
         vp = ncbv_to_vp_prior(ncbv)
         assert np.isnan(vp[0])
 
@@ -1062,6 +1074,68 @@ class TestCnrBypassFallThrough:
             agent_standard_dose=0.1,
         )
         assert result.confidence == "high"
+
+
+class TestSigmaUnification:
+    """v0.27.0: σ unified at 0.40 across all DSC-confidence + preload/K2 tiers.
+
+    Per physics-expert 2026-04-19: residual scale uncertainty on vp is
+    dominated by biological sources (Hct heterogeneity ~15% CoV, capillary-
+    vs-total vessel partitioning ~20%) which are DSC-SNR-independent.
+    Stratifying σ by DSC confidence confuses orthogonal uncertainties.
+    """
+
+    def test_all_confidence_tiers_emit_unified_sigma(self) -> None:
+        """High/moderate/low confidence paths (where SOFT emits) all use σ = 0.40."""
+        high = CBVQualityAssessment(confidence="high", use_constraint=True, reasons=[])
+        mod = CBVQualityAssessment(confidence="moderate", use_constraint=True, reasons=[])
+
+        cfg_high = determine_constraint_mode(high)
+        cfg_mod = determine_constraint_mode(mod)
+
+        assert cfg_high.mode == ConstraintMode.SOFT
+        assert cfg_mod.mode == ConstraintMode.SOFT
+        assert cfg_high.vp_uncertainty == pytest.approx(0.40)
+        assert cfg_mod.vp_uncertainty == pytest.approx(0.40)
+
+    def test_all_preload_k2_tiers_emit_unified_sigma(self) -> None:
+        """Preload-suppressed / high-K2 / default moderate paths all use σ = 0.40."""
+        mod = CBVQualityAssessment(confidence="moderate", use_constraint=True, reasons=[])
+        low_k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
+        high_k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
+
+        cfg_preload = determine_constraint_mode(
+            mod, preload_classification="half_dose", k2_metrics=low_k2,
+        )
+        cfg_highk2 = determine_constraint_mode(
+            mod, preload_classification="none", k2_metrics=high_k2,
+        )
+        cfg_default = determine_constraint_mode(mod)
+
+        assert cfg_preload.vp_uncertainty == pytest.approx(0.40)
+        assert cfg_highk2.vp_uncertainty == pytest.approx(0.40)
+        assert cfg_default.vp_uncertainty == pytest.approx(0.40)
+
+
+class TestNAWMVpReferenceAnchor:
+    """v0.27.0: NAWM_VP_REFERENCE = 0.010 from Larsson MRM 2009;62:1270.
+
+    Regression guard — pinning the anchor value ensures any future retuning
+    carries an explicit test update + citation.
+    """
+
+    def test_nawm_vp_reference_value(self) -> None:
+        from pmriprep.utils.dce_constants import NAWM_VP_REFERENCE
+        assert NAWM_VP_REFERENCE == 0.010
+
+    def test_nawm_vp_reference_inside_median_bounds(self) -> None:
+        """Anchor must sit inside [VP_MEDIAN_MIN, VP_MEDIAN_MAX] so normal
+        NAWM-like nCBV inputs never trip the magnitude gate.
+        """
+        from pmriprep.utils.dce_constants import (
+            NAWM_VP_REFERENCE, VP_MEDIAN_MIN, VP_MEDIAN_MAX,
+        )
+        assert VP_MEDIAN_MIN < NAWM_VP_REFERENCE < VP_MEDIAN_MAX
 
 
 class TestSkipReasonConstants:

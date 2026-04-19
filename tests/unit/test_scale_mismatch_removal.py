@@ -36,21 +36,20 @@ from pmriprep.utils.dce_constants import (
 
 
 class TestVpMedianBoundsTightened:
-    """v0.25.4: VP_MEDIAN_MIN/MAX tightened from [0.005, 0.10] to [0.008, 0.06]
-    for the NAWM-anchored path. Existing magnitude-gate fixtures (0.001
-    undershoot, 0.15 overshoot, 0.02 in-range) don't straddle the new
-    boundaries — confirmed by physics-expert + code review.
+    """v0.27.0: VP_MEDIAN_MIN/MAX re-tuned to [0.005, 0.03] around the
+    Larsson-2009-anchored NAWM_VP_REFERENCE = 0.010. Factor-of-3-either-side
+    band preserved to keep the gross-miscalibration gate intact.
     """
 
-    def test_vp_median_min_tightened(self) -> None:
-        assert VP_MEDIAN_MIN == pytest.approx(0.008)
+    def test_vp_median_min_retuned(self) -> None:
+        assert VP_MEDIAN_MIN == pytest.approx(0.005)
 
-    def test_vp_median_max_tightened(self) -> None:
-        assert VP_MEDIAN_MAX == pytest.approx(0.06)
+    def test_vp_median_max_retuned(self) -> None:
+        assert VP_MEDIAN_MAX == pytest.approx(0.03)
 
-    def test_nawm_anchor_inside_tightened_bounds(self) -> None:
-        """NAWM_VP_REFERENCE=0.02 should sit comfortably inside
-        [0.008, 0.06] so normal NAWM-like nCBV inputs never trip the gate.
+    def test_nawm_anchor_inside_retuned_bounds(self) -> None:
+        """NAWM_VP_REFERENCE=0.010 should sit inside [0.005, 0.03] so
+        normal NAWM-like nCBV inputs never trip the gate.
         """
         from pmriprep.utils.dce_constants import NAWM_VP_REFERENCE
         assert VP_MEDIAN_MIN < NAWM_VP_REFERENCE < VP_MEDIAN_MAX

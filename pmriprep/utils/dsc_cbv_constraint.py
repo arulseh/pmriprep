@@ -691,33 +691,33 @@ def ncbv_to_vp_prior(
 ) -> npt.NDArray[np.floating]:
     """Convert NAWM-normalized CBV (nCBV) to a vp prior map.
 
-    Assumes NAWM vp ≈ 0.02 (Rostrup 2000, ASFNR Boxerman 2020) and scales
-    linearly with the per-voxel nCBV ratio. Because nCBV cancels AIF
-    partial-volume, recirculation, and first-pass-truncation biases (all
-    affect numerator and denominator equally), this is the scientifically
-    defensible conversion from a DSC-derived relative volume measure to a
-    DCE vp prior, avoiding the unit ambiguities that plague direct
-    absolute-CBV → vp conversion with `cbv_to_vp`.
+    Anchors NAWM vp at ``NAWM_VP_REFERENCE`` (Larsson 2009 MRM direct
+    measurement) and scales linearly with the per-voxel
+    nCBV ratio. Because nCBV cancels AIF partial-volume, recirculation,
+    and first-pass-truncation biases (all affect numerator and denominator
+    equally), this is the scientifically defensible conversion from a
+    DSC-derived relative volume measure to a DCE vp prior, avoiding the
+    unit ambiguities that plague direct absolute-CBV → vp conversion with
+    ``cbv_to_vp``.
 
-    Hct convention: NAWM_VP_REFERENCE = 0.02 is the capillary-Hct-consistent
-    NAWM plasma volume fraction (Rostrup 2000 reports NAWM CBV ≈ 2.5 mL/100g;
-    with capillary Hct from Fåhræus ratio, vp ≈ (1-Hct_cap)·ρ·CBV/100 ≈ 0.016-
-    0.02). This is distinct from the arterial Hct used in ``dce_aif.py``'s
-    ``/(1-Hct_arterial)`` blood→plasma AIF conversion. The two Hct
-    conventions are physically independent and correctly applied to their
-    respective scales.
+    Hct closure constraint: this anchor uses the same large-vessel Hct =
+    0.42 convention as the AIF-path ``/(1-Hct)`` blood→plasma conversion
+    in ``dce_aif.py``. Mixing capillary-Hct (for the tissue vp anchor) and
+    large-vessel-Hct (for AIF conversion) across a single quantitative
+    chain violates plasma-fraction closure.
 
     Args:
         ncbv_data: 3D nCBV map (CBV / median(CBV_NAWM)), dimensionless.
-        nawm_vp_reference: Assumed NAWM vp. Default 0.02.
+        nawm_vp_reference: Assumed NAWM vp. Default NAWM_VP_REFERENCE (0.010).
 
     Returns:
         3D vp prior map (dimensionless), clipped to [0, VP_MAX_PHYSIOLOGICAL].
 
     References:
-        Rostrup E et al., NeuroImage 2000 (NAWM CBV ~2.5 mL/100g).
-        Boxerman JL et al., Neuro-Oncology 2020 (ASFNR/NCI consensus —
-        contralateral NAWM is the standard normalization reference).
+        Larsson HBW et al., MRM 2009;62:1270 (NAWM vp = 0.0089 ± 0.0038,
+        direct DCE measurement at matched Hct = 0.42).
+        Sourbron SP, Buckley DL, NMR Biomed 2013;26:1004 (WM vp 0.005–0.02
+        literature review).
     """
     ncbv_safe = np.where(
         np.isfinite(ncbv_data) & (ncbv_data >= 0),
@@ -746,19 +746,23 @@ def determine_constraint_mode(
 ) -> ConstraintConfig:
     """Determine constraint mode from DSC quality assessment.
 
-    Decision logic (v0.25.0+ per 2026-04 physics review):
+    Decision logic:
 
-    - User override (if not 'auto') takes priority. Explicit HARD emits a
+    - User override (if not 'auto') takes priority. Explicit HARD is
+      rejected at config validation for `2cxm` model and `vi`/`mcmc`
+      Bayesian because hard-fixing vp violates physics assumptions in
+      those paths (Sourbron & Buckley MRM 2013); otherwise HARD emits a
       warning because DSC CBV and DCE vp measure subtly different vascular
-      compartments (all-vessel vs capillary-plasma); HARD equality is an
-      unsupported physics claim even when CBV calibration is correct.
-    - **auto never emits HARD.** High quality → tight SOFT (σ=0.20);
-      moderate → SOFT with sigma that depends on preload/K2 status;
+      compartments (all-vessel vs capillary-plasma).
+    - **auto never emits HARD.** High quality → SOFT at unified σ;
+      moderate → SOFT at unified σ with preload/K2 reason annotation;
       low → SKIP (unconstrained).
 
-    Soft sigma values (widened from prior 0.2/0.12/0.30 per physics review):
-    DSC→DCE scale uncertainty is genuinely 40–50% from compartment differences
-    plus preload/K2 residuals. See SIGMA_SOFT_* in dce_constants.
+    Soft sigma is unified at ``SIGMA_SOFT_DEFAULT = 0.40`` across all
+    confidence and preload/K2 tiers — the residual scale uncertainty is
+    biological (Hct heterogeneity + compartment partitioning ≈ ±40%) and
+    does not reduce with better DSC SNR. The ``SIGMA_SOFT_*`` constants
+    are kept as separate names (future-hook), but currently all = 0.40.
 
     Args:
         dsc_quality: Quality assessment from assess_dsc_cbv_quality.
@@ -829,11 +833,14 @@ def determine_constraint_mode(
     confidence = dsc_quality.confidence
 
     if confidence == "high":
-        # High quality no longer emits HARD; use tight SOFT instead.
+        # High quality emits SOFT at the unified σ rather than HARD — DSC
+        # SNR does not reduce the biological uncertainty on vp (Hct
+        # heterogeneity + compartment partitioning ≈ ±40%), so stratifying
+        # σ by DSC confidence confuses orthogonal uncertainties.
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,
-            vp_uncertainty=0.20,
-            reason="high DSC quality (auto → tight SOFT)",
+            vp_uncertainty=SIGMA_SOFT_DEFAULT,
+            reason="high DSC quality (auto → SOFT, σ unified)",
         )
     elif confidence == "moderate":
         uncertainty = SIGMA_SOFT_DEFAULT
@@ -891,7 +898,7 @@ def prepare_vp_constraint(
     Orchestrates:
     1. Load nCBV map and AIF QC JSON
     2. Assess DSC CBV quality (on the nCBV distribution)
-    3. Convert nCBV to vp prior via ``ncbv_to_vp_prior`` (vp = 0.02 × nCBV)
+    3. Convert nCBV to vp prior via ``ncbv_to_vp_prior`` (vp = NAWM_VP_REFERENCE × nCBV)
     4. Determine constraint mode
     5. Magnitude gate: downgrade to SKIP if derived vp is outside physiological range
 

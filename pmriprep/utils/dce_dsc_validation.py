@@ -5,11 +5,11 @@ volume measure to validate quantification and detect preload effects.
 
 Two calibration paths are supported:
 
-- **nCBV path (v0.25.1+, default when the workflow supplies a NAWM-normalized
-  CBV):** expected ratio = ``NAWM_VP_REFERENCE`` (0.02, dimensionless); the
-  comparison is ``vp / nCBV`` voxelwise. NAWM normalization cancels AIF
-  partial-volume, recirculation, and first-pass truncation biases, which is
-  why this is the scientifically defensible path for clinical DSC.
+- **nCBV path (default when the workflow supplies a NAWM-normalized CBV):**
+  expected ratio = ``NAWM_VP_REFERENCE`` (dimensionless); the comparison is
+  ``vp / nCBV`` voxelwise. NAWM normalization cancels AIF partial-volume,
+  recirculation, and first-pass truncation biases, which is why this is
+  the scientifically defensible path for clinical DSC.
 
 - **Legacy absolute-CBV path:** expected ratio = ``(1 - Hct_cap) × ρ ≈ 0.669``
   assuming CBV in mL/100g and vp × 100 in mL/100mL. Retained for backward
@@ -27,8 +27,8 @@ with the ratio magnitude (0.002 on the nCBV path, 0.01 on the absolute path).
 References:
     - Boxerman et al., Neuro-Oncology 2020 (ASFNR/NCI consensus — NAWM
       normalization is the reference scale for clinical DSC).
-    - Rostrup et al., NeuroImage 2000 (physiological NAWM CBV ≈ 2.5 mL/100g
-      → NAWM vp ≈ 0.02).
+    - Larsson et al., MRM 2009;62:1270 (direct DCE-measured NAWM vp ≈ 0.0089
+      at matched Hct=0.42; anchor for ``NAWM_VP_REFERENCE``).
     - Schmainda et al., Theory and Application of Quantitative DCE-MRI (2021).
 """
 
@@ -92,8 +92,9 @@ CORRELATION_WARN_SOFT: float = 0.30
 
 #: Minimum fraction of valid voxels for reliable validation.
 #: Thresholds depend on DCE constraint mode because soft-constrained Bayesian
-#: vp fitting concentrates WM voxels at the lower bound (prior mean ~0.02,
-#: sigma ~0.01), so most fall below MIN_VP_FOR_VALIDATION = 0.001.
+#: vp fitting concentrates WM voxels at the lower bound (prior mean
+#: ~NAWM_VP_REFERENCE, σ = 0.40 × prior_mean), so most fall below
+#: MIN_VP_FOR_VALIDATION = 0.001.
 #: The 5-9% that pass represent well-perfused GM — the most informative
 #: subset for cross-validation.
 #: Unconstrained fitting has wider scatter → 35-60% expected coverage.
@@ -345,10 +346,11 @@ def validate_vp_cbv(
          anchoring (Rempp 1994; Knutsson 2010).
 
     - **nCBV (``use_ncbv_scale=True``):** CBV is NAWM-normalized
-      (dimensionless, NAWM=1). Expected ratio = ``NAWM_VP_REFERENCE`` (0.02)
-      by construction — vp prior was ``0.02 × nCBV``. Circular threshold
-      scales to ``std(vp/nCBV) < 0.002`` (10% of 0.02 ratio center); the
-      old 0.01 would misflag genuine 50% posterior spread as circular.
+      (dimensionless, NAWM=1). Expected ratio = ``NAWM_VP_REFERENCE`` by
+      construction — vp prior is ``NAWM_VP_REFERENCE × nCBV``. Circular
+      threshold scales to ``std(vp/nCBV) < 0.002`` (~10–20% of the ratio
+      center); the non-nCBV path's 0.01 would misflag genuine 50%
+      posterior spread as circular at this scale.
 
     Args:
         vp_data: 3D vp map array (fraction, 0-1 scale).
@@ -510,9 +512,9 @@ def validate_vp_cbv(
 
     # Detect near-circularity: soft constraint effectively locking vp to CBV.
     # Threshold scales with the ratio magnitude: for nCBV-anchored vp (ratio
-    # centered at NAWM_VP_REFERENCE ≈ 0.02), a 10% spread is std ≈ 0.002; for
-    # absolute CBV (ratio centered at ~0.006 mL/100g), the legacy 0.01 still
-    # flags tight-soft and HARD overrides.
+    # centered at NAWM_VP_REFERENCE), std ≈ 0.002 is ~10–20% of the ratio
+    # center; for absolute CBV (ratio centered at ~0.006 mL/100g), the
+    # legacy 0.01 still flags tight-soft and HARD overrides.
     if metrics.std_ratio < circular_std_threshold:
         result.circular = True
         result.status = QCStatus.CIRCULAR
@@ -722,8 +724,8 @@ def validate_vp_cbv_from_files(
         dsc_preload_configured: Whether DSC preload was configured.
         ncbv_path: Optional path to NAWM-normalized CBV (dimensionless nCBV).
             When provided, validation uses the nCBV path: expected ratio is
-            NAWM_VP_REFERENCE (0.02) and the circular-std threshold is scaled
-            to match (CIRCULAR_STD_THRESHOLD_NCBV ≈ 0.002).
+            NAWM_VP_REFERENCE and the circular-std threshold is scaled to
+            match (CIRCULAR_STD_THRESHOLD_NCBV ≈ 0.002).
 
     Returns:
         ValidationResult with status, preload detection, and metrics.

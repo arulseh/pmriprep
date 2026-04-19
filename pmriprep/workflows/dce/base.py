@@ -1464,6 +1464,7 @@ def init_dce_preproc_wf(
                 "ktrans_file", "ve_file", "vp_file", "fp_file", "ps_file",
                 "r2_file", "qc_mask_file", "fitted_curves_file",
                 "model_selection_file", "enhancing_mask_file",
+                "non_enhancing_mask_file",
                 "volume_tr", "baseline_frames",
                 "model_name", "subject_id", "session_id",
             ],
@@ -1506,6 +1507,9 @@ def init_dce_preproc_wf(
         ]),
         (transform_enhancing_mask, dce_pk_fit_qc, [
             ("out_file", "enhancing_mask_file"),
+        ]),
+        (transform_non_enhancing_mask, dce_pk_fit_qc, [
+            ("out_file", "non_enhancing_mask_file"),
         ]),
     ])
 
@@ -3049,8 +3053,8 @@ def _dsc_dce_validation_node(
 
     Args:
         dsc_ncbv_file: Optional NAWM-normalized CBV. When provided, validation
-            uses the nCBV-anchored expected ratio (NAWM_VP_REFERENCE = 0.02)
-            and the scaled circular-std threshold.
+            uses the nCBV-anchored expected ratio (``NAWM_VP_REFERENCE``) and
+            the scaled circular-std threshold.
         pk_qc: Full ``pk_modeling.qc_metrics`` dict (or a bare string for
             backwards compatibility). The function extracts
             ``dsc_cbv_constraint.mode`` and
@@ -3197,7 +3201,7 @@ def _dsc_dce_xval_plot_node(
         dsc_ncbv_file: Optional NAWM-normalized CBV. When provided (and the
             validation ran under use_ncbv_scale=True), the plot is drawn on
             the dimensionless nCBV scale with expected ratio =
-            NAWM_VP_REFERENCE (0.02), matching the validation metrics.
+            ``NAWM_VP_REFERENCE``, matching the validation metrics.
         pk_qc: Full ``pk_modeling.qc_metrics`` dict (or a bare mode string
             for backwards compatibility); the function extracts
             ``dsc_cbv_constraint.mode``.
@@ -4534,6 +4538,7 @@ def _generate_dce_pk_fit_qc(
     fitted_curves_file=None,
     model_selection_file=None,
     enhancing_mask_file=None,
+    non_enhancing_mask_file=None,
     volume_tr=1.0,
     baseline_frames=10,
     model_name="tofts",
@@ -4642,6 +4647,9 @@ def _generate_dce_pk_fit_qc(
 
         # Recompute single-voxel fitted curve
         qc_fitted_curve_1d = None
+        # Preload model-selection map so downstream stratified-Patlak code
+        # can reference it even if the inner fit-replay block raises.
+        model_sel_data = _safe_load(model_selection_file)
         try:
             from scipy.ndimage import binary_erosion
 
@@ -4666,7 +4674,6 @@ def _generate_dce_pk_fit_qc(
 
             # Determine model for the QC voxel
             _CODE_TO_MODEL = {1: "patlak", 2: "tofts", 3: "extended_tofts", 4: "2cxm"}
-            model_sel_data = _safe_load(model_selection_file)
 
             if is_auto and model_sel_data is not None:
                 qc_code = int(model_sel_data[qc_vx, qc_vy, qc_vz])
@@ -4716,6 +4723,79 @@ def _generate_dce_pk_fit_qc(
             subject_id=subject_id,
             session_id=session_id,
         )
+
+        # FXL-suspect tumor-stratified flag and ROI-stratified Patlak fractions.
+        # conc_data is already baseline-subtracted; np.nanmax gives peak tissue Ct
+        # per Landis MRM 2000 / Li MRM 2005. Report-only diagnostic — shutter-speed
+        # model not viable at clinical TR_vol.
+        peak_ct = np.nanmax(conc_data, axis=-1)
+
+        if enhancing_mask_data is not None:
+            enh_bool = enhancing_mask_data > 0.5
+            if np.any(enh_bool):
+                tumor_peak = peak_ct[enh_bool]
+                tumor_peak = tumor_peak[np.isfinite(tumor_peak)]
+                if tumor_peak.size > 0:
+                    frac_fxl_tumor = float(np.mean(tumor_peak > 0.8))
+                    pk_voxel_metrics["frac_fxl_risk_tumor"] = frac_fxl_tumor
+                    pk_voxel_metrics["p95_tumor_peak_Ct"] = float(
+                        np.percentile(tumor_peak, 95)
+                    )
+                    if frac_fxl_tumor > 0.15:
+                        pk_voxel_metrics["fxl_status"] = "FAIL"
+                    elif frac_fxl_tumor > 0.02:
+                        pk_voxel_metrics["fxl_status"] = "WARN"
+                    else:
+                        pk_voxel_metrics["fxl_status"] = "PASS"
+                else:
+                    pk_voxel_metrics["frac_fxl_risk_tumor"] = None
+                    pk_voxel_metrics["p95_tumor_peak_Ct"] = None
+                    pk_voxel_metrics["fxl_status"] = "PASS"
+            else:
+                pk_voxel_metrics["frac_fxl_risk_tumor"] = None
+                pk_voxel_metrics["p95_tumor_peak_Ct"] = None
+                pk_voxel_metrics["fxl_status"] = "PASS"
+        else:
+            pk_voxel_metrics["frac_fxl_risk_tumor"] = None
+            pk_voxel_metrics["p95_tumor_peak_Ct"] = None
+            pk_voxel_metrics["fxl_status"] = "PASS"
+
+        # ROI-stratified Patlak fraction: intersect model-selection map with
+        # each tissue class. Whole-brain patlak_fraction emitted by
+        # ComputeDCEMaps is only meaningful stratified (Heye NeuroImage Clin
+        # 2014: enhancing tumor 20-40%, NAWM/GM 70-90%).
+        _PATLAK_CODE = 1  # from _MODEL_SELECTION_CODES in dce_compute.py
+        if is_auto and model_sel_data is not None:
+            ne_data = _safe_load(non_enhancing_mask_file)
+            ne_bool = (ne_data > 0.5) if ne_data is not None else None
+
+            def _patlak_frac(region_mask):
+                region_fitted = region_mask & (model_sel_data > 0)
+                n_region = int(region_fitted.sum())
+                if n_region == 0:
+                    return None
+                n_patlak = int(np.sum((model_sel_data == _PATLAK_CODE) & region_fitted))
+                return n_patlak / n_region
+
+            if enhancing_mask_data is not None:
+                pk_voxel_metrics["patlak_fraction_enhancing_tumor"] = _patlak_frac(
+                    enhancing_mask_data > 0.5
+                )
+            else:
+                pk_voxel_metrics["patlak_fraction_enhancing_tumor"] = None
+
+            if ne_bool is not None:
+                pk_voxel_metrics["patlak_fraction_non_enh_tumor"] = _patlak_frac(ne_bool)
+            else:
+                pk_voxel_metrics["patlak_fraction_non_enh_tumor"] = None
+
+            # NAWM/GM proxy = brain minus all tumor
+            non_tumor = mask_bool.copy()
+            if enhancing_mask_data is not None:
+                non_tumor &= ~(enhancing_mask_data > 0.5)
+            if ne_bool is not None:
+                non_tumor &= ~ne_bool
+            pk_voxel_metrics["patlak_fraction_nawm_gm"] = _patlak_frac(non_tumor)
 
         return pk_modeling_qc_path, pk_voxel_metrics
 
