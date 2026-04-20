@@ -1832,12 +1832,13 @@ class ComputeDCEMaps(BaseInterface):
         fp_std = np.zeros(spatial_shape, dtype=np.float64)
         ps_std = np.zeros(spatial_shape, dtype=np.float64)
 
-        # v0.28.0: per-voxel indicator that vp ended at a bound in the SOFT
-        # NLLS active-set path. Populated only by batched NLLS SOFT; 0
-        # elsewhere (HARD / SKIP / Bayesian fits). Emitted as a NIfTI +
-        # whole-brain scalar in constraint_qc; downstream dce_pk_maps_qc
-        # stratifies over ROI masks to produce
-        # fraction_vp_at_bound_{tumor_core, enhancing, nawm}.
+        # Per-voxel indicator that vp ended at a bound in the SOFT NLLS
+        # active-set path. Populated only by batched NLLS SOFT; 0 elsewhere
+        # (HARD / SKIP / Bayesian fits). Emitted as a NIfTI + whole-brain
+        # scalar in constraint_qc; downstream dce_pk_maps_qc stratifies
+        # over ROI masks into
+        # qc_metrics.pk_modeling.vp_at_bound_fractions.{whole_brain,
+        # enhancing, tumor_core, nawm}.
         vp_at_bound_map = np.zeros(spatial_shape, dtype=np.float32)
 
         # Fitted curves

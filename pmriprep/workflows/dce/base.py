@@ -1422,6 +1422,7 @@ def init_dce_preproc_wf(
                 "pk_param_maps_qc_plot",
                 "model_selection_qc_plot",
                 "model_selection_regions",
+                "vp_at_bound_fractions",
             ],
             function=_generate_dce_pk_maps_qc,
         ),
@@ -1736,6 +1737,7 @@ def init_dce_preproc_wf(
                 "preproc_display",
                 "pk_fit_qc_metrics",
                 "pk_maps_qc_metrics",
+                "vp_at_bound_fractions",
                 "use_external_t1",
                 "no_t1",
                 "b1_method",
@@ -1799,6 +1801,7 @@ def init_dce_preproc_wf(
         ]),
         (dce_pk_maps_qc, collect_qc, [
             ("model_selection_regions", "pk_maps_qc_metrics"),
+            ("vp_at_bound_fractions", "vp_at_bound_fractions"),
         ]),
         (tortuosity_corr, collect_qc, [
             ("was_corrected", "tortuosity_applied"),
@@ -3289,6 +3292,7 @@ def _collect_qc_metrics(
     preproc_display=None,
     pk_fit_qc_metrics=None,
     pk_maps_qc_metrics=None,
+    vp_at_bound_fractions=None,
     use_external_t1=False,
     no_t1=False,
     b1_method="auto",
@@ -3307,7 +3311,8 @@ def _collect_qc_metrics(
         validation_result: DSC-DCE validation result.
         preproc_display: Preprocessing display stats.
         pk_fit_qc_metrics: PK fit QC metrics from plot node.
-        pk_maps_qc_metrics: PK maps QC metrics from plot node.
+        pk_maps_qc_metrics: Region→model-distribution mapping from plot node.
+        vp_at_bound_fractions: Scalar whole-brain/ROI vp-at-bound fractions.
         use_external_t1: Whether external T1 map was used.
         no_t1: Whether T1 mapping was skipped (assumed T1).
         b1_method: B1 correction method used.
@@ -3358,6 +3363,8 @@ def _collect_qc_metrics(
         qc_metrics.setdefault("pk_modeling", {}).update(pk_fit_qc_metrics)
     if pk_maps_qc_metrics is not None:
         qc_metrics.setdefault("pk_modeling", {})["model_selection_regions"] = pk_maps_qc_metrics
+    if vp_at_bound_fractions:
+        qc_metrics.setdefault("pk_modeling", {})["vp_at_bound_fractions"] = vp_at_bound_fractions
     if validation_result is not None:
         qc_metrics["dsc_dce_validation"] = validation_result
 
@@ -4425,7 +4432,11 @@ def _generate_dce_pk_maps_qc(
 
     Returns:
         Tuple of (pk_param_maps_qc_plot, model_selection_qc_plot,
-        model_selection_regions).
+        model_selection_regions, vp_at_bound_fractions).
+        ``model_selection_regions`` is a pure ``{region: {model: pct}}``
+        mapping; ``vp_at_bound_fractions`` carries scalar whole-brain and
+        per-ROI vp-at-bound fractions separately so downstream consumers
+        (report template, sidecar writer) can rely on a homogeneous shape.
     """
     import logging
 
@@ -4444,6 +4455,7 @@ def _generate_dce_pk_maps_qc(
     pk_param_maps_qc_plot = ""
     model_selection_qc_plot = ""
     model_selection_regions = None
+    vp_at_bound_fractions: dict[str, float] = {}
 
     try:
         from pmriprep.utils.dce_pk_qc_plots import (
@@ -4528,27 +4540,24 @@ def _generate_dce_pk_maps_qc(
             if regional_stats:
                 model_selection_regions = regional_stats
 
-        # v0.28.0: stratify vp_at_bound map by ROI masks already loaded
-        # above (enh_data / ne_data / nawm_data). Only emitted when the
+        # Stratify vp_at_bound map by ROI masks already loaded above
+        # (enh_data / ne_data / nawm_data). Only emitted when the
         # vp_at_bound NIfTI exists (ComputeDCEMaps always writes it;
-        # non-zero only for SOFT NLLS runs). Added into
-        # model_selection_regions so it reaches collect_qc via the
-        # existing pk_maps_qc_metrics channel.
+        # non-zero only for SOFT NLLS runs). Kept in a dedicated
+        # ``vp_at_bound_fractions`` output so ``model_selection_regions``
+        # stays a homogeneous region→model-dist mapping.
         vp_at_bound_data = _safe_load(vp_at_bound_map_file)
         if vp_at_bound_data is not None:
-            if model_selection_regions is None:
-                model_selection_regions = {}
-            # Whole-brain fraction
             brain_bool = mask_data > 0.5
             vpab_bool = vp_at_bound_data > 0.5
             finite = np.isfinite(vp_at_bound_data)
             brain_finite = brain_bool & finite
             if brain_finite.any():
-                model_selection_regions["fraction_vp_at_bound_whole_brain"] = (
-                    float(np.mean(vpab_bool[brain_finite]))
+                vp_at_bound_fractions["whole_brain"] = float(
+                    np.mean(vpab_bool[brain_finite])
                 )
             else:
-                model_selection_regions["fraction_vp_at_bound_whole_brain"] = 0.0
+                vp_at_bound_fractions["whole_brain"] = 0.0
 
             def _frac_in_roi(roi_bool):
                 sel = roi_bool & finite
@@ -4569,20 +4578,25 @@ def _generate_dce_pk_maps_qc(
             if enh_data is not None:
                 val = _frac_in_roi(enh_data > 0.5)
                 if val is not None:
-                    model_selection_regions["fraction_vp_at_bound_enhancing"] = val
+                    vp_at_bound_fractions["enhancing"] = val
             if ne_data is not None:
                 val = _frac_in_roi(ne_data > 0.5)
                 if val is not None:
-                    model_selection_regions["fraction_vp_at_bound_tumor_core"] = val
+                    vp_at_bound_fractions["tumor_core"] = val
             if nawm_data is not None:
                 val = _frac_in_roi(nawm_data > 0.5)
                 if val is not None:
-                    model_selection_regions["fraction_vp_at_bound_nawm"] = val
+                    vp_at_bound_fractions["nawm"] = val
 
     except Exception as e:
         logger.warning("Failed to generate PK maps QC plots: %s", e, exc_info=True)
 
-    return pk_param_maps_qc_plot, model_selection_qc_plot, model_selection_regions
+    return (
+        pk_param_maps_qc_plot,
+        model_selection_qc_plot,
+        model_selection_regions,
+        vp_at_bound_fractions or None,
+    )
 
 
 def _generate_dce_pk_fit_qc(

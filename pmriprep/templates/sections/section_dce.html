@@ -557,10 +557,15 @@
 
         {% if dce.qc_metrics.pk_modeling.model_selection_regions is defined %}
         {% set regions = dce.qc_metrics.pk_modeling.model_selection_regions %}
-        {% set region_keys = regions.keys() | list %}
+        {# Defensive: skip any non-mapping entries so a stray scalar can
+           never reach the inner ``.items()`` calls below. #}
+        {% set region_keys = [] %}
+        {% for _rk, _rv in regions.items() %}
+            {% if _rv is mapping %}{% set _ = region_keys.append(_rk) %}{% endif %}
+        {% endfor %}
 
         {# Whole Brain bar #}
-        {% if 'Whole Brain' in regions %}
+        {% if 'Whole Brain' in region_keys %}
         <div style="display: flex; align-items: center;" aria-label="Whole Brain model distribution">
             <div style="min-width: 110px; font-size: 0.88em; font-weight: 600; color: #555;">Whole Brain</div>
             <div style="display: flex; flex: 1; height: 28px; border-radius: 3px; overflow: hidden;">
@@ -590,7 +595,7 @@
         {% endif %}
 
         {# Color legend — centered with respect to bars (offset by label column) #}
-        {% if 'Whole Brain' in regions %}
+        {% if 'Whole Brain' in region_keys %}
         <div style="display: flex; justify-content: center; padding-left: 110px; margin-top: 8px; flex-wrap: wrap; gap: 14px;">
             {% for model_name in regions['Whole Brain'].keys() %}
             <div style="display: flex; align-items: center; gap: 5px; font-size: 0.82em; color: #555;">
