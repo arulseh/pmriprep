@@ -1415,6 +1415,7 @@ def init_dce_preproc_wf(
                 "enhancing_mask_file", "non_enhancing_mask_file",
                 "nawm_mask_file",
                 "user_lesion_mask_file", "roi_mask_file",
+                "vp_at_bound_map_file",
                 "model_name", "subject_id", "session_id",
             ],
             output_names=[
@@ -1439,6 +1440,7 @@ def init_dce_preproc_wf(
             ("out_ps", "ps_file"),
             ("out_model_selection", "model_selection_file"),
             ("out_delta_bic", "delta_bic_file"),
+            ("out_vp_at_bound_map", "vp_at_bound_map_file"),
         ]),
         (dce_brain_extract, dce_pk_maps_qc, [
             ("out_mask", "brain_mask_file"),
@@ -4393,6 +4395,7 @@ def _generate_dce_pk_maps_qc(
     nawm_mask_file: str | None = None,
     user_lesion_mask_file: str | None = None,
     roi_mask_file: str | None = None,
+    vp_at_bound_map_file: str | None = None,
     model_name: str = "tofts",
     subject_id: str = "",
     session_id: str = "",
@@ -4524,6 +4527,57 @@ def _generate_dce_pk_maps_qc(
             )
             if regional_stats:
                 model_selection_regions = regional_stats
+
+        # v0.28.0: stratify vp_at_bound map by ROI masks already loaded
+        # above (enh_data / ne_data / nawm_data). Only emitted when the
+        # vp_at_bound NIfTI exists (ComputeDCEMaps always writes it;
+        # non-zero only for SOFT NLLS runs). Added into
+        # model_selection_regions so it reaches collect_qc via the
+        # existing pk_maps_qc_metrics channel.
+        vp_at_bound_data = _safe_load(vp_at_bound_map_file)
+        if vp_at_bound_data is not None:
+            if model_selection_regions is None:
+                model_selection_regions = {}
+            # Whole-brain fraction
+            brain_bool = mask_data > 0.5
+            vpab_bool = vp_at_bound_data > 0.5
+            finite = np.isfinite(vp_at_bound_data)
+            brain_finite = brain_bool & finite
+            if brain_finite.any():
+                model_selection_regions["fraction_vp_at_bound_whole_brain"] = (
+                    float(np.mean(vpab_bool[brain_finite]))
+                )
+            else:
+                model_selection_regions["fraction_vp_at_bound_whole_brain"] = 0.0
+
+            def _frac_in_roi(roi_bool):
+                sel = roi_bool & finite
+                return float(np.mean(vpab_bool[sel])) if sel.any() else None
+
+            # Load ROI masks if model-selection branch didn't already
+            if "enh_data" not in locals():
+                enh_data = _safe_load(enhancing_mask_file)
+                if enh_data is not None:
+                    enh_data = (enh_data > 0.5).astype(np.float64)
+                ne_data = _safe_load(non_enhancing_mask_file)
+                if ne_data is not None:
+                    ne_data = (ne_data > 0.5).astype(np.float64)
+                nawm_data = _safe_load(nawm_mask_file)
+                if nawm_data is not None:
+                    nawm_data = (nawm_data > 0.5).astype(np.float64)
+
+            if enh_data is not None:
+                val = _frac_in_roi(enh_data > 0.5)
+                if val is not None:
+                    model_selection_regions["fraction_vp_at_bound_enhancing"] = val
+            if ne_data is not None:
+                val = _frac_in_roi(ne_data > 0.5)
+                if val is not None:
+                    model_selection_regions["fraction_vp_at_bound_tumor_core"] = val
+            if nawm_data is not None:
+                val = _frac_in_roi(nawm_data > 0.5)
+                if val is not None:
+                    model_selection_regions["fraction_vp_at_bound_nawm"] = val
 
     except Exception as e:
         logger.warning("Failed to generate PK maps QC plots: %s", e, exc_info=True)

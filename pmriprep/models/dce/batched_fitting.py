@@ -75,6 +75,9 @@ class FitResult:
         model_name: Name of the fitted model.
         uncertainties: Parameter uncertainties, param_name → (N,).
             NaN for non-converged voxels.
+        vp_at_bound: Per-voxel indicator (0/1) of whether vp ended at a
+            bound in the active-set SOFT NLLS path. None for HARD / SKIP /
+            unconstrained / Bayesian fits. Shape (N,).
     """
 
     params: dict[str, npt.NDArray[np.floating]]
@@ -84,6 +87,7 @@ class FitResult:
     n_iterations: int
     model_name: str
     uncertainties: dict[str, npt.NDArray[np.floating]] = field(default_factory=dict)
+    vp_at_bound: Optional[npt.NDArray[np.floating]] = None
 
 
 def concat_fit_results(
@@ -151,6 +155,20 @@ def concat_fit_results(
     }
     n_iterations = max(r.n_iterations for r in results)
 
+    # vp_at_bound: either None on every chunk or non-None on every chunk
+    first_has_atbound = results[0].vp_at_bound is not None
+    for r in results[1:]:
+        assert (r.vp_at_bound is not None) == first_has_atbound, (
+            "vp_at_bound must be either None on all chunks or non-None on all"
+        )
+    vp_at_bound: Optional[npt.NDArray[np.floating]]
+    if first_has_atbound:
+        vp_at_bound = np.concatenate(
+            [r.vp_at_bound for r in results]  # type: ignore[misc]
+        )
+    else:
+        vp_at_bound = None
+
     assert r_squared.shape[0] == n_total, (
         f"concatenated length {r_squared.shape[0]} != expected {n_total}"
     )
@@ -163,6 +181,7 @@ def concat_fit_results(
         n_iterations=n_iterations,
         model_name=model_name,
         uncertainties=uncertainties,
+        vp_at_bound=vp_at_bound,
     )
 
 
@@ -241,27 +260,51 @@ def batched_patlak_lstsq(
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     fixed_vp: Optional[npt.NDArray[np.floating]] = None,
+    vp_uncertainty: Optional[float] = None,
     weights: Optional[npt.NDArray[np.floating]] = None,
     save_fitted_curves: bool = False,
     compute_uncertainties: bool = False,
 ) -> FitResult:
-    """Fit Patlak model using linear least squares.
+    """Fit Patlak model using linear least squares with optional vp constraint.
 
     Uses np.linalg.lstsq (QR-based) for numerical stability.
+
+    Three modes determined by ``fixed_vp`` and ``vp_uncertainty``:
+
+    - ``fixed_vp is None`` → unconstrained 2-param solve (Ktrans, vp).
+    - ``fixed_vp`` provided, ``vp_uncertainty is None`` → HARD: vp fixed at
+      ``fixed_vp``, 1-param Ktrans-only solve.
+    - ``fixed_vp`` provided, ``vp_uncertainty > 0`` → SOFT box constraint:
+      vp constrained to ``[fixed_vp·(1−σ), fixed_vp·(1+σ)]`` per voxel via
+      active-set two-pass:
+        Pass 1: unconstrained 2-param solve on all voxels (closed-form lstsq).
+        Pass 2: for voxels where unconstrained vp* strictly violates a bound,
+                clamp vp at the violated bound and re-solve for Ktrans only
+                (closed-form 1-param). Merged per-voxel via ``np.where``.
+      Voxels with ``fixed_vp == 0`` are treated as unconstrained (active-mask).
+
+    ``vp_uncertainty == 0.0`` raises ``ValueError`` — pass ``None`` for HARD.
 
     Args:
         tissue_curves: Observed tissue curves, shape (N, T).
         aif: Arterial input function, shape (T,).
         time_points: Time points in minutes, shape (T,).
-        fixed_vp: Fixed vp values, shape (N,). If provided, solves
-            1-parameter (Ktrans only) via dot product.
+        fixed_vp: Fixed vp values, shape (N,). See modes above.
+        vp_uncertainty: Relative uncertainty σ for the SOFT box constraint.
+            Must be positive or None.
         weights: Per-frame motion weights, shape (T,).
         save_fitted_curves: Whether to store fitted curves in result.
         compute_uncertainties: Whether to compute parameter uncertainties.
 
     Returns:
-        FitResult with fitted Patlak parameters.
+        FitResult with fitted Patlak parameters. ``vp_at_bound`` is set
+        (per-voxel 0/1) only for the SOFT box mode; None otherwise.
     """
+    if vp_uncertainty is not None and vp_uncertainty == 0.0:
+        raise ValueError(
+            "vp_uncertainty must be positive for SOFT constraint; pass None for HARD"
+        )
+
     tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
 
     n_voxels, n_timepoints = tissue_curves.shape
@@ -274,8 +317,74 @@ def batched_patlak_lstsq(
     # Apply weights if provided
     w = np.ones(n_timepoints) if weights is None else np.sqrt(np.maximum(weights, 1e-10))
 
-    if fixed_vp is not None:
-        # 1-parameter solve: subtract vp*Cp, solve for Ktrans
+    vp_at_bound: Optional[npt.NDArray[np.floating]] = None
+
+    soft_box = (
+        fixed_vp is not None
+        and vp_uncertainty is not None
+        and vp_uncertainty > 0
+    )
+
+    if soft_box:
+        # SOFT box constraint via active-set two-pass.
+        assert fixed_vp is not None  # for type narrowing
+        assert vp_uncertainty is not None
+
+        # Pass 1: unconstrained 2-param solve on all voxels.
+        A = np.stack([w * aif_integral, w * aif], axis=1)  # (T, 2)
+        Y = (tissue_curves * w[None, :]).T  # (T, N)
+        params_2xN, _, _, _ = np.linalg.lstsq(A, Y, rcond=1e-10)
+        ktrans_unc = params_2xN[0]
+        vp_unc = params_2xN[1]
+
+        # Per-voxel bounds. fixed_vp == 0 → inactive (acts unconstrained).
+        active = fixed_vp > 0
+        vp_lo = np.where(
+            active,
+            fixed_vp * (1.0 - vp_uncertainty),
+            _PARAM_BOUNDS["vp"][0],
+        )
+        vp_hi = np.where(
+            active,
+            fixed_vp * (1.0 + vp_uncertainty),
+            _PARAM_BOUNDS["vp"][1],
+        )
+
+        # Strict-inequality violation detection (grazing the bound = interior).
+        violates_lo = active & (vp_unc < vp_lo)
+        violates_hi = active & (vp_unc > vp_hi)
+        violates = violates_lo | violates_hi
+
+        # Pass 2: for violators, clamp vp at violated bound and 1-param
+        # Ktrans-only solve. Computed for all voxels then merged by np.where
+        # (closed-form, cheap enough to do unconditionally).
+        clamped_vp = np.where(
+            violates_lo,
+            vp_lo,
+            np.where(violates_hi, vp_hi, vp_unc),
+        )
+        residual_clamped = tissue_curves - clamped_vp[:, None] * aif[None, :]
+        denom = max(np.sum((w * aif_integral) ** 2), 1e-30)
+        ktrans_clamped = np.sum(
+            residual_clamped * (w ** 2)[None, :] * aif_integral[None, :], axis=1
+        )
+        ktrans_clamped /= denom
+        ktrans_clamped = np.clip(ktrans_clamped, *_PARAM_BOUNDS["ktrans"])
+
+        ktrans = np.where(
+            violates,
+            ktrans_clamped,
+            np.clip(ktrans_unc, *_PARAM_BOUNDS["ktrans"]),
+        )
+        vp_out = np.where(
+            violates,
+            clamped_vp,
+            np.clip(vp_unc, *_PARAM_BOUNDS["vp"]),
+        )
+        vp_at_bound = violates.astype(np.float32)
+        n_free = 2  # Pass-1 effective dof for interior voxels; pragmatic.
+    elif fixed_vp is not None:
+        # HARD: 1-parameter solve: subtract vp*Cp, solve for Ktrans.
         residual = tissue_curves - fixed_vp[:, None] * aif[None, :]
         w_aif_int = w * aif_integral
         denom = np.sum(w_aif_int ** 2)
@@ -285,7 +394,7 @@ def batched_patlak_lstsq(
         vp_out = fixed_vp.copy()
         n_free = 1
     else:
-        # 2-parameter solve: [aif_integral, aif] → [Ktrans, vp]
+        # Unconstrained: 2-parameter solve [aif_integral, aif] → [Ktrans, vp].
         A = np.stack([w * aif_integral, w * aif], axis=1)  # (T, 2)
         Y = (tissue_curves * w[None, :]).T  # (T, N)
         params_2xN, _, _, _ = np.linalg.lstsq(A, Y, rcond=1e-10)  # (2, N)
@@ -303,7 +412,29 @@ def batched_patlak_lstsq(
     if compute_uncertainties:
         residuals = tissue_curves - fitted
         sigma2 = np.sum((w[None, :] * residuals) ** 2, axis=1) / max(n_timepoints - n_free, 1)
-        if fixed_vp is not None:
+        # For SOFT box and HARD (vp fixed or clamped at a bound), uncertainty
+        # in vp is 0 for voxels at a bound and data-driven elsewhere; a tight
+        # closed-form formula across the mixed population is not meaningful,
+        # so report the Ktrans-only σ and zero vp uncertainty for HARD and
+        # at-bound voxels. Interior SOFT voxels get the 2-param uncertainty.
+        if soft_box and vp_at_bound is not None:
+            A_full = np.stack([w * aif_integral, w * aif], axis=1)
+            ATA = A_full.T @ A_full
+            try:
+                ATA_inv = np.linalg.inv(ATA)
+                uncertainties["ktrans"] = np.sqrt(
+                    np.maximum(sigma2 * ATA_inv[0, 0], 0.0)
+                )
+                unc_vp_interior = np.sqrt(
+                    np.maximum(sigma2 * ATA_inv[1, 1], 0.0)
+                )
+                uncertainties["vp"] = np.where(
+                    vp_at_bound > 0, 0.0, unc_vp_interior
+                )
+            except np.linalg.LinAlgError:
+                uncertainties["ktrans"] = np.full(n_voxels, np.nan)
+                uncertainties["vp"] = np.full(n_voxels, np.nan)
+        elif fixed_vp is not None:
             denom_val = max(np.sum((w * aif_integral) ** 2), 1e-30)
             ktrans_var = sigma2 / denom_val
             uncertainties["ktrans"] = np.sqrt(np.maximum(ktrans_var, 0.0))
@@ -327,6 +458,7 @@ def batched_patlak_lstsq(
         n_iterations=1,
         model_name="patlak",
         uncertainties=uncertainties,
+        vp_at_bound=vp_at_bound,
     )
 
 
@@ -408,12 +540,175 @@ def _batched_initial_guess(
     return params
 
 
+def _batched_lm_fit_soft_box(
+    model_name: str,
+    tissue_curves: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    time_points: npt.NDArray[np.floating],
+    fixed_vp: npt.NDArray[np.floating],
+    vp_uncertainty: float,
+    weights: Optional[npt.NDArray[np.floating]],
+    max_iter: int,
+    ftol: float,
+    xtol: float,
+    save_fitted_curves: bool,
+    compute_uncertainties: bool,
+) -> FitResult:
+    """Active-set two-pass SOFT box constraint for batched LM.
+
+    Pass 1: unconstrained batched LM (vp in free-param set). Extract
+    unconstrained vp*.
+
+    Pass 2: for voxels where vp* strictly violates the per-voxel bound
+    ``[fixed_vp·(1−σ), fixed_vp·(1+σ)]``, clamp vp at the violated bound
+    and re-run batched LM with vp fixed (reduced problem). Mirrors the KKT
+    solution for bounded NLLS and the Patlak active-set in
+    ``batched_patlak_lstsq``.
+
+    Edge-case handling:
+    - ``fixed_vp == 0`` per voxel → inactive (treated as unconstrained;
+      Pass 2 never fires).
+    - Pass-1 NaN vp → mark voxel ``converged=False``, keep Pass-1 params,
+      skip Pass 2 for that voxel.
+    - Pass-2 non-convergence → fall back to (vp clamped at bound, Pass-1
+      Ktrans/ve), flag ``converged=False`` so BIC=inf downstream.
+    - Strict inequalities (vp* < vp_lo or vp* > vp_hi) for Pass-2 trigger;
+      grazing the bound (vp* == bound) counts as interior (matches scipy KKT).
+    """
+    n_voxels = tissue_curves.shape[0]
+
+    # Pass 1: fully unconstrained (all params free, no fixed_vp).
+    pass1 = batched_lm_fit(
+        model_name, tissue_curves, aif, time_points,
+        fixed_vp=None, vp_uncertainty=None,
+        weights=weights, max_iter=max_iter, ftol=ftol, xtol=xtol,
+        save_fitted_curves=save_fitted_curves,
+        compute_uncertainties=compute_uncertainties,
+    )
+
+    vp_unc = pass1.params.get("vp")
+    if vp_unc is None:
+        # Model has no vp parameter — shouldn't reach here given the caller
+        # gate (model_name ∈ {extended_tofts, patlak, 2cxm}), but degrade
+        # gracefully: just return Pass 1.
+        pass1.vp_at_bound = np.zeros(n_voxels, dtype=np.float32)
+        return pass1
+
+    # Per-voxel bounds. fixed_vp == 0 → inactive (acts unconstrained).
+    active = fixed_vp > 0
+    vp_lo = np.where(
+        active, fixed_vp * (1.0 - vp_uncertainty), _PARAM_BOUNDS["vp"][0],
+    )
+    vp_hi = np.where(
+        active, fixed_vp * (1.0 + vp_uncertainty), _PARAM_BOUNDS["vp"][1],
+    )
+
+    # Pass-1 NaN: NaN comparisons are False, so such voxels don't enter
+    # `violates` naturally; handle explicitly by forcing converged=False.
+    pass1_nan = ~np.isfinite(vp_unc)
+
+    # Strict-inequality violation detection.
+    violates_lo = active & ~pass1_nan & (vp_unc < vp_lo)
+    violates_hi = active & ~pass1_nan & (vp_unc > vp_hi)
+    violates = violates_lo | violates_hi
+
+    clamped_vp = np.where(
+        violates_lo, vp_lo, np.where(violates_hi, vp_hi, vp_unc),
+    )
+
+    # No violators: return Pass 1 with vp_at_bound all zeros, plus NaN fixup.
+    if not np.any(violates):
+        merged_converged = pass1.converged.copy()
+        merged_converged[pass1_nan] = False
+        pass1.converged = merged_converged
+        pass1.vp_at_bound = np.zeros(n_voxels, dtype=np.float32)
+        return pass1
+
+    # Pass 2: re-fit violators with vp fixed at the clamped bound (HARD on subset).
+    viol_idx = np.where(violates)[0]
+    tc_viol = tissue_curves[viol_idx]
+    fixed_vp_viol = clamped_vp[viol_idx]
+    weights_viol = weights  # per-frame weights, shape (T,), independent of voxels
+
+    pass2 = batched_lm_fit(
+        model_name, tc_viol, aif, time_points,
+        fixed_vp=fixed_vp_viol, vp_uncertainty=None,  # HARD on subset
+        weights=weights_viol, max_iter=max_iter, ftol=ftol, xtol=xtol,
+        save_fitted_curves=save_fitted_curves,
+        compute_uncertainties=compute_uncertainties,
+    )
+
+    # Merge per-voxel: interior voxels keep Pass-1; violators take Pass-2.
+    merged_params: dict[str, npt.NDArray[np.floating]] = {
+        k: v.copy() for k, v in pass1.params.items()
+    }
+    for name, arr in pass2.params.items():
+        if name in merged_params:
+            merged_params[name][viol_idx] = arr
+        else:
+            merged_params[name] = np.zeros(n_voxels, dtype=arr.dtype)
+            merged_params[name][viol_idx] = arr
+
+    # Ensure vp at the violated bound for Pass-2 voxels (Pass-2 returns
+    # fixed_vp_viol unchanged, but belt-and-suspenders in case the HARD path
+    # ever modifies it — the clamped_vp[viol_idx] is the authoritative value).
+    merged_params["vp"][viol_idx] = clamped_vp[viol_idx]
+
+    merged_converged = pass1.converged.copy()
+    merged_converged[viol_idx] = pass2.converged
+    merged_converged[pass1_nan] = False
+
+    # Pass-2 non-convergence fallback: keep vp at bound (already set), and
+    # for Ktrans/ve use Pass-1 values (since Pass-2 didn't converge, its
+    # Ktrans/ve are unreliable). Already have Pass-1 values in merged_params
+    # prior to the pass2 overwrite loop — re-apply for non-converged Pass-2.
+    pass2_not_conv_local = ~pass2.converged
+    if np.any(pass2_not_conv_local):
+        notconv_local_idx = np.where(pass2_not_conv_local)[0]
+        notconv_global_idx = viol_idx[notconv_local_idx]
+        for name in pass2.params:
+            if name == "vp":
+                continue  # vp stays at bound per plan
+            if name in pass1.params:
+                merged_params[name][notconv_global_idx] = (
+                    pass1.params[name][notconv_global_idx]
+                )
+
+    merged_r2 = pass1.r_squared.copy()
+    merged_r2[viol_idx] = pass2.r_squared
+
+    merged_fitted: Optional[npt.NDArray[np.floating]] = None
+    if save_fitted_curves:
+        if pass1.fitted_curves is not None and pass2.fitted_curves is not None:
+            merged_fitted = pass1.fitted_curves.copy()
+            merged_fitted[viol_idx] = pass2.fitted_curves
+
+    merged_unc: dict[str, npt.NDArray[np.floating]] = {}
+    if compute_uncertainties:
+        for name, arr in pass1.uncertainties.items():
+            merged_unc[name] = arr.copy()
+            if name in pass2.uncertainties:
+                merged_unc[name][viol_idx] = pass2.uncertainties[name]
+
+    return FitResult(
+        params=merged_params,
+        r_squared=merged_r2,
+        converged=merged_converged,
+        fitted_curves=merged_fitted,
+        n_iterations=max(pass1.n_iterations, pass2.n_iterations),
+        model_name=model_name,
+        uncertainties=merged_unc,
+        vp_at_bound=violates.astype(np.float32),
+    )
+
+
 def batched_lm_fit(
     model_name: str,
     tissue_curves: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     fixed_vp: Optional[npt.NDArray[np.floating]] = None,
+    vp_uncertainty: Optional[float] = None,
     weights: Optional[npt.NDArray[np.floating]] = None,
     max_iter: int = 100,
     ftol: float = 1e-6,
@@ -427,14 +722,29 @@ def batched_lm_fit(
     evaluations. The LM normal equations are solved on CPU (small per-voxel
     systems), while the expensive forward model calls are batched.
 
+    Constraint modes (determined by ``fixed_vp`` and ``vp_uncertainty``):
+
+    - ``fixed_vp is None`` → unconstrained fit (all model params free).
+    - ``fixed_vp`` provided, ``vp_uncertainty is None`` → HARD: vp fixed at
+      ``fixed_vp``; for extended_tofts/patlak, pre-subtracts vp*Cp; for 2cxm,
+      vp enters eigenvalues nonlinearly.
+    - ``fixed_vp`` provided, ``vp_uncertainty > 0`` → SOFT box constraint
+      ``vp ∈ [fixed_vp·(1−σ), fixed_vp·(1+σ)]`` per voxel, implemented as
+      active-set two-pass (Pass 1: unconstrained; Pass 2: for violators,
+      clamp vp at violated bound and re-fit reduced problem). Voxels with
+      ``fixed_vp == 0`` are treated as unconstrained (active-mask).
+
+    ``vp_uncertainty == 0.0`` raises ``ValueError`` — pass ``None`` for HARD.
+
     Args:
         model_name: Model to fit ('tofts', 'extended_tofts', 'patlak', '2cxm').
         tissue_curves: Observed tissue curves, shape (N, T).
         aif: Arterial input function, shape (T,).
         time_points: Time points in minutes, shape (T,).
         fixed_vp: Fixed vp values for constrained fitting, shape (N,).
-            For extended_tofts/patlak: pre-subtract vp*Cp.
-            For 2cxm: pass as constant (vp enters eigenvalues nonlinearly).
+            See modes above.
+        vp_uncertainty: Relative uncertainty σ for the SOFT box constraint.
+            Must be positive or None.
         weights: Per-frame motion weights, shape (T,).
         max_iter: Maximum LM iterations. Default 100.
         ftol: Relative cost function convergence tolerance. Default 1e-6.
@@ -444,8 +754,30 @@ def batched_lm_fit(
             from the final Jacobian.
 
     Returns:
-        FitResult with fitted parameters, R², and convergence flags.
+        FitResult with fitted parameters, R², and convergence flags. The
+        ``vp_at_bound`` field is set (per-voxel 0/1) only for the SOFT box
+        mode; None otherwise.
     """
+    if vp_uncertainty is not None and vp_uncertainty == 0.0:
+        raise ValueError(
+            "vp_uncertainty must be positive for SOFT constraint; pass None for HARD"
+        )
+
+    # SOFT box constraint: active-set two-pass dispatch. Only meaningful for
+    # models that have a vp parameter.
+    if (
+        fixed_vp is not None
+        and vp_uncertainty is not None
+        and vp_uncertainty > 0
+        and model_name in ("extended_tofts", "patlak", "2cxm")
+    ):
+        return _batched_lm_fit_soft_box(
+            model_name, tissue_curves, aif, time_points,
+            fixed_vp, vp_uncertainty, weights,
+            max_iter, ftol, xtol,
+            save_fitted_curves, compute_uncertainties,
+        )
+
     tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
 
     n_voxels, n_timepoints = tissue_curves.shape
