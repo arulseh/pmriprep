@@ -31,7 +31,7 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
-LABEL org.opencontainers.image.version="0.27.2"
+LABEL org.opencontainers.image.version="0.27.3"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 
@@ -180,11 +180,15 @@ RUN mkdir -p /home/pmriprep/.cache && \
 WORKDIR /tmp
 USER 1000
 
-# Set up entry point. tini is PID 1 and reaps orphaned children from
-# nipype multiproc + nnU-Net worker pools that would otherwise accumulate
-# as zombies (a problem in JupyterHub-singleuser containers where the
-# default init does not call wait() on SIGCHLD).
-ENTRYPOINT ["/usr/bin/tini", "--", "pmriprep"]
+# Set up entry point. tini reaps orphaned children from nipype multiproc
+# + nnU-Net worker pools that would otherwise accumulate as zombies (a
+# problem in JupyterHub-singleuser containers where the default init
+# does not call wait() on SIGCHLD).
+#
+# The -s / --subreaper flag registers tini via prctl(PR_SET_CHILD_SUBREAPER)
+# so it reaps orphaned descendants even when it is not PID 1 — required
+# under Apptainer/Singularity, where the container runtime itself is PID 1.
+ENTRYPOINT ["/usr/bin/tini", "-s", "--", "pmriprep"]
 
 # Default help message
 CMD ["--help"]
