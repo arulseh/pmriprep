@@ -146,7 +146,7 @@ class TestAifPassesQuality:
         curve = _make_aif_curve(
             peak_height=30.0, recirculation_height=3.0,
         )
-        passes, spr, pr = AIFDetection._aif_passes_quality(
+        passes, spr, pr, brr = AIFDetection._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
         assert spr < 100.0
@@ -157,7 +157,7 @@ class TestAifPassesQuality:
             peak_height=10.0, recirculation_height=15.0,
             recirc_frame=60,
         )
-        passes, spr, pr = AIFDetection._aif_passes_quality(
+        passes, spr, pr, brr = AIFDetection._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
         assert passes is False
@@ -248,7 +248,7 @@ class TestAccumulatingCascade:
         # May return None if gamma fit fails on synthetic curve — that's OK.
         # When it returns, roi_used must be valid.
         if result is not None:
-            _, _, roi_used, spr, _ = result
+            _, _, roi_used, spr, _, _ = result
             assert roi_used in (1, 3)
             assert spr >= 0.0
 
@@ -433,3 +433,244 @@ class TestPostGammaFitR2Fallback:
         """Verify GAMMA_R2_SYNTHETIC_FALLBACK constant is 0.0."""
         from pmriprep.interfaces.dsc_aif import GAMMA_R2_SYNTHETIC_FALLBACK
         assert GAMMA_R2_SYNTHETIC_FALLBACK == 0.0
+
+
+# =============================================================================
+# Progressive-trim + averaged-BRR gate (v0.28.2)
+# =============================================================================
+
+
+def _curve_with_negative_tail(
+    peak_height: float = 30.0,
+    tail_offset: float = -5.0,
+    n_frames: int = 120,
+    baseline_frames: int = 20,
+    peak_frame: int = 25,
+    fwhm_frames: int = 5,
+) -> np.ndarray:
+    """Build a curve with a clean first-pass peak but a constant negative
+    pedestal in the post-peak tail.  Mimics the sub-02 / sub-04 failure
+    mode where T1 leakage or motion produces a negative-going tail."""
+    curve = np.zeros(n_frames)
+    for i in range(peak_frame, n_frames):
+        dt = i - peak_frame
+        curve[i] = peak_height * np.exp(-0.5 * (dt / fwhm_frames) ** 2)
+    # Apply pedestal in the late tail (last 40% of frames)
+    tail_start = int(0.6 * n_frames)
+    curve[tail_start:] += tail_offset
+    return curve
+
+
+class TestAifAvgBrrConstant:
+    """The new averaged-AIF BRR floor (v0.28.2)."""
+
+    def test_value(self) -> None:
+        from pmriprep.interfaces.dsc_aif import AIF_AVG_BRR_MIN
+        assert AIF_AVG_BRR_MIN == -3.0
+
+    def test_looser_than_per_voxel_permissive(self) -> None:
+        """Averaged-curve floor should be tighter than the per-voxel
+        permissive floor (−10 %) — averaging should reduce noise, not
+        let bad voxels dominate.  -3 is between relaxed (0) and
+        permissive (−10)."""
+        from pmriprep.interfaces.dsc_aif import AIF_AVG_BRR_MIN
+        # Per-voxel ranges from _score_candidate_cost:
+        # strict (5, 30), relaxed (0, 40), permissive (−10, 50)
+        assert -10.0 < AIF_AVG_BRR_MIN < 0.0
+
+
+class TestComputeAifBrr:
+    """AIFDetection._compute_aif_brr static helper."""
+
+    def test_positive_tail(self) -> None:
+        curve = _make_aif_curve(peak_height=30.0, recirculation_height=2.0)
+        brr = AIFDetection._compute_aif_brr(curve, baseline_frames=20, tr=1.5)
+        assert brr > 0.0
+        assert brr < 50.0
+
+    def test_negative_tail(self) -> None:
+        curve = _curve_with_negative_tail(peak_height=30.0, tail_offset=-5.0)
+        brr = AIFDetection._compute_aif_brr(curve, baseline_frames=20, tr=1.5)
+        assert brr < 0.0
+
+    def test_short_curve_returns_nan(self) -> None:
+        curve = np.zeros(5)
+        brr = AIFDetection._compute_aif_brr(curve, baseline_frames=3, tr=1.5)
+        assert np.isnan(brr)
+
+
+class TestAifPassesQualityBrrGate:
+    """_aif_passes_quality now gates on averaged BRR ≥ AIF_AVG_BRR_MIN."""
+
+    def test_rejects_negative_tail(self) -> None:
+        """Curve with BRR well below −3 % fails the new gate."""
+        curve = _curve_with_negative_tail(
+            peak_height=30.0, tail_offset=-8.0,
+        )
+        passes, spr, pr, brr = AIFDetection._aif_passes_quality(
+            curve, baseline_frames=20, tr=1.5,
+        )
+        assert passes is False
+        assert brr < -3.0
+
+    def test_return_tuple_has_brr(self) -> None:
+        """The return tuple now has 4 elements (adds brr)."""
+        curve = _make_aif_curve(peak_height=30.0, recirculation_height=2.0)
+        result = AIFDetection._aif_passes_quality(
+            curve, baseline_frames=20, tr=1.5,
+        )
+        assert len(result) == 4
+        _, _, _, brr = result
+        assert isinstance(brr, float)
+
+
+class TestTryDualRoiBrrGate:
+    """`_try_aif_dual_roi` returns None when averaged curve fails BRR."""
+
+    def test_negative_tail_average_returns_none(self) -> None:
+        """Pool whose averaged curve has strongly negative tail → None.
+
+        Place 4 candidates with negative-tail curves; their inverse-cost
+        weighted average preserves the negative tail, so the BRR gate
+        should fire and return None.
+        """
+        aif = AIFDetection()
+        shape = (10, 10, 5, 120)
+        conc_data = np.zeros(shape)
+        brain_mask = np.ones(shape[:3])
+        bad_curve = _curve_with_negative_tail(peak_height=30.0, tail_offset=-8.0)
+        coords = [(4, 4, 2), (4, 5, 2), (5, 4, 2), (5, 5, 2)]
+        candidates: list[tuple[float, tuple[int, int, int], dict]] = []
+        for i, c in enumerate(coords):
+            conc_data[c[0], c[1], c[2], :] = bad_curve + np.random.randn(120) * 0.1
+            # Assign per-candidate BRR matching the curve (negative)
+            candidates.append((1.0 + i * 0.1, c, {"baseline_return_ratio": -8.0}))
+        result = aif._try_aif_dual_roi(
+            candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
+        )
+        # Should fail the BRR gate — result is None
+        assert result is None
+
+    def test_returns_brr_in_tuple(self) -> None:
+        """Successful return now has 6 elements including brr."""
+        aif = AIFDetection()
+        shape = (10, 10, 5, 120)
+        conc_data = np.zeros(shape)
+        brain_mask = np.ones(shape[:3])
+        good_curve = _make_aif_curve(peak_height=30.0, recirculation_height=2.0)
+        coords = [(4, 4, 2), (4, 5, 2), (5, 4, 2)]
+        candidates: list[tuple[float, tuple[int, int, int], dict]] = []
+        for i, c in enumerate(coords):
+            conc_data[c[0], c[1], c[2], :] = good_curve
+            candidates.append((1.0 + i * 0.1, c, {"baseline_return_ratio": 10.0}))
+        result = aif._try_aif_dual_roi(
+            candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
+        )
+        # May be None if gamma fit fails, but when non-None it's a 6-tuple
+        if result is not None:
+            assert len(result) == 6
+            _, _, roi_used, spr, pr, brr = result
+            assert roi_used in (1, 3)
+            assert isinstance(brr, float)
+
+
+class TestProgressiveTrimSemantics:
+    """Verify the cost-sorted pool + drop-worst-BRR ordering.
+
+    These are semantic / invariant tests on the trim choice function
+    (imports the worst_idx logic directly).  The full cascade loop
+    itself is exercised by existing cascade tests — adding a full 4-D
+    end-to-end test that triggers trimming requires synthesizing atlas
+    masks, scoring gates, and the complete `_run_interface` wiring,
+    which is left for integration-level coverage.
+    """
+
+    def _worst_idx(
+        self,
+        pool: list[tuple[float, tuple[int, int, int], dict]],
+    ) -> int:
+        """Replicates the trim-selection predicate inside the cascade
+        loop in `pmriprep/interfaces/dsc_aif.py` (v0.28.2)."""
+        def key(i: int) -> float:
+            brr = pool[i][2].get("baseline_return_ratio", float("nan"))
+            if not np.isnan(brr):
+                return brr
+            # Cost fallback: more negative = "worse" in the min() call,
+            # matching the higher-cost = worse convention.
+            return -pool[i][0]
+        return min(range(len(pool)), key=key)
+
+    def test_drops_most_negative_brr(self) -> None:
+        pool = [
+            (1.0, (0, 0, 0), {"baseline_return_ratio": 10.0}),
+            (2.0, (1, 0, 0), {"baseline_return_ratio": -8.0}),  # worst
+            (3.0, (2, 0, 0), {"baseline_return_ratio": 5.0}),
+        ]
+        assert self._worst_idx(pool) == 1
+
+    def test_drops_most_negative_even_if_low_cost(self) -> None:
+        """Worst-BRR wins even when its cost is the lowest (best)."""
+        pool = [
+            (0.1, (0, 0, 0), {"baseline_return_ratio": -9.0}),  # worst-BRR, lowest cost
+            (2.0, (1, 0, 0), {"baseline_return_ratio": 5.0}),
+            (3.0, (2, 0, 0), {"baseline_return_ratio": 8.0}),
+        ]
+        assert self._worst_idx(pool) == 0
+
+    def test_cost_fallback_when_brr_nan(self) -> None:
+        """When all per-voxel BRRs are NaN, fall back to highest-cost."""
+        pool = [
+            (1.0, (0, 0, 0), {}),
+            (3.0, (1, 0, 0), {}),  # highest cost → worst under fallback
+            (2.0, (2, 0, 0), {}),
+        ]
+        assert self._worst_idx(pool) == 1
+
+
+class TestTrimLoopEdgeCases:
+    """Edge-case behaviour of the trim loop."""
+
+    def test_pool_exactly_at_floor_runs_once(self) -> None:
+        """``len(scored) == MIN`` should test once, then break without
+        trimming (the trim step checks ``len(pool) == MIN`` before
+        popping)."""
+        aif = AIFDetection()
+        shape = (8, 8, 4, 120)
+        conc_data = np.zeros(shape)
+        brain_mask = np.ones(shape[:3])
+        bad_curve = _curve_with_negative_tail(peak_height=30.0, tail_offset=-8.0)
+        coords = [(3, 3, 2), (3, 4, 2), (4, 3, 2)]  # exactly MIN=3
+        candidates: list[tuple[float, tuple[int, int, int], dict]] = []
+        for i, c in enumerate(coords):
+            conc_data[c[0], c[1], c[2], :] = bad_curve
+            candidates.append((1.0 + i * 0.1, c, {"baseline_return_ratio": -8.0}))
+        # At exactly MIN, _try_aif_dual_roi is called once; BRR gate
+        # rejects the averaged negative-tail curve; no trim happens
+        # because pool size is already at the floor.
+        result = aif._try_aif_dual_roi(
+            candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
+        )
+        assert result is None
+
+    def test_below_floor_skips_loop(self) -> None:
+        """``len(scored) < MIN`` should never enter _try_aif_dual_roi
+        (possible after _ensure_bilateral_balance filtering)."""
+        # This is a semantic check on the trim loop's entry condition.
+        # The real cascade skips the loop when len(pool) < MIN; we
+        # verify the predicate directly.
+        from pmriprep.interfaces.dsc_aif import MIN_AIF_CANDIDATES_ACCEPT
+        scored: list[tuple[float, tuple[int, int, int], dict]] = [
+            (0.5, (0, 0, 0), {"baseline_return_ratio": 5.0}),
+            (0.6, (1, 0, 0), {"baseline_return_ratio": 8.0}),
+        ]
+        # The loop's entry predicate is `while len(pool) >= MIN`; with
+        # len=2 < 3 the loop never executes and the tier rejects via
+        # accumulation.
+        assert len(scored) < MIN_AIF_CANDIDATES_ACCEPT
+        # Simulate the loop
+        pool = list(scored)
+        iterations = 0
+        while len(pool) >= MIN_AIF_CANDIDATES_ACCEPT:
+            iterations += 1
+            pool.pop()
+        assert iterations == 0

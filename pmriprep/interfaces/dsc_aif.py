@@ -56,6 +56,16 @@ GAMMA_PEAK_RATIO_CASCADE_MAX: float = 1.12
 #: A true arterial bolus will never fit worse than a horizontal line.
 GAMMA_R2_SYNTHETIC_FALLBACK: float = 0.0
 
+#: Minimum baseline-return ratio (%) for an accepted averaged AIF.
+#: BRR = mean(tail) / peak × 100. True arterial washout produces +5 to +30%;
+#: slightly negative (≥-2%) is within T1-recirculation noise.  Below -3%
+#: indicates T1-leakage dominance or motion breaking the mono-exponential
+#: ΔR2* assumption (Boxerman 2006, AJNR 27:859; Calamante 2013,
+#: NMR Biomed 26:862).  Tighter than the per-candidate permissive floor
+#: (-10%) because averaging should reduce noise, not let bad voxels
+#: dominate.
+AIF_AVG_BRR_MIN: float = -3.0
+
 #: S0 ratio floor: reject candidates with baseline signal below this
 #: fraction of median brain S0.  Below 0.10, baseline SNR < 5 and the
 #: logarithmic ΔR2* conversion is numerically unstable.
@@ -1569,21 +1579,57 @@ class AIFDetection(BaseInterface):
         return fp_start <= global_max_frame < fp_end
 
     @staticmethod
+    def _compute_aif_brr(
+        curve: npt.NDArray[Any],
+        baseline_frames: int,
+        tr: float,
+    ) -> float:
+        """Compute baseline-return ratio (%) for an averaged AIF curve.
+
+        Matches the per-candidate BRR computation in
+        ``_calculate_candidate_metrics``: mean of the late-tail window
+        divided by the first-pass peak, times 100.
+        """
+        n_time = len(curve)
+        fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
+        fp_end = min(baseline_frames + int(40.0 / tr), n_time)
+        if fp_start >= n_time or fp_end <= fp_start:
+            return float("nan")
+
+        fp_window = curve[fp_start:fp_end]
+        fp_peak_val = float(np.max(fp_window))
+        if fp_peak_val <= EPSILON_SIGNAL:
+            return float("nan")
+
+        exclude_end = int(0.2 * n_time)
+        tail_start = max(fp_end, n_time - exclude_end - 10)
+        tail_end = max(tail_start + 1, n_time - exclude_end)
+        tail_window = curve[tail_start:tail_end]
+        if len(tail_window) == 0:
+            return float("nan")
+        return float(np.mean(tail_window)) / fp_peak_val * 100.0
+
+    @staticmethod
     def _aif_passes_quality(
         curve: npt.NDArray[Any],
         baseline_frames: int,
         tr: float,
-    ) -> tuple[bool, float, Optional[float]]:
-        """Check if an AIF curve passes SPR and global-max quality checks.
+    ) -> tuple[bool, float, Optional[float], float]:
+        """Check if an AIF curve passes quality gates.
 
         Returns
         -------
         passes : bool
-            True if SPR <= 100 and global max is in first-pass window.
+            True if SPR <= 100, global max is in first-pass window,
+            gamma peak ratio is in [MIN, MAX], AND averaged BRR >=
+            AIF_AVG_BRR_MIN (rejects negative-tail averaged AIFs that
+            violate the mono-exponential ΔR2* assumption).
         spr : float
             Secondary peak ratio (%).
         pr : float or None
             Gamma peak ratio (fitted/measured), None if gamma fit fails.
+        brr : float
+            Baseline-return ratio (%) for the averaged curve.
         """
         spr, _, _ = AIFDetection._compute_aif_spr(curve, baseline_frames, tr)
         gmax_ok = AIFDetection._aif_global_max_in_fp(curve, baseline_frames, tr)
@@ -1592,8 +1638,10 @@ class AIFDetection(BaseInterface):
             pr is not None
             and GAMMA_PEAK_RATIO_CASCADE_MIN <= pr <= GAMMA_PEAK_RATIO_CASCADE_MAX
         )
-        passes = spr <= 100.0 and gmax_ok and pr_ok
-        return passes, spr, pr
+        brr = AIFDetection._compute_aif_brr(curve, baseline_frames, tr)
+        brr_ok = np.isnan(brr) or brr >= AIF_AVG_BRR_MIN
+        passes = spr <= 100.0 and gmax_ok and pr_ok and brr_ok
+        return passes, spr, pr, brr
 
     def _try_aif_dual_roi(
         self,
@@ -1602,14 +1650,22 @@ class AIFDetection(BaseInterface):
         brain_mask: npt.NDArray[Any],
         tr: float,
         baseline_frames: int,
-    ) -> Optional[tuple[npt.NDArray[Any], npt.NDArray[Any], int, float, Optional[float]]]:
-        """Try both roi_size=3 and roi_size=1, return best passing result.
+    ) -> Optional[tuple[npt.NDArray[Any], npt.NDArray[Any], int, float, Optional[float], float]]:
+        """Compute the inverse-cost-weighted averaged AIF and gate it.
+
+        Name kept for compatibility with historical "dual ROI" phase;
+        today this tries only ``roi_size=1`` (single-voxel per candidate)
+        — tissue contamination from 3x3x3 neighbourhoods had no SNR
+        benefit over the weighted mean across multiple voxels.
 
         Returns
         -------
         result : tuple or None
-            ``(aif_curve, aif_mask, roi_size_used, spr, peak_ratio)``
-            or None if neither passes.
+            ``(aif_curve, aif_mask, roi_size_used, spr, peak_ratio, brr)``
+            when the averaged curve passes `_aif_passes_quality`;
+            ``None`` otherwise (SPR>100, global-max outside FP, gamma
+            peak-ratio outside [MIN, MAX], or averaged BRR below
+            ``AIF_AVG_BRR_MIN``).
         """
         # Use roi_size=1 only — candidate voxels without tissue-contaminated
         # 3x3x3 neighborhoods.  Noise reduction comes from the inverse-cost
@@ -1617,11 +1673,11 @@ class AIFDetection(BaseInterface):
         curve, mask = self._compute_roi_averaged_aif(
             candidates, conc_data, brain_mask, roi_size=1,
         )
-        passes, spr, pr = self._aif_passes_quality(
+        passes, spr, pr, brr = self._aif_passes_quality(
             curve, baseline_frames, tr,
         )
         if passes:
-            return (curve, mask, 1, spr, pr)
+            return (curve, mask, 1, spr, pr, brr)
         return None
 
     # -----------------------------------------------------------------
@@ -2413,6 +2469,12 @@ class AIFDetection(BaseInterface):
         accumulated_pool: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
         accumulated_coords: set[tuple[int, int, int]] = set()
         tiers_attempted: list[str] = []
+        # Per-tier trim trajectories for tiers that tried but rejected
+        # the averaged AIF. Surfaces in QC so debugging of subjects that
+        # fall all the way to synthetic can see how many voxels survived
+        # at each level. Initialised here (not inside the cascade branch)
+        # so it is always defined before the build-AIF block below.
+        rejected_trajectories: dict[str, list[int]] = {}
 
         if aif_method == "synthetic":
             pass  # Go directly to synthetic
@@ -2490,38 +2552,93 @@ class AIFDetection(BaseInterface):
                     cascade_initial_level = level_name
                 tiers_attempted.append(level_name)
 
-                # --- Dual-ROI quality gate ---
-                # Step A: try all scored candidates with both ROI sizes
-                if len(scored) >= MIN_AIF_CANDIDATES_ACCEPT:
+                # --- Progressive-trim quality gate ---
+                # Walk from len(scored) down to MIN_AIF_CANDIDATES_ACCEPT
+                # (global floor=3 for every tier). At each step, average
+                # the current pool and test quality. If the averaged AIF
+                # fails, drop the candidate with the most-negative
+                # per-voxel BRR (the most likely tail contaminator) and
+                # retry. Accept on the first passing subset (largest
+                # pool that passes). Replaces the prior single-shot
+                # Step A (all) + Step B (top-N) pattern.
+                pool: list[
+                    tuple[float, tuple[int, int, int], dict[str, Any]]
+                ] = list(scored)
+                trim_trajectory: list[int] = [len(pool)]
+                tier_accepted = False
+                while len(pool) >= MIN_AIF_CANDIDATES_ACCEPT:
                     result = self._try_aif_dual_roi(
-                        scored, conc_data, brain_mask, tr, aif_baseline_frames,
+                        pool, conc_data, brain_mask, tr, aif_baseline_frames,
                     )
                     if result is not None:
-                        aif_curve_r, aif_mask_r, roi_used, _, _ = result
+                        aif_curve_r, aif_mask_r, roi_used, _, _, _ = result
                         accepted_aif = (aif_curve_r, aif_mask_r, roi_used)
-                        top_candidates = scored
+                        top_candidates = pool
                         n_available = n_avail
                         detection_level = level_name
                         filter_meta = f_meta
+                        filter_meta["aif_pool_trimmed_from"] = trim_trajectory[0]
+                        filter_meta["aif_pool_trimmed_to"] = len(pool)
+                        filter_meta["aif_trim_trajectory"] = list(trim_trajectory)
+                        if len(pool) < trim_trajectory[0]:
+                            _logger.info(
+                                "AIF cascade tier %s accepted after trim: "
+                                "%d -> %d candidates (trajectory=%s)",
+                                level_name,
+                                trim_trajectory[0],
+                                len(pool),
+                                trim_trajectory,
+                            )
+                        tier_accepted = True
                         break
+                    if len(pool) == MIN_AIF_CANDIDATES_ACCEPT:
+                        break  # tier exhausted at the global floor
+                    # Drop the candidate with the most-negative per-voxel
+                    # BRR (most likely tail contaminator). Cost fallback
+                    # when BRR is NaN: ``-cost`` puts highest-cost last,
+                    # matching "worst first". The two branches produce
+                    # values from different numeric ranges (BRR ~ [-10, 30],
+                    # -cost ~ [-5, -0.1]) but both are floats so the sort
+                    # is total; in practice NaN-BRR candidates tend to get
+                    # dropped first, which is fine because a NaN BRR is
+                    # itself suspicious.
+                    worst_idx = min(
+                        range(len(pool)),
+                        key=lambda i: (
+                            pool[i][2].get("baseline_return_ratio", float("inf"))
+                            if not np.isnan(
+                                pool[i][2].get(
+                                    "baseline_return_ratio", float("nan")
+                                )
+                            )
+                            else -pool[i][0]
+                        ),
+                    )
+                    pool.pop(worst_idx)
+                    trim_trajectory.append(len(pool))
 
-                    # Step B: try top-N candidates (tier minimum)
-                    top_n = scored[:level_n_candidates]
-                    if len(top_n) >= MIN_AIF_CANDIDATES_ACCEPT:
-                        result = self._try_aif_dual_roi(
-                            top_n, conc_data, brain_mask,
-                            tr, aif_baseline_frames,
-                        )
-                        if result is not None:
-                            aif_curve_r, aif_mask_r, roi_used, _, _ = result
-                            accepted_aif = (aif_curve_r, aif_mask_r, roi_used)
-                            top_candidates = top_n
-                            n_available = n_avail
-                            detection_level = level_name
-                            filter_meta = f_meta
-                            break
+                if tier_accepted:
+                    break
 
-                # Accumulate good candidates (deduplicate by coordinate)
+                # Tier rejected after trim (or never entered the loop).
+                # Stash the trajectory per-tier so downstream debugging
+                # of subjects that exhaust every tier (and fall to
+                # synthetic AIF) can see how many voxels were tried at
+                # each level. Only emitted when trim actually ran.
+                if len(trim_trajectory) > 1 or (
+                    len(pool) >= MIN_AIF_CANDIDATES_ACCEPT
+                ):
+                    rejected_trajectories[level_name] = list(trim_trajectory)
+                    _logger.debug(
+                        "AIF cascade tier %s rejected after trim: %s",
+                        level_name,
+                        trim_trajectory,
+                    )
+
+                # Accumulate good candidates (deduplicate by coordinate).
+                # Use the *original* full ``scored`` list, not the trimmed
+                # pool, so the next tier / accumulated-pool fallback sees
+                # every candidate that scored here.
                 for cost, coord, metrics in scored:
                     if coord not in accumulated_coords:
                         accumulated_pool.append((cost, coord, metrics))
@@ -2543,35 +2660,59 @@ class AIFDetection(BaseInterface):
                         tr, aif_baseline_frames,
                     )
                     if result is not None:
-                        aif_curve_r, aif_mask_r, roi_used, _, _ = result
+                        aif_curve_r, aif_mask_r, roi_used, _, _, _ = result
                         accepted_aif = (aif_curve_r, aif_mask_r, roi_used)
                         top_candidates = capped_pool
                         n_available = len(accumulated_pool)
                         detection_level = "accumulated"
                         filter_meta = {}
 
-                # Single-best fallback: relaxed gate (global_max_in_fp only,
-                # no SPR/PR check). A noisy single-voxel AIF preserves
-                # patient-specific bolus timing — better than synthetic.
+                # Single-best fallback: relaxed gate (global_max_in_fp +
+                # averaged BRR floor). A noisy single-voxel AIF preserves
+                # patient-specific bolus timing — but a voxel with a
+                # strongly negative tail is worse than synthetic, so we
+                # apply AIF_AVG_BRR_MIN here too and fall through to
+                # synthetic if it fails.
                 if accepted_aif is None and capped_pool:
                     best_only = [capped_pool[0]]
-                    # Prefer roi_size=1 first (pure voxel timing, no tissue dilution)
+                    # Try roi_size=1 first (pure voxel timing, no tissue
+                    # dilution). If the BRR gate rejects, fall through
+                    # to roi_size=3 — averaging the 3x3x3 neighbourhood
+                    # can pull the tail back up. Both failing forces
+                    # synthetic.
                     for roi_size in (1, 3):
                         curve, mask = self._compute_roi_averaged_aif(
                             best_only, conc_data, brain_mask,
                             roi_size=roi_size,
                         )
-                        if self._aif_global_max_in_fp(curve, aif_baseline_frames, tr):
-                            accepted_aif = (curve, mask, roi_size)
-                            top_candidates = best_only
-                            n_available = len(accumulated_pool)
-                            detection_level = tiers_attempted[-1] if tiers_attempted else "single_best"
-                            filter_meta = {}
+                        if not self._aif_global_max_in_fp(
+                            curve, aif_baseline_frames, tr
+                        ):
+                            continue
+                        single_best_brr = self._compute_aif_brr(
+                            curve, aif_baseline_frames, tr
+                        )
+                        if (
+                            not np.isnan(single_best_brr)
+                            and single_best_brr < AIF_AVG_BRR_MIN
+                        ):
                             _logger.warning(
-                                "AIF cascade: using single-best candidate "
-                                "(accumulated pool failed dual-ROI validation)"
+                                "AIF cascade: single-best candidate rejected "
+                                "(BRR=%.1f%% < %.1f%%); falling through to "
+                                "synthetic AIF",
+                                single_best_brr, AIF_AVG_BRR_MIN,
                             )
-                            break
+                            continue
+                        accepted_aif = (curve, mask, roi_size)
+                        top_candidates = best_only
+                        n_available = len(accumulated_pool)
+                        detection_level = tiers_attempted[-1] if tiers_attempted else "single_best"
+                        filter_meta = {}
+                        _logger.warning(
+                            "AIF cascade: using single-best candidate "
+                            "(accumulated pool failed dual-ROI validation)"
+                        )
+                        break
 
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
@@ -2621,6 +2762,10 @@ class AIFDetection(BaseInterface):
             qc_metrics["cascade_tiers_attempted"] = tiers_attempted
             qc_metrics["cascade_accumulated_pool_size"] = len(accumulated_pool)
             qc_metrics["cascade_accepted_roi_size"] = accepted_roi_size
+            if rejected_trajectories:
+                qc_metrics["cascade_rejected_trim_trajectories"] = (
+                    rejected_trajectories
+                )
             spr, fp_frame, _ = self._compute_aif_spr(
                 aif_curve, aif_baseline_frames, tr,
             )
@@ -2642,7 +2787,12 @@ class AIFDetection(BaseInterface):
                 "n_aif_voxels_used": 0,
                 "n_aif_voxels_available": 0,
                 "synthetic_fallback_reason": "no_candidates",
+                "cascade_tiers_attempted": list(tiers_attempted),
             }
+            if rejected_trajectories:
+                qc_metrics["cascade_rejected_trim_trajectories"] = (
+                    rejected_trajectories
+                )
             qc_metrics.update(synth_metrics)
         else:
             raise RuntimeError(
