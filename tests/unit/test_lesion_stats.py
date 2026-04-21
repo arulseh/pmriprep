@@ -351,3 +351,37 @@ class TestLesionStatisticsResultToDict:
         assert "LesionMaskType" in d
         assert "TotalLesionVoxels" in d
         assert "Regions" in d
+
+
+class TestLesionStatisticsAifProvenance:
+    """AifSource / CrossSubjectComparable sidecar fields (v0.28.3)."""
+
+    def test_measured_aif_source(self) -> None:
+        result = LesionStatisticsResult(
+            subject_id="0001", session_id="0002", modality="DSC",
+            mask_type="binary", mask_source="m.nii.gz", total_voxels=500,
+            aif_source="measured", cross_subject_comparable=True,
+        )
+        d = result.to_dict()
+        assert d["AifSource"] == "measured"
+        assert d["CrossSubjectComparable"] is True
+
+    def test_synthetic_aif_source(self) -> None:
+        result = LesionStatisticsResult(
+            subject_id="0001", session_id="0002", modality="DSC",
+            mask_type="binary", mask_source="m.nii.gz", total_voxels=500,
+            aif_source="synthetic", cross_subject_comparable=False,
+        )
+        d = result.to_dict()
+        assert d["AifSource"] == "synthetic"
+        assert d["CrossSubjectComparable"] is False
+
+    def test_fields_absent_by_default(self) -> None:
+        """DCE lesion-stats (no AIF provenance) omits the fields cleanly."""
+        result = LesionStatisticsResult(
+            subject_id="0001", session_id="0002", modality="DCE",
+            mask_type="binary", mask_source="m.nii.gz", total_voxels=500,
+        )
+        d = result.to_dict()
+        assert "AifSource" not in d
+        assert "CrossSubjectComparable" not in d

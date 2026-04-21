@@ -125,7 +125,12 @@ GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
 
 SKIP_REASON_NO_DSC_RUN = "no_dsc_run"
 SKIP_REASON_NO_NAWM_MASK = "no_nawm_mask"
+SKIP_REASON_SYNTHETIC_AIF = "synthetic_aif"
 NO_DSC_RUN_REASON_STRING = "No DSC data provided"
+SYNTHETIC_AIF_REASON_STRING = (
+    "AIF is synthetic (cascade exhausted or gamma-R² fallback); "
+    "absolute CBV magnitudes are not calibrated"
+)
 
 
 class ConstraintMode(Enum):
@@ -778,6 +783,30 @@ def determine_constraint_mode(
         additionally annotates the config's ``reason`` with a physics caveat
         so callers can surface the warning in QC / HTML reports.
     """
+    # Synthetic-AIF short-circuit: overrides EVERY user selection. If the
+    # AIF cascade exhausted and the pipeline fell back to a synthetic
+    # gamma variate, the CBV magnitudes are not comparable to calibrated
+    # data. HARD would be physically meaningless; SOFT would lock vp to
+    # an arbitrary scale; only SKIP is defensible. This also guards
+    # against a user forcing ``--constraint-mode hard`` on a subject
+    # that happens to have a synthetic AIF.
+    if dsc_quality.detection_level == "synthetic":
+        if (
+            user_override is not None
+            and user_override.lower() not in ("auto", "skip")
+        ):
+            logger.warning(
+                "User requested constraint mode '%s' but AIF is synthetic; "
+                "overriding to SKIP. Absolute CBV magnitudes are not "
+                "calibrated against this subject's true arterial input.",
+                user_override,
+            )
+        return ConstraintConfig(
+            mode=ConstraintMode.SKIP,
+            vp_uncertainty=0.0,
+            reason=SYNTHETIC_AIF_REASON_STRING,
+        )
+
     # UNKNOWN preload → SKIP (physics consult 2026-04-18: more conservative
     # than defaulting to NONE, which would silently apply a soft prior to
     # data with no basis for any prior). Short-circuits before quality-
@@ -976,6 +1005,40 @@ def prepare_vp_constraint_from_data(
     import nibabel as nib  # type: ignore[import-untyped]
 
     result = VpConstraintResult()
+
+    # Synthetic-AIF handling: when the AIF cascade exhausts every tier
+    # and the pipeline falls back to a population-average synthetic
+    # gamma variate, the ``rel_cbv_auc`` denominator is not calibrated
+    # against this subject's true arterial amplitude. Any vp number
+    # derived from it is not comparable across subjects, so the DCE vp
+    # constraint is unsafe to anchor on synthetic CBV magnitudes. Emit
+    # an explicit SKIP with a dedicated reason *before* the existing
+    # nCBV-presence check (which happens to fire implicitly today via
+    # the confidence-downgrade + magnitude-gate path, but only
+    # accidentally — this makes the intent auditable).
+    if aif_qc_data and (
+        aif_qc_data.get("detection_level") == "synthetic"
+        or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
+    ):
+        logger.info(
+            "vp constraint skipped: AIF is synthetic (cascade exhausted "
+            "or gamma-R² fallback). Absolute CBV magnitudes not "
+            "calibrated; DCE vp will be fit unconstrained."
+        )
+        result.config = ConstraintConfig(
+            mode=ConstraintMode.SKIP,
+            vp_uncertainty=0.0,
+            reason=SYNTHETIC_AIF_REASON_STRING,
+        )
+        result.vp_map = None
+        result.qc_report = {
+            "mode": ConstraintMode.SKIP.value,
+            "reason": result.config.reason,
+            "vp_uncertainty": result.config.vp_uncertainty,
+            "skip_reason": SKIP_REASON_SYNTHETIC_AIF,
+            "hematocrit": hematocrit,
+        }
+        return result
 
     # Missing-NAWM handling: if no nCBV file available, cleanly SKIP.
     if ncbv_file is None or not Path(str(ncbv_file)).is_file():

@@ -3078,14 +3078,18 @@ def _dsc_dce_validation_node(
     from pmriprep.utils.dsc_cbv_constraint import (
         NO_DSC_RUN_REASON_STRING,
         SKIP_REASON_NO_DSC_RUN,
+        SKIP_REASON_SYNTHETIC_AIF,
+        SYNTHETIC_AIF_REASON_STRING,
     )
 
     resolved_mode = None
     overshoot = None
+    constraint_skip_reason = None
     if isinstance(pk_qc, dict):
         cbv_constraint = pk_qc.get("dsc_cbv_constraint", {}) or {}
         resolved_mode = cbv_constraint.get("mode")
         overshoot = cbv_constraint.get("aif_tissue_overshoot_fraction")
+        constraint_skip_reason = cbv_constraint.get("skip_reason")
     elif isinstance(pk_qc, str):
         resolved_mode = pk_qc
 
@@ -3100,6 +3104,22 @@ def _dsc_dce_validation_node(
             "skipped": True,
             "status": "skipped",
             "reason": "Validation skipped or missing data",
+        }
+
+    # Synthetic-AIF short-circuit: the DSC CBV constraint upstream
+    # already SKIPped with reason=synthetic_aif, so running the xval
+    # on absolute-scale-invalid CBV would emit spurious POOR/CIRCULAR.
+    # The xval ratio bands are calibrated against calibrated-scale
+    # (NAWM-anchored) CBV; with a synthetic AIF the scale is not
+    # comparable across subjects. Check BEFORE the no-DSC guard so
+    # the explicit reason surfaces even if downstream files haven't
+    # arrived yet (the constraint's QC is the authoritative signal).
+    if constraint_skip_reason == SKIP_REASON_SYNTHETIC_AIF:
+        return {
+            "skipped": True,
+            "status": "SKIPPED",
+            "reason": SYNTHETIC_AIF_REASON_STRING,
+            "skip_reason": SKIP_REASON_SYNTHETIC_AIF,
         }
 
     if not dsc_inputs_present:

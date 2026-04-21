@@ -2693,6 +2693,9 @@ def init_dsc_preproc_wf(
         (normalize, lesion_stats, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, lesion_stats, [("ncbf_file", "ncbf_map")]),
         (compute_maps, lesion_stats, [("out_k2", "k2_map")]),
+        # AIF provenance (v0.28.3) — surface AifSource /
+        # CrossSubjectComparable in the lesion-stats sidecar.
+        (aif_detect, lesion_stats, [("qc_metrics", "aif_qc")]),
     ])
     # Connect lesion stats outputs to outputnode
     workflow.connect([
@@ -2745,6 +2748,8 @@ def init_dsc_preproc_wf(
         (normalize, roi_stats, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, roi_stats, [("ncbf_file", "ncbf_map")]),
         (compute_maps, roi_stats, [("out_k2", "k2_map")]),
+        # AIF provenance (v0.28.3) — same as lesion_stats.
+        (aif_detect, roi_stats, [("qc_metrics", "aif_qc")]),
     ])
     # Connect ROI stats outputs to outputnode
     workflow.connect([

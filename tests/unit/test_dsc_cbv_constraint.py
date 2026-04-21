@@ -1146,7 +1146,134 @@ class TestSkipReasonConstants:
             NO_DSC_RUN_REASON_STRING,
             SKIP_REASON_NO_DSC_RUN,
             SKIP_REASON_NO_NAWM_MASK,
+            SKIP_REASON_SYNTHETIC_AIF,
+            SYNTHETIC_AIF_REASON_STRING,
         )
         assert SKIP_REASON_NO_DSC_RUN == "no_dsc_run"
         assert SKIP_REASON_NO_NAWM_MASK == "no_nawm_mask"
+        assert SKIP_REASON_SYNTHETIC_AIF == "synthetic_aif"
         assert NO_DSC_RUN_REASON_STRING == "No DSC data provided"
+        assert "synthetic" in SYNTHETIC_AIF_REASON_STRING.lower()
+
+
+# =============================================================================
+# Synthetic-AIF SKIP plumbing (v0.28.3)
+# =============================================================================
+
+
+class TestPrepareVpConstraintSyntheticAif:
+    """`prepare_vp_constraint_from_data` early-SKIPs on synthetic AIF."""
+
+    def test_skip_on_detection_level_synthetic(self, tmp_path) -> None:
+        from pmriprep.utils.dsc_cbv_constraint import (
+            prepare_vp_constraint_from_data, SKIP_REASON_SYNTHETIC_AIF,
+        )
+        # Brain mask file required by signature; synthetic branch
+        # short-circuits before it's loaded, so a placeholder suffices.
+        mask_path = tmp_path / "brain_mask.nii.gz"
+        mask_path.write_text("")
+        # ncbv_file=None would also hit the no-NAWM SKIP, but synthetic
+        # SKIP must fire FIRST — that's the precedence being tested.
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=None,
+            aif_qc_data={"detection_level": "synthetic"},
+            brain_mask_file=str(mask_path),
+        )
+        assert result.config.mode == ConstraintMode.SKIP
+        assert result.qc_report["skip_reason"] == SKIP_REASON_SYNTHETIC_AIF
+
+    def test_skip_on_cbv_auc_denominator_is_synthetic(self, tmp_path) -> None:
+        """Legacy flag (``cbv_auc_denominator_is_synthetic``) also fires."""
+        from pmriprep.utils.dsc_cbv_constraint import (
+            prepare_vp_constraint_from_data, SKIP_REASON_SYNTHETIC_AIF,
+        )
+        mask_path = tmp_path / "brain_mask.nii.gz"
+        mask_path.write_text("")
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=None,
+            aif_qc_data={"cbv_auc_denominator_is_synthetic": True},
+            brain_mask_file=str(mask_path),
+        )
+        assert result.config.mode == ConstraintMode.SKIP
+        assert result.qc_report["skip_reason"] == SKIP_REASON_SYNTHETIC_AIF
+
+    def test_synthetic_short_circuits_before_missing_ncbv(
+        self, tmp_path
+    ) -> None:
+        """Synthetic-AIF SKIP precedes the no-NAWM-mask SKIP — the reason
+        in QC must be ``synthetic_aif``, not ``no_nawm_mask``."""
+        from pmriprep.utils.dsc_cbv_constraint import (
+            prepare_vp_constraint_from_data,
+            SKIP_REASON_SYNTHETIC_AIF,
+            SKIP_REASON_NO_NAWM_MASK,
+        )
+        mask_path = tmp_path / "brain_mask.nii.gz"
+        mask_path.write_text("")
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=None,  # would fire NO_NAWM_MASK if synthetic missed
+            aif_qc_data={"detection_level": "synthetic"},
+            brain_mask_file=str(mask_path),
+        )
+        assert result.qc_report["skip_reason"] == SKIP_REASON_SYNTHETIC_AIF
+        assert result.qc_report["skip_reason"] != SKIP_REASON_NO_NAWM_MASK
+
+    def test_measured_aif_does_not_short_circuit(self, tmp_path) -> None:
+        """Measured AIF + missing ncbv → normal NO_NAWM_MASK SKIP, not synthetic."""
+        from pmriprep.utils.dsc_cbv_constraint import (
+            prepare_vp_constraint_from_data, SKIP_REASON_NO_NAWM_MASK,
+        )
+        mask_path = tmp_path / "brain_mask.nii.gz"
+        mask_path.write_text("")
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=None,
+            aif_qc_data={"detection_level": "atlas_relaxed"},
+            brain_mask_file=str(mask_path),
+        )
+        assert result.qc_report["skip_reason"] == SKIP_REASON_NO_NAWM_MASK
+
+
+class TestDetermineConstraintModeSyntheticOverride:
+    """`determine_constraint_mode` forces SKIP when AIF is synthetic."""
+
+    def _make_quality(
+        self, detection_level: str = "measured"
+    ) -> CBVQualityAssessment:
+        return CBVQualityAssessment(
+            cbv_median=1.0,
+            confidence="high",
+            use_constraint=True,
+            detection_level=detection_level,
+        )
+
+    def test_synthetic_overrides_user_hard(self) -> None:
+        quality = self._make_quality(detection_level="synthetic")
+        config = determine_constraint_mode(
+            dsc_quality=quality,
+            user_override="hard",
+        )
+        assert config.mode == ConstraintMode.SKIP
+
+    def test_synthetic_overrides_user_soft(self) -> None:
+        quality = self._make_quality(detection_level="synthetic")
+        config = determine_constraint_mode(
+            dsc_quality=quality,
+            user_override="soft",
+        )
+        assert config.mode == ConstraintMode.SKIP
+
+    def test_synthetic_auto_still_skips(self) -> None:
+        quality = self._make_quality(detection_level="synthetic")
+        config = determine_constraint_mode(
+            dsc_quality=quality,
+            user_override="auto",
+        )
+        assert config.mode == ConstraintMode.SKIP
+
+    def test_measured_hard_still_honors_user(self) -> None:
+        quality = self._make_quality(detection_level="atlas_strict")
+        config = determine_constraint_mode(
+            dsc_quality=quality,
+            user_override="hard",
+        )
+        # Not synthetic → user override honored (HARD emitted with warning)
+        assert config.mode == ConstraintMode.HARD

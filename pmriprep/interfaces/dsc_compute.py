@@ -2036,6 +2036,18 @@ class ComputeDSCMaps(BaseInterface):
         qc_metrics.update(baseline_detection_info)
         qc_metrics["aif_bat_seconds"] = aif_bat_seconds
 
+        # v0.28.3: when the AIF is synthetic, CBV magnitudes (cbv_mean,
+        # cbv_median, cbv_auc_mean, cbv_auc_median) are not comparable
+        # against literature reference ranges — the synthetic AIF's
+        # amplitude is not calibrated to this subject's true arterial
+        # input. Emit an explicit `cbv_literature_range_applicable` flag
+        # so any downstream QC consumer that checks literature ranges
+        # can branch cleanly. Keys remain present with values intact;
+        # only the interpretability annotation changes.
+        qc_metrics["cbv_literature_range_applicable"] = (
+            aif_level != "synthetic"
+        )
+
         # -----------------------------------------------------------
         # Helper to save a 3D array as NIfTI
         # -----------------------------------------------------------

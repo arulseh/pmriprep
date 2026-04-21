@@ -1399,6 +1399,7 @@ class ComputeDCEMaps(BaseInterface):
         from pmriprep.utils.dsc_cbv_constraint import (
             NO_DSC_RUN_REASON_STRING,
             SKIP_REASON_NO_DSC_RUN,
+            SKIP_REASON_SYNTHETIC_AIF,
             ConstraintMode,
             prepare_vp_constraint_from_data,
         )
@@ -1739,6 +1740,26 @@ class ComputeDCEMaps(BaseInterface):
                                     "design at this acquisition; "
                                     "informational only — no action taken."
                                 )
+                # Synthetic-AIF annotation (v0.28.3). When the vp
+                # constraint SKIPs due to synthetic AIF, the overshoot
+                # diagnostic above does not run — the comparison uses
+                # absolute scales that the synthetic AIF cannot provide.
+                # Emit explicit "not applicable" keys with stable shape
+                # so downstream QC parsers don't have to differentiate
+                # "missing because didn't compute" from "missing because
+                # synthetic."
+                if (
+                    isinstance(aif_qc_data, dict)
+                    and (
+                        aif_qc_data.get("detection_level") == "synthetic"
+                        or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
+                    )
+                ):
+                    constraint_qc.setdefault(
+                        "aif_tissue_overshoot_fraction", None
+                    )
+                    constraint_qc["overshoot_applicable"] = False
+                    constraint_qc["overshoot_reason"] = SKIP_REASON_SYNTHETIC_AIF
             except Exception as exc:
                 constraint_qc = {
                     "mode": "skip",

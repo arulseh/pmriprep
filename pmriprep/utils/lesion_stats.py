@@ -116,6 +116,15 @@ class LesionStatisticsResult:
     nawm_reference: Optional[Dict[str, Any]] = None
     derived_metrics: Optional[Dict[str, Any]] = None
     clinical_context: Optional[Dict[str, Any]] = None
+    # v0.28.3: AIF provenance for DSC stats. "measured" | "synthetic" for
+    # AifSource; CrossSubjectComparable is False at the root when the AIF
+    # is synthetic (absolute CBV magnitudes not comparable across
+    # subjects). Within-subject nCBV ratios cancel the AIF amplitude, so
+    # nested nCBV-derived metrics remain cross-subject-comparable —
+    # downstream consumers should read the field per-map as well as at
+    # the root. None for DCE stats (no AIF provenance applies).
+    aif_source: Optional[str] = None
+    cross_subject_comparable: Optional[bool] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -129,6 +138,10 @@ class LesionStatisticsResult:
             "LesionMaskType": self.mask_type,
             "TotalLesionVoxels": self.total_voxels,
         }
+        if self.aif_source is not None:
+            result["AifSource"] = self.aif_source
+        if self.cross_subject_comparable is not None:
+            result["CrossSubjectComparable"] = self.cross_subject_comparable
         if self.clinical_context:
             result["ClinicalContext"] = self.clinical_context
         if self.nawm_reference:
