@@ -188,7 +188,7 @@ pmriprep /path/to/bids /path/to/output participant \
 dsc:
   method: cpi
   bayesian: vi
-  preload: 0.5        # half-dose preload (administered); or "auto" to detect from signal
+  preload: 0.5
   dose: 0.75
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
@@ -207,7 +207,7 @@ dce:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `preload` | str or float | `"auto"` | Preload administered dose. `"auto"` infers adequacy from the K2 residual distribution post-leakage-correction (Boxerman 2006, Leu 2016, Welker 2015), or pass a float multiplier of the agent's standard dose (`0.0` = none, `0.5` = half-dose, `1.0` = full). Low K2 (below `K2_PRIMARY_ADEQUATE = 0.005 s⁻¹`) → adequate/well-suppressed; elevated K2 → partial or inadequate. When K2 metrics are unavailable (e.g., leakage correction disabled), auto-detection returns `unknown` and the DCE vp constraint is SKIPed. Legacy `baseline_delta_r2` is retained as a tissue-heterogeneity-biased advisory metric (motion / S0 baseline QC) only. User override always wins. |
+| `preload` | str or float | `"auto"` | Preload dose multiplier (`0` = none, `0.5` = half, `1` = full) or `"auto"` to detect from data |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
@@ -235,7 +235,7 @@ dce:
 | `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection (Patlak, Extended Tofts, 2CXM). Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
 | `bayesian` | str | `"none"` | Bayesian mode: `none`, `vi`, `map` |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
-| `aif_file` | path | `null` | External AIF curve file (`.txt` or `.npz` with `Cp`/`aif` key); true plasma [Gd] in mM (already Hct-corrected), temporally aligned with DCE volumes. Bypasses AIF detection; the pipeline does not re-scale or re-correct for hematocrit |
+| `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected). Bypasses AIF detection |
 | `scale_aif` | bool | `true` | Scale AIF to population reference |
 | `target_peak` | float | `null` | Target AIF peak (mM); null = field-strength default |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
@@ -252,9 +252,9 @@ dce:
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `no_tortuosity` | bool | `false` | Skip DWI-based tortuosity correction |
-| `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation. Note: xval requires a NAWM mask to produce the dimensionless nCBV that anchors the expected `vp / nCBV` ratio at 0.02 (Rostrup 2000, Boxerman 2020). When no NAWM is available, xval is automatically SKIPPED (not flagged POOR) since the legacy rel-AUC-CBV fallback has no universal expected ratio (Rempp 1994; Knutsson 2010). At long volume TR (> ~3 s, per Buckley 2002), DCE vp is prior-dominated by design; the QC JSON reports `aif_tissue_overshoot_fraction` + `acquisition_limited_note` to flag this regime without touching the fit. |
-| `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto` (default) emits only `soft` or `skip` — never `hard`, because DSC CBV and DCE vp measure different vascular compartments. `hard` requires explicit user opt-in (unsupported physics claim; biases absolute PK estimates). Uses NAWM-normalized CBV (nCBV) as the prior input. |
-| `hematocrit` | float | `0.42` | Arterial hematocrit (from blood draw). Used for AIF plasma correction; capillary Hct derived via Fåhræus ratio (0.85) |
+| `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation. Requires a NAWM mask; automatically skipped when unavailable |
+| `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto`: `soft` prior when DSC CBV is available, `skip` otherwise. Options: `auto`, `soft`, `skip` |
+| `hematocrit` | float | `0.42` | Arterial hematocrit for AIF plasma correction |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
@@ -356,7 +356,7 @@ Required: `RepetitionTime`, `EchoTime`, `FlipAngle`, `MagneticFieldStrength`. Re
 ```
 Required: `FlipAngle`, `MagneticFieldStrength`. For 3D sequences (VIBE/LAVA/THRIVE), both `RepetitionTime` (volume TR) and `RepetitionTimeExcitation` (pulse TR) are required. For 2D sequences, `RepetitionTime` serves as both. Recommended: `ContrastBolusAgent` (used for relaxivity lookup and AIF peak threshold scaling).
 
-> **Note:** If `ContrastBolusAgent` is not provided, the pipeline defaults to Gd-DTPA (r1=3.8 s⁻¹/mM at 3T). For high-relaxivity agents (gadopiclenol, gadoquatrane), this default produces incorrect quantitative DCE parameters. The pipeline warns about defaults in the HTML QC report and records assumed values in output JSON sidecars under `PerfusionProcessing`. Use `--dce-r1` to override.
+> **Note:** If `ContrastBolusAgent` is not provided, the pipeline defaults to Gd-DTPA (r1=3.8 s⁻¹/mM at 3T). The pipeline warns about defaults in the HTML QC report and records assumed values in output JSON sidecars under `PerfusionProcessing`. Use `--dce-r1` to override.
 >
 > **Dose:** `--dsc-dose` and `--dce-dose` are multipliers of the agent's recommended dose (e.g., `0.5` for half dose, `1.0` for full). If you administered less than a full dose (common with DSC preload protocols), set the multiplier accordingly. Incorrect dose settings cause AIF detection failure because peak concentration thresholds are scaled by dose.
 
@@ -543,35 +543,6 @@ output_dir/pmriprep/
 
 All NIfTI outputs have paired `.json` sidecars with descriptions, units, and provenance.
 
-### DSC AIF provenance (v0.29.0)
-
-Every DSC map sidecar carries a `PerfusionProcessing.AIF` block plus two top-level tags that tell downstream consumers how to interpret the map given the detected AIF source:
-
-```jsonc
-{
-  "AIFDependent": true,             // false for maps whose computation does not consume the AIF
-                                    // (BW K2, PSR, PH, SNR, tSNR, CNR, TTP, auc_diff)
-  "TemplateAIFUsage": "ratio_defensible",  // how to treat this map under a template/synthetic AIF:
-                                           //   "safe"              — unaffected (BW K2, nCBV/nCBF, TTP, PSR, PH, SNR/tSNR/CNR)
-                                           //   "ratio_defensible"  — absolute magnitude not comparable across subjects,
-                                           //                         within-subject lesion:NAWM ratios remain interpretable
-                                           //   "qualitative_only"  — AIF shape/timing mismatch biases the map (MTT, Tmax)
-  "PerfusionProcessing": {
-    "AIF": {
-      "Source": "measured",          // "measured" | "gamma_fit_measured" | "template" | "external"
-      "DetectionLevel": "atlas_strict",
-      "QualityFlag": "pass",         // "pass" | "warn" | "poor" — score-primary (≥0.7 / ≥0.5 / else),
-                                     // "synthetic" detection always forces "poor"
-      "GammaFitApplied": false,
-      "CrossSubjectComparable": true
-      // when Source == "template": also "SyntheticFallbackReason": "..."
-      // when Source == "external":  also "ExternalAIFVerified": false
-    }
-  }
-}
-```
-
-PMRIPrep emits no absolute CBV/CBF maps, so a template AIF never triggers output suppression — only interpretation downgrades. The HTML report renders a caveat block in the AIF section when `detection_level == "synthetic"`.
 
 ## QC Reports
 
