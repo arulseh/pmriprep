@@ -1740,7 +1740,7 @@ class ComputeDCEMaps(BaseInterface):
                                     "design at this acquisition; "
                                     "informational only — no action taken."
                                 )
-                # Synthetic-AIF annotation (v0.28.3). When the vp
+                # Synthetic-AIF annotation. When the vp
                 # constraint SKIPs due to synthetic AIF, the overshoot
                 # diagnostic above does not run — the comparison uses
                 # absolute scales that the synthetic AIF cannot provide.

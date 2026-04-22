@@ -6,7 +6,7 @@ outputs with BIDS-compliant filenames, JSON sidecars, and QC files.
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Final, Literal
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterface,
@@ -17,42 +17,201 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     isdefined,
 )
 
+from pmriprep.utils.dsc_constants import DSC_DETECTION_LEVELS
 from pmriprep.utils.outputs import copy_derivative, has_input, write_json_sidecar
 from pmriprep.utils.provenance import get_bids_derivative_provenance
 
+logger = logging.getLogger(__name__)
 
-def _extract_aif_provenance(
+
+# =============================================================================
+# AIF Provenance Stamping
+# =============================================================================
+# Every DSC map sidecar carries a `PerfusionProcessing.AIF` block
+# (Source, DetectionLevel, QualityFlag, GammaFitApplied,
+# CrossSubjectComparable, and optionally SyntheticFallbackReason /
+# ExternalAIFVerified) plus per-map `AIFDependent` and
+# `TemplateAIFUsage` tags so downstream consumers can filter correctly
+# when a synthetic/template AIF was used as a rescue.
+
+#: Keys whose *computation* does not consume the AIF.
+#: Under any AIF provenance these maps are unaffected.
+AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
+    "k2",                                          # BW leakage (reference-tissue based)
+    "psr", "ph",                                   # signal features
+    "cnr", "snr", "tsnr",                          # quality metrics
+    "auc_diff",                                    # tissue AUC difference
+    "ttp", "ttpCorrected", "rttp",                 # tissue peak timing
+})
+
+TemplateAIFUsageCategory = Literal[
+    "safe", "ratio_defensible", "qualitative_only"
+]
+
+#: How to interpret each DSC map under a template (synthetic) AIF:
+#:
+#: - ``safe``: map is unaffected (or ratio cancels the AIF amplitude).
+#: - ``ratio_defensible``: map is AIF-scaled; absolute magnitudes are
+#:   not comparable across subjects, but within-subject lesion:NAWM
+#:   ratios remain interpretable for grading/trending.
+#: - ``qualitative_only``: AIF shape/timing mismatch biases the map
+#:   via deconvolution; treat as qualitative.
+#:
+#: New maps must declare their usage explicitly —
+#: :func:`apply_aif_sidecar` raises ``KeyError`` on unknown keys.
+TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
+    # rel_maps (keyed by map_suffix)
+    "cbf": "ratio_defensible",
+    "cbv": "ratio_defensible",
+    "cbv_auc": "ratio_defensible",
+    "auc": "ratio_defensible",
+    "auc_corr": "ratio_defensible",
+    # core_maps
+    "mtt": "qualitative_only",
+    "tmax": "qualitative_only",
+    "psr": "safe",
+    "ph": "safe",
+    # optional_maps
+    "ttp": "safe",
+    "ttpCorrected": "safe",
+    "rttp": "safe",
+    "cnr": "safe",
+    "auc_diff": "safe",
+    "snr": "safe",
+    "tsnr": "safe",
+    # normalized (NAWM ratio cancels AIF amplitude)
+    "ncbv": "safe",
+    "ncbf": "safe",
+    # leakage
+    "k2": "safe",
+    # vascular model (deconvolution-based)
+    "alpha": "qualitative_only",
+    "beta": "qualitative_only",
+    "cth": "qualitative_only",
+    # Bayesian uncertainty (mirror underlying mean map)
+    "cbf_std": "ratio_defensible",
+    "cbv_std": "ratio_defensible",
+    "cbfCV": "ratio_defensible",
+    "cbvCV": "ratio_defensible",
+    "cbfCI95lower": "ratio_defensible",
+    "cbfCI95upper": "ratio_defensible",
+    "cbvCI95lower": "ratio_defensible",
+    "cbvCI95upper": "ratio_defensible",
+    # smoothed hemodynamic map keys (distinct from raw rel_maps keys)
+    "rel_cbf": "ratio_defensible",
+    "rel_cbv": "ratio_defensible",
+    # smoothed AUC keys
+    "rel_auc_corr": "ratio_defensible",
+}
+
+
+def _derive_aif_source(aif_qc: dict[str, Any]) -> str:
+    """Derive ``Source`` value from ``qc_metrics['aif']``."""
+    detection_level = aif_qc.get("detection_level", "")
+    if detection_level == "synthetic":
+        return "template"
+    if detection_level == "external":
+        return "external"
+    if aif_qc.get("gamma_fit_applied"):
+        return "gamma_fit_measured"
+    return "measured"
+
+
+def _derive_quality_flag(aif_qc: dict[str, Any]) -> str:
+    """Derive ``QualityFlag`` (pass/warn/poor) score-primary with
+    ``synthetic`` forced to poor. Thresholds 0.7 / 0.5 align with
+    Willats & Calamante / Mouridsen composite AIF-QC heuristics.
+    """
+    detection_level = aif_qc.get("detection_level", "")
+    if detection_level == "synthetic":
+        return "poor"
+    score = aif_qc.get("quality_score")
+    if score is None:
+        return "warn"
+    if score >= 0.7:
+        return "pass"
+    if score >= 0.5:
+        return "warn"
+    return "poor"
+
+
+def build_aif_provenance_block(
     qc_metrics: dict[str, Any] | None,
-) -> tuple[str, bool]:
-    """Return ``(AifSource, CrossSubjectComparable)`` for CBV sidecars.
+) -> dict[str, Any]:
+    """Assemble the ``PerfusionProcessing.AIF`` sub-block from AIF QC.
 
-    ``AifSource`` reflects whether the accepted AIF was detected in the
-    measured concentration data (``"measured"``) or generated as a
-    population-average Parker-style synthetic curve after cascade
-    exhaustion (``"synthetic"``).
-
-    ``CrossSubjectComparable`` is True only for measured-AIF runs on the
-    raw ``rel_cbv_auc`` variants. Callers handling NAWM-normalised nCBV
-    sidecars should override to True because the AIF amplitude cancels
-    in a within-subject ratio — this helper's return is the *default*
-    appropriate for AUC-denominator CBV magnitudes.
-
-    The flag source is ``qc_metrics["aif"]["detection_level"]`` (the
-    canonical setter in ``pmriprep.interfaces.dsc_aif``). Falls back to
-    ``cbv_auc_denominator_is_synthetic`` for backwards compatibility.
+    Accepts either the merged workflow ``qc_metrics`` (``{"aif": {...}, "motion": ...}``)
+    or the flat ``DSCAIFDetection.qc_metrics`` output (``{"detection_level": ..., ...}``).
+    Returns an empty dict when AIF QC is absent — callers should then
+    skip stamping the block.
     """
     if not isinstance(qc_metrics, dict):
-        return "measured", True
-    aif_qc = qc_metrics.get("aif") or {}
-    is_synthetic = (
-        aif_qc.get("detection_level") == "synthetic"
-        or bool(aif_qc.get("cbv_auc_denominator_is_synthetic"))
-    )
-    if is_synthetic:
-        return "synthetic", False
-    return "measured", True
+        return {}
+    # Accept both shapes. If "detection_level" is at the top level, the
+    # input is the flat pre-merge dict; otherwise look for an "aif" sub-dict.
+    if "detection_level" in qc_metrics:
+        aif_qc = qc_metrics
+    else:
+        aif_qc = qc_metrics.get("aif") or {}
+    if not aif_qc or "detection_level" not in aif_qc:
+        return {}
+    detection_level = aif_qc.get("detection_level")
+    if detection_level not in DSC_DETECTION_LEVELS:
+        logger.warning(
+            "Unknown DSC AIF detection_level %r; expected one of %s. "
+            "Skipping AIF provenance block.",
+            detection_level, DSC_DETECTION_LEVELS,
+        )
+        return {}
+    source = _derive_aif_source(aif_qc)
+    block: dict[str, Any] = {
+        "Source": source,
+        "DetectionLevel": aif_qc.get("detection_level", "unknown"),
+        "QualityFlag": _derive_quality_flag(aif_qc),
+        "GammaFitApplied": bool(aif_qc.get("gamma_fit_applied", False)),
+        "CrossSubjectComparable": source in {
+            "measured", "gamma_fit_measured", "external",
+        },
+    }
+    if source == "template":
+        # synthetic_fallback_reason may live on the merged qc_metrics or
+        # on the flat pre-merge AIF dict (when AIF QC is passed directly).
+        reason = (
+            qc_metrics.get("synthetic_fallback_reason")
+            or aif_qc.get("synthetic_fallback_reason")
+            or "cascade_exhausted"
+        )
+        block["SyntheticFallbackReason"] = str(reason)
+    if source == "external":
+        # Pipeline cannot verify user-supplied curves.
+        block["ExternalAIFVerified"] = False
+    return block
 
-logger = logging.getLogger(__name__)
+
+def apply_aif_sidecar(
+    sidecar: dict[str, Any],
+    map_key: str,
+    qc_metrics: dict[str, Any] | None,
+) -> None:
+    """Stamp ``AIFDependent`` + ``TemplateAIFUsage`` on ``sidecar`` and
+    merge the ``PerfusionProcessing.AIF`` provenance block.
+
+    Raises ``KeyError`` when ``map_key`` is not registered in
+    :data:`TEMPLATE_AIF_USAGE` — new maps must opt in explicitly.
+    """
+    if map_key not in TEMPLATE_AIF_USAGE:
+        raise KeyError(
+            f"Unknown DSC map key '{map_key}'. Register it in "
+            "pmriprep.interfaces.dsc_outputs.TEMPLATE_AIF_USAGE with "
+            "the appropriate tag ('safe' / 'ratio_defensible' / "
+            "'qualitative_only')."
+        )
+    sidecar["AIFDependent"] = map_key not in AIF_INDEPENDENT_MAPS
+    sidecar["TemplateAIFUsage"] = TEMPLATE_AIF_USAGE[map_key]
+    block = build_aif_provenance_block(qc_metrics)
+    if block:
+        perf = sidecar.setdefault("PerfusionProcessing", {})
+        perf["AIF"] = block
 
 
 class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
@@ -243,11 +402,10 @@ class DSCDerivativeWriter(BaseInterface):
         # Build base sidecar from config
         base_sidecar = self._build_base_sidecar(bids_dir, voxel_sizes)
 
-        # AIF provenance: extract from qc_metrics (when available) so CBV
-        # sidecars can surface whether the AIF was measured or synthetic,
-        # and whether cross-subject absolute magnitudes are comparable.
-        # v0.28.3: see CHANGELOG for rationale.
-        aif_source, cross_subject_comparable = _extract_aif_provenance(
+        # AIF provenance is stamped onto every DSC map sidecar at
+        # write-time via apply_aif_sidecar(); qc_metrics flows through
+        # the writer so the provenance reflects post-detection state.
+        qc_for_aif = (
             self.inputs.qc_metrics if isdefined(self.inputs.qc_metrics) else None
         )
 
@@ -284,16 +442,9 @@ class DSCDerivativeWriter(BaseInterface):
                     sidecar["Units"] = rel_units[map_suffix]
                 if map_suffix == "cbv":
                     sidecar["CBVMethod"] = "deconvolution_residue_integral"
-                    # Deconv CBV shares the AIF with AUC-CBV, so it
-                    # inherits the same absolute-scale caveat when
-                    # synthetic. Amplitude cancels in within-subject
-                    # ratios per physics-expert review.
-                    sidecar["AifSource"] = aif_source
-                    sidecar["CrossSubjectComparable"] = cross_subject_comparable
                 elif map_suffix == "cbv_auc":
                     sidecar["CBVMethod"] = "k2_corrected_full_bolus_auc"
-                    sidecar["AifSource"] = aif_source
-                    sidecar["CrossSubjectComparable"] = cross_subject_comparable
+                apply_aif_sidecar(sidecar, map_suffix, qc_for_aif)
                 write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -310,6 +461,7 @@ class DSCDerivativeWriter(BaseInterface):
             fname = f"{prefix}_{spatial}_desc-dsc_{map_name}"
             copy_derivative(src, perf_dir / f"{fname}.nii.gz")
             sidecar = {**base_sidecar, "Description": description, "Units": units}
+            apply_aif_sidecar(sidecar, map_name, qc_for_aif)
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # Additional optional maps with per-map desc values
@@ -352,6 +504,7 @@ class DSCDerivativeWriter(BaseInterface):
                     sidecar.update(timing_sidecars[map_key])
                 if map_key in optional_units:
                     sidecar["Units"] = optional_units[map_key]
+                apply_aif_sidecar(sidecar, map_key, qc_for_aif)
                 write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -360,31 +513,23 @@ class DSCDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"ncbv_map"):
             fname = f"{prefix}_{spatial}_desc-dscNawmNorm_cbv"
             copy_derivative(self.inputs.ncbv_map, perf_dir / f"{fname}.nii.gz")
-            # nCBV is a within-subject NAWM ratio → AIF amplitude
-            # cancels. CrossSubjectComparable is always True, even when
-            # the AIF is synthetic. AifSource is still recorded for
-            # provenance.
             sidecar = {
                 **base_sidecar,
                 "Description": "Normalized CBV (NAWM-normalized)",
                 "Units": "ratio",
-                "AifSource": aif_source,
-                "CrossSubjectComparable": True,
             }
+            apply_aif_sidecar(sidecar, "ncbv", qc_for_aif)
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         if has_input(self.inputs,"ncbf_map"):
             fname = f"{prefix}_{spatial}_desc-dscNawmNorm_cbf"
             copy_derivative(self.inputs.ncbf_map, perf_dir / f"{fname}.nii.gz")
-            # Same rationale as nCBV — NAWM normalization cancels AIF
-            # amplitude; cross-subject ratio comparisons remain valid.
             sidecar = {
                 **base_sidecar,
                 "Description": "Normalized CBF (NAWM-normalized)",
                 "Units": "ratio",
-                "AifSource": aif_source,
-                "CrossSubjectComparable": True,
             }
+            apply_aif_sidecar(sidecar, "ncbf", qc_for_aif)
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -404,6 +549,7 @@ class DSCDerivativeWriter(BaseInterface):
             if preload_qc.get("kep_used") is not None:
                 sidecar["KepUsed"] = preload_qc["kep_used"]
                 sidecar["KepUnits"] = "1/s"
+            apply_aif_sidecar(sidecar, "k2", qc_for_aif)
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -419,6 +565,7 @@ class DSCDerivativeWriter(BaseInterface):
                 fname = f"{prefix}_{spatial}_desc-dsc_{vmap}"
                 copy_derivative(src, perf_dir / f"{fname}.nii.gz")
                 sidecar = {**base_sidecar, "Description": desc}
+                apply_aif_sidecar(sidecar, vmap, qc_for_aif)
                 write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -464,6 +611,7 @@ class DSCDerivativeWriter(BaseInterface):
                     "EstimationMethod": est_method,
                     "UncertaintyMethod": uncertainty_type,
                 }
+                apply_aif_sidecar(sidecar, umap_key, qc_for_aif)
                 write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------
@@ -508,16 +656,7 @@ class DSCDerivativeWriter(BaseInterface):
                                    "Note": "Use non-smoothed maps for quantitative ROI analysis"}
                         if units:
                             sidecar["Units"] = units
-                        # AIF provenance — same rules as the non-smoothed
-                        # variants: raw CBV (deconv + AUC) inherits the
-                        # synthetic-AIF caveat; nCBV/nCBF cancel the AIF
-                        # amplitude via NAWM normalization.
-                        if name in ("rel_cbf", "rel_cbv"):
-                            sidecar["AifSource"] = aif_source
-                            sidecar["CrossSubjectComparable"] = cross_subject_comparable
-                        elif name in ("ncbf", "ncbv"):
-                            sidecar["AifSource"] = aif_source
-                            sidecar["CrossSubjectComparable"] = True
+                        apply_aif_sidecar(sidecar, name, qc_for_aif)
                         write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
             # Smoothed AUC corrected maps (CBV surrogate)
@@ -544,6 +683,7 @@ class DSCDerivativeWriter(BaseInterface):
                                    "SmoothingMasked": True,
                                    "IntendedFor": "visualization",
                                    "Note": "Use non-smoothed maps for quantitative ROI analysis"}
+                        apply_aif_sidecar(sidecar, name, qc_for_aif)
                         write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

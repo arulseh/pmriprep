@@ -2036,7 +2036,7 @@ class ComputeDSCMaps(BaseInterface):
         qc_metrics.update(baseline_detection_info)
         qc_metrics["aif_bat_seconds"] = aif_bat_seconds
 
-        # v0.28.3: when the AIF is synthetic, CBV magnitudes (cbv_mean,
+        # When the AIF is synthetic (template), CBV magnitudes (cbv_mean,
         # cbv_median, cbv_auc_mean, cbv_auc_median) are not comparable
         # against literature reference ranges — the synthetic AIF's
         # amplitude is not calibrated to this subject's true arterial

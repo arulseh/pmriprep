@@ -8,47 +8,45 @@ tests by asserting end-to-end flag propagation.
 from __future__ import annotations
 
 
-def test_extract_aif_provenance_measured() -> None:
-    from pmriprep.interfaces.dsc_outputs import _extract_aif_provenance
+def test_build_aif_block_measured() -> None:
+    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
 
-    qc = {"aif": {"detection_level": "atlas_relaxed"}}
-    source, comparable = _extract_aif_provenance(qc)
-    assert source == "measured"
-    assert comparable is True
-
-
-def test_extract_aif_provenance_synthetic_via_detection_level() -> None:
-    from pmriprep.interfaces.dsc_outputs import _extract_aif_provenance
-
-    qc = {"aif": {"detection_level": "synthetic"}}
-    source, comparable = _extract_aif_provenance(qc)
-    assert source == "synthetic"
-    assert comparable is False
+    block = build_aif_provenance_block(
+        {"aif": {"detection_level": "atlas_relaxed", "quality_score": 0.8}}
+    )
+    assert block["Source"] == "measured"
+    assert block["CrossSubjectComparable"] is True
 
 
-def test_extract_aif_provenance_synthetic_via_legacy_flag() -> None:
-    from pmriprep.interfaces.dsc_outputs import _extract_aif_provenance
+def test_build_aif_block_template_via_detection_level() -> None:
+    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
 
-    qc = {"aif": {"cbv_auc_denominator_is_synthetic": True}}
-    source, comparable = _extract_aif_provenance(qc)
-    assert source == "synthetic"
-    assert comparable is False
-
-
-def test_extract_aif_provenance_none_input() -> None:
-    from pmriprep.interfaces.dsc_outputs import _extract_aif_provenance
-
-    source, comparable = _extract_aif_provenance(None)
-    assert source == "measured"
-    assert comparable is True
+    block = build_aif_provenance_block({"aif": {"detection_level": "synthetic"}})
+    assert block["Source"] == "template"
+    assert block["CrossSubjectComparable"] is False
 
 
-def test_extract_aif_provenance_missing_aif_block() -> None:
-    from pmriprep.interfaces.dsc_outputs import _extract_aif_provenance
+def test_build_aif_block_accepts_flat_dict() -> None:
+    """Flat pre-merge AIF QC (detection_level at top level) is accepted."""
+    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
 
-    source, comparable = _extract_aif_provenance({"preprocessing": {}})
-    assert source == "measured"
-    assert comparable is True
+    block = build_aif_provenance_block(
+        {"detection_level": "synthetic", "synthetic_fallback_reason": "low_snr"}
+    )
+    assert block["Source"] == "template"
+    assert block["SyntheticFallbackReason"] == "low_snr"
+
+
+def test_build_aif_block_none_input() -> None:
+    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
+
+    assert build_aif_provenance_block(None) == {}
+
+
+def test_build_aif_block_missing_aif_block() -> None:
+    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
+
+    assert build_aif_provenance_block({"preprocessing": {}}) == {}
 
 
 def test_validation_node_synthetic_aif_short_circuits() -> None:

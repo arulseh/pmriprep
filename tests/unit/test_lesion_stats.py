@@ -354,34 +354,48 @@ class TestLesionStatisticsResultToDict:
 
 
 class TestLesionStatisticsAifProvenance:
-    """AifSource / CrossSubjectComparable sidecar fields (v0.28.3)."""
+    """PerfusionProcessing.AIF sidecar block (v0.29.0)."""
 
-    def test_measured_aif_source(self) -> None:
+    def test_measured_aif_provenance(self) -> None:
+        aif_block = {
+            "Source": "measured",
+            "DetectionLevel": "atlas_strict",
+            "QualityFlag": "pass",
+            "GammaFitApplied": False,
+            "CrossSubjectComparable": True,
+        }
         result = LesionStatisticsResult(
             subject_id="0001", session_id="0002", modality="DSC",
             mask_type="binary", mask_source="m.nii.gz", total_voxels=500,
-            aif_source="measured", cross_subject_comparable=True,
+            aif_provenance=aif_block,
         )
         d = result.to_dict()
-        assert d["AifSource"] == "measured"
-        assert d["CrossSubjectComparable"] is True
+        assert d["PerfusionProcessing"]["AIF"]["Source"] == "measured"
+        assert d["PerfusionProcessing"]["AIF"]["CrossSubjectComparable"] is True
 
-    def test_synthetic_aif_source(self) -> None:
+    def test_template_aif_provenance(self) -> None:
+        aif_block = {
+            "Source": "template",
+            "DetectionLevel": "synthetic",
+            "QualityFlag": "poor",
+            "GammaFitApplied": False,
+            "CrossSubjectComparable": False,
+            "SyntheticFallbackReason": "no_candidates",
+        }
         result = LesionStatisticsResult(
             subject_id="0001", session_id="0002", modality="DSC",
             mask_type="binary", mask_source="m.nii.gz", total_voxels=500,
-            aif_source="synthetic", cross_subject_comparable=False,
+            aif_provenance=aif_block,
         )
         d = result.to_dict()
-        assert d["AifSource"] == "synthetic"
-        assert d["CrossSubjectComparable"] is False
+        assert d["PerfusionProcessing"]["AIF"]["Source"] == "template"
+        assert d["PerfusionProcessing"]["AIF"]["SyntheticFallbackReason"] == "no_candidates"
 
     def test_fields_absent_by_default(self) -> None:
-        """DCE lesion-stats (no AIF provenance) omits the fields cleanly."""
+        """DCE lesion-stats (no AIF provenance) omits the block cleanly."""
         result = LesionStatisticsResult(
             subject_id="0001", session_id="0002", modality="DCE",
             mask_type="binary", mask_source="m.nii.gz", total_voxels=500,
         )
         d = result.to_dict()
-        assert "AifSource" not in d
-        assert "CrossSubjectComparable" not in d
+        assert "PerfusionProcessing" not in d

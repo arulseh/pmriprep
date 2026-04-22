@@ -4,7 +4,29 @@ Centralized constants for DSC-MRI processing including signal conversion,
 deconvolution, and physiological parameter bounds.
 """
 
-from typing import Final, NamedTuple
+from typing import Final, Literal, NamedTuple, get_args
+
+# =============================================================================
+# AIF Detection Cascade Levels
+# =============================================================================
+# Canonical strings for the DSC AIF detection cascade. Referenced by the
+# sidecar writer, HTML report, and QC code to prevent string drift.
+
+DSCDetectionLevel = Literal[
+    "atlas_strict",
+    "atlas_relaxed",
+    "atlas_permissive",
+    "full_atlas_permissive",
+    "brain_relaxed",
+    "brain_permissive",
+    "accumulated",
+    "single_best",
+    "synthetic",
+    "external",
+]
+
+#: Runtime tuple of valid detection-level strings.
+DSC_DETECTION_LEVELS: Final[tuple[str, ...]] = get_args(DSCDetectionLevel)
 
 # =============================================================================
 # Epsilon Guards

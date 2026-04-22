@@ -781,6 +781,14 @@ def build_dsc_provenance(
         Dict with PerfusionProcessing namespace containing ContrastAgent
         (when agent is known), ContrastDose, Deconvolution, and
         LeakageCorrection sub-dicts.
+
+    Note:
+        The ``PerfusionProcessing.AIF`` sub-block is assembled
+        downstream at sidecar-write time by
+        :func:`pmriprep.interfaces.dsc_outputs.apply_aif_sidecar`, which
+        reads post-detection ``qc_metrics['aif']``. This function runs
+        at workflow construction, before AIF detection, so it cannot
+        populate AIF fields itself.
     """
     deconv_block: dict[str, Any] = {"method": str(deconv_method)}
     if bayesian is not None and deconv_method in ("cpi", "vascular"):
@@ -922,6 +930,24 @@ def collect_default_warnings(
                 warnings.append(
                     f"DSC preload auto-detected{detail}. "
                     f"Use --dsc-preload to confirm or override."
+                )
+
+        # Synthetic/template AIF warning — read directly from
+        # qc_metrics (the AIF block is not in the provenance dict).
+        if qc_metrics:
+            aif_qc = qc_metrics.get("aif") or {}
+            if aif_qc.get("detection_level") == "synthetic":
+                reason = (
+                    qc_metrics.get("synthetic_fallback_reason")
+                    or aif_qc.get("synthetic_fallback_reason")
+                    or "cascade_exhausted"
+                )
+                warnings.append(
+                    f"DSC AIF fell back to template (Parker synthetic) "
+                    f"— reason: {reason}. Absolute CBV/CBF magnitudes "
+                    f"are not emitted by pmriprep; ratio-normalised "
+                    f"maps (nCBV, nCBF) and BW K2 remain defensible. "
+                    f"MTT / Tmax are qualitative only."
                 )
 
     return warnings

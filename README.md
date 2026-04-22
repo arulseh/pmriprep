@@ -543,6 +543,36 @@ output_dir/pmriprep/
 
 All NIfTI outputs have paired `.json` sidecars with descriptions, units, and provenance.
 
+### DSC AIF provenance (v0.29.0)
+
+Every DSC map sidecar carries a `PerfusionProcessing.AIF` block plus two top-level tags that tell downstream consumers how to interpret the map given the detected AIF source:
+
+```jsonc
+{
+  "AIFDependent": true,             // false for maps whose computation does not consume the AIF
+                                    // (BW K2, PSR, PH, SNR, tSNR, CNR, TTP, auc_diff)
+  "TemplateAIFUsage": "ratio_defensible",  // how to treat this map under a template/synthetic AIF:
+                                           //   "safe"              — unaffected (BW K2, nCBV/nCBF, TTP, PSR, PH, SNR/tSNR/CNR)
+                                           //   "ratio_defensible"  — absolute magnitude not comparable across subjects,
+                                           //                         within-subject lesion:NAWM ratios remain interpretable
+                                           //   "qualitative_only"  — AIF shape/timing mismatch biases the map (MTT, Tmax)
+  "PerfusionProcessing": {
+    "AIF": {
+      "Source": "measured",          // "measured" | "gamma_fit_measured" | "template" | "external"
+      "DetectionLevel": "atlas_strict",
+      "QualityFlag": "pass",         // "pass" | "warn" | "poor" — score-primary (≥0.7 / ≥0.5 / else),
+                                     // "synthetic" detection always forces "poor"
+      "GammaFitApplied": false,
+      "CrossSubjectComparable": true
+      // when Source == "template": also "SyntheticFallbackReason": "..."
+      // when Source == "external":  also "ExternalAIFVerified": false
+    }
+  }
+}
+```
+
+PMRIPrep emits no absolute CBV/CBF maps, so a template AIF never triggers output suppression — only interpretation downgrades. The HTML report renders a caveat block in the AIF section when `detection_level == "synthetic"`.
+
 ## QC Reports
 
 PMRIPrep generates a per-session HTML report (`sub-XX_ses-XX.html`) in the output directory. The report includes:

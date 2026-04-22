@@ -88,12 +88,12 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     ttp_corrected_map = traits.Either(traits.Str, None, desc="AIF-corrected TTP map path")
     rttp_map = traits.Either(traits.Str, None, desc="NAWM-relative TTP map path")
 
-    # AIF provenance (v0.28.3) — passed from the cascade QC so the
-    # lesion-stats sidecar surfaces whether the AIF was measured or
-    # synthetic, and whether CBV magnitudes are cross-subject-comparable.
+    # AIF provenance (v0.29.0) — passed from the cascade QC so the
+    # lesion-stats sidecar carries the PerfusionProcessing.AIF block
+    # (Source / DetectionLevel / QualityFlag / etc).
     aif_qc = traits.Dict(
-        desc="AIF QC dict from cascade, used for AifSource / "
-             "CrossSubjectComparable sidecar provenance",
+        desc="AIF QC dict from cascade, used for the "
+             "PerfusionProcessing.AIF provenance block",
     )
 
 
@@ -225,19 +225,20 @@ class DSCLesionStats(BaseInterface):
             # Add clinical context
             result.clinical_context = get_dsc_clinical_context()
 
-        # AIF provenance (v0.28.3) — extract from aif_qc when available.
-        # Synthetic-AIF subjects carry CrossSubjectComparable=false at
-        # the root; nested nCBV-derived fields remain cross-subject-
-        # comparable via NAWM normalization (amplitude cancels), but
-        # callers should consult per-map sidecars for that distinction.
+        # AIF provenance (v0.29.0) — populate the PerfusionProcessing.AIF
+        # sub-block from aif_qc. Downstream consumers should read
+        # ``PerfusionProcessing.AIF.Source`` / ``CrossSubjectComparable``
+        # rather than top-level fields. Within-subject nCBV ratios cancel
+        # the AIF amplitude, so nested nCBV-derived metrics remain
+        # cross-subject-comparable even when Source == "template"; callers
+        # should consult per-map sidecars for that distinction.
         if self._has_input("aif_qc"):
-            aif_qc = self.inputs.aif_qc or {}
-            is_synthetic = (
-                aif_qc.get("detection_level") == "synthetic"
-                or bool(aif_qc.get("cbv_auc_denominator_is_synthetic"))
+            from pmriprep.interfaces.dsc_outputs import (
+                build_aif_provenance_block,
             )
-            result.aif_source = "synthetic" if is_synthetic else "measured"
-            result.cross_subject_comparable = not is_synthetic
+            result.aif_provenance = build_aif_provenance_block(
+                self.inputs.aif_qc or {}
+            ) or None
 
         # Write outputs
         output_dir = Path(runtime.cwd)
