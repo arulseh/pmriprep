@@ -146,10 +146,10 @@ class TestAifPassesQuality:
         curve = _make_aif_curve(
             peak_height=30.0, recirculation_height=3.0,
         )
-        passes, spr, pr, brr = AIFDetection._aif_passes_quality(
+        result = AIFDetection()._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
-        assert spr < 100.0
+        assert result.spr < 100.0
 
     def test_bad_recirculation_fails(self) -> None:
         """Dominant recirculation fails SPR check."""
@@ -157,11 +157,11 @@ class TestAifPassesQuality:
             peak_height=10.0, recirculation_height=15.0,
             recirc_frame=60,
         )
-        passes, spr, pr, brr = AIFDetection._aif_passes_quality(
+        result = AIFDetection()._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
-        assert passes is False
-        assert spr > 100.0
+        assert result.passes is False
+        assert result.spr > 100.0
 
 
 class TestGraduatedNCandidates:
@@ -248,9 +248,8 @@ class TestAccumulatingCascade:
         # May return None if gamma fit fails on synthetic curve — that's OK.
         # When it returns, roi_used must be valid.
         if result is not None:
-            _, _, roi_used, spr, _, _ = result
-            assert roi_used in (1, 3)
-            assert spr >= 0.0
+            assert result.roi_size in (1, 3)
+            assert result.spr >= 0.0
 
     def test_try_dual_roi_returns_none_on_bad_curves(self) -> None:
         """When neither ROI size passes, returns None."""
@@ -503,25 +502,25 @@ class TestAifPassesQualityBrrGate:
     """_aif_passes_quality now gates on averaged BRR ≥ AIF_AVG_BRR_MIN."""
 
     def test_rejects_negative_tail(self) -> None:
-        """Curve with BRR well below −3 % fails the new gate."""
+        """Curve with BRR well below -3 % fails the new gate."""
         curve = _curve_with_negative_tail(
             peak_height=30.0, tail_offset=-8.0,
         )
-        passes, spr, pr, brr = AIFDetection._aif_passes_quality(
+        result = AIFDetection()._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
-        assert passes is False
-        assert brr < -3.0
+        assert result.passes is False
+        assert result.brr < -3.0
 
-    def test_return_tuple_has_brr(self) -> None:
-        """The return tuple now has 4 elements (adds brr)."""
+    def test_return_tuple_has_brr_and_auc_ratio(self) -> None:
+        """The return is an AifQualityResult with 5 fields."""
         curve = _make_aif_curve(peak_height=30.0, recirculation_height=2.0)
-        result = AIFDetection._aif_passes_quality(
+        result = AIFDetection()._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
-        assert len(result) == 4
-        _, _, _, brr = result
-        assert isinstance(brr, float)
+        assert len(result) == 5
+        assert isinstance(result.brr, float)
+        assert result.auc_ratio is None  # no ref set
 
 
 class TestTryDualRoiBrrGate:
@@ -552,7 +551,7 @@ class TestTryDualRoiBrrGate:
         assert result is None
 
     def test_returns_brr_in_tuple(self) -> None:
-        """Successful return now has 6 elements including brr."""
+        """Successful return is a DualRoiResult with 7 fields."""
         aif = AIFDetection()
         shape = (10, 10, 5, 120)
         conc_data = np.zeros(shape)
@@ -566,12 +565,10 @@ class TestTryDualRoiBrrGate:
         result = aif._try_aif_dual_roi(
             candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
-        # May be None if gamma fit fails, but when non-None it's a 6-tuple
         if result is not None:
-            assert len(result) == 6
-            _, _, roi_used, spr, pr, brr = result
-            assert roi_used in (1, 3)
-            assert isinstance(brr, float)
+            assert len(result) == 7
+            assert result.roi_size in (1, 3)
+            assert isinstance(result.brr, float)
 
 
 class TestProgressiveTrimSemantics:

@@ -11,7 +11,7 @@ scoring, 3x3x3 ROI averaging, and Savitzky-Golay smoothing.
 
 import math
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -27,6 +27,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
 )
 
+from pmriprep.utils.dsc_aif import compute_windowed_first_pass_auc
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
@@ -34,6 +35,10 @@ from pmriprep.utils.dsc_constants import (
     SYNTH_AIF_BASE_PEAK_3T,
     SYNTH_AIF_DOSE_CAP,
     SYNTH_AIF_MIN_PEAK,
+    WINDOWED_AUC_FWHM_MULTIPLIER,
+    WINDOWED_AUC_RATIO_MAX,
+    WINDOWED_AUC_RATIO_MIN,
+    WINDOWED_AUC_TRAILING_CAP_S,
 )
 
 # Seconds after baseline end before first-pass window begins.
@@ -84,6 +89,26 @@ _CASCADE_N_CANDIDATES_FRACTION: dict[str, float] = {
     "permissive": 0.4,
     # Note: "degraded" removed in v0.19.16
 }
+
+
+class AifQualityResult(NamedTuple):
+    """Return type for ``_aif_passes_quality``."""
+    passes: bool
+    spr: float
+    peak_ratio: Optional[float]
+    brr: float
+    auc_ratio: Optional[float]
+
+
+class DualRoiResult(NamedTuple):
+    """Return type for ``_try_aif_dual_roi``."""
+    curve: npt.NDArray[Any]
+    mask: npt.NDArray[Any]
+    roi_size: int
+    spr: float
+    peak_ratio: Optional[float]
+    brr: float
+    auc_ratio: Optional[float]
 
 
 # ---------------------------------------------------------------------------
@@ -1631,27 +1656,18 @@ class AIFDetection(BaseInterface):
             return float("nan")
         return float(np.mean(tail_window)) / fp_peak_val * 100.0
 
-    @staticmethod
     def _aif_passes_quality(
+        self,
         curve: npt.NDArray[Any],
         baseline_frames: int,
         tr: float,
-    ) -> tuple[bool, float, Optional[float], float]:
+    ) -> AifQualityResult:
         """Check if an AIF curve passes quality gates.
 
         Returns
         -------
-        passes : bool
-            True if SPR <= 100, global max is in first-pass window,
-            gamma peak ratio is in [MIN, MAX], AND averaged BRR >=
-            AIF_AVG_BRR_MIN (rejects negative-tail averaged AIFs that
-            violate the mono-exponential ΔR2* assumption).
-        spr : float
-            Secondary peak ratio (%).
-        pr : float or None
-            Gamma peak ratio (fitted/measured), None if gamma fit fails.
-        brr : float
-            Baseline-return ratio (%) for the averaged curve.
+        AifQualityResult
+            Named tuple with passes, spr, peak_ratio, brr, auc_ratio.
         """
         spr, _, _ = AIFDetection._compute_aif_spr(curve, baseline_frames, tr)
         gmax_ok = AIFDetection._aif_global_max_in_fp(curve, baseline_frames, tr)
@@ -1662,8 +1678,31 @@ class AIFDetection(BaseInterface):
         )
         brr = AIFDetection._compute_aif_brr(curve, baseline_frames, tr)
         brr_ok = np.isnan(brr) or brr >= AIF_AVG_BRR_MIN
-        passes = spr <= 100.0 and gmax_ok and pr_ok and brr_ok
-        return passes, spr, pr, brr
+
+        auc_ratio: Optional[float] = None
+        auc_ok = True
+        synth_ref = getattr(self, "_synth_ref_windowed_auc", 0.0)
+        if synth_ref > EPSILON_CONCENTRATION:
+            det_auc, _, _ = compute_windowed_first_pass_auc(
+                curve, baseline_frames, tr,
+                fwhm_multiplier=WINDOWED_AUC_FWHM_MULTIPLIER,
+                trailing_cap_s=WINDOWED_AUC_TRAILING_CAP_S,
+            )
+            if det_auc > EPSILON_CONCENTRATION:
+                auc_ratio = det_auc / synth_ref
+                if getattr(self, "_auc_gate_latched", False):
+                    auc_ok = True
+                else:
+                    auc_ok = (
+                        WINDOWED_AUC_RATIO_MIN
+                        <= auc_ratio
+                        <= WINDOWED_AUC_RATIO_MAX
+                    )
+                    if auc_ok:
+                        self._auc_gate_latched = True
+
+        passes = spr <= 100.0 and gmax_ok and pr_ok and brr_ok and auc_ok
+        return AifQualityResult(passes, spr, pr, brr, auc_ratio)
 
     def _try_aif_dual_roi(
         self,
@@ -1672,7 +1711,7 @@ class AIFDetection(BaseInterface):
         brain_mask: npt.NDArray[Any],
         tr: float,
         baseline_frames: int,
-    ) -> Optional[tuple[npt.NDArray[Any], npt.NDArray[Any], int, float, Optional[float], float]]:
+    ) -> Optional[DualRoiResult]:
         """Compute the inverse-cost-weighted averaged AIF and gate it.
 
         Name kept for compatibility with historical "dual ROI" phase;
@@ -1682,24 +1721,20 @@ class AIFDetection(BaseInterface):
 
         Returns
         -------
-        result : tuple or None
-            ``(aif_curve, aif_mask, roi_size_used, spr, peak_ratio, brr)``
-            when the averaged curve passes `_aif_passes_quality`;
-            ``None`` otherwise (SPR>100, global-max outside FP, gamma
-            peak-ratio outside [MIN, MAX], or averaged BRR below
-            ``AIF_AVG_BRR_MIN``).
+        DualRoiResult or None
+            Named tuple with (curve, mask, roi_size, spr, peak_ratio,
+            brr, auc_ratio) when the averaged curve passes quality gates;
+            ``None`` otherwise.
         """
-        # Use roi_size=1 only — candidate voxels without tissue-contaminated
-        # 3x3x3 neighborhoods.  Noise reduction comes from the inverse-cost
-        # weighted mean across multiple candidates.
         curve, mask = self._compute_roi_averaged_aif(
             candidates, conc_data, brain_mask, roi_size=1,
         )
-        passes, spr, pr, brr = self._aif_passes_quality(
-            curve, baseline_frames, tr,
-        )
-        if passes:
-            return (curve, mask, 1, spr, pr, brr)
+        qr = self._aif_passes_quality(curve, baseline_frames, tr)
+        if qr.passes:
+            return DualRoiResult(
+                curve, mask, 1,
+                qr.spr, qr.peak_ratio, qr.brr, qr.auc_ratio,
+            )
         return None
 
     # -----------------------------------------------------------------
@@ -2489,6 +2524,22 @@ class AIFDetection(BaseInterface):
         else:
             aif_baseline_frames = baseline_frames  # fallback to configured
 
+        # Pre-compute synthetic AIF reference for windowed-AUC gate.
+        # The synthetic AIF adapts to dose/B0/TR so the reference AUC is
+        # acquisition-specific. Cached on self for reuse as cascade fallback.
+        self._cached_synth_aif, self._cached_synth_metrics = (
+            self._generate_synthetic_aif(
+                n_timepoints, tr, aif_baseline_frames,
+                field_strength=field_strength,
+                effective_dose=synth_effective_dose,
+            )
+        )
+        self._synth_ref_windowed_auc, _, _ = compute_windowed_first_pass_auc(
+            self._cached_synth_aif, aif_baseline_frames, tr,
+            fwhm_multiplier=WINDOWED_AUC_FWHM_MULTIPLIER,
+            trailing_cap_s=WINDOWED_AUC_TRAILING_CAP_S,
+        )
+
         # Initialize
         detection_level = "synthetic"
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
@@ -2540,6 +2591,7 @@ class AIFDetection(BaseInterface):
             ]
 
             for crit, roi, level_name in attempts:
+                self._auc_gate_latched = False
                 frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
                 level_n_candidates = max(
                     MIN_AIF_CANDIDATES_ACCEPT,
@@ -2601,8 +2653,7 @@ class AIFDetection(BaseInterface):
                         pool, conc_data, brain_mask, tr, aif_baseline_frames,
                     )
                     if result is not None:
-                        aif_curve_r, aif_mask_r, roi_used, _, _, _ = result
-                        accepted_aif = (aif_curve_r, aif_mask_r, roi_used)
+                        accepted_aif = (result.curve, result.mask, result.roi_size)
                         top_candidates = pool
                         n_available = n_avail
                         detection_level = level_name
@@ -2675,6 +2726,7 @@ class AIFDetection(BaseInterface):
                         accumulated_coords.add(coord)
 
             # --- Post-loop: try accumulated pool ---
+            self._auc_gate_latched = False
             if accepted_aif is None and accumulated_pool:
                 accumulated_pool.sort(key=lambda x: x[0])
                 # Cap pool to prevent permissive domination
@@ -2690,8 +2742,7 @@ class AIFDetection(BaseInterface):
                         tr, aif_baseline_frames,
                     )
                     if result is not None:
-                        aif_curve_r, aif_mask_r, roi_used, _, _, _ = result
-                        accepted_aif = (aif_curve_r, aif_mask_r, roi_used)
+                        accepted_aif = (result.curve, result.mask, result.roi_size)
                         top_candidates = capped_pool
                         n_available = len(accumulated_pool)
                         detection_level = "accumulated"
@@ -2803,15 +2854,40 @@ class AIFDetection(BaseInterface):
             qc_metrics["averaged_aif_fp_peak_frame"] = fp_frame
             qc_metrics["averaged_aif_final_roi_size"] = accepted_roi_size
 
+            # Windowed AUC diagnostics
+            synth_ref = getattr(self, "_synth_ref_windowed_auc", 0.0)
+            if synth_ref > EPSILON_CONCENTRATION:
+                det_auc, win_start, win_end = compute_windowed_first_pass_auc(
+                    aif_curve, aif_baseline_frames, tr,
+                    fwhm_multiplier=WINDOWED_AUC_FWHM_MULTIPLIER,
+                    trailing_cap_s=WINDOWED_AUC_TRAILING_CAP_S,
+                )
+                qc_metrics["windowed_auc_detected"] = round(det_auc, 3)
+                qc_metrics["windowed_auc_synthetic_ref"] = round(synth_ref, 3)
+                if det_auc > EPSILON_CONCENTRATION:
+                    qc_metrics["windowed_auc_ratio"] = round(
+                        det_auc / synth_ref, 3,
+                    )
+                qc_metrics["windowed_auc_window_frames"] = [win_start, win_end]
+
         elif not disable_fallback:
-            # Synthetic fallback: no candidates found at any cascade level
+            # Synthetic fallback: reuse cached synthetic AIF from pre-compute
             tissue_max = self._compute_tissue_max_for_synthetic(conc_data, brain_mask)
-            aif_curve, synth_metrics = self._generate_synthetic_aif(
-                n_timepoints, tr, aif_baseline_frames,
-                tissue_max_delta_r2star=tissue_max,
-                field_strength=field_strength,
-                effective_dose=synth_effective_dose,
-            )
+            aif_curve = self._cached_synth_aif.copy()
+            synth_metrics = dict(self._cached_synth_metrics)
+            if tissue_max is not None and tissue_max > 0:
+                synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
+                    float(tissue_max), 2,
+                )
+                peak = synth_metrics.get("synthetic_aif_target_peak", 0.0)
+                if peak > 0:
+                    synth_metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
+                        peak / tissue_max, 2,
+                    )
+            elif tissue_max is not None:
+                synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
+                    float(tissue_max), 2,
+                )
             detection_level = "synthetic"
             quality_score = 0.3
             qc_metrics = {
@@ -2887,14 +2963,23 @@ class AIFDetection(BaseInterface):
                     gamma_r2,
                     GAMMA_R2_SYNTHETIC_FALLBACK,
                 )
-                # Synthetic fallback: gamma fit catastrophically bad
+                # Synthetic fallback: reuse cached synthetic AIF
                 tissue_max = self._compute_tissue_max_for_synthetic(conc_data, brain_mask)
-                aif_curve, synth_metrics = self._generate_synthetic_aif(
-                    n_timepoints, tr, aif_baseline_frames,
-                    tissue_max_delta_r2star=tissue_max,
-                    field_strength=field_strength,
-                    effective_dose=synth_effective_dose,
-                )
+                aif_curve = self._cached_synth_aif.copy()
+                synth_metrics = dict(self._cached_synth_metrics)
+                if tissue_max is not None and tissue_max > 0:
+                    synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
+                        float(tissue_max), 2,
+                    )
+                    peak = synth_metrics.get("synthetic_aif_target_peak", 0.0)
+                    if peak > 0:
+                        synth_metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
+                            peak / tissue_max, 2,
+                        )
+                elif tissue_max is not None:
+                    synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
+                        float(tissue_max), 2,
+                    )
                 detection_level = "synthetic"
                 quality_score = 0.3
                 aif_mask_arr[:] = 0  # Clear AIF mask (no voxels used)

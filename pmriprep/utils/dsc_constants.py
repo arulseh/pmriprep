@@ -105,6 +105,32 @@ SYNTH_AIF_MIN_PEAK: Final[float] = 3.0
 
 
 # =============================================================================
+# Windowed AUC Gate (First-Pass Partial-Volume Rejection)
+# =============================================================================
+
+#: Minimum acceptable ratio of detected AIF windowed first-pass AUC to
+#: synthetic AIF windowed first-pass AUC. Below 0.4 indicates severe
+#: partial-volume averaging (<40% arterial fraction). Widened from 0.5
+#: to accommodate +/-30% subject-to-subject variability due to cardiac
+#: output range (Calamante MRM 2003). Physics consult 2026-04-22.
+WINDOWED_AUC_RATIO_MIN: Final[float] = 0.4
+
+#: Maximum acceptable ratio. Above 1.8 indicates non-arterial signal
+#: or acquisition artifact. Widened from 1.5 per physics review:
+#: low cardiac output patients produce taller, narrower boluses.
+WINDOWED_AUC_RATIO_MAX: Final[float] = 1.8
+
+#: Number of FWHM half-widths on each side of peak for the AUC window.
+#: 2 * FWHM captures >95% of a Gaussian-like first-pass bolus.
+WINDOWED_AUC_FWHM_MULTIPLIER: Final[float] = 2.0
+
+#: Maximum trailing-edge extent (seconds after peak) for the AUC window.
+#: Caps the window for short acquisitions to prevent including
+#: recirculation or post-tail noise. Physics consult 2026-04-22.
+WINDOWED_AUC_TRAILING_CAP_S: Final[float] = 20.0
+
+
+# =============================================================================
 # K2 residual thresholds (two tiers — different decision commitment levels)
 # =============================================================================
 
