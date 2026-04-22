@@ -1075,9 +1075,15 @@ def init_pmriprep_wf(
         dce_config=dce_config,
         vfa_flip_angles=preflight_vfa_flip_angles,
         vfa_trs=preflight_vfa_trs,
+        dsc_config=dsc_config,
     )
     preflight_report.log_all()
     preflight_report.raise_if_errors()
+
+    dsc_preflight_warnings = preflight_report.warning_strings(prefix="DSC_")
+    dce_preflight_warnings = preflight_report.warning_strings(prefix="DCE_")
+    dce_preflight_warnings.extend(preflight_report.warning_strings(prefix="VFA_"))
+    dce_preflight_warnings.extend(preflight_report.warning_strings(prefix="AFI_"))
 
     # Define master output node
     outputnode = pe.Node(
@@ -1883,6 +1889,8 @@ def init_pmriprep_wf(
         # Set provenance dict for output JSON sidecars
         if dsc_provenance:
             dsc_writer.inputs.provenance_dict = dsc_provenance
+        if dsc_preflight_warnings:
+            dsc_writer.inputs.preflight_warnings = dsc_preflight_warnings
 
         # Connect perfusion maps to writer
         workflow.connect([
@@ -2743,6 +2751,8 @@ def init_pmriprep_wf(
         # Set provenance dict for output JSON sidecars
         if dce_provenance:
             dce_writer.inputs.provenance_dict = dce_provenance
+        if dce_preflight_warnings:
+            dce_writer.inputs.preflight_warnings = dce_preflight_warnings
 
         # Connect DCE outputs to writer
         workflow.connect([

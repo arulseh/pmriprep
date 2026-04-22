@@ -145,6 +145,10 @@ class DCEDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     pk_model = traits.Either(traits.Str, None, desc="Pharmacokinetic model name")
     config_dict = traits.Dict(desc="DCE processing config as dictionary")
     provenance_dict = traits.Dict(desc="Physics provenance metadata for output sidecars")
+    preflight_warnings = traits.List(
+        traits.Str, value=[], usedefault=True,
+        desc="Preflight validation warnings to include in QC output",
+    )
 
     # QC plots (optional)
     brain_mask_filmstrip = traits.Either(traits.Str, None, desc="Brain mask QC filmstrip PNG path")
@@ -762,6 +766,11 @@ class DCEDerivativeWriter(BaseInterface):
                 prov_warnings = collect_default_warnings(provenance, "DCE")
                 if prov_warnings:
                     qc_metrics["provenance_warnings"] = prov_warnings
+            pf_warnings = self.inputs.preflight_warnings
+            if isdefined(pf_warnings) and pf_warnings:
+                qc_metrics.setdefault("provenance_warnings", []).extend(
+                    pf_warnings
+                )
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
             qc_json_path = ses_dir / f"{prefix}_desc-dceQC_quality.json"
             write_json_sidecar(enhanced_qc, qc_json_path)

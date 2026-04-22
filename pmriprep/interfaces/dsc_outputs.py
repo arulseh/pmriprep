@@ -290,6 +290,10 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     # Processing config for sidecar
     config_dict = traits.Dict(desc="DSC processing config as dictionary")
     provenance_dict = traits.Dict(desc="Physics provenance metadata for output sidecars")
+    preflight_warnings = traits.List(
+        traits.Str, value=[], usedefault=True,
+        desc="Preflight validation warnings to include in QC output",
+    )
 
     # Smoothed map dicts (optional — each is a dict of name->filepath)
     smooth_hemodynamic = traits.Dict(desc="Smoothed hemodynamic maps (CBF, CBV, MTT, nCBF, nCBV)")
@@ -792,6 +796,11 @@ class DSCDerivativeWriter(BaseInterface):
                 )
                 if prov_warnings:
                     qc_metrics["provenance_warnings"] = prov_warnings
+            pf_warnings = self.inputs.preflight_warnings
+            if isdefined(pf_warnings) and pf_warnings:
+                qc_metrics.setdefault("provenance_warnings", []).extend(
+                    pf_warnings
+                )
             # Add NiPreps-style recommendation to QC metrics
             enhanced_qc = self._add_qc_recommendation(qc_metrics)
             qc_json_path = ses_dir / f"{prefix}_desc-dscQC_quality.json"

@@ -11,8 +11,19 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pmriprep.config.dce import DCEConfig
+from pmriprep.config.dsc import DSCConfig
+from pmriprep.utils.contrast_agent import (
+    lookup_gd_multiplicity,
+    lookup_r1_safe,
+    lookup_standard_dose,
+    normalize_agent_name,
+)
 
 logger = logging.getLogger("pmriprep.preflight")
+
+HIGH_R1_THRESHOLD: float = 8.0  # s⁻¹/mM — above this, T1 effects dominate
+LOW_GD_DOSE_THRESHOLD: float = 0.05  # mmol-Gd/kg — DSC deconvolution floor
+LOW_DCE_DOSE_R1_THRESHOLD: float = 0.35  # kg⁻¹·s⁻¹ — DCE tissue enhancement floor
 
 
 class PreflightError(RuntimeError):
@@ -74,6 +85,22 @@ class PreflightReport:
             lines.append(f"  [{e.code}] {e.message}")
         raise PreflightError("\n".join(lines))
 
+    def warning_strings(self, prefix: str = "") -> list[str]:
+        """Return formatted warning strings, optionally filtered by code prefix.
+
+        Args:
+            prefix: If non-empty, only return warnings whose code starts
+                with this string (e.g. ``"DSC_"``).
+
+        Returns:
+            List of ``"[CODE] message"`` strings for warning-level messages.
+        """
+        return [
+            f"[{m.code}] {m.message}"
+            for m in self.messages
+            if m.level == "warning" and m.code.startswith(prefix)
+        ]
+
 
 def validate_sidecar_exists(
     nifti_path: Path,
@@ -107,11 +134,15 @@ def validate_sidecar_exists(
     return msgs
 
 
-def validate_dsc_metadata(sidecar: dict[str, Any]) -> list[PreflightMessage]:
+def validate_dsc_metadata(
+    sidecar: dict[str, Any],
+    dsc_config: Optional[DSCConfig] = None,
+) -> list[PreflightMessage]:
     """Validate DSC acquisition metadata.
 
     Args:
         sidecar: Dict returned by ``_read_bids_sidecar()``.
+        dsc_config: DSC configuration for preload and dose checks.
 
     Returns:
         List of validation messages.
@@ -175,7 +206,8 @@ def validate_dsc_metadata(sidecar: dict[str, Any]) -> list[PreflightMessage]:
         ))
 
     # Field strength
-    if sidecar.get("field_strength") is None:
+    field_strength = sidecar.get("field_strength")
+    if field_strength is None:
         msgs.append(PreflightMessage(
             level="error",
             code="DSC_MISSING_FIELD_STRENGTH",
@@ -185,6 +217,90 @@ def validate_dsc_metadata(sidecar: dict[str, Any]) -> list[PreflightMessage]:
                 "Add MagneticFieldStrength to your BIDS sidecar."
             ),
         ))
+
+    # --- Agent-specific checks ---
+    agent_raw = sidecar.get("contrast_agent")
+    agent_name: Optional[str] = None
+    if agent_raw:
+        agent_name = normalize_agent_name(agent_raw)
+
+    if dsc_config is not None:
+        preload = dsc_config.preload
+        # Real-world preload doses are quantized (0.0, 0.25, 0.5, 1.0);
+        # 0.01 threshold separates explicit no-preload from any real dose.
+        no_confirmed_preload = (
+            isinstance(preload, str) or float(preload) < 0.01
+        )
+
+        # DSC check 1: high-r1 agent without preload
+        if agent_name and field_strength is not None:
+            r1 = lookup_r1_safe(agent_name, field_strength)
+            if r1 is not None and r1 >= HIGH_R1_THRESHOLD and no_confirmed_preload:
+                if isinstance(preload, str):
+                    detail = (
+                        "Preload status is unknown (auto-detect). If no "
+                        "preload is present, T1 shine-through will be "
+                        "disproportionately severe."
+                    )
+                else:
+                    detail = (
+                        "No-preload configuration with a high-r1 agent "
+                        "produces severe T1 shine-through."
+                    )
+                msgs.append(PreflightMessage(
+                    level="warning",
+                    code="DSC_HIGH_R1_NO_PRELOAD",
+                    message=(
+                        f"High-r1 agent ({agent_raw}, r1={r1:.1f} s-1/mM) "
+                        f"without confirmed preload. {detail} "
+                        f"BW leakage correction is unvalidated for agents "
+                        f"with r1 >= {HIGH_R1_THRESHOLD}. Use --dsc-preload "
+                        f"to confirm preload status."
+                    ),
+                ))
+
+        # DSC check 2: high FA without preload
+        fa = sidecar.get("flip_angle")
+        if fa is not None and fa >= 60 and no_confirmed_preload:
+            if isinstance(preload, str):
+                detail = (
+                    "If no preload is present, this FA maximizes "
+                    "T1 contamination."
+                )
+            else:
+                detail = (
+                    "No-preload DSC at this FA maximizes T1 contamination."
+                )
+            msgs.append(PreflightMessage(
+                level="warning",
+                code="DSC_HIGH_FA_NO_PRELOAD",
+                message=(
+                    f"DSC FlipAngle={fa:.0f} deg without confirmed preload. "
+                    f"DSC consensus recommends 30 deg FA for no-preload "
+                    f"protocols; 60 deg is for preloaded acquisitions. "
+                    f"{detail} Use --dsc-preload to confirm."
+                ),
+            ))
+
+        # DSC check 3: low effective Gd dose
+        if agent_name:
+            gd_mult = lookup_gd_multiplicity(agent_name)
+            eff_gd_dose = (
+                dsc_config.agent_standard_dose * dsc_config.dose * gd_mult
+            )
+            if eff_gd_dose < LOW_GD_DOSE_THRESHOLD:
+                msgs.append(PreflightMessage(
+                    level="warning",
+                    code="DSC_LOW_EFFECTIVE_DOSE",
+                    message=(
+                        f"Effective DSC Gd dose is {eff_gd_dose:.3f} mmol-Gd/kg "
+                        f"(< {LOW_GD_DOSE_THRESHOLD} threshold). At this dose, "
+                        f"peak deltaR2* may be insufficient for robust "
+                        f"deconvolution; CBF/MTT maps will have reduced "
+                        f"precision. Consider higher dose or acknowledge "
+                        f"reduced quality."
+                    ),
+                ))
 
     return msgs
 
@@ -298,9 +414,8 @@ def validate_dce_metadata(
         ))
 
     # r1 relaxivity warnings (skip if user supplied override)
+    contrast_agent = sidecar.get("contrast_agent")
     if dce_config.r1_relaxivity is None:
-        contrast_agent = sidecar.get("contrast_agent")
-
         if contrast_agent is None and field_strength is not None:
             msgs.append(PreflightMessage(
                 level="warning",
@@ -332,6 +447,53 @@ def validate_dce_metadata(
                     f"agents have r1 in 3-7 s^-1/mM at clinical fields."
                 ),
             ))
+
+    # --- Agent-specific checks ---
+    agent_name: Optional[str] = None
+    if contrast_agent:
+        agent_name = normalize_agent_name(contrast_agent)
+
+    # DCE agent checks (require agent + field strength for r1 lookup)
+    r1: Optional[float] = None
+    if agent_name and field_strength is not None:
+        r1 = lookup_r1_safe(agent_name, field_strength)
+
+    # DCE check 1: high-r1 agent with measured AIF
+    if (r1 is not None
+            and r1 >= HIGH_R1_THRESHOLD
+            and dce_config.aif_method != "population"
+            and dce_config.aif_file is None):
+        msgs.append(PreflightMessage(
+            level="warning",
+            code="DCE_HIGH_R1_AIF_SATURATION",
+            message=(
+                f"High-r1 agent ({contrast_agent}, r1={r1:.1f} s-1/mM) "
+                f"with measured AIF. Arterial peak signal approaches "
+                f"the Ernst ceiling; noise amplification and E1 clipping "
+                f"systematically underestimate peak AIF concentration. "
+                f"Consider --dce-aif-method population or acknowledge "
+                f"degraded AIF accuracy."
+            ),
+        ))
+
+    # DCE check 2: low effective dose × r1
+    if agent_name:
+        if r1 is None and dce_config.r1_relaxivity is not None:
+            r1 = dce_config.r1_relaxivity
+        if r1 is not None:
+            agent_std_dose = lookup_standard_dose(agent_name)
+            eff_dose_r1 = agent_std_dose * dce_config.dose * r1
+            if eff_dose_r1 < LOW_DCE_DOSE_R1_THRESHOLD:
+                msgs.append(PreflightMessage(
+                    level="warning",
+                    code="DCE_LOW_EFFECTIVE_DOSE",
+                    message=(
+                        f"Effective DCE dose x r1 = {eff_dose_r1:.3f} "
+                        f"kg-1 s-1 (< {LOW_DCE_DOSE_R1_THRESHOLD} "
+                        f"threshold). Tissue enhancement may be too low "
+                        f"for reliable Ktrans estimation."
+                    ),
+                ))
 
     return msgs
 
@@ -440,6 +602,7 @@ def run_preflight(
     dce_config: Optional[DCEConfig],
     vfa_flip_angles: Optional[list[float]] = None,
     vfa_trs: Optional[list[Optional[float]]] = None,
+    dsc_config: Optional[DSCConfig] = None,
 ) -> PreflightReport:
     """Run all pre-flight validations based on pipeline decisions.
 
@@ -451,6 +614,7 @@ def run_preflight(
         dce_config: DCE configuration, or None if DCE not running.
         vfa_flip_angles: VFA flip angles, if VFA data present.
         vfa_trs: VFA TR values, if VFA data present.
+        dsc_config: DSC configuration, or None if DSC not running.
 
     Returns:
         PreflightReport with all collected messages.
@@ -465,7 +629,9 @@ def run_preflight(
             )
         )
         if dsc_sidecar is not None:
-            report.messages.extend(validate_dsc_metadata(dsc_sidecar))
+            report.messages.extend(
+                validate_dsc_metadata(dsc_sidecar, dsc_config=dsc_config)
+            )
 
     # DCE validation
     if decision.run_dce and session_data.modalities.dce is not None:

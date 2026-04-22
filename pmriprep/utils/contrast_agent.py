@@ -86,7 +86,7 @@ DEFAULT_AGENT: Final[str] = "gd-dtpa"
 
 #: Standard clinical doses per agent (mmol/kg).
 #: Most agents: 0.1 mmol/kg. High-relaxivity agents use lower doses.
-#: Keyed by generic name; brand names resolved via AGENT_ALIASES + _normalize_agent_name()
+#: Keyed by generic name; brand names resolved via AGENT_ALIASES + normalize_agent_name()
 AGENT_STANDARD_DOSES: Final[dict[str, float]] = {
     "gd-dtpa": 0.1,
     "gadopentetate": 0.1,
@@ -366,7 +366,7 @@ def get_r1_from_sidecar_dict(
 # R1 Relaxivity Lookup Functions
 # =============================================================================
 
-def _normalize_agent_name(agent: str) -> str:
+def normalize_agent_name(agent: str) -> str:
     """Normalize agent name for lookup.
 
     Args:
@@ -385,7 +385,7 @@ def _normalize_agent_name(agent: str) -> str:
 def lookup_standard_dose(agent: str) -> float:
     """Look up standard clinical dose for a contrast agent.
 
-    Uses _normalize_agent_name() to resolve brand names via AGENT_ALIASES.
+    Uses normalize_agent_name() to resolve brand names via AGENT_ALIASES.
     E.g., "Vueway" -> "gadopiclenol" -> 0.05 mmol/kg
 
     Args:
@@ -394,7 +394,7 @@ def lookup_standard_dose(agent: str) -> float:
     Returns:
         Standard dose in mmol/kg (0.1 for most agents, 0.05 for Vueway, etc.).
     """
-    name = _normalize_agent_name(agent)
+    name = normalize_agent_name(agent)
     return AGENT_STANDARD_DOSES.get(name, 0.1)
 
 
@@ -413,7 +413,7 @@ def lookup_gd_multiplicity(agent: str) -> int:
         Number of Gd3+ ions per molecule (1 for most agents, 4 for
         gadoquatrane).
     """
-    name = _normalize_agent_name(agent)
+    name = normalize_agent_name(agent)
     relaxivity = CONTRAST_AGENTS.get(name)
     return relaxivity.gd_ions if relaxivity else 1
 
@@ -443,7 +443,7 @@ def lookup_r1(
         >>> lookup_r1("Gadavist", 3.0)  # Brand name
         5.0
     """
-    name = _normalize_agent_name(agent)
+    name = normalize_agent_name(agent)
 
     if name not in CONTRAST_AGENTS:
         available = sorted(set(CONTRAST_AGENTS.keys()) | set(AGENT_ALIASES.keys()))
@@ -489,7 +489,7 @@ def get_agent_info(agent: str) -> dict[str, float]:
     Raises:
         ValueError: If the agent name is not recognized
     """
-    name = _normalize_agent_name(agent)
+    name = normalize_agent_name(agent)
 
     if name not in CONTRAST_AGENTS:
         raise ValueError(f"Unknown contrast agent: '{agent}'")
@@ -541,7 +541,7 @@ def calculate_dose_from_volume(
     if body_weight_kg <= 0:
         raise ValueError(f"Body weight must be positive, got {body_weight_kg}")
 
-    name = _normalize_agent_name(agent)
+    name = normalize_agent_name(agent)
 
     if name not in AGENT_CONCENTRATIONS:
         # Check if it's at least a known alias
@@ -590,7 +590,7 @@ def calculate_volume_for_dose(
     if body_weight_kg <= 0:
         raise ValueError(f"Body weight must be positive, got {body_weight_kg}")
 
-    name = _normalize_agent_name(agent)
+    name = normalize_agent_name(agent)
 
     if name not in AGENT_CONCENTRATIONS:
         if name not in CONTRAST_AGENTS:

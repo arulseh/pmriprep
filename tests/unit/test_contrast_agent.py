@@ -4,7 +4,7 @@ import pytest
 
 from pmriprep.utils.contrast_agent import (
     ParameterSource,
-    _normalize_agent_name,
+    normalize_agent_name,
     build_dce_provenance,
     build_dsc_provenance,
     calculate_dose_from_volume,
@@ -62,11 +62,11 @@ class TestNormalizeAgentName:
 
     def test_brand_alias_resolves(self) -> None:
         """'Gadavist' resolves to generic 'gadobutrol' via alias."""
-        assert _normalize_agent_name("Gadavist") == "gadobutrol"
+        assert normalize_agent_name("Gadavist") == "gadobutrol"
 
     def test_generic_name_passthrough(self) -> None:
         """Generic name 'gd-dtpa' passes through unchanged."""
-        assert _normalize_agent_name("gd-dtpa") == "gd-dtpa"
+        assert normalize_agent_name("gd-dtpa") == "gd-dtpa"
 
 
 class TestLookupR1:

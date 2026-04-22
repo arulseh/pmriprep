@@ -576,3 +576,215 @@ class TestConfigLoaderR1:
         from pmriprep.config.loader import build_dce_config
         cfg = build_dce_config({"dce": {}})
         assert cfg.r1_relaxivity is None
+
+
+# ===========================================================================
+# Agent-specific preflight guardrails
+# ===========================================================================
+
+def _make_dsc_config(**overrides):
+    """Create a DSCConfig with sensible defaults for testing."""
+    from pmriprep.config.dsc import DSCConfig
+    defaults = dict(
+        preload="auto",
+        dose=1.0,
+        agent_standard_dose=0.1,
+    )
+    defaults.update(overrides)
+    return DSCConfig(**defaults)
+
+
+class TestDSCAgentGuardrails:
+
+    def test_high_r1_no_preload_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(preload=0.0, agent_standard_dose=0.05)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_HIGH_R1_NO_PRELOAD" in codes
+
+    def test_high_r1_gadoquatrane_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadoquatrane"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(preload="auto", agent_standard_dose=0.04)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_HIGH_R1_NO_PRELOAD" in codes
+
+    def test_high_r1_auto_preload_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(preload="auto", agent_standard_dose=0.05)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_HIGH_R1_NO_PRELOAD" in codes
+
+    def test_high_r1_with_preload_no_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(preload=1.0, agent_standard_dose=0.05)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_HIGH_R1_NO_PRELOAD" not in codes
+
+    def test_high_fa_no_preload_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["flip_angle"] = 60.0
+        cfg = _make_dsc_config(preload=0.0)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_HIGH_FA_NO_PRELOAD" in codes
+
+    def test_high_fa_with_preload_no_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["flip_angle"] = 60.0
+        cfg = _make_dsc_config(preload=1.0)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_HIGH_FA_NO_PRELOAD" not in codes
+
+    def test_normal_fa_no_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(preload=0.0)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_HIGH_FA_NO_PRELOAD" not in codes
+
+    def test_low_dose_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(dose=0.5, agent_standard_dose=0.05)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_LOW_EFFECTIVE_DOSE" in codes
+
+    def test_low_dose_gadoquatrane_no_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadoquatrane"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(dose=1.0, agent_standard_dose=0.04)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_LOW_EFFECTIVE_DOSE" not in codes
+
+    def test_full_dose_no_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadobutrol"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(dose=1.0, agent_standard_dose=0.1)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        codes = [m.code for m in msgs]
+        assert "DSC_LOW_EFFECTIVE_DOSE" not in codes
+
+    def test_standard_agent_no_warnings(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadobutrol"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(preload="auto")
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        agent_codes = {m.code for m in msgs if m.code.startswith("DSC_H") or m.code.startswith("DSC_LOW")}
+        assert len(agent_codes) == 0
+
+    def test_no_agent_no_warnings(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = None
+        cfg = _make_dsc_config(preload="auto")
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        agent_codes = {m.code for m in msgs if "AGENT" in m.code or "R1" in m.code or "DOSE" in m.code}
+        assert len(agent_codes) == 0
+
+    def test_no_config_no_crash(self):
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        msgs = validate_dsc_metadata(sc, dsc_config=None)
+        codes = [m.code for m in msgs]
+        assert "DSC_HIGH_R1_NO_PRELOAD" not in codes
+        assert "DSC_HIGH_FA_NO_PRELOAD" not in codes
+        assert "DSC_LOW_EFFECTIVE_DOSE" not in codes
+
+
+class TestDCEAgentGuardrails:
+
+    def test_high_r1_measured_aif_warning(self):
+        sc = _valid_dce_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        cfg = DCEConfig(aif_method="auto")
+        msgs = validate_dce_metadata(sc, cfg)
+        codes = [m.code for m in msgs]
+        assert "DCE_HIGH_R1_AIF_SATURATION" in codes
+
+    def test_high_r1_population_aif_no_warning(self):
+        sc = _valid_dce_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        cfg = DCEConfig(aif_method="population")
+        msgs = validate_dce_metadata(sc, cfg)
+        codes = [m.code for m in msgs]
+        assert "DCE_HIGH_R1_AIF_SATURATION" not in codes
+
+    def test_high_r1_external_aif_no_warning(self):
+        sc = _valid_dce_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        cfg = DCEConfig(aif_method="auto", aif_file=Path("/tmp/aif.txt"))
+        msgs = validate_dce_metadata(sc, cfg)
+        codes = [m.code for m in msgs]
+        assert "DCE_HIGH_R1_AIF_SATURATION" not in codes
+
+    def test_low_dose_warning(self):
+        sc = _valid_dce_sidecar()
+        sc["contrast_agent"] = "gadoterate"
+        cfg = DCEConfig(dose=0.5)
+        msgs = validate_dce_metadata(sc, cfg)
+        codes = [m.code for m in msgs]
+        assert "DCE_LOW_EFFECTIVE_DOSE" in codes
+
+    def test_high_r1_standard_dose_no_warning(self):
+        """Gadopiclenol at standard dose (0.05 mmol/kg): 0.05 × 11.6 = 0.58 > 0.35."""
+        sc = _valid_dce_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        cfg = DCEConfig(dose=1.0, aif_method="population")
+        msgs = validate_dce_metadata(sc, cfg)
+        codes = [m.code for m in msgs]
+        assert "DCE_LOW_EFFECTIVE_DOSE" not in codes
+
+    def test_full_dose_no_warning(self):
+        sc = _valid_dce_sidecar()
+        sc["contrast_agent"] = "gadobutrol"
+        cfg = DCEConfig(dose=1.0)
+        msgs = validate_dce_metadata(sc, cfg)
+        codes = [m.code for m in msgs]
+        assert "DCE_LOW_EFFECTIVE_DOSE" not in codes
+
+
+class TestWarningStrings:
+
+    def test_all_warnings(self):
+        report = PreflightReport(messages=[
+            PreflightMessage("warning", "DSC_HIGH_R1_NO_PRELOAD", "msg1"),
+            PreflightMessage("error", "DSC_MISSING_TE", "msg2"),
+            PreflightMessage("warning", "DCE_HIGH_R1_AIF_SATURATION", "msg3"),
+        ])
+        result = report.warning_strings()
+        assert len(result) == 2
+        assert "[DSC_HIGH_R1_NO_PRELOAD]" in result[0]
+        assert "[DCE_HIGH_R1_AIF_SATURATION]" in result[1]
+
+    def test_prefix_filter(self):
+        report = PreflightReport(messages=[
+            PreflightMessage("warning", "DSC_HIGH_R1_NO_PRELOAD", "msg1"),
+            PreflightMessage("warning", "DCE_HIGH_R1_AIF_SATURATION", "msg2"),
+        ])
+        dsc = report.warning_strings(prefix="DSC_")
+        dce = report.warning_strings(prefix="DCE_")
+        assert len(dsc) == 1
+        assert len(dce) == 1
+
+    def test_empty(self):
+        report = PreflightReport()
+        assert report.warning_strings() == []
