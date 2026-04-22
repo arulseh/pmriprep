@@ -84,6 +84,27 @@ GD_DOTA_STANDARD_DOSE: Final[float] = 0.1
 
 
 # =============================================================================
+# Synthetic AIF Calibration
+# =============================================================================
+
+#: Population-median arterial peak ΔR2* (s⁻¹) at 3T for standard single-dose
+#: monomeric Gd (0.1 mmol/kg). Vonken MRM 41:524 (1999) reports arterial peak
+#: ΔR2* of 30–50 s⁻¹ at 3T; Willats PMB 51:5007 (2006) AIF characterisation.
+#: 35.0 is the population median. For tetrameric agents at standard molecular
+#: dose, linear gd_multiplicity scaling may overestimate by up to 30% due to
+#: partial saturation of the static dephasing regime above ~15 mM blood [Gd].
+SYNTH_AIF_BASE_PEAK_3T: Final[float] = 35.0
+
+#: Upper cap on effective_dose multiplier. Kjølby MRM 56:187 (2006): ΔR2*
+#: linearity holds to ~15 mM blood [Gd]; 2.5× reference dose stays within.
+SYNTH_AIF_DOSE_CAP: Final[float] = 2.5
+
+#: Minimum synthetic AIF peak amplitude (s⁻¹). At 3T with SNR≈20, TE≈30 ms,
+#: per-voxel ΔR2* noise ≈ 1/(TE×SNR) ≈ 1.7 s⁻¹; 3.0 is ~2 sigma guard.
+SYNTH_AIF_MIN_PEAK: Final[float] = 3.0
+
+
+# =============================================================================
 # K2 residual thresholds (two tiers — different decision commitment levels)
 # =============================================================================
 

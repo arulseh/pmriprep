@@ -1,0 +1,235 @@
+"""Tests for synthetic AIF peak calibration (v0.29.1).
+
+Verifies the population-median, B0-scaled, dose-aware peak formula:
+    peak = max(SYNTH_AIF_BASE_PEAK_3T * (B0 / 3.0) * effective_dose,
+               SYNTH_AIF_MIN_PEAK)
+"""
+
+from unittest.mock import MagicMock
+
+import numpy as np
+import pytest
+
+from pmriprep.utils.dsc_constants import (
+    GD_DOTA_STANDARD_DOSE,
+    SYNTH_AIF_BASE_PEAK_3T,
+    SYNTH_AIF_DOSE_CAP,
+    SYNTH_AIF_MIN_PEAK,
+)
+
+
+def _make_aif_detection(**trait_overrides):
+    """Create a mock AIFDetection with specified input traits."""
+    from pmriprep.interfaces.dsc_aif import AIFDetection
+
+    det = AIFDetection()
+    for key, val in trait_overrides.items():
+        setattr(det.inputs, key, val)
+    return det
+
+
+# -----------------------------------------------------------------------
+# _effective_dose helper
+# -----------------------------------------------------------------------
+
+class TestEffectiveDose:
+
+    def test_standard_dose(self):
+        det = _make_aif_detection(dose=1.0, agent_standard_dose=0.1, gd_multiplicity=1)
+        assert det._effective_dose() == pytest.approx(1.0)
+
+    def test_double_dose(self):
+        det = _make_aif_detection(dose=2.0, agent_standard_dose=0.1, gd_multiplicity=1)
+        assert det._effective_dose() == pytest.approx(2.0)
+
+    def test_gadoquatrane(self):
+        det = _make_aif_detection(dose=1.0, agent_standard_dose=0.04, gd_multiplicity=4)
+        assert det._effective_dose() == pytest.approx(1.6)
+
+    def test_raw_value_not_clamped(self):
+        det = _make_aif_detection(dose=5.0, agent_standard_dose=0.2, gd_multiplicity=4)
+        raw = det._effective_dose()
+        assert raw == pytest.approx(40.0)
+
+    def test_explicit_overrides(self):
+        det = _make_aif_detection(dose=1.0, agent_standard_dose=0.1, gd_multiplicity=1)
+        val = det._effective_dose(dose=0.5, agent_standard_dose=0.1, gd_multiplicity=2)
+        assert val == pytest.approx(1.0)
+
+    def test_all_defaults(self):
+        det = _make_aif_detection()
+        assert det._effective_dose() == pytest.approx(1.0)
+
+
+# -----------------------------------------------------------------------
+# _generate_synthetic_aif peak formula
+# -----------------------------------------------------------------------
+
+class TestSyntheticAIFPeak:
+
+    @pytest.mark.parametrize(
+        "field_strength, effective_dose, expected_peak",
+        [
+            (3.0, 1.0, 35.0),            # standard single dose 3T
+            (3.0, 0.75, 26.25),           # Penn sub-02 dose
+            (3.0, 2.0, 70.0),             # double dose
+            (1.5, 1.0, 17.5),             # 1.5T scaling
+            (7.0, 1.0, 35.0 * 7 / 3),    # 7T scaling
+            (3.0, 1.6, 56.0),             # gadoquatrane effective dose
+            (3.0, 2.5, 87.5),             # dose cap boundary
+        ],
+        ids=[
+            "standard_3T",
+            "penn_sub02_075",
+            "double_dose",
+            "1.5T",
+            "7T",
+            "gadoquatrane",
+            "dose_cap",
+        ],
+    )
+    def test_peak_formula(self, field_strength, effective_dose, expected_peak):
+        det = _make_aif_detection()
+        aif, metrics = det._generate_synthetic_aif(
+            n_timepoints=60,
+            tr=1.5,
+            baseline_frames=5,
+            field_strength=field_strength,
+            effective_dose=effective_dose,
+        )
+        assert metrics["synthetic_aif_target_peak"] == pytest.approx(expected_peak)
+        assert aif.max() > 0
+
+    def test_min_peak_guard(self):
+        det = _make_aif_detection()
+        aif, metrics = det._generate_synthetic_aif(
+            n_timepoints=60,
+            tr=1.5,
+            baseline_frames=5,
+            field_strength=3.0,
+            effective_dose=0.01,
+        )
+        assert metrics["synthetic_aif_target_peak"] == pytest.approx(SYNTH_AIF_MIN_PEAK)
+
+    def test_tissue_max_does_not_affect_peak(self):
+        det = _make_aif_detection()
+        _, metrics_no_tissue = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+        )
+        _, metrics_high_tissue = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+            tissue_max_delta_r2star=500.0,
+        )
+        assert (
+            metrics_no_tissue["synthetic_aif_target_peak"]
+            == metrics_high_tissue["synthetic_aif_target_peak"]
+        )
+
+    def test_tissue_max_none_uses_formula(self):
+        """Regression: tissue_max=None no longer falls back to Bleeker 250."""
+        det = _make_aif_detection()
+        _, metrics = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+            tissue_max_delta_r2star=None,
+        )
+        assert metrics["synthetic_aif_target_peak"] == pytest.approx(35.0)
+
+
+# -----------------------------------------------------------------------
+# QC metrics
+# -----------------------------------------------------------------------
+
+class TestSyntheticAIFQCMetrics:
+
+    def test_new_qc_keys_present(self):
+        det = _make_aif_detection()
+        _, metrics = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+            tissue_max_delta_r2star=7.0,
+        )
+        assert metrics["synthetic_aif_peak_formula"] == "population_median_b0_scaled"
+        assert metrics["synthetic_aif_effective_dose"] == pytest.approx(1.0)
+        assert metrics["synthetic_aif_field_strength"] == pytest.approx(3.0)
+        assert metrics["synthetic_aif_amplitude_source"] == "population_calibrated"
+
+    def test_peak_to_tissue_ratio(self):
+        det = _make_aif_detection()
+        _, metrics = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+            tissue_max_delta_r2star=7.0,
+        )
+        assert metrics["synthetic_aif_peak_to_tissue_ratio"] == pytest.approx(5.0)
+
+    def test_tissue_p95_qc_key(self):
+        det = _make_aif_detection()
+        _, metrics = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+            tissue_max_delta_r2star=34.0,
+        )
+        assert metrics["synthetic_aif_tissue_p95_delta_r2star"] == pytest.approx(34.0)
+
+    def test_no_tissue_max_no_ratio_key(self):
+        det = _make_aif_detection()
+        _, metrics = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+        )
+        assert "synthetic_aif_peak_to_tissue_ratio" not in metrics
+        assert "synthetic_aif_tissue_p95_delta_r2star" not in metrics
+
+    def test_tissue_max_zero_no_division_error(self):
+        det = _make_aif_detection()
+        _, metrics = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+            tissue_max_delta_r2star=0.0,
+        )
+        assert "synthetic_aif_peak_to_tissue_ratio" not in metrics
+        assert metrics["synthetic_aif_tissue_p95_delta_r2star"] == pytest.approx(0.0)
+
+    def test_tissue_max_negative_no_ratio(self):
+        det = _make_aif_detection()
+        _, metrics = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+            tissue_max_delta_r2star=-1.0,
+        )
+        assert "synthetic_aif_peak_to_tissue_ratio" not in metrics
+
+
+# -----------------------------------------------------------------------
+# Shape preservation
+# -----------------------------------------------------------------------
+
+class TestShapePreserved:
+
+    def test_shape_parameters_unchanged(self):
+        det = _make_aif_detection()
+        _, metrics = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+        )
+        assert metrics["synthetic_aif_alpha"] == pytest.approx(4.0)
+        assert metrics["synthetic_aif_time_to_peak_s"] == pytest.approx(4.5)
+
+    def test_recirculation_scales_with_peak(self):
+        det = _make_aif_detection()
+        _, metrics_std = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+        )
+        _, metrics_dbl = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=2.0,
+        )
+        assert metrics_std["synthetic_aif_recirc_fraction"] == pytest.approx(0.35)
+        assert metrics_dbl["synthetic_aif_recirc_fraction"] == pytest.approx(0.35)
+
+    def test_baseline_is_zero(self):
+        det = _make_aif_detection()
+        aif, _ = det._generate_synthetic_aif(
+            n_timepoints=60, tr=1.5, baseline_frames=5,
+            field_strength=3.0, effective_dose=1.0,
+        )
+        np.testing.assert_array_equal(aif[:5], 0.0)
+
+    def test_no_negative_values(self):
+        det = _make_aif_detection()
+        aif, _ = det._generate_synthetic_aif(
+            n_timepoints=60, field_strength=3.0, effective_dose=1.0,
+        )
+        assert np.all(aif >= 0)

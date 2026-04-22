@@ -2416,6 +2416,7 @@ def init_dsc_preproc_wf(
             ("whole_tumor_mask", "lesion_mask_file"),  # Undilated mask for AIF distance exclusion
             ("enhancing_mask", "enhancing_mask_file"),
             ("tr", "tr"),
+            ("field_strength", "field_strength"),
         ]),
     ])
 

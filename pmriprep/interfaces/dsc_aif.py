@@ -30,6 +30,10 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
+    GD_DOTA_STANDARD_DOSE,
+    SYNTH_AIF_BASE_PEAK_3T,
+    SYNTH_AIF_DOSE_CAP,
+    SYNTH_AIF_MIN_PEAK,
 )
 
 # Seconds after baseline end before first-pass window begins.
@@ -396,6 +400,12 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Gd3+ ions per molecule (1=monomeric, 4=gadoquatrane). "
              "Affects DSC susceptibility scaling for AIF peak thresholds.",
+    )
+    field_strength = traits.Float(
+        3.0,
+        usedefault=True,
+        desc="Magnetic field strength in Tesla (from BIDS MagneticFieldStrength). "
+             "Used for B0 scaling of synthetic AIF peak amplitude.",
     )
 
     # Output file
@@ -1001,6 +1011,40 @@ class AIFDetection(BaseInterface):
         }
 
     # -----------------------------------------------------------------
+    # Effective dose helper (shared by candidate scoring + synthetic AIF)
+    # -----------------------------------------------------------------
+
+    def _effective_dose(
+        self,
+        dose: Optional[float] = None,
+        agent_standard_dose: Optional[float] = None,
+        gd_multiplicity: Optional[int] = None,
+    ) -> float:
+        """Effective Gd dose relative to 0.1 mmol/kg reference (unclamped).
+
+        Args:
+            dose: Override; falls back to self.inputs.dose.
+            agent_standard_dose: Override; falls back to self.inputs.agent_standard_dose.
+            gd_multiplicity: Override; falls back to self.inputs.gd_multiplicity.
+
+        Returns:
+            Raw multiplier ``(agent_std * dose * gd_mult) / GD_DOTA_STANDARD_DOSE``.
+            Consumers apply their own clamping.
+        """
+        d = dose if dose is not None else (
+            float(self.inputs.dose) if isdefined(self.inputs.dose) else 1.0
+        )
+        a = agent_standard_dose if agent_standard_dose is not None else (
+            float(self.inputs.agent_standard_dose)
+            if isdefined(self.inputs.agent_standard_dose) else 0.1
+        )
+        g = gd_multiplicity if gd_multiplicity is not None else (
+            int(self.inputs.gd_multiplicity)
+            if isdefined(self.inputs.gd_multiplicity) else 1
+        )
+        return (a * d * g) / GD_DOTA_STANDARD_DOSE
+
+    # -----------------------------------------------------------------
     # Step 7: Cost-function scoring
     # -----------------------------------------------------------------
 
@@ -1133,34 +1177,12 @@ class AIFDetection(BaseInterface):
             BASE_PEAK_FLOOR = 5.0  # s^-1 — tissue contamination floor (dose-independent)
             BASE_PEAK_CEILING = 120.0  # s^-1 — susceptibility artifact ceiling
 
-            # Effective dose only raises the ceiling for high-Gd agents (gadoquatrane);
-            # peak_floor is fixed regardless of dose.
-            # DSC ΔR2* scales with total Gd3+ ions, so multiply by gd_multiplicity
-            # for tetrameric agents (gadoquatrane: 4 Gd per molecule).
-            if dose is not None:
-                dose_val = dose
-            else:
-                dose_val = float(self.inputs.dose) if isdefined(self.inputs.dose) else 1.0
-            if agent_standard_dose is not None:
-                agent_std = agent_standard_dose
-            else:
-                agent_std = (
-                    float(self.inputs.agent_standard_dose)
-                    if isdefined(self.inputs.agent_standard_dose)
-                    else 0.1
-                )
-            if gd_multiplicity is not None:
-                gd_mult = gd_multiplicity
-            else:
-                gd_mult = (
-                    int(self.inputs.gd_multiplicity)
-                    if isdefined(self.inputs.gd_multiplicity)
-                    else 1
-                )
-            effective_dose = (agent_std * dose_val * gd_mult) / 0.1
-
-            # Clamp to prevent pathological thresholds
-            effective_dose = np.clip(effective_dose, 0.2, 3.0)
+            # Cap 3.0 (vs 2.5 for synthetic AIF): artifact rejection tolerates
+            # slight nonlinearity; synthetic AIF amplitude must stay linear.
+            effective_dose = float(np.clip(
+                self._effective_dose(dose, agent_standard_dose, gd_multiplicity),
+                0.2, 3.0,
+            ))
 
             peak_floor = BASE_PEAK_FLOOR
             peak_ceiling = max(BASE_PEAK_CEILING * effective_dose, BASE_PEAK_CEILING)
@@ -1874,30 +1896,25 @@ class AIFDetection(BaseInterface):
         tr: float = 1.5,
         baseline_frames: int = 5,
         tissue_max_delta_r2star: Optional[float] = None,
+        field_strength: float = 3.0,
+        effective_dose: float = 1.0,
     ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
         """Generate synthetic AIF using physiologically calibrated gamma-variate.
 
-        Uses ΔR2*-scaled peak amplitude with recirculation
-        component for more realistic bolus shape.
+        Peak amplitude is dose- and B0-scaled from population-median arterial
+        ΔR2* at 3T (Vonken MRM 1999, Willats PMB 2006).
 
-        Parameters
-        ----------
-        n_timepoints : int
-            Number of time frames.
-        tr : float
-            Repetition time in seconds.
-        baseline_frames : int
-            Number of pre-bolus baseline frames.
-        tissue_max_delta_r2star : float or None
-            95th percentile of max ΔR2* across brain voxels. Used to scale
-            AIF peak amplitude. If None, uses literature default (250 s⁻¹).
+        Args:
+            n_timepoints: Number of time frames.
+            tr: Repetition time in seconds.
+            baseline_frames: Number of pre-bolus baseline frames.
+            tissue_max_delta_r2star: 95th percentile of max ΔR2* across brain
+                voxels. QC diagnostic only — does not drive peak amplitude.
+            field_strength: Magnetic field strength in Tesla.
+            effective_dose: ``(agent_std * dose * gd_mult) / 0.1``, clamped.
 
-        Returns
-        -------
-        aif : ndarray
-            Synthetic AIF curve (ΔR2* units, s⁻¹).
-        metrics : dict
-            QC metadata describing the synthetic AIF parameters.
+        Returns:
+            Tuple of (aif_curve, qc_metrics_dict).
         """
         # --- First-pass gamma-variate parameters ---
         alpha = 4.0
@@ -1905,13 +1922,12 @@ class AIFDetection(BaseInterface):
         arrival_frame = baseline_frames + 2
         t0 = arrival_frame * tr  # bolus arrival time (seconds)
 
-        # Peak amplitude scaling
-        if tissue_max_delta_r2star is not None and tissue_max_delta_r2star > 0:
-            peak = float(np.clip(tissue_max_delta_r2star * 6.0, 20.0, 400.0))
-            amplitude_source = "tissue_scaled"
-        else:
-            peak = 250.0  # literature default (Bleeker 2011)
-            amplitude_source = "literature_default"
+        # Peak amplitude: population-median arterial ΔR2* scaled by B0 and dose
+        peak = max(
+            SYNTH_AIF_BASE_PEAK_3T * (field_strength / 3.0) * effective_dose,
+            SYNTH_AIF_MIN_PEAK,
+        )
+        amplitude_source = "population_calibrated"
 
         # Recirculation parameters
         recirc_fraction = 0.35
@@ -1951,6 +1967,9 @@ class AIFDetection(BaseInterface):
             "synthetic_aif_peak_delta_r2star": float(np.max(aif)),
             "synthetic_aif_target_peak": peak,
             "synthetic_aif_amplitude_source": amplitude_source,
+            "synthetic_aif_peak_formula": "population_median_b0_scaled",
+            "synthetic_aif_effective_dose": effective_dose,
+            "synthetic_aif_field_strength": field_strength,
             "synthetic_aif_alpha": alpha,
             "synthetic_aif_time_to_peak_s": time_to_peak,
             "synthetic_aif_arrival_frame": arrival_frame,
@@ -1958,9 +1977,13 @@ class AIFDetection(BaseInterface):
             "synthetic_aif_recirc_delay_s": recirc_delay,
         }
         if tissue_max_delta_r2star is not None:
-            metrics["tissue_max_delta_r2star"] = float(
+            metrics["synthetic_aif_tissue_p95_delta_r2star"] = float(
                 tissue_max_delta_r2star
             )
+            if peak > 0 and tissue_max_delta_r2star > 0:
+                metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
+                    peak / tissue_max_delta_r2star, 2
+                )
 
         return aif, metrics
 
@@ -2402,6 +2425,13 @@ class AIFDetection(BaseInterface):
         disable_fallback = bool(self.inputs.disable_fallback)
         lesion_distance = float(self.inputs.lesion_distance)
         n_timepoints = conc_data.shape[3]
+        field_strength = (
+            float(self.inputs.field_strength)
+            if isdefined(self.inputs.field_strength) else 3.0
+        )
+        synth_effective_dose = float(np.clip(
+            self._effective_dose(), 0.2, SYNTH_AIF_DOSE_CAP,
+        ))
 
         # Voxel sizes for distance-based lesion exclusion and TR detection
         zooms = conc_img.header.get_zooms()  # type: ignore[attr-defined,union-attr]
@@ -2779,6 +2809,8 @@ class AIFDetection(BaseInterface):
             aif_curve, synth_metrics = self._generate_synthetic_aif(
                 n_timepoints, tr, aif_baseline_frames,
                 tissue_max_delta_r2star=tissue_max,
+                field_strength=field_strength,
+                effective_dose=synth_effective_dose,
             )
             detection_level = "synthetic"
             quality_score = 0.3
@@ -2860,6 +2892,8 @@ class AIFDetection(BaseInterface):
                 aif_curve, synth_metrics = self._generate_synthetic_aif(
                     n_timepoints, tr, aif_baseline_frames,
                     tissue_max_delta_r2star=tissue_max,
+                    field_strength=field_strength,
+                    effective_dose=synth_effective_dose,
                 )
                 detection_level = "synthetic"
                 quality_score = 0.3

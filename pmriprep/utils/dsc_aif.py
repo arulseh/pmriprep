@@ -2126,6 +2126,11 @@ def generate_synthetic_aif(
 ) -> SyntheticAIFResult:
     """Generate a synthetic AIF using population-derived gamma-variate parameters.
 
+    .. deprecated::
+        Legacy utility with different parameters than the production
+        ``AIFDetection._generate_synthetic_aif``. Retained for test
+        compatibility only; production uses the interface method.
+
     This function creates a synthetic arterial input function when automatic
     AIF detection fails. The synthetic AIF enables relative perfusion
     quantification but absolute CBV/CBF measurements are NOT valid.
@@ -2214,6 +2219,13 @@ def generate_synthetic_aif(
     atlas_based_aif_search : Preferred AIF detection method
     fit_gamma_variate : Gamma-variate fitting for measured AIFs
     """
+    import warnings
+    warnings.warn(
+        "generate_synthetic_aif() uses legacy parameters. "
+        "Production uses AIFDetection._generate_synthetic_aif().",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     # Get population parameters
     alpha = SYNTHETIC_AIF_PARAMS["alpha"]
     beta = SYNTHETIC_AIF_PARAMS["beta"]
