@@ -31,8 +31,6 @@
     {% if acquisition_warnings %}
     <div class="section review acquisition-warning">
         <h3>&#9888; Acquisition Advisory</h3>
-        <p>The following advisories relate to <strong>acquisition parameters or data quality</strong>,
-        not to unset pipeline defaults. They may affect quantitative accuracy.</p>
         {% for pipeline_name, warnings in acquisition_warnings.items() %}
         <h4>{{ pipeline_name }}</h4>
         <ul>
