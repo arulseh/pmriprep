@@ -27,7 +27,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
 )
 
-from pmriprep.utils.dsc_aif import compute_windowed_first_pass_auc
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
@@ -35,10 +34,6 @@ from pmriprep.utils.dsc_constants import (
     SYNTH_AIF_BASE_PEAK_3T,
     SYNTH_AIF_DOSE_CAP,
     SYNTH_AIF_MIN_PEAK,
-    WINDOWED_AUC_FWHM_MULTIPLIER,
-    WINDOWED_AUC_RATIO_MAX,
-    WINDOWED_AUC_RATIO_MIN,
-    WINDOWED_AUC_TRAILING_CAP_S,
 )
 
 # Seconds after baseline end before first-pass window begins.
@@ -97,7 +92,6 @@ class AifQualityResult(NamedTuple):
     spr: float
     peak_ratio: Optional[float]
     brr: float
-    auc_ratio: Optional[float]
 
 
 class DualRoiResult(NamedTuple):
@@ -108,7 +102,6 @@ class DualRoiResult(NamedTuple):
     spr: float
     peak_ratio: Optional[float]
     brr: float
-    auc_ratio: Optional[float]
 
 
 # ---------------------------------------------------------------------------
@@ -1656,8 +1649,8 @@ class AIFDetection(BaseInterface):
             return float("nan")
         return float(np.mean(tail_window)) / fp_peak_val * 100.0
 
+    @staticmethod
     def _aif_passes_quality(
-        self,
         curve: npt.NDArray[Any],
         baseline_frames: int,
         tr: float,
@@ -1667,7 +1660,7 @@ class AIFDetection(BaseInterface):
         Returns
         -------
         AifQualityResult
-            Named tuple with passes, spr, peak_ratio, brr, auc_ratio.
+            Named tuple with passes, spr, peak_ratio, brr.
         """
         spr, _, _ = AIFDetection._compute_aif_spr(curve, baseline_frames, tr)
         gmax_ok = AIFDetection._aif_global_max_in_fp(curve, baseline_frames, tr)
@@ -1679,30 +1672,8 @@ class AIFDetection(BaseInterface):
         brr = AIFDetection._compute_aif_brr(curve, baseline_frames, tr)
         brr_ok = np.isnan(brr) or brr >= AIF_AVG_BRR_MIN
 
-        auc_ratio: Optional[float] = None
-        auc_ok = True
-        synth_ref = getattr(self, "_synth_ref_windowed_auc", 0.0)
-        if synth_ref > EPSILON_CONCENTRATION:
-            det_auc, _, _ = compute_windowed_first_pass_auc(
-                curve, baseline_frames, tr,
-                fwhm_multiplier=WINDOWED_AUC_FWHM_MULTIPLIER,
-                trailing_cap_s=WINDOWED_AUC_TRAILING_CAP_S,
-            )
-            if det_auc > EPSILON_CONCENTRATION:
-                auc_ratio = det_auc / synth_ref
-                if getattr(self, "_auc_gate_latched", False):
-                    auc_ok = True
-                else:
-                    auc_ok = (
-                        WINDOWED_AUC_RATIO_MIN
-                        <= auc_ratio
-                        <= WINDOWED_AUC_RATIO_MAX
-                    )
-                    if auc_ok:
-                        self._auc_gate_latched = True
-
-        passes = spr <= 100.0 and gmax_ok and pr_ok and brr_ok and auc_ok
-        return AifQualityResult(passes, spr, pr, brr, auc_ratio)
+        passes = spr <= 100.0 and gmax_ok and pr_ok and brr_ok
+        return AifQualityResult(passes, spr, pr, brr)
 
     def _try_aif_dual_roi(
         self,
@@ -1723,7 +1694,7 @@ class AIFDetection(BaseInterface):
         -------
         DualRoiResult or None
             Named tuple with (curve, mask, roi_size, spr, peak_ratio,
-            brr, auc_ratio) when the averaged curve passes quality gates;
+            brr) when the averaged curve passes quality gates;
             ``None`` otherwise.
         """
         curve, mask = self._compute_roi_averaged_aif(
@@ -1733,7 +1704,7 @@ class AIFDetection(BaseInterface):
         if qr.passes:
             return DualRoiResult(
                 curve, mask, 1,
-                qr.spr, qr.peak_ratio, qr.brr, qr.auc_ratio,
+                qr.spr, qr.peak_ratio, qr.brr,
             )
         return None
 
@@ -2524,20 +2495,13 @@ class AIFDetection(BaseInterface):
         else:
             aif_baseline_frames = baseline_frames  # fallback to configured
 
-        # Pre-compute synthetic AIF reference for windowed-AUC gate.
-        # The synthetic AIF adapts to dose/B0/TR so the reference AUC is
-        # acquisition-specific. Cached on self for reuse as cascade fallback.
+        # Cached for reuse as cascade fallback.
         self._cached_synth_aif, self._cached_synth_metrics = (
             self._generate_synthetic_aif(
                 n_timepoints, tr, aif_baseline_frames,
                 field_strength=field_strength,
                 effective_dose=synth_effective_dose,
             )
-        )
-        self._synth_ref_windowed_auc, _, _ = compute_windowed_first_pass_auc(
-            self._cached_synth_aif, aif_baseline_frames, tr,
-            fwhm_multiplier=WINDOWED_AUC_FWHM_MULTIPLIER,
-            trailing_cap_s=WINDOWED_AUC_TRAILING_CAP_S,
         )
 
         # Initialize
@@ -2591,7 +2555,6 @@ class AIFDetection(BaseInterface):
             ]
 
             for crit, roi, level_name in attempts:
-                self._auc_gate_latched = False
                 frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
                 level_n_candidates = max(
                     MIN_AIF_CANDIDATES_ACCEPT,
@@ -2726,7 +2689,6 @@ class AIFDetection(BaseInterface):
                         accumulated_coords.add(coord)
 
             # --- Post-loop: try accumulated pool ---
-            self._auc_gate_latched = False
             if accepted_aif is None and accumulated_pool:
                 accumulated_pool.sort(key=lambda x: x[0])
                 # Cap pool to prevent permissive domination
@@ -2853,22 +2815,6 @@ class AIFDetection(BaseInterface):
             qc_metrics["averaged_aif_spr"] = round(spr, 1)
             qc_metrics["averaged_aif_fp_peak_frame"] = fp_frame
             qc_metrics["averaged_aif_final_roi_size"] = accepted_roi_size
-
-            # Windowed AUC diagnostics
-            synth_ref = getattr(self, "_synth_ref_windowed_auc", 0.0)
-            if synth_ref > EPSILON_CONCENTRATION:
-                det_auc, win_start, win_end = compute_windowed_first_pass_auc(
-                    aif_curve, aif_baseline_frames, tr,
-                    fwhm_multiplier=WINDOWED_AUC_FWHM_MULTIPLIER,
-                    trailing_cap_s=WINDOWED_AUC_TRAILING_CAP_S,
-                )
-                qc_metrics["windowed_auc_detected"] = round(det_auc, 3)
-                qc_metrics["windowed_auc_synthetic_ref"] = round(synth_ref, 3)
-                if det_auc > EPSILON_CONCENTRATION:
-                    qc_metrics["windowed_auc_ratio"] = round(
-                        det_auc / synth_ref, 3,
-                    )
-                qc_metrics["windowed_auc_window_frames"] = [win_start, win_end]
 
         elif not disable_fallback:
             # Synthetic fallback: reuse cached synthetic AIF from pre-compute

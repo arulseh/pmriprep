@@ -146,7 +146,7 @@ class TestAifPassesQuality:
         curve = _make_aif_curve(
             peak_height=30.0, recirculation_height=3.0,
         )
-        result = AIFDetection()._aif_passes_quality(
+        result = AIFDetection._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
         assert result.spr < 100.0
@@ -157,7 +157,7 @@ class TestAifPassesQuality:
             peak_height=10.0, recirculation_height=15.0,
             recirc_frame=60,
         )
-        result = AIFDetection()._aif_passes_quality(
+        result = AIFDetection._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
         assert result.passes is False
@@ -506,21 +506,20 @@ class TestAifPassesQualityBrrGate:
         curve = _curve_with_negative_tail(
             peak_height=30.0, tail_offset=-8.0,
         )
-        result = AIFDetection()._aif_passes_quality(
+        result = AIFDetection._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
         assert result.passes is False
         assert result.brr < -3.0
 
-    def test_return_tuple_has_brr_and_auc_ratio(self) -> None:
-        """The return is an AifQualityResult with 5 fields."""
+    def test_return_tuple_has_brr(self) -> None:
+        """The return is an AifQualityResult with 4 fields."""
         curve = _make_aif_curve(peak_height=30.0, recirculation_height=2.0)
-        result = AIFDetection()._aif_passes_quality(
+        result = AIFDetection._aif_passes_quality(
             curve, baseline_frames=20, tr=1.5,
         )
-        assert len(result) == 5
+        assert len(result) == 4
         assert isinstance(result.brr, float)
-        assert result.auc_ratio is None  # no ref set
 
 
 class TestTryDualRoiBrrGate:
@@ -551,7 +550,7 @@ class TestTryDualRoiBrrGate:
         assert result is None
 
     def test_returns_brr_in_tuple(self) -> None:
-        """Successful return is a DualRoiResult with 7 fields."""
+        """Successful return is a DualRoiResult with 6 fields."""
         aif = AIFDetection()
         shape = (10, 10, 5, 120)
         conc_data = np.zeros(shape)
@@ -566,7 +565,7 @@ class TestTryDualRoiBrrGate:
             candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
         if result is not None:
-            assert len(result) == 7
+            assert len(result) == 6
             assert result.roi_size in (1, 3)
             assert isinstance(result.brr, float)
 
