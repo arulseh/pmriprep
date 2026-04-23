@@ -787,18 +787,29 @@ class DSCDerivativeWriter(BaseInterface):
             qc_metrics = dict(qc_metrics)
             if warnings:
                 qc_metrics["warnings"] = warnings
-            # Add provenance warnings (structurally separate from data warnings)
+            # Provenance warnings (defaulted parameters only)
             provenance = self.inputs.provenance_dict
             if isdefined(provenance) and provenance:
-                from pmriprep.utils.contrast_agent import collect_default_warnings
+                from pmriprep.utils.contrast_agent import (
+                    collect_default_warnings,
+                )
                 prov_warnings = collect_default_warnings(
                     provenance, "DSC", qc_metrics=qc_metrics,
                 )
                 if prov_warnings:
                     qc_metrics["provenance_warnings"] = prov_warnings
+            # AIF fallback warning (depends on qc_metrics, not provenance)
+            from pmriprep.utils.contrast_agent import (
+                collect_aif_fallback_warning,
+            )
+            aif_warn = collect_aif_fallback_warning(qc_metrics, "DSC")
+            if aif_warn:
+                qc_metrics.setdefault(
+                    "acquisition_warnings", []
+                ).append(aif_warn)
             pf_warnings = self.inputs.preflight_warnings
             if isdefined(pf_warnings) and pf_warnings:
-                qc_metrics.setdefault("provenance_warnings", []).extend(
+                qc_metrics.setdefault("acquisition_warnings", []).extend(
                     pf_warnings
                 )
             # Add NiPreps-style recommendation to QC metrics
@@ -994,7 +1005,7 @@ class DSCDerivativeWriter(BaseInterface):
         elif detection_level == "external":
             aif_rec = QCRecommendation(QCAction.REVIEW, "External AIF provided; verify curve quality", 1)
         elif detection_level == "synthetic":
-            aif_rec = QCRecommendation(QCAction.EXCLUDE, "Synthetic AIF used; verify clinically", 3)
+            aif_rec = QCRecommendation(QCAction.EXCLUDE, "Synthetic AIF used", 3)
         elif detection_level in ("none", "unknown"):
             aif_rec = QCRecommendation(QCAction.EXCLUDE, f"AIF detection failed ({detection_level})", 3)
         else:

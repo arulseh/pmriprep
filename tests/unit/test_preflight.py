@@ -737,15 +737,16 @@ class TestDCEAgentGuardrails:
         assert "DCE_HIGH_R1_AIF_SATURATION" not in codes
 
     def test_low_dose_warning(self):
+        """Gd-DTPA quarter-dose: 0.1 * 0.25 * 3.7 = 0.093 < 0.15."""
         sc = _valid_dce_sidecar()
-        sc["contrast_agent"] = "gadoterate"
-        cfg = DCEConfig(dose=0.5)
+        sc["contrast_agent"] = "gd-dtpa"
+        cfg = DCEConfig(dose=0.25)
         msgs = validate_dce_metadata(sc, cfg)
         codes = [m.code for m in msgs]
         assert "DCE_LOW_EFFECTIVE_DOSE" in codes
 
     def test_high_r1_standard_dose_no_warning(self):
-        """Gadopiclenol at standard dose (0.05 mmol/kg): 0.05 × 11.6 = 0.58 > 0.35."""
+        """Gadopiclenol at standard dose (0.05 mmol/kg): 0.05 × 11.6 = 0.58 > 0.15."""
         sc = _valid_dce_sidecar()
         sc["contrast_agent"] = "gadopiclenol"
         cfg = DCEConfig(dose=1.0, aif_method="population")

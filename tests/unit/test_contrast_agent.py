@@ -10,6 +10,7 @@ from pmriprep.utils.contrast_agent import (
     calculate_dose_from_volume,
     calculate_volume_for_dose,
     classify_dose,
+    collect_aif_fallback_warning,
     collect_default_warnings,
     get_agent_info,
     get_available_agents,
@@ -585,3 +586,66 @@ class TestCollectDefaultWarnings:
         )
         warnings = collect_default_warnings(prov, "DSC")
         assert not any("agent" in w.lower() and "dose" not in w.lower() for w in warnings)
+
+
+class TestCollectAifFallbackWarning:
+    """Tests for collect_aif_fallback_warning."""
+
+    def test_none_when_no_qc(self) -> None:
+        assert collect_aif_fallback_warning(None, "DSC") is None
+
+    def test_none_when_empty_dict(self) -> None:
+        assert collect_aif_fallback_warning({}, "DSC") is None
+        assert collect_aif_fallback_warning({}, "DCE") is None
+
+    def test_dsc_none_when_measured(self) -> None:
+        qc: dict = {"aif": {"detection_level": "atlas_strict"}}
+        assert collect_aif_fallback_warning(qc, "DSC") is None
+
+    def test_dsc_warning_when_synthetic(self) -> None:
+        qc: dict = {"aif": {"detection_level": "synthetic"}}
+        result = collect_aif_fallback_warning(qc, "DSC")
+        assert result is not None
+        assert "Parker population template" in result
+        assert "cascade_exhausted" in result
+
+    def test_dsc_uses_fallback_reason(self) -> None:
+        qc: dict = {
+            "aif": {"detection_level": "synthetic"},
+            "synthetic_fallback_reason": "no_candidates",
+        }
+        result = collect_aif_fallback_warning(qc, "DSC")
+        assert result is not None
+        assert "no_candidates" in result
+
+    def test_dce_none_when_no_aif_detection(self) -> None:
+        qc: dict = {"preprocessing": {}}
+        assert collect_aif_fallback_warning(qc, "DCE") is None
+
+    def test_dce_none_when_atlas(self) -> None:
+        qc: dict = {"aif_detection": {"aif_source": "atlas"}}
+        assert collect_aif_fallback_warning(qc, "DCE") is None
+
+    def test_dce_warning_when_population(self) -> None:
+        qc: dict = {"aif_detection": {"aif_source": "population"}}
+        result = collect_aif_fallback_warning(qc, "DCE")
+        assert result is not None
+        assert "Parker population model" in result
+        assert "user-selected" in result
+
+    def test_dce_auto_fallback_includes_reason(self) -> None:
+        qc: dict = {
+            "aif_detection": {
+                "aif_source": "population",
+                "auto_detection_attempted": True,
+                "auto_fallback_reason": "0/5 candidates scored >= 0.40",
+            },
+        }
+        result = collect_aif_fallback_warning(qc, "DCE")
+        assert result is not None
+        assert "auto-detection failed" in result
+        assert "0/5 candidates" in result
+
+    def test_unknown_modality_returns_none(self) -> None:
+        qc: dict = {"aif": {"detection_level": "synthetic"}}
+        assert collect_aif_fallback_warning(qc, "UNKNOWN") is None

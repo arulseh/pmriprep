@@ -23,7 +23,7 @@ logger = logging.getLogger("pmriprep.preflight")
 
 HIGH_R1_THRESHOLD: float = 8.0  # s⁻¹/mM — above this, T1 effects dominate
 LOW_GD_DOSE_THRESHOLD: float = 0.05  # mmol-Gd/kg — DSC deconvolution floor
-LOW_DCE_DOSE_R1_THRESHOLD: float = 0.35  # kg⁻¹·s⁻¹ — DCE tissue enhancement floor
+LOW_DCE_DOSE_R1_THRESHOLD: float = 0.15  # kg⁻¹·s⁻¹ — DCE tissue enhancement floor
 
 
 class PreflightError(RuntimeError):

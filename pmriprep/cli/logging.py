@@ -73,6 +73,29 @@ def init(
     for lgr in (cli, workflow, interface, utils):
         lgr.setLevel(logging.DEBUG)
 
+    # Console handler for pmriprep.* loggers (preflight, interfaces, utils)
+    pmriprep_logger = logging.getLogger("pmriprep")
+    pmriprep_logger.setLevel(logging.DEBUG)
+    pmriprep_logger.propagate = False
+    _has_pmriprep_console = any(
+        isinstance(h, logging.StreamHandler)
+        and not isinstance(h, logging.FileHandler)
+        for h in pmriprep_logger.handlers
+    )
+    if not _has_pmriprep_console:
+        pmriprep_console = logging.StreamHandler(stream=sys.stdout)
+        pmriprep_console.setFormatter(
+            logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATEFMT)
+        )
+        pmriprep_console.setLevel(log_level)
+        pmriprep_logger.addHandler(pmriprep_console)
+    else:
+        for h in pmriprep_logger.handlers:
+            if isinstance(h, logging.StreamHandler) and not isinstance(
+                h, logging.FileHandler
+            ):
+                h.setLevel(log_level)
+
     # FileHandlers for pmriprep.log — captures cli + interface messages.
     # Close any existing FileHandlers from a previous subject before adding new.
     if log_dir is not None:
@@ -88,9 +111,7 @@ def init(
                 cli.removeHandler(h)
         cli.addHandler(fh)
 
-        # pmriprep parent logger — captures pmriprep.interfaces.*, pmriprep.utils.*, etc.
-        pmriprep_logger = logging.getLogger("pmriprep")
-        pmriprep_logger.setLevel(logging.DEBUG)
+        # pmriprep parent logger (already configured above)
         for h in pmriprep_logger.handlers[:]:
             if isinstance(h, logging.FileHandler):
                 h.close()

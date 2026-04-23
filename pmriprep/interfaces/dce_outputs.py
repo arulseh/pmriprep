@@ -759,16 +759,27 @@ class DCEDerivativeWriter(BaseInterface):
             qc_metrics = dict(qc_metrics)
             if warnings:
                 qc_metrics["warnings"] = warnings
-            # Add provenance warnings (structurally separate from data warnings)
+            # Provenance warnings (defaulted parameters only)
             provenance = self.inputs.provenance_dict
             if isdefined(provenance) and provenance:
-                from pmriprep.utils.contrast_agent import collect_default_warnings
+                from pmriprep.utils.contrast_agent import (
+                    collect_default_warnings,
+                )
                 prov_warnings = collect_default_warnings(provenance, "DCE")
                 if prov_warnings:
                     qc_metrics["provenance_warnings"] = prov_warnings
+            # AIF fallback warning (depends on qc_metrics, not provenance)
+            from pmriprep.utils.contrast_agent import (
+                collect_aif_fallback_warning,
+            )
+            aif_warn = collect_aif_fallback_warning(qc_metrics, "DCE")
+            if aif_warn:
+                qc_metrics.setdefault(
+                    "acquisition_warnings", []
+                ).append(aif_warn)
             pf_warnings = self.inputs.preflight_warnings
             if isdefined(pf_warnings) and pf_warnings:
-                qc_metrics.setdefault("provenance_warnings", []).extend(
+                qc_metrics.setdefault("acquisition_warnings", []).extend(
                     pf_warnings
                 )
             enhanced_qc = self._add_qc_recommendation(qc_metrics)

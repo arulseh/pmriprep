@@ -121,3 +121,42 @@ def test_quality_flag_colour_synthetic_is_poor(env):
     rendered = template.render(dsc=dsc_ctx)
     # Status badge carries the flag class.
     assert 'class="metric-value poor"' in rendered
+
+
+# =============================================================================
+# Acquisition Advisory section (v0.29.4)
+# =============================================================================
+
+
+def _summary_ctx(**overrides) -> dict:
+    """Build minimal context for section_summary.html."""
+    ctx = {
+        "overall_recommendation": None,
+        "provenance_warnings": {},
+        "acquisition_warnings": {},
+        "ran_pipelines": {
+            "anat": True, "tumor_seg": False, "dsc": True, "dce": False,
+        },
+        "all_warnings": {},
+    }
+    ctx.update(overrides)
+    return ctx
+
+
+def test_summary_renders_acquisition_warnings(env):
+    """Acquisition advisory section renders when warnings present."""
+    template = env.get_template("sections/section_summary.html")
+    ctx = _summary_ctx(acquisition_warnings={
+        "DSC Perfusion": ["[DSC_LOW_EFFECTIVE_DOSE] Low dose warning"],
+    })
+    rendered = template.render(**ctx)
+    assert "Acquisition Advisory" in rendered
+    assert "DSC_LOW_EFFECTIVE_DOSE" in rendered
+
+
+def test_summary_hides_acquisition_warnings_when_empty(env):
+    """Acquisition advisory section hidden when no warnings."""
+    template = env.get_template("sections/section_summary.html")
+    ctx = _summary_ctx()
+    rendered = template.render(**ctx)
+    assert "Acquisition Advisory" not in rendered

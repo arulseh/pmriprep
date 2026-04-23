@@ -932,22 +932,58 @@ def collect_default_warnings(
                     f"Use --dsc-preload to confirm or override."
                 )
 
-        # Synthetic/template AIF warning — read directly from
-        # qc_metrics (the AIF block is not in the provenance dict).
-        if qc_metrics:
-            aif_qc = qc_metrics.get("aif") or {}
-            if aif_qc.get("detection_level") == "synthetic":
-                reason = (
-                    qc_metrics.get("synthetic_fallback_reason")
-                    or aif_qc.get("synthetic_fallback_reason")
-                    or "cascade_exhausted"
-                )
-                warnings.append(
-                    f"DSC AIF fell back to template (Parker synthetic) "
-                    f"— reason: {reason}. Absolute CBV/CBF magnitudes "
-                    f"are not emitted by pmriprep; ratio-normalised "
-                    f"maps (nCBV, nCBF) and BW K2 remain defensible. "
-                    f"MTT / Tmax are qualitative only."
-                )
-
     return warnings
+
+
+def collect_aif_fallback_warning(
+    qc_metrics: Optional[dict[str, Any]],
+    modality: str,
+) -> Optional[str]:
+    """Return a warning string if AIF fell back to population/template.
+
+    Args:
+        qc_metrics: QC metrics dict containing AIF detection results.
+        modality: ``"DSC"`` or ``"DCE"``.
+
+    Returns:
+        Warning string if AIF used population/template, else ``None``.
+    """
+    if not qc_metrics:
+        return None
+
+    if modality == "DSC":
+        aif_qc = qc_metrics.get("aif") or {}
+        if aif_qc.get("detection_level") != "synthetic":
+            return None
+        reason = (
+            qc_metrics.get("synthetic_fallback_reason")
+            or aif_qc.get("synthetic_fallback_reason")
+            or "cascade_exhausted"
+        )
+        return (
+            f"DSC AIF fell back to Parker population template "
+            f"\u2014 reason: {reason}. "
+            f"nCBV and nCBF remain usable (NAWM normalisation "
+            f"cancels AIF scaling). K2-corrected rCBV inherits "
+            f"template-AIF shape bias on the first-pass integral. "
+            f"MTT / Tmax are qualitative only."
+        )
+
+    if modality == "DCE":
+        aif_qc = qc_metrics.get("aif_detection") or {}
+        if aif_qc.get("aif_source") != "population":
+            return None
+        if aif_qc.get("auto_detection_attempted"):
+            reason = aif_qc.get(
+                "auto_fallback_reason", "cascade_exhausted"
+            )
+            detail = f" \u2014 auto-detection failed: {reason}"
+        else:
+            detail = " (user-selected)"
+        return (
+            f"DCE AIF using Parker population model{detail}. "
+            f"Individual arterial physiology is not captured; "
+            f"Ktrans may be biased by AIF peak/shape mismatch."
+        )
+
+    return None
