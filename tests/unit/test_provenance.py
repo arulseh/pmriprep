@@ -38,7 +38,7 @@ class TestEnrichDCE:
             "t1_mapping": {"method": "vfa", "b1_correction": "AFI"},
             "aif_detection": {
                 "aif_source": "auto",
-                "n_aif_voxels": 8,
+                "n_aif_voxels_selected": 8,
                 "peak_mm_mean": 6.2,
                 "fwhm_seconds_mean": 12.3,
                 "quality_score": 0.82,
@@ -85,7 +85,7 @@ class TestEnrichDCE:
                 "aif_source": "population",
                 "population_aif": True,
                 "dose_factor": 0.5,
-                "n_aif_voxels": 0,
+                "n_aif_voxels_selected": 0,
                 "blood_t1_seconds": 1.664,
             },
         }
@@ -132,7 +132,7 @@ class TestEnrichDCE:
     def test_missing_t1_mapping(self) -> None:
         """Missing t1_mapping in QC is silently skipped."""
         sidecar = _make_dce_sidecar()
-        qc = {"aif_detection": {"aif_source": "auto", "n_aif_voxels": 5}}
+        qc = {"aif_detection": {"aif_source": "auto", "n_aif_voxels_selected": 5}}
         result = enrich_provenance_from_qc(sidecar, qc, "DCE")
         assert "T1Mapping" not in result["PerfusionProcessing"]
 
@@ -184,9 +184,9 @@ class TestEnrichDSC:
                 "preload_classification_source": "k2_primary",
                 "preload_k2_classification": "none",
             },
-            "aif": {
-                "detection_level": "atlas_strict",
-                "n_aif_voxels_used": 6,
+            "aif_detection": {
+                "detection_method": "atlas_strict",
+                "n_aif_voxels_selected": 6,
                 "quality_score": 0.91,
                 "best_fwhm": 4.0,
                 "arrival_time_seconds": 3.2,
@@ -221,10 +221,10 @@ class TestEnrichDSC:
         assert perf["BaselineFrames"]["detection_method"] == "auto_p99"
 
     def test_synthetic_aif(self) -> None:
-        """Synthetic AIF is derived from detection_level."""
+        """Synthetic AIF is derived from detection_method."""
         sidecar = _make_dsc_sidecar()
         qc = {
-            "aif": {"detection_level": "synthetic", "n_aif_voxels_used": 0},
+            "aif_detection": {"detection_method": "synthetic", "n_aif_voxels_selected": 0},
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DSC")
         assert result["PerfusionProcessing"]["AIF"]["synthetic"] is True

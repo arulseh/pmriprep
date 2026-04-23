@@ -97,7 +97,7 @@ def _run_writer(inputs: dict, qc_metrics: dict) -> Path:
 class TestBuildAifProvenanceBlock:
     def test_measured_atlas_strict(self) -> None:
         block = build_aif_provenance_block(
-            {"aif": {"detection_level": "atlas_strict", "quality_score": 0.85}}
+            {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.85}}
         )
         assert block["Source"] == "measured"
         assert block["DetectionLevel"] == "atlas_strict"
@@ -109,8 +109,8 @@ class TestBuildAifProvenanceBlock:
 
     def test_gamma_fit_measured(self) -> None:
         block = build_aif_provenance_block(
-            {"aif": {
-                "detection_level": "atlas_relaxed",
+            {"aif_detection": {
+                "detection_method": "atlas_relaxed",
                 "quality_score": 0.75,
                 "gamma_fit_applied": True,
             }}
@@ -122,8 +122,8 @@ class TestBuildAifProvenanceBlock:
 
     def test_template_synthetic(self) -> None:
         block = build_aif_provenance_block(
-            {"aif": {
-                "detection_level": "synthetic",
+            {"aif_detection": {
+                "detection_method": "synthetic",
                 "quality_score": 0.9,  # forced to poor regardless
             },
              "synthetic_fallback_reason": "no_candidates"}
@@ -135,8 +135,8 @@ class TestBuildAifProvenanceBlock:
 
     def test_external(self) -> None:
         block = build_aif_provenance_block(
-            {"aif": {
-                "detection_level": "external",
+            {"aif_detection": {
+                "detection_method": "external",
                 "quality_score": 0.65,
             }}
         )
@@ -150,7 +150,7 @@ class TestBuildAifProvenanceBlock:
                                 (0.6, "warn"), (0.5, "warn"),
                                 (0.4, "poor"), (0.1, "poor")]:
             block = build_aif_provenance_block(
-                {"aif": {"detection_level": "brain_permissive",
+                {"aif_detection": {"detection_method": "brain_permissive",
                          "quality_score": score}}
             )
             assert block["QualityFlag"] == expected, (
@@ -160,7 +160,7 @@ class TestBuildAifProvenanceBlock:
     def test_empty_qc_returns_empty(self) -> None:
         assert build_aif_provenance_block(None) == {}
         assert build_aif_provenance_block({}) == {}
-        assert build_aif_provenance_block({"aif": {}}) == {}
+        assert build_aif_provenance_block({"aif_detection": {}}) == {}
 
 
 # =============================================================================
@@ -171,7 +171,7 @@ class TestBuildAifProvenanceBlock:
 class TestApplyAifSidecar:
     def test_k2_is_aif_independent_and_safe(self) -> None:
         sidecar: dict = {}
-        qc = {"aif": {"detection_level": "synthetic"}}
+        qc = {"aif_detection": {"detection_method": "synthetic"}}
         apply_aif_sidecar(sidecar, "k2", qc)
         assert sidecar["AIFDependent"] is False
         assert sidecar["TemplateAIFUsage"] == "safe"
@@ -179,7 +179,7 @@ class TestApplyAifSidecar:
 
     def test_mtt_is_dependent_and_qualitative(self) -> None:
         sidecar: dict = {}
-        qc = {"aif": {"detection_level": "synthetic"}}
+        qc = {"aif_detection": {"detection_method": "synthetic"}}
         apply_aif_sidecar(sidecar, "mtt", qc)
         assert sidecar["AIFDependent"] is True
         assert sidecar["TemplateAIFUsage"] == "qualitative_only"
@@ -188,25 +188,25 @@ class TestApplyAifSidecar:
         """nCBV is AIF-dependent in computation but NAWM ratio cancels
         amplitude → safe under template."""
         sidecar: dict = {}
-        qc = {"aif": {"detection_level": "synthetic"}}
+        qc = {"aif_detection": {"detection_method": "synthetic"}}
         apply_aif_sidecar(sidecar, "ncbv", qc)
         assert sidecar["AIFDependent"] is True
         assert sidecar["TemplateAIFUsage"] == "safe"
 
     def test_ttp_is_independent_and_safe(self) -> None:
         sidecar: dict = {}
-        qc = {"aif": {"detection_level": "synthetic"}}
+        qc = {"aif_detection": {"detection_method": "synthetic"}}
         apply_aif_sidecar(sidecar, "ttp", qc)
         assert sidecar["AIFDependent"] is False
         assert sidecar["TemplateAIFUsage"] == "safe"
 
     def test_unknown_map_key_raises(self) -> None:
         with pytest.raises(KeyError, match="Unknown DSC map key"):
-            apply_aif_sidecar({}, "not_a_real_map", {"aif": {}})
+            apply_aif_sidecar({}, "not_a_real_map", {"aif_detection": {}})
 
     def test_preserves_existing_perfusion_processing(self) -> None:
         sidecar = {"PerfusionProcessing": {"ContrastAgent": {"GenericName": "gadobutrol"}}}
-        qc = {"aif": {"detection_level": "atlas_strict", "quality_score": 0.9}}
+        qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.9}}
         apply_aif_sidecar(sidecar, "cbv", qc)
         perf = sidecar["PerfusionProcessing"]
         assert perf["ContrastAgent"]["GenericName"] == "gadobutrol"
@@ -274,7 +274,7 @@ class TestWriterAifBlockPresentOnAllMaps:
     emitted sidecar."""
 
     def test_all_core_and_rel_maps_stamped_measured(self, minimal_inputs) -> None:
-        qc = {"aif": {"detection_level": "atlas_strict", "quality_score": 0.85}}
+        qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.85}}
         derivatives = _run_writer(minimal_inputs, qc)
 
         for suffix in ["dscRelAUC_cbv", "dscRel_cbv", "dscRel_cbf",
@@ -288,7 +288,7 @@ class TestWriterAifBlockPresentOnAllMaps:
 
     def test_k2_independent(self, minimal_inputs, tmp_path) -> None:
         minimal_inputs["k2_map"] = _write_dummy_nifti(tmp_path / "k2.nii.gz")
-        qc = {"aif": {"detection_level": "atlas_strict", "quality_score": 0.9}}
+        qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.9}}
         derivatives = _run_writer(minimal_inputs, qc)
         sidecar = _load_sidecar(derivatives, "dsc_k2")
         assert sidecar["AIFDependent"] is False
@@ -296,7 +296,7 @@ class TestWriterAifBlockPresentOnAllMaps:
 
     def test_synthetic_template_flags(self, minimal_inputs) -> None:
         qc = {
-            "aif": {"detection_level": "synthetic", "quality_score": 0.3},
+            "aif_detection": {"detection_method": "synthetic", "quality_score": 0.3},
             "synthetic_fallback_reason": "no_candidates",
         }
         derivatives = _run_writer(minimal_inputs, qc)
@@ -311,8 +311,8 @@ class TestWriterAifBlockPresentOnAllMaps:
         assert mtt["TemplateAIFUsage"] == "qualitative_only"
 
     def test_gamma_fit_measured_source(self, minimal_inputs) -> None:
-        qc = {"aif": {
-            "detection_level": "atlas_relaxed",
+        qc = {"aif_detection": {
+            "detection_method": "atlas_relaxed",
             "quality_score": 0.72,
             "gamma_fit_applied": True,
         }}
@@ -330,7 +330,7 @@ class TestSmoothedSidecars:
             "rel_cbv": _write_dummy_nifti(tmp_path / "rcbv_sm.nii.gz"),
             "ncbv": _write_dummy_nifti(tmp_path / "ncbv_sm.nii.gz"),
         }
-        qc = {"aif": {"detection_level": "synthetic", "quality_score": 0.3}}
+        qc = {"aif_detection": {"detection_method": "synthetic", "quality_score": 0.3}}
         derivatives = _run_writer(minimal_inputs, qc)
         raw = _load_sidecar(derivatives, "dscRelAUCSm3_cbv")
         assert _aif_block(raw)["Source"] == "template"

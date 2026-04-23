@@ -85,8 +85,8 @@ def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
 
 
 def _dsc_ctx_with_aif_level(level: str, **extra) -> dict:
-    """Build a minimal DSC context with an AIF detection_level set."""
-    qc: dict = {"aif": {"detection_level": level, "quality_score": 0.85}}
+    """Build a minimal DSC context with an AIF detection_method set."""
+    qc: dict = {"aif_detection": {"detection_method": level, "quality_score": 0.85}}
     qc.update(extra)
     return {
         "qc_metrics": qc,

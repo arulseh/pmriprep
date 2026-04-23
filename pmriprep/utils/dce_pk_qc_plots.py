@@ -299,7 +299,7 @@ def generate_preprocessing_qc_plot(
         "peak_enh_pct": round(peak_enh_pct, 1),
         "mean_tsnr": round(mean_tsnr, 1),
         "baseline_tsnr": round(mean_baseline_tsnr, 1),
-        "cnr_dce": cnr_dce,
+        "mean_cnr": cnr_dce,
         "n_brain_voxels": int(mask_bool.sum()),
         "voxel_size_mm": (
             [float(v) for v in voxel_size_mm] if voxel_size_mm is not None else None

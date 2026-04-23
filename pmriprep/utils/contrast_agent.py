@@ -952,8 +952,8 @@ def collect_aif_fallback_warning(
         return None
 
     if modality == "DSC":
-        aif_qc = qc_metrics.get("aif") or {}
-        if aif_qc.get("detection_level") != "synthetic":
+        aif_qc = qc_metrics.get("aif_detection") or {}
+        if aif_qc.get("detection_method") != "synthetic":
             return None
         reason = (
             qc_metrics.get("synthetic_fallback_reason")

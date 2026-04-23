@@ -1751,7 +1751,7 @@ class ComputeDCEMaps(BaseInterface):
                 if (
                     isinstance(aif_qc_data, dict)
                     and (
-                        aif_qc_data.get("detection_level") == "synthetic"
+                        aif_qc_data.get("detection_method") == "synthetic"
                         or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
                     )
                 ):

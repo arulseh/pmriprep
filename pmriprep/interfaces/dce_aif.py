@@ -2427,7 +2427,7 @@ class AIFDetection(BaseInterface):
             "detection_method": "external",
             "quality_score": quality_score,
             "baseline_frames": baseline_frames,
-            "n_aif_voxels": 0,
+            "n_aif_voxels_selected": 0,
             "aif_status": QCStatus.PASS,
         }
 
@@ -2766,7 +2766,7 @@ class AIFDetection(BaseInterface):
                     "upstroke_slope_mean": float(
                         np.mean([m.get("upstroke_slope", 0.0) for m in metrics_list])
                     ),
-                    "n_aif_voxels": len(candidates),
+                    "n_aif_voxels_selected": len(candidates),
                     "n_aif_voxels_filtered_out": n_filtered_out,
                     "candidate_coords": [list(c) for c in candidates],
                     "candidate_scores": [float(s) for s in scores],
@@ -2905,7 +2905,7 @@ class AIFDetection(BaseInterface):
                 "population_aif": True,
                 "aif_source": "population",  # For boilerplate text generation
                 "dose_factor": dose_factor,
-                "n_aif_voxels": 0,
+                "n_aif_voxels_selected": 0,
                 "bat_seconds": bat_shift,
                 "bat_method": "baseline_frames",
             }

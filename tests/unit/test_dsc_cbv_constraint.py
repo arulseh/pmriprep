@@ -144,7 +144,7 @@ class TestAssessDSCCBVQuality:
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
             "aif_peak_height": 0.4,
             "baseline_return_ratio": 0.15,
-            "detection_level": "synthetic",
+            "detection_method": "synthetic",
         }
         result = assess_dsc_cbv_quality(aif_qc_data)
         assert result.confidence == "low"
@@ -159,7 +159,7 @@ class TestAssessDSCCBVQuality:
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
             "aif_peak_height": 0.4,
             "baseline_return_ratio": 0.15,
-            "detection_level": "atlas_permissive",
+            "detection_method": "atlas_permissive",
         }
         result = assess_dsc_cbv_quality(aif_qc_data)
         assert result.confidence == "moderate"
@@ -170,7 +170,7 @@ class TestAssessDSCCBVQuality:
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
             "aif_peak_height": 0.4,
             "baseline_return_ratio": 0.15,
-            "detection_level": "atlas_strict",
+            "detection_method": "atlas_strict",
         }
         result = assess_dsc_cbv_quality(aif_qc_data)
         assert result.confidence == "high"
@@ -181,8 +181,8 @@ class TestAssessDSCCBVQuality:
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
             "aif_peak_height": 0.4,
             "baseline_return_ratio": 0.15,
-            "detection_level": "atlas_strict",
-            "n_aif_voxels_used": 1,
+            "detection_method": "atlas_strict",
+            "n_aif_voxels_selected": 1,
         }
         result = assess_dsc_cbv_quality(aif_qc_data)
         assert result.confidence == "low"
@@ -193,8 +193,8 @@ class TestAssessDSCCBVQuality:
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
             "aif_peak_height": 0.4,
             "baseline_return_ratio": 0.15,
-            "detection_level": "atlas_strict",
-            "n_aif_voxels_used": 2,
+            "detection_method": "atlas_strict",
+            "n_aif_voxels_selected": 2,
         }
         result = assess_dsc_cbv_quality(aif_qc_data)
         assert result.confidence == "moderate"
@@ -205,8 +205,8 @@ class TestAssessDSCCBVQuality:
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
             "aif_peak_height": 0.4,
             "baseline_return_ratio": 0.15,
-            "detection_level": "atlas_relaxed",
-            "n_aif_voxels_used": 5,
+            "detection_method": "atlas_relaxed",
+            "n_aif_voxels_selected": 5,
         }
         result = assess_dsc_cbv_quality(aif_qc_data)
         assert result.detection_level == "atlas_relaxed"
@@ -908,7 +908,7 @@ class TestDoseAwareCnrGate:
                 "fraction_cnr_gt_4": cnr_coverage,
                 "mean_cnr": 10.0,  # above Rose minimum
             },
-            "detection_level": detection,
+            "detection_method": detection,
             "aif_peak_height": peak,
             "baseline_return_ratio": 0.15,
         }
@@ -1049,7 +1049,7 @@ class TestCnrBypassFallThrough:
                 "fraction_cnr_gt_4": cnr_coverage,
                 "mean_cnr": 10.0,
             },
-            "detection_level": detection,
+            "detection_method": detection,
             "aif_peak_height": 0.4,
             "baseline_return_ratio": 0.15,
         }
@@ -1176,7 +1176,7 @@ class TestPrepareVpConstraintSyntheticAif:
         # SKIP must fire FIRST — that's the precedence being tested.
         result = prepare_vp_constraint_from_data(
             ncbv_file=None,
-            aif_qc_data={"detection_level": "synthetic"},
+            aif_qc_data={"detection_method": "synthetic"},
             brain_mask_file=str(mask_path),
         )
         assert result.config.mode == ConstraintMode.SKIP
@@ -1211,7 +1211,7 @@ class TestPrepareVpConstraintSyntheticAif:
         mask_path.write_text("")
         result = prepare_vp_constraint_from_data(
             ncbv_file=None,  # would fire NO_NAWM_MASK if synthetic missed
-            aif_qc_data={"detection_level": "synthetic"},
+            aif_qc_data={"detection_method": "synthetic"},
             brain_mask_file=str(mask_path),
         )
         assert result.qc_report["skip_reason"] == SKIP_REASON_SYNTHETIC_AIF
@@ -1226,7 +1226,7 @@ class TestPrepareVpConstraintSyntheticAif:
         mask_path.write_text("")
         result = prepare_vp_constraint_from_data(
             ncbv_file=None,
-            aif_qc_data={"detection_level": "atlas_relaxed"},
+            aif_qc_data={"detection_method": "atlas_relaxed"},
             brain_mask_file=str(mask_path),
         )
         assert result.qc_report["skip_reason"] == SKIP_REASON_NO_NAWM_MASK

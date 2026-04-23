@@ -106,8 +106,8 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
 
 
 def _derive_aif_source(aif_qc: dict[str, Any]) -> str:
-    """Derive ``Source`` value from ``qc_metrics['aif']``."""
-    detection_level = aif_qc.get("detection_level", "")
+    """Derive ``Source`` value from ``qc_metrics['aif_detection']``."""
+    detection_level = aif_qc.get("detection_method", "")
     if detection_level == "synthetic":
         return "template"
     if detection_level == "external":
@@ -122,7 +122,7 @@ def _derive_quality_flag(aif_qc: dict[str, Any]) -> str:
     ``synthetic`` forced to poor. Thresholds 0.7 / 0.5 align with
     Willats & Calamante / Mouridsen composite AIF-QC heuristics.
     """
-    detection_level = aif_qc.get("detection_level", "")
+    detection_level = aif_qc.get("detection_method", "")
     if detection_level == "synthetic":
         return "poor"
     score = aif_qc.get("quality_score")
@@ -140,22 +140,22 @@ def build_aif_provenance_block(
 ) -> dict[str, Any]:
     """Assemble the ``PerfusionProcessing.AIF`` sub-block from AIF QC.
 
-    Accepts either the merged workflow ``qc_metrics`` (``{"aif": {...}, "motion": ...}``)
-    or the flat ``DSCAIFDetection.qc_metrics`` output (``{"detection_level": ..., ...}``).
+    Accepts either the merged workflow ``qc_metrics`` (``{"aif_detection": {...}, ...}``)
+    or the flat ``DSCAIFDetection.qc_metrics`` output (``{"detection_method": ..., ...}``).
     Returns an empty dict when AIF QC is absent — callers should then
     skip stamping the block.
     """
     if not isinstance(qc_metrics, dict):
         return {}
-    # Accept both shapes. If "detection_level" is at the top level, the
-    # input is the flat pre-merge dict; otherwise look for an "aif" sub-dict.
-    if "detection_level" in qc_metrics:
+    # Accept both shapes. If "detection_method" is at the top level, the
+    # input is the flat pre-merge dict; otherwise look for an "aif_detection" sub-dict.
+    if "detection_method" in qc_metrics:
         aif_qc = qc_metrics
     else:
-        aif_qc = qc_metrics.get("aif") or {}
-    if not aif_qc or "detection_level" not in aif_qc:
+        aif_qc = qc_metrics.get("aif_detection") or {}
+    if not aif_qc or "detection_method" not in aif_qc:
         return {}
-    detection_level = aif_qc.get("detection_level")
+    detection_level = aif_qc.get("detection_method")
     if detection_level not in DSC_DETECTION_LEVELS:
         logger.warning(
             "Unknown DSC AIF detection_level %r; expected one of %s. "
@@ -166,7 +166,7 @@ def build_aif_provenance_block(
     source = _derive_aif_source(aif_qc)
     block: dict[str, Any] = {
         "Source": source,
-        "DetectionLevel": aif_qc.get("detection_level", "unknown"),
+        "DetectionLevel": aif_qc.get("detection_method", "unknown"),
         "QualityFlag": _derive_quality_flag(aif_qc),
         "GammaFitApplied": bool(aif_qc.get("gamma_fit_applied", False)),
         "CrossSubjectComparable": source in {
@@ -995,8 +995,8 @@ class DSCDerivativeWriter(BaseInterface):
         enhanced = dict(qc_metrics)
 
         # Evaluate AIF detection quality
-        aif_qc = qc_metrics.get("aif", {})
-        detection_level = aif_qc.get("detection_level", "unknown")
+        aif_qc = qc_metrics.get("aif_detection", {})
+        detection_level = aif_qc.get("detection_method", "unknown")
         if detection_level in ("atlas_strict", "atlas_relaxed"):
             aif_rec = QCRecommendation(QCAction.INCLUDE, f"AIF detected ({detection_level})", 0)
         elif detection_level in ("atlas_permissive", "brain_relaxed", "brain_permissive"):
@@ -1013,12 +1013,12 @@ class DSCDerivativeWriter(BaseInterface):
         recommendations.append(aif_rec)
 
         # Evaluate motion QC using composite motion_status
-        motion_qc = qc_metrics.get("motion", {})
-        motion_status = motion_qc.get("motion_status")
+        preprocessing = qc_metrics.get("preprocessing", {})
+        motion_status = preprocessing.get("motion_status")
         if motion_status is not None:
-            fd_mean = motion_qc.get("fd_mean")
-            fd_max = motion_qc.get("fd_max")
-            pct_outliers = motion_qc.get("percent_outliers")
+            fd_mean = preprocessing.get("fd_mean")
+            fd_max = preprocessing.get("fd_max")
+            pct_outliers = preprocessing.get("percent_outliers")
             parts = []
             if fd_mean is not None:
                 parts.append(f"mean FD={fd_mean:.2f}mm")
@@ -1040,7 +1040,6 @@ class DSCDerivativeWriter(BaseInterface):
                 recommendations.append(motion_rec)
 
         # Evaluate CNR if available (from preprocessing stats)
-        preprocessing = qc_metrics.get("preprocessing", {})
         cnr_fraction = preprocessing.get("fraction_cnr_gt_4")
         mean_cnr = preprocessing.get("mean_cnr")
 

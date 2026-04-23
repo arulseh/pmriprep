@@ -435,7 +435,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
     )
 
     # AIF detection
-    aif_info = dsc_qc.get("aif", {})
+    aif_info = dsc_qc.get("aif_detection") or dsc_qc.get("aif", {})
     config_info = dsc_qc.get("config", {})
     aif_source = config_info.get("aif_source") or aif_info.get("aif_method", "auto")
 
@@ -1137,13 +1137,13 @@ def generate_unified_report(
                 ),
             }
         elif pipeline_name == "dsc" and qc_metrics:
-            motion = qc_metrics.get("motion", {})
+            preproc = qc_metrics.get("preprocessing", {})
             preload = qc_metrics.get("preload", {})
             deconv = qc_metrics.get("deconvolution", {})
             display_status = {
                 # Motion outliers (lower is better)
                 "outliers": _classify_metric_inverse(
-                    motion.get("percent_outliers"), 5, 10
+                    preproc.get("percent_outliers"), 5, 10
                 ),
                 # Leaky voxels (lower is better)
                 "leaky_voxels": _classify_metric_inverse(

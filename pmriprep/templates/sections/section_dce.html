@@ -314,10 +314,10 @@
                 <div class="metric-value {{ dce.display_status.baseline_tsnr }}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.preprocessing.cnr_dce is defined %}
+            {% if dce.qc_metrics.preprocessing.mean_cnr is defined %}
             <div class="metric">
                 <div class="metric-label">Mean CNR</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.cnr_dce) }}</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.mean_cnr) }}</div>
             </div>
             {% endif %}
         </div>
@@ -389,8 +389,8 @@
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.scaling_factor) }}x</div>
             </div>
             {% endif %}
-            {% set used = dce.qc_metrics.aif_detection.n_aif_voxels
-               if dce.qc_metrics.aif_detection.n_aif_voxels is defined %}
+            {% set used = dce.qc_metrics.aif_detection.n_aif_voxels_selected
+               if dce.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
             {% if used is defined %}
             <div class="metric">
                 <div class="metric-label">AIF Voxels (used / available)</div>

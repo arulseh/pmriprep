@@ -599,11 +599,11 @@ class TestCollectAifFallbackWarning:
         assert collect_aif_fallback_warning({}, "DCE") is None
 
     def test_dsc_none_when_measured(self) -> None:
-        qc: dict = {"aif": {"detection_level": "atlas_strict"}}
+        qc: dict = {"aif_detection": {"detection_method": "atlas_strict"}}
         assert collect_aif_fallback_warning(qc, "DSC") is None
 
     def test_dsc_warning_when_synthetic(self) -> None:
-        qc: dict = {"aif": {"detection_level": "synthetic"}}
+        qc: dict = {"aif_detection": {"detection_method": "synthetic"}}
         result = collect_aif_fallback_warning(qc, "DSC")
         assert result is not None
         assert "Parker population template" in result
@@ -611,7 +611,7 @@ class TestCollectAifFallbackWarning:
 
     def test_dsc_uses_fallback_reason(self) -> None:
         qc: dict = {
-            "aif": {"detection_level": "synthetic"},
+            "aif_detection": {"detection_method": "synthetic"},
             "synthetic_fallback_reason": "no_candidates",
         }
         result = collect_aif_fallback_warning(qc, "DSC")
@@ -647,5 +647,5 @@ class TestCollectAifFallbackWarning:
         assert "0/5 candidates" in result
 
     def test_unknown_modality_returns_none(self) -> None:
-        qc: dict = {"aif": {"detection_level": "synthetic"}}
+        qc: dict = {"aif_detection": {"detection_method": "synthetic"}}
         assert collect_aif_fallback_warning(qc, "UNKNOWN") is None

@@ -12,7 +12,7 @@ def test_build_aif_block_measured() -> None:
     from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
 
     block = build_aif_provenance_block(
-        {"aif": {"detection_level": "atlas_relaxed", "quality_score": 0.8}}
+        {"aif_detection": {"detection_method": "atlas_relaxed", "quality_score": 0.8}}
     )
     assert block["Source"] == "measured"
     assert block["CrossSubjectComparable"] is True
@@ -21,7 +21,7 @@ def test_build_aif_block_measured() -> None:
 def test_build_aif_block_template_via_detection_level() -> None:
     from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
 
-    block = build_aif_provenance_block({"aif": {"detection_level": "synthetic"}})
+    block = build_aif_provenance_block({"aif_detection": {"detection_method": "synthetic"}})
     assert block["Source"] == "template"
     assert block["CrossSubjectComparable"] is False
 
@@ -31,7 +31,7 @@ def test_build_aif_block_accepts_flat_dict() -> None:
     from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
 
     block = build_aif_provenance_block(
-        {"detection_level": "synthetic", "synthetic_fallback_reason": "low_snr"}
+        {"detection_method": "synthetic", "synthetic_fallback_reason": "low_snr"}
     )
     assert block["Source"] == "template"
     assert block["SyntheticFallbackReason"] == "low_snr"

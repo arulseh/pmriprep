@@ -1345,15 +1345,19 @@ def _merge_qc_metrics(
         motion_data = dict(motion_data) if motion_data else {}
         motion_data["motion_summary"] = motion_summary
 
+    preprocessing = dict(preprocessing_stats) if preprocessing_stats else {}
+    if motion_data:
+        preprocessing.update(motion_data)
+
     aif_data = aif_qc if aif_qc else {}
     if aif_metrics:
         aif_data = dict(aif_data) if aif_data else {}
         aif_data["aif_metrics"] = aif_metrics
 
     merged = {
-        "motion": motion_data,
+        "preprocessing": preprocessing,
         "preload": preload_qc if preload_qc else {},
-        "aif": aif_data,
+        "aif_detection": aif_data,
         "deconvolution": deconv_qc if deconv_qc else {},
         "registration": registration_qc if registration_qc else {},
         "normalization_factor": normalization_factor,
@@ -1362,8 +1366,6 @@ def _merge_qc_metrics(
             "registration_bbr": registration_bbr,
         },
     }
-    if preprocessing_stats:
-        merged["preprocessing"] = preprocessing_stats
     return merged
 
 

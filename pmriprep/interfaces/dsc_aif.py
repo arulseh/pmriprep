@@ -629,7 +629,6 @@ class AIFDetection(BaseInterface):
         tumor_laterality: str,
     ) -> tuple[
         list[tuple[float, tuple[int, int, int], dict[str, Any]]],
-        str,
         int,
         int,
     ]:
@@ -650,15 +649,14 @@ class AIFDetection(BaseInterface):
 
         Returns
         -------
-        tuple of (filtered, hemisphere_used, n_contra, n_ipsi)
+        tuple of (filtered, n_contra, n_ipsi)
             filtered : all candidates with ipsilateral cost penalty,
                 sorted by adjusted cost.
-            hemisphere_used : ``'bilateral'`` or ``'both'``.
             n_contra : count of contralateral candidates.
             n_ipsi : count of ipsilateral candidates.
         """
         if tumor_laterality == "bilateral":
-            return top_candidates, "both", 0, 0
+            return top_candidates, 0, 0
 
         contra_side = "right" if tumor_laterality == "left" else "left"
 
@@ -688,7 +686,7 @@ class AIFDetection(BaseInterface):
 
         combined = contra + adjusted_ipsi
         combined.sort(key=lambda x: x[0])
-        return combined, "bilateral", n_contra, n_ipsi
+        return combined, n_contra, n_ipsi
 
     # -----------------------------------------------------------------
     # Step 2c: Bilateral balance (ensures both hemispheres represented)
@@ -1432,7 +1430,6 @@ class AIFDetection(BaseInterface):
         # for laterality if provided (avoids bilateral misclassification
         # from dilated whole-tumor masks crossing midline).
         tumor_laterality: Optional[str] = None
-        hemisphere_used = "both"
         n_contra = 0
         n_ipsi = 0
 
@@ -1450,17 +1447,13 @@ class AIFDetection(BaseInterface):
             if tumor_laterality is not None and tumor_laterality != "bilateral":
                 (
                     top_candidates,
-                    hemisphere_used,
                     n_contra,
                     n_ipsi,
                 ) = self._filter_candidates_by_hemisphere(
                     top_candidates, affine, tumor_laterality,
                 )
-            elif tumor_laterality == "bilateral":
-                hemisphere_used = "both"
 
         meta["tumor_laterality"] = tumor_laterality
-        meta["hemisphere_used"] = hemisphere_used
         meta["n_contralateral"] = n_contra
         meta["n_ipsilateral"] = n_ipsi
         meta["laterality_mask_source"] = (
@@ -2079,9 +2072,17 @@ class AIFDetection(BaseInterface):
 
         n_used = len(top_candidates)
 
+        # Hemisphere coverage (harmonized with DCE)
+        if n_left > 0 and n_right > 0:
+            hemisphere_coverage = "bilateral"
+        elif n_left > 0:
+            hemisphere_coverage = "unilateral_left"
+        else:
+            hemisphere_coverage = "unilateral_right"
+
         qc: dict[str, Any] = {
             # Candidate counts
-            "n_aif_voxels_used": n_used,
+            "n_aif_voxels_selected": n_used,
             "n_aif_voxels_requested": n_candidates_requested,
             "n_aif_voxels_available": n_available,
             "aif_insufficient_candidates": n_available < 3,
@@ -2093,16 +2094,17 @@ class AIFDetection(BaseInterface):
             "aif_voxel_coord": list(best_coord_int),
             "aif_centroid_mm": [float(v) for v in aif_centroid_mm],
             "aif_hemisphere": aif_hemisphere,
-            "all_candidate_coords": [
+            "candidate_coords": [
                 [int(c) for c in coord]
                 for _, coord, _ in top_candidates
             ],
-            "all_candidate_scores": _costs_to_scores(
+            "candidate_scores": _costs_to_scores(
                 [float(cost) for cost, _, _ in top_candidates]
             ),
             # Hemisphere distribution
-            "n_left_hemisphere": n_left,
-            "n_right_hemisphere": n_right,
+            "n_left_candidates": n_left,
+            "n_right_candidates": n_right,
+            "hemisphere_coverage": hemisphere_coverage,
             "is_bilateral": is_bilateral,
             # Edge slice
             "aif_slice": aif_z,
@@ -2264,7 +2266,7 @@ class AIFDetection(BaseInterface):
         qc_metrics: dict[str, Any] = {
             "external_aif": True,
             "external_aif_file": str(ext_path),
-            "detection_level": "external",
+            "detection_method": "external",
             "quality_score": quality_score,
             "peak_delta_r2_star": peak,
             "cnr": cnr,
@@ -2311,7 +2313,7 @@ class AIFDetection(BaseInterface):
             "out_raw_aif_curve": "",
             "out_aif_coord": [0, 0, 0],
             "aif_curve": [float(x) for x in aif_curve],
-            "detection_level": "external",
+            "detection_method": "external",
             "quality_score": quality_score,
             "candidate_count": 0,
             "gamma_fit_applied": False,
@@ -2838,7 +2840,7 @@ class AIFDetection(BaseInterface):
             quality_score = 0.3
             qc_metrics = {
                 "synthetic": True,
-                "n_aif_voxels_used": 0,
+                "n_aif_voxels_selected": 0,
                 "n_aif_voxels_available": 0,
                 "synthetic_fallback_reason": "no_candidates",
                 "cascade_tiers_attempted": list(tiers_attempted),
@@ -2854,8 +2856,8 @@ class AIFDetection(BaseInterface):
                 "synthetic fallback is disabled"
             )
 
-        qc_metrics["detection_level"] = detection_level
-        qc_metrics["n_candidates_effective"] = len(top_candidates)
+        qc_metrics["detection_method"] = detection_level
+        qc_metrics["n_aif_voxels_selected"] = len(top_candidates)
         qc_metrics["s0_rejection_available"] = signal_data is not None
         qc_metrics["tr_used"] = tr
         qc_metrics["baseline_frames_initial"] = baseline_frames  # configured S0 baseline
@@ -2930,9 +2932,9 @@ class AIFDetection(BaseInterface):
                 quality_score = 0.3
                 aif_mask_arr[:] = 0  # Clear AIF mask (no voxels used)
                 # Update QC metrics
-                qc_metrics["detection_level"] = detection_level
+                qc_metrics["detection_method"] = detection_level
                 qc_metrics["synthetic"] = True
-                qc_metrics["n_aif_voxels_used"] = 0
+                qc_metrics["n_aif_voxels_selected"] = 0
                 qc_metrics["n_aif_voxels_available"] = 0
                 qc_metrics["synthetic_fallback_reason"] = "gamma_r2_floor"
                 qc_metrics["gamma_r2_at_fallback"] = gamma_r2
@@ -2985,7 +2987,7 @@ class AIFDetection(BaseInterface):
             "out_raw_aif_curve": out_raw_aif,
             "out_aif_coord": qc_metrics.get("aif_voxel_coord", []),
             "aif_curve": [float(x) for x in aif_curve],
-            "detection_level": detection_level,
+            "detection_method": detection_level,
             "quality_score": quality_score,
             "candidate_count": n_cand,
             "gamma_fit_applied": gamma_fit_applied,

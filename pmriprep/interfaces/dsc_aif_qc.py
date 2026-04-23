@@ -122,7 +122,7 @@ class AIFQCPlot(BaseInterface):
         qc = self.inputs.qc_metrics if isdefined(self.inputs.qc_metrics) else {}
         sub = self.inputs.subject_id or ""
         ses = self.inputs.session_id or ""
-        detection_level = qc.get("detection_level", "unknown")
+        detection_level = qc.get("detection_method", "unknown")
 
         # Load raw AIF for gamma fit overlay
         raw_aif_curve = None
@@ -162,7 +162,7 @@ class AIFQCPlot(BaseInterface):
         psr_val = qc.get("best_psr", float("nan"))
 
         aif_metrics: dict[str, Any] = {
-            "detection_level": detection_level,
+            "detection_method": detection_level,
             "peak_conc": round(peak_conc, 2),
         }
         if ttp_s is not None:
@@ -194,7 +194,7 @@ class AIFQCPlot(BaseInterface):
         if (
             detection_level not in ("synthetic", "external")
             and has_xfms
-            and qc.get("all_candidate_coords")
+            and qc.get("candidate_coords")
         ):
             from pmriprep.interfaces.dce_aif_qc import (
                 plot_aif_candidates_glass_brain,
@@ -202,8 +202,8 @@ class AIFQCPlot(BaseInterface):
 
             aif_candidates_path = str(out_dir / "aif_candidates_qc.png")
             plot_aif_candidates_glass_brain(
-                candidate_coords=qc["all_candidate_coords"],
-                candidate_scores=qc.get("all_candidate_scores", []),
+                candidate_coords=qc["candidate_coords"],
+                candidate_scores=qc.get("candidate_scores", []),
                 native_img=dsc_img,
                 t1w_to_native_xfm=self.inputs.t1w_to_dsc_xfm,
                 t1w_to_mni_xfm=self.inputs.t1w_to_mni_xfm,
@@ -448,7 +448,7 @@ class AIFQCPlot(BaseInterface):
                 ax_plt.axvline(x=cross_x, color="cyan", linestyle="--", linewidth=0.8, alpha=0.5)
 
                 # Candidate markers (numbered circles)
-                all_coords = qc.get("all_candidate_coords", [])
+                all_coords = qc.get("candidate_coords", [])
                 if len(all_coords) > 0:
                     candidate_colors = [
                         "#EE3377", "#FFDD00", "#33BBEE", "#009988",

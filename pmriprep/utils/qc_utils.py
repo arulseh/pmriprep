@@ -571,7 +571,7 @@ def plot_motion_qc(
 
     Returns:
         Tuple of (path to saved figure, motion metrics dict with
-        ``fd_mean``, ``fd_max``, ``n_outliers``, ``pct_outliers``,
+        ``fd_mean``, ``fd_max``, ``n_outliers``, ``percent_outliers``,
         ``fd_threshold``).
 
     Raises:
@@ -683,7 +683,7 @@ def plot_motion_qc(
         "fd_mean": round(float(np.mean(fd)), 3),
         "fd_max": round(max_fd, 3),
         "n_outliers": n_outliers,
-        "pct_outliers": round(100.0 * n_outliers / n_frames, 1),
+        "percent_outliers": round(100.0 * n_outliers / n_frames, 1),
         "fd_threshold": fd_threshold,
     }
 

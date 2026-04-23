@@ -739,8 +739,9 @@ def _find_previous_dsc_outputs(
             import json
             with open(qc_json) as fh:
                 qc_data = json.load(fh)
-            if "aif" in qc_data:
-                outputs["aif_qc"] = qc_data["aif"]
+            aif_section = qc_data.get("aif_detection") or qc_data.get("aif")
+            if aif_section:
+                outputs["aif_qc"] = aif_section
             if "preload" in qc_data:
                 outputs["preload_qc"] = qc_data["preload"]
             if "preprocessing" in qc_data:

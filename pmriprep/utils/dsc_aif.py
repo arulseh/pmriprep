@@ -1074,7 +1074,7 @@ def atlas_based_aif_search(
         "peak_value_mean": float(
             np.mean([c.metrics.peak_value for c in top_candidates])
         ),
-        "n_aif_voxels_used": len(top_candidates),
+        "n_aif_voxels_selected": len(top_candidates),
     }
 
     return AIFSearchResult(
@@ -1483,62 +1483,6 @@ def _compute_auc(
 
     auc = float(integrate.trapezoid(curve)) * tr
     return auc
-
-
-def compute_windowed_first_pass_auc(
-    curve: npt.NDArray[Any],
-    baseline_frames: int,
-    tr: float,
-    fwhm_multiplier: float = 2.0,
-    trailing_cap_s: float = 20.0,
-) -> tuple[float, int, int]:
-    """Compute AUC over a first-pass window centered on the peak.
-
-    Window: [peak - fwhm_multiplier * fwhm, peak + fwhm_multiplier * fwhm],
-    with the leading edge floored at baseline_frames and the trailing edge
-    capped at min(peak + fwhm_multiplier * fwhm, peak + trailing_cap_s / tr).
-
-    Parameters
-    ----------
-    curve : np.ndarray
-        1D concentration time course (baseline-included).
-    baseline_frames : int
-        Number of pre-bolus frames.
-    tr : float
-        Repetition time in seconds.
-    fwhm_multiplier : float
-        Half-widths of FWHM on each side of peak (default 2.0).
-    trailing_cap_s : float
-        Maximum seconds after peak for trailing edge (default 20.0).
-
-    Returns
-    -------
-    auc : float
-        Trapezoidal AUC over the windowed region.
-    win_start : int
-        Starting frame index of the window.
-    win_end : int
-        Ending frame index (exclusive) of the window.
-    """
-    fwhm_frames = compute_aif_fwhm_frames(curve, baseline_frames)
-    if fwhm_frames == 0:
-        return (0.0, 0, 0)
-
-    peak_idx = int(np.argmax(curve))
-    half_width = int(np.ceil(fwhm_multiplier * fwhm_frames))
-
-    win_start = max(baseline_frames, peak_idx - half_width)
-    trailing_cap_frames = int(trailing_cap_s / max(tr, 0.01))
-    win_end = min(
-        len(curve),
-        peak_idx + half_width + 1,
-        peak_idx + trailing_cap_frames + 1,
-    )
-
-    if win_end <= win_start:
-        return (0.0, win_start, win_start)
-
-    return (_compute_auc(curve[win_start:win_end], tr), win_start, win_end)
 
 
 def _find_recirculation_start(

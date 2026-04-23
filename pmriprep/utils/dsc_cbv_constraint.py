@@ -423,7 +423,7 @@ def assess_dsc_cbv_quality(
     # AIF detection tier is read here (not from result.detection_level,
     # which isn't set yet) to allow the AIF-tier fast-pass below to bypass
     # the CNR-coverage SKIP for high-quality atlas-based AIF detections.
-    _detection_level_for_cnr = str(aif_qc_data.get("detection_level", ""))
+    _detection_level_for_cnr = str(aif_qc_data.get("detection_method", ""))
     aif_high_quality = _detection_level_for_cnr in {
         "atlas_strict",
         "atlas_relaxed",
@@ -491,7 +491,7 @@ def assess_dsc_cbv_quality(
     _AIF_LEVELS_LOW = {"synthetic"}
     _AIF_LEVELS_MODERATE = {"brain_permissive", "brain_relaxed", "atlas_permissive"}
 
-    detection_level = str(aif_qc_data.get("detection_level", ""))
+    detection_level = str(aif_qc_data.get("detection_method", ""))
     result.detection_level = detection_level or None
 
     if detection_level in _AIF_LEVELS_LOW:
@@ -509,10 +509,7 @@ def assess_dsc_cbv_quality(
     # Single-voxel AIF has no noise averaging; AIF SNR < 20 degrades
     # SVD deconvolution (Wu et al. MRM 2003).  Default 3 when key is
     # absent for backward compatibility (no penalty).
-    n_candidates = int(aif_qc_data.get(
-        "n_aif_voxels_used",
-        aif_qc_data.get("n_candidates_effective", 3),
-    ))
+    n_candidates = int(aif_qc_data.get("n_aif_voxels_selected", 3))
     result.n_aif_voxels = n_candidates
 
     if n_candidates < 2:
@@ -1017,7 +1014,7 @@ def prepare_vp_constraint_from_data(
     # the confidence-downgrade + magnitude-gate path, but only
     # accidentally — this makes the intent auditable).
     if aif_qc_data and (
-        aif_qc_data.get("detection_level") == "synthetic"
+        aif_qc_data.get("detection_method") == "synthetic"
         or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
     ):
         logger.info(
@@ -1111,8 +1108,8 @@ def prepare_vp_constraint_from_data(
         "cnr_coverage": quality.cnr_coverage,
         "aif_peak_height": quality.aif_peak_height,
         "aif_baseline_return": quality.aif_baseline_return,
-        "detection_level": quality.detection_level,
-        "n_aif_voxels": quality.n_aif_voxels,
+        "detection_method": quality.detection_level,
+        "n_aif_voxels_selected": quality.n_aif_voxels,
         "gamma_peak_ratio": quality.gamma_peak_ratio,
         "hematocrit": hematocrit,
         # Unit annotations so downstream consumers don't conflate scales.

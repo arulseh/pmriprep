@@ -332,8 +332,8 @@ def _enrich_dce(
         aif_block: Dict[str, Any] = {}
         if "aif_source" in aif:
             aif_block["method"] = str(aif["aif_source"])
-        if "n_aif_voxels" in aif:
-            aif_block["n_voxels"] = int(aif["n_aif_voxels"])
+        if "n_aif_voxels_selected" in aif:
+            aif_block["n_voxels"] = int(aif["n_aif_voxels_selected"])
         peak = aif.get("peak_mm_mean")
         if peak is None:
             peak = aif.get("final_peak_mm")
@@ -476,15 +476,15 @@ def _enrich_dsc(
             )
         perf["PreloadDetection"] = preload_det
 
-    # AIF and baseline frames (both from qc["aif"])
-    aif = qc.get("aif")
+    # AIF and baseline frames (both from qc["aif_detection"])
+    aif = qc.get("aif_detection")
     if aif and isinstance(aif, dict):
         aif_block: Dict[str, Any] = {}
-        if "detection_level" in aif:
-            aif_block["method"] = str(aif["detection_level"])
-            aif_block["synthetic"] = aif["detection_level"] == "synthetic"
-        if "n_aif_voxels_used" in aif:
-            aif_block["n_voxels"] = int(aif["n_aif_voxels_used"])
+        if "detection_method" in aif:
+            aif_block["method"] = str(aif["detection_method"])
+            aif_block["synthetic"] = aif["detection_method"] == "synthetic"
+        if "n_aif_voxels_selected" in aif:
+            aif_block["n_voxels"] = int(aif["n_aif_voxels_selected"])
         if "quality_score" in aif:
             aif_block["quality_score"] = _safe_float(aif["quality_score"])
         if "best_fwhm" in aif:

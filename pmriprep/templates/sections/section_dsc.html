@@ -35,39 +35,39 @@
     {% endif %}
 
     <!-- Motion QC -->
-    {% if dsc.images.motion or dsc.qc_metrics.motion %}
+    {% if dsc.images.motion or dsc.qc_metrics.preprocessing.motion_status %}
     <div class="section">
         <h3>Motion Quality Control</h3>
-        {% if dsc.qc_metrics.motion %}
+        {% if dsc.qc_metrics.preprocessing.motion_status %}
         <div class="metrics">
-            {% if dsc.qc_metrics.motion.motion_status is defined %}
+            {% if dsc.qc_metrics.preprocessing.motion_status is defined %}
             <div class="metric">
                 <div class="metric-label">Motion Status</div>
-                <div class="metric-value {{ dsc.qc_metrics.motion.motion_status | lower }}">{{ dsc.qc_metrics.motion.motion_status }}</div>
+                <div class="metric-value {{ dsc.qc_metrics.preprocessing.motion_status | lower }}">{{ dsc.qc_metrics.preprocessing.motion_status }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.motion.fd_mean is defined %}
+            {% if dsc.qc_metrics.preprocessing.fd_mean is defined %}
             <div class="metric">
                 <div class="metric-label">Mean FD</div>
-                <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.motion.fd_mean) }} mm</div>
+                <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.preprocessing.fd_mean) }} mm</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.motion.fd_max is defined %}
+            {% if dsc.qc_metrics.preprocessing.fd_max is defined %}
             <div class="metric">
                 <div class="metric-label">Max FD</div>
-                <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.motion.fd_max) }} mm</div>
+                <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.preprocessing.fd_max) }} mm</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.motion.n_outliers is defined and dsc.qc_metrics.motion.percent_outliers is defined %}
+            {% if dsc.qc_metrics.preprocessing.n_outliers is defined and dsc.qc_metrics.preprocessing.percent_outliers is defined %}
             <div class="metric">
                 <div class="metric-label">Outlier Frames</div>
-                <div class="metric-value {{ dsc.display_status.outliers }}">{{ dsc.qc_metrics.motion.n_outliers }} ({{ "%.1f"|format(dsc.qc_metrics.motion.percent_outliers) }}%)</div>
+                <div class="metric-value {{ dsc.display_status.outliers }}">{{ dsc.qc_metrics.preprocessing.n_outliers }} ({{ "%.1f"|format(dsc.qc_metrics.preprocessing.percent_outliers) }}%)</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.motion.n_volumes is defined %}
+            {% if dsc.qc_metrics.preprocessing.n_volumes is defined %}
             <div class="metric">
                 <div class="metric-label">Total Volumes</div>
-                <div class="metric-value">{{ dsc.qc_metrics.motion.n_volumes }}</div>
+                <div class="metric-value">{{ dsc.qc_metrics.preprocessing.n_volumes }}</div>
             </div>
             {% endif %}
         </div>
@@ -150,15 +150,15 @@
     {% endif %}
 
     <!-- AIF Detection -->
-    {% if dsc.images.aif_curve or dsc.qc_metrics.aif %}
+    {% if dsc.images.aif_curve or dsc.qc_metrics.aif_detection %}
     <div class="section">
         <h3>Arterial Input Function (AIF) Detection</h3>
-        {% if dsc.qc_metrics.aif %}
+        {% if dsc.qc_metrics.aif_detection %}
         <div class="metrics">
-            {% if dsc.qc_metrics.aif.detection_level is defined %}
-            {% set aif_level = dsc.qc_metrics.aif.detection_level %}
-            {% set aif_score = dsc.qc_metrics.aif.quality_score
-                               if dsc.qc_metrics.aif.quality_score is defined
+            {% if dsc.qc_metrics.aif_detection.detection_method is defined %}
+            {% set aif_level = dsc.qc_metrics.aif_detection.detection_method %}
+            {% set aif_score = dsc.qc_metrics.aif_detection.quality_score
+                               if dsc.qc_metrics.aif_detection.quality_score is defined
                                else none %}
             {% set aif_flag = 'poor' if aif_level == 'synthetic'
                               else ('pass' if aif_score is not none and aif_score >= 0.7
@@ -170,62 +170,62 @@
                 <div class="metric-value {{ aif_flag }}">{{ aif_level | replace("_", " ") | title }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.aif_metrics is defined and dsc.qc_metrics.aif.aif_metrics.peak_conc is defined %}
+            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.peak_conc is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Concentration</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.aif_metrics.peak_conc) }} s<sup>-1</sup></div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.peak_conc) }} s<sup>-1</sup></div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.best_ph is defined %}
+            {% if dsc.qc_metrics.aif_detection.best_ph is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Height</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.best_ph) }}%</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_ph) }}%</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.best_fwhm is defined %}
+            {% if dsc.qc_metrics.aif_detection.best_fwhm is defined %}
             <div class="metric">
                 <div class="metric-label">FWHM</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.best_fwhm) }} s</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_fwhm) }} s</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.best_ttp is defined %}
+            {% if dsc.qc_metrics.aif_detection.best_ttp is defined %}
             <div class="metric">
                 <div class="metric-label">TTP</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.best_ttp) }} s</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_ttp) }} s</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.best_psr is defined %}
+            {% if dsc.qc_metrics.aif_detection.best_psr is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Signal Ratio</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.best_psr) }}</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_psr) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.best_brr is defined %}
+            {% if dsc.qc_metrics.aif_detection.best_brr is defined %}
             <div class="metric">
                 <div class="metric-label">Baseline Return Ratio</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.best_brr) }}</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_brr) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.arrival_time_seconds is defined %}
+            {% if dsc.qc_metrics.aif_detection.arrival_time_seconds is defined %}
             <div class="metric">
                 <div class="metric-label">Arrival Time</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif.arrival_time_seconds) }} s</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.arrival_time_seconds) }} s</div>
             </div>
             {% endif %}
-            {% set dsc_used = dsc.qc_metrics.aif.n_aif_voxels_used
-               if dsc.qc_metrics.aif.n_aif_voxels_used is defined %}
-            {% set dsc_available = dsc.qc_metrics.aif.n_aif_voxels_available
-               if dsc.qc_metrics.aif.n_aif_voxels_available is defined %}
+            {% set dsc_used = dsc.qc_metrics.aif_detection.n_aif_voxels_selected
+               if dsc.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
+            {% set dsc_available = dsc.qc_metrics.aif_detection.n_aif_voxels_available
+               if dsc.qc_metrics.aif_detection.n_aif_voxels_available is defined %}
             {% if dsc_used is defined and dsc_available is defined %}
             <div class="metric">
                 <div class="metric-label">AIF Voxels (used / available)</div>
                 <div class="metric-value">{{ dsc_used }} / {{ dsc_available }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif.n_baseline_frames is defined %}
+            {% if dsc.qc_metrics.aif_detection.n_baseline_frames is defined %}
             <div class="metric">
                 <div class="metric-label">Baseline Frames</div>
-                <div class="metric-value">{{ dsc.qc_metrics.aif.n_baseline_frames }}</div>
+                <div class="metric-value">{{ dsc.qc_metrics.aif_detection.n_baseline_frames }}</div>
             </div>
             {% endif %}
         </div>
@@ -256,7 +256,7 @@
             </div>
             {% endif %}
         </div>
-        {% if dsc.qc_metrics.aif and dsc.qc_metrics.aif.detection_level == 'synthetic' %}
+        {% if dsc.qc_metrics.aif_detection and dsc.qc_metrics.aif_detection.detection_method == 'synthetic' %}
         <div class="alert-warn" style="margin-top: 12px; padding: 10px 14px; border-left: 4px solid #d97706; background: #fef3c7; border-radius: 4px;">
             <strong>Template AIF — interpret maps with care.</strong>
             Reason:
