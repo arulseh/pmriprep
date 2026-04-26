@@ -508,7 +508,7 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_qc_fit_data = File(desc="JSON with QC voxel fit data for fit QC plot")
 
     # Optional extras
-    out_delay = File(desc="Delay map (only for cSVD method)")
+    out_delay = File(desc="Delay map (cSVD and oSVD methods)")
     out_residues = File(desc="Residue functions (if save_residue=True)")
     out_alpha = File(desc="Alpha map (vascular method only)")
     out_beta = File(desc="Beta map (vascular method only)")
@@ -589,7 +589,7 @@ class ComputeDSCMaps(BaseInterface):
     out_snr, out_tsnr : str
         Paths to SNR and tSNR quality metric maps.
     out_delay : str, optional
-        Path to delay map (cSVD only).
+        Path to delay map (cSVD and oSVD).
     out_residues : str, optional
         Path to residue functions (if save_residue=True).
     qc_metrics : dict
@@ -612,8 +612,8 @@ class ComputeDSCMaps(BaseInterface):
     For Bayesian methods (map, vi, mcmc), uncertainty maps are also
     generated when method is 'vascular' or 'cpi'.
 
-    The cSVD method additionally outputs a delay map showing the
-    estimated tracer arrival delay relative to the AIF.
+    The cSVD and oSVD methods additionally output a delay map showing
+    the estimated tracer arrival delay relative to the AIF.
 
     References
     ----------
@@ -754,7 +754,7 @@ class ComputeDSCMaps(BaseInterface):
         npt.NDArray[Any],  # cbv
         npt.NDArray[Any],  # mtt
         npt.NDArray[Any],  # tmax
-        Optional[npt.NDArray[Any]],  # delay (cSVD only)
+        Optional[npt.NDArray[Any]],  # delay (cSVD and oSVD)
         Optional[npt.NDArray[Any]],  # residues
         dict[str, Any],  # qc_metrics
     ]:
@@ -800,14 +800,14 @@ class ComputeDSCMaps(BaseInterface):
             residues = res if self.inputs.save_residue else None
 
         elif method == "oSVD":
-            res, cbf, cbv, mtt, oi_values, thresholds_used = svd_deconvolve_oscillation_batch(  # type: ignore[assignment]
+            res, cbf, cbv, mtt, oi_values, thresholds_used, delay = svd_deconvolve_oscillation_batch(  # type: ignore[assignment]
                 concentration_data,
                 aif,
                 dt=dt,
                 oi_target=oi_threshold,
                 mask=mask_bool,
             )
-            tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
+            tmax = delay.copy()
             residues = res if self.inputs.save_residue else None
             qc_metrics["oi_mean"] = float(np.mean(oi_values[mask_bool]))
             qc_metrics["threshold_mean"] = float(np.mean(thresholds_used[mask_bool]))
@@ -1020,7 +1020,7 @@ class ComputeDSCMaps(BaseInterface):
                 cbf[x, y, z] = svd_result.cbf
                 cbv[x, y, z] = svd_result.cbv
                 mtt[x, y, z] = svd_result.mtt
-                tmax[x, y, z] = float(np.argmax(svd_result.residue)) * dt
+                tmax[x, y, z] = svd_result.delay
                 # Zero parametric/uncertainty maps for fallback voxels —
                 # these are SVD-derived, not from parametric fit
                 if alpha_map is not None:
@@ -1524,10 +1524,11 @@ class ComputeDSCMaps(BaseInterface):
                 matrix = build_block_circulant_matrix(aif, dt)
                 c_recon = (matrix @ full_residue)[:n_timepoints]
             elif method == "oSVD":
-                residue = svd_deconvolve_oscillation(
+                full_residue = svd_deconvolve_oscillation(
                     tissue_curve, aif, dt=dt, oi_target=oi_threshold,
                 ).residue
-                c_recon = np.convolve(aif, residue, mode="full")[:n_timepoints] * dt
+                matrix = build_block_circulant_matrix(aif, dt)
+                c_recon = (matrix @ full_residue)[:n_timepoints]
             elif method == "tikhonov":
                 residue = tikhonov_deconvolve(
                     tissue_curve, aif, dt=dt,
@@ -2126,7 +2127,7 @@ class ComputeDSCMaps(BaseInterface):
             nib.save(k2_fallback_img, k2_fallback_path)  # type: ignore[attr-defined]
             self._results["out_k2"] = k2_fallback_path
 
-        # Save delay map if cSVD
+        # Save delay map if cSVD or oSVD
         if delay is not None:
             self._results["out_delay"] = _save_map(delay, "_delay")
 

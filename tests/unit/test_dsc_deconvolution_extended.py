@@ -271,7 +271,7 @@ class TestBatchMethods:
             single_cbv[i] = result.cbv
             single_mtt[i] = result.mtt
 
-        _, batch_cbf, batch_cbv, batch_mtt, _, _ = (
+        _, batch_cbf, batch_cbv, batch_mtt, _, _, _ = (
             svd_deconvolve_oscillation_batch(tissues, aif, dt=dt)
         )
 
@@ -316,7 +316,7 @@ class TestBatchMethods:
 
         mask = np.array([True, True, False, True, False])
 
-        _, batch_cbf, _, _, _, _ = svd_deconvolve_oscillation_batch(
+        _, batch_cbf, _, _, _, _, _ = svd_deconvolve_oscillation_batch(
             tissues, aif, dt=dt, mask=mask,
         )
 

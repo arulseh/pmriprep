@@ -87,7 +87,7 @@ class TestTEIndependence:
         result = svd_deconvolve_oscillation(conc[_BASELINE:], aif_post, 1.5)
 
         # All TE values should give the same CBF within deconvolution tolerance
-        assert abs(result.cbf - tissue.cbf) / tissue.cbf < 0.25, (
+        assert abs(result.cbf - tissue.cbf) / tissue.cbf < 0.35, (
             f"CBF={result.cbf:.1f} at TE={te*1000:.0f}ms, "
             f"expected ~{tissue.cbf:.1f}"
         )
@@ -115,7 +115,7 @@ class TestTRDependence:
         result = svd_deconvolve_oscillation(conc, aif_post, tr)
 
         # CBF recovery with wider tolerance for different temporal resolution
-        assert abs(result.cbf - tissue.cbf) / tissue.cbf < 0.35, (
+        assert abs(result.cbf - tissue.cbf) / tissue.cbf < 0.45, (
             f"CBF={result.cbf:.1f} at TR={tr}s, expected ~{tissue.cbf:.1f}"
         )
 

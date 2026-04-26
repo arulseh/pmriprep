@@ -431,7 +431,7 @@ def deconvolve_dro_batch(
             concentration_2d, aif, dt=dt
         )
     elif method == "osvd":
-        residues, cbf, cbv, mtt, _, _ = svd_deconvolve_oscillation_batch(
+        residues, cbf, cbv, mtt, _, _, _ = svd_deconvolve_oscillation_batch(
             concentration_2d, aif, dt=dt
         )
     elif method == "tikhonov":

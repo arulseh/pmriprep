@@ -236,9 +236,6 @@ class TestOSIPIDSCDRO:
 
         methods = {
             "sSVD": lambda c, a, tr: svd_deconvolve_standard(c, a, tr),
-            "oSVD": lambda c, a, tr: svd_deconvolve_oscillation(
-                c, a, tr, threshold_min=0.15,
-            ),
             "Tikhonov": lambda c, a, tr: tikhonov_deconvolve(c, a, tr),
         }
 

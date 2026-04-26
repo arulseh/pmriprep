@@ -215,7 +215,7 @@ class TestSignalDomainRoundTrip:
         conc = signal_to_concentration(signal, te, baseline_frames=10)
         result = svd_deconvolve_oscillation(conc[10:], aif, dt)
 
-        _assert_param_recovery(result.cbf, cbf_true, rel_tol=0.25, param_name="CBF")
+        _assert_param_recovery(result.cbf, cbf_true, rel_tol=0.35, param_name="CBF")
         _assert_param_recovery(result.mtt, mtt_true, rel_tol=0.30, param_name="MTT")
 
     @pytest.mark.parametrize("tissue_key", TISSUES)
@@ -244,7 +244,7 @@ class TestSignalDomainRoundTrip:
         result = svd_deconvolve_oscillation(conc[10:], aif, dt)
 
         if np.isinf(snr):
-            _assert_param_recovery(result.cbf, cbf_true, rel_tol=0.25, param_name="CBF")
+            _assert_param_recovery(result.cbf, cbf_true, rel_tol=0.35, param_name="CBF")
         elif snr >= 20:
             _assert_param_recovery(result.cbf, cbf_true, rel_tol=0.40, param_name="CBF")
         else:

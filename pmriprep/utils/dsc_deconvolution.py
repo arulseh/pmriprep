@@ -774,29 +774,30 @@ def svd_deconvolve_circulant_batch(
 class OscillationDeconvolutionResult:
     """Result from oscillation-index limited SVD deconvolution.
 
-    Extends the standard DeconvolutionResult with oscillation index information,
-    which is uniquely available from the oSVD approach.
+    Uses a block-circulant matrix (Wu 2003) for delay-insensitive
+    deconvolution with OI-based adaptive threshold selection.
 
     Attributes:
-        residue: Residue function R(t) with same length as input curves.
-            The maximum value corresponds to CBF.
-        cbf: Cerebral blood flow, max(R(t)).
-        cbv: Cerebral blood volume, integral of R(t).
+        residue: Residue function R(t), length 2N-1 (circulant output).
+        cbf: Cerebral blood flow, max of causal residue.
+        cbv: Cerebral blood volume, integral of causal residue.
         mtt: Mean transit time (seconds), CBV/CBF via central volume theorem.
-        oscillation_index: The computed oscillation index of the residue function.
-            OI = (1/N) × Σ|R(t+1) - R(t)| / max(R).
-            Lower values indicate smoother residue functions.
-        threshold_used: The optimal SVD truncation threshold found by binary search.
+        delay: Tracer arrival delay in seconds.
+        delay_frames: Tracer arrival delay in frame units.
+        oscillation_index: OI = (1/N) * sum|R(t+1) - R(t)| / max(R).
+        threshold_used: The optimal SVD truncation threshold.
         n_singular_values: Number of singular values retained after truncation.
         condition_number: Condition number of the truncated matrix.
         oi_target: The target oscillation index threshold that was used.
-        converged: Whether the binary search converged to find a valid threshold.
+        converged: Whether the search converged to find a valid threshold.
     """
 
     residue: npt.NDArray[np.floating]
     cbf: float
     cbv: float
     mtt: float
+    delay: float
+    delay_frames: int
     oscillation_index: float
     threshold_used: float
     n_singular_values: int
@@ -805,7 +806,7 @@ class OscillationDeconvolutionResult:
     converged: bool
 
     def get_tmax(self, dt: float = 1.0) -> float:
-        """Get time to maximum of residue function.
+        """Get time to maximum of residue function (delay-based).
 
         Args:
             dt: Time step in seconds (default 1.0 for frame units).
@@ -813,7 +814,7 @@ class OscillationDeconvolutionResult:
         Returns:
             Tmax in seconds (or frames if dt=1.0).
         """
-        return float(np.argmax(self.residue)) * dt
+        return float(self.delay_frames) * dt
 
 
 def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
@@ -864,30 +865,29 @@ def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
 
 
 def _deconvolve_with_threshold(
-    tissue_curve: npt.NDArray[np.floating],
-    aif: npt.NDArray[np.floating],
-    dt: float,
+    tissue_padded: npt.NDArray[np.floating],
+    n_original: int,
     threshold: float,
-    matrix: npt.NDArray[np.floating],
     u: npt.NDArray[np.floating],
     s: npt.NDArray[np.floating],
     vh: npt.NDArray[np.floating],
     apply_non_negativity: bool,
-) -> tuple[npt.NDArray[np.floating], float, int, float]:
-    """Helper function to deconvolve with a given threshold.
+) -> tuple[npt.NDArray[np.floating], float, int, float, int]:
+    """Helper: deconvolve with a given threshold using block-circulant SVD.
 
     Args:
-        tissue_curve: Tissue concentration curve.
-        aif: Arterial input function.
-        dt: Time step.
-        threshold: SVD truncation threshold.
-        matrix: Pre-computed Toeplitz matrix.
-        u, s, vh: Pre-computed SVD decomposition.
+        tissue_padded: Zero-padded tissue curve, length 2N-1.
+        n_original: Original (unpadded) number of timepoints N.
+        threshold: SVD truncation threshold (fraction of max singular value).
+        u, s, vh: Pre-computed SVD of block-circulant matrix.
         apply_non_negativity: Whether to clip negative values.
 
     Returns:
-        Tuple of (residue, oscillation_index, n_retained, condition_number).
+        Tuple of (residue_2N1, oscillation_index, n_retained,
+        condition_number, peak_position).
     """
+    m = len(tissue_padded)
+
     # Truncate singular values below threshold
     s_max = s[0] if len(s) > 0 else 1.0
     truncation_threshold = threshold * s_max
@@ -895,7 +895,7 @@ def _deconvolve_with_threshold(
     # Count retained singular values
     n_retained = int(np.sum(s > truncation_threshold))
     if n_retained == 0:
-        n_retained = 1  # Keep at least one singular value
+        n_retained = 1
 
     # Create truncated inverse singular values
     s_inv = np.zeros_like(s)
@@ -909,17 +909,22 @@ def _deconvolve_with_threshold(
     else:
         condition_number = float("inf")
 
-    # Solve for residue function: R = V @ S_inv @ U^T @ C
-    residue = vh.T @ (s_inv * (u.T @ tissue_curve))
+    # Solve: R = Vh^T @ (S_inv * (U^T @ C_padded))
+    residue = vh.T @ (s_inv * (u.T @ tissue_padded))
 
     # Apply non-negativity constraint
     if apply_non_negativity:
         residue = np.maximum(residue, 0.0)
 
-    # Compute oscillation index
-    oi = compute_oscillation_index(residue)
+    # Extract peak and N causal points for OI computation
+    peak_position = int(np.argmax(residue))
+    causal_indices = (peak_position + np.arange(n_original)) % m
+    causal_residue = residue[causal_indices]
 
-    return residue, oi, n_retained, condition_number
+    # OI computed on causal subset only (Wu 2003)
+    oi = compute_oscillation_index(causal_residue)
+
+    return residue, oi, n_retained, condition_number, peak_position
 
 
 def svd_deconvolve_oscillation(
@@ -934,62 +939,41 @@ def svd_deconvolve_oscillation(
 ) -> OscillationDeconvolutionResult:
     """Oscillation-index limited SVD deconvolution (oSVD).
 
-    Performs deconvolution using a truncated SVD approach where the truncation
-    threshold is automatically selected to keep the oscillation index (OI)
-    of the residue function at or below a target value. This provides adaptive
-    regularization that balances noise suppression against preserving
-    physiological detail.
+    Uses a block-circulant matrix (Wu 2003) for delay-insensitive
+    deconvolution with adaptive OI-based threshold selection.
 
     The oscillation index is defined as:
-        OI = (1/N) × Σ|R(t+1) - R(t)| / max(R)
+        OI = (1/N) * sum|R(t+1) - R(t)| / max(R)
+    computed on the N causal points extracted from the 2N-1 circulant residue.
 
-    A linear search from low to high threshold is used to find the first
-    threshold that achieves OI ≤ oi_target.
-
-    Strategy:
-        - Lower threshold = more singular values retained = more detail but more noise
-        - Higher threshold = fewer singular values = smoother but may lose detail
-        - Linear search finds the first (lowest) threshold where OI ≤ target
+    A linear search from low to high threshold finds the first (lowest)
+    threshold that achieves OI <= oi_target.
 
     Args:
         tissue_curve: Tissue concentration curve, shape (n_timepoints,).
         aif: Arterial input function, shape (n_timepoints,).
             Must have same length as tissue_curve.
         dt: Time step in seconds. Default 1.0 gives results in frame units.
-            Provide actual TR for timing parameters (MTT, Tmax) in seconds.
-        oi_target: Target oscillation index threshold. Residue functions with
-            OI above this value are considered too oscillatory. Default is 0.065.
+        oi_target: Target oscillation index threshold. Default is 0.065.
         threshold_min: Minimum SVD threshold to consider. Default 0.01.
         threshold_max: Maximum SVD threshold to consider. Default 0.50.
-        max_iterations: Number of evenly-spaced thresholds in linear
-            search. Default 20.
-        apply_non_negativity: If True, apply non-negativity constraint to
-            residue function by clipping negative values to zero.
-            Default is True.
+        max_iterations: Number of evenly-spaced thresholds. Default 20.
+        apply_non_negativity: If True, clip negative residue values to zero.
 
     Returns:
-        OscillationDeconvolutionResult containing residue function, perfusion
-        parameters, oscillation index, and optimal threshold.
+        OscillationDeconvolutionResult with 2N-1 residue, delay, and
+        perfusion parameters derived from the N causal points.
 
     Raises:
         ValueError: If tissue_curve and aif have different lengths.
         ValueError: If arrays are empty.
         ValueError: If oi_target is not positive.
 
-    Notes:
-        - CBF is extracted as max(R(t))
-        - CBV is computed as integral of R(t) using trapezoidal rule
-        - MTT = CBV / CBF (central volume theorem)
-        - If OI cannot be reduced to oi_target even at threshold_max, returns
-          the result at threshold_max with converged=False
-        - This method is NOT delay-insensitive; for delay estimation, consider
-          applying oSVD after cSVD delay correction
-
     References:
-        Wu O, Østergaard L, Korber M, Yenari M, Weisskoff RM, Sorensen AG.
-        Oscillation index: a novel technique for measurement of cerebral
-        blood flow using an oscillation-index-driven deconvolution method.
-        ISMRM 2000.
+        Wu O, Ostergaard L, Weisskoff RM, et al. Tracer arrival
+        timing-insensitive technique for estimating flow in MR
+        perfusion-weighted imaging using singular value decomposition
+        with a block-circulant deconvolution matrix. MRM 2003;50:164-174.
     """
     # Validate inputs
     if len(tissue_curve) != len(aif):
@@ -1005,28 +989,30 @@ def svd_deconvolve_oscillation(
         raise ValueError(f"oi_target must be positive, got {oi_target}")
 
     n = len(tissue_curve)
+    m = 2 * n - 1
 
-    # Build Toeplitz convolution matrix and compute SVD once
-    matrix = build_toeplitz_matrix(aif, dt)
+    # Zero-pad tissue curve to 2N-1
+    tissue_padded = np.zeros(m, dtype=np.float64)
+    tissue_padded[:n] = tissue_curve
+
+    # Build block-circulant matrix and compute SVD once
+    matrix = build_block_circulant_matrix(aif, dt)
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Linear search for optimal threshold
-    # Search from LOW to HIGH, take the FIRST threshold where OI ≤ oi_target.
-    # This finds the lowest acceptable threshold (least regularization).
-    n_steps = max_iterations
-    thresholds = np.linspace(threshold_min, threshold_max, n_steps)
+    # Linear search for optimal threshold (LOW→HIGH, first acceptable)
+    thresholds = np.linspace(threshold_min, threshold_max, max_iterations)
 
     best_residue: Optional[npt.NDArray[np.floating]] = None
     best_oi = float("inf")
     best_threshold = threshold_max
     best_n_ret = 0
     best_cond = float("inf")
+    best_peak = n - 1
     converged = False
 
     for thresh in thresholds:
-        residue, oi, n_ret, cond = _deconvolve_with_threshold(
-            tissue_curve, aif, dt, thresh, matrix, u, s, vh,
-            apply_non_negativity,
+        residue, oi, n_ret, cond, peak = _deconvolve_with_threshold(
+            tissue_padded, n, thresh, u, s, vh, apply_non_negativity,
         )
 
         if oi <= oi_target:
@@ -1035,23 +1021,31 @@ def svd_deconvolve_oscillation(
             best_threshold = thresh
             best_n_ret = n_ret
             best_cond = cond
+            best_peak = peak
             converged = True
             break
 
     # If no threshold achieved target, use maximum regularization
     if best_residue is None:
-        best_residue, best_oi, best_n_ret, best_cond = (
+        best_residue, best_oi, best_n_ret, best_cond, best_peak = (
             _deconvolve_with_threshold(
-                tissue_curve, aif, dt, threshold_max, matrix, u, s, vh,
+                tissue_padded, n, threshold_max, u, s, vh,
                 apply_non_negativity,
             )
         )
         best_threshold = threshold_max
         converged = False
 
-    # Extract perfusion parameters from best result
-    cbf = float(np.max(best_residue))
-    cbv = float(np.trapezoid(best_residue, dx=dt))
+    # Extract delay from peak position (zero-delay at index N-1)
+    delay_frames = best_peak - (n - 1)
+    delay = float(delay_frames) * dt
+
+    # Extract N causal points for perfusion parameters
+    causal_indices = (best_peak + np.arange(n)) % m
+    causal_residue = best_residue[causal_indices]
+
+    cbf = float(np.max(causal_residue))
+    cbv = float(np.trapezoid(causal_residue, dx=dt))
     mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION else 0.0
 
     return OscillationDeconvolutionResult(
@@ -1059,6 +1053,8 @@ def svd_deconvolve_oscillation(
         cbf=cbf,
         cbv=cbv,
         mtt=mtt,
+        delay=delay,
+        delay_frames=delay_frames,
         oscillation_index=best_oi,
         threshold_used=best_threshold,
         n_singular_values=best_n_ret,
@@ -1079,21 +1075,18 @@ def svd_deconvolve_oscillation_batch(
     apply_non_negativity: bool = True,
     mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> tuple[
-    npt.NDArray[np.floating],  # residues
+    npt.NDArray[np.floating],  # residues (2N-1 per voxel)
     npt.NDArray[np.floating],  # cbf
     npt.NDArray[np.floating],  # cbv
     npt.NDArray[np.floating],  # mtt
     npt.NDArray[np.floating],  # oscillation_index
     npt.NDArray[np.floating],  # threshold_used
+    npt.NDArray[np.floating],  # delay (seconds)
 ]:
-    """Batch oSVD deconvolution for multiple voxels.
+    """Batch oSVD deconvolution using block-circulant matrix (Wu 2003).
 
-    Deconvolves multiple tissue curves using the oscillation-index limited
-    SVD approach. Each voxel gets an individually optimized threshold.
-
-    Note: This function processes voxels sequentially because each voxel
-    may require a different optimal threshold. For faster processing with
-    a fixed threshold, use svd_deconvolve_standard_batch().
+    Each voxel gets an individually optimized threshold via OI-based
+    linear search. Returns 2N-1 residues and delay maps.
 
     Args:
         tissue_curves: Tissue concentration curves, shape (n_voxels, n_timepoints)
@@ -1105,16 +1098,16 @@ def svd_deconvolve_oscillation_batch(
         threshold_max: Maximum SVD threshold. Default 0.50.
         max_iterations: Number of linear search steps per voxel. Default 20.
         apply_non_negativity: Apply non-negativity constraint on residue.
-        mask: Optional boolean mask of voxels to process. If None, process all.
-            Shape must match spatial dimensions of tissue_curves.
+        mask: Optional boolean mask of voxels to process.
 
     Returns:
-        Tuple of (residues, cbf, cbv, mtt, oscillation_index, threshold_used) arrays.
-        All output arrays have the same spatial shape as input (excluding time dimension).
+        Tuple of (residues, cbf, cbv, mtt, oscillation_index, threshold_used,
+        delay) arrays. Residues have time dimension 2N-1. All spatial arrays
+        match the input spatial shape.
     """
-    # Store original shape for reshaping output
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
+    m = 2 * n_timepoints - 1
 
     # Reshape to 2D (n_voxels, n_timepoints)
     if tissue_curves.ndim > 2:
@@ -1132,70 +1125,79 @@ def svd_deconvolve_oscillation_batch(
     else:
         mask_flat = np.ones(n_voxels, dtype=bool)
 
-    # Build Toeplitz matrix and compute SVD once (shared across all voxels)
-    matrix = build_toeplitz_matrix(aif, dt)
+    # Build block-circulant matrix and compute SVD once
+    matrix = build_block_circulant_matrix(aif, dt)
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Initialize output arrays
-    residues = np.zeros((n_voxels, n_timepoints), dtype=np.float64)
+    # Initialize output arrays (residues are 2N-1 long)
+    residues = np.zeros((n_voxels, m), dtype=np.float64)
     cbf = np.zeros(n_voxels, dtype=np.float64)
     cbv = np.zeros(n_voxels, dtype=np.float64)
     mtt = np.zeros(n_voxels, dtype=np.float64)
     oscillation_index = np.zeros(n_voxels, dtype=np.float64)
     threshold_used = np.zeros(n_voxels, dtype=np.float64)
+    delay = np.zeros(n_voxels, dtype=np.float64)
 
-    # Process each masked voxel with individual threshold optimization
     masked_indices = np.where(mask_flat)[0]
-
-    # Pre-compute linear threshold grid (shared across all voxels)
     thresholds = np.linspace(threshold_min, threshold_max, max_iterations)
 
     for idx in masked_indices:
-        tissue_curve = tissue_2d[idx, :]
+        # Zero-pad tissue to 2N-1
+        tissue_padded = np.zeros(m, dtype=np.float64)
+        tissue_padded[:n_timepoints] = tissue_2d[idx, :]
 
         # Linear search: LOW→HIGH, stop at FIRST threshold where OI ≤ target
         best_residue = None
         best_oi = float("inf")
         best_threshold = threshold_max
+        best_peak = n_timepoints - 1
 
         for thresh in thresholds:
-            residue, oi, n_ret, cond = _deconvolve_with_threshold(
-                tissue_curve, aif, dt, thresh, matrix, u, s, vh,
+            residue, oi, n_ret, cond, peak = _deconvolve_with_threshold(
+                tissue_padded, n_timepoints, thresh, u, s, vh,
                 apply_non_negativity,
             )
             if oi <= oi_target:
                 best_residue = residue
                 best_oi = oi
                 best_threshold = thresh
+                best_peak = peak
                 break
 
         # If no threshold achieved target, use maximum regularization
         if best_residue is None:
-            best_residue, best_oi, _, _ = _deconvolve_with_threshold(
-                tissue_curve, aif, dt, threshold_max, matrix, u, s, vh,
+            best_residue, best_oi, _, _, best_peak = _deconvolve_with_threshold(
+                tissue_padded, n_timepoints, threshold_max, u, s, vh,
                 apply_non_negativity,
             )
             best_threshold = threshold_max
 
-        # Store results for this voxel
+        # Extract delay and causal perfusion parameters
+        delay_frames = best_peak - (n_timepoints - 1)
+        causal_indices = (best_peak + np.arange(n_timepoints)) % m
+        causal_residue = best_residue[causal_indices]
+
         residues[idx, :] = best_residue
-        cbf[idx] = float(np.max(best_residue))
-        cbv[idx] = float(np.trapezoid(best_residue, dx=dt))
+        cbf[idx] = float(np.max(causal_residue))
+        cbv[idx] = float(np.trapezoid(causal_residue, dx=dt))
         if cbf[idx] > EPSILON_CONCENTRATION:
             mtt[idx] = cbv[idx] / cbf[idx]
         oscillation_index[idx] = best_oi
         threshold_used[idx] = best_threshold
+        delay[idx] = float(delay_frames) * dt
 
     # Reshape to original spatial dimensions
     if tissue_curves.ndim > 2:
-        residues = residues.reshape(original_shape)  # type: ignore[assignment]
+        residue_shape = spatial_shape + (m,)
+        residues = residues.reshape(residue_shape)  # type: ignore[assignment]
         cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
         cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
         mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
         oscillation_index = oscillation_index.reshape(spatial_shape)  # type: ignore[assignment]
         threshold_used = threshold_used.reshape(spatial_shape)  # type: ignore[assignment]
+        delay = delay.reshape(spatial_shape)  # type: ignore[assignment]
 
-    return residues, cbf, cbv, mtt, oscillation_index, threshold_used
+    return residues, cbf, cbv, mtt, oscillation_index, threshold_used, delay
 
 
 # =============================================================================

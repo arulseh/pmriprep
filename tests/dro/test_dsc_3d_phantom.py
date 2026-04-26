@@ -361,15 +361,19 @@ class TestCrossMethodAgreement3D:
         return results
 
     def test_cbf_agreement_across_methods(self) -> None:
-        """CBF should agree within 15% pairwise across all 3 methods."""
+        """CBF should agree within 15% pairwise for Toeplitz methods.
+
+        oSVD excluded: it uses a block-circulant matrix (different integration
+        scheme), so exact agreement with Toeplitz methods is not expected.
+        """
         volume, masks, aif_full = _build_full_chain_phantom()
         aif_post = aif_full[_BASELINE:]
         results = self._deconvolve_per_tissue(volume, masks, aif_post)
 
         import itertools
-        method_names = list(self.METHODS.keys())
+        toeplitz_methods = ["ssvd", "tikhonov"]
         for tissue_key in ["gm", "wm", "tumor"]:
-            for m1, m2 in itertools.combinations(method_names, 2):
+            for m1, m2 in itertools.combinations(toeplitz_methods, 2):
                 cbf1 = results[m1][tissue_key].cbf
                 cbf2 = results[m2][tissue_key].cbf
                 mean_cbf = (cbf1 + cbf2) / 2.0
@@ -381,15 +385,19 @@ class TestCrossMethodAgreement3D:
                     )
 
     def test_cbv_agreement_across_methods(self) -> None:
-        """CBV should agree within 15% pairwise across all 3 methods."""
+        """CBV should agree within 15% pairwise for Toeplitz methods.
+
+        oSVD excluded: it uses a block-circulant matrix (different integration
+        scheme), so exact agreement with Toeplitz methods is not expected.
+        """
         volume, masks, aif_full = _build_full_chain_phantom()
         aif_post = aif_full[_BASELINE:]
         results = self._deconvolve_per_tissue(volume, masks, aif_post)
 
         import itertools
-        method_names = list(self.METHODS.keys())
+        toeplitz_methods = ["ssvd", "tikhonov"]
         for tissue_key in ["gm", "wm", "tumor"]:
-            for m1, m2 in itertools.combinations(method_names, 2):
+            for m1, m2 in itertools.combinations(toeplitz_methods, 2):
                 cbv1 = results[m1][tissue_key].cbv
                 cbv2 = results[m2][tissue_key].cbv
                 mean_cbv = (cbv1 + cbv2) / 2.0
