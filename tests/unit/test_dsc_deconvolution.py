@@ -4,9 +4,11 @@ import numpy as np
 import pytest
 
 from pmriprep.utils.dsc_deconvolution import (
+    build_block_circulant_matrix,
     build_toeplitz_matrix,
     compute_oscillation_index,
     svd_deconvolve_circulant,
+    svd_deconvolve_oscillation,
     svd_deconvolve_standard,
     svd_deconvolve_standard_batch,
 )
@@ -141,36 +143,105 @@ class TestSVDDeconvolveCirculant:
     def test_delay_detection(self) -> None:
         """cSVD should detect a non-negative delay for delayed tissue.
 
-        Create tissue as a time-shifted version of a known convolution
-        to produce a detectable delay.
+        Uses circulant forward model to avoid discretization mismatch
+        between Toeplitz (trapezoidal) and circulant (rectangular) weighting.
         """
         n = 40
         dt = 1.5
+        m = 2 * n - 1
 
-        # AIF: gamma-variate bolus peaking around frame 5
         t = np.arange(n, dtype=np.float64) * dt
         aif = (t / 5.0) * np.exp(-t / 7.0)
         aif[0] = 0.0
 
-        # Create tissue = convolution of AIF with exponential residue,
-        # then time-shift by delay_frames to simulate arrival delay
         delay_frames = 4
-        residue_no_delay = 2.0 * np.exp(-t / 12.0)
-        matrix = build_toeplitz_matrix(aif, dt=dt)
-        tissue_no_delay = matrix @ residue_no_delay
-
-        # Time-shift tissue to create delay
-        tissue = np.zeros(n, dtype=np.float64)
-        tissue[delay_frames:] = tissue_no_delay[: n - delay_frames]
+        residue_padded = np.zeros(m, dtype=np.float64)
+        residue_padded[delay_frames:delay_frames + n] = 2.0 * np.exp(-t / 12.0)
+        matrix = build_block_circulant_matrix(aif, dt)
+        tissue = (matrix @ residue_padded)[:n]
 
         result = svd_deconvolve_circulant(
             tissue, aif, dt=dt, threshold=0.15
         )
 
-        # CBF should be positive and reasonable
         assert result.cbf > 0.0
-        # The result should produce valid perfusion parameters
         assert result.mtt >= 0.0
+        assert result.delay_frames >= 0, (
+            f"Delayed tissue should give non-negative delay, got {result.delay_frames}"
+        )
+
+    def test_csvd_relative_delay_recovery(self) -> None:
+        """cSVD delay differences should match injected delay differences.
+
+        Absolute delay has a systematic offset from SVD regularization,
+        but relative delay between two tissues should be accurate.
+        """
+        n = 40
+        dt = 1.5
+        m = 2 * n - 1
+
+        t = np.arange(n, dtype=np.float64) * dt
+        aif = (t / 5.0) * np.exp(-t / 7.0)
+        aif[0] = 0.0
+        matrix = build_block_circulant_matrix(aif, dt)
+
+        delays_detected = []
+        for injected_delay in [0, 3, 6]:
+            residue_padded = np.zeros(m, dtype=np.float64)
+            residue_padded[injected_delay:injected_delay + n] = (
+                2.0 * np.exp(-t / 12.0)
+            )
+            tissue = (matrix @ residue_padded)[:n]
+            result = svd_deconvolve_circulant(
+                tissue, aif, dt=dt, threshold=0.15,
+            )
+            delays_detected.append(result.delay_frames)
+
+        # Relative delay differences should match within ±1 frame
+        assert abs((delays_detected[1] - delays_detected[0]) - 3) <= 1, (
+            f"Relative delay 3-0: expected 3, got {delays_detected[1] - delays_detected[0]}"
+        )
+        assert abs((delays_detected[2] - delays_detected[0]) - 6) <= 1, (
+            f"Relative delay 6-0: expected 6, got {delays_detected[2] - delays_detected[0]}"
+        )
+
+
+class TestOSVDDelayDetection:
+    """Tests for oSVD delay recovery."""
+
+    def test_osvd_relative_delay_recovery(self) -> None:
+        """oSVD delay differences should match injected delay differences.
+
+        Uses circulant forward model. Small delays (0-3) to avoid
+        wrap-around artifacts from minimal regularization.
+        """
+        n = 40
+        dt = 1.5
+        m = 2 * n - 1
+
+        t = np.arange(n, dtype=np.float64) * dt
+        aif = (t / 5.0) * np.exp(-t / 7.0)
+        aif[0] = 0.0
+        matrix = build_block_circulant_matrix(aif, dt)
+
+        delays_detected = []
+        for injected_delay in [0, 1, 3]:
+            residue_padded = np.zeros(m, dtype=np.float64)
+            residue_padded[injected_delay:injected_delay + n] = (
+                2.0 * np.exp(-t / 12.0)
+            )
+            tissue = (matrix @ residue_padded)[:n]
+            result = svd_deconvolve_oscillation(tissue, aif, dt=dt)
+            delays_detected.append(result.delay_frames)
+
+        # oSVD has adaptive threshold selection, so relative delay is
+        # less precise than cSVD (±2 frames vs ±1)
+        assert abs((delays_detected[1] - delays_detected[0]) - 1) <= 2, (
+            f"Relative delay 1-0: expected 1, got {delays_detected[1] - delays_detected[0]}"
+        )
+        assert abs((delays_detected[2] - delays_detected[0]) - 3) <= 2, (
+            f"Relative delay 3-0: expected 3, got {delays_detected[2] - delays_detected[0]}"
+        )
 
 
 class TestSVDBatchMatchesSingle:

@@ -1,19 +1,15 @@
 """Extended unit tests for DSC deconvolution methods.
 
-Tests for oSVD, Tikhonov, block-circulant matrix, dispersion correction,
-batch methods, and perfusion parameter extraction.
+Tests for oSVD, Tikhonov, block-circulant matrix, and batch methods.
 """
 
 import numpy as np
 import pytest
 
 from pmriprep.utils.dsc_deconvolution import (
-    apply_dispersion_correction,
     build_block_circulant_matrix,
     build_toeplitz_matrix,
     compute_oscillation_index,
-    extract_perfusion_params,
-    extract_perfusion_params_batch,
     svd_deconvolve_circulant,
     svd_deconvolve_circulant_batch,
     svd_deconvolve_oscillation,
@@ -328,131 +324,3 @@ class TestBatchMethods:
         for i in [0, 1, 3]:
             single = svd_deconvolve_oscillation(tissues[i], aif, dt=dt)
             assert batch_cbf[i] == pytest.approx(single.cbf, rel=1e-8)
-
-
-# =============================================================================
-# Dispersion Correction Tests
-# =============================================================================
-
-
-class TestDispersionCorrection:
-    """Tests for apply_dispersion_correction."""
-
-    def _make_dispersed_aif(self) -> np.ndarray:
-        """Create a gamma-variate AIF that has some inherent width."""
-        n = 60
-        t = np.arange(n, dtype=np.float64)
-        aif = (t / 5.0) * np.exp(-t / 8.0)
-        aif[0] = 0.0
-        return aif
-
-    def test_dispersion_correction_narrower_aif(self) -> None:
-        """Corrected AIF has a higher peak than original (sharper bolus)."""
-        aif = self._make_dispersed_aif()
-        result = apply_dispersion_correction(aif, dt=1.0)
-
-        # Corrected peak should be higher (dispersion removed = sharper)
-        assert result.peak_corrected >= result.peak_original
-
-    def test_dispersion_correction_preserve_auc(self) -> None:
-        """With preserve_auc=True, corrected AUC matches original within 20%."""
-        aif = self._make_dispersed_aif()
-        result = apply_dispersion_correction(aif, dt=1.0, preserve_auc=True)
-
-        ratio = result.auc_corrected / result.auc_original
-        assert ratio == pytest.approx(1.0, abs=0.2)
-
-    def test_dispersion_correction_result_fields(self) -> None:
-        """DispersionCorrectionResult has all expected fields; dispersion_factor >= ~1.0."""
-        aif = self._make_dispersed_aif()
-        result = apply_dispersion_correction(aif, dt=1.0)
-
-        # Check all fields exist and are reasonable
-        assert result.aif_corrected is not None
-        assert len(result.aif_corrected) == len(aif)
-        assert result.vtf is not None
-        assert result.auc_original > 0
-        assert result.auc_corrected > 0
-        assert result.peak_original > 0
-        assert result.peak_corrected > 0
-        assert result.fwhm_original >= 0
-        assert result.fwhm_corrected >= 0
-        # Dispersion factor should be >= ~1.0 (corrected peak >= original)
-        assert result.dispersion_factor >= 0.95
-
-
-# =============================================================================
-# Perfusion Parameter Extraction Tests
-# =============================================================================
-
-
-class TestPerfusionParamExtraction:
-    """Tests for extract_perfusion_params and extract_perfusion_params_batch."""
-
-    def test_extract_perfusion_params_exponential(self) -> None:
-        """Known exponential residue yields expected CBF, MTT, and CBV."""
-        true_cbf = 2.0
-        true_mtt = 8.0
-        dt = 1.5
-        n = 40
-        t = np.arange(n, dtype=np.float64) * dt
-        residue = true_cbf * np.exp(-t / true_mtt)
-
-        params = extract_perfusion_params(residue, dt=dt)
-
-        # CBF = max(R) should be exactly true_cbf (peak at t=0)
-        assert params["cbf"] == pytest.approx(true_cbf, rel=1e-10)
-        assert params["r_max"] == pytest.approx(true_cbf, rel=1e-10)
-
-        # MTT should be within 50% of true_mtt (trapezoidal integration
-        # of a truncated exponential introduces some error)
-        assert params["mtt"] == pytest.approx(true_mtt, rel=0.5)
-
-        # CBV = integral of R(t) dt = CBF * MTT for exponential
-        # (approximately, due to truncation)
-        expected_cbv = true_cbf * true_mtt * (1 - np.exp(-t[-1] / true_mtt))
-        assert params["cbv"] == pytest.approx(expected_cbv, rel=0.1)
-
-        # TTP should be 0 (peak at first frame)
-        assert params["ttp"] == 0
-        assert params["tmax"] == pytest.approx(0.0, abs=1e-10)
-
-    def test_extract_perfusion_params_keys(self) -> None:
-        """Returned dict has all expected keys."""
-        residue = np.exp(-np.arange(20, dtype=np.float64) / 5.0)
-        params = extract_perfusion_params(residue, dt=1.0)
-
-        expected_keys = {"cbf", "cbv", "mtt", "tmax", "ttp", "auc", "r_max"}
-        assert set(params.keys()) == expected_keys
-
-    def test_extract_perfusion_params_batch_matches_single(self) -> None:
-        """Batch extraction matches looped single-voxel extraction."""
-        dt = 1.5
-        n = 30
-        t = np.arange(n, dtype=np.float64) * dt
-
-        residues = np.zeros((3, n), dtype=np.float64)
-        for i in range(3):
-            residues[i, :] = (1.0 + i) * np.exp(-t / (5.0 + i * 3.0))
-
-        # Single-voxel extraction
-        single_cbf = np.zeros(3)
-        single_cbv = np.zeros(3)
-        single_mtt = np.zeros(3)
-        single_tmax = np.zeros(3)
-        for i in range(3):
-            p = extract_perfusion_params(residues[i], dt=dt)
-            single_cbf[i] = p["cbf"]
-            single_cbv[i] = p["cbv"]
-            single_mtt[i] = p["mtt"]
-            single_tmax[i] = p["tmax"]
-
-        # Batch extraction
-        batch_cbf, batch_cbv, batch_mtt, batch_tmax = (
-            extract_perfusion_params_batch(residues, dt=dt)
-        )
-
-        np.testing.assert_allclose(batch_cbf, single_cbf, rtol=1e-10)
-        np.testing.assert_allclose(batch_cbv, single_cbv, rtol=1e-10)
-        np.testing.assert_allclose(batch_mtt, single_mtt, rtol=1e-10)
-        np.testing.assert_allclose(batch_tmax, single_tmax, rtol=1e-10)

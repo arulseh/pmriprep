@@ -1467,6 +1467,7 @@ class ComputeDSCMaps(BaseInterface):
             svd_deconvolve_oscillation,
             tikhonov_deconvolve,
             build_block_circulant_matrix,
+            build_toeplitz_matrix,
         )
 
         try:
@@ -1515,7 +1516,7 @@ class ComputeDSCMaps(BaseInterface):
                 residue = svd_deconvolve_standard(
                     tissue_curve, aif, dt=dt, threshold=threshold,
                 ).residue
-                c_recon = np.convolve(aif, residue, mode="full")[:n_timepoints] * dt
+                c_recon = build_toeplitz_matrix(aif, dt) @ residue
             elif method == "cSVD":
                 # cSVD uses block-circulant matrix; reconstruct via matrix multiply
                 full_residue = svd_deconvolve_circulant(
@@ -1533,7 +1534,7 @@ class ComputeDSCMaps(BaseInterface):
                 residue = tikhonov_deconvolve(
                     tissue_curve, aif, dt=dt,
                 ).residue
-                c_recon = np.convolve(aif, residue, mode="full")[:n_timepoints] * dt
+                c_recon = build_toeplitz_matrix(aif, dt) @ residue
             else:
                 return
 

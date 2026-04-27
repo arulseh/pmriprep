@@ -180,6 +180,11 @@ class TestCSVDRecovery:
         assert result.cbf > 0, f"CBF should be positive, got {result.cbf}"
         # The residue should not be all zeros
         assert np.max(result.residue) > 0
+        # Delay recovered within ±3 frames (wider tolerance accounts for
+        # Toeplitz/circulant discretization mismatch in forward model)
+        assert abs(result.delay_frames - delay_frames) <= 3, (
+            f"Expected delay ~{delay_frames}, got {result.delay_frames}"
+        )
 
 
 # =============================================================================
@@ -263,6 +268,11 @@ class TestOSVDRecovery:
         )
         assert result.cbf > 0, f"CBF should be positive, got {result.cbf}"
         assert np.max(result.residue) > 0
+        # Delay recovered within ±3 frames (wider tolerance accounts for
+        # Toeplitz/circulant discretization mismatch in forward model)
+        assert abs(result.delay_frames - delay_frames) <= 3, (
+            f"Expected delay ~{delay_frames}, got {result.delay_frames}"
+        )
 
 
 # =============================================================================

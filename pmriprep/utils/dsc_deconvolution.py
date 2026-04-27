@@ -28,7 +28,6 @@ from typing import Optional
 import numpy as np
 import numpy.typing as npt
 from scipy import linalg
-from scipy.integrate import trapezoid
 from scipy.optimize import minimize_scalar
 
 from pmriprep.utils.dsc_constants import (
@@ -42,27 +41,20 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DeconvolutionResult:
-    """Result from SVD deconvolution.
+class DeconvolutionResultBase:
+    """Base result fields shared by all deconvolution methods.
 
     Attributes:
-        residue: Residue function R(t) with same length as input curves.
-            The maximum value corresponds to CBF.
+        residue: Residue function R(t).
         cbf: Cerebral blood flow, max(R(t)).
         cbv: Cerebral blood volume, integral of R(t).
         mtt: Mean transit time (seconds), CBV/CBF via central volume theorem.
-        threshold_used: SVD truncation threshold that was applied.
-        n_singular_values: Number of singular values retained after truncation.
-        condition_number: Condition number of the truncated matrix.
     """
 
     residue: npt.NDArray[np.floating]
     cbf: float
     cbv: float
     mtt: float
-    threshold_used: float
-    n_singular_values: int
-    condition_number: float
 
     def get_tmax(self, dt: float = 1.0) -> float:
         """Get time to maximum of residue function.
@@ -74,6 +66,21 @@ class DeconvolutionResult:
             Tmax in seconds (or frames if dt=1.0).
         """
         return float(np.argmax(self.residue)) * dt
+
+
+@dataclass
+class DeconvolutionResult(DeconvolutionResultBase):
+    """Result from standard SVD (sSVD) deconvolution.
+
+    Attributes:
+        threshold_used: SVD truncation threshold that was applied.
+        n_singular_values: Number of singular values retained after truncation.
+        condition_number: Condition number of the truncated matrix.
+    """
+
+    threshold_used: float
+    n_singular_values: int
+    condition_number: float
 
 
 def build_toeplitz_matrix(
@@ -373,32 +380,19 @@ def svd_deconvolve_standard_batch(
 
 
 @dataclass
-class CirculantDeconvolutionResult:
-    """Result from circulant SVD deconvolution.
-
-    Extends the standard DeconvolutionResult with delay estimation,
-    which is uniquely available from the block-circulant approach.
+class CirculantDeconvolutionResult(DeconvolutionResultBase):
+    """Result from circulant SVD (cSVD) deconvolution.
 
     Attributes:
-        residue: Residue function R(t) with length 2N-1 where N is input length.
-            The maximum value corresponds to CBF. The delay is encoded in the
-            position of the maximum.
-        cbf: Cerebral blood flow, max(R(t)).
-        cbv: Cerebral blood volume, integral of the positive portion of R(t).
-        mtt: Mean transit time (seconds), CBV/CBF via central volume theorem.
         delay: Estimated delay between AIF and tissue in seconds.
             Positive = tissue delayed relative to AIF.
-            Negative = tissue arrives before AIF (e.g., proximal to AIF sampling site).
+            Negative = tissue arrives before AIF.
         delay_frames: Delay in frame units (before multiplication by dt).
         threshold_used: SVD truncation threshold that was applied.
         n_singular_values: Number of singular values retained after truncation.
         condition_number: Condition number of the truncated matrix.
     """
 
-    residue: npt.NDArray[np.floating]
-    cbf: float
-    cbv: float
-    mtt: float
     delay: float
     delay_frames: int
     threshold_used: float
@@ -450,27 +444,14 @@ def build_block_circulant_matrix(
         Magn Reson Med. 2003;50(1):164-174.
     """
     n = len(aif)
-    # Padded length for full delay range
     m = 2 * n - 1
 
-    # Zero-pad AIF to length 2N-1
+    # Zero-pad AIF to length 2N-1 for full delay range
     aif_padded = np.zeros(m, dtype=np.float64)
     aif_padded[:n] = aif
 
-    # Build circulant matrix where each row is a cyclic shift
-    # Row i has aif_padded shifted by i positions
-    matrix = np.zeros((m, m), dtype=np.float64)
-    for i in range(m):
-        for j in range(m):
-            # Circulant: element (i,j) = aif_padded[(i-j) mod m]
-            idx = (i - j) % m
-            matrix[i, j] = aif_padded[idx]
-
-    # Apply rectangular integration weighting for circulant matrix.
-    # The block-circulant structure uses uniform (rectangular) weighting
-    # because the cyclic shift pattern is incompatible with trapezoidal
-    # endpoint weighting.
-    matrix *= dt
+    # Rectangular weighting (cyclic shifts are incompatible with trapezoidal)
+    matrix: npt.NDArray[np.floating] = linalg.circulant(aif_padded) * dt
 
     return matrix
 
@@ -494,9 +475,12 @@ def svd_deconvolve_circulant(
         C_tissue(t) = CBF × ∫_{-∞}^{∞} R(t-τ) × AIF(τ) dτ
 
     The delay is extracted from the position of the residue maximum:
-        delay = argmax(R(t)) - (N-1)
+        if argmax(R) < N:  delay = argmax(R)          (positive delay)
+        else:              delay = argmax(R) - (2N-1)  (negative / wrap-around)
 
-    where N is the original curve length and (N-1) is the zero-delay position.
+    where N is the original curve length and 2N-1 is the padded length.
+    Index 0 in the block-circulant residue corresponds to zero delay
+    (Wu et al. 2003, Eq. 5).
 
     Args:
         tissue_curve: Tissue concentration curve, shape (n_timepoints,).
@@ -589,11 +573,13 @@ def svd_deconvolve_circulant(
     if apply_non_negativity:
         residue = np.maximum(residue, 0.0)
 
-    # Extract delay from position of maximum
-    # The zero-delay position is at index (n-1) in the padded residue
-    # Delay = peak_position - (n-1)
+    # Extract delay from position of maximum (Wu et al. 2003)
+    # Zero-delay is at index 0; indices >= n wrap to negative delays.
     peak_position = int(np.argmax(residue))
-    delay_frames = peak_position - (n - 1)
+    if peak_position < n:
+        delay_frames = peak_position
+    else:
+        delay_frames = peak_position - m
     delay_seconds = float(delay_frames) * dt
 
     # Extract N causal points starting at peak position
@@ -721,9 +707,13 @@ def svd_deconvolve_circulant_batch(
         if apply_non_negativity:
             residues_masked = np.maximum(residues_masked, 0.0)
 
-        # Extract delays from peak positions
+        # Extract delays from peak positions (Wu et al. 2003; zero-delay at index 0)
         peak_positions = np.argmax(residues_masked, axis=1)
-        delay_frames = peak_positions - (n_timepoints - 1)
+        delay_frames = np.where(
+            peak_positions < n_timepoints,
+            peak_positions,
+            peak_positions - m,
+        )
         delay_masked = delay_frames.astype(np.float64) * dt
 
         # Extract N causal points from each voxel's 2N-1 residue
@@ -771,17 +761,10 @@ def svd_deconvolve_circulant_batch(
 
 
 @dataclass
-class OscillationDeconvolutionResult:
-    """Result from oscillation-index limited SVD deconvolution.
-
-    Uses a block-circulant matrix (Wu 2003) for delay-insensitive
-    deconvolution with OI-based adaptive threshold selection.
+class OscillationDeconvolutionResult(DeconvolutionResultBase):
+    """Result from oscillation-index limited SVD (oSVD) deconvolution.
 
     Attributes:
-        residue: Residue function R(t), length 2N-1 (circulant output).
-        cbf: Cerebral blood flow, max of causal residue.
-        cbv: Cerebral blood volume, integral of causal residue.
-        mtt: Mean transit time (seconds), CBV/CBF via central volume theorem.
         delay: Tracer arrival delay in seconds.
         delay_frames: Tracer arrival delay in frame units.
         oscillation_index: OI = (1/N) * sum|R(t+1) - R(t)| / max(R).
@@ -792,10 +775,6 @@ class OscillationDeconvolutionResult:
         converged: Whether the search converged to find a valid threshold.
     """
 
-    residue: npt.NDArray[np.floating]
-    cbf: float
-    cbv: float
-    mtt: float
     delay: float
     delay_frames: int
     oscillation_index: float
@@ -1007,7 +986,7 @@ def svd_deconvolve_oscillation(
     best_threshold = threshold_max
     best_n_ret = 0
     best_cond = float("inf")
-    best_peak = n - 1
+    best_peak = 0
     converged = False
 
     for thresh in thresholds:
@@ -1036,8 +1015,11 @@ def svd_deconvolve_oscillation(
         best_threshold = threshold_max
         converged = False
 
-    # Extract delay from peak position (zero-delay at index N-1)
-    delay_frames = best_peak - (n - 1)
+    # Extract delay from peak position (Wu et al. 2003; zero-delay at index 0)
+    if best_peak < n:
+        delay_frames = best_peak
+    else:
+        delay_frames = best_peak - m
     delay = float(delay_frames) * dt
 
     # Extract N causal points for perfusion parameters
@@ -1150,7 +1132,7 @@ def svd_deconvolve_oscillation_batch(
         best_residue = None
         best_oi = float("inf")
         best_threshold = threshold_max
-        best_peak = n_timepoints - 1
+        best_peak = 0
 
         for thresh in thresholds:
             residue, oi, n_ret, cond, peak = _deconvolve_with_threshold(
@@ -1172,8 +1154,11 @@ def svd_deconvolve_oscillation_batch(
             )
             best_threshold = threshold_max
 
-        # Extract delay and causal perfusion parameters
-        delay_frames = best_peak - (n_timepoints - 1)
+        # Extract delay (Wu et al. 2003; zero-delay at index 0)
+        if best_peak < n_timepoints:
+            delay_frames = best_peak
+        else:
+            delay_frames = best_peak - m
         causal_indices = (best_peak + np.arange(n_timepoints)) % m
         causal_residue = best_residue[causal_indices]
 
@@ -1206,47 +1191,23 @@ def svd_deconvolve_oscillation_batch(
 
 
 @dataclass
-class TikhonovDeconvolutionResult:
+class TikhonovDeconvolutionResult(DeconvolutionResultBase):
     """Result from Tikhonov regularized deconvolution.
 
-    Extends the standard DeconvolutionResult with Tikhonov-specific information.
-
     Attributes:
-        residue: Residue function R(t) with same length as input curves.
-            The maximum value corresponds to CBF.
-        cbf: Cerebral blood flow, max(R(t)).
-        cbv: Cerebral blood volume, integral of R(t).
-        mtt: Mean transit time (seconds), CBV/CBF via central volume theorem.
         lambda_optimal: The optimal regularization parameter λ found by GCV.
         gcv_score: The GCV score at the optimal λ.
-        n_lambda_evaluated: Number of λ values evaluated during optimization.
-        residual_norm: ||AR - C||² at the solution.
-        regularization_norm: ||R||² at the solution.
+        residual_norm: ||AR - C||² at the unclipped solution.
+        regularization_norm: ||R||² at the unclipped solution.
         gcv_boundary_expanded: True if the GCV search was expanded beyond
             the initial lambda_max boundary.
     """
 
-    residue: npt.NDArray[np.floating]
-    cbf: float
-    cbv: float
-    mtt: float
     lambda_optimal: float
     gcv_score: float
-    n_lambda_evaluated: int
     residual_norm: float
     regularization_norm: float
     gcv_boundary_expanded: bool = False
-
-    def get_tmax(self, dt: float = 1.0) -> float:
-        """Get time to maximum of residue function.
-
-        Args:
-            dt: Time step in seconds (default 1.0 for frame units).
-
-        Returns:
-            Tmax in seconds (or frames if dt=1.0).
-        """
-        return float(np.argmax(self.residue)) * dt
 
 
 def _compute_gcv_score(
@@ -1310,7 +1271,6 @@ def tikhonov_deconvolve(
     dt: float = 1.0,
     lambda_min: float = DEFAULT_LAMBDA_RANGE.min,
     lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
-    n_lambda: int = 50,
     apply_non_negativity: bool = True,
 ) -> TikhonovDeconvolutionResult:
     """Tikhonov regularized deconvolution with GCV parameter selection.
@@ -1336,7 +1296,6 @@ def tikhonov_deconvolve(
             Provide actual TR for timing parameters (MTT, Tmax) in seconds.
         lambda_min: Minimum λ value to consider. Default 1e-4.
         lambda_max: Maximum λ value to consider. Default 1.0.
-        n_lambda: Unused. Kept for API compatibility.
         apply_non_negativity: If True, apply non-negativity constraint to
             residue function by clipping negative values to zero.
             Default is True.
@@ -1461,14 +1420,14 @@ def tikhonov_deconvolve(
         tissue_curve, u, s, vh, best_lambda
     )
 
-    # Apply non-negativity constraint
-    if apply_non_negativity:
-        best_residue = np.maximum(best_residue, 0.0)
-
-    # Compute residual and regularization norms
+    # Compute residual norm before non-negativity clipping
     predicted = matrix @ best_residue
     residual_norm = float(np.sum((predicted - tissue_curve) ** 2))
     regularization_norm = float(np.sum(best_residue ** 2))
+
+    # Apply non-negativity constraint
+    if apply_non_negativity:
+        best_residue = np.maximum(best_residue, 0.0)
 
     # Extract perfusion parameters
     cbf = float(np.max(best_residue))
@@ -1489,7 +1448,6 @@ def tikhonov_deconvolve(
         mtt=mtt,
         lambda_optimal=float(best_lambda),
         gcv_score=float(best_gcv),
-        n_lambda_evaluated=n_lambda,
         residual_norm=residual_norm,
         regularization_norm=regularization_norm,
         gcv_boundary_expanded=gcv_boundary_expanded,
@@ -1502,7 +1460,6 @@ def tikhonov_deconvolve_batch(
     dt: float = 1.0,
     lambda_min: float = DEFAULT_LAMBDA_RANGE.min,
     lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
-    n_lambda: int = 50,
     apply_non_negativity: bool = True,
     mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> tuple[
@@ -1527,7 +1484,6 @@ def tikhonov_deconvolve_batch(
         dt: Time step in seconds.
         lambda_min: Minimum λ value. Default 1e-4.
         lambda_max: Maximum λ value. Default 1.0.
-        n_lambda: Unused. Kept for API compatibility.
         apply_non_negativity: Apply non-negativity constraint on residue.
         mask: Optional boolean mask of voxels to process. If None, process all.
             Shape must match spatial dimensions of tissue_curves.
@@ -1589,6 +1545,33 @@ def tikhonov_deconvolve_batch(
             )
             if result.success and np.isfinite(result.x):
                 best_lambda = 10.0 ** result.x
+
+                # Boundary expansion (matches single-voxel tikhonov_deconvolve)
+                if result.x > log_lambda_max - 0.05:
+                    expanded_lambda_max = min(lambda_max * 10, 100.0)
+                    if expanded_lambda_max > lambda_max * 1.1:
+                        try:
+                            result2 = minimize_scalar(
+                                gcv_objective,
+                                bounds=(
+                                    log_lambda_min,
+                                    np.log10(expanded_lambda_max),
+                                ),
+                                method="bounded",
+                            )
+                            if (
+                                result2.success
+                                and np.isfinite(result2.x)
+                                and np.isfinite(result2.fun)
+                                and result2.fun <= result.fun
+                            ):
+                                best_lambda = 10.0 ** result2.x
+                        except Exception as e:
+                            logger.debug(
+                                "Expanded GCV search failed for voxel %d "
+                                "(%s); keeping initial lambda=%.4f",
+                                idx, e, best_lambda,
+                            )
             else:
                 best_lambda = 0.1
         except Exception:
@@ -1618,610 +1601,3 @@ def tikhonov_deconvolve_batch(
 
     return residues, cbf, cbv, mtt, lambda_optimal
 
-
-# =============================================================================
-# Arterial Dispersion Correction
-# =============================================================================
-
-
-@dataclass
-class DispersionCorrectionResult:
-    """Result from arterial dispersion correction.
-
-    Dispersion correction accounts for the broadening and attenuation of
-    the bolus as it travels from the AIF sampling site to the tissue of interest.
-    This is modeled using a vascular transport function (VTF).
-
-    Attributes:
-        aif_corrected: The dispersion-corrected AIF, with same length as input AIF.
-            This represents the estimated AIF at the tissue site.
-        vtf: The vascular transport function used for correction.
-        auc_original: AUC of the original AIF (dose preserved).
-        auc_corrected: AUC of the corrected AIF (should match original).
-        peak_original: Peak value of the original AIF.
-        peak_corrected: Peak value of the corrected AIF (typically higher).
-        fwhm_original: FWHM of the original AIF in frames.
-        fwhm_corrected: FWHM of the corrected AIF (typically narrower).
-        dispersion_factor: Ratio of corrected to original peak (typically 1.15-1.30).
-    """
-
-    aif_corrected: npt.NDArray[np.floating]
-    vtf: npt.NDArray[np.floating]
-    auc_original: float
-    auc_corrected: float
-    peak_original: float
-    peak_corrected: float
-    fwhm_original: float
-    fwhm_corrected: float
-    dispersion_factor: float
-
-
-def _gamma_variate_vtf(
-    t: npt.NDArray[np.floating],
-    alpha: float,
-    beta: float,
-    delay: float = 0.0,
-) -> npt.NDArray[np.floating]:
-    """Generate a gamma-variate vascular transport function (VTF).
-
-    The VTF models the probability distribution of transit times through
-    the arterial tree between the AIF sampling site and the tissue.
-
-    Model: h(t) = ((t - delay) / beta)^alpha × exp(-(t - delay) / beta) / (beta × Gamma(alpha + 1))
-
-    This is a normalized gamma distribution (integrates to 1) representing
-    the probability density of transit times.
-
-    Args:
-        t: Time points in seconds (or frames if dt=1), shape (n_timepoints,).
-        alpha: Shape parameter controlling the skewness of the VTF.
-            Higher alpha = more symmetric distribution.
-            Typical range: 0.5-2.0 for arterial dispersion.
-        beta: Scale parameter in seconds (or frames), controlling the
-            mean transit time and width.
-            MTT_vtf = (alpha + 1) × beta
-            Typical range: 0.5-2.0 seconds.
-        delay: Onset delay in same units as t. Default 0.
-
-    Returns:
-        Normalized VTF with same shape as t. Integrates to approximately 1.
-    """
-    # Shift time by delay
-    t_shifted = t - delay
-
-    # Output array (zeros where t <= delay)
-    vtf = np.zeros_like(t, dtype=np.float64)
-
-    # Valid time points
-    valid = t_shifted > 0
-    t_valid = t_shifted[valid]
-
-    # Gamma distribution: (t/beta)^alpha * exp(-t/beta) / (beta * Gamma(alpha+1))
-    # This is the PDF of a gamma distribution with shape (alpha+1) and scale beta
-    from scipy.special import gamma as gamma_func
-
-    normalization = beta * gamma_func(alpha + 1)
-    if normalization > EPSILON_CONCENTRATION:
-        vtf[valid] = (
-            np.power(t_valid / beta, alpha)
-            * np.exp(-t_valid / beta)
-            / normalization
-        )
-
-    return vtf
-
-
-def _compute_fwhm_frames(curve: npt.NDArray[np.floating]) -> float:
-    """Compute FWHM of a curve in frame units.
-
-    Args:
-        curve: 1D array representing the curve.
-
-    Returns:
-        FWHM in frames. Returns 0 if curve is flat or invalid.
-    """
-    if len(curve) < 3:
-        return 0.0
-
-    peak = float(np.max(curve))
-    if peak <= EPSILON_CONCENTRATION:
-        return 0.0
-
-    half_max = peak / 2.0
-
-    # Find indices where curve crosses half-max
-    above_half = curve >= half_max
-
-    if not np.any(above_half):
-        return 0.0
-
-    # Find first and last indices above half-max
-    indices = np.where(above_half)[0]
-    first_idx = int(indices[0])
-    last_idx = int(indices[-1])
-
-    # FWHM in frames
-    return float(last_idx - first_idx + 1)
-
-
-def _deconvolve_aif_with_vtf(
-    aif: npt.NDArray[np.floating],
-    vtf: npt.NDArray[np.floating],
-    dt: float,
-    threshold: float = 0.2,
-) -> npt.NDArray[np.floating]:
-    """Deconvolve the measured AIF with the VTF to recover the true local AIF.
-
-    The measured AIF is the convolution of the true (local) AIF with the VTF:
-        AIF_measured = AIF_true ⊗ VTF
-
-    Deconvolving removes the dispersion effect:
-        AIF_true = deconvolve(AIF_measured, VTF)
-
-    Args:
-        aif: Measured AIF concentration curve, shape (n_timepoints,).
-        vtf: Vascular transport function, shape (n_timepoints,).
-        dt: Time step in seconds.
-        threshold: SVD truncation threshold for regularization.
-
-    Returns:
-        Dispersion-corrected (true local) AIF.
-    """
-    n = len(aif)
-
-    # Build Toeplitz matrix from VTF
-    matrix = np.zeros((n, n), dtype=np.float64)
-    for i in range(n):
-        for j in range(i + 1):
-            # Trapezoidal rule weighting
-            if j == 0 or j == i:
-                weight = 0.5
-            else:
-                weight = 1.0
-            matrix[i, j] = vtf[i - j] * weight * dt
-
-    # SVD of VTF convolution matrix
-    u, s, vh = linalg.svd(matrix, full_matrices=False)
-
-    # Truncate singular values
-    s_max = s[0] if len(s) > 0 else 1.0
-    truncation_threshold = threshold * s_max
-    n_retained = max(1, int(np.sum(s > truncation_threshold)))
-
-    # Create truncated inverse
-    s_inv = np.zeros_like(s)
-    for i in range(n_retained):
-        if s[i] > truncation_threshold:
-            s_inv[i] = 1.0 / s[i]
-
-    # Deconvolve: AIF_true = V @ S_inv @ U^T @ AIF_measured
-    aif_corrected = vh.T @ (s_inv * (u.T @ aif))
-
-    # Apply non-negativity
-    aif_corrected = np.maximum(aif_corrected, 0.0)
-
-    return np.asarray(aif_corrected, dtype=np.float64)
-
-
-def apply_dispersion_correction(
-    aif: npt.NDArray[np.floating],
-    dt: float = 1.0,
-    vtf_alpha: float = 1.0,
-    vtf_beta: float = 1.5,
-    vtf_delay: float = 0.0,
-    svd_threshold: float = 0.2,
-    preserve_auc: bool = True,
-) -> DispersionCorrectionResult:
-    """Apply vascular transport function (VTF) based arterial dispersion correction.
-
-    Arterial dispersion occurs as the contrast bolus travels through the
-    arterial tree from the AIF sampling site (typically large arteries like
-    the MCA or carotid) to the tissue microvasculature. The bolus broadens
-    and attenuates due to:
-
-    1. Different path lengths through the vascular network
-    2. Laminar flow velocity profiles
-    3. Mixing at branch points
-
-    This effect causes CBF underestimation, particularly in distal territories
-    (15-30% underestimation in watershed regions).
-
-    The correction models dispersion using a gamma-variate VTF and deconvolves
-    the measured AIF to recover the estimated local AIF at the tissue site.
-
-    Model:
-        AIF_measured(t) = AIF_true(t) ⊗ VTF(t)
-        AIF_true(t) = deconvolve(AIF_measured(t), VTF(t))
-
-    where VTF is a gamma distribution modeling transit time distribution
-    through the arterial tree.
-
-    Args:
-        aif: Measured arterial input function, shape (n_timepoints,).
-            Can be in concentration (mM) or ΔR2* (s⁻¹) units.
-        dt: Time step in seconds. Default 1.0 gives results in frame units.
-        vtf_alpha: Shape parameter for the VTF gamma distribution.
-            Higher values = more symmetric VTF.
-            Typical range: 0.5-2.0. Default 1.0.
-        vtf_beta: Scale parameter for the VTF in seconds (or frames if dt=1).
-            Controls the mean arterial transit time: MTT_vtf = (alpha+1) × beta.
-            Typical range: 0.5-2.0 seconds. Default 1.5.
-        vtf_delay: Onset delay of the VTF in same units as dt.
-            Default 0.0.
-        svd_threshold: SVD truncation threshold for deconvolution.
-            Higher = more regularization = smoother result.
-            Default 0.2.
-        preserve_auc: If True, scale the corrected AIF to preserve the total
-            dose (AUC) of the original AIF. This ensures that CBV remains
-            unaffected by the correction. Default True.
-
-    Returns:
-        DispersionCorrectionResult containing corrected AIF and metrics.
-
-    Raises:
-        ValueError: If aif is empty.
-        ValueError: If vtf_alpha or vtf_beta are not positive.
-
-    Notes:
-        - The correction increases the AIF peak by 15-30% typically
-        - FWHM is reduced (narrower, sharper bolus)
-        - Total AUC is preserved to maintain accurate CBV
-        - CBF increases in distal territories after correction
-        - The effect is larger for regions far from the AIF sampling site
-        - For proximal regions, correction may over-correct
-
-    Impact on perfusion parameters:
-        - CBF: Increases 15-30% in distal (watershed) territories
-        - CBV: Unchanged if preserve_auc=True
-        - MTT: Decreases proportionally (MTT = CBV/CBF)
-        - Tmax: May decrease due to sharper bolus
-
-    References:
-        Calamante F, Gadian DG, Connelly A.
-        Delay and dispersion effects in dynamic susceptibility contrast MRI:
-        simulations using singular value decomposition.
-        Magn Reson Med. 2000;44(3):466-473.
-
-        Willats L, Calamante F.
-        The 39 steps: evading error and deciphering the secrets for
-        accurate dynamic susceptibility contrast MRI.
-        NMR Biomed. 2013;26(8):913-931.
-    """
-    # Validate inputs
-    if len(aif) == 0:
-        raise ValueError("AIF array cannot be empty")
-
-    if vtf_alpha <= 0:
-        raise ValueError(f"vtf_alpha must be positive, got {vtf_alpha}")
-
-    if vtf_beta <= 0:
-        raise ValueError(f"vtf_beta must be positive, got {vtf_beta}")
-
-    n = len(aif)
-
-    # Create time vector
-    t = np.arange(n, dtype=np.float64) * dt
-
-    # Generate VTF
-    vtf = _gamma_variate_vtf(t, vtf_alpha, vtf_beta, vtf_delay)
-
-    # Normalize VTF to integrate to 1 (probability distribution)
-    vtf_integral = trapezoid(vtf, dx=dt)
-    if vtf_integral > EPSILON_CONCENTRATION:
-        vtf = vtf / vtf_integral
-
-    # Compute original AIF metrics
-    auc_original = float(trapezoid(aif, dx=dt))
-    peak_original = float(np.max(aif))
-    fwhm_original = _compute_fwhm_frames(aif)
-
-    # Deconvolve AIF with VTF
-    aif_corrected = _deconvolve_aif_with_vtf(aif, vtf, dt, svd_threshold)
-
-    # Preserve AUC (dose) if requested
-    if preserve_auc:
-        auc_corrected_raw = float(trapezoid(aif_corrected, dx=dt))
-        if auc_corrected_raw > EPSILON_CONCENTRATION:
-            scale_factor = auc_original / auc_corrected_raw
-            aif_corrected = aif_corrected * scale_factor
-
-    # Compute corrected AIF metrics
-    auc_corrected = float(trapezoid(aif_corrected, dx=dt))
-    peak_corrected = float(np.max(aif_corrected))
-    fwhm_corrected = _compute_fwhm_frames(aif_corrected)
-
-    # Dispersion factor (ratio of corrected to original peak)
-    if peak_original > EPSILON_CONCENTRATION:
-        dispersion_factor = peak_corrected / peak_original
-    else:
-        dispersion_factor = 1.0
-
-    return DispersionCorrectionResult(
-        aif_corrected=aif_corrected,
-        vtf=vtf,
-        auc_original=auc_original,
-        auc_corrected=auc_corrected,
-        peak_original=peak_original,
-        peak_corrected=peak_corrected,
-        fwhm_original=fwhm_original,
-        fwhm_corrected=fwhm_corrected,
-        dispersion_factor=dispersion_factor,
-    )
-
-
-def apply_dispersion_correction_batch(
-    aif: npt.NDArray[np.floating],
-    dt: float = 1.0,
-    vtf_alpha: float = 1.0,
-    vtf_beta: float = 1.5,
-    vtf_delay: float = 0.0,
-    svd_threshold: float = 0.2,
-    preserve_auc: bool = True,
-) -> npt.NDArray[np.floating]:
-    """Convenience function to apply dispersion correction and return only the corrected AIF.
-
-    This is a simplified interface for batch processing pipelines that only
-    need the corrected AIF without the full metrics.
-
-    Args:
-        aif: Measured arterial input function, shape (n_timepoints,).
-        dt: Time step in seconds.
-        vtf_alpha: VTF shape parameter. Default 1.0.
-        vtf_beta: VTF scale parameter in seconds. Default 1.5.
-        vtf_delay: VTF onset delay. Default 0.0.
-        svd_threshold: SVD truncation threshold. Default 0.2.
-        preserve_auc: Preserve total AUC. Default True.
-
-    Returns:
-        Dispersion-corrected AIF, shape (n_timepoints,).
-    """
-    result = apply_dispersion_correction(
-        aif=aif,
-        dt=dt,
-        vtf_alpha=vtf_alpha,
-        vtf_beta=vtf_beta,
-        vtf_delay=vtf_delay,
-        svd_threshold=svd_threshold,
-        preserve_auc=preserve_auc,
-    )
-    return result.aif_corrected
-
-
-# =============================================================================
-# Perfusion Parameter Extraction
-# =============================================================================
-
-
-@dataclass
-class PerfusionParameters:
-    """Perfusion parameters extracted from a residue function.
-
-    These parameters are derived from the residue (impulse response) function
-    obtained via deconvolution of the tissue concentration curve with the AIF.
-
-    Attributes:
-        cbf: Cerebral blood flow = max(R(t)).
-            Units: arbitrary (relative).
-        cbv: Cerebral blood volume = ∫R(t)dt.
-            Units: arbitrary (relative).
-        mtt: Mean transit time = CBV / CBF (central volume theorem).
-            Units: seconds.
-        tmax: Time to maximum of residue function = argmax(R(t)) × dt.
-            Units: seconds. Indicates delay between AIF and tissue response.
-            Clinical significance: Tmax > 6s may indicate penumbra.
-        ttp: Time to peak of residue function in frame units (before dt scaling).
-            Integer index of the maximum in the residue function.
-        auc: Area under the residue curve (same as CBV but kept for clarity).
-        r_max: Maximum value of the residue function (same as CBF).
-    """
-
-    cbf: float
-    cbv: float
-    mtt: float
-    tmax: float
-    ttp: int
-    auc: float
-    r_max: float
-
-
-def extract_perfusion_params(
-    residue: npt.NDArray[np.floating],
-    dt: float = 1.0,
-) -> dict[str, float]:
-    """Extract perfusion parameters from a residue function.
-
-    Given a residue function R(t) from deconvolution, extracts the standard
-    DSC perfusion parameters:
-
-    - CBF = max(R(t))
-        Cerebral blood flow, the maximum of the residue function.
-
-    - CBV = ∫R(t)dt
-        Cerebral blood volume, the integral of the residue function.
-
-    - MTT = CBV / CBF
-        Mean transit time via the central volume theorem.
-
-    - Tmax = argmax(R(t)) × dt
-        Time to maximum of the residue function (in seconds if dt provided).
-
-    This function is useful when you have a residue function from any source
-    (not necessarily from the DeconvolutionResult dataclass) and want to
-    extract the standard perfusion parameters.
-
-    Args:
-        residue: Residue function R(t), shape (n_timepoints,).
-            This should be the output from deconvolution (sSVD, cSVD, oSVD,
-            Tikhonov, or any other method).
-        dt: Time step in seconds. Default 1.0 gives Tmax in frame units.
-            For proper temporal units, provide the actual TR (repetition time).
-
-    Returns:
-        Dictionary containing:
-            - 'cbf': Cerebral blood flow = max(R(t))
-            - 'cbv': Cerebral blood volume = ∫R(t)dt
-            - 'mtt': Mean transit time = CBV/CBF (seconds)
-            - 'tmax': Time to maximum = argmax(R(t)) × dt (seconds)
-            - 'ttp': Time to peak in frame units (integer index)
-            - 'auc': Area under curve (same as CBV)
-            - 'r_max': Maximum residue value (same as CBF)
-
-    Raises:
-        ValueError: If residue array is empty.
-
-    Notes:
-        - CBF and CBV are relative (arbitrary units)
-        - MTT is always in seconds (or frames if dt=1.0)
-        - Tmax > 6 seconds is often used as a clinical threshold for penumbra
-        - For cSVD results, the delay is already accounted for in the residue
-
-    Example:
-        >>> import numpy as np
-        >>> from pmriprep.utils.dsc_deconvolution import (
-        ...     svd_deconvolve_standard,
-        ...     extract_perfusion_params,
-        ... )
-        >>> # Generate example data
-        >>> aif = np.exp(-np.arange(60) / 5.0) * 10
-        >>> tissue = np.convolve(aif, np.exp(-np.arange(60) / 10.0))[:60]
-        >>> # Deconvolve
-        >>> result = svd_deconvolve_standard(tissue, aif, dt=1.5)
-        >>> # Extract parameters (alternative to using result.cbf, etc.)
-        >>> params = extract_perfusion_params(result.residue, dt=1.5)
-        >>> print(f"CBF: {params['cbf']:.2f}, MTT: {params['mtt']:.2f}s")
-
-    References:
-        Østergaard L, Weisskoff RM, Chesler DA, Gyldensted C, Rosen BR.
-        High resolution measurement of cerebral blood flow using
-        intravascular tracer bolus passages. Part I: Mathematical approach
-        and statistical analysis. Magn Reson Med. 1996;36(5):715-725.
-
-        Central Volume Theorem:
-        MTT = CBV / CBF (Meier P, Zierler KL. J Appl Physiol. 1954;6:731-744)
-    """
-    # Validate input
-    if len(residue) == 0:
-        raise ValueError("Residue array cannot be empty")
-
-    # CBF = max(R(t))
-    cbf = float(np.max(residue))
-
-    # CBV = ∫R(t)dt using trapezoidal integration (Sourbron & Luypaert 2007)
-    cbv = float(np.trapezoid(residue, dx=dt))
-
-    # MTT = CBV / CBF (central volume theorem)
-    # Guard against division by zero
-    if cbf > EPSILON_CONCENTRATION:
-        mtt = cbv / cbf
-    else:
-        mtt = 0.0
-
-    # Tmax = argmax(R(t)) × dt
-    # Time to peak in frame units (integer index)
-    ttp = int(np.argmax(residue))
-    # Time to maximum in seconds (or whatever units dt is in)
-    tmax = float(ttp) * dt
-
-    return {
-        "cbf": cbf,
-        "cbv": cbv,
-        "mtt": mtt,
-        "tmax": tmax,
-        "ttp": ttp,
-        "auc": cbv,  # AUC is the same as CBV
-        "r_max": cbf,  # r_max is the same as CBF
-    }
-
-
-def extract_perfusion_params_batch(
-    residues: npt.NDArray[np.floating],
-    dt: float = 1.0,
-    mask: Optional[npt.NDArray[np.bool_]] = None,
-) -> tuple[
-    npt.NDArray[np.floating],  # cbf
-    npt.NDArray[np.floating],  # cbv
-    npt.NDArray[np.floating],  # mtt
-    npt.NDArray[np.floating],  # tmax
-]:
-    """Extract perfusion parameters from multiple residue functions.
-
-    Batch version of extract_perfusion_params() for processing multiple
-    voxels efficiently.
-
-    Args:
-        residues: Residue functions, shape (n_voxels, n_timepoints) or
-            (x, y, z, n_timepoints) for 4D data.
-        dt: Time step in seconds. Default 1.0.
-        mask: Optional boolean mask of voxels to process. If None, process all.
-            Shape must match spatial dimensions of residues.
-
-    Returns:
-        Tuple of (cbf, cbv, mtt, tmax) arrays with same spatial shape as input.
-            - cbf: Cerebral blood flow = max(R(t))
-            - cbv: Cerebral blood volume = ∫R(t)dt
-            - mtt: Mean transit time = CBV/CBF
-            - tmax: Time to maximum = argmax(R(t)) × dt
-    """
-    # Store original shape for reshaping output
-    original_shape = residues.shape
-    n_timepoints = original_shape[-1]
-
-    # Reshape to 2D (n_voxels, n_timepoints)
-    if residues.ndim > 2:
-        spatial_shape = original_shape[:-1]
-        n_voxels = int(np.prod(spatial_shape))
-        residues_2d = residues.reshape(n_voxels, n_timepoints)
-    else:
-        spatial_shape = (original_shape[0],)
-        n_voxels = original_shape[0]
-        residues_2d = residues
-
-    # Flatten mask if provided
-    if mask is not None:
-        mask_flat = mask.flatten()
-    else:
-        mask_flat = np.ones(n_voxels, dtype=bool)
-
-    # Initialize output arrays
-    cbf = np.zeros(n_voxels, dtype=np.float64)
-    cbv = np.zeros(n_voxels, dtype=np.float64)
-    mtt = np.zeros(n_voxels, dtype=np.float64)
-    tmax = np.zeros(n_voxels, dtype=np.float64)
-
-    # Process masked voxels
-    masked_indices = np.where(mask_flat)[0]
-    if len(masked_indices) > 0:
-        residues_masked = residues_2d[masked_indices, :]
-
-        # CBF = max(R(t))
-        cbf_masked = np.max(residues_masked, axis=1)
-
-        # CBV = ∫R(t)dt using trapezoidal integration (Sourbron & Luypaert 2007)
-        cbv_masked = np.trapezoid(residues_masked, dx=dt, axis=1)
-
-        # MTT = CBV / CBF
-        with np.errstate(divide="ignore", invalid="ignore"):
-            mtt_masked = np.where(
-                cbf_masked > EPSILON_CONCENTRATION,
-                cbv_masked / cbf_masked,
-                0.0,
-            )
-
-        # Tmax = argmax(R(t)) × dt
-        ttp_masked = np.argmax(residues_masked, axis=1)
-        tmax_masked = ttp_masked.astype(np.float64) * dt
-
-        # Store results
-        cbf[masked_indices] = cbf_masked
-        cbv[masked_indices] = cbv_masked
-        mtt[masked_indices] = mtt_masked
-        tmax[masked_indices] = tmax_masked
-
-    # Reshape to original spatial dimensions
-    if residues.ndim > 2:
-        cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
-        cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
-        mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
-        tmax = tmax.reshape(spatial_shape)  # type: ignore[assignment]
-
-    return cbf, cbv, mtt, tmax
