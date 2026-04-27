@@ -185,7 +185,7 @@ class CPIModel(DSCModel):
                     name=f"r{i}",
                     bounds=(0.0, 1.0),
                     typical_range=(0.0, 1.0),
-                    transform=TransformType.IDENTITY,
+                    transform=TransformType.LOG_LOGIT,
                     description=f"Control point fraction at t={t:.1f}s",
                     units="fraction",
                 )
@@ -382,16 +382,17 @@ class CPIModel(DSCModel):
 
     def compute_monotonicity_precision(
         self,
-        sigma_delta: float = 0.15,
+        sigma_delta: float = 0.60,
     ) -> npt.NDArray[np.floating]:
         """Build symmetric monotonicity prior precision matrix for VI.
 
         The symmetric penalty sum((r_{i-1} - r_i)^2 / sigma_delta^2)
         expands to a tridiagonal matrix on the fraction parameters only
-        (CBF row/column is zero).
+        (CBF row/column is zero). Operates in log-odds space (LOG_LOGIT);
+        sigma calibrated via delta method at r=0.5: 0.15 * 4.0 = 0.60.
 
         Args:
-            sigma_delta: Prior std for decrement penalty.
+            sigma_delta: Prior std for decrement penalty in log-odds space.
 
         Returns:
             n_parameters x n_parameters precision matrix.
@@ -414,6 +415,31 @@ class CPIModel(DSCModel):
 
         # CBF (index 0) has no monotonicity penalty
         return lam
+
+    def compute_monotonicity_eta_correction(
+        self,
+        sigma_anchor: float = 3.0,
+    ) -> npt.NDArray[np.floating]:
+        """R(0)=1.0 anchor mean correction for the VB natural parameter vector.
+
+        The penalty (R(0)' - r_1')^2/sigma_anchor^2 has a linear term
+        tau * R(0)' that must be added to eta[1] in the VB update.
+        Uses logit(0.999) as pseudo-anchor since logit(1.0) = +inf.
+        sigma_anchor is larger than the inter-point sigma_delta because
+        the R(0)-r_1 distance spans a much wider logit range.
+
+        Args:
+            sigma_anchor: Prior std for the anchor pair in log-odds space.
+
+        Returns:
+            n_parameters vector to add to the VB natural parameter.
+        """
+        n = self._n_control_points
+        eta = np.zeros(n, dtype=np.float64)
+        tau = 1.0 / (sigma_anchor ** 2)
+        anchor_logit = np.log(0.999 / 0.001)  # ≈ 6.907
+        eta[1] = tau * anchor_logit
+        return eta
 
     def compute_nlls_seed(
         self,

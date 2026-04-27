@@ -432,6 +432,24 @@ class DSCModel(ABC):
         """
         return None
 
+    def compute_monotonicity_eta_correction(
+        self,
+        sigma_anchor: float = 3.0,
+    ) -> npt.NDArray[np.floating] | None:
+        """Mean correction for fixed-anchor monotonicity penalty in VI.
+
+        Returns None by default. Override in models with a fixed R(0)
+        anchor point. Must use the same anchor value as the precision
+        matrix's first-pair entry in compute_monotonicity_precision().
+
+        Args:
+            sigma_anchor: Prior std for the anchor pair in log-odds space.
+
+        Returns:
+            n_parameters vector to add to the VB natural parameter, or None.
+        """
+        return None
+
     def compute_fitted_residue(
         self,
         params: ParamsLike,

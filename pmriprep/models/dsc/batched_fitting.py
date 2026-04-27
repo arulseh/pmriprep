@@ -363,6 +363,7 @@ def batched_dsc_vi_fit(
     fitting_param_names: list[str],
     fitting_bounds: list[tuple[float, float]],
     mono_prec: Optional[npt.NDArray[np.floating]] = None,
+    mono_eta: Optional[npt.NDArray[np.floating]] = None,
     control_point_times: Optional[npt.NDArray[np.floating]] = None,
     toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
     nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
@@ -625,6 +626,8 @@ def batched_dsc_vi_fit(
             Jm += J_columns[j] * m_a[:, j:j + 1]
 
         lam0_mu0 = prior_prec @ prior_means_t
+        if mono_eta is not None:
+            lam0_mu0 = lam0_mu0 + mono_eta
         data_term = np.zeros((n_active, n_params))
         for j in range(n_params):
             data_term[:, j] = np.sum(

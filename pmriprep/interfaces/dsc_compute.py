@@ -1103,6 +1103,7 @@ class ComputeDSCMaps(BaseInterface):
             fitting_names = [p.name for p in fitting_defs]
             fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
             mono_prec = None
+            mono_eta = None
             cp_times = None
             toeplitz = None
         else:  # cpi
@@ -1118,6 +1119,7 @@ class ComputeDSCMaps(BaseInterface):
             fitting_names = [p.name for p in fitting_defs]
             fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
             mono_prec = cpi_model.compute_monotonicity_precision()
+            mono_eta = cpi_model.compute_monotonicity_eta_correction()
             cp_times = np.array(cpi_model._control_point_times, dtype=np.float64)
             toeplitz = build_toeplitz_matrix(aif, dt)
 
@@ -1144,6 +1146,7 @@ class ComputeDSCMaps(BaseInterface):
             fitting_param_names=fitting_names,
             fitting_bounds=fitting_bounds,
             mono_prec=mono_prec,
+            mono_eta=mono_eta,
             control_point_times=cp_times,
             toeplitz_matrix=toeplitz,
             prior_means_transformed=means_t,

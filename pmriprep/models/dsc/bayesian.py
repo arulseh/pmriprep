@@ -697,9 +697,10 @@ class BayesianDSCFitter:
         prior_prec = np.diag(1.0 / (prior_stds_t**2))  # Λ_diag
 
         # Add symmetric monotonicity penalty for CPI (tridiagonal structure).
-        # CPI control points use IDENTITY transform, so the penalty operates
-        # directly in natural space. Apply unscaled.
+        # CPI control points use LOG_LOGIT transform; the penalty operates
+        # in log-odds space matching the VI update space.
         mono_prec = self.model.compute_monotonicity_precision()
+        mono_eta = self.model.compute_monotonicity_eta_correction()
         if mono_prec is not None:
             prior_prec = prior_prec + mono_prec  # Λ_combined
 
@@ -841,6 +842,8 @@ class BayesianDSCFitter:
                 rhs = prior_prec @ prior_means_t + tau_exp * J.T @ (weights * (k_res + J @ m))
             else:
                 rhs = prior_prec @ prior_means_t + tau_exp * J.T @ (k_res + J @ m)
+            if mono_eta is not None:
+                rhs = rhs + mono_eta
             m_new = post_cov @ rhs
 
             # For LOG/LOG_LOGIT, transformed space is unconstrained (bounds

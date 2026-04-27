@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dsc.cpi import (
     CPIModel,
     estimate_bolus_duration,
@@ -30,6 +31,39 @@ class TestCPIModelConstruction:
         assert model10.n_parameters == 10
         assert model4.name == "cpi_4"
         assert model10.name == "cpi_10"
+
+    def test_fraction_transforms_are_log_logit(self) -> None:
+        """CPI fraction parameters must use LOG_LOGIT for VI correctness."""
+        model = CPIModel()
+        params = model.get_parameter_definitions()
+        for p in params[1:]:  # skip CBF (index 0)
+            assert p.transform == TransformType.LOG_LOGIT, (
+                f"Parameter {p.name} uses {p.transform}, expected LOG_LOGIT"
+            )
+
+    def test_eta_correction_shape(self) -> None:
+        """Eta correction has shape (n_control_points,)."""
+        model = CPIModel(n_control_points=6)
+        eta = model.compute_monotonicity_eta_correction()
+        assert eta.shape == (6,)
+
+    def test_eta_correction_cbf_zero(self) -> None:
+        """CBF (index 0) has no anchor correction."""
+        model = CPIModel()
+        eta = model.compute_monotonicity_eta_correction()
+        assert eta[0] == 0.0
+
+    def test_eta_correction_anchor_positive(self) -> None:
+        """Anchor correction pulls r_1 toward R(0)=1.0 (positive in logit)."""
+        model = CPIModel()
+        eta = model.compute_monotonicity_eta_correction()
+        assert eta[1] > 0.0
+
+    def test_eta_correction_only_first_pair(self) -> None:
+        """Only the R(0)-r_1 pair gets a correction; r_2+ are zero."""
+        model = CPIModel(n_control_points=8)
+        eta = model.compute_monotonicity_eta_correction()
+        np.testing.assert_array_equal(eta[2:], 0.0)
 
     def test_control_point_times_evenly_spaced(self) -> None:
         """Control point times are evenly spaced across the time range."""

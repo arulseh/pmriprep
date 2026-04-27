@@ -583,6 +583,61 @@ class TestCPIBayesianGammaRecovery:
         )
 
 
+class TestCPIVIGammaRecovery:
+    """Test CPI VI recovery on gamma-variate residues with noise.
+
+    After switching CPI fractions to LOG_LOGIT transforms, VI should
+    match MAP accuracy at all noise levels.
+    """
+
+    @pytest.mark.parametrize(
+        "noise_frac,cbf_tol,mtt_tol", CPI_BAYESIAN_NOISE_LEVELS
+    )
+    @pytest.mark.parametrize("cbf,alpha,beta", CPI_BAYESIAN_PARAMS)
+    def test_cpi_vi(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        noise_frac: float,
+        cbf_tol: float,
+        mtt_tol: float,
+    ) -> None:
+        """Test CPI VI recovery of CBF and MTT."""
+        true_mtt = alpha * beta
+
+        if cbf <= 0.02:
+            pytest.xfail(
+                f"CBF prior overwhelms low-flow signal (CBF={cbf})"
+            )
+
+        tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
+            cbf, alpha, beta, noise_frac
+        )
+
+        n_cp = 7
+        t_span = 30.0
+        model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+
+        peak = float(np.max(np.abs(tissue)))
+        noise_std = max(noise_frac * peak, 0.01 * peak) if peak > 0 else 1.0
+
+        result = fit_dsc_model(
+            model, tissue, aif, time_sec, method="vi",
+            compute_uncertainties=False, noise_std=noise_std,
+        )
+        assert result is not None, "CPI VI fit returned None"
+
+        fitted_params = model.dict_to_params(result.parameters)
+        recovered_cbf = model.get_cbf(fitted_params)
+        recovered_mtt = model.get_mtt(fitted_params, time_sec)
+
+        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
+        _assert_param_recovery(
+            recovered_mtt, true_mtt, mtt_tol, param_name="MTT"
+        )
+
+
 # =============================================================================
 # SVD Recovery on Gamma-Variate Residues (cross-residue validation)
 # =============================================================================

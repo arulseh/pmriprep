@@ -261,6 +261,7 @@ class TestBatchedCPIVIFit:
         cp_times = np.array(model._control_point_times, dtype=np.float64)
         toeplitz = build_toeplitz_matrix(aif, dt)
         mono_prec = model.compute_monotonicity_precision()
+        mono_eta = model.compute_monotonicity_eta_correction()
 
         means = np.array([p.mean for p in priors])
         stds = np.array([p.std for p in priors])
@@ -269,13 +270,13 @@ class TestBatchedCPIVIFit:
         names = [p.name for p in fitting_defs]
         bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
 
-        return means, stds, transforms, ubs, names, bounds, mono_prec, cp_times, toeplitz
+        return means, stds, transforms, ubs, names, bounds, mono_prec, mono_eta, cp_times, toeplitz
 
     def test_cpi_recovery(self, dsc_aif_and_time):
         """CPI VI recovers CBF and produces monotonic residue."""
         aif, tp = dsc_aif_and_time
         setup = self._get_cpi_setup(aif, tp)
-        means, stds, transforms, ubs, names, bounds, mono_prec, cp_times, toeplitz = setup
+        means, stds, transforms, ubs, names, bounds, mono_prec, mono_eta, cp_times, toeplitz = setup
 
         # Generate synthetic CPI data with known exponential residue
         rng = np.random.RandomState(42)
@@ -295,7 +296,7 @@ class TestBatchedCPIVIFit:
         result = batched_dsc_vi_fit(
             "cpi", tissue, aif, tp,
             means, stds, transforms, ubs, names, bounds,
-            mono_prec=mono_prec, control_point_times=cp_times,
+            mono_prec=mono_prec, mono_eta=mono_eta, control_point_times=cp_times,
             toeplitz_matrix=toeplitz,
         )
 
@@ -320,7 +321,7 @@ class TestBatchedCPIVIFit:
         """CPI VI result has correct parameter names."""
         aif, tp = dsc_aif_and_time
         setup = self._get_cpi_setup(aif, tp)
-        means, stds, transforms, ubs, names, bounds, mono_prec, cp_times, toeplitz = setup
+        means, stds, transforms, ubs, names, bounds, mono_prec, mono_eta, cp_times, toeplitz = setup
 
         n_cp = len(cp_times)
         params = np.zeros((5, n_cp))
@@ -332,7 +333,7 @@ class TestBatchedCPIVIFit:
         result = batched_dsc_vi_fit(
             "cpi", tissue, aif, tp,
             means, stds, transforms, ubs, names, bounds,
-            mono_prec=mono_prec, control_point_times=cp_times,
+            mono_prec=mono_prec, mono_eta=mono_eta, control_point_times=cp_times,
             toeplitz_matrix=toeplitz, save_fitted_curves=True,
         )
 
