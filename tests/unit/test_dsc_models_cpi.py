@@ -184,10 +184,8 @@ class TestSelectionFunctions:
 
     def test_select_n_control_points(self) -> None:
         """Short bolus gives low N, long bolus gives higher N, both within [4, 12]."""
-        # Short bolus: 5 frames, TR=1.5
-        n_short = select_n_control_points(5, tr_seconds=1.5)
-        # Long bolus: 20 frames, TR=1.5
-        n_long = select_n_control_points(20, tr_seconds=1.5)
+        n_short = select_n_control_points(5)
+        n_long = select_n_control_points(20)
         assert 4 <= n_short <= 12
         assert 4 <= n_long <= 12
         assert n_short < n_long

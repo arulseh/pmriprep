@@ -8,8 +8,6 @@ The model accounts for transit time heterogeneity (CTH) in the
 microvasculature, which affects the relationship between CBF and CBV.
 """
 
-from typing import Sequence
-
 import numpy as np
 import numpy.typing as npt
 from scipy import special  # type: ignore[import-untyped]

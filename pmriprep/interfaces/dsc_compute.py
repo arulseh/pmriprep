@@ -140,7 +140,7 @@ def _dsc_init_worker(
     else:  # cpi
         n_cp = cpi_control_points
         if n_cp == 0:
-            n_cp = select_n_control_points(bolus_duration_frames, dt)
+            n_cp = select_n_control_points(bolus_duration_frames)
         # Control point span: 30s covers ~3x max physiological MTT (10s),
         # ensuring residue decays to ~0 within the fitted window.
         t_span = 30.0
@@ -184,10 +184,6 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
 
         out: dict[str, Any] = {"coords": (x, y, z), "failed": False}
         cbf_val = result.parameters.get("cbf", result.parameters.get("CBF", 0.0))
-        # CPI model uses "r0", "r1", ... instead of "cbf" — extract from residue
-        if "cbf" not in result.parameters and "CBF" not in result.parameters:
-            if result.fitted_residue is not None and len(result.fitted_residue) > 0:
-                cbf_val = float(np.max(result.fitted_residue))
         out["cbf"] = cbf_val
 
         if method == "vascular":
@@ -227,17 +223,14 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         # Extract Bayesian uncertainties for CBF/CBV std maps
         if result.uncertainties:
             out["cbf_std"] = result.uncertainties.get("cbf", 0.0)
-            # CBV = integral of residue; propagate from alpha/beta uncertainties
-            # via first-order approximation: CBV ≈ alpha * beta, so
-            # sigma_CBV ≈ sqrt((beta*sigma_alpha)^2 + (alpha*sigma_beta)^2)
+            # CBV = CBF * MTT; sigma_CBV = sqrt((MTT*sigma_CBF)^2 + (CBF*sigma_MTT)^2)
             if method == "vascular":
-                alpha_val = result.parameters.get("alpha", 1.0)
-                beta_val = result.parameters.get("beta", 1.0)
-                sigma_alpha = result.uncertainties.get("alpha", 0.0)
-                sigma_beta = result.uncertainties.get("beta", 0.0)
+                sigma_cbf = result.uncertainties.get("cbf", 0.0)
+                sigma_mtt = result.uncertainties.get("mtt", 0.0)
+                mtt_val = out["mtt"]
                 out["cbv_std"] = float(np.sqrt(
-                    (beta_val * sigma_alpha) ** 2
-                    + (alpha_val * sigma_beta) ** 2
+                    (mtt_val * sigma_cbf) ** 2
+                    + (cbf_val * sigma_mtt) ** 2
                 ))
             else:
                 out["cbv_std"] = 0.0
@@ -247,17 +240,11 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
             cbf_ci = result.credible_intervals.get("cbf", (0.0, 0.0))
             out["cbf_ci95_lower"] = cbf_ci[0]
             out["cbf_ci95_upper"] = cbf_ci[1]
-            # Propagate CBV CI from alpha/beta CIs (vascular) or set zero (SVD)
+            # CBV = CBF * MTT; propagate CI from fitting-space CBF and MTT CIs
             if method == "vascular":
-                alpha_ci = result.credible_intervals.get("alpha", (0.0, 0.0))
-                beta_ci = result.credible_intervals.get("beta", (0.0, 0.0))
-                alpha_val = result.parameters.get("alpha", 1.0)
-                beta_val = result.parameters.get("beta", 1.0)
-                # Conservative: use extreme combinations for CI bounds
-                cbv_ci_lower = alpha_ci[0] * beta_ci[0]
-                cbv_ci_upper = alpha_ci[1] * beta_ci[1]
-                out["cbv_ci95_lower"] = cbv_ci_lower
-                out["cbv_ci95_upper"] = cbv_ci_upper
+                mtt_ci = result.credible_intervals.get("mtt", (0.0, 0.0))
+                out["cbv_ci95_lower"] = max(cbf_ci[0] * mtt_ci[0], 0.0)
+                out["cbv_ci95_upper"] = cbf_ci[1] * mtt_ci[1]
             else:
                 out["cbv_ci95_lower"] = 0.0
                 out["cbv_ci95_upper"] = 0.0
@@ -1121,7 +1108,7 @@ class ComputeDSCMaps(BaseInterface):
         else:  # cpi
             n_cp = cpi_control_points
             if n_cp == 0:
-                n_cp = select_n_control_points(bolus_duration_frames, dt)
+                n_cp = select_n_control_points(bolus_duration_frames)
             # Control point span: 30s covers ~3x max physiological MTT (10s),
             # ensuring residue decays to ~0 within the fitted window.
             t_span = 30.0
@@ -1241,18 +1228,16 @@ class ComputeDSCMaps(BaseInterface):
             out["cbf_ci95_upper"] = cbf_val + 1.96 * cbf_std_val
 
             if method == "vascular":
-                # Propagate CBV CI from fitting-space uncertainties
-                sig_alpha = float(batched_result.uncertainties.get(
-                    "alpha", np.zeros(n_voxels))[i]) if batched_result.uncertainties else 0.0
+                # CBV = CBF * MTT; CI from ±1.96σ of each factor
+                sig_cbf_ci = cbf_std_val
                 sig_mtt_ci = float(batched_result.uncertainties.get(
                     "mtt", np.zeros(n_voxels))[i]) if batched_result.uncertainties else 0.0
-                # Conservative: CBV = CBF*MTT, CI from ±1.96σ of each
-                alpha_lo = max(alpha_val - 1.96 * sig_alpha, 0.5)
-                alpha_hi = alpha_val + 1.96 * sig_alpha
-                beta_lo = max(mtt_val - 1.96 * sig_mtt_ci, 0.1) / max(alpha_hi, 1e-10)
-                beta_hi = (mtt_val + 1.96 * sig_mtt_ci) / max(alpha_lo, 1e-10)
-                out["cbv_ci95_lower"] = alpha_lo * beta_lo
-                out["cbv_ci95_upper"] = alpha_hi * beta_hi
+                cbv_lo = (max(cbf_val - 1.96 * sig_cbf_ci, 0.0)
+                          * max(mtt_val - 1.96 * sig_mtt_ci, 0.0))
+                cbv_hi = ((cbf_val + 1.96 * sig_cbf_ci)
+                          * (mtt_val + 1.96 * sig_mtt_ci))
+                out["cbv_ci95_lower"] = cbv_lo
+                out["cbv_ci95_upper"] = cbv_hi
             else:
                 out["cbv_ci95_lower"] = 0.0
                 out["cbv_ci95_upper"] = 0.0
@@ -1365,7 +1350,7 @@ class ComputeDSCMaps(BaseInterface):
                 bolus_duration_frames = estimate_bolus_duration(aif)
                 n_cp = cpi_control_points
                 if n_cp == 0:
-                    n_cp = select_n_control_points(bolus_duration_frames, dt)
+                    n_cp = select_n_control_points(bolus_duration_frames)
                 # Control point span: 30s covers ~3x max physiological MTT (10s),
                 # ensuring residue decays to ~0 within the fitted window.
                 t_span = 30.0

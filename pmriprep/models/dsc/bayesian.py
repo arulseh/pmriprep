@@ -1155,6 +1155,17 @@ class BayesianDSCFitter:
             uncertainties[name] = float(posterior_std_model[i])
             credible_intervals[name] = (float(ci_low[i]), float(ci_high[i]))
 
+        # Add fitting-space summaries (e.g. "mtt") alongside model-space keys
+        fitting_std = np.std(fitting_samples, axis=0)
+        fitting_ci_low = np.percentile(fitting_samples, 2.5, axis=0)
+        fitting_ci_high = np.percentile(fitting_samples, 97.5, axis=0)
+        for i, name in enumerate(fitting_param_names):
+            if name not in uncertainties:
+                uncertainties[name] = float(fitting_std[i])
+                credible_intervals[name] = (
+                    float(fitting_ci_low[i]), float(fitting_ci_high[i]),
+                )
+
         # Add sigma posterior summary
         parameters["noise_std"] = float(np.mean(sigma_samples))
         uncertainties["noise_std"] = float(np.std(sigma_samples))

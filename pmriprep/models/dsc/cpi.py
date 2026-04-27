@@ -602,28 +602,19 @@ class CPIModel(DSCModel):
 
 def select_n_control_points(
     bolus_duration_frames: int,
-    tr_seconds: float,
     min_n: int = CPI_N_MIN,
     max_n: int = CPI_N_MAX,
 ) -> int:
     """Automatically select number of control points based on bolus duration.
 
-    The rule is: N ≈ bolus_duration / (2 × TR) + 2
-    This ensures adequate sampling of the residue function while avoiding
-    overfitting.
-
     Args:
         bolus_duration_frames: Duration of bolus passage in frames.
-        tr_seconds: Repetition time in seconds.
         min_n: Minimum number of control points (default 4).
         max_n: Maximum number of control points (default 12).
 
     Returns:
         Recommended number of control points.
     """
-    # N ≈ bolus_duration / (2 × TR) + 2
-    # This gives roughly one control point per 2 TR during the bolus,
-    # plus 2 extra for the tail
     n_recommended = int(bolus_duration_frames / 2.0) + 2
 
     # Clamp to valid range
