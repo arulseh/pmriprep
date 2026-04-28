@@ -1,7 +1,7 @@
-"""Unit tests for DSC batched fitting (forward models and VI).
+"""Unit tests for DSC batched fitting (forward models, VI, and MAP).
 
 Tests verify parameter recovery, convergence, forward model correctness,
-and batched-vs-CPU VI consistency for both CPI and Vascular DSC models.
+and batched-vs-CPU consistency for both CPI and Vascular DSC models.
 
 All tests use numpy (pure CPU).
 """
@@ -11,6 +11,7 @@ import pytest
 
 from pmriprep.models.dsc.batched_fitting import (
     batched_cpi_forward,
+    batched_dsc_map_fit,
     batched_dsc_vi_fit,
     batched_vascular_forward,
 )
@@ -446,3 +447,382 @@ class TestAnalyticCBFJacobian:
         j_fd = (g_plus[0] - g_minus[0]) / (2 * eps)
 
         np.testing.assert_allclose(j_analytic, j_fd, rtol=1e-4, atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Batched MAP fitting tests
+# ---------------------------------------------------------------------------
+
+
+class TestBatchedDSCMAPFit:
+    """Tests for batched_dsc_map_fit."""
+
+    @staticmethod
+    def _get_vascular_prior_info():
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc import VascularModel
+
+        model = VascularModel()
+        fitting_defs = model.get_fitting_parameter_definitions()
+        priors = build_priors_from_params(fitting_defs)
+        return (
+            np.array([p.mean for p in priors]),
+            np.array([p.std for p in priors]),
+            [p.transform for p in priors],
+            [p.upper_bound for p in priors],
+            [p.name for p in fitting_defs],
+            [(p.bounds[0], p.bounds[1]) for p in fitting_defs],
+            np.array([p.mean_transformed for p in priors]),
+            np.array([p.std_transformed for p in priors]),
+        )
+
+    @staticmethod
+    def _get_cpi_setup(aif, tp):
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc import CPIModel
+        from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+
+        dt = tp[1] - tp[0]
+        n_cp = 7
+        model = CPIModel(n_control_points=n_cp, time_range=(0.0, 30.0))
+        fitting_defs = model.get_fitting_parameter_definitions()
+        priors = build_priors_from_params(fitting_defs)
+        cp_times = np.array(model._control_point_times, dtype=np.float64)
+        toeplitz = build_toeplitz_matrix(aif, dt)
+
+        means = np.array([p.mean for p in priors])
+        stds = np.array([p.std for p in priors])
+        transforms = [p.transform for p in priors]
+        ubs = [p.upper_bound for p in priors]
+        names = [p.name for p in fitting_defs]
+        bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+        means_t = np.array([p.mean_transformed for p in priors])
+        stds_t = np.array([p.std_transformed for p in priors])
+
+        return (means, stds, transforms, ubs, names, bounds,
+                None, None, cp_times, toeplitz, means_t, stds_t)
+
+    def test_vascular_recovery(self, dsc_aif_and_time):
+        """Vascular MAP recovers parameters within 30% median error."""
+        aif, tp = dsc_aif_and_time
+        means, stds, transforms, ubs, names, bounds, means_t, stds_t = (
+            self._get_vascular_prior_info()
+        )
+
+        rng = np.random.RandomState(42)
+        n = 50
+        cbf_true = rng.uniform(0.03, 0.1, n)
+        alpha_true = rng.uniform(2.0, 5.0, n)
+        beta_true = rng.uniform(1.0, 4.0, n)
+        delay_true = rng.uniform(0.0, 3.0, n)
+
+        tissue = batched_vascular_forward(cbf_true, alpha_true, beta_true, delay_true, aif, tp)
+        tissue += 0.005 * rng.randn(*tissue.shape)
+
+        result = batched_dsc_map_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+        )
+
+        conv = result.converged
+        assert np.sum(conv) > 25, f"Only {np.sum(conv)}/50 converged"
+
+        cbf_err = np.median(np.abs(result.params["cbf"][conv] - cbf_true[conv]) /
+                            np.maximum(cbf_true[conv], 1e-6))
+        assert cbf_err < 0.3, f"CBF median rel error {cbf_err:.3f}"
+
+    def test_cpi_recovery(self, dsc_aif_and_time):
+        """CPI MAP recovers CBF within 40% median error."""
+        aif, tp = dsc_aif_and_time
+        setup = self._get_cpi_setup(aif, tp)
+        (means, stds, transforms, ubs, names, bounds,
+         mono_prec, mono_eta, cp_times, toeplitz, means_t, stds_t) = setup
+
+        rng = np.random.RandomState(42)
+        n = 30
+        cbf_true = rng.uniform(0.03, 0.1, n)
+        n_cp = len(cp_times)
+
+        params_true = np.zeros((n, n_cp))
+        params_true[:, 0] = cbf_true
+        for k in range(1, n_cp):
+            params_true[:, k] = np.exp(-1.0 / 3.0)
+
+        tissue = batched_cpi_forward(params_true, aif, tp, cp_times, toeplitz)
+        tissue += 0.003 * rng.randn(*tissue.shape)
+
+        result = batched_dsc_map_fit(
+            "cpi", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            mono_prec=mono_prec, mono_eta=mono_eta,
+            control_point_times=cp_times, toeplitz_matrix=toeplitz,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+        )
+
+        conv = result.converged
+        assert np.sum(conv) > 15, f"Only {np.sum(conv)}/30 converged"
+
+        cbf_err = np.median(np.abs(result.params["cbf"][conv] - cbf_true[conv]) /
+                            np.maximum(cbf_true[conv], 1e-6))
+        assert cbf_err < 0.4, f"CBF median rel error {cbf_err:.3f}"
+
+    def test_vascular_result_format(self, dsc_aif_and_time):
+        """MAP result has all required fields."""
+        aif, tp = dsc_aif_and_time
+        means, stds, transforms, ubs, names, bounds, means_t, stds_t = (
+            self._get_vascular_prior_info()
+        )
+
+        tissue = batched_vascular_forward(
+            np.full(5, 0.06), np.full(5, 3.0), np.full(5, 2.0),
+            np.full(5, 1.0), aif, tp,
+        )
+
+        result = batched_dsc_map_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+            save_fitted_curves=True,
+        )
+
+        assert "cbf" in result.params
+        assert "mtt" in result.params
+        assert result.r_squared.shape == (5,)
+        assert result.converged.shape == (5,)
+        assert result.fitted_curves is not None
+        assert result.fitted_curves.shape == (5, len(tp))
+        assert "noise_std" in result.uncertainties
+        assert "cbf" in result.uncertainties
+
+    def test_empty_input(self, dsc_aif_and_time):
+        """Handles zero voxels gracefully."""
+        aif, tp = dsc_aif_and_time
+        means, stds, transforms, ubs, names, bounds, means_t, stds_t = (
+            self._get_vascular_prior_info()
+        )
+
+        result = batched_dsc_map_fit(
+            "vascular", np.zeros((0, len(tp))), aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+        )
+        assert result.r_squared.shape == (0,)
+
+
+class TestBatchedMAPLaplace:
+    """Verify Laplace uncertainties from batched MAP are reasonable."""
+
+    def test_uncertainties_finite_and_positive(self, dsc_aif_and_time):
+        """Laplace uncertainties are finite, positive for converged voxels."""
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc import VascularModel
+
+        aif, tp = dsc_aif_and_time
+        model = VascularModel()
+        fitting_defs = model.get_fitting_parameter_definitions()
+        priors = build_priors_from_params(fitting_defs)
+
+        means = np.array([p.mean for p in priors])
+        stds = np.array([p.std for p in priors])
+        transforms = [p.transform for p in priors]
+        ubs = [p.upper_bound for p in priors]
+        names = [p.name for p in fitting_defs]
+        bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+        means_t = np.array([p.mean_transformed for p in priors])
+        stds_t = np.array([p.std_transformed for p in priors])
+
+        tissue = batched_vascular_forward(
+            np.full(10, 0.06), np.full(10, 3.0), np.full(10, 2.0),
+            np.full(10, 1.5), aif, tp,
+        )
+        rng = np.random.RandomState(42)
+        tissue += 0.005 * rng.randn(*tissue.shape)
+
+        result = batched_dsc_map_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+            compute_uncertainties=True,
+        )
+
+        conv = result.converged
+        assert np.sum(conv) > 5
+
+        for name in names:
+            unc = result.uncertainties[name][conv]
+            assert np.all(np.isfinite(unc)), f"{name} has non-finite uncertainties"
+            assert np.all(unc > 0), f"{name} has non-positive uncertainties"
+
+        noise_std = result.uncertainties["noise_std"][conv]
+        assert np.all(np.isfinite(noise_std))
+        assert np.all(noise_std > 0)
+
+
+class TestBatchedMAPMultiStart:
+    """Verify multi-start improves MAP over single-start."""
+
+    def test_multistart_selects_better(self, dsc_aif_and_time):
+        """Multi-start from NLLS seeds produces better fit than prior-only."""
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc import VascularModel
+
+        aif, tp = dsc_aif_and_time
+        model = VascularModel()
+        fitting_defs = model.get_fitting_parameter_definitions()
+        priors = build_priors_from_params(fitting_defs)
+
+        means = np.array([p.mean for p in priors])
+        stds = np.array([p.std for p in priors])
+        transforms = [p.transform for p in priors]
+        ubs = [p.upper_bound for p in priors]
+        names = [p.name for p in fitting_defs]
+        bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+        means_t = np.array([p.mean_transformed for p in priors])
+        stds_t = np.array([p.std_transformed for p in priors])
+
+        # Ground truth far from prior mean to make multi-start valuable
+        n = 20
+        cbf_true = np.full(n, 0.03)
+        alpha_true = np.full(n, 4.0)
+        beta_true = np.full(n, 1.5)
+        delay_true = np.full(n, 2.5)
+
+        tissue = batched_vascular_forward(cbf_true, alpha_true, beta_true, delay_true, aif, tp)
+        rng = np.random.RandomState(42)
+        tissue += 0.003 * rng.randn(*tissue.shape)
+
+        # NLLS seeds close to ground truth
+        mtt_true = alpha_true * beta_true
+        nlls_seeds = np.column_stack([cbf_true, mtt_true, alpha_true, delay_true])
+
+        result_multi = batched_dsc_map_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+            nlls_seeds=nlls_seeds,
+        )
+
+        result_single = batched_dsc_map_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+            nlls_seeds=None,
+        )
+
+        # Multi-start should have equal or better R²
+        r2_multi = np.median(result_multi.r_squared)
+        r2_single = np.median(result_single.r_squared)
+        assert r2_multi >= r2_single - 0.01, (
+            f"Multi-start R²={r2_multi:.4f} worse than single={r2_single:.4f}"
+        )
+
+
+class TestBatchedMAPSloppy:
+    """Verify sloppy mode behavior."""
+
+    def test_sloppy_mode(self, dsc_aif_and_time):
+        """Sloppy mode uses fewer iterations and skips uncertainties."""
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc import VascularModel
+
+        aif, tp = dsc_aif_and_time
+        model = VascularModel()
+        fitting_defs = model.get_fitting_parameter_definitions()
+        priors = build_priors_from_params(fitting_defs)
+
+        means = np.array([p.mean for p in priors])
+        stds = np.array([p.std for p in priors])
+        transforms = [p.transform for p in priors]
+        ubs = [p.upper_bound for p in priors]
+        names = [p.name for p in fitting_defs]
+        bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+        means_t = np.array([p.mean_transformed for p in priors])
+        stds_t = np.array([p.std_transformed for p in priors])
+
+        tissue = batched_vascular_forward(
+            np.full(5, 0.06), np.full(5, 3.0), np.full(5, 2.0),
+            np.full(5, 1.0), aif, tp,
+        )
+
+        result = batched_dsc_map_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+            sloppy=True,
+        )
+
+        # Sloppy: 8 iters * 1 noise loop = max 8
+        assert result.n_iterations <= 8
+        # Uncertainties should be NaN (skipped)
+        for name in names:
+            assert np.all(np.isnan(result.uncertainties[name]))
+
+
+class TestBatchedMAPVsPerVoxelMAP:
+    """Cross-validate batched MAP against per-voxel MAP.
+
+    The two paths use different prior treatment (transformed-space Gaussian
+    vs natural-space + Jacobian correction), so results will differ slightly.
+    This test documents the expected divergence magnitude.
+    """
+
+    def test_vascular_cbf_within_tolerance(self, dsc_aif_and_time):
+        """Batched and per-voxel MAP agree on CBF within 15%."""
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc import VascularModel, fit_dsc_model
+
+        aif, tp = dsc_aif_and_time
+        model = VascularModel()
+        fitting_defs = model.get_fitting_parameter_definitions()
+        priors = build_priors_from_params(fitting_defs)
+
+        means = np.array([p.mean for p in priors])
+        stds = np.array([p.std for p in priors])
+        transforms = [p.transform for p in priors]
+        ubs = [p.upper_bound for p in priors]
+        names = [p.name for p in fitting_defs]
+        bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+        means_t = np.array([p.mean_transformed for p in priors])
+        stds_t = np.array([p.std_transformed for p in priors])
+
+        # Single synthetic voxel
+        rng = np.random.RandomState(99)
+        tissue = batched_vascular_forward(
+            np.array([0.06]), np.array([3.0]), np.array([2.0]),
+            np.array([1.5]), aif, tp,
+        )
+        tissue_1d = tissue[0] + 0.003 * rng.randn(len(tp))
+
+        # Per-voxel MAP
+        cpu_result = fit_dsc_model(
+            model=VascularModel(), concentration=tissue_1d,
+            aif=aif, time_points=tp, method="map",
+        )
+
+        # Batched MAP
+        batched_result = batched_dsc_map_fit(
+            "vascular", tissue_1d[None, :], aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            prior_means_transformed=means_t,
+            prior_stds_transformed=stds_t,
+        )
+
+        cpu_cbf = cpu_result.parameters.get("cbf", 0)
+        batched_cbf = float(batched_result.params["cbf"][0])
+
+        # Allow 15% divergence due to different prior treatment
+        if cpu_cbf > 0.001:
+            rel_diff = abs(batched_cbf - cpu_cbf) / cpu_cbf
+            assert rel_diff < 0.15, (
+                f"CBF divergence {rel_diff:.1%}: batched={batched_cbf:.6f} "
+                f"per-voxel={cpu_cbf:.6f}"
+            )

@@ -837,10 +837,10 @@ class ComputeDSCMaps(BaseInterface):
         Optional[npt.NDArray[Any]],  # cth_map (vascular only)
         Optional[npt.NDArray[Any]],  # cbf_std_map (bayesian only)
         Optional[npt.NDArray[Any]],  # cbv_std_map (bayesian only)
-        Optional[npt.NDArray[Any]],  # cbf_ci_lower_map (vi/mcmc only)
-        Optional[npt.NDArray[Any]],  # cbf_ci_upper_map (vi/mcmc only)
-        Optional[npt.NDArray[Any]],  # cbv_ci_lower_map (vi/mcmc only)
-        Optional[npt.NDArray[Any]],  # cbv_ci_upper_map (vi/mcmc only)
+        Optional[npt.NDArray[Any]],  # cbf_ci_lower_map (bayesian only)
+        Optional[npt.NDArray[Any]],  # cbf_ci_upper_map (bayesian only)
+        Optional[npt.NDArray[Any]],  # cbv_ci_lower_map (bayesian only)
+        Optional[npt.NDArray[Any]],  # cbv_ci_upper_map (bayesian only)
     ]:
         """Run parametric model deconvolution (vascular, CPI).
 
@@ -863,7 +863,7 @@ class ComputeDSCMaps(BaseInterface):
         cth_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cbf_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
         cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
-        has_ci = bayesian in ("vi", "mcmc")
+        has_ci = bayesian in ("vi", "svb", "mcmc", "map")
         cbf_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
         cbf_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
         cbv_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
@@ -921,6 +921,20 @@ class ComputeDSCMaps(BaseInterface):
                 motion_weights=motion_weights,
                 sloppy=sloppy,
                 spatial=(bayesian == "svb"),
+            )
+        elif bayesian == "map":
+            results = self._dsc_fit_batched_map(
+                concentration_data=concentration_data,
+                mask_coords=mask_coords,
+                aif=aif,
+                time_points=time_points,
+                method=method,
+                dt=dt,
+                n_voxels=n_voxels,
+                cpi_control_points=cpi_control_points,
+                bolus_duration_frames=bolus_duration_frames,
+                motion_weights=motion_weights,
+                sloppy=sloppy,
             )
         elif n_procs > 1:
             from concurrent.futures import ProcessPoolExecutor
@@ -1048,6 +1062,82 @@ class ComputeDSCMaps(BaseInterface):
                 cbf_std_map, cbv_std_map,
                 cbf_ci_lower_map, cbf_ci_upper_map, cbv_ci_lower_map, cbv_ci_upper_map)
 
+    @staticmethod
+    def _build_dsc_parametric_setup(
+        method: str,
+        concentration_data: npt.NDArray[Any],
+        mask_coords: tuple[npt.NDArray[Any], ...],
+        aif: npt.NDArray[np.floating],
+        dt: float,
+        cpi_control_points: int,
+        bolus_duration_frames: int,
+    ) -> dict[str, Any]:
+        """Build model, priors, and fitting kwargs for batched DSC fitting.
+
+        Shared by both batched VI and batched MAP paths.
+
+        Returns:
+            Dict with keys: tissue_curves, fitting_names, fitting_bounds,
+            mono_prec, mono_eta, cp_times, toeplitz, means_nat, stds_nat,
+            means_t, stds_t, transforms, ubs.
+        """
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc import CPIModel, VascularModel, select_n_control_points
+        from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+
+        tissue_curves = concentration_data[
+            mask_coords[0], mask_coords[1], mask_coords[2], :
+        ]
+        tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if method == "vascular":
+            model = VascularModel()
+            fitting_defs = model.get_fitting_parameter_definitions()
+            priors = build_priors_from_params(fitting_defs)
+            fitting_names = [p.name for p in fitting_defs]
+            fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+            mono_prec = None
+            mono_eta = None
+            cp_times = None
+            toeplitz = None
+        else:  # cpi
+            n_cp = cpi_control_points
+            if n_cp == 0:
+                n_cp = select_n_control_points(bolus_duration_frames)
+            t_span = 30.0
+            cpi_model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+            fitting_defs = list(cpi_model.get_fitting_parameter_definitions())
+            priors = build_priors_from_params(fitting_defs)
+            fitting_names = [p.name for p in fitting_defs]
+            fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
+            mono_prec = None
+            mono_eta = None
+            cp_times = np.array(cpi_model._control_point_times, dtype=np.float64)
+            toeplitz = build_toeplitz_matrix(aif, dt)
+
+        means_nat = np.array([p.mean for p in priors], dtype=np.float64)
+        stds_nat = np.array([p.std for p in priors], dtype=np.float64)
+        means_t = np.array([p.mean_transformed for p in priors], dtype=np.float64)
+        stds_t = np.array([p.std_transformed for p in priors], dtype=np.float64)
+        transforms = [p.transform for p in priors]
+        ubs: list[float | None] = [p.upper_bound for p in priors]
+
+        return dict(
+            tissue_curves=tissue_curves,
+            fitting_names=fitting_names,
+            fitting_bounds=fitting_bounds,
+            mono_prec=mono_prec,
+            mono_eta=mono_eta,
+            cp_times=cp_times,
+            toeplitz=toeplitz,
+            means_nat=means_nat,
+            stds_nat=stds_nat,
+            means_t=means_t,
+            stds_t=stds_t,
+            transforms=transforms,
+            ubs=ubs,
+        )
+
     def _dsc_fit_batched_vi(
         self,
         concentration_data: npt.NDArray[Any],
@@ -1085,76 +1175,33 @@ class ComputeDSCMaps(BaseInterface):
         Returns:
             List of per-voxel result dicts.
         """
-        from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc import CPIModel, VascularModel, select_n_control_points
-        from pmriprep.models.dsc.batched_fitting import (
-            _batched_pchip,
-            batched_dsc_vi_fit,
+        from pmriprep.models.dsc.batched_fitting import batched_dsc_vi_fit
+
+        s = self._build_dsc_parametric_setup(
+            method, concentration_data, mask_coords, aif, dt,
+            cpi_control_points, bolus_duration_frames,
         )
-        from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
-
-        tissue_curves = concentration_data[
-            mask_coords[0], mask_coords[1], mask_coords[2], :
-        ]
-        tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
-
-        # Build model and extract priors
-        if method == "vascular":
-            model = VascularModel()
-            fitting_defs = model.get_fitting_parameter_definitions()
-            priors = build_priors_from_params(fitting_defs)
-            fitting_names = [p.name for p in fitting_defs]
-            fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-            mono_prec = None
-            mono_eta = None
-            cp_times = None
-            toeplitz = None
-        else:  # cpi
-            n_cp = cpi_control_points
-            if n_cp == 0:
-                n_cp = select_n_control_points(bolus_duration_frames)
-            # Control point span: 30s covers ~3x max physiological MTT (10s),
-            # ensuring residue decays to ~0 within the fitted window.
-            t_span = 30.0
-            cpi_model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
-            fitting_defs = list(cpi_model.get_fitting_parameter_definitions())
-            priors = build_priors_from_params(fitting_defs)
-            fitting_names = [p.name for p in fitting_defs]
-            fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-            mono_prec = None
-            mono_eta = None
-            cp_times = np.array(cpi_model._control_point_times, dtype=np.float64)
-            toeplitz = build_toeplitz_matrix(aif, dt)
-
-        means_nat = np.array([p.mean for p in priors], dtype=np.float64)
-        stds_nat = np.array([p.std for p in priors], dtype=np.float64)
-        # Pre-transformed priors preserve transformed_prior_sigma overrides
-        # (e.g., FABBER sigma=1.0 for Vascular LOG params)
-        means_t = np.array([p.mean_transformed for p in priors], dtype=np.float64)
-        stds_t = np.array([p.std_transformed for p in priors], dtype=np.float64)
-        transforms = [p.transform for p in priors]
-        ubs: list[float | None] = [p.upper_bound for p in priors]
 
         vi_label = "SVB" if spatial else "VI"
         logger.info("DSC batched %s: fitting %s on %d voxels", vi_label, method, n_voxels)
 
         vi_kwargs: dict[str, Any] = dict(
             model_type=method,
-            tissue_curves=tissue_curves,
+            tissue_curves=s["tissue_curves"],
             aif=aif,
             time_points=time_points,
-            prior_means_nat=means_nat,
-            prior_stds_nat=stds_nat,
-            transforms=transforms,
-            upper_bounds=ubs,
-            fitting_param_names=fitting_names,
-            fitting_bounds=fitting_bounds,
-            mono_prec=mono_prec,
-            mono_eta=mono_eta,
-            control_point_times=cp_times,
-            toeplitz_matrix=toeplitz,
-            prior_means_transformed=means_t,
-            prior_stds_transformed=stds_t,
+            prior_means_nat=s["means_nat"],
+            prior_stds_nat=s["stds_nat"],
+            transforms=s["transforms"],
+            upper_bounds=s["ubs"],
+            fitting_param_names=s["fitting_names"],
+            fitting_bounds=s["fitting_bounds"],
+            mono_prec=s["mono_prec"],
+            mono_eta=s["mono_eta"],
+            control_point_times=s["cp_times"],
+            toeplitz_matrix=s["toeplitz"],
+            prior_means_transformed=s["means_t"],
+            prior_stds_transformed=s["stds_t"],
             weights=motion_weights,
             sloppy=sloppy,
             save_fitted_curves=True,
@@ -1162,15 +1209,50 @@ class ComputeDSCMaps(BaseInterface):
 
         if spatial:
             from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
+            mc3: tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]] = (
+                mask_coords[0], mask_coords[1], mask_coords[2],
+            )
             batched_result = batched_dsc_spatial_vi_fit(
                 **vi_kwargs,
-                mask_coords=mask_coords,
+                mask_coords=mc3,
                 spatial_shape=concentration_data.shape[:3],
             )
         else:
             batched_result = batched_dsc_vi_fit(**vi_kwargs)
 
-        # Convert batched results to per-voxel dicts
+        return self._batched_result_to_voxel_dicts(
+            batched_result, mask_coords, method, n_voxels, dt,
+            s["cp_times"], time_points,
+        )
+
+    def _batched_result_to_voxel_dicts(
+        self,
+        batched_result: Any,
+        mask_coords: tuple[npt.NDArray[Any], ...],
+        method: str,
+        n_voxels: int,
+        dt: float,
+        cp_times: Optional[npt.NDArray[np.floating]],
+        time_points: npt.NDArray[np.floating],
+    ) -> list[dict[str, Any]]:
+        """Convert DSCBatchedFitResult to per-voxel result dicts.
+
+        Shared by both batched VI and batched MAP paths.
+
+        Args:
+            batched_result: DSCBatchedFitResult from VI or MAP.
+            mask_coords: Tuple of coordinate arrays.
+            method: 'cpi' or 'vascular'.
+            n_voxels: Number of voxels.
+            dt: Time step (seconds).
+            cp_times: CPI control point times or None.
+            time_points: Time points (seconds), shape (T,).
+
+        Returns:
+            List of per-voxel result dicts.
+        """
+        from pmriprep.models.dsc.batched_fitting import _batched_pchip
+
         results: list[dict[str, Any]] = []
 
         for i in range(n_voxels):
@@ -1191,7 +1273,7 @@ class ComputeDSCMaps(BaseInterface):
                 beta_val = mtt_val / max(alpha_val, 1e-10)
 
                 out["cbf"] = cbf_val
-                out["cbv"] = cbf_val * mtt_val  # CBV = CBF × MTT
+                out["cbv"] = cbf_val * mtt_val
                 out["mtt"] = mtt_val
                 out["tmax"] = delay_val
                 out["alpha"] = alpha_val
@@ -1200,9 +1282,6 @@ class ComputeDSCMaps(BaseInterface):
             else:  # cpi
                 cbf_val = float(batched_result.params["cbf"][i])
                 out["cbf"] = cbf_val
-                # Compute CBV from residue function (NOT tissue curve).
-                # CBV = CBF * integral(R_norm, dt) where R_norm is the
-                # normalized PCHIP residue from control point params.
                 if cbf_val > EPSILON_CONCENTRATION and cp_times is not None:
                     n_cp_local = len(cp_times)
                     cp_vals_i = np.ones((1, n_cp_local))
@@ -1211,8 +1290,6 @@ class ComputeDSCMaps(BaseInterface):
                             float(batched_result.params[f"f{k}"][i]), 0.0, 1.0,
                         )
                         cp_vals_i[0, k] = cp_vals_i[0, k - 1] * fk
-                    # Use _batched_pchip for consistency with forward model
-                    # (same exponential decay extrapolation beyond last knot)
                     r_norm = np.clip(
                         _batched_pchip(cp_times, cp_vals_i, time_points)[0], 0.0, 1.0
                     )
@@ -1223,7 +1300,6 @@ class ComputeDSCMaps(BaseInterface):
                 out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
                 out["tmax"] = 0.0
 
-            # Uncertainties and CI95
             cbf_std_val = 0.0
             if batched_result.uncertainties:
                 cbf_std_val = float(batched_result.uncertainties.get(
@@ -1234,19 +1310,16 @@ class ComputeDSCMaps(BaseInterface):
                     sig_cbf = cbf_std_val
                     sig_mtt = float(batched_result.uncertainties.get(
                         "mtt", np.zeros(n_voxels))[i])
-                    # CBV = CBF * MTT; propagate: σ_CBV = √((MTT·σ_CBF)² + (CBF·σ_MTT)²)
                     out["cbv_std"] = float(np.sqrt(
                         (mtt_val * sig_cbf) ** 2 + (cbf_val * sig_mtt) ** 2
                     ))
                 else:
                     out["cbv_std"] = 0.0
 
-            # CI95 bounds (mean ± 1.96 * std)
             out["cbf_ci95_lower"] = max(cbf_val - 1.96 * cbf_std_val, 0.0)
             out["cbf_ci95_upper"] = cbf_val + 1.96 * cbf_std_val
 
             if method == "vascular":
-                # CBV = CBF * MTT; CI from ±1.96σ of each factor
                 sig_cbf_ci = cbf_std_val
                 sig_mtt_ci = float(batched_result.uncertainties.get(
                     "mtt", np.zeros(n_voxels))[i]) if batched_result.uncertainties else 0.0
@@ -1262,7 +1335,6 @@ class ComputeDSCMaps(BaseInterface):
 
             out["r_squared"] = float(batched_result.r_squared[i])
             out["converged"] = bool(batched_result.converged[i])
-            # Flag poor fits for oSVD fallback (matches CPU path: R² < 0.5 or not converged)
             out["needs_fallback"] = (
                 float(batched_result.r_squared[i]) < 0.5
                 or not bool(batched_result.converged[i])
@@ -1275,6 +1347,75 @@ class ComputeDSCMaps(BaseInterface):
             results.append(out)
 
         return results
+
+    def _dsc_fit_batched_map(
+        self,
+        concentration_data: npt.NDArray[Any],
+        mask_coords: tuple[npt.NDArray[Any], ...],
+        aif: npt.NDArray[np.floating],
+        time_points: npt.NDArray[np.floating],
+        method: str,
+        dt: float,
+        n_voxels: int,
+        cpi_control_points: int,
+        bolus_duration_frames: int,
+        motion_weights: Optional[npt.NDArray[np.floating]],
+        sloppy: bool,
+    ) -> list[dict[str, Any]]:
+        """Batched MAP for DSC parametric models.
+
+        Extracts priors from model definitions and calls batched_dsc_map_fit.
+        Runs in a single process with vectorized numpy operations.
+
+        Args:
+            concentration_data: Concentration data, shape (X, Y, Z, T).
+            mask_coords: Tuple of coordinate arrays.
+            aif: AIF, shape (T,).
+            time_points: Time points (seconds), shape (T,).
+            method: 'cpi' or 'vascular'.
+            dt: Time step (seconds).
+            n_voxels: Number of voxels.
+            cpi_control_points: Number of CPI control points.
+            bolus_duration_frames: Bolus duration in frames.
+            motion_weights: Per-frame weights or None.
+            sloppy: Whether to use sloppy mode.
+
+        Returns:
+            List of per-voxel result dicts.
+        """
+        from pmriprep.models.dsc.batched_fitting import batched_dsc_map_fit
+
+        s = self._build_dsc_parametric_setup(
+            method, concentration_data, mask_coords, aif, dt,
+            cpi_control_points, bolus_duration_frames,
+        )
+
+        batched_result = batched_dsc_map_fit(
+            model_type=method,
+            tissue_curves=s["tissue_curves"],
+            aif=aif,
+            time_points=time_points,
+            prior_means_nat=s["means_nat"],
+            prior_stds_nat=s["stds_nat"],
+            transforms=s["transforms"],
+            upper_bounds=s["ubs"],
+            fitting_param_names=s["fitting_names"],
+            fitting_bounds=s["fitting_bounds"],
+            mono_prec=s["mono_prec"],
+            mono_eta=s["mono_eta"],
+            control_point_times=s["cp_times"],
+            toeplitz_matrix=s["toeplitz"],
+            prior_means_transformed=s["means_t"],
+            prior_stds_transformed=s["stds_t"],
+            weights=motion_weights,
+            sloppy=sloppy,
+            save_fitted_curves=True,
+        )
+
+        return self._batched_result_to_voxel_dicts(
+            batched_result, mask_coords, method, n_voxels, dt,
+            s["cp_times"], time_points,
+        )
 
     def _save_qc_fit_data(
         self,

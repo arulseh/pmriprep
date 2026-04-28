@@ -10,10 +10,13 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pmriprep.models.bayesian_utils import build_priors_from_params
+from pmriprep.models.dsc.batched_fitting import batched_dsc_map_fit
 from pmriprep.models.dsc.bayesian import fit_dsc_model
 from pmriprep.models.dsc.cpi import CPIModel
 from pmriprep.models.dsc.vascular import VascularModel
 from pmriprep.utils.dsc_deconvolution import (
+    build_toeplitz_matrix,
     svd_deconvolve_circulant,
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
@@ -636,6 +639,164 @@ class TestCPIVIGammaRecovery:
         _assert_param_recovery(
             recovered_mtt, true_mtt, mtt_tol, param_name="MTT"
         )
+
+
+# =============================================================================
+# Batched MAP Recovery (vectorized Gauss-Newton path)
+# =============================================================================
+
+
+BATCHED_MAP_CPI_PARAMS = [
+    pytest.param(0.10, 3.0, 1.5, id="normal_gm"),
+    pytest.param(0.04, 4.0, 1.5, id="normal_wm"),
+    pytest.param(0.16, 2.0, 3.0, id="tumor"),
+    pytest.param(0.13, 3.0, 4.0, id="long_mtt"),
+]
+
+BATCHED_MAP_NOISE_LEVELS = [
+    pytest.param(0.0, 0.20, 0.16, id="zero"),
+    pytest.param(0.02, 0.23, 0.19, id="low"),
+    pytest.param(0.05, 0.26, 0.24, id="medium"),
+]
+
+
+class TestBatchedMAPVascularRecovery:
+    """Test batched MAP recovery for vascular model on DRO data.
+
+    Validates that the vectorized Gauss-Newton MAP path produces the same
+    quality of parameter recovery as the per-voxel scipy MAP.
+    """
+
+    @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", VASCULAR_NOISE_LEVELS)
+    @pytest.mark.parametrize("cbf,alpha,beta,delay", VASCULAR_PARAMS)
+    def test_batched_vascular_map(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        delay: float,
+        noise_frac: float,
+        cbf_tol: float,
+        mtt_tol: float,
+    ) -> None:
+        if cbf < 0.03 and noise_frac >= 0.10:
+            pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
+        if cbf <= 0.04 and noise_frac > 0:
+            pytest.xfail("MAP prior bias pulls low CBF toward prior mean")
+
+        n_seeds = 5
+        tissues = []
+        for seed in range(n_seeds):
+            t, aif, time_sec = _make_vascular_test_data(
+                cbf, alpha, beta, delay, noise_frac, seed=seed,
+            )
+            tissues.append(t)
+        tissue_curves = np.stack(tissues)
+
+        model = VascularModel()
+        fitting_defs = list(model.get_fitting_parameter_definitions())
+        priors = build_priors_from_params(fitting_defs)
+
+        result = batched_dsc_map_fit(
+            model_type="vascular",
+            tissue_curves=tissue_curves,
+            aif=aif,
+            time_points=time_sec,
+            prior_means_nat=np.array([p.mean for p in priors]),
+            prior_stds_nat=np.array([p.std for p in priors]),
+            transforms=[p.transform for p in priors],
+            upper_bounds=[p.upper_bound for p in priors],
+            fitting_param_names=[p.name for p in fitting_defs],
+            fitting_bounds=[(p.bounds[0], p.bounds[1]) for p in fitting_defs],
+            prior_means_transformed=np.array([p.mean_transformed for p in priors]),
+            prior_stds_transformed=np.array([p.std_transformed for p in priors]),
+            compute_uncertainties=False,
+        )
+
+        conv = result.converged
+        assert np.sum(conv) >= 3, f"Only {np.sum(conv)}/{n_seeds} converged"
+
+        recovered_cbf = float(np.median(result.params["cbf"][conv]))
+        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
+
+        true_mtt = alpha * beta
+        recovered_mtt = float(np.median(result.params["mtt"][conv]))
+        _assert_param_recovery(recovered_mtt, true_mtt, mtt_tol, param_name="MTT")
+
+
+class TestBatchedMAPCPIRecovery:
+    """Test batched MAP recovery for CPI model on DRO data.
+
+    Uses the same gamma-variate ground truth and tolerances as the
+    per-voxel CPI MAP tests.
+    """
+
+    @pytest.mark.parametrize(
+        "noise_frac,cbf_tol,mtt_tol", BATCHED_MAP_NOISE_LEVELS
+    )
+    @pytest.mark.parametrize("cbf,alpha,beta", BATCHED_MAP_CPI_PARAMS)
+    def test_batched_cpi_map(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        noise_frac: float,
+        cbf_tol: float,
+        mtt_tol: float,
+    ) -> None:
+        true_mtt = alpha * beta
+
+        if cbf <= 0.02:
+            pytest.xfail(f"CBF prior overwhelms low-flow signal (CBF={cbf})")
+
+        n_seeds = 5
+        tissues = []
+        for seed in range(n_seeds):
+            t, aif, time_sec, _ = _make_cpi_gamma_test_data(
+                cbf, alpha, beta, noise_frac, seed=seed,
+            )
+            tissues.append(t)
+        tissue_curves = np.stack(tissues)
+
+        n_cp = 7
+        t_span = 30.0
+        dt = float(time_sec[1] - time_sec[0])
+        model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+        fitting_defs = list(model.get_fitting_parameter_definitions())
+        priors = build_priors_from_params(fitting_defs)
+        cp_times = np.array(model._control_point_times, dtype=np.float64)
+        toeplitz = build_toeplitz_matrix(aif, dt)
+
+        result = batched_dsc_map_fit(
+            model_type="cpi",
+            tissue_curves=tissue_curves,
+            aif=aif,
+            time_points=time_sec,
+            prior_means_nat=np.array([p.mean for p in priors]),
+            prior_stds_nat=np.array([p.std for p in priors]),
+            transforms=[p.transform for p in priors],
+            upper_bounds=[p.upper_bound for p in priors],
+            fitting_param_names=[p.name for p in fitting_defs],
+            fitting_bounds=[(p.bounds[0], p.bounds[1]) for p in fitting_defs],
+            control_point_times=cp_times,
+            toeplitz_matrix=toeplitz,
+            prior_means_transformed=np.array([p.mean_transformed for p in priors]),
+            prior_stds_transformed=np.array([p.std_transformed for p in priors]),
+            compute_uncertainties=False,
+        )
+
+        conv = result.converged
+        assert np.sum(conv) >= 3, f"Only {np.sum(conv)}/{n_seeds} converged"
+
+        for i in range(n_seeds):
+            if not conv[i]:
+                continue
+            p_dict = {n: float(result.params[n][i]) for n in [p.name for p in fitting_defs]}
+            p_list = model.dict_to_params(p_dict)
+            recovered_cbf = model.get_cbf(p_list)
+            recovered_mtt = model.get_mtt(p_list, time_sec)
+            _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
+            _assert_param_recovery(recovered_mtt, true_mtt, mtt_tol, param_name="MTT")
 
 
 # =============================================================================

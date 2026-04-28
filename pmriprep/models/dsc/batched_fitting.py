@@ -1,8 +1,9 @@
 """Batched fitting for DSC perfusion models.
 
-This module provides batched forward model evaluation and Variational Bayes
-fitting for DSC-MRI parametric models (CPI and Vascular). The key optimization
-is vectorizing forward model evaluations across all voxels simultaneously.
+This module provides batched forward model evaluation, Variational Bayes
+fitting, and MAP fitting for DSC-MRI parametric models (CPI and Vascular).
+The key optimization is vectorizing forward model evaluations across all
+voxels simultaneously.
 
 Supported models:
 - **CPI**: Control-point interpolation with PCHIP residue functions.
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Optional
 
 import numpy as np
@@ -56,7 +57,7 @@ class DSCBatchedFitResult:
         r_squared: R-squared values, shape (N,).
         converged: Convergence flags, shape (N,).
         fitted_curves: Fitted tissue curves, shape (N, T) or None.
-        n_iterations: Number of VI iterations performed.
+        n_iterations: Number of fitting iterations performed.
         model_name: Name of the fitted model ('cpi' or 'vascular').
         uncertainties: Parameter uncertainties, param_name -> (N,).
     """
@@ -329,8 +330,98 @@ def _batched_pchip(
 
 
 # ---------------------------------------------------------------------------
-# Batched DSC Variational Inference
+# Shared helpers for batched fitting (VI and MAP)
 # ---------------------------------------------------------------------------
+
+_FD_REL = 1e-5
+_FD_FLOOR = 1e-10
+
+
+def _compute_jacobian_columns(
+    m_a: npt.NDArray[np.floating],
+    m_nat_a: npt.NDArray[np.floating],
+    g_m: npt.NDArray[np.floating],
+    evaluate_fn: "Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]",
+    transforms: list[TransformType],
+    upper_bounds: list[float | None],
+    bounds_lo: npt.NDArray[np.floating],
+    bounds_hi: npt.NDArray[np.floating],
+    cbf_idx: int,
+) -> list[npt.NDArray[np.floating]]:
+    """Compute Jacobian columns: analytical CBF + forward FD for others.
+
+    Args:
+        m_a: Transformed parameters, shape (n_active, P).
+        m_nat_a: Natural-space parameters, shape (n_active, P).
+        g_m: Forward model at current params, shape (n_active, T).
+        evaluate_fn: Batched forward model callable.
+        transforms: Per-parameter transform types.
+        upper_bounds: Per-parameter upper bounds for LOG_LOGIT.
+        bounds_lo: Lower bounds in natural space, shape (P,).
+        bounds_hi: Upper bounds in natural space, shape (P,).
+        cbf_idx: Index of CBF parameter (uses analytical Jacobian).
+
+    Returns:
+        List of P arrays, each shape (n_active, T).
+    """
+    n_params = m_a.shape[1]
+    deltas = np.maximum(np.abs(m_a) * _FD_REL, _FD_FLOOR)
+    J_columns: list[npt.NDArray[np.floating]] = []
+
+    for j in range(n_params):
+        if j == cbf_idx:
+            J_columns.append(g_m)
+            continue
+
+        nat_plus = m_nat_a.copy()
+        nat_plus[:, j] = from_transformed_batch(
+            m_a[:, j] + deltas[:, j], transforms[j], upper_bounds[j],
+        )
+
+        if transforms[j] == TransformType.IDENTITY:
+            nat_plus[:, j] = np.clip(nat_plus[:, j], bounds_lo[j], bounds_hi[j])
+
+        g_plus = evaluate_fn(nat_plus)
+
+        if transforms[j] == TransformType.IDENTITY:
+            actual_delta = nat_plus[:, j] - m_nat_a[:, j]
+            actual_delta = np.maximum(actual_delta, _FD_FLOOR)
+        else:
+            actual_delta = deltas[:, j]
+
+        J_columns.append((g_plus - g_m) / actual_delta[:, None])
+
+    return J_columns
+
+
+def _assemble_JtWJ(
+    J_columns: list[npt.NDArray[np.floating]],
+    k_res: npt.NDArray[np.floating],
+    w: npt.NDArray[np.floating],
+) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
+    """Assemble J^T W J and J^T W k from Jacobian columns.
+
+    Args:
+        J_columns: List of P arrays, each shape (n_active, T).
+        k_res: Residuals, shape (n_active, T).
+        w: Per-frame weights, shape (T,).
+
+    Returns:
+        JtWJ: shape (n_active, P, P).
+        JtWk: shape (n_active, P).
+    """
+    n_params = len(J_columns)
+    n_active = J_columns[0].shape[0]
+    JtWJ = np.zeros((n_active, n_params, n_params))
+    JtWk = np.zeros((n_active, n_params))
+    for j in range(n_params):
+        wJ_j = w[None, :] * J_columns[j]
+        JtWk[:, j] = np.sum(wJ_j * k_res, axis=1)
+        for k in range(j, n_params):
+            val = np.sum(wJ_j * J_columns[k], axis=1)
+            JtWJ[:, j, k] = val
+            JtWJ[:, k, j] = val
+    return JtWJ, JtWk
 
 
 def _compute_r_squared(
@@ -553,9 +644,6 @@ def batched_dsc_vi_fit(
 
     w = np.ones(n_obs, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
 
-    _FD_REL = 1e-5
-    _FD_FLOOR = 1e-10
-
     # CBF index for analytic Jacobian (constant across iterations)
     cbf_idx = fitting_param_names.index("cbf")
     if transforms[cbf_idx] != TransformType.LOG:
@@ -592,47 +680,16 @@ def batched_dsc_vi_fit(
         g_m = _evaluate(m_nat_a)
 
         # 3. Jacobian: analytic CBF + forward FD for remaining params
-        deltas = np.maximum(np.abs(m_a) * _FD_REL, _FD_FLOOR)
-        J_columns: list[npt.NDArray[np.floating]] = []
-
-        for j in range(n_params):
-            if j == cbf_idx:
-                # CBF is linear in log-space: dC/d(log_cbf) = C(t)
-                J_columns.append(g_m)
-                continue
-
-            # Forward FD; at upper bound, delta→0 giving zero Jacobian (prior-only update)
-            nat_plus = m_nat_a.copy()
-            nat_plus[:, j] = from_transformed_batch(
-                m_a[:, j] + deltas[:, j], transforms[j], upper_bounds[j],
-            )
-
-            if transforms[j] == TransformType.IDENTITY:
-                nat_plus[:, j] = np.clip(nat_plus[:, j], bounds_lo[j], bounds_hi[j])
-
-            g_plus = _evaluate(nat_plus)
-
-            if transforms[j] == TransformType.IDENTITY:
-                actual_delta = nat_plus[:, j] - m_nat_a[:, j]
-                actual_delta = np.maximum(actual_delta, _FD_FLOOR)
-            else:
-                actual_delta = deltas[:, j]
-
-            J_columns.append((g_plus - g_m) / actual_delta[:, None])
+        J_columns = _compute_jacobian_columns(
+            m_a, m_nat_a, g_m, _evaluate,
+            transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
+        )
 
         # Residual
         k_res = y_a - g_m
 
         # 4. Build JtWJ via column-loop
-        JtWJ = np.zeros((n_active, n_params, n_params))
-        JtWk = np.zeros((n_active, n_params))
-        for j in range(n_params):
-            wJ_j = w[None, :] * J_columns[j]
-            JtWk[:, j] = np.sum(wJ_j * k_res, axis=1)
-            for k in range(j, n_params):
-                val = np.sum(wJ_j * J_columns[k], axis=1)
-                JtWJ[:, j, k] = val
-                JtWJ[:, k, j] = val
+        JtWJ, JtWk = _assemble_JtWJ(J_columns, k_res, w)
 
         # 5. Posterior precision and covariance
         post_prec = prior_prec[None, :, :] + tau_a[:, None, None] * JtWJ
@@ -855,4 +912,547 @@ def batched_dsc_vi_fit(
         model_name=model_type, uncertainties=out_uncertainties,
         posterior_means_transformed=out_post_means,
         posterior_cov_diag=out_post_cov,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Batched DSC MAP (Maximum A Posteriori)
+# ---------------------------------------------------------------------------
+
+
+def _run_map_gauss_newton(
+    y: npt.NDArray[np.floating],
+    m_init: npt.NDArray[np.floating],
+    sigma_sq_init: npt.NDArray[np.floating],
+    prior_means_t: npt.NDArray[np.floating],
+    prior_prec: npt.NDArray[np.floating],
+    mono_eta: Optional[npt.NDArray[np.floating]],
+    transforms: list[TransformType],
+    upper_bounds: list[float | None],
+    bounds_lo: npt.NDArray[np.floating],
+    bounds_hi: npt.NDArray[np.floating],
+    cbf_idx: int,
+    w: npt.NDArray[np.floating],
+    n_eff: float,
+    evaluate_fn: "Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]",
+    n_iterations: int,
+    n_noise_iterations: int,
+) -> tuple[
+    npt.NDArray[np.floating],  # best_m (n_valid, P)
+    npt.NDArray[np.floating],  # best_nlp (n_valid,)
+    npt.NDArray[np.floating],  # best_sigma_sq (n_valid,)
+    npt.NDArray[np.bool_],     # converged (n_valid,)
+    int,                       # last_iteration
+]:
+    """Run Gauss-Newton MAP optimization with profile likelihood noise.
+
+    Args:
+        y: Observed curves, shape (n_valid, T).
+        m_init: Initial transformed parameters, shape (n_valid, P).
+        sigma_sq_init: Initial noise variance, shape (n_valid,).
+        prior_means_t: Prior means in transformed space, shape (P,).
+        prior_prec: Prior precision matrix, shape (P, P).
+        mono_eta: CPI monotonicity bias, shape (P,) or None.
+        transforms: Per-parameter transform types.
+        upper_bounds: Per-parameter LOG_LOGIT upper bounds.
+        bounds_lo: Lower bounds in natural space, shape (P,).
+        bounds_hi: Upper bounds in natural space, shape (P,).
+        cbf_idx: Index of CBF parameter.
+        w: Per-frame weights, shape (T,).
+        n_eff: Effective number of observations for noise estimation.
+        evaluate_fn: Batched forward model.
+        n_iterations: Gauss-Newton iterations per noise loop.
+        n_noise_iterations: Profile likelihood outer iterations.
+
+    Returns:
+        Tuple of (best_m, best_nlp, best_sigma_sq, converged, last_iteration).
+    """
+    n_valid = y.shape[0]
+    n_obs = y.shape[1]
+    n_params = m_init.shape[1]
+
+    m = m_init.copy()
+    sigma_sq = sigma_sq_init.copy()
+
+    best_nlp = np.full(n_valid, np.inf)
+    best_m = m.copy()
+    best_sigma_sq = sigma_sq.copy()
+
+    converged = np.zeros(n_valid, dtype=bool)
+    last_iteration = 0
+
+    for sigma_iter in range(n_noise_iterations):
+        tau = 1.0 / np.maximum(sigma_sq, 1e-30)
+
+        # Reset per-iteration state (NLP values from previous sigma are
+        # invalid because tau changed)
+        best_nlp[:] = np.inf
+        active = ~converged.copy()
+        step_scale = np.ones(n_valid)
+        nlp_plateau_count = np.zeros(n_valid, dtype=np.int32)
+        prev_nlp = np.full(n_valid, np.inf)
+
+        for iteration in range(n_iterations):
+            last_iteration = sigma_iter * n_iterations + iteration
+            n_active = int(np.sum(active))
+            if n_active == 0:
+                break
+
+            a_idx = np.where(active)[0]
+            m_a = m[a_idx]
+            y_a = y[a_idx]
+            tau_a = tau[a_idx]
+
+            # 1. Inverse-transform
+            m_nat_a = np.zeros_like(m_a)
+            for j in range(n_params):
+                m_nat_a[:, j] = from_transformed_batch(
+                    m_a[:, j], transforms[j], upper_bounds[j],
+                )
+
+            # 2. Forward model
+            g_m = evaluate_fn(m_nat_a)
+
+            # 3. Jacobian
+            J_columns = _compute_jacobian_columns(
+                m_a, m_nat_a, g_m, evaluate_fn,
+                transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
+            )
+
+            # 4. Residual
+            k_res = y_a - g_m
+
+            # 5. JtWJ
+            JtWJ, _JtWk = _assemble_JtWJ(J_columns, k_res, w)
+
+            # 6. Posterior precision and covariance
+            post_prec = prior_prec[None, :, :] + tau_a[:, None, None] * JtWJ
+            post_cov = np.linalg.inv(post_prec)
+            bad_cov = ~np.isfinite(post_cov).all(axis=(1, 2))
+            if np.any(bad_cov):
+                post_prec[bad_cov] += 1e-6 * np.eye(n_params)
+                post_cov[bad_cov] = np.linalg.inv(post_prec[bad_cov])
+
+            # 7. Gauss-Newton mean update
+            Jm = np.zeros((n_active, n_obs))
+            for j in range(n_params):
+                Jm += J_columns[j] * m_a[:, j:j + 1]
+
+            lam0_mu0 = prior_prec @ prior_means_t
+            if mono_eta is not None:
+                lam0_mu0 = lam0_mu0 + mono_eta
+            data_term = np.zeros((n_active, n_params))
+            for j in range(n_params):
+                data_term[:, j] = np.sum(
+                    w[None, :] * J_columns[j] * (k_res + Jm), axis=1,
+                )
+            rhs = lam0_mu0[None, :] + tau_a[:, None] * data_term
+            m_new = np.einsum("nij,nj->ni", post_cov, rhs)
+
+            # Clip IDENTITY params
+            for j in range(n_params):
+                if transforms[j] == TransformType.IDENTITY:
+                    m_new[:, j] = np.clip(m_new[:, j], bounds_lo[j], bounds_hi[j])
+
+            # 8. Compute negative log posterior
+            m_new_nat = np.zeros_like(m_new)
+            for j in range(n_params):
+                m_new_nat[:, j] = from_transformed_batch(
+                    m_new[:, j], transforms[j], upper_bounds[j],
+                )
+            g_new = evaluate_fn(m_new_nat)
+            k_new = y_a - g_new
+            weighted_rss = np.sum(w[None, :] * k_new ** 2, axis=1)
+            dm = m_new - prior_means_t[None, :]
+            prior_term = np.sum(dm * (dm @ prior_prec), axis=1)
+            nlp = 0.5 * tau_a * weighted_rss + 0.5 * prior_term
+
+            # 9. Step-size reduction (objective-based)
+            cur_best = best_nlp[a_idx].copy()
+            improved = nlp < cur_best
+
+            imp_local = np.where(improved)[0]
+            if len(imp_local) > 0:
+                imp_global = a_idx[imp_local]
+                best_nlp[imp_global] = nlp[imp_local]
+                best_m[imp_global] = m_new[imp_local]
+                step_scale[imp_global] = 1.0
+
+            not_imp_local = np.where(~improved)[0]
+            if len(not_imp_local) > 0:
+                not_imp_global = a_idx[not_imp_local]
+                step_scale[not_imp_global] *= 0.5
+                m_new[not_imp_local] = (
+                    m_a[not_imp_local]
+                    + step_scale[not_imp_global, None]
+                    * (m_new[not_imp_local] - m_a[not_imp_local])
+                )
+                for j in range(n_params):
+                    if transforms[j] == TransformType.IDENTITY:
+                        m_new[not_imp_local, j] = np.clip(
+                            m_new[not_imp_local, j], bounds_lo[j], bounds_hi[j],
+                        )
+                exhausted = step_scale[not_imp_global] < 1e-4
+                if np.any(exhausted):
+                    active[not_imp_global[exhausted]] = False
+
+            # 10. Convergence: param change OR NLP plateau
+            if iteration > 0:
+                param_change = np.max(np.abs(m_new - m_a), axis=1)
+                param_conv = param_change < 1e-3
+
+                cur_prev = prev_nlp[a_idx]
+                nlp_near = (
+                    np.isfinite(cur_prev)
+                    & (np.abs(nlp - cur_prev) < 1e-4 * np.maximum(np.abs(cur_prev), 1.0))
+                )
+                nlp_plateau_count[a_idx] = np.where(
+                    nlp_near, nlp_plateau_count[a_idx] + 1, 0,
+                )
+                nlp_conv = nlp_plateau_count[a_idx] >= 2
+
+                newly_conv = param_conv | nlp_conv
+                if np.any(newly_conv):
+                    conv_global = a_idx[newly_conv]
+                    converged[conv_global] = True
+                    active[conv_global] = False
+
+            prev_nlp[a_idx] = nlp
+
+            # Update state for still-active voxels
+            still_active = active[a_idx]
+            if np.any(still_active):
+                sa_local = np.where(still_active)[0]
+                sa_global = a_idx[sa_local]
+                m[sa_global] = m_new[sa_local]
+
+        # Profile likelihood noise update
+        if sigma_iter < n_noise_iterations - 1:
+            best_nat = np.zeros_like(best_m)
+            for j in range(n_params):
+                best_nat[:, j] = from_transformed_batch(
+                    best_m[:, j], transforms[j], upper_bounds[j],
+                )
+            g_best = evaluate_fn(best_nat)
+            residuals = y - g_best
+            sigma_sq = np.sum(w[None, :] * residuals ** 2, axis=1) / n_eff
+            sigma_sq = np.maximum(sigma_sq, 1e-30)
+            best_sigma_sq = sigma_sq.copy()
+
+            # Warm-start next outer iteration from best solution
+            m = best_m.copy()
+            converged[:] = False
+
+    # Final sigma from best solution
+    best_nat_final = np.zeros_like(best_m)
+    for j in range(n_params):
+        best_nat_final[:, j] = from_transformed_batch(
+            best_m[:, j], transforms[j], upper_bounds[j],
+        )
+    g_final = evaluate_fn(best_nat_final)
+    residuals_final = y - g_final
+    best_sigma_sq = np.sum(w[None, :] * residuals_final ** 2, axis=1) / n_eff
+    best_sigma_sq = np.maximum(best_sigma_sq, 1e-30)
+
+    # Re-evaluate NLP at best solution with final sigma
+    weighted_rss_final = np.sum(w[None, :] * residuals_final ** 2, axis=1)
+    dm_final = best_m - prior_means_t[None, :]
+    prior_term_final = np.sum(dm_final * (dm_final @ prior_prec), axis=1)
+    best_nlp = 0.5 / best_sigma_sq * weighted_rss_final + 0.5 * prior_term_final
+
+    # Mark unconverged voxels that are at a good solution
+    good_fit = _compute_r_squared(y, g_final) > 0.0
+    converged |= good_fit
+
+    return best_m, best_nlp, best_sigma_sq, converged, last_iteration
+
+
+def batched_dsc_map_fit(
+    model_type: str,
+    tissue_curves: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    time_points: npt.NDArray[np.floating],
+    prior_means_nat: npt.NDArray[np.floating],
+    prior_stds_nat: npt.NDArray[np.floating],
+    transforms: list[TransformType],
+    upper_bounds: list[float | None],
+    fitting_param_names: list[str],
+    fitting_bounds: list[tuple[float, float]],
+    mono_prec: Optional[npt.NDArray[np.floating]] = None,
+    mono_eta: Optional[npt.NDArray[np.floating]] = None,
+    control_point_times: Optional[npt.NDArray[np.floating]] = None,
+    toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
+    nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
+    prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
+    prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
+    weights: Optional[npt.NDArray[np.floating]] = None,
+    n_iterations: int = 15,
+    n_noise_iterations: int = 3,
+    sloppy: bool = False,
+    save_fitted_curves: bool = False,
+    compute_uncertainties: bool = True,
+) -> DSCBatchedFitResult:
+    """Batched MAP fitting for DSC perfusion models.
+
+    Implements Gauss-Newton MAP optimization with profile likelihood noise
+    estimation, vectorized across all voxels. Uses the same forward models
+    and Jacobian infrastructure as batched VI.
+
+    Does not support spatial VB (SVB).
+
+    Args:
+        model_type: 'cpi' or 'vascular'.
+        tissue_curves: Observed tissue curves, shape (N, T).
+        aif: Arterial input function, shape (T,).
+        time_points: Time points (seconds), shape (T,).
+        prior_means_nat: Prior means in natural space, shape (P,).
+        prior_stds_nat: Prior stds in natural space, shape (P,).
+        transforms: Per-parameter transform types, length P.
+        upper_bounds: Per-parameter upper bounds for LOG_LOGIT, length P.
+        fitting_param_names: Parameter names in fitting space, length P.
+        fitting_bounds: Per-parameter bounds in fitting space, length P.
+        mono_prec: CPI monotonicity precision matrix, shape (P, P) or None.
+        mono_eta: CPI monotonicity bias, shape (P,) or None.
+        control_point_times: CPI control point times, shape (K,) or None.
+        toeplitz_matrix: Precomputed Toeplitz matrix, shape (T, T) or None.
+        nlls_seeds: NLLS seed parameters for multi-start init, shape (N, P)
+            or None. Used as second start point alongside prior means.
+        prior_means_transformed: Pre-computed prior means in transformed space,
+            shape (P,). Bypasses internal transform_prior() call.
+        prior_stds_transformed: Pre-computed prior stds in transformed space,
+            shape (P,). Must be provided alongside prior_means_transformed.
+        weights: Per-frame motion weights, shape (T,). None = uniform.
+        n_iterations: Gauss-Newton iterations per noise loop (default 15).
+        n_noise_iterations: Profile likelihood outer loops (default 3).
+        sloppy: Fast mode: 8 iters, 1 noise loop, no uncertainties.
+        save_fitted_curves: Whether to store fitted curves in result.
+        compute_uncertainties: Whether to compute Laplace uncertainties.
+
+    Returns:
+        DSCBatchedFitResult with fitted parameters, R², convergence,
+        and Laplace uncertainties.
+    """
+    tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
+    n_voxels, n_obs = tissue_curves.shape
+    n_params = len(fitting_param_names)
+
+    if sloppy:
+        n_iterations = 8
+        n_noise_iterations = 1
+        compute_uncertainties = False
+
+    # Pre-filter: exclude voxels with negligible signal
+    voxel_max = np.max(np.abs(tissue_curves), axis=1)
+    valid_mask = voxel_max > EPSILON_CONCENTRATION
+    valid_idx = np.where(valid_mask)[0]
+    n_valid = len(valid_idx)
+
+    # Initialize output arrays
+    out_params = {name: np.zeros(n_voxels) for name in fitting_param_names}
+    out_r2 = np.full(n_voxels, -1.0)
+    out_converged = np.zeros(n_voxels, dtype=bool)
+    out_uncertainties: dict[str, npt.NDArray[np.floating]] = {
+        name: np.full(n_voxels, np.nan) for name in fitting_param_names
+    }
+    out_uncertainties["noise_std"] = np.full(n_voxels, np.nan)
+
+    if n_valid == 0:
+        return DSCBatchedFitResult(
+            params=out_params, r_squared=out_r2, converged=out_converged,
+            fitted_curves=None, n_iterations=0, model_name=model_type,
+            uncertainties=out_uncertainties,
+        )
+
+    y = tissue_curves[valid_idx]  # (n_valid, T)
+
+    # --- Prior setup ---
+    if prior_means_transformed is not None and prior_stds_transformed is not None:
+        prior_means_t = np.asarray(prior_means_transformed, dtype=np.float64)
+        prior_stds_t = np.asarray(prior_stds_transformed, dtype=np.float64)
+    else:
+        prior_means_t = np.zeros(n_params, dtype=np.float64)
+        prior_stds_t = np.zeros(n_params, dtype=np.float64)
+        for j in range(n_params):
+            prior_means_t[j], prior_stds_t[j] = transform_prior(
+                float(prior_means_nat[j]), float(prior_stds_nat[j]),
+                transforms[j], upper_bounds[j],
+            )
+    prior_prec_mat = np.diag(1.0 / (prior_stds_t ** 2))
+    if mono_prec is not None:
+        prior_prec_mat = prior_prec_mat + mono_prec
+
+    # --- Bounds ---
+    bounds_lo = np.array([b[0] for b in fitting_bounds])
+    bounds_hi = np.array([b[1] for b in fitting_bounds])
+
+    w = np.ones(n_obs, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
+    n_eff = float(np.sum(w)) if weights is not None else float(n_obs)
+
+    # CBF index for analytic Jacobian
+    cbf_idx = fitting_param_names.index("cbf")
+    if transforms[cbf_idx] != TransformType.LOG:
+        raise ValueError(
+            f"Analytic CBF Jacobian requires LOG transform, "
+            f"got {transforms[cbf_idx]} for param '{fitting_param_names[cbf_idx]}'"
+        )
+
+    # --- Forward model dispatch ---
+    def _evaluate(params_fitting: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
+        if model_type == "vascular":
+            cbf_v = params_fitting[:, 0]
+            mtt_v = params_fitting[:, 1]
+            alpha_v = params_fitting[:, 2]
+            delay_v = params_fitting[:, 3]
+            beta_v = mtt_v / np.maximum(alpha_v, 1e-10)
+            return batched_vascular_forward(
+                cbf_v, alpha_v, beta_v, delay_v, aif, time_points,
+            )
+        else:  # cpi
+            if control_point_times is None or toeplitz_matrix is None:
+                raise ValueError("CPI model requires control_point_times and toeplitz_matrix")
+            return batched_cpi_forward(
+                params_fitting, aif, time_points,
+                control_point_times, toeplitz_matrix,
+            )
+
+    # --- Multi-start initialization ---
+    # Start 0: prior means
+    m0_nat = np.tile(prior_means_nat, (n_valid, 1)).astype(np.float64)
+    for j in range(n_params):
+        m0_nat[:, j] = np.clip(m0_nat[:, j], bounds_lo[j], bounds_hi[j])
+    m0_t = np.zeros((n_valid, n_params), dtype=np.float64)
+    for j in range(n_params):
+        m0_t[:, j] = to_transformed_batch(m0_nat[:, j], transforms[j], upper_bounds[j])
+
+    # Initial noise from prior-mean residuals
+    try:
+        g0 = _evaluate(m0_nat)
+        sigma_sq_init = np.sum(w[None, :] * (y - g0) ** 2, axis=1) / n_eff
+        sigma_sq_init = np.maximum(sigma_sq_init, 1e-30)
+    except (ValueError, RuntimeError):
+        sigma_sq_init = np.ones(n_valid, dtype=np.float64)
+
+    # Start 1: NLLS seeds (if available and different from prior)
+    has_second_start = False
+    if not sloppy and nlls_seeds is not None:
+        valid_seeds = nlls_seeds[valid_idx]
+        has_seed = np.any(np.abs(valid_seeds) > 0, axis=1)
+        if np.any(has_seed):
+            has_second_start = True
+            m1_nat = m0_nat.copy()
+            m1_nat[has_seed] = valid_seeds[has_seed]
+            for j in range(n_params):
+                m1_nat[:, j] = np.clip(m1_nat[:, j], bounds_lo[j], bounds_hi[j])
+            m1_t = np.zeros((n_valid, n_params), dtype=np.float64)
+            for j in range(n_params):
+                m1_t[:, j] = to_transformed_batch(m1_nat[:, j], transforms[j], upper_bounds[j])
+
+            # Noise from seed residuals
+            try:
+                g1 = _evaluate(m1_nat)
+                sigma_sq_seed = np.sum(w[None, :] * (y - g1) ** 2, axis=1) / n_eff
+                sigma_sq_seed = np.maximum(sigma_sq_seed, 1e-30)
+            except (ValueError, RuntimeError):
+                sigma_sq_seed = sigma_sq_init.copy()
+
+    # For sloppy with NLLS seeds, use seeds as single start
+    if sloppy and nlls_seeds is not None:
+        valid_seeds = nlls_seeds[valid_idx]
+        has_seed = np.any(np.abs(valid_seeds) > 0, axis=1)
+        if np.any(has_seed):
+            m0_nat[has_seed] = valid_seeds[has_seed]
+            for j in range(n_params):
+                m0_nat[:, j] = np.clip(m0_nat[:, j], bounds_lo[j], bounds_hi[j])
+            for j in range(n_params):
+                m0_t[:, j] = to_transformed_batch(m0_nat[:, j], transforms[j], upper_bounds[j])
+            try:
+                g0 = _evaluate(m0_nat)
+                sigma_sq_init = np.sum(w[None, :] * (y - g0) ** 2, axis=1) / n_eff
+                sigma_sq_init = np.maximum(sigma_sq_init, 1e-30)
+            except (ValueError, RuntimeError):
+                pass
+
+    logger.info("DSC batched MAP: fitting %s on %d voxels (multi-start=%s)",
+                model_type, n_valid, has_second_start)
+
+    # --- Run start 0 ---
+    best_m, best_nlp, best_sigma_sq, converged, total_iters = _run_map_gauss_newton(
+        y, m0_t, sigma_sq_init, prior_means_t, prior_prec_mat, mono_eta,
+        transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx, w, n_eff,
+        _evaluate, n_iterations, n_noise_iterations,
+    )
+
+    # --- Run start 1 (if available) ---
+    if has_second_start:
+        m1_best, nlp1, sigma1, conv1, iters1 = _run_map_gauss_newton(
+            y, m1_t, sigma_sq_seed, prior_means_t, prior_prec_mat, mono_eta,
+            transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx, w, n_eff,
+            _evaluate, n_iterations, n_noise_iterations,
+        )
+        total_iters = max(total_iters, iters1)
+
+        # Select better start per voxel
+        start1_better = nlp1 < best_nlp
+        if np.any(start1_better):
+            best_m[start1_better] = m1_best[start1_better]
+            best_nlp[start1_better] = nlp1[start1_better]
+            best_sigma_sq[start1_better] = sigma1[start1_better]
+            converged[start1_better] |= conv1[start1_better]
+
+    logger.info(
+        "DSC batched MAP finished: %d/%d converged (of %d total)",
+        int(np.sum(converged)), n_valid, n_voxels,
+    )
+
+    # --- Post-convergence: inverse-transform ---
+    fitted_nat = np.zeros((n_valid, n_params), dtype=np.float64)
+    for j in range(n_params):
+        fitted_nat[:, j] = from_transformed_batch(
+            best_m[:, j], transforms[j], upper_bounds[j],
+        )
+    for j in range(n_params):
+        fitted_nat[:, j] = np.clip(fitted_nat[:, j], bounds_lo[j], bounds_hi[j])
+
+    # --- Laplace uncertainties ---
+    if compute_uncertainties:
+        final_tau = 1.0 / np.maximum(best_sigma_sq, 1e-30)
+        g_final_unc = _evaluate(fitted_nat)
+        J_final = _compute_jacobian_columns(
+            best_m, fitted_nat, g_final_unc, _evaluate,
+            transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
+        )
+        JtWJ_final, _ = _assemble_JtWJ(J_final, y - g_final_unc, w)
+
+        H = prior_prec_mat[None, :, :] + final_tau[:, None, None] * JtWJ_final
+        cov = np.linalg.inv(H)
+        bad_cov = ~np.isfinite(cov).all(axis=(1, 2))
+        if np.any(bad_cov):
+            H[bad_cov] += 1e-6 * np.eye(n_params)
+            cov[bad_cov] = np.linalg.inv(H[bad_cov])
+
+        for j, name in enumerate(fitting_param_names):
+            std_t = np.sqrt(np.maximum(np.diagonal(cov, axis1=1, axis2=2)[:, j], 0.0))
+            jac = np.exp(log_jacobian_det(fitted_nat[:, j], transforms[j], upper_bounds[j]))
+            out_uncertainties[name][valid_idx] = std_t * jac
+
+    out_uncertainties["noise_std"][valid_idx] = np.sqrt(best_sigma_sq)
+
+    # --- R² and scatter results ---
+    final_pred = _evaluate(fitted_nat)
+    r2_valid = _compute_r_squared(y, final_pred)
+
+    for j, name in enumerate(fitting_param_names):
+        out_params[name][valid_idx] = fitted_nat[:, j]
+    out_r2[valid_idx] = r2_valid
+    out_converged[valid_idx] = converged
+
+    out_fitted = None
+    if save_fitted_curves:
+        out_fitted = np.zeros((n_voxels, n_obs), dtype=np.float64)
+        out_fitted[valid_idx] = final_pred
+
+    return DSCBatchedFitResult(
+        params=out_params, r_squared=out_r2, converged=out_converged,
+        fitted_curves=out_fitted, n_iterations=total_iters + 1,
+        model_name=model_type, uncertainties=out_uncertainties,
     )
