@@ -556,6 +556,14 @@ def batched_dsc_vi_fit(
     _FD_REL = 1e-5
     _FD_FLOOR = 1e-10
 
+    # CBF index for analytic Jacobian (constant across iterations)
+    cbf_idx = fitting_param_names.index("cbf")
+    if transforms[cbf_idx] != TransformType.LOG:
+        raise ValueError(
+            f"Analytic CBF Jacobian requires LOG transform, "
+            f"got {transforms[cbf_idx]} for param '{fitting_param_names[cbf_idx]}'"
+        )
+
     # Constant prior precision log-determinant
     _sign_prior_prec, _logdet_prior_prec = np.linalg.slogdet(prior_prec)
     _logdet_prior_cov = -_logdet_prior_prec
@@ -583,37 +591,34 @@ def batched_dsc_vi_fit(
         # 2. Forward model at current mean
         g_m = _evaluate(m_nat_a)
 
-        # 3. Jacobian via central FD in transformed space
+        # 3. Jacobian: analytic CBF + forward FD for remaining params
         deltas = np.maximum(np.abs(m_a) * _FD_REL, _FD_FLOOR)
         J_columns: list[npt.NDArray[np.floating]] = []
 
         for j in range(n_params):
+            if j == cbf_idx:
+                # CBF is linear in log-space: dC/d(log_cbf) = C(t)
+                J_columns.append(g_m)
+                continue
+
+            # Forward FD; at upper bound, delta→0 giving zero Jacobian (prior-only update)
             nat_plus = m_nat_a.copy()
             nat_plus[:, j] = from_transformed_batch(
                 m_a[:, j] + deltas[:, j], transforms[j], upper_bounds[j],
             )
-            nat_minus = m_nat_a.copy()
-            nat_minus[:, j] = from_transformed_batch(
-                m_a[:, j] - deltas[:, j], transforms[j], upper_bounds[j],
-            )
 
-            # For IDENTITY params, clip perturbations to bounds
             if transforms[j] == TransformType.IDENTITY:
                 nat_plus[:, j] = np.clip(nat_plus[:, j], bounds_lo[j], bounds_hi[j])
-                nat_minus[:, j] = np.clip(nat_minus[:, j], bounds_lo[j], bounds_hi[j])
 
             g_plus = _evaluate(nat_plus)
-            g_minus = _evaluate(nat_minus)
 
-            actual_delta = (m_a[:, j] + deltas[:, j]) - (m_a[:, j] - deltas[:, j])
-            # For IDENTITY with clipping, recompute actual delta
             if transforms[j] == TransformType.IDENTITY:
-                actual_delta = nat_plus[:, j] - nat_minus[:, j]
+                actual_delta = nat_plus[:, j] - m_nat_a[:, j]
                 actual_delta = np.maximum(actual_delta, _FD_FLOOR)
+            else:
+                actual_delta = deltas[:, j]
 
-            J_columns.append(
-                (g_plus - g_minus) / (actual_delta[:, None])
-            )
+            J_columns.append((g_plus - g_m) / actual_delta[:, None])
 
         # Residual
         k_res = y_a - g_m

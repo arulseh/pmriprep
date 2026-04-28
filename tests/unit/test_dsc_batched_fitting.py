@@ -391,3 +391,58 @@ class TestBatchedDSCVICPUConsistency:
             batched_cbf, cpu_cbf, rtol=5e-3,
             err_msg=f"CBF: batched={batched_cbf:.6f} CPU={cpu_cbf:.6f}",
         )
+
+
+class TestAnalyticCBFJacobian:
+    """Verify analytic dC/d(log_cbf) = C(t) matches central FD."""
+
+    def test_vascular_cbf_jacobian(self, dsc_aif_and_time):
+        """Analytic CBF Jacobian matches central FD for Vascular model."""
+        aif, tp = dsc_aif_and_time
+        cbf = np.array([0.06])
+        alpha, beta, delay = np.array([3.0]), np.array([2.0]), np.array([1.5])
+        g_m = batched_vascular_forward(cbf, alpha, beta, delay, aif, tp)
+
+        j_analytic = g_m[0]
+
+        eps = 1e-5
+        log_cbf = np.log(cbf[0])
+        g_plus = batched_vascular_forward(
+            np.array([np.exp(log_cbf + eps)]), alpha, beta, delay, aif, tp,
+        )
+        g_minus = batched_vascular_forward(
+            np.array([np.exp(log_cbf - eps)]), alpha, beta, delay, aif, tp,
+        )
+        j_fd = (g_plus[0] - g_minus[0]) / (2 * eps)
+
+        np.testing.assert_allclose(j_analytic, j_fd, rtol=1e-4, atol=1e-10)
+
+    def test_cpi_cbf_jacobian(self, dsc_aif_and_time):
+        """Analytic CBF Jacobian matches central FD for CPI model."""
+        from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+
+        aif, tp = dsc_aif_and_time
+        dt = tp[1] - tp[0]
+        toeplitz = build_toeplitz_matrix(aif, dt)
+        cp_times = np.linspace(0, 30, 7)
+
+        params = np.zeros((1, 7))
+        params[0, 0] = 0.06
+        for i in range(1, 7):
+            params[0, i] = np.exp(-1.0 / 3.0)
+
+        g_m = batched_cpi_forward(params, aif, tp, cp_times, toeplitz)
+        j_analytic = g_m[0]
+
+        eps = 1e-5
+        log_cbf = np.log(params[0, 0])
+        params_plus = params.copy()
+        params_plus[0, 0] = np.exp(log_cbf + eps)
+        params_minus = params.copy()
+        params_minus[0, 0] = np.exp(log_cbf - eps)
+
+        g_plus = batched_cpi_forward(params_plus, aif, tp, cp_times, toeplitz)
+        g_minus = batched_cpi_forward(params_minus, aif, tp, cp_times, toeplitz)
+        j_fd = (g_plus[0] - g_minus[0]) / (2 * eps)
+
+        np.testing.assert_allclose(j_analytic, j_fd, rtol=1e-4, atol=1e-10)
