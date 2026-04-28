@@ -3289,7 +3289,6 @@ def _dsc_dce_xval_plot_node(
             validation_result=validation_result or {},
             subject_id=subject_id,
             session_id=session_id,
-            constraint_mode=resolved_mode,
             model_selection=model_sel,
             use_ncbv_scale=use_ncbv_scale,
         )

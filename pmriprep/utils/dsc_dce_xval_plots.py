@@ -43,7 +43,6 @@ def generate_xval_plot(
     subject_id: str = "",
     session_id: str = "",
     output_path: Optional[str] = None,
-    constraint_mode: Optional[str] = None,
     hematocrit: float = HEMATOCRIT_ARTERIAL,
     model_selection: Optional[npt.NDArray[Any]] = None,
     use_ncbv_scale: bool = False,
@@ -61,7 +60,6 @@ def generate_xval_plot(
         subject_id: BIDS subject ID.
         session_id: BIDS session ID.
         output_path: Output PNG path. If None, uses cwd.
-        constraint_mode: CBV constraint mode (hard/soft/skip/None).
         hematocrit: Hematocrit for unit conversion (absolute-CBV path only).
         model_selection: Optional 3D model selection map (int8).
             When provided, scatter points are colored by model
@@ -103,34 +101,48 @@ def generate_xval_plot(
         ratio_label = "(vp*100)/CBV ratio"
         cbv_unit_factor = 100.0  # vp fraction → vp*100 → mL/100mL
 
-    # Extract valid voxels
+    # Extract valid voxels — two masks:
+    #   valid_plot: all finite nonzero brain voxels (gray background layer)
+    #   valid_metrics: physiological bounds subset (colored layer + metrics)
     mask_bool = mask.astype(bool)
     vp_masked = vp_data[mask_bool]
     cbv_masked = cbv_data[mask_bool]
 
-    valid = (
-        (vp_masked > MIN_VP_FOR_VALIDATION)
+    valid_plot = (
+        np.isfinite(vp_masked)
+        & np.isfinite(cbv_masked)
+        & (vp_masked > 0)
+        & (cbv_masked > 0)
+    )
+    valid_metrics = (
+        valid_plot
+        & (vp_masked > MIN_VP_FOR_VALIDATION)
         & (cbv_masked > cbv_min)
         & (vp_masked < MAX_VP_FOR_VALIDATION)
         & (cbv_masked < cbv_max)
-        & np.isfinite(vp_masked)
-        & np.isfinite(cbv_masked)
     )
-    vp_valid = vp_masked[valid]
-    cbv_valid = cbv_masked[valid]
+    vp_valid = vp_masked[valid_metrics]
+    cbv_valid = cbv_masked[valid_metrics]
 
-    # Extract model selection for valid voxels (if provided)
+    # Out-of-bounds voxels for gray background
+    oob = valid_plot & ~valid_metrics
+    vp_oob = vp_masked[oob]
+    cbv_oob = cbv_masked[oob]
+
+    # Extract model selection for in-bounds voxels (if provided)
     model_sel_valid: Optional[npt.NDArray[Any]] = None
     if model_selection is not None:
-        model_sel_valid = model_selection[mask_bool][valid]
+        model_sel_valid = model_selection[mask_bool][valid_metrics]
 
     # Project vp onto the CBV scale for scatter/BA comparison.
     # Absolute path: cbv_equiv = vp * 100 / expected_ratio (mL/100g).
     # nCBV path:     cbv_equiv = vp / expected_ratio (dimensionless).
     if expected_ratio > 0:
         cbv_from_vp = vp_valid * cbv_unit_factor / expected_ratio
+        cbv_from_vp_oob = vp_oob * cbv_unit_factor / expected_ratio
     else:
         cbv_from_vp = vp_valid * cbv_unit_factor
+        cbv_from_vp_oob = vp_oob * cbv_unit_factor
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     fig.suptitle(
@@ -140,10 +152,11 @@ def generate_xval_plot(
     )
 
     is_circular = validation_result.get("circular", False)
+    has_metrics = len(vp_valid) >= 10
 
     # ---- Panel 1: Scatter (vp-derived CBV vs DSC CBV) ----
     ax = axes[0]
-    if is_circular or len(vp_valid) < 10:
+    if is_circular or np.sum(valid_plot) < 10:
         ax.text(
             0.5, 0.5,
             "vp derived from CBV\nscatter not informative"
@@ -155,54 +168,69 @@ def generate_xval_plot(
         ax.set_title("vp vs CBV Scatter", fontsize=10)
     else:
         # Subsample for performance
-        n_pts = min(5000, len(cbv_valid))
         rng = np.random.default_rng(42)
-        idx = rng.choice(len(cbv_valid), size=n_pts, replace=False)
 
-        if model_sel_valid is not None:
-            # Color by DCE model selection (model=auto)
-            from pmriprep.utils.qc_standards import EXTENDED_PALETTE
-
-            _MODEL_NAMES = {1: "Patlak", 2: "Tofts", 3: "Ext. Tofts", 4: "2CXM"}
-            _MODEL_COLORS = {
-                1: EXTENDED_PALETTE[0],
-                2: EXTENDED_PALETTE[2],
-                3: EXTENDED_PALETTE[4],
-                4: EXTENDED_PALETTE[5],
-            }
-            ms_sub = model_sel_valid[idx]
-            for code, name in _MODEL_NAMES.items():
-                sel = ms_sub == code
-                if np.any(sel):
-                    ax.scatter(
-                        cbv_valid[idx][sel], cbv_from_vp[idx][sel],
-                        s=2, alpha=0.3, color=_MODEL_COLORS[code],
-                        label=name, rasterized=True,
-                    )
-            ax.legend(fontsize=7, markerscale=3, loc="lower right")
-        else:
+        # Gray background: out-of-bounds voxels
+        if len(cbv_oob) > 0:
+            n_oob = min(5000, len(cbv_oob))
+            idx_oob = rng.choice(len(cbv_oob), size=n_oob, replace=False)
             ax.scatter(
-                cbv_valid[idx], cbv_from_vp[idx],
-                s=2, alpha=0.3, color=COLORBLIND_PALETTE.primary,
-                rasterized=True,
+                cbv_oob[idx_oob], cbv_from_vp_oob[idx_oob],
+                s=1, alpha=0.12, color="0.6", rasterized=True, zorder=1,
             )
 
-        # Identity line
-        lim_max = max(np.percentile(cbv_valid[idx], 98),
-                      np.percentile(cbv_from_vp[idx], 98))
-        ax.plot([0, lim_max], [0, lim_max], "--",
-                color=COLORBLIND_PALETTE.error, linewidth=1,
-                label="identity")
+        # Colored foreground: in-bounds voxels
+        if has_metrics:
+            n_pts = min(5000, len(cbv_valid))
+            idx = rng.choice(len(cbv_valid), size=n_pts, replace=False)
 
-        # Annotate correlations (Spearman primary, Pearson supplementary)
-        metrics = validation_result.get("metrics", {})
-        rho = metrics.get("correlation", 0.0)
-        r_pearson = metrics.get("pearson_correlation", 0.0)
-        ax.text(
-            0.05, 0.92, f"\u03c1 = {rho:.3f} (r = {r_pearson:.3f})",
-            transform=ax.transAxes, fontsize=9,
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
-        )
+            if model_sel_valid is not None:
+                from pmriprep.utils.qc_standards import EXTENDED_PALETTE
+
+                _MODEL_NAMES = {1: "Patlak", 2: "Tofts", 3: "Ext. Tofts", 4: "2CXM"}
+                _MODEL_COLORS = {
+                    1: EXTENDED_PALETTE[0],
+                    2: EXTENDED_PALETTE[2],
+                    3: EXTENDED_PALETTE[4],
+                    4: EXTENDED_PALETTE[5],
+                }
+                ms_sub = model_sel_valid[idx]
+                for code, name in _MODEL_NAMES.items():
+                    sel = ms_sub == code
+                    if np.any(sel):
+                        ax.scatter(
+                            cbv_valid[idx][sel], cbv_from_vp[idx][sel],
+                            s=2, alpha=0.3, color=_MODEL_COLORS[code],
+                            label=name, rasterized=True, zorder=2,
+                        )
+                ax.legend(fontsize=7, markerscale=3, loc="lower right")
+            else:
+                ax.scatter(
+                    cbv_valid[idx], cbv_from_vp[idx],
+                    s=2, alpha=0.3, color=COLORBLIND_PALETTE.primary,
+                    rasterized=True, zorder=2,
+                )
+
+            lim_max = max(np.percentile(cbv_valid[idx], 98),
+                          np.percentile(cbv_from_vp[idx], 98))
+            ax.plot([0, lim_max], [0, lim_max], "--",
+                    color=COLORBLIND_PALETTE.error, linewidth=1,
+                    label="identity")
+
+            metrics = validation_result.get("metrics", {})
+            rho = metrics.get("correlation", 0.0)
+            r_pearson = metrics.get("pearson_correlation", 0.0)
+            ax.text(
+                0.05, 0.92, f"\u03c1 = {rho:.3f} (r = {r_pearson:.3f})",
+                transform=ax.transAxes, fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+            )
+        else:
+            if len(cbv_oob) > 0:
+                lim_max = max(np.percentile(cbv_oob, 98),
+                              np.percentile(cbv_from_vp_oob, 98))
+            else:
+                lim_max = 1.0
 
         ax.set_xlabel(cbv_axis_label, fontsize=9)
         ax.set_ylabel(cbv_from_vp_label, fontsize=9)
@@ -214,7 +242,7 @@ def generate_xval_plot(
 
     # ---- Panel 2: Bland-Altman ----
     ax = axes[1]
-    if is_circular or len(vp_valid) < 10:
+    if is_circular or np.sum(valid_plot) < 10:
         ax.text(
             0.5, 0.5,
             "vp derived from CBV\nBland-Altman not informative"
@@ -225,68 +253,81 @@ def generate_xval_plot(
         )
         ax.set_title("Bland-Altman", fontsize=10)
     else:
-        n_pts = min(5000, len(cbv_valid))
         rng = np.random.default_rng(42)
-        idx = rng.choice(len(cbv_valid), size=n_pts, replace=False)
 
-        ba_mean = (cbv_from_vp[idx] + cbv_valid[idx]) / 2.0
-        ba_diff = cbv_from_vp[idx] - cbv_valid[idx]
-
-        if model_sel_valid is not None:
-            from pmriprep.utils.qc_standards import EXTENDED_PALETTE
-
-            _MODEL_NAMES = {1: "Patlak", 2: "Tofts", 3: "Ext. Tofts", 4: "2CXM"}
-            _MODEL_COLORS = {
-                1: EXTENDED_PALETTE[0],
-                2: EXTENDED_PALETTE[2],
-                3: EXTENDED_PALETTE[4],
-                4: EXTENDED_PALETTE[5],
-            }
-            ms_sub = model_sel_valid[idx]
-            for code, name in _MODEL_NAMES.items():
-                sel = ms_sub == code
-                if np.any(sel):
-                    ax.scatter(
-                        ba_mean[sel], ba_diff[sel],
-                        s=2, alpha=0.3, color=_MODEL_COLORS[code],
-                        label=name, rasterized=True,
-                    )
-            ax.legend(fontsize=7, markerscale=3, loc="lower right")
-        else:
+        # Gray background: out-of-bounds BA points
+        if len(cbv_oob) > 0:
+            n_oob = min(5000, len(cbv_oob))
+            idx_oob = rng.choice(len(cbv_oob), size=n_oob, replace=False)
+            ba_mean_oob = (cbv_from_vp_oob[idx_oob] + cbv_oob[idx_oob]) / 2.0
+            ba_diff_oob = cbv_from_vp_oob[idx_oob] - cbv_oob[idx_oob]
             ax.scatter(
-                ba_mean, ba_diff,
-                s=2, alpha=0.3, color=COLORBLIND_PALETTE.primary,
-                rasterized=True,
+                ba_mean_oob, ba_diff_oob,
+                s=1, alpha=0.12, color="0.6", rasterized=True, zorder=1,
             )
 
-        # Mean bias and limits of agreement
-        mean_bias = float(np.mean(ba_diff))
-        sd_diff = float(np.std(ba_diff))
-        ax.axhline(mean_bias, color=COLORBLIND_PALETTE.error,
-                    linewidth=1, label=f"bias={mean_bias:.2f}")
-        ax.axhline(mean_bias + 1.96 * sd_diff,
-                    color=COLORBLIND_PALETTE.warning,
-                    linewidth=0.8, linestyle="--")
-        ax.axhline(mean_bias - 1.96 * sd_diff,
-                    color=COLORBLIND_PALETTE.warning,
-                    linewidth=0.8, linestyle="--")
-        ax.axhline(0, color="gray", linewidth=0.5, linestyle=":")
+        # Colored foreground: in-bounds BA points
+        if has_metrics:
+            n_pts = min(5000, len(cbv_valid))
+            idx = rng.choice(len(cbv_valid), size=n_pts, replace=False)
+
+            ba_mean = (cbv_from_vp[idx] + cbv_valid[idx]) / 2.0
+            ba_diff = cbv_from_vp[idx] - cbv_valid[idx]
+
+            if model_sel_valid is not None:
+                from pmriprep.utils.qc_standards import EXTENDED_PALETTE
+
+                _MODEL_NAMES = {1: "Patlak", 2: "Tofts", 3: "Ext. Tofts", 4: "2CXM"}
+                _MODEL_COLORS = {
+                    1: EXTENDED_PALETTE[0],
+                    2: EXTENDED_PALETTE[2],
+                    3: EXTENDED_PALETTE[4],
+                    4: EXTENDED_PALETTE[5],
+                }
+                ms_sub = model_sel_valid[idx]
+                for code, name in _MODEL_NAMES.items():
+                    sel = ms_sub == code
+                    if np.any(sel):
+                        ax.scatter(
+                            ba_mean[sel], ba_diff[sel],
+                            s=2, alpha=0.3, color=_MODEL_COLORS[code],
+                            label=name, rasterized=True, zorder=2,
+                        )
+                ax.legend(fontsize=7, markerscale=3, loc="lower right")
+            else:
+                ax.scatter(
+                    ba_mean, ba_diff,
+                    s=2, alpha=0.3, color=COLORBLIND_PALETTE.primary,
+                    rasterized=True, zorder=2,
+                )
+
+            mean_bias = float(np.mean(ba_diff))
+            sd_diff = float(np.std(ba_diff))
+            ax.axhline(mean_bias, color=COLORBLIND_PALETTE.error,
+                        linewidth=1, label=f"bias={mean_bias:.2f}")
+            ax.axhline(mean_bias + 1.96 * sd_diff,
+                        color=COLORBLIND_PALETTE.warning,
+                        linewidth=0.8, linestyle="--")
+            ax.axhline(mean_bias - 1.96 * sd_diff,
+                        color=COLORBLIND_PALETTE.warning,
+                        linewidth=0.8, linestyle="--")
+            ax.axhline(0, color="gray", linewidth=0.5, linestyle=":")
+
+            ax.text(
+                0.95, 0.92, f"bias={mean_bias:.2f}\nLoA=+/-{1.96*sd_diff:.2f}",
+                transform=ax.transAxes, fontsize=8, ha="right",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+            )
 
         ax.set_xlabel(mean_axis_label, fontsize=9)
         ax.set_ylabel("Difference (DCE - DSC)", fontsize=9)
         ax.set_title("Bland-Altman", fontsize=10)
 
-        ax.text(
-            0.95, 0.92, f"bias={mean_bias:.2f}\nLoA=+/-{1.96*sd_diff:.2f}",
-            transform=ax.transAxes, fontsize=8, ha="right",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
-        )
-
     ax.grid(True, alpha=0.3)
 
     # ---- Panel 3: Spatial ratio map ----
     ax = axes[2]
-    if is_circular or len(vp_valid) < 10:
+    if is_circular or np.sum(valid_plot) < 10:
         ax.text(
             0.5, 0.5,
             "vp derived from CBV\nratio map uniform by construction"
