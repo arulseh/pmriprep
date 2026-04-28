@@ -399,19 +399,11 @@ class DSCModel(ABC):
         sigma_delta: float = 0.15,
         violation_scale: float = 10.0,
     ) -> float:
-        """Compute soft monotonicity log-prior for Bayesian fitting.
+        """Monotonicity log-prior for Bayesian fitting. Returns 0.0.
 
-        Returns 0.0 by default (no monotonicity constraint). Override in
-        models with non-parametric residue functions (e.g. CPI) where
-        monotonicity should be softly enforced via the prior.
-
-        Args:
-            params: Parameter values.
-            sigma_delta: Prior std for expected decrement.
-            violation_scale: Penalty multiplier for violations.
-
-        Returns:
-            Log-prior contribution.
+        Vestigial — CPI now guarantees monotonicity structurally via
+        multiplicative fractions (cumulative product). No model overrides
+        this method.
         """
         return 0.0
 
@@ -419,16 +411,10 @@ class DSCModel(ABC):
         self,
         sigma_delta: float = 0.15,
     ) -> npt.NDArray[np.floating] | None:
-        """Build monotonicity prior precision matrix for VI.
+        """Monotonicity precision matrix for VI. Returns None.
 
-        Returns None by default (no monotonicity structure). Override in
-        models that need pairwise penalties on adjacent parameters.
-
-        Args:
-            sigma_delta: Prior std for decrement penalty.
-
-        Returns:
-            n_parameters x n_parameters precision matrix, or None.
+        Vestigial — CPI now guarantees monotonicity structurally.
+        Callers guard with ``if mono_prec is not None``.
         """
         return None
 
@@ -436,17 +422,10 @@ class DSCModel(ABC):
         self,
         sigma_anchor: float = 3.0,
     ) -> npt.NDArray[np.floating] | None:
-        """Mean correction for fixed-anchor monotonicity penalty in VI.
+        """Monotonicity eta correction for VI. Returns None.
 
-        Returns None by default. Override in models with a fixed R(0)
-        anchor point. Must use the same anchor value as the precision
-        matrix's first-pair entry in compute_monotonicity_precision().
-
-        Args:
-            sigma_anchor: Prior std for the anchor pair in log-odds space.
-
-        Returns:
-            n_parameters vector to add to the VB natural parameter, or None.
+        Vestigial — CPI now guarantees monotonicity structurally.
+        Callers guard with ``if mono_eta is not None``.
         """
         return None
 

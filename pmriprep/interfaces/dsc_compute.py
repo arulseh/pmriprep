@@ -1118,8 +1118,8 @@ class ComputeDSCMaps(BaseInterface):
             priors = build_priors_from_params(fitting_defs)
             fitting_names = [p.name for p in fitting_defs]
             fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-            mono_prec = cpi_model.compute_monotonicity_precision()
-            mono_eta = cpi_model.compute_monotonicity_eta_correction()
+            mono_prec = None
+            mono_eta = None
             cp_times = np.array(cpi_model._control_point_times, dtype=np.float64)
             toeplitz = build_toeplitz_matrix(aif, dt)
 
@@ -1193,9 +1193,10 @@ class ComputeDSCMaps(BaseInterface):
                     n_cp_local = len(cp_times)
                     cp_vals_i = np.ones((1, n_cp_local))
                     for k in range(1, n_cp_local):
-                        cp_vals_i[0, k] = np.clip(
-                            float(batched_result.params[f"r{k}"][i]), 0.0, 1.0,
+                        fk = np.clip(
+                            float(batched_result.params[f"f{k}"][i]), 0.0, 1.0,
                         )
+                        cp_vals_i[0, k] = cp_vals_i[0, k - 1] * fk
                     # Use _batched_pchip for consistency with forward model
                     # (same exponential decay extrapolation beyond last knot)
                     r_norm = np.clip(

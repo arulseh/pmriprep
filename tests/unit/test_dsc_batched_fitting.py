@@ -103,7 +103,7 @@ class TestBatchedCPIForward:
         params = np.zeros((n, 7))
         params[:, 0] = 0.06
         for i in range(1, 7):
-            params[:, i] = np.exp(-i / 3.0)
+            params[:, i] = np.exp(-1.0 / 3.0)
 
         result = batched_cpi_forward(params, aif, tp, cp_times, toeplitz)
         assert result.shape == (n, len(tp))
@@ -121,8 +121,8 @@ class TestBatchedCPIForward:
         cp_times = np.array(model._control_point_times, dtype=np.float64)
         toeplitz = build_toeplitz_matrix(aif, dt)
 
-        # Set params: CBF + exponential decay control points
-        scalar_params = [0.06] + [float(np.exp(-i / 3.0)) for i in range(1, n_cp)]
+        # Set params: CBF + constant multiplicative fractions (exponential decay)
+        scalar_params = [0.06] + [float(np.exp(-1.0 / 3.0)) for _i in range(1, n_cp)]
         scalar_tissue = model.tissue_curve(scalar_params, aif, tp)
 
         batched_params = np.array([scalar_params])
@@ -260,8 +260,8 @@ class TestBatchedCPIVIFit:
         priors = build_priors_from_params(fitting_defs)
         cp_times = np.array(model._control_point_times, dtype=np.float64)
         toeplitz = build_toeplitz_matrix(aif, dt)
-        mono_prec = model.compute_monotonicity_precision()
-        mono_eta = model.compute_monotonicity_eta_correction()
+        mono_prec = None
+        mono_eta = None
 
         means = np.array([p.mean for p in priors])
         stds = np.array([p.std for p in priors])
@@ -284,11 +284,11 @@ class TestBatchedCPIVIFit:
         cbf_true = rng.uniform(0.03, 0.1, n)
         n_cp = len(cp_times)
 
-        # Monotonically decreasing control points (exponential decay)
+        # Multiplicative fractions (constant for exponential decay)
         params_true = np.zeros((n, n_cp))
         params_true[:, 0] = cbf_true
         for k in range(1, n_cp):
-            params_true[:, k] = np.exp(-k / 3.0)
+            params_true[:, k] = np.exp(-1.0 / 3.0)
 
         tissue = batched_cpi_forward(params_true, aif, tp, cp_times, toeplitz)
         tissue += 0.003 * rng.randn(*tissue.shape)
@@ -308,14 +308,11 @@ class TestBatchedCPIVIFit:
                             np.maximum(cbf_true[conv], 1e-6))
         assert cbf_err < 0.4, f"CBF median rel error {cbf_err:.3f}"
 
-        # Verify monotonicity of fitted control points
+        # Verify each multiplicative fraction is in [0, 1]
         for i in np.where(conv)[0][:5]:
-            prev = 1.0
             for k in range(1, n_cp):
-                rk = float(result.params[f"r{k}"][i])
-                # Soft monotonicity: allow small violations (prior, not hard constraint)
-                assert rk <= prev + 0.05, f"Voxel {i}: r{k}={rk:.3f} > r{k-1}={prev:.3f}"
-                prev = rk
+                fk = float(result.params[f"f{k}"][i])
+                assert 0.0 <= fk <= 1.0, f"Voxel {i}: f{k}={fk:.3f} not in [0,1]"
 
     def test_cpi_result_format(self, dsc_aif_and_time):
         """CPI VI result has correct parameter names."""
@@ -327,7 +324,7 @@ class TestBatchedCPIVIFit:
         params = np.zeros((5, n_cp))
         params[:, 0] = 0.06
         for k in range(1, n_cp):
-            params[:, k] = np.exp(-k / 3.0)
+            params[:, k] = np.exp(-1.0 / 3.0)
         tissue = batched_cpi_forward(params, aif, tp, cp_times, toeplitz)
 
         result = batched_dsc_vi_fit(
@@ -339,7 +336,7 @@ class TestBatchedCPIVIFit:
 
         assert "cbf" in result.params
         for k in range(1, n_cp):
-            assert f"r{k}" in result.params
+            assert f"f{k}" in result.params
         assert result.fitted_curves is not None
         assert result.fitted_curves.shape == (5, len(tp))
 

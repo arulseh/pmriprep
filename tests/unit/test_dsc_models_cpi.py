@@ -41,29 +41,11 @@ class TestCPIModelConstruction:
                 f"Parameter {p.name} uses {p.transform}, expected LOG_LOGIT"
             )
 
-    def test_eta_correction_shape(self) -> None:
-        """Eta correction has shape (n_control_points,)."""
+    def test_parameter_names_multiplicative(self) -> None:
+        """Parameter names use f1, f2, ... for multiplicative fractions."""
         model = CPIModel(n_control_points=6)
-        eta = model.compute_monotonicity_eta_correction()
-        assert eta.shape == (6,)
-
-    def test_eta_correction_cbf_zero(self) -> None:
-        """CBF (index 0) has no anchor correction."""
-        model = CPIModel()
-        eta = model.compute_monotonicity_eta_correction()
-        assert eta[0] == 0.0
-
-    def test_eta_correction_anchor_positive(self) -> None:
-        """Anchor correction pulls r_1 toward R(0)=1.0 (positive in logit)."""
-        model = CPIModel()
-        eta = model.compute_monotonicity_eta_correction()
-        assert eta[1] > 0.0
-
-    def test_eta_correction_only_first_pair(self) -> None:
-        """Only the R(0)-r_1 pair gets a correction; r_2+ are zero."""
-        model = CPIModel(n_control_points=8)
-        eta = model.compute_monotonicity_eta_correction()
-        np.testing.assert_array_equal(eta[2:], 0.0)
+        names = model.get_parameter_names()
+        assert names == ["cbf", "f1", "f2", "f3", "f4", "f5"]
 
     def test_control_point_times_evenly_spaced(self) -> None:
         """Control point times are evenly spaced across the time range."""
@@ -88,19 +70,18 @@ class TestResidueFunction:
         np.testing.assert_allclose(residue, 1.0, atol=1e-6)
 
     def test_monotonic_decrease(self) -> None:
-        """Residue with decreasing fractions is monotonically non-increasing."""
+        """Residue with multiplicative fractions is monotonically non-increasing."""
         model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.1, 0.8, 0.6, 0.4, 0.2, 0.05]
+        params = [0.1, 0.8, 0.7, 0.6, 0.5, 0.4]
         t = np.linspace(0, 30, 100)
         residue = model.residue_function(params, t)
-        # Check that each value is >= next value (monotonically non-increasing)
         diffs = np.diff(residue)
         assert np.all(diffs <= 1e-10), "Residue should be monotonically non-increasing"
 
     def test_r0_equals_one(self) -> None:
         """R(0) should always equal 1.0 (dimensionless residue)."""
         model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.15, 0.7, 0.5, 0.3, 0.1, 0.01]
+        params = [0.15, 0.7, 0.5, 0.3, 0.4, 0.6]
         t = np.array([0.0])
         residue = model.residue_function(params, t)
         assert residue[0] == pytest.approx(1.0, abs=1e-10)
@@ -109,37 +90,28 @@ class TestResidueFunction:
 class TestEnforceConstraints:
     """Tests for constraint enforcement on control points."""
 
-    def test_soft_clips_to_01(self) -> None:
-        """Default (soft) enforce_constraints clips to [0,1], no monotonicity."""
+    def test_cumprod_enforce_constraints(self) -> None:
+        """enforce_constraints applies cumulative product of fractions."""
         model = CPIModel(n_control_points=6, time_range=(0, 30))
-        # r2=0.9 > r1=0.8 — allowed in soft mode
         params = [0.1, 0.8, 0.9, 0.5, 0.3, 0.2]
         constrained = model.enforce_constraints(params)
         assert constrained[0] == pytest.approx(1.0)
-        assert constrained[2] == pytest.approx(0.9)  # NOT capped to 0.8
-        # All values in [0, 1]
+        assert constrained[1] == pytest.approx(0.8)
+        assert constrained[2] == pytest.approx(0.8 * 0.9)  # cumprod
+        assert constrained[3] == pytest.approx(0.8 * 0.9 * 0.5)
         for i in range(len(constrained)):
             assert 0.0 <= constrained[i] <= 1.0
 
-    def test_hard_enforces_monotonicity(self) -> None:
-        """Hard mode caps fractions to enforce monotonic non-increase."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.1, 0.8, 0.9, 0.5, 0.3, 0.2]
-        constrained = model.enforce_constraints_hard(params)
-        assert constrained[0] == pytest.approx(1.0)
-        for i in range(1, len(constrained)):
-            assert constrained[i] <= constrained[i - 1] + 1e-15
-
-    def test_monotonicity_prior_penalizes_violations(self) -> None:
-        """Soft monotonicity prior penalizes violations more than decrements."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
-        # Monotonic (good)
-        params_good = [0.1, 0.8, 0.6, 0.4, 0.2, 0.1]
-        # Non-monotonic (bad) — r2=0.9 > r1=0.8
-        params_bad = [0.1, 0.8, 0.9, 0.4, 0.2, 0.1]
-        lp_good = model.compute_monotonicity_prior(params_good)
-        lp_bad = model.compute_monotonicity_prior(params_bad)
-        assert lp_good > lp_bad, "Monotonic should have higher log-prior"
+    def test_multiplicative_monotonicity_guaranteed(self) -> None:
+        """Random f_i in [0,1] always produce non-increasing control values."""
+        rng = np.random.default_rng(42)
+        model = CPIModel(n_control_points=10, time_range=(0, 30))
+        for _ in range(100):
+            fracs = rng.uniform(0.0, 1.0, 10)
+            fracs[0] = 0.1  # CBF
+            constrained = model.enforce_constraints(fracs)
+            diffs = np.diff(constrained)
+            assert np.all(diffs <= 1e-15), "Cumprod must be non-increasing"
 
 
 class TestTissueCurve:
@@ -151,7 +123,7 @@ class TestTissueCurve:
         n = 30
         t = np.linspace(0, 30, n)
         aif = (t / 3.0) * np.exp(-t / 5.0)
-        params = [0.1, 0.8, 0.6, 0.4, 0.2, 0.05]
+        params = [0.1, 0.8, 0.7, 0.6, 0.5, 0.4]
         tissue = model.tissue_curve(params, aif, t)
         assert tissue.shape == (n,)
 
@@ -161,7 +133,7 @@ class TestTissueCurve:
         n = 30
         t = np.linspace(0, 30, n)
         aif = np.zeros(n, dtype=np.float64)
-        params = [0.1, 0.8, 0.6, 0.4, 0.2, 0.05]
+        params = [0.1, 0.8, 0.7, 0.6, 0.5, 0.4]
         tissue = model.tissue_curve(params, aif, t)
         np.testing.assert_allclose(tissue, 0.0, atol=1e-15)
 
@@ -172,13 +144,13 @@ class TestDerivedParameters:
     def test_get_cbf(self) -> None:
         """get_cbf returns the first parameter."""
         model = CPIModel(n_control_points=6)
-        params = [0.15, 0.8, 0.6, 0.4, 0.2, 0.1]
+        params = [0.15, 0.8, 0.7, 0.6, 0.5, 0.4]
         assert model.get_cbf(params) == pytest.approx(0.15)
 
     def test_get_mtt_positive(self) -> None:
         """MTT should be positive for reasonable parameters."""
         model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.15, 0.8, 0.6, 0.4, 0.2, 0.1]
+        params = [0.15, 0.8, 0.7, 0.6, 0.5, 0.4]
         mtt = model.get_mtt(params)
         assert mtt > 0.0
 
@@ -189,7 +161,7 @@ class TestComputeFittedResidue:
     def test_fitted_residue_scales_by_cbf(self) -> None:
         """compute_fitted_residue returns CBF × R(t), not dimensionless R(t)."""
         model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.08, 0.8, 0.6, 0.4, 0.2, 0.05]
+        params = [0.08, 0.8, 0.7, 0.6, 0.5, 0.4]
         t = np.linspace(0, 30, 50)
         residue_norm = model.residue_function(params, t)
         fitted_residue = model.compute_fitted_residue(params, t)
@@ -199,7 +171,7 @@ class TestComputeFittedResidue:
         """Peak of compute_fitted_residue equals CBF (since R(0)=1)."""
         model = CPIModel(n_control_points=6, time_range=(0, 30))
         cbf = 0.12
-        params = [cbf, 0.8, 0.6, 0.4, 0.2, 0.05]
+        params = [cbf, 0.8, 0.7, 0.6, 0.5, 0.4]
         t = np.linspace(0, 30, 50)
         fitted_residue = model.compute_fitted_residue(params, t)
         assert fitted_residue[0] == pytest.approx(cbf, rel=1e-10)

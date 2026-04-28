@@ -56,18 +56,18 @@ class CPIModel(DSCModel):
     points. Control points are evenly spaced in time (or optimally placed),
     and the spline interpolation ensures a smooth residue curve.
 
-    Following Mehndiratta et al. (2013) / Quantiphyse parameterization:
+    Following FABBER's multiplicative fraction parameterization:
         - R(t) is dimensionless (0-1), with R(0) = 1.0 fixed
         - CBF is a separate scaling parameter (relative units, s⁻¹)
         - C(t) = CBF × [A_trap @ R_norm]
 
-    Constraints:
-        - R(0) = 1.0: Fixed (not a free parameter)
-        - Monotonicity: R(t) is monotonically decreasing (or non-increasing)
-        - Non-negativity: R(t) >= 0 for all t
+    Monotonicity is guaranteed by construction: each parameter f_i ∈ (0,1)
+    is a multiplicative fraction, so R(t_i) = f_1 × f_2 × ... × f_i is
+    automatically non-increasing. No external penalty or projection needed.
 
-    The model automatically selects the number of control points based on
-    bolus duration, or uses a user-specified value.
+    At low SNR, the N(0,1) logit prior biases late control points toward
+    zero (median R(t_5) = 0.5^5 ≈ 0.03 for N=6). This matches FABBER and
+    is directionally correct for tumor perfusion (short MTT).
 
     Attributes:
         n_control_points: Number of control points in the spline (4-12).
@@ -75,14 +75,15 @@ class CPIModel(DSCModel):
 
     Parameters:
         - cbf: CBF scaling parameter (relative units, s⁻¹)
-        - r1, r2, ..., r(N-1): Control point fractions (0-1) of R(0)=1.0
-          These are constrained to be <= previous point (monotonicity)
+        - f1, f2, ..., f(N-1): Multiplicative fractions (0-1).
+          R(t_i) = f_1 × f_2 × ... × f_i (cumulative product).
 
     Example:
         For N=6 control points:
-        - Parameters: [cbf, r1, r2, r3, r4, r5]
+        - Parameters: [cbf, f1, f2, f3, f4, f5]
         - cbf = flow scaling (max of unnormalized residue)
         - R(0) = 1.0 (fixed, not a parameter)
+        - R(t_1) = f1, R(t_2) = f1*f2, ..., R(t_5) = f1*f2*f3*f4*f5
         - Control point times: uniformly spaced from 0 to t_max
 
     References:
@@ -122,9 +123,6 @@ class CPIModel(DSCModel):
         self._toeplitz_cache: npt.NDArray[np.floating] | None = None
         self._toeplitz_aif_id: int | None = None
 
-        # When True, enforce_constraints uses hard monotonicity projection.
-        # Set by _fit_cpi_simple for NLLS fitting; False for Bayesian paths.
-        self._hard_monotonicity: bool = False
 
     @property
     def name(self) -> str:
@@ -157,36 +155,31 @@ class CPIModel(DSCModel):
         Returns:
             List of DSCModelParameter objects:
             - cbf: CBF scaling (relative s⁻¹ units)
-            - r1..r_{N-1}: Fractions of R(0)=1.0 at each control point
+            - f1..f_{N-1}: Multiplicative fractions (0-1)
         """
         params = []
 
-        # CBF scaling parameter (relative s⁻¹, same as oSVD max(R(t))).
-        # Field strength, TE, dose cancel in deconvolution (r2* scales
-        # both tissue and AIF equally). Typical 3T: 0.04-0.08 s⁻¹.
         params.append(
             DSCModelParameter(
                 name="cbf",
                 bounds=(CBF_BOUNDS.min, CBF_BOUNDS.max),
                 typical_range=(0.01, 0.15),
                 transform=TransformType.LOG,
+                transformed_prior_sigma=1.0,
                 description="CBF scaling (relative)",
                 units="s⁻¹",
             )
         )
 
-        # Weakly informative priors on fractions — monotonicity is enforced
-        # by a separate soft prior (compute_monotonicity_prior), not by
-        # biasing each fraction's marginal toward an exponential template.
         for i in range(1, self._n_control_points):
             t = self._control_point_times[i]
             params.append(
                 DSCModelParameter(
-                    name=f"r{i}",
+                    name=f"f{i}",
                     bounds=(0.0, 1.0),
                     typical_range=(0.0, 1.0),
                     transform=TransformType.LOG_LOGIT,
-                    description=f"Control point fraction at t={t:.1f}s",
+                    description=f"Multiplicative fraction at t={t:.1f}s",
                     units="fraction",
                 )
             )
@@ -194,80 +187,51 @@ class CPIModel(DSCModel):
         return params
 
     def get_initial_guess(self) -> list[float]:
-        """Get initial parameter guess with exponential decay fractions.
+        """Get initial parameter guess with constant multiplicative fractions.
+
+        For exponential decay R(t) = exp(-t/τ), all multiplicative fractions
+        are identical: f_i = R(t_i)/R(t_{i-1}) = exp(-Δt/τ) = exp(-1/τ).
 
         Returns:
-            List: [cbf_init, exp(-1/τ), exp(-2/τ), ...] where τ = N/2.
-            CBF initial guess is set to a small value appropriate for
-            relative ΔR2* units. Exponential decay matches cerebral
-            physiology better than the linear midpoint default.
+            List: [cbf_init, exp(-1/τ), exp(-1/τ), ...] where τ = N/2.
         """
-        x0: list[float] = [0.08]  # CBF initial guess (midpoint of typical_range)
+        x0: list[float] = [0.08]
         tau = self._n_control_points / 2.0
-        for i in range(1, self._n_control_points):
-            x0.append(float(np.exp(-i / tau)))
+        frac = float(np.exp(-1.0 / tau))
+        for _i in range(1, self._n_control_points):
+            x0.append(frac)
         return x0
 
     def get_parameter_names(self) -> list[str]:
         """Get list of parameter names.
 
         Returns:
-            List: ['cbf', 'r1', 'r2', ..., 'r(N-1)']
+            List: ['cbf', 'f1', 'f2', ..., 'f(N-1)']
         """
-        return ["cbf"] + [f"r{i}" for i in range(1, self._n_control_points)]
+        return ["cbf"] + [f"f{i}" for i in range(1, self._n_control_points)]
 
     def enforce_constraints(
         self, params: ParamsLike
     ) -> npt.NDArray[np.floating]:
-        """Convert fraction parameterization to dimensionless R(t) values.
+        """Convert multiplicative fractions to dimensionless R(t) values.
 
-        In Bayesian mode (default): clips to [0, 1] only. Monotonicity
-        is handled by the soft prior (compute_monotonicity_prior).
-
-        In NLLS mode (_hard_monotonicity=True): also enforces monotonic
-        non-increase via sequential capping.
+        Each f_i is clipped to [0,1] and the cumulative product gives
+        R(t_i) = f_1 × f_2 × ... × f_i, which is monotonically
+        non-increasing by construction.
 
         Args:
-            params: [cbf, frac1, frac2, ...] where cbf is the scaling
-                parameter and frac_i are fractions of R(0)=1.0.
+            params: [cbf, f1, f2, ...] where cbf is the scaling parameter
+                and f_i are multiplicative fractions.
 
         Returns:
             Dimensionless control point values (R(0)=1.0), length =
             n_control_points.
         """
-        if self._hard_monotonicity:
-            return self.enforce_constraints_hard(params)
-
         control_values = np.zeros(self._n_control_points, dtype=np.float64)
         control_values[0] = 1.0
 
         for i in range(1, self._n_control_points):
-            control_values[i] = float(np.clip(params[i], 0.0, 1.0))
-
-        return control_values
-
-    def enforce_constraints_hard(
-        self, params: ParamsLike
-    ) -> npt.NDArray[np.floating]:
-        """Convert fractions to R(t) values with hard monotonicity projection.
-
-        Used by _fit_cpi_simple (NLLS) where hard projection is appropriate
-        for L-BFGS-B box-constrained optimization.
-
-        Args:
-            params: [cbf, frac1, frac2, ...].
-
-        Returns:
-            Monotonically non-increasing control point values.
-        """
-        control_values = np.zeros(self._n_control_points, dtype=np.float64)
-        control_values[0] = 1.0
-
-        prev_r = 1.0
-        for i in range(1, self._n_control_points):
-            frac = float(np.clip(params[i], 0.0, 1.0))
-            control_values[i] = min(frac, prev_r)
-            prev_r = control_values[i]
+            control_values[i] = control_values[i - 1] * float(np.clip(params[i], 0.0, 1.0))
 
         return control_values
 
@@ -283,7 +247,7 @@ class CPIModel(DSCModel):
         R(0) = 1.0 and all values are in [0, 1].
 
         Args:
-            params: Parameter values [cbf, r1, ..., r(N-1)].
+            params: Parameter values [cbf, f1, ..., f(N-1)].
             time_points: Time points (seconds) at which to evaluate R(t).
 
         Returns:
@@ -314,8 +278,7 @@ class CPIModel(DSCModel):
                 control_values,
             )
 
-        # Clip to [0, 1] — PCHIP can overshoot above 1.0 when control
-        # points are non-monotonic (soft monotonicity allows this).
+        # PCHIP can overshoot above 1.0 between knots due to cubic interpolation.
         residue = np.clip(residue, 0.0, 1.0)
 
         # Handle extrapolation beyond control point range
@@ -347,99 +310,6 @@ class CPIModel(DSCModel):
                     residue[beyond_mask] = r_last * np.exp(-decay_rate * t_excess)
 
         return residue
-
-    def compute_monotonicity_prior(
-        self,
-        params: ParamsLike,
-        sigma_delta: float = 0.15,
-        violation_scale: float = 10.0,
-    ) -> float:
-        """Soft monotonicity prior on CPI control point fractions.
-
-        Penalizes violations (r_i > r_{i-1}) more steeply than normal
-        decrements. Used by the Bayesian fitter in the log-posterior.
-
-        Args:
-            params: Parameter values [cbf, r1, ..., r(N-1)].
-            sigma_delta: Prior std for expected decrement between points.
-            violation_scale: How much more steeply to penalize violations.
-
-        Returns:
-            Log-prior contribution (negative for violations).
-        """
-        log_p = 0.0
-        prev = 1.0  # R(0) = 1.0
-        for i in range(1, self._n_control_points):
-            ri = float(np.clip(params[i], 0.0, 1.0))
-            delta = prev - ri  # Should be >= 0 for monotonicity
-            if delta >= 0:
-                log_p -= 0.5 * (delta / sigma_delta) ** 2
-            else:
-                # Violations penalized violation_scale^2 times more steeply
-                log_p -= 0.5 * (delta / (sigma_delta / violation_scale)) ** 2
-            prev = ri
-        return log_p
-
-    def compute_monotonicity_precision(
-        self,
-        sigma_delta: float = 0.60,
-    ) -> npt.NDArray[np.floating]:
-        """Build symmetric monotonicity prior precision matrix for VI.
-
-        The symmetric penalty sum((r_{i-1} - r_i)^2 / sigma_delta^2)
-        expands to a tridiagonal matrix on the fraction parameters only
-        (CBF row/column is zero). Operates in log-odds space (LOG_LOGIT);
-        sigma calibrated via delta method at r=0.5: 0.15 * 4.0 = 0.60.
-
-        Args:
-            sigma_delta: Prior std for decrement penalty in log-odds space.
-
-        Returns:
-            n_parameters x n_parameters precision matrix.
-        """
-        n = self._n_control_points  # = n_parameters
-        lam = np.zeros((n, n), dtype=np.float64)
-        tau = 1.0 / (sigma_delta ** 2)
-
-        # First pair: R(0)=1.0 (fixed) vs r1. Since R(0) is not a
-        # parameter, the penalty (1 - r1)^2 / sigma^2 adds tau to
-        # position [1,1] (the r1 diagonal).
-        lam[1, 1] += tau
-
-        # Subsequent pairs: (r_{i-1} - r_i)^2 / sigma^2
-        for i in range(2, n):
-            lam[i - 1, i - 1] += tau
-            lam[i, i] += tau
-            lam[i - 1, i] -= tau
-            lam[i, i - 1] -= tau
-
-        # CBF (index 0) has no monotonicity penalty
-        return lam
-
-    def compute_monotonicity_eta_correction(
-        self,
-        sigma_anchor: float = 3.0,
-    ) -> npt.NDArray[np.floating]:
-        """R(0)=1.0 anchor mean correction for the VB natural parameter vector.
-
-        The penalty (R(0)' - r_1')^2/sigma_anchor^2 has a linear term
-        tau * R(0)' that must be added to eta[1] in the VB update.
-        Uses logit(0.999) as pseudo-anchor since logit(1.0) = +inf.
-        sigma_anchor is larger than the inter-point sigma_delta because
-        the R(0)-r_1 distance spans a much wider logit range.
-
-        Args:
-            sigma_anchor: Prior std for the anchor pair in log-odds space.
-
-        Returns:
-            n_parameters vector to add to the VB natural parameter.
-        """
-        n = self._n_control_points
-        eta = np.zeros(n, dtype=np.float64)
-        tau = 1.0 / (sigma_anchor ** 2)
-        anchor_logit = np.log(0.999 / 0.001)  # ≈ 6.907
-        eta[1] = tau * anchor_logit
-        return eta
 
     def compute_nlls_seed(
         self,
@@ -482,7 +352,7 @@ class CPIModel(DSCModel):
         CBF = max(residue) and CBV = trapezoid(residue, dx=dt).
 
         Args:
-            params: Parameter values [cbf, r1, ..., r(N-1)].
+            params: Parameter values [cbf, f1, ..., f(N-1)].
             time_points: Time points (seconds).
 
         Returns:
@@ -505,7 +375,7 @@ class CPIModel(DSCModel):
         the SVD deconvolution path (Sourbron & Luypaert PMB 2007).
 
         Args:
-            params: Parameter values [cbf, r1, ..., r(N-1)].
+            params: Parameter values [cbf, f1, ..., f(N-1)].
             aif: Arterial input function concentration values.
             time_points: Time points (seconds) at which to evaluate C(t).
 
@@ -545,7 +415,7 @@ class CPIModel(DSCModel):
         """Get CBF from the scaling parameter.
 
         Args:
-            params: Parameter values [cbf, r1, ..., r(N-1)].
+            params: Parameter values [cbf, f1, ..., f(N-1)].
 
         Returns:
             CBF value (relative, s⁻¹).
@@ -566,7 +436,7 @@ class CPIModel(DSCModel):
         CBV = trapezoid(residue, dx=dt).
 
         Args:
-            params: Parameter values [cbf, r1, ..., r(N-1)].
+            params: Parameter values [cbf, f1, ..., f(N-1)].
             time_points: Optional time points for integration.
                         If None, uses control point times extended.
 
@@ -600,7 +470,7 @@ class CPIModel(DSCModel):
         MTT = CBV / CBF = ∫R_norm(t) dt  (seconds)
 
         Args:
-            params: Parameter values [cbf, r1, ..., r(N-1)].
+            params: Parameter values [cbf, f1, ..., f(N-1)].
             time_points: Optional time points for CBV integration.
 
         Returns:
@@ -761,9 +631,9 @@ def _fit_cpi_simple(
 ) -> DSCFitResult | None:
     """Least-squares fit of CPI model using L-BFGS-B.
 
-    L-BFGS-B handles box bounds natively. Monotonicity is enforced via
-    hard projection in enforce_constraints() (enabled by setting
-    _hard_monotonicity=True for the duration of the fit).
+    L-BFGS-B handles box bounds [0,1] on multiplicative fractions.
+    Monotonicity is guaranteed structurally by the cumulative product
+    in enforce_constraints().
 
     The CBF upper bound is set adaptively based on the data scale
     (10 × max tissue concentration) to ensure the optimizer can reach
@@ -804,9 +674,6 @@ def _fit_cpi_simple(
     x0 = model.get_initial_guess()
     x0[0] = cbf_init
 
-    # Enable hard monotonicity for NLLS fitting
-    model._hard_monotonicity = True
-
     def objective(params: npt.NDArray[np.floating]) -> float:
         """Weighted residual sum of squares objective."""
         predicted = model.tissue_curve(params, aif, time_points)
@@ -825,22 +692,17 @@ def _fit_cpi_simple(
         )
 
         if result.success or result.fun < np.inf:
-            # Store optimizer-space params
             opt_params = np.array(result.x, dtype=np.float64)
-            # Clip fractions to [0,1]
+            # Clip multiplicative fractions to [0,1]
             opt_params[1:] = np.clip(opt_params[1:], 0.0, 1.0)
             opt_params[0] = max(opt_params[0], 0.0)
 
-            # Compute fitted tissue curve for R²
             fitted_tissue = model.tissue_curve(opt_params, aif, time_points)
 
-            # Compute unnormalized residue (CBF × R_norm) for downstream
-            # compatibility: CBF = max(residue), CBV = trapezoid(residue)
             cbf_fitted = float(opt_params[0])
             residue_norm = model.residue_function(opt_params, time_points)
             fitted_residue = cbf_fitted * residue_norm
 
-            # Calculate R²
             ss_res = result.fun
             ss_tot = float(np.sum((concentration - np.mean(concentration))**2))
             r_squared = 1.0 - (ss_res / max(ss_tot, EPSILON_CONCENTRATION))
@@ -860,7 +722,5 @@ def _fit_cpi_simple(
 
     except (ValueError, RuntimeError):
         pass
-    finally:
-        model._hard_monotonicity = False
 
     return None

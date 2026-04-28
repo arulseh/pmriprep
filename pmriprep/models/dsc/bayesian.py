@@ -165,7 +165,6 @@ class BayesianDSCFitter:
             Log prior probability (unnormalized).
         """
         lp = compute_log_prior(params, self.priors)
-        # Add soft monotonicity prior (non-zero for CPI, zero for others)
         lp += self.model.compute_monotonicity_prior(params)
         return lp
 
@@ -696,9 +695,6 @@ class BayesianDSCFitter:
         )
         prior_prec = np.diag(1.0 / (prior_stds_t**2))  # Λ_diag
 
-        # Add symmetric monotonicity penalty for CPI (tridiagonal structure).
-        # CPI control points use LOG_LOGIT transform; the penalty operates
-        # in log-odds space matching the VI update space.
         mono_prec = self.model.compute_monotonicity_precision()
         mono_eta = self.model.compute_monotonicity_eta_correction()
         if mono_prec is not None:

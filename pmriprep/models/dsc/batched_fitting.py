@@ -186,7 +186,7 @@ def batched_cpi_forward(
 
     Args:
         params: Parameter matrix, shape (N, P) where P = n_control_points.
-            Column 0 = CBF, columns 1..P-1 = control point fractions r1..r_{P-1}.
+            Column 0 = CBF, columns 1..P-1 = multiplicative fractions f1..f_{P-1}.
         aif: Arterial input function, shape (T,).
         time_points: Time points (seconds), shape (T,).
         control_point_times: Control point time locations, shape (K,).
@@ -201,10 +201,10 @@ def batched_cpi_forward(
 
     cbf = params[:, 0]  # (N,)
 
-    # Build control point values: R(0) = 1.0, then r1..r_{K-1}
-    # Shape: (N, K)
+    # Cumulative product of multiplicative fractions: R(t_k) = f1*f2*...*fk
     cp_vals = np.ones((n_voxels, n_cp), dtype=np.float64)
-    cp_vals[:, 1:] = np.clip(params[:, 1:], 0.0, 1.0)
+    fracs = np.clip(params[:, 1:], 0.0, 1.0)  # (N, K-1)
+    cp_vals[:, 1:] = np.cumprod(fracs, axis=1)
 
     # Vectorized PCHIP interpolation
     R_norm = _batched_pchip(control_point_times, cp_vals, time_points)
