@@ -435,6 +435,8 @@ output_dir/pmriprep/
       # DSC Bayesian (optional)
       sub-01_ses-01_space-DSC_desc-dscUncertainty_cbf.nii.gz
       sub-01_ses-01_space-DSC_desc-dscCV_cbf.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscCI95lower_cbf.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscCI95upper_cbf.nii.gz
       # DSC vascular model (optional)
       sub-01_ses-01_space-DSC_desc-dsc_alpha.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_beta.nii.gz
