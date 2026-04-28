@@ -713,8 +713,8 @@ def batched_dsc_vi_fit(
         gamma_kl = -(
             (c_new - c0) * digamma(c_new)
             - gammaln(c_new) + gammaln(c0)
-            + c0 * (np.log(s_new) - np.log(s0))
-            + c_new * (s0 / s_new - 1.0)
+            + c0 * (np.log(s0) - np.log(s_new))
+            + c_new * (s_new / s0 - 1.0)
         )
         free_energy += gamma_kl
 

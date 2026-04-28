@@ -973,8 +973,8 @@ class BayesianPKFitter:
             # Gamma KL: -KL(q(tau) || p(tau)) for shape-scale Gamma
             from scipy.special import digamma, gammaln
             gamma_kl = -((c - c0) * digamma(c) - gammaln(c) + gammaln(c0)
-                          + c0 * (np.log(s) - np.log(s0))
-                          + c * (s0 / s - 1.0))
+                          + c0 * (np.log(s0) - np.log(s))
+                          + c * (s / s0 - 1.0))
             free_energy += gamma_kl
 
             # Step-size reduction: if free energy decreased, interpolate
