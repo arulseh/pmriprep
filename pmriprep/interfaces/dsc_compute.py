@@ -907,7 +907,7 @@ class ComputeDSCMaps(BaseInterface):
         n_procs = max(1, int(self.inputs.n_procs))
 
         # Batched VI path: vectorized Variational Bayes in single process
-        if bayesian == "vi":
+        if bayesian in ("vi", "svb"):
             results = self._dsc_fit_batched_vi(
                 concentration_data=concentration_data,
                 mask_coords=mask_coords,
@@ -920,6 +920,7 @@ class ComputeDSCMaps(BaseInterface):
                 bolus_duration_frames=bolus_duration_frames,
                 motion_weights=motion_weights,
                 sloppy=sloppy,
+                spatial=(bayesian == "svb"),
             )
         elif n_procs > 1:
             from concurrent.futures import ProcessPoolExecutor
@@ -1060,6 +1061,7 @@ class ComputeDSCMaps(BaseInterface):
         bolus_duration_frames: int,
         motion_weights: Optional[npt.NDArray[np.floating]],
         sloppy: bool,
+        spatial: bool = False,
     ) -> list[dict[str, Any]]:
         """Batched VI for DSC parametric models.
 
@@ -1078,6 +1080,7 @@ class ComputeDSCMaps(BaseInterface):
             bolus_duration_frames: Bolus duration in frames.
             motion_weights: Per-frame weights or None.
             sloppy: Whether to use sloppy mode.
+            spatial: Use spatial VB wrapper (MRF neighbor coupling).
 
         Returns:
             List of per-voxel result dicts.
@@ -1132,9 +1135,10 @@ class ComputeDSCMaps(BaseInterface):
         transforms = [p.transform for p in priors]
         ubs: list[float | None] = [p.upper_bound for p in priors]
 
-        logger.info("DSC batched VI: fitting %s on %d voxels", method, n_voxels)
+        vi_label = "SVB" if spatial else "VI"
+        logger.info("DSC batched %s: fitting %s on %d voxels", vi_label, method, n_voxels)
 
-        batched_result = batched_dsc_vi_fit(
+        vi_kwargs: dict[str, Any] = dict(
             model_type=method,
             tissue_curves=tissue_curves,
             aif=aif,
@@ -1155,6 +1159,16 @@ class ComputeDSCMaps(BaseInterface):
             sloppy=sloppy,
             save_fitted_curves=True,
         )
+
+        if spatial:
+            from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
+            batched_result = batched_dsc_spatial_vi_fit(
+                **vi_kwargs,
+                mask_coords=mask_coords,
+                spatial_shape=concentration_data.shape[:3],
+            )
+        else:
+            batched_result = batched_dsc_vi_fit(**vi_kwargs)
 
         # Convert batched results to per-voxel dicts
         results: list[dict[str, Any]] = []

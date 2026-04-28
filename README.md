@@ -133,7 +133,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | Flag | Description |
 |------|-------------|
 | `--dsc-deconv-method {sSVD,cSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
-| `--dsc-bayesian {vi,map}` | Bayesian inference for parametric methods (default: vi) |
+| `--dsc-bayesian {vi,svb,map}` | Bayesian inference for parametric methods (default: vi) |
 | `--dsc-preload {auto\|FLOAT}` | Preload: `auto` (detect from signal) or float dose multiplier (0.0–2.0, e.g. `0.5` for half-dose preload) |
 | `--dsc-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `--dsc-agent-standard-dose DOSE` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available). Default: `0.1` |
@@ -211,7 +211,7 @@ dce:
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
-| `bayesian` | str | `"vi"` | Bayesian mode: `vi`, `map` (parametric methods only; SVD ignores) |
+| `bayesian` | str | `"vi"` | Bayesian mode: `vi`, `svb`, `map` (parametric methods only; SVD ignores) |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |

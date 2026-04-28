@@ -72,6 +72,8 @@ class DSCBatchedFitResult:
     n_iterations: int
     model_name: str
     uncertainties: Mapping[str, npt.NDArray[np.floating]] = field(default_factory=dict)
+    posterior_means_transformed: Optional[npt.NDArray[np.floating]] = None
+    posterior_cov_diag: Optional[npt.NDArray[np.floating]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +375,10 @@ def batched_dsc_vi_fit(
     n_iterations: int = 30,
     sloppy: bool = False,
     save_fitted_curves: bool = False,
+    spatial_prec_diag: Optional[npt.NDArray[np.floating]] = None,
+    spatial_eta: Optional[npt.NDArray[np.floating]] = None,
+    return_posteriors: bool = False,
+    n_iterations_override: Optional[int] = None,
 ) -> DSCBatchedFitResult:
     """Batched Variational Bayes fitting for DSC perfusion models.
 
@@ -404,6 +410,14 @@ def batched_dsc_vi_fit(
         n_iterations: Maximum VB iterations (default 20).
         sloppy: Use fast, low-quality settings (8 iterations).
         save_fitted_curves: Whether to store fitted curves in result.
+        spatial_prec_diag: Per-voxel spatial precision diagonal, shape (N, P).
+            N must match tissue_curves.shape[0].
+        spatial_eta: Per-voxel spatial mean contribution, shape (N, P).
+        return_posteriors: If True, populate posterior_means_transformed and
+            posterior_cov_diag on the result.
+        n_iterations_override: When set, overrides n_iterations and sloppy,
+            and disables ELBO-based step-size reduction. Used by spatial VB
+            wrapper where the ELBO is invalidated by spatial terms.
 
     Returns:
         DSCBatchedFitResult with fitted parameters, R², convergence, uncertainties.
@@ -414,8 +428,12 @@ def batched_dsc_vi_fit(
     n_voxels, n_obs = tissue_curves.shape
     n_params = len(fitting_param_names)
 
-    if sloppy:
+    if n_iterations_override is not None:
+        n_iterations = n_iterations_override
+    elif sloppy:
         n_iterations = 8
+    # Disables ELBO step-size/convergence (spatial_vb.py is sole consumer)
+    _spatial_mode = n_iterations_override is not None
 
     # Pre-filter: exclude voxels with negligible signal
     voxel_max = np.max(np.abs(tissue_curves), axis=1)
@@ -613,6 +631,10 @@ def batched_dsc_vi_fit(
 
         # 5. Posterior precision and covariance
         post_prec = prior_prec[None, :, :] + tau_a[:, None, None] * JtWJ
+        if spatial_prec_diag is not None:
+            # (N_total, P) -> valid subset -> active subset
+            sp_a = spatial_prec_diag[valid_idx][a_idx]
+            post_prec[:, range(n_params), range(n_params)] += sp_a
 
         post_cov = np.linalg.inv(post_prec)
         bad_cov = ~np.isfinite(post_cov).all(axis=(1, 2))
@@ -634,6 +656,9 @@ def batched_dsc_vi_fit(
                 w[None, :] * J_columns[j] * (k_res + Jm), axis=1,
             )
         rhs = lam0_mu0[None, :] + tau_a[:, None] * data_term
+        if spatial_eta is not None:
+            sp_eta_a = spatial_eta[valid_idx][a_idx]
+            rhs = rhs + sp_eta_a
 
         m_new = np.einsum("nij,nj->ni", post_cov, rhs)
 
@@ -689,44 +714,53 @@ def batched_dsc_vi_fit(
         free_energy += gamma_kl
 
         # 9. Step-size reduction
-        prev_best_fe = best_fe[a_idx].copy()
-        improved = free_energy > prev_best_fe
+        if _spatial_mode:
+            # Spatial mode: ELBO is invalid (spatial terms not in KL).
+            # Always accept the update; convergence monitored at outer level.
+            best_m[a_idx] = m_new
+            best_cov_diag[a_idx] = np.diagonal(post_cov, axis1=1, axis2=2)
+            best_c[a_idx] = c_new
+            best_s[a_idx] = s_new
+        else:
+            prev_best_fe = best_fe[a_idx].copy()
+            improved = free_energy > prev_best_fe
 
-        imp_local = np.where(improved)[0]
-        if len(imp_local) > 0:
-            imp_global = a_idx[imp_local]
-            best_fe[imp_global] = free_energy[imp_local]
-            best_m[imp_global] = m_new[imp_local]
-            best_cov_diag[imp_global] = np.diagonal(
-                post_cov[imp_local], axis1=1, axis2=2,
-            )
-            best_c[imp_global] = c_new
-            best_s[imp_global] = s_new[imp_local]
-            step_scale[imp_global] = 1.0
+            imp_local = np.where(improved)[0]
+            if len(imp_local) > 0:
+                imp_global = a_idx[imp_local]
+                best_fe[imp_global] = free_energy[imp_local]
+                best_m[imp_global] = m_new[imp_local]
+                best_cov_diag[imp_global] = np.diagonal(
+                    post_cov[imp_local], axis1=1, axis2=2,
+                )
+                best_c[imp_global] = c_new
+                best_s[imp_global] = s_new[imp_local]
+                step_scale[imp_global] = 1.0
 
-        not_imp_local = np.where(~improved)[0]
-        if len(not_imp_local) > 0:
-            not_imp_global = a_idx[not_imp_local]
-            step_scale[not_imp_global] *= 0.5
-            m_new[not_imp_local] = (
-                m_a[not_imp_local]
-                + step_scale[not_imp_global, None]
-                * (m_new[not_imp_local] - m_a[not_imp_local])
-            )
-            # Re-clip IDENTITY params after interpolation
-            for j in range(n_params):
-                if transforms[j] == TransformType.IDENTITY:
-                    m_new[not_imp_local, j] = np.clip(
-                        m_new[not_imp_local, j], bounds_lo[j], bounds_hi[j],
-                    )
-            exhausted = step_scale[not_imp_global] < 1e-4
-            if np.any(exhausted):
-                active[not_imp_global[exhausted]] = False
+            not_imp_local = np.where(~improved)[0]
+            if len(not_imp_local) > 0:
+                not_imp_global = a_idx[not_imp_local]
+                step_scale[not_imp_global] *= 0.5
+                m_new[not_imp_local] = (
+                    m_a[not_imp_local]
+                    + step_scale[not_imp_global, None]
+                    * (m_new[not_imp_local] - m_a[not_imp_local])
+                )
+                # Re-clip IDENTITY params after interpolation
+                for j in range(n_params):
+                    if transforms[j] == TransformType.IDENTITY:
+                        m_new[not_imp_local, j] = np.clip(
+                            m_new[not_imp_local, j], bounds_lo[j], bounds_hi[j],
+                        )
+                exhausted = step_scale[not_imp_global] < 1e-4
+                if np.any(exhausted):
+                    active[not_imp_global[exhausted]] = False
 
         # 10. Convergence checks
-        if iteration > 0:
+        if _spatial_mode:
+            pass
+        elif iteration > 0:
             param_change = np.max(np.abs(m_new - m_a), axis=1)
-            # 1e-3 tolerance: 0.1% relative change for log-CBF, ~0.005s MTT effect
             param_conv = param_change < 1e-3
 
             if iteration > 2:
@@ -802,8 +836,18 @@ def batched_dsc_vi_fit(
         out_fitted = np.zeros((n_voxels, n_obs), dtype=np.float64)
         out_fitted[valid_idx] = final_pred
 
+    out_post_means = None
+    out_post_cov = None
+    if return_posteriors:
+        out_post_means = np.zeros((n_voxels, n_params), dtype=np.float64)
+        out_post_cov = np.zeros((n_voxels, n_params), dtype=np.float64)
+        out_post_means[valid_idx] = best_m
+        out_post_cov[valid_idx] = best_cov_diag
+
     return DSCBatchedFitResult(
         params=out_params, r_squared=out_r2, converged=out_converged,
         fitted_curves=out_fitted, n_iterations=last_iteration + 1,
         model_name=model_type, uncertainties=out_uncertainties,
+        posterior_means_transformed=out_post_means,
+        posterior_cov_diag=out_post_cov,
     )

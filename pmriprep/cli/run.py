@@ -274,10 +274,13 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-bayesian",
-        choices=["vi", "map"],
+        choices=["vi", "svb", "map"],
         default=None,
         help="Bayesian inference for parametric methods (cpi, vascular): "
-        "vi (default, variational inference), map (maximum a posteriori). "
+        "vi (default, variational inference), "
+        "svb (spatial variational Bayes — couples neighboring voxels "
+        "to reduce noise without smoothing), "
+        "map (maximum a posteriori). "
         "SVD methods ignore this option.",
     )
     dsc_group.add_argument(
