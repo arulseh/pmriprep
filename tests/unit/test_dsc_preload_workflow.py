@@ -171,3 +171,30 @@ class TestPreloadPrecedence:
         assert qc["preload_advisory_classification"] == PreloadClass.NONE.value
         assert qc["preload_classification_source"] == "k2_primary"
         assert qc["preload_user_specified"] is False
+
+    def test_k2_unavailable_skips_constraint(self, tmp_path: Path) -> None:
+        """preload='auto' + K2 returns UNKNOWN → source='k2_unavailable'."""
+        conc, mask, aif = _write_fixtures(tmp_path)
+        with mock.patch(
+            "pmriprep.utils.dsc_preload.apply_k2_correction",
+            return_value=_fake_k2_result((4, 4, 4)),
+        ), mock.patch(
+            "pmriprep.utils.dsc_preload.detect_preload",
+            return_value=_advisory(PreloadClass.MINIMAL),
+        ), mock.patch(
+            "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
+            return_value=(PreloadClass.UNKNOWN, 0.0, "stub"),
+        ):
+            _, _, qc = _detect_and_correct_preload(
+                concentration_file=conc,
+                aif_file=aif,
+                brain_mask_file=mask,
+                te=0.03,
+                field_strength=3.0,
+                tr=1.5,
+                preload="auto",
+            )
+
+        assert qc["preload_classification_source"] == "k2_unavailable"
+        assert qc["preload_classification"] == PreloadClass.UNKNOWN.value
+        assert qc["preload_user_specified"] is False

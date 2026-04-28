@@ -65,6 +65,10 @@ DT_SEC = 1.5
 BASELINE_FRAMES = 10
 SEED = 42
 
+# QIBA tissue params use CBF in mL/100g/min; VascularModel uses mL/mL/s.
+# Conversion: mL/100g/min ÷ 6000 = mL/mL/s  (60 s/min × 100 g/100g).
+_CBF_QIBA_TO_MODEL = 6000.0
+
 
 # =============================================================================
 # Helpers
@@ -482,15 +486,19 @@ class TestQIBAVascularExponential:
         mtt_tol: float,
     ) -> None:
         """Test vascular MAP recovery with QIBA recirculation AIF."""
-        # MAP prior N(55, 22.5^2) pulls normal_wm (CBF=20) upward
+        # MAP prior mean ~0.08 pulls normal_wm (CBF=0.0033) upward
         if tissue_key == "normal_wm" and noise_key != "zero":
             pytest.xfail(
-                "MAP prior bias pulls CBF=20 upward at all noise levels"
+                "MAP prior bias pulls low CBF upward at all noise levels"
             )
 
         tissue, aif, dt, time_sec, cbf, mtt = _make_qiba_exponential_data(
             tissue_key, noise_key
         )
+
+        # Scale tissue from QIBA units (mL/100g/min) to model units (mL/mL/s)
+        tissue = tissue / _CBF_QIBA_TO_MODEL
+        cbf_model = cbf / _CBF_QIBA_TO_MODEL
 
         model = VascularModel()
         peak = float(np.max(np.abs(tissue)))
@@ -509,7 +517,7 @@ class TestQIBAVascularExponential:
         assert result is not None, "Vascular MAP fit returned None"
 
         recovered_cbf = result.parameters["cbf"]
-        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
+        _assert_param_recovery(recovered_cbf, cbf_model, cbf_tol, param_name="CBF")
 
         fitted_params = model.dict_to_params(result.parameters)
         derived = model.compute_derived_parameters(fitted_params)
@@ -730,9 +738,10 @@ class TestQIBAVascularCTH:
             baseline_frames=BASELINE_FRAMES,
         )
 
-        # Generate tissue via VascularModel for round-trip
+        # Scale CBF from QIBA units (mL/100g/min) to model units (mL/mL/s)
+        cbf_model = params.cbf / _CBF_QIBA_TO_MODEL
         beta = params.mtt / cth.alpha
-        true_params = [params.cbf, cth.alpha, beta, 0.0]
+        true_params = [cbf_model, cth.alpha, beta, 0.0]
 
         model = VascularModel()
         tissue = model.tissue_curve(true_params, aif, time_sec)
@@ -762,7 +771,7 @@ class TestQIBAVascularCTH:
 
         recovered_cbf = result.parameters["cbf"]
         _assert_param_recovery(
-            recovered_cbf, params.cbf, cbf_tol, param_name="CBF"
+            recovered_cbf, cbf_model, cbf_tol, param_name="CBF"
         )
 
         fitted_params = model.dict_to_params(result.parameters)
