@@ -8,7 +8,7 @@ PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and 
 
 - **DSC Processing**: Six deconvolution methods (sSVD, cSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction
 - **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps
-- **Bayesian Inference**: Variational inference (VI) and MAP estimation with uncertainty quantification
+- **Bayesian Inference**: Variational inference (VI), spatial variational Bayes (SVB), and maximum a posteriori (MAP) estimation with uncertainty quantification
 - **Automatic AIF Detection**: Multi-level arterial input function detection with population fallback, or user-supplied external AIF
 - **T1 Mapping**: Variable flip angle T1 mapping with optional B1+ correction
 - **Tumor Segmentation**: HD-GLIO integration for glioma segmentation
@@ -187,8 +187,8 @@ pmriprep /path/to/bids /path/to/output participant \
 ```yaml
 dsc:
   method: cpi
-  bayesian: vi
-  preload: 0.5
+  bayesian: svb
+  preload: 0.75
   dose: 0.75
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
@@ -207,11 +207,11 @@ dce:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `preload` | str or float | `"auto"` | Preload dose multiplier (`0` = none, `0.5` = half, `1` = full) or `"auto"` to detect from data |
+| `preload` | str or float | `"auto"` | Preload dose fraction: `"auto"` (detect from signal) or a float (0.0–2.0) |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
-| `bayesian` | str | `"vi"` | Bayesian mode: `vi`, `svb`, `map` (parametric methods only; SVD ignores) |
+| `bayesian` | str | `"vi"` | Bayesian mode: `vi`, `svb`, `map` (CPI and Vascular only; SVD and Tikhonov ignore) |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
@@ -408,6 +408,10 @@ output_dir/pmriprep/
       sub-01_ses-01_space-anat_desc-nawm_mask.nii.gz
       # ... tissue segmentations, transforms, space-specific masks
     perf/
+      # DSC preprocessing
+      sub-01_ses-01_space-DSC_desc-dscPreproc_dsc.nii.gz
+      sub-01_ses-01_space-DSC_desc-dscMean_ref.nii.gz
+      sub-01_ses-01_desc-dscConfounds_timeseries.tsv
       # DSC maps
       sub-01_ses-01_space-DSC_desc-dscRel_cbf.nii.gz
       sub-01_ses-01_space-DSC_desc-dscRel_cbv.nii.gz
@@ -435,6 +439,10 @@ output_dir/pmriprep/
       sub-01_ses-01_space-DSC_desc-dsc_alpha.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_beta.nii.gz
       sub-01_ses-01_space-DSC_desc-dsc_cth.nii.gz
+      # DCE preprocessing
+      sub-01_ses-01_space-DCE_desc-dcePreproc_dce.nii.gz
+      sub-01_ses-01_space-DCE_desc-dceMean_ref.nii.gz
+      sub-01_ses-01_desc-dceConfounds_timeseries.tsv
       # DCE PK maps
       sub-01_ses-01_space-DCE_model-auto_desc-dce_Ktrans.nii.gz
       sub-01_ses-01_space-DCE_model-auto_desc-dce_ve.nii.gz
@@ -477,7 +485,17 @@ output_dir/pmriprep/
     sub-01_ses-01.html
 ```
 
+> When `smooth_fwhm` is set (DSC or DCE config), smoothed variants of perfusion maps are also written with a `Sm{fwhm}` suffix in the `desc-` entity (e.g., `desc-dscRelSm3_cbf` for 3 mm FWHM). All NIfTI outputs have paired `.json` sidecars with descriptions, units, and provenance.
+
 ### Output File Descriptions
+
+**DSC preprocessing:**
+
+| File Pattern | Description |
+|--------------|-------------|
+| `*_desc-dscPreproc_dsc` | Motion-corrected 4D concentration time series |
+| `*_desc-dscMean_ref` | Mean DSC reference image |
+| `*_desc-dscConfounds_timeseries.tsv` | Framewise displacement and motion parameters |
 
 **DSC maps:**
 
@@ -510,6 +528,14 @@ output_dir/pmriprep/
 | `*_desc-dscCI95lower_{param}` | 95% credible interval lower bound (Bayesian only) | varies |
 | `*_desc-dscCI95upper_{param}` | 95% credible interval upper bound (Bayesian only) | varies |
 
+**DCE preprocessing:**
+
+| File Pattern | Description |
+|--------------|-------------|
+| `*_desc-dcePreproc_dce` | Motion-corrected 4D concentration time series |
+| `*_desc-dceMean_ref` | Mean DCE reference image |
+| `*_desc-dceConfounds_timeseries.tsv` | Framewise displacement and motion parameters |
+
 **DCE maps:**
 
 | File Pattern | Description | Units |
@@ -540,8 +566,6 @@ output_dir/pmriprep/
 | `*_desc-dceModelSelection_dseg` | Per-voxel model selection (auto mode only) | categorical |
 | `*_desc-dceDeltaBIC_stat` | Delta-BIC confidence (auto mode only) | — |
 | `*_desc-dceQualityFlag_mask` | Voxel quality flags (auto mode only) | categorical |
-
-All NIfTI outputs have paired `.json` sidecars with descriptions, units, and provenance.
 
 
 ## QC Reports
