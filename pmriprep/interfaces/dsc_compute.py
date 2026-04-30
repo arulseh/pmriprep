@@ -2379,7 +2379,16 @@ class ComputeDSCMaps(BaseInterface):
             dtype: Any = np.float32,
         ) -> str:
             path = self._gen_outfilename(suffix)
-            img = nib.Nifti1Image(data.astype(dtype), affine, header)  # type: ignore[attr-defined]
+            # Re-derive a clean header from the upstream concentration
+            # NIfTI's so its `datatype` field doesn't override the
+            # explicit `dtype` we pass in. Without this, nibabel
+            # silently casts e.g. our float32 R² map or uint8 fallback
+            # mask back to the upstream concentration's int16, losing
+            # precision for floats and wasting bits for the mask.
+            cast_data = data.astype(dtype)
+            local_header = header.copy()  # type: ignore[attr-defined]
+            local_header.set_data_dtype(dtype)
+            img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
             nib.save(img, path)  # type: ignore[attr-defined]
             return path
 
