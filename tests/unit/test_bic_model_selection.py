@@ -670,7 +670,7 @@ class TestSymmetricBIC:
         noise = rng.normal(0, 0.001, size=tissue_curve.shape)
         tissue_curve = np.maximum(tissue_curve + noise, 0.0)
 
-        # When Patlak wins BIC and bayesian="map", it should get MAP'd
+        # When Patlak wins BIC and inference="map", it should get MAP'd
         nlls_result = patlak.fit(tissue_curve, aif, time_points)
         assert nlls_result.converged
         # (Full MAP integration test would need worker context)

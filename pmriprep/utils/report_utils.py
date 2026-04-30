@@ -95,11 +95,7 @@ _INFERENCE_TEXT: dict[str, str] = {
         "with Laplace approximation for uncertainty quantification "
         "(Woolrich et al., 2009)."
     ),
-    "nlls": (
-        "Parameter estimation used Levenberg-Marquardt nonlinear least "
-        "squares (FABBER inference_nlls)."
-    ),
-    "none": "Parameters were estimated using nonlinear least squares.",
+    "nlls": "Parameter estimation used nonlinear least squares.",
 }
 
 # Boilerplate text for brain extraction tools
@@ -680,15 +676,16 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
         elif m_lower == "2cxm":
             refs.add("sourbron_2011")
 
-    # Bayesian inference (DCE config still uses "bayesian" field name;
-    # value is "vi"/"map"/"none", canonical naming).
-    bayesian = pk_info.get("bayesian", "none")
-    bayesian_text = _INFERENCE_TEXT.get(bayesian, "")
-    if bayesian_text:
-        sentences.append(bayesian_text)
-        if bayesian == "vi":
+    # Inference engine — DCE NLLS path produces no boilerplate sentence
+    # (the `nlls` entry is generic; emit only when a Bayesian engine
+    # was actually used).
+    inference = pk_info.get("inference", "nlls")
+    inference_text = _INFERENCE_TEXT.get(inference, "")
+    if inference_text:
+        sentences.append(inference_text)
+        if inference == "vi":
             refs.add("chappell_2009")
-        elif bayesian == "map":
+        elif inference == "map":
             refs.add("woolrich_2009")
 
     # Tortuosity correction

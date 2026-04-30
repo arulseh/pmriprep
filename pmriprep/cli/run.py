@@ -347,11 +347,11 @@ Examples:
         "(default: auto).",
     )
     dce_group.add_argument(
-        "--dce-bayesian",
-        choices=["none", "vi", "map"],
+        "--dce-inference",
+        choices=["nlls", "vi", "map"],
         default=None,
-        help="Bayesian inference method for DCE: none (default, NLLS), "
-        "vi (variational inference), map (maximum a posteriori).",
+        help="Inference engine for DCE: nlls (default, scipy "
+        "least_squares), vi (variational Bayes), map (Laplace MAP).",
     )
     dce_group.add_argument(
         "--dce-aif-method",

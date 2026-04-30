@@ -1022,7 +1022,7 @@ def init_dce_preproc_wf(
     # ==========================================================================
     pk_kwargs: dict[str, Any] = dict(
         model=config.model,
-        bayesian=config.bayesian,
+        inference=config.inference,
         mcmc_samples=config.mcmc_samples,
         tsnr_threshold=config.tsnr_threshold,
         constraint_mode=config.cbv_constraint_mode,

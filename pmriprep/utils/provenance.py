@@ -406,8 +406,8 @@ def _enrich_dce(
         pk_block: Dict[str, Any] = {}
         if "model" in pk:
             pk_block["model"] = str(pk["model"])
-        if "bayesian" in pk:
-            pk_block["bayesian_inference"] = str(pk["bayesian"])
+        if "inference" in pk:
+            pk_block["inference"] = str(pk["inference"])
         if pk.get("model") == "auto":
             selection: Dict[str, Any] = {"Method": "per-voxel BIC comparison"}
             candidates = pk.get("candidate_models", [])

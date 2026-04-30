@@ -48,7 +48,7 @@ class TestEnrichDCE:
             },
             "pk_modeling": {
                 "model": "extended_tofts",
-                "bayesian": "vi",
+                "inference": "vi",
                 "convergence_rate": 0.98,
                 "r2_median": 0.87,
             },
@@ -74,7 +74,7 @@ class TestEnrichDCE:
 
         assert "PKModeling" in perf
         assert perf["PKModeling"]["model"] == "extended_tofts"
-        assert perf["PKModeling"]["bayesian_inference"] == "vi"
+        assert perf["PKModeling"]["inference"] == "vi"
         assert perf["PKModeling"]["convergence_rate"] == pytest.approx(0.98, abs=0.001)
 
     def test_population_aif(self) -> None:
@@ -151,7 +151,7 @@ class TestEnrichDCE:
         qc = {
             "pk_modeling": {
                 "model": "auto",
-                "bayesian": "vi",
+                "inference": "vi",
                 "candidate_models": ["patlak", "extended_tofts"],
                 "patlak_fraction": 0.85,
                 "extended_tofts_fraction": 0.15,

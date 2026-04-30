@@ -66,8 +66,10 @@ class DCEConfig:
     model : str
         Pharmacokinetic model: auto (per-voxel BIC selection),
         tofts, extended_tofts, patlak, or 2cxm.
-    bayesian : str
-        Bayesian inference method: none, vi (recommended), or map.
+    inference : str
+        Inference engine: nlls (default, scipy least_squares),
+        vi (recommended; variational Bayes), map (Laplace MAP),
+        or mcmc (YAML-only — not exposed via CLI).
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
     num_processes : int
@@ -109,7 +111,7 @@ class DCEConfig:
 
     # Model settings
     model: str = "auto"
-    bayesian: str = "none"
+    inference: str = "nlls"
     mcmc_samples: int = 500
 
     # Relaxivity override
@@ -221,9 +223,9 @@ class DCEConfig:
                     "hard-fixing propagates DSC CBV bias into Fp and PS. "
                     "Use --constraint-mode soft instead."
                 )
-            if self.bayesian in {"vi", "mcmc"}:
+            if self.inference in {"vi", "mcmc"}:
                 raise ValueError(
-                    f"--constraint-mode hard is incompatible with --bayesian {self.bayesian}. "
+                    f"--constraint-mode hard is incompatible with --dce-inference {self.inference}. "
                     "Hard bypasses the Bayesian fitter for bounded L-BFGS-B, "
                     "triggering mass post-fit rejection on non-enhancing voxels. "
                     "Use --constraint-mode soft to keep the Bayesian posterior with an informative vp prior."

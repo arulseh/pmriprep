@@ -14,8 +14,8 @@ test file enforces the structural invariants that a future backend
      exact invariant violated pre-v0.28.
   5. BIC parameter count: HARD reduces k by 1 for constrained voxels;
      SOFT uses k = k_base (Self-Liang 1987 pragmatic convention).
-  6. Negative cross-regime parity: NLLS box (bayesian=none) and Bayesian
-     Gaussian (bayesian=map) produce materially different vp at σ=0.4 on
+  6. Negative cross-regime parity: NLLS box (inference=nlls) and Bayesian
+     Gaussian (inference=map) produce materially different vp at σ=0.4 on
      a data-dominated voxel — pinning the user-contract that the two
      SOFT implementations ARE different by design.
   7. fraction_vp_at_bound diagnostic: synthetic cohort with controlled

@@ -132,7 +132,7 @@ def _init_worker(
     aif: "np.ndarray[Any, Any]",
     time_points: "np.ndarray[Any, Any]",
     model_name: str,
-    bayesian: str,
+    inference: str,
     mcmc_samples: int,
     baseline_frames: int,
     constraint_mode_str: str,
@@ -177,7 +177,7 @@ def _init_worker(
     model = model_map[model_name]()
 
     fitter = None
-    if bayesian != "none":
+    if inference != "nlls":
         fitter = BayesianPKFitter(model)
 
     # BIC model selection: instantiate all candidate models
@@ -192,7 +192,7 @@ def _init_worker(
     _worker_ctx["model"] = model
     _worker_ctx["model_name"] = model_name
     _worker_ctx["fitter"] = fitter
-    _worker_ctx["bayesian"] = bayesian
+    _worker_ctx["inference"] = inference
     _worker_ctx["mcmc_samples"] = mcmc_samples
     _worker_ctx["baseline_frames"] = baseline_frames
     _worker_ctx["constraint_mode_str"] = constraint_mode_str
@@ -230,7 +230,7 @@ def _fit_single_voxel(
     fitter = _worker_ctx["fitter"]
     aif = _worker_ctx["aif"]
     time_points = _worker_ctx["time_points"]
-    bayesian = _worker_ctx["bayesian"]
+    inference = _worker_ctx["inference"]
     mcmc_samples = _worker_ctx["mcmc_samples"]
     baseline_frames = _worker_ctx["baseline_frames"]
     constraint_mode = ConstraintMode(_worker_ctx["constraint_mode_str"])
@@ -282,7 +282,7 @@ def _fit_single_voxel(
         elif (
             fixed_vp is not None
             and constraint_mode == ConstraintMode.SOFT
-            and bayesian != "none"
+            and inference != "nlls"
         ):
             vp_prior = create_vp_prior_from_dsc(
                 fixed_vp, relative_uncertainty=constraint_vp_uncertainty
@@ -297,7 +297,7 @@ def _fit_single_voxel(
                     )
                 # Flag constrained so all BIC candidates get constrained vp
                 constrained = True
-            elif bayesian == "vi":
+            elif inference == "vi":
                 soft_fitter = BayesianPKFitter(
                     model, vp_prior_override=vp_prior
                 )
@@ -307,7 +307,7 @@ def _fit_single_voxel(
                     sloppy=sloppy,
                 )
                 constrained = True
-            elif bayesian == "map":
+            elif inference == "map":
                 soft_fitter = BayesianPKFitter(
                     model, vp_prior_override=vp_prior
                 )
@@ -318,7 +318,7 @@ def _fit_single_voxel(
                     sloppy=sloppy,
                 )
                 constrained = True
-            elif bayesian == "mcmc":
+            elif inference == "mcmc":
                 soft_fitter = BayesianPKFitter(
                     model, vp_prior_override=vp_prior
                 )
@@ -334,7 +334,7 @@ def _fit_single_voxel(
         elif (
             fixed_vp is not None
             and constraint_mode == ConstraintMode.SOFT
-            and bayesian == "none"
+            and inference == "nlls"
         ):
             sigma = constraint_vp_uncertainty
             vp_lo = max(fixed_vp * (1.0 - sigma), VP_BOUNDS.min)
@@ -348,26 +348,26 @@ def _fit_single_voxel(
 
         # Unconstrained fallback
         if result is None:
-            if is_auto or bayesian == "none":
+            if is_auto or inference == "nlls":
                 # is_auto: NLLS for BIC comparison; MAP applied to winner later
                 result = model.fit(
                     prepared_curve, aif, time_points,
                     weights=motion_weights,
                 )
-            elif bayesian == "vi" and fitter is not None:
+            elif inference == "vi" and fitter is not None:
                 result = fitter.fit_vi(
                     prepared_curve, aif, time_points,
                     weights=motion_weights,
                     sloppy=sloppy,
                 )
-            elif bayesian == "map" and fitter is not None:
+            elif inference == "map" and fitter is not None:
                 result = fitter.fit_map(
                     prepared_curve, aif, time_points,
                     compute_uncertainties=not sloppy,
                     weights=motion_weights,
                     sloppy=sloppy,
                 )
-            elif bayesian == "mcmc" and fitter is not None:
+            elif inference == "mcmc" and fitter is not None:
                 result = fitter.fit_mcmc(
                     prepared_curve, aif, time_points,
                     n_samples=mcmc_samples,
@@ -449,7 +449,7 @@ def _fit_single_voxel(
                 best = simplest
 
             # Bayesian refinement of BIC winner
-            if bayesian == "vi":
+            if inference == "vi":
                 model_map = _worker_ctx.get("model_map", {})
                 winner_model_cls = model_map.get(best.model_name)
                 if winner_model_cls is not None:
@@ -470,7 +470,7 @@ def _fit_single_voxel(
                             x, y, z, exc_info=True,
                         )
 
-            elif bayesian == "map":
+            elif inference == "map":
                 model_map = _worker_ctx.get("model_map", {})
                 winner_model_cls = model_map.get(best.model_name)
                 if winner_model_cls is not None:
@@ -492,7 +492,7 @@ def _fit_single_voxel(
                             x, y, z, exc_info=True,
                         )
 
-            elif bayesian == "mcmc":
+            elif inference == "mcmc":
                 model_map = _worker_ctx.get("model_map", {})
                 winner_model_cls = model_map.get(best.model_name)
                 if winner_model_cls is not None:
@@ -881,13 +881,15 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="Optional 1D text file with time points (minutes); if not provided, uses TR",
     )
 
-    # Bayesian options
-    bayesian = traits.Enum(
-        "none",
+    # Inference engine options
+    inference = traits.Enum(
+        "nlls",
         "vi",
         "map",
+        "mcmc",
         usedefault=True,
-        desc="Bayesian inference method: none (NLLS), vi, or map",
+        desc="Inference engine: nlls (default, scipy least_squares), "
+        "vi (variational Bayes), map (Laplace MAP), mcmc (emcee).",
     )
     mcmc_samples = traits.Int(
         500,
@@ -1092,7 +1094,7 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
             "Per-voxel binary indicator (0/1) of whether vp ended at a bound "
             "in the active-set SOFT NLLS path. 0 for interior / HARD / SKIP / "
             "Bayesian fits. Produced only when constraint_mode=SOFT + "
-            "bayesian=none (v0.28.0+)."
+            "inference=nlls."
         ),
     )
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
@@ -1142,8 +1144,9 @@ class ComputeDCEMaps(BaseInterface):
         Repetition time in seconds (required for model='auto').
     time_points_file : str, optional
         Text file with time points in minutes; if not provided, uses TR.
-    bayesian : str
-        Bayesian inference: none (NLLS), map, or mcmc. Default: 'none'.
+    inference : str
+        Inference engine: nlls (default, scipy least_squares),
+        vi (variational Bayes), map (Laplace MAP), or mcmc (emcee).
     mcmc_samples : int
         MCMC samples for Bayesian. Default: 500.
     tsnr_threshold : float
@@ -1191,7 +1194,7 @@ class ComputeDCEMaps(BaseInterface):
     >>> compute.inputs.aif_file = 'aif_curve.txt'
     >>> compute.inputs.brain_mask_file = 'brain_mask.nii.gz'
     >>> compute.inputs.model = 'extended_tofts'
-    >>> compute.inputs.bayesian = 'map'
+    >>> compute.inputs.inference = 'map'
     >>> result = compute.run()  # doctest: +SKIP
 
     Notes
@@ -1503,7 +1506,7 @@ class ComputeDCEMaps(BaseInterface):
         fitting_mask = fitting_mask & enhancement_mask
 
         # Parameters
-        bayesian = str(self.inputs.bayesian)
+        inference = str(self.inputs.inference)
         mcmc_samples = int(self.inputs.mcmc_samples)
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
 
@@ -1875,7 +1878,7 @@ class ComputeDCEMaps(BaseInterface):
         n_brain = int(np.sum(mask_bool))
         qc_metrics: dict[str, Any] = {
             "model": "auto" if is_auto else model_name,
-            "bayesian": bayesian,
+            "inference": inference,
             "n_voxels_brain": n_brain,
             "n_voxels_fitted": n_voxels,
             "n_voxels_signal_filtered": n_brain - n_voxels,
@@ -1951,7 +1954,7 @@ class ComputeDCEMaps(BaseInterface):
             int(self.inputs.random_seed) if isdefined(self.inputs.random_seed) else None
         )
         init_args = (
-            aif, time_points, model_name, bayesian, mcmc_samples,
+            aif, time_points, model_name, inference, mcmc_samples,
             baseline_frames, constraint_mode.value, constraint_vp_uncertainty,
             save_fitted_curves, motion_weights, sloppy, random_seed,
             candidate_names if is_auto else None,
@@ -1966,7 +1969,7 @@ class ComputeDCEMaps(BaseInterface):
             aif=aif,
             time_points=time_points,
             model_name=model_name,
-            bayesian=bayesian,
+            inference=inference,
             is_auto=is_auto,
             candidate_names=candidate_names,
             vp_constraint_map=vp_constraint_map,
@@ -2088,7 +2091,7 @@ class ComputeDCEMaps(BaseInterface):
                 e_map[x, y, z] = params.get("E", 0.0)
 
             # Uncertainty (Bayesian only)
-            if bayesian != "none" and res["uncertainties"]:
+            if inference != "nlls" and res["uncertainties"]:
                 ktrans_std[x, y, z] = res["uncertainties"].get("Ktrans", 0.0)
                 if self._has_ve(effective_model_name):
                     ve_std[x, y, z] = res["uncertainties"].get("ve", 0.0)
@@ -2123,7 +2126,7 @@ class ComputeDCEMaps(BaseInterface):
             # Only meaningful for SOFT + Bayesian (where a soft prior was used)
             if (
                 constraint_mode == ConstraintMode.SOFT
-                and bayesian != "none"
+                and inference != "nlls"
                 and self._has_vp(effective_model_name)
                 and vd.voxel_vp is not None
                 and vd.voxel_vp > 0
@@ -2440,7 +2443,7 @@ class ComputeDCEMaps(BaseInterface):
             self._results["out_e"] = out_e
 
         # Save uncertainty maps
-        if bayesian != "none":
+        if inference != "nlls":
             out_ktrans_std = self._gen_outfilename("_Ktrans_std")
 
             ktrans_std_img = nib.Nifti1Image(ktrans_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
@@ -2701,7 +2704,7 @@ class ComputeDCEMaps(BaseInterface):
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
         model_name: str,
-        bayesian: str,
+        inference: str,
         is_auto: bool,
         candidate_names: list[str],
         vp_constraint_map: Optional[npt.NDArray[Any]],
@@ -2728,7 +2731,7 @@ class ComputeDCEMaps(BaseInterface):
             aif: AIF, shape (T,).
             time_points: Time points, shape (T,).
             model_name: Primary model name.
-            bayesian: Bayesian mode ('none', 'map', 'vi', 'mcmc').
+            inference: Inference engine ('nlls', 'map', 'vi', 'mcmc').
             is_auto: Whether auto-mode BIC selection is active.
             candidate_names: List of candidate model names for auto mode.
             vp_constraint_map: vp constraint map or None.
@@ -2754,8 +2757,8 @@ class ComputeDCEMaps(BaseInterface):
         n_timepoints = len(aif)
 
         # VI/MCMC: fall through to CPU multiprocessing (unchanged)
-        if bayesian in ("vi", "mcmc"):
-            logger.info("Batched mode with %s: falling through to CPU multiprocessing", bayesian)
+        if inference in ("vi", "mcmc"):
+            logger.info("Batched mode with %s: falling through to CPU multiprocessing", inference)
             _init_worker(*init_args)
             if n_procs > 1:
                 from concurrent.futures import ProcessPoolExecutor
@@ -2790,15 +2793,15 @@ class ComputeDCEMaps(BaseInterface):
             # Zero out invalid entries so they're treated as unconstrained
             fixed_vp[~valid_vp] = 0.0
 
-        # v0.28.0: vp_uncertainty is honored on the batched path only when the
-        # user explicitly selected bayesian=none + SOFT. For bayesian=map + SOFT,
+        # vp_uncertainty is honored on the batched path only when the
+        # user explicitly selected inference=nlls + SOFT. For inference=map + SOFT,
         # the batched Pass acts as HARD warm-start and the CPU MAP refinement
         # downstream applies the Gaussian prior via create_vp_prior_from_dsc.
         # For HARD/SKIP, vp_uncertainty is moot (None).
         vp_uncertainty_batched: Optional[float] = None
         if (
             constraint_mode == ConstraintMode.SOFT
-            and bayesian == "none"
+            and inference == "nlls"
             and fixed_vp is not None
         ):
             vp_uncertainty_batched = float(constraint_vp_uncertainty)
@@ -2817,9 +2820,9 @@ class ComputeDCEMaps(BaseInterface):
                 vp_uncertainty=vp_uncertainty_batched,
                 weights=motion_weights,
                 save_fitted_curves=(
-                    save_fitted_curves or bayesian == "map"
+                    save_fitted_curves or inference == "map"
                 ) if model_name != "patlak" else save_fitted_curves,
-                compute_uncertainties=bayesian == "none",
+                compute_uncertainties=inference == "nlls",
                 n_procs=n_procs,
                 n_voxels=n_voxels,
             )
@@ -2830,7 +2833,7 @@ class ComputeDCEMaps(BaseInterface):
             )
 
             # MAP refinement: use batched fit as warm-start for CPU MAP
-            if bayesian == "map":
+            if inference == "map":
                 results = self._refine_map_from_batched(
                     results, voxel_data_list, init_args, n_procs,
                 )
@@ -3009,7 +3012,7 @@ class ComputeDCEMaps(BaseInterface):
             })
 
         # MAP refinement of BIC winners
-        if bayesian == "map":
+        if inference == "map":
             results = self._refine_map_from_batched(
                 results, voxel_data_list, init_args, n_procs,
             )

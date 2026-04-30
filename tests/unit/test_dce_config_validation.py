@@ -22,23 +22,23 @@ class TestHardConstraintRejectedForIncompatibleModels:
 
     def test_hard_plus_vi_raises(self) -> None:
         with pytest.raises(ValueError, match="incompatible.*vi"):
-            DCEConfig(cbv_constraint_mode="hard", bayesian="vi")
+            DCEConfig(cbv_constraint_mode="hard", inference="vi")
 
     def test_hard_plus_mcmc_raises(self) -> None:
         with pytest.raises(ValueError, match="incompatible.*mcmc"):
-            DCEConfig(cbv_constraint_mode="hard", bayesian="mcmc")
+            DCEConfig(cbv_constraint_mode="hard", inference="mcmc")
 
     def test_hard_plus_tofts_is_ok(self) -> None:
         """HARD with a compatible model (tofts, NLLS) still succeeds."""
-        cfg = DCEConfig(cbv_constraint_mode="hard", model="tofts", bayesian="none")
+        cfg = DCEConfig(cbv_constraint_mode="hard", model="tofts", inference="nlls")
         assert cfg.cbv_constraint_mode == "hard"
 
     def test_soft_plus_2cxm_is_ok(self) -> None:
-        """SOFT with any model/bayesian combination is the supported path."""
-        cfg = DCEConfig(cbv_constraint_mode="soft", model="2cxm", bayesian="vi")
+        """SOFT with any model/inference combination is the supported path."""
+        cfg = DCEConfig(cbv_constraint_mode="soft", model="2cxm", inference="vi")
         assert cfg.cbv_constraint_mode == "soft"
 
     def test_auto_plus_2cxm_is_ok(self) -> None:
         """AUTO with 2CXM+VI is fine — auto never emits HARD."""
-        cfg = DCEConfig(cbv_constraint_mode="auto", model="2cxm", bayesian="vi")
+        cfg = DCEConfig(cbv_constraint_mode="auto", model="2cxm", inference="vi")
         assert cfg.cbv_constraint_mode == "auto"

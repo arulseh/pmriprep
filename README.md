@@ -145,7 +145,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | Flag | Description |
 |------|-------------|
 | `--dce-model {auto,tofts,extended_tofts,patlak,2cxm}` | Pharmacokinetic model. `auto` performs per-voxel BIC model selection from Patlak, Extended Tofts, and 2CXM (default: auto) |
-| `--dce-bayesian {none,vi,map}` | Bayesian inference method (default: none) |
+| `--dce-inference {nlls,vi,map}` | Inference engine for DCE: `nlls` (default, scipy least_squares), `vi`, `map` |
 | `--dce-aif-method {auto,population}` | AIF detection method (default: auto) |
 | `--dce-aif-file FILE` | External AIF curve file (true plasma [Gd] in mM, already Hct-corrected); bypasses detection — the pipeline does not re-scale |
 | `--dce-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
@@ -196,7 +196,7 @@ dsc:
 
 dce:
   model: extended_tofts
-  bayesian: vi
+  inference: vi
   dose: 0.75
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
@@ -233,7 +233,7 @@ dce:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection (Patlak, Extended Tofts, 2CXM). Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
-| `bayesian` | str | `"none"` | Bayesian mode: `none`, `vi`, `map` |
+| `inference` | str | `"nlls"` | Inference engine: `nlls`, `vi`, `map` (and `mcmc` via YAML only) |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
 | `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected). Bypasses AIF detection |
 | `scale_aif` | bool | `true` | Scale AIF to population reference |
@@ -432,7 +432,7 @@ output_dir/pmriprep/
       sub-01_ses-01_space-DSC_desc-dscNawmNorm_cbf.nii.gz
       sub-01_ses-01_space-DSC_desc-dscNawmNorm_cbv.nii.gz
       sub-01_ses-01_space-DSC_desc-dscNawmRel_ttp.nii.gz
-      # DSC Bayesian (optional)
+      # DSC parametric uncertainty (inference: vi/svb/map only)
       sub-01_ses-01_space-DSC_desc-dscUncertainty_cbf.nii.gz
       sub-01_ses-01_space-DSC_desc-dscCV_cbf.nii.gz
       sub-01_ses-01_space-DSC_desc-dscCI95lower_cbf.nii.gz
@@ -453,7 +453,7 @@ output_dir/pmriprep/
       sub-01_ses-01_space-DCE_model-auto_desc-dce_R2.nii.gz
       sub-01_ses-01_space-DCE_model-auto_desc-dceNawmNorm_Ktrans.nii.gz
       sub-01_ses-01_space-DCE_model-auto_desc-dceTortuosityCorr_Ktrans.nii.gz
-      # DCE Bayesian (optional)
+      # DCE PK uncertainty (inference: vi/map/mcmc only)
       sub-01_ses-01_space-DCE_model-auto_desc-dceUncertainty_Ktrans.nii.gz
       sub-01_ses-01_space-DCE_model-auto_desc-dceCV_Ktrans.nii.gz
       sub-01_ses-01_space-DCE_model-auto_desc-dceCI95lower_Ktrans.nii.gz

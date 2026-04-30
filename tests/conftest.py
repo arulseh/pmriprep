@@ -980,7 +980,7 @@ def sample_dce_config() -> Dict[str, Any]:
     """Fixture providing a sample DCE configuration dict."""
     return {
         "model": "extended_tofts",
-        "bayesian": "none",
+        "inference": "nlls",
         "aif_method": "auto",
         "scale_aif": False,
         "b1_method": "auto",
