@@ -448,19 +448,21 @@ class TestBuildDscProvenance:
         dose = prov["PerfusionProcessing"]["ContrastDose"]
         assert "gd_ions_per_molecule" not in dose
 
-    def test_bayesian_cpi_included(self) -> None:
-        """Bayesian inference recorded for CPI deconvolution."""
-        prov = build_dsc_provenance(deconv_method="cpi", bayesian="vi")
+    def test_inference_cpi_included(self) -> None:
+        """Inference engine + FABBER prior profile recorded for CPI."""
+        prov = build_dsc_provenance(deconv_method="cpi", inference="vi")
         deconv = prov["PerfusionProcessing"]["Deconvolution"]
         assert deconv["method"] == "cpi"
-        assert deconv["bayesian_inference"] == "vi"
+        assert deconv["inference"] == "vi"
+        assert deconv["inference_engine"] == "fabber"
+        assert deconv["cpi_prior_profile"] == "fabber"
 
-    def test_bayesian_ignored_for_osvd(self) -> None:
-        """Bayesian inference not recorded for non-CPI methods."""
-        prov = build_dsc_provenance(deconv_method="oSVD", bayesian="vi")
+    def test_inference_ignored_for_osvd(self) -> None:
+        """Inference engine not recorded for non-parametric methods."""
+        prov = build_dsc_provenance(deconv_method="oSVD", inference="vi")
         deconv = prov["PerfusionProcessing"]["Deconvolution"]
         assert deconv["method"] == "oSVD"
-        assert "bayesian_inference" not in deconv
+        assert "inference" not in deconv
 
 
 class TestCollectDefaultWarnings:

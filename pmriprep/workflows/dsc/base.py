@@ -1893,7 +1893,8 @@ def init_dsc_preproc_wf(
         svd_threshold=0.2,  # Default SVD threshold
         oi_threshold=0.065,  # Default OI threshold for oSVD
         cpi_control_points=config.cpi_control_points,
-        bayesian=config.bayesian,
+        cpi_infer_cpt=config.cpi_infer_cpt,
+        inference=config.inference,
         mcmc_samples=config.mcmc_samples,
         n_procs=config.num_processes if config.num_processes > 0 else 1,
         # baseline_frames wired dynamically from aif_detect.aif_baseline_frames

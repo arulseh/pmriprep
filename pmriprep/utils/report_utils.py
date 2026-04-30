@@ -80,16 +80,24 @@ _B1_CORRECTION_TEXT: dict[str, str] = {
     "none": "",
 }
 
-# Boilerplate text for Bayesian inference methods
-_BAYESIAN_TEXT: dict[str, str] = {
+# Boilerplate text for parametric-deconvolution inference methods
+_INFERENCE_TEXT: dict[str, str] = {
     "vi": (
         "Parameter estimation used variational Bayesian inference "
         "(Chappell et al., 2009)."
+    ),
+    "svb": (
+        "Parameter estimation used spatial variational Bayes with the "
+        "M-prior (Penny et al., 2005; Groves et al., 2009)."
     ),
     "map": (
         "Parameter estimation used maximum a posteriori (MAP) inference "
         "with Laplace approximation for uncertainty quantification "
         "(Woolrich et al., 2009)."
+    ),
+    "nlls": (
+        "Parameter estimation used Levenberg-Marquardt nonlinear least "
+        "squares (FABBER inference_nlls)."
     ),
     "none": "Parameters were estimated using nonlinear least squares.",
 }
@@ -475,14 +483,22 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
     elif method_lower == "cpi":
         refs.add("mehndiratta_2013")
 
-    # Bayesian inference (only for vascular/cpi methods)
+    # Inference engine (only for vascular/cpi parametric methods).
+    # Backward-compat: older sidecars may carry "bayesian"/"bayesian_inference"
+    # keys; their values are already in canonical "vi"/"svb"/"map" naming.
     if method_lower in ("vascular", "cpi"):
-        bayesian = deconv.get("bayesian", "vi")
-        if bayesian in ("vi", "map"):
-            sentences.append(_BAYESIAN_TEXT.get(bayesian, ""))
-            if bayesian == "vi":
+        inference = deconv.get(
+            "inference",
+            deconv.get("bayesian_inference", deconv.get("bayesian", "vi")),
+        )
+        if inference in _INFERENCE_TEXT:
+            sentences.append(_INFERENCE_TEXT[inference])
+            if inference == "vi":
                 refs.add("chappell_2009")
-            else:
+            elif inference == "svb":
+                refs.add("groves_2009")
+                refs.add("penny_2005")
+            elif inference == "map":
                 refs.add("woolrich_2009")
 
     # Leakage correction
@@ -664,9 +680,10 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
         elif m_lower == "2cxm":
             refs.add("sourbron_2011")
 
-    # Bayesian inference
+    # Bayesian inference (DCE config still uses "bayesian" field name;
+    # value is "vi"/"map"/"none", canonical naming).
     bayesian = pk_info.get("bayesian", "none")
-    bayesian_text = _BAYESIAN_TEXT.get(bayesian, "")
+    bayesian_text = _INFERENCE_TEXT.get(bayesian, "")
     if bayesian_text:
         sentences.append(bayesian_text)
         if bayesian == "vi":

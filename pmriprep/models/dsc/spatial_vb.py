@@ -77,15 +77,18 @@ def _compute_spatial_contributions(
     posteriors: npt.NDArray[np.floating],
     adj: sparse.csr_matrix,
     degree: npt.NDArray[np.int64],
-    lambdas: npt.NDArray[np.floating],
+    aK: npt.NDArray[np.floating],
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-    """Compute per-voxel spatial precision and eta from neighbor posteriors.
+    """Compute per-voxel spatial precision and eta under FABBER M-prior.
+
+    M-prior (Penny et al. 2005): spatial precision = aK * (nn + 1e-8),
+    eta = aK * (adj @ posteriors), where nn is the neighbour count.
 
     Args:
         posteriors: Posterior means in transformed space, (N, P).
         adj: Sparse adjacency matrix (N, N).
         degree: Degree vector (N,).
-        lambdas: Per-parameter spatial precision, (P,).
+        aK: Per-parameter spatial precision hyperparameter, (P,).
 
     Returns:
         (spatial_prec_diag (N, P), spatial_eta (N, P)).
@@ -94,49 +97,58 @@ def _compute_spatial_contributions(
     prec_diag = np.zeros((n_voxels, n_params), dtype=np.float64)
     eta = np.zeros((n_voxels, n_params), dtype=np.float64)
 
+    L_diag = degree.astype(np.float64) + 1e-8
     for k in range(n_params):
         nbr_sum = np.asarray(adj @ posteriors[:, k]).ravel()
-        prec_diag[:, k] = lambdas[k] * degree
-        eta[:, k] = lambdas[k] * nbr_sum
+        prec_diag[:, k] = aK[k] * L_diag
+        eta[:, k] = aK[k] * nbr_sum
 
     return prec_diag, eta
 
 
-def _update_lambdas(
+def _update_aK_penny(
     posteriors: npt.NDArray[np.floating],
     cov_diag: npt.NDArray[np.floating],
     adj: sparse.csr_matrix,
     degree: npt.NDArray[np.int64],
+    q1: float = 10.0,
+    q2: float = 1.0,
 ) -> npt.NDArray[np.float64]:
-    """Update spatial precision hyperparameters from posteriors.
+    """FABBER M-prior aK closed-form update (Penny et al. 2005).
 
-    Uses vertex-vs-neighbor-mean formulation (equivalent to pairwise
-    edge sum up to a constant absorbed into lambda for the scalar case).
+    Posterior on the spatial-precision hyperparameter aK is Gamma; the
+    update has the closed form:
+        gK = 1 / (0.5 * trace(L Σ_k) + 0.5 * m_k^T L m_k + 1/q1)
+        hK = 0.5 * N + q2
+        aK = gK * hK
+
+    where L = diag(nn + 1e-8) - adj is the graph Laplacian.
 
     Args:
         posteriors: Posterior means in transformed space, (N, P).
-        cov_diag: Posterior variance diagonal, (N, P).
+        cov_diag: Posterior covariance diagonal, (N, P).
         adj: Sparse adjacency matrix (N, N).
         degree: Degree vector (N,).
+        q1: Gamma hyperprior shape (FABBER default 10).
+        q2: Gamma hyperprior rate (FABBER default 1).
 
     Returns:
-        Updated lambda values, (P,).
+        Updated aK values, (P,).
     """
-    n_params = posteriors.shape[1]
-    has_nbr = degree > 0
-    n_with_nbr = int(has_nbr.sum())
-    if n_with_nbr == 0:
-        return np.ones(n_params, dtype=np.float64)
+    n_voxels, n_params = posteriors.shape
+    L_diag = degree.astype(np.float64) + 1e-8
 
-    lambdas = np.zeros(n_params, dtype=np.float64)
+    aK = np.zeros(n_params, dtype=np.float64)
     for k in range(n_params):
-        nbr_sum = np.asarray(adj @ posteriors[:, k]).ravel()
-        nbr_mean = nbr_sum / np.maximum(degree, 1)
-        sq_diff = (posteriors[has_nbr, k] - nbr_mean[has_nbr]) ** 2
-        spatial_var = (cov_diag[has_nbr, k] + sq_diff).sum()
-        lambdas[k] = n_with_nbr / max(spatial_var, 1e-10)
+        m_k = posteriors[:, k]
+        Lm = L_diag * m_k - np.asarray(adj @ m_k).ravel()
+        trace_term = 0.5 * float(np.sum(L_diag * cov_diag[:, k]))
+        term2 = 0.5 * float(m_k @ Lm)
+        gK = 1.0 / max(trace_term + term2 + 1.0 / q1, 1e-30)
+        hK = 0.5 * n_voxels + q2
+        aK[k] = gK * hK
 
-    return lambdas
+    return aK
 
 
 def batched_dsc_spatial_vi_fit(
@@ -156,15 +168,16 @@ def batched_dsc_spatial_vi_fit(
     mono_eta: Optional[npt.NDArray[np.floating]] = None,
     control_point_times: Optional[npt.NDArray[np.floating]] = None,
     toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
+    cpi_t_terminal: Optional[float] = None,
     nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
     prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
     prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
     weights: Optional[npt.NDArray[np.floating]] = None,
     sloppy: bool = False,
     save_fitted_curves: bool = False,
-    n_spatial_sweeps: int = 8,
+    n_spatial_sweeps: int = 20,
     spatial_tol: float = 0.01,
-    lambda_init: float = 1.0,
+    aK_init: float = 10.0,
 ) -> DSCBatchedFitResult:
     """Spatial VB wrapper around batched VI.
 
@@ -205,7 +218,7 @@ def batched_dsc_spatial_vi_fit(
     n_params = len(fitting_param_names)
 
     if sloppy:
-        n_spatial_sweeps = min(n_spatial_sweeps, 4)
+        n_spatial_sweeps = min(n_spatial_sweeps, 6)
 
     adj, degree = _build_neighborhood_graph(mask_coords, spatial_shape)
     has_any_neighbors = (degree > 0).any()
@@ -227,6 +240,7 @@ def batched_dsc_spatial_vi_fit(
             mono_eta=mono_eta,
             control_point_times=control_point_times,
             toeplitz_matrix=toeplitz_matrix,
+            cpi_t_terminal=cpi_t_terminal,
             nlls_seeds=nlls_seeds,
             prior_means_transformed=prior_means_transformed,
             prior_stds_transformed=prior_stds_transformed,
@@ -235,7 +249,7 @@ def batched_dsc_spatial_vi_fit(
             save_fitted_curves=save_fitted_curves,
         )
 
-    lambdas = np.full(n_params, lambda_init, dtype=np.float64)
+    aK = np.full(n_params, aK_init, dtype=np.float64)
     inner_iters = _INNER_ITERATIONS if not sloppy else 2
 
     # Initial standard VI run to get starting posteriors
@@ -255,6 +269,7 @@ def batched_dsc_spatial_vi_fit(
         mono_eta=mono_eta,
         control_point_times=control_point_times,
         toeplitz_matrix=toeplitz_matrix,
+        cpi_t_terminal=cpi_t_terminal,
         nlls_seeds=nlls_seeds,
         prior_means_transformed=prior_means_transformed,
         prior_stds_transformed=prior_stds_transformed,
@@ -268,14 +283,14 @@ def batched_dsc_spatial_vi_fit(
     assert posteriors is not None and cov_diag is not None
 
     for sweep in range(n_spatial_sweeps):
-        lambdas_old = lambdas.copy()
-        lambdas = _update_lambdas(posteriors, cov_diag, adj, degree)
-        sp_prec, sp_eta = _compute_spatial_contributions(posteriors, adj, degree, lambdas)
+        aK_old = aK.copy()
+        aK = _update_aK_penny(posteriors, cov_diag, adj, degree)
+        sp_prec, sp_eta = _compute_spatial_contributions(posteriors, adj, degree, aK)
 
         logger.debug(
-            "SVB sweep %d/%d: lambda = %s",
+            "SVB sweep %d/%d: aK = %s",
             sweep + 1, n_spatial_sweeps,
-            np.array2string(lambdas, precision=3, separator=", "),
+            np.array2string(aK, precision=3, separator=", "),
         )
 
         save_curves = save_fitted_curves and (sweep == n_spatial_sweeps - 1)
@@ -294,6 +309,7 @@ def batched_dsc_spatial_vi_fit(
             mono_eta=mono_eta,
             control_point_times=control_point_times,
             toeplitz_matrix=toeplitz_matrix,
+            cpi_t_terminal=cpi_t_terminal,
             nlls_seeds=None,
             prior_means_transformed=prior_means_transformed,
             prior_stds_transformed=prior_stds_transformed,
@@ -308,7 +324,7 @@ def batched_dsc_spatial_vi_fit(
         cov_diag = result.posterior_cov_diag
         assert posteriors is not None and cov_diag is not None
 
-        rel_change = np.max(np.abs(lambdas - lambdas_old) / np.maximum(lambdas, 1e-10))
+        rel_change = np.max(np.abs(aK - aK_old) / np.maximum(aK, 1e-10))
         if rel_change < spatial_tol:
             logger.info("SVB converged at sweep %d (rel_change=%.4f)", sweep + 1, rel_change)
             break
@@ -334,6 +350,7 @@ def batched_dsc_spatial_vi_fit(
             mono_eta=mono_eta,
             control_point_times=control_point_times,
             toeplitz_matrix=toeplitz_matrix,
+            cpi_t_terminal=cpi_t_terminal,
             nlls_seeds=None,
             prior_means_transformed=prior_means_transformed,
             prior_stds_transformed=prior_stds_transformed,

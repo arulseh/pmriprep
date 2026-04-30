@@ -273,14 +273,14 @@ Examples:
         help="Deconvolution method for DSC (default: oSVD).",
     )
     dsc_group.add_argument(
-        "--dsc-bayesian",
-        choices=["vi", "svb", "map"],
+        "--dsc-inference",
+        choices=["nlls", "map", "vi", "svb"],
         default=None,
-        help="Bayesian inference for parametric methods (cpi, vascular): "
-        "vi (default, variational inference), "
-        "svb (spatial variational Bayes — couples neighboring voxels "
-        "to reduce noise without smoothing), "
-        "map (maximum a posteriori). "
+        help="Inference engine for parametric DSC methods (cpi, vascular): "
+        "vi (default, FABBER variational Bayes), "
+        "svb (spatial VB with FABBER M-prior), "
+        "map (maximum a posteriori), "
+        "nlls (FABBER-style Levenberg-Marquardt). "
         "SVD methods ignore this option.",
     )
     dsc_group.add_argument(

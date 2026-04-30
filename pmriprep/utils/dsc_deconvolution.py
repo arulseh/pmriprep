@@ -970,6 +970,12 @@ def svd_deconvolve_oscillation(
     n = len(tissue_curve)
     m = 2 * n - 1
 
+    if np.max(np.abs(aif)) < EPSILON_CONCENTRATION:
+        raise ValueError(
+            f"AIF is near-zero (max={np.max(np.abs(aif)):.2e}). "
+            "Check AIF detection."
+        )
+
     # Zero-pad tissue curve to 2N-1
     tissue_padded = np.zeros(m, dtype=np.float64)
     tissue_padded[:n] = tissue_curve
@@ -1106,6 +1112,12 @@ def svd_deconvolve_oscillation_batch(
         mask_flat = mask.flatten()
     else:
         mask_flat = np.ones(n_voxels, dtype=bool)
+
+    if np.max(np.abs(aif)) < EPSILON_CONCENTRATION:
+        raise ValueError(
+            f"AIF is near-zero (max={np.max(np.abs(aif)):.2e}). "
+            "Check AIF detection."
+        )
 
     # Build block-circulant matrix and compute SVD once
     matrix = build_block_circulant_matrix(aif, dt)

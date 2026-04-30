@@ -51,8 +51,10 @@ class DSCConfig:
         Use 0.05 for gadopiclenol, 0.04 for gadoquatrane.
     method : str
         Deconvolution method: sSVD, cSVD, oSVD, tikhonov, vascular, or cpi.
-    bayesian : str
-        Bayesian inference method: vi (default), svb (spatial VB), or map.
+    inference : str
+        Inference method for parametric deconvolution:
+        ``vi`` (default — Variational Inference, FABBER VB), ``svb`` (spatial
+        VB), ``map``, or ``nlls`` (FABBER-style Levenberg-Marquardt).
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
     cpi_control_points : int
@@ -110,9 +112,13 @@ class DSCConfig:
 
     # Deconvolution settings
     method: str = "oSVD"
-    bayesian: str = "vi"
+    inference: Literal["nlls", "map", "vi", "svb"] = "vi"
     mcmc_samples: int = 500
     cpi_control_points: int = 0  # 0 = auto-select
+    # Default True: lets CPs migrate to optimal locations via inferred
+    # log-spacings; cuts CBF bias on Normal WM and Long MTT tissues by ~50%.
+    # Costs ~3x per-voxel compute. Set False to match FABBER --infer-cpt false.
+    cpi_infer_cpt: bool = True
 
     # AIF detection settings
     aif_file: Optional[Path] = None
@@ -167,6 +173,7 @@ class DSCConfig:
             self.pre_bolus = int(self.pre_bolus)
             self.mcmc_samples = int(self.mcmc_samples)
             self.cpi_control_points = int(self.cpi_control_points)
+            self.cpi_infer_cpt = bool(self.cpi_infer_cpt)
             self.n_aif_candidates = int(self.n_aif_candidates)
             self.num_processes = int(self.num_processes)
         except (ValueError, TypeError) as e:

@@ -96,11 +96,49 @@ def _compute_dsc_motion_weights(
     return weights
 
 
+def _warn_invalid_cpi_combo(
+    method: str, inference: str, cpi_infer_cpt: bool,
+) -> None:
+    """Emit log warnings for known-bad CPI inference + cpi_infer_cpt combos.
+
+    DRO matrix data
+    (``tests/benchmarks/run_cpi_infer_cpt_map_vs_vb.py``) shows:
+
+    - inference='nlls' + cpi_infer_cpt=False produces 2-3x larger CBF bias
+      than VI/MAP because no prior shrinkage compensates for the rigid CP
+      layout.
+    - inference='map' + cpi_infer_cpt=True is unstable: MAP point estimate
+      fails to find the multimodal posterior basin and CBF variance is
+      ~7x higher than VI at 5% noise.
+
+    Args:
+        method: DSC deconvolution method name.
+        inference: Parametric inference engine ('nlls', 'map', 'vi', 'svb').
+        cpi_infer_cpt: Whether CPI control point times are inferred.
+    """
+    if method != "cpi":
+        return
+    if inference == "nlls" and not cpi_infer_cpt:
+        logger.warning(
+            "DSC CPI: inference='nlls' with cpi_infer_cpt=False produces "
+            "2-3x larger CBF bias than VI/MAP on the gamma-variate DRO "
+            "(no prior shrinkage compensates for the rigid CP layout). "
+            "Recommend cpi_infer_cpt=True or inference='vi'."
+        )
+    if inference == "map" and cpi_infer_cpt:
+        logger.warning(
+            "DSC CPI: inference='map' with cpi_infer_cpt=True is unstable "
+            "(MAP point estimate fails to find the multimodal posterior "
+            "basin; CBF variance ~7x higher than VI at 5% noise). "
+            "Recommend inference='vi' for cpi_infer_cpt=True cases."
+        )
+
+
 def _dsc_init_worker(
     aif: Any,
     time_points: Any,
     method: str,
-    bayesian: str,
+    inference: str,
     mcmc_samples: int,
     cpi_control_points: int,
     bolus_duration_frames: int,
@@ -108,6 +146,8 @@ def _dsc_init_worker(
     motion_weights: Any = None,
     sloppy: bool = False,
     random_seed: Optional[int] = None,
+    cpi_infer_cpt: bool = True,
+    mean_tissue: Any = None,
 ) -> None:
     """Initialise shared state once per worker process."""
     from pmriprep.utils.parallel import limit_worker_threads
@@ -128,7 +168,7 @@ def _dsc_init_worker(
     _dsc_worker_ctx["aif"] = aif
     _dsc_worker_ctx["time_points"] = time_points
     _dsc_worker_ctx["method"] = method
-    _dsc_worker_ctx["bayesian"] = bayesian
+    _dsc_worker_ctx["inference"] = inference
     _dsc_worker_ctx["mcmc_samples"] = mcmc_samples
     _dsc_worker_ctx["dt"] = dt
     _dsc_worker_ctx["motion_weights"] = motion_weights
@@ -140,12 +180,20 @@ def _dsc_init_worker(
     else:  # cpi
         n_cp = cpi_control_points
         if n_cp == 0:
-            n_cp = select_n_control_points(bolus_duration_frames)
-        # Control point span: 30s covers ~3x max physiological MTT (10s),
-        # ensuring residue decays to ~0 within the fitted window.
-        t_span = 30.0
-        _dsc_worker_ctx["model_factory"] = lambda _ncp=n_cp, _tr=(0.0, t_span): CPIModel(
-            n_control_points=_ncp, time_range=_tr
+            n_cp = select_n_control_points(
+                bolus_duration_frames,
+                infer_cpt=bool(cpi_infer_cpt),
+                mean_tissue=mean_tissue,
+                dt=float(dt),
+            )
+        n_frames = int(len(time_points))
+        _dsc_worker_ctx["model_factory"] = (
+            lambda _ncp=n_cp, _nf=n_frames, _dt=dt, _ic=bool(cpi_infer_cpt): CPIModel(
+                n_control_points=_ncp,
+                n_acquisition_frames=_nf,
+                dt=_dt,
+                infer_cpt=_ic,
+            )
         )
 
 
@@ -160,7 +208,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         return {"coords": (x, y, z), "failed": True}
 
     method = _dsc_worker_ctx["method"]
-    bayesian = _dsc_worker_ctx["bayesian"]
+    inference = _dsc_worker_ctx["inference"]
     aif = _dsc_worker_ctx["aif"]
     time_points = _dsc_worker_ctx["time_points"]
     dt = _dsc_worker_ctx["dt"]
@@ -175,7 +223,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
             concentration=tissue_curve,
             aif=aif,
             time_points=time_points,
-            method=bayesian,
+            method=inference,
             mcmc_samples=_dsc_worker_ctx["mcmc_samples"],
             compute_uncertainties=not sloppy,
             weights=motion_weights,
@@ -355,6 +403,14 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Number of CPI control points (0 = auto-select)",
     )
+    cpi_infer_cpt = traits.Bool(
+        True,
+        usedefault=True,
+        desc="Infer control point times via log-spacing parameters "
+             "(default True). Lets CPs migrate to optimal locations; cuts "
+             "bias on long-MTT/low-CBF tissues by ~50%. Costs ~3x per-voxel "
+             "compute. Set False to match FABBER --infer-cpt false.",
+    )
 
     # Time parameters
     tr = traits.Float(
@@ -378,13 +434,16 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Number of tail frames for PSR calculation",
     )
 
-    # Bayesian options (parametric methods only — SVD methods ignore this)
-    bayesian = traits.Enum(
+    # Inference options for parametric methods (cpi, vascular)
+    inference = traits.Enum(
         "vi",
+        "svb",
         "map",
+        "nlls",
         usedefault=True,
-        desc="Bayesian inference for parametric methods (cpi, vascular): "
-             "vi or map. SVD methods ignore this option.",
+        desc="Inference engine for parametric deconvolution (cpi, vascular): "
+             "vi (FABBER VB, default), svb (spatial VB), map, or nlls "
+             "(Levenberg-Marquardt). SVD methods ignore this option.",
     )
     mcmc_samples = traits.Int(
         500,
@@ -558,8 +617,9 @@ class ComputeDSCMaps(BaseInterface):
         Pre-bolus baseline frames. Default: 5.
     tail_frames : int
         Tail frames for PSR. Default: 5.
-    bayesian : str
-        Bayesian inference: none, map, vi, mcmc. Default: 'none'.
+    inference : str
+        Inference engine for parametric methods (cpi/vascular):
+        nlls, map, vi, svb. Default: 'vi'.
     mcmc_samples : int
         MCMC samples for Bayesian. Default: 500.
     save_residue : bool
@@ -822,9 +882,10 @@ class ComputeDSCMaps(BaseInterface):
         mask: npt.NDArray[Any],
         method: str,
         dt: float,
-        bayesian: str,
+        inference: str,
         mcmc_samples: int,
         cpi_control_points: int,
+        cpi_infer_cpt: bool,
         motion_weights: Optional[npt.NDArray[np.floating]] = None,
     ) -> tuple[
         npt.NDArray[Any],  # cbf
@@ -835,12 +896,12 @@ class ComputeDSCMaps(BaseInterface):
         Optional[npt.NDArray[Any]],  # alpha_map (vascular only)
         Optional[npt.NDArray[Any]],  # beta_map (vascular only)
         Optional[npt.NDArray[Any]],  # cth_map (vascular only)
-        Optional[npt.NDArray[Any]],  # cbf_std_map (bayesian only)
-        Optional[npt.NDArray[Any]],  # cbv_std_map (bayesian only)
-        Optional[npt.NDArray[Any]],  # cbf_ci_lower_map (bayesian only)
-        Optional[npt.NDArray[Any]],  # cbf_ci_upper_map (bayesian only)
-        Optional[npt.NDArray[Any]],  # cbv_ci_lower_map (bayesian only)
-        Optional[npt.NDArray[Any]],  # cbv_ci_upper_map (bayesian only)
+        Optional[npt.NDArray[Any]],  # cbf_std_map (parametric only)
+        Optional[npt.NDArray[Any]],  # cbv_std_map (parametric only)
+        Optional[npt.NDArray[Any]],  # cbf_ci_lower_map (parametric only)
+        Optional[npt.NDArray[Any]],  # cbf_ci_upper_map (parametric only)
+        Optional[npt.NDArray[Any]],  # cbv_ci_lower_map (parametric only)
+        Optional[npt.NDArray[Any]],  # cbv_ci_upper_map (parametric only)
     ]:
         """Run parametric model deconvolution (vascular, CPI).
 
@@ -863,7 +924,7 @@ class ComputeDSCMaps(BaseInterface):
         cth_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cbf_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
         cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
-        has_ci = bayesian in ("vi", "svb", "mcmc", "map")
+        has_ci = inference in ("vi", "svb", "mcmc", "map", "nlls")
         cbf_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
         cbf_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
         cbv_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
@@ -871,7 +932,7 @@ class ComputeDSCMaps(BaseInterface):
 
         qc_metrics: dict[str, Any] = {
             "method": method,
-            "bayesian": bayesian,
+            "inference": inference,
         }
 
         # Get mask indices
@@ -880,6 +941,15 @@ class ComputeDSCMaps(BaseInterface):
 
         # Estimate bolus duration once from AIF for CPI
         bolus_duration_frames = estimate_bolus_duration(aif)
+
+        # Mean tissue across in-mask voxels for the MTT-adaptive auto-N
+        # floor (used by select_n_control_points when cpi_infer_cpt=True).
+        mean_tissue = np.mean(
+            concentration_data[
+                mask_coords[0], mask_coords[1], mask_coords[2], :
+            ],
+            axis=0,
+        ).astype(np.float64)
 
         # Build voxel work items
         voxel_data_list: list[_DSCVoxelInput] = []
@@ -899,15 +969,16 @@ class ComputeDSCMaps(BaseInterface):
             int(self.inputs.random_seed) if isdefined(self.inputs.random_seed) else None
         )
         init_args = (
-            aif, time_points, method, bayesian, mcmc_samples,
+            aif, time_points, method, inference, mcmc_samples,
             cpi_control_points, bolus_duration_frames, dt,
-            motion_weights, sloppy, random_seed,
+            motion_weights, sloppy, random_seed, cpi_infer_cpt,
+            mean_tissue,
         )
 
         n_procs = max(1, int(self.inputs.n_procs))
 
         # Batched VI path: vectorized Variational Bayes in single process
-        if bayesian in ("vi", "svb"):
+        if inference in ("vi", "svb"):
             results = self._dsc_fit_batched_vi(
                 concentration_data=concentration_data,
                 mask_coords=mask_coords,
@@ -917,12 +988,14 @@ class ComputeDSCMaps(BaseInterface):
                 dt=dt,
                 n_voxels=n_voxels,
                 cpi_control_points=cpi_control_points,
+                cpi_infer_cpt=cpi_infer_cpt,
                 bolus_duration_frames=bolus_duration_frames,
+                mean_tissue=mean_tissue,
                 motion_weights=motion_weights,
                 sloppy=sloppy,
-                spatial=(bayesian == "svb"),
+                spatial=(inference == "svb"),
             )
-        elif bayesian == "map":
+        elif inference == "map":
             results = self._dsc_fit_batched_map(
                 concentration_data=concentration_data,
                 mask_coords=mask_coords,
@@ -932,7 +1005,9 @@ class ComputeDSCMaps(BaseInterface):
                 dt=dt,
                 n_voxels=n_voxels,
                 cpi_control_points=cpi_control_points,
+                cpi_infer_cpt=cpi_infer_cpt,
                 bolus_duration_frames=bolus_duration_frames,
+                mean_tissue=mean_tissue,
                 motion_weights=motion_weights,
                 sloppy=sloppy,
             )
@@ -1071,6 +1146,8 @@ class ComputeDSCMaps(BaseInterface):
         dt: float,
         cpi_control_points: int,
         bolus_duration_frames: int,
+        cpi_infer_cpt: bool = True,
+        mean_tissue: Optional[npt.NDArray[np.floating]] = None,
     ) -> dict[str, Any]:
         """Build model, priors, and fitting kwargs for batched DSC fitting.
 
@@ -1100,12 +1177,23 @@ class ComputeDSCMaps(BaseInterface):
             mono_eta = None
             cp_times = None
             toeplitz = None
+            cpi_t_terminal = None
         else:  # cpi
             n_cp = cpi_control_points
             if n_cp == 0:
-                n_cp = select_n_control_points(bolus_duration_frames)
-            t_span = 30.0
-            cpi_model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+                n_cp = select_n_control_points(
+                    bolus_duration_frames,
+                    infer_cpt=bool(cpi_infer_cpt),
+                    mean_tissue=mean_tissue,
+                    dt=float(dt),
+                )
+            n_timepoints = int(concentration_data.shape[3])
+            cpi_model = CPIModel(
+                n_control_points=n_cp,
+                n_acquisition_frames=n_timepoints,
+                dt=float(dt),
+                infer_cpt=bool(cpi_infer_cpt),
+            )
             fitting_defs = list(cpi_model.get_fitting_parameter_definitions())
             priors = build_priors_from_params(fitting_defs)
             fitting_names = [p.name for p in fitting_defs]
@@ -1114,6 +1202,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_eta = None
             cp_times = np.array(cpi_model._control_point_times, dtype=np.float64)
             toeplitz = build_toeplitz_matrix(aif, dt)
+            cpi_t_terminal = float(cpi_model.terminal_time)
 
         means_nat = np.array([p.mean for p in priors], dtype=np.float64)
         stds_nat = np.array([p.std for p in priors], dtype=np.float64)
@@ -1130,6 +1219,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_eta=mono_eta,
             cp_times=cp_times,
             toeplitz=toeplitz,
+            cpi_t_terminal=cpi_t_terminal,
             means_nat=means_nat,
             stds_nat=stds_nat,
             means_t=means_t,
@@ -1148,10 +1238,12 @@ class ComputeDSCMaps(BaseInterface):
         dt: float,
         n_voxels: int,
         cpi_control_points: int,
+        cpi_infer_cpt: bool,
         bolus_duration_frames: int,
         motion_weights: Optional[npt.NDArray[np.floating]],
         sloppy: bool,
         spatial: bool = False,
+        mean_tissue: Optional[npt.NDArray[np.floating]] = None,
     ) -> list[dict[str, Any]]:
         """Batched VI for DSC parametric models.
 
@@ -1180,6 +1272,8 @@ class ComputeDSCMaps(BaseInterface):
         s = self._build_dsc_parametric_setup(
             method, concentration_data, mask_coords, aif, dt,
             cpi_control_points, bolus_duration_frames,
+            cpi_infer_cpt=cpi_infer_cpt,
+            mean_tissue=mean_tissue,
         )
 
         vi_label = "SVB" if spatial else "VI"
@@ -1200,6 +1294,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_eta=s["mono_eta"],
             control_point_times=s["cp_times"],
             toeplitz_matrix=s["toeplitz"],
+            cpi_t_terminal=s["cpi_t_terminal"],
             prior_means_transformed=s["means_t"],
             prior_stds_transformed=s["stds_t"],
             weights=motion_weights,
@@ -1251,7 +1346,10 @@ class ComputeDSCMaps(BaseInterface):
         Returns:
             List of per-voxel result dicts.
         """
-        from pmriprep.models.dsc.batched_fitting import _batched_pchip
+        from pmriprep.models.dsc.batched_fitting import (
+            _append_terminal_anchor,
+            _batched_pchip,
+        )
 
         results: list[dict[str, Any]] = []
 
@@ -1290,8 +1388,12 @@ class ComputeDSCMaps(BaseInterface):
                             float(batched_result.params[f"f{k}"][i]), 0.0, 1.0,
                         )
                         cp_vals_i[0, k] = cp_vals_i[0, k - 1] * fk
+                    cp_times_ext, cp_vals_ext = _append_terminal_anchor(
+                        cp_times, cp_vals_i
+                    )
                     r_norm = np.clip(
-                        _batched_pchip(cp_times, cp_vals_i, time_points)[0], 0.0, 1.0
+                        _batched_pchip(cp_times_ext, cp_vals_ext, time_points)[0],
+                        0.0, 1.0,
                     )
                     cbv_val = cbf_val * float(np.trapezoid(r_norm, dx=dt))
                 else:
@@ -1358,9 +1460,11 @@ class ComputeDSCMaps(BaseInterface):
         dt: float,
         n_voxels: int,
         cpi_control_points: int,
+        cpi_infer_cpt: bool,
         bolus_duration_frames: int,
         motion_weights: Optional[npt.NDArray[np.floating]],
         sloppy: bool,
+        mean_tissue: Optional[npt.NDArray[np.floating]] = None,
     ) -> list[dict[str, Any]]:
         """Batched MAP for DSC parametric models.
 
@@ -1388,6 +1492,8 @@ class ComputeDSCMaps(BaseInterface):
         s = self._build_dsc_parametric_setup(
             method, concentration_data, mask_coords, aif, dt,
             cpi_control_points, bolus_duration_frames,
+            cpi_infer_cpt=cpi_infer_cpt,
+            mean_tissue=mean_tissue,
         )
 
         batched_result = batched_dsc_map_fit(
@@ -1405,6 +1511,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_eta=s["mono_eta"],
             control_point_times=s["cp_times"],
             toeplitz_matrix=s["toeplitz"],
+            cpi_t_terminal=s["cpi_t_terminal"],
             prior_means_transformed=s["means_t"],
             prior_stds_transformed=s["stds_t"],
             weights=motion_weights,
@@ -1425,9 +1532,10 @@ class ComputeDSCMaps(BaseInterface):
         mask_bool: npt.NDArray[np.bool_],
         dt: float,
         method: str,
-        bayesian: str,
+        inference: str,
         mcmc_samples: int,
         cpi_control_points: int,
+        cpi_infer_cpt: bool,
         signal_data: npt.NDArray[Any] | None = None,
     ) -> None:
         """Select a QC voxel and save its fit data as JSON.
@@ -1444,7 +1552,7 @@ class ComputeDSCMaps(BaseInterface):
             mask_bool: 3D boolean brain mask.
             dt: Temporal resolution in seconds.
             method: Deconvolution method ('vascular' or 'cpi').
-            bayesian: Bayesian method ('map', 'vi', 'mcmc').
+            inference: Inference engine ('nlls', 'map', 'vi', 'svb').
             mcmc_samples: Number of MCMC samples.
             cpi_control_points: Number of CPI control points (0=auto).
             signal_data: 4D raw signal data (optional, for QC plot).
@@ -1509,11 +1617,23 @@ class ComputeDSCMaps(BaseInterface):
                 bolus_duration_frames = estimate_bolus_duration(aif)
                 n_cp = cpi_control_points
                 if n_cp == 0:
-                    n_cp = select_n_control_points(bolus_duration_frames)
-                # Control point span: 30s covers ~3x max physiological MTT (10s),
-                # ensuring residue decays to ~0 within the fitted window.
-                t_span = 30.0
-                model_instance = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+                    # Mean tissue across in-mask voxels for the
+                    # MTT-adaptive auto-N floor.
+                    mt_mean = np.mean(
+                        conc_data[mask_bool, :], axis=0,
+                    ).astype(np.float64)
+                    n_cp = select_n_control_points(
+                        bolus_duration_frames,
+                        infer_cpt=bool(cpi_infer_cpt),
+                        mean_tissue=mt_mean,
+                        dt=float(dt),
+                    )
+                model_instance = CPIModel(
+                    n_control_points=n_cp,
+                    n_acquisition_frames=n_timepoints,
+                    dt=float(dt),
+                    infer_cpt=bool(cpi_infer_cpt),
+                )
 
             # Fit the QC voxel
             result = fit_dsc_model(
@@ -1521,7 +1641,7 @@ class ComputeDSCMaps(BaseInterface):
                 concentration=tissue_curve,
                 aif=aif,
                 time_points=time_points,
-                method=bayesian,
+                method=inference,
                 mcmc_samples=mcmc_samples,
                 compute_uncertainties=False,
             )
@@ -1754,16 +1874,21 @@ class ComputeDSCMaps(BaseInterface):
         threshold = float(self.inputs.svd_threshold)
         oi_threshold = float(self.inputs.oi_threshold)
         cpi_control_points = int(self.inputs.cpi_control_points)
-        bayesian = str(self.inputs.bayesian)
+        cpi_infer_cpt = bool(self.inputs.cpi_infer_cpt)
+        inference = str(self.inputs.inference)
         mcmc_samples = int(self.inputs.mcmc_samples)
 
-        # SVD methods are direct matrix decompositions — bayesian inference
-        # only applies to parametric fitting (cpi, vascular).
-        if method in ("sSVD", "cSVD", "oSVD", "tikhonov") and bayesian != "vi":
+        # SVD methods are direct matrix decompositions — Bayesian/NLLS
+        # inference only applies to parametric fitting (cpi, vascular).
+        if method in ("sSVD", "cSVD", "oSVD", "tikhonov") and inference != "vi":
             logger.debug(
-                "Bayesian option '%s' ignored for SVD method '%s'.",
-                bayesian, method,
+                "inference='%s' ignored for SVD method '%s'.",
+                inference, method,
             )
+
+        # Warn on known-bad CPI inference + infer_cpt combinations
+        # (DRO matrix data — see tests/benchmarks/run_cpi_infer_cpt_map_vs_vb.py)
+        _warn_invalid_cpi_combo(method, inference, cpi_infer_cpt)
 
         baseline_frames = int(self.inputs.baseline_frames)
         tail_frames = int(self.inputs.tail_frames)
@@ -1918,7 +2043,8 @@ class ComputeDSCMaps(BaseInterface):
              cth_map, cbf_std_map, cbv_std_map,
              cbf_ci_lower_map, cbf_ci_upper_map,
              cbv_ci_lower_map, cbv_ci_upper_map) = self._deconvolve_parametric(
-                conc_data, aif, mask, method, dt, bayesian, mcmc_samples, cpi_control_points,
+                conc_data, aif, mask, method, dt, inference, mcmc_samples, cpi_control_points,
+                cpi_infer_cpt,
                 motion_weights=motion_weights,
             )
             # Merge motion weighting QC into parametric QC dict
@@ -2292,7 +2418,8 @@ class ComputeDSCMaps(BaseInterface):
         if method in ("vascular", "cpi"):
             self._save_qc_fit_data(
                 rel_cbf, conc_data, aif, mask_bool, dt, method,
-                bayesian, mcmc_samples, cpi_control_points,
+                inference, mcmc_samples, cpi_control_points,
+                cpi_infer_cpt,
                 signal_data=signal_data,
             )
         else:
@@ -2336,7 +2463,7 @@ class ComputeDSCMaps(BaseInterface):
                 self._results["out_cbv_cv"] = _save_map(cbv_cv, "_cbv_cv")
 
             # Save CI maps only for VI/MCMC (MAP Laplace CI is approximate)
-            if bayesian in ("vi", "mcmc"):
+            if inference in ("vi", "svb", "mcmc"):
                 if cbf_ci_lower_map is not None:  # type: ignore[possibly-undefined]
                     cbf_ci_lower_map = np.where(mask_bool, cbf_ci_lower_map, 0.0)
                     self._results["out_cbf_ci95_lower"] = _save_map(

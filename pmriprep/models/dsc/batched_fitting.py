@@ -170,12 +170,75 @@ def batched_vascular_forward(
 # ---------------------------------------------------------------------------
 
 
+def _append_terminal_anchor(
+    cp_times: npt.NDArray[np.floating],
+    cp_vals: npt.NDArray[np.floating],
+    t_terminal: float | None = None,
+) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
+    """Append terminal R=0 anchor (and prepend t=0 anchor) for shared CP grid.
+
+    Mirrors FABBER's CPI boundary conditions: prepend (t=0, amp=1) when the
+    first CP sits beyond t=0, and append (t_terminal, amp=0).
+
+    Args:
+        cp_times: Control point times, shape (K,).
+        cp_vals: Control point values, shape (N, K).
+        t_terminal: Optional explicit terminal time. If None, defaults to
+            ``cp_times[-1] + (cp_times[-1] - cp_times[-2])``.
+
+    Returns:
+        Extended (cp_times, cp_vals) with anchors applied.
+    """
+    if t_terminal is None:
+        spacing = float(cp_times[-1] - cp_times[-2]) if len(cp_times) >= 2 else 1.0
+        t_terminal = float(cp_times[-1]) + spacing
+
+    n_voxels = cp_vals.shape[0]
+    if float(cp_times[0]) > 0.0:
+        cp_times_ext = np.concatenate([[0.0], cp_times, [t_terminal]])
+        ones = np.ones((n_voxels, 1), dtype=cp_vals.dtype)
+        zeros = np.zeros((n_voxels, 1), dtype=cp_vals.dtype)
+        cp_vals_ext = np.concatenate([ones, cp_vals, zeros], axis=1)
+    else:
+        cp_times_ext = np.append(cp_times, t_terminal)
+        zeros = np.zeros((n_voxels, 1), dtype=cp_vals.dtype)
+        cp_vals_ext = np.concatenate([cp_vals, zeros], axis=1)
+    return cp_times_ext, cp_vals_ext
+
+
+def _append_terminal_anchor_per_voxel(
+    cp_times: npt.NDArray[np.floating],
+    cp_vals: npt.NDArray[np.floating],
+) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
+    """Per-voxel variant of ``_append_terminal_anchor`` (for ``infer_cpt``).
+
+    Args:
+        cp_times: Control point times per voxel, shape (N, K).
+        cp_vals: Control point values, shape (N, K).
+
+    Returns:
+        Extended (cp_times, cp_vals) each shape (N, K+2): prepended (0, 1)
+        and appended (t_terminal, 0) per voxel.
+    """
+    n_voxels, n_cp = cp_vals.shape
+    last_spacing = (cp_times[:, -1] - cp_times[:, -2]) if n_cp >= 2 else np.ones(n_voxels)
+    t_term = cp_times[:, -1] + last_spacing  # (N,)
+
+    zeros = np.zeros((n_voxels, 1), dtype=cp_vals.dtype)
+    ones = np.ones((n_voxels, 1), dtype=cp_vals.dtype)
+    leading_t = np.zeros((n_voxels, 1), dtype=cp_times.dtype)
+    cp_times_ext = np.concatenate([leading_t, cp_times, t_term[:, None]], axis=1)
+    cp_vals_ext = np.concatenate([ones, cp_vals, zeros], axis=1)
+    return cp_times_ext, cp_vals_ext
+
+
 def batched_cpi_forward(
     params: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     control_point_times: npt.NDArray[np.floating],
     toeplitz_matrix: npt.NDArray[np.floating],
+    t_terminal: float | None = None,
 ) -> npt.NDArray[np.floating]:
     """Batched CPI model forward evaluation for N voxels.
 
@@ -184,16 +247,20 @@ def batched_cpi_forward(
 
     C_tissue(t) = CBF * (Toeplitz @ R_norm(t))
 
-    PCHIP interpolation is vectorized across voxels using
-    Fritsch-Carlson monotone slope computation.
+    Supports both fixed and per-voxel control point times. When
+    ``params`` has 2*n_cp - 1 columns, columns ``[n_cp..2n_cp-2]``
+    are interpreted as log-spacings between CPs (FABBER ``infer-cpt``)
+    and per-voxel CP times are reconstructed via cumulative-sum.
 
     Args:
-        params: Parameter matrix, shape (N, P) where P = n_control_points.
-            Column 0 = CBF, columns 1..P-1 = multiplicative fractions f1..f_{P-1}.
+        params: Parameter matrix, shape (N, P).
+            P = n_cp: column 0 = CBF, columns 1..n_cp-1 = fractions.
+            P = 2*n_cp - 1: above plus columns [n_cp..2*n_cp-2] = log-spacings.
         aif: Arterial input function, shape (T,).
         time_points: Time points (seconds), shape (T,).
-        control_point_times: Control point time locations, shape (K,).
+        control_point_times: Default control point time locations, shape (K,).
         toeplitz_matrix: Precomputed Toeplitz convolution matrix, shape (T, T).
+        t_terminal: Terminal anchor time (seconds) for fixed-CP layout.
 
     Returns:
         Tissue concentration curves, shape (N, T).
@@ -201,16 +268,31 @@ def batched_cpi_forward(
     n_voxels = params.shape[0]
     n_times = len(time_points)
     n_cp = len(control_point_times)
+    # FABBER layout: params = [cbf, f_1..f_N] (no infer_cpt) or
+    # [cbf, f_1..f_N, s_1..s_N] (infer_cpt). All N fractions are free;
+    # the (t=0, amp=1) BC is added at PCHIP-construction time.
+    has_log_spacings = params.shape[1] == 1 + 2 * n_cp
 
     cbf = params[:, 0]  # (N,)
 
-    # Cumulative product of multiplicative fractions: R(t_k) = f1*f2*...*fk
-    cp_vals = np.ones((n_voxels, n_cp), dtype=np.float64)
-    fracs = np.clip(params[:, 1:], 0.0, 1.0)  # (N, K-1)
-    cp_vals[:, 1:] = np.cumprod(fracs, axis=1)
+    # Cumulative product of multiplicative fractions: R(tpos[k]) = f1*...*fk
+    fracs = np.clip(params[:, 1 : 1 + n_cp], 0.0, 1.0)  # (N, n_cp)
+    cp_vals = np.cumprod(fracs, axis=1)
 
-    # Vectorized PCHIP interpolation
-    R_norm = _batched_pchip(control_point_times, cp_vals, time_points)
+    if has_log_spacings:
+        log_s = params[:, 1 + n_cp :]  # (N, n_cp)
+        spacings = np.exp(np.clip(log_s, -50.0, 50.0))
+        per_voxel_cp_times = np.cumsum(spacings, axis=1)
+        cp_times_ext, cp_vals_ext = _append_terminal_anchor_per_voxel(
+            per_voxel_cp_times, cp_vals
+        )
+        R_norm = _batched_pchip_per_voxel(cp_times_ext, cp_vals_ext, time_points)
+    else:
+        cp_times_ext, cp_vals_ext = _append_terminal_anchor(
+            control_point_times, cp_vals, t_terminal=t_terminal,
+        )
+        R_norm = _batched_pchip(cp_times_ext, cp_vals_ext, time_points)
+
     R_norm = np.clip(R_norm, 0.0, 1.0)  # (N, T)
 
     # Toeplitz matmul: C = CBF * (A @ R_norm^T)^T
@@ -308,23 +390,78 @@ def _batched_pchip(
         + h11[None, :] * d1
     )
 
-    # Exponential decay extrapolation beyond last knot (matches CPI scalar path).
-    # Uses last two knot values to estimate decay rate.
-    beyond_mask = xi > x[-1]
-    if np.any(beyond_mask) and n_knots >= 2:
-        r_last = y[:, -1]    # (N,)
-        r_prev = y[:, -2]    # (N,)
-        dt_knot = x[-1] - x[-2]
-        # Decay rate from last two points: lambda = ln(r_prev / r_last) / dt
-        safe_last = np.maximum(r_last, 1e-10)
-        safe_prev = np.maximum(r_prev, 1e-10)
-        decay_rate = np.clip(
-            np.log(safe_prev / safe_last) / dt_knot, 0.01, 1.0,
-        )  # (N,)
-        t_excess = xi[beyond_mask] - x[-1]  # (M,) where M = sum(beyond_mask)
-        result[:, beyond_mask] = r_last[:, None] * np.exp(
-            -decay_rate[:, None] * t_excess[None, :]
+    return result
+
+
+def _batched_pchip_per_voxel(
+    x: npt.NDArray[np.floating],
+    y: npt.NDArray[np.floating],
+    xi: npt.NDArray[np.floating],
+) -> npt.NDArray[np.floating]:
+    """Per-voxel PCHIP for ``infer_cpt`` (CP times vary per voxel).
+
+    Args:
+        x: Knot positions per voxel, shape (N, K). Must be strictly
+            increasing along axis=1.
+        y: Knot values per voxel, shape (N, K).
+        xi: Evaluation points (shared), shape (T,).
+
+    Returns:
+        Interpolated values, shape (N, T).
+    """
+    n_voxels, n_knots = y.shape
+    n_eval = len(xi)
+
+    h = np.diff(x, axis=1)  # (N, K-1)
+    h = np.where(h <= 0.0, 1e-12, h)
+    delta = np.diff(y, axis=1) / h  # (N, K-1)
+
+    d = np.zeros_like(y)  # (N, K)
+
+    # Interior slopes — Fritsch-Carlson harmonic mean
+    if n_knots >= 3:
+        d1 = delta[:, :-1]  # (N, K-2)
+        d2 = delta[:, 1:]
+        same_sign = (d1 * d2) > 0
+        d[:, 1:-1] = np.where(
+            same_sign,
+            2.0 * d1 * d2 / (d1 + d2 + 1e-300),
+            0.0,
         )
+
+    # Endpoint slopes (one-sided)
+    d[:, 0] = delta[:, 0]
+    d[:, -1] = delta[:, -1]
+
+    # Clamp endpoint slopes for monotonicity
+    sign0 = d[:, 0] * delta[:, 0] > 0
+    d[:, 0] = np.where(sign0, d[:, 0], 0.0)
+    signN = d[:, -1] * delta[:, -1] > 0
+    d[:, -1] = np.where(signN, d[:, -1], 0.0)
+
+    # Per-voxel intervals: searchsorted broadcast in a small Python loop
+    # (n_voxels can be 100k+ but n_eval ~50 so this is dominated by numpy ops)
+    result = np.zeros((n_voxels, n_eval), dtype=np.float64)
+    for v in range(n_voxels):
+        xv = x[v]
+        idx = np.searchsorted(xv, xi, side='right') - 1
+        idx = np.clip(idx, 0, n_knots - 2)
+        hv = h[v, idx]
+        t_local = (xi - xv[idx]) / hv
+        t_local = np.clip(t_local, 0.0, 1.0)
+
+        t2 = t_local ** 2
+        t3 = t_local ** 3
+        h00 = 2 * t3 - 3 * t2 + 1
+        h10 = t3 - 2 * t2 + t_local
+        h01 = -2 * t3 + 3 * t2
+        h11 = t3 - t2
+
+        y0 = y[v, idx]
+        y1 = y[v, idx + 1]
+        d0 = d[v, idx] * hv
+        d1v = d[v, idx + 1] * hv
+        result[v] = h00 * y0 + h10 * d0 + h01 * y1 + h11 * d1v
 
     return result
 
@@ -347,8 +484,17 @@ def _compute_jacobian_columns(
     bounds_lo: npt.NDArray[np.floating],
     bounds_hi: npt.NDArray[np.floating],
     cbf_idx: int,
+    fitting_param_names: list[str] | None = None,
 ) -> list[npt.NDArray[np.floating]]:
     """Compute Jacobian columns: analytical CBF + forward FD for others.
+
+    For CBF parameter:
+    - LOG transform: ∂g/∂(log cbf) = g (since g = cbf · h(rest)).
+    - IDENTITY transform: ∂g/∂cbf = g / cbf = h(rest).
+
+    For log-spacing parameters (name starts with "s") under IDENTITY transform,
+    a looser FD step is used because PCHIP knot-shift roundoff dominates the
+    default 1e-5 step.
 
     Args:
         m_a: Transformed parameters, shape (n_active, P).
@@ -360,17 +506,35 @@ def _compute_jacobian_columns(
         bounds_lo: Lower bounds in natural space, shape (P,).
         bounds_hi: Upper bounds in natural space, shape (P,).
         cbf_idx: Index of CBF parameter (uses analytical Jacobian).
+        fitting_param_names: Optional parameter names; used to detect
+            log-spacing columns (starting with "s") for relaxed FD step.
 
     Returns:
         List of P arrays, each shape (n_active, T).
     """
     n_params = m_a.shape[1]
     deltas = np.maximum(np.abs(m_a) * _FD_REL, _FD_FLOOR)
+
+    # Looser FD step for log-spacing columns to clear PCHIP knot-shift roundoff.
+    if fitting_param_names is not None:
+        for j in range(n_params):
+            name = fitting_param_names[j]
+            if (
+                transforms[j] == TransformType.IDENTITY
+                and j != cbf_idx
+                and name.startswith("s")
+            ):
+                deltas[:, j] = np.maximum(np.abs(m_a[:, j]) * 1e-4, 1e-3)
+
     J_columns: list[npt.NDArray[np.floating]] = []
 
     for j in range(n_params):
         if j == cbf_idx:
-            J_columns.append(g_m)
+            if transforms[j] == TransformType.LOG:
+                J_columns.append(g_m)
+            else:  # IDENTITY
+                cbf_vals = m_nat_a[:, cbf_idx, None]
+                J_columns.append(g_m / np.maximum(cbf_vals, 1e-30))
             continue
 
         nat_plus = m_nat_a.copy()
@@ -385,7 +549,9 @@ def _compute_jacobian_columns(
 
         if transforms[j] == TransformType.IDENTITY:
             actual_delta = nat_plus[:, j] - m_nat_a[:, j]
-            actual_delta = np.maximum(actual_delta, _FD_FLOOR)
+            actual_delta = np.maximum(np.abs(actual_delta), _FD_FLOOR) * np.sign(
+                np.where(actual_delta == 0.0, 1.0, actual_delta)
+            )
         else:
             actual_delta = deltas[:, j]
 
@@ -459,11 +625,12 @@ def batched_dsc_vi_fit(
     mono_eta: Optional[npt.NDArray[np.floating]] = None,
     control_point_times: Optional[npt.NDArray[np.floating]] = None,
     toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
+    cpi_t_terminal: Optional[float] = None,
     nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
     prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
     prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
     weights: Optional[npt.NDArray[np.floating]] = None,
-    n_iterations: int = 30,
+    n_iterations: int = 10,
     sloppy: bool = False,
     save_fitted_curves: bool = False,
     spatial_prec_diag: Optional[npt.NDArray[np.floating]] = None,
@@ -568,9 +735,13 @@ def batched_dsc_vi_fit(
     if mono_prec is not None:
         prior_prec = prior_prec + mono_prec
 
-    # Noise precision prior
-    c0 = 1e-3
-    s0 = 1e3
+    # Noise precision prior — FABBER non-informative defaults
+    # (fabber_core/noisemodel_white.cc: c=1e-6, b=1e6).
+    c0 = 1e-6
+    s0 = 1e6
+    # Posterior init for Gamma noise (FABBER posterior init: c=50, s=1e-8)
+    c_post_init = 50.0
+    s_post_init = 1e-8
 
     # --- Bounds ---
     bounds_lo = np.array([b[0] for b in fitting_bounds])
@@ -614,21 +785,26 @@ def batched_dsc_vi_fit(
             return batched_cpi_forward(
                 params_fitting, aif, time_points,
                 control_point_times, toeplitz_matrix,
+                t_terminal=cpi_t_terminal,
             )
 
-    # --- Noise initialization from NLLS seed residuals ---
-    tau_exp = np.full(n_valid, c0 * s0)
-    if nlls_seeds is not None:
-        try:
-            g_init = _evaluate(m_nat)
-            init_var = np.sum((y - g_init) ** 2, axis=1) / n_obs
-            good_var = init_var > 1e-20
-            tau_exp[good_var] = 1.0 / init_var[good_var]
-        except (ValueError, RuntimeError):
-            pass
+    # --- Noise posterior init ---
+    # FABBER's GetInitialPosterior c=50, s=1e-8 gives tau ~ 5e-7 — far below
+    # typical DSC concentration-residual precision (~1/0.01^2 = 1e4). To get
+    # the first VB iteration off the ground, seed tau from residuals at the
+    # initial-guess forward, which mirrors what FABBER's noise posterior
+    # converges to within 1-2 iterations anyway.
+    try:
+        g_init = _evaluate(m_nat)
+        init_var = np.sum((y - g_init) ** 2, axis=1) / n_obs
+        good_var = init_var > 1e-20
+        tau_exp = np.full(n_valid, c_post_init * s_post_init)
+        tau_exp[good_var] = 1.0 / init_var[good_var]
+    except (ValueError, RuntimeError):
+        tau_exp = np.full(n_valid, c_post_init * s_post_init)
 
-    c = np.full(n_valid, c0, dtype=np.float64)
-    s = np.full(n_valid, s0, dtype=np.float64)
+    c = np.full(n_valid, c_post_init, dtype=np.float64)
+    s = np.full(n_valid, s_post_init, dtype=np.float64)
 
     # --- State tracking ---
     best_fe = np.full(n_valid, -np.inf)
@@ -646,9 +822,9 @@ def batched_dsc_vi_fit(
 
     # CBF index for analytic Jacobian (constant across iterations)
     cbf_idx = fitting_param_names.index("cbf")
-    if transforms[cbf_idx] != TransformType.LOG:
+    if transforms[cbf_idx] not in (TransformType.LOG, TransformType.IDENTITY):
         raise ValueError(
-            f"Analytic CBF Jacobian requires LOG transform, "
+            f"Analytic CBF Jacobian requires LOG or IDENTITY transform, "
             f"got {transforms[cbf_idx]} for param '{fitting_param_names[cbf_idx]}'"
         )
 
@@ -683,6 +859,7 @@ def batched_dsc_vi_fit(
         J_columns = _compute_jacobian_columns(
             m_a, m_nat_a, g_m, _evaluate,
             transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
+            fitting_param_names=fitting_param_names,
         )
 
         # Residual
@@ -937,6 +1114,7 @@ def _run_map_gauss_newton(
     evaluate_fn: "Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]",
     n_iterations: int,
     n_noise_iterations: int,
+    fitting_param_names: list[str] | None = None,
 ) -> tuple[
     npt.NDArray[np.floating],  # best_m (n_valid, P)
     npt.NDArray[np.floating],  # best_nlp (n_valid,)
@@ -1017,6 +1195,7 @@ def _run_map_gauss_newton(
             J_columns = _compute_jacobian_columns(
                 m_a, m_nat_a, g_m, evaluate_fn,
                 transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
+                fitting_param_names=fitting_param_names,
             )
 
             # 4. Residual
@@ -1182,6 +1361,7 @@ def batched_dsc_map_fit(
     mono_eta: Optional[npt.NDArray[np.floating]] = None,
     control_point_times: Optional[npt.NDArray[np.floating]] = None,
     toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
+    cpi_t_terminal: Optional[float] = None,
     nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
     prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
     prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
@@ -1290,9 +1470,9 @@ def batched_dsc_map_fit(
 
     # CBF index for analytic Jacobian
     cbf_idx = fitting_param_names.index("cbf")
-    if transforms[cbf_idx] != TransformType.LOG:
+    if transforms[cbf_idx] not in (TransformType.LOG, TransformType.IDENTITY):
         raise ValueError(
-            f"Analytic CBF Jacobian requires LOG transform, "
+            f"Analytic CBF Jacobian requires LOG or IDENTITY transform, "
             f"got {transforms[cbf_idx]} for param '{fitting_param_names[cbf_idx]}'"
         )
 
@@ -1313,6 +1493,7 @@ def batched_dsc_map_fit(
             return batched_cpi_forward(
                 params_fitting, aif, time_points,
                 control_point_times, toeplitz_matrix,
+                t_terminal=cpi_t_terminal,
             )
 
     # --- Multi-start initialization ---
@@ -1380,6 +1561,7 @@ def batched_dsc_map_fit(
         y, m0_t, sigma_sq_init, prior_means_t, prior_prec_mat, mono_eta,
         transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx, w, n_eff,
         _evaluate, n_iterations, n_noise_iterations,
+        fitting_param_names=fitting_param_names,
     )
 
     # --- Run start 1 (if available) ---
@@ -1420,6 +1602,7 @@ def batched_dsc_map_fit(
         J_final = _compute_jacobian_columns(
             best_m, fitted_nat, g_final_unc, _evaluate,
             transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
+            fitting_param_names=fitting_param_names,
         )
         JtWJ_final, _ = _assemble_JtWJ(J_final, y - g_final_unc, w)
 

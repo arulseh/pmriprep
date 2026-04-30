@@ -752,7 +752,7 @@ def build_dsc_provenance(
     gd_multiplicity: int = 1,
     preload_source: str = ParameterSource.AUTO_DETECTED,
     deconv_method: str = "oSVD",
-    bayesian: Optional[str] = None,
+    inference: Optional[str] = None,
     leakage_method: str = "bsw",
 ) -> dict[str, Any]:
     """Build DSC provenance dict for output JSON sidecars.
@@ -774,7 +774,7 @@ def build_dsc_provenance(
             gadoquatrane). Recorded in provenance when != 1.
         preload_source: How preload was determined (user_specified or auto_detected).
         deconv_method: Deconvolution method name.
-        bayesian: Bayesian inference method (for CPI/vascular methods).
+        inference: Inference method (nlls/map/vb/svb) for CPI/vascular.
         leakage_method: Leakage correction method name.
 
     Returns:
@@ -791,8 +791,28 @@ def build_dsc_provenance(
         populate AIF fields itself.
     """
     deconv_block: dict[str, Any] = {"method": str(deconv_method)}
-    if bayesian is not None and deconv_method in ("cpi", "vascular"):
-        deconv_block["bayesian_inference"] = str(bayesian)
+    if inference is not None and deconv_method in ("cpi", "vascular"):
+        deconv_block["inference"] = str(inference)
+        # FABBER-parity provenance for the CPI parametric path so v0.34+
+        # outputs can be retrospectively distinguished from older runs
+        # with different priors / CP layout. Versioning is captured by
+        # the top-level pmriprep version in the sidecar; the actual prior
+        # values are recorded in the adjacent prior blocks below.
+        if deconv_method == "cpi":
+            deconv_block["inference_engine"] = "fabber"
+            deconv_block["cpi_prior_profile"] = "fabber"
+            deconv_block["cpi_cbf_prior"] = {
+                "transform": "identity",
+                "mean": 1.0,
+                "var": 1e6,
+            }
+            deconv_block["cpi_fraction_prior"] = {
+                "transform": "sigmoid",
+                "fitting_space_mean": 0.5,
+                "fitting_space_var": 1e7,
+            }
+            deconv_block["vb_max_iterations"] = 10
+            deconv_block["vb_noise_prior"] = {"c0": 1e-6, "s0": 1e6}
 
     perf: dict[str, Any] = {}
 

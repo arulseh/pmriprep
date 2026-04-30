@@ -122,7 +122,7 @@ def merge_cli_config(
     cli_to_config = {
         # DSC options
         "dsc_deconv_method": ("dsc", "method"),
-        "dsc_bayesian": ("dsc", "bayesian"),
+        "dsc_inference": ("dsc", "inference"),
         "dsc_preload": ("dsc", "preload"),
         "dsc_dose": ("dsc", "dose"),
         "dsc_agent_standard_dose": ("dsc", "agent_standard_dose"),

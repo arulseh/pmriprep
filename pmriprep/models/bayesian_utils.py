@@ -28,8 +28,12 @@ class TransformType(enum.Enum):
 
     IDENTITY: No transform (unconstrained or can-be-negative params).
     LOG: Natural logarithm for strictly positive params (CBF, Ktrans, Fp, etc).
-    LOG_LOGIT: Log-odds for bounded fraction params (ve, vp, CPI control points).
+    LOG_LOGIT: Log-odds for bounded fraction params (ve, vp).
         Requires an upper bound: theta' = ln(theta / (ub - theta)).
+    SIGMOID: FABBER TRANSFORM_FRACTIONAL — natural value lives in (0, 1)
+        with no explicit upper bound; theta = 1/(1+exp(theta')) so the
+        fitting-space prior mean=0.5 corresponds to natural=0.5. Used for
+        CPI control-point fractions.
 
     References:
         Chappell MA et al. (2009). IEEE TMI 28(1):94-104 — FABBER VB.
@@ -38,6 +42,7 @@ class TransformType(enum.Enum):
     IDENTITY = "identity"
     LOG = "log"
     LOG_LOGIT = "log_logit"
+    SIGMOID = "sigmoid"
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +74,12 @@ def to_transformed(
         t = np.clip(theta, 1e-10, upper_bound - 1e-10)
         result = np.log(t / (upper_bound - t))
         return result
+    elif transform == TransformType.SIGMOID:
+        # FABBER TRANSFORM_FRACTIONAL: theta = 1/(1+exp(theta'))
+        # Inverse: theta' = log((1 - theta) / theta)
+        t = np.clip(theta, 1e-10, 1.0 - 1e-10)
+        result = np.log((1.0 - t) / t)
+        return result
     return theta  # IDENTITY
 
 
@@ -96,6 +107,11 @@ def from_transformed(
             raise ValueError("upper_bound required for LOG_LOGIT transform")
         # Numerically stable sigmoid via scipy.special.expit
         result = upper_bound * expit(np.clip(theta_prime, -500, 500))
+        return result
+    elif transform == TransformType.SIGMOID:
+        # FABBER TRANSFORM_FRACTIONAL: theta = 1/(1+exp(theta'))
+        # = expit(-theta')
+        result = expit(-np.clip(theta_prime, -50, 50))
         return result
     return theta_prime  # IDENTITY
 
@@ -125,6 +141,9 @@ def to_transformed_batch(
             raise ValueError("upper_bound required for LOG_LOGIT transform")
         t = np.clip(values, 1e-10, upper_bound - 1e-10)
         result = np.log(t / (upper_bound - t))
+    elif transform == TransformType.SIGMOID:
+        t = np.clip(values, 1e-10, 1.0 - 1e-10)
+        result = np.log((1.0 - t) / t)
     else:
         result = np.asarray(values, dtype=np.float64)
     return np.nan_to_num(np.asarray(result, dtype=np.float64), nan=0.0)
@@ -156,6 +175,9 @@ def from_transformed_batch(
             raise ValueError("upper_bound required for LOG_LOGIT transform")
         clipped = np.clip(values, -500, 500)
         result = upper_bound * expit(clipped)
+    elif transform == TransformType.SIGMOID:
+        clipped = np.clip(values, -50, 50)
+        result = expit(-clipped)
     else:
         result = np.asarray(values, dtype=np.float64)
     return np.nan_to_num(np.asarray(result, dtype=np.float64), nan=0.0)
@@ -190,6 +212,11 @@ def log_jacobian_det(
             raise ValueError("upper_bound required for LOG_LOGIT transform")
         t = np.clip(theta, 1e-10, upper_bound - 1e-10)
         result = np.log(t) + np.log(upper_bound - t) - np.log(upper_bound)
+        return result
+    elif transform == TransformType.SIGMOID:
+        # |dtheta/dtheta'| = theta * (1 - theta)
+        t = np.clip(theta, 1e-10, 1.0 - 1e-10)
+        result = np.log(t) + np.log(1.0 - t)
         return result
     return 0.0  # IDENTITY
 
@@ -268,6 +295,12 @@ def transform_prior(
         m = np.clip(mean, 1e-10, upper_bound - 1e-10)
         m_prime = float(np.log(m / (upper_bound - m)))
         s_prime = float(std * upper_bound / (m * (upper_bound - m)))
+        return m_prime, s_prime
+    elif transform == TransformType.SIGMOID:
+        # theta = 1/(1+exp(theta')); dtheta'/dtheta = -1/(theta*(1-theta))
+        m = float(np.clip(mean, 1e-10, 1.0 - 1e-10))
+        m_prime = float(np.log((1.0 - m) / m))
+        s_prime = float(std / (m * (1.0 - m)))
         return m_prime, s_prime
     return mean, std  # IDENTITY
 
@@ -378,6 +411,8 @@ def build_priors_from_params(
         tfm = param.transform
         ub = param.bounds[1] if tfm == TransformType.LOG_LOGIT else None
 
+        # SIGMOID has natural range (0, 1) — no upper-bound metadata stored
+        # but transform_prior handles it via the implicit (0, 1) clip.
         t_mean, t_std = transform_prior(nat_mean, nat_std, tfm, ub)
 
         # Allow explicit override of transformed-space sigma

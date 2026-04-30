@@ -26,6 +26,7 @@ from pmriprep.utils.dsc_deconvolution import (
 from .conftest import (
     add_gaussian_noise,
     dsc_forward_model,
+    dsc_forward_model_circulant,
     generate_dsc_aif_dro,
     make_exponential_residue,
 )
@@ -65,6 +66,7 @@ def _make_dsc_test_data(
     dt_sec: float = 1.5,
     baseline_frames: int = 10,
     seed: int = 42,
+    forward_model: Any = None,
 ) -> Tuple[
     npt.NDArray[np.floating],
     npt.NDArray[np.floating],
@@ -72,6 +74,8 @@ def _make_dsc_test_data(
     npt.NDArray[np.floating],
 ]:
     """Generate DSC test data with known parameters."""
+    if forward_model is None:
+        forward_model = dsc_forward_model
     aif, time_sec = generate_dsc_aif_dro(
         n_timepoints=n_timepoints,
         dt_sec=dt_sec,
@@ -80,7 +84,7 @@ def _make_dsc_test_data(
     )
 
     residue = make_exponential_residue(cbf, mtt, n_timepoints, dt_sec)
-    tissue = dsc_forward_model(aif, residue, dt_sec)
+    tissue = forward_model(aif, residue, dt_sec)
 
     if noise_frac > 0:
         peak = float(np.max(np.abs(tissue)))
@@ -156,9 +160,9 @@ class TestSSVDRecovery:
 class TestCSVDRecovery:
     """Test circulant SVD deconvolution delay detection.
 
-    cSVD uses a block-circulant matrix that wraps around, which makes
-    CBF recovery unreliable without actual delays in the data. We focus
-    on testing its core feature: delay-insensitive deconvolution.
+    cSVD uses a block-circulant matrix (Wu 2003). Forward model uses
+    the matched circulant matrix to isolate algorithm behavior from
+    discretization mismatch.
     """
 
     @pytest.mark.parametrize(
@@ -171,7 +175,10 @@ class TestCSVDRecovery:
     def test_csvd_delay_preserves_shape(self, delay_frames: int) -> None:
         """Test that cSVD recovers a reasonable residue with delayed data."""
         cbf, mtt = 0.10, 4.0
-        tissue, aif, dt, time_sec = _make_dsc_test_data(cbf, mtt, noise_frac=0.0)
+        tissue, aif, dt, time_sec = _make_dsc_test_data(
+            cbf, mtt, noise_frac=0.0,
+            forward_model=dsc_forward_model_circulant,
+        )
 
         # Shift tissue curve to simulate delay
         tissue_shifted = np.zeros_like(tissue)
@@ -179,12 +186,8 @@ class TestCSVDRecovery:
 
         result = svd_deconvolve_circulant(tissue_shifted, aif, dt)
 
-        # CBF should be positive and in a reasonable range
         assert result.cbf > 0, f"CBF should be positive, got {result.cbf}"
-        # The residue should not be all zeros
         assert np.max(result.residue) > 0
-        # Delay recovered within ±3 frames (wider tolerance accounts for
-        # Toeplitz/circulant discretization mismatch in forward model)
         assert abs(result.delay_frames - delay_frames) <= 3, (
             f"Expected delay ~{delay_frames}, got {result.delay_frames}"
         )
@@ -198,29 +201,25 @@ class TestCSVDRecovery:
 class TestOSVDRecovery:
     """Test oscillation-index SVD deconvolution parameter recovery.
 
-    oSVD uses a block-circulant matrix (Wu 2003). At zero noise, the
-    Toeplitz/circulant forward-inverse mismatch causes systematic CBF
-    underestimation (~15-40%) — identical to cSVD on the same data.
-    MTT is well-preserved because the CBV/CBF ratio cancels the scaling
-    error. Noisy tests (clinically representative) use noise-driven
-    regularization where the mismatch is a minor component.
+    oSVD uses a block-circulant matrix (Wu 2003). Forward model uses
+    the matched circulant matrix to isolate algorithm behavior from
+    discretization mismatch.
     """
 
-    # Zero noise: check residue is reasonable (like cSVD tests),
-    # don't demand precise CBF — circulant/Toeplitz mismatch dominates.
     @pytest.mark.parametrize("cbf,mtt", DSC_PARAMS)
     def test_osvd_zero_noise(self, cbf: float, mtt: float) -> None:
-        """oSVD produces positive CBF and reasonable MTT at zero noise."""
-        tissue, aif, dt, time_sec = _make_dsc_test_data(cbf, mtt, 0.0)
+        """oSVD recovers CBF and MTT at zero noise."""
+        tissue, aif, dt, time_sec = _make_dsc_test_data(
+            cbf, mtt, 0.0, forward_model=dsc_forward_model_circulant,
+        )
         result = svd_deconvolve_oscillation(
-            tissue, aif, dt, threshold_min=0.001
+            tissue, aif, dt, threshold_min=1e-6
         )
         assert result.cbf > 0, f"CBF should be positive, got {result.cbf}"
         assert result.mtt > 0, f"MTT should be positive, got {result.mtt}"
-        # MTT well-recovered despite CBF scaling (ratio cancels)
+        _assert_param_recovery(result.cbf, cbf, 0.10, param_name="CBF")
         _assert_param_recovery(result.mtt, mtt, 0.10, param_name="MTT")
 
-    # Noisy: regularization suppresses mismatch; test CBF and MTT accuracy
     OSVD_NOISY_LEVELS = [
         pytest.param(0.02, 0.005, 0.46, 0.95, id="low"),
         pytest.param(0.05, 0.01, 0.52, 1.79, id="medium"),
@@ -242,7 +241,10 @@ class TestOSVDRecovery:
         if cbf <= 0.015:
             pytest.xfail("SVD regularization inflates MTT for low-CBF residues")
 
-        tissue, aif, dt, time_sec = _make_dsc_test_data(cbf, mtt, noise_frac)
+        tissue, aif, dt, time_sec = _make_dsc_test_data(
+            cbf, mtt, noise_frac,
+            forward_model=dsc_forward_model_circulant,
+        )
         result = svd_deconvolve_oscillation(
             tissue, aif, dt, threshold_min=thresh_min
         )
@@ -260,7 +262,8 @@ class TestOSVDRecovery:
         """Test that oSVD recovers a reasonable residue with delayed data."""
         cbf, mtt = 0.10, 4.0
         tissue, aif, dt, time_sec = _make_dsc_test_data(
-            cbf, mtt, noise_frac=0.0
+            cbf, mtt, noise_frac=0.0,
+            forward_model=dsc_forward_model_circulant,
         )
 
         tissue_shifted = np.zeros_like(tissue)
@@ -271,9 +274,7 @@ class TestOSVDRecovery:
         )
         assert result.cbf > 0, f"CBF should be positive, got {result.cbf}"
         assert np.max(result.residue) > 0
-        # Delay recovered within ±3 frames (wider tolerance accounts for
-        # Toeplitz/circulant discretization mismatch in forward model)
-        assert abs(result.delay_frames - delay_frames) <= 3, (
+        assert abs(result.delay_frames - delay_frames) <= 2, (
             f"Expected delay ~{delay_frames}, got {result.delay_frames}"
         )
 
@@ -468,6 +469,7 @@ def _make_cpi_gamma_test_data(
     dt_sec: float = 1.5,
     baseline_frames: int = 10,
     seed: int = 42,
+    forward_model: Any = None,
 ) -> Tuple[
     npt.NDArray[np.floating],
     npt.NDArray[np.floating],
@@ -478,11 +480,13 @@ def _make_cpi_gamma_test_data(
 
     Uses VascularModel.residue_function() to create the gamma-variate
     residue R(t) = CBF * [1 - gammainc(alpha, t/beta)], then convolves
-    with the DRO AIF via dsc_forward_model().
+    with the DRO AIF via the specified forward model.
 
     Returns:
         Tuple of (tissue_concentration, aif, time_sec, true_mtt).
     """
+    if forward_model is None:
+        forward_model = dsc_forward_model
     aif, time_sec = generate_dsc_aif_dro(
         n_timepoints=n_timepoints,
         dt_sec=dt_sec,
@@ -491,7 +495,7 @@ def _make_cpi_gamma_test_data(
 
     model = VascularModel()
     residue = model.residue_function([cbf, alpha, beta, 0.0], time_sec)
-    tissue = dsc_forward_model(aif, residue, dt_sec)
+    tissue = forward_model(aif, residue, dt_sec)
 
     if noise_frac > 0:
         peak = float(np.max(np.abs(tissue)))
@@ -518,13 +522,14 @@ CPI_BAYESIAN_PARAMS = [
 ]
 
 # (noise_fraction, cbf_tol, mtt_tol)
-# Tolerances from Monte Carlo (N=20 seeds, mean+3sigma, rounded up):
-# The CBF log-space prior systematically pulls low-CBF tissues upward.
-# Zero-noise tolerances cover basis resolution limits.
+# v0.34 FABBER-parity tolerances per Mehndiratta 2013 / Chappell 2009 +
+# physics review: FABBER's loose sigmoid fraction prior systematically
+# inflates MTT (5-20%) and CBF/CBV are biased by the wider full-acquisition
+# CP layout. PMRIPrep §6 numerical-change table.
 CPI_BAYESIAN_NOISE_LEVELS = [
-    pytest.param(0.0, 0.20, 0.16, id="zero"),      # Basis resolution: CBF 18%, MTT 15%
-    pytest.param(0.02, 0.23, 0.19, id="low"),       # MC: CBF mean+3σ=22%, MTT 18%
-    pytest.param(0.05, 0.26, 0.24, id="medium"),    # MC: CBF mean+3σ=26%, MTT 23%
+    pytest.param(0.0, 0.30, 0.25, id="zero"),
+    pytest.param(0.02, 0.30, 0.25, id="low"),
+    pytest.param(0.05, 0.32, 0.30, id="medium"),
 ]
 
 
@@ -552,7 +557,6 @@ class TestCPIBayesianGammaRecovery:
         """Test CPI MAP recovery of CBF and MTT."""
         true_mtt = alpha * beta
 
-        # With t_span=30s, 7 CPs have ~5s spacing - sufficient for all MTTs tested
         if cbf <= 0.02:
             pytest.xfail(
                 f"CBF prior overwhelms low-flow signal (CBF={cbf})"
@@ -562,9 +566,13 @@ class TestCPIBayesianGammaRecovery:
             cbf, alpha, beta, noise_frac
         )
 
-        n_cp = 7
-        t_span = 30.0  # production config: covers ~3x max physiological MTT
-        model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+        n_cp = 10
+        t_span = 30.0
+        model = CPIModel(
+            n_control_points=n_cp,
+            n_acquisition_frames=int(len(time_sec)),
+            dt=float(time_sec[1] - time_sec[0]),
+        )
 
         # Pass noise_std; use 1% of peak as floor for zero-noise DRO
         peak = float(np.max(np.abs(tissue)))
@@ -618,9 +626,13 @@ class TestCPIVIGammaRecovery:
             cbf, alpha, beta, noise_frac
         )
 
-        n_cp = 7
+        n_cp = 10
         t_span = 30.0
-        model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+        model = CPIModel(
+            n_control_points=n_cp,
+            n_acquisition_frames=int(len(time_sec)),
+            dt=float(time_sec[1] - time_sec[0]),
+        )
 
         peak = float(np.max(np.abs(tissue)))
         noise_std = max(noise_frac * peak, 0.01 * peak) if peak > 0 else 1.0
@@ -654,9 +666,9 @@ BATCHED_MAP_CPI_PARAMS = [
 ]
 
 BATCHED_MAP_NOISE_LEVELS = [
-    pytest.param(0.0, 0.20, 0.16, id="zero"),
-    pytest.param(0.02, 0.23, 0.19, id="low"),
-    pytest.param(0.05, 0.26, 0.24, id="medium"),
+    pytest.param(0.0, 0.30, 0.25, id="zero"),
+    pytest.param(0.02, 0.30, 0.25, id="low"),
+    pytest.param(0.05, 0.32, 0.30, id="medium"),
 ]
 
 
@@ -758,10 +770,14 @@ class TestBatchedMAPCPIRecovery:
             tissues.append(t)
         tissue_curves = np.stack(tissues)
 
-        n_cp = 7
+        n_cp = 10
         t_span = 30.0
         dt = float(time_sec[1] - time_sec[0])
-        model = CPIModel(n_control_points=n_cp, time_range=(0.0, t_span))
+        model = CPIModel(
+            n_control_points=n_cp,
+            n_acquisition_frames=int(len(time_sec)),
+            dt=float(time_sec[1] - time_sec[0]),
+        )
         fitting_defs = list(model.get_fitting_parameter_definitions())
         priors = build_priors_from_params(fitting_defs)
         cp_times = np.array(model._control_point_times, dtype=np.float64)
@@ -858,12 +874,9 @@ class TestSVDGammaRecovery:
         _assert_param_recovery(result.cbf, cbf, cbf_tol, param_name="CBF")
         _assert_param_recovery(result.mtt, true_mtt, mtt_tol, param_name="MTT")
 
-    # oSVD gamma tolerances wider than sSVD: block-circulant matrix with
-    # rectangular weighting vs Toeplitz/trapezoidal forward model introduces
-    # additional integration mismatch on non-exponential residues.
     OSVD_GAMMA_NOISE_LEVELS = [
-        pytest.param(0.0, 0.20, 0.45, id="zero"),     # circulant mismatch dominates
-        pytest.param(0.05, 0.57, 0.86, id="medium"),   # noise dominates
+        pytest.param(0.0, 0.10, 0.30, id="zero"),
+        pytest.param(0.05, 0.57, 0.86, id="medium"),
     ]
 
     @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", OSVD_GAMMA_NOISE_LEVELS)
@@ -879,7 +892,8 @@ class TestSVDGammaRecovery:
     ) -> None:
         """Test oSVD recovery of CBF and MTT from gamma-variate residue."""
         tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
-            cbf, alpha, beta, noise_frac
+            cbf, alpha, beta, noise_frac,
+            forward_model=dsc_forward_model_circulant,
         )
 
         dt = float(time_sec[1] - time_sec[0])

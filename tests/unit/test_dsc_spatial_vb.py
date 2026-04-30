@@ -6,7 +6,7 @@ import pytest
 from pmriprep.models.dsc.spatial_vb import (
     _build_neighborhood_graph,
     _compute_spatial_contributions,
-    _update_lambdas,
+    _update_aK_penny,
 )
 
 
@@ -87,7 +87,7 @@ class TestSpatialContributions:
     """Tests for spatial prior contributions."""
 
     def test_uniform_posteriors(self) -> None:
-        """Uniform posteriors: eta pulls toward common value, prec proportional to degree."""
+        """Uniform posteriors: eta pulls toward common value; prec ~ aK * (degree+eps)."""
         n_voxels = 9
         n_params = 2
         coords = np.array([
@@ -100,33 +100,34 @@ class TestSpatialContributions:
             spatial_shape=(3, 3, 1),
         )
         posteriors = np.full((n_voxels, n_params), 5.0)
-        lambdas = np.array([1.0, 2.0])
+        aK = np.array([1.0, 2.0])
 
-        prec, eta = _compute_spatial_contributions(posteriors, adj, degree, lambdas)
+        prec, eta = _compute_spatial_contributions(posteriors, adj, degree, aK)
 
         center_idx = 4
-        assert prec[center_idx, 0] == pytest.approx(1.0 * 4)
-        assert prec[center_idx, 1] == pytest.approx(2.0 * 4)
+        # FABBER M-prior: prec = aK * (degree + 1e-8), so center has 4+1e-8 ≈ 4.
+        assert prec[center_idx, 0] == pytest.approx(1.0 * 4, rel=1e-6)
+        assert prec[center_idx, 1] == pytest.approx(2.0 * 4, rel=1e-6)
         assert eta[center_idx, 0] == pytest.approx(1.0 * 4 * 5.0)
         assert eta[center_idx, 1] == pytest.approx(2.0 * 4 * 5.0)
 
-    def test_zero_lambda_no_contribution(self) -> None:
-        """Zero lambda produces zero spatial contributions."""
+    def test_zero_aK_no_contribution(self) -> None:
+        """Zero aK produces zero spatial contributions."""
         coords = (np.array([0, 1]), np.array([0, 0]), np.array([0, 0]))
         adj, degree = _build_neighborhood_graph(coords, spatial_shape=(2, 1, 1))
         posteriors = np.array([[1.0], [2.0]])
-        lambdas = np.array([0.0])
+        aK = np.array([0.0])
 
-        prec, eta = _compute_spatial_contributions(posteriors, adj, degree, lambdas)
+        prec, eta = _compute_spatial_contributions(posteriors, adj, degree, aK)
         np.testing.assert_allclose(prec, 0.0)
         np.testing.assert_allclose(eta, 0.0)
 
 
-class TestUpdateLambdas:
-    """Tests for lambda hyperparameter updates."""
+class TestUpdateAKPenny:
+    """Tests for FABBER M-prior aK closed-form update (Penny 2005)."""
 
-    def test_homogeneous_field_high_lambda(self) -> None:
-        """Uniform posterior field produces high lambda (strong coupling)."""
+    def test_homogeneous_field_high_aK(self) -> None:
+        """Uniform posterior field produces high aK (strong coupling)."""
         n_voxels = 9
         coords = np.array([
             [0, 0, 0, 1, 1, 1, 2, 2, 2],
@@ -140,11 +141,12 @@ class TestUpdateLambdas:
         posteriors = np.full((n_voxels, 1), 3.0)
         cov_diag = np.full((n_voxels, 1), 0.01)
 
-        lambdas = _update_lambdas(posteriors, cov_diag, adj, degree)
-        assert lambdas[0] > 10.0
+        aK = _update_aK_penny(posteriors, cov_diag, adj, degree)
+        # Uniform field: m^T L m ≈ 0; trace term tiny; aK ~ q1 * (N/2 + q2).
+        assert aK[0] > 10.0
 
-    def test_heterogeneous_field_low_lambda(self) -> None:
-        """Highly variable posterior field produces low lambda (weak coupling)."""
+    def test_heterogeneous_field_low_aK(self) -> None:
+        """Highly variable posterior field produces low aK (weak coupling)."""
         n_voxels = 9
         coords = np.array([
             [0, 0, 0, 1, 1, 1, 2, 2, 2],
@@ -159,18 +161,20 @@ class TestUpdateLambdas:
         posteriors = rng.normal(0, 10, (n_voxels, 1))
         cov_diag = np.full((n_voxels, 1), 1.0)
 
-        lambdas = _update_lambdas(posteriors, cov_diag, adj, degree)
-        assert lambdas[0] < 1.0
+        aK = _update_aK_penny(posteriors, cov_diag, adj, degree)
+        # m^T L m large for noise-like fields → aK small.
+        assert aK[0] < 1.0
 
-    def test_isolated_voxels_return_default(self) -> None:
-        """When no voxel has neighbors, return default lambda=1."""
+    def test_isolated_voxels_return_finite(self) -> None:
+        """No-neighbour voxels still yield finite aK (driven by hyperprior)."""
         coords = (np.array([0, 5]), np.array([0, 5]), np.array([0, 5]))
         adj, degree = _build_neighborhood_graph(coords, spatial_shape=(10, 10, 10))
         posteriors = np.array([[1.0], [2.0]])
         cov_diag = np.full((2, 1), 0.1)
 
-        lambdas = _update_lambdas(posteriors, cov_diag, adj, degree)
-        assert lambdas[0] == pytest.approx(1.0)
+        aK = _update_aK_penny(posteriors, cov_diag, adj, degree)
+        assert np.isfinite(aK[0])
+        assert aK[0] > 0.0
 
 
 class TestSpatialVIIntegration:
@@ -193,11 +197,15 @@ class TestSpatialVIIntegration:
         aif = (t / 3.0) * np.exp(-t / 5.0)
         aif[0] = 0.0
 
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
+        model = CPIModel(
+            n_control_points=6,
+            n_acquisition_frames=n_timepoints,
+            dt=dt,
+        )
         toeplitz = build_toeplitz_matrix(aif, dt)
 
         rng = np.random.default_rng(42)
-        params = [cbf, 0.8, 0.7, 0.6, 0.5, 0.4]
+        params = [cbf, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]  # cbf + 6 fractions
         clean_curve = model.tissue_curve(params, aif, t)
         tissue_curves = np.tile(clean_curve, (n_voxels, 1))
         tissue_curves += rng.normal(0, noise_std, (n_voxels, n_timepoints))
@@ -323,10 +331,14 @@ class TestSpatialVIIntegration:
         from pmriprep.models.dsc.cpi import CPIModel
         from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
 
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
         dt = float(t[1] - t[0])
+        model = CPIModel(
+            n_control_points=6,
+            n_acquisition_frames=int(len(t)),
+            dt=dt,
+        )
         toeplitz = build_toeplitz_matrix(aif, dt)
-        params = [0.1, 0.8, 0.7, 0.6, 0.5, 0.4]
+        params = [0.1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]  # cbf + 6 fractions
         tissue = model.tissue_curve(params, aif, t).reshape(1, -1)
 
         fitting_defs = list(model.get_fitting_parameter_definitions())

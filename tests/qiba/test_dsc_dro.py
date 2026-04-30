@@ -440,7 +440,11 @@ class TestQIBACPIExponential:
             tissue_key, noise_key
         )
 
-        model = CPIModel(n_control_points=6, time_range=(0.0, 30.0))
+        model = CPIModel(
+            n_control_points=6,
+            n_acquisition_frames=int(len(time_sec)),
+            dt=float(time_sec[1] - time_sec[0]),
+        )
         result = _fit_cpi_simple(model, tissue, aif, time_sec)
         assert result is not None, "CPI fit returned None"
         assert result.converged or result.r_squared > 0.9
@@ -684,7 +688,11 @@ class TestQIBACPICTH:
             tissue_key, cth_key, noise_key
         )
 
-        model = CPIModel(n_control_points=6, time_range=(0.0, 30.0))
+        model = CPIModel(
+            n_control_points=6,
+            n_acquisition_frames=int(len(time_sec)),
+            dt=float(time_sec[1] - time_sec[0]),
+        )
         result = _fit_cpi_simple(model, tissue, aif, time_sec)
         assert result is not None, "CPI fit returned None"
         assert result.converged or result.r_squared > 0.9

@@ -17,44 +17,51 @@ class TestCPIModelConstruction:
     """Tests for CPIModel initialization and properties."""
 
     def test_default_n6(self) -> None:
-        """Default CPIModel() has 6 control points and matching properties."""
-        model = CPIModel()
+        """Default CPIModel(n_acquisition_frames=20, dt=1.5) has 6 control points and matching properties."""
+        model = CPIModel(n_acquisition_frames=20, dt=1.5)
         assert model.name == "cpi_6"
-        assert model.n_parameters == 6
+        # FABBER convention: cbf + N free fractions = N+1 params.
+        assert model.n_parameters == 7
         assert model.n_control_points == 6
 
     def test_custom_n(self) -> None:
         """Custom n_control_points produce different n_parameters."""
-        model4 = CPIModel(n_control_points=4)
-        model10 = CPIModel(n_control_points=10)
-        assert model4.n_parameters == 4
-        assert model10.n_parameters == 10
+        model4 = CPIModel(n_control_points=4, n_acquisition_frames=20, dt=1.5)
+        model10 = CPIModel(n_control_points=10, n_acquisition_frames=20, dt=1.5)
+        assert model4.n_parameters == 5  # cbf + 4 fractions
+        assert model10.n_parameters == 11  # cbf + 10 fractions
         assert model4.name == "cpi_4"
         assert model10.name == "cpi_10"
 
-    def test_fraction_transforms_are_log_logit(self) -> None:
-        """CPI fraction parameters must use LOG_LOGIT for VI correctness."""
-        model = CPIModel()
+    def test_fraction_transforms_are_sigmoid(self) -> None:
+        """CPI fraction parameters use SIGMOID (FABBER TRANSFORM_FRACTIONAL)."""
+        model = CPIModel(n_acquisition_frames=20, dt=1.5)
         params = model.get_parameter_definitions()
-        for p in params[1:]:  # skip CBF (index 0)
-            assert p.transform == TransformType.LOG_LOGIT, (
-                f"Parameter {p.name} uses {p.transform}, expected LOG_LOGIT"
+        # CBF (index 0) is identity-transformed (FABBER: var=1e6 flat prior)
+        assert params[0].transform == TransformType.IDENTITY, (
+            f"CBF uses {params[0].transform}, expected IDENTITY"
+        )
+        for p in params[1:]:
+            assert p.transform == TransformType.SIGMOID, (
+                f"Parameter {p.name} uses {p.transform}, expected SIGMOID"
             )
 
     def test_parameter_names_multiplicative(self) -> None:
-        """Parameter names use f1, f2, ... for multiplicative fractions."""
-        model = CPIModel(n_control_points=6)
+        """Parameter names use f1..fN for N CPs (FABBER convention)."""
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
         names = model.get_parameter_names()
-        assert names == ["cbf", "f1", "f2", "f3", "f4", "f5"]
+        assert names == ["cbf", "f1", "f2", "f3", "f4", "f5", "f6"]
 
-    def test_control_point_times_evenly_spaced(self) -> None:
-        """Control point times are evenly spaced across the time range."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
+    def test_control_point_times_fabber_layout(self) -> None:
+        """CP times follow FABBER layout: tpos[i] = (i+1) * nt/N * dt."""
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
         times = model.control_point_times
         assert len(times) == 6
-        expected = np.linspace(0, 30, 6)
+        # (i+1)*20/6 * 1.5 for i=0..5 → 5, 10, 15, 20, 25, 30 (seconds)
+        expected = (np.arange(1, 7) * 20.0 / 6.0) * 1.5
         np.testing.assert_allclose(times, expected, rtol=1e-10)
-        assert model.time_range == (0.0, 30.0)
+        # Terminal anchor at (nt+1)*dt = 21*1.5 = 31.5s
+        assert model.terminal_time == pytest.approx(31.5)
 
 
 class TestResidueFunction:
@@ -62,26 +69,26 @@ class TestResidueFunction:
 
     def test_all_ones_flat_residue(self) -> None:
         """Params with all fractions 1.0 give R(t) approximately 1.0."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
-        # cbf=0.1, all fractions = 1.0 => control values all 1.0
-        params = [0.1, 1.0, 1.0, 1.0, 1.0, 1.0]
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
+        # cbf=0.1, all 6 fractions = 1.0 => control values all 1.0
+        params = [0.1] + [1.0] * 6
         t = np.linspace(0, 30, 50)
         residue = model.residue_function(params, t)
         np.testing.assert_allclose(residue, 1.0, atol=1e-6)
 
     def test_monotonic_decrease(self) -> None:
         """Residue with multiplicative fractions is monotonically non-increasing."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.1, 0.8, 0.7, 0.6, 0.5, 0.4]
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
+        params = [0.1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]  # cbf + 6 fractions
         t = np.linspace(0, 30, 100)
         residue = model.residue_function(params, t)
         diffs = np.diff(residue)
         assert np.all(diffs <= 1e-10), "Residue should be monotonically non-increasing"
 
     def test_r0_equals_one(self) -> None:
-        """R(0) should always equal 1.0 (dimensionless residue)."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.15, 0.7, 0.5, 0.3, 0.4, 0.6]
+        """R(0) should always equal 1.0 (FABBER prepends a (0, 1) anchor)."""
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
+        params = [0.15, 0.9, 0.7, 0.5, 0.3, 0.4, 0.6]  # cbf + 6 fractions
         t = np.array([0.0])
         residue = model.residue_function(params, t)
         assert residue[0] == pytest.approx(1.0, abs=1e-10)
@@ -91,25 +98,25 @@ class TestEnforceConstraints:
     """Tests for constraint enforcement on control points."""
 
     def test_cumprod_enforce_constraints(self) -> None:
-        """enforce_constraints applies cumulative product of fractions."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.1, 0.8, 0.9, 0.5, 0.3, 0.2]
+        """enforce_constraints applies cumprod over N free fractions."""
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
+        # cbf + 6 fractions; enforce_constraints returns cumprod over fractions
+        params = [0.1, 1.0, 0.8, 0.9, 0.5, 0.3, 0.2]
         constrained = model.enforce_constraints(params)
         assert constrained[0] == pytest.approx(1.0)
         assert constrained[1] == pytest.approx(0.8)
-        assert constrained[2] == pytest.approx(0.8 * 0.9)  # cumprod
+        assert constrained[2] == pytest.approx(0.8 * 0.9)
         assert constrained[3] == pytest.approx(0.8 * 0.9 * 0.5)
-        for i in range(len(constrained)):
-            assert 0.0 <= constrained[i] <= 1.0
+        for v in constrained:
+            assert 0.0 <= v <= 1.0
 
     def test_multiplicative_monotonicity_guaranteed(self) -> None:
         """Random f_i in [0,1] always produce non-increasing control values."""
         rng = np.random.default_rng(42)
-        model = CPIModel(n_control_points=10, time_range=(0, 30))
+        model = CPIModel(n_control_points=10, n_acquisition_frames=20, dt=1.5)
         for _ in range(100):
-            fracs = rng.uniform(0.0, 1.0, 10)
-            fracs[0] = 0.1  # CBF
-            constrained = model.enforce_constraints(fracs)
+            params = [0.1] + list(rng.uniform(0.0, 1.0, 10))  # cbf + 10 fractions
+            constrained = model.enforce_constraints(params)
             diffs = np.diff(constrained)
             assert np.all(diffs <= 1e-15), "Cumprod must be non-increasing"
 
@@ -119,21 +126,21 @@ class TestTissueCurve:
 
     def test_tissue_curve_shape(self) -> None:
         """Tissue curve has same length as time points."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
         n = 30
         t = np.linspace(0, 30, n)
         aif = (t / 3.0) * np.exp(-t / 5.0)
-        params = [0.1, 0.8, 0.7, 0.6, 0.5, 0.4]
+        params = [0.1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]  # cbf + 6 fractions
         tissue = model.tissue_curve(params, aif, t)
         assert tissue.shape == (n,)
 
     def test_zero_aif_zero_tissue(self) -> None:
         """All-zero AIF produces all-zero tissue curve."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
         n = 30
         t = np.linspace(0, 30, n)
         aif = np.zeros(n, dtype=np.float64)
-        params = [0.1, 0.8, 0.7, 0.6, 0.5, 0.4]
+        params = [0.1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
         tissue = model.tissue_curve(params, aif, t)
         np.testing.assert_allclose(tissue, 0.0, atol=1e-15)
 
@@ -143,14 +150,14 @@ class TestDerivedParameters:
 
     def test_get_cbf(self) -> None:
         """get_cbf returns the first parameter."""
-        model = CPIModel(n_control_points=6)
-        params = [0.15, 0.8, 0.7, 0.6, 0.5, 0.4]
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
+        params = [0.15, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
         assert model.get_cbf(params) == pytest.approx(0.15)
 
     def test_get_mtt_positive(self) -> None:
         """MTT should be positive for reasonable parameters."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.15, 0.8, 0.7, 0.6, 0.5, 0.4]
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
+        params = [0.15, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
         mtt = model.get_mtt(params)
         assert mtt > 0.0
 
@@ -160,8 +167,8 @@ class TestComputeFittedResidue:
 
     def test_fitted_residue_scales_by_cbf(self) -> None:
         """compute_fitted_residue returns CBF × R(t), not dimensionless R(t)."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
-        params = [0.08, 0.8, 0.7, 0.6, 0.5, 0.4]
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
+        params = [0.08, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
         t = np.linspace(0, 30, 50)
         residue_norm = model.residue_function(params, t)
         fitted_residue = model.compute_fitted_residue(params, t)
@@ -169,9 +176,9 @@ class TestComputeFittedResidue:
 
     def test_fitted_residue_peak_equals_cbf(self) -> None:
         """Peak of compute_fitted_residue equals CBF (since R(0)=1)."""
-        model = CPIModel(n_control_points=6, time_range=(0, 30))
+        model = CPIModel(n_control_points=6, n_acquisition_frames=20, dt=1.5)
         cbf = 0.12
-        params = [cbf, 0.8, 0.7, 0.6, 0.5, 0.4]
+        params = [cbf, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
         t = np.linspace(0, 30, 50)
         fitted_residue = model.compute_fitted_residue(params, t)
         assert fitted_residue[0] == pytest.approx(cbf, rel=1e-10)

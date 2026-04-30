@@ -566,6 +566,7 @@ def dsc_forward_model(
     """Compute tissue concentration via Toeplitz convolution.
 
     C(t) = A @ R where A is the trapezoidal Toeplitz matrix of the AIF.
+    Matched forward model for sSVD, Tikhonov, and CPI deconvolution.
 
     Args:
         aif: Arterial input function concentration array.
@@ -579,6 +580,33 @@ def dsc_forward_model(
 
     A = build_toeplitz_matrix(aif, dt)
     return np.asarray(A @ residue, dtype=np.float64)
+
+
+def dsc_forward_model_circulant(
+    aif: npt.NDArray[np.floating],
+    residue: npt.NDArray[np.floating],
+    dt: float,
+) -> npt.NDArray[np.floating]:
+    """Compute tissue concentration via block-circulant convolution.
+
+    Matched forward model for oSVD and cSVD deconvolution (Wu 2003).
+    Uses rectangular weighting, consistent with the circulant inverse.
+
+    Args:
+        aif: Arterial input function concentration array.
+        residue: Residue function array (CBF * R(t)).
+        dt: Time step in seconds.
+
+    Returns:
+        Tissue concentration array (length N, truncated from 2N-1).
+    """
+    from pmriprep.utils.dsc_deconvolution import build_block_circulant_matrix
+
+    n = len(aif)
+    A = build_block_circulant_matrix(aif, dt)
+    residue_padded = np.zeros(2 * n - 1, dtype=np.float64)
+    residue_padded[:n] = residue
+    return np.asarray((A @ residue_padded)[:n], dtype=np.float64)
 
 
 def make_exponential_residue(

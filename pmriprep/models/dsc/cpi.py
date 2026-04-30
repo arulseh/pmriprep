@@ -45,7 +45,7 @@ from pmriprep.utils.dsc_constants import (
 
 # Default bounds for CPI control points
 CPI_N_MIN: int = 4
-CPI_N_MAX: int = 12
+CPI_N_MAX: int = 24
 CPI_DEFAULT_N: int = 6
 
 
@@ -70,8 +70,9 @@ class CPIModel(DSCModel):
     is directionally correct for tumor perfusion (short MTT).
 
     Attributes:
-        n_control_points: Number of control points in the spline (4-12).
-        time_range: Time range (t_min, t_max) for control point placement.
+        n_control_points: Number of control points in the spline (4-24).
+        n_acquisition_frames: Number of frames in the DSC time series.
+        dt: Frame period in seconds.
 
     Parameters:
         - cbf: CBF scaling parameter (relative units, s⁻¹)
@@ -95,29 +96,53 @@ class CPIModel(DSCModel):
     def __init__(
         self,
         n_control_points: int = CPI_DEFAULT_N,
-        time_range: tuple[float, float] | None = None,
+        n_acquisition_frames: int | None = None,
+        dt: float | None = None,
+        infer_cpt: bool = False,
     ) -> None:
         """Initialize the CPI model.
 
+        Control point times follow FABBER's convention:
+        ``tpos[i] = (i+1) * n_acquisition_frames / num_cps`` (frame-uniform).
+        Terminal zero anchor sits one frame beyond the data:
+        ``t_terminal = (n_acquisition_frames + 1) * dt``.
+
         Args:
-            n_control_points: Number of control points (4-12, default 6).
-                This controls the shape of R(t). The total number of free
-                parameters is n_control_points: 1 for CBF + (N-1) fractions.
-            time_range: Optional (t_min, t_max) for control point placement.
-                        If None, defaults to (0, 30) seconds.
+            n_control_points: Number of control points (4-24, default 6).
+                Mehndiratta 2013 / FABBER paper used 5; production default is 6
+                with ``select_n_control_points`` available for auto-selection.
+            n_acquisition_frames: Number of frames in the DSC acquisition
+                (length of the time series). Used to lay out CPs uniformly
+                across the acquisition.
+            dt: Frame period in seconds.
+            infer_cpt: If True, optimize control point positions (log-spacing
+                parameterization). Doubles parameter count to 2N-1.
         """
-        # Validate and clamp n_control_points
         self._n_control_points = max(CPI_N_MIN, min(CPI_N_MAX, n_control_points))
+        self._infer_cpt = infer_cpt
 
-        # Set time range for control point placement
-        self._time_range = time_range if time_range is not None else (0.0, 30.0)
+        if n_acquisition_frames is None or dt is None:
+            raise ValueError(
+                "CPIModel requires both n_acquisition_frames and dt. "
+                "The legacy time_range argument was removed in v0.34 "
+                "(FABBER-parity CP layout)."
+            )
+        if n_acquisition_frames < self._n_control_points:
+            raise ValueError(
+                f"n_acquisition_frames ({n_acquisition_frames}) must be "
+                f">= n_control_points ({self._n_control_points})"
+            )
 
-        # Pre-compute control point times (uniform spacing, per Mehndiratta 2013)
-        self._control_point_times = np.linspace(
-            self._time_range[0],
-            self._time_range[1],
-            self._n_control_points,
-        )
+        self._n_acquisition_frames = int(n_acquisition_frames)
+        self._dt = float(dt)
+
+        # FABBER tpos = (i+1) * nt / N for i in 0..N-1 (in frame indices)
+        i = np.arange(self._n_control_points)
+        tpos_frames = (i + 1) * self._n_acquisition_frames / self._n_control_points
+        self._control_point_times = tpos_frames.astype(np.float64) * self._dt
+
+        # FABBER terminal anchor: one acquisition frame beyond the data
+        self._terminal_time = (self._n_acquisition_frames + 1) * self._dt
 
         # Cache for the Toeplitz matrix (built on first use)
         self._toeplitz_cache: npt.NDArray[np.floating] | None = None
@@ -131,8 +156,26 @@ class CPIModel(DSCModel):
 
     @property
     def n_parameters(self) -> int:
-        """Number of free parameters (CBF + N-1 fractions)."""
-        return self._n_control_points
+        """Number of free parameters: CBF + N fractions [+ N log-spacings].
+
+        FABBER convention: each CP has its own free amplitude fraction. The
+        boundary condition R(0)=1 is enforced by prepending a (t=0, amp=1)
+        anchor at PCHIP-construction time, not by forcing the first
+        amplitude parameter.
+        """
+        if self._infer_cpt:
+            return 1 + 2 * self._n_control_points
+        return 1 + self._n_control_points
+
+    @property
+    def infer_cpt(self) -> bool:
+        """Whether control point times are optimized."""
+        return self._infer_cpt
+
+    @property
+    def terminal_time(self) -> float:
+        """Terminal zero-anchor time (seconds)."""
+        return self._terminal_time
 
     @property
     def n_control_points(self) -> int:
@@ -145,70 +188,122 @@ class CPIModel(DSCModel):
         return self._control_point_times
 
     @property
-    def time_range(self) -> tuple[float, float]:
-        """Time range (t_min, t_max) for control points."""
-        return self._time_range
+    def n_acquisition_frames(self) -> int:
+        """Number of acquisition frames the CP grid was built against."""
+        return self._n_acquisition_frames
+
+    @property
+    def dt(self) -> float:
+        """Frame period in seconds."""
+        return self._dt
 
     def get_parameter_definitions(self) -> list[DSCModelParameter]:
-        """Get parameter definitions for CPI model.
+        """Get parameter definitions for CPI model (FABBER-parity priors).
+
+        Priors mirror ``fabber_models_dsc/fwdmodel_dsc_cpi.cc``:
+        - CBF: identity transform, mean=1.0, var=1e6 (essentially flat).
+        - Fractions f_i: SIGMOID transform (FABBER ``TRANSFORM_FRACTIONAL``),
+          fitting-space prior N(0.5, sqrt(1e7)).
+        - Log-spacings (infer_cpt): identity, mean=log(uniform_spacing),
+          var=10 (FABBER ``cpt_i`` variance, units anchored to seconds).
 
         Returns:
-            List of DSCModelParameter objects:
-            - cbf: CBF scaling (relative s⁻¹ units)
-            - f1..f_{N-1}: Multiplicative fractions (0-1)
+            List of DSCModelParameter objects.
         """
         params = []
 
+        # CBF: identity-space N(1.0, sqrt(1e6)) — FABBER non-informative.
+        cbf_sigma = float(np.sqrt(1e6))
         params.append(
             DSCModelParameter(
                 name="cbf",
-                bounds=(CBF_BOUNDS.min, CBF_BOUNDS.max),
-                typical_range=(0.01, 0.15),
-                transform=TransformType.LOG,
-                transformed_prior_sigma=1.0,
-                description="CBF scaling (relative)",
+                bounds=(0.0, CBF_BOUNDS.max),
+                typical_range=(1.0, 1.0),  # mean=1.0
+                transform=TransformType.IDENTITY,
+                transformed_prior_sigma=cbf_sigma,
+                description="CBF scaling (FABBER identity-space)",
                 units="s⁻¹",
             )
         )
 
-        for i in range(1, self._n_control_points):
+        # Fractions: SIGMOID, fitting-space N(0.5, sqrt(1e7)) per FABBER.
+        # natural-space prior mean = sigmoid(-0.5) ≈ 0.378.
+        # One fraction per CP — first CP amplitude no longer forced to 1.0;
+        # the (t=0, amp=1) anchor is enforced via PCHIP knot prepend.
+        amp_nat_mean = float(1.0 / (1.0 + np.exp(0.5)))
+        amp_fit_sigma = float(np.sqrt(1e7))
+        for i in range(self._n_control_points):
             t = self._control_point_times[i]
             params.append(
                 DSCModelParameter(
-                    name=f"f{i}",
+                    name=f"f{i + 1}",
                     bounds=(0.0, 1.0),
-                    typical_range=(0.0, 1.0),
-                    transform=TransformType.LOG_LOGIT,
+                    typical_range=(amp_nat_mean, amp_nat_mean),
+                    transform=TransformType.SIGMOID,
+                    transformed_prior_sigma=amp_fit_sigma,
                     description=f"Multiplicative fraction at t={t:.1f}s",
                     units="fraction",
                 )
             )
 
+        if self._infer_cpt:
+            uniform_spacing = float(
+                self._control_point_times[1] - self._control_point_times[0]
+            ) if self._n_control_points >= 2 else 1.0
+            log_spacing = float(np.log(max(uniform_spacing, 1e-6)))
+            spacing_sigma = float(np.sqrt(10.0))
+            for i in range(self._n_control_points):
+                params.append(
+                    DSCModelParameter(
+                        name=f"s{i + 1}",
+                        bounds=(-5.0, 5.0),
+                        typical_range=(log_spacing, log_spacing),
+                        transform=TransformType.IDENTITY,
+                        transformed_prior_sigma=spacing_sigma,
+                        description=f"Log-spacing for CP {i + 1}",
+                        units="log(s)",
+                    )
+                )
+
         return params
 
     def get_initial_guess(self) -> list[float]:
-        """Get initial parameter guess with constant multiplicative fractions.
+        """Get FABBER-parity initial guess in NATURAL space.
 
-        For exponential decay R(t) = exp(-t/τ), all multiplicative fractions
-        are identical: f_i = R(t_i)/R(t_{i-1}) = exp(-Δt/τ) = exp(-1/τ).
+        Mirrors FABBER's ``GetInitialPosterior`` for ``dsc_cpi`` — no
+        data-driven warm-start.
 
         Returns:
-            List: [cbf_init, exp(-1/τ), exp(-1/τ), ...] where τ = N/2.
+            List: [cbf=1.0, f1=0.378, ..., fN=0.378] (+ N log-spacings
+            anchored at log(uniform_spacing) when infer_cpt is True).
         """
-        x0: list[float] = [0.08]
-        tau = self._n_control_points / 2.0
-        frac = float(np.exp(-1.0 / tau))
-        for _i in range(1, self._n_control_points):
-            x0.append(frac)
+        cbf_init = 1.0
+        amp_init = float(1.0 / (1.0 + np.exp(0.5)))  # ≈0.378
+
+        x0: list[float] = [cbf_init]
+        for _i in range(self._n_control_points):
+            x0.append(amp_init)
+
+        if self._infer_cpt:
+            uniform_spacing = float(
+                self._control_point_times[1] - self._control_point_times[0]
+            ) if self._n_control_points >= 2 else 1.0
+            log_spacing = float(np.log(max(uniform_spacing, 1e-6)))
+            for _i in range(self._n_control_points):
+                x0.append(log_spacing)
+
         return x0
 
     def get_parameter_names(self) -> list[str]:
         """Get list of parameter names.
 
         Returns:
-            List: ['cbf', 'f1', 'f2', ..., 'f(N-1)']
+            List: ['cbf', 'f1', ..., 'fN'] (+ 's1'...'sN' when infer_cpt).
         """
-        return ["cbf"] + [f"f{i}" for i in range(1, self._n_control_points)]
+        names = ["cbf"] + [f"f{i + 1}" for i in range(self._n_control_points)]
+        if self._infer_cpt:
+            names += [f"s{i + 1}" for i in range(self._n_control_points)]
+        return names
 
     def enforce_constraints(
         self, params: ParamsLike
@@ -216,24 +311,51 @@ class CPIModel(DSCModel):
         """Convert multiplicative fractions to dimensionless R(t) values.
 
         Each f_i is clipped to [0,1] and the cumulative product gives
-        R(t_i) = f_1 × f_2 × ... × f_i, which is monotonically
-        non-increasing by construction.
+        R(t_i) = f_1 × f_2 × ... × f_i (FABBER convention), which is
+        monotonically non-increasing by construction. The (t=0, amp=1)
+        anchor is added downstream by ``residue_function`` / the batched
+        forward, so the first-CP amplitude is a free parameter rather
+        than a forced 1.0.
 
         Args:
-            params: [cbf, f1, f2, ...] where cbf is the scaling parameter
-                and f_i are multiplicative fractions.
+            params: [cbf, f1, f2, ..., fN] where cbf is the scaling
+                parameter and f_i are multiplicative fractions.
 
         Returns:
-            Dimensionless control point values (R(0)=1.0), length =
-            n_control_points.
+            Dimensionless control point values (cumprod of fractions),
+            length = n_control_points.
         """
-        control_values = np.zeros(self._n_control_points, dtype=np.float64)
-        control_values[0] = 1.0
-
-        for i in range(1, self._n_control_points):
-            control_values[i] = control_values[i - 1] * float(np.clip(params[i], 0.0, 1.0))
-
+        n = self._n_control_points
+        fracs = np.array(params[1 : 1 + n], dtype=np.float64)
+        fracs = np.clip(fracs, 0.0, 1.0)
+        control_values = np.cumprod(fracs)
         return control_values
+
+    def _compute_cp_times_from_params(
+        self, params: ParamsLike
+    ) -> npt.NDArray[np.floating]:
+        """Compute control point times, optionally from log-spacing params.
+
+        Layout under ``infer_cpt``: params = [cbf, f_1..f_N, s_1..s_N].
+        ``s_i`` is the log-spacing between the (i-1)-th anchor and the
+        i-th CP, so cp_times[i] = sum_{k<=i} exp(s_k).
+
+        Args:
+            params: Full parameter vector.
+
+        Returns:
+            Control point times array, shape (N,).
+        """
+        if not self._infer_cpt:
+            return self._control_point_times
+
+        n = self._n_control_points
+        log_spacings = np.array(
+            [float(params[1 + n + i]) for i in range(n)], dtype=np.float64
+        )
+        spacings = np.exp(log_spacings)
+        cp_times = np.cumsum(spacings).astype(np.float64)
+        return cp_times
 
     def residue_function(
         self,
@@ -242,103 +364,50 @@ class CPIModel(DSCModel):
     ) -> npt.NDArray[np.floating]:
         """Compute the dimensionless residue function R(t) using PCHIP.
 
-        The residue is a smooth spline through the control points,
-        constrained to be monotonically decreasing and non-negative.
-        R(0) = 1.0 and all values are in [0, 1].
+        Uses the FABBER terminal anchor at ``(n_acquisition_frames+1)*dt``
+        when ``infer_cpt`` is False; under ``infer_cpt`` the terminal sits
+        one inferred-spacing past the last CP.
 
         Args:
-            params: Parameter values [cbf, f1, ..., f(N-1)].
+            params: Parameter values [cbf, f1, ..., f(N-1), [s1, ..., s(N-1)]].
             time_points: Time points (seconds) at which to evaluate R(t).
 
         Returns:
             Dimensionless residue function values R(t) at each time point.
         """
-        # Enforce constraints (returns dimensionless values with R(0)=1.0)
         control_values = self.enforce_constraints(params)
+        cp_times = self._compute_cp_times_from_params(params)
 
-        # Create PCHIP interpolant
-        # PCHIP (Piecewise Cubic Hermite Interpolating Polynomial) preserves
-        # monotonicity and is shape-preserving
+        # Append terminal zero-anchor (FABBER: t = (nt+1)*dt for fixed CPs)
+        if self._infer_cpt:
+            last_spacing = float(cp_times[-1] - cp_times[-2]) if len(cp_times) >= 2 else 1.0
+            t_terminal = float(cp_times[-1]) + last_spacing
+        else:
+            t_terminal = self._terminal_time
+
+        # FABBER BC: prepend (t=0, amp=1) anchor when first CP is at t > 0
+        if float(cp_times[0]) > 0.0:
+            cp_times_ext = np.concatenate([[0.0], cp_times, [t_terminal]])
+            cp_vals_ext = np.concatenate([[1.0], control_values, [0.0]])
+        else:
+            cp_times_ext = np.append(cp_times, t_terminal)
+            cp_vals_ext = np.append(control_values, 0.0)
+
         try:
             pchip = interpolate.PchipInterpolator(
-                self._control_point_times,
-                control_values,
+                cp_times_ext,
+                cp_vals_ext,
                 extrapolate=True,
             )
-
-            # Evaluate at requested time points
             residue: npt.NDArray[np.floating] = np.asarray(
                 pchip(time_points), dtype=np.float64
             )
         except ValueError:
-            # Fallback: linear interpolation if PCHIP fails
-            residue = np.interp(
-                time_points,
-                self._control_point_times,
-                control_values,
-            )
+            residue = np.interp(time_points, cp_times_ext, cp_vals_ext)
 
-        # PCHIP can overshoot above 1.0 between knots due to cubic interpolation.
         residue = np.clip(residue, 0.0, 1.0)
-
-        # Handle extrapolation beyond control point range
-        # For t > t_max: extrapolate towards zero
-        # For t < t_min: use R(0) = 1.0
-        if len(time_points) > 0:
-            t_max = self._time_range[1]
-            beyond_mask = time_points > t_max
-
-            if np.any(beyond_mask):
-                # Exponential decay beyond last control point
-                # Use last two control points to estimate decay rate
-                if self._n_control_points >= 2:
-                    r_last = float(control_values[-1])
-                    r_prev = float(control_values[-2])
-                    dt = self._control_point_times[-1] - self._control_point_times[-2]
-
-                    # Decay rate from last two points
-                    # The clip on line below serves as a secondary safety net,
-                    # bounding extreme log ratios from near-zero control points.
-                    if r_prev > EPSILON_CONCENTRATION and r_last > EPSILON_CONCENTRATION:
-                        decay_rate = np.log(r_prev / max(r_last, EPSILON_CONCENTRATION)) / dt
-                        decay_rate = float(np.clip(decay_rate, 0.01, 1.0))
-                    else:
-                        decay_rate = 0.1  # Default: 10s time constant
-
-                    # Exponential extrapolation
-                    t_excess = time_points[beyond_mask] - t_max
-                    residue[beyond_mask] = r_last * np.exp(-decay_rate * t_excess)
-
         return residue
 
-    def compute_nlls_seed(
-        self,
-        concentration: npt.NDArray[np.floating],
-        aif: npt.NDArray[np.floating],
-        time_points: npt.NDArray[np.floating],
-    ) -> npt.NDArray[np.floating] | None:
-        """Compute NLLS seed for Bayesian VI initialization.
-
-        CPI's high-dimensional spline space requires a good starting point
-        for VI to prevent noise precision collapse. Runs a quick L-BFGS-B
-        fit and returns the parameter array.
-
-        Args:
-            concentration: Measured tissue concentration curve.
-            aif: Arterial input function.
-            time_points: Time points (seconds).
-
-        Returns:
-            Parameter array from NLLS fit, or None if fitting failed.
-        """
-        result = _fit_cpi_simple(
-            self, concentration, aif, time_points, sloppy=True
-        )
-        if result is not None and (result.converged or result.r_squared > 0.5):
-            return np.array(
-                self.dict_to_params(result.parameters), dtype=np.float64
-            )
-        return None
 
     def compute_fitted_residue(
         self,
@@ -444,10 +513,9 @@ class CPIModel(DSCModel):
             CBV value (relative, dimensionless).
         """
         if time_points is None:
-            # Use fine-grained time points for accurate integration
             time_points = np.linspace(
-                self._time_range[0],
-                self._time_range[1] * 1.5,  # Extend for tail
+                0.0,
+                self._terminal_time,
                 200,
             )
 
@@ -455,7 +523,6 @@ class CPIModel(DSCModel):
         residue_norm = self.residue_function(params, time_points)
         dt = float(time_points[1] - time_points[0])
 
-        # CBV = CBF × ∫R_norm(t) dt (no /60 — relative units)
         cbv = cbf * float(np.trapezoid(residue_norm, dx=dt))
 
         return cbv
@@ -482,8 +549,8 @@ class CPIModel(DSCModel):
 
         if time_points is None:
             time_points = np.linspace(
-                self._time_range[0],
-                self._time_range[1] * 1.5,
+                0.0,
+                self._terminal_time,
                 200,
             )
 
@@ -496,27 +563,80 @@ class CPIModel(DSCModel):
         return mtt
 
 
+_INFER_CPT_DECAY_DIVISOR_SEC: float = 3.0
+"""Empirically-calibrated divisor for the tail-decay → N rule under
+``infer_cpt=True``. Calibration anchor:
+``tests/benchmarks/run_cpi_n_sweep_infer_cpt.py`` showed a sharp cliff at
+N=7→8 for Long MTT=12s tissue (CBF bias +9.5%→+0.6%); divisor=3.0 gives
+N=8 for the gamma-variate DRO mean tissue (decay≈22.5s), landing exactly
+at the cliff with no headroom.
+
+This is intentional: the cliff is sharp, so N=8 is genuinely sufficient
+(not borderline). Adding margin (e.g. divisor=2.5 → N=9 on the DRO)
+would erase the variance gain on short-MTT data without measurable
+accuracy improvement. The defense for unusual cohorts is the adaptive
+*scaling*: stroke-like data with longer tail decay scales N upward
+naturally (τ=20s → N=15), so users with pathologically long MTT are
+covered automatically.
+
+If real clinical data shows the cliff position is noise- or
+SNR-dependent, recalibrate via the N-sweep benchmark before changing
+this constant."""
+
+
 def select_n_control_points(
     bolus_duration_frames: int,
+    data_duration_sec: float = 30.0,
+    target_spacing_sec: float = 10.0,
     min_n: int = CPI_N_MIN,
     max_n: int = CPI_N_MAX,
+    *,
+    infer_cpt: bool = False,
+    mean_tissue: npt.NDArray[np.floating] | None = None,
+    dt: float | None = None,
 ) -> int:
-    """Automatically select number of control points based on bolus duration.
+    """Automatically select number of control points.
+
+    Two distinct paths based on ``infer_cpt``:
+
+    - **Fixed-CP layout (``infer_cpt=False``)**: legacy heuristic
+      ``max(n_bolus, n_spacing)`` — sufficient bolus density for
+      uniformly-placed CPs.
+    - **Migrating CPs (``infer_cpt=True``) with ``mean_tissue`` + ``dt``**:
+      pure tail-decay-driven N. ``n_bolus`` is dropped here because CPs
+      migrate to optimal locations and don't need a-priori dense bolus
+      sampling. The empirical N-sweep shows N=4 fits short-MTT tissue
+      perfectly under migration.
+
+    If ``infer_cpt=True`` but ``mean_tissue`` or ``dt`` are missing, falls
+    back to the legacy formula (callers without mean_tissue can't use the
+    adaptive path).
 
     Args:
         bolus_duration_frames: Duration of bolus passage in frames.
-        min_n: Minimum number of control points (default 4).
-        max_n: Maximum number of control points (default 12).
+        data_duration_sec: Total data duration in seconds.
+        target_spacing_sec: Target CP spacing in seconds.
+        min_n: Minimum number of control points.
+        max_n: Maximum number of control points.
+        infer_cpt: When True and ``mean_tissue``/``dt`` are provided, use
+            the tail-decay-adaptive formula instead of the legacy
+            heuristic.
+        mean_tissue: Mean tissue concentration across in-mask voxels,
+            shape (T,). Required for the adaptive path.
+        dt: Frame period in seconds. Required for the adaptive path.
 
     Returns:
-        Recommended number of control points.
+        Recommended number of control points, clamped to ``[min_n, max_n]``.
     """
-    n_recommended = int(bolus_duration_frames / 2.0) + 2
+    if infer_cpt and mean_tissue is not None and dt is not None:
+        decay_sec = estimate_tail_decay_time_seconds(mean_tissue, float(dt))
+        n_recommended = int(np.ceil(decay_sec / _INFER_CPT_DECAY_DIVISOR_SEC))
+    else:
+        n_bolus = int(bolus_duration_frames / 2.0) + 2
+        n_spacing = int(data_duration_sec / target_spacing_sec) + 1
+        n_recommended = max(n_bolus, n_spacing)
 
-    # Clamp to valid range
-    n_clamped = max(min_n, min(max_n, n_recommended))
-
-    return n_clamped
+    return max(min_n, min(max_n, n_recommended))
 
 
 def estimate_bolus_duration(
@@ -550,6 +670,60 @@ def estimate_bolus_duration(
 
     # Return at least 5 frames
     return max(5, n_frames_above)
+
+
+def estimate_tail_decay_time_seconds(
+    mean_tissue: npt.NDArray[np.floating],
+    dt: float,
+    threshold_fraction: float = 0.1,
+    fallback_sec: float = 30.0,
+    max_decay_fraction: float = 0.5,
+) -> float:
+    """Time from post-peak frame to first frame at <``threshold_fraction``
+    of peak.
+
+    Returns a property of the mean tissue concentration curve. For
+    exponential residues this scales roughly with mean MTT, but it
+    conflates AIF tail and tissue MTT, so callers treat it as an opaque
+    proxy and apply an empirically-calibrated divisor to derive an N
+    floor. See :func:`select_n_control_points` for the calibration.
+
+    Args:
+        mean_tissue: Mean tissue concentration across in-mask voxels,
+            shape (T,). Pre-computed by the caller.
+        dt: Frame period in seconds.
+        threshold_fraction: Fraction of peak defining the tail end.
+            Matches ``estimate_bolus_duration``'s convention (default 0.1).
+        fallback_sec: Returned when peak detection fails (zero curve,
+            peak at last frame, etc.).
+        max_decay_fraction: Cap returned decay time at
+            ``max_decay_fraction × T·dt``. Prevents runaway N on
+            preloaded studies where the tail never drops below threshold.
+
+    Returns:
+        Decay time in seconds, in [0, max_decay_fraction × T·dt].
+    """
+    n_frames = len(mean_tissue)
+    if n_frames < 2:
+        return fallback_sec
+    if not np.all(np.isfinite(mean_tissue)):
+        return fallback_sec
+    peak_frame = int(np.argmax(mean_tissue))
+    peak_val = float(mean_tissue[peak_frame])
+    if peak_val < EPSILON_CONCENTRATION:
+        return fallback_sec
+    if peak_frame >= n_frames - 1:
+        return fallback_sec
+    threshold = peak_val * threshold_fraction
+    post_peak = mean_tissue[peak_frame:]
+    below = np.where(post_peak < threshold)[0]
+    if len(below) == 0:
+        decay_frames = len(post_peak)
+    else:
+        decay_frames = int(below[0])
+    decay_sec = float(decay_frames * dt)
+    cap_sec = float(max_decay_fraction * n_frames * dt)
+    return min(decay_sec, cap_sec)
 
 
 def select_n_by_bic(
@@ -586,13 +760,17 @@ def select_n_by_bic(
     n_obs = len(concentration)
     results: list[tuple[int, float, float]] = []
 
+    dt_local = float(time_points[1] - time_points[0]) if len(time_points) >= 2 else 1.0
     for n in n_candidates:
         if n < CPI_N_MIN or n > CPI_N_MAX:
             continue
 
         # Create model with this number of control points
-        t_range = (float(time_points[0]), float(time_points[-1]))
-        model = CPIModel(n_control_points=n, time_range=t_range)
+        model = CPIModel(
+            n_control_points=n,
+            n_acquisition_frames=len(time_points),
+            dt=dt_local,
+        )
 
         # Fit model (simple least squares for speed)
         fit_result = _fit_cpi_simple(model, concentration, aif, time_points)
@@ -629,15 +807,17 @@ def _fit_cpi_simple(
     weights: npt.NDArray[np.floating] | None = None,
     sloppy: bool = False,
 ) -> DSCFitResult | None:
-    """Least-squares fit of CPI model using L-BFGS-B.
+    """FABBER-parity NLLS fit of the CPI model (priors-off least squares).
 
-    L-BFGS-B handles box bounds [0,1] on multiplicative fractions.
-    Monotonicity is guaranteed structurally by the cumulative product
-    in enforce_constraints().
+    Mirrors FABBER's ``inference_nlls.cc`` for ``--model=dsc_cpi``:
+    Levenberg-Marquardt-style trust-region reflective optimisation in
+    *fitting space* (sigmoid-transformed fractions, identity CBF). The
+    sigmoid transform implicitly bounds fractions to (0, 1), so no box
+    constraints are imposed beyond the identity-CBF ≥ 0 floor.
 
-    The CBF upper bound is set adaptively based on the data scale
-    (10 × max tissue concentration) to ensure the optimizer can reach
-    the correct solution regardless of input units.
+    Parameter covariance is reported via ``(JᵀJ + 1e-6·I)⁻¹ · MSE``
+    using the Jacobian returned by ``scipy.optimize.least_squares``.
+    Natural-space std on CBF and CBV is recovered via the delta method.
 
     Args:
         model: CPIModel instance.
@@ -645,82 +825,122 @@ def _fit_cpi_simple(
         aif: Arterial input function.
         time_points: Time points (seconds).
         weights: Optional per-frame motion weights (1.0 = full weight).
-        sloppy: Use fast, low-quality settings for testing.
+        sloppy: Use fewer iterations for benchmarks/tests.
 
     Returns:
-        DSCFitResult with fitted parameters, or None if fitting failed.
-        fitted_residue contains the unnormalized residue (CBF × R_norm)
-        so downstream code can extract CBF = max(residue) and
-        CBV = trapezoid(residue, dx=dt).
+        DSCFitResult with fitted parameters in NATURAL space, or None on
+        failure. ``fitted_residue`` contains CBF × R_norm so downstream
+        code can extract CBF = max(residue) and CBV = trapezoid(residue, dx=dt).
     """
     from scipy import optimize  # type: ignore[import-untyped]
 
-    n_params = model.n_parameters
-    bounds = model.get_bounds()
+    from pmriprep.models.bayesian_utils import (
+        TransformType,
+        from_transformed,
+        to_transformed,
+    )
 
-    # Adaptive CBF upper bound: 10× max observed concentration
-    max_conc = float(np.max(np.abs(concentration)))
-    cbf_upper = max(10.0 * max_conc, 1.0)
-    bounds[0] = (0.0, cbf_upper)
+    fitting_defs = list(model.get_fitting_parameter_definitions())
+    n_params = len(fitting_defs)
+    transforms = [d.transform for d in fitting_defs]
+    upper_bounds: list[float | None] = [
+        d.bounds[1] if d.transform == TransformType.LOG_LOGIT else None
+        for d in fitting_defs
+    ]
+    n_obs = len(concentration)
 
-    # Data-driven CBF initial guess: max(concentration) / max(AIF) is a
-    # rough estimate of CBF (ratio of tissue to arterial peak)
-    max_aif = float(np.max(np.abs(aif)))
-    if max_aif > EPSILON_CONCENTRATION:
-        cbf_init = max_conc / max_aif
-    else:
-        cbf_init = 0.1
+    if n_obs <= n_params:
+        return None
 
-    x0 = model.get_initial_guess()
-    x0[0] = cbf_init
+    # Initial guess in NATURAL space → fitting space
+    x0_nat = np.asarray(model.get_initial_guess(), dtype=np.float64)
+    x0_fit = np.array([
+        float(to_transformed(x0_nat[j], transforms[j], upper_bounds[j]))
+        for j in range(n_params)
+    ], dtype=np.float64)
 
-    def objective(params: npt.NDArray[np.floating]) -> float:
-        """Weighted residual sum of squares objective."""
-        predicted = model.tissue_curve(params, aif, time_points)
-        residuals = concentration - predicted
-        if weights is not None:
-            return float(np.sum(weights * residuals**2))
-        return float(np.sum(residuals**2))
+    sqrt_w = (
+        np.sqrt(np.asarray(weights, dtype=np.float64))
+        if weights is not None
+        else np.ones(n_obs, dtype=np.float64)
+    )
+
+    def _to_natural(x_fit: npt.NDArray[np.floating]) -> npt.NDArray[np.float64]:
+        x_nat = np.empty(n_params, dtype=np.float64)
+        for j in range(n_params):
+            x_nat[j] = float(
+                from_transformed(float(x_fit[j]), transforms[j], upper_bounds[j])
+            )
+        return x_nat
+
+    def _residual(x_fit: npt.NDArray[np.floating]) -> npt.NDArray[np.float64]:
+        x_nat = _to_natural(x_fit)
+        predicted = model.tissue_curve(x_nat, aif, time_points)
+        return sqrt_w * (concentration - predicted)
 
     try:
-        result = optimize.minimize(
-            objective,
-            x0,
-            method="L-BFGS-B",
-            bounds=bounds,
-            options={"maxiter": 50 if sloppy else 500, "ftol": 1e-6},
+        max_nfev = 200 if sloppy else 2000
+        ls_result = optimize.least_squares(
+            _residual,
+            x0_fit,
+            method="trf",
+            max_nfev=max_nfev,
+            ftol=1e-8,
+            xtol=1e-8,
         )
-
-        if result.success or result.fun < np.inf:
-            opt_params = np.array(result.x, dtype=np.float64)
-            # Clip multiplicative fractions to [0,1]
-            opt_params[1:] = np.clip(opt_params[1:], 0.0, 1.0)
-            opt_params[0] = max(opt_params[0], 0.0)
-
-            fitted_tissue = model.tissue_curve(opt_params, aif, time_points)
-
-            cbf_fitted = float(opt_params[0])
-            residue_norm = model.residue_function(opt_params, time_points)
-            fitted_residue = cbf_fitted * residue_norm
-
-            ss_res = result.fun
-            ss_tot = float(np.sum((concentration - np.mean(concentration))**2))
-            r_squared = 1.0 - (ss_res / max(ss_tot, EPSILON_CONCENTRATION))
-
-            return DSCFitResult(
-                parameters=model.params_to_dict(opt_params),
-                r_squared=r_squared,
-                residual_sum_squares=float(result.fun),
-                model_name=model.name,
-                n_parameters=n_params,
-                n_observations=len(concentration),
-                converged=result.success,
-                fitting_method="nlls",
-                fitted_residue=fitted_residue,
-                fitted_tissue_curve=fitted_tissue,
-            )
-
     except (ValueError, RuntimeError):
+        return None
+
+    opt_fit = np.array(ls_result.x, dtype=np.float64)
+    opt_nat = _to_natural(opt_fit)
+    opt_nat[0] = max(opt_nat[0], 0.0)  # CBF ≥ 0
+
+    fitted_tissue = model.tissue_curve(opt_nat, aif, time_points)
+    residue_norm = model.residue_function(opt_nat, time_points)
+    fitted_residue = float(opt_nat[0]) * residue_norm
+
+    residuals = concentration - fitted_tissue
+    ss_res = float(np.sum((sqrt_w * residuals) ** 2))
+    ss_tot = float(np.sum((concentration - np.mean(concentration)) ** 2))
+    r_squared = 1.0 - (ss_res / max(ss_tot, EPSILON_CONCENTRATION))
+
+    # Parameter covariance in fitting space: (J^T J + 1e-6 I)^-1 · MSE
+    # FABBER inference_nlls.cc adds a 1e-6 diagonal floor for stability.
+    sidecar_std: dict[str, float] = {}
+    try:
+        J = np.asarray(ls_result.jac, dtype=np.float64)
+        JtJ = J.T @ J + 1e-6 * np.eye(n_params)
+        cov_fit = np.linalg.inv(JtJ) * (ss_res / max(n_obs - n_params, 1))
+        # Delta-method natural-space sigma per parameter
+        for j in range(n_params):
+            tf = transforms[j]
+            sigma_fit_j = float(np.sqrt(max(cov_fit[j, j], 0.0)))
+            if tf == TransformType.LOG:
+                # |dnat/dfit| = exp(fit) = nat
+                jac = float(opt_nat[j])
+            elif tf == TransformType.SIGMOID:
+                nat = float(opt_nat[j])
+                jac = nat * (1.0 - nat)  # |dnat/dfit| at the optimum
+            elif tf == TransformType.LOG_LOGIT:
+                ub = float(upper_bounds[j] or 1.0)
+                nat = float(opt_nat[j])
+                jac = (nat * (ub - nat)) / max(ub, 1e-30)
+            else:  # IDENTITY
+                jac = 1.0
+            sidecar_std[fitting_defs[j].name] = jac * sigma_fit_j
+    except np.linalg.LinAlgError:
         pass
 
-    return None
+    return DSCFitResult(
+        parameters=model.params_to_dict(opt_nat),
+        uncertainties=sidecar_std,
+        r_squared=r_squared,
+        residual_sum_squares=ss_res,
+        model_name=model.name,
+        n_parameters=n_params,
+        n_observations=n_obs,
+        converged=bool(ls_result.success),
+        fitting_method="nlls",
+        fitted_residue=fitted_residue,
+        fitted_tissue_curve=fitted_tissue,
+    )

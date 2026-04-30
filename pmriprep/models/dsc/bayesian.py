@@ -1252,19 +1252,38 @@ def fit_dsc_model(
     """
     fitter = BayesianDSCFitter(model, noise_std=noise_std)
 
-    if method.lower() == "map":
+    method_lower = method.lower()
+    # Spatial VB collapses to plain VI at the per-voxel scalar level
+    # (spatial coupling is handled by the batched_dsc_spatial_vi_fit wrapper).
+    if method_lower == "svb":
+        method_lower = "vi"
+
+    if method_lower == "nlls":
+        # FABBER-parity NLLS lives only on the CPI path
+        from pmriprep.models.dsc.cpi import CPIModel, _fit_cpi_simple
+        if not isinstance(model, CPIModel):
+            raise ValueError(
+                "method='nlls' is only supported for CPIModel; got "
+                f"{type(model).__name__}. Use 'map' or 'vi' for other models."
+            )
+        result = _fit_cpi_simple(model, concentration, aif, time_points,
+                                 weights=weights, sloppy=sloppy)
+        if result is None:
+            raise RuntimeError("CPI NLLS fit failed to converge")
+        return result
+    elif method_lower == "map":
         return fitter.fit_map(
             concentration, aif, time_points,
             compute_uncertainties=compute_uncertainties,
             weights=weights,
             sloppy=sloppy,
         )
-    elif method.lower() == "vi":
+    elif method_lower == "vi":
         return fitter.fit_vi(
             concentration, aif, time_points, weights=weights,
             sloppy=sloppy,
         )
-    elif method.lower() == "mcmc":
+    elif method_lower == "mcmc":
         return fitter.fit_mcmc(
             concentration, aif, time_points, n_samples=mcmc_samples,
             weights=weights,
@@ -1272,5 +1291,6 @@ def fit_dsc_model(
         )
     else:
         raise ValueError(
-            f"Unknown fitting method: {method}. Use 'map', 'vi', or 'mcmc'."
+            f"Unknown fitting method: {method}. "
+            "Use 'nlls', 'map', 'vi', 'svb', or 'mcmc'."
         )
