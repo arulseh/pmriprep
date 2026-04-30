@@ -1629,6 +1629,9 @@ def init_dsc_preproc_wf(
                 "cbf_ci95_upper_map",
                 "cbv_ci95_lower_map",
                 "cbv_ci95_upper_map",
+                # Parametric-fit diagnostics (CPI/Vascular only)
+                "parametric_r2_map",
+                "fallback_mask",
                 # Relative maps (always produced)
                 "rel_cbf_map",
                 "rel_cbv_map",
@@ -2937,6 +2940,12 @@ def init_dsc_preproc_wf(
             ("out_cbf_ci95_upper", "cbf_ci95_upper_map"),
             ("out_cbv_ci95_lower", "cbv_ci95_lower_map"),
             ("out_cbv_ci95_upper", "cbv_ci95_upper_map"),
+        ]),
+        # Parametric-fit diagnostics (CPI/Vascular only;
+        # undefined for SVD methods)
+        (compute_maps, outputnode, [
+            ("out_parametric_r2", "parametric_r2_map"),
+            ("out_fallback_mask", "fallback_mask"),
         ]),
         # AIF outputs
         (aif_detect, outputnode, [

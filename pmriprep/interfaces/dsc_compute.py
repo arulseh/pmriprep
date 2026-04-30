@@ -574,6 +574,14 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_cbf_ci95_upper = File(desc="CBF 95% CI upper bound (VI/MCMC only)")
     out_cbv_ci95_lower = File(desc="CBV 95% CI lower bound (VI/MCMC only)")
     out_cbv_ci95_upper = File(desc="CBV 95% CI upper bound (VI/MCMC only)")
+    out_parametric_r2 = File(
+        desc="Per-voxel R² of parametric fit (CPI / Vascular only). "
+        "Raw value preserved on fallback voxels; see out_fallback_mask."
+    )
+    out_fallback_mask = File(
+        desc="Binary mask: 1 where parametric fit fell back to oSVD "
+        "(CPI / Vascular only)"
+    )
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
 
@@ -909,6 +917,8 @@ class ComputeDSCMaps(BaseInterface):
         Optional[npt.NDArray[Any]],  # cbf_ci_upper_map (parametric only)
         Optional[npt.NDArray[Any]],  # cbv_ci_lower_map (parametric only)
         Optional[npt.NDArray[Any]],  # cbv_ci_upper_map (parametric only)
+        Optional[npt.NDArray[Any]],  # parametric_r2_map (parametric only)
+        Optional[npt.NDArray[Any]],  # fallback_mask (parametric only)
     ]:
         """Run parametric model deconvolution (vascular, CPI).
 
@@ -931,6 +941,19 @@ class ComputeDSCMaps(BaseInterface):
         cth_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cbf_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
         cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
+        # Parametric-fit R² map and oSVD-fallback mask (parametric only).
+        # R² inits to NaN so plotting tools render outside-brain voxels
+        # transparent; raw parametric R² is preserved on fallback voxels
+        # (the fallback mask separately flags which method produced
+        # the saved CBF/CBV/MTT/Tmax in that voxel).
+        parametric_r2_map = (
+            np.full(spatial_shape, np.nan, dtype=np.float32)
+            if method in ("cpi", "vascular") else None
+        )
+        fallback_mask = (
+            np.zeros(spatial_shape, dtype=np.uint8)
+            if method in ("cpi", "vascular") else None
+        )
         has_ci = inference in ("vi", "svb", "mcmc", "map", "nlls")
         cbf_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
         cbf_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
@@ -1077,6 +1100,11 @@ class ComputeDSCMaps(BaseInterface):
 
             if res.get("r_squared") is not None:
                 r_squared_list.append(res["r_squared"])
+                # Scatter raw parametric R² into 3-D map even on
+                # would-fallback voxels — keeps the close-call vs
+                # catastrophic distinction visible in the saved map.
+                if parametric_r2_map is not None:
+                    parametric_r2_map[x, y, z] = float(res["r_squared"])
             if res.get("converged"):
                 n_converged += 1
 
@@ -1125,6 +1153,8 @@ class ComputeDSCMaps(BaseInterface):
                     cbv_ci_lower_map[x, y, z] = 0.0
                 if cbv_ci_upper_map is not None:
                     cbv_ci_upper_map[x, y, z] = 0.0
+                if fallback_mask is not None:
+                    fallback_mask[x, y, z] = 1
                 n_fallback += 1
             except Exception:
                 pass  # leave as parametric result or zeros
@@ -1149,7 +1179,8 @@ class ComputeDSCMaps(BaseInterface):
 
         return (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map,
                 cbf_std_map, cbv_std_map,
-                cbf_ci_lower_map, cbf_ci_upper_map, cbv_ci_lower_map, cbv_ci_upper_map)
+                cbf_ci_lower_map, cbf_ci_upper_map, cbv_ci_lower_map, cbv_ci_upper_map,
+                parametric_r2_map, fallback_mask)
 
     @staticmethod
     def _build_dsc_parametric_setup(
@@ -1611,11 +1642,12 @@ class ComputeDSCMaps(BaseInterface):
                 else:
                     enhancing_mask_data = enh_data
 
-            qc_voxel = _select_dsc_qc_voxel(
+            qc_voxel, qc_voxel_tier = _select_dsc_qc_voxel(
                 cbf_map, mask_bool, binary_erosion,
                 enhancing_mask=enhancing_mask_data,
             )
             x, y, z = qc_voxel
+            self._qc_voxel_tier = qc_voxel_tier
             tissue_curve = conc_data[x, y, z, :].astype(np.float64)
 
             if np.max(np.abs(tissue_curve)) < EPSILON_CONCENTRATION:
@@ -1776,11 +1808,12 @@ class ComputeDSCMaps(BaseInterface):
                 else:
                     enhancing_mask_data = enh_data
 
-            qc_voxel = _select_dsc_qc_voxel(
+            qc_voxel, qc_voxel_tier = _select_dsc_qc_voxel(
                 cbf_map, mask_bool, binary_erosion,
                 enhancing_mask=enhancing_mask_data,
             )
             x, y, z = qc_voxel
+            self._qc_voxel_tier = qc_voxel_tier
             tissue_curve = conc_data[x, y, z, :].astype(np.float64)
 
             if np.max(np.abs(tissue_curve)) < EPSILON_CONCENTRATION:
@@ -2057,7 +2090,9 @@ class ComputeDSCMaps(BaseInterface):
             (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map,
              cth_map, cbf_std_map, cbv_std_map,
              cbf_ci_lower_map, cbf_ci_upper_map,
-             cbv_ci_lower_map, cbv_ci_upper_map) = self._deconvolve_parametric(
+             cbv_ci_lower_map, cbv_ci_upper_map,
+             parametric_r2_map,
+             fallback_mask) = self._deconvolve_parametric(
                 conc_data, aif, mask, method, dt, inference, mcmc_samples, cpi_control_points,
                 cpi_infer_cpt,
                 motion_weights=motion_weights,
@@ -2338,9 +2373,13 @@ class ComputeDSCMaps(BaseInterface):
         # -----------------------------------------------------------
         # Helper to save a 3D array as NIfTI
         # -----------------------------------------------------------
-        def _save_map(data: npt.NDArray[Any], suffix: str) -> str:
+        def _save_map(
+            data: npt.NDArray[Any],
+            suffix: str,
+            dtype: Any = np.float32,
+        ) -> str:
             path = self._gen_outfilename(suffix)
-            img = nib.Nifti1Image(data.astype(np.float32), affine, header)  # type: ignore[attr-defined]
+            img = nib.Nifti1Image(data.astype(dtype), affine, header)  # type: ignore[attr-defined]
             nib.save(img, path)  # type: ignore[attr-defined]
             return path
 
@@ -2452,6 +2491,12 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["qc_voxel"] = f"({vx}, {vy}, {vz})"
             qc_metrics["qc_voxel_cbv"] = round(float(rel_cbv[vx, vy, vz]), 4)
             qc_metrics["qc_voxel_r2"] = round(_fit.get("r_squared", 0.0), 4)
+            # Tier name from _select_dsc_qc_voxel — confirms at a glance
+            # whether the example voxel landed in the enhancing tumor
+            # mask (when one was available) or fell through to brain.
+            tier = getattr(self, "_qc_voxel_tier", None)
+            if tier is not None:
+                qc_metrics["qc_voxel_tier"] = tier
 
         # Save Bayesian uncertainty maps (parametric methods only)
         if method in ("cpi", "vascular"):
@@ -2495,6 +2540,21 @@ class ComputeDSCMaps(BaseInterface):
                     cbv_ci_upper_map = np.where(mask_bool, cbv_ci_upper_map, 0.0)
                     self._results["out_cbv_ci95_upper"] = _save_map(
                         cbv_ci_upper_map, "_cbv_ci95_upper")
+
+            # Parametric-fit R² and oSVD-fallback mask (saved as
+            # diagnostic outputs; not surfaced in HTML report).
+            if parametric_r2_map is not None:  # type: ignore[possibly-undefined]
+                # Mask outside-brain to NaN so plotting tools render the
+                # background as transparent rather than zero.
+                _r2 = np.where(mask_bool, parametric_r2_map, np.nan).astype(np.float32)
+                self._results["out_parametric_r2"] = _save_map(
+                    _r2, "_dscParametric_r2"
+                )
+            if fallback_mask is not None:  # type: ignore[possibly-undefined]
+                _fb = np.where(mask_bool, fallback_mask, 0).astype(np.uint8)
+                self._results["out_fallback_mask"] = _save_map(
+                    _fb, "_dscFallback_mask", dtype=np.uint8,
+                )
 
         # Save residues if requested
         if residues is not None and self.inputs.save_residue:

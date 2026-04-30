@@ -200,6 +200,24 @@ class TestApplyAifSidecar:
         assert sidecar["AIFDependent"] is False
         assert sidecar["TemplateAIFUsage"] == "safe"
 
+    def test_parametric_r2_is_independent_and_safe(self) -> None:
+        """Parametric-fit R² is AIF-amplitude-independent (model-fit
+        diagnostic). Tagged ``safe``.
+        """
+        sidecar: dict = {}
+        qc = {"aif_detection": {"detection_method": "synthetic"}}
+        apply_aif_sidecar(sidecar, "parametric_r2", qc)
+        assert sidecar["AIFDependent"] is False
+        assert sidecar["TemplateAIFUsage"] == "safe"
+
+    def test_fallback_mask_is_independent_and_safe(self) -> None:
+        """oSVD-fallback mask is a binary gate decision; AIF-independent."""
+        sidecar: dict = {}
+        qc = {"aif_detection": {"detection_method": "synthetic"}}
+        apply_aif_sidecar(sidecar, "fallback", qc)
+        assert sidecar["AIFDependent"] is False
+        assert sidecar["TemplateAIFUsage"] == "safe"
+
     def test_unknown_map_key_raises(self) -> None:
         with pytest.raises(KeyError, match="Unknown DSC map key"):
             apply_aif_sidecar({}, "not_a_real_map", {"aif_detection": {}})
@@ -243,12 +261,15 @@ class TestTemplateAifUsageCoverage:
         bayesian_keys = {"cbf_std", "cbv_std", "cbfCV", "cbvCV",
                          "cbfCI95lower", "cbfCI95upper",
                          "cbvCI95lower", "cbvCI95upper"}
+        # Parametric-fit diagnostics added in v0.35.0.
+        parametric_diag_keys = {"parametric_r2", "fallback"}
         smoothed_hemo_keys = {"mtt", "rel_cbf", "rel_cbv", "ncbf", "ncbv"}
         smoothed_auc_keys = {"rel_auc_corr"}
 
         all_keys = (rel_map_keys | core_map_keys | optional_map_keys
                     | normalized_keys | leakage_keys | vascular_keys
-                    | bayesian_keys | smoothed_hemo_keys | smoothed_auc_keys)
+                    | bayesian_keys | parametric_diag_keys
+                    | smoothed_hemo_keys | smoothed_auc_keys)
         missing = all_keys - set(TEMPLATE_AIF_USAGE.keys())
         assert not missing, (
             f"Writer keys not registered in TEMPLATE_AIF_USAGE: {missing}. "

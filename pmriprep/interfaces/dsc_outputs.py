@@ -42,6 +42,8 @@ AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
     "cnr", "snr", "tsnr",                          # quality metrics
     "auc_diff",                                    # tissue AUC difference
     "ttp", "ttpCorrected", "rttp",                 # tissue peak timing
+    "parametric_r2",                               # model-fit diagnostic (CPI/Vascular only)
+    "fallback",                                    # binary gate decision (R²<0.5)
 })
 
 TemplateAIFUsageCategory = Literal[
@@ -102,6 +104,9 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "rel_cbv": "ratio_defensible",
     # smoothed AUC keys
     "rel_auc_corr": "ratio_defensible",
+    # parametric-fit diagnostics (R²/fallback gate decision are AIF-amplitude-independent)
+    "parametric_r2": "safe",
+    "fallback": "safe",
 }
 
 
@@ -263,6 +268,16 @@ class DSCDerivativeWriterInputSpec(BaseInterfaceInputSpec):
     cbf_ci95_upper_map = traits.Either(traits.Str, None, desc="CBF 95% CI upper bound path (VI/MCMC only)")
     cbv_ci95_lower_map = traits.Either(traits.Str, None, desc="CBV 95% CI lower bound path (VI/MCMC only)")
     cbv_ci95_upper_map = traits.Either(traits.Str, None, desc="CBV 95% CI upper bound path (VI/MCMC only)")
+
+    # Parametric-fit diagnostics (CPI/Vascular only)
+    parametric_r2_map = traits.Either(
+        traits.Str, None,
+        desc="Parametric-fit R² map path (CPI/Vascular only)",
+    )
+    fallback_mask = traits.Either(
+        traits.Str, None,
+        desc="oSVD fallback mask path (CPI/Vascular only)",
+    )
 
     # Leakage correction (optional)
     k2_map = traits.Either(traits.Str, None, desc="K2 leakage correction map path")
@@ -554,6 +569,66 @@ class DSCDerivativeWriter(BaseInterface):
                 sidecar["KepUsed"] = preload_qc["kep_used"]
                 sidecar["KepUnits"] = "1/s"
             apply_aif_sidecar(sidecar, "k2", qc_for_aif)
+            write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
+
+        # -----------------------------------------------------------
+        # 5a. Parametric-fit diagnostics (CPI / Vascular only):
+        #     R² map (raw parametric R²; preserved on fallback voxels)
+        #     and binary fallback mask (1 = oSVD-fallback voxel).
+        # -----------------------------------------------------------
+        _all_qc = (
+            self.inputs.qc_metrics
+            if isdefined(self.inputs.qc_metrics) else {}
+        )
+        deconv_qc = _all_qc.get("deconvolution", {}) if isinstance(
+            _all_qc, dict
+        ) else {}
+        fit_method = deconv_qc.get("method", "")
+        inference_engine = deconv_qc.get("inference", "")
+
+        if has_input(self.inputs, "parametric_r2_map"):
+            fname = f"{prefix}_{spatial}_desc-dscParametric_r2"
+            copy_derivative(
+                self.inputs.parametric_r2_map, perf_dir / f"{fname}.nii.gz",
+            )
+            sidecar = {
+                **base_sidecar,
+                "Description": (
+                    "Per-voxel R² (coefficient of determination) of the "
+                    "parametric DSC fit (CPI / Vascular) against the "
+                    "K2-corrected tissue concentration. Raw parametric R² "
+                    "is preserved on voxels that fell back to oSVD — see "
+                    "dscFallback_mask to identify those. The CBF/CBV/MTT/"
+                    "Tmax saved in fallback voxels comes from oSVD, NOT "
+                    "from a fit with this R²."
+                ),
+                "FitMethod": fit_method,
+                "InferenceEngine": inference_engine,
+                "FallbackThreshold": 0.5,
+            }
+            apply_aif_sidecar(sidecar, "parametric_r2", qc_for_aif)
+            write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
+
+        if has_input(self.inputs, "fallback_mask"):
+            fname = f"{prefix}_{spatial}_desc-dscFallback_mask"
+            copy_derivative(
+                self.inputs.fallback_mask, perf_dir / f"{fname}.nii.gz",
+            )
+            sidecar = {
+                **base_sidecar,
+                "Description": (
+                    "Binary oSVD-fallback mask. 1 = the parametric R²<0.5 "
+                    "gate rejected this voxel and the saved CBF/CBV/MTT/"
+                    "Tmax come from svd_deconvolve_oscillation; the "
+                    "parametric uncertainty maps (cbf_std, cbv_std, "
+                    "CV, CI95) are zero-filled in these voxels. 0 = the "
+                    "parametric fit was retained."
+                ),
+                "FitMethod": fit_method,
+                "InferenceEngine": inference_engine,
+                "FallbackThreshold": 0.5,
+            }
+            apply_aif_sidecar(sidecar, "fallback", qc_for_aif)
             write_json_sidecar(sidecar, perf_dir / f"{fname}.json")
 
         # -----------------------------------------------------------

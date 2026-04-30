@@ -28,7 +28,7 @@ def _select_dsc_qc_voxel(
     brain_mask: npt.NDArray[np.bool_],
     binary_erosion: Any,
     enhancing_mask: npt.NDArray[Any] | None = None,
-) -> tuple[int, int, int]:
+) -> tuple[tuple[int, int, int], str]:
     """Select an example voxel for DSC fit QC display.
 
     Tiered selection (adapted from DCE _select_qc_voxel for CBF):
@@ -45,7 +45,11 @@ def _select_dsc_qc_voxel(
             the enhancing region.
 
     Returns:
-        (x, y, z) voxel coordinates.
+        Tuple of ((x, y, z) voxel coordinates, tier name). The tier name
+        is one of ``"enhancing"``, ``"eroded_brain"``, ``"center"`` and
+        is stamped into the QC JSON so reviewers can confirm at a glance
+        that the example-fit voxel landed in the clinically-relevant
+        region.
     """
     def _near_median(search_mask: npt.NDArray[np.bool_]) -> tuple[int, int, int] | None:
         vals = cbf[search_mask]
@@ -66,7 +70,7 @@ def _select_dsc_qc_voxel(
         if np.any(enh_with_cbf):
             result = _near_median(enh_with_cbf)
             if result is not None:
-                return result
+                return result, "enhancing"
 
     # Tier 2: Eroded brain mask with nonzero CBF
     eroded_brain = binary_erosion(brain_mask, iterations=3)
@@ -75,12 +79,12 @@ def _select_dsc_qc_voxel(
         if np.any(eroded_with_cbf):
             result = _near_median(eroded_with_cbf)
             if result is not None:
-                return result
+                return result, "eroded_brain"
 
     # Tier 3: Fallback — center of brain mask
     coords = np.where(brain_mask)
     mid = len(coords[0]) // 2
-    return int(coords[0][mid]), int(coords[1][mid]), int(coords[2][mid])
+    return (int(coords[0][mid]), int(coords[1][mid]), int(coords[2][mid])), "center"
 
 
 def generate_dsc_preprocessing_qc_plot(

@@ -1930,6 +1930,9 @@ def init_pmriprep_wf(
                 ("outputnode.cbf_ci95_upper_map", "cbf_ci95_upper_map"),
                 ("outputnode.cbv_ci95_lower_map", "cbv_ci95_lower_map"),
                 ("outputnode.cbv_ci95_upper_map", "cbv_ci95_upper_map"),
+                # Parametric-fit diagnostics (CPI/Vascular only)
+                ("outputnode.parametric_r2_map", "parametric_r2_map"),
+                ("outputnode.fallback_mask", "fallback_mask"),
                 # Leakage correction
                 ("outputnode.k2_map", "k2_map"),
                 ("outputnode.preload_qc", "preload_qc"),
