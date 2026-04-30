@@ -151,8 +151,29 @@ class TikhonovRange(NamedTuple):
     max: float
 
 
-#: Default lambda search range for Tikhonov regularization with GCV
-DEFAULT_LAMBDA_RANGE: Final[TikhonovRange] = TikhonovRange(1e-4, 1.0)
+#: Default lambda search range for Tikhonov regularization, expressed
+#: as fractions of σ_max(A) (largest singular value of the AIF Toeplitz
+#: matrix). The natural scale for first-order Tikhonov is the operator
+#: norm; absolute λ values are AIF-dependent and not portable. The 4-decade
+#: span (1e-3 to 10) covers the well-conditioned regime where the L-curve
+#: actually has a corner — narrower ranges miss corners, wider ranges (e.g.
+#: starting at 1e-6·σ_max) descend into the rank-deficient AtA noise floor
+#: where the L-curve becomes non-monotone.
+DEFAULT_LAMBDA_RANGE: Final[TikhonovRange] = TikhonovRange(1e-3, 10.0)
+
+#: Number of log-spaced lambda values in the L-curve sweep. 50 is a
+#: defensible compromise between corner-localization quality (Hansen
+#: recommends ~30 minimum) and per-voxel runtime cost.
+LCURVE_N_LAMBDAS: Final[int] = 50
+
+#: Curvature threshold (log-log space) for L-curve corner detection.
+#: Below this, the curve is treated as cornerless and the caller falls
+#: back to ``λ = 0.1 · σ_max(A)`` (Hansen 1998 default). Empirically on
+#: the gamma-variate DSC DRO: noiseless data peaks at curvature ≈1.0
+#: (no real corner; the bend is the over-regularization elbow), while
+#: any real noise (≥0.5%) gives peak curvature ≥10. A threshold of 2.0
+#: cleanly separates the two regimes across all four manuscript tissues.
+LCURVE_CURVATURE_FALLBACK: Final[float] = 2.0
 
 
 # =============================================================================

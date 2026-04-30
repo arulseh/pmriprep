@@ -28,13 +28,14 @@ from typing import Optional
 import numpy as np
 import numpy.typing as npt
 from scipy import linalg
-from scipy.optimize import minimize_scalar
 
 from pmriprep.utils.dsc_constants import (
     DEFAULT_LAMBDA_RANGE,
     DEFAULT_OI_THRESHOLD,
     DEFAULT_SVD_THRESHOLD,
     EPSILON_CONCENTRATION,
+    LCURVE_CURVATURE_FALLBACK,
+    LCURVE_N_LAMBDAS,
 )
 
 logger = logging.getLogger(__name__)
@@ -1204,77 +1205,98 @@ def svd_deconvolve_oscillation_batch(
 
 @dataclass
 class TikhonovDeconvolutionResult(DeconvolutionResultBase):
-    """Result from Tikhonov regularized deconvolution.
+    """Result from Tikhonov regularised deconvolution.
+
+    First-derivative penalty operator with L-curve corner detection
+    (Hansen 1998). Replaces the legacy zeroth-order + GCV implementation
+    that failed on noisy DSC data.
 
     Attributes:
-        lambda_optimal: The optimal regularization parameter λ found by GCV.
-        gcv_score: The GCV score at the optimal λ.
-        residual_norm: ||AR - C||² at the unclipped solution.
-        regularization_norm: ||R||² at the unclipped solution.
-        gcv_boundary_expanded: True if the GCV search was expanded beyond
-            the initial lambda_max boundary.
+        lambda_optimal: λ at the L-curve corner (or fallback default).
+        residual_norm: ||A·r - C||² at the unclipped solution.
+        solution_norm: ||L·r||² at the unclipped solution (where L is
+            the first-derivative operator).
+        lcurve_corner_found: True if the L-curve has a detectable corner
+            (curvature ≥ ``LCURVE_CURVATURE_FALLBACK``); False if the
+            curve was too flat / monotone and the caller fell back to a
+            default λ.
     """
 
     lambda_optimal: float
-    gcv_score: float
     residual_norm: float
-    regularization_norm: float
-    gcv_boundary_expanded: bool = False
+    solution_norm: float
+    lcurve_corner_found: bool = False
 
 
-def _compute_gcv_score(
-    tissue_curve: npt.NDArray[np.floating],
-    u: npt.NDArray[np.floating],
-    s: npt.NDArray[np.floating],
-    vh: npt.NDArray[np.floating],
-    lambda_val: float,
-) -> tuple[float, npt.NDArray[np.floating]]:
-    """Compute Generalized Cross-Validation score for a given λ.
+def _build_first_derivative_matrix(n: int) -> npt.NDArray[np.float64]:
+    """Build the (n-1, n) forward-difference operator L.
 
-    The GCV function is defined as:
-        GCV(λ) = ||AR_λ - C||² / (tr(I - A × A_λ^†))²
+    L[i, i] = -1, L[i, i+1] = +1, used for first-order Tikhonov:
+        min ||A·r - C||² + λ² ||L·r||²
 
-    where A_λ^† is the Tikhonov-regularized pseudoinverse.
-
-    For SVD-based computation:
-        GCV(λ) = Σ[(u_i^T C)² × λ²/(s_i² + λ²)²] / [Σ(λ²/(s_i² + λ²))]²
-
-    Args:
-        tissue_curve: Tissue concentration curve.
-        u, s, vh: SVD decomposition of the Toeplitz matrix.
-        lambda_val: Regularization parameter λ.
-
-    Returns:
-        Tuple of (GCV score, residue function at this λ).
+    The penalty ||L·r||² is the sum of squared first differences,
+    appropriate for residue functions that should vary smoothly.
     """
-    n = len(tissue_curve)
-    lambda_sq = lambda_val ** 2
-    s_sq = s ** 2
+    L = np.zeros((n - 1, n), dtype=np.float64)
+    idx = np.arange(n - 1)
+    L[idx, idx] = -1.0
+    L[idx, idx + 1] = 1.0
+    return L
 
-    # Filter factors: f_i = s_i² / (s_i² + λ²)
-    filter_factors = s_sq / (s_sq + lambda_sq)
 
-    # Compute residue via Tikhonov regularization
-    # R = V @ diag(s / (s² + λ²)) @ U^T @ C
-    s_reg = s / (s_sq + lambda_sq)
-    ut_c = u.T @ tissue_curve  # (n,)
-    residue = vh.T @ (s_reg * ut_c)
+def _precompute_tikhonov_inverses(
+    AtA: npt.NDArray[np.floating],
+    LtL: npt.NDArray[np.floating],
+    lambdas: npt.NDArray[np.floating],
+) -> npt.NDArray[np.float64]:
+    """Precompute (A^T A + λ² L^T L)^{-1} for each λ in the sweep.
 
-    # Residual part of GCV: Σ[(u_i^T C)² × (1 - f_i)²]
-    # = Σ[(u_i^T C)² × (λ²/(s_i² + λ²))²]
-    residual_terms = (ut_c ** 2) * ((1 - filter_factors) ** 2)
-    residual_sum = float(np.sum(residual_terms))
+    Uses Cholesky-based ``np.linalg.solve`` against the identity, which is
+    numerically stable: the system ``A^T A + λ² L^T L`` is symmetric
+    positive definite for any λ > 0 even though L^T L is rank-deficient
+    on its own. This avoids the ill-conditioning of the
+    generalised-eigenvalue pencil (which has near-zero L^T L modes
+    aligned with near-zero A^T A modes for DSC Toeplitz matrices).
 
-    # Denominator: (Σ(1 - f_i))² = (Σ(λ²/(s_i² + λ²)))²
-    trace_term = float(np.sum(1 - filter_factors))
+    Returns an array of shape (n_lambdas, n, n).
+    """
+    n = AtA.shape[0]
+    eye_n = np.eye(n)
+    inverses = np.zeros((len(lambdas), n, n), dtype=np.float64)
+    for k, lam in enumerate(lambdas):
+        M = AtA + (lam ** 2) * LtL
+        inverses[k] = np.linalg.solve(M, eye_n)
+    return inverses
 
-    # GCV = residual_sum / trace_term²
-    if trace_term > 1e-12:
-        gcv = residual_sum / (trace_term ** 2)
-    else:
-        gcv = float("inf")
 
-    return gcv, residue
+def _select_lambda_lcurve(
+    residual_norms: npt.NDArray[np.floating],
+    solution_norms: npt.NDArray[np.floating],
+) -> tuple[int, bool]:
+    """Triangle-method L-curve corner detection (Hansen 1998 + Castellanos 2002).
+
+    Returns (best_index, corner_found). ``corner_found=False`` indicates
+    the L-curve is approximately monotone — the caller should fall back
+    to a conservative default λ.
+    """
+    log_rho = np.log10(np.maximum(residual_norms, 1e-30))
+    log_eta = np.log10(np.maximum(solution_norms, 1e-30))
+    n = len(log_rho)
+    curvatures = np.zeros(n, dtype=np.float64)
+    for i in range(1, n - 1):
+        P_i = np.array([log_rho[i], log_eta[i]])
+        P_lt = np.array([log_rho[i - 1], log_eta[i - 1]])
+        P_rt = np.array([log_rho[i + 1], log_eta[i + 1]])
+        a = float(np.linalg.norm(P_lt - P_i))
+        b = float(np.linalg.norm(P_i - P_rt))
+        c = float(np.linalg.norm(P_lt - P_rt))
+        s = 0.5 * (a + b + c)
+        area2 = max(s * (s - a) * (s - b) * (s - c), 0.0)
+        if a * b * c > 1e-30:
+            curvatures[i] = 4.0 * np.sqrt(area2) / (a * b * c)
+    best_idx = int(np.argmax(curvatures))
+    corner_found = bool(curvatures[best_idx] >= LCURVE_CURVATURE_FALLBACK)
+    return best_idx, corner_found
 
 
 def tikhonov_deconvolve(
@@ -1285,58 +1307,48 @@ def tikhonov_deconvolve(
     lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
     apply_non_negativity: bool = True,
 ) -> TikhonovDeconvolutionResult:
-    """Tikhonov regularized deconvolution with GCV parameter selection.
+    """First-order Tikhonov regularised deconvolution with L-curve λ selection.
 
-    Performs deconvolution by solving the regularized least squares problem:
-        minimize ||AR - C||² + λ²||R||²
+    Solves the regularised least squares problem with a first-derivative
+    smoothness penalty:
+        minimize ||A·r - C||² + λ²||L·r||²
 
-    where A is the Toeplitz convolution matrix from the AIF, R is the residue
-    function, C is the tissue curve, and λ is the regularization parameter.
+    where ``A`` is the Toeplitz convolution matrix built from the AIF, ``r``
+    is the residue function, and ``L`` is the (n-1, n) forward-difference
+    operator that penalises oscillations rather than residue magnitude.
+    First-order Tikhonov is more appropriate than zeroth-order for DSC
+    residues (which physically should vary smoothly) — see Wirestam 2000,
+    Calamante 2003.
 
-    The optimal λ is selected using Generalized Cross-Validation (GCV), which
-    minimizes the leave-one-out cross-validation error:
-        GCV(λ) = ||AR_λ - C||² / (tr(I - A × A_λ^†))²
-
-    The GCV score is minimized over λ using bounded scalar optimization
-    in log10-space (scipy.optimize.minimize_scalar).
+    The optimal λ is selected via the L-curve corner method (Hansen 1998):
+    sweep λ on a log grid, record (||A·r_λ - C||, ||L·r_λ||), find the
+    point of maximum curvature in log-log space.
 
     Args:
         tissue_curve: Tissue concentration curve, shape (n_timepoints,).
-        aif: Arterial input function, shape (n_timepoints,).
-            Must have same length as tissue_curve.
-        dt: Time step in seconds. Default 1.0 gives results in frame units.
-            Provide actual TR for timing parameters (MTT, Tmax) in seconds.
-        lambda_min: Minimum λ value to consider. Default 1e-4.
-        lambda_max: Maximum λ value to consider. Default 1.0.
-        apply_non_negativity: If True, apply non-negativity constraint to
-            residue function by clipping negative values to zero.
-            Default is True.
+        aif: Arterial input function, shape (n_timepoints,). Must match
+            ``tissue_curve`` length.
+        dt: Frame period in seconds. Default 1.0 gives frame-unit timings;
+            provide the actual TR for MTT/Tmax in seconds.
+        lambda_min, lambda_max: Bounds of the log-spaced λ sweep,
+            **expressed as fractions of σ_max(A)** (the largest singular
+            value of the AIF Toeplitz matrix). The natural scale for
+            first-order Tikhonov is the operator norm; absolute λ values
+            are AIF-dependent and not portable. Defaults from
+            ``DEFAULT_LAMBDA_RANGE`` = (1e-3, 10.0).
+        apply_non_negativity: If True, clip negative residue values to zero
+            after solving.
 
     Returns:
-        TikhonovDeconvolutionResult containing residue function, perfusion
-        parameters, and optimal λ.
-
-    Raises:
-        ValueError: If tissue_curve and aif have different lengths.
-        ValueError: If arrays are empty.
-        ValueError: If lambda_min >= lambda_max.
-
-    Notes:
-        - CBF is extracted as max(R(t))
-        - CBV is computed as integral of R(t) using trapezoidal rule
-        - MTT = CBV / CBF (central volume theorem)
-        - Tikhonov regularization provides smooth solutions by penalizing
-          the norm of the residue function
-        - GCV provides automatic parameter selection without requiring a
-          noise estimate
-        - This method is NOT delay-insensitive; consider cSVD for delay estimation
+        TikhonovDeconvolutionResult with the residue, perfusion parameters,
+        chosen λ, and a flag indicating whether the L-curve had a detectable
+        corner.
 
     References:
-        Hansen PC. Rank-Deficient and Discrete Ill-Posed Problems: Numerical
-        Aspects of Linear Inversion. SIAM, 1998.
-
-        Golub GH, Heath M, Wahba G. Generalized cross-validation as a method
-        for choosing a good ridge parameter. Technometrics. 1979;21(2):215-223.
+        Hansen PC. Rank-Deficient and Discrete Ill-Posed Problems. SIAM, 1998.
+        Wirestam R et al. MRM 43:691-700 (2000).
+        Calamante F et al. MRM 50:1237-1247 (2003).
+        Castellanos JL et al. App Numer Math 43:359-373 (2002).
     """
     # Validate inputs
     if len(tissue_curve) != len(aif):
@@ -1355,103 +1367,65 @@ def tikhonov_deconvolve(
         )
 
     n = len(tissue_curve)
+    tissue = tissue_curve.astype(np.float64, copy=False)
 
-    # Build Toeplitz convolution matrix
-    matrix = build_toeplitz_matrix(aif, dt)
+    A = build_toeplitz_matrix(aif, dt)
+    L = _build_first_derivative_matrix(n)
+    AtA = A.T @ A
+    LtL = L.T @ L
+    AtC = A.T @ tissue
 
-    # Perform SVD
-    u, s, vh = linalg.svd(matrix, full_matrices=False)
-
-    # Find optimal λ via continuous GCV minimization in log10-space
-    def gcv_objective(log_lambda: float) -> float:
-        lam = 10.0 ** log_lambda
-        gcv, _ = _compute_gcv_score(tissue_curve, u, s, vh, lam)
-        return gcv
-
-    gcv_boundary_expanded = False
-    try:
-        result = minimize_scalar(
-            gcv_objective,
-            bounds=(np.log10(lambda_min), np.log10(lambda_max)),
-            method="bounded",
+    sigma_max = float(linalg.svdvals(A)[0])
+    if sigma_max <= 0.0:
+        raise ValueError(
+            "AIF produces a degenerate Toeplitz matrix (σ_max = 0)."
         )
-        if result.success and np.isfinite(result.x):
-            best_lambda = 10.0 ** result.x
 
-            # Boundary detection: if GCV minimum is at the upper boundary,
-            # expand the search range (Hansen, SIAM 1998).
-            if result.x > np.log10(lambda_max) - 0.05:
-                expanded_lambda_max = min(lambda_max * 10, 100.0)
-                if expanded_lambda_max <= lambda_max * 1.1:
-                    logger.debug(
-                        "GCV at upper boundary but lambda_max=%.2f "
-                        "already near hard cap; cannot expand.",
-                        lambda_max,
-                    )
-                else:
-                    logger.debug(
-                        "GCV selected lambda=%.4f at upper boundary "
-                        "(lambda_max=%.4f), expanding search to %.2f",
-                        best_lambda, lambda_max, expanded_lambda_max,
-                    )
-                    try:
-                        result2 = minimize_scalar(
-                            gcv_objective,
-                            bounds=(
-                                np.log10(lambda_min),
-                                np.log10(expanded_lambda_max),
-                            ),
-                            method="bounded",
-                        )
-                        if (
-                            result2.success
-                            and np.isfinite(result2.x)
-                            and np.isfinite(result2.fun)
-                            and result2.fun <= result.fun
-                        ):
-                            best_lambda = 10.0 ** result2.x
-                            gcv_boundary_expanded = True
-                            if result2.x > np.log10(expanded_lambda_max) - 0.05:
-                                logger.debug(
-                                    "GCV still at boundary after "
-                                    "expansion (lambda=%.4f).",
-                                    best_lambda,
-                                )
-                    except Exception as e:
-                        logger.debug(
-                            "Expanded GCV search failed (%s); keeping "
-                            "initial lambda=%.4f",
-                            e, best_lambda,
-                        )
-        else:
-            best_lambda = 0.1
-    except Exception:
-        best_lambda = 0.1
+    # λ_min, λ_max are interpreted as fractions of σ_max(A). First-order
+    # Tikhonov has no problem-independent λ scale; absolute values are
+    # AIF-dependent and not portable across protocols. The 4-decade
+    # default sweep keeps the system well-conditioned at the low end
+    # (where AtA alone is rank-deficient for DSC Toeplitz operators).
+    lambdas = np.logspace(
+        np.log10(lambda_min), np.log10(lambda_max), LCURVE_N_LAMBDAS
+    ) * sigma_max
+    residual_norms = np.zeros(LCURVE_N_LAMBDAS, dtype=np.float64)
+    solution_norms = np.zeros(LCURVE_N_LAMBDAS, dtype=np.float64)
+    residues_sweep = np.zeros((LCURVE_N_LAMBDAS, n), dtype=np.float64)
 
-    best_gcv, best_residue = _compute_gcv_score(
-        tissue_curve, u, s, vh, best_lambda
+    for k, lam in enumerate(lambdas):
+        M = AtA + (lam ** 2) * LtL
+        r = np.linalg.solve(M, AtC)
+        residues_sweep[k] = r
+        residual_norms[k] = float(np.linalg.norm(A @ r - tissue))
+        solution_norms[k] = float(np.linalg.norm(L @ r))
+
+    best_idx, corner_found = _select_lambda_lcurve(
+        residual_norms, solution_norms
     )
 
-    # Compute residual norm before non-negativity clipping
-    predicted = matrix @ best_residue
-    residual_norm = float(np.sum((predicted - tissue_curve) ** 2))
-    regularization_norm = float(np.sum(best_residue ** 2))
+    if corner_found:
+        best_lambda = float(lambdas[best_idx])
+        best_residue = residues_sweep[best_idx].copy()
+        best_residual_norm_unsq = residual_norms[best_idx]
+        best_solution_norm_unsq = solution_norms[best_idx]
+    else:
+        # Hansen 1998 default for cornerless / monotone L-curves
+        best_lambda = 0.1 * sigma_max
+        M = AtA + (best_lambda ** 2) * LtL
+        best_residue = np.linalg.solve(M, AtC)
+        best_residual_norm_unsq = float(np.linalg.norm(A @ best_residue - tissue))
+        best_solution_norm_unsq = float(np.linalg.norm(L @ best_residue))
 
-    # Apply non-negativity constraint
+    residual_norm = float(best_residual_norm_unsq ** 2)
+    solution_norm = float(best_solution_norm_unsq ** 2)
+
     if apply_non_negativity:
         best_residue = np.maximum(best_residue, 0.0)
 
-    # Extract perfusion parameters
     cbf = float(np.max(best_residue))
-
-    # CBV via trapezoidal integration of residue (Sourbron & Luypaert 2007)
     cbv = float(np.trapezoid(best_residue, dx=dt))
-
-    # MTT from central volume theorem: MTT = CBV / CBF
-    if cbf > EPSILON_CONCENTRATION:
-        mtt = cbv / cbf
-    else:
-        mtt = 0.0
+    mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION else 0.0
 
     return TikhonovDeconvolutionResult(
         residue=best_residue,
@@ -1459,10 +1433,9 @@ def tikhonov_deconvolve(
         cbv=cbv,
         mtt=mtt,
         lambda_optimal=float(best_lambda),
-        gcv_score=float(best_gcv),
         residual_norm=residual_norm,
-        regularization_norm=regularization_norm,
-        gcv_boundary_expanded=gcv_boundary_expanded,
+        solution_norm=solution_norm,
+        lcurve_corner_found=bool(corner_found),
     )
 
 
@@ -1481,21 +1454,20 @@ def tikhonov_deconvolve_batch(
     npt.NDArray[np.floating],  # mtt
     npt.NDArray[np.floating],  # lambda_optimal
 ]:
-    """Batch Tikhonov deconvolution for multiple voxels.
+    """Batch first-order Tikhonov deconvolution with L-curve λ selection.
 
-    Deconvolves multiple tissue curves using Tikhonov regularization with
-    GCV-based parameter selection. Each voxel gets an individually optimized λ.
-
-    Note: This function processes voxels sequentially because each voxel
-    may require a different optimal λ.
+    Vectorised counterpart of :func:`tikhonov_deconvolve`. The Toeplitz
+    matrix ``A`` and its first-derivative pencil ``(A^T A, L^T L)``
+    eigendecomposition are computed once and shared across all voxels;
+    each voxel runs its own L-curve corner search.
 
     Args:
-        tissue_curves: Tissue concentration curves, shape (n_voxels, n_timepoints)
-            or (x, y, z, n_timepoints) for 4D data.
+        tissue_curves: Tissue concentration curves, shape
+            (n_voxels, n_timepoints) or (x, y, z, n_timepoints) for 4D data.
         aif: Arterial input function, shape (n_timepoints,).
         dt: Time step in seconds.
-        lambda_min: Minimum λ value. Default 1e-4.
-        lambda_max: Maximum λ value. Default 1.0.
+        lambda_min: Minimum λ value (log-grid lower bound).
+        lambda_max: Maximum λ value (log-grid upper bound).
         apply_non_negativity: Apply non-negativity constraint on residue.
         mask: Optional boolean mask of voxels to process. If None, process all.
             Shape must match spatial dimensions of tissue_curves.
@@ -1504,106 +1476,89 @@ def tikhonov_deconvolve_batch(
         Tuple of (residues, cbf, cbv, mtt, lambda_optimal) arrays.
         All output arrays have the same spatial shape as input (excluding time dimension).
     """
-    # Store original shape for reshaping output
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
 
-    # Reshape to 2D (n_voxels, n_timepoints)
     if tissue_curves.ndim > 2:
         spatial_shape = original_shape[:-1]
         n_voxels = int(np.prod(spatial_shape))
-        tissue_2d = tissue_curves.reshape(n_voxels, n_timepoints)
+        tissue_2d = tissue_curves.reshape(n_voxels, n_timepoints).astype(
+            np.float64, copy=False
+        )
     else:
         spatial_shape = (original_shape[0],)
         n_voxels = original_shape[0]
-        tissue_2d = tissue_curves
+        tissue_2d = tissue_curves.astype(np.float64, copy=False)
 
-    # Flatten mask if provided
     if mask is not None:
         mask_flat = mask.flatten()
     else:
         mask_flat = np.ones(n_voxels, dtype=bool)
 
-    # Build Toeplitz matrix and compute SVD once (shared across all voxels)
-    matrix = build_toeplitz_matrix(aif, dt)
-    u, s, vh = linalg.svd(matrix, full_matrices=False)
+    A = build_toeplitz_matrix(aif, dt)
+    L = _build_first_derivative_matrix(n_timepoints)
+    AtA = A.T @ A
+    LtL = L.T @ L
 
-    # Initialize output arrays
+    sigma_max = float(linalg.svdvals(A)[0])
+    if sigma_max <= 0.0:
+        raise ValueError(
+            "AIF produces a degenerate Toeplitz matrix (σ_max = 0)."
+        )
+    fallback_lambda = 0.1 * sigma_max
+
+    # λ bounds are fractions of σ_max(A); see scalar tikhonov_deconvolve
+    # for the rationale. Scale once and reuse for the precomputed inverses.
+    lambdas = np.logspace(
+        np.log10(lambda_min), np.log10(lambda_max), LCURVE_N_LAMBDAS
+    ) * sigma_max
+
+    # Shared precompute: (A^T A + λ² L^T L)^{-1} for each λ. Each system is
+    # SPD for any λ > 0, so np.linalg.solve is rock-solid even where
+    # AtA alone is rank-deficient (typical for DSC Toeplitz matrices).
+    inverses = _precompute_tikhonov_inverses(AtA, LtL, lambdas)
+    M_fallback = AtA + (fallback_lambda ** 2) * LtL
+
     residues = np.zeros((n_voxels, n_timepoints), dtype=np.float64)
     cbf = np.zeros(n_voxels, dtype=np.float64)
     cbv = np.zeros(n_voxels, dtype=np.float64)
     mtt = np.zeros(n_voxels, dtype=np.float64)
     lambda_optimal = np.zeros(n_voxels, dtype=np.float64)
 
-    # Log10 bounds for minimize_scalar
-    log_lambda_min = np.log10(lambda_min)
-    log_lambda_max = np.log10(lambda_max)
-
-    # Process each masked voxel with individual λ optimization via minimize_scalar
     masked_indices = np.where(mask_flat)[0]
     for idx in masked_indices:
-        tissue_curve = tissue_2d[idx, :]
+        tissue = tissue_2d[idx]
+        AtC = A.T @ tissue
 
-        def gcv_objective(log_lambda: float) -> float:
-            lam = 10.0 ** log_lambda
-            gcv, _ = _compute_gcv_score(tissue_curve, u, s, vh, lam)
-            return gcv
+        # R[k, :] = inverses[k] @ AtC — shape (LCURVE_N_LAMBDAS, n)
+        R = inverses @ AtC
 
-        try:
-            result = minimize_scalar(
-                gcv_objective,
-                bounds=(log_lambda_min, log_lambda_max),
-                method="bounded",
-            )
-            if result.success and np.isfinite(result.x):
-                best_lambda = 10.0 ** result.x
+        AR = R @ A.T
+        LR = R @ L.T
+        residual_norms = np.linalg.norm(AR - tissue, axis=1)
+        solution_norms = np.linalg.norm(LR, axis=1)
 
-                # Boundary expansion (matches single-voxel tikhonov_deconvolve)
-                if result.x > log_lambda_max - 0.05:
-                    expanded_lambda_max = min(lambda_max * 10, 100.0)
-                    if expanded_lambda_max > lambda_max * 1.1:
-                        try:
-                            result2 = minimize_scalar(
-                                gcv_objective,
-                                bounds=(
-                                    log_lambda_min,
-                                    np.log10(expanded_lambda_max),
-                                ),
-                                method="bounded",
-                            )
-                            if (
-                                result2.success
-                                and np.isfinite(result2.x)
-                                and np.isfinite(result2.fun)
-                                and result2.fun <= result.fun
-                            ):
-                                best_lambda = 10.0 ** result2.x
-                        except Exception as e:
-                            logger.debug(
-                                "Expanded GCV search failed for voxel %d "
-                                "(%s); keeping initial lambda=%.4f",
-                                idx, e, best_lambda,
-                            )
-            else:
-                best_lambda = 0.1
-        except Exception:
-            best_lambda = 0.1
+        best_idx, corner_found = _select_lambda_lcurve(
+            residual_norms, solution_norms
+        )
 
-        _, best_residue = _compute_gcv_score(tissue_curve, u, s, vh, best_lambda)
+        if corner_found:
+            best_lambda = float(lambdas[best_idx])
+            best_residue = R[best_idx].copy()
+        else:
+            best_lambda = fallback_lambda
+            best_residue = np.linalg.solve(M_fallback, AtC)
 
-        # Apply non-negativity
         if apply_non_negativity:
             best_residue = np.maximum(best_residue, 0.0)
 
-        # Store results for this voxel
         residues[idx, :] = best_residue
         cbf[idx] = float(np.max(best_residue))
         cbv[idx] = float(np.trapezoid(best_residue, dx=dt))
         if cbf[idx] > EPSILON_CONCENTRATION:
             mtt[idx] = cbv[idx] / cbf[idx]
-        lambda_optimal[idx] = float(best_lambda)
+        lambda_optimal[idx] = best_lambda
 
-    # Reshape to original spatial dimensions
     if tissue_curves.ndim > 2:
         residues = residues.reshape(original_shape)  # type: ignore[assignment]
         cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]

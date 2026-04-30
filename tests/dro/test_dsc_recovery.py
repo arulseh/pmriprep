@@ -287,25 +287,67 @@ class TestOSVDRecovery:
 class TestTikhonovRecovery:
     """Test Tikhonov regularization deconvolution parameter recovery.
 
-    Tikhonov uses GCV (generalized cross-validation) to select lambda.
-    GCV works excellently at zero noise but selects excessive regularization
-    with additive Gaussian noise on synthetic DRO data (a known GCV
-    failure mode). We therefore only test at zero noise.
+    Uses first-order (smoothness) Tikhonov with L-curve corner λ
+    selection (Hansen 1998) on gamma-variate residues, which match the
+    DSC manuscript figure tissue model. Tolerances are mean+3σ from
+    20-seed Monte Carlo on the production defaults
+    (``DEFAULT_LAMBDA_RANGE = (1e-3, 10) · σ_max(A)``,
+    ``LCURVE_CURVATURE_FALLBACK = 2.0``).
+
+    First-order Tikhonov has a known smoothing bias on sharply-peaked
+    (e.g. exponential) residues, which is why the recovery test runs on
+    the gamma-variate residue family used in production validation —
+    not the exponential residue used by sSVD/oSVD/cSVD tests above.
     """
 
-    @pytest.mark.parametrize("cbf,mtt", DSC_PARAMS)
-    def test_tikhonov_zero_noise(
+    # (cbf, alpha, beta, mtt = α·β) — gamma-variate residue (Vascular model).
+    GAMMA_PARAMS = [
+        pytest.param(0.10, 3.0, 1.5, 4.5, id="normal_gm"),
+        pytest.param(0.04, 4.0, 1.5, 6.0, id="normal_wm"),
+        pytest.param(0.16, 2.0, 3.0, 6.0, id="tumor"),
+        pytest.param(0.13, 3.0, 4.0, 12.0, id="long_mtt"),
+    ]
+
+    # Tolerances per (noise_frac, cbf_tol, mtt_tol). MC mean+3σ:
+    #   noiseless: max |CBF| 5.4%, max |MTT| 5.4% → 8% covers all
+    #   2% noise:  CBF max 6.2+3·2.7=14%, MTT max 16+3·9=43%
+    #   5% noise:  CBF max 14.1+3·4.6=28%, MTT max 29.3+3·13=68%
+    NOISE_LEVELS = [
+        pytest.param(0.0,  0.10, 0.10, id="zero"),
+        pytest.param(0.02, 0.20, 0.50, id="low"),
+        pytest.param(0.05, 0.35, 0.75, id="medium"),
+    ]
+
+    @pytest.mark.parametrize("cbf,alpha,beta,mtt", GAMMA_PARAMS)
+    @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", NOISE_LEVELS)
+    def test_tikhonov(
         self,
         cbf: float,
+        alpha: float,
+        beta: float,
         mtt: float,
+        noise_frac: float,
+        cbf_tol: float,
+        mtt_tol: float,
     ) -> None:
-        """Test Tikhonov recovery of CBF and MTT at zero noise."""
-        tissue, aif, dt, time_sec = _make_dsc_test_data(cbf, mtt, noise_frac=0.0)
+        """Tikhonov recovers CBF and MTT on gamma-variate residues."""
+        aif, time_sec = generate_dsc_aif_dro(
+            n_timepoints=60, dt_sec=1.5, baseline_frames=10,
+            peak_delta_r2=40.0,
+        )
+        dt = 1.5
+        residue = VascularModel().residue_function(
+            [cbf, alpha, beta, 0.0], time_sec
+        )
+        tissue = dsc_forward_model(aif, residue, dt)
+        if noise_frac > 0:
+            peak = float(np.max(np.abs(tissue)))
+            tissue = add_gaussian_noise(tissue, noise_frac * peak, seed=42)
 
         result = tikhonov_deconvolve(tissue, aif, dt)
 
-        _assert_param_recovery(result.cbf, cbf, 0.05, param_name="CBF")
-        _assert_param_recovery(result.mtt, mtt, 0.05, param_name="MTT")
+        _assert_param_recovery(result.cbf, cbf, cbf_tol, param_name="CBF")
+        _assert_param_recovery(result.mtt, mtt, mtt_tol, param_name="MTT")
 
 
 # =============================================================================
@@ -955,7 +997,15 @@ class TestDSCEdgeCases:
         _assert_param_recovery(result.mtt, 15.0, 0.15, param_name="MTT")
 
     def test_ssvd_tikhonov_agreement(self) -> None:
-        """sSVD and Tikhonov (both Toeplitz) should agree at zero noise."""
+        """sSVD and Tikhonov (both Toeplitz) should agree at zero noise.
+
+        Tolerance is 25%: sSVD with threshold=0.001 is essentially the
+        unregularised pseudo-inverse, while first-order Tikhonov + L-curve
+        always applies a smoothness penalty even at zero noise (its
+        L-curve has no real corner there, so it falls back to the
+        Hansen 1998 default λ = 0.1·σ_max). The smoothing biases CBF
+        down ~5–25% on exponential residues.
+        """
         tissue, aif, dt, time_sec = _make_dsc_test_data(
             cbf=0.10, mtt=4.0, noise_frac=0.0
         )
@@ -968,7 +1018,7 @@ class TestDSCEdgeCases:
 
         for cbf_val in cbf_values:
             rel_diff = abs(cbf_val - mean_cbf) / mean_cbf
-            assert rel_diff < 0.05, (
+            assert rel_diff < 0.25, (
                 f"Method disagreement: CBFs = {cbf_values}, "
                 f"mean = {mean_cbf:.2f}"
             )

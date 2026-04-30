@@ -146,13 +146,16 @@ class TestTikhonovSingleVoxel:
         result = tikhonov_deconvolve(tissue, aif, dt=1.5)
         assert result.cbf == pytest.approx(true_cbf, rel=0.5)
 
-    def test_tikhonov_gcv_score_finite(self) -> None:
-        """GCV score is finite and positive; lambda_optimal is positive."""
+    def test_tikhonov_lcurve_result_finite(self) -> None:
+        """L-curve result fields are finite and consistent."""
         aif, tissue, _, _ = _make_synthetic_data()
         result = tikhonov_deconvolve(tissue, aif, dt=1.5)
-        assert np.isfinite(result.gcv_score)
-        assert result.gcv_score > 0
+        assert np.isfinite(result.residual_norm)
+        assert np.isfinite(result.solution_norm)
+        assert result.residual_norm >= 0
+        assert result.solution_norm >= 0
         assert result.lambda_optimal > 0
+        assert isinstance(result.lcurve_corner_found, bool)
 
     def test_tikhonov_validation(self) -> None:
         """Empty arrays, length mismatch, and invalid lambda raise ValueError."""
