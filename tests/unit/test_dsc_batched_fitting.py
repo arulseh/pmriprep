@@ -870,3 +870,172 @@ class TestBatchedMAPVsPerVoxelMAP:
                 f"CBF divergence {rel_diff:.1%}: batched={batched_cbf:.6f} "
                 f"per-voxel={cpu_cbf:.6f}"
             )
+
+
+# ---------------------------------------------------------------------------
+# TestBatchedFitParallel — multiprocess dispatch (v0.36.0)
+# ---------------------------------------------------------------------------
+
+
+class TestBatchedFitParallel:
+    """Tests for the nprocs>1 dispatch in batched_dsc_vi_fit /
+    batched_dsc_map_fit.
+
+    Per-voxel updates inside the batched fit functions are independent,
+    so chunked + concatenated should equal single-process up to
+    floating-point reduction order. Spatial VB is rejected because
+    voxels are coupled through the M-prior.
+    """
+
+    @staticmethod
+    def _vasc_priors():
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc import VascularModel
+
+        model = VascularModel()
+        fitting_defs = model.get_fitting_parameter_definitions()
+        priors = build_priors_from_params(fitting_defs)
+        return dict(
+            prior_means_nat=np.array([p.mean for p in priors]),
+            prior_stds_nat=np.array([p.std for p in priors]),
+            transforms=[p.transform for p in priors],
+            upper_bounds=[p.upper_bound for p in priors],
+            fitting_param_names=[p.name for p in fitting_defs],
+            fitting_bounds=[(p.bounds[0], p.bounds[1]) for p in fitting_defs],
+        )
+
+    @staticmethod
+    def _build_tissue(aif, tp, n: int = 200):
+        rng = np.random.RandomState(7)
+        cbf_true = rng.uniform(0.03, 0.1, n)
+        alpha_true = rng.uniform(2.0, 5.0, n)
+        beta_true = rng.uniform(1.0, 4.0, n)
+        delay_true = rng.uniform(0.0, 3.0, n)
+        tissue = batched_vascular_forward(
+            cbf_true, alpha_true, beta_true, delay_true, aif, tp,
+        )
+        tissue += 0.005 * rng.randn(*tissue.shape)
+        return tissue
+
+    def test_vi_parallel_matches_single(self, dsc_aif_and_time):
+        """nprocs=1 vs nprocs=2 vi_fit results agree within fp tolerance."""
+        aif, tp = dsc_aif_and_time
+        priors = self._vasc_priors()
+        tissue = self._build_tissue(aif, tp, n=120)
+
+        common = dict(
+            model_type="vascular",
+            tissue_curves=tissue,
+            aif=aif,
+            time_points=tp,
+            **priors,
+        )
+        single = batched_dsc_vi_fit(**common, nprocs=1)
+        # Force the parallel path by lowering parallel_chunk_min below n.
+        parallel = batched_dsc_vi_fit(
+            **common, nprocs=2, parallel_chunk_min=50,
+        )
+
+        assert single.r_squared.shape == parallel.r_squared.shape
+        np.testing.assert_allclose(
+            parallel.r_squared, single.r_squared, rtol=1e-10, atol=1e-12,
+        )
+        np.testing.assert_array_equal(parallel.converged, single.converged)
+        for k in single.params:
+            np.testing.assert_allclose(
+                parallel.params[k], single.params[k],
+                rtol=1e-10, atol=1e-12,
+                err_msg=f"params[{k!r}] mismatch under nprocs=2",
+            )
+
+    def test_map_parallel_matches_single(self, dsc_aif_and_time):
+        """nprocs=1 vs nprocs=2 map_fit results agree within fp tolerance."""
+        aif, tp = dsc_aif_and_time
+        priors = self._vasc_priors()
+        tissue = self._build_tissue(aif, tp, n=120)
+
+        common = dict(
+            model_type="vascular",
+            tissue_curves=tissue,
+            aif=aif,
+            time_points=tp,
+            **priors,
+        )
+        single = batched_dsc_map_fit(**common, nprocs=1)
+        parallel = batched_dsc_map_fit(
+            **common, nprocs=2, parallel_chunk_min=50,
+        )
+
+        np.testing.assert_allclose(
+            parallel.r_squared, single.r_squared, rtol=1e-10, atol=1e-12,
+        )
+        for k in single.params:
+            np.testing.assert_allclose(
+                parallel.params[k], single.params[k],
+                rtol=1e-10, atol=1e-12,
+                err_msg=f"MAP params[{k!r}] mismatch under nprocs=2",
+            )
+
+    def test_spatial_vb_rejected_under_nprocs(self, dsc_aif_and_time):
+        """Spatial VB inputs + nprocs>1 must raise ValueError."""
+        aif, tp = dsc_aif_and_time
+        priors = self._vasc_priors()
+        n = 50
+        tissue = self._build_tissue(aif, tp, n=n)
+        n_params = len(priors["fitting_param_names"])
+        spatial_prec_diag = np.ones((n, n_params), dtype=np.float64)
+        spatial_eta = np.zeros((n, n_params), dtype=np.float64)
+
+        with pytest.raises(ValueError, match="spatial VB"):
+            batched_dsc_vi_fit(
+                model_type="vascular",
+                tissue_curves=tissue,
+                aif=aif,
+                time_points=tp,
+                **priors,
+                spatial_prec_diag=spatial_prec_diag,
+                spatial_eta=spatial_eta,
+                nprocs=2,
+                parallel_chunk_min=10,
+            )
+
+    def test_below_threshold_no_pool_spawned(self, dsc_aif_and_time, monkeypatch):
+        """When n_voxels < parallel_chunk_min, no ProcessPoolExecutor is created
+        even if nprocs > 1 — short-circuit avoids worker-spawn overhead.
+        """
+        import pmriprep.models.dsc.batched_fitting as bf_mod
+
+        sentinel = {"called": False}
+
+        class _ShouldNotSpawn:
+            def __init__(self, *_a, **_kw):
+                sentinel["called"] = True
+                raise AssertionError(
+                    "ProcessPoolExecutor must not be instantiated when "
+                    "n_voxels < parallel_chunk_min"
+                )
+
+        # Monkeypatch the symbol that _run_chunked_in_pool looks up at
+        # call time. Because that helper imports inside the function
+        # body (`from concurrent.futures import ProcessPoolExecutor`),
+        # we patch the parent module instead.
+        import concurrent.futures
+        monkeypatch.setattr(
+            concurrent.futures, "ProcessPoolExecutor", _ShouldNotSpawn,
+        )
+
+        aif, tp = dsc_aif_and_time
+        priors = self._vasc_priors()
+        tissue = self._build_tissue(aif, tp, n=10)
+
+        result = batched_dsc_vi_fit(
+            model_type="vascular",
+            tissue_curves=tissue,
+            aif=aif,
+            time_points=tp,
+            **priors,
+            nprocs=4,  # ignored because 10 < default parallel_chunk_min=5000
+        )
+        assert result.r_squared.shape == (10,)
+        assert sentinel["called"] is False
+

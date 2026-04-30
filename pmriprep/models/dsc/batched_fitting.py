@@ -610,6 +610,174 @@ def _compute_r_squared(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Multiprocess dispatch helpers (used by batched_dsc_vi_fit /
+# batched_dsc_map_fit when nprocs>1; per-voxel updates inside the
+# batched fit functions are independent so the voxel batch can be
+# split across workers and the results concatenated voxel-axis-wise).
+#
+# Spatial VB is NOT in scope: it couples voxels through a sparse
+# adjacency M-prior, so it cannot be chunked safely. The dispatchers
+# raise ValueError on the spatial path.
+# ---------------------------------------------------------------------------
+
+#: Voxel-axis kwargs that must be sliced when chunking. All other
+#: keyword args are broadcast unchanged to every worker.
+_VOXEL_AXIS_KWARGS: tuple[str, ...] = ("tissue_curves", "nlls_seeds")
+
+
+def _init_blas_single_threaded() -> None:
+    """Worker-pool initialiser: clamp BLAS / OpenMP threads to 1.
+
+    Without this clamp, N workers each spawning B BLAS threads creates
+    N×B-way thread contention and wipes out any parallel speedup. The
+    production Dockerfile sets ``MKL_NUM_THREADS=1`` /
+    ``OMP_NUM_THREADS=1``, but local-dev runs without those env vars
+    need the explicit clamp.
+
+    NOTE: ``threadpool_limits`` returns a ``_ThreadpoolLimiter``
+    instance whose ``__exit__`` / explicit ``unregister()`` would
+    *restore* the original thread count. Discarding the returned
+    object is correct: the limit is applied as a side effect inside
+    ``__init__`` (it calls into the loaded BLAS / OpenMP libs
+    directly) and persists for the worker's full lifetime when the
+    object is GC'd. **Do not** rewrite as ``with threadpool_limits(...)``
+    — that would defeat the purpose by restoring on context exit.
+    """
+    from threadpoolctl import threadpool_limits
+    threadpool_limits(limits=1, user_api="blas")
+    threadpool_limits(limits=1, user_api="openmp")
+
+
+def _split_chunks(n: int, nprocs: int) -> list[tuple[int, int]]:
+    """Split ``range(n)`` into ``nprocs`` contiguous (start, end) chunks
+    of approximately equal size."""
+    nprocs = max(1, int(nprocs))
+    base, extra = divmod(n, nprocs)
+    chunks: list[tuple[int, int]] = []
+    cursor = 0
+    for i in range(nprocs):
+        size = base + (1 if i < extra else 0)
+        if size <= 0:
+            continue
+        chunks.append((cursor, cursor + size))
+        cursor += size
+    return chunks
+
+
+def _chunk_kwargs(full_kwargs: dict, start: int, end: int) -> dict:
+    """Return a copy of ``full_kwargs`` with voxel-axis arrays sliced
+    to ``[start:end]``. ``nprocs`` is forced to 1 so the worker takes
+    the single-process path (no recursion footgun).
+    """
+    out = dict(full_kwargs)
+    for key in _VOXEL_AXIS_KWARGS:
+        v = out.get(key)
+        if v is not None:
+            out[key] = v[start:end]
+    out["nprocs"] = 1
+    return out
+
+
+def _vi_chunk_worker(kwargs: dict) -> "DSCBatchedFitResult":
+    """Top-level pickle-safe worker — calls the single-process VI path."""
+    return batched_dsc_vi_fit(**kwargs)
+
+
+def _map_chunk_worker(kwargs: dict) -> "DSCBatchedFitResult":
+    """Top-level pickle-safe worker — calls the single-process MAP path."""
+    return batched_dsc_map_fit(**kwargs)
+
+
+def _concat_dsc_batched_results(
+    results: list["DSCBatchedFitResult"],
+) -> "DSCBatchedFitResult":
+    """Concatenate per-chunk DSCBatchedFitResult objects voxel-axis-wise.
+
+    All voxel-indexed fields (``params[*]``, ``r_squared``, ``converged``,
+    ``fitted_curves``, ``uncertainties[*]``, ``posterior_means_transformed``,
+    ``posterior_cov_diag``) are concatenated along axis 0. Shared
+    metadata fields (``model_name``, ``n_iterations``) must agree
+    across chunks; ``n_iterations`` is reduced by ``max`` (workers may
+    converge at different iters).
+
+    Field list anchored on ``DSCBatchedFitResult`` definition; re-grep
+    that dataclass when adding new fields.
+    """
+    if not results:
+        raise ValueError("_concat_dsc_batched_results: empty results list")
+
+    # Sanity check: shared metadata must agree across chunks.
+    model_names = {r.model_name for r in results}
+    if len(model_names) != 1:
+        raise AssertionError(f"chunk model_name mismatch: {model_names}")
+
+    head = results[0]
+    return DSCBatchedFitResult(
+        params={
+            k: np.concatenate([r.params[k] for r in results])
+            for k in head.params
+        },
+        r_squared=np.concatenate([r.r_squared for r in results]),
+        converged=np.concatenate([r.converged for r in results]),
+        fitted_curves=(
+            np.concatenate(
+                [r.fitted_curves for r in results], axis=0,
+            )
+            if head.fitted_curves is not None else None
+        ),
+        n_iterations=max(r.n_iterations for r in results),
+        model_name=head.model_name,
+        uncertainties=(
+            {
+                k: np.concatenate([r.uncertainties[k] for r in results])
+                for k in head.uncertainties
+            }
+            if head.uncertainties else {}
+        ),
+        posterior_means_transformed=(
+            np.concatenate(
+                [r.posterior_means_transformed for r in results], axis=0,
+            )
+            if head.posterior_means_transformed is not None else None
+        ),
+        posterior_cov_diag=(
+            np.concatenate(
+                [r.posterior_cov_diag for r in results], axis=0,
+            )
+            if head.posterior_cov_diag is not None else None
+        ),
+    )
+
+
+def _run_chunked_in_pool(
+    full_kwargs: dict,
+    nprocs: int,
+    worker: Callable[[dict], "DSCBatchedFitResult"],
+) -> "DSCBatchedFitResult":
+    """Common chunk + ProcessPoolExecutor + concat workflow shared by
+    the parallel VI and MAP dispatchers.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+
+    n_voxels = full_kwargs["tissue_curves"].shape[0]
+    chunks = _split_chunks(n_voxels, nprocs)
+    # _split_chunks always returns ≥1 chunk for n_voxels ≥ 1, and the
+    # dispatchers don't reach this helper when n_voxels == 0 (threshold
+    # gate above). The 1-chunk case (e.g. nprocs > n_voxels) runs the
+    # worker synchronously without spawning a pool.
+    assert chunks, "internal error: _split_chunks produced no chunks"
+    chunk_kwargs_list = [_chunk_kwargs(full_kwargs, s, e) for (s, e) in chunks]
+    if len(chunk_kwargs_list) == 1:
+        return worker(chunk_kwargs_list[0])
+    with ProcessPoolExecutor(
+        max_workers=len(chunk_kwargs_list),
+        initializer=_init_blas_single_threaded,
+    ) as pool:
+        results = list(pool.map(worker, chunk_kwargs_list))
+    return _concat_dsc_batched_results(results)
+
+
 def batched_dsc_vi_fit(
     model_type: str,
     tissue_curves: npt.NDArray[np.floating],
@@ -637,6 +805,8 @@ def batched_dsc_vi_fit(
     spatial_eta: Optional[npt.NDArray[np.floating]] = None,
     return_posteriors: bool = False,
     n_iterations_override: Optional[int] = None,
+    nprocs: int = 1,
+    parallel_chunk_min: int = 5000,
 ) -> DSCBatchedFitResult:
     """Batched Variational Bayes fitting for DSC perfusion models.
 
@@ -676,10 +846,67 @@ def batched_dsc_vi_fit(
         n_iterations_override: When set, overrides n_iterations and sloppy,
             and disables ELBO-based step-size reduction. Used by spatial VB
             wrapper where the ELBO is invalidated by spatial terms.
+        nprocs: When > 1, split the voxel batch across worker processes.
+            Per-voxel updates are independent so chunked == single-process
+            up to floating-point reduction order. Spatial VB
+            (``spatial_prec_diag`` / ``spatial_eta`` set) is rejected with
+            ``ValueError`` because voxels are coupled via the M-prior.
+            Default 1 (single process). The dispatcher silently
+            short-circuits to single-process when ``n_voxels <
+            parallel_chunk_min`` to avoid worker-spawn overhead.
+        parallel_chunk_min: Minimum voxel count to actually use the
+            parallel path when ``nprocs > 1``. Default 5000 — below this,
+            the worker spawn + import overhead (~1-3s per worker) dominates.
 
     Returns:
         DSCBatchedFitResult with fitted parameters, R², convergence, uncertainties.
     """
+    # ----- Multiprocess dispatch -----
+    # When nprocs > 1 and the voxel batch is large enough to amortise
+    # worker spawn overhead, split the voxel axis across worker
+    # processes. Per-voxel updates are independent (each voxel's
+    # posterior depends only on its own data + shared read-only
+    # priors / AIF / Toeplitz), so chunked + concatenated == single
+    # process up to floating-point reduction-order. Spatial VB is
+    # rejected because the M-prior couples voxels through neighbours.
+    if nprocs > 1:
+        if spatial_prec_diag is not None or spatial_eta is not None:
+            raise ValueError(
+                "spatial VB couples voxels through neighbours; "
+                "nprocs>1 not supported. Use single-process "
+                "(nprocs=1) or batched_dsc_spatial_vi_fit."
+            )
+        if tissue_curves.shape[0] >= parallel_chunk_min:
+            full_kwargs = dict(
+                model_type=model_type,
+                tissue_curves=tissue_curves,
+                aif=aif,
+                time_points=time_points,
+                prior_means_nat=prior_means_nat,
+                prior_stds_nat=prior_stds_nat,
+                transforms=transforms,
+                upper_bounds=upper_bounds,
+                fitting_param_names=fitting_param_names,
+                fitting_bounds=fitting_bounds,
+                mono_prec=mono_prec,
+                mono_eta=mono_eta,
+                control_point_times=control_point_times,
+                toeplitz_matrix=toeplitz_matrix,
+                cpi_t_terminal=cpi_t_terminal,
+                nlls_seeds=nlls_seeds,
+                prior_means_transformed=prior_means_transformed,
+                prior_stds_transformed=prior_stds_transformed,
+                weights=weights,
+                n_iterations=n_iterations,
+                sloppy=sloppy,
+                save_fitted_curves=save_fitted_curves,
+                spatial_prec_diag=spatial_prec_diag,
+                spatial_eta=spatial_eta,
+                return_posteriors=return_posteriors,
+                n_iterations_override=n_iterations_override,
+            )
+            return _run_chunked_in_pool(full_kwargs, nprocs, _vi_chunk_worker)
+
     from scipy.special import digamma, gammaln
 
     tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
@@ -1375,6 +1602,8 @@ def batched_dsc_map_fit(
     sloppy: bool = False,
     save_fitted_curves: bool = False,
     compute_uncertainties: bool = True,
+    nprocs: int = 1,
+    parallel_chunk_min: int = 5000,
 ) -> DSCBatchedFitResult:
     """Batched MAP fitting for DSC perfusion models.
 
@@ -1411,11 +1640,50 @@ def batched_dsc_map_fit(
         sloppy: Fast mode: 8 iters, 1 noise loop, no uncertainties.
         save_fitted_curves: Whether to store fitted curves in result.
         compute_uncertainties: Whether to compute Laplace uncertainties.
+        nprocs: When > 1, split the voxel batch across worker processes.
+            Default 1. See ``batched_dsc_vi_fit`` for parallel-dispatch
+            semantics. MAP has no spatial-VB equivalent so no spatial
+            guard applies.
+        parallel_chunk_min: Minimum voxel count to actually use the
+            parallel path. Default 5000. See ``batched_dsc_vi_fit``.
 
     Returns:
         DSCBatchedFitResult with fitted parameters, R², convergence,
         and Laplace uncertainties.
     """
+    # ----- Multiprocess dispatch -----
+    # Same chunk + pool + concatenate workflow as batched_dsc_vi_fit.
+    # MAP has no spatial-VB equivalent, so no spatial guard is needed —
+    # `_run_chunked_in_pool` will simply chunk and merge.
+    if nprocs > 1 and tissue_curves.shape[0] >= parallel_chunk_min:
+        full_kwargs = dict(
+            model_type=model_type,
+            tissue_curves=tissue_curves,
+            aif=aif,
+            time_points=time_points,
+            prior_means_nat=prior_means_nat,
+            prior_stds_nat=prior_stds_nat,
+            transforms=transforms,
+            upper_bounds=upper_bounds,
+            fitting_param_names=fitting_param_names,
+            fitting_bounds=fitting_bounds,
+            mono_prec=mono_prec,
+            mono_eta=mono_eta,
+            control_point_times=control_point_times,
+            toeplitz_matrix=toeplitz_matrix,
+            cpi_t_terminal=cpi_t_terminal,
+            nlls_seeds=nlls_seeds,
+            prior_means_transformed=prior_means_transformed,
+            prior_stds_transformed=prior_stds_transformed,
+            weights=weights,
+            n_iterations=n_iterations,
+            n_noise_iterations=n_noise_iterations,
+            sloppy=sloppy,
+            save_fitted_curves=save_fitted_curves,
+            compute_uncertainties=compute_uncertainties,
+        )
+        return _run_chunked_in_pool(full_kwargs, nprocs, _map_chunk_worker)
+
     tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
     n_voxels, n_obs = tissue_curves.shape
     n_params = len(fitting_param_names)

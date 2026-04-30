@@ -1358,7 +1358,12 @@ class ComputeDSCMaps(BaseInterface):
                 spatial_shape=concentration_data.shape[:3],
             )
         else:
-            batched_result = batched_dsc_vi_fit(**vi_kwargs)
+            # Parallel batched VI when --nprocs > 1 (spatial path
+            # remains single-process — voxels are coupled via the
+            # M-prior, see batched_fitting.py guard).
+            batched_result = batched_dsc_vi_fit(
+                **vi_kwargs, nprocs=int(self.inputs.n_procs),
+            )
 
         return self._batched_result_to_voxel_dicts(
             batched_result, mask_coords, method, n_voxels, dt,
@@ -1563,6 +1568,7 @@ class ComputeDSCMaps(BaseInterface):
             weights=motion_weights,
             sloppy=sloppy,
             save_fitted_curves=True,
+            nprocs=int(self.inputs.n_procs),
         )
 
         return self._batched_result_to_voxel_dicts(
