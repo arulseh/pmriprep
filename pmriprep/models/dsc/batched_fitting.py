@@ -1030,13 +1030,17 @@ def batched_dsc_vi_fit(
 
         if iteration % 5 == 0:
             logger.info(
-                "DSC batched VI iter %d: %d/%d active, %d converged",
+                "DSC batched VI iter %d: %d/%d active, %d at FE plateau",
                 iteration, int(np.sum(active)), n_valid, int(np.sum(converged)),
             )
 
+    # FABBER protocol is a fixed 10-iter schedule; the FE-plateau count is
+    # informational only (strict 1e-4 relative tolerance over 2 iters
+    # rarely fires in 10 iters by design). Final fit quality is gated
+    # downstream by R² in dsc_compute.py.
     logger.info(
-        "DSC batched VI finished after %d iters: %d/%d converged (of %d total)",
-        last_iteration + 1, int(np.sum(converged)), n_valid, n_voxels,
+        "DSC batched VI finished FABBER %d-iter schedule (n=%d): %d at FE plateau",
+        last_iteration + 1, n_voxels, int(np.sum(converged)),
     )
 
     # --- Post-convergence: inverse-transform best params ---
@@ -1581,9 +1585,12 @@ def batched_dsc_map_fit(
             best_sigma_sq[start1_better] = sigma1[start1_better]
             converged[start1_better] |= conv1[start1_better]
 
+    # MAP `converged` combines NLP/param plateau with an R²>0 fallback
+    # (see _run_map_gauss_newton); it's a meaningful fit-stability flag,
+    # but final fit quality is gated downstream by R² in dsc_compute.py.
     logger.info(
-        "DSC batched MAP finished: %d/%d converged (of %d total)",
-        int(np.sum(converged)), n_valid, n_voxels,
+        "DSC batched MAP finished (n=%d): %d at NLP/parameter plateau",
+        n_voxels, int(np.sum(converged)),
     )
 
     # --- Post-convergence: inverse-transform ---

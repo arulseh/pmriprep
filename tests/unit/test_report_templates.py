@@ -114,6 +114,85 @@ def test_measured_aif_omits_caveat(env):
     assert "Template AIF" not in rendered
 
 
+# =============================================================================
+# Deconvolution panel — v0.34.2 metric renames
+# =============================================================================
+
+
+def _dsc_ctx_with_deconv(method: str, **deconv_extra) -> dict:
+    """Build a DSC context that surfaces the deconvolution metrics panel."""
+    deconv = {
+        "method": method,
+        "cbf_median": 50.0,
+        "cbv_median": 1.5,
+        "mtt_median": 4.0,
+        "tmax_median": 1.5,
+        "n_voxels": 1000,
+    }
+    deconv.update(deconv_extra)
+    return {
+        "qc_metrics": {
+            "deconvolution": deconv,
+            "aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.85},
+        },
+        "images": {"aif_curve": ""},
+        "display_status": {
+            "leaky_voxels": "pass",
+            "fit_r2": "pass",
+            "fallback": "pass",
+        },
+    }
+
+
+def test_deconv_panel_inference_shown_for_cpi(env):
+    """CPI runs render an "Inference" metric box (not the legacy "Bayesian" label)."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_deconv(
+        "cpi", inference="vi", fallback_rate=0.05, fe_plateau_rate=0.0001,
+    )
+    rendered = template.render(dsc=dsc_ctx)
+    assert ">Inference<" in rendered
+    assert ">Bayesian<" not in rendered  # old label retired
+    assert ">vi<" in rendered
+
+
+def test_deconv_panel_hides_tmax_for_cpi(env):
+    """CPI does not model bolus delay — Tmax stat must be hidden."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_deconv(
+        "cpi", inference="vi", fallback_rate=0.05, fe_plateau_rate=0.0,
+    )
+    rendered = template.render(dsc=dsc_ctx)
+    assert ">Median Tmax<" not in rendered
+
+
+def test_deconv_panel_shows_tmax_for_osvd(env):
+    """oSVD does model delay — Tmax stat is visible."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_deconv("oSVD")
+    rendered = template.render(dsc=dsc_ctx)
+    assert ">Median Tmax<" in rendered
+
+
+def test_deconv_panel_fallback_only_for_parametric(env):
+    """oSVD Fallback metric box only renders for parametric methods (cpi, vascular)."""
+    template = env.get_template("sections/section_dsc.html")
+
+    cpi_ctx = _dsc_ctx_with_deconv(
+        "cpi", inference="vi", fallback_rate=0.07, fe_plateau_rate=0.0001,
+    )
+    cpi_rendered = template.render(dsc=cpi_ctx)
+    assert ">oSVD Fallback<" in cpi_rendered
+
+    osvd_ctx = _dsc_ctx_with_deconv("oSVD", fallback_rate=0.0)
+    osvd_rendered = template.render(dsc=osvd_ctx)
+    assert ">oSVD Fallback<" not in osvd_rendered
+
+    # The legacy "Convergence Rate" label should be retired everywhere.
+    assert ">Convergence Rate<" not in cpi_rendered
+    assert ">Convergence Rate<" not in osvd_rendered
+
+
 def test_quality_flag_colour_synthetic_is_poor(env):
     """Synthetic detection_level badges as 'poor' regardless of score."""
     template = env.get_template("sections/section_dsc.html")

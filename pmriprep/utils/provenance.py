@@ -444,8 +444,13 @@ def _enrich_dsc(
             deconv_block["oscillation_index_mean"] = _safe_float(deconv["oi_mean"])
         if "lambda_mean" in deconv:
             deconv_block["lambda_mean"] = _safe_float(deconv["lambda_mean"])
-        if "convergence_rate" in deconv:
-            deconv_block["convergence_rate"] = _safe_float(deconv["convergence_rate"])
+        if "fe_plateau_rate" in deconv:
+            # Renamed from convergence_rate in v0.34.2 — FABBER's fixed
+            # 10-iter VB schedule rarely satisfies the strict FE-plateau
+            # test, so this is informational, not a fit-quality metric.
+            deconv_block["fe_plateau_rate"] = _safe_float(deconv["fe_plateau_rate"])
+        if "fallback_rate" in deconv:
+            deconv_block["fallback_rate"] = _safe_float(deconv["fallback_rate"])
         perf["Deconvolution"] = deconv_block
 
     # Leakage correction details

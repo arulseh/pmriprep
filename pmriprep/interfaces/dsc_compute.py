@@ -300,8 +300,15 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         out["r_squared"] = result.r_squared
         out["converged"] = result.passes_convergence()
 
-        # Flag poor fits for oSVD fallback (R² < 0.5 threshold)
-        if result.r_squared < 0.5 or not result.converged:
+        # Flag poor fits for oSVD fallback. R² gate applies to every
+        # inference method; the `converged` flag only gates NLLS/MAP
+        # because for VI/SVB the FABBER 10-iter schedule rarely satisfies
+        # the strict FE-plateau convergence test even on usable fits.
+        bad_r2 = result.r_squared < 0.5
+        bad_solver_conv = (
+            inference in ("nlls", "map") and not result.converged
+        )
+        if bad_r2 or bad_solver_conv:
             out["needs_fallback"] = True
 
         return out
@@ -1129,9 +1136,16 @@ class ComputeDSCMaps(BaseInterface):
 
         if method in ("cpi", "vascular"):
             qc_metrics["n_converged"] = n_converged
-            qc_metrics["convergence_rate"] = n_converged / max(1, n_voxels)
+            # FE/NLP plateau rate is informational only (FABBER 10-iter
+            # spec rarely satisfies the strict plateau in 10 iters by
+            # design); fit quality is gated by R² in the fallback path.
+            qc_metrics["fe_plateau_rate"] = n_converged / max(1, n_voxels)
 
         qc_metrics["n_fallback_osvd"] = n_fallback
+        # Fallback rate is the actual fit-health signal for parametric
+        # methods: voxels rejected by the R² < 0.5 gate fall through to
+        # oSVD. Always populated (zero for non-parametric methods).
+        qc_metrics["fallback_rate"] = n_fallback / max(1, n_voxels)
 
         return (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map,
                 cbf_std_map, cbv_std_map,
@@ -1437,14 +1451,15 @@ class ComputeDSCMaps(BaseInterface):
 
             out["r_squared"] = float(batched_result.r_squared[i])
             out["converged"] = bool(batched_result.converged[i])
-            out["needs_fallback"] = (
-                float(batched_result.r_squared[i]) < 0.5
-                or not bool(batched_result.converged[i])
-            )
-            out["failed"] = (
-                not bool(batched_result.converged[i])
-                and float(batched_result.r_squared[i]) < -0.5
-            )
+            # Fallback gate: fit quality only. The `converged` flag tracks
+            # the strict FE-plateau test, but FABBER's protocol is a fixed
+            # 10-iter schedule (see batched_fitting.py:1006-1013) — most
+            # voxels never satisfy the 1e-4 relative FE plateau in that
+            # window even when their parameter fits are perfectly usable.
+            # Gating on `not converged` would silently fall back ~100% of
+            # voxels to oSVD; gate on R² instead.
+            out["needs_fallback"] = float(batched_result.r_squared[i]) < 0.5
+            out["failed"] = float(batched_result.r_squared[i]) < -0.5
 
             results.append(out)
 

@@ -440,8 +440,8 @@
             {% endif %}
             {% if dsc.qc_metrics.deconvolution.method is defined and dsc.qc_metrics.deconvolution.method in ["cpi", "vascular"] %}
             <div class="metric">
-                <div class="metric-label">Bayesian</div>
-                <div class="metric-value">{{ dsc.qc_metrics.deconvolution.bayesian }}</div>
+                <div class="metric-label">Inference</div>
+                <div class="metric-value">{{ dsc.qc_metrics.deconvolution.inference }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.deconvolution.cbf_median is defined %}
@@ -462,7 +462,7 @@
                 <div class="metric-value">{{ "%.2f"|format(dsc.qc_metrics.deconvolution.mtt_median) }} s</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.tmax_median is defined %}
+            {% if dsc.qc_metrics.deconvolution.tmax_median is defined and dsc.qc_metrics.deconvolution.method != "cpi" %}
             <div class="metric">
                 <div class="metric-label">Median Tmax</div>
                 <div class="metric-value">{{ "%.2f"|format(dsc.qc_metrics.deconvolution.tmax_median) }} s</div>
@@ -498,10 +498,10 @@
                 <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.deconvolution.r2_mean) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.convergence_rate is defined %}
+            {% if dsc.qc_metrics.deconvolution.fallback_rate is defined and dsc.qc_metrics.deconvolution.method in ["cpi", "vascular"] %}
             <div class="metric">
-                <div class="metric-label">Convergence Rate</div>
-                <div class="metric-value {{ dsc.display_status.convergence }}">{{ "%.1f"|format(dsc.qc_metrics.deconvolution.convergence_rate * 100) }}%</div>
+                <div class="metric-label">oSVD Fallback</div>
+                <div class="metric-value {{ dsc.display_status.fallback }}">{{ "%.1f"|format(dsc.qc_metrics.deconvolution.fallback_rate * 100) }}%</div>
             </div>
             {% endif %}
         </div>
