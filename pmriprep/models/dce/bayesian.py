@@ -697,9 +697,19 @@ class BayesianPKFitter:
                 hessian_t = self._compute_hessian(
                     fitted_params_t, neg_log_posterior_t
                 )
+                # _compute_hessian uses finite differences and can return
+                # non-finite entries when perturbations land on the
+                # boundary objective (1e30) or violate constraints.
+                # np.linalg.inv on a non-finite matrix returns silently
+                # NaN-laden output rather than raising, so guard explicitly
+                # to route into the prior-std fallback below.
+                if not np.all(np.isfinite(hessian_t)):
+                    raise np.linalg.LinAlgError("non-finite Hessian")
                 cov_t = np.linalg.inv(
                     hessian_t + 1e-6 * np.eye(n_params)
                 )
+                if not np.all(np.isfinite(cov_t)):
+                    raise np.linalg.LinAlgError("non-finite covariance")
                 stds_t = np.sqrt(np.maximum(np.diag(cov_t), 0.0))
 
                 names = self.model.get_parameter_names()
