@@ -435,7 +435,7 @@ def deconvolve_dro_batch(
             concentration_2d, aif, dt=dt
         )
     elif method == "tikhonov":
-        residues, cbf, cbv, mtt, _ = tikhonov_deconvolve_batch(
+        residues, cbf, cbv, mtt, _, _ = tikhonov_deconvolve_batch(
             concentration_2d, aif, dt=dt
         )
     else:

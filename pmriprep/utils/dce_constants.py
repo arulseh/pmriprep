@@ -69,53 +69,34 @@ EPSILON_EIGENVALUE: Final[float] = 1e-10
 # =============================================================================
 # Field-Strength Dependent R1 Relaxivity
 # =============================================================================
-
-#: r1 relaxivity by field strength (T) in s^-1 per mM (Gd-DTPA, plasma)
-#: OSIPI standard values (https://osipi.org/)
-R1_RELAXIVITY_BY_FIELD: Final[dict[float, float]] = {
-    1.5: 3.9,   # Gd-DTPA at 1.5T (OSIPI standard)
-    3.0: 3.8,   # Gd-DTPA at 3.0T (OSIPI standard)
-    7.0: 3.5,   # Gd-DTPA at 7.0T
-}
+#
+# Single source of truth: CONTRAST_AGENTS in contrast_agent.py.
+# This module's get_r1_relaxivity(field_strength) delegates to that table
+# under the Gd-DTPA fallback agent. Per-agent values, per-field citations,
+# and 7T support live there.
 
 
 def get_r1_relaxivity(field_strength: float) -> float:
-    """Get r1 relaxivity for a given field strength.
+    """Get fallback r1 relaxivity (Gd-DTPA) for a given field strength.
 
-    Uses linear interpolation between known values.
+    Used when the BIDS sidecar does not identify a specific contrast agent.
+    Delegates to :func:`pmriprep.utils.contrast_agent.lookup_r1` with
+    ``"gd-dtpa"``, so all per-agent values come from one table.
 
     Args:
-        field_strength: Magnetic field strength in Tesla
+        field_strength: Magnetic field strength in Tesla.
 
     Returns:
-        r1 relaxivity in s^-1 per mM
+        r1 relaxivity in s^-1 per mM.
+
+    Raises:
+        ValueError: If field_strength > 5.0 T and no peer-reviewed 7T value
+            exists for the fallback agent. Gd-DTPA has a Noebauer-Huhmann
+            2010 7T value, so this should not raise in practice.
     """
-    # Direct lookup for known field strengths
-    if field_strength in R1_RELAXIVITY_BY_FIELD:
-        return R1_RELAXIVITY_BY_FIELD[field_strength]
+    from pmriprep.utils.contrast_agent import lookup_r1
 
-    # Linear interpolation for intermediate field strengths
-    fields = sorted(R1_RELAXIVITY_BY_FIELD.keys())
-
-    # Clamp to valid range
-    if field_strength <= fields[0]:
-        return R1_RELAXIVITY_BY_FIELD[fields[0]]
-    if field_strength >= fields[-1]:
-        return R1_RELAXIVITY_BY_FIELD[fields[-1]]
-
-    # Find surrounding known field strengths
-    for i, f in enumerate(fields[:-1]):
-        if f <= field_strength < fields[i + 1]:
-            f_low, f_high = f, fields[i + 1]
-            r1_low = R1_RELAXIVITY_BY_FIELD[f_low]
-            r1_high = R1_RELAXIVITY_BY_FIELD[f_high]
-
-            # Linear interpolation
-            fraction = (field_strength - f_low) / (f_high - f_low)
-            return r1_low + fraction * (r1_high - r1_low)
-
-    # Fallback (should not reach here)
-    return R1_RELAXIVITY_BY_FIELD[3.0]
+    return lookup_r1("gd-dtpa", field_strength)
 
 
 # =============================================================================

@@ -624,6 +624,7 @@ def detect_preload_from_dce_protocol(
     dce_end_time: Optional[float] = None,
     dsc_start_time: Optional[float] = None,
     dce_dose: float = 1.0,
+    field_strength: float = 3.0,
 ) -> PreloadResult:
     """Detect preload from DCE protocol information.
 
@@ -634,6 +635,9 @@ def detect_preload_from_dce_protocol(
         dce_end_time: Time when DCE acquisition ended (seconds from session start).
         dsc_start_time: Time when DSC acquisition started.
         dce_dose: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
+        field_strength: Magnetic field strength in Tesla. Used to scale the
+            base ΔR2* (which scales linearly with B0 in tissue) and to
+            select field-appropriate preload thresholds.
 
     Returns:
         PreloadResult with estimated preload from protocol.
@@ -656,13 +660,14 @@ def detect_preload_from_dce_protocol(
     if dce_end_time is not None and dsc_start_time is not None:
         elapsed_time = dsc_start_time - dce_end_time
 
-    # Estimate baseline ΔR2* based on dose and clearance
-    # Using approximate clearance model: C(t) = C0 * exp(-t/tau)
-    # tau ~ 20 min for healthy subjects, shorter for tumors
+    # Estimate baseline ΔR2* based on dose and clearance.
+    # Clearance model: C(t) = C0 * exp(-t/tau); tau ~ 20 min healthy.
     clearance_tau = 1200.0  # 20 minutes in seconds
 
-    # Base ΔR2* for full dose immediately after DCE (3T)
-    base_delta_r2 = 5.0  # s⁻¹, half-dose equivalent
+    # Base ΔR2* for full dose immediately after DCE, calibrated at 3T,
+    # scaled linearly with B0 (Yablonskiy regime, susceptibility-driven).
+    base_delta_r2_3t = 5.0  # s⁻¹, half-dose equivalent at 3T
+    base_delta_r2 = base_delta_r2_3t * (field_strength / 3.0)
 
     if elapsed_time is not None and elapsed_time > 0:
         # Apply clearance decay
@@ -673,7 +678,7 @@ def detect_preload_from_dce_protocol(
 
     estimated_delta_r2 = base_delta_r2 * dose_factor * decay_factor
 
-    classification = classify_preload(estimated_delta_r2, 3.0)
+    classification = classify_preload(estimated_delta_r2, field_strength)
 
     return PreloadResult(
         classification=classification,
@@ -686,12 +691,14 @@ def detect_preload_from_dce_protocol(
             "elapsed_time": elapsed_time,
             "dose_factor": dose_factor,
             "decay_factor": decay_factor,
+            "field_strength": field_strength,
         },
     )
 
 
 def detect_preload_from_dicom(
     dicom_metadata: dict[str, Any],
+    field_strength: float = 3.0,
 ) -> PreloadResult:
     """Detect preload from DICOM metadata.
 
@@ -699,6 +706,9 @@ def detect_preload_from_dicom(
 
     Args:
         dicom_metadata: Dictionary of DICOM metadata fields.
+        field_strength: Magnetic field strength in Tesla. ΔR2* per
+            unit Gd scales linearly with B0; the dose-bin estimates
+            below are calibrated at 3T and scaled accordingly.
 
     Returns:
         PreloadResult based on DICOM information.
@@ -706,7 +716,6 @@ def detect_preload_from_dicom(
     # Look for contrast administration tags
     contrast_bolus_agent = dicom_metadata.get("ContrastBolusAgent", "")
     contrast_bolus_volume = dicom_metadata.get("ContrastBolusVolume", None)
-    contrast_bolus_start_time = dicom_metadata.get("ContrastBolusStartTime", None)
 
     # Check if this is a contrast-enhanced sequence
     is_contrast = bool(contrast_bolus_agent) or dicom_metadata.get(
@@ -722,29 +731,31 @@ def detect_preload_from_dicom(
             details={"contrast_info_found": False},
         )
 
-    # Try to estimate dose from volume
-    # Standard: 0.1 mmol/kg, ~7-10 mL for typical adult
+    # Try to estimate dose from volume.
+    # Standard: 0.1 mmol/kg, ~7-10 mL for typical adult.
+    # ΔR2* values are 3T half/full/double-dose equivalents, scaled to
+    # field_strength linearly (Yablonskiy regime).
+    b0_scale = field_strength / 3.0
     if contrast_bolus_volume is not None:
         try:
             volume_ml = float(contrast_bolus_volume)
-            # Estimate dose category
             if volume_ml < 5:
                 dose = "half"
-                estimated_delta_r2 = 2.5
+                estimated_delta_r2 = 2.5 * b0_scale
             elif volume_ml < 15:
                 dose = "full"
-                estimated_delta_r2 = 5.0
+                estimated_delta_r2 = 5.0 * b0_scale
             else:
                 dose = "double"
-                estimated_delta_r2 = 10.0
+                estimated_delta_r2 = 10.0 * b0_scale
         except (ValueError, TypeError):
             dose = "unknown"
-            estimated_delta_r2 = 5.0  # Assume full dose
+            estimated_delta_r2 = 5.0 * b0_scale  # Assume full dose
     else:
         dose = "unknown"
-        estimated_delta_r2 = 5.0
+        estimated_delta_r2 = 5.0 * b0_scale
 
-    classification = classify_preload(estimated_delta_r2, 3.0)
+    classification = classify_preload(estimated_delta_r2, field_strength)
 
     return PreloadResult(
         classification=classification,
@@ -755,6 +766,7 @@ def detect_preload_from_dicom(
             "contrast_agent": contrast_bolus_agent,
             "volume_ml": contrast_bolus_volume,
             "estimated_dose": dose,
+            "field_strength": field_strength,
         },
     )
 
@@ -816,12 +828,15 @@ def detect_preload(
             dce_end_time=dce_info.get("end_time"),
             dsc_start_time=dce_info.get("dsc_start_time"),
             dce_dose=float(dce_info.get("dose", 1.0)),
+            field_strength=field_strength,
         )
         results.append(result)
 
     # Method 3: DICOM metadata
     if dicom_metadata is not None:
-        result = detect_preload_from_dicom(dicom_metadata)
+        result = detect_preload_from_dicom(
+            dicom_metadata, field_strength=field_strength,
+        )
         results.append(result)
 
     # Return most confident result

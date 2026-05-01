@@ -4,12 +4,15 @@ Functions for converting DCE-MRI signal to concentration using the Ernst
 equation and related T1-based calculations for pharmacokinetic analysis.
 """
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
+
+logger = logging.getLogger(__name__)
 
 from pmriprep.utils.dce_constants import (
     DEFAULT_BASELINE_FRAMES,
@@ -376,16 +379,29 @@ def signal_to_concentration(
     else:
         baseline_signal = np.mean(signal[..., :baseline_frames], axis=-1)
 
-    # Prevent division by zero in baseline signal
+    # Prevent division by zero in baseline signal. Negative baselines are
+    # unphysical (phase artifact, registration overshoot, denoising) — track
+    # them so we can zero out their concentration rather than propagating a
+    # sign-flipped time course downstream.
     if isinstance(baseline_signal, np.ndarray):
+        negative_baseline_mask = baseline_signal < 0
         baseline_signal_safe = np.maximum(np.abs(baseline_signal), EPSILON_SIGNAL)
-        baseline_signal_safe = np.where(
-            baseline_signal >= 0, baseline_signal_safe, -baseline_signal_safe
-        )
+        if np.any(negative_baseline_mask):
+            n_neg = int(np.sum(negative_baseline_mask))
+            n_total = int(negative_baseline_mask.size)
+            logger.warning(
+                "%d / %d voxels have negative DCE baseline; their concentration "
+                "will be zeroed (phase/registration artifact suspected).",
+                n_neg, n_total,
+            )
     else:
+        negative_baseline_mask = baseline_signal < 0
         baseline_signal_safe = max(abs(baseline_signal), EPSILON_SIGNAL)
-        if baseline_signal < 0:
-            baseline_signal_safe = -baseline_signal_safe
+        if negative_baseline_mask:
+            logger.warning(
+                "DCE 1D baseline signal is negative; concentration will be "
+                "zeroed (phase artifact suspected)."
+            )
 
     # Compute signal ratio S(t)/S(baseline) for each timepoint
     if signal.ndim == 1:
@@ -466,6 +482,13 @@ def signal_to_concentration(
     )
     concentration = concentration - baseline_conc
     concentration = np.maximum(concentration, 0.0)
+
+    # Zero voxels with negative-baseline phase artifacts.
+    if isinstance(negative_baseline_mask, np.ndarray):
+        if np.any(negative_baseline_mask):
+            concentration[negative_baseline_mask] = 0.0
+    elif negative_baseline_mask:
+        concentration[...] = 0.0
 
     # Convert to plasma concentration if requested
     # C_plasma = C_blood / (1 - Hct)

@@ -291,7 +291,7 @@ class TestBatchMethods:
             single_cbv[i] = result.cbv
             single_mtt[i] = result.mtt
 
-        _, batch_cbf, batch_cbv, batch_mtt, _ = tikhonov_deconvolve_batch(
+        _, batch_cbf, batch_cbv, batch_mtt, _, _ = tikhonov_deconvolve_batch(
             tissues, aif, dt=dt,
         )
 

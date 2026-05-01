@@ -1453,6 +1453,7 @@ def tikhonov_deconvolve_batch(
     npt.NDArray[np.floating],  # cbv
     npt.NDArray[np.floating],  # mtt
     npt.NDArray[np.floating],  # lambda_optimal
+    npt.NDArray[np.bool_],  # corner_found_map
 ]:
     """Batch first-order Tikhonov deconvolution with L-curve λ selection.
 
@@ -1473,8 +1474,11 @@ def tikhonov_deconvolve_batch(
             Shape must match spatial dimensions of tissue_curves.
 
     Returns:
-        Tuple of (residues, cbf, cbv, mtt, lambda_optimal) arrays.
-        All output arrays have the same spatial shape as input (excluding time dimension).
+        Tuple of (residues, cbf, cbv, mtt, lambda_optimal, corner_found_map)
+        arrays. All spatial outputs share the input spatial shape (excluding
+        time). corner_found_map is True where L-curve found a corner; False
+        where the per-voxel solver fell back to ``λ = 0.1 σ_max(A)``. Use
+        the fraction of False voxels in QC to detect over-regularization.
     """
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
@@ -1524,6 +1528,7 @@ def tikhonov_deconvolve_batch(
     cbv = np.zeros(n_voxels, dtype=np.float64)
     mtt = np.zeros(n_voxels, dtype=np.float64)
     lambda_optimal = np.zeros(n_voxels, dtype=np.float64)
+    corner_found_map = np.zeros(n_voxels, dtype=bool)
 
     masked_indices = np.where(mask_flat)[0]
     for idx in masked_indices:
@@ -1558,6 +1563,7 @@ def tikhonov_deconvolve_batch(
         if cbf[idx] > EPSILON_CONCENTRATION:
             mtt[idx] = cbv[idx] / cbf[idx]
         lambda_optimal[idx] = best_lambda
+        corner_found_map[idx] = bool(corner_found)
 
     if tissue_curves.ndim > 2:
         residues = residues.reshape(original_shape)  # type: ignore[assignment]
@@ -1565,6 +1571,7 @@ def tikhonov_deconvolve_batch(
         cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
         mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
         lambda_optimal = lambda_optimal.reshape(spatial_shape)  # type: ignore[assignment]
+        corner_found_map = corner_found_map.reshape(spatial_shape)  # type: ignore[assignment]
 
-    return residues, cbf, cbv, mtt, lambda_optimal
+    return residues, cbf, cbv, mtt, lambda_optimal, corner_found_map
 

@@ -623,26 +623,40 @@ class BayesianPKFitter:
         transforms = [p.transform for p in self.priors]
         upper_bounds_t = [p.upper_bound for p in self.priors]
 
-        # Objective in transformed space
+        # Objective in transformed space.
+        # Prior is evaluated as a Gaussian directly on transformed params
+        # (== log-normal on natural-space LOG params, == logit-normal on
+        # natural-space LOG_LOGIT params). This matches the VI path's
+        # convention and the FABBER convention. Evaluating the prior in
+        # natural space and adding a Jacobian recovered the MAP of a
+        # *different* prior distribution, so MAP and VI returned different
+        # posterior modes for the same model when the prior was informative.
         def neg_log_posterior_t(params_t: npt.NDArray[np.floating]) -> float:
-            # Inverse-transform to natural space
+            log_prior_t = compute_log_prior(
+                params_t, self.priors, transformed=True
+            )
+            if not np.isfinite(log_prior_t):
+                return 1e30
+
+            # Inverse-transform for likelihood (model evaluates natural params)
             params_nat = np.array([
                 float(from_transformed(params_t[i], transforms[i], upper_bounds_t[i]))
                 for i in range(n_params)
             ], dtype=np.float64)
-            lp = self._log_posterior(
+
+            if not self.model.validate_params(params_nat):
+                return 1e30
+            if not self._check_volume_constraint(params_nat):
+                return 1e30
+
+            log_lik = self._log_likelihood(
                 params_nat, tissue_curve, aif, time_points, noise_std,
                 weights=weights,
             )
-            if not np.isfinite(lp):
+            if not np.isfinite(log_lik):
                 return 1e30
-            val = -lp
-            # Subtract log-Jacobian for correct MAP in transformed space
-            for i in range(n_params):
-                val -= float(log_jacobian_det(
-                    params_nat[i], transforms[i], upper_bounds_t[i]
-                ))
-            return min(val, 1e30)
+
+            return min(-(log_prior_t + log_lik), 1e30)
 
         # Multi-start: try NLLS warm-start, prior mean, and data-driven guess.
         # Use Nelder-Mead (gradient-free) because the profile likelihood
@@ -716,20 +730,48 @@ class BayesianPKFitter:
         # Apply volume constraint (natural space, no clipping)
         fitted_params = self._apply_volume_constraint(fitted_params)  # type: ignore[assignment]
 
-        # Compute Laplace approximation uncertainties (natural space)
+        # Compute Laplace approximation uncertainties.
+        # Hessian is taken on the transformed-space objective so its
+        # prior contribution matches what MAP optimized; the resulting
+        # transformed-space std is back-transformed to natural space
+        # via the delta method (jac = exp(log|d theta_nat / d theta_t|)).
         if compute_uncertainties:
-            def _neg_log_post_nat(params: npt.NDArray[np.floating]) -> float:
-                lp = self._log_posterior(
-                    params, tissue_curve, aif, time_points, noise_std,
-                    weights=weights,
+            try:
+                hessian_t = self._compute_hessian(
+                    fitted_params_t, neg_log_posterior_t
                 )
-                if not np.isfinite(lp):
-                    return 1e30
-                return -lp
+                cov_t = np.linalg.inv(
+                    hessian_t + 1e-6 * np.eye(n_params)
+                )
+                stds_t = np.sqrt(np.maximum(np.diag(cov_t), 0.0))
 
-            uncertainties, credible_intervals = self._compute_laplace_uncertainties(
-                fitted_params, _neg_log_post_nat
-            )
+                names = self.model.get_parameter_names()
+                bounds_natural = self.model.get_bounds()
+                uncertainties = {}
+                credible_intervals = {}
+                for i, name in enumerate(names):
+                    theta_nat = float(fitted_params[i])
+                    jac = float(np.exp(log_jacobian_det(
+                        theta_nat, transforms[i], upper_bounds_t[i]
+                    )))
+                    std_nat = float(stds_t[i]) * jac
+                    uncertainties[name] = std_nat
+                    ci_low = max(theta_nat - 1.96 * std_nat, bounds_natural[i][0])
+                    ci_high = min(theta_nat + 1.96 * std_nat, bounds_natural[i][1])
+                    credible_intervals[name] = (ci_low, ci_high)
+            except np.linalg.LinAlgError:
+                # Hessian not invertible; fall back to prior std as
+                # uncertainty estimate (matches _compute_laplace_uncertainties).
+                names = self.model.get_parameter_names()
+                bounds_natural = self.model.get_bounds()
+                uncertainties = {
+                    name: self.priors[i].std
+                    for i, name in enumerate(names)
+                }
+                credible_intervals = {
+                    name: (bounds_natural[i][0], bounds_natural[i][1])
+                    for i, name in enumerate(names)
+                }
         else:
             uncertainties = {}
             credible_intervals = {}

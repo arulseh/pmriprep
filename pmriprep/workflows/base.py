@@ -1504,15 +1504,31 @@ def init_pmriprep_wf(
             name="dsc_wf",
         )
 
-        # Read TE/TR/field_strength from BIDS sidecar JSON
+        # Read TE/TR/field_strength from BIDS sidecar JSON.
+        # All three are required for DSC quantification: TE feeds the
+        # signal-to-ΔR2* equation, TR sets temporal sampling, B0 selects
+        # field-dependent constants (preload thresholds, contrast r1).
+        # Silently defaulting any of these to 3T-Siemens values would
+        # mis-quantify cohorts at 1.5T/7T or with sparse sidecars.
         if session_data.modalities.dsc:
             sidecar = _read_bids_sidecar(session_data.modalities.dsc)
-            if sidecar["te"] is not None:
-                dsc_wf.inputs.inputnode.te = sidecar["te"]
-            if sidecar["tr"] is not None:
-                dsc_wf.inputs.inputnode.tr = sidecar["tr"]
-            if sidecar["field_strength"] is not None:
-                dsc_wf.inputs.inputnode.field_strength = sidecar["field_strength"]
+            missing = [
+                k for k in ("te", "tr", "field_strength") if sidecar[k] is None
+            ]
+            if missing:
+                bids_keys = {
+                    "te": "EchoTime",
+                    "tr": "RepetitionTime/RepetitionTimeExcitation",
+                    "field_strength": "MagneticFieldStrength",
+                }
+                raise ValueError(
+                    f"DSC BIDS sidecar missing required fields: "
+                    f"{[bids_keys[k] for k in missing]}. "
+                    f"Source: {session_data.modalities.dsc}"
+                )
+            dsc_wf.inputs.inputnode.te = sidecar["te"]
+            dsc_wf.inputs.inputnode.tr = sidecar["tr"]
+            dsc_wf.inputs.inputnode.field_strength = sidecar["field_strength"]
 
         # Connect DSC file from inputnode
         workflow.connect([
@@ -2055,21 +2071,38 @@ def init_pmriprep_wf(
             (inputnode, dce_wf, [("dce_file", "inputnode.dce_file")]),
         ])
 
-        # Read acquisition parameters from DCE BIDS sidecar JSON
+        # Read acquisition parameters from DCE BIDS sidecar JSON.
+        # All five fields are required: TE/pulse TR/FA feed the SPGR
+        # signal equation, volume TR sets the time vector for PK fitting,
+        # B0 selects field-dependent r1 and T1 references. Silent defaults
+        # would mis-quantify Ktrans/ve by orders of magnitude (volume_tr
+        # → pulse_tr fallback compresses the time axis ~1000×) or by
+        # 5-30% (B0 mismatch on relaxivity).
         dce_provenance: dict[str, Any] = {}
         if session_data.modalities.dce:
             dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
-            if dce_sidecar["te"] is not None:
-                dce_wf.inputs.inputnode.te = dce_sidecar["te"]
-            if dce_sidecar["tr"] is not None:
-                dce_wf.inputs.inputnode.tr = dce_sidecar["tr"]
-            # Volume TR for model auto-selection (temporal resolution)
-            if dce_sidecar["volume_tr"] is not None:
-                dce_wf.inputs.inputnode.volume_tr = dce_sidecar["volume_tr"]
-            if dce_sidecar["flip_angle"] is not None:
-                dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
-            if dce_sidecar["field_strength"] is not None:
-                dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
+            missing = [
+                k for k in ("te", "tr", "volume_tr", "flip_angle", "field_strength")
+                if dce_sidecar[k] is None
+            ]
+            if missing:
+                bids_keys = {
+                    "te": "EchoTime",
+                    "tr": "RepetitionTimeExcitation (or RepetitionTime for 2D)",
+                    "volume_tr": "RepetitionTime",
+                    "flip_angle": "FlipAngle",
+                    "field_strength": "MagneticFieldStrength",
+                }
+                raise ValueError(
+                    f"DCE BIDS sidecar missing required fields: "
+                    f"{[bids_keys[k] for k in missing]}. "
+                    f"Source: {session_data.modalities.dce}"
+                )
+            dce_wf.inputs.inputnode.te = dce_sidecar["te"]
+            dce_wf.inputs.inputnode.tr = dce_sidecar["tr"]
+            dce_wf.inputs.inputnode.volume_tr = dce_sidecar["volume_tr"]
+            dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
+            dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
 
             # Set r1 relaxivity — priority chain:
             # 1. User-supplied override (dce_config.r1_relaxivity)

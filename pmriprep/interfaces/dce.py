@@ -420,14 +420,20 @@ class B1Mapping(SimpleInterface):
                         tr2_ms, tr1_ms,
                     )
             else:
-                # No TR info found - use defaults, assume standard ordering
-                logger.warning(
-                    "No TR values in JSON sidecar - using defaults (20/100 ms)"
-                )
-                tr1_ms = tr1_override if tr1_override is not None else 20.0
-                tr2_ms = tr2_override if tr2_override is not None else 100.0
-                s1 = afi_data[:, :, :, 0]
-                s2 = afi_data[:, :, :, 1]
+                # No TR info found. Vendor-specific defaults (Siemens 20/100,
+                # GE 25/125, Philips 30/150) cannot be silently assumed —
+                # wrong ratio yields wrong B1+ → wrong T1 → wrong Ktrans.
+                if tr1_override is not None and tr2_override is not None:
+                    tr1_ms = float(tr1_override)
+                    tr2_ms = float(tr2_override)
+                    s1 = afi_data[:, :, :, 0]
+                    s2 = afi_data[:, :, :, 1]
+                else:
+                    raise ValueError(
+                        "AFI 4D acquisition has no RepetitionTime metadata in "
+                        "JSON sidecar and no tr1/tr2 override provided. "
+                        "AFI requires explicit TR1 and TR2 (no vendor defaults)."
+                    )
 
             # 4D mode: no coregistration needed (same acquisition)
             coreg_info: dict[str, Any] = {"coregistered": False}
@@ -445,30 +451,33 @@ class B1Mapping(SimpleInterface):
             affine = tr1_img.affine  # type: ignore[attr-defined]
             header = tr1_img.header  # type: ignore[attr-defined]
 
-            # Get TR values: override > JSON sidecar > defaults
-            if tr1_override is not None:
-                tr1_ms = float(tr1_override)
-            else:
-                tr1_json = Path(
-                    str(tr1_file).replace(".nii.gz", ".json").replace(".nii", ".json")
+            # Get TR values: override > JSON sidecar. No vendor defaults —
+            # wrong TR ratio biases B1+ and propagates to T1/Ktrans.
+            def _read_tr_ms(nifti_path: str, label: str) -> float:
+                json_path = Path(
+                    str(nifti_path).replace(".nii.gz", ".json").replace(".nii", ".json")
                 )
-                if tr1_json.exists():
-                    with open(tr1_json) as f:
-                        tr1_ms = _json.load(f).get("RepetitionTime", 0.020) * 1000
-                else:
-                    tr1_ms = 20.0
+                if not json_path.exists():
+                    raise ValueError(
+                        f"AFI {label} JSON sidecar not found: {json_path}. "
+                        f"AFI requires explicit RepetitionTime per volume."
+                    )
+                with open(json_path) as f:
+                    meta = _json.load(f)
+                if "RepetitionTime" not in meta:
+                    raise ValueError(
+                        f"AFI {label} sidecar {json_path} missing RepetitionTime."
+                    )
+                return float(meta["RepetitionTime"]) * 1000
 
-            if tr2_override is not None:
-                tr2_ms = float(tr2_override)
-            else:
-                tr2_json = Path(
-                    str(tr2_file).replace(".nii.gz", ".json").replace(".nii", ".json")
-                )
-                if tr2_json.exists():
-                    with open(tr2_json) as f:
-                        tr2_ms = _json.load(f).get("RepetitionTime", 0.100) * 1000
-                else:
-                    tr2_ms = 100.0
+            tr1_ms = (
+                float(tr1_override) if tr1_override is not None
+                else _read_tr_ms(tr1_file, "TR1")
+            )
+            tr2_ms = (
+                float(tr2_override) if tr2_override is not None
+                else _read_tr_ms(tr2_file, "TR2")
+            )
 
             # Auto-correct TR ordering: TR1 must be the short TR, TR2 the long TR.
             # Files may arrive in arbitrary order (e.g., sorted alphabetically).
@@ -607,17 +616,14 @@ class B1Mapping(SimpleInterface):
 
         # Get TR ratio
         n = tr2_ms / tr1_ms
-        # Guard against Undefined flowing through workflow connections
-        # when afi_flip_angle is not set on the inputnode.
-        if isdefined(self.inputs.nominal_flip_angle):
-            nominal_fa = float(self.inputs.nominal_flip_angle)
-        else:
-            nominal_fa = 60.0
-        if nominal_fa == 60.0:
-            logger.info(
-                "Using default AFI nominal flip angle = 60 deg. "
-                "Set FlipAngle in BIDS sidecar or afi_flip_angle in config file if different.",
+        # AFI nominal flip angle must be explicit — vendor defaults (60° Siemens,
+        # ~55° GE) silently bias B1+ → T1 → concentration → Ktrans.
+        if not isdefined(self.inputs.nominal_flip_angle):
+            raise ValueError(
+                "AFI nominal_flip_angle not set. Required from BIDS sidecar "
+                "FlipAngle or afi_flip_angle config; no vendor default applied."
             )
+        nominal_fa = float(self.inputs.nominal_flip_angle)
 
         # -----------------------------------------------------------------
         # Signal masking: only compute B1+ where both signals are above
@@ -2298,7 +2304,7 @@ class T1Mapping(SimpleInterface):
         Returns:
             T1 map in seconds, shape (x, y, z). Unfitted voxels are 0.
         """
-        from pmriprep.utils.dce_constants import EPSILON_T1
+        from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1
 
         n_fa = signal_data.shape[0]
         n_voxels = int(np.prod(shape))
@@ -2330,7 +2336,10 @@ class T1Mapping(SimpleInterface):
         if e1_init is not None:
             # Use WLLS E1 estimate → R1 = -ln(E1) / TR
             e1_sub = e1_init[fit_idx]
-            e1_sub = np.clip(e1_sub, EPSILON_T1, 1.0 - EPSILON_T1)
+            # Use EPSILON_E1_UPPER (1e-4), not EPSILON_T1 (0.01), as the
+            # upper bound: at short pulse TR (e.g., 4 ms) E1=0.99 caps T1
+            # at ~397 ms, miscapping long-T1 tissue at the seed.
+            e1_sub = np.clip(e1_sub, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
             r1 = -np.log(e1_sub) / tr_s
         else:
             # Unweighted GLLS: single-pass linearized regression (no IRLS)
@@ -2347,7 +2356,7 @@ class T1Mapping(SimpleInterface):
             denom = np.where(np.abs(denom) < 1e-12, 1e-12, denom)
             e1_glls = np.clip(
                 (n_fa * sum_xy - sum_x * sum_y) / denom,
-                EPSILON_T1, 1.0 - EPSILON_T1,
+                EPSILON_T1, 1.0 - EPSILON_E1_UPPER,
             )
             r1 = -np.log(e1_glls) / tr_s
 

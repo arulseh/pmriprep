@@ -1425,28 +1425,28 @@ class ComputeDCEMaps(BaseInterface):
         if self.inputs.time_points_file:
             time_points = np.loadtxt(self.inputs.time_points_file)
         elif isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
-            # Use volume TR (temporal resolution between 3D acquisitions) for
-            # the time vector — this is the actual time between DCE frames.
-            # Note: self.inputs.tr is the pulse TR (RF excitation interval),
-            # which is ~1000x shorter for 3D sequences like VIBE.
+            # Volume TR (temporal resolution between 3D volumes) drives the
+            # time vector. self.inputs.tr is the pulse TR (RF excitation
+            # interval), which is ~1000× shorter for 3D sequences (VIBE,
+            # TWIST). Falling back to pulse TR here would compress the
+            # time axis 1000× and miscompute Ktrans by orders of magnitude.
             vol_tr_minutes = float(self.inputs.volume_tr) / 60.0
             time_points = np.arange(n_timepoints, dtype=np.float64) * vol_tr_minutes
-        elif self.inputs.tr:
-            # Fallback to pulse TR (correct for 2D sequences where
-            # pulse TR == volume TR)
-            tr_minutes = float(self.inputs.tr) / 60.0
-            time_points = np.arange(n_timepoints, dtype=np.float64) * tr_minutes
         else:
-            raise ValueError("Either tr or time_points_file must be provided")
+            raise ValueError(
+                "DCE time vector requires either time_points_file or volume_tr "
+                "(BIDS RepetitionTime). Pulse TR (RepetitionTimeExcitation) "
+                "must not be used as a substitute for 3D acquisitions."
+            )
 
-        # Get TR for auto-model selection
-        # Use volume_tr (temporal resolution) if available, else fall back to tr
+        # TR for auto-model selection: must be the volume TR (temporal
+        # sampling), not the pulse TR — model eligibility depends on
+        # whether the AIF is sampled finely enough to resolve early kinetics.
         if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
             selection_tr_seconds = float(self.inputs.volume_tr)
-        elif isdefined(self.inputs.tr) and self.inputs.tr is not None:
-            selection_tr_seconds = float(self.inputs.tr)
         else:
-            # Estimate TR from time points (minutes -> seconds)
+            # Recover from time_points (minutes → seconds) when volume_tr
+            # was not threaded but a time_points_file was provided.
             selection_tr_seconds = float(time_points[1] - time_points[0]) * 60.0
 
         # Select model
@@ -2328,36 +2328,48 @@ class ComputeDCEMaps(BaseInterface):
         out_ktrans = self._gen_outfilename("_Ktrans")
         out_r2 = self._gen_outfilename("_R2")
 
+        def _save_dce_map(
+            data: npt.NDArray[Any],
+            path: str,
+            dtype: Any = np.float32,
+        ) -> None:
+            """Save a DCE-derived map with an explicit data dtype.
+
+            Mirrors DSC's _save_map: re-derives the header so its
+            inherited datatype field doesn't trigger silent scl_slope
+            rescaling on save (e.g. when the upstream concentration
+            NIfTI is int16/int32).
+            """
+            cast_data = data.astype(dtype)
+            local_header = header.copy()  # type: ignore[attr-defined]
+            local_header.set_data_dtype(dtype)
+            img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
+            nib.save(img, path)  # type: ignore[attr-defined]
+
         # Save main outputs
-        ktrans_img = nib.Nifti1Image(ktrans.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(ktrans_img, out_ktrans)  # type: ignore[attr-defined]
+        _save_dce_map(ktrans, out_ktrans)
 
         # ve and kep are model-dependent: produced by Tofts, ExtTofts, 2CXM
         # but NOT by Patlak (which only estimates Ktrans and vp).
         # In auto mode, always save (NaN where not applicable).
         if save_ve:
             out_ve = self._gen_outfilename("_ve")
-            ve_img = nib.Nifti1Image(ve.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(ve_img, out_ve)  # type: ignore[attr-defined]
+            _save_dce_map(ve, out_ve)
 
             out_kep = self._gen_outfilename("_kep")
-            kep_img = nib.Nifti1Image(kep.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(kep_img, out_kep)  # type: ignore[attr-defined]
+            _save_dce_map(kep, out_kep)
 
-        r2_img = nib.Nifti1Image(r2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(r2_img, out_r2)  # type: ignore[attr-defined]
+        _save_dce_map(r2_map, out_r2)
 
-        # Save quality flag map
+        # Save quality flag map (uint8 categorical)
         out_quality_flag = self._gen_outfilename("_quality_flag")
-        qf_img = nib.Nifti1Image(quality_flag_map, affine, header)  # type: ignore[attr-defined]
-        nib.save(qf_img, out_quality_flag)  # type: ignore[attr-defined]
+        _save_dce_map(quality_flag_map, out_quality_flag, dtype=np.uint8)
 
-        # v0.28.0: save vp_at_bound spatial map. Zero outside brain mask so
+        # Save vp_at_bound spatial map. Zero outside brain mask so
         # downstream ROI aggregations are well-defined on brain voxels only.
-        vp_at_bound_map = np.where(mask_bool, vp_at_bound_map, 0.0).astype(np.float32)
+        vp_at_bound_map = np.where(mask_bool, vp_at_bound_map, 0.0)
         out_vp_at_bound_map = self._gen_outfilename("_vpAtBound")
-        vpab_img = nib.Nifti1Image(vp_at_bound_map, affine, header)  # type: ignore[attr-defined]
-        nib.save(vpab_img, out_vp_at_bound_map)  # type: ignore[attr-defined]
+        _save_dce_map(vp_at_bound_map, out_vp_at_bound_map)
 
         # Save model-free maps
         out_iauc60_path = self._gen_outfilename("_IAUC60")
@@ -2385,12 +2397,10 @@ class ComputeDCEMaps(BaseInterface):
         if peak_enh is not None:
             save_list.insert(3, (peak_enh, out_peak_enh_path))
         for arr, path in save_list:
-            img = nib.Nifti1Image(arr.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(img, path)  # type: ignore[attr-defined]
+            _save_dce_map(arr, path)
 
         # Save curve type as int8 (categorical)
-        ct_img = nib.Nifti1Image(curve_type, affine, header)  # type: ignore[attr-defined]
-        nib.save(ct_img, out_curve_type_path)  # type: ignore[attr-defined]
+        _save_dce_map(curve_type, out_curve_type_path, dtype=np.int8)
 
         # Initialize results
         self._results: dict[str, Any] = {
@@ -2419,8 +2429,7 @@ class ComputeDCEMaps(BaseInterface):
         # Save vp if applicable
         if save_vp:
             out_vp = self._gen_outfilename("_vp")
-            vp_img = nib.Nifti1Image(vp.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(vp_img, out_vp)  # type: ignore[attr-defined]
+            _save_dce_map(vp, out_vp)
             self._results["out_vp"] = out_vp
 
         # Save 2CXM-specific outputs
@@ -2429,14 +2438,9 @@ class ComputeDCEMaps(BaseInterface):
             out_ps = self._gen_outfilename("_PS")
             out_e = self._gen_outfilename("_E")
 
-            fp_img = nib.Nifti1Image(fp_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(fp_img, out_fp)  # type: ignore[attr-defined]
-
-            ps_img = nib.Nifti1Image(ps_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(ps_img, out_ps)  # type: ignore[attr-defined]
-
-            e_img = nib.Nifti1Image(e_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(e_img, out_e)  # type: ignore[attr-defined]
+            _save_dce_map(fp_map, out_fp)
+            _save_dce_map(ps_map, out_ps)
+            _save_dce_map(e_map, out_e)
 
             self._results["out_fp"] = out_fp
             self._results["out_ps"] = out_ps
@@ -2445,34 +2449,27 @@ class ComputeDCEMaps(BaseInterface):
         # Save uncertainty maps
         if inference != "nlls":
             out_ktrans_std = self._gen_outfilename("_Ktrans_std")
-
-            ktrans_std_img = nib.Nifti1Image(ktrans_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(ktrans_std_img, out_ktrans_std)  # type: ignore[attr-defined]
-
+            _save_dce_map(ktrans_std, out_ktrans_std)
             self._results["out_ktrans_std"] = out_ktrans_std
 
             if save_ve:
                 out_ve_std = self._gen_outfilename("_ve_std")
-                ve_std_img = nib.Nifti1Image(ve_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-                nib.save(ve_std_img, out_ve_std)  # type: ignore[attr-defined]
+                _save_dce_map(ve_std, out_ve_std)
                 self._results["out_ve_std"] = out_ve_std
 
             if save_vp:
                 out_vp_std = self._gen_outfilename("_vp_std")
-                vp_std_img = nib.Nifti1Image(vp_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-                nib.save(vp_std_img, out_vp_std)  # type: ignore[attr-defined]
+                _save_dce_map(vp_std, out_vp_std)
                 self._results["out_vp_std"] = out_vp_std
 
             # 2CXM-specific: save Fp and PS uncertainty maps
             if save_2cxm:
                 out_fp_std_file = self._gen_outfilename("_Fp_std")
-                fp_std_img = nib.Nifti1Image(fp_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-                nib.save(fp_std_img, out_fp_std_file)  # type: ignore[attr-defined]
+                _save_dce_map(fp_std, out_fp_std_file)
                 self._results["out_fp_std"] = out_fp_std_file
 
                 out_ps_std_file = self._gen_outfilename("_PS_std")
-                ps_std_img = nib.Nifti1Image(ps_std.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-                nib.save(ps_std_img, out_ps_std_file)  # type: ignore[attr-defined]
+                _save_dce_map(ps_std, out_ps_std_file)
                 self._results["out_ps_std"] = out_ps_std_file
 
             # Compute and save Coefficient of Variation (CV = std / mean)
@@ -2485,7 +2482,7 @@ class ComputeDCEMaps(BaseInterface):
             ktrans_cv = np.where(mask_bool, ktrans_cv, 0.0)
 
             out_ktrans_cv = self._gen_outfilename("_Ktrans_cv")
-            nib.save(nib.Nifti1Image(ktrans_cv, affine, header), out_ktrans_cv)  # type: ignore[attr-defined]
+            _save_dce_map(ktrans_cv, out_ktrans_cv)
             self._results["out_ktrans_cv"] = out_ktrans_cv
 
             if save_ve:
@@ -2495,7 +2492,7 @@ class ComputeDCEMaps(BaseInterface):
                     ).astype(np.float32)
                 ve_cv = np.where(mask_bool, ve_cv, 0.0)
                 out_ve_cv = self._gen_outfilename("_ve_cv")
-                nib.save(nib.Nifti1Image(ve_cv, affine, header), out_ve_cv)  # type: ignore[attr-defined]
+                _save_dce_map(ve_cv, out_ve_cv)
                 self._results["out_ve_cv"] = out_ve_cv
 
             if save_vp:
@@ -2505,7 +2502,7 @@ class ComputeDCEMaps(BaseInterface):
                     ).astype(np.float32)
                 vp_cv = np.where(mask_bool, vp_cv, 0.0)
                 out_vp_cv = self._gen_outfilename("_vp_cv")
-                nib.save(nib.Nifti1Image(vp_cv, affine, header), out_vp_cv)  # type: ignore[attr-defined]
+                _save_dce_map(vp_cv, out_vp_cv)
                 self._results["out_vp_cv"] = out_vp_cv
 
             # Compute and save 95% Credible Intervals (mean ± 1.96 * std)
@@ -2516,8 +2513,8 @@ class ComputeDCEMaps(BaseInterface):
             out_ktrans_ci95_lower = self._gen_outfilename("_Ktrans_ci95lower")
             out_ktrans_ci95_upper = self._gen_outfilename("_Ktrans_ci95upper")
 
-            nib.save(nib.Nifti1Image(ktrans_ci95_lower, affine, header), out_ktrans_ci95_lower)  # type: ignore[attr-defined]
-            nib.save(nib.Nifti1Image(ktrans_ci95_upper, affine, header), out_ktrans_ci95_upper)  # type: ignore[attr-defined]
+            _save_dce_map(ktrans_ci95_lower, out_ktrans_ci95_lower)
+            _save_dce_map(ktrans_ci95_upper, out_ktrans_ci95_upper)
 
             self._results["out_ktrans_ci95_lower"] = out_ktrans_ci95_lower
             self._results["out_ktrans_ci95_upper"] = out_ktrans_ci95_upper
@@ -2529,8 +2526,8 @@ class ComputeDCEMaps(BaseInterface):
                 out_ve_ci95_lower = self._gen_outfilename("_ve_ci95lower")
                 out_ve_ci95_upper = self._gen_outfilename("_ve_ci95upper")
 
-                nib.save(nib.Nifti1Image(ve_ci95_lower, affine, header), out_ve_ci95_lower)  # type: ignore[attr-defined]
-                nib.save(nib.Nifti1Image(ve_ci95_upper, affine, header), out_ve_ci95_upper)  # type: ignore[attr-defined]
+                _save_dce_map(ve_ci95_lower, out_ve_ci95_lower)
+                _save_dce_map(ve_ci95_upper, out_ve_ci95_upper)
 
                 self._results["out_ve_ci95_lower"] = out_ve_ci95_lower
                 self._results["out_ve_ci95_upper"] = out_ve_ci95_upper
@@ -2542,16 +2539,15 @@ class ComputeDCEMaps(BaseInterface):
                 out_vp_ci95_lower = self._gen_outfilename("_vp_ci95lower")
                 out_vp_ci95_upper = self._gen_outfilename("_vp_ci95upper")
 
-                nib.save(nib.Nifti1Image(vp_ci95_lower, affine, header), out_vp_ci95_lower)  # type: ignore[attr-defined]
-                nib.save(nib.Nifti1Image(vp_ci95_upper, affine, header), out_vp_ci95_upper)  # type: ignore[attr-defined]
+                _save_dce_map(vp_ci95_lower, out_vp_ci95_lower)
+                _save_dce_map(vp_ci95_upper, out_vp_ci95_upper)
 
                 self._results["out_vp_ci95_lower"] = out_vp_ci95_lower
                 self._results["out_vp_ci95_upper"] = out_vp_ci95_upper
 
         # Save tSNR map (always computed)
         out_tsnr = self._gen_outfilename("_tSNR")
-        tsnr_img = nib.Nifti1Image(tsnr_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-        nib.save(tsnr_img, out_tsnr)  # type: ignore[attr-defined]
+        _save_dce_map(tsnr_map, out_tsnr)
         self._results["out_tsnr"] = out_tsnr
 
         # Create QC mask using physiological bounds
@@ -2580,21 +2576,18 @@ class ComputeDCEMaps(BaseInterface):
 
         qc_mask = qc_mask.astype(np.uint8)
         out_qc_mask = self._gen_outfilename("_qc_mask")
-        qc_mask_img = nib.Nifti1Image(qc_mask, affine, header)  # type: ignore[attr-defined]
-        nib.save(qc_mask_img, out_qc_mask)  # type: ignore[attr-defined]
+        _save_dce_map(qc_mask, out_qc_mask, dtype=np.uint8)
         self._results["out_qc_mask"] = out_qc_mask
 
         # Save model selection map (auto/BIC mode)
         if is_auto:
             out_model_sel = self._gen_outfilename("_modelSelection")
-            model_sel_img = nib.Nifti1Image(model_selection_map, affine, header)  # type: ignore[attr-defined]
-            nib.save(model_sel_img, out_model_sel)  # type: ignore[attr-defined]
+            _save_dce_map(model_selection_map, out_model_sel, dtype=np.int8)
             self._results["out_model_selection"] = out_model_sel
 
             # Save delta-BIC confidence map
             out_delta_bic = self._gen_outfilename("_deltaBIC")
-            delta_bic_img = nib.Nifti1Image(delta_bic_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
-            nib.save(delta_bic_img, out_delta_bic)  # type: ignore[attr-defined]
+            _save_dce_map(delta_bic_map, out_delta_bic)
             self._results["out_delta_bic"] = out_delta_bic
 
         # Save fitted curves

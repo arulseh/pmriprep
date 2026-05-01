@@ -245,22 +245,36 @@ QC_MEAN_CNR_MINIMUM: Final[float] = 3.0
 # Field-Strength Dependent Constants
 # =============================================================================
 
-#: In-vivo tissue transverse relaxivity r2* by field strength (T) in s^-1 per mM.
-#: Based on van Osch MJP, et al. "Quantitative cerebral perfusion MRI and
-#: CO2 reactivity measurements in patients with symptomatic internal carotid
-#: artery occlusion." J Cereb Blood Flow Metab. 2013;33(6):921-927 (PMC3672249).
+#: In-vivo tissue transverse relaxivity r2* by field strength (T) in s^-1 per mM
+#: tissue Gd, for gradient-echo DSC with Gd-DTPA in cortical tissue.
 #:
-#: The r2* relationship is approximately linear with field strength:
-#:   r2* ≈ 28.9 ± 0.48 s^-1 T^-1 mM^-1
+#: Sources:
+#:   Kjølby BF, Østergaard L, Kiselev VG. "Theoretical model of intravascular
+#:     paramagnetic tracers effect on tissue relaxation." Magn Reson Med
+#:     2006;56:187-197.
+#:   Calamante F, Vonken EJPA, van Osch MJP. "Contrast agent concentration
+#:     measurements affecting quantification of bolus-tracking perfusion MRI."
+#:     Magn Reson Med 2007;58:544-553 (blood vs tissue r2* distinction).
 #:
-#: Note: This is a linear approximation; the true r2*-concentration
-#: relationship is non-linear and depends on vascular geometry, contrast
-#: agent compartmentalization, and pulse sequence parameters. These values
-#: are used only for AUC → mM·s conversion and preload residual estimation.
+#: The earlier value 28.9 s^-1·T^-1·mM^-1 from van Osch 2003 is whole-blood
+#: Gd-DTPA r2* (used for AIF quantification), not tissue r2*. Applying it
+#: to tissue ΔR2* under-estimates inferred tissue [Gd] by ~2× because the
+#: mesoscopic field perturbation around microvasculature amplifies tissue
+#: ΔR2* per unit tissue Gd relative to per unit blood Gd. The values below
+#: are tissue-calibrated.
+#:
+#: Caveats:
+#:   - Linear B0 scaling holds 1.5T-3T (static-dephasing regime). The 7T
+#:     value is extrapolated; r2* at 7T depends non-linearly on vessel
+#:     architecture (diffusion narrowing, non-Lorentzian lineshape).
+#:   - Cortical-GM number; WM is ~10-20% lower.
+#:   - Macrocyclic agents within ~10% of Gd-DTPA at standard dose.
+#:   - Used only for residual-fraction QC (residual ΔR2* → equivalent [Gd]);
+#:     does NOT enter deconvolution math (r2* cancels in CBF/CBV ratios).
 R2_STAR_TISSUE_LINEAR_BY_FIELD: Final[dict[float, float]] = {
-    1.5: 43.4,   # 28.9 * 1.5 s^-1/mM
-    3.0: 86.7,   # 28.9 * 3.0 s^-1/mM
-    7.0: 202.3,  # 28.9 * 7.0 s^-1/mM
+    1.5: 87.0,   # Kjølby 2006, GE-EPI cortical tissue
+    3.0: 174.0,  # Linear B0 scaling
+    7.0: 400.0,  # Extrapolated; non-linearity at 7T (see caveat above)
 }
 
 #: Legacy alias for backwards compatibility
@@ -270,18 +284,16 @@ R2_STAR_BY_FIELD = R2_STAR_TISSUE_LINEAR_BY_FIELD
 def get_r2_star_tissue(field_strength: float) -> float:
     """Get in-vivo tissue transverse relaxivity r2* for a given field strength.
 
-    Uses linear interpolation between known values from van Osch et al.
-    (2013, PMC3672249): r2* ≈ 28.9 s^-1 T^-1 mM^-1.
-
-    Note: This is a linear approximation of a non-linear relationship.
-    The true r2* depends on vascular geometry, contrast agent
-    compartmentalization, and pulse sequence parameters.
+    Uses linear interpolation across :data:`R2_STAR_TISSUE_LINEAR_BY_FIELD`,
+    which holds Kjølby 2006 / Calamante 2007 tissue-calibrated values for
+    Gd-DTPA in cortical tissue. See the constant docstring for caveats
+    (Gd-DTPA assumed; cortical-GM numbers; 7T extrapolated).
 
     Args:
         field_strength: Magnetic field strength in Tesla.
 
     Returns:
-        Tissue r2* relaxivity in s^-1 per mM.
+        Tissue r2* relaxivity in s^-1 per mM tissue Gd.
     """
     # Direct lookup for known field strengths
     if field_strength in R2_STAR_TISSUE_LINEAR_BY_FIELD:

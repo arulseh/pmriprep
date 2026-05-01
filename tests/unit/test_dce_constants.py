@@ -25,25 +25,31 @@ from pmriprep.utils.dce_constants import (
 
 
 class TestR1Relaxivity:
-    """Tests for field-strength-dependent R1 relaxivity lookup."""
+    """Tests for field-strength-dependent R1 relaxivity lookup.
+
+    get_r1_relaxivity now delegates to contrast_agent.lookup_r1 with
+    Gd-DTPA as the fallback agent (Rohrer 2005 plasma at 1.5T/3T,
+    Noebauer-Huhmann 2010 at 7T).
+    """
 
     def test_r1_relaxivity_known_fields(self) -> None:
-        """Known field strengths return catalogued values."""
-        assert get_r1_relaxivity(1.5) == 3.9
-        assert get_r1_relaxivity(3.0) == 3.8
-        assert get_r1_relaxivity(7.0) == 3.5
+        """Known field strengths return catalogued Gd-DTPA values."""
+        assert get_r1_relaxivity(1.5) == pytest.approx(4.1)
+        assert get_r1_relaxivity(3.0) == pytest.approx(3.7)
+        assert get_r1_relaxivity(7.0) == pytest.approx(3.3)
 
-    def test_r1_relaxivity_interpolation(self) -> None:
-        """Midpoint between 1.5T and 3.0T interpolates linearly."""
-        midpoint = (1.5 + 3.0) / 2.0  # 2.25T
-        result = get_r1_relaxivity(midpoint)
-        expected = (3.9 + 3.8) / 2.0  # 3.85
-        assert result == pytest.approx(expected)
+    def test_r1_relaxivity_bin_low(self) -> None:
+        """B0 ≤ 2.25T snaps to 1.5T value."""
+        assert get_r1_relaxivity(2.25) == pytest.approx(4.1)
 
-    def test_r1_relaxivity_clamping(self) -> None:
-        """Values outside known range clamp to boundary values."""
-        assert get_r1_relaxivity(0.5) == 3.9   # clamped to 1.5T
-        assert get_r1_relaxivity(10.0) == 3.5  # clamped to 7.0T
+    def test_r1_relaxivity_bin_mid(self) -> None:
+        """2.25 < B0 ≤ 5.0T snaps to 3.0T value."""
+        assert get_r1_relaxivity(3.0) == pytest.approx(3.7)
+        assert get_r1_relaxivity(5.0) == pytest.approx(3.7)
+
+    def test_r1_relaxivity_low_clamp(self) -> None:
+        """Sub-1.5T field clamps to 1.5T bin."""
+        assert get_r1_relaxivity(0.5) == pytest.approx(4.1)
 
 
 class TestBloodT1:

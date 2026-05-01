@@ -39,6 +39,7 @@ from pmriprep.utils.dce_constants import (
     EPSILON_EIGENVALUE,
     EPSILON_FLOW,
     EPSILON_VE,
+    MAX_KEP,
     EPSILON_VP,
     MAX_EIGENVALUE_SLOW,
 )
@@ -227,7 +228,11 @@ def batched_tofts_model(
         ve_batch = ve[batch_start:batch_end]
 
         ve_safe = np.maximum(ve_batch, EPSILON_VE)
-        kep = ktrans_batch / ve_safe
+        # Cap kep to match scalar tofts.fit() — degenerate voxels with
+        # ve at EPSILON_VE and moderate Ktrans otherwise produce
+        # exp(-kep·t) that underflows to 0 immediately and wipes the
+        # convolution kernel, breaking scalar/batched parity.
+        kep = np.minimum(ktrans_batch / ve_safe, MAX_KEP)
 
         exp_kernel = _build_exp_kernel(kep, time_points)
         conv_result = _fft_convolve(aif, exp_kernel, dt)
@@ -316,7 +321,8 @@ def batched_extended_tofts_model(
         vascular_term = vp_batch[:, None] * aif[None, :]
 
         ve_safe = np.maximum(ve_batch, EPSILON_VE)
-        kep = ktrans_batch / ve_safe
+        # Cap kep — see tofts batch above for rationale.
+        kep = np.minimum(ktrans_batch / ve_safe, MAX_KEP)
 
         exp_kernel = _build_exp_kernel(kep, time_points)
         conv_result = _fft_convolve(aif, exp_kernel, dt)

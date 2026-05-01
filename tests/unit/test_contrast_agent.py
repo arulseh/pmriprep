@@ -74,24 +74,39 @@ class TestLookupR1:
     """Tests for R1 relaxivity lookup."""
 
     def test_gadobutrol_3t(self) -> None:
-        """Gadobutrol at 3T returns 5.0 L/(mmol*s)."""
-        assert lookup_r1("gadobutrol", 3.0) == pytest.approx(5.0)
+        """Gadobutrol at 3T returns Szomolanyi 2019 plasma value."""
+        assert lookup_r1("gadobutrol", 3.0) == pytest.approx(4.97)
 
     def test_gd_dtpa_3t(self) -> None:
-        """Gd-DTPA at 3T returns 3.7 L/(mmol*s)."""
+        """Gd-DTPA at 3T returns 3.7 L/(mmol*s) (Rohrer 2005 plasma)."""
         assert lookup_r1("gd-dtpa", 3.0) == pytest.approx(3.7)
 
     def test_gd_dtpa_1_5t(self) -> None:
-        """Gd-DTPA at 1.5T returns 4.1 L/(mmol*s)."""
+        """Gd-DTPA at 1.5T returns 4.1 L/(mmol*s) (Rohrer 2005 plasma)."""
         assert lookup_r1("gd-dtpa", 1.5) == pytest.approx(4.1)
 
-    def test_interpolation_midpoint(self) -> None:
-        """Field strength 2.25T linearly interpolates between 1.5T and 3.0T values."""
-        # 2.25T is midpoint between 2.0 and 2.5 (interpolation zone)
-        # fraction = (2.25 - 1.5) / (3.0 - 1.5) = 0.5
-        # gd-dtpa: 4.1 + 0.5 * (3.7 - 4.1) = 4.1 - 0.2 = 3.9
-        expected = 4.1 + 0.5 * (3.7 - 4.1)
-        assert lookup_r1("gd-dtpa", 2.25) == pytest.approx(expected)
+    def test_gd_dtpa_7t(self) -> None:
+        """Gd-DTPA at 7T returns Noebauer-Huhmann 2010 plasma value."""
+        assert lookup_r1("gd-dtpa", 7.0) == pytest.approx(3.3)
+
+    def test_gadobutrol_7t(self) -> None:
+        """Gadobutrol at 7T returns Szomolanyi 2019 plasma value."""
+        assert lookup_r1("gadobutrol", 7.0) == pytest.approx(3.83)
+
+    def test_field_strength_bin_low(self) -> None:
+        """B0 ≤ 2.25T snaps to 1.5T value (no interpolation)."""
+        # Two-bin selection: 2.25T midpoint snaps low.
+        assert lookup_r1("gd-dtpa", 2.25) == pytest.approx(4.1)
+
+    def test_field_strength_bin_mid(self) -> None:
+        """2.25 < B0 ≤ 5.0T uses 3T value."""
+        assert lookup_r1("gd-dtpa", 2.5) == pytest.approx(3.7)
+        assert lookup_r1("gd-dtpa", 5.0) == pytest.approx(3.7)
+
+    def test_unsupported_7t_agent_raises(self) -> None:
+        """Agent without peer-reviewed 7T value raises at B0 > 5.0T."""
+        with pytest.raises(ValueError, match="No peer-reviewed 7T r1"):
+            lookup_r1("gadoxetate", 7.0)
 
     def test_brand_name_resolves(self) -> None:
         """Brand name 'Gadavist' returns same r1 as 'gadobutrol'."""
@@ -128,7 +143,7 @@ class TestLookupR1Safe:
 
     def test_known_returns_value(self) -> None:
         """Known agent returns the same value as lookup_r1."""
-        assert lookup_r1_safe("gadobutrol", 3.0) == pytest.approx(5.0)
+        assert lookup_r1_safe("gadobutrol", 3.0) == pytest.approx(4.97)
 
 
 class TestLookupStandardDose:
@@ -188,10 +203,11 @@ class TestGetAgentInfo:
     """Tests for detailed agent information retrieval."""
 
     def test_gadobutrol_info(self) -> None:
-        """Gadobutrol info contains r1 values and 1.0M concentration."""
+        """Gadobutrol info contains Szomolanyi 2019 r1 + 1.0M concentration."""
         info = get_agent_info("gadobutrol")
-        assert info["r1_1_5T"] == pytest.approx(5.2)
-        assert info["r1_3_0T"] == pytest.approx(5.0)
+        assert info["r1_1_5T"] == pytest.approx(4.78)
+        assert info["r1_3_0T"] == pytest.approx(4.97)
+        assert info["r1_7_0T"] == pytest.approx(3.83)
         assert info["concentration_mmol_per_ml"] == pytest.approx(1.0)
 
 
@@ -265,8 +281,8 @@ class TestGetR1FromSidecarDict:
             "MagneticFieldStrength": 3.0,
         }
         result = get_r1_from_sidecar_dict(sidecar)
-        # gadovist -> gadobutrol -> 5.0 at 3T
-        assert result["r1"] == pytest.approx(5.0)
+        # gadovist -> gadobutrol -> 4.97 at 3T (Szomolanyi 2019)
+        assert result["r1"] == pytest.approx(4.97)
         assert result["source"] == "dicom_lookup"
         assert result["volume_ml"] == pytest.approx(3.5)
 

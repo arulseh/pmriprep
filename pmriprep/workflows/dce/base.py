@@ -2825,18 +2825,15 @@ def _signal_to_concentration_node(
                 "Failed to load T1 map (%s) — using default T1", exc,
             )
 
-    # Load B1 map — clip to DCE-appropriate field-strength-dependent range.
-    # Tighter than VFA T1 mapping range because signal-to-concentration
-    # conversion is more sensitive to B1+ errors.
-    from pmriprep.utils.dce_constants import get_b1_thresholds
-
-    b1_thresh = get_b1_thresholds(field_strength)
+    # Load B1 map. Do NOT pre-clip here: signal_to_concentration captures
+    # the b1<=0 sentinel before its own clip, then resets those voxels to
+    # nominal flip angle. Pre-clipping would map the sentinel to the lower
+    # bound (e.g., 0.5 at 3T), silently halving the effective flip angle.
     b1_map = None
     if b1_map_file:
         try:
             b1_img = nib.load(b1_map_file)
             b1_map = b1_img.get_fdata()  # type: ignore[attr-defined]
-            b1_map = np.clip(b1_map, b1_thresh.dce_clip_low, b1_thresh.dce_clip_high)
         except Exception as exc:
             import logging as _logging
 

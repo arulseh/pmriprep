@@ -24,24 +24,24 @@ class TestR2StarTissue:
     """Tests for field-strength-dependent R2* tissue relaxivity lookup."""
 
     def test_r2_star_tissue_known_fields(self) -> None:
-        """Known field strengths return catalogued values."""
-        assert get_r2_star_tissue(1.5) == 43.4
-        assert get_r2_star_tissue(3.0) == 86.7
-        assert get_r2_star_tissue(7.0) == 202.3
+        """Known field strengths return Kjølby 2006 / Calamante 2007 values."""
+        assert get_r2_star_tissue(1.5) == 87.0
+        assert get_r2_star_tissue(3.0) == 174.0
+        assert get_r2_star_tissue(7.0) == 400.0
 
     def test_r2_star_tissue_interpolation(self) -> None:
         """Midpoint between 1.5T and 3.0T interpolates linearly."""
         midpoint = (1.5 + 3.0) / 2.0  # 2.25T
         result = get_r2_star_tissue(midpoint)
-        expected = 43.4 + (86.7 - 43.4) * (2.25 - 1.5) / (3.0 - 1.5)
+        expected = 87.0 + (174.0 - 87.0) * (2.25 - 1.5) / (3.0 - 1.5)
         assert result == pytest.approx(expected)
 
     def test_r2_star_tissue_clamping(self) -> None:
         """Field strengths outside known range clamp to boundary values."""
         # Below minimum → clamp to 1.5T value
-        assert get_r2_star_tissue(0.5) == 43.4
+        assert get_r2_star_tissue(0.5) == 87.0
         # Above maximum → clamp to 7.0T value
-        assert get_r2_star_tissue(10.0) == 202.3
+        assert get_r2_star_tissue(10.0) == 400.0
 
     def test_r2_star_legacy_alias(self) -> None:
         """get_r2_star is a legacy alias for get_r2_star_tissue."""

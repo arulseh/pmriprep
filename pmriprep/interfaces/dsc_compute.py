@@ -875,15 +875,29 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["threshold_mean"] = float(np.mean(thresholds_used[mask_bool]))
 
         elif method == "tikhonov":
-            res, cbf, cbv, mtt, lambda_opt = tikhonov_deconvolve_batch(  # type: ignore[assignment]
-                concentration_data,
-                aif,
-                dt=dt,
-                mask=mask_bool,
+            res, cbf, cbv, mtt, lambda_opt, lcurve_corner_found = (
+                tikhonov_deconvolve_batch(  # type: ignore[assignment]
+                    concentration_data,
+                    aif,
+                    dt=dt,
+                    mask=mask_bool,
+                )
             )
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
             residues = res if self.inputs.save_residue else None
             qc_metrics["lambda_mean"] = float(np.mean(lambda_opt[mask_bool]))
+            # Fraction of voxels where the L-curve had no detectable
+            # corner and the solver fell back to λ = 0.1·σ_max(A).
+            # High fraction → over-regularised CBF/CBV; investigate AIF
+            # conditioning or noise floor.
+            n_mask = int(np.sum(mask_bool))
+            if n_mask > 0:
+                qc_metrics["lcurve_corner_found_fraction"] = float(
+                    np.sum(lcurve_corner_found[mask_bool]) / n_mask
+                )
+                qc_metrics["lcurve_fallback_lambda_fraction"] = float(
+                    1.0 - qc_metrics["lcurve_corner_found_fraction"]
+                )
 
         else:
             raise ValueError(f"Unknown SVD method: {method}")
@@ -2201,8 +2215,20 @@ class ComputeDSCMaps(BaseInterface):
         # For future absolute quantification, trapezoidal (O(dt^2)) can
         # be used instead:
         #   auc_corr = np.trapezoid(conc_data, dx=dt, axis=-1)
-        auc_corr = np.clip(np.sum(conc_data, axis=-1) * dt, 0, 10000)
-        auc_raw = np.clip(np.sum(raw_conc_data, axis=-1) * dt, 0, 10000)
+        #
+        # raw_conc_data is pre-K2 and pre-baseline-subtraction (preloaded
+        # subjects carry residual ΔR2* baseline). Subtract per-voxel
+        # baseline before integrating so auc_diff = auc_raw - auc_corr
+        # reflects integrated K2 leakage correction, not residual baseline.
+        raw_conc_for_auc = raw_conc_data - np.mean(
+            raw_conc_data[..., :n_bl], axis=-1, keepdims=True
+        )
+        # Upper bound 10000 rejects sentinel/overflow voxels. No lower
+        # bound: half-rectifying symmetric noise biases NAWM voxels (the
+        # nCBV denominator) upward, depressing tumor nCBV near the 1.75
+        # progression cutoff (Boxerman Neuro-Oncology 2020).
+        auc_corr = np.minimum(np.sum(conc_data, axis=-1) * dt, 10000.0)
+        auc_raw = np.minimum(np.sum(raw_conc_for_auc, axis=-1) * dt, 10000.0)
         auc_diff = auc_raw - auc_corr
 
         # -----------------------------------------------------------
@@ -2238,7 +2264,10 @@ class ComputeDSCMaps(BaseInterface):
                 logger.warning("AIF AUC near-zero (%.6f); AUC CBV unavailable", aif_auc)
                 cbv_auc = np.full(spatial_shape, np.nan, dtype=np.float64)
             else:
-                cbv_auc = np.clip(tissue_auc_bolus / aif_auc, 0.0, 10.0)
+                # Upper bound rejects sentinel voxels. No lower bound:
+                # NAWM-normalization (downstream) requires unbiased
+                # negatives; half-rectifying here inflates the denominator.
+                cbv_auc = np.minimum(tissue_auc_bolus / aif_auc, 10.0)
 
             qc_metrics["cbv_auc_bat_frame"] = bat  # first frame of bolus rise
             qc_metrics["cbv_auc_end_frame"] = n_timepoints

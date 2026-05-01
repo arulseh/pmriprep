@@ -119,7 +119,11 @@ class PatlakModel(PKModel):
             ModelParameter(
                 name="vp",
                 bounds=(VP_BOUNDS.min, VP_BOUNDS.max),
-                typical_range=(0.01, 0.2),
+                # Brain vp 0.005-0.04 (Larsson MRM 2009; Sourbron NMR
+                # Biomed 2013). Match Extended Tofts. Wider prior
+                # (0.01, 0.2) centered ~3× too high vs physiology and
+                # biased Patlak Ki via the Patlak-plot intercept.
+                typical_range=(0.001, 0.04),
                 transform=TransformType.LOG_LOGIT,
                 description="Plasma volume fraction",
                 units="",

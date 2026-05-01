@@ -20,39 +20,93 @@ logger = logging.getLogger(__name__)
 class AgentRelaxivity(NamedTuple):
     """R1 relaxivity values at different field strengths.
 
-    Values are in L/(mmol·s) or equivalently s^-1 per mM.
-    All values are per millimole of molecule (not per Gd3+ ion).
+    Values are in L/(mmol·s) (equivalently s^-1 per mM) per millimole of
+    molecule (not per Gd3+ ion). r1_7_0T is None for agents without a
+    peer-reviewed plasma-37°C measurement at 7T; lookups at B0 ≥ 5T for
+    those agents raise rather than extrapolate.
     """
     r1_1_5T: float  # R1 relaxivity at 1.5T
     r1_3_0T: float  # R1 relaxivity at 3.0T
+    r1_7_0T: Optional[float] = None  # R1 at 7T; None = no measured value
     gd_ions: int = 1  # Gd3+ ions per molecule (4 for tetrameric gadoquatrane)
+    source: str = ""  # Primary citation for the values
 
 
-#: R1 relaxivity values for common gadolinium-based contrast agents
+#: R1 relaxivity values for common gadolinium-based contrast agents in
+#: human plasma at 37°C, per Gd3+ ion unless gd_ions > 1.
+#:
 #: References:
-#:   - Rohrer et al. (2005) Invest Radiol
-#:   - Shen et al. (2015) Invest Radiol
-#:   - Frenzel et al. (2017) Invest Radiol
-#:   - Aime et al. (2019) J Magn Reson Imaging
+#:   - Rohrer M, et al. Invest Radiol 2005;40(11):715-724 (legacy 1.5T/3T,
+#:     bovine plasma — note 1.5T/3T values for the three macrocyclics
+#:     superseded by Szomolanyi 2019 with human plasma + ICP-MS).
+#:   - Szomolanyi P, Rohrer M, Frenzel T, et al. Invest Radiol 2019;
+#:     54(9):559-564 (gadobutrol, gadoteridol, gadoterate at 1.5T/3T/7T,
+#:     human plasma).
+#:   - Robic C, et al. Invest Radiol 2019;54(8):475-484 (gadopiclenol,
+#:     1.5T-7T, human serum).
+#:   - Lohrke J, et al. Invest Radiol 2022;57(10):629-638 (gadoquatrane,
+#:     low-n; treat as ±15% uncertainty).
+#:   - Noebauer-Huhmann IM, et al. Invest Radiol 2010;45(9):554-558
+#:     (gd-dtpa at 7T human plasma; older 7T hardware — caveat).
 CONTRAST_AGENTS: Final[dict[str, AgentRelaxivity]] = {
     # Linear agents (lower relaxivity, higher stability)
-    "gd-dtpa": AgentRelaxivity(r1_1_5T=4.1, r1_3_0T=3.7),        # Magnevist
-    "gadopentetate": AgentRelaxivity(r1_1_5T=4.1, r1_3_0T=3.7),  # Magnevist (generic)
-    "gd-dtpa-bma": AgentRelaxivity(r1_1_5T=4.0, r1_3_0T=3.6),    # Omniscan
+    "gd-dtpa": AgentRelaxivity(  # Magnevist
+        r1_1_5T=4.1, r1_3_0T=3.7, r1_7_0T=3.3,
+        source="Rohrer 2005 (1.5T/3T plasma); Noebauer-Huhmann 2010 (7T)",
+    ),
+    "gadopentetate": AgentRelaxivity(  # Magnevist (generic)
+        r1_1_5T=4.1, r1_3_0T=3.7, r1_7_0T=3.3,
+        source="Rohrer 2005 (1.5T/3T plasma); Noebauer-Huhmann 2010 (7T)",
+    ),
+    "gd-dtpa-bma": AgentRelaxivity(  # Omniscan (NSF-restricted)
+        r1_1_5T=4.3, r1_3_0T=4.0, r1_7_0T=None,
+        source="Rohrer 2005 plasma; no peer-reviewed 7T plasma measurement",
+    ),
 
     # Macrocyclic agents (higher stability, preferred clinically)
-    "gadoterate": AgentRelaxivity(r1_1_5T=3.6, r1_3_0T=3.5),     # Dotarem
-    "gd-dota": AgentRelaxivity(r1_1_5T=3.6, r1_3_0T=3.5),        # Dotarem (generic)
-    "gadoteridol": AgentRelaxivity(r1_1_5T=4.1, r1_3_0T=3.7),    # ProHance
-    "gd-hp-do3a": AgentRelaxivity(r1_1_5T=4.1, r1_3_0T=3.7),     # ProHance (generic)
-    "gadobutrol": AgentRelaxivity(r1_1_5T=5.2, r1_3_0T=5.0),     # Gadavist/Gadovist
+    "gadoterate": AgentRelaxivity(  # Dotarem
+        r1_1_5T=3.32, r1_3_0T=3.00, r1_7_0T=2.84,
+        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+    ),
+    "gd-dota": AgentRelaxivity(  # Dotarem (generic)
+        r1_1_5T=3.32, r1_3_0T=3.00, r1_7_0T=2.84,
+        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+    ),
+    "gadoteridol": AgentRelaxivity(  # ProHance
+        r1_1_5T=3.80, r1_3_0T=3.28, r1_7_0T=3.21,
+        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+    ),
+    "gd-hp-do3a": AgentRelaxivity(  # ProHance (generic)
+        r1_1_5T=3.80, r1_3_0T=3.28, r1_7_0T=3.21,
+        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+    ),
+    "gadobutrol": AgentRelaxivity(  # Gadavist/Gadovist
+        r1_1_5T=4.78, r1_3_0T=4.97, r1_7_0T=3.83,
+        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+    ),
 
     # High-relaxivity agents
-    "gadopiclenol": AgentRelaxivity(r1_1_5T=12.8, r1_3_0T=11.6), # Elucirem (newest)
-    "gadoquatrane": AgentRelaxivity(r1_1_5T=11.8, r1_3_0T=10.5, gd_ions=4), # Ambelvist (tetrameric)
-    "gadobenate": AgentRelaxivity(r1_1_5T=6.3, r1_3_0T=5.5),     # MultiHance
-    "gd-bopta": AgentRelaxivity(r1_1_5T=6.3, r1_3_0T=5.5),       # MultiHance (generic)
-    "gadoxetate": AgentRelaxivity(r1_1_5T=6.9, r1_3_0T=6.2),     # Eovist/Primovist
+    "gadopiclenol": AgentRelaxivity(  # Elucirem/Vueway
+        r1_1_5T=12.8, r1_3_0T=11.6, r1_7_0T=9.6,
+        source="Robic 2019 (human serum 37°C, 1.5T-7T)",
+    ),
+    "gadoquatrane": AgentRelaxivity(  # Ambelvist (tetrameric)
+        r1_1_5T=11.8, r1_3_0T=10.5, r1_7_0T=8.0, gd_ions=4,
+        source="Lohrke 2022 (per-molecule plasma; ±15% uncertainty)",
+    ),
+    "gadobenate": AgentRelaxivity(  # MultiHance — protein-binding
+        r1_1_5T=6.3, r1_3_0T=5.5, r1_7_0T=None,
+        source="Rohrer 2005 plasma; no clean 7T (protein-binding makes "
+               "any single value approximate)",
+    ),
+    "gd-bopta": AgentRelaxivity(  # MultiHance (generic)
+        r1_1_5T=6.3, r1_3_0T=5.5, r1_7_0T=None,
+        source="Rohrer 2005 plasma; no clean 7T (protein-binding)",
+    ),
+    "gadoxetate": AgentRelaxivity(  # Eovist/Primovist — hepatobiliary
+        r1_1_5T=6.9, r1_3_0T=6.2, r1_7_0T=None,
+        source="Rohrer 2005 plasma; no clean 7T human-plasma measurement",
+    ),
 }
 
 #: Agent name aliases for flexible lookup
@@ -454,18 +508,25 @@ def lookup_r1(
 
     relaxivity = CONTRAST_AGENTS[name]
 
-    # Select appropriate field strength
-    if field_strength <= 2.0:
-        # Use 1.5T value for low field
+    # Three field-strength bins, midpoints at 2.25T and 5.0T:
+    #   B0 ≤ 2.25T → 1.5T value
+    #   2.25T < B0 ≤ 5.0T → 3.0T value
+    #   B0 > 5.0T → 7.0T value (raise if not measured for this agent)
+    # No linear interpolation: r1(B0) is concave (NMRD profile), and the
+    # 1.5T/3T/7T values come from different studies for some agents, so
+    # interpolation can mix sources.
+    if field_strength <= 2.25:
         return relaxivity.r1_1_5T
-    elif field_strength >= 2.5:
-        # Use 3.0T value for high field
+    if field_strength <= 5.0:
         return relaxivity.r1_3_0T
-    else:
-        # Linear interpolation between 1.5T and 3.0T for intermediate fields
-        # Note: This is a rough approximation; relaxivity changes are not strictly linear
-        fraction = (field_strength - 1.5) / (3.0 - 1.5)
-        return relaxivity.r1_1_5T + fraction * (relaxivity.r1_3_0T - relaxivity.r1_1_5T)
+    if relaxivity.r1_7_0T is None:
+        raise ValueError(
+            f"No peer-reviewed 7T r1 measurement for agent '{name}' "
+            f"(B0={field_strength}T). Verify the contrast agent and field "
+            "strength against literature, or use a different agent. "
+            f"Citation: {relaxivity.source}"
+        )
+    return relaxivity.r1_7_0T
 
 
 def get_available_agents() -> list[str]:
@@ -500,6 +561,9 @@ def get_agent_info(agent: str) -> dict[str, float]:
     return {
         "r1_1_5T": relaxivity.r1_1_5T,
         "r1_3_0T": relaxivity.r1_3_0T,
+        "r1_7_0T": (
+            relaxivity.r1_7_0T if relaxivity.r1_7_0T is not None else float("nan")
+        ),
         "concentration_mmol_per_ml": concentration,
     }
 
