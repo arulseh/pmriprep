@@ -8,7 +8,7 @@ concentration curves and AIF using various deconvolution methods.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 
 logger = logging.getLogger(__name__)
 
@@ -2392,7 +2392,7 @@ class ComputeDSCMaps(BaseInterface):
             # mask back to the upstream concentration's int16, losing
             # precision for floats and wasting bits for the mask.
             cast_data = data.astype(dtype)
-            local_header = header.copy()  # type: ignore[attr-defined]
+            local_header = cast("nib.Nifti1Header", header.copy())
             local_header.set_data_dtype(dtype)
             img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
             nib.save(img, path)  # type: ignore[attr-defined]

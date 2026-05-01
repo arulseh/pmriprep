@@ -4349,7 +4349,12 @@ def _build_tortuosity_map_dict(ktrans_tortuosity_corrected=None):
 
 
 def _normalize_by_nawm(param_map=None, nawm_mask=None):
-    """Normalize parameter map by NAWM mean.
+    """Normalize parameter map by NAWM median.
+
+    Median is used (matching DSC nCBV in ``utils/dsc_signal.py``) so the
+    normalization is robust to a small fraction of non-WM voxels that FSL
+    FAST classifies as WM (notably globus pallidus, parts of thalamus and
+    hippocampus, where iron- and myelin-rich T1 intensity matches WM).
 
     Args:
         param_map: Path to parameter map NIfTI file.
@@ -4383,19 +4388,18 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):
     if param_data.shape[:3] != nawm_data.shape[:3]:
         return None
 
-    # Compute NAWM mean
     nawm_values = param_data[nawm_data]
     nawm_values = nawm_values[np.isfinite(nawm_values) & (nawm_values > 0)]
     if len(nawm_values) < 10:
         # Not enough valid NAWM voxels
         return None
 
-    nawm_mean = np.mean(nawm_values)
-    if nawm_mean <= 0:
+    nawm_median = float(np.median(nawm_values))
+    if nawm_median <= 0:
         return None
 
     # Normalize
-    normalized = param_data / nawm_mean
+    normalized = param_data / nawm_median
 
     # Save
     param_stem = Path(param_map).name.replace(".nii.gz", "").replace(".nii", "")
