@@ -123,8 +123,7 @@ class CPIModel(DSCModel):
 
         if n_acquisition_frames is None or dt is None:
             raise ValueError(
-                "CPIModel requires both n_acquisition_frames and dt. "
-                "The legacy time_range argument was removed in v0.34 "
+                "CPIModel requires both n_acquisition_frames and dt "
                 "(FABBER-parity CP layout)."
             )
         if n_acquisition_frames < self._n_control_points:

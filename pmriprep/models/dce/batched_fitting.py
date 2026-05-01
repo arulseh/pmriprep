@@ -32,6 +32,7 @@ from pmriprep.utils.dce_constants import (
     PS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
+    VP_VE_TOTAL_MAX,
 )
 
 logger = logging.getLogger("nipype.interface")
@@ -244,11 +245,11 @@ def _apply_volume_constraint_batched(
     vp_idx = param_names.index("vp")
 
     total = params[:, ve_idx] + params[:, vp_idx]
-    violating = total > 1.0
+    violating = total > VP_VE_TOTAL_MAX
 
     if np.any(violating):
         params = params.copy()
-        scale = 1.0 / np.maximum(total[violating], 1e-30)
+        scale = VP_VE_TOTAL_MAX / np.maximum(total[violating], 1e-30)
         params[violating, ve_idx] *= scale
         params[violating, vp_idx] *= scale
 

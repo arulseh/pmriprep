@@ -15,6 +15,12 @@ from typing import Final, NamedTuple
 #: Minimum ve (extravascular extracellular volume fraction) value
 EPSILON_VE: Final[float] = 0.001
 
+#: Maximum allowed sum of ve + vp when the volume constraint is enforced
+#: post-fit. 0.999 leaves a small slack to keep LOG_LOGIT inverse-transform
+#: numerically well-behaved at the boundary; using exactly 1.0 occasionally
+#: produces NaN gradients in the boundary cell of the optimizer.
+VP_VE_TOTAL_MAX: Final[float] = 0.999
+
 #: Minimum T1 value in seconds
 EPSILON_T1: Final[float] = 0.01
 
@@ -794,10 +800,10 @@ def is_low_temporal_resolution(tr: float) -> bool:
 
 
 # =============================================================================
-# DSC→DCE Cross-Modality vp Constraint Constants (v0.25.0+)
+# DSC→DCE Cross-Modality vp Constraint Constants
 # =============================================================================
-# Added 2026-04-18 per physics review. Governs how DSC-derived CBV maps into
-# DCE vp priors via NAWM normalization instead of absolute-CBV conversion.
+# Governs how DSC-derived CBV maps into DCE vp priors via NAWM
+# normalization instead of absolute-CBV conversion.
 
 #: Maximum physiological vp value. Absolute upper bound on plasma volume
 #: fraction in any brain voxel; a vp > 0.2 indicates pure-vessel or
@@ -862,8 +868,8 @@ SIGMA_SOFT_HIGH_K2: Final[float] = 0.40
 
 #: Circular-detector std threshold when cross-validation uses nCBV.
 #: Ratio vp/nCBV is centered at NAWM_VP_REFERENCE;
-#: threshold ≈10% of that center separates "deterministic prior-dominated"
-#: (HARD or tight-SOFT) from "informative DCE posterior" (wide SOFT).
+#: threshold ≈10% of that center separates "tight-SOFT prior-dominated"
+#: from "informative DCE posterior" (wide SOFT).
 #: Legacy threshold 0.01 stays for the non-nCBV path (vp/rel_cbv ratio scale).
 CIRCULAR_STD_THRESHOLD_NCBV: Final[float] = 0.002
 CIRCULAR_STD_THRESHOLD_ABS_CBV: Final[float] = 0.01

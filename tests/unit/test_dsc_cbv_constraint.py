@@ -353,32 +353,25 @@ class TestDetermineConstraintMode:
         config = determine_constraint_mode(quality)
         assert config.mode == ConstraintMode.SKIP
 
-    def test_user_override(self) -> None:
-        """User override forces hard mode even with low quality."""
-        quality = CBVQualityAssessment(
-            confidence="low",
-            use_constraint=False,
-            reasons=["CNR coverage 0.50 < 0.84"],
-        )
-        config = determine_constraint_mode(quality, user_override="hard")
-        assert config.mode == ConstraintMode.HARD
-
-    def test_user_override_hard_logs_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Explicit HARD override emits a logger warning about physics assumptions."""
-        import logging
-
+    def test_user_override_skip(self) -> None:
+        """``skip`` user override is honored regardless of quality."""
         quality = CBVQualityAssessment(
             confidence="high",
             use_constraint=True,
             reasons=["All quality checks passed"],
         )
-        with caplog.at_level(logging.WARNING, logger="pmriprep"):
-            determine_constraint_mode(quality, user_override="hard")
-        messages = " ".join(r.message for r in caplog.records)
-        assert "HARD" in messages or "hard" in messages
-        assert "unsupported" in messages.lower() or "compartment" in messages.lower()
+        config = determine_constraint_mode(quality, user_override="skip")
+        assert config.mode == ConstraintMode.SKIP
+
+    def test_user_override_soft(self) -> None:
+        """``soft`` user override forces SOFT even on low quality."""
+        quality = CBVQualityAssessment(
+            confidence="low",
+            use_constraint=False,
+            reasons=["CNR coverage 0.50 < 0.84"],
+        )
+        config = determine_constraint_mode(quality, user_override="soft")
+        assert config.mode == ConstraintMode.SOFT
 
 
 # =============================================================================
@@ -510,7 +503,7 @@ class TestQcReportSchema:
         assert "reason" in qc, "qc_report must have 'reason' key"
         assert "constraint_mode" not in qc, "old 'constraint_mode' key must not exist"
         assert "constraint_reason" not in qc, "old 'constraint_reason' key must not exist"
-        assert qc["mode"] in ("hard", "soft", "skip")
+        assert qc["mode"] in ("soft", "skip")
 
     def test_qc_report_skip_default_schema(self) -> None:
         """Default skip dict uses 'mode' and 'reason' (no 'constraint_' prefix)."""
@@ -1003,8 +996,8 @@ class TestDetermineConstraintModeUnknownSkips:
         )
         assert config.mode == ConstraintMode.SKIP
 
-    def test_explicit_user_override_hard_still_wins_over_unknown(self) -> None:
-        """User can force HARD even when preload is UNKNOWN."""
+    def test_explicit_user_override_skip_still_wins_over_unknown(self) -> None:
+        """UNKNOWN auto path bypasses preload check, but explicit override is honored."""
         quality = CBVQualityAssessment(
             confidence="high",
             use_constraint=True,
@@ -1012,11 +1005,10 @@ class TestDetermineConstraintModeUnknownSkips:
         )
         config = determine_constraint_mode(
             quality,
-            user_override="hard",
+            user_override="soft",
             preload_classification="unknown",
         )
-        # UNKNOWN branch only fires for auto; explicit hard/soft/skip honored.
-        assert config.mode == ConstraintMode.HARD
+        assert config.mode == ConstraintMode.SOFT
 
 
 class TestBolusGdFractionValidation:
@@ -1245,14 +1237,6 @@ class TestDetermineConstraintModeSyntheticOverride:
             detection_level=detection_level,
         )
 
-    def test_synthetic_overrides_user_hard(self) -> None:
-        quality = self._make_quality(detection_level="synthetic")
-        config = determine_constraint_mode(
-            dsc_quality=quality,
-            user_override="hard",
-        )
-        assert config.mode == ConstraintMode.SKIP
-
     def test_synthetic_overrides_user_soft(self) -> None:
         quality = self._make_quality(detection_level="synthetic")
         config = determine_constraint_mode(
@@ -1269,11 +1253,11 @@ class TestDetermineConstraintModeSyntheticOverride:
         )
         assert config.mode == ConstraintMode.SKIP
 
-    def test_measured_hard_still_honors_user(self) -> None:
+    def test_measured_soft_honored_when_aif_real(self) -> None:
         quality = self._make_quality(detection_level="atlas_strict")
         config = determine_constraint_mode(
             dsc_quality=quality,
-            user_override="hard",
+            user_override="soft",
         )
-        # Not synthetic → user override honored (HARD emitted with warning)
-        assert config.mode == ConstraintMode.HARD
+        # Real AIF → user override honored.
+        assert config.mode == ConstraintMode.SOFT

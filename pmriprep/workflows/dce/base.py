@@ -209,10 +209,10 @@ def init_dce_preproc_wf(
                 "b1_nominal_prep_fa",
                 # DSC integration inputs
                 "dsc_cbv_file",       # Relative/absolute CBV — cross-validation + QC
-                "dsc_ncbv_file",      # NAWM-normalized CBV (nCBV) — vp prior input (v0.25.0+)
+                "dsc_ncbv_file",      # NAWM-normalized CBV (nCBV) — vp prior input
                 "dsc_to_t1w_xfm",
                 "dsc_aif_qc_file",
-                # DSC dose parameters (v0.25.2+) — scale CNR coverage thresholds
+                # DSC dose parameters — scale CNR coverage thresholds
                 "dsc_dose",                # bolus dose multiplier
                 "dsc_agent_standard_dose", # standard dose (mmol Gd/kg)
                 # DWI tortuosity inputs
@@ -251,9 +251,9 @@ def init_dce_preproc_wf(
     inputnode.inputs.dsc_cbv_file = None
     inputnode.inputs.dsc_ncbv_file = None
     inputnode.inputs.dsc_to_t1w_xfm = None
-    # Default dose = 1.0 (full-dose Gd-DOTA) preserves v0.25.1 CNR thresholds
-    # exactly; overridden from config.dsc at the workflows/base.py integration
-    # point when DSC is processed in the same session.
+    # Default dose = 1.0 (full-dose Gd-DOTA); overridden from config.dsc
+    # at the workflows/base.py integration point when DSC is processed
+    # in the same session.
     inputnode.inputs.dsc_dose = 1.0
     inputnode.inputs.dsc_agent_standard_dose = 0.1
 
@@ -1055,9 +1055,9 @@ def init_dce_preproc_wf(
         (inputnode, pk_modeling, [
             ("tr", "tr"),
             ("volume_tr", "volume_tr"),  # For model auto-selection
-            # DSC dose parameters (v0.25.2+) scale CNR coverage thresholds
-            # in the vp constraint quality gate. Defaults (1.0, 0.1)
-            # preserve v0.25.1 behavior on DCE-only runs.
+            # DSC dose parameters scale CNR coverage thresholds in the
+            # vp constraint quality gate. Defaults (1.0, 0.1) apply on
+            # DCE-only runs.
             ("dsc_dose", "dsc_dose"),
             ("dsc_agent_standard_dose", "dsc_agent_standard_dose"),
         ]),
@@ -2857,6 +2857,8 @@ def _signal_to_concentration_node(
     # Zero out concentration for voxels with invalid T1 (NaN, sub-physiological).
     # After resampling, out-of-FOV voxels may have T1=NaN which produces
     # extreme concentration values that corrupt AIF detection thresholds.
+    # invalid_t1 is 3D (spatial); fancy-indexing into the 4D concentration
+    # array broadcasts the assignment across the trailing time axis.
     if t1_map is not None:
         invalid_t1 = ~np.isfinite(t1_map) | (t1_map < 100.0)  # T1 in ms
         result.concentration[invalid_t1] = 0.0
@@ -3127,13 +3129,12 @@ def _dsc_dce_validation_node(
             "skip_reason": SKIP_REASON_NO_DSC_RUN,
         }
 
-    # v0.25.4: xval requires nCBV (NAWM-normalized). The legacy
-    # rel-AUC-CBV fallback was miscalibrated: get_expected_ratio ≈ 0.669
-    # is derived for absolute mL/100g CBV (Tofts 1999), but pmriprep
-    # only produces dimensionless rel-AUC-CBV. No universal expected
-    # ratio exists for vp / rel_AUC_CBV without NAWM anchoring
-    # (Rempp 1994; Knutsson 2010). Skip cleanly rather than emit
-    # false POOR on subjects with no NAWM mask.
+    # xval requires nCBV (NAWM-normalized). get_expected_ratio ≈ 0.669
+    # is derived for absolute mL/100g CBV (Tofts 1999); pmriprep only
+    # produces dimensionless rel-AUC-CBV. No universal expected ratio
+    # exists for vp / rel_AUC_CBV without NAWM anchoring (Rempp 1994;
+    # Knutsson 2010). Skip cleanly rather than emit false POOR on
+    # subjects with no NAWM mask.
     if not have_ncbv:
         return {
             "skipped": True,

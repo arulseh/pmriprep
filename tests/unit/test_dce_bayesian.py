@@ -67,10 +67,14 @@ class TestProfileLikelihoodGradient:
         model = ToftsModel()
         fitter = BayesianPKFitter(model)
 
-        noise_std = 1.0  # unused by profile likelihood
-
         def neg_log_posterior(params: np.ndarray) -> float:
-            lp = fitter._log_posterior(params, tissue_curve, aif, time_points, noise_std)
+            if not model.validate_params(params):
+                return 1e30
+            log_prior = fitter._log_prior(params)
+            log_lik = fitter._log_likelihood(
+                params, tissue_curve, aif, time_points,
+            )
+            lp = log_prior + log_lik
             if not np.isfinite(lp):
                 return 1e30
             return -lp
@@ -129,10 +133,16 @@ class TestHessianComputation:
         model = ExtendedToftsModel()
         fitter = BayesianPKFitter(model)
 
-        noise_std = 1.0
-
         def neg_log_posterior(params: np.ndarray) -> float:
-            lp = fitter._log_posterior(params, tissue_curve, aif, time_points, noise_std)
+            if not model.validate_params(params):
+                return 1e30
+            if not fitter._check_volume_constraint(params):
+                return 1e30
+            log_prior = fitter._log_prior(params)
+            log_lik = fitter._log_likelihood(
+                params, tissue_curve, aif, time_points,
+            )
+            lp = log_prior + log_lik
             if not np.isfinite(lp):
                 return 1e30
             return -lp

@@ -98,37 +98,40 @@ def _make_patlak_cohort(aif, time_points, n_voxels=200, noise_level=0.01, seed=4
 
 
 # ---------------------------------------------------------------------------
-# Assertion 1: σ → 0 ≡ HARD
+# Assertion 1: σ → 0 ≡ vp-pinned (Pass-2 internal mechanism)
 # ---------------------------------------------------------------------------
+# Pinning vp via the kwarg interface (``vp_uncertainty=None``) is the
+# load-bearing mechanism the SOFT active-set Pass-2 invokes on violator
+# voxels. The σ → 0 limit of the SOFT box constraint should reproduce it.
 
-def test_patlak_batched_sigma_near_zero_matches_hard(aif_and_time):
-    """σ → 0 must reproduce HARD fit to within numerical tolerance."""
+def test_patlak_batched_sigma_near_zero_matches_pinned(aif_and_time):
+    """σ → 0 must reproduce vp-pinned fit to within numerical tolerance."""
     aif, time_points = aif_and_time
     tissue, _, vp_true = _make_patlak_cohort(aif, time_points)
     fixed_vp = np.asarray(vp_true, dtype=np.float64)
 
-    r_hard = batched_patlak_lstsq(
+    r_pinned = batched_patlak_lstsq(
         tissue, aif, time_points, fixed_vp=fixed_vp, vp_uncertainty=None,
     )
     r_soft_tiny = batched_patlak_lstsq(
         tissue, aif, time_points, fixed_vp=fixed_vp, vp_uncertainty=1e-9,
     )
-    # HARD pins vp exactly; SOFT at σ=1e-9 should clamp effectively.
+    # Pinning vp deterministically; SOFT at σ=1e-9 should clamp effectively.
     np.testing.assert_allclose(
-        r_soft_tiny.params["vp"], r_hard.params["vp"], atol=1e-6,
+        r_soft_tiny.params["vp"], r_pinned.params["vp"], atol=1e-6,
     )
     np.testing.assert_allclose(
-        r_soft_tiny.params["ktrans"], r_hard.params["ktrans"], rtol=1e-4,
+        r_soft_tiny.params["ktrans"], r_pinned.params["ktrans"], rtol=1e-4,
     )
 
 
-def test_etofts_batched_sigma_near_zero_matches_hard(aif_and_time):
-    """σ → 0 for batched Extended Tofts must match HARD fit."""
+def test_etofts_batched_sigma_near_zero_matches_pinned(aif_and_time):
+    """σ → 0 for batched Extended Tofts must match vp-pinned fit."""
     aif, time_points = aif_and_time
     tissue, _, _, vp_true = _make_etofts_cohort(aif, time_points)
     fixed_vp = np.asarray(vp_true, dtype=np.float64)
 
-    r_hard = batched_lm_fit(
+    r_pinned = batched_lm_fit(
         "extended_tofts", tissue, aif, time_points,
         fixed_vp=fixed_vp, vp_uncertainty=None, max_iter=60,
     )
@@ -139,7 +142,7 @@ def test_etofts_batched_sigma_near_zero_matches_hard(aif_and_time):
     # vp essentially pinned at fixed_vp; Ktrans/ve may vary slightly
     # because Pass-1 TRF doesn't know about the prior.
     np.testing.assert_allclose(
-        r_soft_tiny.params["vp"], r_hard.params["vp"], atol=1e-5,
+        r_soft_tiny.params["vp"], r_pinned.params["vp"], atol=1e-5,
     )
 
 
@@ -243,29 +246,20 @@ def test_nlls_cross_backend_parity_patlak_sigma_0p4(aif_and_time):
 # Assertion 5: BIC parameter count invariant
 # ---------------------------------------------------------------------------
 
-def test_bic_k_reduction_only_for_hard():
-    """BIC k reduction (k_base − 1) must apply only for HARD constraint."""
+def test_bic_k_uses_k_base_for_all_constraint_modes():
+    """All voxels use k_base in BIC regardless of constraint mode (Self-Liang
+    1987 pragmatic; only mode that keeps Patlak / Extended Tofts BIC
+    comparison stable)."""
     from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
     n = 10
-    fixed_vp = np.array([0.01] * n, dtype=np.float64)
     k_base = 3
 
-    # HARD: k reduced by 1 where fixed_vp > 0
-    constraint_mode = ConstraintMode.HARD
-    if fixed_vp is not None and constraint_mode == ConstraintMode.HARD:
-        k_arr = np.where(fixed_vp > 0, k_base - 1, k_base).astype(float)
-    else:
+    for mode in (ConstraintMode.SOFT, ConstraintMode.SKIP):
         k_arr = np.full(n, k_base, dtype=float)
-    np.testing.assert_array_equal(k_arr, np.full(n, k_base - 1))
-
-    # SOFT: k stays at k_base (Self-Liang 1987 pragmatic)
-    constraint_mode = ConstraintMode.SOFT
-    if fixed_vp is not None and constraint_mode == ConstraintMode.HARD:
-        k_arr = np.where(fixed_vp > 0, k_base - 1, k_base).astype(float)
-    else:
-        k_arr = np.full(n, k_base, dtype=float)
-    np.testing.assert_array_equal(k_arr, np.full(n, k_base))
+        np.testing.assert_array_equal(k_arr, np.full(n, k_base))
+        # mode is unused in the BIC formula — assertion is symbolic.
+        assert mode in (ConstraintMode.SOFT, ConstraintMode.SKIP)
 
 
 # ---------------------------------------------------------------------------

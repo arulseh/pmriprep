@@ -52,6 +52,7 @@ from pmriprep.models.dce.base import (
     FitResult,
     PKModel,
 )
+from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
 
 # Re-export BayesianPrior for backward compatibility
 __all__ = [
@@ -229,10 +230,10 @@ class BayesianPKFitter:
     def _apply_volume_constraint(
         self, params: npt.NDArray[np.floating]
     ) -> npt.NDArray[np.floating]:
-        """Apply the ve + vp <= 1.0 constraint.
+        """Apply the ve + vp <= VP_VE_TOTAL_MAX constraint.
 
-        If the sum exceeds 1.0, scales both ve and vp proportionally
-        to satisfy the constraint while maintaining their ratio.
+        If the sum exceeds the constraint, scales both ve and vp
+        proportionally while maintaining their ratio.
 
         Args:
             params: Parameter values.
@@ -248,9 +249,8 @@ class BayesianPKFitter:
         vp = params[self._vp_index]
 
         total_volume = ve + vp
-        if total_volume > 1.0:
-            # Scale down proportionally
-            scale_factor = 0.999 / total_volume
+        if total_volume > VP_VE_TOTAL_MAX:
+            scale_factor = VP_VE_TOTAL_MAX / total_volume
             params[self._ve_index] = ve * scale_factor
             params[self._vp_index] = vp * scale_factor
 
@@ -262,7 +262,6 @@ class BayesianPKFitter:
         tissue_curve: npt.NDArray[np.floating],
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
-        noise_std: float,
         weights: npt.NDArray[np.floating] | None = None,
     ) -> float:
         """Compute log likelihood using profile likelihood noise estimation.
@@ -287,7 +286,6 @@ class BayesianPKFitter:
             tissue_curve: Measured tissue concentration.
             aif: Arterial input function.
             time_points: Time points (minutes).
-            noise_std: Unused (kept for API compatibility).
             weights: Optional per-frame weights in [0, 1]. If provided,
                 inflates noise variance for high-FD frames.
 
@@ -378,50 +376,6 @@ class BayesianPKFitter:
 
         return float(log_lik)
 
-    def _log_posterior(
-        self,
-        params: npt.NDArray[np.floating],
-        tissue_curve: npt.NDArray[np.floating],
-        aif: npt.NDArray[np.floating],
-        time_points: npt.NDArray[np.floating],
-        noise_std: float,
-        weights: npt.NDArray[np.floating] | None = None,
-    ) -> float:
-        """Compute log posterior probability.
-
-        log p(θ|y) ∝ log p(y|θ) + log p(θ)
-
-        Args:
-            params: Parameter values.
-            tissue_curve: Measured tissue concentration.
-            aif: Arterial input function.
-            time_points: Time points (minutes).
-            noise_std: Noise standard deviation.
-            weights: Optional per-frame weights for motion-weighted fitting.
-
-        Returns:
-            Log posterior probability (unnormalized).
-        """
-        # Check bounds
-        if not self.model.validate_params(params):
-            return float("-inf")
-
-        # Check volume constraint
-        if not self._check_volume_constraint(params):
-            return float("-inf")
-
-        log_prior = self._log_prior(params)
-        if not np.isfinite(log_prior):
-            return float("-inf")
-
-        log_lik = self._log_likelihood(
-            params, tissue_curve, aif, time_points, noise_std,
-            weights=weights,
-        )
-
-        posterior = log_prior + log_lik
-        return posterior if np.isfinite(posterior) else float("-inf")
-
     def _compute_hessian(
         self,
         params: npt.NDArray[np.floating],
@@ -490,6 +444,11 @@ class BayesianPKFitter:
                     # sigma ~ 0.001-0.01), individual entries are typically
                     # O(10^3-10^6). The 1e8 threshold provides ~100x headroom
                     # above expected maxima.
+                    # Caveat: at very low permeability (NAWM, Ktrans~0.001
+                    # with σ~0.001 mM and N≈100), the diagonal can sit close
+                    # to 1e8; uncertainties for those voxels are dominated
+                    # by the prior fallback. Acceptable: NAWM is a reference
+                    # region, not a clinical-decision target.
                     if abs(h_ij) < 1e8:
                         hessian[i, j] = h_ij
                     elif i == j:
@@ -614,8 +573,6 @@ class BayesianPKFitter:
             compute_uncertainties = False
         self._validate_inputs(tissue_curve, aif, time_points)
 
-        noise_std = 1.0  # Unused; profile likelihood estimates from residuals
-
         bounds = self.model.get_bounds()
         n_params = self.model.n_parameters
 
@@ -650,7 +607,7 @@ class BayesianPKFitter:
                 return 1e30
 
             log_lik = self._log_likelihood(
-                params_nat, tissue_curve, aif, time_points, noise_std,
+                params_nat, tissue_curve, aif, time_points,
                 weights=weights,
             )
             if not np.isfinite(log_lik):

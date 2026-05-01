@@ -42,10 +42,10 @@ class PreloadClass(str, Enum):
 
     Classes describe either residual contrast effects (ΔR2* auto-detect)
     or administered preload dose (user-specified float). K2-primary
-    classification (v0.25.2+) reuses NONE/MINIMAL/HALF_DOSE as adequacy
-    buckets since low K2 is operationally equivalent to "preload-
-    suppressed or intact BBB" — both cases mean the CBV correction is
-    reliable. UNKNOWN is emitted only when K2 metrics are unavailable.
+    classification reuses NONE/MINIMAL/HALF_DOSE as adequacy buckets
+    since low K2 is operationally equivalent to "preload-suppressed or
+    intact BBB" — both cases mean the CBV correction is reliable.
+    UNKNOWN is emitted only when K2 metrics are unavailable.
     """
 
     NONE = "none"
@@ -851,14 +851,14 @@ def detect_preload(
         )
 
     # Sort by confidence, return highest.
-    # Note: confidence scales differ across methods — signal-based is now
-    # probabilistic P(correct classification) via SEM+z-score (this function
-    # post-v0.25.0), while DCE-protocol and DICOM-metadata methods return
-    # heuristic values (~0.5–0.7). A low-confidence signal detection
-    # (near-edge ΔR2* or tiny mask) may defer to DCE timing, which is
-    # usually acceptable — but confidence values are not directly comparable
-    # across methods. Consider sorting by detection_method priority first
-    # if this causes issues in practice.
+    # Note: confidence scales differ across methods — signal-based is
+    # probabilistic P(correct classification) via SEM+z-score, while
+    # DCE-protocol and DICOM-metadata methods return heuristic values
+    # (~0.5–0.7). A low-confidence signal detection (near-edge ΔR2* or
+    # tiny mask) may defer to DCE timing, which is usually acceptable —
+    # but confidence values are not directly comparable across methods.
+    # Consider sorting by detection_method priority first if this causes
+    # issues in practice.
     results.sort(key=lambda r: r.confidence, reverse=True)
     return results[0]
 

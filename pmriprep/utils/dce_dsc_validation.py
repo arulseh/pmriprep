@@ -19,11 +19,6 @@ Ratio deviations indicate:
 - Ratio << expected: preload effect (reduced DSC signal from prior contrast).
 - Ratio >> expected: DCE overestimation or DSC underestimation.
 
-When constraint_mode is "hard", vp is deterministically derived from CBV and
-correlation is 1.0 by construction; validation reports status = "CIRCULAR"
-instead of running meaningless metrics. The circular-std threshold scales
-with the ratio magnitude (0.002 on the nCBV path, 0.01 on the absolute path).
-
 References:
     - Boxerman et al., Neuro-Oncology 2020 (ASFNR/NCI consensus — NAWM
       normalization is the reference scale for clinical DSC).
@@ -192,9 +187,9 @@ class ValidationResult:
         dsc_preload_configured: True when user explicitly overrode
             auto-detection with a preload class (i.e., ``preload != "auto"``).
             None if unknown.
-        constraint_mode: CBV constraint mode used (hard/soft/skip/None).
-        circular: True when constraint_mode="hard" — vp is deterministically
-            derived from CBV, making cross-validation meaningless.
+        constraint_mode: CBV constraint mode used (soft/skip/None).
+        circular: Reserved (always False — no circular constraint mode is
+            currently supported).
         correction_factor: Suggested correction factor to align vp with CBV.
         metrics: Detailed validation metrics.
         interpretation: Human-readable interpretation of results.
@@ -320,10 +315,6 @@ def validate_vp_cbv(
     Compares vp (plasma volume fraction from DCE) with CBV (cerebral blood
     volume from DSC) to detect quantification issues or preload effects.
 
-    When constraint_mode is "hard", vp is deterministically derived from CBV
-    (circular), so ratio/correlation metrics are skipped and status is set to
-    "CIRCULAR". The caller should reference delta-R2 from pk_qc instead.
-
     Two calibration modes:
 
     - **Absolute CBV (``use_ncbv_scale=False``):** CBV in mL/100g.
@@ -359,7 +350,7 @@ def validate_vp_cbv(
         mask: 3D boolean mask for analysis region.
         hematocrit: Hematocrit value (only used when ``use_ncbv_scale=False``).
         tissue_density: Tissue density (only used when ``use_ncbv_scale=False``).
-        constraint_mode: CBV constraint mode ("hard", "soft", "skip", or None).
+        constraint_mode: CBV constraint mode ("soft", "skip", or None).
         dsc_preload_configured: Whether DSC preload was configured.
         use_ncbv_scale: When True, interpret ``cbv_data`` as NAWM-normalized
             nCBV and use the NAWM-anchored expected ratio + scaled circular
@@ -423,21 +414,6 @@ def validate_vp_cbv(
         result.status = QCStatus.POOR
         result.interpretation = "Empty mask - no voxels for validation"
         result.metrics = metrics
-        return result
-
-    # Detect circularity: hard constraint means vp = f(CBV) deterministically
-    if constraint_mode == "hard":
-        result.circular = True
-        result.status = QCStatus.CIRCULAR
-        result.interpretation = (
-            "vp hard-constrained from CBV -- cross-validation is circular. "
-            "See delta-R2 in pk_qc for constraint benefit assessment."
-        )
-        result.metrics = metrics
-        logger.info(
-            "DSC-DCE Validation: CIRCULAR (hard constraint), "
-            "skipping ratio/correlation metrics"
-        )
         return result
 
     # Filter to valid voxels (positive values above thresholds, below upper bounds).
@@ -514,7 +490,7 @@ def validate_vp_cbv(
     # Threshold scales with the ratio magnitude: for nCBV-anchored vp (ratio
     # centered at NAWM_VP_REFERENCE), std ≈ 0.002 is ~10–20% of the ratio
     # center; for absolute CBV (ratio centered at ~0.006 mL/100g), the
-    # legacy 0.01 still flags tight-soft and HARD overrides.
+    # legacy 0.01 still flags tight-soft constraints.
     if metrics.std_ratio < circular_std_threshold:
         result.circular = True
         result.status = QCStatus.CIRCULAR
@@ -720,7 +696,7 @@ def validate_vp_cbv_from_files(
         mask_path: Path to mask NIfTI file (brain or tissue mask).
         hematocrit: Hematocrit value for expected ratio calculation.
         tissue_density: Tissue density for expected ratio calculation.
-        constraint_mode: CBV constraint mode ("hard", "soft", "skip", or None).
+        constraint_mode: CBV constraint mode ("soft", "skip", or None).
         dsc_preload_configured: Whether DSC preload was configured.
         ncbv_path: Optional path to NAWM-normalized CBV (dimensionless nCBV).
             When provided, validation uses the nCBV path: expected ratio is

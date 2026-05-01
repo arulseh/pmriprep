@@ -136,9 +136,6 @@ SYNTHETIC_AIF_REASON_STRING = (
 class ConstraintMode(Enum):
     """Mode for applying DSC CBV vp constraint to DCE fitting."""
 
-    HARD = "hard"
-    """Fix vp to DSC-derived value. Reduces free parameters by 1."""
-
     SOFT = "soft"
     """Use DSC-derived vp as Bayesian prior with uncertainty."""
 
@@ -284,7 +281,7 @@ def _is_auto(user_override: Optional[str]) -> bool:
     """Return True when the auto-classification branch should be taken.
 
     Truth table: ``None`` → True; ``""`` → True; ``"auto"`` → True;
-    anything else (e.g. ``"hard"``, ``"soft"``, ``"skip"``) → False.
+    anything else (e.g. ``"soft"``, ``"skip"``) → False.
     """
     return not user_override or user_override == "auto"
 
@@ -413,8 +410,7 @@ def assess_dsc_cbv_quality(
     confidence = "high"
 
     # Scale CNR coverage thresholds by the effective bolus Gd fraction.
-    # Default (full-dose Gd-DOTA) gives eff=1.0 and preserves v0.25.1
-    # thresholds exactly.
+    # Default (full-dose Gd-DOTA) gives eff=1.0 → unscaled thresholds.
     eff_dose = _bolus_gd_fraction(dose, agent_standard_dose)
     cnr_skip = CNR_COVERAGE_SKIP * eff_dose
     cnr_moderate = CNR_COVERAGE_MODERATE * eff_dose
@@ -486,8 +482,6 @@ def assess_dsc_cbv_quality(
 
     # --- AIF Detection Level ---
     # A synthetic AIF produces unreliable CBV regardless of shape metrics.
-    # Note: brain_degraded removed in v0.19.16 - cascade now falls through
-    # to synthetic when permissive fails.
     _AIF_LEVELS_LOW = {"synthetic"}
     _AIF_LEVELS_MODERATE = {"brain_permissive", "brain_relaxed", "atlas_permissive"}
 
@@ -750,15 +744,10 @@ def determine_constraint_mode(
 
     Decision logic:
 
-    - User override (if not 'auto') takes priority. Explicit HARD is
-      rejected at config validation for `2cxm` model and `vi`/`mcmc`
-      Bayesian because hard-fixing vp violates physics assumptions in
-      those paths (Sourbron & Buckley MRM 2013); otherwise HARD emits a
-      warning because DSC CBV and DCE vp measure subtly different vascular
-      compartments (all-vessel vs capillary-plasma).
-    - **auto never emits HARD.** High quality → SOFT at unified σ;
-      moderate → SOFT at unified σ with preload/K2 reason annotation;
-      low → SKIP (unconstrained).
+    - User override (if not 'auto') takes priority. Valid overrides are
+      'soft' and 'skip'; config validation rejects everything else.
+    - High quality → SOFT at unified σ; moderate → SOFT at unified σ with
+      preload/K2 reason annotation; low → SKIP (unconstrained).
 
     Soft sigma is unified at ``SIGMA_SOFT_DEFAULT = 0.40`` across all
     confidence and preload/K2 tiers — the residual scale uncertainty is
@@ -768,7 +757,7 @@ def determine_constraint_mode(
 
     Args:
         dsc_quality: Quality assessment from assess_dsc_cbv_quality.
-        user_override: User-specified mode override ('auto', 'hard', 'soft',
+        user_override: User-specified mode override ('auto', 'soft',
             'skip'). If 'auto' or None, auto-determined from quality.
         preload_classification: DSC preload classification string from QC
             (e.g., 'half_dose', 'significant', 'severe', 'none').
@@ -776,17 +765,13 @@ def determine_constraint_mode(
             containing 'k2_median', 'percent_leaky_voxels', etc.
 
     Returns:
-        ConstraintConfig with mode, uncertainty, and reason. HARD override
-        additionally annotates the config's ``reason`` with a physics caveat
-        so callers can surface the warning in QC / HTML reports.
+        ConstraintConfig with mode, uncertainty, and reason.
     """
-    # Synthetic-AIF short-circuit: overrides EVERY user selection. If the
+    # Synthetic-AIF short-circuit: overrides every user selection. If the
     # AIF cascade exhausted and the pipeline fell back to a synthetic
     # gamma variate, the CBV magnitudes are not comparable to calibrated
-    # data. HARD would be physically meaningless; SOFT would lock vp to
-    # an arbitrary scale; only SKIP is defensible. This also guards
-    # against a user forcing ``--constraint-mode hard`` on a subject
-    # that happens to have a synthetic AIF.
+    # data, so SOFT would lock vp to an arbitrary scale; only SKIP is
+    # defensible.
     if dsc_quality.detection_level == "synthetic":
         if (
             user_override is not None
@@ -804,11 +789,11 @@ def determine_constraint_mode(
             reason=SYNTHETIC_AIF_REASON_STRING,
         )
 
-    # UNKNOWN preload → SKIP (physics consult 2026-04-18: more conservative
-    # than defaulting to NONE, which would silently apply a soft prior to
-    # data with no basis for any prior). Short-circuits before quality-
-    # confidence branches and before user override (user can still request
-    # HARD/SOFT/SKIP explicitly; UNKNOWN only bypasses the auto branch).
+    # UNKNOWN preload → SKIP. More conservative than defaulting to NONE,
+    # which would silently apply a soft prior to data with no basis for
+    # any prior. Short-circuits before quality-confidence branches and
+    # before user override (user can still request SOFT/SKIP explicitly;
+    # UNKNOWN only bypasses the auto branch).
     from pmriprep.utils.dsc_preload import PreloadClass as _PreloadClass
 
     if (
@@ -828,28 +813,22 @@ def determine_constraint_mode(
     if not _is_auto(user_override):
         try:
             mode = ConstraintMode(user_override)
+            reason = f"User override: {user_override}"
         except ValueError:
             mode = ConstraintMode.SKIP
-        if mode == ConstraintMode.HARD:
-            uncertainty = 0.0
             logger.warning(
-                "User explicitly requested HARD vp constraint. DSC CBV and "
-                "DCE vp measure different vascular compartments; HARD "
-                "equality is an unsupported physics claim and biases "
-                "absolute PK estimates. Consider 'soft' or 'skip' unless "
-                "fixing vp is required for parameter identifiability."
+                "Unrecognized constraint user_override %r — falling back to "
+                "SKIP. Valid values: 'auto', 'soft', 'skip'.",
+                user_override,
             )
             reason = (
-                f"User override: {user_override} "
-                "(WARNING: HARD equality is unsupported physics; "
-                "biases absolute PK estimates)"
+                f"Unrecognized user_override {user_override!r} → SKIP "
+                "(valid: 'auto', 'soft', 'skip')"
             )
-        elif mode == ConstraintMode.SOFT:
+        if mode == ConstraintMode.SOFT:
             uncertainty = SIGMA_SOFT_DEFAULT
-            reason = f"User override: {user_override}"
         else:
             uncertainty = 0.0
-            reason = f"User override: {user_override}"
         return ConstraintConfig(
             mode=mode,
             vp_uncertainty=uncertainty,
@@ -859,10 +838,10 @@ def determine_constraint_mode(
     confidence = dsc_quality.confidence
 
     if confidence == "high":
-        # High quality emits SOFT at the unified σ rather than HARD — DSC
-        # SNR does not reduce the biological uncertainty on vp (Hct
-        # heterogeneity + compartment partitioning ≈ ±40%), so stratifying
-        # σ by DSC confidence confuses orthogonal uncertainties.
+        # High quality emits SOFT at the unified σ. DSC SNR does not reduce
+        # the biological uncertainty on vp (Hct heterogeneity + compartment
+        # partitioning ≈ ±40%), so stratifying σ by DSC confidence confuses
+        # orthogonal uncertainties.
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,
             vp_uncertainty=SIGMA_SOFT_DEFAULT,
@@ -1164,17 +1143,6 @@ def prepare_vp_constraint_from_data(
         qc_report["cbv_median"] = quality.cbv_median
     if quality.cbv_negative_fraction is not None:
         qc_report["cbv_negative_fraction"] = quality.cbv_negative_fraction
-
-    # Surface HARD-override physics warning in QC (from determine_constraint_mode)
-    if (
-        config.mode == ConstraintMode.HARD
-        and config.reason.startswith("User override:")
-    ):
-        qc_report["user_override_warning"] = (
-            "User explicitly requested HARD constraint. DSC CBV and DCE vp "
-            "measure different vascular compartments; HARD equality is an "
-            "unsupported physics claim and biases absolute PK estimates."
-        )
 
     result.qc_report = qc_report
 

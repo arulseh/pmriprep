@@ -240,6 +240,13 @@ QC_CNR_THRESHOLD: Final[float] = 4.0
 #: Below this threshold, data is unusable regardless of coverage
 QC_MEAN_CNR_MINIMUM: Final[float] = 3.0
 
+#: Target temporal smoothing window for AIF re-extraction (seconds).
+#: Bolus FWHM is typically 3-6 s; ~7.5 s gives single-pole filtering of the
+#: peak without distorting it. Used by Savitzky-Golay on the re-extracted
+#: AIF; the integer window length is computed at runtime as an odd number
+#: of samples per ``max(5, int(round(target / dt)) | 1)``.
+AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
+
 
 # =============================================================================
 # Field-Strength Dependent Constants

@@ -1405,7 +1405,6 @@ class T1Mapping(SimpleInterface):
         from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
         from pmriprep.utils.dce_constants import (
-            DEFAULT_T1_MS,
             EPSILON_TRIG,
             NLLS_REFINEMENT_E1_THRESHOLD,
             SLAB_EROSION_MAX_SLICES,

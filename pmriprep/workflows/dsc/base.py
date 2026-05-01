@@ -433,12 +433,12 @@ def _detect_and_correct_preload(
     qc_metrics: dict = {}
     k2_map_file: str = ""
 
-    # v0.25.2: K2-primary is the sole classifier. Run detect_preload() only
-    # for the ΔR2* advisory metric (logged as tissue-heterogeneity-biased
-    # motion/S0-baseline diagnostic; never drives effective_class). K2
-    # correction runs unconditionally (preload-class-agnostic per Boxerman
-    # 2006 / Leu 2016), and the K2 residual distribution is then used to
-    # classify preload adequacy (ADEQUATE / PARTIAL / INADEQUATE / UNKNOWN).
+    # K2-primary is the sole classifier. Run detect_preload() only for the
+    # ΔR2* advisory metric (logged as tissue-heterogeneity-biased motion/
+    # S0-baseline diagnostic; never drives effective_class). K2 correction
+    # runs unconditionally (preload-class-agnostic per Boxerman 2006 / Leu
+    # 2016), and the K2 residual distribution is then used to classify
+    # preload adequacy (ADEQUATE / PARTIAL / INADEQUATE / UNKNOWN).
     from pmriprep.utils.dsc_preload import (
         PreloadClass,
         classify_preload_adequacy_from_k2,

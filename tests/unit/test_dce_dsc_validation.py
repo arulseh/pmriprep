@@ -198,16 +198,6 @@ class TestRatioStillWorks:
         assert result.status in (QCStatus.WARN, QCStatus.POOR)
 
 
-class TestCircularDetection:
-    """Hard constraint should still return CIRCULAR."""
-
-    def test_hard_constraint_circular(self):
-        vp, cbv, mask = _make_data()
-        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="hard")
-        assert result.circular is True
-        assert result.status == QCStatus.CIRCULAR
-
-
 class TestWorstOfLogic:
     """Final status should be the worst of ratio, correlation, coverage."""
 
@@ -361,15 +351,6 @@ class TestNcbvPathValidation:
             NAWM_VP_REFERENCE, abs=0.003
         )
         assert result.circular is False
-
-    def test_circular_flag_fires_on_hard_override_ncbv_path(self) -> None:
-        """HARD override under nCBV path still triggers CIRCULAR flag."""
-        vp, ncbv, mask = _make_data(vp_mean=0.020, cbv_mean=1.0)
-        result = validate_vp_cbv(
-            vp, ncbv, mask, constraint_mode="hard", use_ncbv_scale=True,
-        )
-        assert result.circular is True
-        assert result.status == QCStatus.CIRCULAR
 
     def test_widened_soft_does_not_trigger_circular_ncbv_path(self) -> None:
         """Realistic SOFT posterior spread (> CIRCULAR_STD_THRESHOLD_NCBV)

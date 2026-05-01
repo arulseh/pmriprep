@@ -68,9 +68,8 @@ def prepare_voxel_for_fitting(
             )
 
     # Subtract baseline concentration and clip to non-negative.
-    # Since v0.11.9, signal_to_concentration() performs baseline subtraction
-    # before clipping, so baseline_mean here is ~0. This step is kept for
-    # safety (baseline mean is ~0 after upstream subtraction).
+    # signal_to_concentration() performs baseline subtraction before
+    # clipping, so baseline_mean here is ~0. This step is kept for safety.
     prepared = tissue_curve - baseline_mean
     prepared = np.maximum(prepared, 0.0)
 

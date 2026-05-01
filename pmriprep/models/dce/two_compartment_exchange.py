@@ -42,6 +42,7 @@ from pmriprep.utils.dce_constants import (
     PS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
+    VP_VE_TOTAL_MAX,
 )
 
 
@@ -411,9 +412,9 @@ class TwoCompartmentExchangeModel(PKModel):
         vp = params[3]
 
         total_volume = ve + vp
-        if total_volume > 1.0:
+        if total_volume > VP_VE_TOTAL_MAX:
             # Scale down proportionally
-            scale_factor = 1.0 / total_volume
+            scale_factor = VP_VE_TOTAL_MAX / total_volume
             ve = ve * scale_factor
             vp = vp * scale_factor
 

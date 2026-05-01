@@ -313,12 +313,16 @@ class TestVolumeConstraint:
     def test_volume_constraint_boundary(
         self, etofts_model: ExtendedToftsModel
     ) -> None:
-        # ve=0.7, vp=0.3 -> total=1.0 exactly, should be unchanged
+        # ve=0.7, vp=0.3 -> total=1.0; constraint scales to VP_VE_TOTAL_MAX
+        # (0.999) leaving slack at the LOG_LOGIT bound while preserving
+        # the ve:vp ratio.
+        from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
+
         ktrans, ve, vp = etofts_model._apply_volume_constraint([0.1, 0.7, 0.3])
 
         assert ktrans == 0.1
-        assert ve == 0.7
-        assert vp == 0.3
+        np.testing.assert_allclose(ve + vp, VP_VE_TOTAL_MAX, rtol=1e-12)
+        np.testing.assert_allclose(ve / vp, 0.7 / 0.3, rtol=1e-12)
 
 
 # ---------------------------------------------------------------------------

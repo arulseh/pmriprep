@@ -88,9 +88,9 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     ttp_corrected_map = traits.Either(traits.Str, None, desc="AIF-corrected TTP map path")
     rttp_map = traits.Either(traits.Str, None, desc="NAWM-relative TTP map path")
 
-    # AIF provenance (v0.29.0) — passed from the cascade QC so the
-    # lesion-stats sidecar carries the PerfusionProcessing.AIF block
-    # (Source / DetectionLevel / QualityFlag / etc).
+    # AIF provenance — passed from the cascade QC so the lesion-stats
+    # sidecar carries the PerfusionProcessing.AIF block (Source /
+    # DetectionLevel / QualityFlag / etc).
     aif_qc = traits.Dict(
         desc="AIF QC dict from cascade, used for the "
              "PerfusionProcessing.AIF provenance block",
@@ -225,7 +225,7 @@ class DSCLesionStats(BaseInterface):
             # Add clinical context
             result.clinical_context = get_dsc_clinical_context()
 
-        # AIF provenance (v0.29.0) — populate the PerfusionProcessing.AIF
+        # AIF provenance — populate the PerfusionProcessing.AIF
         # sub-block from aif_qc. Downstream consumers should read
         # ``PerfusionProcessing.AIF.Source`` / ``CrossSubjectComparable``
         # rather than top-level fields. Within-subject nCBV ratios cancel

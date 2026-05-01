@@ -118,7 +118,7 @@ class DCEConfig:
     r1_relaxivity: Optional[float] = None  # User-supplied r1 (s^-1/mM)
 
     # DSC CBV constraint settings
-    cbv_constraint_mode: str = "auto"  # "auto", "hard", "soft", "skip"
+    cbv_constraint_mode: str = "auto"  # "auto", "soft", "skip"
     hematocrit: float = 0.42  # Arterial Hct; Parker 2006 MRM used 0.42 in the original population-AIF derivation, so using Parker's fallback with 0.42 is internally self-consistent. Closer to GBM-cohort mean (~0.38) than QIBA Profile v2.0's adult-healthy-male 0.45.
 
     # Resource settings
@@ -151,6 +151,14 @@ class DCEConfig:
             raise ValueError(
                 f"Invalid b1_method: {self.b1_method!r}. "
                 f"Valid: {sorted(_VALID_B1_METHODS)}"
+            )
+
+        # Validate cbv_constraint_mode
+        _VALID_CBV_CONSTRAINT_MODES = {"auto", "soft", "skip"}
+        if self.cbv_constraint_mode not in _VALID_CBV_CONSTRAINT_MODES:
+            raise ValueError(
+                f"Invalid cbv_constraint_mode: {self.cbv_constraint_mode!r}. "
+                f"Valid: {sorted(_VALID_CBV_CONSTRAINT_MODES)}"
             )
 
         # Coerce integer fields (these have non-None defaults)
@@ -207,29 +215,6 @@ class DCEConfig:
                 self.r1_relaxivity = float(self.r1_relaxivity)
             except (ValueError, TypeError) as e:
                 raise TypeError(f"DCEConfig.r1_relaxivity has invalid type: {e}") from e
-
-        # Reject HARD constraint on 2CXM and Bayesian (VI/MCMC) paths.
-        # Sourbron & Buckley MRM 2013: vp enters 2CXM nonlinearly via
-        # eigenvalues α± and coefficient mixing; hard-fixing vp propagates
-        # DSC CBV bias into Fp = k_out·vp and PS = k_pe·vp as first-order
-        # multiplicative error. For VI/MCMC, hard bypasses the Bayesian
-        # fitter for bounded L-BFGS-B, triggering mass post-fit rejection.
-        # Users who need HARD must choose a compatible model/inference.
-        if self.cbv_constraint_mode == "hard":
-            if self.model == "2cxm":
-                raise ValueError(
-                    "--constraint-mode hard is incompatible with --model 2cxm. "
-                    "vp enters 2CXM nonlinearly (Sourbron & Buckley MRM 2013); "
-                    "hard-fixing propagates DSC CBV bias into Fp and PS. "
-                    "Use --constraint-mode soft instead."
-                )
-            if self.inference in {"vi", "mcmc"}:
-                raise ValueError(
-                    f"--constraint-mode hard is incompatible with --dce-inference {self.inference}. "
-                    "Hard bypasses the Bayesian fitter for bounded L-BFGS-B, "
-                    "triggering mass post-fit rejection on non-enhancing voxels. "
-                    "Use --constraint-mode soft to keep the Bayesian posterior with an informative vp prior."
-                )
 
         # Validate t1_map_file / no_t1 mutual exclusivity
         if self.t1_map_file and self.no_t1:

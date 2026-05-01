@@ -116,11 +116,11 @@ class LesionStatisticsResult:
     nawm_reference: Optional[Dict[str, Any]] = None
     derived_metrics: Optional[Dict[str, Any]] = None
     clinical_context: Optional[Dict[str, Any]] = None
-    # AIF provenance for DSC stats (v0.29.0). A prebuilt
-    # ``PerfusionProcessing.AIF`` sub-block (Source, DetectionLevel,
-    # QualityFlag, GammaFitApplied, CrossSubjectComparable, optionally
-    # SyntheticFallbackReason / ExternalAIFVerified). None for DCE
-    # stats or when AIF QC is unavailable.
+    # AIF provenance for DSC stats: a prebuilt ``PerfusionProcessing.AIF``
+    # sub-block (Source, DetectionLevel, QualityFlag, GammaFitApplied,
+    # CrossSubjectComparable, optionally SyntheticFallbackReason /
+    # ExternalAIFVerified). None for DCE stats or when AIF QC is
+    # unavailable.
     aif_provenance: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:

@@ -707,15 +707,15 @@ def _find_previous_dsc_outputs(
         if outputs["rel_cbv_map"] is None:
             for f in perf_dir.glob("*desc-dscRel_cbv.nii.gz"):
                 outputs["rel_cbv_map"] = str(f)
-        # NAWM-normalized CBV (required for v0.25.0+ vp prior path).
+        # NAWM-normalized CBV (required for the vp prior path).
         # Missing → vp constraint cleanly SKIPs in prepare_vp_constraint.
         for f in perf_dir.glob("*desc-dscNawmNorm_cbv.nii.gz"):
             outputs["ncbv_map"] = str(f)
         if outputs["rel_cbv_map"] is not None and outputs["ncbv_map"] is None:
-            # Pre-v0.25.0 derivatives layout. The DCE vp constraint anchors
-            # on nCBV; without it the constraint falls back to SKIP. Warn so
-            # the user knows the skip-DSC run cannot reuse the old
-            # (known-biased) absolute-CBV path for the prior.
+            # Older derivatives without NAWM-normalized CBV. The DCE vp
+            # constraint anchors on nCBV; without it the constraint falls
+            # back to SKIP. Warn so the user knows the skip-DSC run cannot
+            # reuse the old (known-biased) absolute-CBV path for the prior.
             logging.getLogger("pmriprep.workflows").warning(
                 "Found previous DSC outputs for sub-%s without a NAWM-"
                 "normalized CBV map (no *desc-dscNawmNorm_cbv.nii.gz in %s). "
@@ -1851,6 +1851,7 @@ def init_pmriprep_wf(
             deconv_method=dsc_config.method,
             inference=dsc_config.inference,
             leakage_method=dsc_config.leakage_method,
+            scanner_metadata=dsc_sidecar,
         )
 
         # DSC fallback logging warnings (parity with DCE warnings)
@@ -2189,6 +2190,7 @@ def init_pmriprep_wf(
                 dose_source=_dce_dose_source,
                 agent_standard_dose=dce_sidecar["agent_standard_dose"],
                 bids_agent_string=_bids_agent_string,
+                scanner_metadata=dce_sidecar,
             )
 
         # Determine DCE structural reference from confidence-scored selection
@@ -2654,9 +2656,8 @@ def init_pmriprep_wf(
 
         # DSC dose (bolus multiplier + agent standard dose) flows into the
         # DCE constraint quality gate so CNR coverage thresholds scale with
-        # administered Gd fraction (v0.25.2). Read from dsc_config unless
-        # DSC is absent, in which case defaults (1.0, 0.1) preserve v0.25.1
-        # CNR behavior.
+        # administered Gd fraction. Read from dsc_config; defaults
+        # (1.0, 0.1) apply when DSC is absent.
         if dsc_config is not None:
             dce_wf.inputs.inputnode.dsc_dose = float(dsc_config.dose)
             dce_wf.inputs.inputnode.dsc_agent_standard_dose = float(
@@ -2674,9 +2675,9 @@ def init_pmriprep_wf(
                         # Relative/absolute CBV → cross-validation + QC
                         # resampling path (DSC 128x128 → DCE 256x256).
                         ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
-                        # NAWM-normalized CBV → vp prior path (v0.25.0+).
-                        # None propagates cleanly when no NAWM mask exists
-                        # (missing-NAWM handling lives in prepare_vp_constraint).
+                        # NAWM-normalized CBV → vp prior path. None propagates
+                        # cleanly when no NAWM mask exists (missing-NAWM
+                        # handling lives in prepare_vp_constraint).
                         ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
                         ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                         # AIF QC is a JSON file, no spatial resampling needed
@@ -2725,8 +2726,8 @@ def init_pmriprep_wf(
                 else:
                     _log.warning(
                         "skip-dsc: nCBV not found in previous DSC outputs "
-                        "(pre-v0.25.0 run or no NAWM mask); vp constraint "
-                        "will cleanly SKIP. Use --no-dsc-validation to avoid "
+                        "(older run or no NAWM mask); vp constraint will "
+                        "cleanly SKIP. Use --no-dsc-validation to avoid "
                         "cross-validation noise if this is unexpected."
                     )
                 _log.info(

@@ -54,8 +54,8 @@ class BatchedChunkArgs(NamedTuple):
     Pickle-safe across ``ProcessPoolExecutor.map`` because it is defined
     at module top-level (a nested NamedTuple definition would raise
     PicklingError at runtime). Named fields replace a prior positional
-    8-tuple so that adding fields (e.g., ``vp_uncertainty`` in v0.28.0)
-    is compile-time-checked instead of positionally-dropped silently.
+    tuple so that adding fields (e.g., ``vp_uncertainty``) is
+    compile-time-checked instead of positionally-dropped silently.
     """
 
     model_name: str
@@ -266,20 +266,8 @@ def _fit_single_voxel(
         if voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
             fixed_vp = voxel_vp
 
-        # HARD constraint: use fit_constrained with fixed vp
-        if (
-            fixed_vp is not None
-            and constraint_mode == ConstraintMode.HARD
-            and hasattr(model, "fit_constrained")
-        ):
-            result = model.fit_constrained(
-                prepared_curve, aif, time_points, fixed_vp=fixed_vp,
-                weights=motion_weights,
-            )
-            constrained = True
-
         # SOFT constraint: Bayesian with informative vp prior
-        elif (
+        if (
             fixed_vp is not None
             and constraint_mode == ConstraintMode.SOFT
             and inference != "nlls"
@@ -793,7 +781,7 @@ def _fit_chunk_nlls(args: BatchedChunkArgs) -> Any:
 
     Accepts a ``BatchedChunkArgs`` NamedTuple (see module docstring) — this
     replaces a prior positional tuple to prevent silent parameter drops
-    (e.g. the pre-v0.28 `vp_uncertainty` drop that caused SOFT to behave
+    (e.g. the historical `vp_uncertainty` drop that caused SOFT to behave
     as HARD in the batched NLLS path).
 
     Returns:
@@ -936,11 +924,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
     constraint_mode = traits.Enum(
         "auto",
-        "hard",
         "soft",
         "skip",
         usedefault=True,
-        desc="DSC CBV constraint mode: auto, hard, soft, or skip",
+        desc="DSC CBV constraint mode: auto, soft, or skip",
     )
     hematocrit = traits.Float(
         HEMATOCRIT_ARTERIAL,
@@ -1027,7 +1014,7 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         genfile=True,
         desc=(
             "Output per-voxel binary map (0/1) indicating whether vp ended at "
-            "a bound in the active-set SOFT NLLS path (v0.28.0+). 0 elsewhere."
+            "a bound in the active-set SOFT NLLS path. 0 elsewhere."
         ),
     )
 
@@ -1558,12 +1545,12 @@ class ComputeDCEMaps(BaseInterface):
             "skip_reason": SKIP_REASON_NO_DSC_RUN,
         }
 
-        # vp prior is NAWM-anchored (v0.25.0+): vp = NAWM_VP_REFERENCE · nCBV.
-        # Only nCBV feeds the prior — absolute-CBV is consumed elsewhere
-        # (cross-validation, QC plots) but no longer drives the prior because
+        # vp prior is NAWM-anchored: vp = NAWM_VP_REFERENCE · nCBV. Only
+        # nCBV feeds the prior — absolute-CBV is consumed elsewhere
+        # (cross-validation, QC plots) but does not drive the prior because
         # the scalar calibration from ΔR2*-derived CBV to DCE vp cannot be
         # closed robustly (AIF partial-volume, recirculation, first-pass
-        # truncation). When nCBV is missing (pre-v0.25.0 skip-DSC derivatives,
+        # truncation). When nCBV is missing (older skip-DSC derivatives,
         # or no NAWM reference), prepare_vp_constraint_from_data emits a
         # clean SKIP with skip_reason="no_nawm_mask".
         ncbv_available = (
@@ -1636,26 +1623,24 @@ class ComputeDCEMaps(BaseInterface):
                 constraint_vp_uncertainty = vp_result.config.vp_uncertainty
                 constraint_qc = vp_result.qc_report
 
-                # Acquisition-limited diagnostic (v0.25.4+, replacing the
-                # v0.25.0 scale-mismatch sigma-widening safeguard).
+                # Acquisition-limited diagnostic.
                 #
-                # The old safeguard checked vp_prior * Cp(peak) > Ct(peak)
-                # and interpreted > 30% overshoot as a scale bug, then
-                # either downgraded HARD→SKIP or widened SOFT σ to 0.5.
-                # Under the NAWM-anchored prior (vp = NAWM_VP_REFERENCE
-                # × nCBV) and the plasma-corrected AIF convention, that
-                # test no longer measures scale. It primarily detects
-                # first-pass
-                # temporal undersampling (Buckley MRM 2002, Henderson
-                # MRI 1998): max(Ct_samp) is Jensen-biased by (TR/FWHM)²
-                # so vp·Cp_peak > Ct_samp_peak is expected at any
-                # realistic volume TR even at perfect scale. Widening σ
-                # at long TR is physically backward — vp is
-                # prior-dominated by design in that regime, and killing
-                # the prior makes vp identifiability worse, not better.
-                # Genuine scale breaks (e.g., 10× CBV-unit bug from
-                # v0.25.0) are caught by the VP_MEDIAN magnitude gate
-                # in prepare_vp_constraint_from_data.
+                # Earlier safeguard logic checked vp_prior * Cp(peak) >
+                # Ct(peak) and interpreted > 30% overshoot as a scale
+                # bug, then either downgraded HARD→SKIP or widened SOFT σ
+                # to 0.5. Under the NAWM-anchored prior (vp =
+                # NAWM_VP_REFERENCE × nCBV) and the plasma-corrected AIF
+                # convention, that test no longer measures scale. It
+                # primarily detects first-pass temporal undersampling
+                # (Buckley MRM 2002, Henderson MRI 1998): max(Ct_samp)
+                # is Jensen-biased by (TR/FWHM)² so vp·Cp_peak >
+                # Ct_samp_peak is expected at any realistic volume TR
+                # even at perfect scale. Widening σ at long TR is
+                # physically backward — vp is prior-dominated by design
+                # in that regime, and killing the prior makes vp
+                # identifiability worse, not better. Genuine scale
+                # breaks (e.g., 10× CBV-unit bugs) are caught by the
+                # VP_MEDIAN magnitude gate in prepare_vp_constraint_from_data.
                 #
                 # We keep the same arithmetic but emit it as informational
                 # QC only (no mutation of constraint_mode, sigma, or
@@ -1664,8 +1649,7 @@ class ComputeDCEMaps(BaseInterface):
                 # expected ~1 frame (normal) vs many frames (either
                 # tracer delay or TR-induced aliasing).
                 if (
-                    constraint_mode
-                    in (ConstraintMode.HARD, ConstraintMode.SOFT)
+                    constraint_mode == ConstraintMode.SOFT
                     and str(self.inputs.constraint_mode) == "auto"
                     and vp_constraint_map is not None
                 ):
@@ -1858,7 +1842,7 @@ class ComputeDCEMaps(BaseInterface):
 
         # Per-voxel indicator that vp ended at a bound in the SOFT NLLS
         # active-set path. Populated only by batched NLLS SOFT; 0 elsewhere
-        # (HARD / SKIP / Bayesian fits). Emitted as a NIfTI + whole-brain
+        # (SKIP / Bayesian fits). Emitted as a NIfTI + whole-brain
         # scalar in constraint_qc; downstream dce_pk_maps_qc stratifies
         # over ROI masks into
         # qc_metrics.pk_modeling.vp_at_bound_fractions.{whole_brain,
@@ -2107,7 +2091,7 @@ class ComputeDCEMaps(BaseInterface):
                 if res["fitted_curve"] is not None:
                     fitted_curves[x, y, z, :] = res["fitted_curve"].astype(np.float32)
 
-            # vp_at_bound scatter (v0.28.0): only populated by SOFT NLLS path;
+            # vp_at_bound scatter: only populated by the SOFT NLLS path;
             # 0 elsewhere (default value from the result dict).
             vp_at_bound_map[x, y, z] = float(res.get("vp_at_bound", 0.0))
 
@@ -2277,10 +2261,10 @@ class ComputeDCEMaps(BaseInterface):
                     qc_metrics["ve_histogram"] = hist_counts_ve.tolist()
                     qc_metrics["ve_histogram_edges"] = hist_edges_ve.tolist()
 
-        # v0.28.0: compute whole-brain fraction of SOFT-NLLS voxels that
-        # ended at a bound (active-set Pass 2 fired). Reported in
-        # constraint_qc; downstream dce_pk_maps_qc stratifies over ROI masks.
-        # Zero everywhere for HARD / SKIP / Bayesian fits.
+        # Compute whole-brain fraction of SOFT-NLLS voxels that ended
+        # at a bound (active-set Pass 2 fired). Reported in
+        # constraint_qc; downstream dce_pk_maps_qc stratifies over ROI
+        # masks. Zero everywhere for HARD / SKIP / Bayesian fits.
         if np.any(mask_bool):
             vp_at_bound_in_brain = vp_at_bound_map[mask_bool]
             finite_bound = np.isfinite(vp_at_bound_in_brain)
@@ -2627,8 +2611,7 @@ class ComputeDCEMaps(BaseInterface):
 
         ``vp_uncertainty`` is the relative σ for the SOFT box constraint;
         passed through to ``_fit_chunk_nlls`` via ``BatchedChunkArgs``.
-        Pass None for HARD / unconstrained. This parameter was silently
-        dropped in pre-v0.28 versions (see CHANGELOG).
+        Pass None for HARD / unconstrained.
         """
         from pmriprep.models.dce.batched_fitting import concat_fit_results
 
@@ -2728,7 +2711,7 @@ class ComputeDCEMaps(BaseInterface):
             is_auto: Whether auto-mode BIC selection is active.
             candidate_names: List of candidate model names for auto mode.
             vp_constraint_map: vp constraint map or None.
-            constraint_mode: Constraint mode (SKIP, HARD, SOFT).
+            constraint_mode: Constraint mode (SKIP, SOFT).
             constraint_vp_uncertainty: Uncertainty for soft constraint.
             motion_weights: Per-frame motion weights or None.
             save_fitted_curves: Whether to save fitted curves.
@@ -2874,25 +2857,14 @@ class ComputeDCEMaps(BaseInterface):
             rss = np.sum((tissue_curves - result.fitted_curves) ** 2, axis=1)
             rss_safe = np.maximum(rss, EPSILON_RSS)
             # Per-voxel effective param count:
-            # - HARD constraint (vp deterministically pinned): k reduced by 1
-            #   for constrained voxels, since vp is not fit.
-            # - SOFT box constraint (v0.28.0): k = k_base constant. Self-Liang
-            #   (JASA 1987) shows boundary-parameter effective d.o.f. lies
-            #   between k_base-1 and k_base; k_base with the full data
-            #   likelihood is the standard pragmatic choice and the only one
-            #   that keeps Patlak / Extended Tofts BIC comparison stable.
-            # - Unconstrained: k = k_base.
+            # SOFT box constraint: k = k_base constant. Self-Liang (JASA
+            # 1987) shows boundary-parameter effective d.o.f. lies between
+            # k_base-1 and k_base; k_base with the full data likelihood is
+            # the standard pragmatic choice and the only one that keeps
+            # Patlak / Extended Tofts BIC comparison stable. Unconstrained
+            # path also uses k_base.
             k_base = _N_PARAMS[cname]
-            if (
-                cname in _MODEL_HAS_VP
-                and fixed_vp is not None
-                and constraint_mode == ConstraintMode.HARD
-            ):
-                k_arr = np.where(
-                    fixed_vp > 0, k_base - 1, k_base,
-                ).astype(float)
-            else:
-                k_arr = np.full(n_voxels, k_base, dtype=float)
+            k_arr = np.full(n_voxels, k_base, dtype=float)
             bic_arrays[cname] = T * np.log(rss_safe / T) + k_arr * np.log(T)
 
         # Filter non-converged → BIC = inf
@@ -2980,8 +2952,8 @@ class ComputeDCEMaps(BaseInterface):
             if save_fitted_curves and winner_result.fitted_curves is not None:
                 fitted_curve = winner_result.fitted_curves[i]
 
-            # v0.28.0 vp_at_bound propagation: read from the winner's
-            # per-voxel indicator (non-None only for SOFT NLLS path).
+            # vp_at_bound propagation: read from the winner's per-voxel
+            # indicator (non-None only for the SOFT NLLS path).
             vp_at_bound_val = 0.0
             if winner_result.vp_at_bound is not None:
                 vp_at_bound_val = float(winner_result.vp_at_bound[i])
@@ -3062,7 +3034,7 @@ class ComputeDCEMaps(BaseInterface):
             if fit_result.fitted_curves is not None:
                 fitted_curve = fit_result.fitted_curves[i]
 
-            # v0.28.0 vp_at_bound propagation: only populated for SOFT NLLS.
+            # vp_at_bound propagation: only populated for the SOFT NLLS path.
             vp_at_bound_val = 0.0
             if fit_result.vp_at_bound is not None:
                 vp_at_bound_val = float(fit_result.vp_at_bound[i])

@@ -236,16 +236,15 @@ class DSCConfig:
                 f"Valid: {sorted(_valid_registration)}"
             )
 
-        # preload: "auto" or float dose multiplier. Reject enum strings
-        # from the pre-v0.25.0 config (breaking pre-release change).
+        # preload: "auto" or float dose multiplier. Reject enum strings.
         if isinstance(self.preload, str):
             if self.preload != "auto":
                 raise ValueError(
                     f"Invalid preload={self.preload!r}. Use 'auto' to "
                     "auto-detect, or a float dose multiplier (e.g., 0.5 for "
-                    "half-dose preload). The string enum "
-                    "('none'/'minimal'/'half_dose'/...) was removed in "
-                    "v0.25.0 — use a numeric fraction instead."
+                    "half-dose preload). String enums "
+                    "('none'/'minimal'/'half_dose'/...) are not accepted; "
+                    "use a numeric fraction."
                 )
         else:
             try:

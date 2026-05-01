@@ -624,11 +624,9 @@
             <div class="metric">
                 <div class="metric-label">Constraint</div>
                 <div class="metric-value
-                    {%- if cbv_c.mode == 'hard' %} warn
-                    {%- elif cbv_c.mode == 'soft' %} pass
+                    {%- if cbv_c.mode == 'soft' %} pass
                     {%- elif cbv_c.mode == 'skip' %} warn
-                    {%- else %} unknown{% endif %}"
-                    {%- if cbv_c.mode == 'hard' %} title="HARD equality is an unsupported physics claim — DSC CBV and DCE vp measure different vascular compartments. Requires explicit user override."{% endif %}>{{ cbv_c.mode }}</div>
+                    {%- else %} unknown{% endif %}">{{ cbv_c.mode }}</div>
             </div>
         </div>
         {% if cbv_c.reason is defined %}

@@ -82,7 +82,6 @@ _CASCADE_N_CANDIDATES_FRACTION: dict[str, float] = {
     "strict": 1.0,
     "relaxed": 0.6,
     "permissive": 0.4,
-    # Note: "degraded" removed in v0.19.16
 }
 
 
@@ -2872,9 +2871,6 @@ class AIFDetection(BaseInterface):
                 "TTP and Tmax are valid (timing independent of AIF amplitude)",
                 "Manual AIF selection recommended for clinical use",
             ]
-        # Note: brain_degraded tier removed in v0.19.16 - cascade now goes
-        # directly from brain_permissive to synthetic AIF.
-
         # Capture measured AIF in caller scope BEFORE gamma fit (which may
         # replace aif_curve with the fitted curve in-place). This is the
         # always-available measured AIF consumed by AUC CBV downstream.

@@ -754,6 +754,7 @@ def build_dce_provenance(
     dose_source: str = ParameterSource.DEFAULT_FALLBACK,
     agent_standard_dose: float = 0.1,
     bids_agent_string: Optional[str] = None,
+    scanner_metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Build DCE provenance dict for output JSON sidecars.
 
@@ -769,6 +770,10 @@ def build_dce_provenance(
         dose_source: How the dose was determined (ParameterSource constant).
         agent_standard_dose: Standard clinical dose in mmol/kg.
         bids_agent_string: Raw ContrastBolusAgent string from BIDS sidecar.
+        scanner_metadata: Acquisition metadata from BIDS sidecar (TR/TE/
+            FlipAngle/etc.) emitted under PerfusionProcessing.ScannerMetadata
+            so downstream sidecars carry the acquisition context directly
+            without requiring users to traverse Sources.
 
     Returns:
         Dict with PerfusionProcessing namespace containing ContrastAgent,
@@ -786,22 +791,25 @@ def build_dce_provenance(
     if bids_agent_string is not None:
         agent_dict["OriginalString"] = str(bids_agent_string)
 
-    return {
-        "PerfusionProcessing": {
-            "ContrastAgent": agent_dict,
-            "Relaxivity": {
-                "r1": float(r1_relaxivity),
-                "units": "s-1.mM-1",
-                "field_strength_T": float(field_strength),
-                "Source": str(agent_source),
-            },
-            "ContrastDose": {
-                "standard_dose_mmol_kg": float(agent_standard_dose),
-                "dose_multiplier": float(dose_multiplier),
-                "Source": str(dose_source),
-            },
+    perf: dict[str, Any] = {
+        "ContrastAgent": agent_dict,
+        "Relaxivity": {
+            "r1": float(r1_relaxivity),
+            "units": "s-1.mM-1",
+            "field_strength_T": float(field_strength),
+            "Source": str(agent_source),
+        },
+        "ContrastDose": {
+            "standard_dose_mmol_kg": float(agent_standard_dose),
+            "dose_multiplier": float(dose_multiplier),
+            "Source": str(dose_source),
         },
     }
+    if scanner_metadata:
+        block = _build_scanner_metadata_block(scanner_metadata)
+        if block:
+            perf["ScannerMetadata"] = block
+    return {"PerfusionProcessing": perf}
 
 
 def build_dsc_provenance(
@@ -818,6 +826,7 @@ def build_dsc_provenance(
     deconv_method: str = "oSVD",
     inference: Optional[str] = None,
     leakage_method: str = "bsw",
+    scanner_metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Build DSC provenance dict for output JSON sidecars.
 
@@ -840,6 +849,9 @@ def build_dsc_provenance(
         deconv_method: Deconvolution method name.
         inference: Inference method (nlls/map/vb/svb) for CPI/vascular.
         leakage_method: Leakage correction method name.
+        scanner_metadata: Acquisition metadata from BIDS sidecar (TR/TE/
+            FlipAngle/FieldStrength) emitted under
+            PerfusionProcessing.ScannerMetadata.
 
     Returns:
         Dict with PerfusionProcessing namespace containing ContrastAgent
@@ -857,11 +869,10 @@ def build_dsc_provenance(
     deconv_block: dict[str, Any] = {"method": str(deconv_method)}
     if inference is not None and deconv_method in ("cpi", "vascular"):
         deconv_block["inference"] = str(inference)
-        # FABBER-parity provenance for the CPI parametric path so v0.34+
-        # outputs can be retrospectively distinguished from older runs
-        # with different priors / CP layout. Versioning is captured by
-        # the top-level pmriprep version in the sidecar; the actual prior
-        # values are recorded in the adjacent prior blocks below.
+        # FABBER-parity provenance for the CPI parametric path. The
+        # pipeline version is recorded at the top of the sidecar; the
+        # prior values themselves are emitted in the adjacent prior
+        # blocks below for retrospective comparison.
         if deconv_method == "cpi":
             deconv_block["inference_engine"] = "fabber"
             deconv_block["cpi_prior_profile"] = "fabber"
@@ -908,8 +919,38 @@ def build_dsc_provenance(
     perf["Deconvolution"] = deconv_block
     perf["LeakageCorrection"] = {"method": str(leakage_method)}
     perf["PreloadDetection"] = {"Source": str(preload_source)}
+    if scanner_metadata:
+        block = _build_scanner_metadata_block(scanner_metadata)
+        if block:
+            perf["ScannerMetadata"] = block
 
     return {"PerfusionProcessing": perf}
+
+
+def _build_scanner_metadata_block(
+    sidecar: dict[str, Any],
+) -> dict[str, Any]:
+    """Extract acquisition metadata for the ScannerMetadata sidecar block.
+
+    Mirrors the field names returned by ``_read_bids_sidecar``: ``te``,
+    ``volume_tr``, ``pulse_tr``, ``field_strength``, ``flip_angle``.
+    Each is emitted under its BIDS-spec name with original units (TE/TR
+    in seconds, FlipAngle in degrees, MagneticFieldStrength in Tesla).
+    Returns an empty dict when no recognized fields are populated; the
+    caller should skip emission rather than write an empty block.
+    """
+    bids_keys = {
+        "te": "EchoTime",
+        "volume_tr": "RepetitionTime",
+        "pulse_tr": "RepetitionTimeExcitation",
+        "field_strength": "MagneticFieldStrength",
+        "flip_angle": "FlipAngle",
+    }
+    block: dict[str, Any] = {}
+    for src_key, bids_key in bids_keys.items():
+        if src_key in sidecar and sidecar[src_key] is not None:
+            block[bids_key] = float(sidecar[src_key])
+    return block
 
 
 def collect_default_warnings(
@@ -1005,7 +1046,6 @@ def collect_default_warnings(
                 classification = preload_qc.get(
                     "preload_classification", ""
                 )
-                # v0.25.2: renamed to preload_baseline_delta_r2_advisory.
                 delta_r2 = preload_qc.get("preload_baseline_delta_r2_advisory")
             if classification not in ("", "none"):
                 detail = ""

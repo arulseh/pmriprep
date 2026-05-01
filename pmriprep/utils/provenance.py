@@ -357,8 +357,8 @@ def _enrich_dce(
         if aif_block:
             perf["AIF"] = aif_block
 
-        # v0.25.3+: explicit unit traceability. The AIF curve consumed by
-        # PK modelling is in true plasma [Gd] (mM) after /(1-Hct); Parker
+        # Explicit unit traceability. The AIF curve consumed by PK
+        # modelling is in true plasma [Gd] (mM) after /(1-Hct); Parker
         # reference peaks are blood-voxel units pre-Hct. Emit the block
         # only when at least one concrete measurement (peak or Hct) is
         # available, to avoid description-only blocks.
@@ -445,9 +445,9 @@ def _enrich_dsc(
         if "lambda_mean" in deconv:
             deconv_block["lambda_mean"] = _safe_float(deconv["lambda_mean"])
         if "fe_plateau_rate" in deconv:
-            # Renamed from convergence_rate in v0.34.2 — FABBER's fixed
-            # 10-iter VB schedule rarely satisfies the strict FE-plateau
-            # test, so this is informational, not a fit-quality metric.
+            # FABBER's fixed 10-iter VB schedule rarely satisfies the
+            # strict FE-plateau test, so this is informational, not a
+            # fit-quality metric.
             deconv_block["fe_plateau_rate"] = _safe_float(deconv["fe_plateau_rate"])
         if "fallback_rate" in deconv:
             deconv_block["fallback_rate"] = _safe_float(deconv["fallback_rate"])
@@ -473,8 +473,8 @@ def _enrich_dsc(
             preload_det["k2_classification"] = str(
                 preload["preload_k2_classification"]
             )
-        # v0.25.2: key renamed from baseline_delta_r2 → preload_baseline_delta_r2_advisory
-        # (tissue-heterogeneity-biased advisory metric, not used for classification).
+        # preload_baseline_delta_r2_advisory: tissue-heterogeneity-biased
+        # advisory metric, not used for classification.
         if "preload_baseline_delta_r2_advisory" in preload:
             preload_det["baseline_delta_r2_advisory"] = _safe_float(
                 preload["preload_baseline_delta_r2_advisory"]
