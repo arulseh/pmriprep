@@ -182,15 +182,15 @@ class DCEDerivativeWriter(BaseInterface):
             dataset_description.json
             sub-{subject}/ses-{session}/
                 perf/
-                    sub-XX_ses-XX_space-DCE_model-{model}_desc-dce_Ktrans.nii.gz
-                    sub-XX_ses-XX_space-DCE_model-{model}_desc-dce_Ktrans.json
+                    sub-XX_ses-XX_space-dce_model-{model}_desc-dce_Ktrans.nii.gz
+                    sub-XX_ses-XX_space-dce_model-{model}_desc-dce_Ktrans.json
                     ...
                 anat/
-                    sub-XX_ses-XX_space-DCE_T1map.nii.gz
-                    sub-XX_ses-XX_from-DCE_to-anat_mode-image_xfm.mat
+                    sub-XX_ses-XX_space-dce_T1map.nii.gz
+                    sub-XX_ses-XX_from-dce_to-anat_mode-image_xfm.mat
                     ...
                 sub-XX_ses-XX_desc-dceQC_quality.json
-                sub-XX_ses-XX_space-DCE_desc-lesionStats.json
+                sub-XX_ses-XX_space-dce_desc-lesionStats.json
     """
 
     input_spec = DCEDerivativeWriterInputSpec
@@ -219,7 +219,7 @@ class DCEDerivativeWriter(BaseInterface):
             pk_model = "unknown"
 
         # Build spatial and model entity strings
-        spatial = "space-DCE"
+        spatial = "space-dce"
         model_entity = f"model-{sanitize_model_entity(pk_model)}"
 
         # Create directory structure (unified output dir)
@@ -669,7 +669,7 @@ class DCEDerivativeWriter(BaseInterface):
             anat_dir.mkdir(parents=True, exist_ok=True)
             copy_derivative(
                 self.inputs.dce_to_t1w_xfm,
-                anat_dir / f"{prefix}_from-DCE_to-anat_mode-image_xfm.mat",
+                anat_dir / f"{prefix}_from-dce_to-anat_mode-image_xfm.mat",
             )
 
         # -----------------------------------------------------------

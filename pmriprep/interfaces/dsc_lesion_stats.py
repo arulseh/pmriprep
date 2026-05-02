@@ -115,7 +115,7 @@ class DSCLesionStats(BaseInterface):
     - Clinical interpretation thresholds (nCBV > 1.75 = high-grade)
 
     Output files:
-        {prefix}_space-DSC_lesion-stats.json  - Comprehensive JSON statistics
+        {prefix}_lesion-stats.json  - Comprehensive JSON statistics
     """
 
     input_spec = DSCLesionStatsInputSpec
@@ -249,7 +249,7 @@ class DSCLesionStats(BaseInterface):
 
         # JSON output
         desc = "roi-stats" if self.inputs.force_binary else "lesion-stats"
-        json_path = output_dir / f"{prefix}_space-DSC_{desc}.json"
+        json_path = output_dir / f"{prefix}_{desc}.json"
         with open(json_path, "w") as f:
             json.dump(result.to_dict(), f, indent=2, default=str)
 

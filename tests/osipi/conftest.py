@@ -65,7 +65,7 @@ DRO_SESSION_MAP: Dict[Tuple[str, str], Tuple[str, str]] = {
 DRO_SESSIONS = list(DRO_SESSION_MAP.keys())
 
 # File name patterns (no res- entity in new BIDS naming)
-SPACE_ENTITY = "space-DCE"
+SPACE_ENTITY = "space-dce"
 
 # Map suffix patterns
 MAP_SUFFIXES = {
@@ -280,7 +280,7 @@ def _get_anat_path(subject: str, session: str) -> Path:
 
 def _get_dce_to_anat_xfm(subject: str, session: str) -> Path:
     """Get path to the pipeline's DCE-to-anat FLIRT transform."""
-    fname = f"{subject}_{session}_from-DCE_to-anat_mode-image_xfm.mat"
+    fname = f"{subject}_{session}_from-dce_to-anat_mode-image_xfm.mat"
     return OUTPUT_ROOT / subject / session / "anat" / fname
 
 

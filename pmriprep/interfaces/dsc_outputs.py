@@ -371,17 +371,17 @@ class DSCDerivativeWriter(BaseInterface):
             dataset_description.json
             sub-{subject}/ses-{session}/
                 perf/
-                    sub-XX_ses-XX_space-DSC_desc-{desc}_{suffix}.nii.gz
-                    sub-XX_ses-XX_space-DSC_desc-{desc}_{suffix}.json
+                    sub-XX_ses-XX_space-dsc_desc-{desc}_{suffix}.nii.gz
+                    sub-XX_ses-XX_space-dsc_desc-{desc}_{suffix}.json
                     ...
                 anat/
-                    sub-XX_ses-XX_space-DSC_{T1w|FLAIR}.nii.gz
+                    sub-XX_ses-XX_space-dsc_{T1w|FLAIR}.nii.gz
                     sub-XX_ses-XX_from-{src}_to-{dst}_mode-image_xfm.mat
-                    sub-XX_ses-XX_space-DSC_desc-lesion_mask.nii.gz
+                    sub-XX_ses-XX_space-dsc_desc-lesion_mask.nii.gz
                 figures/
                     {BIDS figure files}
                 sub-XX_ses-XX_desc-dscQC_quality.json
-                sub-XX_ses-XX_space-DSC_desc-lesionStats.json
+                sub-XX_ses-XX_space-dsc_desc-lesionStats.json
     """
 
     input_spec = DSCDerivativeWriterInputSpec
@@ -405,7 +405,7 @@ class DSCDerivativeWriter(BaseInterface):
         voxel_sizes = ref_img.header.get_zooms()[:3]  # type: ignore[attr-defined]
 
         # Build spatial entity string (no res- entity)
-        spatial = "space-DSC"
+        spatial = "space-dsc"
 
         # Create directory structure (unified output dir)
         pipeline_dir = output_dir / "pmriprep"
@@ -830,13 +830,13 @@ class DSCDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"dsc_to_t1w_xfm"):
             copy_derivative(
                 self.inputs.dsc_to_t1w_xfm,
-                anat_dir / f"{prefix}_from-DSC_to-anat_mode-image_xfm.mat",
+                anat_dir / f"{prefix}_from-dsc_to-anat_mode-image_xfm.mat",
             )
 
         if has_input(self.inputs,"t1w_to_dsc_xfm"):
             copy_derivative(
                 self.inputs.t1w_to_dsc_xfm,
-                anat_dir / f"{prefix}_from-anat_to-DSC_mode-image_xfm.mat",
+                anat_dir / f"{prefix}_from-anat_to-dsc_mode-image_xfm.mat",
             )
 
         # -----------------------------------------------------------
@@ -951,7 +951,7 @@ class DSCDerivativeWriter(BaseInterface):
         if has_input(self.inputs,"lesion_stats_json"):
             copy_derivative(
                 self.inputs.lesion_stats_json,
-                ses_dir / f"{prefix}_space-DSC_desc-lesionStats.json",
+                ses_dir / f"{prefix}_space-dsc_desc-lesionStats.json",
             )
 
         if has_input(self.inputs,"lesion_mask_dsc"):
@@ -966,7 +966,7 @@ class DSCDerivativeWriter(BaseInterface):
         if has_input(self.inputs, "roi_stats_json"):
             copy_derivative(
                 self.inputs.roi_stats_json,
-                ses_dir / f"{prefix}_space-DSC_desc-roiStats.json",
+                ses_dir / f"{prefix}_space-dsc_desc-roiStats.json",
             )
 
         if has_input(self.inputs, "roi_mask_dsc"):

@@ -112,7 +112,7 @@ class DCELesionStats(BaseInterface):
     - Clinical interpretation thresholds (Ktrans > 0.1 = high-grade)
 
     Output files:
-        {prefix}_space-DCE_lesion-stats.json  - Comprehensive JSON statistics
+        {prefix}_lesion-stats.json  - Comprehensive JSON statistics
     """
 
     input_spec = DCELesionStatsInputSpec
@@ -231,7 +231,7 @@ class DCELesionStats(BaseInterface):
 
         # JSON output
         desc = "roi-stats" if self.inputs.force_binary else "lesion-stats"
-        json_path = output_dir / f"{prefix}_space-DCE_{desc}.json"
+        json_path = output_dir / f"{prefix}_{desc}.json"
         with open(json_path, "w") as f:
             json.dump(result.to_dict(), f, indent=2, default=str)
 
