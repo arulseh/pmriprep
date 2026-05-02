@@ -331,7 +331,6 @@ class TestTypecheckVerification:
     def test_import_utils(self) -> None:
         """Verify utility modules import."""
         from pmriprep.utils import (
-            bids,
             nifti,
             dsc_constants,
             dce_constants,
@@ -344,7 +343,6 @@ class TestTypecheckVerification:
             structural_reference,
         )
 
-        assert bids is not None
         assert nifti is not None
         assert dsc_constants.EPSILON_SIGNAL is not None
         assert dce_constants.EPSILON_VE is not None

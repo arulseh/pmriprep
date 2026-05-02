@@ -42,6 +42,11 @@ EPSILON_DELTA_R2: Final[float] = 1e-10
 #: Minimum concentration value
 EPSILON_CONCENTRATION: Final[float] = 1e-10
 
+#: Floor for gamma-variate shape parameter alpha when computing
+#: beta = MTT / alpha. Prevents division-by-zero on degenerate fits;
+#: physiological alpha is O(1-10) so 1e-10 is safely below the floor.
+EPSILON_SHAPE: Final[float] = 1e-10
+
 
 # =============================================================================
 # Leakage Correction (K2)

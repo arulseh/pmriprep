@@ -2970,10 +2970,12 @@ class DCEPreprocess(SimpleInterface):
             # Use specified baseline
             baseline_frames = self.inputs.baseline_frames
             # Detect bolus arrival for QC
-            bolus_frame = self._detect_bolus_arrival(dce_data, brain_mask)
+            bolus_frame, baseline_diag = self._detect_bolus_arrival(
+                dce_data, brain_mask
+            )
         else:
             # Auto-detect baseline from global signal
-            baseline_frames, bolus_frame = self._auto_detect_baseline(
+            baseline_frames, bolus_frame, baseline_diag = self._auto_detect_baseline(
                 dce_data, brain_mask
             )
 
@@ -3101,8 +3103,21 @@ class DCEPreprocess(SimpleInterface):
                 "percent_outliers": 100.0 * n_outliers / max(1, n_volumes),
                 "baseline_frames": baseline_frames,
                 "bolus_arrival_frame": bolus_frame,
+                "baseline_detection_method": baseline_diag.get("method", "unknown"),
+                "baseline_detection_confidence": baseline_diag.get(
+                    "confidence", "unknown"
+                ),
                 "reference_type": str(ref_vol),
             }
+            if baseline_diag.get("confidence", "high") != "high":
+                logger.warning(
+                    "DCE baseline detection low confidence: method=%s, "
+                    "confidence=%s, bolus_frame=%d (S0 window may include "
+                    "enhanced frames; concentration may be biased).",
+                    baseline_diag.get("method"),
+                    baseline_diag.get("confidence"),
+                    bolus_frame,
+                )
 
             self._results["fd"] = fd_list
             self._results["fd_mean"] = fd_mean
@@ -3210,7 +3225,7 @@ class DCEPreprocess(SimpleInterface):
         self,
         dce_data: np.ndarray,
         brain_mask: Optional[np.ndarray],
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, dict[str, Any]]:
         """Auto-detect baseline frames from brain signal time course.
 
         For DCE with gadolinium, signal INCREASES at bolus arrival due to
@@ -3223,25 +3238,28 @@ class DCEPreprocess(SimpleInterface):
             brain_mask: Optional brain mask
 
         Returns:
-            Tuple of (baseline_frames, bolus_arrival_frame)
+            Tuple of (baseline_frames, bolus_arrival_frame, diagnostics).
+            ``diagnostics`` is the per-call diag dict from
+            ``detect_baseline_ensemble`` (method, confidence, ...) so
+            silent low-confidence fallbacks can be surfaced in QC.
         """
         from pmriprep.utils.baseline_detection import detect_baseline_ensemble
         from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
 
         signal = self._brain_signal_timecourse(dce_data, brain_mask)
         volume_tr = self.inputs.volume_tr if self.inputs.volume_tr > 0 else 7.0
-        bolus_frame, _ = detect_baseline_ensemble(
+        bolus_frame, diag = detect_baseline_ensemble(
             signal, tr=volume_tr, min_baseline=DEFAULT_BASELINE_FRAMES,
         )
         baseline_frames = bolus_frame
 
-        return baseline_frames, bolus_frame
+        return baseline_frames, bolus_frame, diag
 
     def _detect_bolus_arrival(
         self,
         dce_data: np.ndarray,
         brain_mask: Optional[np.ndarray],
-    ) -> int:
+    ) -> tuple[int, dict[str, Any]]:
         """Detect bolus arrival frame from data.
 
         Args:
@@ -3249,17 +3267,18 @@ class DCEPreprocess(SimpleInterface):
             brain_mask: Optional brain mask
 
         Returns:
-            Bolus arrival frame index
+            Tuple of (bolus_arrival_frame, diagnostics) — see
+            ``_auto_detect_baseline`` for the diag contract.
         """
         from pmriprep.utils.baseline_detection import detect_baseline_ensemble
         from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
 
         signal = self._brain_signal_timecourse(dce_data, brain_mask)
         volume_tr = self.inputs.volume_tr if self.inputs.volume_tr > 0 else 7.0
-        bolus_frame, _ = detect_baseline_ensemble(
+        bolus_frame, diag = detect_baseline_ensemble(
             signal, tr=volume_tr, min_baseline=DEFAULT_BASELINE_FRAMES,
         )
-        return bolus_frame
+        return bolus_frame, diag
 
     def _detect_bolus_arrival_from_signal(self, signal: np.ndarray) -> int:
         """Detect bolus arrival from global signal time course.

@@ -277,7 +277,7 @@ def batched_cpi_forward(
 
     # Cumulative product of multiplicative fractions: R(tpos[k]) = f1*...*fk
     fracs = np.clip(params[:, 1 : 1 + n_cp], 0.0, 1.0)  # (N, n_cp)
-    cp_vals = np.cumprod(fracs, axis=1)
+    cp_vals: npt.NDArray[np.floating] = np.cumprod(fracs, axis=1).astype(np.float64)
 
     if has_log_spacings:
         log_s = params[:, 1 + n_cp :]  # (N, n_cp)

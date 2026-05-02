@@ -11,7 +11,16 @@ from typing import Sequence, Union
 import numpy as np
 import numpy.typing as npt
 
-from pmriprep.models.bayesian_utils import TransformType
+from pmriprep.models._base import BaseModelParameter
+from pmriprep.models.bayesian_utils import TransformType  # re-export for callers
+
+__all__ = [
+    "DSCModelParameter",
+    "DSCFitResult",
+    "DSCModel",
+    "ParamsLike",
+    "TransformType",
+]
 
 #: Type alias for model parameter vectors — accepts both Python sequences
 #: and numpy arrays (scipy optimizers return ndarrays).
@@ -19,75 +28,10 @@ ParamsLike = Union[Sequence[float], npt.NDArray[np.floating]]
 
 
 @dataclass
-class DSCModelParameter:
-    """Definition of a model parameter with bounds and prior information.
+class DSCModelParameter(BaseModelParameter):
+    """DSC parametric model parameter — see BaseModelParameter."""
 
-    Attributes:
-        name: Parameter identifier (e.g., 'cbf', 'alpha', 'beta').
-        bounds: Tuple of (lower, upper) hard bounds for the parameter.
-        typical_range: Tuple of (low, high) values representing the typical
-            physiological range. Used for prior construction in Bayesian fitting.
-        transform: Parameter space transform for Bayesian fitting.
-            LOG for strictly positive params, LOG_LOGIT for bounded fractions,
-            IDENTITY for params that can be negative (e.g., delay).
-        transformed_prior_sigma: Optional override for the prior standard
-            deviation in transformed space. When set, bypasses the delta-method
-            approximation from typical_range. Units are in the space defined
-            by ``transform`` (e.g., log-space for LOG, log-odds for LOG_LOGIT).
-            FABBER convention uses 1.0 for LOG parameters.
-        description: Human-readable description of the parameter.
-        units: Physical units of the parameter.
-    """
-
-    name: str
-    bounds: tuple[float, float]
-    typical_range: tuple[float, float]
-    transform: TransformType = TransformType.IDENTITY
-    transformed_prior_sigma: float | None = None
-    description: str = ""
-    units: str = ""
-
-    def get_prior_sigma(self) -> float:
-        """Compute prior standard deviation from typical range.
-
-        Uses the rule that the typical_range should span approximately
-        ±2 standard deviations (95% of the prior mass), so:
-        sigma = (typical_range[1] - typical_range[0]) / 4.0
-
-        Returns:
-            Prior standard deviation for Gaussian prior construction.
-        """
-        return (self.typical_range[1] - self.typical_range[0]) / 4.0
-
-    def get_prior_mean(self) -> float:
-        """Compute prior mean from typical range midpoint.
-
-        Returns:
-            Prior mean (center of typical range).
-        """
-        return (self.typical_range[0] + self.typical_range[1]) / 2.0
-
-    def clip_to_bounds(self, value: float) -> float:
-        """Clip a value to the parameter bounds.
-
-        Args:
-            value: Parameter value to clip.
-
-        Returns:
-            Value clipped to (bounds[0], bounds[1]).
-        """
-        return float(np.clip(value, self.bounds[0], self.bounds[1]))
-
-    def is_valid(self, value: float) -> bool:
-        """Check if a value is within bounds.
-
-        Args:
-            value: Parameter value to check.
-
-        Returns:
-            True if value is within bounds.
-        """
-        return self.bounds[0] <= value <= self.bounds[1]
+    pass
 
 
 @dataclass

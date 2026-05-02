@@ -383,6 +383,7 @@ def signal_to_concentration(
     # unphysical (phase artifact, registration overshoot, denoising) — track
     # them so we can zero out their concentration rather than propagating a
     # sign-flipped time course downstream.
+    negative_baseline_mask: Union[npt.NDArray[np.bool_], bool]
     if isinstance(baseline_signal, np.ndarray):
         negative_baseline_mask = baseline_signal < 0
         baseline_signal_safe = np.maximum(np.abs(baseline_signal), EPSILON_SIGNAL)

@@ -353,7 +353,7 @@ class CPIModel(DSCModel):
             [float(params[1 + n + i]) for i in range(n)], dtype=np.float64
         )
         spacings = np.exp(log_spacings)
-        cp_times = np.cumsum(spacings).astype(np.float64)
+        cp_times: npt.NDArray[np.floating] = np.cumsum(spacings).astype(np.float64)
         return cp_times
 
     def residue_function(

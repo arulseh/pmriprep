@@ -23,6 +23,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 
 from pmriprep.utils.dce_constants import (
     ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
+    EPSILON_RATIO,
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
     FP_BOUNDS,
@@ -596,7 +597,7 @@ def _compute_derived_params(
     elif model_name == "2cxm":
         fp_val = params_out.get("Fp", 0.0)
         ps_val = params_out.get("PS", 0.0)
-        E = ps_val / (fp_val + ps_val + 1e-10)
+        E = ps_val / (fp_val + ps_val + EPSILON_RATIO)
         params_out["E"] = E
         params_out["Ktrans"] = E * fp_val / 100.0
         ve_val = params_out.get("ve", EPSILON_VE)
@@ -2326,7 +2327,7 @@ class ComputeDCEMaps(BaseInterface):
             """
             cast_data = data.astype(dtype)
             local_header = header.copy()  # type: ignore[attr-defined]
-            local_header.set_data_dtype(dtype)
+            local_header.set_data_dtype(dtype)  # type: ignore[attr-defined]
             img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
             nib.save(img, path)  # type: ignore[attr-defined]
 

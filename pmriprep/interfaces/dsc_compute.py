@@ -26,6 +26,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
+    EPSILON_SHAPE,
     EPSILON_SIGNAL,
     DEFAULT_SVD_THRESHOLD,
     DEFAULT_OI_THRESHOLD,
@@ -995,17 +996,21 @@ class ComputeDSCMaps(BaseInterface):
             axis=0,
         ).astype(np.float64)
 
-        # Build voxel work items
+        # Build voxel work items only for paths that consume them.
+        # VI/SVB and MAP take concentration_data + mask_coords directly
+        # via vectorized gather; pre-building N namedtuples + N×T copies
+        # wastes ~40 MB at 50K voxels × 100 timepoints.
         voxel_data_list: list[_DSCVoxelInput] = []
-        for i in range(n_voxels):
-            x, y, z = (
-                int(mask_coords[0][i]),
-                int(mask_coords[1][i]),
-                int(mask_coords[2][i]),
-            )
-            voxel_data_list.append(
-                _DSCVoxelInput(x, y, z, concentration_data[x, y, z, :])
-            )
+        if inference == "nlls":
+            for i in range(n_voxels):
+                x, y, z = (
+                    int(mask_coords[0][i]),
+                    int(mask_coords[1][i]),
+                    int(mask_coords[2][i]),
+                )
+                voxel_data_list.append(
+                    _DSCVoxelInput(x, y, z, concentration_data[x, y, z, :])
+                )
 
         # Worker initializer args
         sloppy = bool(self.inputs.sloppy)
@@ -1432,7 +1437,7 @@ class ComputeDSCMaps(BaseInterface):
                 mtt_val = float(batched_result.params["mtt"][i])
                 alpha_val = float(batched_result.params["alpha"][i])
                 delay_val = float(batched_result.params["delay"][i])
-                beta_val = mtt_val / max(alpha_val, 1e-10)
+                beta_val = mtt_val / max(alpha_val, EPSILON_SHAPE)
 
                 out["cbf"] = cbf_val
                 out["cbv"] = cbf_val * mtt_val
