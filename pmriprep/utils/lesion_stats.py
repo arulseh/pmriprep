@@ -481,6 +481,8 @@ def combine_tumor_masks(
     Returns:
         Tuple of (mask_file_path, mask_origin) where mask_origin is
         "tumor_segmentation" or "whole_tumor" or "" if no masks available.
+        Returns ("", "") (not (None, "")) when no masks present because
+        downstream traits.Str rejects None.
 
     Note:
         This function is used as a Nipype Function node, so type hints are removed
@@ -488,7 +490,6 @@ def combine_tumor_masks(
     """
     from pathlib import Path
 
-    # Check for Nipype Undefined
     from nipype.interfaces.base import isdefined
 
     def _is_valid_file(f):
@@ -499,16 +500,13 @@ def combine_tumor_masks(
             return False
         return Path(f).exists()
 
-    # Priority 1: Use tumor segmentation directly (already multi-label)
     if _is_valid_file(tumor_segmentation_file):
         return (tumor_segmentation_file, "tumor_segmentation")
 
-    # Priority 2: Use whole_tumor as binary mask
     if _is_valid_file(whole_tumor_mask_file):
         return (whole_tumor_mask_file, "whole_tumor")
 
-    # Priority 3: No masks available
-    return (None, "")
+    return ("", "")
 
 
 def compute_nawm_reference(

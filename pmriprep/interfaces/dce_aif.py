@@ -382,14 +382,11 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         mandatory=True,
         desc="3D brain mask NIfTI",
     )
-    atlas_mask_file = traits.Either(
-        traits.Str,
-        None,
+    atlas_mask_file = traits.Str(
         desc="Optional 3D arterial atlas mask in DCE space (broadest)",
     )
-    atlas_mask_files = traits.Either(
-        traits.List(traits.Str),
-        None,
+    atlas_mask_files = traits.List(
+        traits.Str,
         desc=(
             "Optional list of atlas masks in DCE space, ordered tightest to "
             "broadest. Enables tiered atlas cascade: MCA_ACA → CoW → full."
@@ -407,11 +404,7 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
              "Values must be plasma concentration in mM, temporally aligned "
              "with DCE volumes. Bypasses all AIF detection.",
     )
-    lesion_mask_file = traits.Either(
-        File(exists=True),
-        None,
-        desc="Optional 3D lesion mask for exclusion",
-    )
+    lesion_mask_file = File(exists=True, desc="Optional 3D lesion mask for exclusion")
 
     # Detection parameters
     aif_method = traits.Enum(
@@ -2496,10 +2489,7 @@ class AIFDetection(BaseInterface):
             atlas_names = [Path(self.inputs.aif_mask_file).name.split(".")[0].replace("MNI_2mm_MRA_arterial_", "")]
         else:
             # Load tiered atlas cascade (atlas_mask_files, tightest first)
-            if (
-                isdefined(self.inputs.atlas_mask_files)
-                and self.inputs.atlas_mask_files is not None
-            ):
+            if isdefined(self.inputs.atlas_mask_files):
                 for af in self.inputs.atlas_mask_files:
                     af_path = Path(str(af))
                     if af_path.exists() and str(af) not in ("", "None"):
@@ -2513,8 +2503,7 @@ class AIFDetection(BaseInterface):
             if (
                 not atlas_masks
                 and isdefined(self.inputs.atlas_mask_file)
-                and self.inputs.atlas_mask_file is not None
-                and str(self.inputs.atlas_mask_file) != "None"
+                and str(self.inputs.atlas_mask_file) not in ("", "None")
                 and Path(self.inputs.atlas_mask_file).exists()
             ):
                 atlas_masks = [

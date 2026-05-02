@@ -21,12 +21,8 @@ from nipype.interfaces.base import (
 class _MergeMasksInputSpec(BaseInterfaceInputSpec):
     """Input specification for MergeMasks."""
 
-    mask_a = traits.Either(
-        File(exists=True), None, desc="First mask file (optional)"
-    )
-    mask_b = traits.Either(
-        File(exists=True), None, desc="Second mask file (optional)"
-    )
+    mask_a = File(exists=True, desc="First mask file (optional)")
+    mask_b = File(exists=True, desc="Second mask file (optional)")
 
 
 class _MergeMasksOutputSpec(TraitedSpec):

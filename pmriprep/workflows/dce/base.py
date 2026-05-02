@@ -2449,7 +2449,7 @@ def _transform_lesion_mask_to_dce(
     lesion_mask_file: str | None = None,
     reference_file: str | None = None,
     transform_matrix: str | None = None,
-) -> str | None:
+) -> str:
     """Transform lesion mask from T1w space to DCE space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -2461,24 +2461,24 @@ def _transform_lesion_mask_to_dce(
         transform_matrix: Path to T1w→DCE FLIRT matrix.
 
     Returns:
-        Path to transformed lesion mask in DCE space, or None if no mask.
+        Path to transformed lesion mask in DCE space, or "" if no mask.
+        Returns "" (not None) because downstream traits.Str rejects None.
     """
     from nipype.interfaces.base import isdefined
 
-    # Handle both None and Nipype Undefined
     if not isdefined(lesion_mask_file) or lesion_mask_file is None:
-        return None
+        return ""
     if not isdefined(reference_file) or reference_file is None:
-        return None
+        return ""
     if not isdefined(transform_matrix) or transform_matrix is None:
-        return None
+        return ""
 
     from pathlib import Path
     import subprocess
 
     lesion_path = Path(lesion_mask_file)
     if not lesion_path.is_file():
-        return None
+        return ""
 
     out_dir = Path.cwd()
     out_file = str(out_dir / "lesion_mask_dce.nii.gz")

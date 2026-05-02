@@ -48,26 +48,22 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     """Input specification for DSC lesion statistics extraction."""
 
     # Required inputs
-    lesion_mask = traits.Either(
-        traits.Str, None, desc="Lesion/tumor mask in DSC space (optional)"
-    )
+    lesion_mask = traits.Str(desc="Lesion/tumor mask in DSC space")
     subject_id = traits.Str(mandatory=True, desc="Subject ID (without sub- prefix)")
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
 
     # Optional NAWM mask for reference values
-    nawm_mask = traits.Either(
-        traits.Str, None, desc="NAWM mask in DSC space for reference values"
-    )
+    nawm_mask = traits.Str(desc="NAWM mask in DSC space for reference values")
 
     # Core perfusion maps (all optional - stats computed for available maps)
-    cbf_map = traits.Either(traits.Str, None, desc="CBF map path")
-    cbv_map = traits.Either(traits.Str, None, desc="CBV map path")
-    mtt_map = traits.Either(traits.Str, None, desc="MTT map path")
-    tmax_map = traits.Either(traits.Str, None, desc="Tmax map path")
+    cbf_map = traits.Str(desc="CBF map path")
+    cbv_map = traits.Str(desc="CBV map path")
+    mtt_map = traits.Str(desc="MTT map path")
+    tmax_map = traits.Str(desc="Tmax map path")
 
     # Normalized maps (optional - only available when NAWM mask present)
-    ncbv_map = traits.Either(traits.Str, None, desc="Normalized CBV map path")
-    ncbf_map = traits.Either(traits.Str, None, desc="Normalized CBF map path")
+    ncbv_map = traits.Str(desc="Normalized CBV map path")
+    ncbf_map = traits.Str(desc="Normalized CBF map path")
 
     # Mask origin: "tumor_segmentation" or "whole_tumor" (from combine_tumor_masks)
     mask_origin = traits.Str(
@@ -82,11 +78,11 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     )
 
     # Additional maps (all optional)
-    psr_map = traits.Either(traits.Str, None, desc="PSR map path")
-    ph_map = traits.Either(traits.Str, None, desc="PH map path")
-    k2_map = traits.Either(traits.Str, None, desc="K2 leakage correction map path")
-    ttp_corrected_map = traits.Either(traits.Str, None, desc="AIF-corrected TTP map path")
-    rttp_map = traits.Either(traits.Str, None, desc="NAWM-relative TTP map path")
+    psr_map = traits.Str(desc="PSR map path")
+    ph_map = traits.Str(desc="PH map path")
+    k2_map = traits.Str(desc="K2 leakage correction map path")
+    ttp_corrected_map = traits.Str(desc="AIF-corrected TTP map path")
+    rttp_map = traits.Str(desc="NAWM-relative TTP map path")
 
     # AIF provenance — passed from the cascade QC so the lesion-stats
     # sidecar carries the PerfusionProcessing.AIF block (Source /

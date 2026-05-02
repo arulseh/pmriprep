@@ -617,7 +617,7 @@ def _transform_nawm_to_dsc(
     nawm_mask_file: Optional[str] = None,
     reference_file: Optional[str] = None,
     transform_matrix: Optional[str] = None,
-) -> Optional[str]:
+) -> str:
     """Transform NAWM mask from T1w space to DSC space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -629,17 +629,20 @@ def _transform_nawm_to_dsc(
         transform_matrix: Path to T1w→DSC FLIRT matrix.
 
     Returns:
-        Path to transformed NAWM mask in DSC space, or None if no mask.
+        Path to transformed NAWM mask in DSC space, or "" if no mask.
+        Returns "" (not None) because downstream traits.Str rejects None.
     """
-    if nawm_mask_file is None:
-        return None
+    from nipype.interfaces.base import isdefined
+
+    if not isdefined(nawm_mask_file) or nawm_mask_file is None:
+        return ""
 
     from pathlib import Path
     import subprocess
 
     nawm_path = Path(nawm_mask_file)
     if not nawm_path.is_file():
-        return None
+        return ""
 
     out_dir = Path.cwd()
     out_file = str(out_dir / "nawm_mask_dsc.nii.gz")
@@ -662,7 +665,7 @@ def _transform_lesion_mask_to_dsc(
     lesion_mask_file: Optional[str] = None,
     reference_file: Optional[str] = None,
     transform_matrix: Optional[str] = None,
-) -> Optional[str]:
+) -> str:
     """Transform lesion mask from T1w space to DSC space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -674,24 +677,24 @@ def _transform_lesion_mask_to_dsc(
         transform_matrix: Path to T1w→DSC FLIRT matrix.
 
     Returns:
-        Path to transformed lesion mask in DSC space, or None if no mask.
+        Path to transformed lesion mask in DSC space, or "" if no mask.
+        Returns "" (not None) because downstream traits.Str rejects None.
     """
     from nipype.interfaces.base import isdefined
 
-    # Handle both None and Nipype Undefined
     if not isdefined(lesion_mask_file) or lesion_mask_file is None:
-        return None
+        return ""
     if not isdefined(reference_file) or reference_file is None:
-        return None
+        return ""
     if not isdefined(transform_matrix) or transform_matrix is None:
-        return None
+        return ""
 
     from pathlib import Path
     import subprocess
 
     lesion_path = Path(lesion_mask_file)
     if not lesion_path.is_file():
-        return None
+        return ""
 
     out_dir = Path.cwd()
     out_file = str(out_dir / "lesion_mask_dsc.nii.gz")

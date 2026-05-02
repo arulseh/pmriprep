@@ -48,31 +48,27 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     """Input specification for DCE lesion statistics extraction."""
 
     # Required inputs
-    lesion_mask = traits.Either(
-        traits.Str, None, desc="Lesion/tumor mask in DCE space (optional)"
-    )
+    lesion_mask = traits.Str(desc="Lesion/tumor mask in DCE space")
     subject_id = traits.Str(mandatory=True, desc="Subject ID (without sub- prefix)")
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
 
     # Optional NAWM mask for reference values
-    nawm_mask = traits.Either(
-        traits.Str, None, desc="NAWM mask in DCE space for reference values"
-    )
+    nawm_mask = traits.Str(desc="NAWM mask in DCE space for reference values")
 
     # Core pharmacokinetic maps (all optional - stats computed for available maps)
-    ktrans_map = traits.Either(traits.Str, None, desc="Ktrans map path (min^-1)")
-    ve_map = traits.Either(traits.Str, None, desc="ve (EES volume fraction) map path")
-    vp_map = traits.Either(traits.Str, None, desc="vp (plasma volume fraction) map path")
-    kep_map = traits.Either(traits.Str, None, desc="kep (rate constant) map path")
+    ktrans_map = traits.Str(desc="Ktrans map path (min^-1)")
+    ve_map = traits.Str(desc="ve (EES volume fraction) map path")
+    vp_map = traits.Str(desc="vp (plasma volume fraction) map path")
+    kep_map = traits.Str(desc="kep (rate constant) map path")
 
     # Normalized maps (optional - only available when NAWM mask present)
-    nktrans_map = traits.Either(traits.Str, None, desc="Normalized Ktrans map path")
+    nktrans_map = traits.Str(desc="Normalized Ktrans map path")
 
     # IAUC maps (all optional)
-    iauc60_map = traits.Either(traits.Str, None, desc="IAUC at 60 seconds map path")
-    iauc90_map = traits.Either(traits.Str, None, desc="IAUC at 90 seconds map path")
-    iauc120_map = traits.Either(traits.Str, None, desc="IAUC at 120 seconds map path")
-    niauc60_map = traits.Either(traits.Str, None, desc="Normalized IAUC60 map path")
+    iauc60_map = traits.Str(desc="IAUC at 60 seconds map path")
+    iauc90_map = traits.Str(desc="IAUC at 90 seconds map path")
+    iauc120_map = traits.Str(desc="IAUC at 120 seconds map path")
+    niauc60_map = traits.Str(desc="Normalized IAUC60 map path")
 
     # Mask origin: "tumor_segmentation" or "whole_tumor" (from combine_tumor_masks)
     mask_origin = traits.Str(
@@ -87,11 +83,11 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     )
 
     # Additional derived maps (all optional)
-    peak_enhancement_map = traits.Either(traits.Str, None, desc="Peak enhancement map path")
-    wash_in_map = traits.Either(traits.Str, None, desc="Wash-in rate map path")
-    wash_out_map = traits.Either(traits.Str, None, desc="Wash-out rate map path")
-    ttp_map = traits.Either(traits.Str, None, desc="Time to peak map path")
-    auc_map = traits.Either(traits.Str, None, desc="Total AUC map path")
+    peak_enhancement_map = traits.Str(desc="Peak enhancement map path")
+    wash_in_map = traits.Str(desc="Wash-in rate map path")
+    wash_out_map = traits.Str(desc="Wash-out rate map path")
+    ttp_map = traits.Str(desc="Time to peak map path")
+    auc_map = traits.Str(desc="Total AUC map path")
 
 
 class DCELesionStatsOutputSpec(TraitedSpec):

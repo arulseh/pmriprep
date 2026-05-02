@@ -7,6 +7,7 @@ from pmriprep.utils.lesion_stats import (
     LesionStatisticsResult,
     MapStatistics,
     RegionStatistics,
+    combine_tumor_masks,
     compute_dce_derived_metrics,
     compute_dsc_derived_metrics,
     compute_fraction_above_threshold,
@@ -399,3 +400,66 @@ class TestLesionStatisticsAifProvenance:
         )
         d = result.to_dict()
         assert "PerfusionProcessing" not in d
+
+
+class TestCombineTumorMasksReturnsEmptyString:
+    """Contract: when no masks present, return ("", "") not (None, "").
+
+    Downstream consumers (DCE/DSC lesion-stats interfaces) declare
+    ``lesion_mask`` as ``traits.Str``; a Function-node returning ``None``
+    triggers a TraitError when nipype propagates the value to the next
+    node's input. Empty string is the proper "not set" sentinel —
+    ``has_input()`` treats it as missing and skips processing.
+    """
+
+    def test_no_masks_returns_empty_strings(self) -> None:
+        result = combine_tumor_masks(
+            tumor_segmentation_file=None,
+            whole_tumor_mask_file=None,
+            reference_file="ref.nii.gz",
+        )
+        assert result == ("", "")
+
+    def test_undefined_inputs_return_empty_strings(self) -> None:
+        from nipype.interfaces.base import Undefined
+
+        result = combine_tumor_masks(
+            tumor_segmentation_file=Undefined,
+            whole_tumor_mask_file=Undefined,
+            reference_file="ref.nii.gz",
+        )
+        assert result == ("", "")
+
+
+class TestTransformHelpersReturnEmptyString:
+    """Contract: workflow Function nodes returning paths must use "" not None.
+
+    See TestCombineTumorMasksReturnsEmptyString for the trait rationale.
+    """
+
+    def test_transform_lesion_mask_to_dce_no_input(self) -> None:
+        from pmriprep.workflows.dce.base import _transform_lesion_mask_to_dce
+
+        assert _transform_lesion_mask_to_dce(
+            lesion_mask_file=None,
+            reference_file="ref.nii.gz",
+            transform_matrix="x.mat",
+        ) == ""
+
+    def test_transform_lesion_mask_to_dsc_no_input(self) -> None:
+        from pmriprep.workflows.dsc.base import _transform_lesion_mask_to_dsc
+
+        assert _transform_lesion_mask_to_dsc(
+            lesion_mask_file=None,
+            reference_file="ref.nii.gz",
+            transform_matrix="x.mat",
+        ) == ""
+
+    def test_transform_nawm_to_dsc_no_input(self) -> None:
+        from pmriprep.workflows.dsc.base import _transform_nawm_to_dsc
+
+        assert _transform_nawm_to_dsc(
+            nawm_mask_file=None,
+            reference_file="ref.nii.gz",
+            transform_matrix="x.mat",
+        ) == ""
