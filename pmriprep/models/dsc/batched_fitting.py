@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from collections.abc import Callable, Mapping
-from typing import Optional
+from typing import Final, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -41,6 +41,12 @@ from pmriprep.models.bayesian_utils import (
 from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION
 
 logger = logging.getLogger("nipype.interface")
+
+#: Numerical floor used as a divide guard in batched VI/MAP fits
+#: (R² denominators, sigma² floors, Jacobian column scaling). Set well
+#: below any physical scale so it only fires on truly degenerate inputs.
+#: Not a physics constant.
+_EPSILON_NUMERICAL: Final[float] = 1e-30
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +540,7 @@ def _compute_jacobian_columns(
                 J_columns.append(g_m)
             else:  # IDENTITY
                 cbf_vals = m_nat_a[:, cbf_idx, None]
-                J_columns.append(g_m / np.maximum(cbf_vals, 1e-30))
+                J_columns.append(g_m / np.maximum(cbf_vals, _EPSILON_NUMERICAL))
             continue
 
         nat_plus = m_nat_a.copy()
@@ -605,7 +611,7 @@ def _compute_r_squared(
     """
     ss_res = np.sum((observed - predicted) ** 2, axis=1)
     ss_tot = np.sum((observed - observed.mean(axis=1, keepdims=True)) ** 2, axis=1)
-    r2 = 1.0 - ss_res / np.maximum(ss_tot, 1e-30)
+    r2 = 1.0 - ss_res / np.maximum(ss_tot, _EPSILON_NUMERICAL)
     result: npt.NDArray[np.floating] = np.clip(r2, -1.0, 1.0)
     return result
 
@@ -1391,7 +1397,7 @@ def _run_map_gauss_newton(
     last_iteration = 0
 
     for sigma_iter in range(n_noise_iterations):
-        tau = 1.0 / np.maximum(sigma_sq, 1e-30)
+        tau = 1.0 / np.maximum(sigma_sq, _EPSILON_NUMERICAL)
 
         # Reset per-iteration state (NLP values from previous sigma are
         # invalid because tau changed)
@@ -1546,7 +1552,7 @@ def _run_map_gauss_newton(
             g_best = evaluate_fn(best_nat)
             residuals = y - g_best
             sigma_sq = np.sum(w[None, :] * residuals ** 2, axis=1) / n_eff
-            sigma_sq = np.maximum(sigma_sq, 1e-30)
+            sigma_sq = np.maximum(sigma_sq, _EPSILON_NUMERICAL)
             best_sigma_sq = sigma_sq.copy()
 
             # Warm-start next outer iteration from best solution
@@ -1562,7 +1568,7 @@ def _run_map_gauss_newton(
     g_final = evaluate_fn(best_nat_final)
     residuals_final = y - g_final
     best_sigma_sq = np.sum(w[None, :] * residuals_final ** 2, axis=1) / n_eff
-    best_sigma_sq = np.maximum(best_sigma_sq, 1e-30)
+    best_sigma_sq = np.maximum(best_sigma_sq, _EPSILON_NUMERICAL)
 
     # Re-evaluate NLP at best solution with final sigma
     weighted_rss_final = np.sum(w[None, :] * residuals_final ** 2, axis=1)
@@ -1781,7 +1787,7 @@ def batched_dsc_map_fit(
     try:
         g0 = _evaluate(m0_nat)
         sigma_sq_init = np.sum(w[None, :] * (y - g0) ** 2, axis=1) / n_eff
-        sigma_sq_init = np.maximum(sigma_sq_init, 1e-30)
+        sigma_sq_init = np.maximum(sigma_sq_init, _EPSILON_NUMERICAL)
     except (ValueError, RuntimeError):
         sigma_sq_init = np.ones(n_valid, dtype=np.float64)
 
@@ -1804,7 +1810,7 @@ def batched_dsc_map_fit(
             try:
                 g1 = _evaluate(m1_nat)
                 sigma_sq_seed = np.sum(w[None, :] * (y - g1) ** 2, axis=1) / n_eff
-                sigma_sq_seed = np.maximum(sigma_sq_seed, 1e-30)
+                sigma_sq_seed = np.maximum(sigma_sq_seed, _EPSILON_NUMERICAL)
             except (ValueError, RuntimeError):
                 sigma_sq_seed = sigma_sq_init.copy()
 
@@ -1821,7 +1827,7 @@ def batched_dsc_map_fit(
             try:
                 g0 = _evaluate(m0_nat)
                 sigma_sq_init = np.sum(w[None, :] * (y - g0) ** 2, axis=1) / n_eff
-                sigma_sq_init = np.maximum(sigma_sq_init, 1e-30)
+                sigma_sq_init = np.maximum(sigma_sq_init, _EPSILON_NUMERICAL)
             except (ValueError, RuntimeError):
                 pass
 
@@ -1872,7 +1878,7 @@ def batched_dsc_map_fit(
 
     # --- Laplace uncertainties ---
     if compute_uncertainties:
-        final_tau = 1.0 / np.maximum(best_sigma_sq, 1e-30)
+        final_tau = 1.0 / np.maximum(best_sigma_sq, _EPSILON_NUMERICAL)
         g_final_unc = _evaluate(fitted_nat)
         J_final = _compute_jacobian_columns(
             best_m, fitted_nat, g_final_unc, _evaluate,

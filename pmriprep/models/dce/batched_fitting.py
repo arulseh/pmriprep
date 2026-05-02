@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Final, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -36,6 +36,12 @@ from pmriprep.utils.dce_constants import (
 )
 
 logger = logging.getLogger("nipype.interface")
+
+#: Numerical floor used as a divide/log guard in batched fits (R²
+#: denominators, normal-equation denominators, ftol scaling). Set well
+#: below any physical scale (~24 orders below a noise-floor RSS in mM²)
+#: so it only fires on truly degenerate inputs. Not a physics constant.
+_EPSILON_NUMERICAL: Final[float] = 1e-30
 
 # Model parameter configurations
 _MODEL_PARAMS: dict[str, list[str]] = {
@@ -201,7 +207,7 @@ def _compute_r_squared(
     """
     ss_res = np.sum((observed - predicted) ** 2, axis=1)
     ss_tot = np.sum((observed - observed.mean(axis=1, keepdims=True)) ** 2, axis=1)
-    r2 = 1.0 - ss_res / np.maximum(ss_tot, 1e-30)
+    r2 = 1.0 - ss_res / np.maximum(ss_tot, _EPSILON_NUMERICAL)
     return np.asarray(np.clip(r2, a_min=-1.0, a_max=1.0))
 
 
@@ -249,7 +255,7 @@ def _apply_volume_constraint_batched(
 
     if np.any(violating):
         params = params.copy()
-        scale = VP_VE_TOTAL_MAX / np.maximum(total[violating], 1e-30)
+        scale = VP_VE_TOTAL_MAX / np.maximum(total[violating], _EPSILON_NUMERICAL)
         params[violating, ve_idx] *= scale
         params[violating, vp_idx] *= scale
 
@@ -365,7 +371,7 @@ def batched_patlak_lstsq(
             np.where(violates_hi, vp_hi, vp_unc),
         )
         residual_clamped = tissue_curves - clamped_vp[:, None] * aif[None, :]
-        denom = max(np.sum((w * aif_integral) ** 2), 1e-30)
+        denom = max(np.sum((w * aif_integral) ** 2), _EPSILON_NUMERICAL)
         ktrans_clamped = np.sum(
             residual_clamped * (w ** 2)[None, :] * aif_integral[None, :], axis=1
         )
@@ -390,7 +396,7 @@ def batched_patlak_lstsq(
         w_aif_int = w * aif_integral
         denom = np.sum(w_aif_int ** 2)
         ktrans = np.sum(residual * (w ** 2)[None, :] * aif_integral[None, :], axis=1)
-        ktrans /= max(denom, 1e-30)
+        ktrans /= max(denom, _EPSILON_NUMERICAL)
         ktrans = np.clip(ktrans, *_PARAM_BOUNDS["ktrans"])
         vp_out = fixed_vp.copy()
         n_free = 1
@@ -436,7 +442,7 @@ def batched_patlak_lstsq(
                 uncertainties["ktrans"] = np.full(n_voxels, np.nan)
                 uncertainties["vp"] = np.full(n_voxels, np.nan)
         elif fixed_vp is not None:
-            denom_val = max(np.sum((w * aif_integral) ** 2), 1e-30)
+            denom_val = max(np.sum((w * aif_integral) ** 2), _EPSILON_NUMERICAL)
             ktrans_var = sigma2 / denom_val
             uncertainties["ktrans"] = np.sqrt(np.maximum(ktrans_var, 0.0))
             uncertainties["vp"] = np.zeros(n_voxels)
@@ -498,7 +504,7 @@ def _batched_initial_guess(
 
     # Patlak regression for Ktrans estimate
     aif_int_sq = np.sum(aif_integral ** 2)
-    if aif_int_sq > 1e-30:
+    if aif_int_sq > _EPSILON_NUMERICAL:
         tissue_dot_int = np.sum(tissue_curves * aif_integral[None, :], axis=1)
         ktrans_init = np.clip(tissue_dot_int / aif_int_sq, 0.001, 2.0)
     else:
@@ -965,7 +971,7 @@ def batched_lm_fit(
             old_cost_acc = cost[acc_local]
             new_cost_acc = cost_trial[acc_local]
             cost_change = old_cost_acc - new_cost_acc  # positive since accepted
-            ftol_check = (cost_change / np.maximum(old_cost_acc, 1e-30)) < ftol
+            ftol_check = (cost_change / np.maximum(old_cost_acc, _EPSILON_NUMERICAL)) < ftol
 
             # xtol: relative parameter step size
             dp_acc = dp[acc_local]
