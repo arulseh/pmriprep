@@ -863,6 +863,14 @@ def init_pmriprep_wf(
         bids_dir, subject_id, session_id, layout=layout
     )
 
+    # Modality-presence flags used by every per-pipeline DerivativesDataSink
+    # factory (anat, tumor_seg, dsc, dce). Computed once at the top so they
+    # are in scope under --skip-anat where the anat block is skipped but
+    # tumor_seg/dsc/dce factories still run.
+    has_t1w_pre = bool(session_data.modalities.t1w_pre)
+    has_t1w_postcon = bool(session_data.modalities.t1w_ce_gad)
+    is_postcon_ref = has_t1w_postcon and not has_t1w_pre
+
     # Estimate memory requirements from image dimensions
     from pmriprep.utils.mem import cap_mem_gb, estimate_4d_mem_gb
 
@@ -1247,13 +1255,8 @@ def init_pmriprep_wf(
         # -------------------------------------------------------------------
         from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
 
-        has_t1w_pre = bool(session_data.modalities.t1w_pre)
-        has_t1w_postcon = bool(session_data.modalities.t1w_ce_gad)
-        # Postcon-only mode: anat workflow uses postcon as the structural
-        # reference. The unconditional anat outputs (t1w_preproc, brain_mask,
-        # acpc_xfm) are still produced, but their sidecar Sources and
-        # SpatialReference URI must point at the postcon-derived reference.
-        is_postcon_ref = has_t1w_postcon and not has_t1w_pre
+        # has_t1w_pre, has_t1w_postcon, is_postcon_ref are computed at the top
+        # of init_pmriprep_wf so they're in scope under --skip-anat too.
         anat_datasinks_wf = init_anat_datasinks_wf(
             output_dir=str(output_dir),
             bids_dir=str(bids_dir),
@@ -1427,46 +1430,53 @@ def init_pmriprep_wf(
         ])
 
         # -------------------------------------------------------------------
-        # TumorSegDerivativeWriter: Write BIDS-compliant tumor seg outputs
+        # Tumor-seg derivatives: niworkflows DerivativesDataSink chain
         # -------------------------------------------------------------------
-        from pmriprep.interfaces.tumor_seg_outputs import TumorSegDerivativeWriter
+        from pmriprep.workflows.tumor_seg.datasinks import init_tumor_seg_datasinks_wf
 
-        tumor_seg_writer = pe.Node(
-            TumorSegDerivativeWriter(
-                output_dir=str(output_dir),
-                subject_id=subject_id,
-                session_id=session_id or "",
-                bids_dir=str(bids_dir),
-            ),
-            name="tumor_seg_writer",
+        tumor_seg_datasinks_wf = init_tumor_seg_datasinks_wf(
+            output_dir=str(output_dir),
+            bids_dir=str(bids_dir),
+            subject_id=subject_id,
+            session_id=session_id,
         )
 
         workflow.connect([
-            (tumor_seg_wf, tumor_seg_writer, [
-                ("outputnode.segmentation", "segmentation"),
-                ("outputnode.enhancing_mask", "enhancing_mask"),
-                ("outputnode.non_enhancing_mask", "non_enhancing_mask"),
-                ("outputnode.whole_tumor_mask", "whole_tumor_mask"),
-                ("outputnode.nawm_mask", "nawm_mask"),
-                ("outputnode.qc_metrics", "qc_metrics"),
+            (tumor_seg_wf, tumor_seg_datasinks_wf, [
+                ("outputnode.segmentation", "inputnode.segmentation"),
+                ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+                ("outputnode.non_enhancing_mask", "inputnode.non_enhancing_mask"),
+                ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
+                ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+                ("outputnode.qc_metrics", "inputnode.qc_metrics"),
+                ("outputnode.seg_filmstrip_postcon",
+                 "inputnode.seg_filmstrip_postcon"),
+                ("outputnode.seg_filmstrip_flair",
+                 "inputnode.seg_filmstrip_flair"),
+                ("outputnode.nawm_filmstrip_flair",
+                 "inputnode.nawm_filmstrip_flair"),
+            ]),
+            # HD-GLIO source paths for the per-output Sources field.
+            (inputnode, tumor_seg_datasinks_wf, [
+                ("t1w_postcon", "inputnode.source_t1w_postcon"),
+                ("flair", "inputnode.source_flair"),
+            ]),
+            (tumor_seg_datasinks_wf, report_barrier, [
+                ("outputnode.qc_json", "tumor_seg_done"),
             ]),
         ])
-
-        # -------------------------------------------------------------------
-        # Tumor segmentation: connect writer to unified report barrier
-        # -------------------------------------------------------------------
-        workflow.connect([
-            (tumor_seg_writer, report_barrier, [("qc_json", "tumor_seg_done")]),
-        ])
-
-        # Connect filmstrips to writer (writer saves to figures/ dir)
-        workflow.connect([
-            (tumor_seg_wf, tumor_seg_writer, [
-                ("outputnode.seg_filmstrip_postcon", "seg_filmstrip_postcon"),
-                ("outputnode.seg_filmstrip_flair", "seg_filmstrip_flair"),
-                ("outputnode.nawm_filmstrip_flair", "nawm_filmstrip_flair"),
-            ]),
-        ])
+        if has_t1w_pre:
+            workflow.connect([
+                (inputnode, tumor_seg_datasinks_wf, [
+                    ("t1w_pre", "inputnode.source_t1w"),
+                ]),
+            ])
+        if session_data.modalities.t2w:
+            workflow.connect([
+                (inputnode, tumor_seg_datasinks_wf, [
+                    ("t2w", "inputnode.source_t2w"),
+                ]),
+            ])
 
     # -------------------------------------------------------------------
     # DSC perfusion workflow (requires anat, optional tumor seg)

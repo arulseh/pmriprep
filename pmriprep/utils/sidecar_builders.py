@@ -309,6 +309,90 @@ def build_anat_mask_sidecar(
     }
 
 
+_TUMOR_SEG_LABELS = {
+    "0": "Background",
+    "1": "Non-enhancing tumor",
+    "2": "Enhancing tumor",
+}
+
+
+def build_tumor_seg_dseg_sidecar(
+    *,
+    source_paths: Sequence[PathLike],
+    reference_voxel_source: PathLike,
+    bids_dir: PathLike,
+    subject: str,
+    session: Optional[str],
+    is_postcon_ref: bool = False,
+) -> Dict[str, Any]:
+    """Sidecar for the multi-class tumor ``dseg`` label map."""
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
+    return {
+        **get_bids_derivative_provenance(),
+        "Description": "Deep learning tumor segmentation",
+        "Manual": False,
+        "SegmentationLabels": dict(_TUMOR_SEG_LABELS),
+        "Method": "HD-GLIO (Isensee et al.)",
+        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "Sources": build_sources_list(source_paths, bids_dir),
+        **resolution_native_block(reference_voxel_source),
+    }
+
+
+def build_tumor_seg_mask_sidecar(
+    *,
+    description: str,
+    source_paths: Sequence[PathLike],
+    reference_voxel_source: PathLike,
+    bids_dir: PathLike,
+    subject: str,
+    session: Optional[str],
+    method: str = "Derived from tumor segmentation",
+    is_postcon_ref: bool = False,
+) -> Dict[str, Any]:
+    """Sidecar for a binary tumor-derived mask (enhancing/nonenhancing/whole/lesion)."""
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
+    return {
+        **get_bids_derivative_provenance(),
+        "Description": description,
+        "Type": "Brain",
+        "Method": method,
+        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "Sources": build_sources_list(source_paths, bids_dir),
+        **resolution_native_block(reference_voxel_source),
+    }
+
+
+def build_tumor_seg_nawm_sidecar(
+    *,
+    source_paths: Sequence[PathLike],
+    reference_voxel_source: PathLike,
+    bids_dir: PathLike,
+    subject: str,
+    session: Optional[str],
+    is_postcon_ref: bool = False,
+) -> Dict[str, Any]:
+    """Sidecar for the contralateral NAWM mask."""
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
+    return {
+        **get_bids_derivative_provenance(),
+        "Description": (
+            "Contralateral normal-appearing white matter mask for CBV "
+            "normalization"
+        ),
+        "Type": "Brain",
+        "Method": (
+            "Contralateral WM thresholded at p>=0.9, excluding tumor margin"
+        ),
+        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "Sources": build_sources_list(source_paths, bids_dir),
+        **resolution_native_block(reference_voxel_source),
+    }
+
+
 def build_anat_probseg_sidecar(
     *,
     tissue_type: str,
