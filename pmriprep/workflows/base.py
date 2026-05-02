@@ -2052,8 +2052,18 @@ def init_pmriprep_wf(
             detected = session_data.modalities.b1_method_detected
             if detected in ("afi", "tfl_b1map"):
                 b1_method = detected  # type: ignore[assignment]
-            elif session_data.modalities.afi:
+            elif (
+                session_data.modalities.afi
+                and session_data.modalities.afi_mode == "4d"
+            ):
                 b1_method = "afi"
+            elif session_data.modalities.afi:
+                _log.warning(
+                    "AFI files found for sub-%s ses-%s but no 4D TB1AFI "
+                    "volume; skipping B1+ correction.",
+                    subject_id, session_id,
+                )
+                b1_method = "none"
             else:
                 _log.warning(
                     "No B1+ data (AFI or tfl_b1map) found for sub-%s ses-%s; "
@@ -2590,10 +2600,11 @@ def init_pmriprep_wf(
                     session_data.modalities.b1_nominal_prep_fa
                 )
         elif b1_method == "afi" and session_data.modalities.afi:
-            afi_mode = session_data.modalities.afi_mode
-
-            if afi_mode == "4d" and session_data.modalities.afi_4d_file:
-                # 4D mode: single file with 2 volumes
+            # Only 4D AFI is supported.
+            if (
+                session_data.modalities.afi_mode == "4d"
+                and session_data.modalities.afi_4d_file
+            ):
                 dce_wf.inputs.inputnode.afi_4d_file = str(
                     session_data.modalities.afi_4d_file
                 )
@@ -2602,24 +2613,6 @@ def init_pmriprep_wf(
                     dce_wf.inputs.inputnode.afi_tr1 = session_data.modalities.afi_tr1_ms
                 if session_data.modalities.afi_tr2_ms is not None:
                     dce_wf.inputs.inputnode.afi_tr2 = session_data.modalities.afi_tr2_ms
-            elif afi_mode != "precomputed":
-                # 3D mode: use TR-classified file paths from discovery
-                mods = session_data.modalities
-                tr1_file = mods.afi_tr1_file or (mods.afi[0] if len(mods.afi) >= 2 else None)
-                tr2_file = mods.afi_tr2_file or (mods.afi[1] if len(mods.afi) >= 2 else None)
-                if tr1_file and tr2_file:
-                    dce_wf.inputs.inputnode.afi_tr1_file = str(tr1_file)
-                    dce_wf.inputs.inputnode.afi_tr2_file = str(tr2_file)
-                    # Use pre-read TR values from discovery; fall back to sidecar read
-                    if mods.afi_tr1_ms is not None and mods.afi_tr2_ms is not None:
-                        dce_wf.inputs.inputnode.afi_tr1 = mods.afi_tr1_ms
-                        dce_wf.inputs.inputnode.afi_tr2 = mods.afi_tr2_ms
-                    else:
-                        afi_sidecar_1 = _read_bids_sidecar(tr1_file)
-                        afi_sidecar_2 = _read_bids_sidecar(tr2_file)
-                        if afi_sidecar_1["tr"] is not None and afi_sidecar_2["tr"] is not None:
-                            dce_wf.inputs.inputnode.afi_tr1 = afi_sidecar_1["tr"] * 1000
-                            dce_wf.inputs.inputnode.afi_tr2 = afi_sidecar_2["tr"] * 1000
 
             # Wire AFI nominal flip angle from BIDS sidecar (default 60 in B1Mapping)
             if session_data.modalities.afi_flip_angle is not None:

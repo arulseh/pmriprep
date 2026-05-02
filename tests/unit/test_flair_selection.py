@@ -2,10 +2,26 @@
 
 import json
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
 from pmriprep.workflows.discovery import _select_best_flair
+
+
+class _MockLayout:
+    """Minimal stand-in: returns the per-file JSON sidecar dict."""
+
+    def get_metadata(self, path: str) -> Optional[dict]:
+        sidecar = Path(path).with_name(
+            Path(path).name.replace(".nii.gz", ".json").replace(".nii", ".json")
+        )
+        if not sidecar.is_file():
+            return None
+        try:
+            return json.loads(sidecar.read_text())
+        except json.JSONDecodeError:
+            return None
 
 
 class TestSelectBestFlair:
@@ -15,7 +31,7 @@ class TestSelectBestFlair:
         """Single FLAIR should be returned without any sidecar check."""
         flair = tmp_path / "sub-01_ses-01_run-1_FLAIR.nii.gz"
         flair.touch()
-        assert _select_best_flair([flair]) == flair
+        assert _select_best_flair([flair], _MockLayout()) == flair
 
     def test_prefers_3d_from_sidecar(self, tmp_path: Path) -> None:
         """When JSON sidecar has MRAcquisitionType=3D, prefer that file."""
@@ -24,16 +40,14 @@ class TestSelectBestFlair:
         flair_2d.touch()
         flair_3d.touch()
 
-        # Write 2D sidecar
-        sidecar_2d = tmp_path / "sub-01_ses-01_acq-2d_run-1_FLAIR.json"
-        sidecar_2d.write_text(json.dumps({"MRAcquisitionType": "2D"}))
+        (tmp_path / "sub-01_ses-01_acq-2d_run-1_FLAIR.json").write_text(
+            json.dumps({"MRAcquisitionType": "2D"})
+        )
+        (tmp_path / "sub-01_ses-01_acq-3d_run-1_FLAIR.json").write_text(
+            json.dumps({"MRAcquisitionType": "3D"})
+        )
 
-        # Write 3D sidecar
-        sidecar_3d = tmp_path / "sub-01_ses-01_acq-3d_run-1_FLAIR.json"
-        sidecar_3d.write_text(json.dumps({"MRAcquisitionType": "3D"}))
-
-        # 2D listed first — should still pick 3D
-        result = _select_best_flair([flair_2d, flair_3d])
+        result = _select_best_flair([flair_2d, flair_3d], _MockLayout())
         assert result == flair_3d
 
     def test_prefers_acq_3d_in_filename_when_no_sidecar(
@@ -45,7 +59,7 @@ class TestSelectBestFlair:
         flair_2d.touch()
         flair_3d.touch()
 
-        result = _select_best_flair([flair_2d, flair_3d])
+        result = _select_best_flair([flair_2d, flair_3d], _MockLayout())
         assert result == flair_3d
 
     def test_fallback_returns_first_candidate(self, tmp_path: Path) -> None:
@@ -55,26 +69,26 @@ class TestSelectBestFlair:
         flair_a.touch()
         flair_b.touch()
 
-        result = _select_best_flair([flair_a, flair_b])
+        result = _select_best_flair([flair_a, flair_b], _MockLayout())
         assert result == flair_a
 
     def test_sidecar_3d_takes_precedence_over_filename(
         self, tmp_path: Path
     ) -> None:
         """Sidecar MRAcquisitionType=3D should win over acq-3d filename."""
-        # File named acq-3d but sidecar says 2D
         flair_fake3d = tmp_path / "sub-01_ses-01_acq-3d_run-1_FLAIR.nii.gz"
         flair_fake3d.touch()
-        sidecar_fake = tmp_path / "sub-01_ses-01_acq-3d_run-1_FLAIR.json"
-        sidecar_fake.write_text(json.dumps({"MRAcquisitionType": "2D"}))
+        (tmp_path / "sub-01_ses-01_acq-3d_run-1_FLAIR.json").write_text(
+            json.dumps({"MRAcquisitionType": "2D"})
+        )
 
-        # File with no acq label but sidecar says 3D
         flair_real3d = tmp_path / "sub-01_ses-01_run-2_FLAIR.nii.gz"
         flair_real3d.touch()
-        sidecar_real = tmp_path / "sub-01_ses-01_run-2_FLAIR.json"
-        sidecar_real.write_text(json.dumps({"MRAcquisitionType": "3D"}))
+        (tmp_path / "sub-01_ses-01_run-2_FLAIR.json").write_text(
+            json.dumps({"MRAcquisitionType": "3D"})
+        )
 
-        result = _select_best_flair([flair_fake3d, flair_real3d])
+        result = _select_best_flair([flair_fake3d, flair_real3d], _MockLayout())
         assert result == flair_real3d
 
     def test_handles_malformed_sidecar(self, tmp_path: Path) -> None:
@@ -84,11 +98,11 @@ class TestSelectBestFlair:
         flair_a.touch()
         flair_b.touch()
 
-        # Write invalid JSON for first file
-        sidecar_a = tmp_path / "sub-01_ses-01_run-1_FLAIR.json"
-        sidecar_a.write_text("not valid json{{{")
+        (tmp_path / "sub-01_ses-01_run-1_FLAIR.json").write_text(
+            "not valid json{{{"
+        )
 
-        result = _select_best_flair([flair_a, flair_b])
+        result = _select_best_flair([flair_a, flair_b], _MockLayout())
         assert result == flair_b  # falls through to acq-3d filename match
 
     def test_nii_extension_without_gz(self, tmp_path: Path) -> None:
@@ -96,7 +110,8 @@ class TestSelectBestFlair:
         flair = tmp_path / "sub-01_ses-01_run-1_FLAIR.nii"
         flair.touch()
 
-        sidecar = tmp_path / "sub-01_ses-01_run-1_FLAIR.json"
-        sidecar.write_text(json.dumps({"MRAcquisitionType": "3D"}))
+        (tmp_path / "sub-01_ses-01_run-1_FLAIR.json").write_text(
+            json.dumps({"MRAcquisitionType": "3D"})
+        )
 
-        assert _select_best_flair([flair]) == flair
+        assert _select_best_flair([flair], _MockLayout()) == flair

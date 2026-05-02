@@ -84,10 +84,6 @@ def init_dce_preproc_wf(
         Paths to VFA (Variable Flip Angle) images for T1 mapping.
     vfa_flip_angles : list of float
         Flip angles (degrees) for each VFA image.
-    afi_tr1_file : str, optional
-        Path to AFI TR1 image for B1+ mapping.
-    afi_tr2_file : str, optional
-        Path to AFI TR2 image for B1+ mapping.
     afi_tr1 : float, optional
         TR1 value (ms) for AFI B1+ mapping.
     afi_tr2 : float, optional
@@ -197,9 +193,7 @@ def init_dce_preproc_wf(
                 "vfa_files",
                 "vfa_flip_angles",
                 "vfa_tr",
-                # AFI B1+ mapping inputs
-                "afi_tr1_file",
-                "afi_tr2_file",
+                # AFI B1+ mapping inputs (4D only)
                 "afi_4d_file",
                 "afi_tr1",
                 "afi_tr2",
@@ -413,8 +407,6 @@ def init_dce_preproc_wf(
 
         workflow.connect([
             (inputnode, b1_mapping, [
-                ("afi_tr1_file", "tr1_file"),
-                ("afi_tr2_file", "tr2_file"),
                 ("afi_4d_file", "afi_4d_file"),
                 ("afi_tr1", "tr1"),
                 ("afi_tr2", "tr2"),

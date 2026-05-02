@@ -99,14 +99,6 @@ def _b1_interior_mask(valid: np.ndarray, iterations: int = 2) -> np.ndarray:
 class B1MappingInputSpec(BaseInterfaceInputSpec):
     """Input specification for B1Mapping interface."""
 
-    tr1_file = File(
-        exists=True,
-        desc="AFI image acquired with short TR (TR1, typically ~20ms)",
-    )
-    tr2_file = File(
-        exists=True,
-        desc="AFI image acquired with long TR (TR2, typically ~100ms)",
-    )
     tr1 = traits.Float(
         desc="Short TR value in milliseconds (TR1, typically 20ms)",
     )
@@ -115,7 +107,7 @@ class B1MappingInputSpec(BaseInterfaceInputSpec):
     )
     afi_4d_file = File(
         exists=True,
-        desc="Single 4D AFI volume with 2 timepoints (alternative to separate tr1/tr2 files)",
+        desc="4D AFI volume with 2 interleaved-TR timepoints (TB1AFI).",
     )
     nominal_flip_angle = traits.Float(
         60.0,
@@ -200,10 +192,8 @@ class B1Mapping(SimpleInterface):
 
     Parameters
     ----------
-    tr1_file : str
-        AFI image with short TR (typically 20ms)
-    tr2_file : str
-        AFI image with long TR (typically 100ms)
+    afi_4d_file : str
+        4D NIfTI with two interleaved-TR volumes (TB1AFI BIDS suffix).
     tr1 : float
         Short TR value in milliseconds
     tr2 : float
@@ -271,9 +261,9 @@ class B1Mapping(SimpleInterface):
     def _load_afi_data(
         self,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], Any, Any, float, float, dict[str, Any]]:
-        """Load AFI data from either a single 4D volume or separate 3D volumes.
+        """Load AFI data from a 4D TB1AFI volume.
 
-        For 4D input, auto-detects TR1/TR2 ordering from JSON sidecar using:
+        Auto-detects TR1/TR2 ordering from JSON sidecar using:
         1. RepetitionTimeExcitation array (BIDS standard for per-volume TRs)
         2. RepetitionTime array (if present)
         3. PerFrameFunctionalGroupsSequence (enhanced DICOM)
@@ -293,27 +283,15 @@ class B1Mapping(SimpleInterface):
         from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
         afi_4d = self.inputs.afi_4d_file if isdefined(self.inputs.afi_4d_file) else None
-        tr1_file = self.inputs.tr1_file if isdefined(self.inputs.tr1_file) else None
-        tr2_file = self.inputs.tr2_file if isdefined(self.inputs.tr2_file) else None
         tr1_override = self.inputs.tr1 if isdefined(self.inputs.tr1) else None
         tr2_override = self.inputs.tr2 if isdefined(self.inputs.tr2) else None
 
-        # Reorient AFI files to RAS before loading
+        # Reorient AFI 4D file to RAS before loading
         if afi_4d is not None:
             afi_4d_reoriented = _reorient_to_ras(afi_4d)
             if afi_4d_reoriented:
                 afi_4d = afi_4d_reoriented
                 logger.info("Reoriented 4D AFI to RAS")
-        if tr1_file is not None:
-            tr1_reoriented = _reorient_to_ras(tr1_file)
-            if tr1_reoriented:
-                tr1_file = tr1_reoriented
-                logger.info("Reoriented AFI TR1 to RAS")
-        if tr2_file is not None:
-            tr2_reoriented = _reorient_to_ras(tr2_file)
-            if tr2_reoriented:
-                tr2_file = tr2_reoriented
-                logger.info("Reoriented AFI TR2 to RAS")
 
         if afi_4d is not None:
             # --- 4D mode: single file with 2 volumes ---
@@ -439,111 +417,8 @@ class B1Mapping(SimpleInterface):
             coreg_info: dict[str, Any] = {"coregistered": False}
             return s1, s2, affine, header, tr1_ms, tr2_ms, coreg_info
 
-        elif tr1_file is not None and tr2_file is not None:
-            # --- 3D mode: separate files ---
-            logger.info("Loading separate 3D AFI volumes")
-
-            tr1_img = nib.load(tr1_file)
-            tr2_img = nib.load(tr2_file)
-
-            s1 = tr1_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-            s2 = tr2_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-            affine = tr1_img.affine  # type: ignore[attr-defined]
-            header = tr1_img.header  # type: ignore[attr-defined]
-
-            # Get TR values: override > JSON sidecar. No vendor defaults —
-            # wrong TR ratio biases B1+ and propagates to T1/Ktrans.
-            def _read_tr_ms(nifti_path: str, label: str) -> float:
-                json_path = Path(
-                    str(nifti_path).replace(".nii.gz", ".json").replace(".nii", ".json")
-                )
-                if not json_path.exists():
-                    raise ValueError(
-                        f"AFI {label} JSON sidecar not found: {json_path}. "
-                        f"AFI requires explicit RepetitionTime per volume."
-                    )
-                with open(json_path) as f:
-                    meta = _json.load(f)
-                if "RepetitionTime" not in meta:
-                    raise ValueError(
-                        f"AFI {label} sidecar {json_path} missing RepetitionTime."
-                    )
-                return float(meta["RepetitionTime"]) * 1000
-
-            tr1_ms = (
-                float(tr1_override) if tr1_override is not None
-                else _read_tr_ms(tr1_file, "TR1")
-            )
-            tr2_ms = (
-                float(tr2_override) if tr2_override is not None
-                else _read_tr_ms(tr2_file, "TR2")
-            )
-
-            # Auto-correct TR ordering: TR1 must be the short TR, TR2 the long TR.
-            # Files may arrive in arbitrary order (e.g., sorted alphabetically).
-            if tr1_ms > tr2_ms:
-                logger.info(
-                    "Swapping TR ordering: tr1_file had TR=%.1fms > tr2_file TR=%.1fms",
-                    tr1_ms, tr2_ms,
-                )
-                s1, s2 = s2, s1
-                tr1_ms, tr2_ms = tr2_ms, tr1_ms
-                # Also swap the image references so coregistration uses correct files
-                tr1_img, tr2_img = tr2_img, tr1_img
-                tr1_file, tr2_file = tr2_file, tr1_file
-
-            # Coregister TR2 → TR1 if affines differ (Gap 5).
-            # Separate 3D AFI acquisitions may have slight inter-scan motion.
-            coreg_info: dict[str, Any] = {"coregistered": False}  # type: ignore[no-redef]
-            s1_original = s1.copy()
-            s2_original = s2.copy()
-
-            affine_diff = float(np.abs(tr1_img.affine - tr2_img.affine).max())  # type: ignore[attr-defined]
-            if affine_diff > 1e-4:
-                import subprocess as _sp
-
-                coreg_out = str(Path.cwd() / "afi_tr2_coreg.nii.gz")
-                coreg_mat = str(Path.cwd() / "afi_tr2_to_tr1.mat")
-                cmd = [
-                    "flirt",
-                    "-in", str(tr2_file),
-                    "-ref", str(tr1_file),
-                    "-out", coreg_out,
-                    "-omat", coreg_mat,
-                    "-dof", "6",
-                    "-cost", "normcorr",
-                    "-searchrx", "-5", "5",
-                    "-searchry", "-5", "5",
-                    "-searchrz", "-5", "5",
-                ]
-                try:
-                    _sp.run(cmd, check=True, capture_output=True)
-                    s2 = nib.load(coreg_out).get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-                    logger.info(
-                        "Coregistered AFI TR2 → TR1 (affine diff=%.4f)", affine_diff,
-                    )
-                    # Track coregistration for QC plot generation
-                    coreg_info = {
-                        "coregistered": True,
-                        "s1_original": s1_original,
-                        "s2_original": s2_original,
-                        "s2_coregistered": s2.copy(),
-                        "affine_diff": affine_diff,
-                        "tr1_ms": tr1_ms,
-                        "tr2_ms": tr2_ms,
-                    }
-                except (FileNotFoundError, _sp.CalledProcessError) as exc:
-                    logger.warning(
-                        "AFI coregistration failed (%s) — using unregistered volumes",
-                        exc,
-                    )
-
-            return s1, s2, affine, header, tr1_ms, tr2_ms, coreg_info
-
         else:
-            raise ValueError(
-                "Must provide either afi_4d_file or both tr1_file and tr2_file"
-            )
+            raise ValueError("afi_4d_file is required (4D TB1AFI).")
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute B1+ mapping computation."""
@@ -610,7 +485,7 @@ class B1Mapping(SimpleInterface):
             # Note: registration_qc_plot left undefined (File traits cannot be None)
             return runtime
 
-        # Load AFI data (supports both 4D and 3D modes)
+        # Load 4D AFI data
         s1, s2, affine, header, tr1_ms, tr2_ms, coreg_info = self._load_afi_data()
         shape = s1.shape[:3]
 
@@ -1178,8 +1053,6 @@ class B1Mapping(SimpleInterface):
             in_file = Path(str(self.inputs.precomputed_b1_file))
         elif isdefined(self.inputs.afi_4d_file) and self.inputs.afi_4d_file:
             in_file = Path(str(self.inputs.afi_4d_file))
-        elif isdefined(self.inputs.tr1_file) and self.inputs.tr1_file:
-            in_file = Path(self.inputs.tr1_file)
         else:
             # No input file available (e.g., skip_b1 with no AFI data)
             return str(Path.cwd() / "B1plus.nii.gz")
