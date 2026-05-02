@@ -452,3 +452,93 @@ def build_qc_summary(
             for name, (value, status) in metrics.items()
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-pipeline recommendation enrichers (lifted from bespoke writers)
+# ---------------------------------------------------------------------------
+
+
+def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
+    """Add a NiPreps-style overall ``recommendation`` block to DSC QC metrics.
+
+    Mirrors the legacy ``DSCDerivativeWriter._add_qc_recommendation`` —
+    evaluates AIF detection, motion (composite ``motion_status``), and CNR
+    (with a Rose-criterion floor on mean CNR), aggregates per-axis severity,
+    and returns ``qc_metrics`` augmented with ``recommendation``.
+    """
+    from pmriprep.utils.dsc_constants import QC_MEAN_CNR_MINIMUM
+
+    recommendations: list[QCRecommendation] = []
+    enhanced = dict(qc_metrics)
+
+    # AIF detection quality
+    aif_qc = qc_metrics.get("aif_detection", {})
+    detection_level = aif_qc.get("detection_method", "unknown")
+    if detection_level in ("atlas_strict", "atlas_relaxed"):
+        aif_rec = QCRecommendation(QCAction.INCLUDE, f"AIF detected ({detection_level})", 0)
+    elif detection_level in ("atlas_permissive", "brain_relaxed", "brain_permissive"):
+        aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF detection marginal ({detection_level})", 1)
+    elif detection_level == "external":
+        aif_rec = QCRecommendation(QCAction.REVIEW, "External AIF provided; verify curve quality", 1)
+    elif detection_level == "synthetic":
+        aif_rec = QCRecommendation(QCAction.EXCLUDE, "Synthetic AIF used", 3)
+    elif detection_level in ("none", "unknown"):
+        aif_rec = QCRecommendation(QCAction.EXCLUDE, f"AIF detection failed ({detection_level})", 3)
+    else:
+        aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF detection: {detection_level}", 1)
+    recommendations.append(aif_rec)
+
+    # Motion via composite status
+    preprocessing = qc_metrics.get("preprocessing", {})
+    motion_status = preprocessing.get("motion_status")
+    if motion_status is not None:
+        fd_mean = preprocessing.get("fd_mean")
+        fd_max = preprocessing.get("fd_max")
+        pct_outliers = preprocessing.get("percent_outliers")
+        parts = []
+        if fd_mean is not None:
+            parts.append(f"mean FD={fd_mean:.2f}mm")
+        if fd_max is not None:
+            parts.append(f"max FD={fd_max:.2f}mm")
+        if pct_outliers is not None:
+            parts.append(f"outliers={pct_outliers:.1f}%")
+        detail = f"({', '.join(parts)})" if parts else ""
+
+        if motion_status == QCStatus.PASS:
+            motion_rec = QCRecommendation(QCAction.INCLUDE, f"Motion acceptable {detail}", 0)
+        elif motion_status == QCStatus.WARN:
+            motion_rec = QCRecommendation(QCAction.REVIEW, f"Motion marginal {detail}", 1)
+        elif motion_status == QCStatus.POOR:
+            motion_rec = QCRecommendation(QCAction.REVIEW, f"Excessive motion {detail}", 2)
+        else:
+            motion_rec = None
+        if motion_rec is not None:
+            recommendations.append(motion_rec)
+
+    # CNR (Rose-criterion floor + fraction-based grading)
+    cnr_fraction = preprocessing.get("fraction_cnr_gt_4")
+    mean_cnr = preprocessing.get("mean_cnr")
+    if mean_cnr is not None and mean_cnr < QC_MEAN_CNR_MINIMUM:
+        cnr_rec = QCRecommendation(
+            QCAction.EXCLUDE,
+            f"Mean CNR critically low ({mean_cnr:.1f} < {QC_MEAN_CNR_MINIMUM}, possible failed injection)",
+            3,
+        )
+        recommendations.append(cnr_rec)
+    elif cnr_fraction is not None:
+        if cnr_fraction >= 0.84:
+            cnr_rec = QCRecommendation(QCAction.INCLUDE, f"CNR excellent ({cnr_fraction:.0%} >4)", 0)
+        elif cnr_fraction >= 0.65:
+            cnr_rec = QCRecommendation(QCAction.REVIEW, f"CNR marginal ({cnr_fraction:.0%} >4)", 1)
+        else:
+            cnr_rec = QCRecommendation(QCAction.EXCLUDE, f"CNR poor ({cnr_fraction:.0%} >4)", 3)
+        recommendations.append(cnr_rec)
+
+    overall = aggregate_qc_recommendations(recommendations)
+    enhanced["recommendation"] = {
+        "action": overall.action,
+        "reason": overall.reason,
+        "severity": overall.severity,
+    }
+    return enhanced

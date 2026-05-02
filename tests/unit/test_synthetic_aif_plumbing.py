@@ -9,7 +9,7 @@ from __future__ import annotations
 
 
 def test_build_aif_block_measured() -> None:
-    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
+    from pmriprep.utils.dsc_aif_provenance import build_aif_provenance_block
 
     block = build_aif_provenance_block(
         {"aif_detection": {"detection_method": "atlas_relaxed", "quality_score": 0.8}}
@@ -19,7 +19,7 @@ def test_build_aif_block_measured() -> None:
 
 
 def test_build_aif_block_template_via_detection_level() -> None:
-    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
+    from pmriprep.utils.dsc_aif_provenance import build_aif_provenance_block
 
     block = build_aif_provenance_block({"aif_detection": {"detection_method": "synthetic"}})
     assert block["Source"] == "template"
@@ -28,7 +28,7 @@ def test_build_aif_block_template_via_detection_level() -> None:
 
 def test_build_aif_block_accepts_flat_dict() -> None:
     """Flat pre-merge AIF QC (detection_level at top level) is accepted."""
-    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
+    from pmriprep.utils.dsc_aif_provenance import build_aif_provenance_block
 
     block = build_aif_provenance_block(
         {"detection_method": "synthetic", "synthetic_fallback_reason": "low_snr"}
@@ -38,13 +38,13 @@ def test_build_aif_block_accepts_flat_dict() -> None:
 
 
 def test_build_aif_block_none_input() -> None:
-    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
+    from pmriprep.utils.dsc_aif_provenance import build_aif_provenance_block
 
     assert build_aif_provenance_block(None) == {}
 
 
 def test_build_aif_block_missing_aif_block() -> None:
-    from pmriprep.interfaces.dsc_outputs import build_aif_provenance_block
+    from pmriprep.utils.dsc_aif_provenance import build_aif_provenance_block
 
     assert build_aif_provenance_block({"preprocessing": {}}) == {}
 

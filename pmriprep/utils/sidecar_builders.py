@@ -393,6 +393,72 @@ def build_tumor_seg_nawm_sidecar(
     }
 
 
+def dsc_reference_basename() -> str:
+    """Basename of the DSC reference image inside the derivatives tree."""
+    return "space-dsc_desc-dscMean_ref.nii.gz"
+
+
+def _dsc_spatial_reference(subject: str, session: Optional[str]) -> str:
+    return build_spatial_reference_uri(
+        dsc_reference_basename(), subject, session, datatype="perf",
+    )
+
+
+def build_dsc_base_sidecar(
+    *,
+    source_paths: Sequence[PathLike],
+    reference_voxel_source: PathLike,
+    bids_dir: PathLike,
+    subject: str,
+    session: Optional[str],
+    provenance_dict: Optional[Dict[str, Any]] = None,
+    qc_metrics: Optional[Dict[str, Any]] = None,
+    minimal: bool = False,
+) -> Dict[str, Any]:
+    """Common base sidecar for DSC derivatives.
+
+    ``minimal=True`` suppresses perfusion-specific provenance enrichment
+    (used for masks, structural underlays, motion-corrected 4D, etc.).
+    """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
+    sidecar: Dict[str, Any] = {
+        **get_bids_derivative_provenance(),
+        "SpatialReference": _dsc_spatial_reference(subject, session),
+        "Sources": build_sources_list(source_paths, bids_dir),
+        **resolution_native_block(reference_voxel_source),
+    }
+    if provenance_dict:
+        sidecar.update(provenance_dict)
+    if not minimal and provenance_dict and qc_metrics:
+        from pmriprep.utils.provenance import enrich_provenance_from_qc
+
+        enriched = enrich_provenance_from_qc(sidecar, qc_metrics, "DSC")
+        sidecar.update(enriched)
+    return sidecar
+
+
+def build_dsc_map_sidecar(
+    *,
+    base: Dict[str, Any],
+    description: str,
+    map_key: str,
+    qc_metrics: Optional[Dict[str, Any]] = None,
+    units: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Per-output DSC sidecar with description + units + AIF stamp + extras."""
+    from pmriprep.utils.dsc_aif_provenance import apply_aif_sidecar
+
+    sidecar: Dict[str, Any] = {**base, "Description": description}
+    if units is not None:
+        sidecar["Units"] = units
+    if extra:
+        sidecar.update(extra)
+    apply_aif_sidecar(sidecar, map_key, qc_metrics)
+    return sidecar
+
+
 def build_anat_probseg_sidecar(
     *,
     tissue_type: str,

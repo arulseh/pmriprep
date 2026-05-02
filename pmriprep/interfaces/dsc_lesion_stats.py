@@ -233,7 +233,7 @@ class DSCLesionStats(BaseInterface):
         # cross-subject-comparable even when Source == "template"; callers
         # should consult per-map sidecars for that distinction.
         if self._has_input("aif_qc"):
-            from pmriprep.interfaces.dsc_outputs import (
+            from pmriprep.utils.dsc_aif_provenance import (
                 build_aif_provenance_block,
             )
             result.aif_provenance = build_aif_provenance_block(

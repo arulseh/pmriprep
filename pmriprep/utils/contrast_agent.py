@@ -861,7 +861,7 @@ def build_dsc_provenance(
     Note:
         The ``PerfusionProcessing.AIF`` sub-block is assembled
         downstream at sidecar-write time by
-        :func:`pmriprep.interfaces.dsc_outputs.apply_aif_sidecar`, which
+        :func:`pmriprep.utils.dsc_aif_provenance.apply_aif_sidecar`, which
         reads post-detection ``qc_metrics['aif']``. This function runs
         at workflow construction, before AIF detection, so it cannot
         populate AIF fields itself.

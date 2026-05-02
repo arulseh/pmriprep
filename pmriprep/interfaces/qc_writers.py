@@ -354,6 +354,169 @@ class TumorSegQCWriter(SimpleInterface):
 
 
 # ---------------------------------------------------------------------------
+# DSC QC writer
+# ---------------------------------------------------------------------------
+
+
+_DSC_FIGURE_KEYS = {
+    "dsc_brain_mask": "brain_mask_filmstrip",
+    "motion": "motion_qc_plot",
+    "aif_curve": "aif_curve_plot",
+    "aif_location": "aif_location_plot",
+    "aif_candidates": "aif_candidates_plot",
+    "registration": "registration_filmstrip",
+    "dsc_preprocessing_qc": "dsc_preprocessing_qc_plot",
+    "dsc_param_maps_qc": "dsc_param_maps_qc_plot",
+    "dsc_fit_qc": "dsc_fit_qc_plot",
+    "dsc_leakage_qc": "dsc_leakage_qc_plot",
+}
+
+
+class DSCQCWriterInputSpec(BaseInterfaceInputSpec):
+    output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
+    subject_id = traits.Str(mandatory=True)
+    session_id = traits.Str("", usedefault=True)
+    qc_metrics = traits.Dict(desc="Merged DSC QC metrics dict")
+    provenance_dict = traits.Dict(desc="DSC physics provenance dict (drives warnings)")
+    preflight_warnings = traits.List(traits.Str, value=[], usedefault=True)
+
+    has_brain_mask_dsc = traits.Bool(False, usedefault=True)
+    has_nawm_mask_dsc = traits.Bool(False, usedefault=True)
+    has_lesion_mask_dsc = traits.Bool(False, usedefault=True)
+    has_dsc_to_t1w_xfm = traits.Bool(False, usedefault=True)
+
+    aif_curve = File(exists=True, desc="AIF curve text file")
+    motion_params = File(exists=True, desc=".par motion file (converted to confounds TSV)")
+    lesion_stats_json = File(exists=True)
+    roi_stats_json = File(exists=True)
+
+    brain_mask_filmstrip = File(exists=True)
+    motion_qc_plot = File(exists=True)
+    aif_curve_plot = File(exists=True)
+    aif_location_plot = File(exists=True)
+    aif_candidates_plot = File(exists=True)
+    registration_filmstrip = File(exists=True)
+    dsc_preprocessing_qc_plot = File(exists=True)
+    dsc_param_maps_qc_plot = File(exists=True)
+    dsc_fit_qc_plot = File(exists=True)
+    dsc_leakage_qc_plot = File(exists=True)
+
+
+class DSCQCWriterOutputSpec(TraitedSpec):
+    qc_json = File(desc="Path to desc-dscQC_quality.json (empty if no metrics)")
+    aif_curve_txt = File(desc="Path to copied AIF curve TXT (empty if not provided)")
+    confounds_tsv = File(desc="Path to derived confounds TSV (empty if no motion params)")
+
+
+class DSCQCWriter(SimpleInterface):
+    """Writes the DSC QC JSON, AIF curve copy, confounds TSV/JSON, lesion/roi
+    stats JSON copies, and figure filmstrips.
+    """
+
+    input_spec = DSCQCWriterInputSpec
+    output_spec = DSCQCWriterOutputSpec
+
+    def _run_interface(self, runtime: Any) -> Any:
+        from pmriprep.utils.outputs import (
+            par_to_confounds_tsv,
+            write_confounds_sidecar,
+        )
+        from pmriprep.utils.qc_standards import recommend_dsc_qc
+        from pmriprep.utils.report_utils import figure_filename
+
+        output_dir = Path(self.inputs.output_dir)
+        subject = self.inputs.subject_id
+        session = self.inputs.session_id or ""
+
+        prefix = f"sub-{subject}"
+        if session:
+            prefix += f"_ses-{session}"
+
+        ses_dir = output_dir / "pmriprep" / f"sub-{subject}"
+        if session:
+            ses_dir = ses_dir / f"ses-{session}"
+        perf_dir = ses_dir / "perf"
+        perf_dir.mkdir(parents=True, exist_ok=True)
+
+        self._results["aif_curve_txt"] = ""
+        if isdefined(self.inputs.aif_curve) and self.inputs.aif_curve:
+            dst = perf_dir / f"{prefix}_desc-dscAif_timeseries.txt"
+            shutil.copy2(self.inputs.aif_curve, dst)
+            self._results["aif_curve_txt"] = str(dst)
+
+        self._results["confounds_tsv"] = ""
+        if isdefined(self.inputs.motion_params) and self.inputs.motion_params:
+            tsv_path = perf_dir / f"{prefix}_desc-dscConfounds_timeseries.tsv"
+            json_path = perf_dir / f"{prefix}_desc-dscConfounds_timeseries.json"
+            par_to_confounds_tsv(self.inputs.motion_params, tsv_path)
+            write_confounds_sidecar(json_path)
+            self._results["confounds_tsv"] = str(tsv_path)
+
+        if isdefined(self.inputs.lesion_stats_json) and self.inputs.lesion_stats_json:
+            shutil.copy2(
+                self.inputs.lesion_stats_json,
+                ses_dir / f"{prefix}_space-dsc_desc-lesionStats.json",
+            )
+        if isdefined(self.inputs.roi_stats_json) and self.inputs.roi_stats_json:
+            shutil.copy2(
+                self.inputs.roi_stats_json,
+                ses_dir / f"{prefix}_space-dsc_desc-roiStats.json",
+            )
+
+        figures_dir = ses_dir / "figures"
+        for fig_key, attr in _DSC_FIGURE_KEYS.items():
+            src = getattr(self.inputs, attr)
+            if not isdefined(src) or not src:
+                continue
+            figures_dir.mkdir(parents=True, exist_ok=True)
+            fname = figure_filename(subject, session, fig_key, "dsc")
+            shutil.copy2(src, figures_dir / fname)
+
+        self._results["qc_json"] = ""
+        qc_metrics = self.inputs.qc_metrics
+        if isdefined(qc_metrics) and qc_metrics:
+            qc = dict(qc_metrics)
+            warnings_list: list = []
+            if not self.inputs.has_brain_mask_dsc:
+                warnings_list.append("Brain mask in DSC space not available")
+            if not self.inputs.has_nawm_mask_dsc:
+                warnings_list.append("NAWM mask in DSC space not available")
+            if not self.inputs.has_lesion_mask_dsc:
+                warnings_list.append("Lesion mask in DSC space not available")
+            if not self.inputs.has_dsc_to_t1w_xfm:
+                warnings_list.append("DSC to T1w registration transform not available")
+            if warnings_list:
+                qc["warnings"] = warnings_list
+
+            provenance = self.inputs.provenance_dict
+            if isdefined(provenance) and provenance:
+                from pmriprep.utils.contrast_agent import collect_default_warnings
+
+                prov_warnings = collect_default_warnings(
+                    provenance, "DSC", qc_metrics=qc,
+                )
+                if prov_warnings:
+                    qc["provenance_warnings"] = prov_warnings
+
+            from pmriprep.utils.contrast_agent import collect_aif_fallback_warning
+
+            aif_warn = collect_aif_fallback_warning(qc, "DSC")
+            if aif_warn:
+                qc.setdefault("acquisition_warnings", []).append(aif_warn)
+
+            pf = self.inputs.preflight_warnings
+            if isdefined(pf) and pf:
+                qc.setdefault("acquisition_warnings", []).extend(list(pf))
+
+            enhanced = recommend_dsc_qc(qc)
+            qc_path = ses_dir / f"{prefix}_desc-dscQC_quality.json"
+            qc_path.write_text(json.dumps(enhanced, indent=2, default=str))
+            self._results["qc_json"] = str(qc_path)
+
+        return runtime
+
+
+# ---------------------------------------------------------------------------
 # Dataset description barrier
 # ---------------------------------------------------------------------------
 

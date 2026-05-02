@@ -1872,138 +1872,196 @@ def init_pmriprep_wf(
                 dsc_sidecar.get("contrast_agent", "unknown") if dsc_sidecar else "unknown",
             )
 
-        # DSCDerivativeWriter: Write BIDS-compliant DSC outputs
+        # DSC derivatives: niworkflows DerivativesDataSink chain
         # -------------------------------------------------------------------
-        from pmriprep.interfaces.dsc_outputs import DSCDerivativeWriter
-        import dataclasses
+        from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
 
-        dsc_config_dict = dataclasses.asdict(dsc_config)
-        # Convert Path objects to strings for JSON serialization
-        for k, v in dsc_config_dict.items():
-            if isinstance(v, Path):
-                dsc_config_dict[k] = str(v)
-
-        dsc_writer = pe.Node(
-            DSCDerivativeWriter(
-                output_dir=str(output_dir),
-                subject_id=subject_id,
-                session_id=session_id or "",
-                bids_dir=str(bids_dir),
-                config_dict=dsc_config_dict,
-                smooth_fwhm=dsc_config.smooth_fwhm,
-                has_postcon_t1w="t1w_postcon" in dsc_config.underlays,
-            ),
-            name="dsc_writer",
+        dsc_underlays = list(dsc_config.underlays)
+        has_t1w_in_dsc = (
+            "t1w_precon" in dsc_underlays or "t1w_postcon" in dsc_underlays
         )
-        # Set provenance dict for output JSON sidecars
-        if dsc_provenance:
-            dsc_writer.inputs.provenance_dict = dsc_provenance
-        if dsc_preflight_warnings:
-            dsc_writer.inputs.preflight_warnings = dsc_preflight_warnings
+        has_postcon_in_dsc = "t1w_postcon" in dsc_underlays
+        # Build the set of inputnode fields that this session will wire,
+        # gated to match what dsc_wf.outputnode actually populates. Including
+        # an unpopulated key here triggers nipype mandatory-input crashes
+        # because the sink's `in_file` becomes Undefined.
+        dsc_method = (dsc_config.method or "").lower()
+        dsc_inference = (dsc_config.inference or "").lower()
+        dsc_has_nawm = (
+            dsc_config.nawm_mask is not None
+            or session_data.modalities.t1w_pre is not None
+        )
 
-        # Connect perfusion maps to writer
+        dsc_present: set = {
+            # Always-present (mandatory in dsc_wf.outputnode)
+            "ttp_map", "cnr_map", "auc_diff_map", "snr_map", "tsnr_map",
+            "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
+            "rel_auc_raw_map", "rel_auc_corr_map",
+            "ncbv_map", "ncbf_map",
+            "k2_map",
+            "dsc_moco", "dsc_mean", "motion_params",
+            "aif_mask",
+            "brain_mask_dsc",
+            "dsc_to_t1w_xfm",
+        }
+        # AIF-detection-derived TTP variants
+        dsc_present.add("ttp_corrected_map")
+        if dsc_has_nawm:
+            dsc_present.add("rttp_map")
+        # Parametric methods only (oSVD/cSVD/sSVD/tikhonov produce no
+        # vascular params, no Bayesian uncertainty, no parametric R²)
+        if dsc_method in ("cpi", "vascular"):
+            dsc_present |= {"parametric_r2_map", "fallback_mask"}
+            dsc_present |= {
+                "cbf_std_map", "cbv_std_map", "cbf_cv_map", "cbv_cv_map",
+            }
+            # CI95 maps only for posterior-sample inference (VI/MCMC/SVB)
+            if dsc_inference in ("vi", "svb", "mcmc"):
+                dsc_present |= {
+                    "cbf_ci95_lower_map", "cbf_ci95_upper_map",
+                    "cbv_ci95_lower_map", "cbv_ci95_upper_map",
+                }
+        # Vascular method only (alpha/beta/cth params)
+        if dsc_method == "vascular":
+            dsc_present |= {"alpha_map", "beta_map", "cth_map"}
+
+        if dsc_has_nawm:
+            dsc_present.add("nawm_mask_dsc")
+        if dsc_config.lesion_mask is not None or decision.run_tumor_seg:
+            dsc_present.add("lesion_mask_dsc")
+        if dsc_config.roi_mask is not None:
+            dsc_present.add("roi_mask_dsc")
+        if has_t1w_in_dsc:
+            dsc_present.add("t1w_in_dsc")
+        if "flair" in dsc_underlays:
+            dsc_present.add("flair_in_dsc")
+        if "t2w" in dsc_underlays:
+            dsc_present.add("t2w_in_dsc")
+        if dsc_underlays:
+            dsc_present.add("t1w_to_dsc_xfm")
+
+        dsc_datasinks_wf = init_dsc_datasinks_wf(
+            output_dir=str(output_dir),
+            bids_dir=str(bids_dir),
+            subject_id=subject_id,
+            session_id=session_id,
+            present_inputs=dsc_present,
+            has_postcon_t1w=has_postcon_in_dsc,
+            has_lesion_stats=dsc_config.lesion_mask is not None
+                              or decision.run_tumor_seg,
+            has_roi_stats=dsc_config.roi_mask is not None,
+            has_smoothing=dsc_config.smooth_fwhm > 0,
+        )
+        if dsc_provenance:
+            dsc_datasinks_wf.inputs.inputnode.provenance_dict = dsc_provenance
+        if dsc_preflight_warnings:
+            dsc_datasinks_wf.inputs.inputnode.preflight_warnings = list(
+                dsc_preflight_warnings
+            )
+
         workflow.connect([
-            (dsc_wf, dsc_writer, [
+            (dsc_wf, dsc_datasinks_wf, [
                 # Quantification-independent maps
-                ("outputnode.mtt_map", "mtt_map"),
-                ("outputnode.tmax_map", "tmax_map"),
-                ("outputnode.psr_map", "psr_map"),
-                ("outputnode.ph_map", "ph_map"),
-                ("outputnode.ttp_map", "ttp_map"),
-                ("outputnode.ttp_corrected_map", "ttp_corrected_map"),
-                ("outputnode.rttp_map", "rttp_map"),
-                ("outputnode.cnr_map", "cnr_map"),
-                ("outputnode.auc_diff_map", "auc_diff_map"),
-                ("outputnode.snr_map", "snr_map"),
-                ("outputnode.tsnr_map", "tsnr_map"),
+                ("outputnode.mtt_map", "inputnode.mtt_map"),
+                ("outputnode.tmax_map", "inputnode.tmax_map"),
+                ("outputnode.psr_map", "inputnode.psr_map"),
+                ("outputnode.ph_map", "inputnode.ph_map"),
+                ("outputnode.ttp_map", "inputnode.ttp_map"),
+                ("outputnode.ttp_corrected_map", "inputnode.ttp_corrected_map"),
+                ("outputnode.rttp_map", "inputnode.rttp_map"),
+                ("outputnode.cnr_map", "inputnode.cnr_map"),
+                ("outputnode.auc_diff_map", "inputnode.auc_diff_map"),
+                ("outputnode.snr_map", "inputnode.snr_map"),
+                ("outputnode.tsnr_map", "inputnode.tsnr_map"),
                 # Relative maps
-                ("outputnode.rel_cbf_map", "rel_cbf_map"),
-                ("outputnode.rel_cbv_map", "rel_cbv_map"),
-                ("outputnode.rel_cbv_auc_map", "rel_cbv_auc_map"),
-                ("outputnode.rel_auc_raw_map", "rel_auc_raw_map"),
-                ("outputnode.rel_auc_corr_map", "rel_auc_corr_map"),
+                ("outputnode.rel_cbf_map", "inputnode.rel_cbf_map"),
+                ("outputnode.rel_cbv_map", "inputnode.rel_cbv_map"),
+                ("outputnode.rel_cbv_auc_map", "inputnode.rel_cbv_auc_map"),
+                ("outputnode.rel_auc_raw_map", "inputnode.rel_auc_raw_map"),
+                ("outputnode.rel_auc_corr_map", "inputnode.rel_auc_corr_map"),
                 # Normalized maps
-                ("outputnode.ncbv_map", "ncbv_map"),
-                ("outputnode.ncbf_map", "ncbf_map"),
+                ("outputnode.ncbv_map", "inputnode.ncbv_map"),
+                ("outputnode.ncbf_map", "inputnode.ncbf_map"),
                 # Vascular model parameters
-                ("outputnode.alpha_map", "alpha_map"),
-                ("outputnode.beta_map", "beta_map"),
-                ("outputnode.cth_map", "cth_map"),
+                ("outputnode.alpha_map", "inputnode.alpha_map"),
+                ("outputnode.beta_map", "inputnode.beta_map"),
+                ("outputnode.cth_map", "inputnode.cth_map"),
                 # Bayesian uncertainty maps
-                ("outputnode.cbf_std_map", "cbf_std_map"),
-                ("outputnode.cbv_std_map", "cbv_std_map"),
-                ("outputnode.cbf_cv_map", "cbf_cv_map"),
-                ("outputnode.cbv_cv_map", "cbv_cv_map"),
-                ("outputnode.cbf_ci95_lower_map", "cbf_ci95_lower_map"),
-                ("outputnode.cbf_ci95_upper_map", "cbf_ci95_upper_map"),
-                ("outputnode.cbv_ci95_lower_map", "cbv_ci95_lower_map"),
-                ("outputnode.cbv_ci95_upper_map", "cbv_ci95_upper_map"),
+                ("outputnode.cbf_std_map", "inputnode.cbf_std_map"),
+                ("outputnode.cbv_std_map", "inputnode.cbv_std_map"),
+                ("outputnode.cbf_cv_map", "inputnode.cbf_cv_map"),
+                ("outputnode.cbv_cv_map", "inputnode.cbv_cv_map"),
+                ("outputnode.cbf_ci95_lower_map", "inputnode.cbf_ci95_lower_map"),
+                ("outputnode.cbf_ci95_upper_map", "inputnode.cbf_ci95_upper_map"),
+                ("outputnode.cbv_ci95_lower_map", "inputnode.cbv_ci95_lower_map"),
+                ("outputnode.cbv_ci95_upper_map", "inputnode.cbv_ci95_upper_map"),
                 # Parametric-fit diagnostics (CPI/Vascular only)
-                ("outputnode.parametric_r2_map", "parametric_r2_map"),
-                ("outputnode.fallback_mask", "fallback_mask"),
+                ("outputnode.parametric_r2_map", "inputnode.parametric_r2_map"),
+                ("outputnode.fallback_mask", "inputnode.fallback_mask"),
                 # Leakage correction
-                ("outputnode.k2_map", "k2_map"),
-                ("outputnode.preload_qc", "preload_qc"),
+                ("outputnode.k2_map", "inputnode.k2_map"),
+                ("outputnode.preload_qc", "inputnode.preload_qc"),
                 # Motion-corrected data
-                ("outputnode.dsc_moco", "dsc_moco"),
-                ("outputnode.dsc_mean", "dsc_mean"),
-                ("outputnode.motion_params", "motion_params"),
+                ("outputnode.dsc_moco", "inputnode.dsc_moco"),
+                ("outputnode.dsc_mean", "inputnode.dsc_mean"),
+                ("outputnode.motion_params", "inputnode.motion_params"),
                 # AIF outputs
-                ("outputnode.aif_curve", "aif_curve"),
-                ("outputnode.aif_mask", "aif_mask"),
+                ("outputnode.aif_curve", "inputnode.aif_curve"),
+                ("outputnode.aif_mask", "inputnode.aif_mask"),
                 # Registration
-                ("outputnode.dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
-                ("outputnode.registration_filmstrip", "registration_filmstrip"),
+                ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
+                ("outputnode.registration_filmstrip",
+                 "inputnode.registration_filmstrip"),
                 # Structural underlays
-                ("outputnode.t1w_in_dsc", "t1w_in_dsc"),
-                ("outputnode.flair_in_dsc", "flair_in_dsc"),
-                ("outputnode.t2w_in_dsc", "t2w_in_dsc"),
-                ("outputnode.t1w_to_dsc_xfm", "t1w_to_dsc_xfm"),
+                ("outputnode.t1w_in_dsc", "inputnode.t1w_in_dsc"),
+                ("outputnode.flair_in_dsc", "inputnode.flair_in_dsc"),
+                ("outputnode.t2w_in_dsc", "inputnode.t2w_in_dsc"),
+                ("outputnode.t1w_to_dsc_xfm", "inputnode.t1w_to_dsc_xfm"),
                 # AIF QC plots
-                ("outputnode.aif_curve_plot", "aif_curve_plot"),
-                ("outputnode.aif_location_plot", "aif_location_plot"),
-                ("outputnode.aif_candidates_plot", "aif_candidates_plot"),
+                ("outputnode.aif_curve_plot", "inputnode.aif_curve_plot"),
+                ("outputnode.aif_location_plot", "inputnode.aif_location_plot"),
+                ("outputnode.aif_candidates_plot",
+                 "inputnode.aif_candidates_plot"),
                 # Motion QC plot
-                ("outputnode.motion_qc_plot", "motion_qc_plot"),
+                ("outputnode.motion_qc_plot", "inputnode.motion_qc_plot"),
                 # QC metrics
-                ("outputnode.qc_metrics", "qc_metrics"),
+                ("outputnode.qc_metrics", "inputnode.qc_metrics"),
                 # DSC-space masks
-                ("outputnode.brain_mask_dsc", "brain_mask_dsc"),
-                ("outputnode.nawm_mask_dsc", "nawm_mask_dsc"),
+                ("outputnode.brain_mask_dsc", "inputnode.brain_mask_dsc"),
+                ("outputnode.nawm_mask_dsc", "inputnode.nawm_mask_dsc"),
                 # Lesion statistics
-                ("outputnode.lesion_stats_json", "lesion_stats_json"),
-                ("outputnode.lesion_mask_dsc", "lesion_mask_dsc"),
+                ("outputnode.lesion_stats_json", "inputnode.lesion_stats_json"),
+                ("outputnode.lesion_mask_dsc", "inputnode.lesion_mask_dsc"),
                 # ROI statistics
-                ("outputnode.roi_stats_json", "roi_stats_json"),
-                ("outputnode.roi_mask_dsc", "roi_mask_dsc"),
+                ("outputnode.roi_stats_json", "inputnode.roi_stats_json"),
+                ("outputnode.roi_mask_dsc", "inputnode.roi_mask_dsc"),
+                # Brain-mask + DSC QC filmstrips
+                ("outputnode.brain_mask_filmstrip",
+                 "inputnode.brain_mask_filmstrip"),
+                ("outputnode.dsc_preprocessing_qc_plot",
+                 "inputnode.dsc_preprocessing_qc_plot"),
+                ("outputnode.dsc_param_maps_qc_plot",
+                 "inputnode.dsc_param_maps_qc_plot"),
+                ("outputnode.dsc_fit_qc_plot", "inputnode.dsc_fit_qc_plot"),
+                ("outputnode.dsc_leakage_qc_plot",
+                 "inputnode.dsc_leakage_qc_plot"),
             ]),
-            (inputnode, dsc_writer, [("dsc_file", "source_dsc")]),
+            (inputnode, dsc_datasinks_wf, [("dsc_file", "inputnode.source_dsc")]),
         ])
 
-        # Connect smoothed maps to writer (if smoothing enabled)
         if dsc_config.smooth_fwhm > 0:
             workflow.connect([
-                (dsc_wf, dsc_writer, [
-                    ("outputnode.smooth_hemodynamic", "smooth_hemodynamic"),
-                    ("outputnode.smooth_auc", "smooth_auc"),
+                (dsc_wf, dsc_datasinks_wf, [
+                    ("outputnode.smooth_hemodynamic",
+                     "inputnode.smooth_hemodynamic"),
+                    ("outputnode.smooth_auc", "inputnode.smooth_auc"),
                 ]),
             ])
+            dsc_datasinks_wf.inputs.inputnode.smooth_fwhm = dsc_config.smooth_fwhm
 
-        # -------------------------------------------------------------------
-        # DSC: connect writer to unified report barrier
-        # -------------------------------------------------------------------
         workflow.connect([
-            (dsc_writer, report_barrier, [("qc_json", "dsc_done")]),
-        ])
-
-        # Connect DSC QC plots to writer (writer saves to figures/ dir)
-        workflow.connect([
-            (dsc_wf, dsc_writer, [
-                ("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip"),
-                ("outputnode.dsc_preprocessing_qc_plot", "dsc_preprocessing_qc_plot"),
-                ("outputnode.dsc_param_maps_qc_plot", "dsc_param_maps_qc_plot"),
-                ("outputnode.dsc_fit_qc_plot", "dsc_fit_qc_plot"),
-                ("outputnode.dsc_leakage_qc_plot", "dsc_leakage_qc_plot"),
+            (dsc_datasinks_wf, report_barrier, [
+                ("outputnode.qc_json", "dsc_done"),
             ]),
         ])
 
