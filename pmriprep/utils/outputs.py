@@ -10,12 +10,21 @@ interfaces (anat, DSC, DCE, HD-GLIO).
 import json
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Final, List, Optional, Union
 
 import numpy as np
 
 import pmriprep
 from pmriprep.utils.provenance import get_software_versions
+
+#: BIDS specification version that the derivative naming and JSON sidecars
+#: target. Bump deliberately when migrating to a newer spec; downstream
+#: validators key off this string.
+BIDS_DERIVATIVES_VERSION: Final[str] = "1.9.0"
+
+#: Public source URL for the pipeline. Surfaced in dataset_description's
+#: ``GeneratedBy.CodeURL`` and in ``HowToAcknowledge``.
+PMRIPREP_CODE_URL: Final[str] = "https://github.com/arulseh/pmriprep"
 
 
 def write_qc_json(
@@ -104,40 +113,66 @@ def sanitize_model_entity(model_name: str) -> str:
     return model_name
 
 
-def write_dataset_description(pipeline_dir: Path, bids_dir: str) -> None:
+def write_dataset_description(
+    pipeline_dir: Path,
+    bids_dir: str,
+    citation_doi: Optional[str] = None,
+) -> None:
     """Write a unified dataset_description.json at the derivative root.
 
     This is the shared implementation used by all four output writers
-    (anat, DSC, DCE, HD-GLIO). Always overwrites to ensure the version
-    and metadata stay current across pipeline upgrades.
+    (anat, DSC, DCE, HD-GLIO). Merges this run's pmriprep ``GeneratedBy``
+    entry with any pre-existing entries from other NiPreps tools that
+    wrote into the same derivative root, preserving cross-tool provenance.
 
     Args:
         pipeline_dir: Path to the ``pmriprep/`` derivative root directory.
         bids_dir: Path to the source BIDS dataset root.
+        citation_doi: Optional DOI string to attach to the pmriprep
+            ``GeneratedBy`` entry (e.g. for cite-by-version manuscripts).
     """
     desc_path = pipeline_dir / "dataset_description.json"
-
     pipeline_dir.mkdir(parents=True, exist_ok=True)
+
+    # pmriprep's own GeneratedBy entry for this run.
+    pmriprep_entry: Dict[str, Any] = {
+        "Name": "pmriprep",
+        "Version": pmriprep.__version__,
+        "Description": (
+            "Automated preprocessing and quantification of "
+            "DSC and DCE data"
+        ),
+        "CodeURL": PMRIPREP_CODE_URL,
+    }
+    if citation_doi:
+        pmriprep_entry["DOI"] = citation_doi
+
+    # Preserve any GeneratedBy entries from other NiPreps tools that
+    # previously wrote into this derivative root. Drop a stale pmriprep
+    # entry so version/DOI stays current.
+    existing_generated_by: List[Dict[str, Any]] = []
+    if desc_path.exists():
+        try:
+            with open(desc_path) as f:
+                existing = json.load(f)
+            existing_generated_by = [
+                e for e in existing.get("GeneratedBy", [])
+                if e.get("Name") != "pmriprep"
+            ]
+        except (OSError, json.JSONDecodeError):
+            existing_generated_by = []
+
     description: Dict[str, Any] = {
         "Name": "PMRIPrep - Perfusion MRI Preprocessing Pipeline",
-        "BIDSVersion": "1.9.0",
+        "BIDSVersion": BIDS_DERIVATIVES_VERSION,
         "DatasetType": "derivative",
-        "GeneratedBy": [
-            {
-                "Name": "pmriprep",
-                "Version": pmriprep.__version__,
-                "Description": (
-                    "Automated preprocessing and quantification of "
-                    "DSC and DCE data"
-                ),
-            }
-        ],
+        "GeneratedBy": existing_generated_by + [pmriprep_entry],
         "SourceDatasets": [
-            {"URL": Path(bids_dir).name},
+            {"URL": f"bids:raw:{Path(bids_dir).name}"},
         ],
         "HowToAcknowledge": (
             f"Please cite PMRIPrep (version {pmriprep.__version__}), "
-            "https://github.com/arulseh/pmriprep"
+            f"{PMRIPREP_CODE_URL}"
         ),
         "License": "BSD-3-Clause",
     }
