@@ -112,6 +112,7 @@ pmriprep bids_dir output_dir {participant} [options]
 |------|-------------|
 | `--participant-label LABEL [...]` | Participant(s) to process (without `sub-` prefix) |
 | `--session-label LABEL [...]` | Session(s) to process (without `ses-` prefix) |
+| `--skip-bids-validation` | Skip the `bids-validator` pre-flight check (validation is silently skipped if the binary is missing) |
 | `--nprocs N` | Maximum number of parallel processes (default: 1) |
 | `--omp-nthreads N` | Per-process thread limit (OMP/MKL/ITK) |
 | `--mem-gb GB` | Upper bound memory limit in GB |

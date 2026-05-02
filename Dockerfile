@@ -31,7 +31,7 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
-LABEL org.opencontainers.image.version="0.38.3"
+LABEL org.opencontainers.image.version="0.39.0"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 
@@ -78,11 +78,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libxext6 \
     libxrender1 \
+    nodejs \
+    npm \
     tar \
     tini \
     unzip \
     wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Install bids-validator (legacy JS CLI; the Deno v2 rewrite would require Deno 2)
+RUN npm install -g bids-validator@1.14.10 && npm cache clean --force
 
 # Install Python 3.10, FSL, and ANTs via mamba (fast solver)
 # FSL and ANTs are separate installs because the FSL channel does not
@@ -170,6 +175,8 @@ print('HD-BET weights: OK'); \
 assert os.path.isdir('/opt/hd_glio_params'), 'HD-GLIO weights missing'; \
 print('HD-GLIO weights: OK'); \
 import pmriprep; print('PMRIPrep: OK')"
+
+RUN bids-validator --version
 
 # Set up user (non-root execution)
 # chmod go=u lets Apptainer's host UID (mapped into the container) write to $HOME

@@ -87,3 +87,5 @@ def test_handles_malformed_existing_json(tmp_path: Path) -> None:
     desc = _read(pipeline_dir / "dataset_description.json")
     names = [e["Name"] for e in desc["GeneratedBy"]]
     assert names == ["pmriprep"]
+
+

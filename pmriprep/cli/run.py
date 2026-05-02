@@ -6,7 +6,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 from time import strftime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 from uuid import uuid4
 
 import toml  # type: ignore[import-untyped]
@@ -15,6 +15,9 @@ from pmriprep import __version__
 from pmriprep.cli import logging as plogger
 from pmriprep.cli.logging import IMPORTANT
 from pmriprep.config import DOSE_PRESETS
+
+if TYPE_CHECKING:
+    from bids.layout import BIDSLayout
 
 # Module-level logger — uses the centralized ``cli`` logger for top-level
 # messages that should be IMPORTANT-level by default.
@@ -183,6 +186,15 @@ Examples:
         metavar="LABEL",
         help="A space-separated list of session labels to process "
         "(without 'ses-' prefix). If not provided, all sessions are processed.",
+    )
+    parser.add_argument(
+        "--skip-bids-validation",
+        "--skip_bids_validation",
+        action="store_true",
+        default=False,
+        help="Skip the bids-validator pre-flight check on the input dataset. "
+        "If the validator binary is not on PATH, validation is skipped with "
+        "a warning regardless of this flag.",
     )
 
     # Resource arguments
@@ -536,6 +548,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if not args.bids_dir.is_dir():
         parser.error(f"bids_dir does not exist: {args.bids_dir}")
 
+    # Run BIDS validator (warn-and-skip if binary missing; sys.exit on failure).
+    from pmriprep.utils.bids import validate_bids_input
+
+    validate_bids_input(args.bids_dir, skip=args.skip_bids_validation)
+
     # Create output_dir if it doesn't exist
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -598,100 +615,43 @@ def _args_to_dict(args: argparse.Namespace) -> Dict[str, Any]:
 def _find_subjects(
     bids_dir: Path,
     participant_label: Optional[List[str]] = None,
+    layout: Optional["BIDSLayout"] = None,
 ) -> List[str]:
-    """Find subject directories in a BIDS dataset.
+    """Return participant IDs in ``bids_dir`` (sub- prefix stripped).
 
-    Parameters
-    ----------
-    bids_dir : Path
-        Path to BIDS dataset root directory.
-    participant_label : list of str, optional
-        List of participant labels to process. If None, find all subjects.
-
-    Returns
-    -------
-    list of str
-        List of subject IDs (without 'sub-' prefix).
+    Delegates to :func:`pmriprep.utils.bids.collect_participants_pmriprep`,
+    which wraps :func:`niworkflows.utils.bids.collect_participants` and
+    accepts a prebuilt :class:`bids.layout.BIDSLayout` for reuse.
     """
-    if participant_label is not None:
-        # Validate requested subjects exist
-        subjects = []
-        for label in participant_label:
-            sub_dir = bids_dir / f"sub-{label}"
-            if sub_dir.is_dir():
-                subjects.append(label)
-            else:
-                logger.warning(f"Subject directory not found: {sub_dir}")
-        return subjects
+    from pmriprep.utils.bids import collect_participants_pmriprep
 
-    # Find all subjects
-    subjects = []
-    for sub_dir in sorted(bids_dir.glob("sub-*")):
-        if sub_dir.is_dir():
-            # Extract subject ID (without 'sub-' prefix)
-            subject_id = sub_dir.name[4:]  # Remove 'sub-' prefix
-            subjects.append(subject_id)
-
-    return subjects
+    return collect_participants_pmriprep(
+        bids_dir, participant_label=participant_label, layout=layout
+    )
 
 
 def _find_sessions(
     bids_dir: Path,
     subject_id: str,
     session_label: Optional[List[str]] = None,
+    layout: Optional["BIDSLayout"] = None,
 ) -> List[Optional[str]]:
-    """Find session directories for a subject.
+    """Return session IDs (ses- prefix stripped) for ``subject_id``.
 
-    Parameters
-    ----------
-    bids_dir : Path
-        Path to BIDS dataset root directory.
-    subject_id : str
-        Subject ID (without 'sub-' prefix).
-    session_label : list of str, optional
-        List of session labels to process. If None, find all sessions.
-
-    Returns
-    -------
-    list of str or None
-        List of session IDs (without 'ses-' prefix). Returns [None] if
-        no sessions exist (single-session dataset).
+    Returns ``[None]`` for session-less datasets so the caller's per-session
+    loop iterates exactly once.
     """
-    sub_dir = bids_dir / f"sub-{subject_id}"
+    from pmriprep.utils.bids import collect_sessions
 
-    # Check if this is a session-less dataset
-    ses_dirs = list(sub_dir.glob("ses-*"))
-    if not ses_dirs:
-        # No sessions - return [None] to indicate single-session
-        return [None]
-
-    if session_label is not None:
-        # Validate requested sessions exist
-        sessions: List[Optional[str]] = []
-        for label in session_label:
-            ses_dir = sub_dir / f"ses-{label}"
-            if ses_dir.is_dir():
-                sessions.append(label)
-            else:
-                logger.warning(
-                    f"Session directory not found for sub-{subject_id}: {ses_dir}"
-                )
-        return sessions if sessions else [None]
-
-    # Find all sessions
-    sessions = []
-    for ses_dir in sorted(sub_dir.glob("ses-*")):
-        if ses_dir.is_dir():
-            # Extract session ID (without 'ses-' prefix)
-            session_id = ses_dir.name[4:]  # Remove 'ses-' prefix
-            sessions.append(session_id)
-
-    return sessions if sessions else [None]
+    return collect_sessions(
+        bids_dir, subject_id, session_label=session_label, layout=layout
+    )
 
 
 def _run_report_only(
     args: argparse.Namespace,
     subjects: List[str],
+    layout: Optional["BIDSLayout"] = None,
 ) -> None:
     """Regenerate HTML reports from existing QC outputs on disk.
 
@@ -712,7 +672,9 @@ def _run_report_only(
     )
 
     for subject_id in subjects:
-        sessions = _find_sessions(args.bids_dir, subject_id, args.session_label)
+        sessions = _find_sessions(
+            args.bids_dir, subject_id, args.session_label, layout=layout
+        )
 
         for session_id in sessions:
             session_str = f"ses-{session_id}" if session_id else "no-session"
@@ -828,8 +790,17 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         random.seed(args.random_seed)
         logger.info("Random seed: %d", args.random_seed)
 
+    # Build a single BIDSLayout for the whole invocation; reused for subject
+    # enumeration, per-session discovery, and downstream finders. validate=False
+    # because the JS bids-validator already ran (or was skipped) above.
+    from bids.layout import BIDSLayout
+
+    bids_layout = BIDSLayout(str(args.bids_dir), validate=False)
+
     # Find subjects to process
-    subjects = _find_subjects(args.bids_dir, args.participant_label)
+    subjects = _find_subjects(
+        args.bids_dir, args.participant_label, layout=bids_layout
+    )
 
     if not subjects:
         logger.error("No subjects found to process")
@@ -839,7 +810,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
 
     # --report-only: regenerate HTML from existing QC outputs and exit
     if args.report_only:
-        _run_report_only(args, subjects)
+        _run_report_only(args, subjects, layout=bids_layout)
         return
 
     # --- Full pipeline path: load configs, build workflows, run Nipype ---
@@ -924,7 +895,12 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
 
     # Process each subject
     for subject_id in subjects:
-        sessions = _find_sessions(args.bids_dir, subject_id, args.session_label)
+        sessions = _find_sessions(
+            args.bids_dir,
+            subject_id,
+            args.session_label,
+            layout=bids_layout,
+        )
 
         for session_id in sessions:
             session_str = f"ses-{session_id}" if session_id else "no-session"
@@ -982,6 +958,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     command_string=args.command_string,
                     user_specified=user_specified,
                     name=f"pmriprep_sub_{subject_id}_ses_{session_id}_wf" if session_id else f"pmriprep_sub_{subject_id}_wf",
+                    layout=bids_layout,
                 )
 
                 # Log pipeline summary

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.38.3"
+version = "0.39.0"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
@@ -31,6 +31,7 @@ dependencies = [
     "nilearn>=0.10.0",
     # Neuroimaging tools
     "niworkflows>=1.9.0",
+    "pybids>=0.16,<1.0",
     "templateflow>=23.0.0",
     # Parallel worker thread control
     "threadpoolctl>=3.0.0",

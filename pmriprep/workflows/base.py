@@ -8,7 +8,7 @@ and user-specified skip flags.
 from dataclasses import dataclass
 from pathlib import Path
 import logging
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
@@ -18,6 +18,9 @@ from pmriprep.config.dce import DCEConfig
 from pmriprep.config.dsc import DSCConfig
 from pmriprep.config.tumor_seg import TumorSegConfig
 from pmriprep.workflows.discovery import discover_session_data, SessionData
+
+if TYPE_CHECKING:
+    from bids.layout import BIDSLayout
 
 
 @dataclass
@@ -771,6 +774,7 @@ def init_pmriprep_wf(
     command_string: str = "",
     user_specified: Optional[dict[str, bool]] = None,
     name: str = "pmriprep_wf",
+    layout: Optional["BIDSLayout"] = None,
 ) -> pe.Workflow:
     """Initialize the master PMRIPrep workflow.
 
@@ -855,7 +859,9 @@ def init_pmriprep_wf(
         dce_config = DCEConfig()
 
     # Discover available data
-    session_data = discover_session_data(bids_dir, subject_id, session_id)
+    session_data = discover_session_data(
+        bids_dir, subject_id, session_id, layout=layout
+    )
 
     # Estimate memory requirements from image dimensions
     from pmriprep.utils.mem import cap_mem_gb, estimate_4d_mem_gb

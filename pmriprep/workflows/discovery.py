@@ -8,7 +8,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
+
+if TYPE_CHECKING:
+    from bids.layout import BIDSLayout
 
 logger = logging.getLogger("pmriprep.workflows.discovery")
 
@@ -1042,6 +1045,7 @@ def discover_session_data(
     bids_dir: Union[str, Path],
     subject: str,
     session: Optional[str] = None,
+    layout: Optional["BIDSLayout"] = None,
 ) -> SessionData:
     """Discover available imaging modalities for a subject/session.
 
@@ -1052,10 +1056,15 @@ def discover_session_data(
         bids_dir: Path to the BIDS dataset root.
         subject: Subject ID (without 'sub-' prefix).
         session: Session ID (without 'ses-' prefix), optional.
+        layout: Optional pre-built ``BIDSLayout`` to reuse (avoids re-indexing
+            on every per-session call). PR1 only threads it; per-modality
+            finders still use ``Path.glob`` (migrated in PR2).
 
     Returns:
         SessionData containing available modalities and runnable pipelines.
     """
+    # TODO(B3-PR2): wire layout into per-modality finders below.
+    del layout
     bids_path = Path(bids_dir)
     modalities = ModalityAvailability()
 
