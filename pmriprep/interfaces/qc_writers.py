@@ -517,6 +517,190 @@ class DSCQCWriter(SimpleInterface):
 
 
 # ---------------------------------------------------------------------------
+# DCE QC writer
+# ---------------------------------------------------------------------------
+
+
+_DCE_FIGURE_KEYS = {
+    "dce_brain_mask": "brain_mask_filmstrip",
+    "motion": "motion_qc_plot",
+    "aif_curve": "aif_curve_plot",
+    "aif_location": "aif_location_plot",
+    "aif_candidates": "aif_candidates_plot",
+    "registration": "registration_filmstrip",
+    "b1": "b1_qc_plot",
+    "t1": "t1_qc_plot",
+    "preprocessing_qc": "preprocessing_qc_plot",
+    "pk_modeling_qc": "pk_modeling_qc_plot",
+    "pk_param_maps_qc": "pk_param_maps_qc_plot",
+    "model_selection_qc": "model_selection_qc_plot",
+    "dsc_dce_xval": "dsc_dce_xval_plot",
+}
+
+
+class DCEQCWriterInputSpec(BaseInterfaceInputSpec):
+    output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
+    subject_id = traits.Str(mandatory=True)
+    session_id = traits.Str("", usedefault=True)
+    qc_metrics = traits.Dict(desc="Merged DCE QC metrics dict")
+    provenance_dict = traits.Dict(desc="DCE physics provenance (drives warnings)")
+    preflight_warnings = traits.List(traits.Str, value=[], usedefault=True)
+
+    has_t1_map = traits.Bool(False, usedefault=True)
+    has_b1_map = traits.Bool(False, usedefault=True)
+    has_brain_mask = traits.Bool(False, usedefault=True)
+    has_nawm_mask = traits.Bool(False, usedefault=True)
+    has_lesion_mask_dce = traits.Bool(False, usedefault=True)
+    has_dce_to_t1w_xfm = traits.Bool(False, usedefault=True)
+
+    aif_curve = File(exists=True, desc="AIF curve text file")
+    motion_params = File(exists=True, desc=".par motion file (→ confounds TSV)")
+    lesion_stats_json = File(exists=True)
+    roi_stats_json = File(exists=True)
+
+    brain_mask_filmstrip = File(exists=True)
+    motion_qc_plot = File(exists=True)
+    aif_curve_plot = File(exists=True)
+    aif_location_plot = File(exists=True)
+    aif_candidates_plot = File(exists=True)
+    registration_filmstrip = File(exists=True)
+    b1_qc_plot = File(exists=True)
+    t1_qc_plot = File(exists=True)
+    preprocessing_qc_plot = File(exists=True)
+    pk_modeling_qc_plot = File(exists=True)
+    pk_param_maps_qc_plot = File(exists=True)
+    model_selection_qc_plot = File(exists=True)
+    dsc_dce_xval_plot = File(exists=True)
+
+
+class DCEQCWriterOutputSpec(TraitedSpec):
+    qc_json = File(desc="Path to desc-dceQC_quality.json (empty if no metrics)")
+    aif_curve_txt = File(desc="Path to copied AIF curve TXT (empty if not provided)")
+    confounds_tsv = File(desc="Path to derived confounds TSV (empty if no motion params)")
+
+
+class DCEQCWriter(SimpleInterface):
+    """DCE QC JSON, AIF curve copy, confounds TSV/JSON, lesion/ROI stats
+    copies, figure copies, and stale-figure cleanup on rerun.
+    """
+
+    input_spec = DCEQCWriterInputSpec
+    output_spec = DCEQCWriterOutputSpec
+
+    def _run_interface(self, runtime: Any) -> Any:
+        from pmriprep.utils.outputs import (
+            par_to_confounds_tsv,
+            write_confounds_sidecar,
+        )
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+        from pmriprep.utils.report_utils import figure_filename
+
+        output_dir = Path(self.inputs.output_dir)
+        subject = self.inputs.subject_id
+        session = self.inputs.session_id or ""
+
+        prefix = f"sub-{subject}"
+        if session:
+            prefix += f"_ses-{session}"
+
+        ses_dir = output_dir / "pmriprep" / f"sub-{subject}"
+        if session:
+            ses_dir = ses_dir / f"ses-{session}"
+        perf_dir = ses_dir / "perf"
+        perf_dir.mkdir(parents=True, exist_ok=True)
+        figures_dir = ses_dir / "figures"
+
+        self._results["aif_curve_txt"] = ""
+        if isdefined(self.inputs.aif_curve) and self.inputs.aif_curve:
+            dst = perf_dir / f"{prefix}_desc-dceAif_timeseries.txt"
+            shutil.copy2(self.inputs.aif_curve, dst)
+            self._results["aif_curve_txt"] = str(dst)
+
+        self._results["confounds_tsv"] = ""
+        if isdefined(self.inputs.motion_params) and self.inputs.motion_params:
+            tsv_path = perf_dir / f"{prefix}_desc-dceConfounds_timeseries.tsv"
+            json_path = perf_dir / f"{prefix}_desc-dceConfounds_timeseries.json"
+            par_to_confounds_tsv(self.inputs.motion_params, tsv_path)
+            write_confounds_sidecar(json_path)
+            self._results["confounds_tsv"] = str(tsv_path)
+
+        if isdefined(self.inputs.lesion_stats_json) and self.inputs.lesion_stats_json:
+            shutil.copy2(
+                self.inputs.lesion_stats_json,
+                ses_dir / f"{prefix}_space-dce_desc-lesionStats.json",
+            )
+        if isdefined(self.inputs.roi_stats_json) and self.inputs.roi_stats_json:
+            shutil.copy2(
+                self.inputs.roi_stats_json,
+                ses_dir / f"{prefix}_space-dce_desc-roiStats.json",
+            )
+
+        # Stale AIF location figure cleanup (population/external AIF)
+        qc_metrics = self.inputs.qc_metrics
+        if isdefined(qc_metrics) and qc_metrics:
+            method = (
+                qc_metrics.get("aif_detection", {})
+                .get("detection_method", "unknown")
+            )
+            if method in ("population", "external"):
+                stale = figures_dir / figure_filename(
+                    subject, session, "aif_location", "dce",
+                )
+                if stale.exists():
+                    stale.unlink()
+
+        for fig_key, attr in _DCE_FIGURE_KEYS.items():
+            src = getattr(self.inputs, attr)
+            if not isdefined(src) or not src:
+                continue
+            figures_dir.mkdir(parents=True, exist_ok=True)
+            fname = figure_filename(subject, session, fig_key, "dce")
+            shutil.copy2(src, figures_dir / fname)
+
+        # QC JSON enrichment + write
+        self._results["qc_json"] = ""
+        if isdefined(qc_metrics) and qc_metrics:
+            qc = dict(qc_metrics)
+            warnings_list: list = []
+            if not self.inputs.has_b1_map:
+                warnings_list.append("B1+ transmit field map not available")
+            if not self.inputs.has_t1_map:
+                warnings_list.append("T1 relaxation time map not available")
+            if not self.inputs.has_brain_mask:
+                warnings_list.append("Brain mask in DCE space not available")
+            if not self.inputs.has_nawm_mask:
+                warnings_list.append("NAWM mask in DCE space not available")
+            if not self.inputs.has_lesion_mask_dce:
+                warnings_list.append("Lesion mask in DCE space not available")
+            if not self.inputs.has_dce_to_t1w_xfm:
+                warnings_list.append("DCE to T1w registration transform not available")
+            if warnings_list:
+                qc["warnings"] = warnings_list
+
+            provenance = self.inputs.provenance_dict
+            if isdefined(provenance) and provenance:
+                from pmriprep.utils.contrast_agent import collect_default_warnings
+                prov_warnings = collect_default_warnings(provenance, "DCE")
+                if prov_warnings:
+                    qc["provenance_warnings"] = prov_warnings
+
+            from pmriprep.utils.contrast_agent import collect_aif_fallback_warning
+            aif_warn = collect_aif_fallback_warning(qc, "DCE")
+            if aif_warn:
+                qc.setdefault("acquisition_warnings", []).append(aif_warn)
+            pf = self.inputs.preflight_warnings
+            if isdefined(pf) and pf:
+                qc.setdefault("acquisition_warnings", []).extend(list(pf))
+
+            enhanced = recommend_dce_qc(qc)
+            qc_path = ses_dir / f"{prefix}_desc-dceQC_quality.json"
+            qc_path.write_text(json.dumps(enhanced, indent=2, default=str))
+            self._results["qc_json"] = str(qc_path)
+
+        return runtime
+
+
+# ---------------------------------------------------------------------------
 # Dataset description barrier
 # ---------------------------------------------------------------------------
 

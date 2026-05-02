@@ -393,6 +393,58 @@ def build_tumor_seg_nawm_sidecar(
     }
 
 
+def dce_reference_basename() -> str:
+    """Basename of the DCE reference image inside the derivatives tree."""
+    return "space-dce_desc-dceMean_ref.nii.gz"
+
+
+def _dce_spatial_reference(subject: str, session: Optional[str]) -> str:
+    return build_spatial_reference_uri(
+        dce_reference_basename(), subject, session, datatype="perf",
+    )
+
+
+def build_dce_base_sidecar(
+    *,
+    source_paths: Sequence[PathLike],
+    reference_voxel_source: PathLike,
+    bids_dir: PathLike,
+    subject: str,
+    session: Optional[str],
+    provenance_dict: Optional[Dict[str, Any]] = None,
+    qc_metrics: Optional[Dict[str, Any]] = None,
+    minimal: bool = False,
+) -> Dict[str, Any]:
+    """Common base sidecar for DCE derivatives.
+
+    ``minimal=True`` suppresses perfusion-specific provenance enrichment
+    and the ``KtransConvention`` block (used for masks, structural
+    underlays, motion-corrected 4D, T1map, B1+map, etc.).
+    """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
+    sidecar: Dict[str, Any] = {
+        **get_bids_derivative_provenance(),
+        "SpatialReference": _dce_spatial_reference(subject, session),
+        "Sources": build_sources_list(source_paths, bids_dir),
+        **resolution_native_block(reference_voxel_source),
+    }
+    if provenance_dict:
+        sidecar.update(provenance_dict)
+    if not minimal:
+        if provenance_dict and qc_metrics:
+            from pmriprep.utils.provenance import enrich_provenance_from_qc
+
+            enriched = enrich_provenance_from_qc(sidecar, qc_metrics, "DCE")
+            sidecar.update(enriched)
+        sidecar["KtransConvention"] = "plasma_Tofts1999"
+        if isinstance(qc_metrics, dict):
+            hct = qc_metrics.get("aif_detection", {}).get("hematocrit")
+            if hct is not None:
+                sidecar["KtransConventionHct"] = float(hct)
+    return sidecar
+
+
 def dsc_reference_basename() -> str:
     """Basename of the DSC reference image inside the derivatives tree."""
     return "space-dsc_desc-dscMean_ref.nii.gz"

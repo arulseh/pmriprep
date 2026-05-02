@@ -542,3 +542,158 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         "severity": overall.severity,
     }
     return enhanced
+
+
+def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
+    """Add a NiPreps-style overall ``recommendation`` block to DCE QC metrics.
+
+    Mirrors the legacy ``DCEDerivativeWriter._add_qc_recommendation`` —
+    evaluates AIF quality_score, PK fit residual, Ktrans plausibility,
+    motion (composite ``motion_status``), peak enhancement + baseline
+    tSNR (with ``QC_*`` constants from ``dce_constants``), B1+ bias,
+    and DSC-DCE cross-validation. Aggregates per-axis severity and
+    returns ``qc_metrics`` augmented with ``recommendation``.
+    """
+    from pmriprep.utils.dce_constants import (
+        QC_B1_MEAN_HIGH,
+        QC_B1_MEAN_LOW,
+        QC_DCE_BASELINE_TSNR_MIN,
+        QC_DCE_BASELINE_TSNR_WARN,
+        QC_PEAK_ENHANCEMENT_MIN,
+        QC_PEAK_ENHANCEMENT_WARN,
+    )
+
+    recommendations: list[QCRecommendation] = []
+    enhanced = dict(qc_metrics)
+
+    # AIF quality
+    aif_qc = qc_metrics.get("aif_detection", {})
+    quality_score = aif_qc.get("quality_score")
+    if quality_score is not None:
+        if quality_score >= 0.7:
+            aif_rec = QCRecommendation(QCAction.INCLUDE, f"AIF quality good ({quality_score:.2f})", 0)
+        elif quality_score >= 0.4:
+            aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF quality marginal ({quality_score:.2f})", 1)
+        else:
+            aif_rec = QCRecommendation(QCAction.EXCLUDE, f"AIF quality poor ({quality_score:.2f})", 3)
+        recommendations.append(aif_rec)
+
+    # PK model fit
+    pk_qc = qc_metrics.get("pk_modeling", {})
+    fit_residual = pk_qc.get("median_residual")
+    if fit_residual is not None:
+        if fit_residual < 0.1:
+            fit_rec = QCRecommendation(QCAction.INCLUDE, f"PK fit residual acceptable ({fit_residual:.3f})", 0)
+        elif fit_residual < 0.2:
+            fit_rec = QCRecommendation(QCAction.REVIEW, f"PK fit residual marginal ({fit_residual:.3f})", 1)
+        else:
+            fit_rec = QCRecommendation(QCAction.EXCLUDE, f"PK fit residual high ({fit_residual:.3f})", 2)
+        recommendations.append(fit_rec)
+
+    # Ktrans plausibility
+    ktrans_mean = pk_qc.get("ktrans_mean")
+    if ktrans_mean is not None:
+        if 0.0001 < ktrans_mean < 1.0:
+            kt_rec = QCRecommendation(QCAction.INCLUDE, f"Ktrans physiologically plausible (mean={ktrans_mean:.4f})", 0)
+        else:
+            kt_rec = QCRecommendation(QCAction.REVIEW, f"Ktrans outside typical range (mean={ktrans_mean:.4f})", 1)
+        recommendations.append(kt_rec)
+
+    # Motion via composite status
+    preprocessing_qc = qc_metrics.get("preprocessing", {})
+    motion_status = preprocessing_qc.get("motion_status")
+    if motion_status is not None:
+        fd_mean = preprocessing_qc.get("fd_mean")
+        fd_max = preprocessing_qc.get("fd_max")
+        pct_outliers = preprocessing_qc.get("percent_outliers")
+        parts = []
+        if fd_mean is not None:
+            parts.append(f"mean FD={fd_mean:.2f}mm")
+        if fd_max is not None:
+            parts.append(f"max FD={fd_max:.2f}mm")
+        if pct_outliers is not None:
+            parts.append(f"outliers={pct_outliers:.1f}%")
+        detail = f"({', '.join(parts)})" if parts else ""
+        if motion_status == QCStatus.PASS:
+            motion_rec = QCRecommendation(QCAction.INCLUDE, f"Motion acceptable {detail}", 0)
+        elif motion_status == QCStatus.WARN:
+            motion_rec = QCRecommendation(QCAction.REVIEW, f"Motion marginal {detail}", 1)
+        elif motion_status == QCStatus.POOR:
+            motion_rec = QCRecommendation(QCAction.REVIEW, f"Excessive motion {detail}", 2)
+        else:
+            motion_rec = None
+        if motion_rec is not None:
+            recommendations.append(motion_rec)
+
+    # Peak enhancement + baseline tSNR
+    peak_enh = preprocessing_qc.get("peak_enh_pct")
+    baseline_tsnr = preprocessing_qc.get("baseline_tsnr")
+    aif_source = aif_qc.get("aif_source", "")
+    if peak_enh is not None:
+        if peak_enh < QC_PEAK_ENHANCEMENT_MIN:
+            recommendations.append(QCRecommendation(
+                QCAction.EXCLUDE,
+                f"Peak enhancement critically low ({peak_enh:.1f}% < {QC_PEAK_ENHANCEMENT_MIN}%, possible failed injection)",
+                3,
+            ))
+        elif peak_enh < QC_PEAK_ENHANCEMENT_WARN:
+            recommendations.append(QCRecommendation(
+                QCAction.REVIEW,
+                f"Peak enhancement marginal ({peak_enh:.1f}%)",
+                1,
+            ))
+            if aif_source == "population":
+                recommendations.append(QCRecommendation(
+                    QCAction.REVIEW,
+                    "Injection quality cannot be verified with population AIF",
+                    1,
+                ))
+    if baseline_tsnr is not None:
+        if baseline_tsnr < QC_DCE_BASELINE_TSNR_MIN:
+            recommendations.append(QCRecommendation(
+                QCAction.EXCLUDE,
+                f"Baseline tSNR critically low ({baseline_tsnr:.1f} < {QC_DCE_BASELINE_TSNR_MIN})",
+                3,
+            ))
+        elif baseline_tsnr < QC_DCE_BASELINE_TSNR_WARN:
+            recommendations.append(QCRecommendation(
+                QCAction.REVIEW,
+                f"Baseline tSNR marginal ({baseline_tsnr:.1f})",
+                1,
+            ))
+
+    # B1+ bias
+    b1_qc = qc_metrics.get("b1_mapping", {})
+    mean_b1 = b1_qc.get("mean_b1")
+    if mean_b1 is not None:
+        if mean_b1 < QC_B1_MEAN_LOW or mean_b1 > QC_B1_MEAN_HIGH:
+            recommendations.append(QCRecommendation(
+                QCAction.REVIEW,
+                f"B1+ bias outside expected range (mean={mean_b1:.2f}, expected {QC_B1_MEAN_LOW}-{QC_B1_MEAN_HIGH})",
+                1,
+            ))
+
+    # DSC-DCE cross-validation
+    xval = qc_metrics.get("dsc_dce_validation", {})
+    if not xval.get("skipped", False) and not xval.get("circular", False):
+        xval_status = xval.get("status")
+        xval_metrics = xval.get("metrics", {})
+        corr = xval_metrics.get("correlation", 0.0)
+        if xval_status == QCStatus.WARN:
+            preload = xval.get("preload_effect_detected", False)
+            detail = "low vp/CBV ratio" if preload else "ratio outside range"
+            recommendations.append(QCRecommendation(
+                QCAction.REVIEW, f"DSC-DCE: {detail} (r={corr:.2f})", 1,
+            ))
+        elif xval_status == QCStatus.PASS:
+            recommendations.append(QCRecommendation(
+                QCAction.INCLUDE, f"DSC-DCE validation passed (r={corr:.2f})", 0,
+            ))
+
+    overall = aggregate_qc_recommendations(recommendations)
+    enhanced["recommendation"] = {
+        "action": overall.action,
+        "reason": overall.reason,
+        "severity": overall.severity,
+    }
+    return enhanced
