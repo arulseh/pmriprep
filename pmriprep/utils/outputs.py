@@ -168,7 +168,7 @@ def write_dataset_description(
         "DatasetType": "derivative",
         "GeneratedBy": existing_generated_by + [pmriprep_entry],
         "SourceDatasets": [
-            {"URL": f"bids:raw:{Path(bids_dir).name}"},
+            {"URL": f"bids::{Path(bids_dir).name}"},
         ],
         "HowToAcknowledge": (
             f"Please cite PMRIPrep (version {pmriprep.__version__}), "

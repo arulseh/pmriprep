@@ -1170,9 +1170,21 @@ def _load_plugin_config(path: Path) -> tuple[str, dict[str, Any]]:
             f"--use-plugin file {path} must contain a top-level 'plugin' key"
         )
 
-    plugin_name = str(data["plugin"])
-    plugin_args = dict(data.get("plugin_args") or {})
-    return plugin_name, plugin_args
+    plugin_value = data["plugin"]
+    if not isinstance(plugin_value, str):
+        raise ValueError(
+            f"--use-plugin 'plugin' must be a string (got "
+            f"{type(plugin_value).__name__})"
+        )
+
+    plugin_args_raw = data.get("plugin_args") or {}
+    if not isinstance(plugin_args_raw, dict):
+        raise ValueError(
+            f"--use-plugin 'plugin_args' must be a mapping (got "
+            f"{type(plugin_args_raw).__name__})"
+        )
+
+    return plugin_value, dict(plugin_args_raw)
 
 
 def _run_workflow(

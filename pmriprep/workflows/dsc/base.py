@@ -435,7 +435,7 @@ def _detect_and_correct_preload(
     # Load AIF
     aif = np.loadtxt(aif_file)
 
-    qc_metrics: dict = {}
+    qc_metrics: dict[str, Any] = {}
     k2_map_file: str = ""
 
     # K2-primary is the sole classifier. Run detect_preload() only for the
