@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.38.0"
+version = "0.38.1"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
@@ -64,6 +64,10 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pmriprep.workflows.*"
+disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 markers = [

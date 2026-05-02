@@ -5,7 +5,7 @@ following the NiPreps/fMRIPrep workflow design patterns.
 """
 
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 from nipype.interfaces import utility as niu  # type: ignore[import-untyped]
 from nipype.pipeline import engine as pe  # type: ignore[import-untyped]
@@ -23,7 +23,10 @@ from pmriprep.interfaces.anat import (
 )
 
 
-def _merge_qc_metrics(brain_qc, denoising=False):
+def _merge_qc_metrics(
+    brain_qc: dict[str, Any],
+    denoising: bool = False,
+) -> dict[str, Any]:
     """Merge QC metrics from preprocessing steps.
 
     Parameters
@@ -52,7 +55,10 @@ def _merge_qc_metrics(brain_qc, denoising=False):
     return merged
 
 
-def _determine_processing_mode(t1w_precon=None, t1w_postcon=None):
+def _determine_processing_mode(
+    t1w_precon: Optional[str] = None,
+    t1w_postcon: Optional[str] = None,
+) -> Tuple[Optional[str], bool]:
     """Determine reference T1w and processing mode using confidence scoring.
 
     Uses _determine_processing_mode_v2 from structural_reference module for
@@ -81,7 +87,12 @@ def _determine_processing_mode(t1w_precon=None, t1w_postcon=None):
     return reference_t1w, is_postcon_ref
 
 
-def _create_brain_mask_filmstrip(t1w_file, brain_mask_file, subject_id="", session_id=""):
+def _create_brain_mask_filmstrip(
+    t1w_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create brain extraction QC filmstrip showing mask boundary on T1w.
 
     Loads bias-corrected T1w as background and overlays the brain mask
@@ -116,9 +127,9 @@ def _create_brain_mask_filmstrip(t1w_file, brain_mask_file, subject_id="", sessi
     output_path = str(out_dir / "brain_mask_qc_filmstrip.png")
 
     t1w_img = nib.load(t1w_file)
-    t1w_data = t1w_img.get_fdata()
-    mask_data = nib.load(brain_mask_file).get_fdata().astype(bool)
-    voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])
+    t1w_data = t1w_img.get_fdata()  # type: ignore[attr-defined]
+    mask_data = nib.load(brain_mask_file).get_fdata().astype(bool)  # type: ignore[attr-defined]
+    voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])  # type: ignore[attr-defined]
 
     # Pass full binary mask — contour at level=0.5 gives solid line
     label_masks = [("Brain mask", mask_data.astype(np.float64), "#EE6677")]
@@ -135,7 +146,11 @@ def _create_brain_mask_filmstrip(t1w_file, brain_mask_file, subject_id="", sessi
     return output_path
 
 
-def _create_acpc_registration_filmstrip(t1w_acpc_file, subject_id="", session_id=""):
+def _create_acpc_registration_filmstrip(
+    t1w_acpc_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create ACPC-to-MNI registration QC filmstrip.
 
     Shows ACPC-aligned T1w as background with MNI template edges overlaid
@@ -186,8 +201,14 @@ def _create_acpc_registration_filmstrip(t1w_acpc_file, subject_id="", session_id
     return output_path
 
 
-def _create_coreg_qc_filmstrip(coregistered_file, reference_file, brain_mask_file, title,
-                               subject_id="", session_id=""):
+def _create_coreg_qc_filmstrip(
+    coregistered_file: str,
+    reference_file: str,
+    brain_mask_file: str,
+    title: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create cross-modal coregistration QC filmstrip.
 
     Shows masked coregistered image as background with brain-extracted T1w
@@ -221,10 +242,10 @@ def _create_coreg_qc_filmstrip(coregistered_file, reference_file, brain_mask_fil
     output_path = str(out_dir / f"coreg_qc_{safe_name}.png")
 
     coreg_img = nib.load(coregistered_file)
-    coreg_data = coreg_img.get_fdata()
-    ref_data = nib.load(reference_file).get_fdata()
-    mask_data = nib.load(brain_mask_file).get_fdata()
-    voxel_sizes = tuple(coreg_img.header.get_zooms()[:3])
+    coreg_data = coreg_img.get_fdata()  # type: ignore[attr-defined]
+    ref_data = nib.load(reference_file).get_fdata()  # type: ignore[attr-defined]
+    mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]
+    voxel_sizes = tuple(coreg_img.header.get_zooms()[:3])  # type: ignore[attr-defined]
 
     plot_registration_qc_filmstrip(
         fixed=coreg_data,
@@ -238,8 +259,14 @@ def _create_coreg_qc_filmstrip(coregistered_file, reference_file, brain_mask_fil
     return output_path
 
 
-def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf_probseg_file,
-                                 subject_id="", session_id=""):
+def _create_tissue_seg_filmstrip(
+    t1w_file: str,
+    wm_probseg_file: str,
+    gm_probseg_file: str,
+    csf_probseg_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create tissue segmentation QC filmstrip showing WM/GM/CSF contours on T1w.
 
     Thresholds each probability map at p>0.5 to create binary masks,
@@ -278,12 +305,12 @@ def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf
     output_path = str(out_dir / "tissue_seg_qc_filmstrip.png")
 
     t1w_img = nib.load(t1w_file)
-    t1w_data = t1w_img.get_fdata()
-    voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])
+    t1w_data = t1w_img.get_fdata()  # type: ignore[attr-defined]
+    voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])  # type: ignore[attr-defined]
 
     # Threshold probability maps at 0.5 to get binary masks
-    wm_mask = (nib.load(wm_probseg_file).get_fdata() > 0.5).astype(np.float64)
-    csf_mask = (nib.load(csf_probseg_file).get_fdata() > 0.5).astype(np.float64)
+    wm_mask = (nib.load(wm_probseg_file).get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
+    csf_mask = (nib.load(csf_probseg_file).get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
 
     # Two boundary lines separate three compartments:
     # WM contour = WM/GM interface, CSF contour = GM/CSF interface.
@@ -305,7 +332,7 @@ def _create_tissue_seg_filmstrip(t1w_file, wm_probseg_file, gm_probseg_file, csf
     return output_path
 
 
-def _passthrough_if_undefined(in_file=None):
+def _passthrough_if_undefined(in_file: Optional[str] = None) -> str:
     """Return empty string if input is undefined or doesn't exist.
 
     Parameters
@@ -786,7 +813,12 @@ def init_anat_preproc_wf(
     # Node to route FAST input: handles normal, hybrid, and skip modes.
     # In hybrid mode (postcon reference + acceptable precon), FAST runs
     # on a coregistered precon image prepared by a parallel path below.
-    def _route_fast_input(in_file, t1w_precon=None, t1w_postcon=None, is_postcon_ref=False):
+    def _route_fast_input(
+        in_file: Optional[str],
+        t1w_precon: Optional[str] = None,
+        t1w_postcon: Optional[str] = None,
+        is_postcon_ref: bool = False,
+    ) -> Optional[str]:
         """Route FAST input based on processing mode and precon quality.
 
         Normal mode: FAST on brain-extracted precon (in_file).
@@ -834,7 +866,9 @@ def init_anat_preproc_wf(
         name="check_fast_mode",
     )
 
-    def _guarded_tissue_segment(in_file):
+    def _guarded_tissue_segment(
+        in_file: Optional[str],
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """Run FAST tissue segmentation, or return None triplet if skipped.
 
         Returns (None, None, None) when in_file is None (Case 4: postcon
@@ -880,9 +914,13 @@ def init_anat_preproc_wf(
     # -------------------------------------------------------------------
 
     def _run_hybrid_fast_chain(
-        t1w_precon=None, t1w_postcon=None, is_postcon_ref=False,
-        reference_file=None, brain_mask=None, denoise=True,
-    ):
+        t1w_precon: Optional[str] = None,
+        t1w_postcon: Optional[str] = None,
+        is_postcon_ref: bool = False,
+        reference_file: Optional[str] = None,
+        brain_mask: Optional[str] = None,
+        denoise: bool = True,
+    ) -> Optional[str]:
         """Run full hybrid FAST preprocessing chain or return None.
 
         When postcon is reference and precon passes the quality gate,
@@ -913,7 +951,7 @@ def init_anat_preproc_wf(
             in_file=bias_corrected, reference=reference_file,
             modality="T1w", dof=6,
         ).run().outputs.out_file
-        masked = ApplyMask(
+        masked: str = ApplyMask(
             in_file=coregistered, mask_file=brain_mask,
         ).run().outputs.out_file
         return masked
@@ -944,7 +982,9 @@ def init_anat_preproc_wf(
     ])
 
     # Merge: pick normal FAST input or hybrid FAST input
-    def _merge_fast_inputs(normal_input, hybrid_input):
+    def _merge_fast_inputs(
+        normal_input: Optional[str], hybrid_input: Optional[str]
+    ) -> Optional[str]:
         """Select whichever FAST input is available."""
         if normal_input is not None:
             return normal_input

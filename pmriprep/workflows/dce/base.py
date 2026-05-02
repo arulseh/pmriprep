@@ -5,7 +5,7 @@ following the NiPreps/fMRIPrep workflow design patterns.
 """
 
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
@@ -2571,11 +2571,11 @@ def _create_aif_search_mask(
 
 
 def _transform_atlas_to_dce(
-    atlas_file=None,
-    t1w_to_mni_xfm=None,
-    t1w_to_dce_xfm=None,
-    reference_file=None,
-):
+    atlas_file: Optional[str] = None,
+    t1w_to_mni_xfm: Optional[str] = None,
+    t1w_to_dce_xfm: Optional[str] = None,
+    reference_file: Optional[str] = None,
+) -> Optional[str]:
     """Transform MNI atlas mask to DCE space via T1w (Gap 6).
 
     Creates a concatenated transform MNI→T1w→DCE and applies it to the
@@ -2679,11 +2679,11 @@ def _transform_atlas_to_dce(
 
 
 def _transform_atlas_cascade_to_dce(
-    atlas_files=None,
-    t1w_to_mni_xfm=None,
-    t1w_to_dce_xfm=None,
-    reference_file=None,
-):
+    atlas_files: Optional[list[str]] = None,
+    t1w_to_mni_xfm: Optional[str] = None,
+    t1w_to_dce_xfm: Optional[str] = None,
+    reference_file: Optional[str] = None,
+) -> Optional[list[str]]:
     """Transform a list of MNI atlas masks to DCE space via T1w.
 
     Computes the MNI→DCE composite transform once, then applies it to each
@@ -2784,16 +2784,16 @@ def _transform_atlas_cascade_to_dce(
 
 
 def _signal_to_concentration_node(
-    dce_file,
-    t1_map_file,
-    b1_map_file,
-    flip_angle,
-    tr,
-    field_strength,
-    r1_relaxivity,
-    baseline_frames,
-    no_t1,
-):
+    dce_file: str,
+    t1_map_file: Optional[str],
+    b1_map_file: Optional[str],
+    flip_angle: float,
+    tr: float,
+    field_strength: float,
+    r1_relaxivity: Optional[float],
+    baseline_frames: int,
+    no_t1: bool,
+) -> str:
     """Function node for signal to concentration conversion.
 
     This function wraps the signal_to_concentration utility for use in
@@ -2872,13 +2872,13 @@ def _signal_to_concentration_node(
 
 
 def _tortuosity_correction_node(
-    ktrans_file,
-    dwi_file,
-    dwi_bvals=None,
-    dwi_bvecs=None,
-    brain_mask=None,
-    no_tortuosity=False,
-):
+    ktrans_file: str,
+    dwi_file: Optional[str],
+    dwi_bvals: Optional[list[float]] = None,
+    dwi_bvecs: Optional[list[list[float]]] = None,
+    brain_mask: Optional[str] = None,
+    no_tortuosity: bool = False,
+) -> Tuple[Optional[str], bool, Optional[str]]:
     """Function node for tortuosity correction.
 
     Returns ``(ktrans_corrected_file, was_corrected, qc_plot)`` on success,
@@ -2909,10 +2909,10 @@ def _tortuosity_correction_node(
     logger = logging.getLogger("nipype.workflow")
 
     # If skipping tortuosity or no DWI data, return None (no output file)
-    if no_tortuosity or dwi_file is None:
+    if no_tortuosity or dwi_file is None or brain_mask is None:
         logger.info(
-            "Tortuosity correction skipped (no_tortuosity=%s, dwi=%s)",
-            no_tortuosity, dwi_file is not None,
+            "Tortuosity correction skipped (no_tortuosity=%s, dwi=%s, mask=%s)",
+            no_tortuosity, dwi_file is not None, brain_mask is not None,
         )
         return None, False, None
 
@@ -2960,7 +2960,7 @@ def _tortuosity_correction_node(
             bvecs_arr = bvecs_arr[keep_indices]
 
         n_before = dwi_data.shape[3] if dwi_data.ndim == 4 else 1
-        dwi_data, b_values = average_dwi_directions(
+        dwi_data, b_values = average_dwi_directions(  # type: ignore[assignment]
             dwi_data, b_values, bvecs_arr
         )
         n_after = dwi_data.shape[3] if dwi_data.ndim == 4 else 1
@@ -3046,14 +3046,14 @@ def _tortuosity_correction_node(
 
 
 def _dsc_dce_validation_node(
-    vp_file=None,
-    dsc_cbv_file=None,
-    dsc_ncbv_file=None,
-    brain_mask=None,
-    no_dsc_validation=False,
-    pk_qc=None,
-    dsc_preload_configured=None,
-):
+    vp_file: Optional[str] = None,
+    dsc_cbv_file: Optional[str] = None,
+    dsc_ncbv_file: Optional[str] = None,
+    brain_mask: Optional[str] = None,
+    no_dsc_validation: bool = False,
+    pk_qc: Optional[dict[str, Any]] = None,
+    dsc_preload_configured: Optional[bool] = None,
+) -> Optional[dict[str, Any]]:
     """Function node for DSC-DCE cross-validation.
 
     Args:
@@ -3147,6 +3147,15 @@ def _dsc_dce_validation_node(
             ),
         }
 
+    # Past the no-NAWM guard above, brain_mask is required by the validator;
+    # surface a clean skip rather than letting nib.load raise.
+    if not brain_mask:
+        return {
+            "skipped": True,
+            "status": "SKIPPED",
+            "reason": "DSC-DCE xval skipped: brain_mask unavailable.",
+        }
+
     try:
         # nCBV is the only valid comparator; cbv_path is unused here.
         result = validate_vp_cbv_from_files(
@@ -3209,16 +3218,16 @@ def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
 
 
 def _dsc_dce_xval_plot_node(
-    vp_file=None,
-    dsc_cbv_file=None,
-    dsc_ncbv_file=None,
-    brain_mask=None,
-    validation_result=None,
-    subject_id="",
-    session_id="",
-    pk_qc=None,
-    model_selection_file=None,
-):
+    vp_file: Optional[str] = None,
+    dsc_cbv_file: Optional[str] = None,
+    dsc_ncbv_file: Optional[str] = None,
+    brain_mask: Optional[str] = None,
+    validation_result: Optional[dict[str, Any]] = None,
+    subject_id: str = "",
+    session_id: str = "",
+    pk_qc: Optional[dict[str, Any]] = None,
+    model_selection_file: Optional[str] = None,
+) -> Optional[str]:
     """Function node for DSC-DCE cross-validation plot generation.
 
     Args:
@@ -3245,7 +3254,7 @@ def _dsc_dce_xval_plot_node(
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
     # Plot mirrors _dsc_dce_validation_node — requires nCBV; the rel-AUC-CBV
     # fallback is miscalibrated, so skip plot when no NAWM.
-    if not have_ncbv:
+    if not have_ncbv or dsc_ncbv_file is None:
         return None
 
     resolved_mode = None
@@ -3299,23 +3308,23 @@ def _dsc_dce_xval_plot_node(
 
 
 def _collect_qc_metrics(
-    b1_qc,
-    t1_qc,
-    preprocess_qc,
-    registration_qc,
-    aif_qc,
-    pk_qc,
-    validation_result,
-    preproc_display=None,
-    pk_fit_qc_metrics=None,
-    pk_maps_qc_metrics=None,
-    vp_at_bound_fractions=None,
-    use_external_t1=False,
-    no_t1=False,
-    b1_method="auto",
-    tortuosity_applied=False,
-    nawm_available=False,
-):
+    b1_qc: Optional[dict[str, Any]],
+    t1_qc: Optional[dict[str, Any]],
+    preprocess_qc: dict[str, Any],
+    registration_qc: dict[str, Any],
+    aif_qc: dict[str, Any],
+    pk_qc: dict[str, Any],
+    validation_result: Optional[dict[str, Any]],
+    preproc_display: Optional[dict[str, Any]] = None,
+    pk_fit_qc_metrics: Optional[dict[str, Any]] = None,
+    pk_maps_qc_metrics: Optional[dict[str, Any]] = None,
+    vp_at_bound_fractions: Optional[dict[str, float]] = None,
+    use_external_t1: bool = False,
+    no_t1: bool = False,
+    b1_method: str = "auto",
+    tortuosity_applied: bool = False,
+    nawm_available: bool = False,
+) -> dict[str, Any]:
     """Collect all QC metrics into a single dictionary.
 
     Args:
@@ -3339,7 +3348,7 @@ def _collect_qc_metrics(
     Returns:
         Combined QC metrics dictionary.
     """
-    qc_metrics = {}
+    qc_metrics: dict[str, Any] = {}
 
     if b1_qc is not None:
         qc_metrics["b1_mapping"] = b1_qc
@@ -3696,11 +3705,11 @@ def _resample_dsc_ncbv_to_dce(
 
 
 def _register_dwi_to_dce(
-    dwi_file=None,
-    t1w_file=None,
-    t1w_to_dce_xfm=None,
-    dce_reference=None,
-):
+    dwi_file: Optional[str] = None,
+    t1w_file: Optional[str] = None,
+    t1w_to_dce_xfm: Optional[str] = None,
+    dce_reference: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str]]:
     """Register DWI to DCE space via T1w (Gap 1 fix).
 
     Performs a two-step registration chain:
@@ -3751,11 +3760,11 @@ def _register_dwi_to_dce(
         from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
 
         _dwi_img = nib.load(dwi_reoriented)
-        _ornt = io_orientation(_dwi_img.affine)
+        _ornt = io_orientation(_dwi_img.affine)  # type: ignore[attr-defined]
         _ras_ornt = axcodes2ornt(("R", "A", "S"))
         if not np.array_equal(_ornt, _ras_ornt):
             _transform = ornt_transform(_ornt, _ras_ornt)
-            _dwi_ras = _dwi_img.as_reoriented(_transform)
+            _dwi_ras = _dwi_img.as_reoriented(_transform)  # type: ignore[attr-defined]
             nib.save(_dwi_ras, dwi_reoriented)
         dwi_file = dwi_reoriented
     except subprocess.CalledProcessError:
@@ -3768,7 +3777,7 @@ def _register_dwi_to_dce(
     if dwi_data.ndim == 4:
         # Use first volume (assumed b0) for registration
         b0_data = dwi_data[..., 0]
-        b0_img = nib.Nifti1Image(b0_data, dwi_img.affine)
+        b0_img = nib.Nifti1Image(b0_data, dwi_img.affine)  # type: ignore[attr-defined]
         b0_file = str(out_dir / "_tmp_dwi_b0.nii.gz")
         nib.save(b0_img, b0_file)
         reg_input = b0_file
@@ -3997,7 +4006,12 @@ def _transform_structural_to_dce(
     return out_file
 
 
-def _generate_dce_motion_qc_plot(motion_params_file, tr, subject_id="", session_id=""):
+def _generate_dce_motion_qc_plot(
+    motion_params_file: str,
+    tr: float,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Generate motion QC plot from DCE motion parameters.
 
     Creates a two-panel figure showing raw motion parameters and
@@ -4024,16 +4038,16 @@ def _generate_dce_motion_qc_plot(motion_params_file, tr, subject_id="", session_
 
 
 def _generate_preprocessing_qc(
-    dce_file,
-    brain_mask_file,
-    baseline_frames,
-    bolus_arrival_frame,
-    tr_ms,
-    volume_tr_s,
-    te=None,
-    subject_id="",
-    session_id="",
-):
+    dce_file: str,
+    brain_mask_file: str,
+    baseline_frames: int,
+    bolus_arrival_frame: int,
+    tr_ms: float,
+    volume_tr_s: float,
+    te: Optional[float] = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> Tuple[str, dict[str, Any]]:
     """Generate DCE preprocessing QC plot.
 
     Thin wrapper that loads NIfTI data and delegates to
@@ -4060,10 +4074,13 @@ def _generate_preprocessing_qc(
     from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
 
     dce_img = nib.load(dce_file)
-    dce_data = dce_img.get_fdata()
-    brain_mask = nib.load(brain_mask_file).get_fdata() > 0.5
+    dce_data = dce_img.get_fdata()  # type: ignore[attr-defined]
+    brain_mask = nib.load(brain_mask_file).get_fdata() > 0.5  # type: ignore[attr-defined]
 
-    voxel_size_mm = tuple(float(z) for z in dce_img.header.get_zooms()[:3])
+    _zooms = dce_img.header.get_zooms()  # type: ignore[attr-defined]
+    voxel_size_mm: tuple[float, float, float] = (
+        float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),
+    )
 
     # Convert TR from seconds (inputnode) to milliseconds
     tr_ms_val = tr_ms * 1000.0 if tr_ms is not None else 0.0
@@ -4098,12 +4115,12 @@ def _generate_preprocessing_qc(
 
 
 def _create_dce_registration_filmstrip(
-    dce_mean_file=None,
-    registered_t1w_file=None,
-    brain_mask_file=None,
-    subject_id="",
-    session_id="",
-):
+    dce_mean_file: Optional[str] = None,
+    registered_t1w_file: Optional[str] = None,
+    brain_mask_file: Optional[str] = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> Optional[str]:
     """Create registration QC filmstrip for DCE-T1w registration.
 
     Generates a multi-slice filmstrip showing the DCE mean image with
@@ -4135,7 +4152,7 @@ def _create_dce_registration_filmstrip(
     # Load data
     dce_img = nib.load(dce_mean_file)
     dce_data = dce_img.get_fdata()  # type: ignore[attr-defined]
-    voxel_sizes = tuple(dce_img.header.get_zooms()[:3])
+    voxel_sizes = tuple(dce_img.header.get_zooms()[:3])  # type: ignore[attr-defined]
 
     t1w_img = nib.load(registered_t1w_file)
     t1w_data = t1w_img.get_fdata()  # type: ignore[attr-defined]
@@ -4160,7 +4177,11 @@ def _create_dce_registration_filmstrip(
     return str(out_path)
 
 
-def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
+def _smooth_dce_maps(
+    map_files: dict[str, str],
+    brain_mask_file: str,
+    fwhm: float,
+) -> dict[str, str]:
     """Apply Gaussian smoothing to a dict of DCE maps.
 
     Uses normalized convolution for maps containing NaN (PK maps in auto
@@ -4193,7 +4214,7 @@ def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
         "peak_enhancement", "ser",
     }
 
-    results = {}
+    results: dict[str, str] = {}
     if not map_files:
         return results
     if not brain_mask_file or not isdefined(brain_mask_file):
@@ -4214,7 +4235,7 @@ def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
 
         # Check for NaN values
         img = nib.load(filepath)
-        data = img.get_fdata()
+        data = img.get_fdata()  # type: ignore[attr-defined]
         has_nan = np.any(np.isnan(data))
 
         if has_nan:
@@ -4224,7 +4245,7 @@ def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
             # Normalized convolution: smooth(data) / smooth(valid_mask)
             valid_mask = np.isfinite(data).astype(np.float32)
             vmask_path = str(Path.cwd() / f"{name}_vmask.nii.gz")
-            nib.save(nib.Nifti1Image(valid_mask, img.affine, img.header), vmask_path)
+            nib.save(nib.Nifti1Image(valid_mask, img.affine, img.header), vmask_path)  # type: ignore[attr-defined]
 
             num_path = str(Path.cwd() / f"{name}_num.nii.gz")
             den_path = str(Path.cwd() / f"{name}_den.nii.gz")
@@ -4263,7 +4284,12 @@ def _smooth_dce_maps(map_files, brain_mask_file, fwhm):
     return results
 
 
-def _build_pk_map_dict(ktrans=None, ve=None, vp=None, kep=None):
+def _build_pk_map_dict(
+    ktrans: Optional[str] = None,
+    ve: Optional[str] = None,
+    vp: Optional[str] = None,
+    kep: Optional[str] = None,
+) -> dict[str, str]:
     """Build dictionary of PK maps for smoothing."""
     from nipype.interfaces.base import isdefined
 
@@ -4280,9 +4306,15 @@ def _build_pk_map_dict(ktrans=None, ve=None, vp=None, kep=None):
 
 
 def _build_model_free_map_dict(
-    iauc60=None, iauc90=None, iauc120=None, peak=None, ttp=None, ser=None,
-    wash_in_slope=None, wash_out_slope=None,
-):
+    iauc60: Optional[str] = None,
+    iauc90: Optional[str] = None,
+    iauc120: Optional[str] = None,
+    peak: Optional[str] = None,
+    ttp: Optional[str] = None,
+    ser: Optional[str] = None,
+    wash_in_slope: Optional[str] = None,
+    wash_out_slope: Optional[str] = None,
+) -> dict[str, str]:
     """Build dictionary of model-free maps for smoothing.
 
     Note: TTP is excluded from smoothing because it is a discrete timing
@@ -4311,8 +4343,12 @@ def _build_model_free_map_dict(
 
 
 def _build_uncertainty_map_dict(
-    ktrans_std=None, ve_std=None, vp_std=None, fp_std=None, ps_std=None,
-):
+    ktrans_std: Optional[str] = None,
+    ve_std: Optional[str] = None,
+    vp_std: Optional[str] = None,
+    fp_std: Optional[str] = None,
+    ps_std: Optional[str] = None,
+) -> dict[str, str]:
     """Build dictionary of uncertainty std maps for smoothing.
 
     Only posterior std maps are smoothed. CV (std/mean ratio) and CI95 bounds
@@ -4336,7 +4372,9 @@ def _build_uncertainty_map_dict(
     return d
 
 
-def _build_tortuosity_map_dict(ktrans_tortuosity_corrected=None):
+def _build_tortuosity_map_dict(
+    ktrans_tortuosity_corrected: Optional[str] = None,
+) -> dict[str, str]:
     """Build dictionary for tortuosity-corrected Ktrans for smoothing."""
     from nipype.interfaces.base import isdefined
 
@@ -4346,7 +4384,10 @@ def _build_tortuosity_map_dict(ktrans_tortuosity_corrected=None):
     return d
 
 
-def _normalize_by_nawm(param_map=None, nawm_mask=None):
+def _normalize_by_nawm(
+    param_map: Optional[str] = None,
+    nawm_mask: Optional[str] = None,
+) -> Optional[str]:
     """Normalize parameter map by NAWM median.
 
     Median is used (matching DSC nCBV in ``utils/dsc_signal.py``) so the
@@ -4403,7 +4444,7 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):
     param_stem = Path(param_map).name.replace(".nii.gz", "").replace(".nii", "")
     out_file = str(Path.cwd() / f"n{param_stem}.nii.gz")
     nib.save(
-        nib.Nifti1Image(normalized.astype(np.float32), param_img.affine),
+        nib.Nifti1Image(normalized.astype(np.float32), param_img.affine),  # type: ignore[attr-defined]
         out_file,
     )
     return out_file
@@ -4468,10 +4509,10 @@ def _generate_dce_pk_maps_qc(
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath):
+    def _safe_load(filepath: Optional[str]) -> Any:
         if not filepath or not _P(str(filepath)).is_file():
             return None
-        return nib.load(filepath).get_fdata()
+        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
 
     pk_param_maps_qc_plot = ""
     model_selection_qc_plot = ""
@@ -4580,7 +4621,7 @@ def _generate_dce_pk_maps_qc(
             else:
                 vp_at_bound_fractions["whole_brain"] = 0.0
 
-            def _frac_in_roi(roi_bool):
+            def _frac_in_roi(roi_bool: Any) -> Optional[float]:
                 sel = roi_bool & finite
                 return float(np.mean(vpab_bool[sel])) if sel.any() else None
 
@@ -4621,27 +4662,27 @@ def _generate_dce_pk_maps_qc(
 
 
 def _generate_dce_pk_fit_qc(
-    concentration_file,
-    dce_signal_file=None,
-    aif_file=None,
-    brain_mask_file=None,
-    ktrans_file=None,
-    ve_file=None,
-    vp_file=None,
-    fp_file=None,
-    ps_file=None,
-    r2_file=None,
-    qc_mask_file=None,
-    fitted_curves_file=None,
-    model_selection_file=None,
-    enhancing_mask_file=None,
-    non_enhancing_mask_file=None,
-    volume_tr=1.0,
-    baseline_frames=10,
-    model_name="tofts",
-    subject_id="",
-    session_id="",
-):
+    concentration_file: str,
+    dce_signal_file: Optional[str] = None,
+    aif_file: Optional[str] = None,
+    brain_mask_file: Optional[str] = None,
+    ktrans_file: Optional[str] = None,
+    ve_file: Optional[str] = None,
+    vp_file: Optional[str] = None,
+    fp_file: Optional[str] = None,
+    ps_file: Optional[str] = None,
+    r2_file: Optional[str] = None,
+    qc_mask_file: Optional[str] = None,
+    fitted_curves_file: Optional[str] = None,
+    model_selection_file: Optional[str] = None,
+    enhancing_mask_file: Optional[str] = None,
+    non_enhancing_mask_file: Optional[str] = None,
+    volume_tr: float = 1.0,
+    baseline_frames: int = 10,
+    model_name: str = "tofts",
+    subject_id: str = "",
+    session_id: str = "",
+) -> Tuple[Optional[str], dict[str, Any]]:
     """Generate DCE PK modeling fit QC plot.
 
     Lightweight wrapper that loads saved NIfTIs, recomputes the single-voxel
@@ -4681,10 +4722,13 @@ def _generate_dce_pk_fit_qc(
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath):
+    def _safe_load(filepath: Optional[str]) -> Any:
         if not filepath or not _P(str(filepath)).is_file():
             return None
-        return nib.load(filepath).get_fdata()
+        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
+
+    if not brain_mask_file or not aif_file:
+        return None, {}
 
     try:
         from pmriprep.utils.dce_pk_qc_plots import (
@@ -4693,8 +4737,8 @@ def _generate_dce_pk_fit_qc(
         )
 
         # Load required data
-        conc_data = nib.load(concentration_file).get_fdata()
-        mask_data = nib.load(brain_mask_file).get_fdata()
+        conc_data = nib.load(concentration_file).get_fdata()  # type: ignore[attr-defined]
+        mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]
         mask_bool = mask_data > 0.5
 
         n_timepoints = conc_data.shape[3]
@@ -4762,7 +4806,9 @@ def _generate_dce_pk_fit_qc(
                 enhancing_mask=enhancing_mask_data,
             )
 
-            model_cls_map = {
+            # Concrete subclasses of PKModel; mypy infers the dict value as the
+            # abstract base, so the call site below needs an explicit type tag.
+            model_cls_map: dict[str, type] = {
                 "tofts": ToftsModel,
                 "extended_tofts": ExtendedToftsModel,
                 "patlak": PatlakModel,
@@ -4866,7 +4912,7 @@ def _generate_dce_pk_fit_qc(
             ne_data = _safe_load(non_enhancing_mask_file)
             ne_bool = (ne_data > 0.5) if ne_data is not None else None
 
-            def _patlak_frac(region_mask):
+            def _patlak_frac(region_mask: Any) -> Optional[float]:
                 region_fitted = region_mask & (model_sel_data > 0)
                 n_region = int(region_fitted.sum())
                 if n_region == 0:

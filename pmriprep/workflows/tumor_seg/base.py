@@ -15,35 +15,35 @@ from pmriprep.data import get_lobar_atlas_dir
 from pmriprep.interfaces.hdglio import HDGLIOPrep, HDGLIOSegment
 
 
-def _select_enhancing(masks):
+def _select_enhancing(masks: dict[str, str]) -> str:
     """Select enhancing mask path from masks dict."""
     return masks["enhancing"]
 
 
-def _select_non_enhancing(masks):
+def _select_non_enhancing(masks: dict[str, str]) -> str:
     """Select non-enhancing mask path from masks dict."""
     return masks["non_enhancing"]
 
 
-def _select_whole_tumor(masks):
+def _select_whole_tumor(masks: dict[str, str]) -> str:
     """Select whole tumor mask path from masks dict."""
     return masks["whole_tumor"]
 
 
-def _extract_nawm_mask_path(nawm_result):
+def _extract_nawm_mask_path(nawm_result: dict[str, Any]) -> str:
     """Extract NAWM mask file path from result dict."""
-    return nawm_result["output_file"]
+    return str(nawm_result["output_file"])
 
 
-def _extract_nawm_analysis_dict(nawm_result):
+def _extract_nawm_analysis_dict(nawm_result: dict[str, Any]) -> dict[str, Any]:
     """Extract NAWM analysis sub-dict from result dict."""
-    return nawm_result["analysis"]
+    return dict(nawm_result["analysis"])
 
 
 def _extract_masks_node(
-    segmentation_file,
-    prefix,
-):
+    segmentation_file: str,
+    prefix: str,
+) -> dict[str, str]:
     """Node function to extract tumor masks from HD-GLIO segmentation.
 
     This function wraps the extract_tumor_masks utility for use in a
@@ -78,15 +78,15 @@ def _extract_masks_node(
 
 
 def _create_nawm_node(
-    tumor_mask_file,
-    wm_probseg_file,
-    nawm_erosion,
-    nawm_min_voxels,
-    t1w_to_mni_xfm="",
-    reference_image="",
-    atlases_dir="",
-    brain_mask_file="",
-):
+    tumor_mask_file: str,
+    wm_probseg_file: str,
+    nawm_erosion: int,
+    nawm_min_voxels: int,
+    t1w_to_mni_xfm: str = "",
+    reference_image: str = "",
+    atlases_dir: str = "",
+    brain_mask_file: str = "",
+) -> dict[str, Any]:
     """Node function to create NAWM ROI.
 
     Parameters
@@ -129,13 +129,13 @@ def _create_nawm_node(
 
 
 def _create_tumor_on_postcon_filmstrip(
-    t1w_postcon_file,
-    enhancing_mask_file,
-    non_enhancing_mask_file,
-    brain_mask_file,
-    subject_id="",
-    session_id="",
-):
+    t1w_postcon_file: str,
+    enhancing_mask_file: str,
+    non_enhancing_mask_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create tumor segmentation filmstrip on T1w post-contrast background."""
     import nibabel as nib
     import numpy as np
@@ -144,11 +144,14 @@ def _create_tumor_on_postcon_filmstrip(
     from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip, qc_figure_title
 
     bg_img = nib.load(t1w_postcon_file)
-    bg_data = np.asarray(bg_img.dataobj)
-    brain_mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0
-    enh = np.asarray(nib.load(enhancing_mask_file).dataobj) > 0
-    non_enh = np.asarray(nib.load(non_enhancing_mask_file).dataobj) > 0
-    voxel_sizes = tuple(float(v) for v in bg_img.header.get_zooms()[:3])
+    bg_data = np.asarray(bg_img.dataobj)  # type: ignore[attr-defined]
+    brain_mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    enh = np.asarray(nib.load(enhancing_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    non_enh = np.asarray(nib.load(non_enhancing_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    _zooms = bg_img.header.get_zooms()  # type: ignore[attr-defined]
+    voxel_sizes: tuple[float, float, float] = (
+        float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),
+    )
 
     output_path = os.path.join(os.getcwd(), "seg_filmstrip_postcon.png")
     plot_segmentation_qc_filmstrip(
@@ -166,13 +169,13 @@ def _create_tumor_on_postcon_filmstrip(
 
 
 def _create_tumor_on_flair_filmstrip(
-    flair_file,
-    enhancing_mask_file,
-    non_enhancing_mask_file,
-    brain_mask_file,
-    subject_id="",
-    session_id="",
-):
+    flair_file: str,
+    enhancing_mask_file: str,
+    non_enhancing_mask_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create tumor segmentation filmstrip on FLAIR background."""
     import nibabel as nib
     import numpy as np
@@ -181,11 +184,14 @@ def _create_tumor_on_flair_filmstrip(
     from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip, qc_figure_title
 
     bg_img = nib.load(flair_file)
-    bg_data = np.asarray(bg_img.dataobj)
-    brain_mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0
-    enh = np.asarray(nib.load(enhancing_mask_file).dataobj) > 0
-    non_enh = np.asarray(nib.load(non_enhancing_mask_file).dataobj) > 0
-    voxel_sizes = tuple(float(v) for v in bg_img.header.get_zooms()[:3])
+    bg_data = np.asarray(bg_img.dataobj)  # type: ignore[attr-defined]
+    brain_mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    enh = np.asarray(nib.load(enhancing_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    non_enh = np.asarray(nib.load(non_enhancing_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    _zooms = bg_img.header.get_zooms()  # type: ignore[attr-defined]
+    voxel_sizes: tuple[float, float, float] = (
+        float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),
+    )
 
     output_path = os.path.join(os.getcwd(), "seg_filmstrip_flair.png")
     plot_segmentation_qc_filmstrip(
@@ -203,13 +209,13 @@ def _create_tumor_on_flair_filmstrip(
 
 
 def _create_nawm_on_flair_filmstrip(
-    flair_file,
-    nawm_mask_file,
-    whole_tumor_mask_file,
-    brain_mask_file,
-    subject_id="",
-    session_id="",
-):
+    flair_file: str,
+    nawm_mask_file: str,
+    whole_tumor_mask_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create NAWM ROI filmstrip on FLAIR background."""
     import nibabel as nib
     import numpy as np
@@ -218,11 +224,14 @@ def _create_nawm_on_flair_filmstrip(
     from pmriprep.utils.qc_utils import plot_segmentation_qc_filmstrip, qc_figure_title
 
     bg_img = nib.load(flair_file)
-    bg_data = np.asarray(bg_img.dataobj)
-    brain_mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0
-    nawm = np.asarray(nib.load(nawm_mask_file).dataobj) > 0
-    tumor = np.asarray(nib.load(whole_tumor_mask_file).dataobj) > 0
-    voxel_sizes = tuple(float(v) for v in bg_img.header.get_zooms()[:3])
+    bg_data = np.asarray(bg_img.dataobj)  # type: ignore[attr-defined]
+    brain_mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    nawm = np.asarray(nib.load(nawm_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    tumor = np.asarray(nib.load(whole_tumor_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    _zooms = bg_img.header.get_zooms()  # type: ignore[attr-defined]
+    voxel_sizes: tuple[float, float, float] = (
+        float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),
+    )
 
     output_path = os.path.join(os.getcwd(), "nawm_filmstrip_flair.png")
     plot_segmentation_qc_filmstrip(
@@ -239,7 +248,11 @@ def _create_nawm_on_flair_filmstrip(
     return output_path
 
 
-def _generate_qc_metrics(prep_qc, segment_qc, nawm_analysis):
+def _generate_qc_metrics(
+    prep_qc: dict[str, Any],
+    segment_qc: dict[str, Any],
+    nawm_analysis: Optional[dict[str, Any]],
+) -> dict[str, Any]:
     """Combine QC metrics from all HD-GLIO processing steps.
 
     Parameters
