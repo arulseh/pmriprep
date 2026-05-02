@@ -499,6 +499,17 @@ Examples:
         help="Initialize random seed for reproducible results. "
         "Full reproducibility requires --omp-nthreads 1 and --nprocs 1.",
     )
+    g_other.add_argument(
+        "--use-plugin",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Path to a YAML/JSON file specifying the nipype execution "
+        "plugin (e.g. SLURM, SGE, PBS). Overrides the default "
+        "MultiProc/Linear selection. File must contain top-level keys "
+        "'plugin' (string) and optional 'plugin_args' (mapping). See "
+        "nipype docs for plugin-specific args.",
+    )
 
     return parser
 
@@ -1118,6 +1129,52 @@ def _configure_nipype(
         logger.debug(f"Memory limit: {args.mem_gb} GB")
 
 
+def _load_plugin_config(path: Path) -> tuple[str, dict[str, Any]]:
+    """Read a nipype execution plugin config file.
+
+    Accepts YAML (``.yaml``/``.yml``) or JSON (``.json``); the format is
+    sniffed by file extension. Expected schema::
+
+        plugin: SLURM
+        plugin_args:
+          template: '#SBATCH --partition=normal'
+          sbatch_args: '--mem=64G --time=4:00:00'
+
+    Parameters
+    ----------
+    path : Path
+        Path to the plugin config file.
+
+    Returns
+    -------
+    tuple
+        ``(plugin_name, plugin_args)`` ready to pass to
+        ``workflow.run(...)``.
+    """
+    text = path.read_text()
+    if path.suffix.lower() in (".yaml", ".yml"):
+        import yaml  # type: ignore[import-untyped]
+
+        data = yaml.safe_load(text)
+    elif path.suffix.lower() == ".json":
+        import json
+
+        data = json.loads(text)
+    else:
+        raise ValueError(
+            f"--use-plugin file must be .yaml/.yml/.json (got {path.suffix})"
+        )
+
+    if not isinstance(data, dict) or "plugin" not in data:
+        raise ValueError(
+            f"--use-plugin file {path} must contain a top-level 'plugin' key"
+        )
+
+    plugin_name = str(data["plugin"])
+    plugin_args = dict(data.get("plugin_args") or {})
+    return plugin_name, plugin_args
+
+
 def _run_workflow(
     workflow: Any,  # pe.Workflow but avoiding circular import
     args: argparse.Namespace,
@@ -1131,6 +1188,19 @@ def _run_workflow(
     args : argparse.Namespace
         Parsed command line arguments.
     """
+    # User-supplied plugin config takes precedence over the auto
+    # MultiProc/Linear selection. Useful for cluster schedulers
+    # (SLURM/SGE/PBS/LSF) that need scheduler-specific args.
+    user_plugin = getattr(args, "use_plugin", None)
+    if user_plugin is not None:
+        plugin, plugin_args = _load_plugin_config(user_plugin)
+        logger.info(
+            "Running workflow with user-supplied plugin %s (from %s)",
+            plugin, user_plugin,
+        )
+        workflow.run(plugin=plugin, plugin_args=plugin_args)
+        return
+
     # Determine execution plugin based on nprocs
     if args.nprocs > 1:
         # Use MultiProc plugin for parallel execution

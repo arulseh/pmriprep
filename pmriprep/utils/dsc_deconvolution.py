@@ -112,20 +112,22 @@ def build_toeplitz_matrix(
         Østergaard L, et al. Magn Reson Med. 1996;36(5):715-725.
         Sourbron S, Luypaert R. Phys Med Biol. 2007;52:6761-6783.
     """
+    from scipy.linalg import toeplitz  # type: ignore[import-untyped]
+
     n = len(aif)
-    matrix = np.zeros((n, n), dtype=np.float64)
+    aif64 = np.asarray(aif, dtype=np.float64)
 
-    # Build lower-triangular Toeplitz matrix with trapezoidal weighting
-    for i in range(n):
-        for j in range(i + 1):
-            # Trapezoidal rule: half-weight at endpoints (j==0, j==i)
-            if j == 0 or j == i:
-                weight = 0.5
-            else:
-                weight = 1.0
-            matrix[i, j] = aif[i - j] * weight * dt
+    # Lower-triangular Toeplitz: T[i, j] = aif[i-j] for i>=j, else 0.
+    matrix = toeplitz(aif64, np.zeros(n, dtype=np.float64))
 
-    return matrix
+    # Trapezoidal weights: 0.5 on the first column (j==0) and on the
+    # diagonal (j==i); 1.0 in the strict interior.
+    weights = np.ones((n, n), dtype=np.float64)
+    weights[:, 0] = 0.5
+    idx = np.arange(n)
+    weights[idx, idx] = 0.5
+
+    return matrix * weights * dt  # type: ignore[no-any-return]
 
 
 def svd_deconvolve_standard(
