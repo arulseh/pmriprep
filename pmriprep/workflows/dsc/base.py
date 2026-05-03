@@ -237,12 +237,7 @@ def _create_perfusion_brain_mask_filmstrip(
     return output_path
 
 
-def _transform_brain_mask_to_dsc(
-    brain_mask_file: str,
-    reference_file: str,
-    transform_matrix: str,
-    hdbet_mask_file: Optional[str] = None,
-) -> Tuple[str, float]:
+def _transform_brain_mask_to_dsc(brain_mask_file, reference_file, transform_matrix, hdbet_mask_file=None):  # type: ignore[no-untyped-def]
     """Transform T1w brain mask to DSC space using registration transform.
 
     This is the final brain mask used for all DSC-space processing.
@@ -306,11 +301,7 @@ def _transform_brain_mask_to_dsc(
     return dsc_brain_mask_file, dice_score
 
 
-def _signal_to_concentration(
-    dsc_file: str,
-    te: float,
-    baseline_frames: int,
-) -> Tuple[str, str]:
+def _signal_to_concentration(dsc_file, te, baseline_frames):  # type: ignore[no-untyped-def]
     """Convert DSC signal to ΔR2* concentration.
 
     This is a Function node wrapper for the signal_to_concentration utility.
@@ -361,20 +352,7 @@ def _signal_to_concentration(
     return conc_file, signal_file
 
 
-def _detect_and_correct_preload(
-    concentration_file: str,
-    aif_file: str,
-    brain_mask_file: str,
-    te: float,
-    field_strength: float,
-    tr: float,
-    preload: Union[str, float],
-    signal_file: Optional[str] = None,
-    baseline_frames: int = 5,
-    leakage_method: str = "bsw",
-    kep: Optional[float] = None,
-    agent_standard_dose: float = 0.1,
-) -> Tuple[str, Optional[str], dict[str, Any]]:
+def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, te, field_strength, tr, preload, signal_file=None, baseline_frames=5, leakage_method='bsw', kep=None, agent_standard_dose=0.1):  # type: ignore[no-untyped-def]
     """Detect preload and apply K2 correction if needed.
 
     This is a Function node wrapper for preload detection and K2 correction.
@@ -613,11 +591,11 @@ def _compute_prebolus_mean(moco_file: str, baseline_frames: int) -> str:
     return out_file
 
 
-def _transform_nawm_to_dsc(
-    nawm_mask_file: Optional[str] = None,
-    reference_file: Optional[str] = None,
-    transform_matrix: Optional[str] = None,
-) -> str:
+def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
+    nawm_mask_file=None,
+    reference_file=None,
+    transform_matrix=None,
+):
     """Transform NAWM mask from T1w space to DSC space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -661,11 +639,11 @@ def _transform_nawm_to_dsc(
     return out_file
 
 
-def _transform_lesion_mask_to_dsc(
-    lesion_mask_file: Optional[str] = None,
-    reference_file: Optional[str] = None,
-    transform_matrix: Optional[str] = None,
-) -> str:
+def _transform_lesion_mask_to_dsc(  # type: ignore[no-untyped-def]
+    lesion_mask_file=None,
+    reference_file=None,
+    transform_matrix=None,
+):
     """Transform lesion mask from T1w space to DSC space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -713,12 +691,7 @@ def _transform_lesion_mask_to_dsc(
     return out_file
 
 
-def _transform_structural_to_dsc(
-    structural_file: Optional[str] = None,
-    reference_file: Optional[str] = None,
-    transform_matrix: Optional[str] = None,
-    output_name: str = "structural_in_dsc.nii.gz",
-) -> Optional[str]:
+def _transform_structural_to_dsc(structural_file=None, reference_file=None, transform_matrix=None, output_name='structural_in_dsc.nii.gz'):  # type: ignore[no-untyped-def]
     """Transform structural image from T1w space to DSC space via FLIRT.
 
     Handles None/undefined inputs gracefully by returning None.
@@ -766,14 +739,7 @@ def _transform_structural_to_dsc(
     return out_file
 
 
-def _normalize_cbv(
-    cbv_file: str,
-    brain_mask_file: str,
-    derivatives_dir: str,
-    subject_id: str,
-    session_id: Optional[str],
-    nawm_mask_file: Optional[str] = None,
-) -> Tuple[Optional[str], Optional[float]]:
+def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, session_id, nawm_mask_file=None):  # type: ignore[no-untyped-def]
     """Normalize CBV to NAWM median.
 
     This is a Function node wrapper for CBV normalization.
@@ -825,14 +791,7 @@ def _normalize_cbv(
     return str(output_path), norm_factor
 
 
-def _normalize_cbf(
-    cbf_file: str,
-    brain_mask_file: str,
-    derivatives_dir: str,
-    subject_id: str,
-    session_id: Optional[str],
-    nawm_mask_file: Optional[str] = None,
-) -> Tuple[Optional[str], Optional[float]]:
+def _normalize_cbf(cbf_file, brain_mask_file, derivatives_dir, subject_id, session_id, nawm_mask_file=None):  # type: ignore[no-untyped-def]
     """Normalize CBF to NAWM median (same method as CBV normalization).
 
     Returns (None, None) when NAWM mask is not available - normalization
@@ -974,15 +933,7 @@ def _generate_motion_qc_plot(
     return str(out_path), motion_summary
 
 
-def _generate_dsc_preprocessing_qc(
-    dsc_signal_file: str,
-    brain_mask_file: str,
-    baseline_frames: int,
-    tr: float,
-    te: Optional[float] = None,
-    subject_id: str = "",
-    session_id: str = "",
-) -> Tuple[str, dict[str, Any]]:
+def _generate_dsc_preprocessing_qc(dsc_signal_file, brain_mask_file, baseline_frames, tr, te=None, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
     """Generate DSC preprocessing QC plot.
 
     Args:
@@ -1021,17 +972,7 @@ def _generate_dsc_preprocessing_qc(
     return plot_path, stats
 
 
-def _generate_dsc_param_maps_qc(
-    rel_cbf_file: str,
-    rel_cbv_file: str,
-    mtt_file: str,
-    tmax_file: str,
-    psr_file: Optional[str],
-    ttp_file: Optional[str],
-    brain_mask_file: str,
-    subject_id: str = "",
-    session_id: str = "",
-) -> str:
+def _generate_dsc_param_maps_qc(rel_cbf_file, rel_cbv_file, mtt_file, tmax_file, psr_file, ttp_file, brain_mask_file, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
     """Generate DSC parameter maps QC plot.
 
     Args:
@@ -1076,20 +1017,7 @@ def _generate_dsc_param_maps_qc(
     return plot_path
 
 
-def _generate_dsc_leakage_qc(
-    k2_map_file: Optional[str],
-    auc_raw_file: Optional[str],
-    auc_corr_file: Optional[str],
-    auc_diff_file: Optional[str],
-    brain_mask_file: str,
-    concentration_file: Optional[str] = None,
-    corrected_concentration_file: Optional[str] = None,
-    psr_file: Optional[str] = None,
-    tr: float = 1.5,
-    subject_id: str = "",
-    session_id: str = "",
-    preload_qc: Optional[dict[str, Any]] = None,
-) -> str:
+def _generate_dsc_leakage_qc(k2_map_file, auc_raw_file, auc_corr_file, auc_diff_file, brain_mask_file, concentration_file=None, corrected_concentration_file=None, psr_file=None, tr=1.5, subject_id='', session_id='', preload_qc=None):  # type: ignore[no-untyped-def]
     """Generate DSC leakage correction QC plot.
 
     Args:
@@ -1326,19 +1254,7 @@ def _smooth_maps(
     return results
 
 
-def _merge_qc_metrics(
-    motion_qc: dict[str, Any],
-    preload_qc: dict[str, Any],
-    aif_qc: dict[str, Any],
-    deconv_qc: dict[str, Any],
-    registration_qc: dict[str, Any],
-    normalization_factor: Optional[float],
-    motion_summary: Optional[dict[str, Any]] = None,
-    aif_metrics: Optional[dict[str, Any]] = None,
-    preprocessing_stats: Optional[dict[str, Any]] = None,
-    aif_source: str = "auto",
-    registration_bbr: bool = False,
-) -> dict[str, Any]:
+def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc, normalization_factor, motion_summary=None, aif_metrics=None, preprocessing_stats=None, aif_source='auto', registration_bbr=False):  # type: ignore[no-untyped-def]
     """Merge all QC metrics into a single dictionary.
 
     Args:
@@ -1386,13 +1302,7 @@ def _merge_qc_metrics(
     return merged
 
 
-def _save_transforms(
-    dsc_to_t1w_matrix: str,
-    t1w_to_dsc_matrix: str,
-    derivatives_dir: str,
-    subject_id: str,
-    session_id: Optional[str],
-) -> Tuple[str, str]:
+def _save_transforms(dsc_to_t1w_matrix, t1w_to_dsc_matrix, derivatives_dir, subject_id, session_id):  # type: ignore[no-untyped-def]
     """Copy transform matrices to BIDS xfm/ directory with proper naming.
 
     Args:
@@ -1431,14 +1341,7 @@ def _save_transforms(
     return dsc_to_t1w_path, t1w_to_dsc_path
 
 
-def _write_pipeline_provenance(
-    merged_qc: dict[str, Any],
-    derivatives_dir: str,
-    subject_id: str,
-    session_id: Optional[str],
-    config_dict: dict[str, Any],
-    dsc_file: str,
-) -> Tuple[str, str]:
+def _write_pipeline_provenance(merged_qc, derivatives_dir, subject_id, session_id, config_dict, dsc_file):  # type: ignore[no-untyped-def]
     """Write DSC QC JSON and provenance JSON to derivatives directory."""
     from pmriprep.utils.provenance import write_modality_provenance
 
@@ -2821,13 +2724,7 @@ def init_dsc_preproc_wf(
         # MTT, rel_CBF, rel_CBV, plus optional abs_CBF, abs_CBV, nCBF, nCBV
         # Physics-approved: intensive quantities that vary smoothly across tissue.
         # NOT smoothed: Tmax, TTP, delay (timing), PSR, PH, K2, auc_diff (BBB/leakage)
-        def _build_hemodynamic_dict(
-            mtt: str,
-            rel_cbf: str,
-            rel_cbv: str,
-            ncbf: Optional[str],
-            ncbv: Optional[str],
-        ) -> dict[str, str]:
+        def _build_hemodynamic_dict(mtt, rel_cbf, rel_cbv, ncbf, ncbv):  # type: ignore[no-untyped-def]
             from pathlib import Path as _P
             d = {"mtt": mtt, "rel_cbf": rel_cbf, "rel_cbv": rel_cbv}
             for name, val in [
@@ -2864,7 +2761,7 @@ def init_dsc_preproc_wf(
 
         # Build dict of leakage-corrected AUC maps for smoothing (CBV surrogate).
         # Only auc_corr is smoothed; auc_raw contains leakage artifact.
-        def _build_auc_corr_dict(rel_auc_corr: str) -> dict[str, str]:
+        def _build_auc_corr_dict(rel_auc_corr):  # type: ignore[no-untyped-def]
             return {"rel_auc_corr": rel_auc_corr}
 
         build_auc_dict = pe.Node(

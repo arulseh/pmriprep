@@ -23,10 +23,7 @@ from pmriprep.interfaces.anat import (
 )
 
 
-def _merge_qc_metrics(
-    brain_qc: dict[str, Any],
-    denoising: bool = False,
-) -> dict[str, Any]:
+def _merge_qc_metrics(brain_qc, denoising=False):  # type: ignore[no-untyped-def]
     """Merge QC metrics from preprocessing steps.
 
     Parameters
@@ -55,10 +52,7 @@ def _merge_qc_metrics(
     return merged
 
 
-def _determine_processing_mode(
-    t1w_precon: Optional[str] = None,
-    t1w_postcon: Optional[str] = None,
-) -> Tuple[Optional[str], bool]:
+def _determine_processing_mode(t1w_precon=None, t1w_postcon=None):  # type: ignore[no-untyped-def]
     """Determine reference T1w and processing mode using confidence scoring.
 
     Uses _determine_processing_mode_v2 from structural_reference module for
@@ -813,12 +807,12 @@ def init_anat_preproc_wf(
     # Node to route FAST input: handles normal, hybrid, and skip modes.
     # In hybrid mode (postcon reference + acceptable precon), FAST runs
     # on a coregistered precon image prepared by a parallel path below.
-    def _route_fast_input(
-        in_file: Optional[str],
-        t1w_precon: Optional[str] = None,
-        t1w_postcon: Optional[str] = None,
-        is_postcon_ref: bool = False,
-    ) -> Optional[str]:
+    def _route_fast_input(  # type: ignore[no-untyped-def]
+        in_file,
+        t1w_precon=None,
+        t1w_postcon=None,
+        is_postcon_ref=False,
+    ):
         """Route FAST input based on processing mode and precon quality.
 
         Normal mode: FAST on brain-extracted precon (in_file).
@@ -866,9 +860,7 @@ def init_anat_preproc_wf(
         name="check_fast_mode",
     )
 
-    def _guarded_tissue_segment(
-        in_file: Optional[str],
-    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def _guarded_tissue_segment(in_file):  # type: ignore[no-untyped-def]
         """Run FAST tissue segmentation, or return None triplet if skipped.
 
         Returns (None, None, None) when in_file is None (Case 4: postcon
@@ -913,14 +905,14 @@ def init_anat_preproc_wf(
     # avoiding File(exists=True) crashes on CommandLine nodes.
     # -------------------------------------------------------------------
 
-    def _run_hybrid_fast_chain(
-        t1w_precon: Optional[str] = None,
-        t1w_postcon: Optional[str] = None,
-        is_postcon_ref: bool = False,
-        reference_file: Optional[str] = None,
-        brain_mask: Optional[str] = None,
-        denoise: bool = True,
-    ) -> Optional[str]:
+    def _run_hybrid_fast_chain(  # type: ignore[no-untyped-def]
+        t1w_precon=None,
+        t1w_postcon=None,
+        is_postcon_ref=False,
+        reference_file=None,
+        brain_mask=None,
+        denoise=True,
+    ):
         """Run full hybrid FAST preprocessing chain or return None.
 
         When postcon is reference and precon passes the quality gate,
@@ -982,9 +974,7 @@ def init_anat_preproc_wf(
     ])
 
     # Merge: pick normal FAST input or hybrid FAST input
-    def _merge_fast_inputs(
-        normal_input: Optional[str], hybrid_input: Optional[str]
-    ) -> Optional[str]:
+    def _merge_fast_inputs(normal_input, hybrid_input):  # type: ignore[no-untyped-def]
         """Select whichever FAST input is available."""
         if normal_input is not None:
             return normal_input
