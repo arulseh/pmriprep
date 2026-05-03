@@ -83,8 +83,8 @@ _MODEL_ENTITY_MAP: Dict[str, str] = {
     "tofts": "tofts",
     "extended_tofts": "extendedTofts",
     "patlak": "patlak",
-    "two_compartment_exchange": "2CXM",
-    "2cxm": "2CXM",
+    "two_compartment_exchange": "2cxm",
+    "2cxm": "2cxm",
     "auto": "auto",
 }
 
@@ -100,7 +100,7 @@ def sanitize_model_entity(model_name: str) -> str:
         model_name: Raw model name (e.g., "extended_tofts", "2cxm").
 
     Returns:
-        BIDS-safe entity value (e.g., "extendedTofts", "2CXM").
+        BIDS-safe entity value (e.g., "extendedTofts", "2cxm").
     """
     lowered = model_name.lower().strip()
     if lowered in _MODEL_ENTITY_MAP:
