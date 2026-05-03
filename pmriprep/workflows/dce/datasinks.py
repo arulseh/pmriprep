@@ -316,19 +316,19 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
     if mf_units is None:
         mf_units = {}
 
-    def _extract_fwhm(src_path: str) -> tuple[str, str]:
+    def _extract_fwhm(src_path):  # type: ignore[no-untyped-def]
         m = _re.search(r"_fwhm(\d+(?:\.\d+)?)", str(src_path))
         if m:
             return f"Sm{m.group(1)}", m.group(1)
         return "SmN", "N"
 
-    in_files: list[str] = []
-    descs: list[str] = []
-    fwhms: list[str] = []
-    units_list: list[str] = []
-    desc_values: list[str] = []
-    suffixes: list[str] = []
-    use_model: list[bool] = []
+    in_files = []
+    descs = []
+    fwhms = []
+    units_list = []
+    desc_values = []
+    suffixes = []
+    use_model = []
 
     if isinstance(smooth_pk, dict):
         for name, src in smooth_pk.items():

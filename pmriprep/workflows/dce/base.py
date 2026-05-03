@@ -2245,14 +2245,14 @@ def init_dce_preproc_wf(
 # =============================================================================
 
 
-def _write_dce_pipeline_provenance(
-    qc_metrics: dict | None,
-    derivatives_dir: str,
-    subject_id: str,
-    session_id: str | None,
-    config_dict: dict | None,
-    source_file: str | None,
-) -> tuple[str, str]:
+def _write_dce_pipeline_provenance(  # type: ignore[no-untyped-def]
+    qc_metrics,
+    derivatives_dir,
+    subject_id,
+    session_id,
+    config_dict,
+    source_file,
+):
     """Write DCE QC JSON and provenance JSON to derivatives directory."""
     from pmriprep.utils.provenance import write_modality_provenance
 
@@ -2267,11 +2267,11 @@ def _write_dce_pipeline_provenance(
     )
 
 
-def _transform_mask_to_dce(
-    mask_file: str | None = None,
-    reference_file: str | None = None,
-    transform_matrix: str | None = None,
-) -> str | None:
+def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
+    mask_file=None,
+    reference_file=None,
+    transform_matrix=None,
+):
     """Transform brain mask from T1w space to DCE space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -2359,11 +2359,11 @@ def _transform_mask_to_dce(
     return out_file
 
 
-def _transform_probseg_to_dce(
-    probseg_file: str | None = None,
-    reference_file: str | None = None,
-    transform_matrix: str | None = None,
-) -> str | None:
+def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
+    probseg_file=None,
+    reference_file=None,
+    transform_matrix=None,
+):
     """Transform a probability segmentation map from T1w space to DCE space.
 
     Uses FSL FLIRT with trilinear interpolation (appropriate for continuous
@@ -2497,10 +2497,10 @@ def _transform_lesion_mask_to_dce(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _create_aif_search_mask(
-    t1w_mask_in_dce: str | None = None,
-    dce_native_mask: str | None = None,
-) -> str | None:
+def _create_aif_search_mask(  # type: ignore[no-untyped-def]
+    t1w_mask_in_dce=None,
+    dce_native_mask=None,
+):
     """Create conservative AIF search mask (Gap 5).
 
     Creates an intersection of T1w-transformed mask with the native DCE
@@ -3283,7 +3283,7 @@ def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk
     Returns:
         Combined QC metrics dictionary.
     """
-    qc_metrics: dict[str, Any] = {}
+    qc_metrics = {}
 
     if b1_qc is not None:
         qc_metrics["b1_mapping"] = b1_qc
@@ -3339,9 +3339,9 @@ def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk
     return qc_metrics
 
 
-def _transform_b1_to_vfa(
-    b1_map_file: str | None = None, vfa_ref_file: str | None = None
-) -> str | None:
+def _transform_b1_to_vfa(  # type: ignore[no-untyped-def]
+    b1_map_file=None, vfa_ref_file=None
+):
     """Resample B1+ map from AFI space to VFA space.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -3397,9 +3397,9 @@ def _transform_b1_to_vfa(
     return out_file
 
 
-def _transform_b1_to_dce(
-    b1_map_file: str | None = None, reference_file: str | None = None
-) -> str | None:
+def _transform_b1_to_dce(  # type: ignore[no-untyped-def]
+    b1_map_file=None, reference_file=None
+):
     """Resample B1+ map to DCE space for signal-to-concentration.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -3454,12 +3454,12 @@ def _transform_b1_to_dce(
     return out_file
 
 
-def _resample_dsc_cbv_to_dce(
-    dsc_cbv_file: str | None = None,
-    dsc_to_t1w_xfm: str | None = None,
-    t1w_to_dce_xfm: str | None = None,
-    dce_reference: str | None = None,
-) -> str | None:
+def _resample_dsc_cbv_to_dce(  # type: ignore[no-untyped-def]
+    dsc_cbv_file=None,
+    dsc_to_t1w_xfm=None,
+    t1w_to_dce_xfm=None,
+    dce_reference=None,
+):
     """Resample DSC CBV map to DCE native space.
 
     Chains two existing transforms: DSC→T1w + T1w→DCE = DSC→DCE,
@@ -3538,12 +3538,12 @@ def _resample_dsc_cbv_to_dce(
     return cbv_in_dce
 
 
-def _resample_dsc_ncbv_to_dce(
-    dsc_cbv_file: str | None = None,
-    dsc_to_t1w_xfm: str | None = None,
-    t1w_to_dce_xfm: str | None = None,
-    dce_reference: str | None = None,
-) -> str | None:
+def _resample_dsc_ncbv_to_dce(  # type: ignore[no-untyped-def]
+    dsc_cbv_file=None,
+    dsc_to_t1w_xfm=None,
+    t1w_to_dce_xfm=None,
+    dce_reference=None,
+):
     """Resample DSC nCBV to DCE space and clip trilinear-ringing negatives.
 
     Mirrors ``_resample_dsc_cbv_to_dce`` then clips negatives. Nipype's
@@ -3774,9 +3774,9 @@ def _register_dwi_to_dce(dwi_file=None, t1w_file=None, t1w_to_dce_xfm=None, dce_
     return dwi_in_dce, dwi_to_dce_xfm
 
 
-def _transform_t1_to_dce(
-    t1_map_file: str | None = None, reference_file: str | None = None
-) -> str | None:
+def _transform_t1_to_dce(  # type: ignore[no-untyped-def]
+    t1_map_file=None, reference_file=None
+):
     """Resample T1 map from VFA space to DCE space.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -3827,14 +3827,14 @@ def _transform_t1_to_dce(
     return out_file
 
 
-def _transform_external_t1_to_dce(
-    t1_map_file: str | None = None, reference_file: str | None = None
-) -> str | None:
+def _transform_external_t1_to_dce(  # type: ignore[no-untyped-def]
+    t1_map_file=None, reference_file=None
+):
     """Resample external T1 map to DCE space with unit validation.
 
     Validates that T1 values are in milliseconds (expected units for the
     pipeline). If median T1 < 10, assumes values are in seconds and
-    auto-converts. Then delegates to _transform_t1_to_dce for resampling.
+    auto-converts, then resamples to DCE space.
 
     Args:
         t1_map_file: Path to external T1 map (NIfTI).
@@ -3854,12 +3854,36 @@ def _transform_external_t1_to_dce(
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
+    def _resample(src_t1_file, ref_file):  # type: ignore[no-untyped-def]
+        # Inlined copy of _transform_t1_to_dce — nipype Function nodes
+        # exec helpers in an empty namespace, so module-level helpers are
+        # not visible. See test_function_node_helpers.py.
+        if src_t1_file is None or ref_file is None:
+            return src_t1_file
+        from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+        t1_img_local = nib.load(src_t1_file)
+        ref_img_local = nib.load(ref_file)
+        if t1_img_local.shape[:3] == ref_img_local.shape[:3]:  # type: ignore[attr-defined]
+            affine_diff = float(np.abs(t1_img_local.affine - ref_img_local.affine).max())  # type: ignore[attr-defined]
+            if affine_diff < 1e-4:
+                return src_t1_file
+        resampled = resample_to_img(t1_img_local, ref_img_local, interpolation="continuous")
+        data_local = resampled.get_fdata()
+        if np.sum(data_local <= 0) > 0:
+            data_local[data_local <= 0] = np.nan
+            resampled = nib.Nifti1Image(
+                data_local.astype(np.float32), resampled.affine, resampled.header,
+            )
+        out_local = str(Path.cwd() / "t1_map_dce_space.nii.gz")
+        nib.save(resampled, out_local)
+        return out_local
+
     t1_img = nib.load(t1_map_file)
     t1_data = t1_img.get_fdata()  # type: ignore[attr-defined]
     valid = t1_data[t1_data > 0]
     if len(valid) == 0:
         logger.warning("External T1 map has no positive values.")
-        return _transform_t1_to_dce(t1_map_file, reference_file)
+        return _resample(t1_map_file, reference_file)
 
     median_t1 = float(np.nanmedian(valid))
 
@@ -3883,15 +3907,15 @@ def _transform_external_t1_to_dce(
             median_t1,
         )
 
-    return _transform_t1_to_dce(t1_map_file, reference_file)
+    return _resample(t1_map_file, reference_file)
 
 
-def _transform_structural_to_dce(
-    structural_file: str | None = None,
-    reference_file: str | None = None,
-    transform_matrix: str | None = None,
-    output_name: str = "structural_in_dce.nii.gz",
-) -> str | None:
+def _transform_structural_to_dce(  # type: ignore[no-untyped-def]
+    structural_file=None,
+    reference_file=None,
+    transform_matrix=None,
+    output_name="structural_in_dce.nii.gz",
+):
     """Transform structural image from T1w space to DCE space via FLIRT.
 
     Args:
@@ -3998,7 +4022,7 @@ def _generate_preprocessing_qc(dce_file, brain_mask_file, baseline_frames, bolus
     brain_mask = nib.load(brain_mask_file).get_fdata() > 0.5  # type: ignore[attr-defined]
 
     _zooms = dce_img.header.get_zooms()  # type: ignore[attr-defined]
-    voxel_size_mm: tuple[float, float, float] = (
+    voxel_size_mm = (
         float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),
     )
 
@@ -4091,11 +4115,11 @@ def _create_dce_registration_filmstrip(dce_mean_file=None, registered_t1w_file=N
     return str(out_path)
 
 
-def _smooth_dce_maps(
-    map_files: dict[str, str],
-    brain_mask_file: str,
-    fwhm: float,
-) -> dict[str, str]:
+def _smooth_dce_maps(  # type: ignore[no-untyped-def]
+    map_files,
+    brain_mask_file,
+    fwhm,
+):
     """Apply Gaussian smoothing to a dict of DCE maps.
 
     Uses normalized convolution for maps containing NaN (PK maps in auto
@@ -4128,7 +4152,7 @@ def _smooth_dce_maps(
         "peak_enhancement", "ser",
     }
 
-    results: dict[str, str] = {}
+    results = {}
     if not map_files:
         return results
     if not brain_mask_file or not isdefined(brain_mask_file):
@@ -4339,25 +4363,25 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyp
     return out_file
 
 
-def _generate_dce_pk_maps_qc(
-    ktrans_file: str,
-    ve_file: str | None = None,
-    vp_file: str | None = None,
-    fp_file: str | None = None,
-    ps_file: str | None = None,
-    brain_mask_file: str | None = None,
-    model_selection_file: str | None = None,
-    delta_bic_file: str | None = None,
-    enhancing_mask_file: str | None = None,
-    non_enhancing_mask_file: str | None = None,
-    nawm_mask_file: str | None = None,
-    user_lesion_mask_file: str | None = None,
-    roi_mask_file: str | None = None,
-    vp_at_bound_map_file: str | None = None,
-    model_name: str = "tofts",
-    subject_id: str = "",
-    session_id: str = "",
-) -> tuple:
+def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
+    ktrans_file,
+    ve_file=None,
+    vp_file=None,
+    fp_file=None,
+    ps_file=None,
+    brain_mask_file=None,
+    model_selection_file=None,
+    delta_bic_file=None,
+    enhancing_mask_file=None,
+    non_enhancing_mask_file=None,
+    nawm_mask_file=None,
+    user_lesion_mask_file=None,
+    roi_mask_file=None,
+    vp_at_bound_map_file=None,
+    model_name="tofts",
+    subject_id="",
+    session_id="",
+):
     """Generate DCE PK parameter maps QC and model selection QC plots.
 
     Lightweight wrapper that loads saved NIfTIs and calls plot functions.
@@ -4398,7 +4422,7 @@ def _generate_dce_pk_maps_qc(
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath):
+    def _safe_load(filepath):  # type: ignore[no-untyped-def]
         if not filepath or not _P(str(filepath)).is_file():
             return None
         return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
@@ -4406,7 +4430,7 @@ def _generate_dce_pk_maps_qc(
     pk_param_maps_qc_plot = ""
     model_selection_qc_plot = ""
     model_selection_regions = None
-    vp_at_bound_fractions: dict[str, float] = {}
+    vp_at_bound_fractions = {}
 
     try:
         from pmriprep.utils.dce_pk_qc_plots import (
@@ -4510,7 +4534,7 @@ def _generate_dce_pk_maps_qc(
             else:
                 vp_at_bound_fractions["whole_brain"] = 0.0
 
-            def _frac_in_roi(roi_bool):
+            def _frac_in_roi(roi_bool):  # type: ignore[no-untyped-def]
                 sel = roi_bool & finite
                 return float(np.mean(vpab_bool[sel])) if sel.any() else None
 
@@ -4590,7 +4614,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath):
+    def _safe_load(filepath):  # type: ignore[no-untyped-def]
         if not filepath or not _P(str(filepath)).is_file():
             return None
         return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
@@ -4676,7 +4700,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
 
             # Concrete subclasses of PKModel; mypy infers the dict value as the
             # abstract base, so the call site below needs an explicit type tag.
-            model_cls_map: dict[str, type] = {
+            model_cls_map = {
                 "tofts": ToftsModel,
                 "extended_tofts": ExtendedToftsModel,
                 "patlak": PatlakModel,
@@ -4780,7 +4804,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
             ne_data = _safe_load(non_enhancing_mask_file)
             ne_bool = (ne_data > 0.5) if ne_data is not None else None
 
-            def _patlak_frac(region_mask):
+            def _patlak_frac(region_mask):  # type: ignore[no-untyped-def]
                 region_fitted = region_mask & (model_sel_data > 0)
                 n_region = int(region_fitted.sum())
                 if n_region == 0:

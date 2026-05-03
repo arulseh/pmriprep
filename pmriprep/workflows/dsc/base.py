@@ -413,7 +413,7 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
     # Load AIF
     aif = np.loadtxt(aif_file)
 
-    qc_metrics: dict[str, Any] = {}
+    qc_metrics = {}
     k2_map_file: str = ""
 
     # K2-primary is the sole classifier. Run detect_preload() only for the
@@ -890,7 +890,7 @@ def _create_registration_filmstrip(
     return output_path
 
 
-def _extract_preload_class(qc_dict: dict | None) -> str:
+def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]
     """Extract preload classification from preload_correct QC dict.
 
     Args:
@@ -904,9 +904,9 @@ def _extract_preload_class(qc_dict: dict | None) -> str:
     return qc_dict.get("preload_classification", "none")  # type: ignore[no-any-return]
 
 
-def _generate_motion_qc_plot(
-    motion_params_file: str, tr: float, subject_id: str = "", session_id: str = ""
-) -> tuple[str, dict]:
+def _generate_motion_qc_plot(  # type: ignore[no-untyped-def]
+    motion_params_file, tr, subject_id="", session_id=""
+):
     """Generate motion QC plot from motion parameters.
 
     Creates a three-panel figure showing raw motion parameters and
@@ -956,7 +956,7 @@ def _generate_dsc_preprocessing_qc(dsc_signal_file, brain_mask_file, baseline_fr
     mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]
 
     _zooms = signal_img.header.get_zooms()  # type: ignore[attr-defined]
-    voxel_size_mm: tuple[float, float, float] = (
+    voxel_size_mm = (
         float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),
     )
 
@@ -1167,11 +1167,11 @@ def _generate_dsc_fit_qc(
     return plot_path
 
 
-def _smooth_maps(
-    map_files: dict[str, str],
-    brain_mask_file: str,
-    fwhm: float,
-) -> dict[str, str]:
+def _smooth_maps(  # type: ignore[no-untyped-def]
+    map_files,
+    brain_mask_file,
+    fwhm,
+):
     """Apply Gaussian smoothing to a dict of maps.
 
     Uses normalized convolution for maps containing NaN to prevent edge

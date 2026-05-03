@@ -15,17 +15,17 @@ from pmriprep.data import get_lobar_atlas_dir
 from pmriprep.interfaces.hdglio import HDGLIOPrep, HDGLIOSegment
 
 
-def _select_enhancing(masks: dict[str, str]) -> str:
+def _select_enhancing(masks):  # type: ignore[no-untyped-def]
     """Select enhancing mask path from masks dict."""
     return masks["enhancing"]
 
 
-def _select_non_enhancing(masks: dict[str, str]) -> str:
+def _select_non_enhancing(masks):  # type: ignore[no-untyped-def]
     """Select non-enhancing mask path from masks dict."""
     return masks["non_enhancing"]
 
 
-def _select_whole_tumor(masks: dict[str, str]) -> str:
+def _select_whole_tumor(masks):  # type: ignore[no-untyped-def]
     """Select whole tumor mask path from masks dict."""
     return masks["whole_tumor"]
 
@@ -40,10 +40,10 @@ def _extract_nawm_analysis_dict(nawm_result):  # type: ignore[no-untyped-def]
     return dict(nawm_result["analysis"])
 
 
-def _extract_masks_node(
-    segmentation_file: str,
-    prefix: str,
-) -> dict[str, str]:
+def _extract_masks_node(  # type: ignore[no-untyped-def]
+    segmentation_file,
+    prefix,
+):
     """Node function to extract tumor masks from HD-GLIO segmentation.
 
     This function wraps the extract_tumor_masks utility for use in a
@@ -119,14 +119,14 @@ def _create_nawm_node(tumor_mask_file, wm_probseg_file, nawm_erosion, nawm_min_v
     )
 
 
-def _create_tumor_on_postcon_filmstrip(
-    t1w_postcon_file: str,
-    enhancing_mask_file: str,
-    non_enhancing_mask_file: str,
-    brain_mask_file: str,
-    subject_id: str = "",
-    session_id: str = "",
-) -> str:
+def _create_tumor_on_postcon_filmstrip(  # type: ignore[no-untyped-def]
+    t1w_postcon_file,
+    enhancing_mask_file,
+    non_enhancing_mask_file,
+    brain_mask_file,
+    subject_id="",
+    session_id="",
+):
     """Create tumor segmentation filmstrip on T1w post-contrast background."""
     import nibabel as nib
     import numpy as np
@@ -140,7 +140,7 @@ def _create_tumor_on_postcon_filmstrip(
     enh = np.asarray(nib.load(enhancing_mask_file).dataobj) > 0  # type: ignore[attr-defined]
     non_enh = np.asarray(nib.load(non_enhancing_mask_file).dataobj) > 0  # type: ignore[attr-defined]
     _zooms = bg_img.header.get_zooms()  # type: ignore[attr-defined]
-    voxel_sizes: tuple[float, float, float] = (
+    voxel_sizes = (
         float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),
     )
 
@@ -159,14 +159,14 @@ def _create_tumor_on_postcon_filmstrip(
     return output_path
 
 
-def _create_tumor_on_flair_filmstrip(
-    flair_file: str,
-    enhancing_mask_file: str,
-    non_enhancing_mask_file: str,
-    brain_mask_file: str,
-    subject_id: str = "",
-    session_id: str = "",
-) -> str:
+def _create_tumor_on_flair_filmstrip(  # type: ignore[no-untyped-def]
+    flair_file,
+    enhancing_mask_file,
+    non_enhancing_mask_file,
+    brain_mask_file,
+    subject_id="",
+    session_id="",
+):
     """Create tumor segmentation filmstrip on FLAIR background."""
     import nibabel as nib
     import numpy as np
@@ -180,7 +180,7 @@ def _create_tumor_on_flair_filmstrip(
     enh = np.asarray(nib.load(enhancing_mask_file).dataobj) > 0  # type: ignore[attr-defined]
     non_enh = np.asarray(nib.load(non_enhancing_mask_file).dataobj) > 0  # type: ignore[attr-defined]
     _zooms = bg_img.header.get_zooms()  # type: ignore[attr-defined]
-    voxel_sizes: tuple[float, float, float] = (
+    voxel_sizes = (
         float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),
     )
 
@@ -199,14 +199,14 @@ def _create_tumor_on_flair_filmstrip(
     return output_path
 
 
-def _create_nawm_on_flair_filmstrip(
-    flair_file: str,
-    nawm_mask_file: str,
-    whole_tumor_mask_file: str,
-    brain_mask_file: str,
-    subject_id: str = "",
-    session_id: str = "",
-) -> str:
+def _create_nawm_on_flair_filmstrip(  # type: ignore[no-untyped-def]
+    flair_file,
+    nawm_mask_file,
+    whole_tumor_mask_file,
+    brain_mask_file,
+    subject_id="",
+    session_id="",
+):
     """Create NAWM ROI filmstrip on FLAIR background."""
     import nibabel as nib
     import numpy as np
@@ -220,7 +220,7 @@ def _create_nawm_on_flair_filmstrip(
     nawm = np.asarray(nib.load(nawm_mask_file).dataobj) > 0  # type: ignore[attr-defined]
     tumor = np.asarray(nib.load(whole_tumor_mask_file).dataobj) > 0  # type: ignore[attr-defined]
     _zooms = bg_img.header.get_zooms()  # type: ignore[attr-defined]
-    voxel_sizes: tuple[float, float, float] = (
+    voxel_sizes = (
         float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),
     )
 

@@ -249,12 +249,12 @@ def _split_smooth_dict(  # type: ignore[no-untyped-def]
     from pathlib import Path
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
-    out_files: list[str] = []
-    out_descs: list[str] = []
-    out_keys: list[str] = []
-    out_map_suffixes: list[str] = []
-    out_desc_prefixes: list[str] = []
-    out_units: list[str] = []
+    out_files = []
+    out_descs = []
+    out_keys = []
+    out_map_suffixes = []
+    out_desc_prefixes = []
+    out_units = []
 
     if not (isdefined(fwhm) and fwhm and float(fwhm) > 0):
         return out_files, out_descs, out_keys, out_map_suffixes, out_desc_prefixes, out_units
