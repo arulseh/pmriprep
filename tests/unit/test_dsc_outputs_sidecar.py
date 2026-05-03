@@ -320,3 +320,55 @@ class TestMissingAifQc:
         sidecar = _load_sidecar(derivatives, "dscRelAUC_cbv")
         assert sidecar["AIFDependent"] is True
         assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
+
+
+# =============================================================================
+# Structural underlays: T1w/FLAIR/T2w in DSC space must land in anat/, not perf/
+# =============================================================================
+
+
+class TestStructuralUnderlayDatatype:
+    """Regression: T1w-in-DSC sink must write to anat/ (not perf/).
+
+    niworkflows derives ``datatype`` from ``source_file``; with
+    ``source_dsc`` (a perf-datatype file) the default would be ``perf``,
+    which makes pybids reject the path because BIDS does not allow ``T1w``
+    suffix in ``perf/``. ``_add_anat_sink`` must override datatype="anat".
+    """
+
+    def test_t1w_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
+        from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
+
+        minimal_inputs["t1w_in_dsc"] = _write_dummy_nifti(tmp_path / "t1w_in_dsc.nii.gz")
+        present = (set(minimal_inputs.keys()) - {
+            "output_dir", "bids_dir", "subject_id", "session_id", "qc_metrics",
+        })
+        wf = init_dsc_datasinks_wf(
+            output_dir=minimal_inputs["output_dir"],
+            bids_dir=minimal_inputs["bids_dir"],
+            subject_id=minimal_inputs["subject_id"],
+            session_id=minimal_inputs["session_id"],
+            present_inputs=present,
+            has_postcon_t1w=True,  # triggers ce-GAD entity
+        )
+        wf.base_dir = str(tmp_path / "work")
+        inp = wf.inputs.inputnode
+        for k, v in minimal_inputs.items():
+            if k in {"output_dir", "subject_id", "session_id", "bids_dir"}:
+                continue
+            setattr(inp, k, v)
+        wf.run()  # would raise "Could not build path" before fix
+
+        derivatives = Path(minimal_inputs["output_dir"])
+        anat_dir = derivatives / "pmriprep" / "sub-test01" / "ses-01" / "anat"
+        perf_dir = derivatives / "pmriprep" / "sub-test01" / "ses-01" / "perf"
+        # Underlay must land in anat/ with ce-GAD + space-dsc entities,
+        # NOT in perf/. Postcon-mode → ce-GAD must propagate via the
+        # niworkflows `ceagent` trait (NOT `ce` — that trait doesn't exist).
+        expected_nii = anat_dir / "sub-test01_ses-01_ce-GAD_space-dsc_T1w.nii.gz"
+        assert expected_nii.exists(), (
+            f"underlay missing at {expected_nii}; "
+            f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+        )
+        perf_t1w = list(perf_dir.glob("*T1w.nii.gz")) if perf_dir.exists() else []
+        assert not perf_t1w, f"T1w must not land in perf/; got {perf_t1w}"

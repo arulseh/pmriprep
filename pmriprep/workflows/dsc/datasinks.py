@@ -475,7 +475,12 @@ def _add_anat_sink(
     ce_value: Optional[str] = None,
     source_attr: str = "source_dsc",
 ) -> pe.Node:
-    """Wire one anat/-side DSC sink (mask, structural underlay)."""
+    """Wire one anat/-side DSC sink (mask, structural underlay).
+
+    Forces ``datatype="anat"`` because the source_file is a perf-datatype
+    NIfTI; structural suffixes (T1w/FLAIR/T2w) in perf/ violate BIDS, and
+    even masks belong under anat/ when they describe anatomy in DSC space.
+    """
     meta = pe.Node(
         niu.Function(
             input_names=["base", "description", "skull_stripped"],
@@ -491,15 +496,15 @@ def _add_anat_sink(
     sink = pe.Node(
         PMRIPrepDataSink(
             check_hdr=True, compress=True,
-            allowed_entities=("space",),
-            space="dsc", suffix=suffix,
+            allowed_entities=("space", "datatype", "ceagent"),
+            space="dsc", suffix=suffix, datatype="anat",
         ),
         name=f"{name}_sink",
     )
     if desc_value is not None:
         sink.inputs.desc = desc_value
     if ce_value is not None:
-        sink.inputs.ce = ce_value
+        sink.inputs.ceagent = ce_value
     workflow.connect([
         (inputnode, sink, [
             ("output_dir", "base_directory"),

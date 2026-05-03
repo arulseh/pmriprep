@@ -223,7 +223,7 @@ def _add_one_anat_sink(
         PMRIPrepDataSink(
             check_hdr=True,
             compress=True,
-            allowed_entities=("space", "label"),
+            allowed_entities=("space", "label", "ceagent"),
             space="anat",
             suffix=suffix,
         ),
@@ -232,7 +232,7 @@ def _add_one_anat_sink(
     if desc_value is not None:
         sink.inputs.desc = desc_value
     if ce_value is not None:
-        sink.inputs.ce = ce_value
+        sink.inputs.ceagent = ce_value
     if label_value is not None:
         sink.inputs.label = label_value
 

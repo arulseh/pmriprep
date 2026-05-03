@@ -663,7 +663,7 @@ def _pick_nawm_mask(tumor_seg_nawm=None, user_nawm=None):  # type: ignore[no-unt
             p = Path(candidate)
             if p.exists():
                 return str(p)
-    return None
+    return ""
 
 
 def _find_previous_dsc_outputs(
@@ -1884,9 +1884,20 @@ def init_pmriprep_wf(
         # because the sink's `in_file` becomes Undefined.
         dsc_method = (dsc_config.method or "").lower()
         dsc_inference = (dsc_config.inference or "").lower()
-        dsc_has_nawm = (
-            dsc_config.nawm_mask is not None
-            or session_data.modalities.t1w_pre is not None
+        # Gate on actual NAWM source, not t1w_pre presence. t1w_pre alone
+        # doesn't produce NAWM — that needs tumor_seg or a user mask.
+        # Without a real source, _transform_nawm_to_dsc returns "" and
+        # niworkflows File(exists=True) rejects it at runtime.
+        dsc_has_nawm = bool(
+            dsc_config.nawm_mask
+            or tumor_seg_wf is not None
+            or (
+                work_dir is not None
+                and not decision.run_tumor_seg
+                and _find_previous_tumor_seg_outputs(
+                    Path(work_dir), subject_id, session_id,
+                ).get("nawm_mask")
+            )
         )
 
         dsc_present: set = {
@@ -1928,13 +1939,32 @@ def init_pmriprep_wf(
             dsc_present.add("lesion_mask_dsc")
         if dsc_config.roi_mask is not None:
             dsc_present.add("roi_mask_dsc")
-        if has_t1w_in_dsc:
+        # Underlays: only add to present if the modality is actually
+        # available in the session. dsc_config.underlays is user intent;
+        # session_data.modalities is what's actually wired. Mismatch makes
+        # the upstream _transform_structural_to_dsc emit "" and the sink
+        # crash on niworkflows File(exists=True).
+        _has_t1w_underlay = (
+            ("t1w_precon" in dsc_underlays
+                and session_data.modalities.t1w_pre is not None)
+            or ("t1w_postcon" in dsc_underlays
+                and session_data.modalities.t1w_ce_gad is not None)
+        )
+        _has_flair_underlay = (
+            "flair" in dsc_underlays
+            and session_data.modalities.flair is not None
+        )
+        _has_t2w_underlay = (
+            "t2w" in dsc_underlays
+            and session_data.modalities.t2w is not None
+        )
+        if _has_t1w_underlay:
             dsc_present.add("t1w_in_dsc")
-        if "flair" in dsc_underlays:
+        if _has_flair_underlay:
             dsc_present.add("flair_in_dsc")
-        if "t2w" in dsc_underlays:
+        if _has_t2w_underlay:
             dsc_present.add("t2w_in_dsc")
-        if dsc_underlays:
+        if _has_t1w_underlay or _has_flair_underlay or _has_t2w_underlay:
             dsc_present.add("t1w_to_dsc_xfm")
 
         dsc_datasinks_wf = init_dsc_datasinks_wf(
@@ -2814,9 +2844,16 @@ def init_pmriprep_wf(
         dce_inference = (dce_config.inference or "").lower()
         dce_uses_bayes = dce_inference != "nlls"
         dce_model = dce_config.model or "auto"
-        dce_has_nawm = (
-            dce_config.nawm_mask is not None
-            or session_data.modalities.t1w_pre is not None
+        dce_has_nawm = bool(
+            dce_config.nawm_mask
+            or tumor_seg_wf is not None
+            or (
+                work_dir is not None
+                and not decision.run_tumor_seg
+                and _find_previous_tumor_seg_outputs(
+                    Path(work_dir), subject_id, session_id,
+                ).get("nawm_mask")
+            )
         )
         dce_has_lesion = (
             dce_config.lesion_mask is not None or decision.run_tumor_seg
@@ -2892,12 +2929,27 @@ def init_pmriprep_wf(
             dce_present.add("lesion_mask_dce")
         if dce_config.roi_mask is not None:
             dce_present.add("roi_mask_dce")
-        # Structural underlays
-        if dce_has_t1w_in_dce:
+        # Structural underlays — gate on session_data, not just config.
+        # See dsc_present underlay block for rationale.
+        _dce_has_t1w_underlay = (
+            ("t1w_precon" in dce_underlays
+                and session_data.modalities.t1w_pre is not None)
+            or ("t1w_postcon" in dce_underlays
+                and session_data.modalities.t1w_ce_gad is not None)
+        )
+        _dce_has_flair_underlay = (
+            "flair" in dce_underlays
+            and session_data.modalities.flair is not None
+        )
+        _dce_has_t2w_underlay = (
+            "t2w" in dce_underlays
+            and session_data.modalities.t2w is not None
+        )
+        if _dce_has_t1w_underlay:
             dce_present.add("t1w_in_dce")
-        if "flair" in dce_underlays:
+        if _dce_has_flair_underlay:
             dce_present.add("flair_in_dce")
-        if "t2w" in dce_underlays:
+        if _dce_has_t2w_underlay:
             dce_present.add("t2w_in_dce")
 
         dce_datasinks_wf = init_dce_datasinks_wf(

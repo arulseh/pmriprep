@@ -707,20 +707,21 @@ def _transform_structural_to_dsc(structural_file=None, reference_file=None, tran
     """
     from nipype.interfaces.base import isdefined
 
-    # Handle both None and Nipype Undefined
+    # Returns "" (not None) because downstream traits.Str / niworkflows
+    # File rejects None.
     if not isdefined(structural_file) or structural_file is None:
-        return None
+        return ""
     if not isdefined(reference_file) or reference_file is None:
-        return None
+        return ""
     if not isdefined(transform_matrix) or transform_matrix is None:
-        return None
+        return ""
 
     from pathlib import Path
     import subprocess
 
     structural_path = Path(structural_file)
     if not structural_path.is_file():
-        return None
+        return ""
 
     out_dir = Path.cwd()
     out_file = str(out_dir / output_name)
