@@ -4398,7 +4398,7 @@ def _generate_dce_pk_maps_qc(
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath: Optional[str]) -> Any:
+    def _safe_load(filepath):
         if not filepath or not _P(str(filepath)).is_file():
             return None
         return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
@@ -4510,7 +4510,7 @@ def _generate_dce_pk_maps_qc(
             else:
                 vp_at_bound_fractions["whole_brain"] = 0.0
 
-            def _frac_in_roi(roi_bool: Any) -> Optional[float]:
+            def _frac_in_roi(roi_bool):
                 sel = roi_bool & finite
                 return float(np.mean(vpab_bool[sel])) if sel.any() else None
 
@@ -4590,7 +4590,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath: Optional[str]) -> Any:
+    def _safe_load(filepath):
         if not filepath or not _P(str(filepath)).is_file():
             return None
         return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
@@ -4780,7 +4780,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
             ne_data = _safe_load(non_enhancing_mask_file)
             ne_bool = (ne_data > 0.5) if ne_data is not None else None
 
-            def _patlak_frac(region_mask: Any) -> Optional[float]:
+            def _patlak_frac(region_mask):
                 region_fitted = region_mask & (model_sel_data > 0)
                 n_region = int(region_fitted.sum())
                 if n_region == 0:
