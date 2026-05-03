@@ -251,10 +251,16 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     return str(nii_out)
 
 
-def _copy_dce_anat_image(  # type: ignore[no-untyped-def]
-    in_file, output_dir, subject, session, label, ce_label, meta_dict,
+def _copy_b1plusmap(  # type: ignore[no-untyped-def]
+    in_file, output_dir, subject, session, meta_dict,
 ):
-    """Copy a DCE-space anat NIfTI (T1w/FLAIR/T2w underlay) + sidecar."""
+    """Copy a B1plusmap NIfTI + sidecar to anat/.
+
+    Bypasses ``PMRIPrepDataSink`` because ``B1plusmap`` is not in the
+    niworkflows default anat-suffix allow-list (`T1w|T2w|T1map|FLAIR|...`).
+    All other DCE-space anat outputs (T1w/FLAIR/T2w/T1map) go through
+    ``_add_anat_image_sink`` → ``PMRIPrepDataSink``.
+    """
     import json as _json
     import shutil
     from pathlib import Path
@@ -268,11 +274,7 @@ def _copy_dce_anat_image(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    parts = [prefix]
-    if ce_label:
-        parts.append(f"ce-{ce_label}")
-    parts.extend(["space-dce", label])
-    stem = "_".join(parts)
+    stem = f"{prefix}_space-dce_B1plusmap"
     nii_out = out_root / f"{stem}.nii.gz"
     json_out = out_root / f"{stem}.json"
 
@@ -462,8 +464,16 @@ def _add_anat_image_sink(
     description: str,
     ce_label: str = "",
     skull_stripped: bool = False,
+    units: Optional[str] = None,
+    source_attr: str = "source_dce",
 ) -> pe.Node:
-    """Wire a structural underlay (T1w/FLAIR/T2w) in DCE space."""
+    """Wire an anat-side DCE sink (T1w/FLAIR/T2w/T1map in DCE space).
+
+    Mirrors DSC's ``_add_anat_sink`` — uses ``PMRIPrepDataSink`` (niworkflows
+    ``DerivativesDataSink`` subclass) for BIDS-canonical anat suffixes. The
+    space-dce entity correctly indicates cross-modality registration to DCE
+    acquisition geometry.
+    """
     meta = pe.Node(
         niu.Function(
             input_names=["base", "description", "units", "extra"],
@@ -473,29 +483,25 @@ def _add_anat_image_sink(
         name=f"{name}_meta",
     )
     meta.inputs.description = description
-    meta.inputs.units = None
+    meta.inputs.units = units
     meta.inputs.extra = {"SkullStripped": True} if skull_stripped else None
     workflow.connect(base_minimal_node, "meta_dict", meta, "base")
 
     sink = pe.Node(
-        niu.Function(
-            input_names=[
-                "in_file", "output_dir", "subject", "session",
-                "label", "ce_label", "meta_dict",
-            ],
-            output_names=["out_file"],
-            function=_copy_dce_anat_image,
+        PMRIPrepDataSink(
+            check_hdr=True, compress=True,
+            allowed_entities=("space", "datatype", "ceagent"),
+            space="dce", suffix=label, datatype="anat",
         ),
         name=f"{name}_sink",
     )
-    sink.inputs.label = label
-    sink.inputs.ce_label = ce_label
+    if ce_label:
+        sink.inputs.ceagent = ce_label
     workflow.connect([
         (inputnode, sink, [
-            ("output_dir", "output_dir"),
-            ("subject_id", "subject"),
-            ("session_id", "session"),
+            ("output_dir", "base_directory"),
             (in_attr, "in_file"),
+            (source_attr, "source_file"),
         ]),
         (meta, sink, [("meta_dict", "meta_dict")]),
     ])
@@ -947,40 +953,12 @@ def init_dce_datasinks_wf(
 
     # --- T1map + B1+map (anat/) ---
     if "t1_map" in present:
-        meta = pe.Node(
-            niu.Function(
-                input_names=["base", "description", "units", "extra"],
-                output_names=["meta_dict"],
-                function=_build_dce_meta,
-            ),
-            name="t1_map_meta",
+        sink = _add_anat_image_sink(
+            workflow, inputnode, base_minimal,
+            name="t1_map", in_attr="t1_map", label="T1map",
+            description="T1 relaxation time map (ms)",
+            units="ms",
         )
-        meta.inputs.description = "T1 relaxation time map (ms)"
-        meta.inputs.units = "ms"
-        meta.inputs.extra = None
-        workflow.connect(base_minimal, "meta_dict", meta, "base")
-        sink = pe.Node(
-            niu.Function(
-                input_names=[
-                    "in_file", "output_dir", "subject", "session",
-                    "label", "ce_label", "meta_dict",
-                ],
-                output_names=["out_file"],
-                function=_copy_dce_anat_image,
-            ),
-            name="t1_map_sink",
-        )
-        sink.inputs.label = "T1map"
-        sink.inputs.ce_label = ""
-        workflow.connect([
-            (inputnode, sink, [
-                ("output_dir", "output_dir"),
-                ("subject_id", "subject"),
-                ("session_id", "session"),
-                ("t1_map", "in_file"),
-            ]),
-            (meta, sink, [("meta_dict", "meta_dict")]),
-        ])
         sink_outputs.append((sink, "out_file"))
     if "b1_map" in present:
         meta = pe.Node(
@@ -998,16 +976,13 @@ def init_dce_datasinks_wf(
         sink = pe.Node(
             niu.Function(
                 input_names=[
-                    "in_file", "output_dir", "subject", "session",
-                    "label", "ce_label", "meta_dict",
+                    "in_file", "output_dir", "subject", "session", "meta_dict",
                 ],
                 output_names=["out_file"],
-                function=_copy_dce_anat_image,
+                function=_copy_b1plusmap,
             ),
             name="b1_map_sink",
         )
-        sink.inputs.label = "B1plusmap"
-        sink.inputs.ce_label = ""
         workflow.connect([
             (inputnode, sink, [
                 ("output_dir", "output_dir"),
