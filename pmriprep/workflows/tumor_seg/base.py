@@ -30,12 +30,12 @@ def _select_whole_tumor(masks: dict[str, str]) -> str:
     return masks["whole_tumor"]
 
 
-def _extract_nawm_mask_path(nawm_result: dict[str, Any]) -> str:
+def _extract_nawm_mask_path(nawm_result):  # type: ignore[no-untyped-def]
     """Extract NAWM mask file path from result dict."""
     return str(nawm_result["output_file"])
 
 
-def _extract_nawm_analysis_dict(nawm_result: dict[str, Any]) -> dict[str, Any]:
+def _extract_nawm_analysis_dict(nawm_result):  # type: ignore[no-untyped-def]
     """Extract NAWM analysis sub-dict from result dict."""
     return dict(nawm_result["analysis"])
 
@@ -77,16 +77,7 @@ def _extract_masks_node(
     )
 
 
-def _create_nawm_node(
-    tumor_mask_file: str,
-    wm_probseg_file: str,
-    nawm_erosion: int,
-    nawm_min_voxels: int,
-    t1w_to_mni_xfm: str = "",
-    reference_image: str = "",
-    atlases_dir: str = "",
-    brain_mask_file: str = "",
-) -> dict[str, Any]:
+def _create_nawm_node(tumor_mask_file, wm_probseg_file, nawm_erosion, nawm_min_voxels, t1w_to_mni_xfm='', reference_image='', atlases_dir='', brain_mask_file=''):  # type: ignore[no-untyped-def]
     """Node function to create NAWM ROI.
 
     Parameters
@@ -248,11 +239,7 @@ def _create_nawm_on_flair_filmstrip(
     return output_path
 
 
-def _generate_qc_metrics(
-    prep_qc: dict[str, Any],
-    segment_qc: dict[str, Any],
-    nawm_analysis: Optional[dict[str, Any]],
-) -> dict[str, Any]:
+def _generate_qc_metrics(prep_qc, segment_qc, nawm_analysis):  # type: ignore[no-untyped-def]
     """Combine QC metrics from all HD-GLIO processing steps.
 
     Parameters

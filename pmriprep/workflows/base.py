@@ -654,10 +654,7 @@ def _find_previous_tumor_seg_outputs(
     return outputs
 
 
-def _pick_nawm_mask(
-    tumor_seg_nawm: Optional[str] = None,
-    user_nawm: Optional[str] = None,
-) -> Optional[str]:
+def _pick_nawm_mask(tumor_seg_nawm=None, user_nawm=None):  # type: ignore[no-untyped-def]
     """Pick best NAWM mask: prefer tumor-seg, fall back to user-supplied."""
     from pathlib import Path
 

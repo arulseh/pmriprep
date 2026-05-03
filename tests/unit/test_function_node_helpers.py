@@ -21,8 +21,14 @@ import pytest
 
 WORKFLOW_FILES = [
     "pmriprep/workflows/anat/base.py",
+    "pmriprep/workflows/anat/datasinks.py",
+    "pmriprep/workflows/base.py",
     "pmriprep/workflows/dce/base.py",
+    "pmriprep/workflows/dce/datasinks.py",
     "pmriprep/workflows/dsc/base.py",
+    "pmriprep/workflows/dsc/datasinks.py",
+    "pmriprep/workflows/tumor_seg/base.py",
+    "pmriprep/workflows/tumor_seg/datasinks.py",
 ]
 
 
