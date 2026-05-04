@@ -570,3 +570,175 @@ def compute_nawm_reference(
         reference["qc_notes"] = qc_notes
 
     return reference
+
+
+# ---------------------------------------------------------------------------
+# Tumor segmentation dseg.tsv (BIDS-Common-Derivatives ROI summary table)
+#
+# This is the canonical TSV companion for the existing
+# `desc-tumorseg_dseg.nii.gz` label map. Per BIDS, a `_dseg.tsv` is the
+# label-lookup table; integer values match the NIfTI's voxel labels.
+# Per BIDS, index 0 is reserved for background and is NOT emitted here
+# (otherwise pybids and downstream label-remappers misclassify background
+# as a tumor region). The TSV emits one row per non-background label
+# (1 = non-enhancing, 2 = contrast-enhancing); the whole-tumor union
+# is recoverable by summing voxel/volume columns or via the existing
+# `desc-wholetumor_mask.nii.gz` / `desc-wholetumor_mask.json` artifact.
+#
+# The label name strings come from the existing `_TUMOR_SEG_LABELS`
+# table in `pmriprep.utils.sidecar_builders` (single source of truth);
+# this module exposes a mapping with snake_case names suitable as TSV
+# `name` column values.
+# ---------------------------------------------------------------------------
+
+# Mapping: integer label → (snake_case TSV name, human description).
+# Index 0 (background) intentionally excluded per BIDS dseg semantics.
+_TUMOR_DSEG_ROWS: Tuple[Tuple[int, str, str], ...] = (
+    (1, "non_enhancing_tumor", "Non-enhancing tumor (HD-GLIO label 1)"),
+    (2, "contrast_enhancing_tumor", "Contrast-enhancing tumor (HD-GLIO label 2)"),
+)
+
+
+def write_tumor_dseg_tsv(
+    segmentation_file: Union[str, Path],
+    output_path: Union[str, Path],
+) -> Path:
+    """Write a BIDS-Common-Derivatives ``_dseg.tsv`` for HD-GLIO tumor seg.
+
+    Companion lookup table for the existing ``desc-tumorseg_dseg.nii.gz``
+    label NIfTI. Columns: ``index, name, voxel_count, volume_mm3, volume_ml``.
+    One row per non-background label. The accompanying JSON sidecar is
+    built by :func:`pmriprep.utils.sidecar_builders.build_tumor_seg_dseg_sidecar`,
+    which describes both the NIfTI label map and these TSV columns.
+
+    Args:
+        segmentation_file: Path to HD-GLIO dseg NIfTI (int labels 0/1/2).
+        output_path: Output ``.tsv`` path. Should match the NIfTI basename
+            (e.g. ``sub-X_space-T1w_desc-tumorseg_dseg.tsv``) so the
+            companion JSON sidecar applies to both files per BIDS.
+
+    Returns:
+        Resolved ``output_path`` as a ``Path``.
+
+    Raises:
+        ValueError: if the NIfTI contains label values outside the
+            registered set (0, 1, 2).
+    """
+    import csv
+
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    img = nib.load(str(segmentation_file))
+    seg_data = np.asarray(img.dataobj, dtype=np.int16)  # type: ignore[attr-defined]
+    unique_labels = set(np.unique(seg_data).tolist())
+    allowed = {0, 1, 2}
+    unexpected = unique_labels - allowed
+    if unexpected:
+        raise ValueError(
+            f"HD-GLIO dseg NIfTI contains unexpected labels {sorted(unexpected)}; "
+            f"expected subset of {sorted(allowed)}. Source: {segmentation_file}",
+        )
+    zooms = img.header.get_zooms()[:3]  # type: ignore[attr-defined]
+    voxel_sizes = (float(zooms[0]), float(zooms[1]), float(zooms[2]))
+
+    rows: List[Dict[str, Any]] = []
+    for index, name, _description in _TUMOR_DSEG_ROWS:
+        mask = seg_data == index
+        voxel_count, volume_mm3, volume_ml = compute_region_volume(mask, voxel_sizes)
+        rows.append({
+            "index": index,
+            "name": name,
+            "voxel_count": voxel_count,
+            "volume_mm3": round(volume_mm3, 2),
+            "volume_ml": round(volume_ml, 3),
+        })
+
+    with out_path.open("w", newline="") as fh:
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=["index", "name", "voxel_count", "volume_mm3", "volume_ml"],
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# Per-map lesion / ROI stats fragment extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_per_map_lesion_stats(
+    aggregate: Optional[Dict[str, Any]],
+    map_name: str,
+) -> Optional[Dict[str, Any]]:
+    """Extract a per-perfusion-map fragment from an aggregate lesion stats dict.
+
+    Used to inject per-map ``LesionStats`` blocks into perfusion map
+    sidecars. The aggregate dict (output of
+    :meth:`LesionStatisticsResult.to_dict`) has the shape::
+
+        {
+          "Regions": {
+            "<region_name>": {
+              "voxel_count": N, "volume_mm3": V, "volume_ml": V,
+              "perfusion_maps": {"<map_name>": <MapStatistics dict>, ...}
+            }, ...
+          },
+          "TotalLesionVoxels": ...,
+          ...
+        }
+
+    For one ``map_name`` (e.g. ``"cbf"``, ``"Ktrans"``), this returns::
+
+        {
+          "Regions": {
+            "<region_name>": {
+              "voxel_count": N, "volume_ml": V,
+              "stats": <MapStatistics dict for map_name>,
+            }, ...
+          }
+        }
+
+    Returns ``None`` when the aggregate is empty or the requested map is
+    absent from every region (so the caller can skip injecting the field
+    entirely rather than emit an empty block).
+
+    Args:
+        aggregate: Aggregate lesion stats dict, or None.
+        map_name: Perfusion map name to extract (e.g. ``"cbf"``).
+
+    Returns:
+        Per-map fragment dict, or None if no data is available.
+    """
+    if not aggregate or not isinstance(aggregate, dict):
+        return None
+    regions = aggregate.get("Regions") or {}
+    if not isinstance(regions, dict):
+        return None
+
+    out_regions: Dict[str, Dict[str, Any]] = {}
+    for region_name, region_block in regions.items():
+        if not isinstance(region_block, dict):
+            continue
+        per_map = region_block.get("perfusion_maps") or {}
+        stats = per_map.get(map_name) if isinstance(per_map, dict) else None
+        if stats is None:
+            continue
+        fragment: Dict[str, Any] = {}
+        if "voxel_count" in region_block:
+            fragment["voxel_count"] = region_block["voxel_count"]
+        if "volume_ml" in region_block:
+            fragment["volume_ml"] = region_block["volume_ml"]
+        fragment["stats"] = stats
+        out_regions[region_name] = fragment
+
+    if not out_regions:
+        return None
+    return {"Regions": out_regions}

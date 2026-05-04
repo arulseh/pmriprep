@@ -331,7 +331,15 @@ def build_tumor_seg_dseg_sidecar(
     session: Optional[str],
     is_postcon_ref: bool = False,
 ) -> Dict[str, Any]:
-    """Sidecar for the multi-class tumor ``dseg`` label map."""
+    """Sidecar for the multi-class tumor ``dseg`` label map.
+
+    Per BIDS-Common-Derivatives, a single ``_dseg.json`` describes both
+    the ``_dseg.nii.gz`` label NIfTI and the ``_dseg.tsv`` lookup table
+    (when the latter is present) since they share a basename. The
+    ``Columns`` block here documents the TSV columns
+    (``index, name, voxel_count, volume_mm3, volume_ml``) for any
+    consumer reading the companion ``_dseg.tsv``.
+    """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
     return {
@@ -343,6 +351,35 @@ def build_tumor_seg_dseg_sidecar(
         "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
+        "Columns": {
+            "index": {
+                "LongName": "Region label index",
+                "Description": (
+                    "Integer label matching the corresponding ``_dseg.nii.gz`` "
+                    "voxel value. Background (0) is omitted from the TSV per "
+                    "BIDS dseg convention."
+                ),
+            },
+            "name": {
+                "LongName": "Region name",
+                "Description": "Tumor region identifier (snake_case).",
+            },
+            "voxel_count": {
+                "LongName": "Voxel count",
+                "Description": "Number of voxels with this label.",
+                "Units": "voxels",
+            },
+            "volume_mm3": {
+                "LongName": "Region volume",
+                "Description": "Region volume in cubic millimetres.",
+                "Units": "mm^3",
+            },
+            "volume_ml": {
+                "LongName": "Region volume",
+                "Description": "Region volume in millilitres.",
+                "Units": "mL",
+            },
+        },
     }
 
 
@@ -548,3 +585,204 @@ def build_anat_probseg_sidecar(
         "NumberOfClasses": 3,
         "ProbabilityMap": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-image anat sidecar enrichment (Option A QC distribution)
+#
+# These helpers take a base sidecar dict + the upstream `qc_metrics` dict
+# and inject the relevant subset of pipeline state matching what was
+# previously aggregated into the standalone anat QC summary JSON.
+#
+# Pattern: each helper mutates the sidecar in-place AND returns it for
+# chaining. Missing qc fields are silently skipped — sidecars that lack
+# upstream qc data still emit a valid (smaller) sidecar.
+# ---------------------------------------------------------------------------
+
+
+def enrich_brain_mask_sidecar(
+    sidecar: Dict[str, Any],
+    qc_metrics: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Add a ``BrainExtraction`` block to a brain-mask sidecar.
+
+    Reads ``qc_metrics["brain_extraction"]`` (tool, version, parameters).
+    Used during 0.45.0 distribution of anat QC content.
+    """
+    if not qc_metrics or not isinstance(qc_metrics, dict):
+        return sidecar
+    be = qc_metrics.get("brain_extraction")
+    if not be or not isinstance(be, dict):
+        return sidecar
+    block: Dict[str, Any] = {}
+    if "tool" in be:
+        block["Tool"] = str(be["tool"])
+    if "version" in be:
+        block["Version"] = str(be["version"])
+    if "device" in be:
+        block["Device"] = str(be["device"])
+    if "voxel_count" in be:
+        block["BrainVoxelCount"] = int(be["voxel_count"])
+    if "volume_ml" in be:
+        block["BrainVolume_mL"] = float(be["volume_ml"])
+    if block:
+        sidecar["BrainExtraction"] = block
+    return sidecar
+
+
+def enrich_preproc_anat_sidecar(
+    sidecar: Dict[str, Any],
+    qc_metrics: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Add a ``Preprocessing`` block to an anat preproc sidecar.
+
+    Reads ``qc_metrics["preprocessing"]`` (denoising, bias correction,
+    ACPC alignment) and ``qc_metrics["coregistration"]`` (per-modality
+    coreg metrics if present in the calling sidecar's modality scope).
+    """
+    if not qc_metrics or not isinstance(qc_metrics, dict):
+        return sidecar
+    prep = qc_metrics.get("preprocessing")
+    if prep and isinstance(prep, dict):
+        block: Dict[str, Any] = {}
+        if "denoising" in prep:
+            block["Denoising"] = bool(prep["denoising"])
+        if "bias_correction" in prep:
+            block["BiasCorrection"] = str(prep["bias_correction"])
+        if "acpc_aligned" in prep:
+            block["ACPCAligned"] = bool(prep["acpc_aligned"])
+        if block:
+            sidecar["Preprocessing"] = block
+    coreg = qc_metrics.get("coregistration")
+    if coreg and isinstance(coreg, dict):
+        # The caller knows which modality this sidecar describes; coreg
+        # metrics are passed pre-filtered. Accept whatever subset is given.
+        sidecar["Coregistration"] = dict(coreg)
+    return sidecar
+
+
+def enrich_probseg_sidecar(
+    sidecar: Dict[str, Any],
+    qc_metrics: Optional[Dict[str, Any]],
+    tissue_type: str,
+) -> Dict[str, Any]:
+    """Add a ``TissueSegmentationStats`` block to a probseg sidecar.
+
+    Reads ``qc_metrics["tissue_segmentation"][tissue_type]`` (mean
+    probability, voxel count) for the target tissue (WM/GM/CSF).
+    """
+    if not qc_metrics or not isinstance(qc_metrics, dict):
+        return sidecar
+    seg = qc_metrics.get("tissue_segmentation")
+    if not seg or not isinstance(seg, dict):
+        return sidecar
+    block_for_tissue = seg.get(tissue_type) if isinstance(seg.get(tissue_type), dict) else None
+    if not block_for_tissue:
+        return sidecar
+    sidecar["TissueSegmentationStats"] = dict(block_for_tissue)
+    return sidecar
+
+
+# ---------------------------------------------------------------------------
+# AIF timeseries sidecars
+# ---------------------------------------------------------------------------
+
+
+def build_aif_timeseries_sidecar(
+    *,
+    modality: str,
+    source_paths: Sequence[PathLike],
+    bids_dir: PathLike,
+    subject: str,
+    session: Optional[str],
+    qc_metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the JSON sidecar for the AIF curve text file.
+
+    Per BIDS-Common-Derivatives, every data file should carry its own
+    sidecar describing how it was derived. The AIF curve TXT
+    (``desc-{dsc,dce}Aif_timeseries.txt``) currently has no companion
+    JSON. This builder produces one carrying AIF detection metadata
+    (method, voxel count, peak, FWHM) plus standard provenance fields.
+
+    Note: the ``.txt`` extension is non-canonical (BIDS uses
+    ``_timeseries.tsv``) and is a separate, pre-existing issue; this
+    sidecar attaches metadata regardless and is treated by the validator
+    as a free sidecar.
+
+    Args:
+        modality: ``"DCE"`` or ``"DSC"``.
+        source_paths: Source 4D NIfTI paths the AIF was extracted from.
+        bids_dir: BIDS rawdata root for ``Sources`` BIDS-URI construction.
+        subject: Subject ID without ``sub-`` prefix.
+        session: Session ID without ``ses-`` prefix (or None).
+        qc_metrics: Pipeline QC dict with ``aif_detection`` block.
+
+    Returns:
+        Dict suitable for ``json.dumps``.
+    """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
+    if modality not in {"DCE", "DSC"}:
+        raise ValueError(f"modality must be 'DCE' or 'DSC'; got {modality!r}")
+
+    # AIF curve content differs by modality (verified against
+    # interfaces/dsc_aif.py:2270 and interfaces/dce_aif.py):
+    #   DSC: peak_delta_r2_star — change in transverse relaxation rate (1/s)
+    #   DCE: plasma [Gd] in mM (after /(1-Hct) conversion; see
+    #        provenance.py:_enrich_dce AIFUnits block)
+    if modality == "DSC":
+        column_name = "delta_r2_star"
+        units = "1/s"
+        column_description = (
+            "Susceptibility-induced change in transverse relaxation rate "
+            "(ΔR2*) at the AIF voxel(s)."
+        )
+    else:  # DCE
+        column_name = "plasma_concentration_mM"
+        units = "mM"
+        column_description = (
+            "Plasma gadolinium concentration after blood-to-plasma "
+            "conversion (/(1-Hct))."
+        )
+
+    sidecar: Dict[str, Any] = {
+        **get_bids_derivative_provenance(),
+        "Description": f"Arterial input function (AIF) curve for {modality}-MRI.",
+        "Sources": build_sources_list(source_paths, bids_dir),
+        "Columns": [column_name],
+        "Units": units,
+        "ColumnDescriptions": {column_name: column_description},
+    }
+    sidecar["Subject"] = f"sub-{subject}"
+    if session:
+        sidecar["Session"] = f"ses-{session}"
+
+    aif = (qc_metrics or {}).get("aif_detection") if qc_metrics else None
+    if aif and isinstance(aif, dict):
+        detection: Dict[str, Any] = {}
+        if "aif_source" in aif:
+            detection["Method"] = str(aif["aif_source"])
+        if "n_aif_voxels_selected" in aif:
+            detection["NumberOfVoxelsSelected"] = int(aif["n_aif_voxels_selected"])
+        peak = aif.get("peak_mm_mean") or aif.get("final_peak_mm")
+        if peak is not None:
+            detection["PeakConcentration_mM"] = float(peak)
+        fwhm = aif.get("fwhm_seconds_mean") or aif.get("final_fwhm_seconds")
+        if fwhm is not None:
+            detection["FWHM_seconds"] = float(fwhm)
+        if "quality_score" in aif:
+            detection["QualityScore"] = float(aif["quality_score"])
+        if "arterial_cascade_tier" in aif:
+            detection["ArterialCascadeTier"] = int(aif["arterial_cascade_tier"])
+        if "hemisphere_coverage" in aif:
+            detection["HemisphereCoverage"] = str(aif["hemisphere_coverage"])
+        if aif.get("population_aif"):
+            detection["PopulationModel"] = "parker"
+            if "dose_factor" in aif:
+                detection["DoseFactor"] = float(aif["dose_factor"])
+        if detection:
+            sidecar["AIFDetection"] = detection
+        if "hematocrit" in aif:
+            sidecar["Hematocrit"] = float(aif["hematocrit"])
+    return sidecar
