@@ -64,16 +64,20 @@ DRO_SESSION_MAP: Dict[Tuple[str, str], Tuple[str, str]] = {
 
 DRO_SESSIONS = list(DRO_SESSION_MAP.keys())
 
-# File name patterns (no res- entity in new BIDS naming)
-SPACE_ENTITY = "space-dce"
+# File name patterns (BIDS-Common-Derivatives compliant).
+# Native-space perf/ outputs omit the space- entity (perf/ directory
+# implies native acquisition space). Cross-modality anat/ outputs
+# (e.g., a brain mask describing anat in DCE space) keep space-dce.
+PERF_SPACE_PREFIX = ""
+ANAT_SPACE_PREFIX = "space-dce_"
 
 # Map suffix patterns
 MAP_SUFFIXES = {
-    "Ktrans": "model-auto_desc-dce_Ktrans",
-    "ve": "model-auto_desc-dce_ve",
-    "vp": "model-auto_desc-dce_vp",
-    "kep": "model-auto_desc-dce_kep",
-    "R2": "model-auto_desc-dce_R2",
+    "Ktrans": "desc-dce_Ktrans",
+    "ve": "desc-dce_ve",
+    "vp": "desc-dce_vp",
+    "kep": "desc-dce_kep",
+    "R2": "desc-dce_R2",
     "IAUC60": "desc-dce_IAUC60",
     "IAUC90": "desc-dce_IAUC90",
     "IAUC120": "desc-dce_IAUC120",
@@ -106,7 +110,7 @@ def load_map(
     import nibabel as nib
 
     map_suffix = MAP_SUFFIXES.get(suffix, suffix)
-    fname = f"{subject}_{session}_{SPACE_ENTITY}_{map_suffix}.nii.gz"
+    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{map_suffix}.nii.gz"
     fpath = OUTPUT_ROOT / subject / session / "perf" / fname
 
     if not fpath.exists():
@@ -134,13 +138,13 @@ def load_mask(
     import nibabel as nib
 
     if mask_type == "brain":
-        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-brain_mask.nii.gz"
+        fname = f"{subject}_{session}_{ANAT_SPACE_PREFIX}desc-brain_mask.nii.gz"
         fpath = OUTPUT_ROOT / subject / session / "anat" / fname
     elif mask_type == "qc":
-        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceQc_mask.nii.gz"
+        fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceQc_mask.nii.gz"
         fpath = OUTPUT_ROOT / subject / session / "perf" / fname
     elif mask_type == "aif":
-        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceAif_mask.nii.gz"
+        fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceAif_mask.nii.gz"
         fpath = OUTPUT_ROOT / subject / session / "perf" / fname
     else:
         raise ValueError(f"Unknown mask type: {mask_type}")
@@ -167,7 +171,7 @@ def load_ref_dce(
     """
     import nibabel as nib
 
-    fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceMean_ref.nii.gz"
+    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_ref.nii.gz"
     fpath = OUTPUT_ROOT / subject / session / "perf" / fname
 
     if not fpath.exists():
@@ -179,24 +183,24 @@ def load_ref_dce(
 
 def get_ref_dce_path(subject: str, session: str) -> Path:
     """Get path to DCE reference image."""
-    fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceMean_ref.nii.gz"
+    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_ref.nii.gz"
     return OUTPUT_ROOT / subject / session / "perf" / fname
 
 
 def get_map_path(subject: str, session: str, suffix: str) -> Path:
     """Get path to a parameter map file."""
     map_suffix = MAP_SUFFIXES.get(suffix, suffix)
-    fname = f"{subject}_{session}_{SPACE_ENTITY}_{map_suffix}.nii.gz"
+    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{map_suffix}.nii.gz"
     return OUTPUT_ROOT / subject / session / "perf" / fname
 
 
 def get_mask_path(subject: str, session: str, mask_type: str) -> Path:
     """Get path to a mask file."""
     if mask_type == "brain":
-        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-brain_mask.nii.gz"
+        fname = f"{subject}_{session}_{ANAT_SPACE_PREFIX}desc-brain_mask.nii.gz"
         return OUTPUT_ROOT / subject / session / "anat" / fname
     elif mask_type == "qc":
-        fname = f"{subject}_{session}_{SPACE_ENTITY}_desc-dceQc_mask.nii.gz"
+        fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceQc_mask.nii.gz"
         return OUTPUT_ROOT / subject / session / "perf" / fname
     else:
         raise ValueError(f"Unknown mask type: {mask_type}")
@@ -273,14 +277,14 @@ def has_fsl() -> bool:
 
 
 def _get_anat_path(subject: str, session: str) -> Path:
-    """Get path to preprocessed T1w in anat space."""
-    fname = f"{subject}_{session}_space-anat_desc-preproc_T1w.nii.gz"
+    """Get path to preprocessed T1w in anat reference space."""
+    fname = f"{subject}_{session}_space-T1w_desc-preproc_T1w.nii.gz"
     return OUTPUT_ROOT / subject / session / "anat" / fname
 
 
 def _get_dce_to_anat_xfm(subject: str, session: str) -> Path:
-    """Get path to the pipeline's DCE-to-anat FLIRT transform."""
-    fname = f"{subject}_{session}_from-dce_to-anat_mode-image_xfm.mat"
+    """Get path to the pipeline's DCE-to-T1w FLIRT transform."""
+    fname = f"{subject}_{session}_from-dce_to-T1w_mode-image_xfm.mat"
     return OUTPUT_ROOT / subject / session / "anat" / fname
 
 
@@ -358,8 +362,8 @@ def register_sessions(
 
     1. **Direct**: FLIRT DCE-ref → DCE-ref (works well when slabs overlap
        sufficiently).
-    2. **Anat-mediated**: Chain DCE→anat→anat→DCE using the pipeline's
-       DCE-to-anat transforms plus an inter-session T1 registration.
+    2. **Anat-mediated**: Chain DCE→T1w→T1w→DCE using the pipeline's
+       DCE-to-T1w transforms plus an inter-session T1w registration.
        More robust for large positioning differences, but the 3-transform
        chain can accumulate interpolation error.
 
@@ -769,8 +773,8 @@ def load_ci_map(
     """
     import nibabel as nib
 
-    suffix = f"model-auto_desc-dceCI95{bound}_{parameter}"
-    fname = f"{subject}_{session}_{SPACE_ENTITY}_{suffix}.nii.gz"
+    suffix = f"desc-dceCI95{bound}_{parameter}"
+    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{suffix}.nii.gz"
     fpath = OUTPUT_ROOT / subject / session / "perf" / fname
 
     if not fpath.exists():

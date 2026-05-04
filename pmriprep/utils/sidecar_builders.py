@@ -10,9 +10,12 @@ Sidecar field strategy (M3):
 - **Sources**: per-output list of BIDS URIs (``bids::sub-X/ses-Y/...``) to
   the immediate raw inputs that produced the derivative.
 - **SpatialReference**: BIDS URI to the on-disk reference image whose
-  grid the derivative occupies (e.g., the preproc T1w for ``space-anat``,
-  the mean DCE/DSC ref for ``space-dce/dsc``). For native acquisition
-  space, the reference image references itself.
+  grid the derivative occupies (e.g., the preproc T1w for ``space-T1w``,
+  the mean DCE/DSC ref for native acquisition space). For native
+  acquisition space in perf/, per BIDS-Common-Derivatives convention,
+  outputs omit the ``space-`` entity. For anat/ outputs, ``space-T1w``
+  is used uniformly per fmriprep precedent; pre- vs post-contrast
+  disambiguation lives in this URI.
 - **Resolution**: literal string ``"native"`` (BIDS-Derivatives 1.9
   keyword for unresampled images). The numeric voxel sizes go in
   ``VoxelSize: [vx, vy, vz]`` (custom pmriprep field).
@@ -68,7 +71,7 @@ def build_spatial_reference_uri(
 
     ``reference_filename`` is the basename (without sub-/ses- prefix) of the
     reference image inside the derivatives tree, e.g.
-    ``"space-anat_desc-preproc_T1w.nii.gz"``.
+    ``"space-T1w_desc-preproc_T1w.nii.gz"``.
     """
     prefix = f"sub-{subject}"
     if session:
@@ -229,12 +232,15 @@ def anat_reference_basename(is_postcon_ref: bool = False) -> str:
     """Basename of the anat reference image inside the derivatives tree.
 
     In postcon-only mode the postcon T1w IS the reference, so the file is
-    ``ce-GAD_space-anat_desc-preproc_T1w.nii.gz``. Otherwise the precon
-    T1w is the reference.
+    ``ce-GAD_space-T1w_desc-preproc_T1w.nii.gz``. Otherwise the precon
+    T1w is the reference. Note: the BIDS ``T1w`` space label is canonical
+    per fmriprep/aslprep precedent; pre- vs post-contrast disambiguation
+    lives in the JSON ``SpatialReference`` field, which points to the
+    actual reference image (with or without the ``ce-GAD`` entity).
     """
     if is_postcon_ref:
-        return "ce-GAD_space-anat_desc-preproc_T1w.nii.gz"
-    return "space-anat_desc-preproc_T1w.nii.gz"
+        return "ce-GAD_space-T1w_desc-preproc_T1w.nii.gz"
+    return "space-T1w_desc-preproc_T1w.nii.gz"
 
 
 def _anat_spatial_reference(
@@ -395,7 +401,7 @@ def build_tumor_seg_nawm_sidecar(
 
 def dce_reference_basename() -> str:
     """Basename of the DCE reference image inside the derivatives tree."""
-    return "space-dce_desc-dceMean_ref.nii.gz"
+    return "desc-dceMean_ref.nii.gz"
 
 
 def _dce_spatial_reference(subject: str, session: Optional[str]) -> str:
@@ -447,7 +453,7 @@ def build_dce_base_sidecar(
 
 def dsc_reference_basename() -> str:
     """Basename of the DSC reference image inside the derivatives tree."""
-    return "space-dsc_desc-dscMean_ref.nii.gz"
+    return "desc-dscMean_ref.nii.gz"
 
 
 def _dsc_spatial_reference(subject: str, session: Optional[str]) -> str:

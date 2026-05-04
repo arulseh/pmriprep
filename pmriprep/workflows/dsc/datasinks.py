@@ -228,7 +228,7 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    stem = f"{prefix}_space-dsc_desc-{desc}_{suffix}"
+    stem = f"{prefix}_desc-{desc}_{suffix}"
     nii_out = out_root / f"{stem}.nii.gz"
     json_out = out_root / f"{stem}.json"
 
@@ -1054,7 +1054,7 @@ def init_dsc_datasinks_wf(
             workflow, inputnode,
             name="dsc_to_t1w_xfm",
             in_attr="dsc_to_t1w_xfm",
-            from_space="dsc", to_space="anat",
+            from_space="dsc", to_space="T1w",
         )
         sink_outputs.append((sink, "out_file"))
     if "t1w_to_dsc_xfm" in present:
@@ -1062,7 +1062,7 @@ def init_dsc_datasinks_wf(
             workflow, inputnode,
             name="t1w_to_dsc_xfm",
             in_attr="t1w_to_dsc_xfm",
-            from_space="anat", to_space="dsc",
+            from_space="T1w", to_space="dsc",
         )
         sink_outputs.append((sink, "out_file"))
 

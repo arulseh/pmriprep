@@ -6,8 +6,9 @@ sidecar) plus a ``DCEQCWriter`` shim for the QC JSON, AIF curve copy,
 confounds TSV/JSON, lesion/ROI stats copies, and figure copies.
 
 Per-output sidecar enrichment uses ``build_dce_base_sidecar`` from
-``pmriprep.utils.sidecar_builders``. PK-map sinks carry a
-``model-{pk_model}`` entity in their filename.
+``pmriprep.utils.sidecar_builders``. The PK model name is recorded in
+the JSON sidecar (``PKModeling.model`` field) rather than in the
+filename — the BIDS schema does not register a ``model-`` entity.
 """
 from __future__ import annotations
 
@@ -28,7 +29,8 @@ from pmriprep.interfaces.qc_writers import (
 # ---------------------------------------------------------------------------
 
 
-# PK parameter maps (carry ``model-{pk_model}`` entity).
+# PK parameter maps. Model name lives in JSON sidecar (PKModeling.model),
+# not in the filename (no `model-` entity in BIDS schema).
 # (input_attr, suffix, description, units)
 _PK_MAPS: tuple[tuple[str, str, str, str], ...] = (
     ("ktrans_map", "Ktrans", "Volume transfer constant (1/min)", "1/min"),
@@ -236,7 +238,7 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    parts = [prefix, "space-dce"]
+    parts = [prefix]
     if model_entity:
         parts.append(model_entity)
     if desc:
@@ -286,7 +288,7 @@ def _copy_b1plusmap(  # type: ignore[no-untyped-def]
 def _copy_dce_xfm(  # type: ignore[no-untyped-def]
     in_file, output_dir, subject, session,
 ):
-    """Copy DCE-to-anat transform .mat into the derivatives anat/."""
+    """Copy DCE-to-T1w transform .mat into the derivatives anat/."""
     import shutil
     from pathlib import Path
 
@@ -299,7 +301,7 @@ def _copy_dce_xfm(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    fname = f"{prefix}_from-dce_to-anat_mode-image_xfm.mat"
+    fname = f"{prefix}_from-dce_to-T1w_mode-image_xfm.mat"
     out_path = out_root / fname
     shutil.copy2(in_file, out_path)
     return str(out_path)
@@ -587,12 +589,12 @@ def init_dce_datasinks_wf(
     sinks. Model-free maps (IAUC, peakEnhancement, ttp, SER, washIn/Out,
     BAT, curveType, tsnr, qcMask, nIAUC60) drop the model entity.
     """
-    from pmriprep.utils.outputs import sanitize_model_entity
-
     if present_inputs is None:
         present_inputs = set()
     present = set(_ALWAYS_PRESENT_INPUTS) | set(present_inputs)
-    model_entity = f"model-{sanitize_model_entity(pk_model)}"
+    # `model-` is not a BIDS entity; model name lives in the JSON sidecar
+    # (PKModeling.model). Empty string here propagates through all callers.
+    model_entity = ""
 
     workflow = pe.Workflow(name=name)
 

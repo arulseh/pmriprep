@@ -137,7 +137,7 @@ def _add_dseg_sink(
         PMRIPrepDataSink(
             check_hdr=True, compress=True,
             allowed_entities=("space",),
-            space="anat", desc="tumorseg", suffix="dseg",
+            space="T1w", desc="tumorseg", suffix="dseg",
         ),
         name="dseg_sink",
     )
@@ -200,7 +200,7 @@ def _add_mask_sink(
         PMRIPrepDataSink(
             check_hdr=True, compress=True,
             allowed_entities=("space",),
-            space="anat", desc=desc_value, suffix="mask",
+            space="T1w", desc=desc_value, suffix="mask",
         ),
         name=f"{name}_sink",
     )
@@ -250,7 +250,7 @@ def _add_nawm_sink(
         PMRIPrepDataSink(
             check_hdr=True, compress=True,
             allowed_entities=("space",),
-            space="anat", desc="nawm", suffix="mask",
+            space="T1w", desc="nawm", suffix="mask",
         ),
         name="nawm_sink",
     )

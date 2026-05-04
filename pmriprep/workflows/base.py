@@ -729,7 +729,7 @@ def _find_previous_dsc_outputs(
     # DSC→T1w transform (now in anat/ instead of xfm/)
     anat_dir = dsc_dir / "anat"
     if anat_dir.exists():
-        for f in anat_dir.glob("*from-dsc_to-anat*_xfm.mat"):
+        for f in anat_dir.glob("*from-dsc_to-T1w*_xfm.mat"):
             outputs["dsc_to_t1w_xfm"] = str(f)
 
     # AIF QC from BIDS-named QC JSON in session root

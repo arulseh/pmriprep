@@ -1330,10 +1330,10 @@ def _save_transforms(dsc_to_t1w_matrix, t1w_to_dsc_matrix, derivatives_dir, subj
     prefix = f"{sub_dir}{'_' + ses_part if ses_part else ''}"
 
     dsc_to_t1w_path = str(
-        out_dir / f"{prefix}_from-dsc_to-anat_mode-image_xfm.mat"
+        out_dir / f"{prefix}_from-dsc_to-T1w_mode-image_xfm.mat"
     )
     t1w_to_dsc_path = str(
-        out_dir / f"{prefix}_from-anat_to-dsc_mode-image_xfm.mat"
+        out_dir / f"{prefix}_from-T1w_to-dsc_mode-image_xfm.mat"
     )
 
     shutil.copy2(dsc_to_t1w_matrix, dsc_to_t1w_path)

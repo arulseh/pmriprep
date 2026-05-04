@@ -74,9 +74,9 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     wf.run()
 
     pmri = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    t1w_out = pmri / "sub-01_ses-0001_space-anat_desc-preproc_T1w.nii.gz"
+    t1w_out = pmri / "sub-01_ses-0001_space-T1w_desc-preproc_T1w.nii.gz"
     t1w_json = t1w_out.with_suffix("").with_suffix(".json")
-    mask_out = pmri / "sub-01_ses-0001_space-anat_desc-brain_mask.nii.gz"
+    mask_out = pmri / "sub-01_ses-0001_space-T1w_desc-brain_mask.nii.gz"
     mask_json = mask_out.with_suffix("").with_suffix(".json")
 
     assert t1w_out.exists(), f"Missing: {t1w_out}"
@@ -210,9 +210,9 @@ def test_postcon_only_writes_unconditional_outputs(tmp_path: Path) -> None:
     anat_dir = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
 
     # All three unconditional outputs must be present
-    t1w_out = anat_dir / "sub-01_ses-0001_ce-GAD_space-anat_desc-preproc_T1w.nii.gz"
-    mask_out = anat_dir / "sub-01_ses-0001_ce-GAD_space-anat_desc-brain_mask.nii.gz"
-    xfm_out = anat_dir / "sub-01_ses-0001_from-anat_to-MNI152NLin6Asym_mode-image_xfm.mat"
+    t1w_out = anat_dir / "sub-01_ses-0001_ce-GAD_space-T1w_desc-preproc_T1w.nii.gz"
+    mask_out = anat_dir / "sub-01_ses-0001_ce-GAD_space-T1w_desc-brain_mask.nii.gz"
+    xfm_out = anat_dir / "sub-01_ses-0001_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.mat"
 
     assert t1w_out.exists(), f"Missing t1w preproc in postcon-only: {t1w_out}"
     assert mask_out.exists(), f"Missing brain mask in postcon-only: {mask_out}"
@@ -322,26 +322,26 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
 
     anat_dir = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
     expected = [
-        "sub-01_ses-0001_space-anat_desc-preproc_T1w.nii.gz",
-        "sub-01_ses-0001_space-anat_desc-brain_mask.nii.gz",
-        "sub-01_ses-0001_space-anat_label-CSF_probseg.nii.gz",
-        "sub-01_ses-0001_space-anat_label-GM_probseg.nii.gz",
-        "sub-01_ses-0001_space-anat_label-WM_probseg.nii.gz",
-        "sub-01_ses-0001_ce-GAD_space-anat_desc-preproc_T1w.nii.gz",
-        "sub-01_ses-0001_space-anat_desc-preproc_T2w.nii.gz",
-        "sub-01_ses-0001_space-anat_desc-preproc_FLAIR.nii.gz",
-        "sub-01_ses-0001_space-anat_desc-subtraction_T1w.nii.gz",
-        "sub-01_ses-0001_from-anat_to-MNI152NLin6Asym_mode-image_xfm.mat",
-        "sub-01_ses-0001_from-T1wCE_to-anat_mode-image_xfm.mat",
-        "sub-01_ses-0001_from-T2w_to-anat_mode-image_xfm.mat",
-        "sub-01_ses-0001_from-FLAIR_to-anat_mode-image_xfm.mat",
+        "sub-01_ses-0001_space-T1w_desc-preproc_T1w.nii.gz",
+        "sub-01_ses-0001_space-T1w_desc-brain_mask.nii.gz",
+        "sub-01_ses-0001_space-T1w_label-CSF_probseg.nii.gz",
+        "sub-01_ses-0001_space-T1w_label-GM_probseg.nii.gz",
+        "sub-01_ses-0001_space-T1w_label-WM_probseg.nii.gz",
+        "sub-01_ses-0001_ce-GAD_space-T1w_desc-preproc_T1w.nii.gz",
+        "sub-01_ses-0001_space-T1w_desc-preproc_T2w.nii.gz",
+        "sub-01_ses-0001_space-T1w_desc-preproc_FLAIR.nii.gz",
+        "sub-01_ses-0001_space-T1w_desc-subtraction_T1w.nii.gz",
+        "sub-01_ses-0001_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.mat",
+        "sub-01_ses-0001_from-T1wCE_to-T1w_mode-image_xfm.mat",
+        "sub-01_ses-0001_from-T2w_to-T1w_mode-image_xfm.mat",
+        "sub-01_ses-0001_from-FLAIR_to-T1w_mode-image_xfm.mat",
     ]
     for name in expected:
         assert (anat_dir / name).exists(), f"Missing: {name}"
 
     # Postcon T1w sidecar must carry the contrast-agent block
     postcon_sidecar = json.loads(
-        (anat_dir / "sub-01_ses-0001_ce-GAD_space-anat_desc-preproc_T1w.json").read_text()
+        (anat_dir / "sub-01_ses-0001_ce-GAD_space-T1w_desc-preproc_T1w.json").read_text()
     )
     assert "PerfusionProcessing" in postcon_sidecar
     assert "ContrastAgent" in postcon_sidecar["PerfusionProcessing"]

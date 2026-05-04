@@ -397,83 +397,83 @@ output_dir/pmriprep/
   dataset_description.json
   sub-01/ses-01/
     anat/
-      sub-01_ses-01_space-anat_desc-preproc_T1w.nii.gz
-      sub-01_ses-01_space-anat_desc-brain_mask.nii.gz
-      sub-01_ses-01_space-anat_label-GM_probseg.nii.gz
-      sub-01_ses-01_space-anat_label-WM_probseg.nii.gz
-      sub-01_ses-01_space-anat_label-CSF_probseg.nii.gz
-      sub-01_ses-01_space-DCE_T1map.nii.gz
-      sub-01_ses-01_space-DCE_B1plusmap.nii.gz
-      sub-01_ses-01_space-anat_desc-tumorseg_dseg.nii.gz
-      sub-01_ses-01_space-anat_desc-enhancing_mask.nii.gz
-      sub-01_ses-01_space-anat_desc-nawm_mask.nii.gz
+      sub-01_ses-01_space-T1w_desc-preproc_T1w.nii.gz
+      sub-01_ses-01_space-T1w_desc-brain_mask.nii.gz
+      sub-01_ses-01_space-T1w_label-GM_probseg.nii.gz
+      sub-01_ses-01_space-T1w_label-WM_probseg.nii.gz
+      sub-01_ses-01_space-T1w_label-CSF_probseg.nii.gz
+      sub-01_ses-01_space-dce_T1map.nii.gz
+      sub-01_ses-01_space-dce_B1plusmap.nii.gz
+      sub-01_ses-01_space-T1w_desc-tumorseg_dseg.nii.gz
+      sub-01_ses-01_space-T1w_desc-enhancing_mask.nii.gz
+      sub-01_ses-01_space-T1w_desc-nawm_mask.nii.gz
       # ... tissue segmentations, transforms, space-specific masks
     perf/
       # DSC preprocessing
-      sub-01_ses-01_space-DSC_desc-dscPreproc_dsc.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscMean_ref.nii.gz
+      sub-01_ses-01_desc-dscPreproc_dsc.nii.gz
+      sub-01_ses-01_desc-dscMean_ref.nii.gz
       sub-01_ses-01_desc-dscConfounds_timeseries.tsv
       # DSC maps
-      sub-01_ses-01_space-DSC_desc-dscRel_cbf.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscRel_cbv.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscRelAUC_cbv.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscRel_auc.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_mtt.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_tmax.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_ttp.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_k2.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_ph.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_psr.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_snr.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_tsnr.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_cnr.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscAifCorrected_ttp.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscRelCorrected_auc.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscLeakage_auc.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscNawmNorm_cbf.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscNawmNorm_cbv.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscNawmRel_ttp.nii.gz
+      sub-01_ses-01_desc-dscRel_cbf.nii.gz
+      sub-01_ses-01_desc-dscRel_cbv.nii.gz
+      sub-01_ses-01_desc-dscRelAUC_cbv.nii.gz
+      sub-01_ses-01_desc-dscRel_auc.nii.gz
+      sub-01_ses-01_desc-dsc_mtt.nii.gz
+      sub-01_ses-01_desc-dsc_tmax.nii.gz
+      sub-01_ses-01_desc-dsc_ttp.nii.gz
+      sub-01_ses-01_desc-dsc_k2.nii.gz
+      sub-01_ses-01_desc-dsc_ph.nii.gz
+      sub-01_ses-01_desc-dsc_psr.nii.gz
+      sub-01_ses-01_desc-dsc_snr.nii.gz
+      sub-01_ses-01_desc-dsc_tsnr.nii.gz
+      sub-01_ses-01_desc-dsc_cnr.nii.gz
+      sub-01_ses-01_desc-dscAifCorrected_ttp.nii.gz
+      sub-01_ses-01_desc-dscRelCorrected_auc.nii.gz
+      sub-01_ses-01_desc-dscLeakage_auc.nii.gz
+      sub-01_ses-01_desc-dscNawmNorm_cbf.nii.gz
+      sub-01_ses-01_desc-dscNawmNorm_cbv.nii.gz
+      sub-01_ses-01_desc-dscNawmRel_ttp.nii.gz
       # DSC parametric uncertainty (inference: vi/svb/map only)
-      sub-01_ses-01_space-DSC_desc-dscUncertainty_cbf.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscCV_cbf.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscCI95lower_cbf.nii.gz
-      sub-01_ses-01_space-DSC_desc-dscCI95upper_cbf.nii.gz
+      sub-01_ses-01_desc-dscUncertainty_cbf.nii.gz
+      sub-01_ses-01_desc-dscCV_cbf.nii.gz
+      sub-01_ses-01_desc-dscCI95lower_cbf.nii.gz
+      sub-01_ses-01_desc-dscCI95upper_cbf.nii.gz
       # DSC vascular model (optional)
-      sub-01_ses-01_space-DSC_desc-dsc_alpha.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_beta.nii.gz
-      sub-01_ses-01_space-DSC_desc-dsc_cth.nii.gz
+      sub-01_ses-01_desc-dsc_alpha.nii.gz
+      sub-01_ses-01_desc-dsc_beta.nii.gz
+      sub-01_ses-01_desc-dsc_cth.nii.gz
       # DCE preprocessing
-      sub-01_ses-01_space-DCE_desc-dcePreproc_dce.nii.gz
-      sub-01_ses-01_space-DCE_desc-dceMean_ref.nii.gz
+      sub-01_ses-01_desc-dcePreproc_dce.nii.gz
+      sub-01_ses-01_desc-dceMean_ref.nii.gz
       sub-01_ses-01_desc-dceConfounds_timeseries.tsv
       # DCE PK maps
-      sub-01_ses-01_space-DCE_model-auto_desc-dce_Ktrans.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dce_ve.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dce_vp.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dce_kep.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dce_R2.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dceNawmNorm_Ktrans.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dceTortuosityCorr_Ktrans.nii.gz
+      sub-01_ses-01_desc-dce_Ktrans.nii.gz
+      sub-01_ses-01_desc-dce_ve.nii.gz
+      sub-01_ses-01_desc-dce_vp.nii.gz
+      sub-01_ses-01_desc-dce_kep.nii.gz
+      sub-01_ses-01_desc-dce_R2.nii.gz
+      sub-01_ses-01_desc-dceNawmNorm_Ktrans.nii.gz
+      sub-01_ses-01_desc-dceTortuosityCorr_Ktrans.nii.gz
       # DCE PK uncertainty (inference: vi/map/mcmc only)
-      sub-01_ses-01_space-DCE_model-auto_desc-dceUncertainty_Ktrans.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dceCV_Ktrans.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dceCI95lower_Ktrans.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dceCI95upper_Ktrans.nii.gz
+      sub-01_ses-01_desc-dceUncertainty_Ktrans.nii.gz
+      sub-01_ses-01_desc-dceCV_Ktrans.nii.gz
+      sub-01_ses-01_desc-dceCI95lower_Ktrans.nii.gz
+      sub-01_ses-01_desc-dceCI95upper_Ktrans.nii.gz
       # DCE model selection (auto mode)
-      sub-01_ses-01_space-DCE_model-auto_desc-dceModelSelection_dseg.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dceDeltaBIC_stat.nii.gz
-      sub-01_ses-01_space-DCE_model-auto_desc-dceQualityFlag_mask.nii.gz
+      sub-01_ses-01_desc-dceModelSelection_dseg.nii.gz
+      sub-01_ses-01_desc-dceDeltaBIC_stat.nii.gz
+      sub-01_ses-01_desc-dceQualityFlag_mask.nii.gz
       # DCE model-free maps
-      sub-01_ses-01_space-DCE_desc-dce_IAUC60.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_peakEnhancement.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_SER.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_washInSlope.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_washOutSlope.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_BAT.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_curveType.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_ttp.nii.gz
-      sub-01_ses-01_space-DCE_desc-dce_tsnr.nii.gz
-      sub-01_ses-01_space-DCE_desc-dceNawmNorm_IAUC60.nii.gz
+      sub-01_ses-01_desc-dce_IAUC60.nii.gz
+      sub-01_ses-01_desc-dce_peakEnhancement.nii.gz
+      sub-01_ses-01_desc-dce_SER.nii.gz
+      sub-01_ses-01_desc-dce_washInSlope.nii.gz
+      sub-01_ses-01_desc-dce_washOutSlope.nii.gz
+      sub-01_ses-01_desc-dce_BAT.nii.gz
+      sub-01_ses-01_desc-dce_curveType.nii.gz
+      sub-01_ses-01_desc-dce_ttp.nii.gz
+      sub-01_ses-01_desc-dce_tsnr.nii.gz
+      sub-01_ses-01_desc-dceNawmNorm_IAUC60.nii.gz
       # AIF
       sub-01_ses-01_desc-dscAif_timeseries.txt
       sub-01_ses-01_desc-dceAif_timeseries.txt
@@ -482,8 +482,8 @@ output_dir/pmriprep/
     sub-01_ses-01_desc-dscQC_quality.json
     sub-01_ses-01_desc-dceQC_quality.json
     sub-01_ses-01_desc-tumorsegQC_quality.json
-    sub-01_ses-01_space-DSC_desc-lesionStats.json
-    sub-01_ses-01_space-DCE_desc-lesionStats.json
+    sub-01_ses-01_space-dsc_desc-lesionStats.json
+    sub-01_ses-01_space-dce_desc-lesionStats.json
     # HTML report
     sub-01_ses-01.html
 ```

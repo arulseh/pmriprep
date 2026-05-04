@@ -48,10 +48,10 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    ktrans = perf_out / "sub-01_ses-0001_space-dce_model-auto_desc-dce_Ktrans.nii.gz"
+    ktrans = perf_out / "sub-01_ses-0001_desc-dce_Ktrans.nii.gz"
     assert ktrans.exists(), f"Missing: {ktrans}"
     sidecar = json.loads(
-        (perf_out / "sub-01_ses-0001_space-dce_model-auto_desc-dce_Ktrans.json").read_text()
+        (perf_out / "sub-01_ses-0001_desc-dce_Ktrans.json").read_text()
     )
     assert sidecar["Description"].startswith("Volume transfer constant")
     assert sidecar["Units"] == "1/min"
@@ -93,13 +93,13 @@ def test_dce_factory_with_bayesian_uncertainty(
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
     expected = [
-        "sub-01_ses-0001_space-dce_model-extendedTofts_desc-dce_Ktrans.nii.gz",
-        "sub-01_ses-0001_space-dce_model-extendedTofts_desc-dce_ve.nii.gz",
-        "sub-01_ses-0001_space-dce_model-extendedTofts_desc-dce_vp.nii.gz",
-        "sub-01_ses-0001_space-dce_model-extendedTofts_desc-dceUncertainty_Ktrans.nii.gz",
-        "sub-01_ses-0001_space-dce_model-extendedTofts_desc-dceCV_Ktrans.nii.gz",
-        "sub-01_ses-0001_space-dce_model-extendedTofts_desc-dceCI95lower_Ktrans.nii.gz",
-        "sub-01_ses-0001_space-dce_model-extendedTofts_desc-dceCI95upper_Ktrans.nii.gz",
+        "sub-01_ses-0001_desc-dce_Ktrans.nii.gz",
+        "sub-01_ses-0001_desc-dce_ve.nii.gz",
+        "sub-01_ses-0001_desc-dce_vp.nii.gz",
+        "sub-01_ses-0001_desc-dceUncertainty_Ktrans.nii.gz",
+        "sub-01_ses-0001_desc-dceCV_Ktrans.nii.gz",
+        "sub-01_ses-0001_desc-dceCI95lower_Ktrans.nii.gz",
+        "sub-01_ses-0001_desc-dceCI95upper_Ktrans.nii.gz",
     ]
     for fname in expected:
         assert (perf_out / fname).exists(), f"Missing: {fname}"
@@ -132,10 +132,10 @@ def test_dce_factory_model_free_no_model_entity(
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
     # No model entity in filename
-    assert (perf_out / "sub-01_ses-0001_space-dce_desc-dce_IAUC60.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_space-dce_desc-dce_peakEnhancement.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dce_IAUC60.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dce_peakEnhancement.nii.gz").exists()
     bat_sidecar = json.loads(
-        (perf_out / "sub-01_ses-0001_space-dce_desc-dce_BAT.json").read_text()
+        (perf_out / "sub-01_ses-0001_desc-dce_BAT.json").read_text()
     )
     assert bat_sidecar["DetectionMethod"] == "threshold_then_gradient_fallback"
 
@@ -164,8 +164,8 @@ def test_patlak_only_no_ve_kep(tmp_path: Path, minimal_bids: tuple[Path, str]) -
     wf.run()  # Must not crash
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    assert (perf_out / "sub-01_ses-0001_space-dce_model-patlak_desc-dce_Ktrans.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_space-dce_model-patlak_desc-dce_vp.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dce_Ktrans.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dce_vp.nii.gz").exists()
     # No ve/kep files
     assert not list(perf_out.glob("*_ve.nii.gz"))
     assert not list(perf_out.glob("*_kep.nii.gz"))
@@ -200,8 +200,8 @@ def test_2cxm_bayesian_fp_ps_uncertainty(
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    assert (perf_out / "sub-01_ses-0001_space-dce_model-2cxm_desc-dceUncertainty_Fp.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_space-dce_model-2cxm_desc-dceUncertainty_PS.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dceUncertainty_Fp.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dceUncertainty_PS.nii.gz").exists()
 
 
 def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:

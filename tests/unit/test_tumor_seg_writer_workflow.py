@@ -101,12 +101,12 @@ def test_tumor_seg_datasinks_smoke(
     ses = out_root / "pmriprep" / "sub-01" / "ses-0001"
     anat = ses / "anat"
     expected = [
-        anat / "sub-01_ses-0001_space-anat_desc-tumorseg_dseg.nii.gz",
-        anat / "sub-01_ses-0001_space-anat_desc-enhancing_mask.nii.gz",
-        anat / "sub-01_ses-0001_space-anat_desc-nonenhancing_mask.nii.gz",
-        anat / "sub-01_ses-0001_space-anat_desc-wholetumor_mask.nii.gz",
-        anat / "sub-01_ses-0001_space-anat_desc-lesion_mask.nii.gz",
-        anat / "sub-01_ses-0001_space-anat_desc-nawm_mask.nii.gz",
+        anat / "sub-01_ses-0001_space-T1w_desc-tumorseg_dseg.nii.gz",
+        anat / "sub-01_ses-0001_space-T1w_desc-enhancing_mask.nii.gz",
+        anat / "sub-01_ses-0001_space-T1w_desc-nonenhancing_mask.nii.gz",
+        anat / "sub-01_ses-0001_space-T1w_desc-wholetumor_mask.nii.gz",
+        anat / "sub-01_ses-0001_space-T1w_desc-lesion_mask.nii.gz",
+        anat / "sub-01_ses-0001_space-T1w_desc-nawm_mask.nii.gz",
         anat / "sub-01_ses-0001_desc-tumorseg_volumes.txt",
         ses / "sub-01_ses-0001_space-anat_desc-lesionStats.json",
         ses / "sub-01_ses-0001_desc-tumorsegQC_quality.json",

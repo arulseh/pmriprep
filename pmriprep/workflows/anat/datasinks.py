@@ -224,7 +224,7 @@ def _add_one_anat_sink(
             check_hdr=True,
             compress=True,
             allowed_entities=("space", "label", "ceagent"),
-            space="anat",
+            space="T1w",
             suffix=suffix,
         ),
         name=f"{name}_sink",
@@ -542,7 +542,7 @@ def init_anat_datasinks_wf(
             workflow, inputnode,
             name="acpc_xfm",
             in_attr="acpc_xfm",
-            from_space="anat",
+            from_space="T1w",
             to_space="MNI152NLin6Asym",
             source_attr=primary_source_attr,
         )
@@ -554,7 +554,7 @@ def init_anat_datasinks_wf(
             name="t1w_postcon_xfm",
             in_attr="t1w_postcon_to_t1w_xfm",
             from_space="T1wCE",
-            to_space="anat",
+            to_space="T1w",
             source_attr="source_t1w_postcon",
         )
         sink_outputs.append((sink, "out_file"))
@@ -565,7 +565,7 @@ def init_anat_datasinks_wf(
             name="t2w_xfm",
             in_attr="t2w_to_t1w_xfm",
             from_space="T2w",
-            to_space="anat",
+            to_space="T1w",
             source_attr="source_t2w",
         )
         sink_outputs.append((sink, "out_file"))
@@ -576,7 +576,7 @@ def init_anat_datasinks_wf(
             name="flair_xfm",
             in_attr="flair_to_t1w_xfm",
             from_space="FLAIR",
-            to_space="anat",
+            to_space="T1w",
             source_attr="source_flair",
         )
         sink_outputs.append((sink, "out_file"))
@@ -587,7 +587,7 @@ def init_anat_datasinks_wf(
             name="flair_postcon_xfm",
             in_attr="flair_postcon_to_t1w_xfm",
             from_space="FLAIRCE",
-            to_space="anat",
+            to_space="T1w",
             source_attr="source_flair_postcon",
         )
         sink_outputs.append((sink, "out_file"))
