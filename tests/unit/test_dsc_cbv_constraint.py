@@ -472,7 +472,7 @@ class TestNormalizeAifQcKeys:
 class TestQcReportSchema:
     """Tests that qc_report uses the renamed key schema (mode, reason)."""
 
-    def test_qc_report_keys_from_prepare_vp_constraint(self, tmp_path: Any) -> None:
+    def test_qc_report_keys_from_prepare_vp_constraint_from_data(self, tmp_path: Any) -> None:
         """prepare_vp_constraint_from_data returns qc_report with 'mode'/'reason' keys."""
         import nibabel as nib
 

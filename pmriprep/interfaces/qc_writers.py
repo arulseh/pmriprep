@@ -158,6 +158,50 @@ class AnatQCWriter(SimpleInterface):
 
 
 # ---------------------------------------------------------------------------
+# AIF timeseries sidecar writer (Phase 2a)
+# ---------------------------------------------------------------------------
+
+
+def _write_aif_timeseries_sidecar(
+    *,
+    modality: str,
+    aif_txt: Path,
+    qc_metrics: Optional[dict],
+    bids_dir: str,
+    source_path: Optional[str],
+    subject: str,
+    session: str,
+) -> None:
+    """Write the JSON sidecar next to a copied AIF curve TXT.
+
+    Reads ``qc_metrics["aif_detection"]`` (the producer-shape ``aif_qc``
+    dict) and emits flat ``AIF*``-prefixed top-level keys via
+    :func:`pmriprep.utils.sidecar_builders.build_aif_timeseries_sidecar`.
+    Silently skips when ``qc_metrics`` is missing or empty — the TXT
+    still exists; the sidecar is opt-in metadata.
+    """
+    if not qc_metrics:
+        return
+    aif_qc = qc_metrics.get("aif_detection") if isinstance(qc_metrics, dict) else None
+    if not aif_qc:
+        return
+
+    from pmriprep.utils.sidecar_builders import build_aif_timeseries_sidecar
+
+    sources = [source_path] if source_path else []
+    sidecar = build_aif_timeseries_sidecar(
+        modality=modality,
+        source_paths=sources,
+        bids_dir=bids_dir or ".",
+        subject=subject,
+        session=session or None,
+        aif_qc=aif_qc,
+    )
+    json_path = aif_txt.with_suffix(".json")
+    json_path.write_text(json.dumps(sidecar, indent=2, default=str))
+
+
+# ---------------------------------------------------------------------------
 # Tumor-segmentation QC writer
 # ---------------------------------------------------------------------------
 
@@ -379,6 +423,8 @@ class DSCQCWriterInputSpec(BaseInterfaceInputSpec):
     qc_metrics = traits.Dict(desc="Merged DSC QC metrics dict")
     provenance_dict = traits.Dict(desc="DSC physics provenance dict (drives warnings)")
     preflight_warnings = traits.List(traits.Str, value=[], usedefault=True)
+    bids_dir = traits.Str("", usedefault=True, desc="BIDS rawdata root for AIF sidecar Sources URIs")
+    source_dsc = File(exists=False, desc="Raw DSC NIfTI for AIF sidecar Sources field")
 
     has_brain_mask_dsc = traits.Bool(False, usedefault=True)
     has_nawm_mask_dsc = traits.Bool(False, usedefault=True)
@@ -443,6 +489,19 @@ class DSCQCWriter(SimpleInterface):
             dst = perf_dir / f"{prefix}_desc-dscAif_timeseries.txt"
             shutil.copy2(self.inputs.aif_curve, dst)
             self._results["aif_curve_txt"] = str(dst)
+            _write_aif_timeseries_sidecar(
+                modality="DSC",
+                aif_txt=dst,
+                qc_metrics=self.inputs.qc_metrics if isdefined(self.inputs.qc_metrics) else None,
+                bids_dir=self.inputs.bids_dir if isdefined(self.inputs.bids_dir) else "",
+                source_path=(
+                    self.inputs.source_dsc
+                    if isdefined(self.inputs.source_dsc) and self.inputs.source_dsc
+                    else None
+                ),
+                subject=subject,
+                session=session,
+            )
 
         self._results["confounds_tsv"] = ""
         if isdefined(self.inputs.motion_params) and self.inputs.motion_params:
@@ -545,6 +604,8 @@ class DCEQCWriterInputSpec(BaseInterfaceInputSpec):
     qc_metrics = traits.Dict(desc="Merged DCE QC metrics dict")
     provenance_dict = traits.Dict(desc="DCE physics provenance (drives warnings)")
     preflight_warnings = traits.List(traits.Str, value=[], usedefault=True)
+    bids_dir = traits.Str("", usedefault=True, desc="BIDS rawdata root for AIF sidecar Sources URIs")
+    source_dce = File(exists=False, desc="Raw DCE NIfTI for AIF sidecar Sources field")
 
     has_t1_map = traits.Bool(False, usedefault=True)
     has_b1_map = traits.Bool(False, usedefault=True)
@@ -615,6 +676,19 @@ class DCEQCWriter(SimpleInterface):
             dst = perf_dir / f"{prefix}_desc-dceAif_timeseries.txt"
             shutil.copy2(self.inputs.aif_curve, dst)
             self._results["aif_curve_txt"] = str(dst)
+            _write_aif_timeseries_sidecar(
+                modality="DCE",
+                aif_txt=dst,
+                qc_metrics=self.inputs.qc_metrics if isdefined(self.inputs.qc_metrics) else None,
+                bids_dir=self.inputs.bids_dir if isdefined(self.inputs.bids_dir) else "",
+                source_path=(
+                    self.inputs.source_dce
+                    if isdefined(self.inputs.source_dce) and self.inputs.source_dce
+                    else None
+                ),
+                subject=subject,
+                session=session,
+            )
 
         self._results["confounds_tsv"] = ""
         if isdefined(self.inputs.motion_params) and self.inputs.motion_params:

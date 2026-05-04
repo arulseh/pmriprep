@@ -368,7 +368,7 @@ class TestComputeDCEMapsDoseTraits:
     """`dsc_dose` + `dsc_agent_standard_dose` traits must reach
     `prepare_vp_constraint_from_data`."""
 
-    def test_dose_traits_forwarded_to_prepare_vp_constraint(
+    def test_dose_traits_forwarded_to_prepare_vp_constraint_from_data(
         self, tmp_path: Any,
     ) -> None:
         """`self.inputs.dsc_dose` + `.dsc_agent_standard_dose` flow through

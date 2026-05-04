@@ -711,7 +711,7 @@ def _find_previous_dsc_outputs(
             for f in perf_dir.glob("*desc-dscRel_cbv.nii.gz"):
                 outputs["rel_cbv_map"] = str(f)
         # NAWM-normalized CBV (required for the vp prior path).
-        # Missing → vp constraint cleanly SKIPs in prepare_vp_constraint.
+        # Missing → vp constraint cleanly SKIPs in prepare_vp_constraint_from_data.
         for f in perf_dir.glob("*desc-dscNawmNorm_cbv.nii.gz"):
             outputs["ncbv_map"] = str(f)
         if outputs["rel_cbv_map"] is not None and outputs["ncbv_map"] is None:
@@ -732,25 +732,29 @@ def _find_previous_dsc_outputs(
         for f in anat_dir.glob("*from-dsc_to-T1w*_xfm.mat"):
             outputs["dsc_to_t1w_xfm"] = str(f)
 
-    # AIF QC from BIDS-named QC JSON in session root
+    # AIF / preload / preprocessing QC from the pipeline-internal resume
+    # sidecar at perf/. Carries verbatim producer-shape dicts so the
+    # downstream consumers (PK setup + dsc_cbv_constraint) receive the
+    # same dict structure they would on the in-process DSC→DCE path.
     prefix = f"sub-{subject_id}"
     if ses_label:
         prefix += f"_{ses_label}"
-    qc_json = dsc_dir / f"{prefix}_desc-dscQC_quality.json"
-    if qc_json.exists():
-        try:
-            import json
-            with open(qc_json) as fh:
-                qc_data = json.load(fh)
-            aif_section = qc_data.get("aif_detection") or qc_data.get("aif")
-            if aif_section:
-                outputs["aif_qc"] = aif_section
-            if "preload" in qc_data:
-                outputs["preload_qc"] = qc_data["preload"]
-            if "preprocessing" in qc_data:
-                outputs["preprocessing_stats"] = qc_data["preprocessing"]
-        except Exception:
-            pass
+    if perf_dir.exists():
+        resume_json = perf_dir / f"{prefix}_desc-dscResume_pmriprep.json"
+        if resume_json.exists():
+            try:
+                import json
+                with open(resume_json) as fh:
+                    data = json.load(fh)
+            except Exception:
+                data = {}
+            if isinstance(data, dict):
+                if isinstance(data.get("aif_qc"), dict):
+                    outputs["aif_qc"] = data["aif_qc"]
+                if isinstance(data.get("preload_qc"), dict):
+                    outputs["preload_qc"] = data["preload_qc"]
+                if isinstance(data.get("preprocessing_stats"), dict):
+                    outputs["preprocessing_stats"] = data["preprocessing_stats"]
 
     return outputs
 
@@ -2028,6 +2032,10 @@ def init_pmriprep_wf(
                 # Leakage correction
                 ("outputnode.k2_map", "inputnode.k2_map"),
                 ("outputnode.preload_qc", "inputnode.preload_qc"),
+                # Phase 2/3 BIDS cleanup: in-memory dicts feeding the
+                # preproc-4D cosmetic enrichment + verbatim resume sidecar.
+                ("outputnode.aif_qc", "inputnode.aif_qc"),
+                ("outputnode.preprocessing_stats", "inputnode.preprocessing_stats"),
                 # Motion-corrected data
                 ("outputnode.dsc_moco", "inputnode.dsc_moco"),
                 ("outputnode.dsc_mean", "inputnode.dsc_mean"),
@@ -2746,7 +2754,7 @@ def init_pmriprep_wf(
                         ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
                         # NAWM-normalized CBV → vp prior path. None propagates
                         # cleanly when no NAWM mask exists (missing-NAWM
-                        # handling lives in prepare_vp_constraint).
+                        # handling lives in prepare_vp_constraint_from_data).
                         ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
                         ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                         # AIF QC is a JSON file, no spatial resampling needed

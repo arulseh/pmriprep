@@ -19,7 +19,6 @@ References:
     grade." AJNR. 2006;27(4):859-867.
 """
 
-import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -196,7 +195,7 @@ class ConstraintConfig:
 
 @dataclass
 class VpConstraintResult:
-    """Result from prepare_vp_constraint orchestrator.
+    """Result from prepare_vp_constraint_from_data orchestrator.
 
     Attributes:
         vp_map: 3D vp map (plasma volume fraction), or None if skipped.
@@ -230,6 +229,13 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
 
     Returns:
         Dictionary with normalized keys suitable for assess_dsc_cbv_quality.
+
+    Note:
+        This function defines the contract for the producer-shape ``aif_qc``
+        dict that the ``--skip-dsc`` resume sidecar must round-trip
+        verbatim. If you add a new producer key consumed here, also add it
+        to the oracle in ``tests/unit/test_resume_qc_round_trip_consumer_keys.py``
+        so the round-trip parity guard catches future schema drift.
     """
     data = dict(aif_qc_data)
 
@@ -887,63 +893,6 @@ def determine_constraint_mode(
 # =============================================================================
 
 
-def prepare_vp_constraint(
-    ncbv_file: Optional[Union[str, Path]],
-    aif_qc_file: Union[str, Path],
-    brain_mask_file: Union[str, Path],
-    mode_override: Optional[str] = None,
-    hematocrit: float = HEMATOCRIT_ARTERIAL,
-    preload_classification: Optional[str] = None,
-    k2_metrics: Optional[dict[str, Any]] = None,
-    dose: float = 1.0,
-    agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
-) -> VpConstraintResult:
-    """Prepare vp constraint map from DSC NAWM-normalized CBV for DCE PK fitting.
-
-    Orchestrates:
-    1. Load nCBV map and AIF QC JSON
-    2. Assess DSC CBV quality (on the nCBV distribution)
-    3. Convert nCBV to vp prior via ``ncbv_to_vp_prior`` (vp = NAWM_VP_REFERENCE × nCBV)
-    4. Determine constraint mode
-    5. Magnitude gate: downgrade to SKIP if derived vp is outside physiological range
-
-    Args:
-        ncbv_file: Path to DSC-derived NAWM-normalized CBV (nCBV) NIfTI.
-            If None or missing (no NAWM reference available), returns a
-            SKIP result with reason "nCBV unavailable".
-        aif_qc_file: Path to DSC AIF QC JSON.
-        brain_mask_file: Path to brain mask NIfTI.
-        mode_override: User-specified constraint mode override.
-        hematocrit: Blood hematocrit (retained for provenance; not used by
-            the nCBV→vp conversion which anchors on NAWM_VP_REFERENCE).
-        preload_classification: DSC preload classification string from QC
-            (e.g., 'half_dose', 'significant', 'severe', 'none').
-        k2_metrics: K2 leakage correction metrics dict from dsc_preload,
-            containing 'k2_median', 'percent_leaky_voxels', etc.
-
-    Returns:
-        VpConstraintResult with vp_map, config, quality, and qc_report.
-    """
-    aif_qc_path = Path(aif_qc_file)
-    if aif_qc_path.exists():
-        with open(aif_qc_path) as f:
-            aif_qc_data = json.load(f)
-    else:
-        aif_qc_data = {}
-
-    return prepare_vp_constraint_from_data(
-        ncbv_file=ncbv_file,
-        aif_qc_data=aif_qc_data,
-        brain_mask_file=brain_mask_file,
-        mode_override=mode_override,
-        hematocrit=hematocrit,
-        preload_classification=preload_classification,
-        k2_metrics=k2_metrics,
-        dose=dose,
-        agent_standard_dose=agent_standard_dose,
-    )
-
-
 def prepare_vp_constraint_from_data(
     ncbv_file: Optional[Union[str, Path]],
     aif_qc_data: dict[str, Any],
@@ -955,10 +904,14 @@ def prepare_vp_constraint_from_data(
     dose: float = 1.0,
     agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> VpConstraintResult:
-    """Prepare vp constraint map from DSC nCBV for DCE PK modeling (data form).
+    """Prepare vp constraint map from DSC nCBV for DCE PK modeling.
 
-    Same as :func:`prepare_vp_constraint` but accepts AIF QC data as a dict
-    directly instead of reading from a JSON file.
+    Orchestrates:
+    1. Quality assessment on the AIF QC dict + nCBV distribution
+    2. nCBV→vp prior conversion via ``ncbv_to_vp_prior``
+       (vp = NAWM_VP_REFERENCE × nCBV)
+    3. Constraint mode determination
+    4. Magnitude gate: SKIP downgrade when derived vp is non-physiological
 
     If ``ncbv_file`` is None or does not exist, returns a SKIP result with
     ``qc_report["skip_reason"] = "no_nawm_mask"``. This is the expected

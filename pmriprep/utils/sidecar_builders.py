@@ -688,6 +688,58 @@ def enrich_probseg_sidecar(
 # ---------------------------------------------------------------------------
 
 
+def _aif_cosmetic_keys(aif_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Flat AIF*-prefixed top-level keys for AIF curve sidecar enrichment.
+
+    Reads from the producer-shape ``aif_qc`` dict (the same dict that
+    flows through the DSC outputnode). Conditional fields are omitted
+    when not applicable (per fmriprep convention for optional sidecar
+    fields).
+    """
+    if not aif_qc or not isinstance(aif_qc, dict):
+        return {}
+
+    out: Dict[str, Any] = {}
+    raw_metrics = aif_qc.get("aif_metrics")
+    metrics: Dict[str, Any] = raw_metrics if isinstance(raw_metrics, dict) else {}
+
+    if "detection_method" in aif_qc:
+        out["AIFMethod"] = str(aif_qc["detection_method"])
+    if "n_aif_voxels_selected" in aif_qc:
+        out["AIFNumberOfVoxelsSelected"] = int(aif_qc["n_aif_voxels_selected"])
+    if "peak_conc" in metrics:
+        out["AIFPeakAmplitude"] = float(metrics["peak_conc"])
+    if "fwhm" in metrics:
+        out["AIFFWHM"] = float(metrics["fwhm"])
+    if "ttp" in metrics:
+        out["AIFTimeToPeak"] = float(metrics["ttp"])
+    if "arrival" in metrics:
+        out["AIFArrival"] = float(metrics["arrival"])
+    if "best_brr" in aif_qc:
+        out["AIFBaselineReturnRatio"] = float(aif_qc["best_brr"]) / 100.0
+    if "best_psr" in aif_qc:
+        out["AIFPeakSignalRatio"] = float(aif_qc["best_psr"]) / 100.0
+    if "quality_score" in aif_qc:
+        out["AIFQualityScore"] = float(aif_qc["quality_score"])
+    if "cascade_final_level" in aif_qc:
+        out["AIFArterialCascadeTier"] = str(aif_qc["cascade_final_level"])
+    if "hemisphere_coverage" in aif_qc:
+        out["AIFHemisphereCoverage"] = str(aif_qc["hemisphere_coverage"])
+    if "gamma_fit_applied" in aif_qc:
+        out["AIFGammaFitApplied"] = bool(aif_qc["gamma_fit_applied"])
+    if "gamma_fit_r_squared" in aif_qc:
+        out["AIFGammaFitRSquared"] = float(aif_qc["gamma_fit_r_squared"])
+    if "gamma_fit_auc_ratio" in aif_qc:
+        out["AIFGammaFitAUCRatio"] = float(aif_qc["gamma_fit_auc_ratio"])
+    if "synthetic" in aif_qc:
+        out["AIFSynthetic"] = bool(aif_qc["synthetic"])
+    if "cbv_auc_denominator_is_synthetic" in aif_qc:
+        out["AIFUsedAsCBVDenominator"] = bool(aif_qc["cbv_auc_denominator_is_synthetic"])
+    if "hematocrit" in aif_qc:
+        out["AIFHematocrit"] = float(aif_qc["hematocrit"])
+    return out
+
+
 def build_aif_timeseries_sidecar(
     *,
     modality: str,
@@ -695,20 +747,19 @@ def build_aif_timeseries_sidecar(
     bids_dir: PathLike,
     subject: str,
     session: Optional[str],
-    qc_metrics: Optional[Dict[str, Any]] = None,
+    aif_qc: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build the JSON sidecar for the AIF curve text file.
 
     Per BIDS-Common-Derivatives, every data file should carry its own
-    sidecar describing how it was derived. The AIF curve TXT
-    (``desc-{dsc,dce}Aif_timeseries.txt``) currently has no companion
-    JSON. This builder produces one carrying AIF detection metadata
-    (method, voxel count, peak, FWHM) plus standard provenance fields.
+    sidecar describing how it was derived. This builder emits AIF
+    detection metadata as flat ``AIF*``-prefixed top-level keys, matching
+    fmriprep/aslprep convention for pipeline-derived sidecar fields.
 
     Note: the ``.txt`` extension is non-canonical (BIDS uses
-    ``_timeseries.tsv``) and is a separate, pre-existing issue; this
-    sidecar attaches metadata regardless and is treated by the validator
-    as a free sidecar.
+    ``_timeseries.tsv``); this is a separate, pre-existing issue. The
+    sidecar attaches metadata regardless and the validator treats it as
+    a free sidecar.
 
     Args:
         modality: ``"DCE"`` or ``"DSC"``.
@@ -716,7 +767,8 @@ def build_aif_timeseries_sidecar(
         bids_dir: BIDS rawdata root for ``Sources`` BIDS-URI construction.
         subject: Subject ID without ``sub-`` prefix.
         session: Session ID without ``ses-`` prefix (or None).
-        qc_metrics: Pipeline QC dict with ``aif_detection`` block.
+        aif_qc: Producer-shape AIF QC dict (the ``aif_qc`` dict from the
+            DSC outputnode for DSC, or the equivalent for DCE).
 
     Returns:
         Dict suitable for ``json.dumps``.
@@ -726,11 +778,9 @@ def build_aif_timeseries_sidecar(
     if modality not in {"DCE", "DSC"}:
         raise ValueError(f"modality must be 'DCE' or 'DSC'; got {modality!r}")
 
-    # AIF curve content differs by modality (verified against
-    # interfaces/dsc_aif.py:2270 and interfaces/dce_aif.py):
-    #   DSC: peak_delta_r2_star — change in transverse relaxation rate (1/s)
-    #   DCE: plasma [Gd] in mM (after /(1-Hct) conversion; see
-    #        provenance.py:_enrich_dce AIFUnits block)
+    # AIF curve content differs by modality:
+    #   DSC: ΔR2* (1/s) — susceptibility-induced relaxation-rate change
+    #   DCE: plasma [Gd] in mM (after /(1-Hct) conversion)
     if modality == "DSC":
         column_name = "delta_r2_star"
         units = "1/s"
@@ -758,31 +808,145 @@ def build_aif_timeseries_sidecar(
     if session:
         sidecar["Session"] = f"ses-{session}"
 
-    aif = (qc_metrics or {}).get("aif_detection") if qc_metrics else None
-    if aif and isinstance(aif, dict):
-        detection: Dict[str, Any] = {}
-        if "aif_source" in aif:
-            detection["Method"] = str(aif["aif_source"])
-        if "n_aif_voxels_selected" in aif:
-            detection["NumberOfVoxelsSelected"] = int(aif["n_aif_voxels_selected"])
-        peak = aif.get("peak_mm_mean") or aif.get("final_peak_mm")
-        if peak is not None:
-            detection["PeakConcentration_mM"] = float(peak)
-        fwhm = aif.get("fwhm_seconds_mean") or aif.get("final_fwhm_seconds")
-        if fwhm is not None:
-            detection["FWHM_seconds"] = float(fwhm)
-        if "quality_score" in aif:
-            detection["QualityScore"] = float(aif["quality_score"])
-        if "arterial_cascade_tier" in aif:
-            detection["ArterialCascadeTier"] = int(aif["arterial_cascade_tier"])
-        if "hemisphere_coverage" in aif:
-            detection["HemisphereCoverage"] = str(aif["hemisphere_coverage"])
-        if aif.get("population_aif"):
-            detection["PopulationModel"] = "parker"
-            if "dose_factor" in aif:
-                detection["DoseFactor"] = float(aif["dose_factor"])
-        if detection:
-            sidecar["AIFDetection"] = detection
-        if "hematocrit" in aif:
-            sidecar["Hematocrit"] = float(aif["hematocrit"])
+    sidecar.update(_aif_cosmetic_keys(aif_qc))
+    return sidecar
+
+
+# ---------------------------------------------------------------------------
+# DSC preprocessed-4D sidecar enrichment (Phase 2a)
+# ---------------------------------------------------------------------------
+
+
+def _preload_cosmetic_keys(preload_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Flat ``Preload*``-prefixed keys for the DSC preproc-4D sidecar.
+
+    Reads from the producer-shape ``preload_qc`` dict. Optional fields
+    (e.g., ``PreloadKepUsed`` only meaningful for the bidirectional K2
+    method) are omitted when not present in the source dict.
+    """
+    if not preload_qc or not isinstance(preload_qc, dict):
+        return {}
+
+    out: Dict[str, Any] = {}
+    if "k2_method" in preload_qc:
+        out["PreloadK2Method"] = str(preload_qc["k2_method"])
+    if preload_qc.get("kep_used") is not None:
+        out["PreloadKepUsed"] = float(preload_qc["kep_used"])
+    if "preload_classification" in preload_qc:
+        out["PreloadClassification"] = str(preload_qc["preload_classification"])
+    if "preload_classification_source" in preload_qc:
+        out["PreloadClassificationSource"] = str(preload_qc["preload_classification_source"])
+    if "preload_k2_classification" in preload_qc:
+        out["PreloadK2Classification"] = str(preload_qc["preload_k2_classification"])
+    if "preload_k2_confidence" in preload_qc:
+        out["PreloadK2Confidence"] = str(preload_qc["preload_k2_confidence"])
+    if "k2_median" in preload_qc:
+        out["PreloadK2Median"] = float(preload_qc["k2_median"])
+    if "percent_leaky_voxels" in preload_qc:
+        out["PreloadPercentLeakyVoxels"] = float(preload_qc["percent_leaky_voxels"])
+    if "percent_severe_leakage" in preload_qc:
+        out["PreloadPercentSevereLeakage"] = float(preload_qc["percent_severe_leakage"])
+    if "preload_user_specified" in preload_qc:
+        out["PreloadUserSpecified"] = bool(preload_qc["preload_user_specified"])
+    return out
+
+
+def _preprocessing_cosmetic_keys(
+    preprocessing_stats: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Flat motion/signal QC keys for the DSC preproc-4D sidecar.
+
+    No top-level prefix — the sidecar's ``desc-`` entity already conveys
+    "preprocessing." Future ``desc-dcePreproc_dce.json`` will reuse the
+    same key names. ``RepetitionTime`` is the canonical BIDS key (in
+    seconds, converted from the producer's ``tr_ms``).
+    """
+    if not preprocessing_stats or not isinstance(preprocessing_stats, dict):
+        return {}
+
+    p = preprocessing_stats
+    out: Dict[str, Any] = {}
+    if "fd_mean" in p:
+        out["MotionFDMean"] = float(p["fd_mean"])
+    if "fd_max" in p:
+        out["MotionFDMax"] = float(p["fd_max"])
+    if "percent_outliers" in p:
+        out["MotionPercentOutliers"] = float(p["percent_outliers"])
+    if "motion_status" in p:
+        out["MotionStatus"] = str(p["motion_status"])
+    if "mean_cnr" in p:
+        out["CNRWholeBrain"] = float(p["mean_cnr"])
+    if "fraction_cnr_gt_4" in p:
+        out["FractionCNRGreaterThan4"] = float(p["fraction_cnr_gt_4"])
+    if "mean_tsnr" in p:
+        out["MeanTSNR"] = float(p["mean_tsnr"])
+    if "peak_drop_pct" in p:
+        out["PeakSignalDropPercent"] = float(p["peak_drop_pct"])
+    if "n_volumes" in p:
+        out["NumberOfVolumes"] = int(p["n_volumes"])
+    if "tr_ms" in p:
+        out["RepetitionTime"] = float(p["tr_ms"]) / 1000.0
+    return out
+
+
+def enrich_dsc_preproc_sidecar(
+    sidecar: Dict[str, Any],
+    *,
+    preload_qc: Optional[Dict[str, Any]] = None,
+    preprocessing_stats: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Add flat-prefixed cosmetic QC keys to a DSC preproc-4D sidecar.
+
+    Mutates and returns ``sidecar``. Adds ``Preload*`` and unprefixed
+    motion/signal keys from the producer-shape input dicts. Existing
+    sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
+    ``Resolution``) are preserved.
+    """
+    sidecar.update(_preload_cosmetic_keys(preload_qc))
+    sidecar.update(_preprocessing_cosmetic_keys(preprocessing_stats))
+    return sidecar
+
+
+# ---------------------------------------------------------------------------
+# DSC resume sidecar (Phase 2b)
+#
+# Pipeline-internal sidecar that round-trips the verbatim producer-shape
+# QC dicts so the ``--skip-dsc`` resume helper can recover them without
+# JSON-loading the legacy ``desc-dscQC_quality.json``.
+# ---------------------------------------------------------------------------
+
+
+def build_dsc_resume_sidecar(
+    *,
+    aif_qc: Optional[Dict[str, Any]] = None,
+    preload_qc: Optional[Dict[str, Any]] = None,
+    preprocessing_stats: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the verbatim resume sidecar for ``--skip-dsc`` round-trip.
+
+    Stores the producer-shape ``aif_qc``, ``preload_qc``, and
+    ``preprocessing_stats`` dicts verbatim under top-level snake_case
+    keys. The resume helper at ``workflows/base.py:_find_previous_dsc_outputs``
+    reads these and feeds them to the same downstream consumers
+    (``dce_compute.py`` PK setup, ``dsc_cbv_constraint.py``) that the
+    in-process flow uses, so no key translation happens at the resume
+    boundary.
+
+    The ``_pmriprep`` filename suffix and ``PMRIPrepInternal: true`` flag
+    mark this as pipeline-internal scope (per NiPreps precedent for
+    non-canonical-tree files).
+    """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
+    sidecar: Dict[str, Any] = {
+        **get_bids_derivative_provenance(),
+        "Description": "Pipeline-internal resume state for --skip-dsc.",
+        "PMRIPrepInternal": True,
+    }
+    if aif_qc:
+        sidecar["aif_qc"] = dict(aif_qc)
+    if preload_qc:
+        sidecar["preload_qc"] = dict(preload_qc)
+    if preprocessing_stats:
+        sidecar["preprocessing_stats"] = dict(preprocessing_stats)
     return sidecar

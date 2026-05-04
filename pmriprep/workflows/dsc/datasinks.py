@@ -183,6 +183,67 @@ def _build_minimal_meta(  # type: ignore[no-untyped-def]
     return out
 
 
+def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
+    base,
+    description,
+    preload_qc=None,
+    preprocessing_stats=None,
+):
+    """Compose the ``desc-dscPreproc_dsc.json`` sidecar.
+
+    Starts from the minimal-base meta and layers on flat-prefixed
+    cosmetic QC keys via ``enrich_dsc_preproc_sidecar``.
+    """
+    from pmriprep.utils.sidecar_builders import enrich_dsc_preproc_sidecar
+
+    out = dict(base)
+    out["Description"] = description
+    enrich_dsc_preproc_sidecar(
+        out,
+        preload_qc=preload_qc if isinstance(preload_qc, dict) else None,
+        preprocessing_stats=(
+            preprocessing_stats if isinstance(preprocessing_stats, dict) else None
+        ),
+    )
+    return out
+
+
+def _build_dsc_resume_meta(  # type: ignore[no-untyped-def]
+    aif_qc=None, preload_qc=None, preprocessing_stats=None,
+):
+    """Compose the verbatim ``desc-dscResume_pmriprep.json`` sidecar."""
+    from pmriprep.utils.sidecar_builders import build_dsc_resume_sidecar
+
+    return build_dsc_resume_sidecar(
+        aif_qc=aif_qc if isinstance(aif_qc, dict) else None,
+        preload_qc=preload_qc if isinstance(preload_qc, dict) else None,
+        preprocessing_stats=(
+            preprocessing_stats if isinstance(preprocessing_stats, dict) else None
+        ),
+    )
+
+
+def _write_resume_sidecar(  # type: ignore[no-untyped-def]
+    output_dir, subject, session, meta_dict,
+):
+    """Write the resume-only JSON sidecar (no companion data file)."""
+    import json as _json
+    from pathlib import Path
+
+    out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
+    if session:
+        out_root = out_root / f"ses-{session}"
+    out_root = out_root / "perf"
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    prefix = f"sub-{subject}"
+    if session:
+        prefix += f"_ses-{session}"
+    out_path = out_root / f"{prefix}_desc-dscResume_pmriprep.json"
+    out_path.write_text(_json.dumps(meta_dict, indent=2, default=str))
+    return str(out_path)
+
+
 def _copy_xfm(  # type: ignore[no-untyped-def]
     in_file, output_dir, subject, session, from_space, to_space, datatype="anat",
 ):
@@ -615,7 +676,7 @@ def init_dsc_datasinks_wf(
                 "cbv_ci95_lower_map", "cbv_ci95_upper_map",
                 # Parametric diagnostics + leakage
                 "k2_map", "parametric_r2_map", "fallback_mask",
-                "preload_qc",
+                "preload_qc", "preprocessing_stats", "aif_qc",
                 # Smoothing
                 "smooth_hemodynamic", "smooth_auc", "smooth_fwhm",
                 # Motion + AIF
@@ -961,10 +1022,88 @@ def init_dsc_datasinks_wf(
         return sink
 
     if "dsc_moco" in present:
-        sink_outputs.append((_add_minimal_perf_sink(
-            "moco", "dsc_moco", "dscPreproc", "dsc",
-            "Motion-corrected 4D DSC time series",
-        ), "out_file"))
+        # The preproc-4D sidecar carries flat-prefixed cosmetic Preload*
+        # and motion/signal QC keys; the verbatim resume sidecar (below)
+        # carries the producer-shape dicts for --skip-dsc round-trip.
+        moco_meta = pe.Node(
+            niu.Function(
+                input_names=[
+                    "base", "description", "preload_qc", "preprocessing_stats",
+                ],
+                output_names=["meta_dict"],
+                function=_build_dsc_preproc_meta,
+            ),
+            name="moco_meta",
+        )
+        moco_meta.inputs.description = "Motion-corrected 4D DSC time series"
+        workflow.connect([
+            (base_minimal, moco_meta, [("meta_dict", "base")]),
+            (inputnode, moco_meta, [
+                ("preload_qc", "preload_qc"),
+                ("preprocessing_stats", "preprocessing_stats"),
+            ]),
+        ])
+        moco_sink = pe.Node(
+            niu.Function(
+                input_names=[
+                    "in_file", "output_dir", "subject", "session",
+                    "desc", "suffix", "meta_dict", "datatype",
+                ],
+                output_names=["out_file"],
+                function=_copy_perf_map,
+            ),
+            name="moco_sink",
+        )
+        moco_sink.inputs.desc = "dscPreproc"
+        moco_sink.inputs.suffix = "dsc"
+        moco_sink.inputs.datatype = "perf"
+        workflow.connect([
+            (inputnode, moco_sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+                ("dsc_moco", "in_file"),
+            ]),
+            (moco_meta, moco_sink, [("meta_dict", "meta_dict")]),
+        ])
+        sink_outputs.append((moco_sink, "out_file"))
+
+        # Phase 2b: pipeline-internal resume sidecar (no companion data
+        # file). Carries the verbatim aif_qc / preload_qc /
+        # preprocessing_stats dicts so --skip-dsc resume reads them
+        # directly without round-tripping through the legacy QC JSON.
+        resume_meta = pe.Node(
+            niu.Function(
+                input_names=["aif_qc", "preload_qc", "preprocessing_stats"],
+                output_names=["meta_dict"],
+                function=_build_dsc_resume_meta,
+            ),
+            name="resume_meta",
+        )
+        workflow.connect([
+            (inputnode, resume_meta, [
+                ("aif_qc", "aif_qc"),
+                ("preload_qc", "preload_qc"),
+                ("preprocessing_stats", "preprocessing_stats"),
+            ]),
+        ])
+        resume_sink = pe.Node(
+            niu.Function(
+                input_names=["output_dir", "subject", "session", "meta_dict"],
+                output_names=["out_file"],
+                function=_write_resume_sidecar,
+            ),
+            name="resume_sink",
+        )
+        workflow.connect([
+            (inputnode, resume_sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+            ]),
+            (resume_meta, resume_sink, [("meta_dict", "meta_dict")]),
+        ])
+        sink_outputs.append((resume_sink, "out_file"))
     if "dsc_mean" in present:
         sink_outputs.append((_add_minimal_perf_sink(
             "mean", "dsc_mean", "dscMean", "ref",
@@ -1160,6 +1299,9 @@ def init_dsc_datasinks_wf(
             ("preflight_warnings", "preflight_warnings"),
             ("aif_curve", "aif_curve"),
             ("motion_params", "motion_params"),
+            # Phase 2a: AIF curve sidecar Sources/bids_dir
+            ("bids_dir", "bids_dir"),
+            ("source_dsc", "source_dsc"),
             ("brain_mask_filmstrip", "brain_mask_filmstrip"),
             ("motion_qc_plot", "motion_qc_plot"),
             ("aif_curve_plot", "aif_curve_plot"),

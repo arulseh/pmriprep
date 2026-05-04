@@ -184,7 +184,7 @@ def test_aif_sidecar_dsc_units_are_delta_r2_star(tmp_path: Path) -> None:
         bids_dir=tmp_path,
         subject="01",
         session="01",
-        qc_metrics=None,
+        aif_qc=None,
     )
     assert sc["Units"] == "1/s"
     assert sc["Columns"] == ["delta_r2_star"]
@@ -198,7 +198,7 @@ def test_aif_sidecar_dce_units_are_plasma_concentration(tmp_path: Path) -> None:
         bids_dir=tmp_path,
         subject="01",
         session="01",
-        qc_metrics=None,
+        aif_qc=None,
     )
     assert sc["Units"] == "mM"
     assert sc["Columns"] == ["plasma_concentration_mM"]
@@ -215,15 +215,13 @@ def test_aif_sidecar_invalid_modality_raises(tmp_path: Path) -> None:
         )
 
 
-def test_aif_sidecar_aif_detection_block_populated(tmp_path: Path) -> None:
-    qc = {
-        "aif_detection": {
-            "aif_source": "manual",
-            "n_aif_voxels_selected": 12,
-            "final_peak_mm": 4.2,
-            "final_fwhm_seconds": 6.5,
-            "hematocrit": 0.42,
-        },
+def test_aif_sidecar_flat_keys_populated(tmp_path: Path) -> None:
+    """Flat ``AIF*``-prefixed top-level keys (no nested AIFDetection block)."""
+    aif_qc = {
+        "detection_method": "manual",
+        "n_aif_voxels_selected": 12,
+        "aif_metrics": {"peak_conc": 4.2, "fwhm": 6.5},
+        "hematocrit": 0.42,
     }
     sc = build_aif_timeseries_sidecar(
         modality="DCE",
@@ -231,12 +229,15 @@ def test_aif_sidecar_aif_detection_block_populated(tmp_path: Path) -> None:
         bids_dir=tmp_path,
         subject="01",
         session="01",
-        qc_metrics=qc,
+        aif_qc=aif_qc,
     )
-    assert sc["AIFDetection"]["Method"] == "manual"
-    assert sc["AIFDetection"]["NumberOfVoxelsSelected"] == 12
-    assert sc["AIFDetection"]["PeakConcentration_mM"] == pytest.approx(4.2)
-    assert sc["Hematocrit"] == pytest.approx(0.42)
+    assert sc["AIFMethod"] == "manual"
+    assert sc["AIFNumberOfVoxelsSelected"] == 12
+    assert sc["AIFPeakAmplitude"] == pytest.approx(4.2)
+    assert sc["AIFFWHM"] == pytest.approx(6.5)
+    assert sc["AIFHematocrit"] == pytest.approx(0.42)
+    # Regression: no nested block
+    assert "AIFDetection" not in sc
 
 
 # ---------------------------------------------------------------------------

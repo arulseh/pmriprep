@@ -1185,6 +1185,9 @@ def init_dce_datasinks_wf(
             ("preflight_warnings", "preflight_warnings"),
             ("aif_curve", "aif_curve"),
             ("motion_params", "motion_params"),
+            # Phase 2a: AIF curve sidecar Sources/bids_dir
+            ("bids_dir", "bids_dir"),
+            ("source_dce", "source_dce"),
             ("brain_mask_filmstrip", "brain_mask_filmstrip"),
             ("motion_qc_plot", "motion_qc_plot"),
             ("aif_curve_plot", "aif_curve_plot"),

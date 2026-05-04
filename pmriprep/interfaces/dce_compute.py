@@ -555,6 +555,12 @@ def _fit_single_voxel(
 _MODEL_HAS_VP = {"extended_tofts", "patlak", "2cxm"}
 
 #: K2 leakage correction metric keys to extract from preload QC dict.
+#:
+#: These keys are part of the producer-shape ``preload_qc`` dict that the
+#: ``--skip-dsc`` resume sidecar (``perf/desc-dscResume_pmriprep.json``)
+#: must round-trip verbatim. If you add a new key here, also add it to
+#: the oracle in ``tests/unit/test_resume_qc_round_trip_consumer_keys.py``
+#: so the round-trip parity guard catches future schema drift.
 _K2_QC_KEYS = {
     "k2_mean", "k2_std", "k2_max", "k2_median",
     "percent_leaky_voxels", "percent_severe_leakage",
