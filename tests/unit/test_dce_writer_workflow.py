@@ -423,3 +423,154 @@ def test_dce_both_t1w_underlays(
     post_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
     assert "Pre-contrast" in pre_meta["Description"]
     assert "Post-contrast" in post_meta["Description"]
+
+
+# ---------------------------------------------------------------------------
+# Fp/PS uncertainty TR gate (v0.46.2): the build-time decision to add
+# fp_uncertainty/ps_uncertainty to dce_present must mirror the runtime
+# decision in dce_compute._build_candidate_set so the sink isn't built
+# without an upstream feed.
+# ---------------------------------------------------------------------------
+
+
+def test_2cxm_uncertainty_tr_gate_auto_short_tr() -> None:
+    """auto-mode + TR ≤ 3.0 s → 2CXM in candidates → emit Fp/PS std."""
+    from pmriprep.workflows.base import _emit_2cxm_uncertainty
+
+    assert _emit_2cxm_uncertainty("auto", 2.5) is True
+    assert _emit_2cxm_uncertainty("auto", 3.0) is True
+
+
+def test_2cxm_uncertainty_tr_gate_auto_long_tr() -> None:
+    """auto-mode + TR > 3.0 s → 2CXM excluded → don't emit Fp/PS std.
+
+    Reproduces the original crash scenario: current institutional cohort
+    has volume_tr=4.06 s; the prior (auto, _) gate built the sink but the
+    producer never fed it → ``NodeExecutionError: _copy_perf_map missing
+    in_file``.
+    """
+    from pmriprep.workflows.base import _emit_2cxm_uncertainty
+
+    assert _emit_2cxm_uncertainty("auto", 4.06) is False
+    assert _emit_2cxm_uncertainty("auto", 7.6) is False
+
+
+def test_2cxm_uncertainty_tr_gate_explicit_2cxm() -> None:
+    """Explicit ``model="2cxm"`` always emits — bypasses the TR check."""
+    from pmriprep.workflows.base import _emit_2cxm_uncertainty
+
+    assert _emit_2cxm_uncertainty("2cxm", 4.06) is True
+    assert _emit_2cxm_uncertainty("2cxm", None) is True
+
+
+def test_2cxm_uncertainty_tr_gate_other_models() -> None:
+    """Non-2CXM single-model paths never emit 2CXM uncertainty."""
+    from pmriprep.workflows.base import _emit_2cxm_uncertainty
+
+    for model in ("tofts", "extended_tofts", "patlak"):
+        assert _emit_2cxm_uncertainty(model, 2.5) is False, model
+
+
+def test_2cxm_uncertainty_tr_gate_malformed_inputs() -> None:
+    """Defensive: missing/malformed values fall through to no-emission."""
+    from pmriprep.workflows.base import _emit_2cxm_uncertainty
+
+    assert _emit_2cxm_uncertainty(None, 2.5) is False
+    assert _emit_2cxm_uncertainty("auto", None) is False
+    assert _emit_2cxm_uncertainty("auto", "not-a-number") is False  # type: ignore[arg-type]
+
+
+def _build_dce_wf_for_tr_gate(
+    tmp_path: Path, *, volume_tr: float, model: str, inference: str,
+):
+    """Build init_pmriprep_wf with a minimal DCE-only fixture at the given TR."""
+    import json as _json
+
+    from pmriprep.config.tumor_seg import TumorSegConfig
+    from pmriprep.config.anat import AnatConfig
+    from pmriprep.config.dsc import DSCConfig
+    from pmriprep.config.dce import DCEConfig
+    from pmriprep.workflows.base import PipelineSkipFlags, init_pmriprep_wf
+
+    bids = tmp_path / "bids"
+    raw = bids / "sub-01" / "ses-0001"
+    (raw / "anat").mkdir(parents=True)
+    (raw / "perf").mkdir(parents=True)
+    (bids / "dataset_description.json").write_text(
+        _json.dumps({"Name": "T", "BIDSVersion": "1.9.0", "DatasetType": "raw"})
+    )
+    nib.save(
+        nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.float32), np.eye(4)),
+        raw / "anat" / "sub-01_ses-0001_T1w.nii.gz",
+    )
+    (raw / "anat" / "sub-01_ses-0001_T1w.json").write_text(
+        _json.dumps({"RepetitionTime": 2.0})
+    )
+    nib.save(
+        nib.Nifti1Image(np.zeros((4, 4, 4, 5), dtype=np.float32), np.eye(4)),
+        raw / "perf" / "sub-01_ses-0001_dce.nii.gz",
+    )
+    (raw / "perf" / "sub-01_ses-0001_dce.json").write_text(
+        _json.dumps({
+            "RepetitionTime": volume_tr,
+            "FlipAngle": 12.0,
+            "MagneticFieldStrength": 3.0,
+            "EchoTime": 0.0014,
+        })
+    )
+
+    dce_cfg = DCEConfig()
+    dce_cfg.model = model
+    dce_cfg.inference = inference
+    dce_cfg.no_t1 = True
+    dce_cfg.b1_method = "none"
+
+    return init_pmriprep_wf(
+        bids_dir=str(bids),
+        output_dir=str(tmp_path / "out"),
+        subject_id="01",
+        session_id="0001",
+        skip_flags=PipelineSkipFlags(
+            skip_anat=True, skip_dsc=True, skip_dce=False,
+        ),
+        anat_config=AnatConfig(),
+        tumor_seg_config=TumorSegConfig(),
+        dsc_config=DSCConfig(),
+        dce_config=dce_cfg,
+        work_dir=str(tmp_path / "work"),
+    )
+
+
+def _has_fp_uncertainty_sink(wf) -> bool:
+    """True if any datasinks node ends with ``fp_uncertainty_sink``."""
+    return any(
+        name.endswith("fp_uncertainty_sink") for name in wf.list_node_names()
+    )
+
+
+def test_init_pmriprep_wf_auto_long_tr_no_fp_sink(tmp_path: Path) -> None:
+    """Regression for crash.txt: auto + Bayesian + TR>3.0 → no fp/ps sink built.
+
+    Reproduces the original ``NodeExecutionError: _copy_perf_map missing
+    in_file`` failure mode: ``model="auto"``, ``inference="vi"``,
+    ``RepetitionTime=4.06`` (current institutional cohort).
+    """
+    wf = _build_dce_wf_for_tr_gate(
+        tmp_path, volume_tr=4.06, model="auto", inference="vi",
+    )
+    assert not _has_fp_uncertainty_sink(wf), (
+        "auto + Bayesian + TR>3.0 must NOT build fp_uncertainty_sink "
+        "(producer doesn't include 2CXM in candidate set at this TR; "
+        "sink without feed → runtime crash)"
+    )
+
+
+def test_init_pmriprep_wf_auto_short_tr_builds_fp_sink(tmp_path: Path) -> None:
+    """auto + Bayesian + TR≤3.0 → 2CXM in candidates → fp_uncertainty_sink built."""
+    wf = _build_dce_wf_for_tr_gate(
+        tmp_path, volume_tr=2.5, model="auto", inference="vi",
+    )
+    assert _has_fp_uncertainty_sink(wf), (
+        "auto + Bayesian + TR≤3.0 must build fp_uncertainty_sink "
+        "(producer includes 2CXM in candidate set; sink should consume it)"
+    )

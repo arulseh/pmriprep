@@ -666,6 +666,49 @@ def _pick_nawm_mask(tumor_seg_nawm=None, user_nawm=None):  # type: ignore[no-unt
     return ""
 
 
+# Must match ``ComputeDCEMaps._MAX_VOLUME_TR_2CXM`` in
+# ``pmriprep/interfaces/dce_compute.py:1365``. The constant lives on the
+# producer class as a private attribute; duplicating with a named source
+# reference avoids a new public-import boundary while keeping the gate
+# auditable.
+_MAX_VOLUME_TR_2CXM_BUILD = 3.0
+
+
+def _emit_2cxm_uncertainty(
+    model: Optional[str], volume_tr: Optional[float],
+) -> bool:
+    """Return True iff the DCE producer will emit Fp/PS uncertainty maps.
+
+    Mirrors the runtime gate in
+    :func:`pmriprep.interfaces.dce_compute.ComputeDCEMaps._build_candidate_set`
+    (line 1388): 2CXM is in the auto-mode candidate set only when
+    ``volume_tr <= _MAX_VOLUME_TR_2CXM`` (3.0 s). The producer's
+    ``save_2cxm`` flag (``dce_compute.py:1822``) then gates whether
+    ``out_fp_std`` / ``out_ps_std`` are saved. Build-time gating must
+    match — building a sink the producer never feeds raises
+    ``NodeExecutionError: _copy_perf_map missing in_file`` at runtime.
+
+    Args:
+        model: Resolved DCE model name (``"auto"``, ``"2cxm"``,
+            ``"tofts"``, etc.). ``None`` is treated as no-emission.
+        volume_tr: DCE volume TR in seconds (BIDS ``RepetitionTime``).
+            ``None`` is treated as long TR (no-emission); a malformed
+            sidecar is preferred-conservative over a runtime crash.
+
+    Returns:
+        True if the build-time ``dce_present`` set should include
+        ``fp_uncertainty`` and ``ps_uncertainty``.
+    """
+    if model == "2cxm":
+        return True
+    if model == "auto" and volume_tr is not None:
+        try:
+            return float(volume_tr) <= _MAX_VOLUME_TR_2CXM_BUILD
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 def _find_previous_dsc_outputs(
     output_dir: Path,
     subject_id: str,
@@ -2893,7 +2936,17 @@ def init_pmriprep_wf(
         #   auto           → all (per-voxel BIC selection)
         _has_ve_models = {"tofts", "extended_tofts", "2cxm", "auto"}
         _has_vp_models = {"extended_tofts", "patlak", "2cxm", "auto"}
-        _has_2cxm_models = {"2cxm", "auto"}
+        # 2CXM uncertainty (Fp/PS std) sinks are gated on whether the
+        # producer will actually emit the files — see
+        # :func:`_emit_2cxm_uncertainty` which mirrors the runtime
+        # candidate-set TR gate.
+        _dce_volume_tr = (
+            dce_sidecar.get("volume_tr")
+            if isinstance(dce_sidecar, dict) else None
+        )
+        _emit_fp_ps_uncertainty = _emit_2cxm_uncertainty(
+            dce_model, _dce_volume_tr,
+        )
         if dce_model in _has_ve_models:
             dce_present |= {"ve_map", "kep_map"}
         if dce_model in _has_vp_models:
@@ -2912,7 +2965,7 @@ def init_pmriprep_wf(
                 dce_present |= {"ve_uncertainty", "ve_cv"}
             if dce_model in _has_vp_models:
                 dce_present |= {"vp_uncertainty", "vp_cv"}
-            if dce_model in _has_2cxm_models:
+            if _emit_fp_ps_uncertainty:
                 dce_present |= {"fp_uncertainty", "ps_uncertainty"}
             dce_present |= {"ktrans_ci95_lower", "ktrans_ci95_upper"}
             if dce_model in _has_ve_models:
