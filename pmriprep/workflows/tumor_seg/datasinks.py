@@ -99,6 +99,56 @@ _HD_GLIO_SOURCE_ATTRS = (
 )
 
 
+def _write_tumor_dseg_tsv_node(  # type: ignore[no-untyped-def]
+    segmentation, output_dir, subject, session,
+):
+    """Function-node wrapper for ``write_tumor_dseg_tsv``.
+
+    Lands the TSV next to the existing ``desc-tumorseg_dseg.nii.gz`` so
+    the companion JSON sidecar (``_dseg.json``) applies to both files
+    per BIDS-Common-Derivatives.
+    """
+    from pathlib import Path
+
+    from pmriprep.utils.lesion_stats import write_tumor_dseg_tsv
+
+    out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
+    if session:
+        out_root = out_root / f"ses-{session}"
+    out_root = out_root / "anat"
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    prefix = f"sub-{subject}"
+    if session:
+        prefix += f"_ses-{session}"
+    tsv_path = out_root / f"{prefix}_space-T1w_desc-tumorseg_dseg.tsv"
+    return str(write_tumor_dseg_tsv(segmentation, tsv_path))
+
+
+def _add_dseg_tsv_sink(
+    workflow: pe.Workflow,
+    inputnode: pe.Node,
+) -> pe.Node:
+    """Wire the BIDS-Common-Derivatives ``_dseg.tsv`` companion writer."""
+    sink = pe.Node(
+        niu.Function(
+            input_names=["segmentation", "output_dir", "subject", "session"],
+            output_names=["out_file"],
+            function=_write_tumor_dseg_tsv_node,
+        ),
+        name="dseg_tsv_sink",
+    )
+    workflow.connect([
+        (inputnode, sink, [
+            ("segmentation", "segmentation"),
+            ("output_dir", "output_dir"),
+            ("subject_id", "subject"),
+            ("session_id", "session"),
+        ]),
+    ])
+    return sink
+
+
 def _add_dseg_sink(
     workflow: pe.Workflow,
     inputnode: pe.Node,
@@ -319,6 +369,7 @@ def init_tumor_seg_datasinks_wf(
     sink_outputs: list[tuple[pe.Node, str]] = []
 
     sink_outputs.append((_add_dseg_sink(workflow, inputnode, is_postcon_ref), "out_file"))
+    sink_outputs.append((_add_dseg_tsv_sink(workflow, inputnode), "out_file"))
 
     sink_outputs.append((_add_mask_sink(
         workflow, inputnode,

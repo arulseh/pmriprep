@@ -157,6 +157,72 @@ def _build_dce_meta(  # type: ignore[no-untyped-def]
     return out
 
 
+def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
+    base, description, qc_metrics=None,
+):
+    """Compose the ``desc-dcePreproc_dce.json`` sidecar with flat-key QC.
+
+    Mirrors the v0.45.0 DSC ``_build_dsc_preproc_meta`` pattern: starts
+    from the perfusion base sidecar and layers on flat ``T1*``/``B1*``/
+    motion/signal cosmetic keys via ``enrich_dce_preproc_sidecar``.
+    """
+    from pmriprep.utils.sidecar_builders import enrich_dce_preproc_sidecar
+
+    out = dict(base)
+    out["Description"] = description
+    enrich_dce_preproc_sidecar(
+        out,
+        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
+    )
+    return out
+
+
+def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
+    base, description, units=None, qc_metrics=None, map_key="",
+    lesion_stats_json=None,
+):
+    """Compose a DCE per-PK-map sidecar with cosmetic enrichment + lesion fragment.
+
+    Reads ``lesion_stats_json`` (path to the aggregate per-pipeline lesion
+    stats JSON the upstream interface emits) and extracts the per-map
+    fragment for ``map_key`` (e.g. ``"ktrans"``) via
+    ``extract_per_map_lesion_stats``. Cross-modality fields
+    (``DSCDCECrossValCorrelation``, ``CBVNegativeFraction``) land only on
+    the maps they apply to per the bids-spec-expert PR1 review.
+    """
+    import json as _json
+    from pathlib import Path
+
+    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+    from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+    from pmriprep.utils.sidecar_builders import enrich_dce_pk_map_sidecar
+
+    out = dict(base)
+    out["Description"] = description
+    if units is not None:
+        out["Units"] = units
+
+    fragment = None
+    if isdefined(lesion_stats_json) and lesion_stats_json:
+        path = Path(lesion_stats_json)
+        if path.exists():
+            try:
+                with open(path) as fh:
+                    aggregate = _json.load(fh)
+                fragment = extract_per_map_lesion_stats(aggregate, map_key)
+            except Exception:
+                fragment = None
+
+    enrich_dce_pk_map_sidecar(
+        out,
+        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
+        map_key=map_key,
+        lesion_fragment=fragment,
+    )
+    return out
+
+
 def _build_dce_smoothed_meta(  # type: ignore[no-untyped-def]
     base, description, fwhm_mm, units=None,
 ):
@@ -455,6 +521,84 @@ def _add_perf_map_sink(
     return sink
 
 
+_PK_MAP_KEY: dict[str, str] = {
+    "ktrans_map": "ktrans",
+    "ve_map": "ve",
+    "kep_map": "kep",
+    "vp_map": "vp",
+}
+
+
+def _add_dce_pk_map_sink(
+    workflow: pe.Workflow,
+    inputnode: pe.Node,
+    base_node: pe.Node,
+    *,
+    name: str,
+    in_attr: str,
+    desc_value: str,
+    suffix: str,
+    description: str,
+    units: Optional[str],
+    map_key: str,
+    model_entity: str = "",
+) -> pe.Node:
+    """Wire a DCE PK-map sink with flat-key cosmetic enrichment.
+
+    Adds ``PK*`` keys + per-map ``LesionStats`` fragment via
+    ``_build_dce_pk_map_meta``. Cross-modality fields land only where
+    they apply (Ktrans → ``DSCDCECrossValCorrelation``; vp →
+    ``CBVNegativeFraction``).
+    """
+    meta = pe.Node(
+        niu.Function(
+            input_names=[
+                "base", "description", "units", "qc_metrics", "map_key",
+                "lesion_stats_json",
+            ],
+            output_names=["meta_dict"],
+            function=_build_dce_pk_map_meta,
+        ),
+        name=f"{name}_meta",
+    )
+    meta.inputs.description = description
+    meta.inputs.units = units
+    meta.inputs.map_key = map_key
+    workflow.connect([
+        (base_node, meta, [("meta_dict", "base")]),
+        (inputnode, meta, [
+            ("qc_metrics", "qc_metrics"),
+            ("lesion_stats_json", "lesion_stats_json"),
+        ]),
+    ])
+
+    sink = pe.Node(
+        niu.Function(
+            input_names=[
+                "in_file", "output_dir", "subject", "session",
+                "desc", "suffix", "meta_dict", "datatype", "model_entity",
+            ],
+            output_names=["out_file"],
+            function=_copy_perf_map,
+        ),
+        name=f"{name}_sink",
+    )
+    sink.inputs.desc = desc_value
+    sink.inputs.suffix = suffix
+    sink.inputs.datatype = "perf"
+    sink.inputs.model_entity = model_entity
+    workflow.connect([
+        (inputnode, sink, [
+            ("output_dir", "output_dir"),
+            ("subject_id", "subject"),
+            ("session_id", "session"),
+            (in_attr, "in_file"),
+        ]),
+        (meta, sink, [("meta_dict", "meta_dict")]),
+    ])
+    return sink
+
+
 def _add_anat_image_sink(
     workflow: pe.Workflow,
     inputnode: pe.Node,
@@ -711,15 +855,16 @@ def init_dce_datasinks_wf(
 
     sink_outputs: list[tuple[pe.Node, str]] = []
 
-    # --- PK maps (carry model entity) ---
+    # --- PK maps (carry model entity + flat-key cosmetic enrichment) ---
     for in_attr, suffix, description, units in _PK_MAPS:
         if in_attr not in present:
             continue
-        sink = _add_perf_map_sink(
+        sink = _add_dce_pk_map_sink(
             workflow, inputnode, base_perf,
             name=in_attr, in_attr=in_attr,
             desc_value="dce", suffix=suffix,
-            description=description, units=units, extra=None,
+            description=description, units=units,
+            map_key=_PK_MAP_KEY.get(in_attr, ""),
             model_entity=model_entity,
         )
         sink_outputs.append((sink, "out_file"))
@@ -926,14 +1071,47 @@ def init_dce_datasinks_wf(
 
     # --- Motion-corrected 4D + mean ref + AIF mask (perf/) ---
     if "dce_moco" in present:
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
-            name="dce_moco", in_attr="dce_moco",
-            desc_value="dcePreproc", suffix="dce",
-            description="Motion-corrected 4D DCE time series",
-            units=None, extra=None, model_entity="",
+        # Preproc-4D sidecar carries flat-prefixed cosmetic T1*/B1*/
+        # motion/signal QC keys via _build_dce_preproc_meta. Mirrors the
+        # v0.45.0 DSC pattern.
+        moco_meta = pe.Node(
+            niu.Function(
+                input_names=["base", "description", "qc_metrics"],
+                output_names=["meta_dict"],
+                function=_build_dce_preproc_meta,
+            ),
+            name="dce_moco_meta",
         )
-        sink_outputs.append((sink, "out_file"))
+        moco_meta.inputs.description = "Motion-corrected 4D DCE time series"
+        workflow.connect([
+            (base_perf, moco_meta, [("meta_dict", "base")]),
+            (inputnode, moco_meta, [("qc_metrics", "qc_metrics")]),
+        ])
+        moco_sink = pe.Node(
+            niu.Function(
+                input_names=[
+                    "in_file", "output_dir", "subject", "session",
+                    "desc", "suffix", "meta_dict", "datatype", "model_entity",
+                ],
+                output_names=["out_file"],
+                function=_copy_perf_map,
+            ),
+            name="dce_moco_sink",
+        )
+        moco_sink.inputs.desc = "dcePreproc"
+        moco_sink.inputs.suffix = "dce"
+        moco_sink.inputs.datatype = "perf"
+        moco_sink.inputs.model_entity = ""
+        workflow.connect([
+            (inputnode, moco_sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+                ("dce_moco", "in_file"),
+            ]),
+            (moco_meta, moco_sink, [("meta_dict", "meta_dict")]),
+        ])
+        sink_outputs.append((moco_sink, "out_file"))
     if "dce_mean" in present:
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,

@@ -337,7 +337,7 @@ def build_tumor_seg_dseg_sidecar(
     the ``_dseg.nii.gz`` label NIfTI and the ``_dseg.tsv`` lookup table
     (when the latter is present) since they share a basename. The
     ``Columns`` block here documents the TSV columns
-    (``index, name, voxel_count, volume_mm3, volume_ml``) for any
+    (``index, name, abbreviation, voxel_count, volume_mm3``) for any
     consumer reading the companion ``_dseg.tsv``.
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -364,6 +364,13 @@ def build_tumor_seg_dseg_sidecar(
                 "LongName": "Region name",
                 "Description": "Tumor region identifier (snake_case).",
             },
+            "abbreviation": {
+                "LongName": "Region abbreviation",
+                "Description": (
+                    "Short identifier for the region (e.g., ``ET`` for "
+                    "contrast-enhancing tumor, ``NET`` for non-enhancing tumor)."
+                ),
+            },
             "voxel_count": {
                 "LongName": "Voxel count",
                 "Description": "Number of voxels with this label.",
@@ -373,11 +380,6 @@ def build_tumor_seg_dseg_sidecar(
                 "LongName": "Region volume",
                 "Description": "Region volume in cubic millimetres.",
                 "Units": "mm^3",
-            },
-            "volume_ml": {
-                "LongName": "Region volume",
-                "Description": "Region volume in millilitres.",
-                "Units": "mL",
             },
         },
     }
@@ -604,60 +606,68 @@ def enrich_brain_mask_sidecar(
     sidecar: Dict[str, Any],
     qc_metrics: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Add a ``BrainExtraction`` block to a brain-mask sidecar.
+    """Add flat ``BrainExtraction*`` keys to a brain-mask sidecar.
 
     Reads ``qc_metrics["brain_extraction"]`` (tool, version, parameters).
-    Used during 0.45.0 distribution of anat QC content.
+    Volume in ``BrainExtractionVolume`` is in mL (documented in sidecar
+    Description; no unit suffix in key per BIDS convention).
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         return sidecar
     be = qc_metrics.get("brain_extraction")
     if not be or not isinstance(be, dict):
         return sidecar
-    block: Dict[str, Any] = {}
     if "tool" in be:
-        block["Tool"] = str(be["tool"])
+        sidecar["BrainExtractionTool"] = str(be["tool"])
     if "version" in be:
-        block["Version"] = str(be["version"])
+        sidecar["BrainExtractionVersion"] = str(be["version"])
     if "device" in be:
-        block["Device"] = str(be["device"])
+        sidecar["BrainExtractionDevice"] = str(be["device"])
     if "voxel_count" in be:
-        block["BrainVoxelCount"] = int(be["voxel_count"])
+        sidecar["BrainExtractionVoxelCount"] = int(be["voxel_count"])
     if "volume_ml" in be:
-        block["BrainVolume_mL"] = float(be["volume_ml"])
-    if block:
-        sidecar["BrainExtraction"] = block
+        sidecar["BrainExtractionVolume"] = float(be["volume_ml"])
     return sidecar
 
 
 def enrich_preproc_anat_sidecar(
     sidecar: Dict[str, Any],
     qc_metrics: Optional[Dict[str, Any]],
+    coreg_modality: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Add a ``Preprocessing`` block to an anat preproc sidecar.
+    """Add flat ``Preprocessing*`` and ``Coregistration<Modality>*`` keys.
 
     Reads ``qc_metrics["preprocessing"]`` (denoising, bias correction,
     ACPC alignment) and ``qc_metrics["coregistration"]`` (per-modality
     coreg metrics if present in the calling sidecar's modality scope).
+
+    ``coreg_modality`` is the modality this sidecar describes (e.g.,
+    ``"T2w"``, ``"FLAIR"``); used to namespace coregistration keys
+    (``CoregistrationT2wMethod`` etc.). Pass ``None`` for the T1w
+    reference sidecar (no coregistration applies — T1w is the target).
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         return sidecar
     prep = qc_metrics.get("preprocessing")
     if prep and isinstance(prep, dict):
-        block: Dict[str, Any] = {}
         if "denoising" in prep:
-            block["Denoising"] = bool(prep["denoising"])
+            sidecar["PreprocessingDenoising"] = bool(prep["denoising"])
         if "bias_correction" in prep:
-            block["BiasCorrection"] = str(prep["bias_correction"])
+            sidecar["PreprocessingBiasCorrection"] = str(prep["bias_correction"])
         if "acpc_aligned" in prep:
-            block["ACPCAligned"] = bool(prep["acpc_aligned"])
-        if block:
-            sidecar["Preprocessing"] = block
-    coreg = qc_metrics.get("coregistration")
-    if coreg and isinstance(coreg, dict):
-        # The caller knows which modality this sidecar describes; coreg
-        # metrics are passed pre-filtered. Accept whatever subset is given.
-        sidecar["Coregistration"] = dict(coreg)
+            sidecar["PreprocessingACPCAligned"] = bool(prep["acpc_aligned"])
+    if coreg_modality:
+        coreg = qc_metrics.get("coregistration")
+        if coreg and isinstance(coreg, dict):
+            prefix = f"Coregistration{coreg_modality}"
+            if "method" in coreg:
+                sidecar[f"{prefix}Method"] = str(coreg["method"])
+            if "cost_function" in coreg:
+                sidecar[f"{prefix}CostFunction"] = str(coreg["cost_function"])
+            if "correlation_ratio" in coreg:
+                sidecar[f"{prefix}CorrelationRatio"] = float(
+                    coreg["correlation_ratio"],
+                )
     return sidecar
 
 
@@ -666,20 +676,28 @@ def enrich_probseg_sidecar(
     qc_metrics: Optional[Dict[str, Any]],
     tissue_type: str,
 ) -> Dict[str, Any]:
-    """Add a ``TissueSegmentationStats`` block to a probseg sidecar.
+    """Add flat ``TissueSegmentation*`` keys to a probseg sidecar.
 
-    Reads ``qc_metrics["tissue_segmentation"][tissue_type]`` (mean
-    probability, voxel count) for the target tissue (WM/GM/CSF).
+    Reads ``qc_metrics["tissue_segmentation"][tissue_type]``
+    (``mean_probability``, ``voxel_count``, ``volume_ml``) for the target
+    tissue (WM/GM/CSF). Per-tissue scope is encoded by the sidecar's
+    ``label-`` entity; no need to repeat tissue type in key names.
+    Volume in ``TissueSegmentationVolume`` is in mL (documented in
+    sidecar Description).
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         return sidecar
     seg = qc_metrics.get("tissue_segmentation")
     if not seg or not isinstance(seg, dict):
         return sidecar
-    block_for_tissue = seg.get(tissue_type) if isinstance(seg.get(tissue_type), dict) else None
-    if not block_for_tissue:
-        return sidecar
-    sidecar["TissueSegmentationStats"] = dict(block_for_tissue)
+    raw_block = seg.get(tissue_type)
+    block: Dict[str, Any] = raw_block if isinstance(raw_block, dict) else {}
+    if "mean_probability" in block:
+        sidecar["TissueSegmentationMeanProbability"] = float(block["mean_probability"])
+    if "voxel_count" in block:
+        sidecar["TissueSegmentationVoxelCount"] = int(block["voxel_count"])
+    if "volume_ml" in block:
+        sidecar["TissueSegmentationVolume"] = float(block["volume_ml"])
     return sidecar
 
 
@@ -949,4 +967,154 @@ def build_dsc_resume_sidecar(
         sidecar["preload_qc"] = dict(preload_qc)
     if preprocessing_stats:
         sidecar["preprocessing_stats"] = dict(preprocessing_stats)
+    return sidecar
+
+
+# ---------------------------------------------------------------------------
+# DCE cosmetic enrichment (PR1 of arc-finishing work)
+#
+# Mirror of the DSC enrichment pattern shipped in v0.45.0. Reads the
+# producer-shape ``qc_metrics`` sub-blocks (``t1_mapping``, ``b1_mapping``,
+# ``preprocessing``, ``pk_modeling``, ``dsc_dce_validation``,
+# ``cbv_constraint``) and writes flat top-level PascalCase keys per
+# bids-spec-expert (round 1, PR1).
+# ---------------------------------------------------------------------------
+
+
+def _dce_t1_cosmetic_keys(t1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Flat ``T1*`` keys for DCE preproc-4D sidecar."""
+    if not t1_qc or not isinstance(t1_qc, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    if "method" in t1_qc:
+        out["T1MappingMethod"] = str(t1_qc["method"])
+    if "b1_correction" in t1_qc:
+        out["T1B1Correction"] = str(t1_qc["b1_correction"])
+    raw_corr = t1_qc.get("t1_correction")
+    corr: Dict[str, Any] = raw_corr if isinstance(raw_corr, dict) else {}
+    if "correction_applied" in corr:
+        out["T1CorrectionApplied"] = str(corr["correction_applied"])
+    tissue_used = corr.get("tissue_t1_used", t1_qc.get("tissue_t1_used"))
+    if tissue_used is not None:
+        out["T1UseTissueLiterature"] = bool(tissue_used)
+    return out
+
+
+def _dce_b1_cosmetic_keys(b1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Flat ``B1*`` keys for DCE preproc-4D sidecar."""
+    if not b1_qc or not isinstance(b1_qc, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    if "mean_b1" in b1_qc:
+        out["B1MeanWholeBrain"] = float(b1_qc["mean_b1"])
+    if "pct_correction_gt_20" in b1_qc:
+        out["B1PercentVoxelsCorrectionAbove20"] = float(b1_qc["pct_correction_gt_20"])
+    return out
+
+
+def _dce_preprocessing_cosmetic_keys(
+    preproc: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Flat motion/signal QC keys for DCE preproc-4D sidecar.
+
+    Mirrors the DSC unprefixed convention (``MotionFDMean``, ...). Adds
+    DCE-specific ``BaselineTSNR`` and ``PeakEnhancementPercent``.
+    """
+    if not preproc or not isinstance(preproc, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    if "fd_mean" in preproc:
+        out["MotionFDMean"] = float(preproc["fd_mean"])
+    if "fd_max" in preproc:
+        out["MotionFDMax"] = float(preproc["fd_max"])
+    if "percent_outliers" in preproc:
+        out["MotionPercentOutliers"] = float(preproc["percent_outliers"])
+    if "motion_status" in preproc:
+        out["MotionStatus"] = str(preproc["motion_status"])
+    if "baseline_tsnr" in preproc:
+        out["BaselineTSNR"] = float(preproc["baseline_tsnr"])
+    if "peak_enh_pct" in preproc:
+        out["PeakEnhancementPercent"] = float(preproc["peak_enh_pct"])
+    if "n_volumes" in preproc:
+        out["NumberOfVolumes"] = int(preproc["n_volumes"])
+    if "tr_ms" in preproc:
+        out["RepetitionTime"] = float(preproc["tr_ms"]) / 1000.0
+    return out
+
+
+def enrich_dce_preproc_sidecar(
+    sidecar: Dict[str, Any],
+    *,
+    qc_metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Add flat-prefixed cosmetic QC keys to a DCE preproc-4D sidecar.
+
+    Mutates and returns ``sidecar``. Adds ``T1*``, ``B1*``, motion/signal,
+    and top-level ``TortuosityCorrectionApplied`` / ``NAWMNormalizationApplied``
+    flags from the producer-shape ``qc_metrics`` envelope. Existing
+    sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
+    ``Resolution``, ``KtransConvention``) are preserved.
+    """
+    if not qc_metrics or not isinstance(qc_metrics, dict):
+        return sidecar
+    sidecar.update(_dce_t1_cosmetic_keys(qc_metrics.get("t1_mapping")))
+    sidecar.update(_dce_b1_cosmetic_keys(qc_metrics.get("b1_mapping")))
+    sidecar.update(_dce_preprocessing_cosmetic_keys(qc_metrics.get("preprocessing")))
+    if "tortuosity_applied" in qc_metrics:
+        sidecar["TortuosityCorrectionApplied"] = bool(qc_metrics["tortuosity_applied"])
+    if "nawm_normalization" in qc_metrics:
+        sidecar["NAWMNormalizationApplied"] = bool(qc_metrics["nawm_normalization"])
+    return sidecar
+
+
+def _dce_pk_cosmetic_keys(pk_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Flat ``PK*`` keys for DCE per-PK-map sidecars."""
+    if not pk_qc or not isinstance(pk_qc, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    if "model" in pk_qc:
+        out["PKModel"] = str(pk_qc["model"])
+    if "candidate_models" in pk_qc:
+        candidates = pk_qc["candidate_models"]
+        if isinstance(candidates, (list, tuple)):
+            out["PKCandidateModels"] = [str(m) for m in candidates]
+    if "qc_voxel_fit_r2" in pk_qc:
+        out["PKVoxelFitR2"] = float(pk_qc["qc_voxel_fit_r2"])
+    if "inference" in pk_qc:
+        out["PKInferenceEngine"] = str(pk_qc["inference"])
+    return out
+
+
+def enrich_dce_pk_map_sidecar(
+    sidecar: Dict[str, Any],
+    *,
+    qc_metrics: Optional[Dict[str, Any]] = None,
+    map_key: str = "",
+    lesion_fragment: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Add flat-prefixed cosmetic keys to a DCE per-PK-map sidecar.
+
+    Mutates and returns ``sidecar``. Adds ``PK*`` keys from
+    ``qc_metrics["pk_modeling"]``; cross-modality fields land only on
+    the maps they apply to (``DSCDCECrossValCorrelation`` on ``ktrans``,
+    ``CBVNegativeFraction`` on ``vp``). Per-map ``LesionStats`` fragment
+    attached when present.
+    """
+    if not qc_metrics or not isinstance(qc_metrics, dict):
+        if lesion_fragment:
+            sidecar["LesionStats"] = dict(lesion_fragment)
+        return sidecar
+    sidecar.update(_dce_pk_cosmetic_keys(qc_metrics.get("pk_modeling")))
+    if map_key == "ktrans":
+        xval = qc_metrics.get("dsc_dce_validation")
+        if isinstance(xval, dict):
+            metrics = xval.get("metrics")
+            if isinstance(metrics, dict) and "correlation" in metrics:
+                sidecar["DSCDCECrossValCorrelation"] = float(metrics["correlation"])
+    if map_key == "vp":
+        cbv = qc_metrics.get("cbv_constraint")
+        if isinstance(cbv, dict) and "cbv_negative_fraction" in cbv:
+            sidecar["CBVNegativeFraction"] = float(cbv["cbv_negative_fraction"])
+    if lesion_fragment:
+        sidecar["LesionStats"] = dict(lesion_fragment)
     return sidecar

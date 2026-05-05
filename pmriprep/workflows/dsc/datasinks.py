@@ -160,8 +160,40 @@ def _build_map_meta(  # type: ignore[no-untyped-def]
     qc_metrics=None,
     units=None,
     extra=None,
+    lesion_stats_json=None,
 ):
+    """Compose a DSC per-map sidecar; injects per-map LesionStats fragment.
+
+    The aggregate lesion-stats JSON (one file per pipeline) is loaded
+    when present and split into per-map fragments via
+    :func:`extract_per_map_lesion_stats`. The fragment is merged into
+    the ``extra`` dict alongside any caller-provided extras (e.g.
+    K2/Bayesian/Vascular extras).
+    """
+    import json as _json
+    from pathlib import Path
+
+    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+    from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
     from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar
+
+    fragment = None
+    if isdefined(lesion_stats_json) and lesion_stats_json:
+        path = Path(lesion_stats_json)
+        if path.exists():
+            try:
+                with open(path) as fh:
+                    aggregate = _json.load(fh)
+                fragment = extract_per_map_lesion_stats(aggregate, map_key)
+            except Exception:
+                fragment = None
+
+    if fragment:
+        merged_extra = dict(extra) if extra else {}
+        merged_extra["LesionStats"] = fragment
+    else:
+        merged_extra = extra
 
     return build_dsc_map_sidecar(
         base=base,
@@ -169,7 +201,7 @@ def _build_map_meta(  # type: ignore[no-untyped-def]
         map_key=map_key,
         qc_metrics=qc_metrics,
         units=units,
-        extra=extra,
+        extra=merged_extra,
     )
 
 
@@ -481,7 +513,10 @@ def _add_perf_map_sink(
     """
     meta = pe.Node(
         niu.Function(
-            input_names=["base", "description", "map_key", "qc_metrics", "units", "extra"],
+            input_names=[
+                "base", "description", "map_key", "qc_metrics", "units",
+                "extra", "lesion_stats_json",
+            ],
             output_names=["meta_dict"],
             function=_build_map_meta,
         ),
@@ -493,7 +528,10 @@ def _add_perf_map_sink(
     meta.inputs.extra = extra
     workflow.connect([
         (base_node, meta, [("meta_dict", "base")]),
-        (inputnode, meta, [("qc_metrics", "qc_metrics")]),
+        (inputnode, meta, [
+            ("qc_metrics", "qc_metrics"),
+            ("lesion_stats_json", "lesion_stats_json"),
+        ]),
     ])
 
     sink = pe.Node(

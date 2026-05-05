@@ -63,10 +63,11 @@ def test_write_tumor_dseg_tsv_round_trip(tmp_path: Path) -> None:
 
     text = out.read_text()
     lines = text.split("\n")
-    # Header + 2 rows + trailing newline = 4 elements
-    assert lines[0] == "index\tname\tvoxel_count\tvolume_mm3\tvolume_ml"
-    assert "non_enhancing_tumor\t27" in text
-    assert "contrast_enhancing_tumor\t8" in text
+    # Header per bids-spec-expert PR1: abbreviation column added,
+    # redundant volume_ml dropped (consumers can divide volume_mm3/1000).
+    assert lines[0] == "index\tname\tabbreviation\tvoxel_count\tvolume_mm3"
+    assert "non_enhancing_tumor\tNET\t27" in text
+    assert "contrast_enhancing_tumor\tET\t8" in text
     # Background (index 0) MUST NOT appear — BIDS dseg semantics
     assert "\t0\twhole_tumor" not in text
     # Line endings are LF only (Unix), not CRLF
@@ -141,34 +142,70 @@ def test_enrich_brain_mask_sidecar_no_qc_metrics_is_no_op() -> None:
     sc: dict = {"Description": "Brain mask"}
     out = enrich_brain_mask_sidecar(sc, None)
     assert out is sc  # mutate-and-return-self
-    assert "BrainExtraction" not in out
+    # Flat-key convention: no BrainExtraction* keys when qc_metrics is None
+    assert all(not k.startswith("BrainExtraction") for k in out)
 
 
 def test_enrich_brain_mask_sidecar_happy_path() -> None:
     qc = {"brain_extraction": {"tool": "hdbet", "version": "v1.0", "device": "mps"}}
     out = enrich_brain_mask_sidecar({}, qc)
-    assert out["BrainExtraction"] == {"Tool": "hdbet", "Version": "v1.0", "Device": "mps"}
+    assert out["BrainExtractionTool"] == "hdbet"
+    assert out["BrainExtractionVersion"] == "v1.0"
+    assert out["BrainExtractionDevice"] == "mps"
+    # No nested block (regression guard against round-1 convention)
+    assert "BrainExtraction" not in out
 
 
 def test_enrich_preproc_anat_sidecar_happy_path() -> None:
     qc = {"preprocessing": {"denoising": True, "bias_correction": "N4", "acpc_aligned": True}}
     out = enrich_preproc_anat_sidecar({}, qc)
-    assert out["Preprocessing"] == {
-        "Denoising": True, "BiasCorrection": "N4", "ACPCAligned": True,
+    assert out["PreprocessingDenoising"] is True
+    assert out["PreprocessingBiasCorrection"] == "N4"
+    assert out["PreprocessingACPCAligned"] is True
+    # No nested block
+    assert "Preprocessing" not in out
+
+
+def test_enrich_preproc_anat_sidecar_with_coreg_modality() -> None:
+    qc = {
+        "preprocessing": {"denoising": False},
+        "coregistration": {
+            "method": "flirt", "cost_function": "corratio",
+            "correlation_ratio": 0.94,
+        },
     }
+    out = enrich_preproc_anat_sidecar({}, qc, coreg_modality="T2w")
+    assert out["CoregistrationT2wMethod"] == "flirt"
+    assert out["CoregistrationT2wCostFunction"] == "corratio"
+    assert out["CoregistrationT2wCorrelationRatio"] == pytest.approx(0.94)
+
+
+def test_enrich_preproc_anat_sidecar_t1w_omits_coreg_keys() -> None:
+    qc = {
+        "preprocessing": {"denoising": True},
+        "coregistration": {"method": "flirt"},
+    }
+    # T1w sidecar passes coreg_modality=None — no Coregistration* keys
+    out = enrich_preproc_anat_sidecar({}, qc, coreg_modality=None)
+    assert all(not k.startswith("Coregistration") for k in out)
 
 
 def test_enrich_probseg_sidecar_filters_by_tissue_type() -> None:
     qc = {
         "tissue_segmentation": {
-            "WM": {"mean_probability": 0.92},
+            "WM": {"mean_probability": 0.92, "voxel_count": 100, "volume_ml": 0.1},
             "GM": {"mean_probability": 0.88},
         },
     }
     out_wm = enrich_probseg_sidecar({}, qc, "WM")
-    assert out_wm["TissueSegmentationStats"] == {"mean_probability": 0.92}
+    assert out_wm["TissueSegmentationMeanProbability"] == pytest.approx(0.92)
+    assert out_wm["TissueSegmentationVoxelCount"] == 100
+    assert out_wm["TissueSegmentationVolume"] == pytest.approx(0.1)
+    # No nested block
+    assert "TissueSegmentationStats" not in out_wm
+    # CSF tissue not in qc — no keys written
     out_csf = enrich_probseg_sidecar({}, qc, "CSF")
-    assert "TissueSegmentationStats" not in out_csf
+    assert all(not k.startswith("TissueSegmentation") for k in out_csf)
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +294,11 @@ def test_tumor_seg_dseg_sidecar_describes_tsv_columns(tmp_path: Path) -> None:
         session="01",
     )
     assert "Columns" in sc
-    expected_cols = {"index", "name", "voxel_count", "volume_mm3", "volume_ml"}
+    # Per bids-spec-expert PR1: abbreviation column added, redundant
+    # volume_ml dropped (consumers can divide volume_mm3/1000).
+    expected_cols = {"index", "name", "abbreviation", "voxel_count", "volume_mm3"}
     assert set(sc["Columns"].keys()) == expected_cols
     # Per-column metadata follows BIDS Columns convention
     assert "Description" in sc["Columns"]["voxel_count"]
     assert sc["Columns"]["voxel_count"]["Units"] == "voxels"
+    assert "Description" in sc["Columns"]["abbreviation"]

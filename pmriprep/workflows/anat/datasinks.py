@@ -34,11 +34,22 @@ def _build_preproc_meta(  # type: ignore[no-untyped-def]
     skull_stripped=True,
     contrast_agent=None,
     is_postcon_ref=False,
+    qc_metrics=None,
+    coreg_modality=None,
 ):
-    """Nipype-Function wrapper for ``build_anat_preproc_sidecar``."""
-    from pmriprep.utils.sidecar_builders import build_anat_preproc_sidecar
+    """Nipype-Function wrapper for ``build_anat_preproc_sidecar``.
 
-    return build_anat_preproc_sidecar(
+    Chains ``enrich_preproc_anat_sidecar`` after the base build so the
+    sidecar carries flat-prefixed ``Preprocessing*`` keys (and
+    ``Coregistration<Modality>*`` keys when ``coreg_modality`` is set
+    for secondary-modality sidecars).
+    """
+    from pmriprep.utils.sidecar_builders import (
+        build_anat_preproc_sidecar,
+        enrich_preproc_anat_sidecar,
+    )
+
+    sidecar = build_anat_preproc_sidecar(
         description=description,
         source_paths=source_paths,
         reference_voxel_source=reference_voxel_source,
@@ -49,6 +60,12 @@ def _build_preproc_meta(  # type: ignore[no-untyped-def]
         contrast_agent=contrast_agent,
         is_postcon_ref=is_postcon_ref,
     )
+    enrich_preproc_anat_sidecar(
+        sidecar,
+        qc_metrics if isinstance(qc_metrics, dict) else None,
+        coreg_modality=coreg_modality or None,
+    )
+    return sidecar
 
 
 def _build_mask_meta(  # type: ignore[no-untyped-def]
@@ -59,11 +76,19 @@ def _build_mask_meta(  # type: ignore[no-untyped-def]
     subject,
     session,
     is_postcon_ref=False,
+    qc_metrics=None,
 ):
-    """Nipype-Function wrapper for ``build_anat_mask_sidecar``."""
-    from pmriprep.utils.sidecar_builders import build_anat_mask_sidecar
+    """Nipype-Function wrapper for ``build_anat_mask_sidecar``.
 
-    return build_anat_mask_sidecar(
+    Chains ``enrich_brain_mask_sidecar`` after the base build so the
+    sidecar carries flat-prefixed ``BrainExtraction*`` keys.
+    """
+    from pmriprep.utils.sidecar_builders import (
+        build_anat_mask_sidecar,
+        enrich_brain_mask_sidecar,
+    )
+
+    sidecar = build_anat_mask_sidecar(
         description=description,
         source_paths=source_paths,
         reference_voxel_source=reference_voxel_source,
@@ -72,6 +97,11 @@ def _build_mask_meta(  # type: ignore[no-untyped-def]
         session=session or None,
         is_postcon_ref=is_postcon_ref,
     )
+    enrich_brain_mask_sidecar(
+        sidecar,
+        qc_metrics if isinstance(qc_metrics, dict) else None,
+    )
+    return sidecar
 
 
 def _build_probseg_meta(  # type: ignore[no-untyped-def]
@@ -82,11 +112,19 @@ def _build_probseg_meta(  # type: ignore[no-untyped-def]
     subject,
     session,
     is_postcon_ref=False,
+    qc_metrics=None,
 ):
-    """Nipype-Function wrapper for ``build_anat_probseg_sidecar``."""
-    from pmriprep.utils.sidecar_builders import build_anat_probseg_sidecar
+    """Nipype-Function wrapper for ``build_anat_probseg_sidecar``.
 
-    return build_anat_probseg_sidecar(
+    Chains ``enrich_probseg_sidecar`` after the base build so the sidecar
+    carries flat-prefixed ``TissueSegmentation*`` keys.
+    """
+    from pmriprep.utils.sidecar_builders import (
+        build_anat_probseg_sidecar,
+        enrich_probseg_sidecar,
+    )
+
+    sidecar = build_anat_probseg_sidecar(
         tissue_type=tissue_type,
         source_paths=source_paths,
         reference_voxel_source=reference_voxel_source,
@@ -95,6 +133,12 @@ def _build_probseg_meta(  # type: ignore[no-untyped-def]
         session=session or None,
         is_postcon_ref=is_postcon_ref,
     )
+    enrich_probseg_sidecar(
+        sidecar,
+        qc_metrics if isinstance(qc_metrics, dict) else None,
+        tissue_type=tissue_type,
+    )
+    return sidecar
 
 
 def _extract_contrast_agent_node(source_path):  # type: ignore[no-untyped-def]
@@ -122,6 +166,7 @@ def _add_one_anat_sink(
     builder: str = "preproc",
     contrast_agent_attr: Optional[str] = None,
     is_postcon_ref: bool = False,
+    coreg_modality: Optional[str] = None,
 ) -> pe.Node:
     """Wire one DataSink node + its sidecar-builder Function node.
 
@@ -149,6 +194,8 @@ def _add_one_anat_sink(
             "skull_stripped",
             "contrast_agent",
             "is_postcon_ref",
+            "qc_metrics",
+            "coreg_modality",
         ]
     elif builder == "mask":
         builder_fn = _build_mask_meta
@@ -160,6 +207,7 @@ def _add_one_anat_sink(
             "subject",
             "session",
             "is_postcon_ref",
+            "qc_metrics",
         ]
     elif builder == "probseg":
         builder_fn = _build_probseg_meta
@@ -171,6 +219,7 @@ def _add_one_anat_sink(
             "subject",
             "session",
             "is_postcon_ref",
+            "qc_metrics",
         ]
     else:
         raise ValueError(f"Unknown builder: {builder}")
@@ -188,6 +237,7 @@ def _add_one_anat_sink(
         meta_node.inputs.description = description
         meta_node.inputs.skull_stripped = True
         meta_node.inputs.contrast_agent = None
+        meta_node.inputs.coreg_modality = coreg_modality
     elif builder == "mask":
         meta_node.inputs.description = description
     elif builder == "probseg":
@@ -200,6 +250,7 @@ def _add_one_anat_sink(
             ("subject_id", "subject"),
             ("session_id", "session"),
             (in_attr, "reference_voxel_source"),
+            ("qc_metrics", "qc_metrics"),
         ]),
     ])
 
@@ -470,6 +521,7 @@ def init_anat_datasinks_wf(
             desc_value="preproc",
             ce_value="GAD",
             contrast_agent_attr="source_t1w_postcon",
+            coreg_modality="T1wCE",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -484,6 +536,7 @@ def init_anat_datasinks_wf(
             ),
             suffix="T2w",
             desc_value="preproc",
+            coreg_modality="T2w",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -498,6 +551,7 @@ def init_anat_datasinks_wf(
             ),
             suffix="FLAIR",
             desc_value="preproc",
+            coreg_modality="FLAIR",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -515,6 +569,7 @@ def init_anat_datasinks_wf(
             desc_value="preproc",
             ce_value="GAD",
             contrast_agent_attr="source_flair_postcon",
+            coreg_modality="FLAIRCE",
         )
         sink_outputs.append((sink, "out_file"))
 

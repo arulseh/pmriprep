@@ -591,11 +591,11 @@ def compute_nawm_reference(
 # `name` column values.
 # ---------------------------------------------------------------------------
 
-# Mapping: integer label → (snake_case TSV name, human description).
+# Mapping: integer label → (snake_case TSV name, NiPreps abbreviation, human description).
 # Index 0 (background) intentionally excluded per BIDS dseg semantics.
-_TUMOR_DSEG_ROWS: Tuple[Tuple[int, str, str], ...] = (
-    (1, "non_enhancing_tumor", "Non-enhancing tumor (HD-GLIO label 1)"),
-    (2, "contrast_enhancing_tumor", "Contrast-enhancing tumor (HD-GLIO label 2)"),
+_TUMOR_DSEG_ROWS: Tuple[Tuple[int, str, str, str], ...] = (
+    (1, "non_enhancing_tumor", "NET", "Non-enhancing tumor (HD-GLIO label 1)"),
+    (2, "contrast_enhancing_tumor", "ET", "Contrast-enhancing tumor (HD-GLIO label 2)"),
 )
 
 
@@ -606,9 +606,10 @@ def write_tumor_dseg_tsv(
     """Write a BIDS-Common-Derivatives ``_dseg.tsv`` for HD-GLIO tumor seg.
 
     Companion lookup table for the existing ``desc-tumorseg_dseg.nii.gz``
-    label NIfTI. Columns: ``index, name, voxel_count, volume_mm3, volume_ml``.
-    One row per non-background label. The accompanying JSON sidecar is
-    built by :func:`pmriprep.utils.sidecar_builders.build_tumor_seg_dseg_sidecar`,
+    label NIfTI. Columns: ``index, name, abbreviation, voxel_count,
+    volume_mm3``. One row per non-background label. The accompanying JSON
+    sidecar is built by
+    :func:`pmriprep.utils.sidecar_builders.build_tumor_seg_dseg_sidecar`,
     which describes both the NIfTI label map and these TSV columns.
 
     Args:
@@ -645,21 +646,21 @@ def write_tumor_dseg_tsv(
     voxel_sizes = (float(zooms[0]), float(zooms[1]), float(zooms[2]))
 
     rows: List[Dict[str, Any]] = []
-    for index, name, _description in _TUMOR_DSEG_ROWS:
+    for index, name, abbreviation, _description in _TUMOR_DSEG_ROWS:
         mask = seg_data == index
-        voxel_count, volume_mm3, volume_ml = compute_region_volume(mask, voxel_sizes)
+        voxel_count, volume_mm3, _volume_ml = compute_region_volume(mask, voxel_sizes)
         rows.append({
             "index": index,
             "name": name,
+            "abbreviation": abbreviation,
             "voxel_count": voxel_count,
             "volume_mm3": round(volume_mm3, 2),
-            "volume_ml": round(volume_ml, 3),
         })
 
     with out_path.open("w", newline="") as fh:
         writer = csv.DictWriter(
             fh,
-            fieldnames=["index", "name", "voxel_count", "volume_mm3", "volume_ml"],
+            fieldnames=["index", "name", "abbreviation", "voxel_count", "volume_mm3"],
             delimiter="\t",
             lineterminator="\n",
         )
