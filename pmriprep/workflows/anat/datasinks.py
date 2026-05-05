@@ -741,15 +741,18 @@ def init_anat_datasinks_wf(
     ])
 
     # --- outputnode ---
-    # ``done`` is a barrier signal (path to the figures dir) used by
-    # base.py to gate report generation on pipeline completion.
+    # ``done`` is a barrier signal sourced from ``dd_node.dd_path`` so it
+    # fires only after every per-output sink + figures_writer have joined
+    # ``dd_merge``. base.py gates report generation on this barrier.
     outputnode = pe.Node(
         niu.IdentityInterface(fields=["done", "out_dir", "dataset_description_done"]),
         name="outputnode",
     )
     workflow.connect([
-        (figures_writer, outputnode, [("figures_dir", "done")]),
-        (dd_node, outputnode, [("dd_path", "dataset_description_done")]),
+        (dd_node, outputnode, [
+            ("dd_path", "done"),
+            ("dd_path", "dataset_description_done"),
+        ]),
     ])
     # out_dir is a static path
     out_dir_str = str(

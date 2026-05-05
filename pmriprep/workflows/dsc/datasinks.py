@@ -1425,8 +1425,10 @@ def init_dsc_datasinks_wf(
         name="outputnode",
     )
     workflow.connect([
-        (figures_writer, outputnode, [("aif_curve_txt", "done")]),
-        (dd_node, outputnode, [("dd_path", "dataset_description_done")]),
+        (dd_node, outputnode, [
+            ("dd_path", "done"),
+            ("dd_path", "dataset_description_done"),
+        ]),
     ])
 
     return workflow

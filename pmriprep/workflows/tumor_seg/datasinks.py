@@ -459,10 +459,12 @@ def init_tumor_seg_datasinks_wf(
     )
     workflow.connect([
         (figures_writer, outputnode, [
-            ("clinical_context_json", "done"),
             ("clinical_context_json", "clinical_context_json"),
         ]),
-        (dd_node, outputnode, [("dd_path", "dataset_description_done")]),
+        (dd_node, outputnode, [
+            ("dd_path", "done"),
+            ("dd_path", "dataset_description_done"),
+        ]),
     ])
 
     return workflow
