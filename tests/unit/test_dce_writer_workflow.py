@@ -307,3 +307,119 @@ def test_dce_factory_warnings_in_anchor_sidecar(
         / "sub-01_ses-0001_desc-dceQC_quality.json"
     )
     assert not legacy.exists()
+
+
+# ---------------------------------------------------------------------------
+# Dual-T1w-underlay support (v0.47.0): a session configured with both
+# t1w_precon and t1w_postcon must produce TWO anat-side cross-modality
+# outputs differing only by the BIDS ce-GAD entity.
+# ---------------------------------------------------------------------------
+
+
+def _build_dce_underlay_wf(
+    bids: Path, src: str, out: Path, tmp_path: Path,
+    present_inputs: set, work_subdir: str,
+    *, t1w_in_dce: str | None = None,
+    t1w_postcon_in_dce: str | None = None,
+):
+    """Helper: build the DCE datasinks workflow with the given underlays."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out), bids_dir=str(bids),
+        subject_id="01", session_id="0001",
+        pk_model="tofts",
+        present_inputs=present_inputs,
+    )
+    wf.base_dir = str(tmp_path / work_subdir)
+    inp = wf.inputs.inputnode
+    inp.source_dce = src
+    inp.ktrans_map = _write_nii(tmp_path / f"{work_subdir}-k.nii.gz")
+    inp.qc_metrics = {}
+    if t1w_in_dce is not None:
+        inp.t1w_in_dce = t1w_in_dce
+    if t1w_postcon_in_dce is not None:
+        inp.t1w_postcon_in_dce = t1w_postcon_in_dce
+    wf.run()
+
+
+def test_dce_t1w_precon_underlay_lands_in_anat(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """Precon-only underlay: lands in anat/ with no ce- entity."""
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    underlay = _write_nii(tmp_path / "t1w_in_dce.nii.gz")
+
+    _build_dce_underlay_wf(
+        bids, src, out, tmp_path,
+        present_inputs={"t1w_in_dce"},
+        work_subdir="work-precon",
+        t1w_in_dce=underlay,
+    )
+
+    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+    expected = anat_dir / "sub-01_ses-0001_space-dce_T1w.nii.gz"
+    assert expected.exists(), (
+        f"precon underlay missing at {expected}; "
+        f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+    )
+    assert not (anat_dir / "sub-01_ses-0001_ce-GAD_space-dce_T1w.nii.gz").exists()
+    sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
+    assert "Pre-contrast" in sidecar["Description"]
+
+
+def test_dce_t1w_postcon_underlay_lands_in_anat(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """Postcon-only underlay: lands in anat/ with ce-GAD entity."""
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    underlay = _write_nii(tmp_path / "t1w_postcon_in_dce.nii.gz")
+
+    _build_dce_underlay_wf(
+        bids, src, out, tmp_path,
+        present_inputs={"t1w_postcon_in_dce"},
+        work_subdir="work-postcon",
+        t1w_postcon_in_dce=underlay,
+    )
+
+    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+    expected = anat_dir / "sub-01_ses-0001_ce-GAD_space-dce_T1w.nii.gz"
+    assert expected.exists(), (
+        f"postcon underlay missing at {expected}; "
+        f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+    )
+    assert not (anat_dir / "sub-01_ses-0001_space-dce_T1w.nii.gz").exists()
+    sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
+    assert "Post-contrast" in sidecar["Description"]
+
+
+def test_dce_both_t1w_underlays(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """Both underlays configured: two anat/ outputs differing by ce- entity."""
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    pre = _write_nii(tmp_path / "t1w_in_dce.nii.gz")
+    post = _write_nii(tmp_path / "t1w_postcon_in_dce.nii.gz")
+
+    _build_dce_underlay_wf(
+        bids, src, out, tmp_path,
+        present_inputs={"t1w_in_dce", "t1w_postcon_in_dce"},
+        work_subdir="work-both",
+        t1w_in_dce=pre,
+        t1w_postcon_in_dce=post,
+    )
+
+    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+    precon = anat_dir / "sub-01_ses-0001_space-dce_T1w.nii.gz"
+    postcon = anat_dir / "sub-01_ses-0001_ce-GAD_space-dce_T1w.nii.gz"
+    assert precon.exists() and postcon.exists(), (
+        f"both underlays expected; anat/ contains: "
+        f"{sorted(p.name for p in anat_dir.iterdir())}"
+    )
+    pre_meta = json.loads(precon.with_suffix("").with_suffix(".json").read_text())
+    post_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
+    assert "Pre-contrast" in pre_meta["Description"]
+    assert "Post-contrast" in post_meta["Description"]

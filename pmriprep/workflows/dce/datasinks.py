@@ -783,7 +783,6 @@ def init_dce_datasinks_wf(
     session_id: Optional[str],
     pk_model: str,
     present_inputs: Optional[set[str]] = None,
-    has_postcon_t1w: bool = False,
     has_smoothing: bool = False,
     name: str = "dce_datasinks_wf",
 ) -> pe.Workflow:
@@ -839,7 +838,8 @@ def init_dce_datasinks_wf(
                 "dce_moco", "dce_mean", "motion_params",
                 "aif_curve", "aif_mask",
                 # Structural underlays + xfm
-                "t1w_in_dce", "flair_in_dce", "t2w_in_dce", "dce_to_t1w_xfm",
+                "t1w_in_dce", "t1w_postcon_in_dce",
+                "flair_in_dce", "t2w_in_dce", "dce_to_t1w_xfm",
                 # Lesion/ROI
                 "lesion_mask_dce", "lesion_stats_json",
                 "roi_mask_dce", "roi_stats_json",
@@ -1337,11 +1337,17 @@ def init_dce_datasinks_wf(
         sink = _add_anat_image_sink(
             workflow, inputnode, base_minimal,
             name="t1w_in_dce", in_attr="t1w_in_dce", label="T1w",
-            description=(
-                "CE-T1w registered to DCE space" if has_postcon_t1w
-                else "T1w registered to DCE space"
-            ),
-            ce_label="GAD" if has_postcon_t1w else "",
+            description="Pre-contrast T1w registered to DCE space",
+            ce_label="",
+        )
+        sink_outputs.append((sink, "out_file"))
+    if "t1w_postcon_in_dce" in present:
+        sink = _add_anat_image_sink(
+            workflow, inputnode, base_minimal,
+            name="t1w_postcon_in_dce", in_attr="t1w_postcon_in_dce",
+            label="T1w",
+            description="Post-contrast T1w registered to DCE space",
+            ce_label="GAD",
         )
         sink_outputs.append((sink, "out_file"))
     if "flair_in_dce" in present:

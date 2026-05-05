@@ -1491,7 +1491,8 @@ def init_dsc_preproc_wf(
             fields=[
                 "dsc_file",  # Raw 4D DSC perfusion image
                 "t1w_reference",  # T1w reference for registration
-                "t1w_underlay",  # T1w underlay for DSC-space visualization (CE-T1w if available, else native)
+                "t1w_underlay",  # precontrast (or single-source) T1w underlay
+                "t1w_postcon_underlay",  # postcontrast T1w underlay (independent of t1w_underlay)
                 "brain_mask",  # Brain mask in T1w space
                 "wm_probseg",  # White matter probability map (optional)
                 "whole_tumor_mask",  # Whole-tumor mask for AIF exclusion + lesion stats (optional)
@@ -1577,6 +1578,7 @@ def init_dsc_preproc_wf(
                 "registration_filmstrip",
                 # Structural underlays
                 "t1w_in_dsc",
+                "t1w_postcon_in_dsc",
                 "flair_in_dsc",
                 "t2w_in_dsc",
                 # AIF QC plots
@@ -2178,7 +2180,7 @@ def init_dsc_preproc_wf(
     # Uses Function interface to handle undefined inputs gracefully.
     # -------------------------------------------------------------------
     transform_t1_to_dsc = None
-    if "t1w_precon" in config.underlays or "t1w_postcon" in config.underlays:
+    if "t1w_precon" in config.underlays:
         transform_t1_to_dsc = pe.Node(
             niu.Function(
                 input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
@@ -2188,6 +2190,18 @@ def init_dsc_preproc_wf(
             name="transform_t1_to_dsc",
         )
         transform_t1_to_dsc.inputs.output_name = "t1w_in_dsc.nii.gz"
+
+    transform_t1_postcon_to_dsc = None
+    if "t1w_postcon" in config.underlays:
+        transform_t1_postcon_to_dsc = pe.Node(
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dsc,
+            ),
+            name="transform_t1_postcon_to_dsc",
+        )
+        transform_t1_postcon_to_dsc.inputs.output_name = "t1w_postcon_in_dsc.nii.gz"
 
     transform_flair_to_dsc = None
     if "flair" in config.underlays:
@@ -2703,6 +2717,13 @@ def init_dsc_preproc_wf(
             (register, transform_t1_to_dsc, [("out_matrix", "transform_matrix")]),
         ])
 
+    if transform_t1_postcon_to_dsc is not None:
+        workflow.connect([
+            (inputnode, transform_t1_postcon_to_dsc, [("t1w_postcon_underlay", "structural_file")]),
+            (prebolus_mean, transform_t1_postcon_to_dsc, [("prebolus_mean_file", "reference_file")]),
+            (register, transform_t1_postcon_to_dsc, [("out_matrix", "transform_matrix")]),
+        ])
+
     if transform_flair_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_flair_to_dsc, [("flair_in_t1w", "structural_file")]),
@@ -2887,6 +2908,11 @@ def init_dsc_preproc_wf(
     if transform_t1_to_dsc is not None:
         workflow.connect([
             (transform_t1_to_dsc, outputnode, [("out_file", "t1w_in_dsc")]),
+        ])
+
+    if transform_t1_postcon_to_dsc is not None:
+        workflow.connect([
+            (transform_t1_postcon_to_dsc, outputnode, [("out_file", "t1w_postcon_in_dsc")]),
         ])
 
     if transform_flair_to_dsc is not None:

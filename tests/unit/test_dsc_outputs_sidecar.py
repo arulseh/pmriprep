@@ -336,10 +336,10 @@ class TestStructuralUnderlayDatatype:
     suffix in ``perf/``. ``_add_anat_sink`` must override datatype="anat".
     """
 
-    def test_t1w_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
+    def _build_and_run(self, minimal_inputs, tmp_path, work_subdir):
+        """Helper: build the DSC datasinks workflow and run it."""
         from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
 
-        minimal_inputs["t1w_in_dsc"] = _write_dummy_nifti(tmp_path / "t1w_in_dsc.nii.gz")
         present = (set(minimal_inputs.keys()) - {
             "output_dir", "bids_dir", "subject_id", "session_id", "qc_metrics",
         })
@@ -349,26 +349,65 @@ class TestStructuralUnderlayDatatype:
             subject_id=minimal_inputs["subject_id"],
             session_id=minimal_inputs["session_id"],
             present_inputs=present,
-            has_postcon_t1w=True,  # triggers ce-GAD entity
         )
-        wf.base_dir = str(tmp_path / "work")
+        wf.base_dir = str(tmp_path / work_subdir)
         inp = wf.inputs.inputnode
         for k, v in minimal_inputs.items():
             if k in {"output_dir", "subject_id", "session_id", "bids_dir"}:
                 continue
             setattr(inp, k, v)
-        wf.run()  # would raise "Could not build path" before fix
+        wf.run()
+        return Path(minimal_inputs["output_dir"]) / "pmriprep" / "sub-test01" / "ses-01"
 
-        derivatives = Path(minimal_inputs["output_dir"])
-        anat_dir = derivatives / "pmriprep" / "sub-test01" / "ses-01" / "anat"
-        perf_dir = derivatives / "pmriprep" / "sub-test01" / "ses-01" / "perf"
-        # Underlay must land in anat/ with ce-GAD + space-dsc entities,
-        # NOT in perf/. Postcon-mode → ce-GAD must propagate via the
-        # niworkflows `ceagent` trait (NOT `ce` — that trait doesn't exist).
-        expected_nii = anat_dir / "sub-test01_ses-01_ce-GAD_space-dsc_T1w.nii.gz"
-        assert expected_nii.exists(), (
-            f"underlay missing at {expected_nii}; "
+    def test_t1w_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
+        """Precon-only underlay: lands in anat/ with no ce- entity."""
+        minimal_inputs["t1w_in_dsc"] = _write_dummy_nifti(tmp_path / "t1w_in_dsc.nii.gz")
+        ses = self._build_and_run(minimal_inputs, tmp_path, "work-precon")
+
+        anat_dir = ses / "anat"
+        perf_dir = ses / "perf"
+        expected = anat_dir / "sub-test01_ses-01_space-dsc_T1w.nii.gz"
+        assert expected.exists(), (
+            f"precon underlay missing at {expected}; "
             f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
         )
+        assert not (anat_dir / "sub-test01_ses-01_ce-GAD_space-dsc_T1w.nii.gz").exists()
         perf_t1w = list(perf_dir.glob("*T1w.nii.gz")) if perf_dir.exists() else []
         assert not perf_t1w, f"T1w must not land in perf/; got {perf_t1w}"
+
+    def test_t1w_postcon_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
+        """Postcon-only underlay: lands in anat/ with ce-GAD entity."""
+        minimal_inputs["t1w_postcon_in_dsc"] = _write_dummy_nifti(
+            tmp_path / "t1w_postcon_in_dsc.nii.gz",
+        )
+        ses = self._build_and_run(minimal_inputs, tmp_path, "work-postcon")
+
+        anat_dir = ses / "anat"
+        expected = anat_dir / "sub-test01_ses-01_ce-GAD_space-dsc_T1w.nii.gz"
+        assert expected.exists(), (
+            f"postcon underlay missing at {expected}; "
+            f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+        )
+        # Precon file must NOT exist.
+        assert not (anat_dir / "sub-test01_ses-01_space-dsc_T1w.nii.gz").exists()
+
+    def test_both_t1w_underlays_in_dsc(self, minimal_inputs, tmp_path) -> None:
+        """Both underlays configured: two anat/ outputs differing by ce- entity."""
+        minimal_inputs["t1w_in_dsc"] = _write_dummy_nifti(tmp_path / "t1w_in_dsc.nii.gz")
+        minimal_inputs["t1w_postcon_in_dsc"] = _write_dummy_nifti(
+            tmp_path / "t1w_postcon_in_dsc.nii.gz",
+        )
+        ses = self._build_and_run(minimal_inputs, tmp_path, "work-both")
+
+        anat_dir = ses / "anat"
+        precon = anat_dir / "sub-test01_ses-01_space-dsc_T1w.nii.gz"
+        postcon = anat_dir / "sub-test01_ses-01_ce-GAD_space-dsc_T1w.nii.gz"
+        assert precon.exists() and postcon.exists(), (
+            f"both underlays expected; anat/ contains: "
+            f"{sorted(p.name for p in anat_dir.iterdir())}"
+        )
+        # Sidecar Description differentiates the two
+        precon_meta = json.loads(precon.with_suffix("").with_suffix(".json").read_text())
+        postcon_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
+        assert "Pre-contrast" in precon_meta["Description"]
+        assert "Post-contrast" in postcon_meta["Description"]
