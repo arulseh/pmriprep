@@ -102,17 +102,25 @@ def test_tumor_seg_datasinks_smoke(
     anat = ses / "anat"
     expected = [
         anat / "sub-01_ses-0001_space-T1w_desc-tumorseg_dseg.nii.gz",
+        anat / "sub-01_ses-0001_space-T1w_desc-tumorseg_dseg.tsv",
         anat / "sub-01_ses-0001_space-T1w_desc-enhancing_mask.nii.gz",
         anat / "sub-01_ses-0001_space-T1w_desc-nonenhancing_mask.nii.gz",
         anat / "sub-01_ses-0001_space-T1w_desc-wholetumor_mask.nii.gz",
         anat / "sub-01_ses-0001_space-T1w_desc-lesion_mask.nii.gz",
         anat / "sub-01_ses-0001_space-T1w_desc-nawm_mask.nii.gz",
+        anat / "sub-01_ses-0001_desc-tumorClinicalContext.json",
+    ]
+    for p in expected:
+        assert p.exists(), f"Missing: {p.name}"
+
+    # Legacy session-root orphans must not exist after v0.46.0
+    legacy = [
         anat / "sub-01_ses-0001_desc-tumorseg_volumes.txt",
         ses / "sub-01_ses-0001_space-anat_desc-lesionStats.json",
         ses / "sub-01_ses-0001_desc-tumorsegQC_quality.json",
     ]
-    for p in expected:
-        assert p.exists(), f"Missing: {p.name}"
+    for p in legacy:
+        assert not p.exists(), f"Legacy orphan should be gone: {p.name}"
 
     dd = out_root / "pmriprep" / "dataset_description.json"
     assert dd.exists()
@@ -153,7 +161,12 @@ def test_tumor_seg_sidecar_sources_populated(
     wf.run()
 
     anat = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    sidecars = sorted(anat.glob("*.json"))
+    # desc-tumorClinicalContext.json is a non-image clinical-context
+    # sidecar (no Sources/SpatialReference/VoxelSize); skip it here.
+    sidecars = [
+        p for p in sorted(anat.glob("*.json"))
+        if "desc-tumorClinicalContext" not in p.name
+    ]
     assert sidecars, "No sidecars written"
 
     for sc in sidecars:
@@ -198,11 +211,11 @@ def test_tumor_seg_lesion_stats_json_content(
     inp.qc_metrics = {}
     wf.run()
 
-    lesion_path = (
-        out_root / "pmriprep" / "sub-01" / "ses-0001"
-        / "sub-01_ses-0001_space-anat_desc-lesionStats.json"
+    clinical_path = (
+        out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+        / "sub-01_ses-0001_desc-tumorClinicalContext.json"
     )
-    body = json.loads(lesion_path.read_text())
+    body = json.loads(clinical_path.read_text())
     assert body["TotalLesionVoxels"] == 8
     assert body["Regions"]["contrast_enhancing_tumor"]["voxel_count"] == 8
     assert body["Regions"]["non_enhancing_tumor"]["voxel_count"] == 0

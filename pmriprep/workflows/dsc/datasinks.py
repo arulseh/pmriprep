@@ -1,9 +1,10 @@
 """DSC pipeline derivatives factory.
 
-Replaces ``DSCDerivativeWriter`` with a workflow that wires one
-``PMRIPrepDataSink`` per output (NIfTI + sidecar) plus a ``DSCQCWriter``
-shim for the QC JSON, AIF curve copy, confounds TSV/JSON, lesion/ROI
-stats copies, and figure copies.
+Wires one ``PMRIPrepDataSink`` per output (NIfTI + sidecar) plus a
+``DSCFiguresWriter`` for the AIF curve copy, confounds TSV/JSON, and
+figure filmstrips. QC summary fields live on
+``desc-dscPreproc_dsc.json`` as flat ``QC*`` keys; per-map lesion stats
+live on the per-PK-map sidecars as ``LesionStats`` fragments.
 
 Per-output sidecar enrichment uses ``apply_aif_sidecar`` from
 ``pmriprep.utils.dsc_aif_provenance`` to stamp every map with the
@@ -17,7 +18,7 @@ import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 
 from pmriprep.interfaces.qc_writers import (
-    DSCQCWriter,
+    DSCFiguresWriter,
     PMRIPrepDataSink,
     write_dataset_description_node,
 )
@@ -220,13 +221,23 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
     description,
     preload_qc=None,
     preprocessing_stats=None,
+    qc_metrics=None,
+    provenance_dict=None,
+    preflight_warnings=None,
+    presence_warnings=None,
 ):
     """Compose the ``desc-dscPreproc_dsc.json`` sidecar.
 
-    Starts from the minimal-base meta and layers on flat-prefixed
-    cosmetic QC keys via ``enrich_dsc_preproc_sidecar``.
+    Starts from the minimal-base meta, layers on flat-prefixed cosmetic
+    QC keys via ``enrich_dsc_preproc_sidecar``, and finally attaches
+    QC recommendation/warnings flat keys via
+    ``enrich_recommendation_keys`` so the HTML aggregator can read the
+    overall recommendation banner directly from this anchor sidecar.
     """
-    from pmriprep.utils.sidecar_builders import enrich_dsc_preproc_sidecar
+    from pmriprep.utils.sidecar_builders import (
+        enrich_dsc_preproc_sidecar,
+        enrich_recommendation_keys,
+    )
 
     out = dict(base)
     out["Description"] = description
@@ -235,6 +246,20 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
         preload_qc=preload_qc if isinstance(preload_qc, dict) else None,
         preprocessing_stats=(
             preprocessing_stats if isinstance(preprocessing_stats, dict) else None
+        ),
+    )
+    enrich_recommendation_keys(
+        out,
+        modality="DSC",
+        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
+        provenance_dict=(
+            provenance_dict if isinstance(provenance_dict, dict) else None
+        ),
+        preflight_warnings=(
+            list(preflight_warnings) if preflight_warnings else None
+        ),
+        presence_warnings=(
+            list(presence_warnings) if presence_warnings else None
         ),
     )
     return out
@@ -670,8 +695,6 @@ def init_dsc_datasinks_wf(
     session_id: Optional[str],
     present_inputs: Optional[set[str]] = None,
     has_postcon_t1w: bool = False,
-    has_lesion_stats: bool = False,
-    has_roi_stats: bool = False,
     has_smoothing: bool = False,
     name: str = "dsc_datasinks_wf",
 ) -> pe.Workflow:
@@ -729,7 +752,7 @@ def init_dsc_datasinks_wf(
                 # Sidecar drivers
                 "qc_metrics", "provenance_dict", "preflight_warnings",
                 "config_dict",
-                # Figures (passed through to DSCQCWriter)
+                # Figures (passed through to DSCFiguresWriter)
                 "brain_mask_filmstrip", "motion_qc_plot",
                 "aif_curve_plot", "aif_location_plot", "aif_candidates_plot",
                 "registration_filmstrip",
@@ -1060,13 +1083,29 @@ def init_dsc_datasinks_wf(
         return sink
 
     if "dsc_moco" in present:
-        # The preproc-4D sidecar carries flat-prefixed cosmetic Preload*
-        # and motion/signal QC keys; the verbatim resume sidecar (below)
-        # carries the producer-shape dicts for --skip-dsc round-trip.
+        # The preproc-4D sidecar is the canonical anchor for DSC: it
+        # carries flat-prefixed cosmetic Preload* / motion / signal QC
+        # keys AND the QC* recommendation/warnings keys the HTML
+        # aggregator reads. The verbatim resume sidecar (below) carries
+        # the producer-shape dicts for --skip-dsc round-trip.
+        presence_warnings_dsc = [
+            warn for cond, warn in (
+                ("brain_mask_dsc" not in present,
+                 "Brain mask in DSC space not available"),
+                ("nawm_mask_dsc" not in present,
+                 "NAWM mask in DSC space not available"),
+                ("lesion_mask_dsc" not in present,
+                 "Lesion mask in DSC space not available"),
+                ("dsc_to_t1w_xfm" not in present,
+                 "DSC to T1w registration transform not available"),
+            ) if cond
+        ]
         moco_meta = pe.Node(
             niu.Function(
                 input_names=[
                     "base", "description", "preload_qc", "preprocessing_stats",
+                    "qc_metrics", "provenance_dict", "preflight_warnings",
+                    "presence_warnings",
                 ],
                 output_names=["meta_dict"],
                 function=_build_dsc_preproc_meta,
@@ -1074,11 +1113,15 @@ def init_dsc_datasinks_wf(
             name="moco_meta",
         )
         moco_meta.inputs.description = "Motion-corrected 4D DSC time series"
+        moco_meta.inputs.presence_warnings = presence_warnings_dsc
         workflow.connect([
             (base_minimal, moco_meta, [("meta_dict", "base")]),
             (inputnode, moco_meta, [
                 ("preload_qc", "preload_qc"),
                 ("preprocessing_stats", "preprocessing_stats"),
+                ("qc_metrics", "qc_metrics"),
+                ("provenance_dict", "provenance_dict"),
+                ("preflight_warnings", "preflight_warnings"),
             ]),
         ])
         moco_sink = pe.Node(
@@ -1317,27 +1360,16 @@ def init_dsc_datasinks_wf(
         ])
         sink_outputs.append((sm_sink, "out_file"))
 
-    # --- DSC QC writer (figures, AIF curve, confounds, lesion/roi stats, QC JSON) ---
-    qc_writer = pe.Node(
-        DSCQCWriter(
-            has_brain_mask_dsc="brain_mask_dsc" in present,
-            has_nawm_mask_dsc="nawm_mask_dsc" in present,
-            has_lesion_mask_dsc="lesion_mask_dsc" in present,
-            has_dsc_to_t1w_xfm="dsc_to_t1w_xfm" in present,
-        ),
-        name="qc_writer",
-    )
+    # --- DSC figures writer (figures, AIF curve, confounds TSV/JSON) ---
+    figures_writer = pe.Node(DSCFiguresWriter(), name="figures_writer")
     workflow.connect([
-        (inputnode, qc_writer, [
+        (inputnode, figures_writer, [
             ("output_dir", "output_dir"),
             ("subject_id", "subject_id"),
             ("session_id", "session_id"),
             ("qc_metrics", "qc_metrics"),
-            ("provenance_dict", "provenance_dict"),
-            ("preflight_warnings", "preflight_warnings"),
             ("aif_curve", "aif_curve"),
             ("motion_params", "motion_params"),
-            # Phase 2a: AIF curve sidecar Sources/bids_dir
             ("bids_dir", "bids_dir"),
             ("source_dsc", "source_dsc"),
             ("brain_mask_filmstrip", "brain_mask_filmstrip"),
@@ -1352,12 +1384,6 @@ def init_dsc_datasinks_wf(
             ("dsc_leakage_qc_plot", "dsc_leakage_qc_plot"),
         ]),
     ])
-    if has_lesion_stats:
-        workflow.connect(inputnode, "lesion_stats_json",
-                         qc_writer, "lesion_stats_json")
-    if has_roi_stats:
-        workflow.connect(inputnode, "roi_stats_json",
-                         qc_writer, "roi_stats_json")
 
     # --- dataset_description.json barrier ---
     merge = pe.Node(
@@ -1365,7 +1391,9 @@ def init_dsc_datasinks_wf(
     )
     for i, (sink, attr) in enumerate(sink_outputs, start=1):
         workflow.connect(sink, attr, merge, f"in{i}")
-    workflow.connect(qc_writer, "qc_json", merge, f"in{len(sink_outputs) + 1}")
+    workflow.connect(
+        figures_writer, "aif_curve_txt", merge, f"in{len(sink_outputs) + 1}",
+    )
 
     dd_node = pe.Node(
         niu.Function(
@@ -1385,12 +1413,12 @@ def init_dsc_datasinks_wf(
 
     outputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["qc_json", "dataset_description_done"],
+            fields=["done", "dataset_description_done"],
         ),
         name="outputnode",
     )
     workflow.connect([
-        (qc_writer, outputnode, [("qc_json", "qc_json")]),
+        (figures_writer, outputnode, [("aif_curve_txt", "done")]),
         (dd_node, outputnode, [("dd_path", "dataset_description_done")]),
     ])
 

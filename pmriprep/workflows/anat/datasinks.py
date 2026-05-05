@@ -2,7 +2,7 @@
 
 Replaces the monolithic ``AnatDerivativeWriter`` with a small workflow
 that wires one ``PMRIPrepDataSink`` per output (NIfTI + sidecar) plus
-an :class:`AnatQCWriter` shim for the QC JSON and figure copies.
+an :class:`AnatFiguresWriter` shim for the QC JSON and figure copies.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 
 from pmriprep.interfaces.qc_writers import (
-    AnatQCWriter,
+    AnatFiguresWriter,
     PMRIPrepDataSink,
     write_dataset_description_node,
 )
@@ -36,6 +36,8 @@ def _build_preproc_meta(  # type: ignore[no-untyped-def]
     is_postcon_ref=False,
     qc_metrics=None,
     coreg_modality=None,
+    is_anchor_sidecar=False,
+    presence_warnings=None,
 ):
     """Nipype-Function wrapper for ``build_anat_preproc_sidecar``.
 
@@ -43,10 +45,16 @@ def _build_preproc_meta(  # type: ignore[no-untyped-def]
     sidecar carries flat-prefixed ``Preprocessing*`` keys (and
     ``Coregistration<Modality>*`` keys when ``coreg_modality`` is set
     for secondary-modality sidecars).
+
+    When ``is_anchor_sidecar=True`` (only the T1w reference preproc
+    sidecar — the anat presence probe), also attaches QC* warnings flat
+    keys via ``enrich_recommendation_keys`` so the HTML aggregator can
+    read anat warnings directly from this canonical sidecar.
     """
     from pmriprep.utils.sidecar_builders import (
         build_anat_preproc_sidecar,
         enrich_preproc_anat_sidecar,
+        enrich_recommendation_keys,
     )
 
     sidecar = build_anat_preproc_sidecar(
@@ -65,6 +73,15 @@ def _build_preproc_meta(  # type: ignore[no-untyped-def]
         qc_metrics if isinstance(qc_metrics, dict) else None,
         coreg_modality=coreg_modality or None,
     )
+    if is_anchor_sidecar:
+        enrich_recommendation_keys(
+            sidecar,
+            modality="anat",
+            qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
+            presence_warnings=(
+                list(presence_warnings) if presence_warnings else None
+            ),
+        )
     return sidecar
 
 
@@ -167,6 +184,8 @@ def _add_one_anat_sink(
     contrast_agent_attr: Optional[str] = None,
     is_postcon_ref: bool = False,
     coreg_modality: Optional[str] = None,
+    is_anchor_sidecar: bool = False,
+    presence_warnings: Optional[list[str]] = None,
 ) -> pe.Node:
     """Wire one DataSink node + its sidecar-builder Function node.
 
@@ -196,6 +215,8 @@ def _add_one_anat_sink(
             "is_postcon_ref",
             "qc_metrics",
             "coreg_modality",
+            "is_anchor_sidecar",
+            "presence_warnings",
         ]
     elif builder == "mask":
         builder_fn = _build_mask_meta
@@ -238,6 +259,8 @@ def _add_one_anat_sink(
         meta_node.inputs.skull_stripped = True
         meta_node.inputs.contrast_agent = None
         meta_node.inputs.coreg_modality = coreg_modality
+        meta_node.inputs.is_anchor_sidecar = is_anchor_sidecar
+        meta_node.inputs.presence_warnings = presence_warnings or []
     elif builder == "mask":
         meta_node.inputs.description = description
     elif builder == "probseg":
@@ -460,6 +483,22 @@ def init_anat_datasinks_wf(
                 "(pre-contrast)"
             )
             preproc_ce = None
+        # The T1w preproc sidecar is the anat presence probe AND the
+        # carrier of QC warnings flat keys for the HTML aggregator.
+        # TODO: Legacy AnatQCWriter also emitted "Post-contrast T1w
+        # coregistration not available" when has_t1w_pre & has_t1w_postcon
+        # & coreg_filmstrip_postcon was missing at runtime — that
+        # runtime check is dropped here in favor of static modality
+        # flags. Restore via a runtime Function-node check on the
+        # coreg filmstrip output if false negatives become a problem.
+        anat_presence_warnings = [
+            warn for cond, warn in (
+                (not has_tissue_seg,
+                 "Tissue segmentation (WM/GM/CSF probability maps) not available"),
+                (not has_flair, "FLAIR not available"),
+                (not has_t2w, "T2w not available"),
+            ) if cond
+        ]
         sink = _add_one_anat_sink(
             workflow, inputnode,
             name="t1w_preproc",
@@ -470,6 +509,8 @@ def init_anat_datasinks_wf(
             desc_value="preproc",
             ce_value=preproc_ce,
             is_postcon_ref=is_postcon_ref,
+            is_anchor_sidecar=True,
+            presence_warnings=anat_presence_warnings,
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -647,23 +688,13 @@ def init_anat_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- AnatQCWriter shim (QC JSON + figures + warnings derivation) ---
-    qc_writer = pe.Node(
-        AnatQCWriter(
-            has_t1w_pre=has_t1w_pre,
-            has_t1w_postcon=has_t1w_postcon,
-            has_t2w=has_t2w,
-            has_flair=has_flair,
-            has_tissue_seg=has_tissue_seg,
-        ),
-        name="qc_writer",
-    )
+    # --- Anat figures writer (filmstrips into figures/) ---
+    figures_writer = pe.Node(AnatFiguresWriter(), name="figures_writer")
     workflow.connect([
-        (inputnode, qc_writer, [
+        (inputnode, figures_writer, [
             ("output_dir", "output_dir"),
             ("subject_id", "subject_id"),
             ("session_id", "session_id"),
-            ("qc_metrics", "qc_metrics"),
             ("brain_mask_filmstrip", "brain_mask_filmstrip"),
             ("tissue_seg_filmstrip", "tissue_seg_filmstrip"),
             ("acpc_filmstrip", "acpc_filmstrip"),
@@ -683,13 +714,15 @@ def init_anat_datasinks_wf(
         )
         for i, (sink, attr) in enumerate(sink_outputs, start=1):
             workflow.connect(sink, attr, merge, f"in{i}")
-        workflow.connect(qc_writer, "qc_json", merge, f"in{len(sink_outputs) + 1}")
+        workflow.connect(
+            figures_writer, "figures_dir", merge, f"in{len(sink_outputs) + 1}",
+        )
     else:
         merge = pe.Node(
             niu.Merge(numinputs=1),
             name="dd_merge",
         )
-        workflow.connect(qc_writer, "qc_json", merge, "in1")
+        workflow.connect(figures_writer, "figures_dir", merge, "in1")
 
     dd_node = pe.Node(
         niu.Function(
@@ -708,12 +741,14 @@ def init_anat_datasinks_wf(
     ])
 
     # --- outputnode ---
+    # ``done`` is a barrier signal (path to the figures dir) used by
+    # base.py to gate report generation on pipeline completion.
     outputnode = pe.Node(
-        niu.IdentityInterface(fields=["qc_json", "out_dir", "dataset_description_done"]),
+        niu.IdentityInterface(fields=["done", "out_dir", "dataset_description_done"]),
         name="outputnode",
     )
     workflow.connect([
-        (qc_writer, outputnode, [("qc_json", "qc_json")]),
+        (figures_writer, outputnode, [("figures_dir", "done")]),
         (dd_node, outputnode, [("dd_path", "dataset_description_done")]),
     ])
     # out_dir is a static path

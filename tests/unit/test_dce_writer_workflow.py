@@ -264,36 +264,46 @@ def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:
     assert wf is not None
 
 
-def test_dce_factory_warnings_in_qc_json(
+def test_dce_factory_warnings_in_anchor_sidecar(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """DCEQCWriter populates warnings list from has_* flags."""
+    """``QCWarnings`` lands on ``desc-dcePreproc_dce.json`` from has_* flags."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
     out = tmp_path / "out"
 
+    # Include dce_moco so the anchor preproc sidecar is emitted; everything
+    # else absent so all six presence warnings fire.
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
         pk_model="tofts",
-        present_inputs=set(),  # no T1/B1/masks/lesion/xfm
+        present_inputs={"dce_moco"},
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
     inp.source_dce = src
     inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
+    inp.dce_moco = _write_nii(tmp_path / "moco.nii.gz")
     inp.qc_metrics = {"ok": True}
     wf.run()
 
-    qc_path = (
-        out / "pmriprep" / "sub-01" / "ses-0001"
-        / "sub-01_ses-0001_desc-dceQC_quality.json"
+    anchor = (
+        out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
+        / "sub-01_ses-0001_desc-dcePreproc_dce.json"
     )
-    assert qc_path.exists()
-    qc = json.loads(qc_path.read_text())
-    warnings = qc.get("warnings", [])
+    assert anchor.exists(), f"Anchor sidecar missing: {anchor}"
+    sidecar = json.loads(anchor.read_text())
+    warnings = sidecar.get("QCWarnings", [])
     assert any("B1+" in w for w in warnings)
     assert any("T1 relaxation" in w for w in warnings)
     assert any("Brain mask" in w for w in warnings)
     assert any("registration transform" in w for w in warnings)
+
+    # Legacy session-root QC JSON must not exist
+    legacy = (
+        out / "pmriprep" / "sub-01" / "ses-0001"
+        / "sub-01_ses-0001_desc-dceQC_quality.json"
+    )
+    assert not legacy.exists()

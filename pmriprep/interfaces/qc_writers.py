@@ -1,4 +1,4 @@
-"""QC writers and shared DataSink subclass for the per-pipeline factories.
+"""Figure writers and shared DataSink subclass for the per-pipeline factories.
 
 The four ``init_*_datasinks_wf`` factories use
 :class:`niworkflows.interfaces.bids.DerivativesDataSink` for every NIfTI +
@@ -6,17 +6,19 @@ sidecar pair. This module hosts the small bespoke pieces that don't fit the
 DataSink model:
 
 - :class:`PMRIPrepDataSink`: subclass that fixes ``out_path_base="pmriprep"``.
-- :class:`AnatQCWriter`: writes ``desc-anatQC_quality.json`` and copies
-  the anat figure filmstrips into ``figures/``.
-- :func:`init_dataset_description_node`: factory for the per-session
-  ``dataset_description.json`` barrier node.
+- :class:`AnatFiguresWriter` / :class:`TumorSegFiguresWriter` /
+  :class:`DSCFiguresWriter` / :class:`DCEFiguresWriter`: copy the
+  per-pipeline figure filmstrips into ``figures/`` and write the
+  AIF-curve TSV companion sidecar (DSC/DCE). All QC summary JSONs live
+  on the canonical per-image sidecars (the ``QC*`` flat keys on the
+  preproc / probseg / dseg sidecars).
 """
 from __future__ import annotations
 
 import json
 import shutil
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterfaceInputSpec,
@@ -42,19 +44,10 @@ class PMRIPrepDataSink(_NiworkflowsDDS):
 # ---------------------------------------------------------------------------
 
 
-class AnatQCWriterInputSpec(BaseInterfaceInputSpec):
+class AnatFiguresWriterInputSpec(BaseInterfaceInputSpec):
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
     subject_id = traits.Str(mandatory=True)
     session_id = traits.Str("", usedefault=True)
-    qc_metrics = traits.Dict(desc="Anatomical QC metrics dict")
-
-    # Modality-presence flags (drive the warnings block in the QC JSON).
-    # Mirrors the legacy AnatDerivativeWriter._data_dependent_inputs check.
-    has_t1w_pre = traits.Bool(False, usedefault=True)
-    has_t1w_postcon = traits.Bool(False, usedefault=True)
-    has_t2w = traits.Bool(False, usedefault=True)
-    has_flair = traits.Bool(False, usedefault=True)
-    has_tissue_seg = traits.Bool(False, usedefault=True)
 
     # Figure filmstrips (all optional)
     brain_mask_filmstrip = File(exists=True)
@@ -66,20 +59,20 @@ class AnatQCWriterInputSpec(BaseInterfaceInputSpec):
     coreg_filmstrip_flair_postcon = File(exists=True)
 
 
-class AnatQCWriterOutputSpec(TraitedSpec):
-    qc_json = File(desc="Path to anatQC_quality.json (empty if no metrics)")
+class AnatFiguresWriterOutputSpec(TraitedSpec):
     figures_dir = traits.Str(desc="Path to per-session figures/ directory")
 
 
-class AnatQCWriter(SimpleInterface):
-    """Writes the anat ``desc-anatQC_quality.json`` and copies filmstrips.
+class AnatFiguresWriter(SimpleInterface):
+    """Copies the anat figure filmstrips into ``figures/``.
 
-    Replaces the QC-and-figures portion of the bespoke
-    ``AnatDerivativeWriter._run_interface``.
+    QC summary fields (recommendation / warnings) live on the canonical
+    ``desc-preproc_T1w.json`` anchor sidecar as flat ``QC*`` keys; this
+    writer no longer emits a session-root ``desc-anatQC_quality.json``.
     """
 
-    input_spec = AnatQCWriterInputSpec
-    output_spec = AnatQCWriterOutputSpec
+    input_spec = AnatFiguresWriterInputSpec
+    output_spec = AnatFiguresWriterOutputSpec
 
     def _run_interface(self, runtime: Any) -> Any:
         from pmriprep.utils.report_utils import figure_filename
@@ -88,49 +81,11 @@ class AnatQCWriter(SimpleInterface):
         subject = self.inputs.subject_id
         session = self.inputs.session_id or ""
 
-        prefix = f"sub-{subject}"
-        if session:
-            prefix += f"_ses-{session}"
-
         ses_dir = output_dir / "pmriprep" / f"sub-{subject}"
         if session:
             ses_dir = ses_dir / f"ses-{session}"
         ses_dir.mkdir(parents=True, exist_ok=True)
 
-        # ---------------------------------------------------------------
-        # QC JSON (with warnings derived from modality-presence flags)
-        # ---------------------------------------------------------------
-        warnings_list: List[str] = []
-        if not self.inputs.has_tissue_seg:
-            warnings_list.append(
-                "Tissue segmentation (WM/GM/CSF probability maps) not available"
-            )
-        if not self.inputs.has_flair:
-            warnings_list.append("FLAIR not available")
-        if not self.inputs.has_t2w:
-            warnings_list.append("T2w not available")
-        # Postcon coreg is only expected when both pre and post T1w are present;
-        # in postcon-only mode the postcon IS the reference, so no coreg warning.
-        if (
-            self.inputs.has_t1w_pre
-            and self.inputs.has_t1w_postcon
-            and not isdefined(self.inputs.coreg_filmstrip_postcon)
-        ):
-            warnings_list.append("Post-contrast T1w coregistration not available")
-
-        qc_metrics = self.inputs.qc_metrics
-        self._results["qc_json"] = ""
-        if isdefined(qc_metrics) and qc_metrics:
-            payload = dict(qc_metrics)
-            if warnings_list:
-                payload["warnings"] = warnings_list
-            qc_path = ses_dir / f"{prefix}_desc-anatQC_quality.json"
-            qc_path.write_text(json.dumps(payload, indent=2, default=str))
-            self._results["qc_json"] = str(qc_path)
-
-        # ---------------------------------------------------------------
-        # Figures
-        # ---------------------------------------------------------------
         figures_dir = ses_dir / "figures"
         fig_inputs = {
             "brain_mask": self.inputs.brain_mask_filmstrip,
@@ -206,59 +161,21 @@ def _write_aif_timeseries_sidecar(
 # ---------------------------------------------------------------------------
 
 
-def _write_tumor_volumes_txt(qc_metrics: dict, path: Path) -> None:
-    """Write tumor volume statistics to a text file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    seg_val = qc_metrics.get("segmentation", {}).get("validation", {})
-    total_vol = seg_val.get("total_tumor_volume_ml", "N/A")
-    enhancing_vol = seg_val.get("enhancing_volume_ml", "N/A")
-    non_enhancing_vol = seg_val.get("non_enhancing_volume_ml", "N/A")
-    total_voxels = seg_val.get("total_tumor_voxels", "N/A")
-    enhancing_voxels = seg_val.get("enhancing_voxels", "N/A")
-    non_enhancing_voxels = seg_val.get("non_enhancing_voxels", "N/A")
-    voxel_vol = seg_val.get("voxel_volume_mm3", "N/A")
-
-    def _fmt_vol(vol_ml: object) -> str:
-        if vol_ml == "N/A" or vol_ml is None:
-            return "N/A"
-        val = float(str(vol_ml))
-        return f"{val:.3f} mL ({val * 1000.0:.2f} mm3)"
-
-    enhancing_frac = "N/A"
-    if (
-        enhancing_vol != "N/A"
-        and total_vol != "N/A"
-        and float(total_vol) > 0
-    ):
-        enhancing_frac = f"{float(enhancing_vol) / float(total_vol):.3f}"
-
-    lines = [
-        "Tumor Volume Statistics",
-        "=" * 50,
-        "",
-        "Volumes:",
-        f"  Total tumor:          {_fmt_vol(total_vol)}",
-        f"  Enhancing tumor:      {_fmt_vol(enhancing_vol)}",
-        f"  Non-enhancing tumor:  {_fmt_vol(non_enhancing_vol)}",
-        "",
-        "Voxel counts:",
-        f"  Total tumor:          {total_voxels}",
-        f"  Enhancing tumor:      {enhancing_voxels}",
-        f"  Non-enhancing tumor:  {non_enhancing_voxels}",
-        "",
-        f"Voxel volume:           {voxel_vol} mm3",
-        f"Enhancing fraction:     {enhancing_frac}",
-    ]
-    path.write_text("\n".join(lines) + "\n")
-
-
-def _write_tumor_lesion_stats_json(
+def _write_tumor_clinical_context_json(
     segmentation_file: str,
     subject: str,
     session: str,
     output_path: Path,
 ) -> None:
-    """Write the per-region tumor-volume stats JSON read straight from the dseg."""
+    """Write per-region tumor-volume context JSON to the anat/ scope.
+
+    Replaces the legacy session-root ``space-anat_desc-lesionStats.json``
+    orphan with an anat-scoped clinical-context sidecar carrying region
+    voxel counts, volumes (mm³ / mL), and the enhancing fraction. The
+    canonical voxel-count/volume table lives in
+    ``<prefix>_space-T1w_desc-tumorseg_dseg.tsv`` (BIDS-Common-Derivatives
+    dseg lookup).
+    """
     from datetime import datetime, timezone
 
     import nibabel as nib  # type: ignore[import-untyped]
@@ -282,7 +199,11 @@ def _write_tumor_lesion_stats_json(
         enhancing_fraction = round(enh_ml / wt_ml, 4)
 
     result: dict = {
-        "Description": "Tumor segmentation lesion volume statistics",
+        "Description": (
+            "Whole-tumor clinical context (volumes + enhancing fraction). "
+            "Per-region voxel counts and volumes are also available in "
+            "the companion desc-tumorseg_dseg.tsv."
+        ),
         "GeneratedBy": [{"Name": "pmriprep", "Version": pmriprep.__version__}],
         "GeneratedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "Subject": f"sub-{subject}",
@@ -312,14 +233,13 @@ def _write_tumor_lesion_stats_json(
     output_path.write_text(json.dumps(result, indent=2, default=str))
 
 
-class TumorSegQCWriterInputSpec(BaseInterfaceInputSpec):
+class TumorSegFiguresWriterInputSpec(BaseInterfaceInputSpec):
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
     subject_id = traits.Str(mandatory=True)
     session_id = traits.Str("", usedefault=True)
-    qc_metrics = traits.Dict(desc="Combined tumor-seg QC metrics")
     segmentation = File(
         exists=True, mandatory=True,
-        desc="Multi-class tumor segmentation NIfTI (consumed for lesionStats)",
+        desc="Multi-class tumor segmentation NIfTI",
     )
 
     # Figure filmstrips (optional)
@@ -328,17 +248,26 @@ class TumorSegQCWriterInputSpec(BaseInterfaceInputSpec):
     nawm_filmstrip_flair = File(exists=True)
 
 
-class TumorSegQCWriterOutputSpec(TraitedSpec):
-    qc_json = File(desc="Path to desc-tumorsegQC_quality.json (empty if no metrics)")
-    lesion_stats_json = File(desc="Path to desc-lesionStats.json")
-    volumes_txt = File(desc="Path to desc-tumorseg_volumes.txt (empty if no metrics)")
+class TumorSegFiguresWriterOutputSpec(TraitedSpec):
+    clinical_context_json = File(
+        desc="Path to anat/<prefix>_desc-tumorClinicalContext.json",
+    )
 
 
-class TumorSegQCWriter(SimpleInterface):
-    """Writes tumor-seg QC JSON, volumes.txt, lesionStats.json + filmstrip copies."""
+class TumorSegFiguresWriter(SimpleInterface):
+    """Writes the tumor-clinical-context JSON + tumor figure filmstrips.
 
-    input_spec = TumorSegQCWriterInputSpec
-    output_spec = TumorSegQCWriterOutputSpec
+    The legacy session-root ``desc-tumorsegQC_quality.json``,
+    ``desc-tumorseg_volumes.txt``, and ``space-anat_desc-lesionStats.json``
+    files are gone after v0.46.0. Per-region voxel counts and volumes
+    live in the canonical ``desc-tumorseg_dseg.tsv`` (BIDS dseg lookup
+    table); whole-tumor clinical context (enhancing fraction + summary
+    volumes) is now anat-scoped at
+    ``anat/<prefix>_desc-tumorClinicalContext.json``.
+    """
+
+    input_spec = TumorSegFiguresWriterInputSpec
+    output_spec = TumorSegFiguresWriterOutputSpec
 
     def _run_interface(self, runtime: Any) -> Any:
         from pmriprep.utils.report_utils import figure_filename
@@ -357,30 +286,17 @@ class TumorSegQCWriter(SimpleInterface):
         anat_dir = ses_dir / "anat"
         anat_dir.mkdir(parents=True, exist_ok=True)
 
-        # QC JSON + volumes.txt (both gated on qc_metrics defined)
-        qc_metrics = self.inputs.qc_metrics
-        self._results["qc_json"] = ""
-        self._results["volumes_txt"] = ""
-        if isdefined(qc_metrics) and qc_metrics:
-            qc_path = ses_dir / f"{prefix}_desc-tumorsegQC_quality.json"
-            qc_path.write_text(json.dumps(qc_metrics, indent=2, default=str))
-            self._results["qc_json"] = str(qc_path)
-
-            volumes_path = anat_dir / f"{prefix}_desc-tumorseg_volumes.txt"
-            _write_tumor_volumes_txt(qc_metrics, volumes_path)
-            self._results["volumes_txt"] = str(volumes_path)
-
-        # lesionStats.json (always written from segmentation NIfTI)
-        lesion_path = ses_dir / f"{prefix}_space-anat_desc-lesionStats.json"
-        _write_tumor_lesion_stats_json(
+        clinical_context_path = (
+            anat_dir / f"{prefix}_desc-tumorClinicalContext.json"
+        )
+        _write_tumor_clinical_context_json(
             segmentation_file=self.inputs.segmentation,
             subject=subject,
             session=session,
-            output_path=lesion_path,
+            output_path=clinical_context_path,
         )
-        self._results["lesion_stats_json"] = str(lesion_path)
+        self._results["clinical_context_json"] = str(clinical_context_path)
 
-        # Figures
         figures_dir = ses_dir / "figures"
         fig_inputs = {
             "seg_postcon": self.inputs.seg_filmstrip_postcon,
@@ -416,25 +332,16 @@ _DSC_FIGURE_KEYS = {
 }
 
 
-class DSCQCWriterInputSpec(BaseInterfaceInputSpec):
+class DSCFiguresWriterInputSpec(BaseInterfaceInputSpec):
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
     subject_id = traits.Str(mandatory=True)
     session_id = traits.Str("", usedefault=True)
-    qc_metrics = traits.Dict(desc="Merged DSC QC metrics dict")
-    provenance_dict = traits.Dict(desc="DSC physics provenance dict (drives warnings)")
-    preflight_warnings = traits.List(traits.Str, value=[], usedefault=True)
+    qc_metrics = traits.Dict(desc="Merged DSC QC metrics (drives AIF sidecar only)")
     bids_dir = traits.Str("", usedefault=True, desc="BIDS rawdata root for AIF sidecar Sources URIs")
     source_dsc = File(exists=False, desc="Raw DSC NIfTI for AIF sidecar Sources field")
 
-    has_brain_mask_dsc = traits.Bool(False, usedefault=True)
-    has_nawm_mask_dsc = traits.Bool(False, usedefault=True)
-    has_lesion_mask_dsc = traits.Bool(False, usedefault=True)
-    has_dsc_to_t1w_xfm = traits.Bool(False, usedefault=True)
-
     aif_curve = File(exists=True, desc="AIF curve text file")
     motion_params = File(exists=True, desc=".par motion file (converted to confounds TSV)")
-    lesion_stats_json = File(exists=True)
-    roi_stats_json = File(exists=True)
 
     brain_mask_filmstrip = File(exists=True)
     motion_qc_plot = File(exists=True)
@@ -448,26 +355,30 @@ class DSCQCWriterInputSpec(BaseInterfaceInputSpec):
     dsc_leakage_qc_plot = File(exists=True)
 
 
-class DSCQCWriterOutputSpec(TraitedSpec):
-    qc_json = File(desc="Path to desc-dscQC_quality.json (empty if no metrics)")
+class DSCFiguresWriterOutputSpec(TraitedSpec):
     aif_curve_txt = File(desc="Path to copied AIF curve TXT (empty if not provided)")
     confounds_tsv = File(desc="Path to derived confounds TSV (empty if no motion params)")
 
 
-class DSCQCWriter(SimpleInterface):
-    """Writes the DSC QC JSON, AIF curve copy, confounds TSV/JSON, lesion/roi
-    stats JSON copies, and figure filmstrips.
+class DSCFiguresWriter(SimpleInterface):
+    """Copies the DSC AIF curve + confounds TSV/JSON + figure filmstrips.
+
+    QC summary fields (recommendation / warnings) live on
+    ``desc-dscPreproc_dsc.json`` as flat ``QC*`` keys; per-map lesion
+    stats live on the per-PK-map sidecars as ``LesionStats`` fragments.
+    This writer no longer emits a session-root
+    ``desc-dscQC_quality.json`` or copies the per-map lesion/ROI stats
+    JSONs.
     """
 
-    input_spec = DSCQCWriterInputSpec
-    output_spec = DSCQCWriterOutputSpec
+    input_spec = DSCFiguresWriterInputSpec
+    output_spec = DSCFiguresWriterOutputSpec
 
     def _run_interface(self, runtime: Any) -> Any:
         from pmriprep.utils.outputs import (
             par_to_confounds_tsv,
             write_confounds_sidecar,
         )
-        from pmriprep.utils.qc_standards import recommend_dsc_qc
         from pmriprep.utils.report_utils import figure_filename
 
         output_dir = Path(self.inputs.output_dir)
@@ -492,8 +403,14 @@ class DSCQCWriter(SimpleInterface):
             _write_aif_timeseries_sidecar(
                 modality="DSC",
                 aif_txt=dst,
-                qc_metrics=self.inputs.qc_metrics if isdefined(self.inputs.qc_metrics) else None,
-                bids_dir=self.inputs.bids_dir if isdefined(self.inputs.bids_dir) else "",
+                qc_metrics=(
+                    self.inputs.qc_metrics
+                    if isdefined(self.inputs.qc_metrics) else None
+                ),
+                bids_dir=(
+                    self.inputs.bids_dir
+                    if isdefined(self.inputs.bids_dir) else ""
+                ),
                 source_path=(
                     self.inputs.source_dsc
                     if isdefined(self.inputs.source_dsc) and self.inputs.source_dsc
@@ -511,17 +428,6 @@ class DSCQCWriter(SimpleInterface):
             write_confounds_sidecar(json_path)
             self._results["confounds_tsv"] = str(tsv_path)
 
-        if isdefined(self.inputs.lesion_stats_json) and self.inputs.lesion_stats_json:
-            shutil.copy2(
-                self.inputs.lesion_stats_json,
-                ses_dir / f"{prefix}_space-dsc_desc-lesionStats.json",
-            )
-        if isdefined(self.inputs.roi_stats_json) and self.inputs.roi_stats_json:
-            shutil.copy2(
-                self.inputs.roi_stats_json,
-                ses_dir / f"{prefix}_space-dsc_desc-roiStats.json",
-            )
-
         figures_dir = ses_dir / "figures"
         for fig_key, attr in _DSC_FIGURE_KEYS.items():
             src = getattr(self.inputs, attr)
@@ -530,47 +436,6 @@ class DSCQCWriter(SimpleInterface):
             figures_dir.mkdir(parents=True, exist_ok=True)
             fname = figure_filename(subject, session, fig_key, "dsc")
             shutil.copy2(src, figures_dir / fname)
-
-        self._results["qc_json"] = ""
-        qc_metrics = self.inputs.qc_metrics
-        if isdefined(qc_metrics) and qc_metrics:
-            qc = dict(qc_metrics)
-            warnings_list: list = []
-            if not self.inputs.has_brain_mask_dsc:
-                warnings_list.append("Brain mask in DSC space not available")
-            if not self.inputs.has_nawm_mask_dsc:
-                warnings_list.append("NAWM mask in DSC space not available")
-            if not self.inputs.has_lesion_mask_dsc:
-                warnings_list.append("Lesion mask in DSC space not available")
-            if not self.inputs.has_dsc_to_t1w_xfm:
-                warnings_list.append("DSC to T1w registration transform not available")
-            if warnings_list:
-                qc["warnings"] = warnings_list
-
-            provenance = self.inputs.provenance_dict
-            if isdefined(provenance) and provenance:
-                from pmriprep.utils.contrast_agent import collect_default_warnings
-
-                prov_warnings = collect_default_warnings(
-                    provenance, "DSC", qc_metrics=qc,
-                )
-                if prov_warnings:
-                    qc["provenance_warnings"] = prov_warnings
-
-            from pmriprep.utils.contrast_agent import collect_aif_fallback_warning
-
-            aif_warn = collect_aif_fallback_warning(qc, "DSC")
-            if aif_warn:
-                qc.setdefault("acquisition_warnings", []).append(aif_warn)
-
-            pf = self.inputs.preflight_warnings
-            if isdefined(pf) and pf:
-                qc.setdefault("acquisition_warnings", []).extend(list(pf))
-
-            enhanced = recommend_dsc_qc(qc)
-            qc_path = ses_dir / f"{prefix}_desc-dscQC_quality.json"
-            qc_path.write_text(json.dumps(enhanced, indent=2, default=str))
-            self._results["qc_json"] = str(qc_path)
 
         return runtime
 
@@ -597,27 +462,16 @@ _DCE_FIGURE_KEYS = {
 }
 
 
-class DCEQCWriterInputSpec(BaseInterfaceInputSpec):
+class DCEFiguresWriterInputSpec(BaseInterfaceInputSpec):
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
     subject_id = traits.Str(mandatory=True)
     session_id = traits.Str("", usedefault=True)
-    qc_metrics = traits.Dict(desc="Merged DCE QC metrics dict")
-    provenance_dict = traits.Dict(desc="DCE physics provenance (drives warnings)")
-    preflight_warnings = traits.List(traits.Str, value=[], usedefault=True)
+    qc_metrics = traits.Dict(desc="Merged DCE QC metrics (drives AIF sidecar only)")
     bids_dir = traits.Str("", usedefault=True, desc="BIDS rawdata root for AIF sidecar Sources URIs")
     source_dce = File(exists=False, desc="Raw DCE NIfTI for AIF sidecar Sources field")
 
-    has_t1_map = traits.Bool(False, usedefault=True)
-    has_b1_map = traits.Bool(False, usedefault=True)
-    has_brain_mask = traits.Bool(False, usedefault=True)
-    has_nawm_mask = traits.Bool(False, usedefault=True)
-    has_lesion_mask_dce = traits.Bool(False, usedefault=True)
-    has_dce_to_t1w_xfm = traits.Bool(False, usedefault=True)
-
     aif_curve = File(exists=True, desc="AIF curve text file")
     motion_params = File(exists=True, desc=".par motion file (→ confounds TSV)")
-    lesion_stats_json = File(exists=True)
-    roi_stats_json = File(exists=True)
 
     brain_mask_filmstrip = File(exists=True)
     motion_qc_plot = File(exists=True)
@@ -634,26 +488,31 @@ class DCEQCWriterInputSpec(BaseInterfaceInputSpec):
     dsc_dce_xval_plot = File(exists=True)
 
 
-class DCEQCWriterOutputSpec(TraitedSpec):
-    qc_json = File(desc="Path to desc-dceQC_quality.json (empty if no metrics)")
+class DCEFiguresWriterOutputSpec(TraitedSpec):
     aif_curve_txt = File(desc="Path to copied AIF curve TXT (empty if not provided)")
     confounds_tsv = File(desc="Path to derived confounds TSV (empty if no motion params)")
 
 
-class DCEQCWriter(SimpleInterface):
-    """DCE QC JSON, AIF curve copy, confounds TSV/JSON, lesion/ROI stats
-    copies, figure copies, and stale-figure cleanup on rerun.
+class DCEFiguresWriter(SimpleInterface):
+    """Copies the DCE AIF curve + confounds TSV/JSON + figure filmstrips.
+
+    QC summary fields (recommendation / warnings) live on
+    ``desc-dcePreproc_dce.json`` as flat ``QC*`` keys; per-PK-map lesion
+    stats live on the per-map sidecars as ``LesionStats`` fragments.
+    This writer no longer emits a session-root
+    ``desc-dceQC_quality.json`` or copies the per-map lesion/ROI stats
+    JSONs. It still cleans up stale ``aif_location`` figures on rerun
+    when AIF detection falls back to population/external.
     """
 
-    input_spec = DCEQCWriterInputSpec
-    output_spec = DCEQCWriterOutputSpec
+    input_spec = DCEFiguresWriterInputSpec
+    output_spec = DCEFiguresWriterOutputSpec
 
     def _run_interface(self, runtime: Any) -> Any:
         from pmriprep.utils.outputs import (
             par_to_confounds_tsv,
             write_confounds_sidecar,
         )
-        from pmriprep.utils.qc_standards import recommend_dce_qc
         from pmriprep.utils.report_utils import figure_filename
 
         output_dir = Path(self.inputs.output_dir)
@@ -679,8 +538,14 @@ class DCEQCWriter(SimpleInterface):
             _write_aif_timeseries_sidecar(
                 modality="DCE",
                 aif_txt=dst,
-                qc_metrics=self.inputs.qc_metrics if isdefined(self.inputs.qc_metrics) else None,
-                bids_dir=self.inputs.bids_dir if isdefined(self.inputs.bids_dir) else "",
+                qc_metrics=(
+                    self.inputs.qc_metrics
+                    if isdefined(self.inputs.qc_metrics) else None
+                ),
+                bids_dir=(
+                    self.inputs.bids_dir
+                    if isdefined(self.inputs.bids_dir) else ""
+                ),
                 source_path=(
                     self.inputs.source_dce
                     if isdefined(self.inputs.source_dce) and self.inputs.source_dce
@@ -697,17 +562,6 @@ class DCEQCWriter(SimpleInterface):
             par_to_confounds_tsv(self.inputs.motion_params, tsv_path)
             write_confounds_sidecar(json_path)
             self._results["confounds_tsv"] = str(tsv_path)
-
-        if isdefined(self.inputs.lesion_stats_json) and self.inputs.lesion_stats_json:
-            shutil.copy2(
-                self.inputs.lesion_stats_json,
-                ses_dir / f"{prefix}_space-dce_desc-lesionStats.json",
-            )
-        if isdefined(self.inputs.roi_stats_json) and self.inputs.roi_stats_json:
-            shutil.copy2(
-                self.inputs.roi_stats_json,
-                ses_dir / f"{prefix}_space-dce_desc-roiStats.json",
-            )
 
         # Stale AIF location figure cleanup (population/external AIF)
         qc_metrics = self.inputs.qc_metrics
@@ -730,46 +584,6 @@ class DCEQCWriter(SimpleInterface):
             figures_dir.mkdir(parents=True, exist_ok=True)
             fname = figure_filename(subject, session, fig_key, "dce")
             shutil.copy2(src, figures_dir / fname)
-
-        # QC JSON enrichment + write
-        self._results["qc_json"] = ""
-        if isdefined(qc_metrics) and qc_metrics:
-            qc = dict(qc_metrics)
-            warnings_list: list = []
-            if not self.inputs.has_b1_map:
-                warnings_list.append("B1+ transmit field map not available")
-            if not self.inputs.has_t1_map:
-                warnings_list.append("T1 relaxation time map not available")
-            if not self.inputs.has_brain_mask:
-                warnings_list.append("Brain mask in DCE space not available")
-            if not self.inputs.has_nawm_mask:
-                warnings_list.append("NAWM mask in DCE space not available")
-            if not self.inputs.has_lesion_mask_dce:
-                warnings_list.append("Lesion mask in DCE space not available")
-            if not self.inputs.has_dce_to_t1w_xfm:
-                warnings_list.append("DCE to T1w registration transform not available")
-            if warnings_list:
-                qc["warnings"] = warnings_list
-
-            provenance = self.inputs.provenance_dict
-            if isdefined(provenance) and provenance:
-                from pmriprep.utils.contrast_agent import collect_default_warnings
-                prov_warnings = collect_default_warnings(provenance, "DCE")
-                if prov_warnings:
-                    qc["provenance_warnings"] = prov_warnings
-
-            from pmriprep.utils.contrast_agent import collect_aif_fallback_warning
-            aif_warn = collect_aif_fallback_warning(qc, "DCE")
-            if aif_warn:
-                qc.setdefault("acquisition_warnings", []).append(aif_warn)
-            pf = self.inputs.preflight_warnings
-            if isdefined(pf) and pf:
-                qc.setdefault("acquisition_warnings", []).extend(list(pf))
-
-            enhanced = recommend_dce_qc(qc)
-            qc_path = ses_dir / f"{prefix}_desc-dceQC_quality.json"
-            qc_path.write_text(json.dumps(enhanced, indent=2, default=str))
-            self._results["qc_json"] = str(qc_path)
 
         return runtime
 

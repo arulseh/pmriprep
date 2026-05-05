@@ -96,11 +96,14 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     dd = out_root / "pmriprep" / "dataset_description.json"
     assert dd.exists()
 
-    # QC JSON written
-    qc = out_root / "pmriprep" / "sub-01" / "ses-0001" / "sub-01_ses-0001_desc-anatQC_quality.json"
-    assert qc.exists()
-    qc_payload = json.loads(qc.read_text())
-    assert qc_payload["resolution_tier"] == "excellent"
+    # No legacy QC JSON at session root after v0.46.0
+    legacy_qc = (
+        out_root / "pmriprep" / "sub-01" / "ses-0001"
+        / "sub-01_ses-0001_desc-anatQC_quality.json"
+    )
+    assert not legacy_qc.exists(), (
+        f"Legacy desc-anatQC_quality.json should not exist: {legacy_qc}"
+    )
 
 
 def test_anat_sidecar_correctness_guard(tmp_path: Path, minimal_bids: Path) -> None:
@@ -228,8 +231,10 @@ def test_postcon_only_writes_unconditional_outputs(tmp_path: Path) -> None:
     assert any("ce-GAD" in s for s in sidecar["Sources"]), sidecar["Sources"]
 
 
-def test_warnings_block_populated_in_qc_json(tmp_path: Path, minimal_bids: Path) -> None:
-    """Regression for M1: AnatQCWriter must compute warnings from has_* flags."""
+def test_warnings_block_populated_in_anchor_sidecar(
+    tmp_path: Path, minimal_bids: Path,
+) -> None:
+    """``QCWarnings`` flat keys land on the T1w preproc anchor sidecar."""
     from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
 
     out_root = tmp_path / "out"
@@ -239,7 +244,7 @@ def test_warnings_block_populated_in_qc_json(tmp_path: Path, minimal_bids: Path)
     fake_xfm = tmp_path / "acpc.mat"
     fake_xfm.write_text("ok\n")
 
-    # No tissue seg, no T2w, no FLAIR — expect three warnings
+    # No tissue seg, no T2w, no FLAIR — expect three warnings on the anchor.
     wf = init_anat_datasinks_wf(
         output_dir=str(out_root), bids_dir=str(minimal_bids),
         subject_id="01", session_id="0001",
@@ -256,13 +261,23 @@ def test_warnings_block_populated_in_qc_json(tmp_path: Path, minimal_bids: Path)
     inp.qc_metrics = {"resolution_tier": "excellent"}
     wf.run()
 
-    qc_path = out_root / "pmriprep" / "sub-01" / "ses-0001" / "sub-01_ses-0001_desc-anatQC_quality.json"
-    assert qc_path.exists()
-    qc = json.loads(qc_path.read_text())
-    warnings = qc.get("warnings", [])
+    anchor = (
+        out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+        / "sub-01_ses-0001_space-T1w_desc-preproc_T1w.json"
+    )
+    assert anchor.exists(), f"Anchor sidecar missing: {anchor}"
+    sidecar = json.loads(anchor.read_text())
+    warnings = sidecar.get("QCWarnings", [])
     assert any("Tissue segmentation" in w for w in warnings), warnings
     assert any("FLAIR not available" in w for w in warnings), warnings
     assert any("T2w not available" in w for w in warnings), warnings
+
+    # No legacy QC JSON at session root after v0.46.0
+    legacy_qc = (
+        out_root / "pmriprep" / "sub-01" / "ses-0001"
+        / "sub-01_ses-0001_desc-anatQC_quality.json"
+    )
+    assert not legacy_qc.exists()
 
 
 def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None:

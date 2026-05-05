@@ -13,11 +13,9 @@ Two rules enforced here:
    ``T1w``). Per fmriprep/aslprep precedent and bids-spec-expert review,
    pmriprep uses ``space-T1w`` (and ``from-T1w`` / ``to-T1w``) uniformly
    for the chosen anat reference space; pre- vs post-contrast
-   disambiguation lives in the JSON ``SpatialReference`` field. One
-   known exception (the orphan-JSON ``space-anat_desc-lesionStats.json``
-   at session root in ``qc_writers.py``) is allowlisted below — it
-   shares the deferred BIDS file-organization issue with the analogous
-   ``space-dsc``/``space-dce`` lesion stats files.
+   disambiguation lives in the JSON ``SpatialReference`` field.
+   v0.46.0 PR2 deleted the last legacy ``space-anat_desc-lesionStats.json``
+   orphan; the allowlist is now empty.
 
 Cross-modality outputs in ``anat/`` (T1w/FLAIR/T2w resampled to DCE/DSC
 space, masks describing anatomy in perf-space) DO carry
@@ -41,15 +39,15 @@ from pmriprep.utils.sidecar_builders import (
 _SPACE_ENTITY = re.compile(r"_space-")
 _PMRIPREP_ROOT = Path(__file__).resolve().parents[2] / "pmriprep"
 
-# Files where the forbidden tokens may legitimately appear (deferred fixes,
-# documentation that describes the historical anti-pattern). Each entry is
+# Files where the forbidden tokens may legitimately appear in
+# *documentation* describing the historical anti-pattern. Each entry is
 # (relative_path, allowed_substring, justification).
 _ALLOWLIST: list[tuple[str, str, str]] = [
     (
         "interfaces/qc_writers.py",
         "space-anat_desc-lesionStats.json",
-        "Orphan-JSON file-org issue at session root; deferred (parallel to"
-        " space-dsc/dce orphan stats).",
+        "Docstring reference describing the legacy orphan deleted in "
+        "v0.46.0; producer code no longer writes this filename.",
     ),
 ]
 

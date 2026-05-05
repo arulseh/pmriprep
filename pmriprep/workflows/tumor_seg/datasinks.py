@@ -1,9 +1,10 @@
 """Tumor-segmentation pipeline derivatives factory.
 
-Replaces ``TumorSegDerivativeWriter`` with a workflow that wires one
-``PMRIPrepDataSink`` per output (NIfTI + sidecar) plus a
-``TumorSegQCWriter`` shim for the QC JSON, ``volumes.txt``,
-``lesionStats.json`` and figure copies.
+Wires one ``PMRIPrepDataSink`` per output (NIfTI + sidecar), a
+``_dseg.tsv`` companion writer, and a ``TumorSegFiguresWriter`` for
+the figure filmstrips and ``anat/desc-tumorClinicalContext.json``
+sidecar. Per-region voxel counts and volumes live in the canonical
+``desc-tumorseg_dseg.tsv`` lookup table.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 
 from pmriprep.interfaces.qc_writers import (
     PMRIPrepDataSink,
-    TumorSegQCWriter,
+    TumorSegFiguresWriter,
     write_dataset_description_node,
 )
 
@@ -409,14 +410,13 @@ def init_tumor_seg_datasinks_wf(
 
     sink_outputs.append((_add_nawm_sink(workflow, inputnode, is_postcon_ref), "out_file"))
 
-    # QC writer (volumes.txt, lesionStats.json, figures, QC JSON)
-    qc_writer = pe.Node(TumorSegQCWriter(), name="qc_writer")
+    # Figures writer (figure filmstrips + anat/desc-tumorClinicalContext.json)
+    figures_writer = pe.Node(TumorSegFiguresWriter(), name="figures_writer")
     workflow.connect([
-        (inputnode, qc_writer, [
+        (inputnode, figures_writer, [
             ("output_dir", "output_dir"),
             ("subject_id", "subject_id"),
             ("session_id", "session_id"),
-            ("qc_metrics", "qc_metrics"),
             ("segmentation", "segmentation"),
             ("seg_filmstrip_postcon", "seg_filmstrip_postcon"),
             ("seg_filmstrip_flair", "seg_filmstrip_flair"),
@@ -430,7 +430,10 @@ def init_tumor_seg_datasinks_wf(
     )
     for i, (sink, attr) in enumerate(sink_outputs, start=1):
         workflow.connect(sink, attr, merge, f"in{i}")
-    workflow.connect(qc_writer, "lesion_stats_json", merge, f"in{len(sink_outputs) + 1}")
+    workflow.connect(
+        figures_writer, "clinical_context_json", merge,
+        f"in{len(sink_outputs) + 1}",
+    )
 
     dd_node = pe.Node(
         niu.Function(
@@ -450,14 +453,14 @@ def init_tumor_seg_datasinks_wf(
 
     outputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["qc_json", "lesion_stats_json", "dataset_description_done"],
+            fields=["done", "clinical_context_json", "dataset_description_done"],
         ),
         name="outputnode",
     )
     workflow.connect([
-        (qc_writer, outputnode, [
-            ("qc_json", "qc_json"),
-            ("lesion_stats_json", "lesion_stats_json"),
+        (figures_writer, outputnode, [
+            ("clinical_context_json", "done"),
+            ("clinical_context_json", "clinical_context_json"),
         ]),
         (dd_node, outputnode, [("dd_path", "dataset_description_done")]),
     ])

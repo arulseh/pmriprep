@@ -1353,7 +1353,7 @@ def init_pmriprep_wf(
 
         workflow.connect([
             (anat_datasinks_wf, report_barrier, [
-                ("outputnode.qc_json", "anat_done"),
+                ("outputnode.done", "anat_done"),
             ]),
         ])
     # -------------------------------------------------------------------
@@ -1463,7 +1463,7 @@ def init_pmriprep_wf(
                 ("flair", "inputnode.source_flair"),
             ]),
             (tumor_seg_datasinks_wf, report_barrier, [
-                ("outputnode.qc_json", "tumor_seg_done"),
+                ("outputnode.done", "tumor_seg_done"),
             ]),
         ])
         if has_t1w_pre:
@@ -1978,9 +1978,6 @@ def init_pmriprep_wf(
             session_id=session_id,
             present_inputs=dsc_present,
             has_postcon_t1w=has_postcon_in_dsc,
-            has_lesion_stats=dsc_config.lesion_mask is not None
-                              or decision.run_tumor_seg,
-            has_roi_stats=dsc_config.roi_mask is not None,
             has_smoothing=dsc_config.smooth_fwhm > 0,
         )
         if dsc_provenance:
@@ -2096,7 +2093,7 @@ def init_pmriprep_wf(
 
         workflow.connect([
             (dsc_datasinks_wf, report_barrier, [
-                ("outputnode.qc_json", "dsc_done"),
+                ("outputnode.done", "dsc_done"),
             ]),
         ])
 
@@ -2968,8 +2965,6 @@ def init_pmriprep_wf(
             pk_model=dce_model,
             present_inputs=dce_present,
             has_postcon_t1w=dce_has_postcon_in_dce,
-            has_lesion_stats=dce_has_lesion,
-            has_roi_stats=dce_config.roi_mask is not None,
             has_smoothing=dce_config.smooth_fwhm > 0,
         )
         if dce_provenance:
@@ -3085,7 +3080,7 @@ def init_pmriprep_wf(
 
         workflow.connect([
             (dce_datasinks_wf, report_barrier, [
-                ("outputnode.qc_json", "dce_done"),
+                ("outputnode.done", "dce_done"),
             ]),
         ])
 

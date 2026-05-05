@@ -667,7 +667,7 @@ def _run_report_only(
         Subject IDs to generate reports for.
     """
     from pmriprep.utils.report_utils import (
-        _PIPELINE_QC_SUFFIXES,
+        _PIPELINE_PRESENCE_PROBES,
         generate_unified_report,
     )
 
@@ -690,15 +690,16 @@ def _run_report_only(
             if session_id:
                 prefix += f"_ses-{session_id}"
 
-            # Auto-detect which pipelines ran from QC JSONs on disk
+            # Auto-detect which pipelines ran from canonical per-image
+            # presence-probe sidecars on disk.
             ran_pipelines: Dict[str, bool] = {}
-            for pipeline, suffix in _PIPELINE_QC_SUFFIXES.items():
-                qc_path = ses_dir / f"{prefix}_desc-{suffix}_quality.json"
-                ran_pipelines[pipeline] = qc_path.exists()
+            for pipeline, anchor_pattern in _PIPELINE_PRESENCE_PROBES.items():
+                anchor_path = ses_dir / anchor_pattern.format(prefix=prefix)
+                ran_pipelines[pipeline] = anchor_path.exists()
 
             if not any(ran_pipelines.values()):
                 logger.warning(
-                    "No QC JSON files found for sub-%s/%s in %s — skipping",
+                    "No pipeline outputs found for sub-%s/%s in %s — skipping",
                     subject_id,
                     session_str,
                     ses_dir,

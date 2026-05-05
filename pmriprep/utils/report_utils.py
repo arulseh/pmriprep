@@ -377,15 +377,21 @@ def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> tuple[str, set[str]]:
     bias_text += "."
     sentences.append(bias_text)
 
-    # Brain extraction
+    # Brain extraction. Only emit a tool-specific citation when the
+    # producer recorded a tool name we have boilerplate for; an unknown
+    # or missing tool would otherwise be silently miscited as HD-BET.
     brain_ex = anat_qc.get("brain_extraction", {})
-    tool = brain_ex.get("tool", "hdbet")
-    tool_text = _BRAIN_EXTRACTION_TEXT.get(tool, _BRAIN_EXTRACTION_TEXT["hdbet"])
-    sentences.append(f"Brain extraction was performed using {tool_text}.")
-    if tool == "hdbet":
-        refs.add("isensee_2019")
+    tool = brain_ex.get("tool")
+    if tool in _BRAIN_EXTRACTION_TEXT:
+        sentences.append(
+            f"Brain extraction was performed using {_BRAIN_EXTRACTION_TEXT[tool]}."
+        )
+        if tool == "hdbet":
+            refs.add("isensee_2019")
+        else:
+            refs.add("avants_2011")
     else:
-        refs.add("avants_2011")
+        sentences.append("Brain extraction was performed.")
 
     # Tissue segmentation (check for tissue_segmentation key)
     if anat_qc.get("tissue_segmentation"):
@@ -773,12 +779,25 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
     ],
 }
 
-# QC JSON file desc suffixes per pipeline
-_PIPELINE_QC_SUFFIXES: dict[str, str] = {
-    "anat": "anatQC",
-    "tumor_seg": "tumorsegQC",
-    "dsc": "dscQC",
-    "dce": "dceQC",
+# Per-image canonical sidecar paths whose existence proves the pipeline
+# ran. These replace the legacy ``desc-*QC_quality.json`` summary files
+# at session root (deleted in v0.46.0). The aggregator uses them as
+# presence probes AND as the source of QC* recommendation/warnings flat
+# keys.
+_PIPELINE_PRESENCE_PROBES: dict[str, str] = {
+    "anat": "anat/{prefix}_space-T1w_desc-preproc_T1w.json",
+    "tumor_seg": "anat/{prefix}_space-T1w_desc-tumorseg_dseg.json",
+    "dsc": "perf/{prefix}_desc-dscPreproc_dsc.json",
+    "dce": "perf/{prefix}_desc-dcePreproc_dce.json",
+}
+
+# Pipeline-internal resume sidecars carrying the verbatim producer-shape
+# qc_metrics envelope. Used by the HTML aggregator to recover the
+# nested-dict shape boilerplate generators expect, mirroring the
+# DSC --skip-dsc round-trip pattern.
+_PIPELINE_RESUME_SIDECARS: dict[str, str] = {
+    "dsc": "perf/{prefix}_desc-dscResume_pmriprep.json",
+    "dce": "perf/{prefix}_desc-dceResume_pmriprep.json",
 }
 
 
@@ -914,29 +933,183 @@ def _classify_metric_inverse(
     return "poor"
 
 
-def _load_qc_json(ses_dir: Path, prefix: str, pipeline: str) -> dict[str, Any]:
-    """Load QC metrics JSON for a pipeline.
-
-    Args:
-        ses_dir: Session directory path.
-        prefix: BIDS prefix (e.g. ``sub-0001_ses-0002``).
-        pipeline: Pipeline name.
-
-    Returns:
-        QC metrics dict, or empty dict if file not found.
-    """
-    suffix = _PIPELINE_QC_SUFFIXES.get(pipeline)
-    if not suffix:
+def _read_json_safe(path: Path) -> dict[str, Any]:
+    """Load a JSON file; return empty dict on error / missing."""
+    if not path.exists():
         return {}
-    qc_path = ses_dir / f"{prefix}_desc-{suffix}_quality.json"
-    if qc_path.exists():
-        try:
-            with open(qc_path) as f:
-                result: dict[str, Any] = json.load(f)
-                return result
-        except json.JSONDecodeError:
-            logger.warning("Malformed QC JSON, skipping: %s", qc_path)
-    return {}
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        logger.warning("Malformed sidecar JSON, skipping: %s", path)
+        return {}
+
+
+def _qc_keys_from_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
+    """Translate flat ``QC*`` recommendation/warnings keys to legacy nested.
+
+    The pre-v0.46.0 aggregator read ``recommendation``, ``warnings``,
+    ``provenance_warnings``, and ``acquisition_warnings`` as top-level
+    keys on ``qc_metrics``. PR2 moves them onto the canonical anchor
+    sidecars as flat ``QC*``-prefixed keys (per bids-spec-expert
+    guidance). This translates them back to the nested shape so
+    ``_compute_overall_recommendation`` / ``_collect_*_warnings`` can be
+    consumed unchanged.
+    """
+    out: dict[str, Any] = {}
+    action = anchor.get("QCRecommendationAction")
+    reason = anchor.get("QCRecommendationReason")
+    if action or reason:
+        out["recommendation"] = {
+            "action": str(action or "review"),
+            "reason": str(reason or ""),
+        }
+    warnings = anchor.get("QCWarnings")
+    if warnings:
+        out["warnings"] = list(warnings)
+    prov = anchor.get("QCProvenanceWarnings")
+    if prov:
+        out["provenance_warnings"] = list(prov)
+    acq = anchor.get("QCAcquisitionWarnings")
+    if acq:
+        out["acquisition_warnings"] = list(acq)
+    return out
+
+
+def _load_pipeline_sidecars(
+    ses_dir: Path, prefix: str, pipeline: str,
+) -> dict[str, Any]:
+    """Build the legacy ``qc_metrics`` nested shape from per-image sidecars.
+
+    Replaces the pre-v0.46.0 ``_load_qc_json`` helper, which read a
+    single ``desc-*QC_quality.json`` summary file at session root. The
+    summary files are gone after v0.46.0; this loader composes the same
+    nested dict from:
+
+    - The anchor sidecar (``QC*`` recommendation/warnings flat keys).
+    - The pipeline-internal resume sidecar (full producer-shape
+      ``qc_metrics`` envelope; DSC/DCE only).
+
+    For pipelines without a resume sidecar (anat / tumor_seg) the
+    anchor sidecar's QC* keys are surfaced; for anat, the loader also
+    reads sibling brain-mask and probseg sidecars to recover the
+    ``preprocessing`` / ``brain_extraction`` / ``tissue_segmentation``
+    nested fields that ``_build_anat_boilerplate`` consumes.
+    """
+    anchor_pattern = _PIPELINE_PRESENCE_PROBES.get(pipeline)
+    if not anchor_pattern:
+        return {}
+    anchor_path = ses_dir / anchor_pattern.format(prefix=prefix)
+    anchor = _read_json_safe(anchor_path)
+
+    qc_metrics: dict[str, Any] = {}
+
+    resume_pattern = _PIPELINE_RESUME_SIDECARS.get(pipeline)
+    if resume_pattern:
+        resume_path = ses_dir / resume_pattern.format(prefix=prefix)
+        resume = _read_json_safe(resume_path)
+        if pipeline == "dsc":
+            # DSC resume carries verbatim aif_qc / preload_qc /
+            # preprocessing_stats; legacy qc_metrics nests them under
+            # aif_detection / preload / preprocessing.
+            aif_qc = resume.get("aif_qc")
+            if isinstance(aif_qc, dict):
+                qc_metrics["aif_detection"] = dict(aif_qc)
+            preload = resume.get("preload_qc")
+            if isinstance(preload, dict):
+                qc_metrics["preload"] = dict(preload)
+            preproc = resume.get("preprocessing_stats")
+            if isinstance(preproc, dict):
+                qc_metrics["preprocessing"] = dict(preproc)
+        elif pipeline == "dce":
+            # DCE resume stores the full producer-shape envelope verbatim.
+            envelope = resume.get("qc_metrics")
+            if isinstance(envelope, dict):
+                qc_metrics.update(dict(envelope))
+
+    if pipeline == "anat":
+        qc_metrics.update(_anat_nested_from_sidecars(ses_dir, prefix, anchor))
+
+    # The two updaters write disjoint key sets:
+    # _anat_nested_from_sidecars / resume → preprocessing /
+    #     brain_extraction / tissue_segmentation / aif_detection /
+    #     preload / pk_modeling / etc.
+    # _qc_keys_from_anchor → recommendation / warnings /
+    #     provenance_warnings / acquisition_warnings.
+    # Ordering does not matter; if the key sets ever overlap, audit
+    # both helpers — the silent overwrite would be a regression.
+    qc_metrics.update(_qc_keys_from_anchor(anchor))
+    return qc_metrics
+
+
+def _anat_nested_from_sidecars(
+    ses_dir: Path, prefix: str, anchor: dict[str, Any],
+) -> dict[str, Any]:
+    """Compose anat ``qc_metrics`` nested fields from per-image sidecars.
+
+    The anat boilerplate at :func:`_build_anat_boilerplate` reads three
+    nested groups: ``preprocessing.denoising`` (anchor flat key
+    ``PreprocessingDenoising``), ``brain_extraction.tool`` (brain-mask
+    sidecar flat key ``BrainExtractionTool``), and ``tissue_segmentation``
+    (presence of any probseg sidecar). This helper translates the flat
+    keys back to the nested shape.
+    """
+    out: dict[str, Any] = {}
+
+    # preprocessing.denoising — comes from the anchor's flat keys
+    preproc: dict[str, Any] = {}
+    if "PreprocessingDenoising" in anchor:
+        preproc["denoising"] = bool(anchor["PreprocessingDenoising"])
+    if "PreprocessingBiasCorrection" in anchor:
+        preproc["bias_correction"] = str(anchor["PreprocessingBiasCorrection"])
+    if "PreprocessingACPCAligned" in anchor:
+        preproc["acpc_aligned"] = bool(anchor["PreprocessingACPCAligned"])
+    if preproc:
+        out["preprocessing"] = preproc
+
+    # brain_extraction.tool — read from the brain-mask sidecar
+    mask_path = (
+        ses_dir / "anat" / f"{prefix}_space-T1w_desc-brain_mask.json"
+    )
+    mask_sidecar = _read_json_safe(mask_path)
+    brain_ex: dict[str, Any] = {}
+    if "BrainExtractionTool" in mask_sidecar:
+        # Normalize tool name to the lowercase token the boilerplate
+        # expects (e.g. "HD-BET" → "hdbet").
+        raw_tool = str(mask_sidecar["BrainExtractionTool"])
+        brain_ex["tool"] = raw_tool.lower().replace("-", "")
+    if "BrainExtractionVersion" in mask_sidecar:
+        brain_ex["version"] = str(mask_sidecar["BrainExtractionVersion"])
+    if brain_ex:
+        out["brain_extraction"] = brain_ex
+
+    # tissue_segmentation — presence of any probseg sidecar is sufficient
+    probseg_dir = ses_dir / "anat"
+    if probseg_dir.is_dir():
+        probsegs: dict[str, Any] = {}
+        for tissue in ("WM", "GM", "CSF"):
+            ps = probseg_dir / f"{prefix}_space-T1w_label-{tissue}_probseg.json"
+            if ps.exists():
+                ps_meta = _read_json_safe(ps)
+                tissue_block: dict[str, Any] = {}
+                if "TissueSegmentationMeanProbability" in ps_meta:
+                    tissue_block["mean_probability"] = float(
+                        ps_meta["TissueSegmentationMeanProbability"],
+                    )
+                if "TissueSegmentationVoxelCount" in ps_meta:
+                    tissue_block["voxel_count"] = int(
+                        ps_meta["TissueSegmentationVoxelCount"],
+                    )
+                if "TissueSegmentationVolume" in ps_meta:
+                    tissue_block["volume_ml"] = float(
+                        ps_meta["TissueSegmentationVolume"],
+                    )
+                probsegs[tissue] = tissue_block
+        if probsegs:
+            out["tissue_segmentation"] = probsegs
+
+    return out
 
 
 def _compute_overall_recommendation(
@@ -1101,7 +1274,7 @@ def generate_unified_report(
             pipeline_data[pipeline_name] = None
             continue
 
-        qc_metrics = _load_qc_json(ses_path, prefix, pipeline_name)
+        qc_metrics = _load_pipeline_sidecars(ses_path, prefix, pipeline_name)
         images = _collect_pipeline_images(
             subject_id, session_id, pipeline_name, fig_path,
         )

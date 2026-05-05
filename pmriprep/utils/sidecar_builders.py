@@ -970,6 +970,130 @@ def build_dsc_resume_sidecar(
     return sidecar
 
 
+def build_dce_resume_sidecar(
+    *,
+    qc_metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the verbatim resume sidecar carrying producer-shape DCE QC.
+
+    Mirror of :func:`build_dsc_resume_sidecar` for DCE. Stores the full
+    producer-shape ``qc_metrics`` envelope verbatim under
+    ``qc_metrics`` so the HTML aggregator (and any future ``--skip-dce``
+    resume helper) can recover the nested-dict shape without translating
+    from flat per-image sidecar keys.
+    """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
+    sidecar: Dict[str, Any] = {
+        **get_bids_derivative_provenance(),
+        "Description": "Pipeline-internal resume state for DCE.",
+        "PMRIPrepInternal": True,
+    }
+    if qc_metrics:
+        sidecar["qc_metrics"] = dict(qc_metrics)
+    return sidecar
+
+
+# ---------------------------------------------------------------------------
+# QC recommendation / warnings enrichment (PR2 of arc-finishing work)
+#
+# Adds flat top-level ``QC*``-prefixed keys carrying the recommendation
+# block and three categories of warnings to the canonical anchor
+# sidecars (``desc-preproc_T1w.json``, ``desc-dscPreproc_dsc.json``,
+# ``desc-dcePreproc_dce.json``). Eliminates the need for separate
+# ``desc-*QC_quality.json`` orphan summary files at session root.
+# ---------------------------------------------------------------------------
+
+
+def enrich_recommendation_keys(
+    sidecar: Dict[str, Any],
+    *,
+    modality: str,
+    qc_metrics: Optional[Dict[str, Any]] = None,
+    provenance_dict: Optional[Dict[str, Any]] = None,
+    preflight_warnings: Optional[Sequence[str]] = None,
+    presence_warnings: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """Add flat ``QC*``-prefixed recommendation/warnings keys to *sidecar*.
+
+    The aggregator reads these keys from the canonical anchor sidecars
+    (the same files used as pipeline presence probes) to build the
+    overall recommendation banner and the three warnings banners in the
+    HTML report. Empty fields are omitted (per fmriprep convention for
+    optional sidecar fields).
+
+    Args:
+        sidecar: Sidecar dict to mutate.
+        modality: ``"DSC"``, ``"DCE"``, or ``"ANAT"`` (case-insensitive).
+            ANAT does not have a recommendation pathway today; only
+            ``QCWarnings`` is populated for ANAT.
+        qc_metrics: Producer-shape QC metrics envelope. Required for
+            recommendation + acquisition-warnings derivation.
+        provenance_dict: Provenance dict (DSC/DCE only) — drives
+            ``QCProvenanceWarnings``.
+        preflight_warnings: Pre-pipeline preflight warnings. Folded into
+            ``QCAcquisitionWarnings`` for DSC/DCE; ignored for ANAT.
+        presence_warnings: Modality-presence warnings (e.g.,
+            "Brain mask in DSC space not available"). Written to
+            ``QCWarnings``.
+
+    Returns:
+        The mutated *sidecar* dict (for chaining).
+    """
+    modality = modality.upper()
+    if modality not in {"DSC", "DCE", "ANAT"}:
+        raise ValueError(
+            f"modality must be 'DSC', 'DCE', or 'ANAT'; got {modality!r}"
+        )
+
+    if modality in {"DSC", "DCE"} and qc_metrics:
+        from pmriprep.utils.qc_standards import recommend_dce_qc, recommend_dsc_qc
+
+        recommender = recommend_dsc_qc if modality == "DSC" else recommend_dce_qc
+        enhanced = recommender(qc_metrics)
+        rec = enhanced.get("recommendation") or {}
+        if rec:
+            action = str(rec.get("action", "review"))
+            reason = str(rec.get("reason", ""))
+            if action:
+                sidecar["QCRecommendationAction"] = action
+            if reason:
+                sidecar["QCRecommendationReason"] = reason
+
+    presence_list: List[str] = []
+    if presence_warnings:
+        presence_list.extend(str(w) for w in presence_warnings if w)
+    if presence_list:
+        sidecar["QCWarnings"] = presence_list
+
+    if modality in {"DSC", "DCE"} and provenance_dict and qc_metrics:
+        from pmriprep.utils.contrast_agent import collect_default_warnings
+
+        if modality == "DSC":
+            prov = collect_default_warnings(
+                provenance_dict, "DSC", qc_metrics=qc_metrics,
+            )
+        else:
+            prov = collect_default_warnings(provenance_dict, "DCE")
+        if prov:
+            sidecar["QCProvenanceWarnings"] = list(prov)
+
+    if modality in {"DSC", "DCE"}:
+        from pmriprep.utils.contrast_agent import collect_aif_fallback_warning
+
+        acq: List[str] = []
+        if qc_metrics:
+            aif_warn = collect_aif_fallback_warning(qc_metrics, modality)
+            if aif_warn:
+                acq.append(aif_warn)
+        if preflight_warnings:
+            acq.extend(str(w) for w in preflight_warnings if w)
+        if acq:
+            sidecar["QCAcquisitionWarnings"] = acq
+
+    return sidecar
+
+
 # ---------------------------------------------------------------------------
 # DCE cosmetic enrichment (PR1 of arc-finishing work)
 #

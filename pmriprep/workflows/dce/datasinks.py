@@ -1,9 +1,11 @@
 """DCE pipeline derivatives factory.
 
-Replaces ``DCEDerivativeWriter`` with a workflow that wires one
-``_copy_perf_map`` Function-based copier per perf-space output (NIfTI +
-sidecar) plus a ``DCEQCWriter`` shim for the QC JSON, AIF curve copy,
-confounds TSV/JSON, lesion/ROI stats copies, and figure copies.
+Wires one ``_copy_perf_map`` Function-based copier per perf-space
+output (NIfTI + sidecar) plus a ``DCEFiguresWriter`` for the AIF curve
+copy, confounds TSV/JSON, and figure filmstrips. QC summary fields
+live on ``desc-dcePreproc_dce.json`` as flat ``QC*`` keys; per-PK-map
+lesion stats live on the per-map sidecars as ``LesionStats``
+fragments.
 
 Per-output sidecar enrichment uses ``build_dce_base_sidecar`` from
 ``pmriprep.utils.sidecar_builders``. The PK model name is recorded in
@@ -18,7 +20,7 @@ import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 
 from pmriprep.interfaces.qc_writers import (
-    DCEQCWriter,
+    DCEFiguresWriter,
     PMRIPrepDataSink,
     write_dataset_description_node,
 )
@@ -159,14 +161,23 @@ def _build_dce_meta(  # type: ignore[no-untyped-def]
 
 def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
     base, description, qc_metrics=None,
+    provenance_dict=None,
+    preflight_warnings=None,
+    presence_warnings=None,
 ):
     """Compose the ``desc-dcePreproc_dce.json`` sidecar with flat-key QC.
 
-    Mirrors the v0.45.0 DSC ``_build_dsc_preproc_meta`` pattern: starts
-    from the perfusion base sidecar and layers on flat ``T1*``/``B1*``/
-    motion/signal cosmetic keys via ``enrich_dce_preproc_sidecar``.
+    Mirrors the DSC ``_build_dsc_preproc_meta`` pattern: starts from the
+    perfusion base sidecar, layers on flat ``T1*``/``B1*``/motion/signal
+    cosmetic keys via ``enrich_dce_preproc_sidecar``, and finally
+    attaches QC recommendation/warnings flat keys via
+    ``enrich_recommendation_keys`` so the HTML aggregator can read the
+    overall recommendation banner directly from this anchor sidecar.
     """
-    from pmriprep.utils.sidecar_builders import enrich_dce_preproc_sidecar
+    from pmriprep.utils.sidecar_builders import (
+        enrich_dce_preproc_sidecar,
+        enrich_recommendation_keys,
+    )
 
     out = dict(base)
     out["Description"] = description
@@ -174,7 +185,60 @@ def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
         out,
         qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
     )
+    enrich_recommendation_keys(
+        out,
+        modality="DCE",
+        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
+        provenance_dict=(
+            provenance_dict if isinstance(provenance_dict, dict) else None
+        ),
+        preflight_warnings=(
+            list(preflight_warnings) if preflight_warnings else None
+        ),
+        presence_warnings=(
+            list(presence_warnings) if presence_warnings else None
+        ),
+    )
     return out
+
+
+def _build_dce_resume_meta(  # type: ignore[no-untyped-def]
+    qc_metrics=None,
+):
+    """Compose the verbatim ``desc-dceResume_pmriprep.json`` sidecar.
+
+    Mirror of the DSC resume sidecar shipped in v0.45.0. Stores the
+    full producer-shape ``qc_metrics`` envelope verbatim so the HTML
+    aggregator can recover the nested dict shape its boilerplate
+    generators expect without translating from flat per-image sidecar
+    keys.
+    """
+    from pmriprep.utils.sidecar_builders import build_dce_resume_sidecar
+
+    return build_dce_resume_sidecar(
+        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
+    )
+
+
+def _write_dce_resume_sidecar(  # type: ignore[no-untyped-def]
+    output_dir, subject, session, meta_dict,
+):
+    """Write the DCE resume-only JSON sidecar (no companion data file)."""
+    import json as _json
+    from pathlib import Path
+
+    out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
+    if session:
+        out_root = out_root / f"ses-{session}"
+    out_root = out_root / "perf"
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    prefix = f"sub-{subject}"
+    if session:
+        prefix += f"_ses-{session}"
+    out_path = out_root / f"{prefix}_desc-dceResume_pmriprep.json"
+    out_path.write_text(_json.dumps(meta_dict, indent=2, default=str))
+    return str(out_path)
 
 
 def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
@@ -720,8 +784,6 @@ def init_dce_datasinks_wf(
     pk_model: str,
     present_inputs: Optional[set[str]] = None,
     has_postcon_t1w: bool = False,
-    has_lesion_stats: bool = False,
-    has_roi_stats: bool = False,
     has_smoothing: bool = False,
     name: str = "dce_datasinks_wf",
 ) -> pe.Workflow:
@@ -1071,21 +1133,49 @@ def init_dce_datasinks_wf(
 
     # --- Motion-corrected 4D + mean ref + AIF mask (perf/) ---
     if "dce_moco" in present:
-        # Preproc-4D sidecar carries flat-prefixed cosmetic T1*/B1*/
-        # motion/signal QC keys via _build_dce_preproc_meta. Mirrors the
-        # v0.45.0 DSC pattern.
+        # Preproc-4D sidecar is the canonical anchor for DCE: it carries
+        # flat-prefixed cosmetic T1*/B1*/motion/signal QC keys AND the
+        # QC* recommendation/warnings keys the HTML aggregator reads.
+        # The verbatim resume sidecar (below) carries the producer-shape
+        # qc_metrics envelope for downstream consumers that need the
+        # full nested-dict shape.
+        presence_warnings_dce = [
+            warn for cond, warn in (
+                ("b1_map" not in present,
+                 "B1+ transmit field map not available"),
+                ("t1_map" not in present,
+                 "T1 relaxation time map not available"),
+                ("brain_mask" not in present,
+                 "Brain mask in DCE space not available"),
+                ("nawm_mask" not in present,
+                 "NAWM mask in DCE space not available"),
+                ("lesion_mask_dce" not in present,
+                 "Lesion mask in DCE space not available"),
+                ("dce_to_t1w_xfm" not in present,
+                 "DCE to T1w registration transform not available"),
+            ) if cond
+        ]
         moco_meta = pe.Node(
             niu.Function(
-                input_names=["base", "description", "qc_metrics"],
+                input_names=[
+                    "base", "description", "qc_metrics",
+                    "provenance_dict", "preflight_warnings",
+                    "presence_warnings",
+                ],
                 output_names=["meta_dict"],
                 function=_build_dce_preproc_meta,
             ),
             name="dce_moco_meta",
         )
         moco_meta.inputs.description = "Motion-corrected 4D DCE time series"
+        moco_meta.inputs.presence_warnings = presence_warnings_dce
         workflow.connect([
             (base_perf, moco_meta, [("meta_dict", "base")]),
-            (inputnode, moco_meta, [("qc_metrics", "qc_metrics")]),
+            (inputnode, moco_meta, [
+                ("qc_metrics", "qc_metrics"),
+                ("provenance_dict", "provenance_dict"),
+                ("preflight_warnings", "preflight_warnings"),
+            ]),
         ])
         moco_sink = pe.Node(
             niu.Function(
@@ -1112,6 +1202,40 @@ def init_dce_datasinks_wf(
             (moco_meta, moco_sink, [("meta_dict", "meta_dict")]),
         ])
         sink_outputs.append((moco_sink, "out_file"))
+
+        # Pipeline-internal resume sidecar (no companion data file)
+        # mirroring the DSC resume sidecar. Carries the verbatim
+        # producer-shape qc_metrics envelope so the HTML aggregator can
+        # recover the nested-dict shape without translating per-image
+        # flat keys.
+        resume_meta = pe.Node(
+            niu.Function(
+                input_names=["qc_metrics"],
+                output_names=["meta_dict"],
+                function=_build_dce_resume_meta,
+            ),
+            name="dce_resume_meta",
+        )
+        workflow.connect([
+            (inputnode, resume_meta, [("qc_metrics", "qc_metrics")]),
+        ])
+        resume_sink = pe.Node(
+            niu.Function(
+                input_names=["output_dir", "subject", "session", "meta_dict"],
+                output_names=["out_file"],
+                function=_write_dce_resume_sidecar,
+            ),
+            name="dce_resume_sink",
+        )
+        workflow.connect([
+            (inputnode, resume_sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+            ]),
+            (resume_meta, resume_sink, [("meta_dict", "meta_dict")]),
+        ])
+        sink_outputs.append((resume_sink, "out_file"))
     if "dce_mean" in present:
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
@@ -1341,29 +1465,16 @@ def init_dce_datasinks_wf(
         ])
         sink_outputs.append((sm_sink, "out_file"))
 
-    # --- DCE QC writer ---
-    qc_writer = pe.Node(
-        DCEQCWriter(
-            has_t1_map="t1_map" in present,
-            has_b1_map="b1_map" in present,
-            has_brain_mask="brain_mask" in present,
-            has_nawm_mask="nawm_mask" in present,
-            has_lesion_mask_dce="lesion_mask_dce" in present,
-            has_dce_to_t1w_xfm="dce_to_t1w_xfm" in present,
-        ),
-        name="qc_writer",
-    )
+    # --- DCE figures writer (figures, AIF curve, confounds TSV/JSON) ---
+    figures_writer = pe.Node(DCEFiguresWriter(), name="figures_writer")
     workflow.connect([
-        (inputnode, qc_writer, [
+        (inputnode, figures_writer, [
             ("output_dir", "output_dir"),
             ("subject_id", "subject_id"),
             ("session_id", "session_id"),
             ("qc_metrics", "qc_metrics"),
-            ("provenance_dict", "provenance_dict"),
-            ("preflight_warnings", "preflight_warnings"),
             ("aif_curve", "aif_curve"),
             ("motion_params", "motion_params"),
-            # Phase 2a: AIF curve sidecar Sources/bids_dir
             ("bids_dir", "bids_dir"),
             ("source_dce", "source_dce"),
             ("brain_mask_filmstrip", "brain_mask_filmstrip"),
@@ -1381,12 +1492,6 @@ def init_dce_datasinks_wf(
             ("dsc_dce_xval_plot", "dsc_dce_xval_plot"),
         ]),
     ])
-    if has_lesion_stats:
-        workflow.connect(inputnode, "lesion_stats_json",
-                         qc_writer, "lesion_stats_json")
-    if has_roi_stats:
-        workflow.connect(inputnode, "roi_stats_json",
-                         qc_writer, "roi_stats_json")
 
     # --- dataset_description.json barrier ---
     merge = pe.Node(
@@ -1394,7 +1499,9 @@ def init_dce_datasinks_wf(
     )
     for i, (sink, attr) in enumerate(sink_outputs, start=1):
         workflow.connect(sink, attr, merge, f"in{i}")
-    workflow.connect(qc_writer, "qc_json", merge, f"in{len(sink_outputs) + 1}")
+    workflow.connect(
+        figures_writer, "aif_curve_txt", merge, f"in{len(sink_outputs) + 1}",
+    )
 
     dd_node = pe.Node(
         niu.Function(
@@ -1414,12 +1521,12 @@ def init_dce_datasinks_wf(
 
     outputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["qc_json", "dataset_description_done"],
+            fields=["done", "dataset_description_done"],
         ),
         name="outputnode",
     )
     workflow.connect([
-        (qc_writer, outputnode, [("qc_json", "qc_json")]),
+        (figures_writer, outputnode, [("aif_curve_txt", "done")]),
         (dd_node, outputnode, [("dd_path", "dataset_description_done")]),
     ])
 
