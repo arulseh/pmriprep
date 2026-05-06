@@ -1278,11 +1278,21 @@ class GammaVariateFitResult:
     beta : float
         Scale parameter β (controls decay rate, in frames).
     auc_original : float
-        Area under curve of original input.
+        First-pass-window AUC of the input curve when ``remove_recirculation=True``;
+        full-curve AUC otherwise. Window matches ``auc_fitted`` so ``auc_ratio``
+        is apples-to-apples.
     auc_fitted : float
-        Area under curve of fitted result.
+        Area under curve of fitted result, integrated over the same window
+        as ``auc_original``. Note: when ``preserve_auc=True`` (production
+        default), this is post-scaling and equals ``auc_original`` by
+        construction. ``auc_ratio`` is computed BEFORE scaling, so it
+        retains shape-fit-quality semantics.
     auc_ratio : float
-        Ratio of fitted/original AUC (should be ~1.0).
+        Ratio of fitted/original AUC computed BEFORE preservation scaling
+        — measures gamma-fit shape mismatch against the empirical
+        first-pass area independent of dose-preservation. Should be ~1.0
+        for a good fit. Reported in QC for provenance; not a hard gate
+        (see ``should_apply_gamma_fit``).
     residual_rms : float
         RMS residual between original and fitted.
     r_squared : float
@@ -1291,6 +1301,12 @@ class GammaVariateFitResult:
         Whether the optimization converged successfully.
     recirculation_removed : bool
         Whether recirculation was removed from the fit.
+    first_pass_n : int
+        Number of samples in the first-pass window
+        ``[baseline_frames : peak_idx + max(10, 2*FWHM)]`` when
+        ``remove_recirculation=True``; equal to ``n_frames - baseline_frames``
+        otherwise. Gamma fitting is ill-posed below ~8 samples (Welker AJNR
+        2015 §"AIF sampling adequacy", Calamante MRM 2010).
     """
 
     fitted_curve: npt.NDArray[Any]
@@ -1305,6 +1321,7 @@ class GammaVariateFitResult:
     r_squared: float
     fit_converged: bool
     recirculation_removed: bool = True
+    first_pass_n: int = 0
 
 
 def _gamma_variate_model(
@@ -1611,9 +1628,6 @@ def fit_gamma_variate(
     baseline = float(np.mean(aif_curve[:baseline_frames]))
     curve_shifted = aif_curve - baseline
 
-    # Compute original AUC
-    auc_original = _compute_auc(curve_shifted, tr)
-
     # Get initial parameter estimates
     p0 = _estimate_initial_params(aif_curve, baseline_frames)
 
@@ -1702,18 +1716,40 @@ def fit_gamma_variate(
             # The fitted gamma-variate naturally excludes recirculation
             # since it only models first-pass bolus
 
-    # Compute AUC scaling target: first-pass only when removing recirculation
-    # to avoid inflating the fitted curve by recirculation/tail AUC
+    # Symmetric AUC window: when removing recirculation, integrate BOTH the
+    # original and the fitted curve over the same first-pass window so the
+    # ratio is apples-to-apples (else the asymmetric ratio misfires on any
+    # AIF with non-trivial post-bolus tail — preloaded protocols always,
+    # and any clean recirculation pattern). See Welker AJNR 2015 §"AIF QC"
+    # and Bell MRM 2023 (OSIPI DSC pipeline conventions).
     if remove_recirculation:
         cutoff_for_auc = min(
             peak_idx + max(10, 2 * compute_aif_fwhm_frames(aif_curve, baseline_frames)),
             n_frames,
         )
-        auc_target = _compute_auc(curve_shifted[baseline_frames:cutoff_for_auc], tr)
-        auc_fitted = _compute_auc(fitted_curve[baseline_frames:cutoff_for_auc], tr)
+        auc_original = _compute_auc(
+            curve_shifted[baseline_frames:cutoff_for_auc], tr,
+        )
+        auc_target = auc_original
+        auc_fitted = _compute_auc(
+            fitted_curve[baseline_frames:cutoff_for_auc], tr,
+        )
+        first_pass_n = max(0, cutoff_for_auc - baseline_frames)
     else:
+        auc_original = _compute_auc(curve_shifted, tr)
         auc_target = auc_original
         auc_fitted = _compute_auc(fitted_curve, tr)
+        first_pass_n = max(0, n_frames - baseline_frames)
+
+    # Compute AUC ratio BEFORE preservation scaling so it reflects the
+    # actual shape mismatch between the gamma fit and the empirical
+    # first-pass area. With preserve_auc=True (production default), scaling
+    # forces auc_fitted == auc_target by construction, which would make a
+    # post-scaling ratio mechanically 1.0 and useless as a QC metric.
+    if auc_original > EPSILON_CONCENTRATION:
+        auc_ratio = auc_fitted / auc_original
+    else:
+        auc_ratio = 1.0
 
     # Optionally scale to preserve AUC (first-pass or full, depending on mode)
     if preserve_auc and auc_fitted > EPSILON_CONCENTRATION:
@@ -1721,12 +1757,6 @@ def fit_gamma_variate(
         fitted_curve = fitted_curve * scale_factor
         amplitude = amplitude * scale_factor
         auc_fitted = auc_target  # by construction
-
-    # Compute AUC ratio
-    if auc_original > EPSILON_CONCENTRATION:
-        auc_ratio = auc_fitted / auc_original
-    else:
-        auc_ratio = 1.0
 
     return GammaVariateFitResult(
         fitted_curve=fitted_curve,
@@ -1741,6 +1771,7 @@ def fit_gamma_variate(
         r_squared=r_squared,
         fit_converged=fit_converged,
         recirculation_removed=recirculation_removed,
+        first_pass_n=first_pass_n,
     )
 
 
@@ -1752,8 +1783,19 @@ def fit_gamma_variate(
 GAMMA_R2_THRESHOLD: float = 0.85
 GAMMA_PEAK_RATIO_MIN: float = 0.90
 GAMMA_PEAK_RATIO_MAX: float = 1.10
+# AUC ratio bounds retained for QC provenance only — no longer a hard gate.
+# Symmetric-window auc_ratio (see ``fit_gamma_variate``) makes this metric
+# meaningful, but R² + peak_ratio + defect detection already cover the
+# pathology this band would catch (Welker AJNR 2015, Bell MRM 2023).
 GAMMA_AUC_RATIO_MIN: float = 0.85
 GAMMA_AUC_RATIO_MAX: float = 1.15
+# Soft warning band: auc_ratio outside this is logged in QC but does not
+# trigger fallback (Welker AJNR 2015 §"AIF QC").
+GAMMA_AUC_RATIO_SOFT_MIN: float = 0.70
+GAMMA_AUC_RATIO_SOFT_MAX: float = 1.30
+# Minimum first-pass samples for gamma fitting to be well-posed (Welker
+# AJNR 2015 §"AIF sampling adequacy", Calamante MRM 2010 review).
+GAMMA_MIN_FIRST_PASS_SAMPLES: int = 8
 
 # Defect detection thresholds
 GAMMA_SPR_THRESHOLD: float = 0.25
@@ -1794,6 +1836,20 @@ def should_apply_gamma_fit(
     when the fit is good AND a defect is detected that gamma fitting
     would correct.
 
+    Hard gates (must all pass for eligibility):
+        - ``fit_converged``
+        - ``first_pass_n >= GAMMA_MIN_FIRST_PASS_SAMPLES`` (8 samples).
+          Below this, gamma fitting is ill-posed regardless of metrics.
+        - ``r_squared >= GAMMA_R2_THRESHOLD``
+        - ``peak_ratio in [GAMMA_PEAK_RATIO_MIN, GAMMA_PEAK_RATIO_MAX]``
+
+    AUC ratio is NOT a hard gate; it is reported in ``metrics["auc_ratio"]``
+    for QC provenance, with ``metrics["auc_ratio_warning"]`` set when the
+    symmetric-window ratio falls outside ``[GAMMA_AUC_RATIO_SOFT_MIN,
+    GAMMA_AUC_RATIO_SOFT_MAX]``. R² + peak_ratio + defect detection already
+    cover the pathology a hard AUC gate would catch (physics review:
+    Welker AJNR 2015, Bell MRM 2023 OSIPI conventions).
+
     Parameters
     ----------
     original_aif : np.ndarray
@@ -1814,6 +1870,21 @@ def should_apply_gamma_fit(
     if not fit_result.fit_converged:
         return (
             GammaAutoDecision(apply=False, reason="Fit did not converge"),
+            metrics,
+        )
+
+    # Eligibility prerequisite: gamma fitting is ill-posed below ~8 first-pass
+    # samples (Welker AJNR 2015 §"AIF sampling adequacy", Calamante MRM 2010).
+    metrics["first_pass_n"] = fit_result.first_pass_n
+    if fit_result.first_pass_n < GAMMA_MIN_FIRST_PASS_SAMPLES:
+        return (
+            GammaAutoDecision(
+                apply=False,
+                reason=(
+                    f"insufficient first-pass samples for gamma fit "
+                    f"({fit_result.first_pass_n} < {GAMMA_MIN_FIRST_PASS_SAMPLES})"
+                ),
+            ),
             metrics,
         )
 
@@ -1844,16 +1915,15 @@ def should_apply_gamma_fit(
             metrics,
         )
 
+    # AUC ratio: reported for QC provenance with a soft warning band, but
+    # NOT a hard gate. R² + peak_ratio + defect detection already cover the
+    # pathology this gate would catch (physics review: Welker AJNR 2015,
+    # Bell MRM 2023 OSIPI conventions).
     auc_ratio = fit_result.auc_ratio
     metrics["auc_ratio"] = auc_ratio
-    if not (GAMMA_AUC_RATIO_MIN <= auc_ratio <= GAMMA_AUC_RATIO_MAX):
-        return (
-            GammaAutoDecision(
-                apply=False,
-                reason=f"AUC ratio {auc_ratio:.3f} outside [{GAMMA_AUC_RATIO_MIN}, {GAMMA_AUC_RATIO_MAX}]",
-            ),
-            metrics,
-        )
+    metrics["auc_ratio_warning"] = not (
+        GAMMA_AUC_RATIO_SOFT_MIN <= auc_ratio <= GAMMA_AUC_RATIO_SOFT_MAX
+    )
 
     # --- Defect detection ---
     n = len(original_aif)

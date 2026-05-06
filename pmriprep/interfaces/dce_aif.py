@@ -1708,6 +1708,206 @@ class AIFDetection(BaseInterface):
     # Vectorized Candidate Search with Arterial Cascade
     # -----------------------------------------------------------------
 
+    @staticmethod
+    def _cascade_exhaustion_provenance(
+        cascade_tiers_attempted: int,
+    ) -> dict[str, Any]:
+        """Build the QC provenance dict for Pass-3 (population) fallback.
+
+        Used when ``_run_two_pass_cascade`` returns ``detection_method=
+        "population"`` with empty candidates — i.e. no tier produced any
+        keeper anywhere. The downstream per-candidate quality filter at
+        ``_run_interface`` only writes provenance when ``candidates`` is
+        non-empty, so this helper is the only path that captures Pass-3
+        exhaustion.
+
+        Args:
+            cascade_tiers_attempted: Total tier attempts executed by the
+                cascade (max 13 = 4 atlases × 3 criteria + 1 whole-brain).
+
+        Returns:
+            Provenance dict consumed by ``qc_metrics.update(...)`` at
+            line 3063 of ``_run_interface``.
+        """
+        return {
+            "auto_detection_attempted": True,
+            "auto_best_score": 0.0,
+            "auto_n_candidates": 0,
+            "auto_n_above_threshold": 0,
+            "auto_fallback_reason": (
+                f"all {cascade_tiers_attempted} cascade tiers "
+                f"exhausted; no tier produced any keeper"
+            ),
+            "cascade_tiers_attempted": cascade_tiers_attempted,
+            "cascade_best_score": 0.0,
+        }
+
+    @staticmethod
+    def _quorum_count(scores: list[float]) -> int:
+        """Count candidates that would survive the per-candidate quality filter.
+
+        Mirrors the threshold used by the downstream quality filter
+        (``score >= _MIN_CANDIDATE_SCORE``). Used by the two-pass cascade
+        as the predicate for "this tier produced a usable result"; the
+        cascade only short-circuits when ``_quorum_count(scores) >=
+        _MIN_CANDIDATES_FOR_DETECTED``.
+
+        Args:
+            scores: Per-candidate composite scores.
+
+        Returns:
+            Number of candidates with score at or above the keeper threshold.
+        """
+        return sum(1 for s in scores if s >= _MIN_CANDIDATE_SCORE)
+
+    def _run_two_pass_cascade(
+        self,
+        conc_data: npt.NDArray[Any],
+        atlas_search_mask: npt.NDArray[Any],
+        wb_search_mask: npt.NDArray[Any],
+        atlas_masks: list[npt.NDArray[Any]],
+        atlas_names: list[str],
+        n_candidates: int,
+        tr: float,
+        baseline_frames: int,
+        tissue_ttp_frame: float | None,
+    ) -> tuple[
+        list[tuple[int, int, int]],
+        list[float],
+        list[dict[str, float]],
+        str,
+        str | None,
+        int,
+    ]:
+        """Run the two-pass multi-level AIF detection cascade.
+
+        Pass 1: descend through every tier (4 atlases × {strict, relaxed,
+        permissive} + whole-brain relaxed = up to 13 tiers), short-circuiting
+        only when a tier produces ≥ 2 keepers (matches the downstream
+        per-candidate quality filter contract).
+
+        Pass 2: if no tier had ≥ 2 keepers, fall back to the best
+        single-keeper tier observed during Pass 1 (highest max-score).
+
+        Population AIF (Pass 3, handled by the caller) only triggers when
+        no tier produced any keeper anywhere.
+
+        Whole-brain stays at "relaxed" (not permissive) because the atlas's
+        spatial constraint is what makes permissive-tier candidates safe;
+        without it, permissive admits tissue voxels.
+
+        Args:
+            conc_data: 4D DCE concentration data (x, y, z, t).
+            atlas_search_mask: Search mask for atlas-constrained tiers.
+            wb_search_mask: Whole-brain search mask for the WB-relaxed tier.
+            atlas_masks: List of atlas masks ordered tightest → broadest.
+                Empty list skips the atlas cascade.
+            atlas_names: Names parallel to ``atlas_masks`` (used for the
+                ``atlas_tier_used`` provenance string).
+            n_candidates: Target candidate count per tier.
+            tr: Temporal resolution in seconds.
+            baseline_frames: Number of pre-bolus baseline frames.
+            tissue_ttp_frame: Reference tissue time-to-peak frame.
+
+        Returns:
+            Tuple of ``(candidates, scores, metrics_list, detection_method,
+            atlas_tier_used, cascade_tiers_attempted)``. ``detection_method``
+            is one of ``"atlas"``, ``"automatic"``, or ``"population"``;
+            ``"population"`` indicates no keeper anywhere — caller handles
+            the Parker fallback. ``atlas_tier_used`` is the
+            ``f"{atlas_name}_{crit}"`` label of the accepted tier (or
+            ``"wb_relaxed"`` for the whole-brain tier), or ``None`` for
+            population.
+        """
+        candidates: list[tuple[int, int, int]] = []
+        scores: list[float] = []
+        metrics_list: list[dict[str, float]] = []
+        detection_method: str = "population"
+        atlas_tier_used: str | None = None
+        cascade_tiers_attempted = 0
+
+        # Pass 2 tracking: (cands, scores, metrics, method, label, max_score)
+        best_single_keeper: tuple[
+            list[tuple[int, int, int]], list[float],
+            list[dict[str, float]], str, str, float,
+        ] | None = None
+
+        def _record_single_keeper(
+            cands: list[tuple[int, int, int]],
+            scs: list[float],
+            mets: list[dict[str, float]],
+            method: str,
+            label: str,
+        ) -> None:
+            nonlocal best_single_keeper
+            if not scs:
+                return
+            n_keepers = self._quorum_count(scs)
+            max_s = max(scs)
+            if n_keepers == 1 and max_s >= _MIN_CANDIDATE_SCORE:
+                if best_single_keeper is None or max_s > best_single_keeper[5]:
+                    best_single_keeper = (
+                        list(cands), list(scs), list(mets),
+                        method, label, max_s,
+                    )
+
+        # Pass 1: atlas cascade (tightest → broadest × strict → permissive)
+        pass1_succeeded = False
+        if atlas_masks:
+            for atlas_idx, atlas_mask in enumerate(atlas_masks):
+                for crit in ("strict", "relaxed", "permissive"):
+                    combined_mask = (atlas_search_mask > 0.5) & (atlas_mask > 0.5)
+                    combined_mask = combined_mask.astype(atlas_search_mask.dtype)
+                    cands, scs, mets = self._find_candidates_in_mask(
+                        conc_data, combined_mask, n_candidates, tr,
+                        baseline_frames, crit,
+                        tissue_ttp_frame=tissue_ttp_frame,
+                        atlas_constrained=True,
+                    )
+                    cascade_tiers_attempted += 1
+                    if self._quorum_count(scs) >= _MIN_CANDIDATES_FOR_DETECTED:
+                        candidates, scores, metrics_list = cands, scs, mets
+                        detection_method = "atlas"
+                        atlas_tier_used = f"{atlas_names[atlas_idx]}_{crit}"
+                        pass1_succeeded = True
+                        break
+                    _record_single_keeper(
+                        cands, scs, mets, "atlas",
+                        f"{atlas_names[atlas_idx]}_{crit}",
+                    )
+                if pass1_succeeded:
+                    break
+
+        # Pass 1 (cont.): whole-brain relaxed
+        if not pass1_succeeded:
+            cands, scs, mets = self._find_candidates_in_mask(
+                conc_data, wb_search_mask, n_candidates, tr,
+                baseline_frames, "relaxed",
+                tissue_ttp_frame=tissue_ttp_frame,
+                atlas_constrained=False,
+            )
+            cascade_tiers_attempted += 1
+            if self._quorum_count(scs) >= _MIN_CANDIDATES_FOR_DETECTED:
+                candidates, scores, metrics_list = cands, scs, mets
+                detection_method = "automatic"
+                pass1_succeeded = True
+            else:
+                _record_single_keeper(
+                    cands, scs, mets, "automatic", "wb_relaxed",
+                )
+
+        # Pass 2: best single-keeper tier
+        if not pass1_succeeded and best_single_keeper is not None:
+            (
+                candidates, scores, metrics_list,
+                detection_method, atlas_tier_used, _,
+            ) = best_single_keeper
+
+        return (
+            candidates, scores, metrics_list,
+            detection_method, atlas_tier_used, cascade_tiers_attempted,
+        )
+
     def _find_candidates_in_mask(
         self,
         concentration_data: npt.NDArray[Any],
@@ -2581,43 +2781,46 @@ class AIFDetection(BaseInterface):
                 conc_data, brain_mask, baseline_frames
             )
 
-            # ===== Multi-level detection cascade =====
-            # Atlas cascade: tightest → broadest, each with strict → permissive.
-            # Trying the tightest atlas first (MCA_ACA) minimizes tissue
-            # contamination; broader atlases serve as fallback.
-            if atlas_masks:
-                for atlas_idx, atlas_mask in enumerate(atlas_masks):
-                    for crit in ("strict", "relaxed", "permissive"):
-                        combined_mask = (atlas_search_mask > 0.5) & (atlas_mask > 0.5)
-                        combined_mask = combined_mask.astype(atlas_search_mask.dtype)
-                        candidates, scores, metrics_list = self._find_candidates_in_mask(
-                            conc_data, combined_mask, n_candidates, tr,
-                            baseline_frames, crit,
-                            tissue_ttp_frame=tissue_ttp_frame,
-                            atlas_constrained=True,
-                        )
-                        if candidates:
-                            detection_method = "atlas"
-                            atlas_tier_used = f"{atlas_names[atlas_idx]}_{crit}"
-                            break
-                    if candidates:
-                        break
+            # ===== Two-pass multi-level detection cascade =====
+            # See ``_run_two_pass_cascade`` docstring for contract details.
+            (
+                candidates, scores, metrics_list,
+                detection_method_str, atlas_tier_used, cascade_tiers_attempted,
+            ) = self._run_two_pass_cascade(
+                conc_data,
+                atlas_search_mask=atlas_search_mask,
+                wb_search_mask=wb_search_mask,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=n_candidates,
+                tr=tr,
+                baseline_frames=baseline_frames,
+                tissue_ttp_frame=tissue_ttp_frame,
+            )
+            # Narrow back to Literal for the typed local.
+            detection_method = (  # type: ignore[assignment]
+                "atlas" if detection_method_str == "atlas"
+                else "automatic" if detection_method_str == "automatic"
+                else "population"
+            )
 
-            # Whole-brain fallback: relaxed only.
-            # If the full atlas cascade AND whole-brain relaxed all fail,
-            # data quality is too poor for voxel-based AIF — go to population
-            # rather than scraping with permissive/degraded (which finds tissue).
-            if not candidates:
-                for crit in ("relaxed",):
-                    candidates, scores, metrics_list = self._find_candidates_in_mask(
-                        conc_data, wb_search_mask, n_candidates, tr,
-                        baseline_frames, crit,
-                        tissue_ttp_frame=tissue_ttp_frame,
-                        atlas_constrained=False,
-                    )
-                    if candidates:
-                        detection_method = "automatic"
-                        break
+            # Cascade-exhaustion provenance: when the two-pass cascade
+            # returns ``detection_method="population"`` (no tier produced
+            # any keeper anywhere), record the fact + tier-attempt count
+            # so QC consumers can distinguish "data quality too poor for
+            # voxel-AIF detection" from older single-tier fallback. The
+            # downstream per-candidate quality filter at line 2812 only
+            # writes provenance when ``candidates`` is non-empty, so this
+            # branch is the only path that captures Pass-3 exhaustion.
+            if not candidates and detection_method_str == "population":
+                _detection_attempt = self._cascade_exhaustion_provenance(
+                    cascade_tiers_attempted,
+                )
+                logger.warning(
+                    "AIF cascade: all %d tiers exhausted without producing "
+                    "any keeper. Falling back to Parker population AIF.",
+                    cascade_tiers_attempted,
+                )
 
             # ===== Phase 5: S0-based partial volume rejection =====
             if candidates:
@@ -2687,7 +2890,10 @@ class AIFDetection(BaseInterface):
                     scores = [scores[keep[0]]]
                     metrics_list = [metrics_list[keep[0]]]
                 else:
-                    # No candidates above threshold — fall back to population
+                    # No candidates above threshold — fall back to population.
+                    # With the two-pass cascade above, this branch is now
+                    # only reachable when no tier produced any keeper across
+                    # the entire cascade (population is Pass 3).
                     best_score = max(scores) if scores else 0.0
                     _detection_attempt = {
                         "auto_detection_attempted": True,
@@ -2695,14 +2901,19 @@ class AIFDetection(BaseInterface):
                         "auto_n_candidates": n_before,
                         "auto_n_above_threshold": 0,
                         "auto_fallback_reason": (
-                            f"0/{n_before} candidates scored >= "
-                            f"{_MIN_CANDIDATE_SCORE}"
+                            f"all {cascade_tiers_attempted} cascade tiers "
+                            f"exhausted; final tier: 0/{n_before} candidates "
+                            f"scored >= {_MIN_CANDIDATE_SCORE}"
                         ),
+                        "cascade_tiers_attempted": cascade_tiers_attempted,
+                        "cascade_best_score": float(best_score),
                     }
                     logger.warning(
                         "AIF quality filter: 0/%d candidates scored >= %.2f "
-                        "(best=%.2f). Falling back to Parker population AIF.",
+                        "(best=%.2f) after %d cascade tiers. "
+                        "Falling back to Parker population AIF.",
                         n_before, _MIN_CANDIDATE_SCORE, best_score,
+                        cascade_tiers_attempted,
                     )
                     candidates = []
                     scores = []

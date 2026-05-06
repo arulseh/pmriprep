@@ -288,8 +288,13 @@ AIF_THRESHOLDS_RELAXED: Final[AIFThresholds] = AIFThresholds(
 )
 
 #: Permissive AIF quality thresholds (for very difficult cases)
+#: Note: ``washout_min`` matches the relaxed value (0.10) — physics review
+#: (Calamante NMR Biomed 2013) showed the CNR relaxation (5.0→2.0) is
+#: sufficient for the sensitivity gain on low-dose/preloaded protocols, and
+#: lowering washout below 0.10 admits tissue voxels without proportional
+#: arterial-detection benefit.
 AIF_THRESHOLDS_PERMISSIVE: Final[AIFThresholds] = AIFThresholds(
-    washout_min=0.05,           # At least 5% washout
+    washout_min=0.10,           # ≥10% washout (matches relaxed; tissue rejection)
     fwhm_min_seconds=3.0,       # FWHM at least 3 seconds
     fwhm_max_seconds=45.0,      # FWHM at most 45 seconds
     baseline_frames=3,          # 3 frames for baseline

@@ -228,6 +228,79 @@ class TestFitGammaVariate:
             f"first-pass peak {measured_peak:.1f} mM — AUC scaling is inflating"
         )
 
+    def test_symmetric_auc_window_preloaded(self) -> None:
+        """Regression: preloaded-shape AIF (first-pass + persistent tail)
+        produces auc_ratio ∈ [0.85, 1.15] with the symmetric-window fix.
+
+        Pre-fix: ``auc_original`` was full-curve while ``auc_fitted`` was
+        first-pass-window only, giving auc_ratio ~0.4-0.6 for any
+        non-trivial tail (4 Gadovist 0.75+0.75 split-dose subjects all
+        rejected on this asymmetric ratio despite R²>0.94).
+
+        Uses ``preserve_auc=False`` so ``auc_ratio`` reflects pre-scaling
+        shape mismatch — the metric we actually care about. With the
+        symmetric window, ratio is near 1.0; the asymmetric (full-curve)
+        denominator would have given ~0.5 here.
+        """
+        n_frames = 120
+        t = np.arange(n_frames, dtype=np.float64)
+        baseline_frames = 20
+
+        # First-pass gamma-variate: peak at t0 + alpha*beta = 25 + 2.5*1.5 ≈ 28.75
+        first_pass = _gamma_variate_model(
+            t, amplitude=28.0, t0=25.0, alpha=2.5, beta=1.5,
+        )
+
+        # Persistent preload tail (~3 mM) AFTER first-pass washout — this is
+        # the residual contrast still circulating from the DCE preload.
+        tail = np.zeros(n_frames)
+        tail_start = 50
+        tail[tail_start:] = 3.0 * (
+            1.0 - np.exp(-0.1 * (t[tail_start:] - tail_start))
+        )
+
+        aif = first_pass + tail
+
+        result = fit_gamma_variate(
+            aif, baseline_frames=baseline_frames,
+            remove_recirculation=True, preserve_auc=False,
+        )
+
+        assert result.fit_converged is True
+        # Symmetric window: numerator and denominator both first-pass.
+        # Ratio should be near 1.0; it will pass the legacy [0.85, 1.15]
+        # gate range even though that gate is no longer enforced.
+        # Pre-fix asymmetric (full-curve denominator) would give ~0.5 here.
+        assert 0.85 <= result.auc_ratio <= 1.15, (
+            f"auc_ratio = {result.auc_ratio:.3f} — symmetric window should "
+            f"yield ratio near 1.0 even with persistent post-bolus tail"
+        )
+        # first_pass_n must be populated for the eligibility prerequisite.
+        assert result.first_pass_n >= 8
+
+    def test_auc_ratio_independent_of_preserve_auc(self) -> None:
+        """auc_ratio is computed BEFORE preservation scaling so it reflects
+        actual shape-fit quality regardless of preserve_auc.
+
+        Without this, with preserve_auc=True (production default) auc_ratio
+        would be mechanically 1.0 by construction and the soft-warning
+        machinery in should_apply_gamma_fit() would be dead code.
+        """
+        t = np.arange(60, dtype=np.float64)
+        aif = _gamma_variate_model(t, amplitude=10.0, t0=5.0, alpha=2.5, beta=3.0)
+
+        result_preserved = fit_gamma_variate(
+            aif, baseline_frames=5, remove_recirculation=False, preserve_auc=True,
+        )
+        result_unscaled = fit_gamma_variate(
+            aif, baseline_frames=5, remove_recirculation=False, preserve_auc=False,
+        )
+
+        # Both report the same pre-scaling auc_ratio (shape-fit quality).
+        assert result_preserved.auc_ratio == pytest.approx(
+            result_unscaled.auc_ratio, abs=0.01,
+        )
+
 
 class TestFindRecirculationStart:
     """Tests for _find_recirculation_start."""
@@ -309,8 +382,14 @@ def _make_fit_result(
     fit_converged: bool = True,
     fitted_curve: np.ndarray | None = None,
     auc_ratio: float = 1.0,
+    first_pass_n: int = 25,
 ) -> GammaVariateFitResult:
-    """Create a GammaVariateFitResult for testing."""
+    """Create a GammaVariateFitResult for testing.
+
+    Default ``first_pass_n=25`` is well above the
+    ``GAMMA_MIN_FIRST_PASS_SAMPLES`` (8) eligibility threshold, so existing
+    tests that don't care about sample count won't trip the new prerequisite.
+    """
     if fitted_curve is None:
         fitted_curve = original_aif.copy()
     return GammaVariateFitResult(
@@ -325,6 +404,7 @@ def _make_fit_result(
         residual_rms=0.1,
         r_squared=r_squared,
         fit_converged=fit_converged,
+        first_pass_n=first_pass_n,
     )
 
 
@@ -360,13 +440,74 @@ class TestShouldApplyGammaFit:
         assert not decision.apply
         assert "peak" in decision.reason.lower() or "Peak" in decision.reason
 
-    def test_reject_auc_ratio_too_high(self) -> None:
-        """Hard gate: reject when AUC ratio exceeds upper bound."""
+    def test_auc_ratio_no_longer_hard_gate_when_no_defect(self) -> None:
+        """auc_ratio outside legacy [0.85, 1.15] no longer gates: fit is
+        rejected for the usual 'no defect detected' reason, and auc_ratio
+        is still reported in metrics for QC provenance.
+        """
         aif = _make_clean_aif()
         fit = _make_fit_result(aif, auc_ratio=1.16)
         decision, metrics = should_apply_gamma_fit(aif, fit)
         assert not decision.apply
-        assert "AUC" in decision.reason
+        # Reason is the terminal "no defect" branch, NOT an AUC-gate string.
+        assert "AUC" not in decision.reason
+        assert (
+            "defect" in decision.reason.lower()
+            or "clean" in decision.reason.lower()
+        )
+        # AUC ratio still reported for QC provenance.
+        assert metrics["auc_ratio"] == pytest.approx(1.16)
+        # 1.16 is inside the soft [0.7, 1.3] band; warning flag stays False.
+        assert metrics["auc_ratio_warning"] is False
+
+    def test_should_apply_gamma_fit_accepts_defect_with_bad_auc_ratio(self) -> None:
+        """Defect-positive AIF + auc_ratio outside [0.85, 1.15] still accepts.
+
+        Regression for the preloaded-DSC case: 4 Gadovist 0.75+0.75 subjects
+        had R²>0.94 + recirculation defect, but the (asymmetric, pre-fix)
+        auc_ratio was 0.39-0.59 and the gate rejected. With the gate
+        demoted, defect detection drives acceptance regardless of auc_ratio.
+        """
+        # Build a defect-positive AIF (clean first pass + recirculation hump)
+        aif = _make_clean_aif()
+        peak_idx = int(np.argmax(aif))
+        peak_val = float(np.max(aif))
+        recirc_center = peak_idx + 15
+        if recirc_center + 5 < len(aif):
+            for i in range(recirc_center - 3, min(recirc_center + 4, len(aif))):
+                offset = i - recirc_center
+                aif[i] += peak_val * 0.35 * np.exp(-0.5 * offset**2)
+
+        fit = _make_fit_result(aif, auc_ratio=0.5, r_squared=0.95)
+        decision, metrics = should_apply_gamma_fit(aif, fit)
+        assert decision.apply
+        assert decision.defect_detected == "recirculation"
+        # auc_ratio carried through; soft warning fires (outside [0.7, 1.3]).
+        assert metrics["auc_ratio"] == pytest.approx(0.5)
+        assert metrics["auc_ratio_warning"] is True
+
+    def test_should_apply_gamma_fit_rejects_insufficient_first_pass_samples(
+        self,
+    ) -> None:
+        """Hard prerequisite: < 8 first-pass samples → reject regardless of fit
+        quality (Welker AJNR 2015 §"AIF sampling adequacy", Calamante MRM 2010).
+        """
+        aif = _make_clean_aif()
+        fit = _make_fit_result(
+            aif, r_squared=0.99, auc_ratio=1.0, first_pass_n=5,
+        )
+        decision, metrics = should_apply_gamma_fit(aif, fit)
+        assert not decision.apply
+        assert decision.reason.startswith("insufficient first-pass samples")
+        assert metrics["first_pass_n"] == 5
+
+    def test_auc_ratio_soft_warning_inside_band(self) -> None:
+        """auc_ratio inside [0.7, 1.3] does NOT trigger the soft warning."""
+        aif = _make_clean_aif()
+        fit = _make_fit_result(aif, auc_ratio=0.95)
+        _, metrics = should_apply_gamma_fit(aif, fit)
+        assert metrics["auc_ratio"] == pytest.approx(0.95)
+        assert metrics["auc_ratio_warning"] is False
 
     def test_accept_recirculation_defect(self) -> None:
         """Recirculation defect: accept when SPR > threshold and local max."""

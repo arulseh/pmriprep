@@ -1,5 +1,7 @@
 """Unit tests for DCE AIF detection fixes: ROI averaging, FWHM validation, atlas cascade."""
 
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 
@@ -9,6 +11,7 @@ from pmriprep.interfaces.dce_aif import (
     compute_dce_aif_washout,
 )
 from pmriprep.data import get_arterial_atlas_cascade
+from pmriprep.utils.dce_constants import AIF_THRESHOLDS_PERMISSIVE
 
 
 # =============================================================================
@@ -577,3 +580,248 @@ class TestAIFScalingUnitFix:
         assert scaling_factor == pytest.approx(1.727, rel=1e-3)
         assert scaling_factor <= 3.4  # no low-confidence warning
         assert scaling_factor <= 5.2  # no unreliable warning
+
+
+# =============================================================================
+# Two-pass cascade regression tests (Issue #2 fix)
+# =============================================================================
+
+
+def _make_cascade_inputs(
+    nx: int = 8, ny: int = 8, nz: int = 4, nt: int = 30,
+) -> dict[str, np.ndarray]:
+    """Build minimal inputs for ``_run_two_pass_cascade``."""
+    conc_data = np.zeros((nx, ny, nz, nt), dtype=np.float64)
+    atlas_search_mask = np.ones((nx, ny, nz), dtype=np.uint8)
+    wb_search_mask = np.ones((nx, ny, nz), dtype=np.uint8)
+    return {
+        "conc_data": conc_data,
+        "atlas_search_mask": atlas_search_mask,
+        "wb_search_mask": wb_search_mask,
+    }
+
+
+def _make_atlas_cascade(n: int = 4) -> tuple[list[np.ndarray], list[str]]:
+    """Build N synthetic atlas masks + names parallel."""
+    masks = [np.ones((8, 8, 4), dtype=np.uint8) for _ in range(n)]
+    names = ["MCA_ACA", "MCA_ACA_dil", "MCA_ACA_dil2", "full_mask_dil2"][:n]
+    return masks, names
+
+
+class TestTwoPassCascade:
+    """Regression tests for the Issue #2 two-pass cascade contract."""
+
+    def test_descends_when_strict_returns_zero_scored(self) -> None:
+        """Strict tier returning 10 zero-scored candidates must NOT
+        short-circuit the cascade. Relaxed at the same atlas level should
+        be tried and accepted when it produces ≥ 2 keepers.
+        """
+        inputs = _make_cascade_inputs()
+        atlas_masks, atlas_names = _make_atlas_cascade()
+        detector = AIFDetection()
+
+        # Mock _find_candidates_in_mask to simulate:
+        #   tier 1 (MCA_ACA, strict)  → 10 candidates, all score 0.0
+        #   tier 2 (MCA_ACA, relaxed) → 5 candidates, all score 0.6
+        # All later tiers should NOT be called.
+        side_effects: list = [
+            ([(1, 1, 1)] * 10, [0.0] * 10, [{}] * 10),
+            ([(2, 2, 2)] * 5, [0.6] * 5, [{}] * 5),
+        ]
+
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=side_effects,
+        ) as mock_find:
+            (
+                candidates, scores, metrics_list,
+                detection_method, atlas_tier_used, n_attempted,
+            ) = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert detection_method == "atlas"
+        assert atlas_tier_used == "MCA_ACA_relaxed"
+        assert n_attempted == 2
+        assert mock_find.call_count == 2
+        assert len(candidates) == 5
+        assert all(s == 0.6 for s in scores)
+
+    def test_pass2_accepts_best_single_keeper_when_no_quorum(self) -> None:
+        """If no tier produces ≥ 2 keepers, Pass 2 falls back to the
+        highest-max-score single-keeper tier observed.
+        """
+        inputs = _make_cascade_inputs()
+        atlas_masks, atlas_names = _make_atlas_cascade()
+        detector = AIFDetection()
+
+        # Every tier returns exactly 1 keeper. Max-score per tier varies;
+        # the tier with the highest max-score should be chosen by Pass 2.
+        # 4 atlases × 3 criteria + 1 whole-brain = 13 tiers.
+        max_scores = [
+            0.55, 0.50, 0.50,  # MCA_ACA × 3
+            0.50, 0.62, 0.50,  # MCA_ACA_dil × 3   ← highest at idx 4 (relaxed)
+            0.50, 0.50, 0.51,  # MCA_ACA_dil2 × 3
+            0.50, 0.50, 0.50,  # full_mask_dil2 × 3
+            0.55,              # wb_relaxed
+        ]
+        side_effects: list = [
+            ([(i, 0, 0)], [s], [{}]) for i, s in enumerate(max_scores)
+        ]
+
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=side_effects,
+        ):
+            (
+                candidates, scores, metrics_list,
+                detection_method, atlas_tier_used, n_attempted,
+            ) = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert n_attempted == 13  # all tiers run, none short-circuited
+        # Highest single-keeper max-score was 0.62 at MCA_ACA_dil_relaxed.
+        assert detection_method == "atlas"
+        assert atlas_tier_used == "MCA_ACA_dil_relaxed"
+        assert len(candidates) == 1
+        assert scores == [0.62]
+
+    def test_falls_to_population_only_when_no_keeper_anywhere(self) -> None:
+        """Cascade must exhaust ALL 13 tiers before signaling population.
+
+        With every tier returning 0-keeper output, Pass 1 fails everywhere,
+        Pass 2 has no single-keeper tier to fall back to, and the cascade
+        returns ``detection_method="population"`` with the full 13-tier
+        attempt count for the caller's provenance.
+        """
+        inputs = _make_cascade_inputs()
+        atlas_masks, atlas_names = _make_atlas_cascade()
+        detector = AIFDetection()
+
+        # All 13 tiers return non-empty zero-scored candidates.
+        side_effects: list = [
+            ([(0, 0, 0)] * 5, [0.0] * 5, [{}] * 5) for _ in range(13)
+        ]
+
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=side_effects,
+        ) as mock_find:
+            (
+                candidates, scores, metrics_list,
+                detection_method, atlas_tier_used, n_attempted,
+            ) = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert detection_method == "population"
+        assert atlas_tier_used is None
+        assert n_attempted == 13
+        assert mock_find.call_count == 13
+        # Pass 1 selected nothing; Pass 2 had no single-keeper tier to use.
+        assert candidates == []
+        assert scores == []
+
+    def test_strict_quorum_short_circuits_relaxed(self) -> None:
+        """When strict tier produces ≥ 2 keepers, relaxed/permissive at
+        the same (or any later) atlas level must NOT be tried.
+
+        Confirms the "tightest tier wins" intent of the cascade: better-
+        constrained tiers preempt looser ones.
+        """
+        inputs = _make_cascade_inputs()
+        atlas_masks, atlas_names = _make_atlas_cascade()
+        detector = AIFDetection()
+
+        # Strict at first atlas finds 5 keepers (all score 0.7).
+        side_effects: list = [
+            ([(i, 0, 0) for i in range(5)], [0.7] * 5, [{}] * 5),
+        ]
+
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=side_effects,
+        ) as mock_find:
+            (
+                _candidates, _scores, _metrics,
+                detection_method, atlas_tier_used, n_attempted,
+            ) = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert detection_method == "atlas"
+        assert atlas_tier_used == "MCA_ACA_strict"
+        assert n_attempted == 1
+        assert mock_find.call_count == 1
+
+
+class TestPermissiveThresholdTightened:
+    """Regression guard for the physics-expert recommendation."""
+
+    def test_permissive_washout_threshold_tightened(self) -> None:
+        """Permissive AIF washout threshold raised from 0.05 to 0.10.
+
+        Physics review (Calamante NMR Biomed 2013): CNR relaxation
+        (5.0→2.0) provides the sensitivity gain on low-dose/preloaded
+        protocols; loosening washout below 0.10 admits tissue voxels
+        without proportional arterial-detection benefit.
+        """
+        assert AIF_THRESHOLDS_PERMISSIVE.washout_min == 0.10
+
+
+class TestCascadeExhaustionProvenance:
+    """Regression for Pass-3 (population) provenance threading.
+
+    When the two-pass cascade exhausts all tiers without any keeper, the
+    population-fallback path must populate ``cascade_tiers_attempted``,
+    ``cascade_best_score=0.0``, and an exhaustion-aware
+    ``auto_fallback_reason`` so QC consumers can distinguish "data quality
+    too poor for voxel-AIF detection" from older single-tier fallback.
+    """
+
+    def test_helper_provenance_shape(self) -> None:
+        """Helper returns a dict with all required QC fields populated."""
+        prov = AIFDetection._cascade_exhaustion_provenance(13)
+        assert prov["auto_detection_attempted"] is True
+        assert prov["auto_best_score"] == 0.0
+        assert prov["auto_n_candidates"] == 0
+        assert prov["auto_n_above_threshold"] == 0
+        assert prov["cascade_tiers_attempted"] == 13
+        assert prov["cascade_best_score"] == 0.0
+        assert "all 13 cascade tiers exhausted" in prov["auto_fallback_reason"]
+        assert "no tier produced any keeper" in prov["auto_fallback_reason"]
+
+    def test_helper_threads_partial_attempt_count(self) -> None:
+        """Helper accurately reports tier count even on partial cascades.
+
+        E.g. atlas_masks=None scenario: only the whole-brain-relaxed tier
+        runs, so cascade_tiers_attempted=1.
+        """
+        prov = AIFDetection._cascade_exhaustion_provenance(1)
+        assert prov["cascade_tiers_attempted"] == 1
+        assert "all 1 cascade tiers exhausted" in prov["auto_fallback_reason"]
