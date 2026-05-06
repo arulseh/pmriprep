@@ -30,9 +30,11 @@ class GenerateUnifiedReportInputSpec(BaseInterfaceInputSpec):
     ran_dsc = traits.Bool(False, usedefault=True, desc="Whether dsc pipeline ran")
     ran_dce = traits.Bool(False, usedefault=True, desc="Whether dce pipeline ran")
 
-    # Barrier strings: connected from writers to enforce execution ordering.
-    # Each carries the qc_json path from its writer, ensuring the writer
-    # finishes before the report node runs.
+    # Barrier strings: each carries the ``dataset_description.json`` path
+    # produced by the per-pipeline ``dd_node``, which fires only after every
+    # per-output sink + figures_writer has joined ``dd_merge``. Connecting
+    # these enforces that the report node sees fully-written sidecars and
+    # figures rather than racing the slowest sink.
     anat_done = traits.Str("", usedefault=True, desc="Barrier from anat writer")
     tumor_seg_done = traits.Str("", usedefault=True, desc="Barrier from tumor_seg writer")
     dsc_done = traits.Str("", usedefault=True, desc="Barrier from dsc writer")
@@ -57,8 +59,8 @@ class GenerateUnifiedReport(BaseInterface):
     so figure paths are simply ``figures/<filename>``.
 
     Barrier inputs (``anat_done``, ``tumor_seg_done``, etc.) carry the
-    ``qc_json`` path from each writer, enforcing execution order without
-    needing explicit data dependencies.
+    ``dataset_description.json`` path from each pipeline's ``dd_node``,
+    enforcing execution order without needing explicit data dependencies.
     """
 
     input_spec = GenerateUnifiedReportInputSpec

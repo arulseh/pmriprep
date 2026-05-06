@@ -574,3 +574,171 @@ def test_init_pmriprep_wf_auto_short_tr_builds_fp_sink(tmp_path: Path) -> None:
         "auto + Bayesian + TR≤3.0 must build fp_uncertainty_sink "
         "(producer includes 2CXM in candidate set; sink should consume it)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Optional-figure trait hardening (regression for crash where upstream
+# Function nodes — e.g. ``_dsc_dce_xval_plot_node`` — return Python ``None``
+# and trip ``TraitError`` in nipype's File validator, stalling the DAG.)
+# ---------------------------------------------------------------------------
+
+
+_ANAT_OPTIONAL_FIGURES = (
+    "brain_mask_filmstrip",
+    "tissue_seg_filmstrip",
+    "acpc_filmstrip",
+    "coreg_filmstrip_postcon",
+    "coreg_filmstrip_t2w",
+    "coreg_filmstrip_flair",
+    "coreg_filmstrip_flair_postcon",
+)
+
+_TUMOR_SEG_OPTIONAL_FIGURES = (
+    "seg_filmstrip_postcon",
+    "seg_filmstrip_flair",
+    "nawm_filmstrip_flair",
+)
+
+_DSC_OPTIONAL_FIGURES = (
+    "brain_mask_filmstrip",
+    "motion_qc_plot",
+    "aif_curve_plot",
+    "aif_location_plot",
+    "aif_candidates_plot",
+    "registration_filmstrip",
+    "dsc_preprocessing_qc_plot",
+    "dsc_param_maps_qc_plot",
+    "dsc_fit_qc_plot",
+    "dsc_leakage_qc_plot",
+)
+
+_DCE_OPTIONAL_FIGURES = (
+    "brain_mask_filmstrip",
+    "motion_qc_plot",
+    "aif_curve_plot",
+    "aif_location_plot",
+    "aif_candidates_plot",
+    "registration_filmstrip",
+    "b1_qc_plot",
+    "t1_qc_plot",
+    "preprocessing_qc_plot",
+    "pk_modeling_qc_plot",
+    "pk_param_maps_qc_plot",
+    "model_selection_qc_plot",
+    "dsc_dce_xval_plot",
+)
+
+
+def test_anat_figures_writer_accepts_none_for_optional_figures(
+    tmp_path: Path,
+) -> None:
+    from pmriprep.interfaces.qc_writers import AnatFiguresWriter
+
+    writer = AnatFiguresWriter()
+    writer.inputs.output_dir = str(tmp_path)
+    writer.inputs.subject_id = "test"
+    for field in _ANAT_OPTIONAL_FIGURES:
+        setattr(writer.inputs, field, None)
+
+
+def test_tumor_seg_figures_writer_accepts_none_for_optional_figures(
+    tmp_path: Path,
+) -> None:
+    from pmriprep.interfaces.qc_writers import TumorSegFiguresWriter
+
+    writer = TumorSegFiguresWriter()
+    writer.inputs.output_dir = str(tmp_path)
+    writer.inputs.subject_id = "test"
+    writer.inputs.segmentation = _write_nii(tmp_path / "seg.nii.gz")
+    for field in _TUMOR_SEG_OPTIONAL_FIGURES:
+        setattr(writer.inputs, field, None)
+
+
+def test_dsc_figures_writer_accepts_none_for_optional_figures(
+    tmp_path: Path,
+) -> None:
+    from pmriprep.interfaces.qc_writers import DSCFiguresWriter
+
+    writer = DSCFiguresWriter()
+    writer.inputs.output_dir = str(tmp_path)
+    writer.inputs.subject_id = "test"
+    for field in _DSC_OPTIONAL_FIGURES:
+        setattr(writer.inputs, field, None)
+
+
+def test_dce_figures_writer_accepts_none_for_optional_figures(
+    tmp_path: Path,
+) -> None:
+    """Regression: dsc_dce_xval_plot=None used to raise TraitError + stall DAG."""
+    from pmriprep.interfaces.qc_writers import DCEFiguresWriter
+
+    writer = DCEFiguresWriter()
+    writer.inputs.output_dir = str(tmp_path)
+    writer.inputs.subject_id = "test"
+    for field in _DCE_OPTIONAL_FIGURES:
+        setattr(writer.inputs, field, None)
+
+
+def _figures_dir(tmp_path: Path, subject: str = "test") -> Path:
+    return tmp_path / "pmriprep" / f"sub-{subject}" / "figures"
+
+
+def test_anat_figures_writer_run_with_all_none_figures(tmp_path: Path) -> None:
+    from pmriprep.interfaces.qc_writers import AnatFiguresWriter
+
+    writer = AnatFiguresWriter()
+    writer.inputs.output_dir = str(tmp_path)
+    writer.inputs.subject_id = "test"
+    for field in _ANAT_OPTIONAL_FIGURES:
+        setattr(writer.inputs, field, None)
+    writer.run()
+
+    assert not _figures_dir(tmp_path).exists(), (
+        "all-None figure inputs must not create the figures/ directory"
+    )
+
+
+def test_tumor_seg_figures_writer_run_with_all_none_figures(tmp_path: Path) -> None:
+    from pmriprep.interfaces.qc_writers import TumorSegFiguresWriter
+
+    writer = TumorSegFiguresWriter()
+    writer.inputs.output_dir = str(tmp_path)
+    writer.inputs.subject_id = "test"
+    writer.inputs.segmentation = _write_nii(tmp_path / "seg.nii.gz")
+    for field in _TUMOR_SEG_OPTIONAL_FIGURES:
+        setattr(writer.inputs, field, None)
+    writer.run()
+
+    assert not _figures_dir(tmp_path).exists(), (
+        "all-None figure inputs must not create the figures/ directory"
+    )
+
+
+def test_dsc_figures_writer_run_with_all_none_figures(tmp_path: Path) -> None:
+    from pmriprep.interfaces.qc_writers import DSCFiguresWriter
+
+    writer = DSCFiguresWriter()
+    writer.inputs.output_dir = str(tmp_path)
+    writer.inputs.subject_id = "test"
+    for field in _DSC_OPTIONAL_FIGURES:
+        setattr(writer.inputs, field, None)
+    writer.run()
+
+    assert not _figures_dir(tmp_path).exists(), (
+        "all-None figure inputs must not create the figures/ directory"
+    )
+
+
+def test_dce_figures_writer_run_with_all_none_figures(tmp_path: Path) -> None:
+    from pmriprep.interfaces.qc_writers import DCEFiguresWriter
+
+    writer = DCEFiguresWriter()
+    writer.inputs.output_dir = str(tmp_path)
+    writer.inputs.subject_id = "test"
+    for field in _DCE_OPTIONAL_FIGURES:
+        setattr(writer.inputs, field, None)
+    writer.run()
+
+    assert not _figures_dir(tmp_path).exists(), (
+        "all-None figure inputs must not create the figures/ directory"
+    )

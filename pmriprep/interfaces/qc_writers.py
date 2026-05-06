@@ -39,6 +39,24 @@ class PMRIPrepDataSink(_NiworkflowsDDS):
     out_path_base = "pmriprep"
 
 
+def _optional_figure_file(desc: str = "") -> traits.Either:
+    """File-trait that also accepts ``None`` from upstream Function nodes.
+
+    Figure-producing Function nodes (e.g. ``_dsc_dce_xval_plot_node``)
+    legitimately return Python ``None`` when their figure is not
+    applicable. Nipype's ``File`` validator calls ``Path(value)``
+    unconditionally, which raises ``TraitError`` on ``None`` and stalls
+    the DAG via a downstream ``FileNotFoundError`` on the missing
+    ``result_*.pklz``. Wrapping ``File(exists=True)`` in
+    ``traits.Either(..., traits.Enum(None))`` lets the value through;
+    each writer's ``_run_interface`` already skips falsy/undefined inputs
+    via ``if not isdefined(src) or not src: continue``.
+    """
+    return traits.Either(
+        File(exists=True), traits.Enum(None), desc=desc,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Anat QC writer
 # ---------------------------------------------------------------------------
@@ -50,13 +68,13 @@ class AnatFiguresWriterInputSpec(BaseInterfaceInputSpec):
     session_id = traits.Str("", usedefault=True)
 
     # Figure filmstrips (all optional)
-    brain_mask_filmstrip = File(exists=True)
-    tissue_seg_filmstrip = File(exists=True)
-    acpc_filmstrip = File(exists=True)
-    coreg_filmstrip_postcon = File(exists=True)
-    coreg_filmstrip_t2w = File(exists=True)
-    coreg_filmstrip_flair = File(exists=True)
-    coreg_filmstrip_flair_postcon = File(exists=True)
+    brain_mask_filmstrip = _optional_figure_file()
+    tissue_seg_filmstrip = _optional_figure_file()
+    acpc_filmstrip = _optional_figure_file()
+    coreg_filmstrip_postcon = _optional_figure_file()
+    coreg_filmstrip_t2w = _optional_figure_file()
+    coreg_filmstrip_flair = _optional_figure_file()
+    coreg_filmstrip_flair_postcon = _optional_figure_file()
 
 
 class AnatFiguresWriterOutputSpec(TraitedSpec):
@@ -243,9 +261,9 @@ class TumorSegFiguresWriterInputSpec(BaseInterfaceInputSpec):
     )
 
     # Figure filmstrips (optional)
-    seg_filmstrip_postcon = File(exists=True)
-    seg_filmstrip_flair = File(exists=True)
-    nawm_filmstrip_flair = File(exists=True)
+    seg_filmstrip_postcon = _optional_figure_file()
+    seg_filmstrip_flair = _optional_figure_file()
+    nawm_filmstrip_flair = _optional_figure_file()
 
 
 class TumorSegFiguresWriterOutputSpec(TraitedSpec):
@@ -343,16 +361,16 @@ class DSCFiguresWriterInputSpec(BaseInterfaceInputSpec):
     aif_curve = File(exists=True, desc="AIF curve text file")
     motion_params = File(exists=True, desc=".par motion file (converted to confounds TSV)")
 
-    brain_mask_filmstrip = File(exists=True)
-    motion_qc_plot = File(exists=True)
-    aif_curve_plot = File(exists=True)
-    aif_location_plot = File(exists=True)
-    aif_candidates_plot = File(exists=True)
-    registration_filmstrip = File(exists=True)
-    dsc_preprocessing_qc_plot = File(exists=True)
-    dsc_param_maps_qc_plot = File(exists=True)
-    dsc_fit_qc_plot = File(exists=True)
-    dsc_leakage_qc_plot = File(exists=True)
+    brain_mask_filmstrip = _optional_figure_file()
+    motion_qc_plot = _optional_figure_file()
+    aif_curve_plot = _optional_figure_file()
+    aif_location_plot = _optional_figure_file()
+    aif_candidates_plot = _optional_figure_file()
+    registration_filmstrip = _optional_figure_file()
+    dsc_preprocessing_qc_plot = _optional_figure_file()
+    dsc_param_maps_qc_plot = _optional_figure_file()
+    dsc_fit_qc_plot = _optional_figure_file()
+    dsc_leakage_qc_plot = _optional_figure_file()
 
 
 class DSCFiguresWriterOutputSpec(TraitedSpec):
@@ -473,19 +491,19 @@ class DCEFiguresWriterInputSpec(BaseInterfaceInputSpec):
     aif_curve = File(exists=True, desc="AIF curve text file")
     motion_params = File(exists=True, desc=".par motion file (→ confounds TSV)")
 
-    brain_mask_filmstrip = File(exists=True)
-    motion_qc_plot = File(exists=True)
-    aif_curve_plot = File(exists=True)
-    aif_location_plot = File(exists=True)
-    aif_candidates_plot = File(exists=True)
-    registration_filmstrip = File(exists=True)
-    b1_qc_plot = File(exists=True)
-    t1_qc_plot = File(exists=True)
-    preprocessing_qc_plot = File(exists=True)
-    pk_modeling_qc_plot = File(exists=True)
-    pk_param_maps_qc_plot = File(exists=True)
-    model_selection_qc_plot = File(exists=True)
-    dsc_dce_xval_plot = File(exists=True)
+    brain_mask_filmstrip = _optional_figure_file()
+    motion_qc_plot = _optional_figure_file()
+    aif_curve_plot = _optional_figure_file()
+    aif_location_plot = _optional_figure_file()
+    aif_candidates_plot = _optional_figure_file()
+    registration_filmstrip = _optional_figure_file()
+    b1_qc_plot = _optional_figure_file()
+    t1_qc_plot = _optional_figure_file()
+    preprocessing_qc_plot = _optional_figure_file()
+    pk_modeling_qc_plot = _optional_figure_file()
+    pk_param_maps_qc_plot = _optional_figure_file()
+    model_selection_qc_plot = _optional_figure_file()
+    dsc_dce_xval_plot = _optional_figure_file()
 
 
 class DCEFiguresWriterOutputSpec(TraitedSpec):

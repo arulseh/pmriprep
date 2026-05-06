@@ -401,8 +401,9 @@ def init_anat_datasinks_wf(
 
     Inputs (on ``inputnode``) mirror the legacy ``AnatDerivativeWriter``
     InputSpec one-for-one so ``base.py`` rewiring is mechanical. Outputs
-    expose ``qc_json`` (for the report barrier) and
-    ``dataset_description_done`` (for the per-session barrier).
+    expose ``done`` (the report barrier, sourced from ``dd_node.dd_path``
+    so it fires only after every sink + figures_writer has finished) and
+    ``out_dir`` (the per-session derivatives root).
 
     ``is_postcon_ref`` indicates the postcon T1w was used as the structural
     reference (postcon-only mode). Drives sidecar ``Sources`` selection
