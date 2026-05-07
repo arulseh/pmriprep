@@ -614,19 +614,20 @@ class TestTwoPassCascade:
     def test_descends_when_strict_returns_zero_scored(self) -> None:
         """Strict tier returning 10 zero-scored candidates must NOT
         short-circuit the cascade. Relaxed at the same atlas level should
-        be tried and accepted when it produces ≥ 2 keepers.
+        be tried and accepted when it produces ≥ 2 keepers and at least
+        one candidate within the anchor-timing window.
         """
         inputs = _make_cascade_inputs()
         atlas_masks, atlas_names = _make_atlas_cascade()
         detector = AIFDetection()
 
-        # Mock _find_candidates_in_mask to simulate:
-        #   tier 1 (MCA_ACA, strict)  → 10 candidates, all score 0.0
-        #   tier 2 (MCA_ACA, relaxed) → 5 candidates, all score 0.6
-        # All later tiers should NOT be called.
+        # baseline_frames=5, tr=4.0 → peak_time_frame ≤ 7 satisfies anchor
+        # ((7-5)*4 = 8s ≤ 10s threshold).
         side_effects: list = [
-            ([(1, 1, 1)] * 10, [0.0] * 10, [{}] * 10),
-            ([(2, 2, 2)] * 5, [0.6] * 5, [{}] * 5),
+            ([(1, 1, 1)] * 10, [0.0] * 10,
+             [{"peak_time_frame": 7}] * 10),
+            ([(2, 2, 2)] * 5, [0.6] * 5,
+             [{"peak_time_frame": 7}] * 5),
         ]
 
         with patch.object(
@@ -636,6 +637,7 @@ class TestTwoPassCascade:
             (
                 candidates, scores, metrics_list,
                 detection_method, atlas_tier_used, n_attempted,
+                anchor_outcomes,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -652,6 +654,9 @@ class TestTwoPassCascade:
         assert mock_find.call_count == 2
         assert len(candidates) == 5
         assert all(s == 0.6 for s in scores)
+        # 2 tiers attempted, both anchored; only the second met quorum.
+        assert len(anchor_outcomes) == 2
+        assert all(o["has_anchor"] for o in anchor_outcomes)
 
     def test_pass2_accepts_best_single_keeper_when_no_quorum(self) -> None:
         """If no tier produces ≥ 2 keepers, Pass 2 falls back to the
@@ -671,8 +676,11 @@ class TestTwoPassCascade:
             0.50, 0.50, 0.50,  # full_mask_dil2 × 3
             0.55,              # wb_relaxed
         ]
+        # Each tier returns 1 candidate at peak_time_frame=6 (post-arrival
+        # = (6-5)*4 = 4s ≤ 10s threshold; keeper is anchored).
         side_effects: list = [
-            ([(i, 0, 0)], [s], [{}]) for i, s in enumerate(max_scores)
+            ([(i, 0, 0)], [s], [{"peak_time_frame": 6}])
+            for i, s in enumerate(max_scores)
         ]
 
         with patch.object(
@@ -682,6 +690,7 @@ class TestTwoPassCascade:
             (
                 candidates, scores, metrics_list,
                 detection_method, atlas_tier_used, n_attempted,
+                anchor_outcomes,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -698,6 +707,7 @@ class TestTwoPassCascade:
         assert atlas_tier_used == "MCA_ACA_dil_relaxed"
         assert len(candidates) == 1
         assert scores == [0.62]
+        assert len(anchor_outcomes) == 13
 
     def test_falls_to_population_only_when_no_keeper_anywhere(self) -> None:
         """Cascade must exhaust ALL 13 tiers before signaling population.
@@ -711,9 +721,11 @@ class TestTwoPassCascade:
         atlas_masks, atlas_names = _make_atlas_cascade()
         detector = AIFDetection()
 
-        # All 13 tiers return non-empty zero-scored candidates.
+        # All 13 tiers return non-empty zero-scored candidates with
+        # arbitrary timing (anchor doesn't matter when quorum is 0).
         side_effects: list = [
-            ([(0, 0, 0)] * 5, [0.0] * 5, [{}] * 5) for _ in range(13)
+            ([(0, 0, 0)] * 5, [0.0] * 5, [{"peak_time_frame": 7}] * 5)
+            for _ in range(13)
         ]
 
         with patch.object(
@@ -723,6 +735,7 @@ class TestTwoPassCascade:
             (
                 candidates, scores, metrics_list,
                 detection_method, atlas_tier_used, n_attempted,
+                anchor_outcomes,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -737,6 +750,7 @@ class TestTwoPassCascade:
         assert atlas_tier_used is None
         assert n_attempted == 13
         assert mock_find.call_count == 13
+        assert len(anchor_outcomes) == 13
         # Pass 1 selected nothing; Pass 2 had no single-keeper tier to use.
         assert candidates == []
         assert scores == []
@@ -752,9 +766,11 @@ class TestTwoPassCascade:
         atlas_masks, atlas_names = _make_atlas_cascade()
         detector = AIFDetection()
 
-        # Strict at first atlas finds 5 keepers (all score 0.7).
+        # Strict at first atlas finds 5 keepers (all score 0.7) at
+        # peak_time_frame=6 (post-arr 4s, anchored).
         side_effects: list = [
-            ([(i, 0, 0) for i in range(5)], [0.7] * 5, [{}] * 5),
+            ([(i, 0, 0) for i in range(5)], [0.7] * 5,
+             [{"peak_time_frame": 6}] * 5),
         ]
 
         with patch.object(
@@ -764,6 +780,7 @@ class TestTwoPassCascade:
             (
                 _candidates, _scores, _metrics,
                 detection_method, atlas_tier_used, n_attempted,
+                _anchor_outcomes,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -814,7 +831,7 @@ class TestCascadeExhaustionProvenance:
         assert prov["cascade_tiers_attempted"] == 13
         assert prov["cascade_best_score"] == 0.0
         assert "all 13 cascade tiers exhausted" in prov["auto_fallback_reason"]
-        assert "no tier produced any keeper" in prov["auto_fallback_reason"]
+        assert "no tier produced any anchored keeper" in prov["auto_fallback_reason"]
 
     def test_helper_threads_partial_attempt_count(self) -> None:
         """Helper accurately reports tier count even on partial cascades.
@@ -825,3 +842,311 @@ class TestCascadeExhaustionProvenance:
         prov = AIFDetection._cascade_exhaustion_provenance(1)
         assert prov["cascade_tiers_attempted"] == 1
         assert "all 1 cascade tiers exhausted" in prov["auto_fallback_reason"]
+
+    def test_helper_embeds_anchor_outcomes_when_provided(self) -> None:
+        """When anchor_outcomes is passed, it appears in the provenance dict."""
+        outcomes = [
+            {"tier": "MCA_ACA_strict", "n_candidates": 5,
+             "quorum_count": 0, "earliest_post_arr_s": 12.5,
+             "has_anchor": False},
+        ]
+        prov = AIFDetection._cascade_exhaustion_provenance(1, anchor_outcomes=outcomes)
+        assert prov["cascade_anchor_outcomes"] == outcomes
+
+
+# =============================================================================
+# Anchor-gate regression tests (venous-cluster fix)
+# =============================================================================
+
+
+class TestArterialAnchor:
+    """Tests for the Mouridsen-style cluster-anchor predicate."""
+
+    def test_empty_metrics_returns_no_anchor(self) -> None:
+        has_anchor, earliest = AIFDetection._has_arterial_anchor(
+            [], baseline_frames=10, tr=4.0,
+        )
+        assert has_anchor is False
+        assert earliest == float("inf")
+
+    def test_anchor_threshold_constant_value(self) -> None:
+        """Regression guard: physiologically-derived 10s threshold."""
+        from pmriprep.interfaces.dce_aif import _MAX_ANCHOR_POST_ARRIVAL_S
+        assert _MAX_ANCHOR_POST_ARRIVAL_S == 10.0
+
+    def test_anchored_when_earliest_within_threshold(self) -> None:
+        # baseline=10, tr=4 → peak_time_frame=12 → post-arr=8s ≤ 10s
+        metrics = [
+            {"peak_time_frame": 12},
+            {"peak_time_frame": 15},
+            {"peak_time_frame": 18},
+        ]
+        has_anchor, earliest = AIFDetection._has_arterial_anchor(
+            metrics, baseline_frames=10, tr=4.0,
+        )
+        assert has_anchor is True
+        assert earliest == pytest.approx(8.0)
+
+    def test_unanchored_when_all_late(self) -> None:
+        # baseline=10, tr=4 → all peak_time_frames give >10s post-arr
+        metrics = [
+            {"peak_time_frame": 13},  # 12s
+            {"peak_time_frame": 14},  # 16s
+            {"peak_time_frame": 15},  # 20s
+        ]
+        has_anchor, earliest = AIFDetection._has_arterial_anchor(
+            metrics, baseline_frames=10, tr=4.0,
+        )
+        assert has_anchor is False
+        assert earliest == pytest.approx(12.0)
+
+
+class TestAnchorGateInCascade:
+    """Cascade-level integration tests for the anchor gate."""
+
+    def test_all_venous_tier_fails_via_anchor_gate(self) -> None:
+        """Sub-20402855 pattern: 3 candidates per tier, all peaking at
+        post-arrival 13s (above 10s threshold). Cascade descends through
+        all 13 tiers, none anchored, falls to population.
+        """
+        inputs = _make_cascade_inputs()
+        atlas_masks, atlas_names = _make_atlas_cascade()
+        detector = AIFDetection()
+
+        # baseline=5, tr=4 → peak_time_frame=8 gives post-arr=12s > 10s
+        side_effects: list = [
+            ([(0, 0, 0)] * 3, [0.6] * 3, [{"peak_time_frame": 8}] * 3)
+            for _ in range(13)
+        ]
+
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=side_effects,
+        ):
+            (
+                candidates, scores, _metrics,
+                detection_method, atlas_tier_used, n_attempted,
+                anchor_outcomes,
+            ) = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert detection_method == "population"
+        assert atlas_tier_used is None
+        assert n_attempted == 13
+        assert candidates == []
+        # Every tier was anchor-rejected
+        assert all(o["has_anchor"] is False for o in anchor_outcomes)
+        assert all(o["quorum_count"] >= 2 for o in anchor_outcomes)
+
+    def test_strict_quorum_without_anchor_descends_to_relaxed(self) -> None:
+        """Strict tier has quorum (5 keepers, score 0.6) but NO anchor
+        (all peak at 12s post-arr); relaxed at the same atlas level has
+        BOTH quorum AND anchor (5 keepers at 8s post-arr). Cascade must
+        descend, not short-circuit on the anchor-failed strict tier.
+
+        Exercises the exact regression the anchor gate is intended to
+        catch: quorum alone is no longer sufficient.
+        """
+        inputs = _make_cascade_inputs()
+        atlas_masks, atlas_names = _make_atlas_cascade()
+        detector = AIFDetection()
+
+        # baseline=5, tr=4
+        # tier 1 (MCA_ACA strict): 5 candidates, score 0.6, peak_time=8
+        #   → quorum=5, post-arr=12s, NO anchor → fail
+        # tier 2 (MCA_ACA relaxed): 5 candidates, score 0.6, peak_time=6
+        #   → quorum=5, post-arr=4s, anchored → succeed
+        side_effects: list = [
+            ([(i, 0, 0) for i in range(5)], [0.6] * 5,
+             [{"peak_time_frame": 8}] * 5),
+            ([(i, 1, 0) for i in range(5)], [0.6] * 5,
+             [{"peak_time_frame": 6}] * 5),
+        ]
+
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=side_effects,
+        ) as mock_find:
+            (
+                candidates, _scores, _metrics,
+                detection_method, atlas_tier_used, n_attempted,
+                anchor_outcomes,
+            ) = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert detection_method == "atlas"
+        assert atlas_tier_used == "MCA_ACA_relaxed"
+        assert n_attempted == 2
+        assert mock_find.call_count == 2
+        assert len(candidates) == 5
+        # Strict tier had quorum but failed anchor; relaxed had both.
+        assert anchor_outcomes[0]["quorum_count"] == 5
+        assert anchor_outcomes[0]["has_anchor"] is False
+        assert anchor_outcomes[1]["quorum_count"] == 5
+        assert anchor_outcomes[1]["has_anchor"] is True
+
+    def test_anchored_tier_with_late_companions_succeeds(self) -> None:
+        """Sub-20449286 pattern: 4 candidates, anchor #1 at post-arr 8s,
+        rest at 12.2s. Tier should pass on anchor + quorum.
+        """
+        inputs = _make_cascade_inputs()
+        atlas_masks, atlas_names = _make_atlas_cascade()
+        detector = AIFDetection()
+
+        # baseline=5, tr=4: peak_time_frame=7 → 8s (anchor),
+        # peak_time_frame=8 → 12s (over threshold, but other tiers do not
+        # need to anchor; this candidate is in the same tier).
+        side_effects: list = [
+            (
+                [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)],
+                [0.7, 0.6, 0.55, 0.51],
+                [
+                    {"peak_time_frame": 7},  # anchor candidate (post-arr 8s)
+                    {"peak_time_frame": 8},
+                    {"peak_time_frame": 8},
+                    {"peak_time_frame": 8},
+                ],
+            ),
+        ]
+
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=side_effects,
+        ):
+            (
+                candidates, scores, _metrics,
+                detection_method, atlas_tier_used, n_attempted,
+                anchor_outcomes,
+            ) = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert detection_method == "atlas"
+        assert atlas_tier_used == "MCA_ACA_strict"
+        assert n_attempted == 1
+        assert len(candidates) == 4
+        assert anchor_outcomes[0]["has_anchor"] is True
+        assert anchor_outcomes[0]["earliest_post_arr_s"] == pytest.approx(8.0)
+
+    def test_anchored_single_keeper_promoted_in_pass2(self) -> None:
+        """Every tier returns 1 keeper at post-arr 8s. Quorum (≥2) fails
+        everywhere; Pass-2 picks an anchored single keeper.
+        """
+        inputs = _make_cascade_inputs()
+        atlas_masks, atlas_names = _make_atlas_cascade()
+        detector = AIFDetection()
+
+        # 13 tiers, each with 1 keeper at peak_time_frame=7 (post-arr 8s)
+        side_effects: list = [
+            ([(i, 0, 0)], [0.6], [{"peak_time_frame": 7}])
+            for i in range(13)
+        ]
+
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=side_effects,
+        ):
+            (
+                candidates, scores, _metrics,
+                detection_method, _atlas_tier, n_attempted,
+                _anchor_outcomes,
+            ) = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert detection_method != "population"
+        assert n_attempted == 13
+        assert len(candidates) == 1
+
+    def test_unanchored_single_keeper_NOT_promoted_in_pass2(self) -> None:
+        """Pass-2 must reject single keepers whose own timing fails the
+        anchor gate (defends against using late venous voxels as fallback).
+        """
+        inputs = _make_cascade_inputs()
+        atlas_masks, atlas_names = _make_atlas_cascade()
+        detector = AIFDetection()
+
+        # 13 tiers, each with 1 keeper at peak_time_frame=8 (post-arr 12s,
+        # over 10s threshold).
+        side_effects: list = [
+            ([(i, 0, 0)], [0.6], [{"peak_time_frame": 8}])
+            for i in range(13)
+        ]
+
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=side_effects,
+        ):
+            (
+                candidates, _scores, _metrics,
+                detection_method, _atlas_tier, n_attempted,
+                _anchor_outcomes,
+            ) = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=atlas_masks,
+                atlas_names=atlas_names,
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert detection_method == "population"
+        assert n_attempted == 13
+        assert candidates == []
+
+    def test_filter_venous_all_flagged_fails_tier(self) -> None:
+        """`_filter_venous_candidates` returns empty when all flagged venous."""
+        cands = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+        scores = [0.7, 0.6, 0.55]
+        metrics = [{"is_likely_venous": True}] * 3
+        out_c, out_s, out_m = AIFDetection._filter_venous_candidates(
+            cands, scores, metrics, min_non_venous=3,
+        )
+        assert out_c == []
+        assert out_s == []
+        assert out_m == []
+
+    def test_filter_venous_drops_venous_keeps_one_survivor(self) -> None:
+        """When < min_non_venous survive but ≥ 1 does, drop venous and
+        keep survivors. Cascade Pass-2 will handle the count.
+        """
+        cands = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+        scores = [0.7, 0.6, 0.55]
+        metrics = [
+            {"is_likely_venous": False},
+            {"is_likely_venous": True},
+            {"is_likely_venous": True},
+        ]
+        out_c, out_s, out_m = AIFDetection._filter_venous_candidates(
+            cands, scores, metrics, min_non_venous=3,
+        )
+        assert out_c == [(0, 0, 0)]
+        assert out_s == [0.7]
+        assert out_m == [{"is_likely_venous": False}]

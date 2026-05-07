@@ -70,6 +70,15 @@ logger = logging.getLogger(__name__)
 _MIN_CANDIDATE_SCORE = 0.5
 # Minimum survivors for a reliable detected AIF (SNR >= 21, basic outlier check)
 _MIN_CANDIDATES_FOR_DETECTED = 2
+# Maximum post-arrival peak time (seconds) for the EARLIEST candidate in a
+# tier to be considered "anchored" by an arterial-grade voxel. Derived from
+# physiological arterial bolus arrival range (4-12s post-injection,
+# Calamante NMR Biomed 2013) plus capillary MTT margin (~4s in GM) for
+# adult brain DCE. Tiers whose earliest candidate peaks later than this
+# are treated as venous-only clusters and fail Pass-1 acceptance. If
+# pediatric or extreme-cardiac-output cohorts are added later, expose as
+# a config knob rather than tuning this constant.
+_MAX_ANCHOR_POST_ARRIVAL_S: float = 10.0
 
 # =============================================================================
 # Parker Population AIF Parameters
@@ -1255,9 +1264,13 @@ class AIFDetection(BaseInterface):
             min_non_venous: Minimum non-venous candidates required to apply filter.
 
         Returns:
-            Filtered (candidates, scores, metrics) with venous candidates removed.
-            If filtering would leave fewer than min_non_venous candidates,
-            returns original input unchanged (with warning logged).
+            Filtered (candidates, scores, metrics) with venous candidates
+            removed. If at least one non-venous candidate survives, drops
+            only the venous-flagged ones (preserving the survivors). If
+            ALL candidates are flagged venous, returns ``([], [], [])`` so
+            the cascade treats the tier as failed (Calamante NMR Biomed
+            2013: venous-derived AIFs produce quantitatively biased PK
+            estimates).
         """
         if not candidates:
             return candidates, scores, metrics_list
@@ -1274,29 +1287,35 @@ class AIFDetection(BaseInterface):
             # No venous candidates, return unchanged
             return candidates, scores, metrics_list
 
-        if len(non_venous_indices) >= min_non_venous:
-            # Enough non-venous candidates, filter out venous
-            logger.info(
-                "Filtering %d venous candidates (keeping %d arterial)",
-                n_venous, len(non_venous_indices),
-            )
+        if non_venous_indices:
+            # At least one non-venous survives — drop venous, keep survivors.
+            # Cascade Pass 1/Pass 2 contract handles count from there.
+            if len(non_venous_indices) >= min_non_venous:
+                logger.info(
+                    "Filtering %d venous candidates (keeping %d arterial)",
+                    n_venous, len(non_venous_indices),
+                )
+            else:
+                logger.warning(
+                    "Filtering %d venous candidates (keeping %d arterial; "
+                    "below min_non_venous=%d, cascade Pass 2 will handle).",
+                    n_venous, len(non_venous_indices), min_non_venous,
+                )
             return (
                 [candidates[i] for i in non_venous_indices],
                 [scores[i] for i in non_venous_indices],
                 [metrics_list[i] for i in non_venous_indices],
             )
 
-        # Not enough non-venous candidates — keep all candidates rather than
-        # returning empty. A detected AIF with marginal timing is better than
-        # population AIF which introduces 25-40% patient-specific variability
-        # (Parker 2006). The venous flag is preserved in metrics for QC.
+        # All flagged venous — fail the tier. The cascade will descend or
+        # fall to Parker (Calamante NMR Biomed 2013: venous-derived AIFs
+        # produce quantitatively biased PK estimates).
         logger.warning(
-            "VENOUS CONTAMINATION WARNING: %d of %d candidates flagged as likely venous. "
-            "Insufficient non-venous candidates (%d < %d). "
-            "Keeping all candidates (detected AIF preferred over population fallback).",
-            n_venous, len(candidates), len(non_venous_indices), min_non_venous,
+            "Tier rejected: %d/%d candidates flagged as likely venous "
+            "(no non-venous alternative). Cascade will descend.",
+            n_venous, len(candidates),
         )
-        return candidates, scores, metrics_list
+        return [], [], []
 
     # -----------------------------------------------------------------
     # Candidate Scoring (replaces old _score_dce_candidate)
@@ -1711,36 +1730,44 @@ class AIFDetection(BaseInterface):
     @staticmethod
     def _cascade_exhaustion_provenance(
         cascade_tiers_attempted: int,
+        anchor_outcomes: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Build the QC provenance dict for Pass-3 (population) fallback.
 
         Used when ``_run_two_pass_cascade`` returns ``detection_method=
         "population"`` with empty candidates — i.e. no tier produced any
-        keeper anywhere. The downstream per-candidate quality filter at
-        ``_run_interface`` only writes provenance when ``candidates`` is
-        non-empty, so this helper is the only path that captures Pass-3
-        exhaustion.
+        anchored keeper anywhere. The downstream per-candidate quality
+        filter at ``_run_interface`` only writes provenance when
+        ``candidates`` is non-empty, so this helper is the only path that
+        captures Pass-3 exhaustion.
 
         Args:
             cascade_tiers_attempted: Total tier attempts executed by the
                 cascade (max 13 = 4 atlases × 3 criteria + 1 whole-brain).
+            anchor_outcomes: Per-tier anchor diagnostics from the cascade.
+                When provided, embedded under ``cascade_anchor_outcomes``
+                so QC reviewers can see why each tier failed (quorum,
+                anchor, or both).
 
         Returns:
-            Provenance dict consumed by ``qc_metrics.update(...)`` at
-            line 3063 of ``_run_interface``.
+            Provenance dict consumed by ``qc_metrics.update(...)`` in
+            ``_run_interface``.
         """
-        return {
+        prov: dict[str, Any] = {
             "auto_detection_attempted": True,
             "auto_best_score": 0.0,
             "auto_n_candidates": 0,
             "auto_n_above_threshold": 0,
             "auto_fallback_reason": (
                 f"all {cascade_tiers_attempted} cascade tiers "
-                f"exhausted; no tier produced any keeper"
+                f"exhausted; no tier produced any anchored keeper"
             ),
             "cascade_tiers_attempted": cascade_tiers_attempted,
             "cascade_best_score": 0.0,
         }
+        if anchor_outcomes is not None:
+            prov["cascade_anchor_outcomes"] = anchor_outcomes
+        return prov
 
     @staticmethod
     def _quorum_count(scores: list[float]) -> int:
@@ -1760,6 +1787,54 @@ class AIFDetection(BaseInterface):
         """
         return sum(1 for s in scores if s >= _MIN_CANDIDATE_SCORE)
 
+    @staticmethod
+    def _has_arterial_anchor(
+        metrics_list: list[dict[str, float]],
+        baseline_frames: int,
+        tr: float,
+    ) -> tuple[bool, float]:
+        """Mouridsen-style cluster-anchor predicate.
+
+        A tier is "anchored" if at least one candidate has post-arrival
+        peak time within the physiological arterial range. This catches
+        clusters with low per-voxel peaks but at least one voxel with
+        arterial-grade timing — while rejecting all-venous clusters
+        where every candidate lags arterial timing by more than
+        ``_MAX_ANCHOR_POST_ARRIVAL_S``.
+
+        Operates on the post-filter survivor list returned by
+        ``_find_candidates_in_mask`` (NOT the raw mask candidates) — by
+        the time it is called, cluster selection and venous filtering
+        have already run.
+
+        Args:
+            metrics_list: Per-candidate metrics dicts; each must contain
+                ``peak_time_frame``.
+            baseline_frames: Bolus arrival frame in the AIF (from
+                baseline detection — same value used by the cascade).
+            tr: Temporal resolution in seconds.
+
+        Returns:
+            ``(has_anchor, earliest_post_arr_s)``. ``has_anchor`` is True
+            iff the earliest candidate's post-arrival peak time is at or
+            below ``_MAX_ANCHOR_POST_ARRIVAL_S``. ``earliest_post_arr_s``
+            is returned for QC logging regardless of pass/fail (``inf``
+            when ``metrics_list`` is empty).
+        """
+        if not metrics_list:
+            return False, float("inf")
+        # Default to ``inf`` for missing key so the gate fails-closed
+        # rather than falsely anchoring (peak_time_frame=0 → very negative
+        # post-arrival → would always anchor).
+        earliest_post_arr_s = min(
+            (float(m.get("peak_time_frame", float("inf"))) - baseline_frames) * tr
+            for m in metrics_list
+        )
+        return (
+            earliest_post_arr_s <= _MAX_ANCHOR_POST_ARRIVAL_S,
+            earliest_post_arr_s,
+        )
+
     def _run_two_pass_cascade(
         self,
         conc_data: npt.NDArray[Any],
@@ -1778,19 +1853,21 @@ class AIFDetection(BaseInterface):
         str,
         str | None,
         int,
+        list[dict[str, Any]],
     ]:
         """Run the two-pass multi-level AIF detection cascade.
 
         Pass 1: descend through every tier (4 atlases × {strict, relaxed,
         permissive} + whole-brain relaxed = up to 13 tiers), short-circuiting
-        only when a tier produces ≥ 2 keepers (matches the downstream
-        per-candidate quality filter contract).
+        only when a tier produces ≥ 2 keepers AND has at least one
+        arterial-grade timing anchor (Mouridsen-style cluster anchor).
 
         Pass 2: if no tier had ≥ 2 keepers, fall back to the best
-        single-keeper tier observed during Pass 1 (highest max-score).
+        anchored single-keeper tier observed during Pass 1 (highest
+        max-score among tiers whose lone keeper passes the anchor gate).
 
         Population AIF (Pass 3, handled by the caller) only triggers when
-        no tier produced any keeper anywhere.
+        no tier produced any anchored keeper anywhere.
 
         Whole-brain stays at "relaxed" (not permissive) because the atlas's
         spatial constraint is what makes permissive-tier candidates safe;
@@ -1811,13 +1888,16 @@ class AIFDetection(BaseInterface):
 
         Returns:
             Tuple of ``(candidates, scores, metrics_list, detection_method,
-            atlas_tier_used, cascade_tiers_attempted)``. ``detection_method``
-            is one of ``"atlas"``, ``"automatic"``, or ``"population"``;
-            ``"population"`` indicates no keeper anywhere — caller handles
-            the Parker fallback. ``atlas_tier_used`` is the
-            ``f"{atlas_name}_{crit}"`` label of the accepted tier (or
-            ``"wb_relaxed"`` for the whole-brain tier), or ``None`` for
-            population.
+            atlas_tier_used, cascade_tiers_attempted, anchor_outcomes)``.
+            ``detection_method`` is one of ``"atlas"``, ``"automatic"``,
+            or ``"population"``; ``"population"`` indicates no anchored
+            keeper anywhere — caller handles the Parker fallback.
+            ``atlas_tier_used`` is the ``f"{atlas_name}_{crit}"`` label
+            of the accepted tier (or ``"wb_relaxed"`` for the whole-brain
+            tier), or ``None`` for population. ``anchor_outcomes`` is a
+            per-tier diagnostic list (one dict per tier attempted) with
+            keys ``tier``, ``n_candidates``, ``quorum_count``,
+            ``earliest_post_arr_s``, ``has_anchor``.
         """
         candidates: list[tuple[int, int, int]] = []
         scores: list[float] = []
@@ -1825,12 +1905,28 @@ class AIFDetection(BaseInterface):
         detection_method: str = "population"
         atlas_tier_used: str | None = None
         cascade_tiers_attempted = 0
+        anchor_outcomes: list[dict[str, Any]] = []
 
         # Pass 2 tracking: (cands, scores, metrics, method, label, max_score)
         best_single_keeper: tuple[
             list[tuple[int, int, int]], list[float],
             list[dict[str, float]], str, str, float,
         ] | None = None
+
+        def _record_tier(
+            cands: list[tuple[int, int, int]],
+            scs: list[float],
+            label: str,
+            has_anchor: bool,
+            earliest_post_arr_s: float,
+        ) -> None:
+            anchor_outcomes.append({
+                "tier": label,
+                "n_candidates": len(cands),
+                "quorum_count": self._quorum_count(scs),
+                "earliest_post_arr_s": earliest_post_arr_s,
+                "has_anchor": has_anchor,
+            })
 
         def _record_single_keeper(
             cands: list[tuple[int, int, int]],
@@ -1839,17 +1935,36 @@ class AIFDetection(BaseInterface):
             method: str,
             label: str,
         ) -> None:
+            """Record an anchored single keeper for Pass 2 fallback.
+
+            Pass-2 acceptance requires the keeper itself to satisfy the
+            anchor gate (a single keeper is the only metric we have, so
+            the cluster anchor degenerates to per-keeper timing). An
+            unanchored single keeper is rejected — likely venous, not a
+            useful Pass-2 fallback.
+            """
             nonlocal best_single_keeper
             if not scs:
                 return
             n_keepers = self._quorum_count(scs)
+            if n_keepers != 1:
+                return
             max_s = max(scs)
-            if n_keepers == 1 and max_s >= _MIN_CANDIDATE_SCORE:
-                if best_single_keeper is None or max_s > best_single_keeper[5]:
-                    best_single_keeper = (
-                        list(cands), list(scs), list(mets),
-                        method, label, max_s,
-                    )
+            if max_s < _MIN_CANDIDATE_SCORE:
+                return
+            keeper_idx = next(
+                i for i, s in enumerate(scs) if s >= _MIN_CANDIDATE_SCORE
+            )
+            keeper_anchor, _ = self._has_arterial_anchor(
+                [mets[keeper_idx]], baseline_frames, tr,
+            )
+            if not keeper_anchor:
+                return
+            if best_single_keeper is None or max_s > best_single_keeper[5]:
+                best_single_keeper = (
+                    list(cands), list(scs), list(mets),
+                    method, label, max_s,
+                )
 
         # Pass 1: atlas cascade (tightest → broadest × strict → permissive)
         pass1_succeeded = False
@@ -1865,16 +1980,21 @@ class AIFDetection(BaseInterface):
                         atlas_constrained=True,
                     )
                     cascade_tiers_attempted += 1
-                    if self._quorum_count(scs) >= _MIN_CANDIDATES_FOR_DETECTED:
+                    label = f"{atlas_names[atlas_idx]}_{crit}"
+                    has_anchor, earliest = self._has_arterial_anchor(
+                        mets, baseline_frames, tr,
+                    )
+                    _record_tier(cands, scs, label, has_anchor, earliest)
+                    if (
+                        self._quorum_count(scs) >= _MIN_CANDIDATES_FOR_DETECTED
+                        and has_anchor
+                    ):
                         candidates, scores, metrics_list = cands, scs, mets
                         detection_method = "atlas"
-                        atlas_tier_used = f"{atlas_names[atlas_idx]}_{crit}"
+                        atlas_tier_used = label
                         pass1_succeeded = True
                         break
-                    _record_single_keeper(
-                        cands, scs, mets, "atlas",
-                        f"{atlas_names[atlas_idx]}_{crit}",
-                    )
+                    _record_single_keeper(cands, scs, mets, "atlas", label)
                 if pass1_succeeded:
                     break
 
@@ -1887,7 +2007,14 @@ class AIFDetection(BaseInterface):
                 atlas_constrained=False,
             )
             cascade_tiers_attempted += 1
-            if self._quorum_count(scs) >= _MIN_CANDIDATES_FOR_DETECTED:
+            has_anchor, earliest = self._has_arterial_anchor(
+                mets, baseline_frames, tr,
+            )
+            _record_tier(cands, scs, "wb_relaxed", has_anchor, earliest)
+            if (
+                self._quorum_count(scs) >= _MIN_CANDIDATES_FOR_DETECTED
+                and has_anchor
+            ):
                 candidates, scores, metrics_list = cands, scs, mets
                 detection_method = "automatic"
                 pass1_succeeded = True
@@ -1896,7 +2023,7 @@ class AIFDetection(BaseInterface):
                     cands, scs, mets, "automatic", "wb_relaxed",
                 )
 
-        # Pass 2: best single-keeper tier
+        # Pass 2: best anchored single-keeper tier
         if not pass1_succeeded and best_single_keeper is not None:
             (
                 candidates, scores, metrics_list,
@@ -1906,6 +2033,7 @@ class AIFDetection(BaseInterface):
         return (
             candidates, scores, metrics_list,
             detection_method, atlas_tier_used, cascade_tiers_attempted,
+            anchor_outcomes,
         )
 
     def _find_candidates_in_mask(
@@ -2746,6 +2874,7 @@ class AIFDetection(BaseInterface):
         _detection_attempt: dict[str, Any] | None = None
         atlas_tier_used: str | None = None
         validation_qc: dict[str, Any] = {}
+        anchor_outcomes: list[dict[str, Any]] = []
 
         # Skip auto detection if population method requested
         if aif_method == "population":
@@ -2786,6 +2915,7 @@ class AIFDetection(BaseInterface):
             (
                 candidates, scores, metrics_list,
                 detection_method_str, atlas_tier_used, cascade_tiers_attempted,
+                anchor_outcomes,
             ) = self._run_two_pass_cascade(
                 conc_data,
                 atlas_search_mask=atlas_search_mask,
@@ -2806,19 +2936,20 @@ class AIFDetection(BaseInterface):
 
             # Cascade-exhaustion provenance: when the two-pass cascade
             # returns ``detection_method="population"`` (no tier produced
-            # any keeper anywhere), record the fact + tier-attempt count
-            # so QC consumers can distinguish "data quality too poor for
-            # voxel-AIF detection" from older single-tier fallback. The
-            # downstream per-candidate quality filter at line 2812 only
-            # writes provenance when ``candidates`` is non-empty, so this
-            # branch is the only path that captures Pass-3 exhaustion.
+            # any anchored keeper anywhere), record the fact + tier-attempt
+            # count + per-tier anchor outcomes so QC reviewers can see why
+            # each tier failed. The downstream per-candidate quality
+            # filter only writes provenance when ``candidates`` is
+            # non-empty, so this branch is the only path that captures
+            # Pass-3 exhaustion.
             if not candidates and detection_method_str == "population":
                 _detection_attempt = self._cascade_exhaustion_provenance(
                     cascade_tiers_attempted,
+                    anchor_outcomes=anchor_outcomes,
                 )
                 logger.warning(
                     "AIF cascade: all %d tiers exhausted without producing "
-                    "any keeper. Falling back to Parker population AIF.",
+                    "any anchored keeper. Falling back to Parker population AIF.",
                     cascade_tiers_attempted,
                 )
 
@@ -2975,6 +3106,13 @@ class AIFDetection(BaseInterface):
                 }
                 if atlas_tier_used is not None:
                     qc_metrics["atlas_tier_used"] = atlas_tier_used
+
+            # Merge cascade anchor outcomes (per-tier diagnostics from
+            # ``_run_two_pass_cascade``). Written whenever the cascade
+            # ran (empty when ``aif_method == "population"``), so
+            # reviewers can see which tiers were tried even on success.
+            if anchor_outcomes:
+                qc_metrics["cascade_anchor_outcomes"] = anchor_outcomes
 
             # Merge FWHM validation QC
             if validation_qc:
