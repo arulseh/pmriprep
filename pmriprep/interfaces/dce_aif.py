@@ -47,6 +47,10 @@ from pmriprep.utils.dce_constants import (
     BRAIN_EROSION_ITERATIONS_ATLAS,
     BRAIN_EROSION_MIN_VOXELS,
     DCE_AIF_EXPECTED_FULL_DOSE,
+    DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
+    DCE_AIF_TAIL_MIN_SEPARATION_SECONDS,
+    DCE_AIF_TAIL_PEAK_FRACTION,
+    DCE_AIF_TAIL_SHOULDER_SECONDS,
     EPSILON_CONCENTRATION,
     EPSILON_T1,
     HEMATOCRIT_ARTERIAL,
@@ -55,8 +59,8 @@ from pmriprep.utils.dce_constants import (
     LESION_EXCLUSION_DISTANCE_MM,
     MIDLINE_EXCLUSION_FRACTION,
     PARKER_R1_REFERENCE,
-    SLAB_EDGE_EXCLUSION_MM,
-    SLAB_EDGE_EXCLUSION_MM_ATLAS,
+    SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
+    SSS_EXCLUSION_MM,
     SUPERIOR_EXCLUSION_FRACTION,
     compute_fwhm_threshold_frames,
     compute_timing_margin_frames,
@@ -329,6 +333,113 @@ def compute_dce_aif_washout(
     return max(0.0, min(1.0, washout))
 
 
+def compute_dce_aif_peak_amplitude_warning(
+    final_peak: float,
+    expected_max_mm: float,
+    detection_method: str,
+    threshold: float = DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
+) -> tuple[float, bool]:
+    """Compute the peak-amplitude QC warning ratio + flag.
+
+    Compares the cluster-mean AIF peak (plasma units, post-Hct division)
+    against the dose-scaled Parker plasma ``peak_max`` and flags when the
+    ratio exceeds ``threshold``. Suppressed for population-AIF fallback
+    (population AIF is tautologically within its own expected range).
+
+    Args:
+        final_peak: Cluster-mean AIF peak concentration (plasma, mM).
+        expected_max_mm: Dose-scaled Parker plasma ``peak_max`` (mM).
+        detection_method: Cascade detection method label
+            ("atlas" / "automatic" / "population" / "external" /
+            "fallback"). Warning is suppressed when this equals
+            ``"population"``.
+        threshold: Multiplier on ``expected_max_mm`` above which the
+            warning fires. Defaults to
+            ``DCE_AIF_PEAK_RATIO_WARN_THRESHOLD``.
+
+    Returns:
+        ``(ratio, warning)`` — ``ratio`` is ``final_peak / expected_max_mm``
+        (NaN when suppressed or when ``expected_max_mm <= 0``);
+        ``warning`` is ``True`` iff the ratio exceeds ``threshold`` and
+        is not suppressed.
+    """
+    if expected_max_mm <= 0 or detection_method == "population":
+        return float("nan"), False
+    ratio = float(final_peak) / expected_max_mm
+    return ratio, ratio > threshold
+
+
+def detect_dce_aif_multi_bump_tail(
+    aif_curve: npt.NDArray[Any],
+    tr: float,
+    baseline_frames: int = 5,
+    secondary_peak_fraction: float = DCE_AIF_TAIL_PEAK_FRACTION,
+    tail_shoulder_seconds: float = DCE_AIF_TAIL_SHOULDER_SECONDS,
+    min_separation_seconds: float = DCE_AIF_TAIL_MIN_SEPARATION_SECONDS,
+) -> tuple[int, list[float]]:
+    """Count secondary maxima in the post-peak AIF tail.
+
+    Detects local maxima in the post-first-pass region whose absolute
+    amplitude exceeds ``secondary_peak_fraction`` x first-pass peak.
+    QC-only flag for motion / inflow / venous mixing artifacts; does not
+    alter AIF detection or candidate selection.
+
+    A clean physiologic AIF has exactly one secondary maximum
+    (recirculation hump at ~30s post-peak), so the caller should treat
+    ``count > 1`` as the abnormality threshold.
+
+    Window parameters are specified in seconds and converted to frames
+    via ``tr`` so the detector behaves consistently across acquisitions
+    with TRs from sub-second (compressed-sensing 4D) to ~6s (clinical
+    DCE-VIBE).
+
+    Args:
+        aif_curve: 1D AIF concentration curve.
+        tr: Repetition time of the AIF time series (seconds).
+        baseline_frames: Number of pre-contrast frames defining baseline.
+        secondary_peak_fraction: Fraction of first-pass peak amplitude
+            (absolute) above which a tail maximum is counted.
+        tail_shoulder_seconds: Time (seconds) to skip immediately after
+            the first-pass peak before searching for secondary maxima
+            (avoids counting the descending shoulder of the first pass
+            as a separate peak; ~half a typical first-pass FWHM).
+        min_separation_seconds: Minimum time (seconds) between detected
+            secondary peaks (~1/3 of the typical recirculation period;
+            ``scipy.signal.find_peaks`` ``distance`` parameter,
+            converted to frames using ``tr``).
+
+    Returns:
+        ``(count, heights)`` where ``count`` is the number of secondary
+        peaks and ``heights`` is their absolute concentrations.
+    """
+    from scipy.signal import find_peaks
+
+    if tr <= 0:
+        return 0, []
+    tail_shoulder_frames = max(1, int(round(tail_shoulder_seconds / tr)))
+    min_separation_frames = max(1, int(round(min_separation_seconds / tr)))
+
+    if aif_curve.size <= baseline_frames + tail_shoulder_frames + 2:
+        return 0, []
+
+    post = aif_curve[baseline_frames:]
+    peak_idx_rel = int(np.argmax(post))
+    first_pass_peak = float(post[peak_idx_rel])
+    if first_pass_peak <= 0:
+        return 0, []
+
+    tail = post[peak_idx_rel + tail_shoulder_frames:]
+    if tail.size < 3:
+        return 0, []
+
+    height_threshold = secondary_peak_fraction * first_pass_peak
+    peak_indices, _ = find_peaks(
+        tail, height=height_threshold, distance=min_separation_frames,
+    )
+    heights = [float(tail[i]) for i in peak_indices]
+    return len(peak_indices), heights
+
+
 def compute_dce_aif_baseline_stability(
     aif_curve: npt.NDArray[Any],
     baseline_frames: int = 5,
@@ -503,10 +614,12 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         "",
         usedefault=True,
         desc=(
-            "BIDS MRAcquisitionType field ('3D' or '2D'). Gates the "
-            "inferior-side inflow exclusion in AIF candidate search. "
-            "Defaults to empty string (treated as 'unknown' — falls "
-            "back to symmetric exclusion)."
+            "BIDS MRAcquisitionType field ('3D' or '2D'). QC metadata "
+            "only — surfaced in the AIF sidecar and informational logs "
+            "for downstream review. Inferior inflow exclusion is "
+            "applied universally and does not depend on this value "
+            "(BIDS metadata cannot reliably distinguish slab-selective "
+            "2D-prep sequences from plain 2D-MS)."
         ),
     )
     dose = traits.Float(
@@ -707,12 +820,19 @@ class AIFDetection(BaseInterface):
     def _get_expected_peak_range(self) -> tuple[float, float]:
         """Get expected peak concentration range based on dose.
 
-        Returns values in **blood-voxel units** (Parker 2006 convention,
-        i.e. ΔR1/r1 without Hct correction). Callers at the scaling site
-        must divide by (1-Hct) to compare against the plasma-scaled
-        aif_curve; per-voxel quality/rescue callers (lines 1357, 1381,
-        1399, 1842) operate on raw blood-voxel peaks and consume these
-        values as-is.
+        Returns values in **plasma units** — Parker 2006 population AIF
+        is the Tofts plasma input function, so
+        ``DCE_AIF_EXPECTED_FULL_DOSE`` inherits plasma scaling. The
+        cluster-mean QC warning at ``final_peak_mm`` compares correctly
+        against this in plasma: ``aif_curve`` is ``(1-Hct)``-divided at
+        its scaling site before ``final_peak`` is computed.
+
+        NB unit-mismatch in upstream candidate-tier callers: per-voxel
+        gates compare per-voxel ``peak`` (blood units, pre-Hct division)
+        against ``peak_min/peak_max`` (plasma units from this function)
+        — a ~1/(1-Hct) ≈ 1.7x systematic mis-scale. The QC warning at
+        ``final_peak_mm`` is unit-correct; upstream candidate selection
+        is not.
         """
         dose_factor = self._get_dose_factor()
         base_min = DCE_AIF_EXPECTED_FULL_DOSE.peak_min_mm
@@ -1031,8 +1151,8 @@ class AIFDetection(BaseInterface):
         lesion_mask: Optional[npt.NDArray[Any]] = None,
         lesion_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
         skip_midline: bool = False,
-        slab_edge_inferior_mm: float = SLAB_EDGE_EXCLUSION_MM,
-        slab_edge_superior_mm: float = SLAB_EDGE_EXCLUSION_MM,
+        slab_edge_inferior_mm: float = SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
+        slab_edge_superior_mm: float = SSS_EXCLUSION_MM,
         erosion_iterations: int = BRAIN_EROSION_ITERATIONS,
     ) -> npt.NDArray[Any]:
         """Prepare the search mask with erosion, slab exclusion, and lesion distance.
@@ -1058,16 +1178,19 @@ class AIFDetection(BaseInterface):
             skip_midline: Skip midline exclusion for atlas-constrained search.
             slab_edge_inferior_mm: Distance (mm) from the INFERIOR slab
                 edge (low-z under RAS+; pipeline enforces RAS+
-                reorientation upstream). For 3D-slab acquisitions, use
-                ``_inflow_exclusion_mm`` to remove entry-slice inflow
-                contamination (van der Schaaf MRM 2006). Defaults to
-                ``SLAB_EDGE_EXCLUSION_MM`` for backward compatibility.
+                reorientation upstream). Callers should pass
+                ``_inflow_exclusion_mm(...)`` to remove entry-slice
+                inflow contamination (van der Schaaf MRM 2006).
+                Default ``SLAB_EDGE_EXCLUSION_MM_ROLLOFF`` is rolloff-
+                only; production call sites override.
             slab_edge_superior_mm: Distance (mm) from the SUPERIOR slab
-                edge (high-z under RAS+) for B1/profile rolloff only.
-                Note: Step 4 below applies an additional
-                ``SUPERIOR_EXCLUSION_FRACTION`` (top 25%) cut, so this
-                parameter is effectively dominated by Step 4 except on
-                very thick slabs.
+                edge. Whole-brain callers should pass
+                ``SSS_EXCLUSION_MM`` (default) to keep the superior
+                sagittal sinus out of candidates; atlas-constrained
+                callers should pass ``SLAB_EDGE_EXCLUSION_MM_ROLLOFF``
+                since the atlas already excludes SSS by anatomy. Step 4
+                below applies an additional ``SUPERIOR_EXCLUSION_FRACTION``
+                (top 25%) cut on top of this for typical acquisitions.
             erosion_iterations: Number of binary erosion iterations. Use
                 ``BRAIN_EROSION_ITERATIONS_ATLAS`` for atlas-constrained
                 search.
@@ -2969,57 +3092,48 @@ class AIFDetection(BaseInterface):
         else:
             # ===== Phase 1: Prepare search masks =====
             _lesion_dist = max(lesion_distance, LESION_EXCLUSION_DISTANCE_MM)
-            # Inferior inflow exclusion gated on MRAcquisitionType=="3D".
-            # 2D multi-slice GRE excites each slice independently per
-            # pulse-TR, so incoming spins arrive fully relaxed into every
-            # slice — no slab-entry saturation gradient to exclude.
-            mr_type = (self.inputs.mr_acquisition_type or "").upper()
-            is_3d_slab = mr_type == "3D"
-            if is_3d_slab:
-                inferior_inflow_mm = _inflow_exclusion_mm(
-                    voxel_sizes[2], conc_data.shape[2],
+            # Inferior inflow exclusion is applied universally — BIDS
+            # MRAcquisitionType does not reliably distinguish slab-
+            # selective 2D-prep sequences (Look-Locker, FAIR, MOTSA
+            # inferior partitions, slab-encoded TWIST) from plain 2D-MS,
+            # and the latter are the only case where slab-entry inflow
+            # is genuinely absent. Cost on plain 2D-MS DCE is ~5
+            # inferior slices in WB search; benefit is correct behavior
+            # for all slab-selective acquisitions.
+            inferior_inflow_mm = _inflow_exclusion_mm(
+                voxel_sizes[2], conc_data.shape[2],
+            )
+            if self.inputs.mr_acquisition_type:
+                logger.info(
+                    "DCE MRAcquisitionType=%s; inflow exclusion applied "
+                    "universally.",
+                    (self.inputs.mr_acquisition_type or "").upper(),
                 )
-                inferior_mm_atlas = inferior_inflow_mm
-                inferior_mm_wb = inferior_inflow_mm
-            else:
-                if mr_type:
-                    logger.info(
-                        "DCE MRAcquisitionType=%s; skipping 3D-slab "
-                        "inflow exclusion (applies to 3D slab "
-                        "excitation only).", mr_type,
-                    )
-                else:
-                    logger.warning(
-                        "DCE MRAcquisitionType missing from BIDS "
-                        "sidecar; defaulting to symmetric slab-edge "
-                        "exclusion (inflow exclusion gated on "
-                        "MRAcquisitionType=3D)."
-                    )
-                inferior_mm_atlas = SLAB_EDGE_EXCLUSION_MM_ATLAS
-                inferior_mm_wb = SLAB_EDGE_EXCLUSION_MM
 
             # Atlas search: skip midline exclusion (MRA-derived atlas
-            # already excludes venous structures) and use reduced slab
-            # edge exclusion (atlas constrains to known arterial regions)
+            # already excludes venous structures, including SSS) and use
+            # rolloff-only superior margin.
             atlas_search_mask = self._prepare_search_mask(
                 brain_mask,
                 voxel_sizes,
                 lesion_mask=lesion_mask,
                 lesion_distance_mm=_lesion_dist,
                 skip_midline=True,
-                slab_edge_inferior_mm=inferior_mm_atlas,
-                slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM_ATLAS,
+                slab_edge_inferior_mm=inferior_inflow_mm,
+                slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
                 erosion_iterations=BRAIN_EROSION_ITERATIONS_ATLAS,
             )
-            # Whole-brain fallback: full erosion, slab edge, and midline
+            # Whole-brain fallback: full erosion, midline exclusion, and
+            # SSS-sized superior margin to keep the superior sagittal
+            # sinus out of the unconstrained candidate pool.
             wb_search_mask = self._prepare_search_mask(
                 brain_mask,
                 voxel_sizes,
                 lesion_mask=lesion_mask,
                 lesion_distance_mm=_lesion_dist,
                 skip_midline=False,
-                slab_edge_inferior_mm=inferior_mm_wb,
-                slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM,
+                slab_edge_inferior_mm=inferior_inflow_mm,
+                slab_edge_superior_mm=SSS_EXCLUSION_MM,
                 erosion_iterations=BRAIN_EROSION_ITERATIONS,
             )
 
@@ -3422,6 +3536,49 @@ class AIFDetection(BaseInterface):
         final_auc = compute_dce_aif_auc(aif_curve, tr)
         final_washout = compute_dce_aif_washout(aif_curve, baseline_frames)
 
+        # Peak-amplitude QC warning. Both final_peak (post-Hct division
+        # at the aif_curve scaling site) and expected_max_mm (Parker 2006
+        # plasma input) are plasma units — no Hct conversion needed.
+        # Suppressed for population fallback (population AIF is
+        # tautologically within its own expected range).
+        _, expected_max_mm = self._get_expected_peak_range()
+        peak_amplitude_ratio, peak_amplitude_warning = (
+            compute_dce_aif_peak_amplitude_warning(
+                final_peak, expected_max_mm, detection_method,
+            )
+        )
+        if peak_amplitude_warning:
+            logger.warning(
+                "DCE AIF peak %.2f mM exceeds %.1fx dose-scaled expected "
+                "max (%.2f mM); possible inflow contamination or motion "
+                "artifact.",
+                final_peak,
+                DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
+                expected_max_mm,
+            )
+
+        # Multi-bump tail detector. Physiologic recirculation produces
+        # exactly one secondary maximum (~30s post-peak); count > 1
+        # indicates motion / inflow / venous mixing. Suppressed for
+        # population fallback.
+        if detection_method != "population":
+            multi_bump_count, multi_bump_heights = (
+                detect_dce_aif_multi_bump_tail(
+                    aif_curve, tr=tr, baseline_frames=baseline_frames,
+                )
+            )
+        else:
+            multi_bump_count, multi_bump_heights = 0, []
+        multi_bump_warning = multi_bump_count > 1
+        if multi_bump_warning:
+            logger.warning(
+                "DCE AIF post-peak tail has %d secondary maxima > %.0f%% "
+                "of first-pass peak (>1 expected from physiologic "
+                "recirculation); possible motion/inflow artifact.",
+                multi_bump_count,
+                DCE_AIF_TAIL_PEAK_FRACTION * 100,
+            )
+
         # Compute AIF status for HTML report
         from pmriprep.utils.qc_standards import QCStatus
         if not np.isnan(quality_score):
@@ -3456,6 +3613,12 @@ class AIFDetection(BaseInterface):
                 "baseline_frames": baseline_frames,
                 "aif_status": aif_status,
                 "hematocrit": float(self.inputs.hematocrit),
+                "expected_peak_max_mm": float(expected_max_mm),
+                "peak_amplitude_ratio": float(peak_amplitude_ratio),
+                "peak_amplitude_warning": bool(peak_amplitude_warning),
+                "multi_bump_tail_count": int(multi_bump_count),
+                "multi_bump_tail_heights_mm": multi_bump_heights,
+                "multi_bump_tail_warning": bool(multi_bump_warning),
             }
         )
 

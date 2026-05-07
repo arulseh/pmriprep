@@ -309,6 +309,46 @@ AIF_THRESHOLDS_DEGRADED: Final[AIFThresholds] = AIFThresholds(
 )
 
 
+#: Multiplier on dose-scaled plasma ``peak_max_mm`` above which the AIF
+#: QC warning fires. Derived from two independent bounds, not tuned to
+#: any specific dataset:
+#:
+#: 1. Encoded Parker 2006 population spread is ``peak_max / peak_min
+#:    = 7.6 / 5.0 = 1.52`` (P95/P5-equivalent across cardiac output,
+#:    injection rate, weight). Literature observed-peak ceilings
+#:    (Parker 2006 max ~8.5 mM plasma, Schabel 2008 max ~9 mM plasma)
+#:    scale to ~1.18x expected_max — both views of the same biology
+#:    place clean-AIF ceiling well below 1.5x.
+#: 2. Engineering tolerance: the largest plausible single-source
+#:    operator/equipment error (50% over-dose, mis-recorded weight,
+#:    50% injection-rate error) inflates peak by 1.5x. Threshold sits
+#:    at this boundary — peaks above 1.5x cannot be explained by
+#:    realistic dose error and require artifact diagnosis (inflow,
+#:    motion, partial volume).
+#:
+#: 2.0x would be too lax — past the literature-observed clean-AIF
+#: ceiling, so escapes from the slab-edge filter would not fire.
+#: Suppressed for population-AIF fallback by construction.
+DCE_AIF_PEAK_RATIO_WARN_THRESHOLD: Final[float] = 1.5
+
+#: Multi-bump tail detection (QC-only flag). Fraction of first-pass
+#: peak (absolute) above which a post-peak local maximum is counted as
+#: a "bump." Physiologic recirculation produces 1 bump at ~30s
+#: post-peak; >1 bump indicates motion / inflow / venous mixing.
+DCE_AIF_TAIL_PEAK_FRACTION: Final[float] = 0.25
+
+#: Time (seconds) to skip immediately after the first-pass peak before
+#: searching for secondary maxima — avoids counting the descending
+#: shoulder of the first pass as a peak. ~half a typical first-pass
+#: FWHM; consistent across TRs from sub-second to ~6s.
+DCE_AIF_TAIL_SHOULDER_SECONDS: Final[float] = 6.0
+
+#: Minimum time (seconds) between detected secondary peaks
+#: (~1/3 of the typical recirculation period; ``scipy.signal.find_peaks``
+#: ``distance`` parameter, converted to frames using AIF tr).
+DCE_AIF_TAIL_MIN_SEPARATION_SECONDS: Final[float] = 10.0
+
+
 def get_aif_thresholds(criteria: str = "strict", tr: float = 0.0) -> AIFThresholds:
     """Get AIF quality thresholds based on criteria level.
 
@@ -603,22 +643,26 @@ BRAIN_EROSION_ITERATIONS_ATLAS: Final[int] = 2
 #: mask if erosion leaves fewer than this.
 BRAIN_EROSION_MIN_VOXELS: Final[int] = 100
 
-#: Distance (mm) from slab edges to exclude in the whole-brain AIF
-#: search mask. Applied to both inferior and superior edges as a slab-
-#: profile rolloff margin. The inferior side additionally receives the
-#: 3D-slab inflow exclusion via ``_inflow_exclusion_mm`` (gated on
-#: ``MRAcquisitionType == "3D"`` at the call site).
-SLAB_EDGE_EXCLUSION_MM: Final[float] = 15.0
+#: Distance (mm) from slab edges to exclude as slab-profile rolloff
+#: (B1/RF rolloff at the outermost 1-2 partitions). Applied at any
+#: edge where neither SSS exclusion nor 3D-slab inflow exclusion
+#: dominates: atlas-tier inferior + superior, and as the inferior
+#: rolloff baseline before ``_inflow_exclusion_mm`` may extend it.
+#: WB superior always uses ``SSS_EXCLUSION_MM`` (larger; SSS is
+#: dorsal midline). Inferior side at both atlas + WB tiers uses
+#: ``_inflow_exclusion_mm`` (applied universally — see
+#: ``pmriprep/interfaces/dce_aif.py`` cascade call sites).
+SLAB_EDGE_EXCLUSION_MM_ROLLOFF: Final[float] = 4.0
 
-#: Reduced slab-edge rolloff (mm) for atlas-constrained search. The
-#: MRA-derived atlas already constrains candidates to known arterial
-#: regions, so only a single-partition margin is needed for slab profile
-#: roll-off. Used for the SUPERIOR side of the search mask. The
-#: inferior side uses ``_inflow_exclusion_mm`` instead when the
-#: acquisition is 3D-slab (gated on ``MRAcquisitionType == "3D"``);
-#: when 2D or unknown, this constant is used symmetrically on both
-#: edges as a safe fallback.
-SLAB_EDGE_EXCLUSION_MM_ATLAS: Final[float] = 4.0
+#: Distance (mm) from the SUPERIOR slab edge to exclude in the
+#: whole-brain AIF search to keep the superior sagittal sinus out of
+#: the unconstrained candidate pool. SSS is a dorsal-midline venous
+#: structure that enhances heavily and early — a classic venous
+#: false positive when no atlas constraint is in play. The atlas tier
+#: does not need this cut because the MRA-derived atlas already
+#: filters SSS by anatomy. Applied to WB superior under both 2D and
+#: 3D acquisitions; not applied to atlas tier or to WB inferior.
+SSS_EXCLUSION_MM: Final[float] = 15.0
 
 #: Base distance (mm) from the INFERIOR slab edge to exclude for
 #: 3D-slab entry-slice inflow. Inflow contamination has two components:

@@ -9,15 +9,19 @@ from pmriprep.interfaces.dce_aif import (
     AIFDetection,
     _inflow_exclusion_mm,
     compute_dce_aif_fwhm_seconds,
+    compute_dce_aif_peak_amplitude_warning,
     compute_dce_aif_washout,
+    detect_dce_aif_multi_bump_tail,
 )
 from pmriprep.data import get_arterial_atlas_cascade
 from pmriprep.utils.dce_constants import (
     AIF_THRESHOLDS_PERMISSIVE,
+    DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
+    DCE_AIF_TAIL_PEAK_FRACTION,
     INFLOW_EXCLUSION_MAX_SLAB_FRACTION,
     INFLOW_EXCLUSION_MM_INFERIOR_BASE,
-    SLAB_EDGE_EXCLUSION_MM,
-    SLAB_EDGE_EXCLUSION_MM_ATLAS,
+    SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
+    SSS_EXCLUSION_MM,
 )
 
 
@@ -1238,17 +1242,19 @@ class TestPrepareSearchMaskDirectional:
         assert out[:, :, 0].sum() > 0
         assert out[:, :, 3].sum() == 0
 
-    def test_default_inferior_matches_old_symmetric_behavior(self) -> None:
-        """With both params defaulting to SLAB_EDGE_EXCLUSION_MM (15mm),
-        16-slice × 4mm mask gets symmetric 4-slice exclusion at each
-        edge — backward-compatible default."""
+    def test_signature_defaults_use_rolloff_inferior_and_sss_superior(self) -> None:
+        """Default args: inferior=SLAB_EDGE_EXCLUSION_MM_ROLLOFF (4mm),
+        superior=SSS_EXCLUSION_MM (15mm). 16-slice × 4mm mask gets 1
+        inferior slice (4mm/4mm) + 4 superior slices (15mm/4mm) zeroed.
+        Production call sites override these defaults; this just
+        documents the ad-hoc / test-invocation defaults."""
         mask = self._ones_mask((64, 64, 16))
         out = AIFDetection._prepare_search_mask(
             mask, voxel_sizes=(1.0, 1.0, 4.0),
             erosion_iterations=0, skip_midline=True,
         )
-        assert out[:, :, :4].sum() == 0   # inferior 4 slices
-        assert out[:, :, -4:].sum() == 0  # superior 4 slices
+        assert out[:, :, :1].sum() == 0   # 1 inferior slice (rolloff)
+        assert out[:, :, -4:].sum() == 0  # 4 superior slices (SSS)
 
     def test_non_axial_slab_falls_back_to_symmetric(self) -> None:
         """In-plane voxel > slice thickness → not axial → symmetric
@@ -1281,87 +1287,75 @@ class TestPrepareSearchMaskDirectional:
         assert out[:, :, 6].sum() > 0     # z=6 retained
 
 
-class TestSlabEdgeConstantsBackwardCompat:
-    """Existing slab-edge constants are unchanged."""
+class TestSlabEdgeConstants:
+    """Renamed slab-edge constants reflect actual physics rationale."""
 
-    def test_slab_edge_exclusion_mm_unchanged(self) -> None:
-        assert SLAB_EDGE_EXCLUSION_MM == 15.0
+    def test_rolloff_constant_value(self) -> None:
+        """Rolloff (B1/RF profile, atlas inferior+superior, WB inferior
+        rolloff baseline) is 4mm — single-partition margin."""
+        assert SLAB_EDGE_EXCLUSION_MM_ROLLOFF == 4.0
 
-    def test_slab_edge_exclusion_mm_atlas_unchanged(self) -> None:
-        assert SLAB_EDGE_EXCLUSION_MM_ATLAS == 4.0
+    def test_sss_constant_value(self) -> None:
+        """SSS exclusion (WB superior only) is 15mm — keeps superior
+        sagittal sinus out of the unconstrained candidate pool."""
+        assert SSS_EXCLUSION_MM == 15.0
 
 
-class TestInflowGatingAtCallSites:
-    """Integration tests for the MRAcquisitionType gating layer.
+class TestInflowExclusionAppliedUniversally:
+    """End-to-end coverage for the universal inferior-inflow apply.
 
-    Patches `_prepare_search_mask` to capture the directional arguments
-    actually passed by `_run_interface`, so we can assert the gating
-    decision propagated correctly without mocking the rest of the
-    interface plumbing.
+    v0.46.7's MRAcquisitionType gate was dropped in v0.46.8 because BIDS
+    metadata can't reliably distinguish slab-selective 2D-prep sequences
+    from plain 2D-MS. Inferior inflow exclusion is now applied to both
+    atlas + WB call sites regardless of acquisition type. These tests
+    assert that the helper output (`_inflow_exclusion_mm`) actually
+    reaches `_prepare_search_mask` and zeroes the expected slice count.
     """
 
     @staticmethod
-    def _capture_search_mask_calls(
-        mr_acquisition_type: str,
-        slice_thickness: float = 4.0,
-        n_slices: int = 24,
-    ) -> list[dict]:
-        """Run the call-site decision logic in isolation, returning the
-        list of (effective inferior, effective superior) at each call site.
-        Mirrors the gating block in `_run_interface` so we can verify
-        which constants flow through for a given mr_acquisition_type.
-        """
-        from pmriprep.interfaces.dce_aif import _inflow_exclusion_mm
+    def _ones_mask(shape: tuple[int, int, int]) -> np.ndarray:
+        return np.ones(shape, dtype=np.uint8)
 
-        mr_type = (mr_acquisition_type or "").upper()
-        is_3d_slab = mr_type == "3D"
-        if is_3d_slab:
-            inferior_inflow_mm = _inflow_exclusion_mm(slice_thickness, n_slices)
-            inferior_mm_atlas = inferior_inflow_mm
-            inferior_mm_wb = inferior_inflow_mm
-        else:
-            inferior_mm_atlas = SLAB_EDGE_EXCLUSION_MM_ATLAS
-            inferior_mm_wb = SLAB_EDGE_EXCLUSION_MM
-        return [
-            {"site": "atlas", "inferior_mm": inferior_mm_atlas,
-             "superior_mm": SLAB_EDGE_EXCLUSION_MM_ATLAS},
-            {"site": "wb", "inferior_mm": inferior_mm_wb,
-             "superior_mm": SLAB_EDGE_EXCLUSION_MM},
-        ]
+    def test_atlas_call_site_zeroes_inflow_inferior_and_rolloff_superior(
+        self,
+    ) -> None:
+        """Atlas tier: inferior=_inflow_exclusion_mm, superior=ROLLOFF.
+        24 slices × 4mm: inflow = max(20, 4*4)=20mm capped at 0.35*96=33.6mm
+        → 20mm = 5 slices inferior. Superior = 4mm = 1 slice."""
+        mask = self._ones_mask((64, 64, 24))
+        slice_thickness = 4.0
+        nz = 24
+        inflow_mm = _inflow_exclusion_mm(slice_thickness, nz)
+        inflow_slices = int(np.ceil(inflow_mm / slice_thickness))
+        out = AIFDetection._prepare_search_mask(
+            mask, voxel_sizes=(1.0, 1.0, slice_thickness),
+            erosion_iterations=0, skip_midline=True,
+            slab_edge_inferior_mm=inflow_mm,
+            slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
+        )
+        assert out[:, :, :inflow_slices].sum() == 0
+        assert out[:, :, -1:].sum() == 0
+        assert out[:, :, inflow_slices].sum() > 0
 
-    def test_3d_acquisition_uses_inflow_exclusion_at_both_sites(self) -> None:
-        """MRAcquisitionType=='3D': both call sites use the adaptive
-        inflow exclusion on the inferior side."""
-        calls = self._capture_search_mask_calls("3D")
-        assert calls[0]["site"] == "atlas"
-        assert calls[0]["inferior_mm"] == pytest.approx(20.0)  # adaptive (4mm slice → 20mm base)
-        assert calls[0]["superior_mm"] == 4.0
-        assert calls[1]["site"] == "wb"
-        assert calls[1]["inferior_mm"] == pytest.approx(20.0)
-        assert calls[1]["superior_mm"] == 15.0
-
-    def test_2d_acquisition_falls_back_to_symmetric(self) -> None:
-        """MRAcquisitionType=='2D': inferior inflow exclusion gated off;
-        atlas falls back to 4mm rolloff symmetric, WB to 15mm symmetric."""
-        calls = self._capture_search_mask_calls("2D")
-        assert calls[0]["inferior_mm"] == 4.0   # SLAB_EDGE_EXCLUSION_MM_ATLAS
-        assert calls[0]["superior_mm"] == 4.0
-        assert calls[1]["inferior_mm"] == 15.0  # SLAB_EDGE_EXCLUSION_MM
-        assert calls[1]["superior_mm"] == 15.0
-
-    def test_missing_acquisition_type_falls_back_to_symmetric(self) -> None:
-        """Empty MRAcquisitionType (sidecar field missing) defaults to
-        symmetric fallback — same as 2D."""
-        calls = self._capture_search_mask_calls("")
-        assert calls[0]["inferior_mm"] == 4.0
-        assert calls[1]["inferior_mm"] == 15.0
-
-    def test_acquisition_type_case_insensitive(self) -> None:
-        """Lowercase '3d' should also trigger inflow exclusion (defensive
-        case folding via .upper() at the gate)."""
-        calls = self._capture_search_mask_calls("3d")
-        assert calls[0]["inferior_mm"] == pytest.approx(20.0)
-        assert calls[1]["inferior_mm"] == pytest.approx(20.0)
+    def test_wb_call_site_zeroes_inflow_inferior_and_sss_superior(self) -> None:
+        """WB tier: inferior=_inflow_exclusion_mm, superior=SSS_EXCLUSION_MM.
+        24 slices × 4mm: 5 inferior slices (inflow), 4 superior slices
+        (15mm SSS / 4mm = ceil(3.75) = 4)."""
+        mask = self._ones_mask((64, 64, 24))
+        slice_thickness = 4.0
+        nz = 24
+        inflow_mm = _inflow_exclusion_mm(slice_thickness, nz)
+        inflow_slices = int(np.ceil(inflow_mm / slice_thickness))
+        sss_slices = int(np.ceil(SSS_EXCLUSION_MM / slice_thickness))
+        out = AIFDetection._prepare_search_mask(
+            mask, voxel_sizes=(1.0, 1.0, slice_thickness),
+            erosion_iterations=0, skip_midline=False,
+            slab_edge_inferior_mm=inflow_mm,
+            slab_edge_superior_mm=SSS_EXCLUSION_MM,
+        )
+        assert out[:, :, :inflow_slices].sum() == 0
+        assert out[:, :, -sss_slices:].sum() == 0
+        assert out[:, :, inflow_slices].sum() > 0
 
     def test_3d_acquisition_isotropic_voxel_passes_axial_proxy(self) -> None:
         """Regression for M1: isotropic 1×1×1mm 3D-VIBE must still get
@@ -1395,3 +1389,302 @@ class TestInflowGatingAtCallSites:
         assert out[:, :, -4:].sum() == 0
         # Middle slices retained
         assert out[:, :, 8].sum() > 0
+
+
+
+# =============================================================================
+# Test: Peak-amplitude QC warning (v0.46.8)
+# =============================================================================
+
+
+class TestDCEAIFPeakAmplitudeWarning:
+    """Coverage for ``compute_dce_aif_peak_amplitude_warning`` —
+    cluster-mean AIF peak vs dose-scaled Parker plasma ``peak_max``."""
+
+    EXPECTED_MAX = 7.6  # full-dose Parker plasma peak_max (mM)
+
+    def test_clean_full_dose_does_not_flag(self) -> None:
+        ratio, warn = compute_dce_aif_peak_amplitude_warning(
+            final_peak=6.5,
+            expected_max_mm=self.EXPECTED_MAX,
+            detection_method="atlas",
+        )
+        assert warn is False
+        assert ratio < DCE_AIF_PEAK_RATIO_WARN_THRESHOLD
+
+    def test_observed_literature_ceiling_does_not_flag(self) -> None:
+        """Schabel 2008 observed clean ceiling at full dose ~9 mM →
+        ratio 1.18 < 1.5; should not flag."""
+        ratio, warn = compute_dce_aif_peak_amplitude_warning(
+            final_peak=9.0,
+            expected_max_mm=self.EXPECTED_MAX,
+            detection_method="atlas",
+        )
+        assert warn is False
+        assert ratio == pytest.approx(9.0 / 7.6)
+
+    def test_inflated_peak_flags(self) -> None:
+        peak = (DCE_AIF_PEAK_RATIO_WARN_THRESHOLD + 0.1) * self.EXPECTED_MAX
+        ratio, warn = compute_dce_aif_peak_amplitude_warning(
+            final_peak=peak,
+            expected_max_mm=self.EXPECTED_MAX,
+            detection_method="atlas",
+        )
+        assert warn is True
+        assert ratio > DCE_AIF_PEAK_RATIO_WARN_THRESHOLD
+
+    def test_threshold_just_below_does_not_flag(self) -> None:
+        peak = (DCE_AIF_PEAK_RATIO_WARN_THRESHOLD - 0.05) * self.EXPECTED_MAX
+        _, warn = compute_dce_aif_peak_amplitude_warning(
+            final_peak=peak,
+            expected_max_mm=self.EXPECTED_MAX,
+            detection_method="atlas",
+        )
+        assert warn is False
+
+    def test_threshold_just_above_flags(self) -> None:
+        peak = (DCE_AIF_PEAK_RATIO_WARN_THRESHOLD + 0.05) * self.EXPECTED_MAX
+        _, warn = compute_dce_aif_peak_amplitude_warning(
+            final_peak=peak,
+            expected_max_mm=self.EXPECTED_MAX,
+            detection_method="atlas",
+        )
+        assert warn is True
+
+    def test_population_method_suppresses_warning(self) -> None:
+        """Even with an inflated peak, population AIF must not flag —
+        population is tautologically within its own expected range."""
+        peak = 2.0 * self.EXPECTED_MAX
+        ratio, warn = compute_dce_aif_peak_amplitude_warning(
+            final_peak=peak,
+            expected_max_mm=self.EXPECTED_MAX,
+            detection_method="population",
+        )
+        assert warn is False
+        assert np.isnan(ratio)
+
+    def test_zero_or_negative_expected_max_returns_nan(self) -> None:
+        """Defensive against malformed dose factor."""
+        ratio, warn = compute_dce_aif_peak_amplitude_warning(
+            final_peak=5.0,
+            expected_max_mm=0.0,
+            detection_method="atlas",
+        )
+        assert warn is False
+        assert np.isnan(ratio)
+
+    def test_dose_factor_scales_expected_max(self) -> None:
+        """Half-dose subject: scaled expected_max = 7.6 * 0.5 = 3.8 mM.
+        Peak just above threshold * scaled expected_max should flag."""
+        scaled_max = self.EXPECTED_MAX * 0.5
+        peak = (DCE_AIF_PEAK_RATIO_WARN_THRESHOLD + 0.05) * scaled_max
+        _, warn = compute_dce_aif_peak_amplitude_warning(
+            final_peak=peak,
+            expected_max_mm=scaled_max,
+            detection_method="atlas",
+        )
+        assert warn is True
+
+
+# =============================================================================
+# Test: Multi-bump tail detector (v0.46.8)
+# =============================================================================
+
+
+class TestMultiBumpTailDetector:
+    """Coverage for ``detect_dce_aif_multi_bump_tail``.
+
+    Builds synthetic AIF curves at TR=4s (typical clinical) and TR=0.5s
+    (sub-second compressed-sensing) to verify the seconds-based windows
+    convert to frames consistently across temporal resolutions.
+    """
+
+    @staticmethod
+    def _gaussian_bump(t: np.ndarray, center: float, sigma: float,
+                      amplitude: float) -> np.ndarray:
+        return amplitude * np.exp(-0.5 * ((t - center) / sigma) ** 2)
+
+    @staticmethod
+    def _build_aif(
+        tr: float,
+        duration_s: float,
+        baseline_frames: int,
+        first_pass_peak_s: float,
+        first_pass_amplitude: float,
+        secondary_peaks: list[tuple[float, float]],  # (center_s, amplitude)
+    ) -> np.ndarray:
+        n_frames = int(round(duration_s / tr))
+        t = np.arange(n_frames, dtype=np.float64) * tr
+        curve = TestMultiBumpTailDetector._gaussian_bump(
+            t, first_pass_peak_s, sigma=4.0, amplitude=first_pass_amplitude,
+        )
+        for center, amp in secondary_peaks:
+            curve += TestMultiBumpTailDetector._gaussian_bump(
+                t, center, sigma=4.0, amplitude=amp,
+            )
+        curve[:baseline_frames] = 0.0
+        return curve
+
+    def test_clean_aif_one_recirculation_bump_not_flagged(self) -> None:
+        """One physiologic recirculation bump → count == 1 → caller
+        treats count > 1 as the abnormality threshold."""
+        aif = self._build_aif(
+            tr=4.0, duration_s=200.0, baseline_frames=5,
+            first_pass_peak_s=20.0, first_pass_amplitude=5.0,
+            secondary_peaks=[(60.0, 1.5)],  # 30% of 5.0
+        )
+        count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
+        assert count == 1
+
+    def test_two_secondary_bumps_flagged(self) -> None:
+        aif = self._build_aif(
+            tr=4.0, duration_s=240.0, baseline_frames=5,
+            first_pass_peak_s=20.0, first_pass_amplitude=5.0,
+            secondary_peaks=[(60.0, 1.5), (120.0, 1.4)],
+        )
+        count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
+        assert count == 2
+
+    def test_three_motion_bumps_flagged(self) -> None:
+        aif = self._build_aif(
+            tr=4.0, duration_s=300.0, baseline_frames=5,
+            first_pass_peak_s=20.0, first_pass_amplitude=5.0,
+            secondary_peaks=[(60.0, 1.5), (120.0, 1.4), (180.0, 1.6)],
+        )
+        count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
+        assert count == 3
+
+    def test_below_threshold_not_counted(self) -> None:
+        """Secondary peak at 20% of first-pass (< 25%) is not counted."""
+        aif = self._build_aif(
+            tr=4.0, duration_s=200.0, baseline_frames=5,
+            first_pass_peak_s=20.0, first_pass_amplitude=5.0,
+            secondary_peaks=[(60.0, 1.0)],  # 20% of 5.0
+        )
+        count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
+        assert count == 0
+
+    def test_separation_distance_enforced(self) -> None:
+        """Two secondary maxima 8s apart (< min_separation_seconds=10s)
+        — find_peaks deduplicates, count == 1."""
+        aif = self._build_aif(
+            tr=4.0, duration_s=200.0, baseline_frames=5,
+            first_pass_peak_s=20.0, first_pass_amplitude=5.0,
+            secondary_peaks=[(60.0, 1.5), (68.0, 1.5)],
+        )
+        count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
+        assert count == 1
+
+    def test_sub_second_tr_window_scales(self) -> None:
+        """TR=0.5s — windows scale to frames preserving physical-time
+        semantics. Two secondary bumps at 60s and 120s should still be
+        counted as 2."""
+        aif = self._build_aif(
+            tr=0.5, duration_s=240.0, baseline_frames=5,
+            first_pass_peak_s=20.0, first_pass_amplitude=5.0,
+            secondary_peaks=[(60.0, 1.5), (120.0, 1.4)],
+        )
+        count, _ = detect_dce_aif_multi_bump_tail(aif, tr=0.5)
+        assert count == 2
+
+    def test_long_tr_window_floors_to_one_frame(self) -> None:
+        """TR=8s: round(6/8) under banker's rounding may give 0; the
+        max(1, ...) guard floors it to ≥1. Helper must remain functional
+        (no divide-by-zero, no zero-frame skip)."""
+        aif = self._build_aif(
+            tr=8.0, duration_s=400.0, baseline_frames=3,
+            first_pass_peak_s=40.0, first_pass_amplitude=5.0,
+            secondary_peaks=[],
+        )
+        count, _ = detect_dce_aif_multi_bump_tail(aif, tr=8.0)
+        assert count == 0  # No secondary bumps; no crash
+
+    def test_zero_tr_returns_zero(self) -> None:
+        """Defensive guard against malformed input."""
+        aif = np.zeros(40)
+        count, heights = detect_dce_aif_multi_bump_tail(aif, tr=0.0)
+        assert count == 0
+        assert heights == []
+
+    def test_zero_or_negative_peak_returns_zero(self) -> None:
+        aif = np.zeros(40)
+        count, heights = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
+        assert count == 0
+        assert heights == []
+
+    def test_short_tail_returns_zero(self) -> None:
+        """First-pass peak at last frame, no tail → no secondary peaks."""
+        aif = np.zeros(15)
+        aif[5:] = np.linspace(0, 5.0, 10)  # peak at last frame
+        count, heights = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
+        assert count == 0
+        assert heights == []
+
+    def test_shoulder_skip_does_not_count_descending_limb(self) -> None:
+        """A noise spike on the descending shoulder of the first-pass
+        peak (within tail_shoulder_seconds=6.0 of the peak) is excluded
+        by *time*, not amplitude. At TR=4s the shoulder is round(6/4)=2
+        frames, so a spike one frame post-peak (at peak+4s) is skipped
+        even when its amplitude exceeds the 25%-of-peak threshold."""
+        tr = 4.0
+        aif = self._build_aif(
+            tr=tr, duration_s=200.0, baseline_frames=5,
+            first_pass_peak_s=20.0, first_pass_amplitude=5.0,
+            secondary_peaks=[],
+        )
+        peak_idx = int(round(20.0 / tr))
+        aif[peak_idx + 1] = 0.5 * 5.0  # 50% of first-pass peak
+        count, _ = detect_dce_aif_multi_bump_tail(aif, tr=tr)
+        assert count == 0
+
+
+class TestMultiBumpCallSiteSuppression:
+    """Population-AIF call-site suppression for multi-bump.
+
+    The helper ``detect_dce_aif_multi_bump_tail`` itself does not know
+    about ``detection_method`` — suppression happens at the cascade call
+    site by short-circuiting count to 0 when the population fallback is
+    active. These tests exercise that decision logic directly without
+    invoking the full ``_run_interface``.
+    """
+
+    @staticmethod
+    def _multi_bump_count_with_suppression(
+        aif_curve: np.ndarray, tr: float, detection_method: str,
+    ) -> tuple[int, list[float]]:
+        """Mirror the call-site suppression decision in _run_interface."""
+        if detection_method != "population":
+            return detect_dce_aif_multi_bump_tail(aif_curve, tr=tr)
+        return 0, []
+
+    @staticmethod
+    def _three_bump_curve(tr: float) -> np.ndarray:
+        n = int(300 / tr)
+        t = np.arange(n) * tr
+        aif = 5.0 * np.exp(-0.5 * ((t - 20) / 4) ** 2)
+        for c in (60.0, 120.0, 180.0):
+            aif += 1.5 * np.exp(-0.5 * ((t - c) / 4) ** 2)
+        aif[:5] = 0.0
+        return aif
+
+    def test_population_method_zeroes_count_on_3_bump_curve(self) -> None:
+        aif = self._three_bump_curve(tr=4.0)
+        count, heights = self._multi_bump_count_with_suppression(
+            aif, tr=4.0, detection_method="population",
+        )
+        assert count == 0
+        assert heights == []
+
+    def test_atlas_method_does_not_suppress(self) -> None:
+        aif = self._three_bump_curve(tr=4.0)
+        count, _ = self._multi_bump_count_with_suppression(
+            aif, tr=4.0, detection_method="atlas",
+        )
+        assert count == 3
+
+
+class TestMultiBumpTailConstantValue:
+    """Regression for the 25% threshold value."""
+
+    def test_tail_peak_fraction_is_25_percent(self) -> None:
+        assert DCE_AIF_TAIL_PEAK_FRACTION == 0.25
