@@ -455,6 +455,7 @@ def _read_bids_sidecar(
         "contrast_agent": None,
         "bids_agent_string": None,  # Original ContrastBolusAgent from sidecar
         "agent_standard_dose": 0.1,  # Default standard dose (mmol/kg)
+        "mr_acquisition_type": "",   # BIDS MRAcquisitionType ('3D'/'2D')
     }
 
     nifti = Path(nifti_path)
@@ -491,6 +492,13 @@ def _read_bids_sidecar(
 
     if "FlipAngle" in meta:
         result["flip_angle"] = float(meta["FlipAngle"])
+
+    # MRAcquisitionType ("3D" or "2D") gates the inferior-side inflow
+    # exclusion in DCE AIF candidate search. 3D-slab excitation has
+    # entry-slice inflow contamination at the inferior partitions
+    # (van der Schaaf MRM 2006); 2D multi-slice does not.
+    if "MRAcquisitionType" in meta:
+        result["mr_acquisition_type"] = str(meta["MRAcquisitionType"])
 
     # Extract contrast agent r1 relaxivity from DICOM metadata
     # This enables agent-specific r1 values (e.g., Gadovist r1=5.0 at 3T)
@@ -2243,6 +2251,9 @@ def init_pmriprep_wf(
             dce_wf.inputs.inputnode.volume_tr = dce_sidecar["volume_tr"]
             dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
             dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
+            dce_wf.inputs.inputnode.mr_acquisition_type = (
+                dce_sidecar.get("mr_acquisition_type", "")
+            )
 
             # Set r1 relaxivity — priority chain:
             # 1. User-supplied override (dce_config.r1_relaxivity)

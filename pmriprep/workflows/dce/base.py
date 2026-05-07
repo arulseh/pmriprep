@@ -218,6 +218,7 @@ def init_dce_preproc_wf(
                 "tr",  # Pulse TR for SPGR signal equation
                 "volume_tr",  # Volume TR for model auto-selection (temporal resolution)
                 "te",
+                "mr_acquisition_type",  # BIDS MRAcquisitionType ('3D'/'2D')
                 "field_strength",
                 "r1_relaxivity",
                 "agent_r1_known",  # True when r1 is from confirmed agent lookup
@@ -1005,6 +1006,7 @@ def init_dce_preproc_wf(
             ("r1_relaxivity", "r1_relaxivity"),
             ("agent_r1_known", "agent_r1_known"),
             ("agent_standard_dose", "agent_standard_dose"),
+            ("mr_acquisition_type", "mr_acquisition_type"),
         ]),
         # Wire auto-detected baseline_frames from dce_preprocess
         (dce_preprocess, aif_detection, [

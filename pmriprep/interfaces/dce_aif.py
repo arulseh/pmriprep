@@ -50,6 +50,8 @@ from pmriprep.utils.dce_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_T1,
     HEMATOCRIT_ARTERIAL,
+    INFLOW_EXCLUSION_MAX_SLAB_FRACTION,
+    INFLOW_EXCLUSION_MM_INFERIOR_BASE,
     LESION_EXCLUSION_DISTANCE_MM,
     MIDLINE_EXCLUSION_FRACTION,
     PARKER_R1_REFERENCE,
@@ -79,6 +81,36 @@ _MIN_CANDIDATES_FOR_DETECTED = 2
 # pediatric or extreme-cardiac-output cohorts are added later, expose as
 # a config knob rather than tuning this constant.
 _MAX_ANCHOR_POST_ARRIVAL_S: float = 10.0
+
+
+def _inflow_exclusion_mm(
+    slice_thickness_mm: float,
+    n_slices: int,
+) -> float:
+    """Adaptive inferior-side inflow exclusion (mm) for 3D-slab DCE.
+
+    Combines a geometric base (``INFLOW_EXCLUSION_MM_INFERIOR_BASE`` =
+    20mm covers ~5 RF pulses' worth of arterial inflow at typical
+    pulse-TRs) with a partition-edge term (4×slice_thickness for
+    slab-profile wings) and a slab-fraction cap
+    (``INFLOW_EXCLUSION_MAX_SLAB_FRACTION`` = 0.35) to prevent
+    over-exclusion on thick-slab acquisitions. Caller must gate use of
+    this function on ``MRAcquisitionType == "3D"``; 2D multi-slice
+    excitation does not produce slab-entry inflow.
+
+    Args:
+        slice_thickness_mm: Through-plane voxel size in mm.
+        n_slices: Number of slices in the acquisition slab.
+
+    Returns:
+        Recommended inferior-side exclusion distance in mm.
+    """
+    slab_depth_mm = slice_thickness_mm * n_slices
+    return min(
+        max(INFLOW_EXCLUSION_MM_INFERIOR_BASE, 4.0 * slice_thickness_mm),
+        INFLOW_EXCLUSION_MAX_SLAB_FRACTION * slab_depth_mm,
+    )
+
 
 # =============================================================================
 # Parker Population AIF Parameters
@@ -466,6 +498,16 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
     tr = traits.Float(
         mandatory=True,
         desc="Temporal resolution (TR) in seconds",
+    )
+    mr_acquisition_type = traits.Str(
+        "",
+        usedefault=True,
+        desc=(
+            "BIDS MRAcquisitionType field ('3D' or '2D'). Gates the "
+            "inferior-side inflow exclusion in AIF candidate search. "
+            "Defaults to empty string (treated as 'unknown' — falls "
+            "back to symmetric exclusion)."
+        ),
     )
     dose = traits.Float(
         1.0,
@@ -989,7 +1031,8 @@ class AIFDetection(BaseInterface):
         lesion_mask: Optional[npt.NDArray[Any]] = None,
         lesion_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
         skip_midline: bool = False,
-        slab_edge_mm: float = SLAB_EDGE_EXCLUSION_MM,
+        slab_edge_inferior_mm: float = SLAB_EDGE_EXCLUSION_MM,
+        slab_edge_superior_mm: float = SLAB_EDGE_EXCLUSION_MM,
         erosion_iterations: int = BRAIN_EROSION_ITERATIONS,
     ) -> npt.NDArray[Any]:
         """Prepare the search mask with erosion, slab exclusion, and lesion distance.
@@ -997,11 +1040,14 @@ class AIFDetection(BaseInterface):
         Steps:
         1. Erode brain mask (``erosion_iterations``) to exclude cortical
            surface veins.
-        2. Exclude inferior/superior slab edges (``slab_edge_mm``) to avoid
-           slab profile roll-off artifacts.
+        2. Directional slab-edge exclusion: separate inferior/superior
+           margins to allow a larger inferior cut for 3D-slab entry-slice
+           inflow contamination while keeping the superior side small for
+           B1/profile rolloff only.
         3. Midline exclusion (skipped when ``skip_midline=True`` for
            atlas-constrained search where the atlas already excludes sinuses).
-        4. Superior slice exclusion (top 25%).
+        4. Superior slice exclusion (top 25%, dominates Step 2's superior
+           cut for typical acquisitions).
         5. Lesion exclusion (binary + distance-based).
 
         Args:
@@ -1010,9 +1056,18 @@ class AIFDetection(BaseInterface):
             lesion_mask: Optional 3D lesion mask.
             lesion_distance_mm: Minimum distance (mm) from lesion.
             skip_midline: Skip midline exclusion for atlas-constrained search.
-            slab_edge_mm: Distance (mm) from inferior/superior slab edges
-                to exclude. Use ``SLAB_EDGE_EXCLUSION_MM_ATLAS`` for
-                atlas-constrained search.
+            slab_edge_inferior_mm: Distance (mm) from the INFERIOR slab
+                edge (low-z under RAS+; pipeline enforces RAS+
+                reorientation upstream). For 3D-slab acquisitions, use
+                ``_inflow_exclusion_mm`` to remove entry-slice inflow
+                contamination (van der Schaaf MRM 2006). Defaults to
+                ``SLAB_EDGE_EXCLUSION_MM`` for backward compatibility.
+            slab_edge_superior_mm: Distance (mm) from the SUPERIOR slab
+                edge (high-z under RAS+) for B1/profile rolloff only.
+                Note: Step 4 below applies an additional
+                ``SUPERIOR_EXCLUSION_FRACTION`` (top 25%) cut, so this
+                parameter is effectively dominated by Step 4 except on
+                very thick slabs.
             erosion_iterations: Number of binary erosion iterations. Use
                 ``BRAIN_EROSION_ITERATIONS_ATLAS`` for atlas-constrained
                 search.
@@ -1029,14 +1084,46 @@ class AIFDetection(BaseInterface):
         if np.sum(search_mask) < BRAIN_EROSION_MIN_VOXELS:
             search_mask = (brain_mask > 0.5).astype(brain_mask.dtype)
 
-        # Step 2: Slab edge exclusion (slab_edge_mm from inferior/superior)
+        # Step 2: Directional slab-edge exclusion under RAS+.
+        # Inferior side uses the larger inflow exclusion; superior side
+        # uses the small rolloff exclusion. The superior cut is typically
+        # subsumed by Step 4 (top-25% exclusion); the parameter is exposed
+        # for completeness and for thick-slab cases.
+        #
+        # Axial-slab proxy guard: through-plane (z) thickness must be
+        # greater than in-plane voxel size for the inferior-as-inflow
+        # assumption to hold. Sagittal/coronal slabs reorient the inflow
+        # direction; in those cases we fall back to symmetric exclusion
+        # using the smaller of the two values to avoid over-rejecting
+        # valid candidates.
         nz = search_mask.shape[2]
         slice_thickness = float(voxel_sizes[2]) if len(voxel_sizes) > 2 else 1.0
+        in_plane_max = max(
+            float(voxel_sizes[0]) if len(voxel_sizes) > 0 else 1.0,
+            float(voxel_sizes[1]) if len(voxel_sizes) > 1 else 1.0,
+        )
+        # Use >= so isotropic 3D-VIBE (1×1×1mm) is treated as axial under
+        # RAS+: only sagittal/coronal acquisitions have in-plane voxels
+        # strictly larger than through-plane after RAS+ reorientation.
+        is_axial_slab = slice_thickness >= in_plane_max
+        effective_inferior_mm = slab_edge_inferior_mm
+        effective_superior_mm = slab_edge_superior_mm
+        if not is_axial_slab:
+            fallback_mm = min(slab_edge_inferior_mm, slab_edge_superior_mm)
+            effective_inferior_mm = fallback_mm
+            effective_superior_mm = fallback_mm
+            logger.info(
+                "Non-axial DCE acquisition (slice_thickness=%.2f mm < "
+                "in-plane=%.2f mm); falling back to symmetric slab-edge "
+                "exclusion using min=%.2f mm.",
+                slice_thickness, in_plane_max, fallback_mm,
+            )
         if slice_thickness > 0:
-            edge_slices = max(1, int(np.ceil(slab_edge_mm / slice_thickness)))
-            if edge_slices * 2 < nz:
-                search_mask[:, :, :edge_slices] = 0
-                search_mask[:, :, -edge_slices:] = 0
+            inferior_slices = max(1, int(np.ceil(effective_inferior_mm / slice_thickness)))
+            superior_slices = max(1, int(np.ceil(effective_superior_mm / slice_thickness)))
+            if inferior_slices + superior_slices < nz:
+                search_mask[:, :, :inferior_slices] = 0   # inferior (low z under RAS+)
+                search_mask[:, :, -superior_slices:] = 0  # superior (high z under RAS+)
 
         # Step 3: Midline exclusion — skip for atlas-constrained search
         # (MRA-derived atlas already excludes venous structures; midline
@@ -2882,6 +2969,35 @@ class AIFDetection(BaseInterface):
         else:
             # ===== Phase 1: Prepare search masks =====
             _lesion_dist = max(lesion_distance, LESION_EXCLUSION_DISTANCE_MM)
+            # Inferior inflow exclusion gated on MRAcquisitionType=="3D".
+            # 2D multi-slice GRE excites each slice independently per
+            # pulse-TR, so incoming spins arrive fully relaxed into every
+            # slice — no slab-entry saturation gradient to exclude.
+            mr_type = (self.inputs.mr_acquisition_type or "").upper()
+            is_3d_slab = mr_type == "3D"
+            if is_3d_slab:
+                inferior_inflow_mm = _inflow_exclusion_mm(
+                    voxel_sizes[2], conc_data.shape[2],
+                )
+                inferior_mm_atlas = inferior_inflow_mm
+                inferior_mm_wb = inferior_inflow_mm
+            else:
+                if mr_type:
+                    logger.info(
+                        "DCE MRAcquisitionType=%s; skipping 3D-slab "
+                        "inflow exclusion (applies to 3D slab "
+                        "excitation only).", mr_type,
+                    )
+                else:
+                    logger.warning(
+                        "DCE MRAcquisitionType missing from BIDS "
+                        "sidecar; defaulting to symmetric slab-edge "
+                        "exclusion (inflow exclusion gated on "
+                        "MRAcquisitionType=3D)."
+                    )
+                inferior_mm_atlas = SLAB_EDGE_EXCLUSION_MM_ATLAS
+                inferior_mm_wb = SLAB_EDGE_EXCLUSION_MM
+
             # Atlas search: skip midline exclusion (MRA-derived atlas
             # already excludes venous structures) and use reduced slab
             # edge exclusion (atlas constrains to known arterial regions)
@@ -2891,7 +3007,8 @@ class AIFDetection(BaseInterface):
                 lesion_mask=lesion_mask,
                 lesion_distance_mm=_lesion_dist,
                 skip_midline=True,
-                slab_edge_mm=SLAB_EDGE_EXCLUSION_MM_ATLAS,
+                slab_edge_inferior_mm=inferior_mm_atlas,
+                slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM_ATLAS,
                 erosion_iterations=BRAIN_EROSION_ITERATIONS_ATLAS,
             )
             # Whole-brain fallback: full erosion, slab edge, and midline
@@ -2901,7 +3018,8 @@ class AIFDetection(BaseInterface):
                 lesion_mask=lesion_mask,
                 lesion_distance_mm=_lesion_dist,
                 skip_midline=False,
-                slab_edge_mm=SLAB_EDGE_EXCLUSION_MM,
+                slab_edge_inferior_mm=inferior_mm_wb,
+                slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM,
                 erosion_iterations=BRAIN_EROSION_ITERATIONS,
             )
 

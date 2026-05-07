@@ -603,15 +603,40 @@ BRAIN_EROSION_ITERATIONS_ATLAS: Final[int] = 2
 #: mask if erosion leaves fewer than this.
 BRAIN_EROSION_MIN_VOXELS: Final[int] = 100
 
-#: Distance (mm) from inferior/superior slab edges to exclude from AIF search.
-#: Avoids 3D VIBE inflow artifacts at slab boundaries.
+#: Distance (mm) from slab edges to exclude in the whole-brain AIF
+#: search mask. Applied to both inferior and superior edges as a slab-
+#: profile rolloff margin. The inferior side additionally receives the
+#: 3D-slab inflow exclusion via ``_inflow_exclusion_mm`` (gated on
+#: ``MRAcquisitionType == "3D"`` at the call site).
 SLAB_EDGE_EXCLUSION_MM: Final[float] = 15.0
 
-#: Reduced slab edge exclusion (mm) for atlas-constrained search.
-#: The MRA-derived atlas already constrains candidates to known arterial
-#: regions; only a single-partition margin is needed for slab profile
-#: roll-off in 3D VIBE (not true inflow, which is a 2D concern).
+#: Reduced slab-edge rolloff (mm) for atlas-constrained search. The
+#: MRA-derived atlas already constrains candidates to known arterial
+#: regions, so only a single-partition margin is needed for slab profile
+#: roll-off. Used for the SUPERIOR side of the search mask. The
+#: inferior side uses ``_inflow_exclusion_mm`` instead when the
+#: acquisition is 3D-slab (gated on ``MRAcquisitionType == "3D"``);
+#: when 2D or unknown, this constant is used symmetrically on both
+#: edges as a safe fallback.
 SLAB_EDGE_EXCLUSION_MM_ATLAS: Final[float] = 4.0
+
+#: Base distance (mm) from the INFERIOR slab edge to exclude for
+#: 3D-slab entry-slice inflow. Inflow contamination has two components:
+#: a geometric refresh depth (unsaturated spins flowing into the slab;
+#: 8-15mm for arterial velocities at typical 3-6ms pulse-TR) and a
+#: partition-count component (slab-profile wings; ~3-5 outermost
+#: partitions). The base 20mm covers the geometric depth for thin
+#: isotropic acquisitions; the helper ``_inflow_exclusion_mm`` adapts
+#: upward for thicker partitions and caps at 35% of slab depth so very
+#: thick / thin-slab acquisitions don't over-exclude. Pipeline enforces
+#: RAS+ reorientation upstream, so z=0 is always the inferior partition.
+INFLOW_EXCLUSION_MM_INFERIOR_BASE: Final[float] = 20.0
+
+#: Cap on inflow exclusion as a fraction of total slab depth.
+#: Guarantees ≥65% of slab survives bilaterally for AIF search even on
+#: thick-slab acquisitions (e.g. 8 slices × 8mm = 64mm slab where a
+#: naive 4×slice = 32mm exclusion would zero half the slab).
+INFLOW_EXCLUSION_MAX_SLAB_FRACTION: Final[float] = 0.35
 
 #: Minimum distance (mm) from lesion for AIF candidate voxels.
 LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0

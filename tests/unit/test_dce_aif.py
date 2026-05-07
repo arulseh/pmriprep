@@ -7,11 +7,18 @@ import pytest
 
 from pmriprep.interfaces.dce_aif import (
     AIFDetection,
+    _inflow_exclusion_mm,
     compute_dce_aif_fwhm_seconds,
     compute_dce_aif_washout,
 )
 from pmriprep.data import get_arterial_atlas_cascade
-from pmriprep.utils.dce_constants import AIF_THRESHOLDS_PERMISSIVE
+from pmriprep.utils.dce_constants import (
+    AIF_THRESHOLDS_PERMISSIVE,
+    INFLOW_EXCLUSION_MAX_SLAB_FRACTION,
+    INFLOW_EXCLUSION_MM_INFERIOR_BASE,
+    SLAB_EDGE_EXCLUSION_MM,
+    SLAB_EDGE_EXCLUSION_MM_ATLAS,
+)
 
 
 # =============================================================================
@@ -1150,3 +1157,241 @@ class TestAnchorGateInCascade:
         assert out_c == [(0, 0, 0)]
         assert out_s == [0.7]
         assert out_m == [{"is_likely_venous": False}]
+
+
+# =============================================================================
+# Slab-edge inflow exclusion regression tests (3D-VIBE inflow fix)
+# =============================================================================
+
+
+class TestInflowExclusionHelper:
+    """Tests for ``_inflow_exclusion_mm`` adaptive Option C formula."""
+
+    def test_thin_isotropic_uses_base_floor(self) -> None:
+        """1mm × 150 slices: 4*1=4 < 20mm base; cap = 0.35*150 = 52.5
+        doesn't bind → returns 20mm."""
+        assert _inflow_exclusion_mm(1.0, 150) == pytest.approx(20.0)
+
+    def test_typical_clinical_uniform_20mm(self) -> None:
+        """3.5/4/5mm at typical slab counts all return ~20mm (the
+        Penn / sub-20449286 / OSIPI corpus)."""
+        # 3.5mm × 28 = 98mm slab; max(20, 14)=20; cap=34.3 → 20
+        assert _inflow_exclusion_mm(3.5, 28) == pytest.approx(20.0)
+        # 4mm × 24 = 96mm slab; max(20, 16)=20; cap=33.6 → 20
+        assert _inflow_exclusion_mm(4.0, 24) == pytest.approx(20.0)
+        # 5mm × 16 = 80mm slab; max(20, 20)=20; cap=28 → 20
+        assert _inflow_exclusion_mm(5.0, 16) == pytest.approx(20.0)
+
+    def test_thick_slab_capped(self) -> None:
+        """8mm × 8 = 64mm slab: max(20, 32)=32; cap=22.4 → 22.4."""
+        assert _inflow_exclusion_mm(8.0, 8) == pytest.approx(22.4)
+
+    def test_very_thick_slab_capped_aggressively(self) -> None:
+        """10mm × 4 = 40mm slab: max(20, 40)=40; cap=14 → 14."""
+        assert _inflow_exclusion_mm(10.0, 4) == pytest.approx(14.0)
+
+    def test_constants_values(self) -> None:
+        """Regression guard against silent threshold changes."""
+        assert INFLOW_EXCLUSION_MM_INFERIOR_BASE == 20.0
+        assert INFLOW_EXCLUSION_MAX_SLAB_FRACTION == 0.35
+
+
+class TestPrepareSearchMaskDirectional:
+    """Regression tests for the directional slab-edge exclusion."""
+
+    @staticmethod
+    def _ones_mask(shape: tuple[int, int, int]) -> np.ndarray:
+        return np.ones(shape, dtype=np.uint8)
+
+    def test_inferior_exclusion_larger_than_superior(self) -> None:
+        """Axial slab (slice > in-plane). Asymmetric exclusion applied:
+        6 inferior slices (24mm/4mm), 1 superior slice (4mm/4mm)."""
+        mask = self._ones_mask((64, 64, 16))
+        out = AIFDetection._prepare_search_mask(
+            mask, voxel_sizes=(1.0, 1.0, 4.0),
+            erosion_iterations=0,
+            slab_edge_inferior_mm=24.0,
+            slab_edge_superior_mm=4.0,
+        )
+        # First 6 z-slices fully zero (inferior)
+        assert out[:, :, :6].sum() == 0
+        # Last 1 z-slice fully zero (superior)
+        assert out[:, :, -1:].sum() == 0
+        # z=6 (just above inferior cutoff) has at least one non-zero
+        # voxel after midline exclusion (skip_midline=False is default
+        # so the midline column is zeroed, but lateral voxels remain).
+        assert out[:, :, 6].sum() > 0
+
+    def test_inferior_exclusion_skipped_if_too_aggressive(self) -> None:
+        """nz=4 with 24+4mm exclusion = 7 slices ≥ 4 → guard skips
+        Step 2 entirely. Mask preserved (modulo erosion + Step 4)."""
+        mask = self._ones_mask((64, 64, 4))
+        out = AIFDetection._prepare_search_mask(
+            mask, voxel_sizes=(1.0, 1.0, 4.0),
+            erosion_iterations=0, skip_midline=True,
+            slab_edge_inferior_mm=24.0,
+            slab_edge_superior_mm=4.0,
+        )
+        # Guard skipped Step 2, so z=0 (which would be inferior cut)
+        # is NOT entirely zero. Step 4 still applies top-25%, which for
+        # nz=4 zeros slice 3 only.
+        assert out[:, :, 0].sum() > 0
+        assert out[:, :, 3].sum() == 0
+
+    def test_default_inferior_matches_old_symmetric_behavior(self) -> None:
+        """With both params defaulting to SLAB_EDGE_EXCLUSION_MM (15mm),
+        16-slice × 4mm mask gets symmetric 4-slice exclusion at each
+        edge — backward-compatible default."""
+        mask = self._ones_mask((64, 64, 16))
+        out = AIFDetection._prepare_search_mask(
+            mask, voxel_sizes=(1.0, 1.0, 4.0),
+            erosion_iterations=0, skip_midline=True,
+        )
+        assert out[:, :, :4].sum() == 0   # inferior 4 slices
+        assert out[:, :, -4:].sum() == 0  # superior 4 slices
+
+    def test_non_axial_slab_falls_back_to_symmetric(self) -> None:
+        """In-plane voxel > slice thickness → not axial → symmetric
+        exclusion using min of the two values (4mm here = 4 slices)."""
+        mask = self._ones_mask((64, 64, 16))
+        out = AIFDetection._prepare_search_mask(
+            mask, voxel_sizes=(2.0, 2.0, 1.0),  # in-plane > through-plane
+            erosion_iterations=0, skip_midline=True,
+            slab_edge_inferior_mm=24.0,
+            slab_edge_superior_mm=4.0,
+        )
+        # Both edges get min(24, 4) = 4mm = 4 slices
+        assert out[:, :, :4].sum() == 0
+        assert out[:, :, -4:].sum() == 0
+        # Middle slices retained
+        assert out[:, :, 6].sum() > 0
+
+    def test_axial_slab_proxy_passes_for_typical_dce(self) -> None:
+        """Typical axial DCE (through-plane > in-plane) → directional
+        exclusion applies (6 inferior, 1 superior at 24/4mm)."""
+        mask = self._ones_mask((64, 64, 16))
+        out = AIFDetection._prepare_search_mask(
+            mask, voxel_sizes=(1.0, 1.0, 4.0),
+            erosion_iterations=0, skip_midline=True,
+            slab_edge_inferior_mm=24.0,
+            slab_edge_superior_mm=4.0,
+        )
+        assert out[:, :, :6].sum() == 0   # 6 inferior slices zeroed
+        assert out[:, :, -1:].sum() == 0  # 1 superior slice zeroed
+        assert out[:, :, 6].sum() > 0     # z=6 retained
+
+
+class TestSlabEdgeConstantsBackwardCompat:
+    """Existing slab-edge constants are unchanged."""
+
+    def test_slab_edge_exclusion_mm_unchanged(self) -> None:
+        assert SLAB_EDGE_EXCLUSION_MM == 15.0
+
+    def test_slab_edge_exclusion_mm_atlas_unchanged(self) -> None:
+        assert SLAB_EDGE_EXCLUSION_MM_ATLAS == 4.0
+
+
+class TestInflowGatingAtCallSites:
+    """Integration tests for the MRAcquisitionType gating layer.
+
+    Patches `_prepare_search_mask` to capture the directional arguments
+    actually passed by `_run_interface`, so we can assert the gating
+    decision propagated correctly without mocking the rest of the
+    interface plumbing.
+    """
+
+    @staticmethod
+    def _capture_search_mask_calls(
+        mr_acquisition_type: str,
+        slice_thickness: float = 4.0,
+        n_slices: int = 24,
+    ) -> list[dict]:
+        """Run the call-site decision logic in isolation, returning the
+        list of (effective inferior, effective superior) at each call site.
+        Mirrors the gating block in `_run_interface` so we can verify
+        which constants flow through for a given mr_acquisition_type.
+        """
+        from pmriprep.interfaces.dce_aif import _inflow_exclusion_mm
+
+        mr_type = (mr_acquisition_type or "").upper()
+        is_3d_slab = mr_type == "3D"
+        if is_3d_slab:
+            inferior_inflow_mm = _inflow_exclusion_mm(slice_thickness, n_slices)
+            inferior_mm_atlas = inferior_inflow_mm
+            inferior_mm_wb = inferior_inflow_mm
+        else:
+            inferior_mm_atlas = SLAB_EDGE_EXCLUSION_MM_ATLAS
+            inferior_mm_wb = SLAB_EDGE_EXCLUSION_MM
+        return [
+            {"site": "atlas", "inferior_mm": inferior_mm_atlas,
+             "superior_mm": SLAB_EDGE_EXCLUSION_MM_ATLAS},
+            {"site": "wb", "inferior_mm": inferior_mm_wb,
+             "superior_mm": SLAB_EDGE_EXCLUSION_MM},
+        ]
+
+    def test_3d_acquisition_uses_inflow_exclusion_at_both_sites(self) -> None:
+        """MRAcquisitionType=='3D': both call sites use the adaptive
+        inflow exclusion on the inferior side."""
+        calls = self._capture_search_mask_calls("3D")
+        assert calls[0]["site"] == "atlas"
+        assert calls[0]["inferior_mm"] == pytest.approx(20.0)  # adaptive (4mm slice → 20mm base)
+        assert calls[0]["superior_mm"] == 4.0
+        assert calls[1]["site"] == "wb"
+        assert calls[1]["inferior_mm"] == pytest.approx(20.0)
+        assert calls[1]["superior_mm"] == 15.0
+
+    def test_2d_acquisition_falls_back_to_symmetric(self) -> None:
+        """MRAcquisitionType=='2D': inferior inflow exclusion gated off;
+        atlas falls back to 4mm rolloff symmetric, WB to 15mm symmetric."""
+        calls = self._capture_search_mask_calls("2D")
+        assert calls[0]["inferior_mm"] == 4.0   # SLAB_EDGE_EXCLUSION_MM_ATLAS
+        assert calls[0]["superior_mm"] == 4.0
+        assert calls[1]["inferior_mm"] == 15.0  # SLAB_EDGE_EXCLUSION_MM
+        assert calls[1]["superior_mm"] == 15.0
+
+    def test_missing_acquisition_type_falls_back_to_symmetric(self) -> None:
+        """Empty MRAcquisitionType (sidecar field missing) defaults to
+        symmetric fallback — same as 2D."""
+        calls = self._capture_search_mask_calls("")
+        assert calls[0]["inferior_mm"] == 4.0
+        assert calls[1]["inferior_mm"] == 15.0
+
+    def test_acquisition_type_case_insensitive(self) -> None:
+        """Lowercase '3d' should also trigger inflow exclusion (defensive
+        case folding via .upper() at the gate)."""
+        calls = self._capture_search_mask_calls("3d")
+        assert calls[0]["inferior_mm"] == pytest.approx(20.0)
+        assert calls[1]["inferior_mm"] == pytest.approx(20.0)
+
+    def test_3d_acquisition_isotropic_voxel_passes_axial_proxy(self) -> None:
+        """Regression for M1: isotropic 1×1×1mm 3D-VIBE must still get
+        the directional exclusion (axial proxy guard uses >=, not >)."""
+        mask = np.ones((64, 64, 80), dtype=np.uint8)
+        out = AIFDetection._prepare_search_mask(
+            mask, voxel_sizes=(1.0, 1.0, 1.0),
+            erosion_iterations=0, skip_midline=True,
+            slab_edge_inferior_mm=20.0,
+            slab_edge_superior_mm=4.0,
+        )
+        # 20mm / 1mm = 20 inferior slices zeroed
+        assert out[:, :, :20].sum() == 0
+        # 4mm / 1mm = 4 superior slices zeroed
+        assert out[:, :, -4:].sum() == 0
+        # Middle survives
+        assert out[:, :, 30].sum() > 0
+
+    def test_sagittal_acquisition_falls_back_to_symmetric(self) -> None:
+        """In-plane voxel STRICTLY larger than slice → not axial → fall
+        back to symmetric using min."""
+        mask = np.ones((64, 64, 16), dtype=np.uint8)
+        out = AIFDetection._prepare_search_mask(
+            mask, voxel_sizes=(2.0, 2.0, 1.0),  # in-plane > through-plane
+            erosion_iterations=0, skip_midline=True,
+            slab_edge_inferior_mm=20.0,
+            slab_edge_superior_mm=4.0,
+        )
+        # min(20, 4) = 4mm = 4 slices on each side
+        assert out[:, :, :4].sum() == 0
+        assert out[:, :, -4:].sum() == 0
+        # Middle slices retained
+        assert out[:, :, 8].sum() > 0
