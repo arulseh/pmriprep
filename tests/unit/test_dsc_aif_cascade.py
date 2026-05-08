@@ -670,3 +670,67 @@ class TestTrimLoopEdgeCases:
             iterations += 1
             pool.pop()
         assert iterations == 0
+
+
+class TestPostfilterDiagsEmission:
+    """Pin the predicate that gates ``cascade_postfilter_diags`` emission.
+
+    Production code emits the per-tier postfilter diagnostics dict to
+    QC iff the cascade was downgraded (initial tier ≠ final accepted
+    tier) OR the cascade fell to synthetic (either via exhaustion or
+    via gamma-R² post-validation rejection). Single-tier acceptances
+    (cascade_initial == cascade_final, no downgrade) skip the per-tier
+    breakdown — there's no diagnostic value when only one tier ran.
+    """
+
+    @staticmethod
+    def _should_emit(qc_metrics: dict, detection_level: str,
+                     postfilter_diags: dict) -> bool:
+        """Mirror of the production gate at dsc_aif.py."""
+        return bool(
+            (qc_metrics.get("cascade_downgraded", False)
+             or detection_level == "synthetic")
+            and postfilter_diags
+        )
+
+    def test_emits_on_downgrade(self) -> None:
+        qc = {"cascade_downgraded": True}
+        diags = {"atlas_strict": {"aif_n_after_filters": 0}}
+        assert self._should_emit(qc, "atlas_relaxed", diags) is True
+
+    def test_emits_on_synthetic_exhaustion(self) -> None:
+        qc = {"cascade_downgraded": False}
+        diags = {
+            "atlas_strict": {"aif_n_after_filters": 0},
+            "atlas_relaxed": {"aif_n_after_filters": 0},
+        }
+        assert self._should_emit(qc, "synthetic", diags) is True
+
+    def test_emits_on_gamma_r2_synthetic_fallback(self) -> None:
+        # In the gamma-R²-fallback path, detection_level is overwritten
+        # to "synthetic" after a tier had originally accepted.
+        # cascade_downgraded may be False, but detection_level alone
+        # should trigger the emission.
+        qc = {"cascade_downgraded": False}
+        diags = {"atlas_strict": {"aif_n_after_filters": 5}}
+        assert self._should_emit(qc, "synthetic", diags) is True
+
+    def test_skips_on_single_tier_accept(self) -> None:
+        # Single-tier accept: initial == final, no downgrade,
+        # detection_level is the tier name (not "synthetic").
+        qc = {"cascade_downgraded": False}
+        diags = {"atlas_strict": {"aif_n_after_filters": 6}}
+        assert self._should_emit(qc, "atlas_strict", diags) is False
+
+    def test_skips_when_postfilter_diags_empty(self) -> None:
+        # Even if downgraded or synthetic, an empty diag dict produces
+        # no useful information; predicate should be False.
+        qc = {"cascade_downgraded": True}
+        assert self._should_emit(qc, "atlas_relaxed", {}) is False
+        assert self._should_emit(qc, "synthetic", {}) is False
+
+    def test_default_no_downgrade(self) -> None:
+        # Missing cascade_downgraded key should be treated as False.
+        qc: dict = {}
+        diags = {"atlas_strict": {"aif_n_after_filters": 6}}
+        assert self._should_emit(qc, "atlas_strict", diags) is False

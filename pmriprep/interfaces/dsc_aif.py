@@ -29,7 +29,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 
 from pmriprep.utils.dsc_constants import (
     AIF_PEAK_SPREAD_MAX_FRAMES,
-    AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN,
     AIF_TAIL_FRACTION_MAX,
     AIF_TAIL_WINDOW_S,
     EPSILON_CONCENTRATION,
@@ -1488,32 +1487,34 @@ class AIFDetection(BaseInterface):
     @staticmethod
     def _apply_postscore_aif_filters(
         scored: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
-        tissue_ttp_frame: float,
     ) -> tuple[
         list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         dict[str, Any],
     ]:
-        """Apply per-voxel kinetic + tissue-TTP causality filters.
+        """Apply per-voxel kinetic-coherence filters.
 
-        Three filters in order:
+        Two filters in order:
 
-        1. **Tissue-TTP causality anchor**: keep only voxels with
-           ``peak_time_frame < tissue_ttp_frame -
-           AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN`` (strict ``<``).
-           Arterial concentration must precede tissue concentration for
-           ``C_t = CBF * (AIF ⊗ R)`` to be causal. Rejects SSS / venous
-           voxels at the brain-wide tier without atlas surgery.
-        2. **1-TR peak-spread filter**: keep voxels whose
+        1. **1-TR peak-spread filter**: keep voxels whose
            ``peak_time_frame`` is within ``AIF_PEAK_SPREAD_MAX_FRAMES``
-           of the **post-anchor pool's earliest** peak. The reference
-           ``earliest_pt`` is fixed to the input pool's minimum after
-           the anchor filter — it is **not** recomputed after the
-           peak-spread filter prunes the pool, so a single reference
-           frame governs the whole pass.
-        3. **Tail/peak filter**: keep voxels with
+           of the input pool's earliest peak. The reference
+           ``earliest_pt`` is fixed to the input pool's minimum — it
+           is **not** recomputed after the peak-spread filter prunes
+           the pool, so a single reference frame governs the whole
+           pass.
+        2. **Tail/peak filter**: keep voxels with
            ``tail_fraction_late <= AIF_TAIL_FRACTION_MAX`` (default
            0.15 — see ``dsc_constants.py`` for the Bleeker 2009 PVF
            rationale).
+
+        TTP causality (peak before tissue) is **not** enforced here;
+        it is the responsibility of ``_score_candidate_cost`` upstream
+        (``_score_and_select_candidates`` rejects ``frames_before_tissue
+        < -2`` outright and applies graduated penalties for borderline
+        cases). Layering a second hard TTP gate here was introduced in
+        an earlier release as belt-and-suspenders; it conflicted with
+        the scorer's softer logic and over-rejected valid arterial
+        voxels in fast-perfusing brains at TR=1.5 s.
 
         Args:
             scored: List of ``(cost, coord, metrics)`` tuples from
@@ -1521,20 +1522,17 @@ class AIFDetection(BaseInterface):
                 must contain ``peak_time_frame`` (float, frame index
                 of first-pass peak) and ``tail_fraction_late`` (float,
                 last 30 s mean ΔR2* / first-pass peak).
-            tissue_ttp_frame: Frame index of mean-brain ΔR2* peak,
-                computed by ``_calculate_tissue_ttp_reference``.
 
         Returns:
             ``(filtered, diagnostics)`` where ``filtered`` is the
             survivor list (preserving input order) and ``diagnostics``
             is a dict with per-filter rejection counts and pool stats:
-            ``aif_n_after_filters``, ``aif_n_filtered_ttp_anchor``,
-            ``aif_n_filtered_peakspread``, ``aif_n_filtered_tail``,
-            ``aif_peak_time_spread_frames``, ``aif_tail_max_fraction``.
+            ``aif_n_after_filters``, ``aif_n_filtered_peakspread``,
+            ``aif_n_filtered_tail``, ``aif_peak_time_spread_frames``,
+            ``aif_tail_max_fraction``.
         """
         zero_diag: dict[str, Any] = {
             "aif_n_after_filters": 0,
-            "aif_n_filtered_ttp_anchor": 0,
             "aif_n_filtered_peakspread": 0,
             "aif_n_filtered_tail": 0,
             "aif_peak_time_spread_frames": 0,
@@ -1543,44 +1541,22 @@ class AIFDetection(BaseInterface):
         if not scored:
             return [], zero_diag
 
-        # Filter 1: tissue-TTP causality anchor
-        anchor_threshold = (
-            float(tissue_ttp_frame) - float(AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN)
-        )
-        anchor_pass: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
-        n_filtered_ttp = 0
-        for cost, coord, metrics in scored:
-            pt = metrics.get("peak_time_frame")
-            if pt is None or not np.isfinite(pt):
-                # Missing or NaN peak time: reject (cannot evaluate anchor)
-                n_filtered_ttp += 1
-                continue
-            if float(pt) < anchor_threshold:
-                anchor_pass.append((cost, coord, metrics))
-            else:
-                n_filtered_ttp += 1
-
-        if not anchor_pass:
-            diag = dict(zero_diag)
-            diag["aif_n_filtered_ttp_anchor"] = n_filtered_ttp
-            return [], diag
-
-        # Filter 2: 1-TR peak-spread (earliest_pt fixed for the whole pass)
+        # Filter 1: 1-TR peak-spread (earliest_pt fixed for the whole pass)
         earliest_pt = min(
             float(m.get("peak_time_frame", float("inf")))
-            for _, _, m in anchor_pass
+            for _, _, m in scored
         )
         spread_max = earliest_pt + float(AIF_PEAK_SPREAD_MAX_FRAMES)
         spread_pass: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
         n_filtered_spread = 0
-        for cost, coord, metrics in anchor_pass:
+        for cost, coord, metrics in scored:
             pt = float(metrics.get("peak_time_frame", float("inf")))
             if pt <= spread_max:
                 spread_pass.append((cost, coord, metrics))
             else:
                 n_filtered_spread += 1
 
-        # Filter 3: tail/peak threshold
+        # Filter 2: tail/peak threshold
         tail_pass: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
         n_filtered_tail = 0
         for cost, coord, metrics in spread_pass:
@@ -1609,7 +1585,6 @@ class AIFDetection(BaseInterface):
 
         diag = {
             "aif_n_after_filters": len(tail_pass),
-            "aif_n_filtered_ttp_anchor": n_filtered_ttp,
             "aif_n_filtered_peakspread": n_filtered_spread,
             "aif_n_filtered_tail": n_filtered_tail,
             "aif_peak_time_spread_frames": spread,
@@ -2763,11 +2738,11 @@ class AIFDetection(BaseInterface):
                 if not scored:
                     continue
 
-                # New post-score kinetic+anchor filter: tissue-TTP
-                # causality, 1-TR peak-spread, tail/peak ≤ threshold.
-                # See ``_apply_postscore_aif_filters`` docstring.
+                # Post-score kinetic-coherence filters: peak-spread
+                # (1-frame max from earliest) and tail/peak ≤ threshold.
+                # TTP causality is enforced by the scorer above.
                 scored, postfilter_diag = self._apply_postscore_aif_filters(
-                    scored, tissue_ttp,
+                    scored,
                 )
                 postfilter_diags_per_tier[level_name] = postfilter_diag
                 if not scored:
@@ -2995,10 +2970,6 @@ class AIFDetection(BaseInterface):
                 for tier, d in postfilter_diags_per_tier.items()
                 if union_tier_provenance.get(tier, 0) > 0
             )
-            agg_filt_ttp = sum(
-                d.get("aif_n_filtered_ttp_anchor", 0)
-                for d in postfilter_diags_per_tier.values()
-            )
             agg_filt_spread = sum(
                 d.get("aif_n_filtered_peakspread", 0)
                 for d in postfilter_diags_per_tier.values()
@@ -3008,7 +2979,6 @@ class AIFDetection(BaseInterface):
                 for d in postfilter_diags_per_tier.values()
             )
             qc_metrics["aif_n_after_filters"] = agg_after
-            qc_metrics["aif_n_filtered_ttp_anchor"] = agg_filt_ttp
             qc_metrics["aif_n_filtered_peakspread"] = agg_filt_spread
             qc_metrics["aif_n_filtered_tail"] = agg_filt_tail
             # Pool spread/tail-max computed from the accepted union
@@ -3064,12 +3034,6 @@ class AIFDetection(BaseInterface):
                 "cascade_tiers_attempted": list(tiers_attempted),
                 "aif_quality": "degraded",
             }
-            if postfilter_diags_per_tier:
-                # Surface per-tier postfilter diagnostics so QC consumers
-                # can see exactly why each tier failed.
-                qc_metrics["cascade_postfilter_diags"] = dict(
-                    postfilter_diags_per_tier
-                )
             qc_metrics.update(synth_metrics)
         else:
             raise RuntimeError(
@@ -3168,6 +3132,21 @@ class AIFDetection(BaseInterface):
                 # with what deconv sees, and marks AUC denominator as synthetic.
                 measured_aif = aif_curve.copy()
                 qc_metrics["cbv_auc_denominator_is_synthetic"] = True
+
+        # Surface per-tier postfilter diagnostics whenever the cascade
+        # was downgraded (final tier ≠ initial) OR fell to synthetic
+        # (either via cascade exhaustion or via gamma-R² post-validation
+        # rejection). Single emission point — guarantees the per-tier
+        # breakdown is available to QC consumers regardless of which
+        # path led to the final outcome.
+        if (
+            (qc_metrics.get("cascade_downgraded", False)
+             or detection_level == "synthetic")
+            and postfilter_diags_per_tier
+        ):
+            qc_metrics["cascade_postfilter_diags"] = dict(
+                postfilter_diags_per_tier
+            )
 
         # Save outputs
         out_aif_curve = self._gen_outfilename("_aif_curve.txt")

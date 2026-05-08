@@ -257,16 +257,6 @@ AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
 # AIF Per-Voxel Kinetic Filters (post-score, pre-averaging)
 # =============================================================================
 
-#: Tissue-TTP causality anchor — minimum frame gap between AIF peak and
-#: mean-brain tissue TTP. Arterial concentration must precede tissue
-#: concentration for ``C_t = CBF * (AIF ⊗ R)`` to be causal. Filter test:
-#: ``peak_t < tissue_ttp - AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN``. At
-#: TR=1.5 s, 1 frame = 1.5 s and the strict ``<`` corresponds to a ≥2-frame
-#: (≥3 s) gap, matching expected MTT/2 lag (Calamante NMR Biomed 2002,
-#: van Osch MRM 2003). Rejects SSS (lags MCA by 4-8 s) without requiring
-#: atlas surgery; preserves ACA (lags MCA by ≤1-2 s).
-AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN: Final[int] = 1
-
 #: Maximum peak-time spread (frames) within an averaged AIF voxel pool.
 #: True intra-arterial dispersion across the MCA tree (M1 → M3) is sub-
 #: second; multi-frame spread is diagnostic of capillary-bed transit (i.e.
