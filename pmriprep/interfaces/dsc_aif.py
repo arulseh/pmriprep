@@ -28,6 +28,10 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dsc_constants import (
+    AIF_PEAK_SPREAD_MAX_FRAMES,
+    AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN,
+    AIF_TAIL_FRACTION_MAX,
+    AIF_TAIL_WINDOW_S,
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
     GD_DOTA_STANDARD_DOSE,
@@ -950,6 +954,19 @@ class AIFDetection(BaseInterface):
         else:
             brr = float("nan")
 
+        # tail_fraction_late — late-tail mean / first-pass peak (fraction,
+        # not %). Distinct from BRR: BRR uses an interior window
+        # (n_time - 0.2*n_time - 10 .. n_time - 0.2*n_time), tail_fraction_late
+        # uses the absolute last AIF_TAIL_WINDOW_S of the acquisition. Used
+        # by the post-score kinetic filter to reject tissue-PVE / BBB-leakage
+        # voxels with sustained late plateau.
+        tail_late_n = max(1, int(round(AIF_TAIL_WINDOW_S / tr)))
+        tail_late_window = conc_curve[-tail_late_n:]
+        if len(tail_late_window) > 0 and fp_peak_val > EPSILON_SIGNAL:
+            tail_fraction_late = float(np.mean(tail_late_window)) / fp_peak_val
+        else:
+            tail_fraction_late = float("nan")
+
         # PBR — peak-to-baseline ratio
         if baseline_conc > EPSILON_SIGNAL:
             pbr = fp_peak_val / baseline_conc
@@ -1023,6 +1040,8 @@ class AIFDetection(BaseInterface):
             "pre_bolus_frames": baseline_frames,
             "scan_duration": scan_duration,
             "max_allowed_ttp": max_allowed_ttp,
+            "peak_time_frame": float(fp_peak_abs),
+            "tail_fraction_late": tail_fraction_late,
         }
 
     # -----------------------------------------------------------------
@@ -1461,6 +1480,142 @@ class AIFDetection(BaseInterface):
         )
 
         return top_candidates, meta
+
+    # -----------------------------------------------------------------
+    # Step 8.5: Per-voxel kinetic+anchor filter (post-score, pre-average)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _apply_postscore_aif_filters(
+        scored: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        tissue_ttp_frame: float,
+    ) -> tuple[
+        list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        dict[str, Any],
+    ]:
+        """Apply per-voxel kinetic + tissue-TTP causality filters.
+
+        Three filters in order:
+
+        1. **Tissue-TTP causality anchor**: keep only voxels with
+           ``peak_time_frame < tissue_ttp_frame -
+           AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN`` (strict ``<``).
+           Arterial concentration must precede tissue concentration for
+           ``C_t = CBF * (AIF ⊗ R)`` to be causal. Rejects SSS / venous
+           voxels at the brain-wide tier without atlas surgery.
+        2. **1-TR peak-spread filter**: keep voxels whose
+           ``peak_time_frame`` is within ``AIF_PEAK_SPREAD_MAX_FRAMES``
+           of the **post-anchor pool's earliest** peak. The reference
+           ``earliest_pt`` is fixed to the input pool's minimum after
+           the anchor filter — it is **not** recomputed after the
+           peak-spread filter prunes the pool, so a single reference
+           frame governs the whole pass.
+        3. **Tail/peak filter**: keep voxels with
+           ``tail_fraction_late <= AIF_TAIL_FRACTION_MAX`` (default
+           0.15 — see ``dsc_constants.py`` for the Bleeker 2009 PVF
+           rationale).
+
+        Args:
+            scored: List of ``(cost, coord, metrics)`` tuples from
+                ``_score_and_select_candidates``. Each ``metrics`` dict
+                must contain ``peak_time_frame`` (float, frame index
+                of first-pass peak) and ``tail_fraction_late`` (float,
+                last 30 s mean ΔR2* / first-pass peak).
+            tissue_ttp_frame: Frame index of mean-brain ΔR2* peak,
+                computed by ``_calculate_tissue_ttp_reference``.
+
+        Returns:
+            ``(filtered, diagnostics)`` where ``filtered`` is the
+            survivor list (preserving input order) and ``diagnostics``
+            is a dict with per-filter rejection counts and pool stats:
+            ``aif_n_after_filters``, ``aif_n_filtered_ttp_anchor``,
+            ``aif_n_filtered_peakspread``, ``aif_n_filtered_tail``,
+            ``aif_peak_time_spread_frames``, ``aif_tail_max_fraction``.
+        """
+        zero_diag: dict[str, Any] = {
+            "aif_n_after_filters": 0,
+            "aif_n_filtered_ttp_anchor": 0,
+            "aif_n_filtered_peakspread": 0,
+            "aif_n_filtered_tail": 0,
+            "aif_peak_time_spread_frames": 0,
+            "aif_tail_max_fraction": float("nan"),
+        }
+        if not scored:
+            return [], zero_diag
+
+        # Filter 1: tissue-TTP causality anchor
+        anchor_threshold = (
+            float(tissue_ttp_frame) - float(AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN)
+        )
+        anchor_pass: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        n_filtered_ttp = 0
+        for cost, coord, metrics in scored:
+            pt = metrics.get("peak_time_frame")
+            if pt is None or not np.isfinite(pt):
+                # Missing or NaN peak time: reject (cannot evaluate anchor)
+                n_filtered_ttp += 1
+                continue
+            if float(pt) < anchor_threshold:
+                anchor_pass.append((cost, coord, metrics))
+            else:
+                n_filtered_ttp += 1
+
+        if not anchor_pass:
+            diag = dict(zero_diag)
+            diag["aif_n_filtered_ttp_anchor"] = n_filtered_ttp
+            return [], diag
+
+        # Filter 2: 1-TR peak-spread (earliest_pt fixed for the whole pass)
+        earliest_pt = min(
+            float(m.get("peak_time_frame", float("inf")))
+            for _, _, m in anchor_pass
+        )
+        spread_max = earliest_pt + float(AIF_PEAK_SPREAD_MAX_FRAMES)
+        spread_pass: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        n_filtered_spread = 0
+        for cost, coord, metrics in anchor_pass:
+            pt = float(metrics.get("peak_time_frame", float("inf")))
+            if pt <= spread_max:
+                spread_pass.append((cost, coord, metrics))
+            else:
+                n_filtered_spread += 1
+
+        # Filter 3: tail/peak threshold
+        tail_pass: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        n_filtered_tail = 0
+        for cost, coord, metrics in spread_pass:
+            tail = metrics.get("tail_fraction_late")
+            if tail is None or not np.isfinite(tail):
+                n_filtered_tail += 1
+                continue
+            if float(tail) <= float(AIF_TAIL_FRACTION_MAX):
+                tail_pass.append((cost, coord, metrics))
+            else:
+                n_filtered_tail += 1
+
+        # Diagnostics over the final survivor pool
+        if tail_pass:
+            peak_times = [
+                float(m["peak_time_frame"]) for _, _, m in tail_pass
+            ]
+            tails = [
+                float(m["tail_fraction_late"]) for _, _, m in tail_pass
+            ]
+            spread = max(peak_times) - min(peak_times)
+            tail_max = max(tails)
+        else:
+            spread = 0
+            tail_max = float("nan")
+
+        diag = {
+            "aif_n_after_filters": len(tail_pass),
+            "aif_n_filtered_ttp_anchor": n_filtered_ttp,
+            "aif_n_filtered_peakspread": n_filtered_spread,
+            "aif_n_filtered_tail": n_filtered_tail,
+            "aif_peak_time_spread_frames": spread,
+            "aif_tail_max_fraction": tail_max,
+        }
+        return tail_pass, diag
 
     # -----------------------------------------------------------------
     # Step 9: ROI averaging + smoothing
@@ -2512,15 +2667,28 @@ class AIFDetection(BaseInterface):
         filter_meta: dict[str, Any] = {}
         cascade_initial_level: Optional[str] = None
         accepted_aif: Optional[tuple[npt.NDArray[Any], npt.NDArray[Any], int]] = None
-        accumulated_pool: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
-        accumulated_coords: set[tuple[int, int, int]] = set()
         tiers_attempted: list[str] = []
-        # Per-tier trim trajectories for tiers that tried but rejected
-        # the averaged AIF. Surfaces in QC so debugging of subjects that
-        # fall all the way to synthetic can see how many voxels survived
-        # at each level. Initialised here (not inside the cascade branch)
-        # so it is always defined before the build-AIF block below.
-        rejected_trajectories: dict[str, list[int]] = {}
+        # Accumulate-to-quorum cascade state. Stricter tiers contribute
+        # first; looser tiers add only the top-up needed to reach
+        # MIN_AIF_CANDIDATES_ACCEPT. Once quorum is reached the cascade
+        # stops — looser tiers do not dilute the union with their
+        # additional looser-criteria voxels.
+        union: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
+        union_coords: set[tuple[int, int, int]] = set()
+        union_tier_provenance: dict[str, int] = {}
+        # Per-voxel source tier (used to map single-best fallback voxel
+        # back to its tier of origin and to construct the
+        # detection_level union string).
+        union_coord_origin: dict[tuple[int, int, int], str] = {}
+        # Per-tier post-filter diagnostics (n_filtered_* counts, pool
+        # spread, max tail). Recorded even on tiers the union does not
+        # accept from, so the synthetic-fallback branch can surface why
+        # each tier failed quorum.
+        postfilter_diags_per_tier: dict[str, dict[str, Any]] = {}
+        # Filter_meta from the strictest contributing tier (geometric
+        # / lesion-distance metadata). Captured at the moment a tier
+        # first contributes a voxel to the union.
+        accepted_filter_meta: dict[str, Any] = {}
 
         if aif_method == "synthetic":
             pass  # Go directly to synthetic
@@ -2555,6 +2723,14 @@ class AIFDetection(BaseInterface):
                 if criteria_order.index(crit) >= start_idx
             ]
 
+            # Compute tissue-TTP reference once — independent of tier
+            # because it operates on the whole brain mask. Used by the
+            # existing per-tier scorer AND by the new post-score
+            # kinetic+anchor filter.
+            tissue_ttp = self._calculate_tissue_ttp_reference(
+                conc_data, brain_mask, aif_baseline_frames
+            )
+
             for crit, roi, level_name in attempts:
                 frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
                 level_n_candidates = max(
@@ -2570,9 +2746,6 @@ class AIFDetection(BaseInterface):
                 )
                 if cands.shape[0] == 0:
                     continue
-                tissue_ttp = self._calculate_tissue_ttp_reference(
-                    conc_data, brain_mask, aif_baseline_frames
-                )
                 scored, n_avail = self._score_and_select_candidates(
                     cands, conc_data, signal_data, peak_map,
                     brain_mask, tr, aif_baseline_frames, crit,
@@ -2590,6 +2763,16 @@ class AIFDetection(BaseInterface):
                 if not scored:
                     continue
 
+                # New post-score kinetic+anchor filter: tissue-TTP
+                # causality, 1-TR peak-spread, tail/peak ≤ threshold.
+                # See ``_apply_postscore_aif_filters`` docstring.
+                scored, postfilter_diag = self._apply_postscore_aif_filters(
+                    scored, tissue_ttp,
+                )
+                postfilter_diags_per_tier[level_name] = postfilter_diag
+                if not scored:
+                    continue
+
                 scored = self._ensure_bilateral_balance(
                     scored, affine, level_n_candidates,
                 )
@@ -2598,165 +2781,102 @@ class AIFDetection(BaseInterface):
                     cascade_initial_level = level_name
                 tiers_attempted.append(level_name)
 
-                # --- Progressive-trim quality gate ---
-                # Walk from len(scored) down to MIN_AIF_CANDIDATES_ACCEPT
-                # (global floor=3 for every tier). At each step, average
-                # the current pool and test quality. If the averaged AIF
-                # fails, drop the candidate with the most-negative
-                # per-voxel BRR (the most likely tail contaminator) and
-                # retry. Accept on the first passing subset (largest
-                # pool that passes). Replaces the prior single-shot
-                # Step A (all) + Step B (top-N) pattern.
-                pool: list[
-                    tuple[float, tuple[int, int, int], dict[str, Any]]
-                ] = list(scored)
-                trim_trajectory: list[int] = [len(pool)]
-                tier_accepted = False
-                while len(pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-                    result = self._try_aif_dual_roi(
-                        pool, conc_data, brain_mask, tr, aif_baseline_frames,
-                    )
-                    if result is not None:
-                        accepted_aif = (result.curve, result.mask, result.roi_size)
-                        top_candidates = pool
-                        n_available = n_avail
-                        detection_level = level_name
-                        filter_meta = f_meta
-                        filter_meta["aif_pool_trimmed_from"] = trim_trajectory[0]
-                        filter_meta["aif_pool_trimmed_to"] = len(pool)
-                        filter_meta["aif_trim_trajectory"] = list(trim_trajectory)
-                        if len(pool) < trim_trajectory[0]:
-                            _logger.info(
-                                "AIF cascade tier %s accepted after trim: "
-                                "%d -> %d candidates (trajectory=%s)",
-                                level_name,
-                                trim_trajectory[0],
-                                len(pool),
-                                trim_trajectory,
-                            )
-                        tier_accepted = True
-                        break
-                    if len(pool) == MIN_AIF_CANDIDATES_ACCEPT:
-                        break  # tier exhausted at the global floor
-                    # Drop the candidate with the most-negative per-voxel
-                    # BRR (most likely tail contaminator). Cost fallback
-                    # when BRR is NaN: ``-cost`` puts highest-cost last,
-                    # matching "worst first". The two branches produce
-                    # values from different numeric ranges (BRR ~ [-10, 30],
-                    # -cost ~ [-5, -0.1]) but both are floats so the sort
-                    # is total; in practice NaN-BRR candidates tend to get
-                    # dropped first, which is fine because a NaN BRR is
-                    # itself suspicious.
-                    worst_idx = min(
-                        range(len(pool)),
-                        key=lambda i: (
-                            pool[i][2].get("baseline_return_ratio", float("inf"))
-                            if not np.isnan(
-                                pool[i][2].get(
-                                    "baseline_return_ratio", float("nan")
-                                )
-                            )
-                            else -pool[i][0]
-                        ),
-                    )
-                    pool.pop(worst_idx)
-                    trim_trajectory.append(len(pool))
-
-                if tier_accepted:
-                    break
-
-                # Tier rejected after trim (or never entered the loop).
-                # Stash the trajectory per-tier so downstream debugging
-                # of subjects that exhaust every tier (and fall to
-                # synthetic AIF) can see how many voxels were tried at
-                # each level. Only emitted when trim actually ran.
-                if len(trim_trajectory) > 1 or (
-                    len(pool) >= MIN_AIF_CANDIDATES_ACCEPT
-                ):
-                    rejected_trajectories[level_name] = list(trim_trajectory)
-                    _logger.debug(
-                        "AIF cascade tier %s rejected after trim: %s",
-                        level_name,
-                        trim_trajectory,
-                    )
-
-                # Accumulate good candidates (deduplicate by coordinate).
-                # Use the *original* full ``scored`` list, not the trimmed
-                # pool, so the next tier / accumulated-pool fallback sees
-                # every candidate that scored here.
+                # Sort survivors by cost (lowest first) and accumulate
+                # ONLY up to quorum. Looser tiers contribute only the
+                # top-up needed; once quorum is reached the cascade
+                # stops to preserve stricter-tier voxel priority.
+                scored.sort(key=lambda x: x[0])
+                taken_this_tier = 0
                 for cost, coord, metrics in scored:
-                    if coord not in accumulated_coords:
-                        accumulated_pool.append((cost, coord, metrics))
-                        accumulated_coords.add(coord)
-
-            # --- Post-loop: try accumulated pool ---
-            if accepted_aif is None and accumulated_pool:
-                accumulated_pool.sort(key=lambda x: x[0])
-                # Cap pool to prevent permissive domination
-                pool_cap = max(
-                    2 * n_candidates,
-                    2 * MIN_AIF_CANDIDATES_ACCEPT,
-                )
-                capped_pool = accumulated_pool[:pool_cap]
-
-                if len(capped_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-                    result = self._try_aif_dual_roi(
-                        capped_pool, conc_data, brain_mask,
-                        tr, aif_baseline_frames,
-                    )
-                    if result is not None:
-                        accepted_aif = (result.curve, result.mask, result.roi_size)
-                        top_candidates = capped_pool
-                        n_available = len(accumulated_pool)
-                        detection_level = "accumulated"
-                        filter_meta = {}
-
-                # Single-best fallback: relaxed gate (global_max_in_fp +
-                # averaged BRR floor). A noisy single-voxel AIF preserves
-                # patient-specific bolus timing — but a voxel with a
-                # strongly negative tail is worse than synthetic, so we
-                # apply AIF_AVG_BRR_MIN here too and fall through to
-                # synthetic if it fails.
-                if accepted_aif is None and capped_pool:
-                    best_only = [capped_pool[0]]
-                    # Try roi_size=1 first (pure voxel timing, no tissue
-                    # dilution). If the BRR gate rejects, fall through
-                    # to roi_size=3 — averaging the 3x3x3 neighbourhood
-                    # can pull the tail back up. Both failing forces
-                    # synthetic.
-                    for roi_size in (1, 3):
-                        curve, mask = self._compute_roi_averaged_aif(
-                            best_only, conc_data, brain_mask,
-                            roi_size=roi_size,
-                        )
-                        if not self._aif_global_max_in_fp(
-                            curve, aif_baseline_frames, tr
-                        ):
-                            continue
-                        single_best_brr = self._compute_aif_brr(
-                            curve, aif_baseline_frames, tr
-                        )
-                        if (
-                            not np.isnan(single_best_brr)
-                            and single_best_brr < AIF_AVG_BRR_MIN
-                        ):
-                            _logger.warning(
-                                "AIF cascade: single-best candidate rejected "
-                                "(BRR=%.1f%% < %.1f%%); falling through to "
-                                "synthetic AIF",
-                                single_best_brr, AIF_AVG_BRR_MIN,
-                            )
-                            continue
-                        accepted_aif = (curve, mask, roi_size)
-                        top_candidates = best_only
-                        n_available = len(accumulated_pool)
-                        detection_level = tiers_attempted[-1] if tiers_attempted else "single_best"
-                        filter_meta = {}
-                        _logger.warning(
-                            "AIF cascade: using single-best candidate "
-                            "(accumulated pool failed dual-ROI validation)"
-                        )
+                    if coord in union_coords:
+                        continue
+                    if len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
                         break
+                    union.append((cost, coord, metrics))
+                    union_coords.add(coord)
+                    union_coord_origin[coord] = level_name
+                    taken_this_tier += 1
+                union_tier_provenance[level_name] = taken_this_tier
+
+                # Capture filter_meta from the strictest contributing tier
+                if taken_this_tier > 0 and not accepted_filter_meta:
+                    accepted_filter_meta = dict(f_meta)
+
+                if len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
+                    break  # quorum reached; later tiers do not contribute
+
+            # --- Post-cascade: single dual_roi check on the union ---
+            if len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
+                result = self._try_aif_dual_roi(
+                    union, conc_data, brain_mask, tr, aif_baseline_frames,
+                )
+                if result is not None:
+                    accepted_aif = (result.curve, result.mask, result.roi_size)
+                    top_candidates = union
+                    n_available = len(union)
+                    # detection_level: cascade-ordered ``+``-joined list
+                    # of tiers that contributed voxels to the union.
+                    # E.g. union built from strict 2 + relaxed 1 →
+                    # ``"atlas_strict+atlas_relaxed"``. Single-tier
+                    # acceptances stay as plain tier names
+                    # (e.g. ``"atlas_strict"``) for back-compat with
+                    # downstream consumers that key on the old enum.
+                    contributing = [
+                        lvl for _, _, lvl in attempts
+                        if union_tier_provenance.get(lvl, 0) > 0
+                    ]
+                    detection_level = "+".join(contributing) if contributing else "synthetic"
+                    filter_meta = dict(accepted_filter_meta)
+
+            # Single-best fallback: union has voxels but dual_roi rejected
+            # (or quorum unmet). Try the lowest-cost union voxel; relaxed
+            # gate matches the legacy semantics (global_max_in_fp +
+            # AIF_AVG_BRR_MIN).
+            if accepted_aif is None and len(union) > 0:
+                union_sorted = sorted(union, key=lambda x: x[0])
+                best_only = [union_sorted[0]]
+                for roi_size in (1, 3):
+                    curve, mask = self._compute_roi_averaged_aif(
+                        best_only, conc_data, brain_mask,
+                        roi_size=roi_size,
+                    )
+                    if not self._aif_global_max_in_fp(
+                        curve, aif_baseline_frames, tr
+                    ):
+                        continue
+                    single_best_brr = self._compute_aif_brr(
+                        curve, aif_baseline_frames, tr
+                    )
+                    if (
+                        not np.isnan(single_best_brr)
+                        and single_best_brr < AIF_AVG_BRR_MIN
+                    ):
+                        _logger.warning(
+                            "AIF cascade: single-best candidate rejected "
+                            "(BRR=%.1f%% < %.1f%%); falling through to "
+                            "synthetic AIF",
+                            single_best_brr, AIF_AVG_BRR_MIN,
+                        )
+                        continue
+                    accepted_aif = (curve, mask, roi_size)
+                    top_candidates = best_only
+                    n_available = len(union)
+                    # Use the chosen voxel's source tier (looked up
+                    # via the per-coord origin map) rather than the
+                    # last attempted tier, because the single-best
+                    # voxel typically came from a stricter tier than
+                    # the last one we tried.
+                    best_coord = best_only[0][1]
+                    detection_level = union_coord_origin.get(
+                        best_coord,
+                        tiers_attempted[-1] if tiers_attempted else "single_best",
+                    )
+                    filter_meta = dict(accepted_filter_meta)
+                    _logger.warning(
+                        "AIF cascade: using single-best candidate "
+                        "(union failed dual-ROI validation)"
+                    )
+                    break
 
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
@@ -2804,12 +2924,51 @@ class AIFDetection(BaseInterface):
                 qc_metrics["cascade_initial_level"] = cascade_initial_level
                 qc_metrics["cascade_final_level"] = detection_level
             qc_metrics["cascade_tiers_attempted"] = tiers_attempted
-            qc_metrics["cascade_accumulated_pool_size"] = len(accumulated_pool)
             qc_metrics["cascade_accepted_roi_size"] = accepted_roi_size
-            if rejected_trajectories:
-                qc_metrics["cascade_rejected_trim_trajectories"] = (
-                    rejected_trajectories
-                )
+            qc_metrics["aif_quality"] = "detected"
+            qc_metrics["aif_tier_provenance"] = dict(union_tier_provenance)
+            # Aggregate per-tier postfilter diagnostics across all tiers
+            # that contributed to the union (sum of n_filtered_* counts;
+            # max-of-max for spread/tail).
+            agg_after = sum(
+                d.get("aif_n_after_filters", 0)
+                for tier, d in postfilter_diags_per_tier.items()
+                if union_tier_provenance.get(tier, 0) > 0
+            )
+            agg_filt_ttp = sum(
+                d.get("aif_n_filtered_ttp_anchor", 0)
+                for d in postfilter_diags_per_tier.values()
+            )
+            agg_filt_spread = sum(
+                d.get("aif_n_filtered_peakspread", 0)
+                for d in postfilter_diags_per_tier.values()
+            )
+            agg_filt_tail = sum(
+                d.get("aif_n_filtered_tail", 0)
+                for d in postfilter_diags_per_tier.values()
+            )
+            qc_metrics["aif_n_after_filters"] = agg_after
+            qc_metrics["aif_n_filtered_ttp_anchor"] = agg_filt_ttp
+            qc_metrics["aif_n_filtered_peakspread"] = agg_filt_spread
+            qc_metrics["aif_n_filtered_tail"] = agg_filt_tail
+            # Pool spread/tail-max computed from the accepted union
+            if top_candidates:
+                pks = [
+                    float(m.get("peak_time_frame", float("nan")))
+                    for _, _, m in top_candidates
+                ]
+                pks = [p for p in pks if np.isfinite(p)]
+                tls = [
+                    float(m.get("tail_fraction_late", float("nan")))
+                    for _, _, m in top_candidates
+                ]
+                tls = [t for t in tls if np.isfinite(t)]
+                if pks:
+                    qc_metrics["aif_peak_time_spread_frames"] = (
+                        max(pks) - min(pks)
+                    )
+                if tls:
+                    qc_metrics["aif_tail_max_fraction"] = max(tls)
             spr, fp_frame, _ = self._compute_aif_spr(
                 aif_curve, aif_baseline_frames, tr,
             )
@@ -2843,10 +3002,13 @@ class AIFDetection(BaseInterface):
                 "n_aif_voxels_available": 0,
                 "synthetic_fallback_reason": "no_candidates",
                 "cascade_tiers_attempted": list(tiers_attempted),
+                "aif_quality": "degraded",
             }
-            if rejected_trajectories:
-                qc_metrics["cascade_rejected_trim_trajectories"] = (
-                    rejected_trajectories
+            if postfilter_diags_per_tier:
+                # Surface per-tier postfilter diagnostics so QC consumers
+                # can see exactly why each tier failed quorum.
+                qc_metrics["cascade_postfilter_diags"] = dict(
+                    postfilter_diags_per_tier
                 )
             qc_metrics.update(synth_metrics)
         else:

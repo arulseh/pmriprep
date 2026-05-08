@@ -254,6 +254,44 @@ AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
 
 
 # =============================================================================
+# AIF Per-Voxel Kinetic Filters (post-score, pre-averaging)
+# =============================================================================
+
+#: Tissue-TTP causality anchor — minimum frame gap between AIF peak and
+#: mean-brain tissue TTP. Arterial concentration must precede tissue
+#: concentration for ``C_t = CBF * (AIF ⊗ R)`` to be causal. Filter test:
+#: ``peak_t < tissue_ttp - AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN``. At
+#: TR=1.5 s, 1 frame = 1.5 s and the strict ``<`` corresponds to a ≥2-frame
+#: (≥3 s) gap, matching expected MTT/2 lag (Calamante NMR Biomed 2002,
+#: van Osch MRM 2003). Rejects SSS (lags MCA by 4-8 s) without requiring
+#: atlas surgery; preserves ACA (lags MCA by ≤1-2 s).
+AIF_PEAK_TIME_PRE_TISSUE_FRAMES_MIN: Final[int] = 1
+
+#: Maximum peak-time spread (frames) within an averaged AIF voxel pool.
+#: True intra-arterial dispersion across the MCA tree (M1 → M3) is sub-
+#: second; multi-frame spread is diagnostic of capillary-bed transit (i.e.
+#: partial-volume contamination), not arterial branching (Calamante NMR
+#: Biomed 2013; Bleeker MRM 2011).
+AIF_PEAK_SPREAD_MAX_FRAMES: Final[int] = 1
+
+#: Maximum tail/peak fraction for an AIF voxel (mean ΔR2* over the last
+#: ``AIF_TAIL_WINDOW_S`` divided by first-pass peak). Catches BBB-leakage
+#: and tissue-PVE-driven late plateau. Threshold of 0.15 (not the
+#: physiologically tighter 0.10) is set per Bleeker MRM 2009 PVF analysis
+#: at ~1.875 mm in-plane resolution: M1 lumen (~2.5 mm) fills <30% of a
+#: voxel, so PVE-inflated tails of 10-15% are physically expected for
+#: arterial voxels at this resolution.
+AIF_TAIL_FRACTION_MAX: Final[float] = 0.15
+
+#: Late-tail measurement window (seconds, from end of acquisition). At
+#: typical bolus arrival ~30 s and recirculation decay <5% peak by t > 4×
+#: MTT (Willats MRM 2006, Vonken MRM 1999), 30 s places the window well
+#: past first-pass + recirculation in normal tissue, so a 15% tail
+#: indicates extravasation/PVE rather than residual recirculation.
+AIF_TAIL_WINDOW_S: Final[float] = 30.0
+
+
+# =============================================================================
 # Field-Strength Dependent Constants
 # =============================================================================
 

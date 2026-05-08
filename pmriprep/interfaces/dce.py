@@ -4092,6 +4092,7 @@ class DCERegistration(SimpleInterface):
                 calculate_correlation_from_files,
                 calculate_dice,
                 calculate_nmi_from_files,
+                transform_mask_to_grid,
             )
 
             # Get optional brain mask using isdefined
@@ -4101,10 +4102,22 @@ class DCERegistration(SimpleInterface):
             ).exists():
                 mask_path = str(self.inputs.brain_mask)
 
+            # Resample the input mask onto the DCE grid using the just-
+            # computed FLIRT matrix. Without this step the mask remains
+            # in T1w/anat space while registered_t1w and dce_mean live on
+            # the DCE grid, causing every QC helper to raise on shape
+            # mismatch and the resulting metrics to be silently dropped.
+            mask_path_dce: Optional[str] = None
+            if mask_path is not None:
+                resampled = transform_mask_to_grid(
+                    mask_path, dce_mean, self._gen_matfilename()
+                )
+                mask_path_dce = resampled or None
+
             # Calculate NMI (always possible)
             try:
                 nmi = calculate_nmi_from_files(
-                    registered_t1w, dce_mean, mask_path=mask_path
+                    registered_t1w, dce_mean, mask_path=mask_path_dce
                 )
                 qc_metrics["nmi"] = nmi
                 if nmi < REG_QC_THRESHOLDS["nmi_min"]:
@@ -4113,12 +4126,12 @@ class DCERegistration(SimpleInterface):
                         f"{REG_QC_THRESHOLDS['nmi_min']}"
                     )
             except Exception as exc:
-                logger.debug("NMI calculation failed: %s", exc)
+                logger.warning("NMI calculation failed: %s", exc)
 
             # Calculate correlation within brain mask
             try:
                 corr = calculate_correlation_from_files(
-                    registered_t1w, dce_mean, mask_path=mask_path
+                    registered_t1w, dce_mean, mask_path=mask_path_dce
                 )
                 qc_metrics["correlation"] = corr
                 if corr < REG_QC_THRESHOLDS["correlation_min"]:
@@ -4127,10 +4140,10 @@ class DCERegistration(SimpleInterface):
                         f"{REG_QC_THRESHOLDS['correlation_min']}"
                     )
             except Exception as exc:
-                logger.debug("Correlation calculation failed: %s", exc)
+                logger.warning("Correlation calculation failed: %s", exc)
 
             # Calculate DICE if brain mask provided
-            if mask_path:
+            if mask_path_dce:
                 try:
                     # Create a rough brain mask from registered T1w by thresholding
                     reg_img = nib.load(registered_t1w)
@@ -4144,8 +4157,8 @@ class DCERegistration(SimpleInterface):
                         )
                         reg_mask = reg_data > threshold
 
-                        # Load the provided brain mask
-                        mask_img = nib.load(mask_path)
+                        # Load the DCE-grid brain mask
+                        mask_img = nib.load(mask_path_dce)
                         ref_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
                         # Compute DICE between the two masks
@@ -4160,7 +4173,7 @@ class DCERegistration(SimpleInterface):
                                 f"{REG_QC_THRESHOLDS['dice_min']}"
                             )
                 except Exception as exc:
-                    logger.debug("DICE calculation failed: %s", exc)
+                    logger.warning("DICE calculation failed: %s", exc)
 
             # Check transform determinant for volume preservation
             out_matrix = self._gen_matfilename()
@@ -4181,13 +4194,13 @@ class DCERegistration(SimpleInterface):
                             "(volume expansion)"
                         )
                 except Exception as exc:
-                    logger.debug("Determinant check failed: %s", exc)
+                    logger.warning("Determinant check failed: %s", exc)
 
             # Add registration metadata
             qc_metrics["dof"] = self.inputs.dof
             qc_metrics["cost_function"] = self.inputs.cost
             qc_metrics["reference_type"] = self.inputs.reference_type
-            qc_metrics["brain_mask_used"] = mask_path is not None
+            qc_metrics["brain_mask_used"] = mask_path_dce is not None
 
             # Determine overall QC status
             qc_metrics["warnings"] = warnings_list

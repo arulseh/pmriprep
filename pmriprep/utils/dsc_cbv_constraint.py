@@ -425,11 +425,20 @@ def assess_dsc_cbv_quality(
     # AIF detection tier is read here (not from result.detection_level,
     # which isn't set yet) to allow the AIF-tier fast-pass below to bypass
     # the CNR-coverage SKIP for high-quality atlas-based AIF detections.
+    # detection_method may be a "+"-joined union (e.g. "atlas_strict+
+    # atlas_relaxed") under v3 accumulate-to-quorum semantics; treat the
+    # union as high-quality only when EVERY contributing tier is in the
+    # bypass set (otherwise a looser tier dilutes the bypass guarantee).
     _detection_level_for_cnr = str(aif_qc_data.get("detection_method", ""))
-    aif_high_quality = _detection_level_for_cnr in {
-        "atlas_strict",
-        "atlas_relaxed",
-    }
+    _contributing_tiers = (
+        set(_detection_level_for_cnr.split("+"))
+        if _detection_level_for_cnr
+        else set()
+    )
+    _AIF_BYPASS_TIERS = {"atlas_strict", "atlas_relaxed"}
+    aif_high_quality = bool(_contributing_tiers) and _contributing_tiers.issubset(
+        _AIF_BYPASS_TIERS
+    )
 
     # --- CNR Coverage and Mean CNR ---
     cnr_info = aif_qc_data.get("cnr_whole_brain", {})
@@ -488,18 +497,26 @@ def assess_dsc_cbv_quality(
 
     # --- AIF Detection Level ---
     # A synthetic AIF produces unreliable CBV regardless of shape metrics.
+    # Under v3 accumulate-to-quorum semantics, detection_method may be a
+    # "+"-joined union (e.g. "atlas_strict+atlas_relaxed"). A single
+    # contributing tier in the LOW or MODERATE set is enough to penalise
+    # the union — looser-tier voxels dilute the AIF shape regardless of
+    # what stricter tiers contributed.
     _AIF_LEVELS_LOW = {"synthetic"}
     _AIF_LEVELS_MODERATE = {"brain_permissive", "brain_relaxed", "atlas_permissive"}
 
     detection_level = str(aif_qc_data.get("detection_method", ""))
     result.detection_level = detection_level or None
+    _contributing = (
+        set(detection_level.split("+")) if detection_level else set()
+    )
 
-    if detection_level in _AIF_LEVELS_LOW:
+    if _contributing & _AIF_LEVELS_LOW:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
             f"AIF detection level '{detection_level}' — CBV unreliable"
         )
-    elif detection_level in _AIF_LEVELS_MODERATE:
+    elif _contributing & _AIF_LEVELS_MODERATE:
         confidence = _downgrade_confidence(confidence, "moderate")
         result.reasons.append(
             f"AIF detection level '{detection_level}' — CBV quality uncertain"

@@ -770,3 +770,94 @@ def compute_dice_for_selection(
             exc,
         )
         return 0.0
+
+
+def transform_mask_to_grid(
+    mask_file: Optional[Union[str, Path]],
+    reference_file: Optional[Union[str, Path]],
+    transform_matrix: Optional[Union[str, Path]],
+    out_dir: Optional[Path] = None,
+) -> str:
+    """Transform a binary mask to a target grid using a FLIRT matrix.
+
+    Resamples a binary mask onto the grid of ``reference_file`` by
+    applying ``transform_matrix`` (a FLIRT 4x4 affine in source-to-target
+    convention) with nearest-neighbour interpolation, then thresholds,
+    binarises, and fills holes via fslmaths.
+
+    A same-space shortcut is taken when the mask and reference share
+    geometry (matching shape and affine within 1e-4): the mask is
+    binarised and hole-filled in place without invoking FLIRT.
+
+    Args:
+        mask_file: Path to source mask.  May be ``None`` or a Nipype
+            ``Undefined``; in either case the function returns ``""``.
+        reference_file: Path to reference image whose grid the output
+            should match.
+        transform_matrix: Path to FLIRT 4x4 affine matrix mapping the
+            mask's source frame into the reference frame.
+        out_dir: Directory for output and temporary files.  Defaults to
+            ``Path.cwd()``, matching the legacy Function-node behaviour.
+
+    Returns:
+        Path to the transformed mask, or ``""`` if any input is unset
+        or the mask file does not exist.  Downstream Nipype
+        ``traits.Str`` ports reject ``None``, so ``""`` is the correct
+        empty sentinel.
+    """
+    import subprocess
+
+    import nibabel as nib
+    from nipype.interfaces.base import isdefined
+    from scipy.ndimage import binary_fill_holes
+
+    if not isdefined(mask_file) or mask_file is None:
+        return ""
+    if not isdefined(reference_file) or reference_file is None:
+        return ""
+    if not isdefined(transform_matrix) or transform_matrix is None:
+        return ""
+
+    mask_path = Path(mask_file)
+    if not mask_path.is_file():
+        return ""
+
+    out_dir = out_dir or Path.cwd()
+    out_file = str(out_dir / "brain_mask_dce.nii.gz")
+
+    mask_img = nib.load(str(mask_file))
+    ref_img = nib.load(str(reference_file))
+    if mask_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
+        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())  # type: ignore[attr-defined]
+        if affine_diff < 1e-4:
+            mask_data = mask_img.get_fdata()  # type: ignore[attr-defined]
+            mask_bin = (mask_data > 0.5).astype(np.int16)
+            mask_filled = binary_fill_holes(mask_bin).astype(np.int16)
+            out_img = nib.Nifti1Image(mask_filled, ref_img.affine)  # type: ignore[attr-defined]
+            nib.save(out_img, out_file)
+            return out_file
+
+    tmp_file = str(out_dir / "_tmp_brain_mask_dce.nii.gz")
+    cmd = [
+        "flirt",
+        "-in", str(mask_file),
+        "-ref", str(reference_file),
+        "-out", tmp_file,
+        "-init", str(transform_matrix),
+        "-applyxfm",
+        "-interp", "nearestneighbour",
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+    cmd_fillh = [
+        "fslmaths", tmp_file,
+        "-thr", "0.5", "-bin", "-fillh", out_file,
+    ]
+    subprocess.run(cmd_fillh, check=True, capture_output=True)
+
+    try:
+        Path(tmp_file).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return out_file

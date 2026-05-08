@@ -2303,10 +2303,11 @@ def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
 ):
     """Transform brain mask from T1w space to DCE space.
 
-    Uses FSL FLIRT with nearest-neighbour interpolation to resample
-    the brain mask into DCE space. Includes:
-    - Same-space shortcut: skip transform if mask and ref share geometry (Gap 10)
-    - Hole-filling: apply -thr 0.5 -bin -fillh after transform (Gap 4)
+    Thin Nipype Function-node wrapper around
+    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is
+    intentionally inline because ``niu.Function`` serialises this body
+    via ``inspect.getsource`` and runs it in a worker that cannot see
+    module-level imports.
 
     Args:
         mask_file: Path to brain mask in T1w space (or None).
@@ -2316,76 +2317,9 @@ def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
     Returns:
         Path to transformed brain mask in DCE space, or "" if no mask.
     """
-    from nipype.interfaces.base import isdefined
+    from pmriprep.utils.registration import transform_mask_to_grid
 
-    # Handle both None and Nipype Undefined.
-    # Return "" (not None) because downstream traits.Str rejects None.
-    if not isdefined(mask_file) or mask_file is None:
-        return ""
-    if not isdefined(reference_file) or reference_file is None:
-        return ""
-    if not isdefined(transform_matrix) or transform_matrix is None:
-        return ""
-
-    from pathlib import Path
-    import subprocess
-
-    import nibabel as nib  # type: ignore[import-untyped]
-    import numpy as np
-
-    mask_path = Path(mask_file)
-    if not mask_path.is_file():
-        return ""
-
-    out_dir = Path.cwd()
-    out_file = str(out_dir / "brain_mask_dce.nii.gz")
-
-    # Same-space shortcut (Gap 10): skip transform if already aligned
-    mask_img = nib.load(mask_file)
-    ref_img = nib.load(reference_file)
-    if mask_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
-        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())  # type: ignore[attr-defined]
-        if affine_diff < 1e-4:
-            # Already in same space, just copy with hole-filling
-            mask_data = mask_img.get_fdata()  # type: ignore[attr-defined]
-            # Apply threshold and binarize
-            mask_bin = (mask_data > 0.5).astype(np.int16)
-            # Fill holes using scipy
-            from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
-            mask_filled = binary_fill_holes(mask_bin).astype(np.int16)
-            # Save
-            out_img = nib.Nifti1Image(mask_filled, ref_img.affine)  # type: ignore[attr-defined]
-            nib.save(out_img, out_file)
-            return out_file
-
-    # Transform with FLIRT
-    tmp_file = str(out_dir / "_tmp_brain_mask_dce.nii.gz")
-    cmd = [
-        "flirt",
-        "-in", str(mask_file),
-        "-ref", str(reference_file),
-        "-out", tmp_file,
-        "-init", str(transform_matrix),
-        "-applyxfm",
-        "-interp", "nearestneighbour",
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
-
-    # Hole-filling (Gap 4): threshold, binarize, fill holes
-    # Using fslmaths: -thr 0.5 -bin -fillh
-    cmd_fillh = [
-        "fslmaths", tmp_file,
-        "-thr", "0.5", "-bin", "-fillh", out_file,
-    ]
-    subprocess.run(cmd_fillh, check=True, capture_output=True)
-
-    # Clean up temp file
-    try:
-        Path(tmp_file).unlink(missing_ok=True)
-    except Exception:
-        pass
-
-    return out_file
+    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)
 
 
 def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
