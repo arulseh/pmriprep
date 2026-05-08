@@ -92,12 +92,17 @@ def _detect_max_slope_backtrack(
         else:
             arrival = min_baseline
 
-        # Forward-only raw verification: the boxcar can bleed the bolus
-        # derivative 1-2 frames backward.  Advance while the raw
-        # derivative is below threshold.  Can only move FORWARD (toward
-        # the bolus), never backward past motion spikes.
-        raw_thresh = backtrack_fraction * float(raw_deriv[peak_idx])
-        while arrival < peak_idx and raw_deriv[arrival] < raw_thresh:
+        # Forward-only raw verification: the 3-frame boxcar can bleed
+        # the bolus derivative 1 frame backward, so source the threshold
+        # from the max raw derivative within the boxcar's support
+        # (peak_idx, peak_idx+1) and allow advancing up to peak_idx+1.
+        # Can only move FORWARD; never past motion spikes.
+        # Edge case: peak_idx == len(raw_deriv) - 1 collapses look_end
+        # to peak_idx + 1; loop guard then fails immediately and the
+        # block is a no-op (matches pre-patch behavior).
+        look_end = min(peak_idx + 2, len(raw_deriv))
+        raw_thresh = backtrack_fraction * float(np.max(raw_deriv[peak_idx:look_end]))
+        while arrival < look_end and raw_deriv[arrival] < raw_thresh:
             arrival += 1
 
         return max(arrival, min_baseline)

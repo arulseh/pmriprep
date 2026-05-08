@@ -90,6 +90,51 @@ class TestPhase1Detectors:
         signal = np.ones(60) * 5.0
         assert _detect_max_slope_backtrack(signal) is None
 
+    @pytest.mark.parametrize(
+        "post_peak_drop,seed",
+        [(20, 0), (20, 1), (20, 2), (40, 0), (40, 1)],
+        ids=["drop20-s0", "drop20-s1", "drop20-s2", "drop40-s0", "drop40-s1"],
+    )
+    def test_max_slope_sharp_upstroke_immediate_washout(
+        self, post_peak_drop: float, seed: int,
+    ) -> None:
+        """Penn sub-03/06/09 pattern: sharp single-frame upstroke + immediate washout.
+
+        Boxcar smoothing of a single-frame Δsig spike followed by an
+        immediate decline used to pull the smoothed-derivative argmax 1
+        frame backward.  The forward-verification sweep must advance
+        through the smeared peak to land on the actual upstroke frame.
+        """
+        rng = np.random.default_rng(seed)
+        n = 14
+        bl_level = 100.0
+        signal = bl_level + rng.normal(0, 0.5, n)
+        signal[8:] += np.array(
+            [0.0, 42.0, 42.0 - post_peak_drop, 30.0, 25.0, 22.0],
+        )[: n - 8]
+        result = _detect_max_slope_backtrack(signal, min_baseline=3)
+        assert result is not None
+        assert result in (7, 8), (
+            f"BAT={result} regressed: boxcar bias not corrected"
+        )
+
+    def test_max_slope_smooth_curve_no_shift(self) -> None:
+        """Pin: smooth multi-frame upstroke must NOT shift after the patch.
+
+        Guards against a future tweak to the forward-verification window
+        silently moving BAT on signals where the boxcar is not biased
+        (smoothed argmax already at the correct frame).
+        """
+        signal, _ = _make_bolus_curve(
+            baseline_frames=15, peak=10.0, noise_std=0.1, seed=0,
+        )
+        assert _detect_max_slope_backtrack(signal, min_baseline=3) == 14
+
+    def test_max_slope_preloaded_curve_no_shift(self) -> None:
+        """Pin: preloaded curve answer must not shift after the patch."""
+        signal, _ = _make_preloaded_curve(baseline_frames=42)
+        assert _detect_max_slope_backtrack(signal, min_baseline=5) == 41
+
     def test_second_deriv_clean(self) -> None:
         signal, true = _make_bolus_curve(baseline_frames=15)
         result = _detect_second_derivative_peak(signal, min_baseline=3)
