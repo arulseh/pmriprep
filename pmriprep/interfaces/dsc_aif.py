@@ -2668,11 +2668,10 @@ class AIFDetection(BaseInterface):
         cascade_initial_level: Optional[str] = None
         accepted_aif: Optional[tuple[npt.NDArray[Any], npt.NDArray[Any], int]] = None
         tiers_attempted: list[str] = []
-        # Accumulate-to-quorum cascade state. Stricter tiers contribute
-        # first; looser tiers add only the top-up needed to reach
-        # MIN_AIF_CANDIDATES_ACCEPT. Once quorum is reached the cascade
-        # stops — looser tiers do not dilute the union with their
-        # additional looser-criteria voxels.
+        # Post-cascade fallback pool. Each tier's kinetic-filter
+        # survivors are appended (capped at n_candidates total). The
+        # union does NOT gate the cascade — it is only consulted as a
+        # fallback if every tier's per-tier dual-ROI gate fails.
         union: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
         union_coords: set[tuple[int, int, int]] = set()
         union_tier_provenance: dict[str, int] = {}
@@ -2683,11 +2682,12 @@ class AIFDetection(BaseInterface):
         # Per-tier post-filter diagnostics (n_filtered_* counts, pool
         # spread, max tail). Recorded even on tiers the union does not
         # accept from, so the synthetic-fallback branch can surface why
-        # each tier failed quorum.
+        # each tier failed.
         postfilter_diags_per_tier: dict[str, dict[str, Any]] = {}
         # Filter_meta from the strictest contributing tier (geometric
         # / lesion-distance metadata). Captured at the moment a tier
-        # first contributes a voxel to the union.
+        # first contributes a voxel to the union; overwritten when a
+        # tier wins via the per-tier dual-ROI gate.
         accepted_filter_meta: dict[str, Any] = {}
 
         if aif_method == "synthetic":
@@ -2781,38 +2781,98 @@ class AIFDetection(BaseInterface):
                     cascade_initial_level = level_name
                 tiers_attempted.append(level_name)
 
-                # Sort survivors by cost (lowest first) and accumulate
-                # ONLY up to quorum. Looser tiers contribute only the
-                # top-up needed; once quorum is reached the cascade
-                # stops to preserve stricter-tier voxel priority.
+                # Sort survivors by cost (lowest first).
                 scored.sort(key=lambda x: x[0])
+
+                # Accumulate this tier's survivors into the global
+                # union (capped at n_candidates total across all tiers
+                # — broader than the per-tier ``level_n_candidates``
+                # used by the per-tier gate below). The union is the
+                # POST-CASCADE fallback pool only and does NOT gate
+                # the cascade. Looser tiers always run if the current
+                # tier's per-tier dual-ROI gate fails, so the cascade
+                # is fully exhausted before any fallback.  Synthetic
+                # AIF is the LAST RESORT — reachable only after every
+                # tier's per-tier gate AND the union/single-best
+                # fallbacks have failed.
                 taken_this_tier = 0
                 for cost, coord, metrics in scored:
                     if coord in union_coords:
                         continue
-                    if len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
+                    if len(union) >= n_candidates:
                         break
                     union.append((cost, coord, metrics))
                     union_coords.add(coord)
                     union_coord_origin[coord] = level_name
                     taken_this_tier += 1
                 union_tier_provenance[level_name] = taken_this_tier
-
-                # Capture filter_meta from the strictest contributing tier
                 if taken_this_tier > 0 and not accepted_filter_meta:
                     accepted_filter_meta = dict(f_meta)
 
-                if len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
-                    break  # quorum reached; later tiers do not contribute
+                # Per-tier dual-ROI gate with progressive worst-BRR
+                # trim.  Asks "do this tier's voxels behave as a
+                # coherent arterial pool together?" — if not, drop the
+                # candidate with the most-negative BRR (worst tail
+                # contaminator) and retry, down to
+                # MIN_AIF_CANDIDATES_ACCEPT.  If the tier can't reach
+                # an acceptable pool, the cascade falls through to the
+                # next (looser) tier.
+                tier_pool = list(scored[:level_n_candidates])
+                while len(tier_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
+                    tier_result = self._try_aif_dual_roi(
+                        tier_pool, conc_data, brain_mask, tr,
+                        aif_baseline_frames,
+                    )
+                    if tier_result is not None:
+                        accepted_aif = (
+                            tier_result.curve,
+                            tier_result.mask,
+                            tier_result.roi_size,
+                        )
+                        # Defensive copy: tier_pool is the loop's
+                        # working list; aliasing it into top_candidates
+                        # would couple downstream QC to future loop edits.
+                        top_candidates = list(tier_pool)
+                        n_available = len(tier_pool)
+                        detection_level = level_name
+                        filter_meta = dict(f_meta)
+                        accepted_filter_meta = dict(f_meta)
+                        # Tier-accept provenance: only this tier
+                        # contributed to the accepted pool.
+                        union_tier_provenance = {
+                            level_name: len(tier_pool)
+                        }
+                        break
+                    # Drop the candidate with the most-negative per-voxel
+                    # BRR (worst tail contaminator). Falls back to
+                    # ``-cost`` (highest cost = worst) when BRR is NaN
+                    # or missing — matches the test-suite contract in
+                    # ``test_dsc_aif_cascade.TestProgressiveTrimSemantics``
+                    # and avoids non-deterministic ``min`` over NaN keys.
+                    def _trim_key(i: int) -> float:
+                        brr = tier_pool[i][2].get(
+                            "baseline_return_ratio", float("nan"),
+                        )
+                        if not np.isnan(brr):
+                            return float(brr)
+                        return -float(tier_pool[i][0])
+                    worst_idx = min(range(len(tier_pool)), key=_trim_key)
+                    tier_pool.pop(worst_idx)
 
-            # --- Post-cascade: single dual_roi check on the union ---
-            if len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
+                if accepted_aif is not None:
+                    break  # cascade complete — tier accepted
+
+            # --- Post-cascade fallback 1: union dual_roi ---
+            # Only runs if EVERY tier's per-tier dual-ROI gate failed
+            # above. Pools kinetic-filter survivors across tiers for a
+            # final attempt before falling through to single-best.
+            if accepted_aif is None and len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
                 result = self._try_aif_dual_roi(
                     union, conc_data, brain_mask, tr, aif_baseline_frames,
                 )
                 if result is not None:
                     accepted_aif = (result.curve, result.mask, result.roi_size)
-                    top_candidates = union
+                    top_candidates = list(union)
                     n_available = len(union)
                     # detection_level: cascade-ordered ``+``-joined list
                     # of tiers that contributed voxels to the union.
@@ -2828,9 +2888,9 @@ class AIFDetection(BaseInterface):
                     detection_level = "+".join(contributing) if contributing else "synthetic"
                     filter_meta = dict(accepted_filter_meta)
 
-            # Single-best fallback: union has voxels but dual_roi rejected
-            # (or quorum unmet). Try the lowest-cost union voxel; relaxed
-            # gate matches the legacy semantics (global_max_in_fp +
+            # Single-best fallback: union has voxels but per-tier and
+            # union dual-ROI all rejected. Try the lowest-cost union
+            # voxel; relaxed gate matches legacy semantics (global_max_in_fp +
             # AIF_AVG_BRR_MIN).
             if accepted_aif is None and len(union) > 0:
                 union_sorted = sorted(union, key=lambda x: x[0])
@@ -3006,7 +3066,7 @@ class AIFDetection(BaseInterface):
             }
             if postfilter_diags_per_tier:
                 # Surface per-tier postfilter diagnostics so QC consumers
-                # can see exactly why each tier failed quorum.
+                # can see exactly why each tier failed.
                 qc_metrics["cascade_postfilter_diags"] = dict(
                     postfilter_diags_per_tier
                 )
