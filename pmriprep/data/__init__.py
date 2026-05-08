@@ -42,15 +42,14 @@ def get_arterial_atlas(resolution: str = "1mm", variant: str = "dil3") -> Path:
 def get_arterial_atlas_cascade(resolution: str = "2mm") -> list[Path]:
     """Return atlas files from tightest to broadest for cascade search.
 
-    The cascade uses progressively dilated MCA/ACA masks, then the full
-    MRA mask.  CoW is omitted: its voxels overlap MCA_ACA_dil2 and add
-    skull-base susceptibility / cavernous sinus partial-volume risk.
+    The cascade walks from the supratentorial MCA/ACA territory outward
+    to the full MRA arterial mask. CoW is omitted to avoid skull-base
+    susceptibility and cavernous-sinus partial-volume contamination.
 
     Levels (when all files present):
-        1. MCA_ACA          — undilated, highest arterial specificity
-        2. MCA_ACA_dil      — 1× dilated (~2 mm margin)
-        3. MCA_ACA_dil2     — 2× dilated (~4 mm margin)
-        4. full_mask_dil2   — full MRA incl. basilar, broadest atlas
+        1. MCA_ACA      — undilated, highest arterial specificity
+        2. MCA_ACA_dil  — 1× dilated (~2 mm margin)
+        3. full_mask    — full MRA incl. basilar / posterior circulation
 
     Missing files are silently skipped, so the effective cascade adapts
     to whichever atlas files are installed.
@@ -70,8 +69,7 @@ def get_arterial_atlas_cascade(resolution: str = "2mm") -> list[Path]:
     variants = [
         ("MCA_ACA", ""),      # Undilated — tightest, highest arterial specificity
         ("MCA_ACA", "dil"),   # 1× dilated — ~2 mm margin
-        ("MCA_ACA", "dil2"),  # 2× dilated — ~4 mm margin
-        ("full_mask", "dil2"),# Full MRA incl. basilar — broadest atlas
+        ("full_mask", ""),    # Full MRA incl. basilar — broadest atlas
     ]
     cascade: list[Path] = []
     for region, dilation in variants:

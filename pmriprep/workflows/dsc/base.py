@@ -1882,13 +1882,15 @@ def init_dsc_preproc_wf(
         ),
         name="transform_atlas",
     )
-    # Set the arterial atlas as input (MCA_ACA_dil — core MCA/ACA with ~2mm margin)
+    # Cascade branch resolves to MCA_ACA_dil (core MCA/ACA, ~2 mm margin).
+    # Fallback resolves to the dilated full MRA mask (full_mask_dil) when
+    # the cascade has fewer than 2 tiers installed.
     try:
         atlas_cascade = get_arterial_atlas_cascade("2mm")
         if len(atlas_cascade) >= 2:
             transform_atlas.inputs.in_file = str(atlas_cascade[1])  # MCA_ACA_dil
         else:
-            transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm", "dil2"))
+            transform_atlas.inputs.in_file = str(get_arterial_atlas("2mm", "dil"))
     except (FileNotFoundError, IndexError):
         import logging as _logging
         _logging.getLogger("pmriprep.workflows.dsc").warning(

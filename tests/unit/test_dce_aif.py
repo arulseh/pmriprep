@@ -612,10 +612,10 @@ def _make_cascade_inputs(
     }
 
 
-def _make_atlas_cascade(n: int = 4) -> tuple[list[np.ndarray], list[str]]:
+def _make_atlas_cascade(n: int = 3) -> tuple[list[np.ndarray], list[str]]:
     """Build N synthetic atlas masks + names parallel."""
     masks = [np.ones((8, 8, 4), dtype=np.uint8) for _ in range(n)]
-    names = ["MCA_ACA", "MCA_ACA_dil", "MCA_ACA_dil2", "full_mask_dil2"][:n]
+    names = ["MCA_ACA", "MCA_ACA_dil", "full_mask"][:n]
     return masks, names
 
 
@@ -679,12 +679,11 @@ class TestTwoPassCascade:
 
         # Every tier returns exactly 1 keeper. Max-score per tier varies;
         # the tier with the highest max-score should be chosen by Pass 2.
-        # 4 atlases × 3 criteria + 1 whole-brain = 13 tiers.
+        # 3 atlases × 3 criteria + 1 whole-brain = 10 tiers.
         max_scores = [
             0.55, 0.50, 0.50,  # MCA_ACA × 3
             0.50, 0.62, 0.50,  # MCA_ACA_dil × 3   ← highest at idx 4 (relaxed)
-            0.50, 0.50, 0.51,  # MCA_ACA_dil2 × 3
-            0.50, 0.50, 0.50,  # full_mask_dil2 × 3
+            0.50, 0.50, 0.50,  # full_mask × 3
             0.55,              # wb_relaxed
         ]
         # Each tier returns 1 candidate at peak_time_frame=6 (post-arrival
@@ -712,31 +711,31 @@ class TestTwoPassCascade:
                 tissue_ttp_frame=10.0,
             )
 
-        assert n_attempted == 13  # all tiers run, none short-circuited
+        assert n_attempted == 10  # all tiers run, none short-circuited
         # Highest single-keeper max-score was 0.62 at MCA_ACA_dil_relaxed.
         assert detection_method == "atlas"
         assert atlas_tier_used == "MCA_ACA_dil_relaxed"
         assert len(candidates) == 1
         assert scores == [0.62]
-        assert len(anchor_outcomes) == 13
+        assert len(anchor_outcomes) == 10
 
     def test_falls_to_population_only_when_no_keeper_anywhere(self) -> None:
-        """Cascade must exhaust ALL 13 tiers before signaling population.
+        """Cascade must exhaust ALL 10 tiers before signaling population.
 
         With every tier returning 0-keeper output, Pass 1 fails everywhere,
         Pass 2 has no single-keeper tier to fall back to, and the cascade
-        returns ``detection_method="population"`` with the full 13-tier
+        returns ``detection_method="population"`` with the full 10-tier
         attempt count for the caller's provenance.
         """
         inputs = _make_cascade_inputs()
         atlas_masks, atlas_names = _make_atlas_cascade()
         detector = AIFDetection()
 
-        # All 13 tiers return non-empty zero-scored candidates with
+        # All 10 tiers return non-empty zero-scored candidates with
         # arbitrary timing (anchor doesn't matter when quorum is 0).
         side_effects: list = [
             ([(0, 0, 0)] * 5, [0.0] * 5, [{"peak_time_frame": 7}] * 5)
-            for _ in range(13)
+            for _ in range(10)
         ]
 
         with patch.object(
@@ -759,9 +758,9 @@ class TestTwoPassCascade:
 
         assert detection_method == "population"
         assert atlas_tier_used is None
-        assert n_attempted == 13
-        assert mock_find.call_count == 13
-        assert len(anchor_outcomes) == 13
+        assert n_attempted == 10
+        assert mock_find.call_count == 10
+        assert len(anchor_outcomes) == 10
         # Pass 1 selected nothing; Pass 2 had no single-keeper tier to use.
         assert candidates == []
         assert scores == []
@@ -918,7 +917,7 @@ class TestAnchorGateInCascade:
     def test_all_venous_tier_fails_via_anchor_gate(self) -> None:
         """Sub-20402855 pattern: 3 candidates per tier, all peaking at
         post-arrival 13s (above 10s threshold). Cascade descends through
-        all 13 tiers, none anchored, falls to population.
+        all 10 tiers, none anchored, falls to population.
         """
         inputs = _make_cascade_inputs()
         atlas_masks, atlas_names = _make_atlas_cascade()
@@ -927,7 +926,7 @@ class TestAnchorGateInCascade:
         # baseline=5, tr=4 → peak_time_frame=8 gives post-arr=12s > 10s
         side_effects: list = [
             ([(0, 0, 0)] * 3, [0.6] * 3, [{"peak_time_frame": 8}] * 3)
-            for _ in range(13)
+            for _ in range(10)
         ]
 
         with patch.object(
@@ -950,7 +949,7 @@ class TestAnchorGateInCascade:
 
         assert detection_method == "population"
         assert atlas_tier_used is None
-        assert n_attempted == 13
+        assert n_attempted == 10
         assert candidates == []
         # Every tier was anchor-rejected
         assert all(o["has_anchor"] is False for o in anchor_outcomes)
@@ -1067,10 +1066,10 @@ class TestAnchorGateInCascade:
         atlas_masks, atlas_names = _make_atlas_cascade()
         detector = AIFDetection()
 
-        # 13 tiers, each with 1 keeper at peak_time_frame=7 (post-arr 8s)
+        # 10 tiers, each with 1 keeper at peak_time_frame=7 (post-arr 8s)
         side_effects: list = [
             ([(i, 0, 0)], [0.6], [{"peak_time_frame": 7}])
-            for i in range(13)
+            for i in range(10)
         ]
 
         with patch.object(
@@ -1092,7 +1091,7 @@ class TestAnchorGateInCascade:
             )
 
         assert detection_method != "population"
-        assert n_attempted == 13
+        assert n_attempted == 10
         assert len(candidates) == 1
 
     def test_unanchored_single_keeper_NOT_promoted_in_pass2(self) -> None:
@@ -1103,11 +1102,11 @@ class TestAnchorGateInCascade:
         atlas_masks, atlas_names = _make_atlas_cascade()
         detector = AIFDetection()
 
-        # 13 tiers, each with 1 keeper at peak_time_frame=8 (post-arr 12s,
+        # 10 tiers, each with 1 keeper at peak_time_frame=8 (post-arr 12s,
         # over 10s threshold).
         side_effects: list = [
             ([(i, 0, 0)], [0.6], [{"peak_time_frame": 8}])
-            for i in range(13)
+            for i in range(10)
         ]
 
         with patch.object(
@@ -1129,7 +1128,7 @@ class TestAnchorGateInCascade:
             )
 
         assert detection_method == "population"
-        assert n_attempted == 13
+        assert n_attempted == 10
         assert candidates == []
 
     def test_filter_venous_all_flagged_fails_tier(self) -> None:
