@@ -2623,6 +2623,7 @@ def init_dsc_preproc_wf(
         (transform_lesion, lesion_stats, [("lesion_mask_dsc_file", "lesion_mask")]),
         (combine_masks, lesion_stats, [("mask_origin", "mask_origin")]),
         (transform_nawm, lesion_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
+        (inputnode, lesion_stats, [("field_strength", "field_strength_t")]),
     ])
     # Connect perfusion maps
     workflow.connect([
@@ -2633,6 +2634,7 @@ def init_dsc_preproc_wf(
             ("out_tmax", "tmax_map"),
             ("out_psr", "psr_map"),
             ("out_ph", "ph_map"),
+            ("out_ttp", "ttp_map"),
             ("out_ttp_corrected", "ttp_corrected_map"),
             ("out_rttp", "rttp_map"),
         ]),

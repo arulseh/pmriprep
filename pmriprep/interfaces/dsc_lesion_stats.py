@@ -81,6 +81,7 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     psr_map = traits.Str(desc="PSR map path")
     ph_map = traits.Str(desc="PH map path")
     k2_map = traits.Str(desc="K2 leakage correction map path")
+    ttp_map = traits.Str(desc="Raw TTP map (no AIF correction)")
     ttp_corrected_map = traits.Str(desc="AIF-corrected TTP map path")
     rttp_map = traits.Str(desc="NAWM-relative TTP map path")
 
@@ -90,6 +91,14 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     aif_qc = traits.Dict(
         desc="AIF QC dict from cascade, used for the "
              "PerfusionProcessing.AIF provenance block",
+    )
+
+    # Field strength (T) for NAWM physiological-range QC. When omitted
+    # (None / 0), value-level NAWM QC is reported as UNKNOWN; outside
+    # the validated [1.5, 3.0] range we also skip range checks.
+    field_strength_t = traits.Float(
+        0.0, usedefault=True,
+        desc="B0 field strength in tesla for NAWM range QC",
     )
 
 
@@ -204,8 +213,10 @@ class DSCLesionStats(BaseInterface):
                     k: v for k, v in maps.items()
                     if k in ["cbv", "cbf", "ncbv", "ncbf", "mtt"]
                 }
+                fs = float(self.inputs.field_strength_t) or None
                 result.nawm_reference = compute_nawm_reference(
-                    nawm_data, nawm_maps, voxel_sizes
+                    nawm_data, nawm_maps, voxel_sizes,
+                    field_strength_t=fs,
                 )
 
             # Compute derived metrics for primary region
@@ -220,6 +231,10 @@ class DSCLesionStats(BaseInterface):
 
             # Add clinical context
             result.clinical_context = get_dsc_clinical_context()
+
+            # Augment per-region per-map stats with Cohen's d vs NAWM
+            # (no-op when nawm_reference is empty).
+            result.augment_with_cohens_d()
 
         # AIF provenance — populate the PerfusionProcessing.AIF
         # sub-block from aif_qc. Downstream consumers should read
@@ -276,7 +291,8 @@ class DSCLesionStats(BaseInterface):
             ("psr_map", "psr"),
             ("ph_map", "ph"),
             ("k2_map", "k2"),
-            ("ttp_corrected_map", "ttp_corrected"),
+            ("ttp_map", "ttp"),
+            ("ttp_corrected_map", "ttpCorrected"),
             ("rttp_map", "rttp"),
         ]
 
@@ -323,9 +339,13 @@ class DSCLesionStats(BaseInterface):
             volume_ml=volume_ml,
         )
 
-        # Compute statistics for each available map
+        # Compute statistics for each available map. compute_advanced=True
+        # turns on histogram metrics (p98/p99/skewness/kurtosis/entropy);
+        # map_name enables PPP for permeability biomarkers.
         for map_name, map_data in maps.items():
-            stats = compute_map_statistics(map_data, mask)
+            stats = compute_map_statistics(
+                map_data, mask, map_name=map_name, compute_advanced=True,
+            )
             if stats is not None:
                 region.perfusion_maps[map_name] = stats
 

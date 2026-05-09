@@ -1896,11 +1896,14 @@ def init_dce_preproc_wf(
             ("out_vp", "vp_map"),
             ("out_kep", "kep_map"),
             ("out_iauc60", "iauc60_map"),
+            ("out_iauc90", "iauc90_map"),
+            ("out_iauc120", "iauc120_map"),
             ("out_peak_enhancement", "peak_enhancement_map"),
             ("out_time_to_peak", "ttp_map"),
         ]),
         (normalize_ktrans, lesion_stats, [("out_file", "nktrans_map")]),
         (normalize_iauc60, lesion_stats, [("out_file", "niauc60_map")]),
+        (inputnode, lesion_stats, [("field_strength", "field_strength_t")]),
     ])
 
     # ==========================================================================

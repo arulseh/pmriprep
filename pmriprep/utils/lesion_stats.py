@@ -37,8 +37,21 @@ class MapStatistics:
         p75: 75th percentile (Q3) value.
         p90: 90th percentile value.
         p95: 95th percentile value.
+        p98: 98th percentile (preferred hotspot per Federau Neuroradiol 2017).
+        p99: 99th percentile (max-robust hotspot).
         cv: Coefficient of variation (std/mean).
         iqr: Interquartile range (p75 - p25).
+        skewness: Histogram skewness (Emblem Radiology 2008).
+        kurtosis: Histogram kurtosis (Just Br J Cancer 2014).
+        entropy: Shannon entropy on 64-bin histogram over [p1, p99]
+            (O'Connor Clin Cancer Res 2015).
+        ppp: Percent positive pixels above noise threshold; populated only
+            for permeability biomarkers (Ktrans/vp/k2). Padhani Targ Oncol
+            2010; Bjornerud NMR Biomed 2011 for k2.
+        cohens_d_vs_nawm: Pooled-SD Cohen's d of region vs NAWM reference;
+            populated post-hoc by ``LesionStatisticsResult.augment_with_cohens_d``.
+        n_valid: Count of finite values used in statistics.
+        n_total: Count of all voxels in mask.
     """
 
     mean: Optional[float] = None
@@ -51,8 +64,15 @@ class MapStatistics:
     p75: Optional[float] = None
     p90: Optional[float] = None
     p95: Optional[float] = None
+    p98: Optional[float] = None
+    p99: Optional[float] = None
     cv: Optional[float] = None
     iqr: Optional[float] = None
+    skewness: Optional[float] = None
+    kurtosis: Optional[float] = None
+    entropy: Optional[float] = None
+    ppp: Optional[float] = None
+    cohens_d_vs_nawm: Optional[float] = None
     n_valid: int = 0
     n_total: int = 0
 
@@ -123,6 +143,45 @@ class LesionStatisticsResult:
     # unavailable.
     aif_provenance: Optional[Dict[str, Any]] = None
 
+    def augment_with_cohens_d(self) -> None:
+        """Attach pooled-SD Cohen's d vs NAWM to each region's per-map stats.
+
+        For every (region, map) pair where the corresponding NAWM
+        reference entry is available, computes::
+
+            d = (region.median - nawm.median)
+                / sqrt((region.std² + nawm.std²) / 2)
+
+        and stores it on the region's ``MapStatistics.cohens_d_vs_nawm``.
+        Mutates ``self.regions`` in place. No-op when NAWM reference is
+        empty or doesn't carry the matching map.
+
+        This is **pooled-SD Cohen's d**, not Glass's Δ. Pooled is
+        symmetric and conservative; both are defensible — documented
+        in derivatives-keys.md.
+        """
+        if not self.nawm_reference:
+            return
+        for region in self.regions.values():
+            for map_name, map_stats in region.perfusion_maps.items():
+                nawm_entry = self.nawm_reference.get(map_name)
+                if not isinstance(nawm_entry, dict):
+                    continue
+                nawm_median = nawm_entry.get("median")
+                nawm_std = nawm_entry.get("std")
+                if (
+                    nawm_median is None
+                    or nawm_std is None
+                    or map_stats.median is None
+                    or map_stats.std is None
+                ):
+                    continue
+                pooled_var = (map_stats.std ** 2 + nawm_std ** 2) / 2.0
+                if pooled_var <= 0:
+                    continue
+                d = (map_stats.median - nawm_median) / float(np.sqrt(pooled_var))
+                map_stats.cohens_d_vs_nawm = round(float(d), 4)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         result: Dict[str, Any] = {
@@ -147,18 +206,89 @@ class LesionStatisticsResult:
         return result
 
 
+# PPP (percent positive pixels) noise-floor thresholds for permeability
+# biomarkers. Map-name keys must match what callers pass to
+# compute_map_statistics; values are in the map's native units.
+#   Ktrans:  Padhani & Khan, Targ Oncol 2010 5:39 (>0.01 min⁻¹)
+#   vp:      conservative noise floor for plasma fraction
+#   k2:      Bjornerud NMR Biomed 2011 24:443; Leu MRM 2017 — explicit
+#            noise-floor cutoff in K2 → corrected-CBV pipeline (>0.001 s⁻¹)
+PPP_THRESHOLDS: Dict[str, float] = {
+    "Ktrans": 0.01,
+    "ktrans": 0.01,  # accept either casing
+    "vp": 0.001,
+    "k2": 0.001,
+}
+
+
+def _safe_skewness(values: np.ndarray) -> Optional[float]:
+    """Return distribution skewness, or None if undefined."""
+    if values.size < 3:
+        return None
+    std = float(np.std(values))
+    if std == 0:
+        return None
+    centered = values - float(np.mean(values))
+    return round(float(np.mean(centered ** 3) / (std ** 3)), 6)
+
+
+def _safe_kurtosis(values: np.ndarray) -> Optional[float]:
+    """Return excess kurtosis (Fisher's definition: normal → 0), or None."""
+    if values.size < 4:
+        return None
+    std = float(np.std(values))
+    if std == 0:
+        return None
+    centered = values - float(np.mean(values))
+    return round(float(np.mean(centered ** 4) / (std ** 4) - 3.0), 6)
+
+
+def _safe_shannon_entropy(values: np.ndarray, n_bins: int = 64) -> Optional[float]:
+    """Shannon entropy on a 64-bin histogram over [p1, p99].
+
+    Returns None for constant / near-constant data where the histogram
+    range collapses.
+    """
+    if values.size < n_bins:
+        return None
+    p1 = float(np.percentile(values, 1))
+    p99 = float(np.percentile(values, 99))
+    if p99 - p1 <= 0:
+        return None
+    hist, _ = np.histogram(values, bins=n_bins, range=(p1, p99))
+    total = hist.sum()
+    if total == 0:
+        return None
+    probs = hist[hist > 0] / total
+    return round(float(-np.sum(probs * np.log2(probs))), 6)
+
+
 def compute_map_statistics(
     map_data: np.ndarray,
     mask: np.ndarray,
+    map_name: Optional[str] = None,
+    compute_advanced: bool = True,
 ) -> Optional[MapStatistics]:
     """Compute comprehensive statistics for a perfusion map within a mask.
 
     Args:
         map_data: 3D array of perfusion map values.
         mask: 3D boolean array defining the ROI.
+        map_name: Optional map identifier used to enable PPP for known
+            permeability biomarkers (Ktrans/vp/k2).
+        compute_advanced: When True, also compute p98, p99, skewness,
+            kurtosis, entropy. Disable for NAWM-reference computation
+            where these histogram metrics add noise on small ROIs and
+            aren't used downstream.
 
     Returns:
-        MapStatistics object or None if mask is empty or all values invalid.
+        MapStatistics object or None if mask is empty.
+        When mask is non-empty but all values are invalid, returns a
+        ``MapStatistics`` with ``n_valid=0`` so callers can distinguish
+        from empty-mask (None).
+        Advanced histogram metrics (skewness, kurtosis, entropy) are
+        only computed when ``n_valid >= 10`` to avoid unstable values
+        on tiny ROIs.
     """
     # Extract values within mask
     values = map_data[mask]
@@ -172,8 +302,6 @@ def compute_map_statistics(
     n_valid = len(values)
 
     if n_valid == 0:
-        # Non-empty mask but all values invalid — return stats with
-        # n_valid=0 so callers can distinguish from empty-mask (None).
         return MapStatistics(n_valid=0, n_total=n_total)
 
     mean_val = float(np.mean(values))
@@ -186,7 +314,7 @@ def compute_map_statistics(
     if mean_val != 0 and not np.isnan(mean_val):
         cv = round(std_val / abs(mean_val), 4)
 
-    return MapStatistics(
+    stats = MapStatistics(
         mean=round(mean_val, 6),
         std=round(std_val, 6),
         median=round(float(np.median(values)), 6),
@@ -202,6 +330,23 @@ def compute_map_statistics(
         n_valid=n_valid,
         n_total=n_total,
     )
+
+    if compute_advanced and n_valid >= 10:
+        stats.p98 = round(float(np.percentile(values, 98)), 6)
+        stats.p99 = round(float(np.percentile(values, 99)), 6)
+        stats.skewness = _safe_skewness(values)
+        stats.kurtosis = _safe_kurtosis(values)
+        stats.entropy = _safe_shannon_entropy(values)
+
+    # PPP for permeability biomarkers. Always computed when map_name matches,
+    # regardless of compute_advanced (this is a clinical-quantitation field,
+    # not a histogram-shape diagnostic).
+    if map_name is not None:
+        threshold = PPP_THRESHOLDS.get(map_name)
+        if threshold is not None:
+            stats.ppp = round(float(np.sum(values > threshold) / n_valid), 4)
+
+    return stats
 
 
 def compute_fraction_above_threshold(
@@ -319,11 +464,41 @@ def compute_region_volume(
     return voxel_count, volume_mm3, volume_ml
 
 
-def get_dsc_clinical_context() -> Dict[str, Any]:
-    """Get clinical context for DSC perfusion interpretation.
+# Per-map clinical thresholds. Map keys correspond to the keys used in
+# DSCLesionStats / DCELesionStats `_load_maps`. Each entry maps to a
+# threshold dict that becomes ``ClinicalThreshold`` in the per-map sidecar.
+#
+# Where a threshold is defined on a normalized companion map (e.g.,
+# nCBV → high_grade=1.75 lives on dscNawmNorm_cbv), the un-normalized
+# companion (cbv → dscRel_cbv) carries an ``applies_to`` breadcrumb so
+# readers know where the threshold value lives. This is built lazily by
+# extract_per_map_lesion_stats based on the ``_INFORMATIONAL_THRESHOLDS``
+# table below.
+DSC_CLINICAL_THRESHOLDS: Dict[str, Dict[str, float]] = {
+    "ncbv": {"high_grade": 1.75},  # Law Radiology 2003
+    "ncbf": {"high_grade": 2.0},   # Law Radiology 2003
+}
+DCE_CLINICAL_THRESHOLDS: Dict[str, Dict[str, float]] = {
+    "Ktrans": {"high_grade": 0.1},   # Zhang Radiology 2014
+    "ktrans": {"high_grade": 0.1},
+    "niauc60": {"high_grade": 2.0},  # Zhang Radiology 2014
+}
 
-    Returns:
-        Dictionary with clinical thresholds and references.
+# Maps that should carry an informational ClinicalThreshold breadcrumb
+# pointing at the normalized companion where the threshold actually
+# applies. Per physics-expert review.
+_INFORMATIONAL_THRESHOLDS: Dict[str, Tuple[str, Dict[str, float]]] = {
+    # un-normalized DSC maps reference the normalized companion's threshold
+    "cbv": ("ncbv", {"high_grade": 1.75}),
+    "cbf": ("ncbf", {"high_grade": 2.0}),
+}
+
+
+def get_dsc_clinical_context() -> Dict[str, Any]:
+    """Get aggregate clinical context for DSC (legacy aggregate-only field).
+
+    Kept for backward compatibility within ``LesionStatisticsResult``; the
+    canonical per-map slice now lives in ``DSC_CLINICAL_THRESHOLDS``.
     """
     return {
         "nCBV_threshold_high_grade": 1.75,
@@ -332,15 +507,58 @@ def get_dsc_clinical_context() -> Dict[str, Any]:
 
 
 def get_dce_clinical_context() -> Dict[str, Any]:
-    """Get clinical context for DCE perfusion interpretation.
+    """Get aggregate clinical context for DCE (legacy aggregate-only field).
 
-    Returns:
-        Dictionary with clinical thresholds and references.
+    Kept for backward compatibility within ``LesionStatisticsResult``; the
+    canonical per-map slice now lives in ``DCE_CLINICAL_THRESHOLDS``.
     """
     return {
         "Ktrans_threshold_high_grade": 0.1,
         "nIAUC60_threshold_high_grade": 2.0,
     }
+
+
+# Per-map fractional-volume thresholds. Each map key may have multiple
+# thresholds; output is keyed by ``above_<threshold>`` (e.g., ``above_1.75``).
+DSC_FRACTIONAL_THRESHOLDS: Dict[str, Tuple[float, ...]] = {
+    "ncbv": (1.75, 2.5, 3.0, 4.0),  # add 3.0 — Hilario AJNR 2012
+    "ncbf": (1.5, 2.0, 3.0),         # NEW — Kickingereder Radiology 2015
+}
+DCE_FRACTIONAL_THRESHOLDS: Dict[str, Tuple[float, ...]] = {
+    "Ktrans": (0.05, 0.1, 0.2),  # add 0.05 — Patankar AJNR 2005
+    "ktrans": (0.05, 0.1, 0.2),
+}
+
+
+def _per_map_fractional_volumes(
+    maps: Dict[str, Optional[np.ndarray]],
+    thresholds_table: Dict[str, Tuple[float, ...]],
+    mask: np.ndarray,
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Compute fractional volumes per-map from a thresholds registry.
+
+    Returns a dict ``{map_name: {"above_<t>": fraction, ...}}`` for every
+    map present in ``maps`` that has a threshold registry entry and at
+    least one finite value above any threshold.
+    """
+    out: Dict[str, Dict[str, Optional[float]]] = {}
+    for map_name, thresholds in thresholds_table.items():
+        data = maps.get(map_name)
+        if data is None:
+            continue
+        per_map: Dict[str, Optional[float]] = {}
+        any_value = False
+        for t in thresholds:
+            f = compute_fraction_above_threshold(data, mask, t)
+            if f is not None:
+                any_value = True
+            # Use a plain decimal in the key (e.g., "above_1.75"); keys with
+            # dots are valid JSON and round-trip through Python/JS without
+            # issue. Documented in derivatives-keys.md.
+            per_map[f"above_{t}"] = f
+        if any_value:
+            out[map_name] = per_map
+    return out
 
 
 def compute_dsc_derived_metrics(
@@ -352,54 +570,20 @@ def compute_dsc_derived_metrics(
 ) -> Dict[str, Any]:
     """Compute DSC-specific derived metrics.
 
-    Args:
-        ncbv_data: Normalized CBV map data (or None).
-        ncbf_data: Normalized CBF map data (or None).
-        cbv_data: CBV map data (or None).
-        cbf_data: CBF map data (or None).
-        mask: Boolean mask for the region of interest.
-
-    Returns:
-        Dictionary with fractional volumes and hotspot summary.
+    Returns a dict with ``fractional_volumes`` keyed per-map (one
+    sub-dict per available map). The legacy ``hotspot_summary`` key is
+    no longer emitted — per-map ``Regions.<r>.stats.p98`` is now the
+    canonical hotspot for each map.
     """
     derived: Dict[str, Any] = {}
-
-    # Fractional volumes (only if nCBV available)
-    if ncbv_data is not None:
-        frac_175 = compute_fraction_above_threshold(ncbv_data, mask, 1.75)
-        frac_25 = compute_fraction_above_threshold(ncbv_data, mask, 2.5)
-        frac_40 = compute_fraction_above_threshold(ncbv_data, mask, 4.0)
-
-        if any(f is not None for f in [frac_175, frac_25, frac_40]):
-            derived["fractional_volumes"] = {
-                "nCBV_above_1.75": frac_175,
-                "nCBV_above_2.5": frac_25,
-                "nCBV_above_4.0": frac_40,
-            }
-
-    # Hotspot summary (90th percentile values)
-    hotspots: Dict[str, Any] = {}
-    if ncbv_data is not None:
-        val = compute_hotspot_value(ncbv_data, mask, 90.0)
-        if val is not None:
-            hotspots["ncbv_p90"] = val
-    if ncbf_data is not None:
-        val = compute_hotspot_value(ncbf_data, mask, 90.0)
-        if val is not None:
-            hotspots["ncbf_p90"] = val
-    if cbv_data is not None:
-        val = compute_hotspot_value(cbv_data, mask, 90.0)
-        if val is not None:
-            hotspots["cbv_p90"] = val
-    if cbf_data is not None:
-        val = compute_hotspot_value(cbf_data, mask, 90.0)
-        if val is not None:
-            hotspots["cbf_p90"] = val
-
-    if hotspots:
-        derived["hotspot_summary"] = hotspots
-
-    return derived if derived else {}
+    fractions = _per_map_fractional_volumes(
+        {"ncbv": ncbv_data, "ncbf": ncbf_data, "cbv": cbv_data, "cbf": cbf_data},
+        DSC_FRACTIONAL_THRESHOLDS,
+        mask,
+    )
+    if fractions:
+        derived["fractional_volumes"] = fractions
+    return derived
 
 
 def compute_dce_derived_metrics(
@@ -411,52 +595,21 @@ def compute_dce_derived_metrics(
 ) -> Dict[str, Any]:
     """Compute DCE-specific derived metrics.
 
-    Args:
-        ktrans_data: Ktrans map data (or None).
-        nktrans_data: Normalized Ktrans map data (or None).
-        ve_data: ve map data (or None).
-        vp_data: vp map data (or None).
-        mask: Boolean mask for the region of interest.
-
-    Returns:
-        Dictionary with fractional volumes and hotspot summary.
+    Returns a dict with ``fractional_volumes`` keyed per-map (one
+    sub-dict per available map). The legacy ``hotspot_summary`` key is
+    no longer emitted — per-map ``Regions.<r>.stats.p98`` is now the
+    canonical hotspot for each map.
     """
     derived: Dict[str, Any] = {}
-
-    # Fractional volumes for Ktrans
-    if ktrans_data is not None:
-        frac_01 = compute_fraction_above_threshold(ktrans_data, mask, 0.1)
-        frac_02 = compute_fraction_above_threshold(ktrans_data, mask, 0.2)
-
-        if any(f is not None for f in [frac_01, frac_02]):
-            derived["fractional_volumes"] = {
-                "Ktrans_above_0.1": frac_01,
-                "Ktrans_above_0.2": frac_02,
-            }
-
-    # Hotspot summary
-    hotspots: Dict[str, Any] = {}
-    if ktrans_data is not None:
-        val = compute_hotspot_value(ktrans_data, mask, 90.0)
-        if val is not None:
-            hotspots["ktrans_p90"] = val
-    if nktrans_data is not None:
-        val = compute_hotspot_value(nktrans_data, mask, 90.0)
-        if val is not None:
-            hotspots["nktrans_p90"] = val
-    if ve_data is not None:
-        val = compute_hotspot_value(ve_data, mask, 90.0)
-        if val is not None:
-            hotspots["ve_p90"] = val
-    if vp_data is not None:
-        val = compute_hotspot_value(vp_data, mask, 90.0)
-        if val is not None:
-            hotspots["vp_p90"] = val
-
-    if hotspots:
-        derived["hotspot_summary"] = hotspots
-
-    return derived if derived else {}
+    fractions = _per_map_fractional_volumes(
+        {"Ktrans": ktrans_data, "nktrans": nktrans_data,
+         "ve": ve_data, "vp": vp_data},
+        DCE_FRACTIONAL_THRESHOLDS,
+        mask,
+    )
+    if fractions:
+        derived["fractional_volumes"] = fractions
+    return derived
 
 
 def combine_tumor_masks(
@@ -509,20 +662,94 @@ def combine_tumor_masks(
     return ("", "")
 
 
+# Per-map NAWM physiological ranges by field strength.
+#   3T table — Helenius Acta Radiol 2003; Calamante NMR Biomed 2013;
+#              Tofts JMRI 1999.
+#   1.5T table — CBF/CBV ~30% lower per Helenius 2003 1.5T values.
+# Outside [1.5T, 3T] we DO NOT extrapolate (Uludag NeuroImage 2009 —
+# CBF/CBV scale non-linearly with B0 via r2*; 7T values from a 3T
+# table would systematically over-flag).
+NAWM_RANGES_3T: Dict[str, Tuple[float, float]] = {
+    "cbf":    (15.0, 35.0),     # mL/100g/min — Helenius Acta Radiol 2003
+    "cbv":    (1.5, 4.0),       # mL/100g
+    "mtt":    (3.0, 8.0),       # s — Calamante NMR Biomed 2013
+    "ncbv":   (0.85, 1.15),     # normalization sanity check
+    "ncbf":   (0.85, 1.15),
+    "ve":     (0.05, 0.30),     # Tofts JMRI 1999
+    "vp":     (0.005, 0.05),
+    "ktrans": (0.0, 0.02),      # NAWM intact BBB
+    "Ktrans": (0.0, 0.02),
+}
+
+NAWM_RANGES_1T5: Dict[str, Tuple[float, float]] = {
+    "cbf":    (10.0, 25.0),     # ~30% lower than 3T
+    "cbv":    (1.0, 3.0),
+    "mtt":    (3.0, 8.0),
+    "ncbv":   (0.85, 1.15),
+    "ncbf":   (0.85, 1.15),
+    "ve":     (0.05, 0.30),
+    "vp":     (0.005, 0.05),
+    "ktrans": (0.0, 0.02),
+    "Ktrans": (0.0, 0.02),
+}
+
+# Standard adult hematocrit assumed by the CBV ranges. Pediatric and
+# anemic cohorts shift CBV scaling ~20% — annotated in qc_notes when
+# value-level QC is applied.
+NAWM_ASSUMED_HEMATOCRIT: float = 0.45
+
+
+def _select_nawm_range_table(
+    field_strength_t: Optional[float],
+) -> Tuple[Optional[Dict[str, Tuple[float, float]]], Optional[str]]:
+    """Pick a NAWM range lookup table based on field strength.
+
+    Returns ``(table, status_note)``:
+        - table is None when field strength is unknown or outside the
+          validated [1.5T, 3.0T] range (no PASS/WARNING flag emitted).
+        - status_note is a string for ``qc_notes`` when value-level
+          QC is skipped, or None when a table was selected.
+    """
+    if field_strength_t is None or field_strength_t == 0:
+        return None, "Field strength unknown; NAWM ranges not applied."
+    if field_strength_t < 1.5 or field_strength_t > 3.0:
+        return None, (
+            f"Field strength {field_strength_t}T outside validated range "
+            "[1.5, 3.0]; NAWM ranges not applied."
+        )
+    if field_strength_t < 2.0:
+        return NAWM_RANGES_1T5, None
+    return NAWM_RANGES_3T, None
+
+
 def compute_nawm_reference(
     nawm_mask: np.ndarray,
     maps: Dict[str, np.ndarray],
     voxel_sizes: Tuple[float, float, float],
+    field_strength_t: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Compute NAWM reference values for normalization context.
+
+    Carries two distinct QC fields per physics-expert review:
+        - ``mask_qc_status`` describes the NAWM mask itself (validity,
+          voxel count). Same value on every map's downstream slice.
+        - per-map ``value_qc_status`` reports whether THAT map's NAWM
+          median falls within the field-strength-appropriate
+          physiological range. Stored as ``<map>_value_qc_status`` keys
+          alongside the per-map sub-dict so that
+          ``extract_per_map_lesion_stats`` can slice cleanly.
 
     Args:
         nawm_mask: Boolean NAWM mask.
         maps: Dictionary mapping map name to 3D array.
         voxel_sizes: Voxel dimensions in mm.
+        field_strength_t: B0 in tesla. When None or outside the
+            validated [1.5T, 3.0T] range, value-level QC is reported
+            as ``UNKNOWN`` (observed values still emitted).
 
     Returns:
-        Dictionary with NAWM statistics for each available map.
+        Dictionary with NAWM statistics for each available map plus
+        the QC fields described above.
     """
     voxel_count, volume_mm3, volume_ml = compute_region_volume(nawm_mask, voxel_sizes)
 
@@ -534,11 +761,12 @@ def compute_nawm_reference(
         "volume_ml": round(volume_ml, 2),
     }
 
-    # Compute statistics for each map
     for map_name, map_data in maps.items():
         if map_data is None:
             continue
-        stats = compute_map_statistics(map_data, nawm_mask)
+        stats = compute_map_statistics(
+            map_data, nawm_mask, map_name=None, compute_advanced=False,
+        )
         if stats is not None and stats.n_valid > 0:
             reference[map_name] = {
                 "median": stats.median,
@@ -547,27 +775,63 @@ def compute_nawm_reference(
                 "p75": stats.p75,
             }
 
-    # QC check for physiological plausibility
-    qc_status = "PASS"
-    qc_notes = ""
+    # No mask-size editorializing here. The NAWM mask may come from the
+    # upstream auto-NAWM builder (which enforces config.tumor_seg.nawm_min_voxels
+    # = 500 by default), the bilateral fallback, or a user-supplied mask in
+    # the force_binary ROI path. Each has its own validity contract; consumers
+    # can apply their own size threshold using the emitted ``voxel_count`` and
+    # ``volume_ml`` fields.
 
-    # Check CBV if available (for DSC)
-    if "cbv" in reference and isinstance(reference["cbv"], dict):
-        cbv_median = reference["cbv"].get("median", 0)
-        if cbv_median < 0.5 or cbv_median > 10:
-            qc_status = "WARNING"
-            qc_notes = "NAWM CBV outside expected range"
-
-    # Check Ktrans if available (for DCE)
-    if "ktrans" in reference and isinstance(reference["ktrans"], dict):
-        ktrans_median = reference["ktrans"].get("median", 0)
-        if ktrans_median < 0 or ktrans_median > 0.5:
-            qc_status = "WARNING"
-            qc_notes = "NAWM Ktrans outside expected range"
-
-    reference["qc_status"] = qc_status
-    if qc_notes:
-        reference["qc_notes"] = qc_notes
+    # Value-level QC: per-map physiological-range check.
+    range_table, range_note = _select_nawm_range_table(field_strength_t)
+    if range_table is None:
+        # Field strength unknown or outside validated range.
+        reference["value_qc_status"] = "UNKNOWN"
+        if range_note:
+            reference["value_qc_notes"] = range_note
+    else:
+        violations: List[str] = []
+        n_maps_checked = 0
+        for map_name, sub in list(reference.items()):
+            if not isinstance(sub, dict) or "median" not in sub:
+                continue
+            rng = range_table.get(map_name)
+            if rng is None:
+                continue
+            lo, hi = rng
+            median = sub.get("median")
+            if median is None:
+                continue
+            n_maps_checked += 1
+            in_range = lo <= median <= hi
+            sub["value_qc_status"] = "PASS" if in_range else "WARNING"
+            if not in_range:
+                violations.append(
+                    f"{map_name}={median} outside [{lo}, {hi}]"
+                )
+        if n_maps_checked == 0:
+            # No emitted maps had entries in the range table — don't
+            # silently claim PASS. Common case: DCE-only modality where
+            # only kep/peak_enhancement/iauc* are computed and none have
+            # registered NAWM ranges.
+            reference["value_qc_status"] = "UNKNOWN"
+            reference["value_qc_notes"] = (
+                "No emitted maps have entries in the field-strength NAWM "
+                "range table; range QC not applied."
+            )
+        elif violations:
+            reference["value_qc_status"] = "WARNING"
+            reference["value_qc_notes"] = (
+                "Out-of-range NAWM medians: " + "; ".join(violations)
+                + f". Assumed hematocrit={NAWM_ASSUMED_HEMATOCRIT}."
+            )
+        else:
+            reference["value_qc_status"] = "PASS"
+            reference["value_qc_notes"] = (
+                f"All NAWM medians within field-strength-appropriate ranges "
+                f"({n_maps_checked} map(s) checked). "
+                f"Assumed hematocrit={NAWM_ASSUMED_HEMATOCRIT}."
+            )
 
     return reference
 
@@ -675,6 +939,88 @@ def write_tumor_dseg_tsv(
 # ---------------------------------------------------------------------------
 
 
+def _build_clinical_threshold_block(
+    map_name: str,
+) -> Optional[Dict[str, Any]]:
+    """Return ClinicalThreshold sub-block for a map, or None.
+
+    Two flavors:
+        - direct: map has its own clinical threshold (e.g.,
+          ``ncbv → {"high_grade": 1.75}``).
+        - informational: map is the un-normalized companion of one that
+          carries a threshold (e.g., ``cbv → {"high_grade": 1.75,
+          "applies_to": "ncbv"}``). The breadcrumb signals to a reader
+          that the threshold is defined on the normalized map next door.
+    """
+    direct = DSC_CLINICAL_THRESHOLDS.get(map_name) or DCE_CLINICAL_THRESHOLDS.get(map_name)
+    if direct is not None:
+        return dict(direct)
+    info = _INFORMATIONAL_THRESHOLDS.get(map_name)
+    if info is not None:
+        applies_to, payload = info
+        block: Dict[str, Any] = dict(payload)
+        block["applies_to"] = applies_to
+        return block
+    return None
+
+
+def _slice_nawm_for_map(
+    nawm_reference: Optional[Dict[str, Any]],
+    map_name: str,
+) -> Optional[Dict[str, Any]]:
+    """Slice the modality NAWM reference dict for a single map.
+
+    Returns a dict carrying:
+        - ``voxel_count``, ``volume_ml`` (global mask context — informational;
+          consumers apply their own size policy)
+        - ``median``, ``std``, ``p25``, ``p75`` for ``map_name`` (in that
+          map's native units; e.g. normalized maps carry ~1.0 ± noise SD)
+        - ``value_qc_status`` / ``value_qc_notes`` for that map only
+          (cross-map contamination avoided per physics-expert review)
+
+    Returns None when no NAWM reference is available for the map.
+    """
+    if not nawm_reference or not isinstance(nawm_reference, dict):
+        return None
+    map_stats = nawm_reference.get(map_name)
+    if not isinstance(map_stats, dict) or "median" not in map_stats:
+        return None
+
+    out: Dict[str, Any] = {}
+    for k in ("voxel_count", "volume_ml"):
+        if k in nawm_reference:
+            out[k] = nawm_reference[k]
+    # Per-map stats and per-map value QC verdict.
+    for k in ("median", "std", "p25", "p75", "value_qc_status"):
+        if k in map_stats:
+            out[k] = map_stats[k]
+
+    # Carry value_qc_notes ONLY when relevant to this specific map, to avoid
+    # cross-map contamination (a map that PASSed individually shouldn't ship
+    # with notes complaining about a sibling map's WARNING). Three cases:
+    per_map_status = out.get("value_qc_status")
+    if per_map_status == "WARNING":
+        # This map itself failed → surface the modality-level note (which
+        # contains "Out-of-range NAWM medians: ..." plus hematocrit).
+        modality_notes = nawm_reference.get("value_qc_notes")
+        if modality_notes:
+            out["value_qc_notes"] = modality_notes
+    elif per_map_status is None:
+        # No per-map verdict (e.g., this map has no entry in the range
+        # table). Surface the modality-level status + notes so consumers
+        # know QC was not applied to this map.
+        modality_status = nawm_reference.get("value_qc_status")
+        if modality_status is not None:
+            out["value_qc_status"] = modality_status
+        modality_notes = nawm_reference.get("value_qc_notes")
+        if modality_notes:
+            out["value_qc_notes"] = modality_notes
+    # When per_map_status == "PASS", deliberately do NOT carry
+    # value_qc_notes — the map is fine, no cross-map context needed.
+
+    return out
+
+
 def extract_per_map_lesion_stats(
     aggregate: Optional[Dict[str, Any]],
     map_name: str,
@@ -683,40 +1029,31 @@ def extract_per_map_lesion_stats(
 
     Used to inject per-map ``LesionStats`` blocks into perfusion map
     sidecars. The aggregate dict (output of
-    :meth:`LesionStatisticsResult.to_dict`) has the shape::
+    :meth:`LesionStatisticsResult.to_dict`) carries per-region per-map
+    stats plus modality-level context (NAWM reference, clinical
+    thresholds, fractional volumes, mask type). This function slices
+    out everything relevant to ``map_name``.
+
+    Returns a fragment of the form::
 
         {
-          "Regions": {
-            "<region_name>": {
-              "voxel_count": N, "volume_mm3": V, "volume_ml": V,
-              "perfusion_maps": {"<map_name>": <MapStatistics dict>, ...}
-            }, ...
-          },
-          "TotalLesionVoxels": ...,
-          ...
-        }
-
-    For one ``map_name`` (e.g. ``"cbf"``, ``"Ktrans"``), this returns::
-
-        {
+          "LesionMaskType": "multi_label_tumor_seg",
           "Regions": {
             "<region_name>": {
               "voxel_count": N, "volume_ml": V,
               "stats": <MapStatistics dict for map_name>,
             }, ...
-          }
+          },
+          "NAWMReference": {... per-map slice in that map's units ...},
+          "ClinicalThreshold": {"high_grade": 1.75[, "applies_to": "ncbv"]},
+          "FractionalVolumes": {"above_1.75": 0.137, "above_2.5": ...},
         }
 
-    Returns ``None`` when the aggregate is empty or the requested map is
-    absent from every region (so the caller can skip injecting the field
-    entirely rather than emit an empty block).
-
-    Args:
-        aggregate: Aggregate lesion stats dict, or None.
-        map_name: Perfusion map name to extract (e.g. ``"cbf"``).
-
-    Returns:
-        Per-map fragment dict, or None if no data is available.
+    Optional fields are omitted when not applicable. Returns ``None``
+    when the aggregate is empty or the requested map has no per-region
+    stats AND no NAWM/threshold/fractional-volume context to forward
+    (so the caller can skip injecting the field entirely rather than
+    emit an empty block).
     """
     if not aggregate or not isinstance(aggregate, dict):
         return None
@@ -740,6 +1077,45 @@ def extract_per_map_lesion_stats(
         fragment["stats"] = stats
         out_regions[region_name] = fragment
 
-    if not out_regions:
+    nawm_block = _slice_nawm_for_map(
+        aggregate.get("nawm_reference"), map_name,
+    )
+    threshold_block = _build_clinical_threshold_block(map_name)
+
+    fractional_volumes = None
+    derived = aggregate.get("derived_metrics")
+    if isinstance(derived, dict):
+        fv_block = derived.get("fractional_volumes")
+        if isinstance(fv_block, dict) and map_name in fv_block:
+            fractional_volumes = fv_block[map_name]
+
+    mask_type = aggregate.get("LesionMaskType")
+
+    # Require some substantive data — region stats or NAWM reference — to
+    # emit a fragment. Standalone context (LesionMaskType, ClinicalThreshold
+    # breadcrumb, FractionalVolumes) is only useful when paired with actual
+    # measurements.
+    if not out_regions and not nawm_block:
         return None
-    return {"Regions": out_regions}
+
+    out: Dict[str, Any] = {}
+    if mask_type:
+        out["LesionMaskType"] = mask_type
+    if out_regions:
+        out["Regions"] = out_regions
+    if nawm_block:
+        out["NAWMReference"] = nawm_block
+    if threshold_block:
+        out["ClinicalThreshold"] = threshold_block
+    if fractional_volumes:
+        out["FractionalVolumes"] = fractional_volumes
+
+    # Symmetric AIF-correction flag for TTP variants. Lets a downstream
+    # consumer of either map clearly distinguish AIF-corrected from raw
+    # rather than rely on filename inference.
+    if map_name == "ttp":
+        out["aif_corrected"] = False
+    elif map_name == "ttpCorrected":
+        out["aif_corrected"] = True
+
+    return out

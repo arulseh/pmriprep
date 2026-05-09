@@ -155,13 +155,42 @@ def _build_dce_base(  # type: ignore[no-untyped-def]
 
 def _build_dce_meta(  # type: ignore[no-untyped-def]
     base, description, units=None, extra=None,
+    map_key="", lesion_stats_json=None,
 ):
+    """Compose a generic DCE sidecar; optionally inject LesionStats fragment.
+
+    When ``map_key`` and ``lesion_stats_json`` are both provided and the
+    aggregate JSON exists, the per-map fragment from
+    :func:`extract_per_map_lesion_stats` is attached as ``LesionStats``.
+    Used for model-free maps and NAWM-normalized maps that aren't routed
+    through ``_build_dce_pk_map_meta``.
+    """
     out = dict(base)
     out["Description"] = description
     if units is not None:
         out["Units"] = units
     if extra:
         out.update(extra)
+
+    if map_key and lesion_stats_json:
+        import json as _json
+        from pathlib import Path
+
+        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+        if isdefined(lesion_stats_json) and lesion_stats_json:
+            path = Path(lesion_stats_json)
+            if path.exists():
+                try:
+                    with open(path) as fh:
+                        aggregate = _json.load(fh)
+                    fragment = extract_per_map_lesion_stats(aggregate, map_key)
+                    if fragment:
+                        out["LesionStats"] = fragment
+                except Exception:
+                    pass
     return out
 
 
@@ -562,11 +591,22 @@ def _add_perf_map_sink(
     extra: Optional[dict],
     model_entity: str = "",
     minimal_base: bool = False,
+    map_key: str = "",
 ) -> pe.Node:
-    """Wire one DCE perf-space map sink (Function builder + Function copy)."""
+    """Wire one DCE perf-space map sink (Function builder + Function copy).
+
+    When ``map_key`` is non-empty, the meta builder also slices the
+    per-map ``LesionStats`` fragment from the aggregate
+    ``lesion_stats_json`` (sourced from inputnode). This unlocks
+    LesionStats injection on model-free + NAWM-normalized maps that
+    aren't routed through the PK-map meta builder.
+    """
     meta = pe.Node(
         niu.Function(
-            input_names=["base", "description", "units", "extra"],
+            input_names=[
+                "base", "description", "units", "extra",
+                "map_key", "lesion_stats_json",
+            ],
             output_names=["meta_dict"],
             function=_build_dce_meta,
         ),
@@ -575,7 +615,10 @@ def _add_perf_map_sink(
     meta.inputs.description = description
     meta.inputs.units = units
     meta.inputs.extra = extra
+    meta.inputs.map_key = map_key
     workflow.connect(base_node, "meta_dict", meta, "base")
+    if map_key:
+        workflow.connect(inputnode, "lesion_stats_json", meta, "lesion_stats_json")
 
     sink = pe.Node(
         niu.Function(
@@ -609,6 +652,26 @@ _PK_MAP_KEY: dict[str, str] = {
     "ve_map": "ve",
     "kep_map": "kep",
     "vp_map": "vp",
+}
+
+
+# Model-free maps that should carry per-region LesionStats. Excluded
+# (intentional, per physics-expert review): ser_map, wash_in_slope_map,
+# wash_out_slope_map, bat_map, curve_type_map — model-free curve features
+# without established per-ROI biomarker conventions.
+_MF_LESIONSTATS_MAP_KEY: dict[str, str] = {
+    "iauc60_map": "iauc60",
+    "iauc90_map": "iauc90",
+    "iauc120_map": "iauc120",
+    "peak_enhancement_map": "peak_enhancement",
+    "time_to_peak_map": "ttp",
+}
+
+
+# NAWM-normalized DCE maps that carry LesionStats.
+_NAWMNORM_LESIONSTATS_MAP_KEY: dict[str, str] = {
+    "nktrans_map": "nktrans",
+    "niauc60_map": "niauc60",
 }
 
 
@@ -988,6 +1051,9 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
 
     # --- Model-free maps (no model entity) ---
+    # Map keys come from module-level _MF_LESIONSTATS_MAP_KEY; maps not
+    # in that dict (SER/wash slopes/BAT/curve_type) get map_key="" and
+    # skip LesionStats injection.
     for in_attr, suffix, description, units, extra in _MODEL_FREE_MAPS:
         if in_attr not in present:
             continue
@@ -997,6 +1063,7 @@ def init_dce_datasinks_wf(
             desc_value="dce", suffix=suffix,
             description=description, units=units, extra=extra,
             model_entity="",
+            map_key=_MF_LESIONSTATS_MAP_KEY.get(in_attr, ""),
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -1141,6 +1208,7 @@ def init_dce_datasinks_wf(
             desc_value="dceNawmNorm", suffix="Ktrans",
             description="Ktrans normalized by NAWM (normal-appearing white matter) mean",
             units="ratio", extra=None, model_entity=model_entity,
+            map_key="nktrans",
         )
         sink_outputs.append((sink, "out_file"))
     if "niauc60_map" in present:
@@ -1150,6 +1218,7 @@ def init_dce_datasinks_wf(
             desc_value="dceNawmNorm", suffix="IAUC60",
             description="IAUC at 60s normalized by NAWM (normal-appearing white matter) mean",
             units="ratio", extra=None, model_entity="",
+            map_key="niauc60",
         )
         sink_outputs.append((sink, "out_file"))
 

@@ -946,7 +946,8 @@ def init_dsc_datasinks_wf(
         k2_meta = pe.Node(
             niu.Function(
                 input_names=[
-                    "base", "description", "map_key", "qc_metrics", "units", "extra",
+                    "base", "description", "map_key", "qc_metrics", "units",
+                    "extra", "lesion_stats_json",
                 ],
                 output_names=["meta_dict"],
                 function=_build_map_meta,
@@ -958,7 +959,10 @@ def init_dsc_datasinks_wf(
         k2_meta.inputs.units = "1/s"
         workflow.connect([
             (base_perf, k2_meta, [("meta_dict", "base")]),
-            (inputnode, k2_meta, [("qc_metrics", "qc_metrics")]),
+            (inputnode, k2_meta, [
+                ("qc_metrics", "qc_metrics"),
+                ("lesion_stats_json", "lesion_stats_json"),
+            ]),
             (k2_extra_node, k2_meta, [("extra", "extra")]),
         ])
         k2_sink = pe.Node(

@@ -183,7 +183,7 @@ class TestComputeDSCDerivedMetrics:
     """Tests for compute_dsc_derived_metrics()."""
 
     def test_with_ncbv_data(self) -> None:
-        """nCBV data + mask produces fractional_volumes and hotspot_summary keys."""
+        """nCBV data + mask produces per-map fractional_volumes (no hotspot_summary)."""
         mask = np.ones((10, 10, 1), dtype=bool)
         # nCBV values: 0.5..5.4 in steps of ~0.05
         ncbv = np.zeros((10, 10, 1))
@@ -197,10 +197,15 @@ class TestComputeDSCDerivedMetrics:
             mask=mask,
         )
         assert "fractional_volumes" in derived
-        assert "nCBV_above_1.75" in derived["fractional_volumes"]
-        assert "nCBV_above_2.5" in derived["fractional_volumes"]
-        assert "nCBV_above_4.0" in derived["fractional_volumes"]
-        assert "hotspot_summary" in derived
+        # New per-map dict shape (Phase 1b refactor):
+        assert "ncbv" in derived["fractional_volumes"]
+        ncbv_fv = derived["fractional_volumes"]["ncbv"]
+        # Phase 2d expanded thresholds: nCBV {1.75, 2.5, 3.0, 4.0}
+        for t in (1.75, 2.5, 3.0, 4.0):
+            assert f"above_{t}" in ncbv_fv
+        # hotspot_summary deliberately removed — per-map p98 is the canonical
+        # hotspot now and lives on each MapStatistics block.
+        assert "hotspot_summary" not in derived
 
     def test_all_none_maps_returns_empty(self) -> None:
         """All None maps returns empty dict."""
@@ -219,7 +224,7 @@ class TestComputeDCEDerivedMetrics:
     """Tests for compute_dce_derived_metrics()."""
 
     def test_with_ktrans_and_ve(self) -> None:
-        """Ktrans + ve data produces correct fractional volumes."""
+        """Ktrans data produces per-map fractional volumes (no hotspot_summary)."""
         mask = np.ones((10, 10, 1), dtype=bool)
         ktrans = np.zeros((10, 10, 1))
         ktrans.flat[:100] = np.linspace(0.0, 0.3, 100)
@@ -234,45 +239,181 @@ class TestComputeDCEDerivedMetrics:
             mask=mask,
         )
         assert "fractional_volumes" in derived
-        assert "Ktrans_above_0.1" in derived["fractional_volumes"]
-        assert "Ktrans_above_0.2" in derived["fractional_volumes"]
-        assert "hotspot_summary" in derived
-        assert "ktrans_p90" in derived["hotspot_summary"]
-        assert "ve_p90" in derived["hotspot_summary"]
+        assert "Ktrans" in derived["fractional_volumes"]
+        ktrans_fv = derived["fractional_volumes"]["Ktrans"]
+        # Phase 2d expanded thresholds: Ktrans {0.05, 0.1, 0.2}
+        for t in (0.05, 0.1, 0.2):
+            assert f"above_{t}" in ktrans_fv
+        # hotspot_summary removed — per-map p98 is canonical now.
+        assert "hotspot_summary" not in derived
 
 
 class TestComputeNAWMReference:
     """Tests for compute_nawm_reference()."""
 
     def test_nawm_stats(self) -> None:
-        """Maps + NAWM mask produces per-map stats with median, std, qc_status=PASS."""
-        nawm_mask = np.zeros((5, 5, 5), dtype=bool)
-        nawm_mask[1:4, 1:4, 1:4] = True  # 27 voxels
+        """Maps + NAWM mask produces per-map stats with value-level QC by field strength."""
+        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
+        nawm_mask[1:9, 1:9, 1:9] = True  # 512 voxels
         rng = np.random.default_rng(42)
-        cbv_data = rng.uniform(2.0, 4.0, (5, 5, 5))
+        cbv_data = rng.uniform(2.0, 4.0, (10, 10, 10))
 
         maps = {"cbv": cbv_data}
         voxel_sizes = (1.0, 1.0, 1.0)
-        ref = compute_nawm_reference(nawm_mask, maps, voxel_sizes)
+        ref = compute_nawm_reference(
+            nawm_mask, maps, voxel_sizes, field_strength_t=3.0,
+        )
 
-        assert ref["voxel_count"] == 27
+        assert ref["voxel_count"] == 512
         assert "cbv" in ref
         assert "median" in ref["cbv"]
         assert "std" in ref["cbv"]
-        assert ref["qc_status"] == "PASS"
+        # CBV ~3 lies in the 3T range (1.5, 4) → PASS at value level.
+        assert ref["value_qc_status"] == "PASS"
+        # Per-map verdict also surfaces:
+        assert ref["cbv"]["value_qc_status"] == "PASS"
+        # No mask-size editorial — voxel_count is informational only.
+        assert "mask_qc_status" not in ref
 
     def test_extreme_cbv_warns(self) -> None:
-        """Extreme CBV median produces qc_status=WARNING."""
-        nawm_mask = np.zeros((5, 5, 5), dtype=bool)
-        nawm_mask[0, 0, 0] = True
-        # CBV far outside expected range (> 10)
-        cbv_data = np.full((5, 5, 5), 15.0)
+        """Extreme CBV median produces value_qc_status=WARNING (3T table)."""
+        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
+        nawm_mask[1:9, 1:9, 1:9] = True  # 512 voxels
+        # CBV far outside 3T range (1.5, 4)
+        cbv_data = np.full((10, 10, 10), 15.0)
 
         maps = {"cbv": cbv_data}
         voxel_sizes = (1.0, 1.0, 1.0)
-        ref = compute_nawm_reference(nawm_mask, maps, voxel_sizes)
+        ref = compute_nawm_reference(
+            nawm_mask, maps, voxel_sizes, field_strength_t=3.0,
+        )
 
-        assert ref["qc_status"] == "WARNING"
+        assert ref["value_qc_status"] == "WARNING"
+        assert "cbv" in ref["value_qc_notes"]
+        # Hematocrit annotation surfaces in the QC notes.
+        assert "hematocrit" in ref["value_qc_notes"].lower()
+
+    def test_unknown_field_strength_skips_value_qc(self) -> None:
+        """field_strength_t=None reports value_qc_status=UNKNOWN."""
+        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
+        nawm_mask[1:9, 1:9, 1:9] = True
+        cbv_data = np.full((10, 10, 10), 15.0)  # would WARN at 3T
+
+        maps = {"cbv": cbv_data}
+        ref = compute_nawm_reference(
+            nawm_mask, maps, (1.0, 1.0, 1.0), field_strength_t=None,
+        )
+
+        assert ref["value_qc_status"] == "UNKNOWN"
+        assert "Field strength unknown" in ref["value_qc_notes"]
+
+    def test_field_strength_outside_validated_range_skips(self) -> None:
+        """7T (outside [1.5, 3.0]) reports value_qc_status=UNKNOWN, no auto-gate."""
+        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
+        nawm_mask[1:9, 1:9, 1:9] = True
+        cbv_data = np.full((10, 10, 10), 5.0)
+
+        maps = {"cbv": cbv_data}
+        ref = compute_nawm_reference(
+            nawm_mask, maps, (1.0, 1.0, 1.0), field_strength_t=7.0,
+        )
+
+        assert ref["value_qc_status"] == "UNKNOWN"
+        assert "7" in ref["value_qc_notes"]
+        assert "outside validated range" in ref["value_qc_notes"]
+
+    def test_small_nawm_mask_emits_size_without_editorial(self) -> None:
+        """Small NAWM mask: voxel_count + volume_ml emitted; no mask_qc_status fabricated.
+
+        NAWM may come from upstream auto-NAWM (config.tumor_seg.nawm_min_voxels=500),
+        bilateral fallback, OR a user-supplied mask via the force_binary ROI path.
+        Each path has its own validity contract, so this function reports size as
+        informational only and does not editorialize.
+        """
+        nawm_mask = np.zeros((5, 5, 5), dtype=bool)
+        nawm_mask[0, 0, 0] = True  # 1 voxel
+        cbv_data = np.full((5, 5, 5), 2.5)
+
+        ref = compute_nawm_reference(
+            nawm_mask, {"cbv": cbv_data}, (1.0, 1.0, 1.0),
+            field_strength_t=3.0,
+        )
+        assert ref["voxel_count"] == 1
+        assert "mask_qc_status" not in ref
+        assert "mask_qc_notes" not in ref
+
+    def test_no_maps_in_range_table_reports_unknown_not_pass(self) -> None:
+        """Field strength provided but emitted maps have no range entries → UNKNOWN.
+
+        Reproduces the M1 bug from the v0.50.0 code review: previously
+        compute_nawm_reference returned ``value_qc_status="PASS"`` with a
+        misleading "All NAWM medians within ranges" note when zero maps
+        had registered ranges (e.g., DCE-only modality with kep / iauc60).
+        """
+        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
+        nawm_mask[1:9, 1:9, 1:9] = True
+        # kep and peak_enhancement aren't in NAWM_RANGES_3T
+        maps = {
+            "kep": np.full((10, 10, 10), 0.5),
+            "peak_enhancement": np.full((10, 10, 10), 50.0),
+        }
+        ref = compute_nawm_reference(
+            nawm_mask, maps, (1.0, 1.0, 1.0), field_strength_t=3.0,
+        )
+        assert ref["value_qc_status"] == "UNKNOWN"
+        assert "No emitted maps" in ref["value_qc_notes"]
+
+
+class TestSliceNawmForMap:
+    """Phase 1a: per-map NAWM slicing avoids cross-map qc_notes contamination."""
+
+    def test_pass_map_does_not_carry_sibling_warning_notes(self) -> None:
+        """A PASSing map must not ship modality-level notes about sibling violations."""
+        from pmriprep.utils.lesion_stats import _slice_nawm_for_map
+
+        nawm = {
+            "voxel_count": 1000, "volume_ml": 50.0,
+            "ncbv": {"median": 1.0, "std": 0.1, "p25": 0.95, "p75": 1.05,
+                     "value_qc_status": "PASS"},
+            "cbv": {"median": 0.34, "std": 0.05, "p25": 0.30, "p75": 0.38,
+                    "value_qc_status": "WARNING"},
+            "value_qc_status": "WARNING",
+            "value_qc_notes": "Out-of-range NAWM medians: cbv. Hematocrit=0.45.",
+        }
+        # ncbv individually PASSed → must not carry the sibling violation note
+        out = _slice_nawm_for_map(nawm, "ncbv")
+        assert out["value_qc_status"] == "PASS"
+        assert "value_qc_notes" not in out
+
+    def test_warning_map_does_carry_modality_notes(self) -> None:
+        """A WARNING map should surface the modality-level violation context."""
+        from pmriprep.utils.lesion_stats import _slice_nawm_for_map
+
+        nawm = {
+            "voxel_count": 1000, "volume_ml": 50.0,
+            "cbv": {"median": 0.34, "std": 0.05, "p25": 0.30, "p75": 0.38,
+                    "value_qc_status": "WARNING"},
+            "value_qc_status": "WARNING",
+            "value_qc_notes": "Out-of-range NAWM medians: cbv. Hematocrit=0.45.",
+        }
+        out = _slice_nawm_for_map(nawm, "cbv")
+        assert out["value_qc_status"] == "WARNING"
+        assert "Out-of-range" in out["value_qc_notes"]
+
+    def test_map_without_per_map_verdict_inherits_modality_status(self) -> None:
+        """When per-map QC wasn't applied (no range entry), surface modality status."""
+        from pmriprep.utils.lesion_stats import _slice_nawm_for_map
+
+        nawm = {
+            "voxel_count": 1000, "volume_ml": 50.0,
+            "kep": {"median": 0.5, "std": 0.1, "p25": 0.4, "p75": 0.6},
+            "value_qc_status": "UNKNOWN",
+            "value_qc_notes": "Field strength unknown; NAWM ranges not applied.",
+        }
+        out = _slice_nawm_for_map(nawm, "kep")
+        # Inherits modality-level UNKNOWN (no per-map verdict on kep)
+        assert out["value_qc_status"] == "UNKNOWN"
+        assert "Field strength unknown" in out["value_qc_notes"]
 
 
 class TestMapStatisticsToDict:
@@ -463,3 +604,277 @@ class TestTransformHelpersReturnEmptyString:
             reference_file="ref.nii.gz",
             transform_matrix="x.mat",
         ) == ""
+
+
+class TestMapStatisticsHistogramMetrics:
+    """Phase 2a: p98/p99/skewness/kurtosis/entropy + compute_advanced gating."""
+
+    def test_advanced_metrics_present_on_large_roi(self) -> None:
+        rng = np.random.default_rng(42)
+        data = rng.gamma(2.0, 0.05, size=(20, 20, 20))
+        mask = np.ones_like(data, dtype=bool)
+        s = compute_map_statistics(data, mask, compute_advanced=True)
+        assert s is not None
+        assert s.p98 is not None
+        assert s.p99 is not None
+        assert s.skewness is not None
+        assert s.kurtosis is not None
+        assert s.entropy is not None
+        assert s.p98 < s.p99 <= s.max
+
+    def test_advanced_metrics_omitted_when_disabled(self) -> None:
+        rng = np.random.default_rng(42)
+        data = rng.gamma(2.0, 0.05, size=100)
+        mask = np.ones_like(data, dtype=bool)
+        s = compute_map_statistics(data, mask, compute_advanced=False)
+        assert s.p98 is None
+        assert s.p99 is None
+        assert s.skewness is None
+        assert s.kurtosis is None
+        assert s.entropy is None
+
+    def test_advanced_metrics_omitted_when_n_valid_below_10(self) -> None:
+        data = np.array([1.0, 2.0, 3.0, 4.0])
+        mask = np.ones_like(data, dtype=bool)
+        s = compute_map_statistics(data, mask, compute_advanced=True)
+        assert s.p98 is None
+        assert s.skewness is None
+
+    def test_constant_data_skew_kurt_entropy_none(self) -> None:
+        data = np.ones(200)
+        mask = np.ones_like(data, dtype=bool)
+        s = compute_map_statistics(data, mask, compute_advanced=True)
+        assert s.skewness is None
+        assert s.kurtosis is None
+        assert s.entropy is None
+
+
+class TestPPP:
+    """Phase 2c: percent positive pixels for permeability biomarkers."""
+
+    def test_ktrans_ppp_above_0p01(self) -> None:
+        # 5 of 12 voxels strictly > 0.01: {0.02, 0.05, 0.1, 0.15, 0.2}
+        data = np.array([0.0, 0.005, 0.02, 0.05, 0.1, 0.15, 0.2,
+                         0.0, 0.0, 0.0, 0.0, 0.0])
+        mask = np.ones_like(data, dtype=bool)
+        s = compute_map_statistics(data, mask, map_name="ktrans")
+        assert abs(s.ppp - 5 / 12) < 1e-3
+
+    def test_vp_ppp_above_0p001(self) -> None:
+        # 3 of 6 voxels strictly > 0.001: {0.002, 0.005, 0.01}
+        data = np.array([0.0, 0.0005, 0.002, 0.005, 0.01, 0.0])
+        mask = np.ones_like(data, dtype=bool)
+        s = compute_map_statistics(data, mask, map_name="vp")
+        assert s.ppp == 0.5
+
+    def test_k2_ppp_above_0p001(self) -> None:
+        # K2 noise floor at 0.001 s⁻¹ (Bjornerud 2011)
+        data = np.array([0.0, 0.0005, 0.001, 0.002, 0.005])
+        mask = np.ones_like(data, dtype=bool)
+        s = compute_map_statistics(data, mask, map_name="k2")
+        # 2 of 5 strictly > 0.001
+        assert abs(s.ppp - 0.4) < 1e-3
+
+    def test_non_permeability_map_no_ppp(self) -> None:
+        data = np.array([1.0, 2.0, 3.0, 4.0])
+        mask = np.ones_like(data, dtype=bool)
+        s = compute_map_statistics(data, mask, map_name="cbv")
+        assert s.ppp is None
+
+
+class TestCohensDAugmentation:
+    """Phase 2b: pooled-SD Cohen's d vs NAWM."""
+
+    def test_pooled_d_attached_when_nawm_matches(self) -> None:
+        result = LesionStatisticsResult(
+            subject_id="X", session_id="Y", modality="DSC",
+            mask_type="binary", mask_source="m.nii.gz", total_voxels=10,
+        )
+        region = RegionStatistics("tumor", 100, 100.0, 0.1)
+        region.perfusion_maps["cbv"] = MapStatistics(
+            median=2.5, std=0.8, n_valid=100, n_total=100,
+        )
+        result.regions["tumor"] = region
+        result.nawm_reference = {
+            "cbv": {"median": 1.5, "std": 0.4, "p25": 1.2, "p75": 1.8,
+                    "value_qc_status": "PASS"},
+        }
+        result.augment_with_cohens_d()
+        d = result.regions["tumor"].perfusion_maps["cbv"].cohens_d_vs_nawm
+        # pooled SD = sqrt((0.64 + 0.16)/2) = sqrt(0.4) ≈ 0.6325
+        # d = (2.5 - 1.5) / 0.6325 ≈ 1.5811
+        assert abs(d - 1.5811) < 1e-3
+
+    def test_no_nawm_yields_no_cohen_d(self) -> None:
+        result = LesionStatisticsResult(
+            subject_id="X", session_id="Y", modality="DSC",
+            mask_type="binary", mask_source="m.nii.gz", total_voxels=10,
+        )
+        region = RegionStatistics("tumor", 100, 100.0, 0.1)
+        region.perfusion_maps["cbv"] = MapStatistics(
+            median=2.5, std=0.8, n_valid=100, n_total=100,
+        )
+        result.regions["tumor"] = region
+        # nawm_reference is None
+        result.augment_with_cohens_d()
+        assert result.regions["tumor"].perfusion_maps["cbv"].cohens_d_vs_nawm is None
+
+    def test_map_without_nawm_entry_skipped(self) -> None:
+        result = LesionStatisticsResult(
+            subject_id="X", session_id="Y", modality="DSC",
+            mask_type="binary", mask_source="m.nii.gz", total_voxels=10,
+        )
+        region = RegionStatistics("tumor", 100, 100.0, 0.1)
+        region.perfusion_maps["mtt"] = MapStatistics(
+            median=12.0, std=3.0, n_valid=100, n_total=100,
+        )
+        result.regions["tumor"] = region
+        result.nawm_reference = {  # only cbv, no mtt
+            "cbv": {"median": 1.5, "std": 0.4, "p25": 1.2, "p75": 1.8},
+        }
+        result.augment_with_cohens_d()
+        assert result.regions["tumor"].perfusion_maps["mtt"].cohens_d_vs_nawm is None
+
+
+class TestExtractPerMapLesionStatsEnrichment:
+    """Phase 1a: extract_per_map_lesion_stats forwards modality context."""
+
+    @pytest.fixture
+    def aggregate(self):
+        return {
+            "LesionMaskType": "multi_label_tumor_seg",
+            "TotalLesionVoxels": 1000,
+            "Regions": {
+                "contrast_enhancing_tumor": {
+                    "voxel_count": 100, "volume_mm3": 100.0, "volume_ml": 0.1,
+                    "perfusion_maps": {
+                        "ncbv": {"mean": 1.8, "std": 0.5, "median": 1.7,
+                                 "p98": 3.2, "n_valid": 100, "n_total": 100},
+                        "cbv": {"mean": 0.6, "std": 0.2, "median": 0.55,
+                                "n_valid": 100, "n_total": 100},
+                        "k2": {"median": 0.0008, "std": 0.0005, "ppp": 0.12,
+                               "n_valid": 100, "n_total": 100},
+                        "ttp": {"median": 65.0, "std": 5.0,
+                                "n_valid": 100, "n_total": 100},
+                        "ttpCorrected": {"median": 5.0, "std": 1.0,
+                                         "n_valid": 100, "n_total": 100},
+                    },
+                },
+            },
+            "nawm_reference": {
+                "voxel_count": 1000, "volume_ml": 50.0,
+                "ncbv": {"median": 1.0, "std": 0.1, "p25": 0.95, "p75": 1.05,
+                         "value_qc_status": "PASS"},
+                "cbv": {"median": 0.34, "std": 0.05, "p25": 0.30, "p75": 0.38,
+                        "value_qc_status": "WARNING"},
+                "mtt": {"median": 5.5, "std": 1.0, "p25": 4.8, "p75": 6.2,
+                        "value_qc_status": "PASS"},
+                "value_qc_status": "WARNING",
+                "value_qc_notes": "Out-of-range NAWM medians: cbv. Hematocrit=0.45.",
+            },
+            "derived_metrics": {
+                "fractional_volumes": {
+                    "ncbv": {"above_1.75": 0.45, "above_2.5": 0.18,
+                             "above_3.0": 0.09, "above_4.0": 0.02},
+                    "Ktrans": {"above_0.05": 0.20, "above_0.1": 0.10},
+                },
+            },
+        }
+
+    def test_normalized_map_gets_direct_threshold_and_fv(self, aggregate):
+        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+        out = extract_per_map_lesion_stats(aggregate, "ncbv")
+        assert out["LesionMaskType"] == "multi_label_tumor_seg"
+        assert "Regions" in out
+        assert out["ClinicalThreshold"] == {"high_grade": 1.75}
+        assert "FractionalVolumes" in out
+        assert "above_3.0" in out["FractionalVolumes"]
+        # NAWM in normalized units, slice for ncbv only
+        assert out["NAWMReference"]["median"] == 1.0
+        assert out["NAWMReference"]["voxel_count"] == 1000
+
+    def test_unnormalized_companion_gets_informational_breadcrumb(self, aggregate):
+        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+        out = extract_per_map_lesion_stats(aggregate, "cbv")
+        assert out["ClinicalThreshold"] == {"high_grade": 1.75, "applies_to": "ncbv"}
+        # FractionalVolumes does NOT live on the un-normalized companion
+        assert "FractionalVolumes" not in out
+        # NAWM in deconv units
+        assert out["NAWMReference"]["median"] == 0.34
+
+    def test_aif_corrected_flag_on_ttp_variants(self, aggregate):
+        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+        raw = extract_per_map_lesion_stats(aggregate, "ttp")
+        corrected = extract_per_map_lesion_stats(aggregate, "ttpCorrected")
+        assert raw["aif_corrected"] is False
+        assert corrected["aif_corrected"] is True
+
+    def test_map_with_no_threshold_no_fv_just_stats(self, aggregate):
+        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+        out = extract_per_map_lesion_stats(aggregate, "k2")
+        assert "Regions" in out
+        assert "ClinicalThreshold" not in out
+        assert "FractionalVolumes" not in out
+        # No NAWM entry for k2 → no NAWMReference
+        assert "NAWMReference" not in out
+
+    def test_map_absent_from_regions_but_nawm_present_returns_nawm_only(self, aggregate):
+        """A map with no per-region stats but NAWM ref still emits NAWMReference."""
+        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+        out = extract_per_map_lesion_stats(aggregate, "mtt")
+        assert "Regions" not in out
+        assert "NAWMReference" in out
+        assert out["NAWMReference"]["median"] == 5.5
+
+    def test_empty_aggregate_returns_none(self):
+        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+        assert extract_per_map_lesion_stats(None, "ncbv") is None
+        assert extract_per_map_lesion_stats({}, "ncbv") is None
+
+
+class TestDSCStatsKeyTtpCorrected:
+    """Phase 1c: DSC interface stores camelCase 'ttpCorrected', not snake_case."""
+
+    def test_dsc_load_maps_uses_camelcase_ttp(self):
+        from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+
+        # Inspect the source for the map_attrs list (no need to instantiate)
+        import inspect
+        src = inspect.getsource(DSCLesionStats._load_maps)
+        assert '"ttpCorrected"' in src
+        assert '"ttp_corrected"' not in src
+
+
+class TestDCELesionStatsMapKeyCoverage:
+    """Phase 1d: model-free + NAWM-norm DCE maps now get LesionStats."""
+
+    def test_mf_dispatcher_covers_intended_maps(self):
+        from pmriprep.workflows.dce.datasinks import (
+            _MF_LESIONSTATS_MAP_KEY,
+        )
+
+        # Maps that SHOULD carry per-region LesionStats per Phase 1d.
+        expected = {
+            "iauc60_map": "iauc60",
+            "iauc90_map": "iauc90",
+            "iauc120_map": "iauc120",
+            "peak_enhancement_map": "peak_enhancement",
+            "time_to_peak_map": "ttp",
+        }
+        assert _MF_LESIONSTATS_MAP_KEY == expected
+
+    def test_nawmnorm_dispatcher_covers_intended_maps(self):
+        from pmriprep.workflows.dce.datasinks import (
+            _NAWMNORM_LESIONSTATS_MAP_KEY,
+        )
+
+        assert _NAWMNORM_LESIONSTATS_MAP_KEY == {
+            "nktrans_map": "nktrans",
+            "niauc60_map": "niauc60",
+        }
