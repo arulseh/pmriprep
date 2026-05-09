@@ -331,8 +331,22 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
     in_file, output_dir, subject, session, from_space, to_space, datatype="anat",
 ):
     """Copy a transform .mat into the derivatives ``anat/`` directory."""
+    import logging
     import shutil
     from pathlib import Path
+
+    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+    # Defensive no-op when upstream registration produced no transform.
+    # See pmriprep.workflows.dce.datasinks._copy_perf_map for the
+    # sentinel-handling rationale.
+    if not isdefined(in_file) or in_file is None or in_file == "":
+        logging.getLogger("nipype.workflow").warning(
+            "Skipping DSC _copy_xfm sink (from=%s, to=%s): upstream "
+            "produced no output (in_file=%r)",
+            from_space, to_space, in_file,
+        )
+        return ""
 
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:
@@ -360,8 +374,24 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     is skipped to match the legacy bespoke writer's ``shutil.copy2``.
     """
     import json as _json
+    import logging
     import shutil
     from pathlib import Path
+
+    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+    # Defensive no-op when upstream conditional producer returned no
+    # output. See pmriprep.workflows.dce.datasinks._copy_perf_map for
+    # the sentinel-handling rationale (Undefined/None/"" all need
+    # explicit handling because isdefined(None) == True is a Nipype
+    # gotcha).
+    if not isdefined(in_file) or in_file is None or in_file == "":
+        logging.getLogger("nipype.workflow").warning(
+            "Skipping DSC _copy_perf_map sink (desc=%s, suffix=%s): upstream "
+            "produced no output (in_file=%r)",
+            desc, suffix, in_file,
+        )
+        return ""
 
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:

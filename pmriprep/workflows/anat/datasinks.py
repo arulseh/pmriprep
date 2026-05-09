@@ -330,8 +330,22 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
     to_space,
 ):
     """Copy a transform .mat into the derivatives anat/ directory."""
+    import logging
     import shutil
     from pathlib import Path
+
+    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+    # Defensive no-op when upstream registration produced no transform.
+    # See pmriprep.workflows.dce.datasinks._copy_perf_map for the
+    # sentinel-handling rationale.
+    if not isdefined(in_file) or in_file is None or in_file == "":
+        logging.getLogger("nipype.workflow").warning(
+            "Skipping anat _copy_xfm sink (from=%s, to=%s): upstream "
+            "produced no output (in_file=%r)",
+            from_space, to_space, in_file,
+        )
+        return ""
 
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:

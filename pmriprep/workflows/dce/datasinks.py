@@ -391,8 +391,27 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     ``perf/`` (perfusion maps) from ``anat/`` (T1map/B1+map/masks).
     """
     import json as _json
+    import logging
     import shutil
     from pathlib import Path
+
+    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+    # Defensive no-op when upstream conditional producer returned no output
+    # (e.g., tortuosity correction skipped due to bad b-values, NAWM
+    # normalization had < 10 NAWM voxels, optional transform absent). The
+    # producer's None-return is the canonical "I had nothing to write"
+    # signal — see _tortuosity_correction_node, _normalize_by_nawm.
+    # Sentinels: isdefined(Undefined) == False, BUT isdefined(None) == True
+    # (Nipype gotcha) and "" is the documented Function-node-returns-empty
+    # convention — all three need explicit handling.
+    if not isdefined(in_file) or in_file is None or in_file == "":
+        logging.getLogger("nipype.workflow").warning(
+            "Skipping _copy_perf_map sink (desc=%s, suffix=%s): upstream "
+            "produced no output (in_file=%r)",
+            desc, suffix, in_file,
+        )
+        return ""
 
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:
@@ -429,8 +448,21 @@ def _copy_b1plusmap(  # type: ignore[no-untyped-def]
     ``_add_anat_image_sink`` → ``PMRIPrepDataSink``.
     """
     import json as _json
+    import logging
     import shutil
     from pathlib import Path
+
+    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+    # Defensive no-op when upstream produced no B1+ map (e.g., subject
+    # configured b1_method != "none" but the actual mapping failed).
+    # See _copy_perf_map for the sentinel-handling rationale.
+    if not isdefined(in_file) or in_file is None or in_file == "":
+        logging.getLogger("nipype.workflow").warning(
+            "Skipping _copy_b1plusmap sink: upstream produced no output "
+            "(in_file=%r)", in_file,
+        )
+        return ""
 
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:
@@ -454,8 +486,21 @@ def _copy_dce_xfm(  # type: ignore[no-untyped-def]
     in_file, output_dir, subject, session,
 ):
     """Copy DCE-to-T1w transform .mat into the derivatives anat/."""
+    import logging
     import shutil
     from pathlib import Path
+
+    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
+
+    # Defensive no-op when upstream registration produced no transform
+    # (rare, but possible when a subject has DCE imaging but registration
+    # to T1w failed). See _copy_perf_map for sentinel-handling rationale.
+    if not isdefined(in_file) or in_file is None or in_file == "":
+        logging.getLogger("nipype.workflow").warning(
+            "Skipping _copy_dce_xfm sink: upstream produced no output "
+            "(in_file=%r)", in_file,
+        )
+        return ""
 
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:

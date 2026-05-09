@@ -1314,10 +1314,30 @@ def _save_transforms(dsc_to_t1w_matrix, t1w_to_dsc_matrix, derivatives_dir, subj
         session_id: Session ID (without 'ses-' prefix), or None.
 
     Returns:
-        Tuple of (dsc_to_t1w_path, t1w_to_dsc_path) in BIDS layout.
+        Tuple of (dsc_to_t1w_path, t1w_to_dsc_path) in BIDS layout, or
+        ``("", "")`` when either input is Undefined/None/'' (upstream
+        registration produced no transform).
     """
+    import logging
     import shutil
     from pathlib import Path
+
+    from nipype.interfaces.base import isdefined
+
+    # Defensive no-op when upstream registration produced no transform.
+    # See pmriprep.workflows.dce.datasinks._copy_perf_map for the
+    # sentinel-handling rationale (Undefined/None/"" all need explicit
+    # handling — isdefined(None) == True is a Nipype gotcha).
+    def _missing(x):  # type: ignore[no-untyped-def]
+        return not isdefined(x) or x is None or x == ""
+
+    if _missing(dsc_to_t1w_matrix) or _missing(t1w_to_dsc_matrix):
+        logging.getLogger("nipype.workflow").warning(
+            "Skipping _save_transforms: upstream produced no transform "
+            "(dsc_to_t1w=%r, t1w_to_dsc=%r)",
+            dsc_to_t1w_matrix, t1w_to_dsc_matrix,
+        )
+        return "", ""
 
     sub_dir = f"sub-{subject_id}"
     ses_part = f"ses-{session_id}" if session_id else ""

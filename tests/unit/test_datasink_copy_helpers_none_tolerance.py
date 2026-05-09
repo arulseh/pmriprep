@@ -1,0 +1,178 @@
+"""Regression tests for v0.50.2 datasink Function-node None-tolerance.
+
+The 6 ``_copy_*`` Function-node helpers across DCE/DSC/anat datasinks
+all call ``shutil.copy2(in_file, ...)``. Conditional producers like
+``_tortuosity_correction_node`` and ``_normalize_by_nawm`` legitimately
+return ``None`` when their preconditions aren't met. Pre-v0.50.2 this
+would crash the whole subject inside ``shutil.copy2(None, ...)`` with
+``TypeError: stat: path should be string, bytes, os.PathLike or
+integer, not NoneType``. Reproduced on sub-0081 (OSIPI test-retest) at
+the ``ktrans_tortuosity_corrected_sink`` node.
+
+Each helper now early-returns ``""`` when given Undefined/None/"".
+These tests cover the two perfusion-map helpers explicitly (the most
+complex signatures); the four xfm/B1+ helpers share the same guard
+pattern with simpler signatures and rely on the perf-map tests for
+guard validation.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from traits.trait_base import Undefined
+
+
+class TestDCECopyPerfMapNoneTolerance:
+    """Regression: dce/datasinks._copy_perf_map must no-op on Undefined/None/''."""
+
+    def test_undefined_in_file_returns_empty_no_files_written(self, tmp_path) -> None:
+        """The exact sentinel that triggered the sub-0081 crash."""
+        from pmriprep.workflows.dce.datasinks import _copy_perf_map
+        out = _copy_perf_map(
+            in_file=Undefined, output_dir=str(tmp_path), subject="X",
+            session="Y", desc="dceTortuosityCorr", suffix="Ktrans",
+            meta_dict={},
+        )
+        assert out == ""
+        assert not list(tmp_path.rglob("*.nii.gz"))
+        assert not list(tmp_path.rglob("*.json"))
+
+    def test_none_in_file_returns_empty_no_files_written(self, tmp_path) -> None:
+        """Nipype converts Undefined → None on some Function-node code paths."""
+        from pmriprep.workflows.dce.datasinks import _copy_perf_map
+        out = _copy_perf_map(
+            in_file=None, output_dir=str(tmp_path), subject="X",
+            session="Y", desc="dceTortuosityCorr", suffix="Ktrans",
+            meta_dict={},
+        )
+        assert out == ""
+        assert not list(tmp_path.rglob("*.nii.gz"))
+        assert not list(tmp_path.rglob("*.json"))
+
+    def test_empty_string_in_file_returns_empty_no_files_written(self, tmp_path) -> None:
+        """Function-node-returns-empty-string convention (per _transform_lesion_mask_to_dce)."""
+        from pmriprep.workflows.dce.datasinks import _copy_perf_map
+        out = _copy_perf_map(
+            in_file="", output_dir=str(tmp_path), subject="X",
+            session="Y", desc="dceTortuosityCorr", suffix="Ktrans",
+            meta_dict={},
+        )
+        assert out == ""
+        assert not list(tmp_path.rglob("*.nii.gz"))
+
+    def test_real_file_still_copies_with_sidecar(self, tmp_path) -> None:
+        """Happy path unchanged: real path → NIfTI copied + JSON sidecar written."""
+        from pmriprep.workflows.dce.datasinks import _copy_perf_map
+        src = tmp_path / "src.nii.gz"
+        src.write_bytes(b"fake nifti")
+        out_dir = tmp_path / "out"
+        out = _copy_perf_map(
+            in_file=str(src), output_dir=str(out_dir),
+            subject="X", session="Y",
+            desc="dceTortuosityCorr", suffix="Ktrans",
+            meta_dict={"Description": "test"},
+        )
+        assert out.endswith("sub-X_ses-Y_desc-dceTortuosityCorr_Ktrans.nii.gz")
+        assert Path(out).is_file()
+        assert Path(out.replace(".nii.gz", ".json")).is_file()
+
+
+class TestDSCCopyPerfMapNoneTolerance:
+    """Regression: dsc/datasinks._copy_perf_map must no-op on Undefined/None/''."""
+
+    def test_undefined_in_file_returns_empty_no_files_written(self, tmp_path) -> None:
+        from pmriprep.workflows.dsc.datasinks import _copy_perf_map
+        out = _copy_perf_map(
+            in_file=Undefined, output_dir=str(tmp_path), subject="X",
+            session="Y", desc="dsc", suffix="cbv",
+            meta_dict={},
+        )
+        assert out == ""
+        assert not list(tmp_path.rglob("*.nii.gz"))
+        assert not list(tmp_path.rglob("*.json"))
+
+    def test_none_in_file_returns_empty_no_files_written(self, tmp_path) -> None:
+        from pmriprep.workflows.dsc.datasinks import _copy_perf_map
+        out = _copy_perf_map(
+            in_file=None, output_dir=str(tmp_path), subject="X",
+            session="Y", desc="dsc", suffix="cbv",
+            meta_dict={},
+        )
+        assert out == ""
+
+    def test_empty_string_in_file_returns_empty_no_files_written(self, tmp_path) -> None:
+        from pmriprep.workflows.dsc.datasinks import _copy_perf_map
+        out = _copy_perf_map(
+            in_file="", output_dir=str(tmp_path), subject="X",
+            session="Y", desc="dsc", suffix="cbv",
+            meta_dict={},
+        )
+        assert out == ""
+
+    def test_real_file_still_copies_with_sidecar(self, tmp_path) -> None:
+        from pmriprep.workflows.dsc.datasinks import _copy_perf_map
+        src = tmp_path / "src.nii.gz"
+        src.write_bytes(b"fake nifti")
+        out_dir = tmp_path / "out"
+        out = _copy_perf_map(
+            in_file=str(src), output_dir=str(out_dir),
+            subject="X", session="Y",
+            desc="dsc", suffix="cbv",
+            meta_dict={"Description": "test"},
+        )
+        assert out.endswith("sub-X_ses-Y_desc-dsc_cbv.nii.gz")
+        assert Path(out).is_file()
+        assert Path(out.replace(".nii.gz", ".json")).is_file()
+
+
+class TestSaveTransformsNoneTolerance:
+    """Regression: dsc/base.py:_save_transforms must no-op on Undefined/None/''.
+
+    Same conditional-producer-feeds-unconditional-sink pattern as the
+    datasinks helpers. ``_save_transforms`` writes both DSC→T1w and
+    T1w→DSC transform matrices; if either upstream registration produces
+    no transform the function would crash inside ``shutil.copy2(None, ...)``.
+    """
+
+    def test_undefined_dsc_to_t1w_returns_empty_tuple(self, tmp_path) -> None:
+        from pmriprep.workflows.dsc.base import _save_transforms
+        result = _save_transforms(
+            dsc_to_t1w_matrix=Undefined,
+            t1w_to_dsc_matrix=str(tmp_path / "t1w_to_dsc.mat"),
+            derivatives_dir=str(tmp_path), subject_id="X", session_id="Y",
+        )
+        assert result == ("", "")
+        assert not list(tmp_path.rglob("*.mat"))
+
+    def test_undefined_t1w_to_dsc_returns_empty_tuple(self, tmp_path) -> None:
+        from pmriprep.workflows.dsc.base import _save_transforms
+        result = _save_transforms(
+            dsc_to_t1w_matrix=str(tmp_path / "dsc_to_t1w.mat"),
+            t1w_to_dsc_matrix=Undefined,
+            derivatives_dir=str(tmp_path), subject_id="X", session_id="Y",
+        )
+        assert result == ("", "")
+
+    def test_none_inputs_return_empty_tuple(self, tmp_path) -> None:
+        from pmriprep.workflows.dsc.base import _save_transforms
+        result = _save_transforms(
+            dsc_to_t1w_matrix=None, t1w_to_dsc_matrix=None,
+            derivatives_dir=str(tmp_path), subject_id="X", session_id="Y",
+        )
+        assert result == ("", "")
+
+    def test_real_inputs_still_copy(self, tmp_path) -> None:
+        from pmriprep.workflows.dsc.base import _save_transforms
+        src1 = tmp_path / "dsc_to_t1w.mat"
+        src2 = tmp_path / "t1w_to_dsc.mat"
+        src1.write_text("identity")
+        src2.write_text("identity")
+        out_dir = tmp_path / "out"
+        result = _save_transforms(
+            dsc_to_t1w_matrix=str(src1), t1w_to_dsc_matrix=str(src2),
+            derivatives_dir=str(out_dir), subject_id="X", session_id="Y",
+        )
+        assert result[0].endswith("sub-X_ses-Y_from-dsc_to-T1w_mode-image_xfm.mat")
+        assert result[1].endswith("sub-X_ses-Y_from-T1w_to-dsc_mode-image_xfm.mat")
+        assert Path(result[0]).is_file()
+        assert Path(result[1]).is_file()
