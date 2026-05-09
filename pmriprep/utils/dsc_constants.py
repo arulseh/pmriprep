@@ -142,7 +142,15 @@ LEAKY_PRIMARY_INADEQUATE: Final[float] = 5.0  # percent, == LEAKY_SIGMA_LOW
 #: Default singular value truncation threshold (fraction of max) for sSVD
 DEFAULT_SVD_THRESHOLD: Final[float] = 0.2
 
-#: Default oscillation index threshold for oSVD
+#: Default oscillation index threshold for oSVD.
+#: Adapted for 3T clinical SNR (~20-40); literature range 0.04-0.10
+#: (Liu 2010 NMR Biomed 23:286; Wu 2003 used 0.095 at SNR~100).
+#: OI(λ) is decreasing in λ, so tightening the OI target forces the
+#: linspace search upward to a higher truncation threshold, suppressing
+#: noise-driven MTT inflation. Loosening (e.g. to Wu's 0.095) lets the
+#: algorithm pick smaller thresholds where residue-tail noise inflates
+#: AUC and hence MTT. See Calamante 2013 NMR Biomed 26:792 §4.2 on the
+#: intrinsic MTT noise sensitivity of oSVD at clinical SNR.
 DEFAULT_OI_THRESHOLD: Final[float] = 0.065
 
 
