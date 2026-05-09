@@ -734,3 +734,156 @@ class TestPostfilterDiagsEmission:
         qc: dict = {}
         diags = {"atlas_strict": {"aif_n_after_filters": 6}}
         assert self._should_emit(qc, "atlas_strict", diags) is False
+
+
+class TestUnionPoolTrim:
+    """Union-pool fallback now mirrors the per-tier progressive worst-BRR
+    trim (production code at ``dsc_aif.py:2870-2925``).
+
+    These tests reproduce the union trim loop pattern in-test and verify
+    (a) single-shot dual-ROI on a contaminated pool fails;
+    (b) one trim iteration drops the contaminator;
+    (c) the trimmed pool passes dual-ROI;
+    (d) ``union_tier_provenance`` recomputed from the trimmed coords
+        excludes tiers whose voxels were dropped (fixes the
+        detection_level vs aif_tier_provenance inconsistency that would
+        otherwise occur).
+    """
+
+    @staticmethod
+    def _trim_key(union_pool, i):
+        brr = union_pool[i][2].get("baseline_return_ratio", float("nan"))
+        if not np.isnan(brr):
+            return float(brr)
+        return -float(union_pool[i][0])
+
+    def _build_pool(self, contaminator_tier="atlas_relaxed"):
+        """Build a 5-voxel union: 1 contaminated (tier=contaminator_tier)
+        + 4 clean (split 1 from atlas_relaxed, 3 from atlas_permissive).
+        """
+        shape = (10, 10, 5, 120)
+        conc_data = np.zeros(shape)
+        brain_mask = np.ones(shape[:3])
+        good_curve = _make_aif_curve(peak_height=30.0, recirculation_height=2.0)
+        bad_curve = _curve_with_negative_tail(
+            peak_height=30.0, tail_offset=-8.0,
+        )
+        # 5 coords; (4,4,2) is the contaminator
+        coords = [(4, 4, 2), (4, 5, 2), (5, 4, 2), (5, 5, 2), (4, 6, 2)]
+        union: list[tuple[float, tuple[int, int, int], dict]] = []
+        union_coord_origin: dict[tuple[int, int, int], str] = {}
+        # Contaminator first (tier matches the parameter)
+        conc_data[4, 4, 2, :] = bad_curve
+        union.append((1.0, (4, 4, 2), {"baseline_return_ratio": -8.0}))
+        union_coord_origin[(4, 4, 2)] = contaminator_tier
+        # 1 clean voxel from atlas_relaxed
+        conc_data[4, 5, 2, :] = good_curve
+        union.append((1.1, (4, 5, 2), {"baseline_return_ratio": 10.0}))
+        union_coord_origin[(4, 5, 2)] = "atlas_relaxed"
+        # 3 clean voxels from atlas_permissive
+        for i, c in enumerate([(5, 4, 2), (5, 5, 2), (4, 6, 2)]):
+            conc_data[c[0], c[1], c[2], :] = good_curve
+            union.append((1.2 + i * 0.1, c, {"baseline_return_ratio": 10.0}))
+            union_coord_origin[c] = "atlas_permissive"
+        return conc_data, brain_mask, union, union_coord_origin
+
+    def _run_union_trim(self, conc_data, brain_mask, union):
+        """Replicates the production union-trim loop body."""
+        aif = AIFDetection()
+        union_pool = list(union)
+        accept_pool = None
+        while len(union_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
+            result = aif._try_aif_dual_roi(
+                union_pool, conc_data, brain_mask,
+                tr=1.5, baseline_frames=20,
+            )
+            if result is not None:
+                accept_pool = list(union_pool)
+                break
+            worst_idx = min(
+                range(len(union_pool)),
+                key=lambda i: self._trim_key(union_pool, i),
+            )
+            union_pool.pop(worst_idx)
+        return accept_pool
+
+    def test_single_shot_fails_on_contaminated_union(self):
+        """Without trim, a 5-voxel union with one negative-BRR voxel
+        averaged in fails the dual-ROI gate single-shot."""
+        aif = AIFDetection()
+        conc_data, brain_mask, union, _ = self._build_pool()
+        result = aif._try_aif_dual_roi(
+            union, conc_data, brain_mask, tr=1.5, baseline_frames=20,
+        )
+        assert result is None
+
+    def test_trim_drops_contaminator_and_passes(self):
+        """With progressive trim, the contaminated voxel is dropped on
+        the first iteration and the remaining 4-voxel pool passes."""
+        conc_data, brain_mask, union, _ = self._build_pool()
+        accepted = self._run_union_trim(conc_data, brain_mask, union)
+        assert accepted is not None
+        accepted_coords = {coord for _, coord, _ in accepted}
+        # Contaminator (4,4,2) must be dropped; the 4 clean voxels remain.
+        assert (4, 4, 2) not in accepted_coords
+        assert {(4, 5, 2), (5, 4, 2), (5, 5, 2), (4, 6, 2)} == accepted_coords
+
+    def test_provenance_recomputed_from_trimmed_pool(self):
+        """When the contaminator was the only voxel from a particular
+        tier, that tier must be REMOVED from the recomputed provenance
+        (and from detection_level) — not merely have its count reduced.
+        """
+        # Contaminator is from atlas_strict; the only atlas_strict voxel.
+        conc_data, brain_mask, union, union_coord_origin = self._build_pool(
+            contaminator_tier="atlas_strict",
+        )
+        accepted = self._run_union_trim(conc_data, brain_mask, union)
+        assert accepted is not None
+        # Recompute provenance from the trimmed pool's coords
+        # (replicates production code).
+        trimmed_provenance: dict[str, int] = {}
+        for _, coord, _ in accepted:
+            lvl = union_coord_origin.get(coord)
+            if lvl is not None:
+                trimmed_provenance[lvl] = trimmed_provenance.get(lvl, 0) + 1
+        # atlas_strict must NOT appear (its only voxel was the contaminator).
+        assert "atlas_strict" not in trimmed_provenance
+        assert trimmed_provenance == {
+            "atlas_relaxed": 1,
+            "atlas_permissive": 3,
+        }
+        # detection_level must reflect post-trim contributors only,
+        # in cascade order (strict, relaxed, permissive).
+        cascade_order = [
+            "atlas_strict", "atlas_relaxed", "atlas_permissive",
+            "full_atlas_permissive", "brain_relaxed", "brain_permissive",
+        ]
+        contributing = [
+            lvl for lvl in cascade_order
+            if trimmed_provenance.get(lvl, 0) > 0
+        ]
+        detection_level = "+".join(contributing)
+        assert detection_level == "atlas_relaxed+atlas_permissive"
+
+    def test_provenance_preserves_partial_tier(self):
+        """When a tier had multiple voxels and only one was trimmed,
+        the tier should remain in provenance with a reduced count.
+        """
+        # Contaminator is from atlas_relaxed; 1 other clean atlas_relaxed
+        # voxel remains in the pool.
+        conc_data, brain_mask, union, union_coord_origin = self._build_pool(
+            contaminator_tier="atlas_relaxed",
+        )
+        accepted = self._run_union_trim(conc_data, brain_mask, union)
+        assert accepted is not None
+        trimmed_provenance: dict[str, int] = {}
+        for _, coord, _ in accepted:
+            lvl = union_coord_origin.get(coord)
+            if lvl is not None:
+                trimmed_provenance[lvl] = trimmed_provenance.get(lvl, 0) + 1
+        # atlas_relaxed still present (1 clean voxel survived) but count
+        # dropped from 2 to 1.
+        assert trimmed_provenance == {
+            "atlas_relaxed": 1,
+            "atlas_permissive": 3,
+        }
