@@ -783,13 +783,47 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
 # ran. These replace the legacy ``desc-*QC_quality.json`` summary files
 # at session root (deleted in v0.46.0). The aggregator uses them as
 # presence probes AND as the source of QC* recommendation/warnings flat
-# keys.
+# keys. Anat / tumor_seg patterns use ``{prefix}*`` between the bare
+# ``sub-XX_ses-YY`` prefix and the trailing ``_space-...`` so optional
+# BIDS run/acq entities propagated from raw inputs are absorbed.
 _PIPELINE_PRESENCE_PROBES: dict[str, str] = {
-    "anat": "anat/{prefix}_space-T1w_desc-preproc_T1w.json",
-    "tumor_seg": "anat/{prefix}_space-T1w_desc-tumorseg_dseg.json",
+    "anat": "anat/{prefix}*_space-T1w_desc-preproc_T1w.json",
+    "tumor_seg": "anat/{prefix}*_space-T1w_desc-tumorseg_dseg.json",
+    # DSC/DCE preproc sidecars use the bare prefix (no run in name).
     "dsc": "perf/{prefix}_desc-dscPreproc_dsc.json",
     "dce": "perf/{prefix}_desc-dcePreproc_dce.json",
 }
+
+
+def _resolve_bids_anchor(
+    ses_dir: Path,
+    glob_pattern: str,
+    *,
+    exclude_entities: tuple[str, ...] = ("_ce-",),
+) -> Path:
+    """Resolve a BIDS file pattern allowing optional run/acq entities.
+
+    Glob patterns use ``{prefix}*`` between the bare ``sub-XX_ses-YY``
+    prefix and the trailing entities/suffix to absorb arbitrary BIDS
+    run/acq entities written by upstream nodes.
+
+    Filenames containing any token in ``exclude_entities`` are dropped
+    BEFORE picking the lowest-run-numbered match. Default excludes
+    ``"_ce-"`` so an anatomy probe like
+    ``{prefix}*_space-T1w_desc-preproc_T1w.json`` does NOT silently
+    return a contrast-enhanced postcon T1w when the native T1w
+    coexists in the same directory. Sorted-ascending returns
+    ``_run-1`` before ``_run-2`` etc.
+
+    Returns the first match after filtering, or a non-existent path
+    when nothing matches (so callers' ``Path.exists()`` semantics still
+    hold for resume / fallback logic).
+    """
+    matches = sorted(
+        m for m in ses_dir.glob(glob_pattern)
+        if not any(token in m.name for token in exclude_entities)
+    )
+    return matches[0] if matches else (ses_dir / glob_pattern)
 
 # Pipeline-internal resume sidecars carrying the verbatim producer-shape
 # qc_metrics envelope. Used by the HTML aggregator to recover the
@@ -1001,19 +1035,35 @@ def _load_pipeline_sidecars(
     anchor_pattern = _PIPELINE_PRESENCE_PROBES.get(pipeline)
     if not anchor_pattern:
         return {}
-    anchor_path = ses_dir / anchor_pattern.format(prefix=prefix)
+    anchor_path = _resolve_bids_anchor(
+        ses_dir, anchor_pattern.format(prefix=prefix),
+    )
     anchor = _read_json_safe(anchor_path)
 
     qc_metrics: dict[str, Any] = {}
 
     resume_pattern = _PIPELINE_RESUME_SIDECARS.get(pipeline)
-    if resume_pattern:
-        resume_path = ses_dir / resume_pattern.format(prefix=prefix)
-        resume = _read_json_safe(resume_path)
-        if pipeline == "dsc":
-            # DSC resume carries verbatim aif_qc / preload_qc /
-            # preprocessing_stats; legacy qc_metrics nests them under
-            # aif_detection / preload / preprocessing.
+    if pipeline == "dsc":
+        # The canonical full-envelope sidecar is desc-dsc_qc.json
+        # (written by write_perfusion_qc_and_provenance). Resume sidecar
+        # only carries flat aif_qc/preload_qc/preprocessing_stats and is
+        # missing deconvolution/registration/normalization_factor/config —
+        # which two DSC report sub-sections (Example Voxel Fit, DSC
+        # Perfusion Maps) gate on. Prefer the canonical sidecar.
+        qc_path = (
+            ses_dir / "perf" / f"{prefix}_desc-dsc_qc.json"
+        )
+        qc_doc = _read_json_safe(qc_path)
+        metrics = qc_doc.get("Metrics") if isinstance(qc_doc, dict) else None
+        if isinstance(metrics, dict):
+            qc_metrics.update(dict(metrics))
+        elif resume_pattern:
+            # Fallback for partial-failure runs where desc-dsc_qc.json
+            # never landed but the resume sidecar did. Both files are
+            # written every successful run today; resume is the
+            # intermediate that backs --skip-dsc round-trips.
+            resume_path = ses_dir / resume_pattern.format(prefix=prefix)
+            resume = _read_json_safe(resume_path)
             aif_qc = resume.get("aif_qc")
             if isinstance(aif_qc, dict):
                 qc_metrics["aif_detection"] = dict(aif_qc)
@@ -1023,7 +1073,10 @@ def _load_pipeline_sidecars(
             preproc = resume.get("preprocessing_stats")
             if isinstance(preproc, dict):
                 qc_metrics["preprocessing"] = dict(preproc)
-        elif pipeline == "dce":
+    elif resume_pattern:
+        resume_path = ses_dir / resume_pattern.format(prefix=prefix)
+        resume = _read_json_safe(resume_path)
+        if pipeline == "dce":
             # DCE resume stores the full producer-shape envelope verbatim.
             envelope = resume.get("qc_metrics")
             if isinstance(envelope, dict):
@@ -1075,9 +1128,10 @@ def _anat_nested_from_sidecars(
     if preproc:
         out["preprocessing"] = preproc
 
-    # brain_extraction.tool — read from the brain-mask sidecar
-    mask_path = (
-        ses_dir / "anat" / f"{prefix}_space-T1w_desc-brain_mask.json"
+    # brain_extraction.tool — read from the brain-mask sidecar.
+    # Glob accommodates optional ``_run-N`` entity propagated from raw.
+    mask_path = _resolve_bids_anchor(
+        ses_dir, f"anat/{prefix}*_space-T1w_desc-brain_mask.json",
     )
     mask_sidecar = _read_json_safe(mask_path)
     brain_ex: dict[str, Any] = {}
@@ -1106,12 +1160,16 @@ def _anat_nested_from_sidecars(
     if brain_ex:
         out["brain_extraction"] = brain_ex
 
-    # tissue_segmentation — presence of any probseg sidecar is sufficient
+    # tissue_segmentation — presence of any probseg sidecar is sufficient.
+    # Glob accommodates optional ``_run-N`` entity propagated from raw.
     probseg_dir = ses_dir / "anat"
     if probseg_dir.is_dir():
         probsegs: dict[str, Any] = {}
         for tissue in ("WM", "GM", "CSF"):
-            ps = probseg_dir / f"{prefix}_space-T1w_label-{tissue}_probseg.json"
+            ps = _resolve_bids_anchor(
+                ses_dir,
+                f"anat/{prefix}*_space-T1w_label-{tissue}_probseg.json",
+            )
             if ps.exists():
                 ps_meta = _read_json_safe(ps)
                 tissue_block: dict[str, Any] = {}

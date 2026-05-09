@@ -106,3 +106,258 @@ class TestClassifyMetricInverse:
     def test_nan_returns_na(self) -> None:
         """NaN values return 'na'."""
         assert _classify_metric_inverse(float("nan"), 5, 10) == "na"
+
+
+# ---------------------------------------------------------------------------
+# BIDS run-entity handling in report sidecar discovery
+# ---------------------------------------------------------------------------
+
+
+class TestRunEntityHandling:
+    """Anat/tumor_seg sidecar lookups must accept either the bare-prefix
+    BIDS form (``sub-XX_ses-YY_space-...``) or the form with the optional
+    ``_run-N`` entity propagated from raw input
+    (``sub-XX_ses-YY_run-1_space-...``). NiPreps convention propagates
+    raw run entities into derivatives verbatim.
+    """
+
+    PREFIX = "sub-09_ses-01"
+
+    def _make_anat(self, tmp_path, *names: str) -> "Path":  # noqa: F821
+        anat = tmp_path / "anat"
+        anat.mkdir(parents=True, exist_ok=True)
+        for n in names:
+            (anat / n).write_text("{}")
+        return tmp_path
+
+    def test_anchor_resolves_with_run_entity(self, tmp_path) -> None:
+        from pmriprep.utils.report_utils import _resolve_bids_anchor
+        ses = self._make_anat(
+            tmp_path,
+            f"{self.PREFIX}_run-1_space-T1w_desc-preproc_T1w.json",
+        )
+        result = _resolve_bids_anchor(
+            ses, f"anat/{self.PREFIX}*_space-T1w_desc-preproc_T1w.json",
+        )
+        assert result.exists()
+        assert "_run-1_" in result.name
+
+    def test_anchor_resolves_without_run_entity(self, tmp_path) -> None:
+        """Bare prefix (no `_run-`) must also resolve."""
+        from pmriprep.utils.report_utils import _resolve_bids_anchor
+        ses = self._make_anat(
+            tmp_path,
+            f"{self.PREFIX}_space-T1w_desc-preproc_T1w.json",
+        )
+        result = _resolve_bids_anchor(
+            ses, f"anat/{self.PREFIX}*_space-T1w_desc-preproc_T1w.json",
+        )
+        assert result.exists()
+        assert "_run-" not in result.name
+
+    def test_anchor_excludes_contrast_variant_when_native_present(
+        self, tmp_path,
+    ) -> None:
+        """When both `_ce-GAD_run-1_*preproc_T1w` and `_run-1_*preproc_T1w`
+        coexist, the helper MUST return the native (non-postcon) variant.
+        Without the `_ce-` exclusion, sorted-ascending picks the postcon
+        (alphabetically `_ce-` < `_run-`) — which would silently render
+        the wrong sidecar's QC.
+        """
+        from pmriprep.utils.report_utils import _resolve_bids_anchor
+        ses = self._make_anat(
+            tmp_path,
+            f"{self.PREFIX}_ce-GAD_run-1_space-T1w_desc-preproc_T1w.json",
+            f"{self.PREFIX}_run-1_space-T1w_desc-preproc_T1w.json",
+        )
+        result = _resolve_bids_anchor(
+            ses, f"anat/{self.PREFIX}*_space-T1w_desc-preproc_T1w.json",
+        )
+        assert result.exists()
+        assert "_ce-" not in result.name
+        assert "_run-1_" in result.name
+
+    def test_anchor_lowest_run_when_multiple(self, tmp_path) -> None:
+        """Multiple legitimate runs (`_run-1` and `_run-2`) — return run-1."""
+        from pmriprep.utils.report_utils import _resolve_bids_anchor
+        ses = self._make_anat(
+            tmp_path,
+            f"{self.PREFIX}_run-1_space-T1w_desc-preproc_T1w.json",
+            f"{self.PREFIX}_run-2_space-T1w_desc-preproc_T1w.json",
+        )
+        result = _resolve_bids_anchor(
+            ses, f"anat/{self.PREFIX}*_space-T1w_desc-preproc_T1w.json",
+        )
+        assert "_run-1_" in result.name
+
+    def test_anat_brain_extraction_with_run_entity(self, tmp_path) -> None:
+        """`_anat_nested_from_sidecars` must surface BrainExtraction*
+        fields from the brain mask sidecar even when the filename
+        carries `_run-1`."""
+        import json as _json
+        from pmriprep.utils.report_utils import _anat_nested_from_sidecars
+        anat = tmp_path / "anat"
+        anat.mkdir(parents=True)
+        (anat / f"{self.PREFIX}_run-1_space-T1w_desc-brain_mask.json").write_text(
+            _json.dumps({
+                "BrainExtractionTool": "HD-BET",
+                "BrainExtractionVolume": 1234.94,
+                "BrainExtractionVolumeMm3": 1234940.0,
+                "BrainExtractionQCStatus": "PASS",
+            })
+        )
+        out = _anat_nested_from_sidecars(tmp_path, self.PREFIX, anchor={})
+        assert "brain_extraction" in out
+        be = out["brain_extraction"]
+        assert be["tool"] == "hdbet"
+        assert be["brain_volume_ml"] == 1234.94
+        assert be["qc_status"] == "PASS"
+
+    def test_anat_tissue_segmentation_with_run_entity(self, tmp_path) -> None:
+        """Probseg sidecars with `_run-1` must populate
+        `tissue_segmentation.{WM,GM,CSF}`."""
+        import json as _json
+        from pmriprep.utils.report_utils import _anat_nested_from_sidecars
+        anat = tmp_path / "anat"
+        anat.mkdir(parents=True)
+        for tissue, vol in (("WM", 500.0), ("GM", 600.0), ("CSF", 200.0)):
+            (
+                anat / f"{self.PREFIX}_run-1_space-T1w_label-{tissue}_probseg.json"
+            ).write_text(_json.dumps({"TissueSegmentationVolume": vol}))
+        out = _anat_nested_from_sidecars(tmp_path, self.PREFIX, anchor={})
+        assert "tissue_segmentation" in out
+        ts = out["tissue_segmentation"]
+        assert ts["WM"]["volume_ml"] == 500.0
+        assert ts["GM"]["volume_ml"] == 600.0
+        assert ts["CSF"]["volume_ml"] == 200.0
+
+    def test_load_pipeline_sidecars_anat_native_over_postcon(
+        self, tmp_path,
+    ) -> None:
+        """Integration: a session with BOTH native and postcon T1w
+        preproc sidecars + a native brain mask must pick the native
+        anchor and surface the native brain extraction QC."""
+        import json as _json
+        from pmriprep.utils.report_utils import _load_pipeline_sidecars
+        anat = tmp_path / "anat"
+        anat.mkdir(parents=True)
+        # Native + postcon preproc anchor sidecars
+        (anat / f"{self.PREFIX}_run-1_space-T1w_desc-preproc_T1w.json").write_text(
+            _json.dumps({"PreprocessingDenoising": True})
+        )
+        (
+            anat / f"{self.PREFIX}_ce-GAD_run-1_space-T1w_desc-preproc_T1w.json"
+        ).write_text(_json.dumps({"PreprocessingDenoising": False}))
+        # Native brain mask with QC
+        (anat / f"{self.PREFIX}_run-1_space-T1w_desc-brain_mask.json").write_text(
+            _json.dumps({
+                "BrainExtractionTool": "HD-BET",
+                "BrainExtractionVolume": 1234.94,
+                "BrainExtractionQCStatus": "PASS",
+            })
+        )
+        out = _load_pipeline_sidecars(tmp_path, self.PREFIX, "anat")
+        # Anchor resolved to native → preprocessing.denoising == True
+        assert out.get("preprocessing", {}).get("denoising") is True
+        # Brain extraction surfaced
+        assert out.get("brain_extraction", {}).get("brain_volume_ml") == 1234.94
+
+
+# ---------------------------------------------------------------------------
+# DSC loader: prefer canonical desc-dsc_qc.json over resume sidecar
+# ---------------------------------------------------------------------------
+
+
+class TestDscLoader:
+    """`_load_pipeline_sidecars("dsc", ...)` must read the canonical
+    full-envelope ``desc-dsc_qc.json`` so the report context exposes
+    ``deconvolution / registration / normalization_factor / config``
+    blocks. The legacy resume sidecar
+    (``aif_qc + preload_qc + preprocessing_stats`` only) is the
+    fallback for partial-failure runs.
+    """
+
+    PREFIX = "sub-09_ses-01"
+
+    def _make_perf(self, tmp_path) -> "Path":  # noqa: F821
+        perf = tmp_path / "perf"
+        perf.mkdir(parents=True, exist_ok=True)
+        # The presence-probe anchor is needed for _load_pipeline_sidecars
+        # to even attempt the DSC branch.
+        (perf / f"{self.PREFIX}_desc-dscPreproc_dsc.json").write_text("{}")
+        return tmp_path
+
+    def test_dsc_loader_reads_canonical_qc_json(self, tmp_path) -> None:
+        """When `desc-dsc_qc.json` is present, every Metrics block
+        surfaces in the returned qc_metrics dict (including the four
+        currently-missing blocks: deconvolution / registration /
+        normalization_factor / config)."""
+        import json as _json
+        from pmriprep.utils.report_utils import _load_pipeline_sidecars
+        ses = self._make_perf(tmp_path)
+        (ses / "perf" / f"{self.PREFIX}_desc-dsc_qc.json").write_text(_json.dumps({
+            "Metrics": {
+                "preprocessing": {"motion_status": "GOOD"},
+                "preload": {"percent_leaky_voxels": 5},
+                "aif_detection": {"detection_method": "atlas_relaxed"},
+                "deconvolution": {"method": "oSVD", "qc_voxel": "[1,2,3]"},
+                "registration": {"registration_method": "flirt"},
+                "normalization_factor": 1.234,
+                "config": {"aif_source": "auto"},
+            },
+        }))
+        out = _load_pipeline_sidecars(ses, self.PREFIX, "dsc")
+        assert out.get("preprocessing", {}).get("motion_status") == "GOOD"
+        assert out.get("preload", {}).get("percent_leaky_voxels") == 5
+        assert out.get("aif_detection", {}).get("detection_method") == "atlas_relaxed"
+        assert out.get("deconvolution", {}).get("method") == "oSVD"
+        assert out.get("deconvolution", {}).get("qc_voxel") == "[1,2,3]"
+        assert out.get("registration", {}).get("registration_method") == "flirt"
+        assert out.get("normalization_factor") == 1.234
+        assert out.get("config", {}).get("aif_source") == "auto"
+
+    def test_dsc_loader_falls_back_to_resume_when_qc_json_missing(
+        self, tmp_path,
+    ) -> None:
+        """When `desc-dsc_qc.json` is absent (e.g. partial-failure run
+        that wrote the resume but not the canonical QC), the loader
+        falls back to the resume sidecar's flat keys mapped to the
+        canonical envelope shape."""
+        import json as _json
+        from pmriprep.utils.report_utils import _load_pipeline_sidecars
+        ses = self._make_perf(tmp_path)
+        (ses / "perf" / f"{self.PREFIX}_desc-dscResume_pmriprep.json").write_text(
+            _json.dumps({
+                "aif_qc": {"detection_method": "synthetic"},
+                "preload_qc": {"percent_leaky_voxels": 99},
+                "preprocessing_stats": {"motion_status": "POOR"},
+            })
+        )
+        out = _load_pipeline_sidecars(ses, self.PREFIX, "dsc")
+        assert out.get("aif_detection", {}).get("detection_method") == "synthetic"
+        assert out.get("preload", {}).get("percent_leaky_voxels") == 99
+        assert out.get("preprocessing", {}).get("motion_status") == "POOR"
+        # Deconvolution etc. NOT in resume — should be absent
+        assert "deconvolution" not in out
+
+    def test_dsc_loader_prefers_qc_json_over_resume(self, tmp_path) -> None:
+        """When BOTH files are present, the canonical qc_json wins
+        (so the resume's stale flat keys can't shadow new metrics)."""
+        import json as _json
+        from pmriprep.utils.report_utils import _load_pipeline_sidecars
+        ses = self._make_perf(tmp_path)
+        (ses / "perf" / f"{self.PREFIX}_desc-dsc_qc.json").write_text(_json.dumps({
+            "Metrics": {
+                "preprocessing": {"motion_status": "FROM_QC_JSON"},
+                "deconvolution": {"method": "oSVD"},
+            },
+        }))
+        (ses / "perf" / f"{self.PREFIX}_desc-dscResume_pmriprep.json").write_text(
+            _json.dumps({
+                "preprocessing_stats": {"motion_status": "FROM_RESUME"},
+            })
+        )
+        out = _load_pipeline_sidecars(ses, self.PREFIX, "dsc")
+        # Canonical qc_json wins
+        assert out.get("preprocessing", {}).get("motion_status") == "FROM_QC_JSON"
+        assert out.get("deconvolution", {}).get("method") == "oSVD"
