@@ -556,7 +556,24 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
              "Values must be plasma concentration in mM, temporally aligned "
              "with DCE volumes. Bypasses all AIF detection.",
     )
-    lesion_mask_file = File(exists=True, desc="Optional 3D lesion mask for exclusion")
+    # Either(File(exists=True), Enum("")) accepts a real path OR the literal
+    # empty string. Empty string is the documented Function-node-returns-empty
+    # convention used by the upstream _transform_lesion_mask_to_dce helper
+    # when no whole-tumor mask is available for a subject. The runtime guard
+    # in _run_interface handles the empty-string case (it's falsy). Analogous
+    # to the Either(File, Enum(None)) sentinel idiom in qc_writers (None vs
+    # "" sentinel reflects the upstream Function-node return contract).
+    lesion_mask_file = traits.Either(
+        File(exists=True),
+        traits.Enum(""),
+        mandatory=False,
+        desc=(
+            "Optional 3D lesion mask for exclusion. Accepts the literal "
+            "empty string when upstream Function nodes have no mask to "
+            "provide (per the workflow Function-node-returns-empty-string "
+            "convention used by _transform_lesion_mask_to_dce)."
+        ),
+    )
 
     # Detection parameters
     aif_method = traits.Enum(

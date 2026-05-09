@@ -1687,3 +1687,73 @@ class TestMultiBumpTailConstantValue:
 
     def test_tail_peak_fraction_is_25_percent(self) -> None:
         assert DCE_AIF_TAIL_PEAK_FRACTION == 0.25
+
+
+class TestDCEAIFDetectionLesionMaskFileTrait:
+    """Regression for v0.50.1: DCE AIF detection must accept the empty string
+    that upstream Function nodes return when no lesion mask is available.
+
+    Reproduced on sub-0081 (OSIPI test-retest, no lesion mask): Nipype rejected
+    ``""`` because the trait was ``File(exists=True)`` (mandatory by default)
+    and ``Path("").is_file()`` is False. v0.50.1 widens the trait to
+    ``Either(File(exists=True), Enum(""))`` so the documented Function-node-
+    returns-empty-string convention works without changing the runtime guard
+    in ``_run_interface``.
+    """
+
+    def test_lesion_mask_file_accepts_empty_string(self) -> None:
+        iface = AIFDetection()
+        iface.inputs.lesion_mask_file = ""
+        assert iface.inputs.lesion_mask_file == ""
+
+    def test_lesion_mask_file_accepts_existing_path(self, tmp_path) -> None:
+        mask = tmp_path / "lesion.nii.gz"
+        mask.write_bytes(b"")
+        iface = AIFDetection()
+        iface.inputs.lesion_mask_file = str(mask)
+        assert iface.inputs.lesion_mask_file == str(mask)
+
+    def test_lesion_mask_file_rejects_nonexistent_path(self) -> None:
+        from traits.trait_errors import TraitError
+        iface = AIFDetection()
+        with pytest.raises(TraitError):
+            iface.inputs.lesion_mask_file = (
+                "/nonexistent/path/that/does/not/exist.nii.gz"
+            )
+
+    def test_upstream_function_node_empty_string_does_not_raise(self, tmp_path) -> None:
+        """Wiring regression: when an upstream Function node returns ``""``
+        (the documented convention used by ``_transform_lesion_mask_to_dce``
+        when no whole-tumor mask is available), assigning that value to the
+        downstream trait must not raise.
+
+        Pre-v0.50.1 this raised ``TraitError`` because ``File(exists=True)``
+        normalized ``""`` → ``"."`` and rejected. Pure ``wf.connect([...])``
+        validation is structural-only and does NOT propagate values, so this
+        test runs the upstream node explicitly and assigns its result to the
+        downstream trait — that's the actual code path the engine takes at
+        node-run time.
+        """
+        import nipype.interfaces.utility as niu
+        import nipype.pipeline.engine as pe
+
+        def _empty_returner():
+            return ""
+
+        upstream = pe.Node(
+            niu.Function(
+                input_names=[], output_names=["lesion_mask_dce_file"],
+                function=_empty_returner,
+            ),
+            name="upstream",
+            base_dir=str(tmp_path),
+        )
+        result = upstream.run()
+        upstream_value = result.outputs.lesion_mask_dce_file
+        assert upstream_value == ""
+
+        aif = AIFDetection()
+        # This is the assignment Nipype's MultiProc plugin makes at node-run
+        # time. Pre-v0.50.1 it raised TraitError; post-fix it must succeed.
+        aif.inputs.lesion_mask_file = upstream_value
+        assert aif.inputs.lesion_mask_file == ""
