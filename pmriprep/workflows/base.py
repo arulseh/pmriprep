@@ -2088,6 +2088,8 @@ def init_pmriprep_wf(
                 # preproc-4D cosmetic enrichment + verbatim resume sidecar.
                 ("outputnode.aif_qc", "inputnode.aif_qc"),
                 ("outputnode.preprocessing_stats", "inputnode.preprocessing_stats"),
+                ("outputnode.motion_qc", "inputnode.motion_qc"),
+                ("outputnode.aif_metrics", "inputnode.aif_metrics"),
                 # Motion-corrected data
                 ("outputnode.dsc_moco", "inputnode.dsc_moco"),
                 ("outputnode.dsc_mean", "inputnode.dsc_mean"),

@@ -1592,6 +1592,8 @@ def init_dsc_preproc_wf(
                 "qc_metrics",
                 "preload_qc",
                 "preprocessing_stats",
+                "motion_qc",
+                "aif_metrics",
                 # Masks in DSC space
                 "brain_mask_dsc",
                 "nawm_mask_dsc",
@@ -2955,6 +2957,8 @@ def init_dsc_preproc_wf(
         # QC metrics
         (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
         (preload_correct, outputnode, [("qc_dict", "preload_qc")]),
+        (motion_correct, outputnode, [("qc_metrics", "motion_qc")]),
+        (aif_qc_plot, outputnode, [("out_aif_metrics", "aif_metrics")]),
     ])
 
     # Smoothed outputs (only if smooth_fwhm > 0)

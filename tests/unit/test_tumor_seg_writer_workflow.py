@@ -161,11 +161,12 @@ def test_tumor_seg_sidecar_sources_populated(
     wf.run()
 
     anat = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    # desc-tumorClinicalContext.json is a non-image clinical-context
-    # sidecar (no Sources/SpatialReference/VoxelSize); skip it here.
+    # Pipeline-internal sidecars without a NIfTI companion (PMRIPrepInternal=True)
+    # do not carry image provenance fields; skip them here.
     sidecars = [
         p for p in sorted(anat.glob("*.json"))
         if "desc-tumorClinicalContext" not in p.name
+        and "desc-tumorResume_pmriprep" not in p.name
     ]
     assert sidecars, "No sidecars written"
 

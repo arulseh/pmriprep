@@ -201,3 +201,82 @@ class TestDCERegistrationQCMaskRegression:
         assert "dice" not in qc_metrics
         assert qc_metrics["brain_mask_used"] is False
         assert qc_metrics["qc_status"] in {"PASS", "WARN", "POOR"}
+
+
+class TestDCERegistrationQCStatusGating:
+    """qc_status routing under the recalibrated cross-modal thresholds.
+
+    Stubs the metric helpers so the test exercises only the threshold
+    table + decision block — independent of FSL availability.
+    """
+
+    @pytest.mark.parametrize(
+        "dice,corr,nmi,det,expected",
+        [
+            (0.96, 0.08, 0.04, 1.00, "PASS"),
+            (0.96, 0.02, 0.04, 1.00, "POOR"),
+            (0.96, 0.05, 0.04, 1.00, "PASS"),
+            (0.70, 0.20, 0.05, 1.00, "POOR"),
+            (0.96, 0.20, 0.05, 1.30, "WARN"),
+            (0.96, 0.40, 0.50, 1.00, "PASS"),
+        ],
+        ids=[
+            "clean_cross_modal",
+            "corr_below_floor",
+            "corr_in_advisory_band",
+            "dice_below_min",
+            "det_out_of_range",
+            "high_nmi_no_warning",
+        ],
+    )
+    def test_qc_status_routing(
+        self, tmp_path, dice, corr, nmi, det, expected,
+    ):
+        from pmriprep.interfaces.dce import DCERegistration
+
+        dce_affine = np.diag([2.0, 2.0, 2.0, 1.0])
+        rng = np.random.default_rng(0)
+        dce_mean_data = rng.uniform(50.0, 200.0, size=(8, 8, 4)).astype(np.float32)
+        registered_t1w_data = dce_mean_data.copy()
+        anat_mask_data = np.ones((8, 8, 4), dtype=np.uint8)
+
+        t1w_file = tmp_path / "t1w.nii.gz"
+        dce_mean_file = tmp_path / "dce_mean.nii.gz"
+        registered_t1w_file = tmp_path / "registered_t1w.nii.gz"
+        anat_mask_file = tmp_path / "brain_mask.nii.gz"
+        out_matrix = tmp_path / "registration.mat"
+
+        _save_volume(t1w_file, anat_mask_data.astype(np.float32), dce_affine)
+        _save_volume(dce_mean_file, dce_mean_data, dce_affine)
+        _save_volume(registered_t1w_file, registered_t1w_data, dce_affine)
+        _save_volume(anat_mask_file, anat_mask_data, dce_affine)
+        _identity_flirt_mat(out_matrix)
+
+        interface = DCERegistration()
+        interface.inputs.t1w_file = str(t1w_file)
+        interface.inputs.dce_mean = str(dce_mean_file)
+        interface.inputs.brain_mask = str(anat_mask_file)
+        interface.inputs.out_file = str(registered_t1w_file)
+        interface.inputs.out_matrix = str(out_matrix)
+
+        with patch(
+            "pmriprep.utils.registration.transform_mask_to_grid",
+            return_value=str(anat_mask_file),
+        ), patch(
+            "pmriprep.utils.registration.calculate_nmi_from_files",
+            return_value=nmi,
+        ), patch(
+            "pmriprep.utils.registration.calculate_correlation_from_files",
+            return_value=corr,
+        ), patch(
+            "pmriprep.utils.registration.calculate_dice",
+            return_value=dice,
+        ), patch.object(
+            DCERegistration, "_check_transform_determinant",
+            return_value=det,
+        ):
+            qc_metrics = interface._compute_qc_metrics(
+                str(registered_t1w_file), str(dce_mean_file)
+            )
+
+        assert qc_metrics["qc_status"] == expected, qc_metrics

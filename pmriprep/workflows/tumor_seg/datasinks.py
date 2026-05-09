@@ -17,6 +17,7 @@ import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 from pmriprep.interfaces.qc_writers import (
     PMRIPrepDataSink,
     TumorSegFiguresWriter,
+    TumorSegResumeWriter,
     write_dataset_description_node,
 )
 
@@ -423,6 +424,20 @@ def init_tumor_seg_datasinks_wf(
             ("nawm_filmstrip_flair", "nawm_filmstrip_flair"),
         ]),
     ])
+
+    # Resume sidecar writer — emits anat/<prefix>_desc-tumorResume_pmriprep.json
+    # carrying the producer-shape qc_metrics envelope (preprocessing /
+    # segmentation / nawm blocks) for the HTML aggregator.
+    resume_writer = pe.Node(TumorSegResumeWriter(), name="resume_writer")
+    workflow.connect([
+        (inputnode, resume_writer, [
+            ("output_dir", "output_dir"),
+            ("subject_id", "subject_id"),
+            ("session_id", "session_id"),
+            ("qc_metrics", "qc_metrics"),
+        ]),
+    ])
+    sink_outputs.append((resume_writer, "out_file"))
 
     # dataset_description.json barrier
     merge = pe.Node(

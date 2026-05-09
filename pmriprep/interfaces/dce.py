@@ -3676,13 +3676,21 @@ QC_MASK_THRESHOLD_PERCENTILE: int = 10
 FLIRT_COARSE_SEARCH: int = 15
 FLIRT_FINE_SEARCH: int = 6
 
-# QC thresholds for registration validation
+# Cross-modal T1w↔DCE registration QC thresholds. Dice (brain-mask
+# overlap) and Pearson correlation drive the qc_status gate.
+# Cross-modal Pearson is intrinsically low (different intensity
+# distributions in T1w vs post-contrast DCE), so correlation_min
+# is set near the noise floor to discriminate failed alignment
+# from normal cross-modal contrast.
+# NMI is computed for the metric record but not gated — the
+# Strehl-Ghosh formula 2*MI/(H1+H2) is bounded above by 1 and
+# its absolute scale is sensitive to histogram binning, so an
+# absolute threshold across sites is unreliable.
 REG_QC_THRESHOLDS: dict[str, float] = {
     "dice_min": 0.80,
     "dice_good": 0.85,
-    "correlation_min": 0.65,
-    "correlation_good": 0.70,
-    "nmi_min": 1.40,
+    "correlation_min": 0.03,
+    "correlation_good": 0.10,
     "determinant_min": 0.85,
     "determinant_max": 1.15,
 }
@@ -4114,17 +4122,15 @@ class DCERegistration(SimpleInterface):
                 )
                 mask_path_dce = resampled or None
 
-            # Calculate NMI (always possible)
+            # NMI is recorded for reference. Not gated: cross-modal
+            # Strehl-Ghosh NMI is bounded above by 1 and its absolute
+            # scale is histogram-bin-sensitive, so an absolute threshold
+            # across sites would be unreliable.
             try:
                 nmi = calculate_nmi_from_files(
                     registered_t1w, dce_mean, mask_path=mask_path_dce
                 )
                 qc_metrics["nmi"] = nmi
-                if nmi < REG_QC_THRESHOLDS["nmi_min"]:
-                    warnings_list.append(
-                        f"NMI {nmi:.2f} below threshold "
-                        f"{REG_QC_THRESHOLDS['nmi_min']}"
-                    )
             except Exception as exc:
                 logger.warning("NMI calculation failed: %s", exc)
 

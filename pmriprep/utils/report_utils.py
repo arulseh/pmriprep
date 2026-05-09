@@ -798,6 +798,7 @@ _PIPELINE_PRESENCE_PROBES: dict[str, str] = {
 _PIPELINE_RESUME_SIDECARS: dict[str, str] = {
     "dsc": "perf/{prefix}_desc-dscResume_pmriprep.json",
     "dce": "perf/{prefix}_desc-dceResume_pmriprep.json",
+    "tumor_seg": "anat/{prefix}_desc-tumorResume_pmriprep.json",
 }
 
 
@@ -1027,6 +1028,12 @@ def _load_pipeline_sidecars(
             envelope = resume.get("qc_metrics")
             if isinstance(envelope, dict):
                 qc_metrics.update(dict(envelope))
+        elif pipeline == "tumor_seg":
+            # Tumor-seg resume carries the same envelope as DCE
+            # (preprocessing / segmentation / nawm blocks).
+            envelope = resume.get("qc_metrics")
+            if isinstance(envelope, dict):
+                qc_metrics.update(dict(envelope))
 
     if pipeline == "anat":
         qc_metrics.update(_anat_nested_from_sidecars(ses_dir, prefix, anchor))
@@ -1081,6 +1088,21 @@ def _anat_nested_from_sidecars(
         brain_ex["tool"] = raw_tool.lower().replace("-", "")
     if "BrainExtractionVersion" in mask_sidecar:
         brain_ex["version"] = str(mask_sidecar["BrainExtractionVersion"])
+    if "BrainExtractionVolume" in mask_sidecar:
+        brain_ex["brain_volume_ml"] = float(mask_sidecar["BrainExtractionVolume"])
+    if "BrainExtractionVolumeMm3" in mask_sidecar:
+        brain_ex["brain_volume_mm3"] = float(mask_sidecar["BrainExtractionVolumeMm3"])
+    elif "BrainExtractionVolume" in mask_sidecar:
+        # Fallback when only the mL value was written.
+        brain_ex["brain_volume_mm3"] = (
+            float(mask_sidecar["BrainExtractionVolume"]) * 1000.0
+        )
+    if "BrainExtractionVoxelCount" in mask_sidecar:
+        brain_ex["voxel_count"] = int(mask_sidecar["BrainExtractionVoxelCount"])
+    if "BrainExtractionQCStatus" in mask_sidecar:
+        brain_ex["qc_status"] = str(mask_sidecar["BrainExtractionQCStatus"])
+    if "BrainExtractionWarnings" in mask_sidecar:
+        brain_ex["warnings"] = list(mask_sidecar["BrainExtractionWarnings"])
     if brain_ex:
         out["brain_extraction"] = brain_ex
 

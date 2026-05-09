@@ -267,16 +267,35 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
 
 def _build_dsc_resume_meta(  # type: ignore[no-untyped-def]
     aif_qc=None, preload_qc=None, preprocessing_stats=None,
+    motion_qc=None, aif_metrics=None,
 ):
-    """Compose the verbatim ``desc-dscResume_pmriprep.json`` sidecar."""
+    """Compose the ``desc-dscResume_pmriprep.json`` sidecar.
+
+    Folds motion fields into ``preprocessing_stats`` and nests the
+    detection-time AIF metrics dict under ``aif_qc.aif_metrics`` so
+    the cosmetic-key builder and the HTML aggregator both see the
+    expected shape.
+    """
     from pmriprep.utils.sidecar_builders import build_dsc_resume_sidecar
 
+    pp = dict(preprocessing_stats) if isinstance(preprocessing_stats, dict) else {}
+    if isinstance(motion_qc, dict):
+        for k in (
+            "fd_mean", "fd_max", "motion_status",
+            "n_outliers", "outlier_frames", "motion_thresh",
+            "fd_list", "n_volumes", "percent_outliers",
+        ):
+            if k in motion_qc:
+                pp[k] = motion_qc[k]
+
+    aq = dict(aif_qc) if isinstance(aif_qc, dict) else {}
+    if isinstance(aif_metrics, dict) and aif_metrics:
+        aq["aif_metrics"] = dict(aif_metrics)
+
     return build_dsc_resume_sidecar(
-        aif_qc=aif_qc if isinstance(aif_qc, dict) else None,
+        aif_qc=aq if aq else None,
         preload_qc=preload_qc if isinstance(preload_qc, dict) else None,
-        preprocessing_stats=(
-            preprocessing_stats if isinstance(preprocessing_stats, dict) else None
-        ),
+        preprocessing_stats=pp if pp else None,
     )
 
 
@@ -737,6 +756,7 @@ def init_dsc_datasinks_wf(
                 # Parametric diagnostics + leakage
                 "k2_map", "parametric_r2_map", "fallback_mask",
                 "preload_qc", "preprocessing_stats", "aif_qc",
+                "motion_qc", "aif_metrics",
                 # Smoothing
                 "smooth_hemodynamic", "smooth_auc", "smooth_fwhm",
                 # Motion + AIF
@@ -1155,7 +1175,10 @@ def init_dsc_datasinks_wf(
         # directly without round-tripping through the legacy QC JSON.
         resume_meta = pe.Node(
             niu.Function(
-                input_names=["aif_qc", "preload_qc", "preprocessing_stats"],
+                input_names=[
+                    "aif_qc", "preload_qc", "preprocessing_stats",
+                    "motion_qc", "aif_metrics",
+                ],
                 output_names=["meta_dict"],
                 function=_build_dsc_resume_meta,
             ),
@@ -1166,6 +1189,8 @@ def init_dsc_datasinks_wf(
                 ("aif_qc", "aif_qc"),
                 ("preload_qc", "preload_qc"),
                 ("preprocessing_stats", "preprocessing_stats"),
+                ("motion_qc", "motion_qc"),
+                ("aif_metrics", "aif_metrics"),
             ]),
         ])
         resume_sink = pe.Node(

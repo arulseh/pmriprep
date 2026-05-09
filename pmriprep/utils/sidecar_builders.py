@@ -625,8 +625,19 @@ def enrich_brain_mask_sidecar(
         sidecar["BrainExtractionDevice"] = str(be["device"])
     if "voxel_count" in be:
         sidecar["BrainExtractionVoxelCount"] = int(be["voxel_count"])
-    if "volume_ml" in be:
-        sidecar["BrainExtractionVolume"] = float(be["volume_ml"])
+    # Producer emits brain_volume_ml / brain_volume_mm3; legacy
+    # volume_ml is also accepted for callers that pre-stripped the
+    # prefix.
+    vol_ml = be.get("brain_volume_ml", be.get("volume_ml"))
+    if vol_ml is not None:
+        sidecar["BrainExtractionVolume"] = float(vol_ml)
+    vol_mm3 = be.get("brain_volume_mm3", be.get("volume_mm3"))
+    if vol_mm3 is not None:
+        sidecar["BrainExtractionVolumeMm3"] = float(vol_mm3)
+    if "qc_status" in be:
+        sidecar["BrainExtractionQCStatus"] = str(be["qc_status"])
+    if "warnings" in be and be["warnings"]:
+        sidecar["BrainExtractionWarnings"] = list(be["warnings"])
     return sidecar
 
 
@@ -987,6 +998,29 @@ def build_dce_resume_sidecar(
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
         "Description": "Pipeline-internal resume state for DCE.",
+        "PMRIPrepInternal": True,
+    }
+    if qc_metrics:
+        sidecar["qc_metrics"] = dict(qc_metrics)
+    return sidecar
+
+
+def build_tumor_resume_sidecar(
+    *,
+    qc_metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the resume sidecar carrying tumor-segmentation + NAWM QC.
+
+    Stores the producer-shape ``qc_metrics`` envelope (``preprocessing``
+    / ``segmentation`` / ``nawm`` blocks) verbatim under ``qc_metrics``
+    so the HTML aggregator can recover the nested shape that
+    ``section_tumor_seg.html`` consumes.
+    """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+
+    sidecar: Dict[str, Any] = {
+        **get_bids_derivative_provenance(),
+        "Description": "Pipeline-internal resume state for tumor segmentation.",
         "PMRIPrepInternal": True,
     }
     if qc_metrics:
