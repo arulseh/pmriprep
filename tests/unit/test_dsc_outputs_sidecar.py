@@ -174,6 +174,60 @@ class TestBuildAifProvenanceBlock:
         assert build_aif_provenance_block({}) == {}
         assert build_aif_provenance_block({"aif_detection": {}}) == {}
 
+    def test_compound_union_two_tiers_accepted(self) -> None:
+        """Cascade emits ``"atlas_relaxed+atlas_permissive"`` when the
+        union-pool fallback accepts voxels from multiple tiers; the
+        validator must accept compound strings whose every part is in
+        the enum."""
+        block = build_aif_provenance_block({
+            "aif_detection": {
+                "detection_method": "atlas_relaxed+atlas_permissive",
+                "quality_score": 0.7,
+            },
+        })
+        assert block != {}
+        assert block["DetectionLevel"] == "atlas_relaxed+atlas_permissive"
+        assert block["Source"] == "measured"
+
+    def test_compound_union_three_tiers_accepted(self) -> None:
+        block = build_aif_provenance_block({
+            "aif_detection": {
+                "detection_method": (
+                    "atlas_strict+atlas_relaxed+full_atlas_permissive"
+                ),
+                "quality_score": 0.8,
+            },
+        })
+        assert block != {}
+        assert block["DetectionLevel"] == (
+            "atlas_strict+atlas_relaxed+full_atlas_permissive"
+        )
+
+    def test_compound_with_unknown_part_rejected(self) -> None:
+        """Compound strings are accepted only when EVERY part is a known
+        cascade tier; an unknown part rejects the whole union."""
+        block = build_aif_provenance_block({
+            "aif_detection": {
+                "detection_method": "atlas_relaxed+nonsense",
+                "quality_score": 0.5,
+            },
+        })
+        assert block == {}
+
+    def test_compound_with_synthetic_part_accepted(self) -> None:
+        """The cascade shouldn't produce ``"...+synthetic"`` (synthetic
+        is a terminal fallback, not a contributing tier), but the
+        validator should accept syntactically valid compounds defensively
+        rather than skipping the whole provenance block."""
+        block = build_aif_provenance_block({
+            "aif_detection": {
+                "detection_method": "atlas_relaxed+synthetic",
+                "quality_score": 0.4,
+            },
+        })
+        assert block != {}
+        assert block["DetectionLevel"] == "atlas_relaxed+synthetic"
+
 
 class TestApplyAifSidecar:
     def test_stamps_dependent_and_block(self) -> None:

@@ -239,3 +239,54 @@ class TestColorPalette:
             assert isinstance(value, str)
             assert value.startswith("#"), f"{field_name} should start with '#'"
             assert len(value) == 7, f"{field_name} should be 7-char hex (e.g. #AABBCC)"
+
+
+class TestCompoundDetectionLevelDispatch:
+    """``recommend_dsc_qc`` must accept ``"+"``-joined ``detection_method``
+    strings (emitted by the AIF cascade's union-pool fallback when voxels
+    from multiple tiers contribute) and apply worst-tier-wins semantics.
+
+    With only the AIF block populated (no motion / CNR), the aggregated
+    overall recommendation IS the AIF recommendation, so we read
+    ``out["recommendation"]["action"]`` directly.
+    """
+
+    @staticmethod
+    def _aif_action(detection_method: str):
+        from pmriprep.utils.qc_standards import recommend_dsc_qc
+        out = recommend_dsc_qc({
+            "aif_detection": {"detection_method": detection_method},
+        })
+        return out["recommendation"]["action"]
+
+    def test_atlas_strict_atlas_relaxed_compound_includes(self) -> None:
+        from pmriprep.utils.qc_standards import QCAction
+        assert self._aif_action("atlas_strict+atlas_relaxed") == QCAction.INCLUDE
+
+    def test_compound_with_permissive_reviews(self) -> None:
+        """Worst-tier-wins: a single permissive part downgrades to REVIEW."""
+        from pmriprep.utils.qc_standards import QCAction
+        assert (
+            self._aif_action("atlas_relaxed+atlas_permissive")
+            == QCAction.REVIEW
+        )
+
+    def test_compound_with_synthetic_excludes(self) -> None:
+        """Worst-tier-wins: a single synthetic part downgrades to EXCLUDE
+        even when stricter tiers also contribute."""
+        from pmriprep.utils.qc_standards import QCAction
+        assert self._aif_action("atlas_relaxed+synthetic") == QCAction.EXCLUDE
+
+    def test_full_atlas_permissive_reviews(self) -> None:
+        """``full_atlas_permissive`` was previously missed by the
+        chained-membership dispatch and would land in the catchall
+        REVIEW branch. The set-membership dispatch now classifies it
+        explicitly as REVIEW."""
+        from pmriprep.utils.qc_standards import QCAction
+        assert self._aif_action("full_atlas_permissive") == QCAction.REVIEW
+
+    def test_unknown_part_in_compound_excludes(self) -> None:
+        """An unknown part in a compound triggers the EXCLUDE branch
+        (treated as ``unknown`` semantically)."""
+        from pmriprep.utils.qc_standards import QCAction
+        assert self._aif_action("atlas_strict+nonsense") == QCAction.EXCLUDE

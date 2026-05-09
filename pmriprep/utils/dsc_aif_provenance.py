@@ -145,10 +145,18 @@ def build_aif_provenance_block(
     if not aif_qc or "detection_method" not in aif_qc:
         return {}
     detection_level = aif_qc.get("detection_method")
-    if detection_level not in DSC_DETECTION_LEVELS:
+    # Cascade may emit "+"-joined unions when union-pool fallback accepts
+    # voxels from multiple tiers (see dsc_aif.py:~2906). Validate each
+    # part against the flat enum; reject only if any part is unknown.
+    parts = (
+        str(detection_level).split("+")
+        if isinstance(detection_level, str) and detection_level
+        else []
+    )
+    if not parts or any(p not in DSC_DETECTION_LEVELS for p in parts):
         logger.warning(
-            "Unknown DSC AIF detection_level %r; expected one of %s. "
-            "Skipping AIF provenance block.",
+            "Unknown DSC AIF detection_level %r; expected one or more "
+            "(joined with '+') of %s. Skipping AIF provenance block.",
             detection_level, DSC_DETECTION_LEVELS,
         )
         return {}

@@ -11,7 +11,7 @@ scoring, 3x3x3 ROI averaging, and Savitzky-Golay smoothing.
 
 import math
 from pathlib import Path
-from typing import Any, NamedTuple, Optional
+from typing import Any, Final, NamedTuple, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -109,6 +109,31 @@ class DualRoiResult(NamedTuple):
 # ---------------------------------------------------------------------------
 # Top-level helper functions (backward-compatible with utils/dsc_aif.py)
 # ---------------------------------------------------------------------------
+
+
+#: QC fields populated from a real-AIF candidate that become stale when
+#: the cascade falls back to synthetic (either at no-candidates or
+#: gamma-R² rejection). Cleared by :func:`_clear_stale_real_aif_keys`
+#: so ``detection_method=='synthetic'`` cannot coexist with stale
+#: spatial data (e.g. ``n_aif_voxels_selected=0`` alongside a real
+#: ``aif_voxel_coord`` from a since-rejected candidate).
+_STALE_REAL_AIF_KEYS: Final[tuple[str, ...]] = (
+    "aif_voxel_coord", "aif_centroid_mm", "aif_hemisphere",
+    "candidate_coords", "candidate_scores",
+    "n_left_candidates", "n_right_candidates",
+    "hemisphere_coverage", "is_bilateral",
+    "aif_slice", "aif_edge_slice_warning",
+    "best_cost", "mean_cost",
+    "cascade_accepted_roi_size",
+    "aif_metrics",
+    "aif_tier_provenance",
+)
+
+
+def _clear_stale_real_aif_keys(qc_metrics: dict[str, Any]) -> None:
+    """Pop real-AIF QC fields that would be stale under synthetic fallback."""
+    for k in _STALE_REAL_AIF_KEYS:
+        qc_metrics.pop(k, None)
 
 
 def _costs_to_scores(costs: list[float]) -> list[float]:
@@ -3095,6 +3120,10 @@ class AIFDetection(BaseInterface):
                 "aif_quality": "degraded",
             }
             qc_metrics.update(synth_metrics)
+            # Defensive: this path constructs a fresh dict so the pop is
+            # a no-op today, but stays robust under future reorgs that
+            # share state with the real-AIF path.
+            _clear_stale_real_aif_keys(qc_metrics)
         else:
             raise RuntimeError(
                 "AIF detection failed at all levels and "
@@ -3173,6 +3202,10 @@ class AIFDetection(BaseInterface):
                 detection_level = "synthetic"
                 quality_score = 0.3
                 aif_mask_arr[:] = 0  # Clear AIF mask (no voxels used)
+                # Drop spatial QC fields populated from the rejected
+                # real-AIF candidate so they don't contradict the
+                # synthetic provenance downstream.
+                _clear_stale_real_aif_keys(qc_metrics)
                 # Update QC metrics
                 qc_metrics["detection_method"] = detection_level
                 qc_metrics["synthetic"] = True

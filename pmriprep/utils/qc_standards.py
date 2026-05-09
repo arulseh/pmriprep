@@ -472,21 +472,55 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     recommendations: list[QCRecommendation] = []
     enhanced = dict(qc_metrics)
 
-    # AIF detection quality
+    # AIF detection quality.  ``detection_method`` may be a "+"-joined
+    # union (e.g. "atlas_relaxed+atlas_permissive") when the union-pool
+    # fallback accepts contributions from multiple tiers.  Apply
+    # worst-tier-wins semantics: any contributing tier downgrades the
+    # recommendation.
     aif_qc = qc_metrics.get("aif_detection", {})
     detection_level = aif_qc.get("detection_method", "unknown")
-    if detection_level in ("atlas_strict", "atlas_relaxed"):
-        aif_rec = QCRecommendation(QCAction.INCLUDE, f"AIF detected ({detection_level})", 0)
-    elif detection_level in ("atlas_permissive", "brain_relaxed", "brain_permissive"):
-        aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF detection marginal ({detection_level})", 1)
-    elif detection_level == "external":
-        aif_rec = QCRecommendation(QCAction.REVIEW, "External AIF provided; verify curve quality", 1)
-    elif detection_level == "synthetic":
-        aif_rec = QCRecommendation(QCAction.EXCLUDE, "Synthetic AIF used", 3)
-    elif detection_level in ("none", "unknown"):
-        aif_rec = QCRecommendation(QCAction.EXCLUDE, f"AIF detection failed ({detection_level})", 3)
+    parts = (
+        str(detection_level).split("+")
+        if isinstance(detection_level, str) and detection_level
+        else ["unknown"]
+    )
+    parts_set = set(parts)
+    _KNOWN_TIERS = {
+        "atlas_strict", "atlas_relaxed", "atlas_permissive",
+        "full_atlas_permissive", "brain_relaxed", "brain_permissive",
+        "external", "synthetic", "none", "unknown",
+    }
+    _unknown_parts = parts_set - _KNOWN_TIERS
+    if parts_set & {"synthetic", "none", "unknown"} or _unknown_parts:
+        # Unknown parts are treated as ``unknown`` semantically — no way
+        # to vouch for an AIF tier we don't recognise.
+        aif_rec = QCRecommendation(
+            QCAction.EXCLUDE,
+            f"AIF detection failed or synthetic ({detection_level})", 3,
+        )
+    elif "external" in parts_set:
+        aif_rec = QCRecommendation(
+            QCAction.REVIEW,
+            "External AIF provided; verify curve quality", 1,
+        )
+    elif parts_set & {
+        "atlas_permissive", "full_atlas_permissive",
+        "brain_relaxed", "brain_permissive",
+    }:
+        aif_rec = QCRecommendation(
+            QCAction.REVIEW,
+            f"AIF detection marginal ({detection_level})", 1,
+        )
+    elif parts_set <= {"atlas_strict", "atlas_relaxed"}:
+        aif_rec = QCRecommendation(
+            QCAction.INCLUDE,
+            f"AIF detected ({detection_level})", 0,
+        )
     else:
-        aif_rec = QCRecommendation(QCAction.REVIEW, f"AIF detection: {detection_level}", 1)
+        aif_rec = QCRecommendation(
+            QCAction.REVIEW,
+            f"AIF detection: {detection_level}", 1,
+        )
     recommendations.append(aif_rec)
 
     # Motion via composite status

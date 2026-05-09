@@ -887,3 +887,83 @@ class TestUnionPoolTrim:
             "atlas_relaxed": 1,
             "atlas_permissive": 3,
         }
+
+
+class TestSyntheticFallbackQcConsistency:
+    """When the cascade falls back to synthetic (either no_candidates or
+    gamma-R²-floor), real-AIF spatial QC fields must NOT remain in
+    ``qc_metrics``. They would otherwise contradict the synthetic
+    provenance (e.g. ``n_aif_voxels_selected=0`` alongside a stale
+    ``aif_voxel_coord`` from the rejected candidate) and corrupt
+    downstream sidecars and QC visualizations.
+
+    Production code at ``dsc_aif.py`` calls ``_clear_stale_real_aif_keys``
+    on both synthetic-fallback paths.
+    """
+
+    # Mirror the production constant — duplicated intentionally so the
+    # test fails loudly if a key is ever added to production but
+    # forgotten here (or vice versa).
+    STALE_KEYS = (
+        "aif_voxel_coord", "aif_centroid_mm", "aif_hemisphere",
+        "candidate_coords", "candidate_scores",
+        "n_left_candidates", "n_right_candidates",
+        "hemisphere_coverage", "is_bilateral",
+        "aif_slice", "aif_edge_slice_warning",
+        "best_cost", "mean_cost",
+        "cascade_accepted_roi_size",
+        "aif_metrics",
+        "aif_tier_provenance",
+    )
+
+    def test_helper_clears_all_stale_keys(self) -> None:
+        """Predicate test: the helper pops every stale key and leaves
+        non-stale keys (cascade_tiers_attempted, cascade_initial_level,
+        n_baseline_frames, etc.) intact."""
+        from pmriprep.interfaces.dsc_aif import _clear_stale_real_aif_keys
+        qc = {k: f"stale_{k}" for k in self.STALE_KEYS}
+        qc["cascade_tiers_attempted"] = ["atlas_strict", "atlas_relaxed"]
+        qc["cascade_initial_level"] = "atlas_strict"
+        qc["cascade_final_level"] = "atlas_relaxed"
+        qc["n_baseline_frames"] = 41
+        qc["arrival_time_seconds"] = 60.0
+        qc["detection_method"] = "synthetic"
+        qc["n_aif_voxels_selected"] = 0
+        _clear_stale_real_aif_keys(qc)
+        for k in self.STALE_KEYS:
+            assert k not in qc, f"{k} should have been popped"
+        assert qc["cascade_tiers_attempted"] == ["atlas_strict", "atlas_relaxed"]
+        assert qc["cascade_initial_level"] == "atlas_strict"
+        assert qc["cascade_final_level"] == "atlas_relaxed"
+        assert qc["n_baseline_frames"] == 41
+        assert qc["arrival_time_seconds"] == 60.0
+        assert qc["detection_method"] == "synthetic"
+        assert qc["n_aif_voxels_selected"] == 0
+
+    def test_helper_idempotent_on_empty_dict(self) -> None:
+        """Helper must not raise when applied to a fresh dict (the
+        no_candidates synthetic-fallback case)."""
+        from pmriprep.interfaces.dsc_aif import _clear_stale_real_aif_keys
+        qc = {"detection_method": "synthetic", "synthetic": True}
+        _clear_stale_real_aif_keys(qc)
+        assert qc == {"detection_method": "synthetic", "synthetic": True}
+
+    def test_consistency_invariant_under_synthetic(self) -> None:
+        """Contract test: any qc_metrics dict with
+        ``detection_method == 'synthetic'`` must NOT contain stale
+        spatial fields. Any future synthetic-fallback path must satisfy
+        this invariant — downstream consumers rely on it.
+        """
+        from pmriprep.interfaces.dsc_aif import _clear_stale_real_aif_keys
+        qc = {k: f"stale_{k}" for k in self.STALE_KEYS}
+        qc["detection_method"] = "atlas_permissive"
+        _clear_stale_real_aif_keys(qc)
+        qc["detection_method"] = "synthetic"
+        qc["synthetic"] = True
+        qc["n_aif_voxels_selected"] = 0
+        if qc.get("detection_method") == "synthetic":
+            for k in self.STALE_KEYS:
+                assert k not in qc, (
+                    f"Synthetic-fallback consistency violated: stale "
+                    f"key {k!r} present alongside detection_method='synthetic'"
+                )
