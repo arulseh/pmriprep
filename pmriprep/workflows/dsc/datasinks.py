@@ -271,10 +271,11 @@ def _build_dsc_resume_meta(  # type: ignore[no-untyped-def]
 ):
     """Compose the ``desc-dscResume_pmriprep.json`` sidecar.
 
-    Folds motion fields into ``preprocessing_stats`` and nests the
-    detection-time AIF metrics dict under ``aif_qc.aif_metrics`` so
-    the cosmetic-key builder and the HTML aggregator both see the
-    expected shape.
+    Folds motion fields into ``preprocessing_stats`` and merges the
+    gamma-augmented ``aif_metrics`` from ``aif_qc_plot`` on top of the
+    producer-side ``aif_qc.aif_metrics`` block (from ``aif_detect``)
+    so the cosmetic-key builder and the HTML aggregator see the full
+    annotated shape.
     """
     from pmriprep.utils.sidecar_builders import build_dsc_resume_sidecar
 
@@ -289,8 +290,14 @@ def _build_dsc_resume_meta(  # type: ignore[no-untyped-def]
                 pp[k] = motion_qc[k]
 
     aq = dict(aif_qc) if isinstance(aif_qc, dict) else {}
+    upstream_metrics = aq.get("aif_metrics")
+    merged_metrics = (
+        dict(upstream_metrics) if isinstance(upstream_metrics, dict) else {}
+    )
     if isinstance(aif_metrics, dict) and aif_metrics:
-        aq["aif_metrics"] = dict(aif_metrics)
+        merged_metrics.update(aif_metrics)
+    if merged_metrics:
+        aq["aif_metrics"] = merged_metrics
 
     return build_dsc_resume_sidecar(
         aif_qc=aq if aq else None,
@@ -999,7 +1006,7 @@ def init_dsc_datasinks_wf(
         "0 = the parametric fit was retained."
     )
     for in_attr, desc_value, suffix, description, key in (
-        ("parametric_r2_map", "dscParametric", "r2",
+        ("parametric_r2_map", "dscParametric", "Rsquared",
          _PARAMETRIC_R2_DESC, "parametric_r2"),
         ("fallback_mask", "dscFallback", "mask",
          _FALLBACK_DESC, "fallback"),

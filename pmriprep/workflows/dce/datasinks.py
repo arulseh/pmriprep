@@ -112,6 +112,12 @@ _MF_UNITS = {
     "wash_in_slope": "mM/min", "wash_out_slope": "mM/min",
 }
 
+# BIDS-correct suffixes for smoothed-map sinks live inline in
+# ``_split_dce_smoothed`` (nipype reconstructs Function helpers in an
+# empty namespace, so the lookup tables can't be shared via module
+# globals). The unsmoothed equivalents are encoded in ``_PK_MAPS`` /
+# ``_MODEL_FREE_MAPS`` above; the inline tables mirror those.
+
 
 # Inputs always treated as present (the four PK maps have ktrans_map mandatory
 # in the legacy writer; everything else is gated by present_inputs).
@@ -450,6 +456,19 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
     if mf_units is None:
         mf_units = {}
 
+    # BIDS-correct suffixes for smoothed maps. Inline because this
+    # function is reconstructed by nipype in an empty namespace and
+    # cannot reference module-level constants.
+    pk_suffix_bids = {
+        "ktrans": "Ktrans", "ve": "ve", "kep": "kep", "vp": "vp",
+        "fp": "Fp", "ps": "PS",
+    }
+    mf_suffix_bids = {
+        "iauc60": "IAUC60", "iauc90": "IAUC90", "iauc120": "IAUC120",
+        "peak_enhancement": "peakEnhancement", "ser": "SER",
+        "wash_in_slope": "washInSlope", "wash_out_slope": "washOutSlope",
+    }
+
     def _extract_fwhm(src_path):  # type: ignore[no-untyped-def]
         m = _re.search(r"_fwhm(\d+(?:\.\d+)?)", str(src_path))
         if m:
@@ -474,7 +493,7 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
             fwhms.append(fwhm_mm)
             units_list.append(pk_units.get(name, ""))
             desc_values.append(f"dce{fwhm_str}")
-            suffixes.append(name)
+            suffixes.append(pk_suffix_bids.get(name, name))
             use_model.append(True)
 
     if isinstance(smooth_mf, dict):
@@ -487,7 +506,7 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
             fwhms.append(fwhm_mm)
             units_list.append(mf_units.get(name, ""))
             desc_values.append(f"dce{fwhm_str}")
-            suffixes.append(name)
+            suffixes.append(mf_suffix_bids.get(name, name))
             use_model.append(False)
 
     if isinstance(smooth_uncertainty, dict):
@@ -1004,8 +1023,11 @@ def init_dce_datasinks_wf(
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
             name="r2_map", in_attr="r2_map",
-            desc_value="dce", suffix="R2",
-            description="R2 goodness of fit", units=None, extra=None,
+            desc_value="dce", suffix="Rsquared",
+            description=(
+                "Coefficient of determination for the per-voxel PK fit"
+            ),
+            units=None, extra=None,
             model_entity=model_entity,
         )
         sink_outputs.append((sink, "out_file"))

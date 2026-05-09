@@ -2244,11 +2244,19 @@ class AIFDetection(BaseInterface):
             "mean_cost": float(
                 np.mean([c for c, _, _ in top_candidates])
             ),
-            "best_ttp": best_m.get("ttp", 0.0),
-            "best_fwhm": best_m.get("fwhm", 0.0),
-            "best_ph": best_m.get("ph", 0.0),
-            "best_psr": best_m.get("psr", 0.0),
-            "best_brr": best_m.get("baseline_return_ratio", 0.0),
+            # Detection-time AIF metrics under a single canonical
+            # nested key. ``peak_conc`` is ΔR2* peak in 1/s (DSC) /
+            # plasma-Gd peak in mM (DCE callers); other fields come
+            # from the best candidate's metric record.
+            "aif_metrics": {
+                "peak_conc": float(np.max(aif_curve)),
+                "ttp": float(best_m.get("ttp", 0.0)),
+                "fwhm": float(best_m.get("fwhm", 0.0)),
+                "ph": float(best_m.get("ph", 0.0)),
+                "psr": float(best_m.get("psr", 0.0)),
+                "brr": float(best_m.get("baseline_return_ratio", 0.0)),
+                "arrival": float(arrival_time_s),
+            },
         }
 
         return aif_curve, qc
@@ -2404,10 +2412,15 @@ class AIFDetection(BaseInterface):
             "baseline_cv": baseline_cv,
             "n_candidates": 0,
             "baseline_frames": baseline_frames,
-            # Keys accessed by AIFQCPlot via .get() with NaN defaults
-            "best_fwhm": float(fwhm_frames),
-            "best_brr": float(washout),
-            "best_psr": peak,
+            # Detection-time AIF metrics under the canonical nested
+            # key. The external path computes a subset of fields —
+            # ttp / ph / psr / arrival are not derivable here, so they
+            # are omitted (consumers must use .get(...) for them).
+            "aif_metrics": {
+                "peak_conc": float(peak),
+                "fwhm": float(fwhm_frames),
+                "brr": float(washout),
+            },
         }
 
         # Write AIF curve

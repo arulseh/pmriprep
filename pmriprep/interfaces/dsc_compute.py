@@ -2554,7 +2554,9 @@ class ComputeDSCMaps(BaseInterface):
             vx, vy, vz = _fit["voxel"]
             qc_metrics["qc_voxel"] = f"({vx}, {vy}, {vz})"
             qc_metrics["qc_voxel_cbv"] = round(float(rel_cbv[vx, vy, vz]), 4)
-            qc_metrics["qc_voxel_r2"] = round(_fit.get("r_squared", 0.0), 4)
+            qc_metrics["qc_voxel_rsquared"] = round(
+                _fit.get("r_squared", 0.0), 4,
+            )
             # Tier name from _select_dsc_qc_voxel — confirms at a glance
             # whether the example voxel landed in the enhancing tumor
             # mask (when one was available) or fell through to brain.

@@ -77,7 +77,7 @@ MAP_SUFFIXES = {
     "ve": "desc-dce_ve",
     "vp": "desc-dce_vp",
     "kep": "desc-dce_kep",
-    "R2": "desc-dce_R2",
+    "Rsquared": "desc-dce_Rsquared",
     "IAUC60": "desc-dce_IAUC60",
     "IAUC90": "desc-dce_IAUC90",
     "IAUC120": "desc-dce_IAUC120",

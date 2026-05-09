@@ -1,9 +1,9 @@
-"""Phase 2a: AIF curve sidecar uses flat ``AIF*``-prefixed top-level keys.
+"""AIF curve sidecar uses flat ``AIF*``-prefixed top-level keys.
 
 Asserts that ``build_aif_timeseries_sidecar`` (and the qc_writers AIF
-sidecar emitter) produce a JSON sidecar with flat top-level keys (NOT
-nested under an ``AIFDetection`` block — that nesting was the round-1
-shape-parity smell).
+sidecar emitter) produce a JSON sidecar with flat top-level keys at the
+sidecar surface, with detection-time metrics sourced from the
+producer-shape ``aif_qc.aif_metrics`` nested block.
 """
 from __future__ import annotations
 
@@ -24,8 +24,6 @@ def aif_qc() -> dict[str, Any]:
     return {
         "detection_method": "atlas_strict",
         "n_aif_voxels_selected": 6,
-        "best_psr": 78.0,                # → 0.78 after /100
-        "best_brr": 92.0,                # → 0.92 after /100
         "quality_score": 0.81,
         "cascade_final_level": "atlas_strict",
         "hemisphere_coverage": "bilateral",
@@ -40,6 +38,8 @@ def aif_qc() -> dict[str, Any]:
             "fwhm": 6.2,
             "ttp": 18.0,
             "arrival": 9.5,
+            "psr": 78.0,    # → 0.78 after /100 in cosmetic writer
+            "brr": 92.0,    # → 0.92 after /100 in cosmetic writer
         },
     }
 

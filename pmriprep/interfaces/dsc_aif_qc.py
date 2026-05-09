@@ -153,28 +153,29 @@ class AIFQCPlot(BaseInterface):
                 qc, sub, ses, aif_location_path,
             )
 
-        # Build AIF metrics dict for HTML report
-        peak_conc = float(np.max(aif_curve))
-        ttp_s = qc.get("best_ttp", None)
-        fwhm = qc.get("best_fwhm", float("nan"))
-        arrival_s = qc.get("arrival_time_seconds", None)
-        brr = qc.get("best_brr", float("nan"))
-        psr_val = qc.get("best_psr", float("nan"))
-
+        # Build AIF metrics dict for HTML report. Producer (aif_detect)
+        # populates the canonical nested ``aif_metrics`` block on its
+        # qc_metrics output; this node augments that block with
+        # detection_method + gamma-fit annotations and rounds for
+        # display.
+        upstream = qc.get("aif_metrics") or {}
         aif_metrics: dict[str, Any] = {
             "detection_method": detection_level,
-            "peak_conc": round(peak_conc, 2),
         }
-        if ttp_s is not None:
-            aif_metrics["ttp"] = round(ttp_s, 1)
-        if not np.isnan(fwhm):
-            aif_metrics["fwhm"] = round(fwhm, 1)
-        if arrival_s is not None:
-            aif_metrics["arrival"] = round(arrival_s, 1)
-        if not np.isnan(brr):
-            aif_metrics["brr"] = round(brr, 1)
-        if not np.isnan(psr_val):
-            aif_metrics["psr"] = round(psr_val, 1)
+        if "peak_conc" in upstream:
+            aif_metrics["peak_conc"] = round(float(upstream["peak_conc"]), 2)
+        if "ttp" in upstream:
+            aif_metrics["ttp"] = round(float(upstream["ttp"]), 1)
+        if "fwhm" in upstream:
+            aif_metrics["fwhm"] = round(float(upstream["fwhm"]), 1)
+        if "arrival" in upstream:
+            aif_metrics["arrival"] = round(float(upstream["arrival"]), 1)
+        if "brr" in upstream:
+            aif_metrics["brr"] = round(float(upstream["brr"]), 1)
+        if "psr" in upstream:
+            aif_metrics["psr"] = round(float(upstream["psr"]), 1)
+        if "ph" in upstream:
+            aif_metrics["ph"] = round(float(upstream["ph"]), 1)
 
         if gamma_applied:
             aif_metrics["gamma_fit"] = True
@@ -304,8 +305,8 @@ class AIFQCPlot(BaseInterface):
                 s=80, zorder=5, label="Peak",
             )
 
-            # TTP marker
-            ttp_s = qc.get("best_ttp", None)
+            # TTP marker (sourced from canonical aif_metrics block)
+            ttp_s = qc.get("aif_metrics", {}).get("ttp")
             if ttp_s is not None and ttp_s > 0:
                 ax.axvline(
                     x=ttp_s, color=COLORBLIND_PALETTE.error,

@@ -1335,7 +1335,9 @@ def generate_unified_report(
                     b1.get("pct_correction_gt_20"), 10, 30
                 ),
                 # PK fit quality
-                "fit_r2": _classify_metric(pk.get("qc_voxel_fit_r2"), 0.9, 0.7),
+                "rsquared": _classify_metric(
+                    pk.get("qc_voxel_rsquared"), 0.9, 0.7,
+                ),
                 # Cross-validation correlation
                 "xval_correlation": _classify_metric(
                     xval.get("metrics", {}).get("correlation"), 0.7, 0.4
@@ -1359,7 +1361,9 @@ def generate_unified_report(
                     preload.get("percent_leaky_voxels"), 5, 20
                 ),
                 # Deconvolution fit quality
-                "fit_r2": _classify_metric(deconv.get("qc_voxel_r2"), 0.9, 0.7),
+                "rsquared": _classify_metric(
+                    deconv.get("qc_voxel_rsquared"), 0.9, 0.7,
+                ),
                 # oSVD fallback rate for parametric methods (lower is better:
                 # high fallback fraction means few voxels passed the R² gate).
                 "fallback": _classify_metric_inverse(

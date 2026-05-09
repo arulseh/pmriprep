@@ -492,8 +492,9 @@ def _enrich_dsc(
             aif_block["n_voxels"] = int(aif["n_aif_voxels_selected"])
         if "quality_score" in aif:
             aif_block["quality_score"] = _safe_float(aif["quality_score"])
-        if "best_fwhm" in aif:
-            aif_block["fwhm_frames"] = _safe_float(aif["best_fwhm"])
+        aif_metrics = aif.get("aif_metrics") or {}
+        if "fwhm" in aif_metrics:
+            aif_block["fwhm_frames"] = _safe_float(aif_metrics["fwhm"])
         if "arrival_time_seconds" in aif:
             aif_block["arrival_time_s"] = _safe_float(aif["arrival_time_seconds"])
         if aif_block:

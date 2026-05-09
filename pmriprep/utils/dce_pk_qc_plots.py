@@ -488,7 +488,7 @@ def generate_pk_modeling_qc_plot(
     voxel_metrics: dict[str, Any] = {
         "qc_voxel": f"({vx}, {vy}, {vz})",
         "qc_voxel_ktrans": round(voxel_ktrans, 4),
-        "qc_voxel_fit_r2": round(voxel_r2, 4),
+        "qc_voxel_rsquared": round(voxel_r2, 4),
     }
     if voxel_ve is not None:
         voxel_metrics["qc_voxel_ve"] = round(voxel_ve, 4)

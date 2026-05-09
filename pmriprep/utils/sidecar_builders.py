@@ -744,10 +744,10 @@ def _aif_cosmetic_keys(aif_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         out["AIFTimeToPeak"] = float(metrics["ttp"])
     if "arrival" in metrics:
         out["AIFArrival"] = float(metrics["arrival"])
-    if "best_brr" in aif_qc:
-        out["AIFBaselineReturnRatio"] = float(aif_qc["best_brr"]) / 100.0
-    if "best_psr" in aif_qc:
-        out["AIFPeakSignalRatio"] = float(aif_qc["best_psr"]) / 100.0
+    if "brr" in metrics:
+        out["AIFBaselineReturnRatio"] = float(metrics["brr"]) / 100.0
+    if "psr" in metrics:
+        out["AIFPeakSignalRatio"] = float(metrics["psr"]) / 100.0
     if "quality_score" in aif_qc:
         out["AIFQualityScore"] = float(aif_qc["quality_score"])
     if "cascade_final_level" in aif_qc:
@@ -1236,8 +1236,8 @@ def _dce_pk_cosmetic_keys(pk_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         candidates = pk_qc["candidate_models"]
         if isinstance(candidates, (list, tuple)):
             out["PKCandidateModels"] = [str(m) for m in candidates]
-    if "qc_voxel_fit_r2" in pk_qc:
-        out["PKVoxelFitR2"] = float(pk_qc["qc_voxel_fit_r2"])
+    if "qc_voxel_rsquared" in pk_qc:
+        out["PKVoxelRsquared"] = float(pk_qc["qc_voxel_rsquared"])
     if "inference" in pk_qc:
         out["PKInferenceEngine"] = str(pk_qc["inference"])
     return out

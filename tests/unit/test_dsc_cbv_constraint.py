@@ -383,8 +383,8 @@ class TestNormalizeAifQcKeys:
     """Tests for _normalize_aif_qc_keys."""
 
     def test_pmriprep_format_translates(self) -> None:
-        """PMRIPrep AIF detection keys (best_psr, best_brr) are translated."""
-        data = {"best_psr": 94.6, "best_brr": 7.17}
+        """Producer-shape aif_metrics (psr, brr) is translated."""
+        data = {"aif_metrics": {"psr": 94.6, "brr": 7.17}}
         result = _normalize_aif_qc_keys(data)
 
         assert result["aif_peak_height"] == pytest.approx(0.946, rel=1e-6)
@@ -418,19 +418,26 @@ class TestNormalizeAifQcKeys:
         assert "aif_peak_height" not in result
         assert "baseline_return_ratio" not in result
 
-    def test_aif_metrics_nested_psr(self) -> None:
-        """Nested aif_metrics.psr is used when best_psr is absent."""
-        data = {"aif_metrics": {"psr": 85.0}, "best_brr": 10.0}
+    def test_aif_metrics_nested_psr_only(self) -> None:
+        """Nested aif_metrics.psr translates to aif_peak_height (brr absent)."""
+        data = {"aif_metrics": {"psr": 85.0}}
         result = _normalize_aif_qc_keys(data)
 
         assert result["aif_peak_height"] == pytest.approx(0.85, rel=1e-6)
-        assert result["baseline_return_ratio"] == pytest.approx(0.10, rel=1e-6)
+        assert "baseline_return_ratio" not in result
+
+    def test_aif_metrics_nested_brr_only(self) -> None:
+        """Nested aif_metrics.brr translates to baseline_return_ratio (psr absent)."""
+        data = {"aif_metrics": {"brr": 12.0}}
+        result = _normalize_aif_qc_keys(data)
+
+        assert result["baseline_return_ratio"] == pytest.approx(0.12, rel=1e-6)
+        assert "aif_peak_height" not in result
 
     def test_good_aif_with_cnr_high_confidence(self) -> None:
         """Good AIF metrics with CNR coverage produces high confidence."""
         aif_qc_data = {
-            "best_psr": 94.6,
-            "best_brr": 7.17,
+            "aif_metrics": {"psr": 94.6, "brr": 7.17},
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.95, "mean_cnr": 25.0},
         }
         result = assess_dsc_cbv_quality(aif_qc_data)
@@ -440,14 +447,13 @@ class TestNormalizeAifQcKeys:
         assert result.aif_peak_height == pytest.approx(0.946, rel=1e-3)
         assert result.aif_baseline_return == pytest.approx(0.0717, rel=1e-3)
 
-    def test_original_keys_preserved(self) -> None:
-        """Original PMRIPrep keys are preserved alongside new keys."""
-        data = {"best_psr": 94.6, "best_brr": 7.17, "extra_field": 42}
+    def test_unknown_keys_preserved(self) -> None:
+        """Unknown keys pass through unchanged (non-AIF fixture)."""
+        data = {"extra_field": 42, "another_extra": "string"}
         result = _normalize_aif_qc_keys(data)
 
-        assert result["best_psr"] == 94.6
-        assert result["best_brr"] == 7.17
         assert result["extra_field"] == 42
+        assert result["another_extra"] == "string"
 
     def test_normalize_extracts_gamma_peak_ratio(self) -> None:
         """gamma_fit_auto_metrics.peak_ratio is promoted to top-level key."""
@@ -458,7 +464,7 @@ class TestNormalizeAifQcKeys:
 
     def test_normalize_no_gamma_metrics_no_key(self) -> None:
         """Missing gamma_fit_auto_metrics does not create gamma_peak_ratio."""
-        data = {"best_psr": 94.6}
+        data = {"aif_metrics": {"psr": 94.6}}
         result = _normalize_aif_qc_keys(data)
 
         assert "gamma_peak_ratio" not in result

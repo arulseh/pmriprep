@@ -85,7 +85,7 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path) -> None:
             "PMRIPrepInternal": True,
             "qc_metrics": {
                 "t1_mapping": {"method": "hybrid", "b1_correction": "afi"},
-                "pk_modeling": {"model": "tofts", "qc_voxel_fit_r2": 0.85},
+                "pk_modeling": {"model": "tofts", "qc_voxel_rsquared": 0.85},
                 "tortuosity_applied": False,
             },
         },

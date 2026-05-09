@@ -176,34 +176,34 @@
                 <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.peak_conc) }} s<sup>-1</sup></div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif_detection.best_ph is defined %}
+            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.ph is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Height</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_ph) }}%</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.ph) }}%</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif_detection.best_fwhm is defined %}
+            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.fwhm is defined %}
             <div class="metric">
                 <div class="metric-label">FWHM</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_fwhm) }} s</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.fwhm) }} s</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif_detection.best_ttp is defined %}
+            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.ttp is defined %}
             <div class="metric">
                 <div class="metric-label">TTP</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_ttp) }} s</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.ttp) }} s</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif_detection.best_psr is defined %}
+            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.psr is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Signal Ratio</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_psr) }}</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.psr) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif_detection.best_brr is defined %}
+            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.brr is defined %}
             <div class="metric">
                 <div class="metric-label">Baseline Return Ratio</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.best_brr) }}</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.brr) }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.aif_detection.arrival_time_seconds is defined %}
@@ -411,10 +411,10 @@
                 <div class="metric-value">{{ "%.4f"|format(dsc.qc_metrics.deconvolution.qc_voxel_cbv) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.qc_voxel_r2 is defined %}
+            {% if dsc.qc_metrics.deconvolution.qc_voxel_rsquared is defined %}
             <div class="metric">
                 <div class="metric-label">Fit R&sup2;</div>
-                <div class="metric-value {{ dsc.display_status.fit_r2 }}">{{ "%.4f"|format(dsc.qc_metrics.deconvolution.qc_voxel_r2) }}</div>
+                <div class="metric-value {{ dsc.display_status.rsquared }}">{{ "%.4f"|format(dsc.qc_metrics.deconvolution.qc_voxel_rsquared) }}</div>
             </div>
             {% endif %}
         </div>

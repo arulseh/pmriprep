@@ -30,7 +30,7 @@ def pk_qc_metrics() -> dict[str, Any]:
         "pk_modeling": {
             "model": "auto",
             "candidate_models": ["tofts", "extended_tofts", "patlak"],
-            "qc_voxel_fit_r2": 0.87,
+            "qc_voxel_rsquared": 0.87,
             "inference": "vi",
         },
         "dsc_dce_validation": {"metrics": {"correlation": 0.72}},
@@ -45,7 +45,7 @@ class TestPKKeys:
         )
         assert out["PKModel"] == "auto"
         assert out["PKCandidateModels"] == ["tofts", "extended_tofts", "patlak"]
-        assert out["PKVoxelFitR2"] == pytest.approx(0.87)
+        assert out["PKVoxelRsquared"] == pytest.approx(0.87)
         assert out["PKInferenceEngine"] == "vi"
 
     def test_pk_candidate_models_is_list(self, base_sidecar, pk_qc_metrics):

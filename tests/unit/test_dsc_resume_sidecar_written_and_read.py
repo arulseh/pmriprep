@@ -25,11 +25,14 @@ def representative_qc_dicts() -> tuple[dict[str, Any], dict[str, Any], dict[str,
     aif_qc = {
         "detection_method": "atlas_strict",
         "n_aif_voxels_selected": 6,
-        "best_psr": 78.0,
-        "best_brr": 92.0,
         "cbv_auc_denominator_is_synthetic": False,
         "cnr_whole_brain": {"fraction_cnr_gt_4": 0.81, "mean_cnr": 5.4},
-        "aif_metrics": {"peak_conc": 12.5, "fwhm": 6.2},
+        "aif_metrics": {
+            "peak_conc": 12.5,
+            "fwhm": 6.2,
+            "psr": 78.0,
+            "brr": 92.0,
+        },
     }
     preload_qc = {
         "k2_method": "bsw",

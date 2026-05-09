@@ -468,10 +468,10 @@
                 <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_ps) }} mL/100g/min</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.pk_modeling.qc_voxel_fit_r2 is defined %}
+            {% if dce.qc_metrics.pk_modeling.qc_voxel_rsquared is defined %}
             <div class="metric">
                 <div class="metric-label">Fit R&sup2;</div>
-                <div class="metric-value {{ dce.display_status.fit_r2 }}">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_fit_r2) }}</div>
+                <div class="metric-value {{ dce.display_status.rsquared }}">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_rsquared) }}</div>
             </div>
             {% endif %}
         </div>

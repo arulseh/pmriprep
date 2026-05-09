@@ -20,11 +20,15 @@ def synthetic_inputs() -> dict[str, Any]:
         "aif_qc": {
             "detection_method": "atlas_relaxed",
             "n_aif_voxels_selected": 6,
-            "best_psr": 78.0,
-            "best_brr": 92.0,
-            "best_ttp": 22.5,
-            "best_fwhm": 6.0,
-            "best_ph": 41.2,
+            "aif_metrics": {
+                "peak_conc": 44.4,
+                "ttp": 22.5,
+                "fwhm": 6.0,
+                "ph": 41.2,
+                "psr": 78.0,
+                "brr": 92.0,
+                "arrival": 14.5,
+            },
         },
         "preload_qc": {
             "k2_method": "bsw",
@@ -77,13 +81,49 @@ class TestBuildDscResumeMeta:
     def test_aif_metrics_nested_under_aif_qc(self, synthetic_inputs):
         meta = _build_dsc_resume_meta(**synthetic_inputs)
         aq = meta["aif_qc"]
-        # Existing flat keys preserved
         assert aq["detection_method"] == "atlas_relaxed"
-        assert aq["best_psr"] == pytest.approx(78.0)
-        # Detection-time metrics now nested under the legacy aif_metrics key
+        # Detection-time metrics live under the canonical aif_metrics key
         assert aq["aif_metrics"]["peak_conc"] == pytest.approx(44.4)
         assert aq["aif_metrics"]["fwhm"] == pytest.approx(6.0)
         assert aq["aif_metrics"]["ttp"] == pytest.approx(22.5)
+        assert aq["aif_metrics"]["psr"] == pytest.approx(78.0)
+        assert aq["aif_metrics"]["brr"] == pytest.approx(92.0)
+        assert aq["aif_metrics"]["ph"] == pytest.approx(41.2)
+        # No flat best_* duplicates at top level
+        for k in ("best_psr", "best_brr", "best_ttp", "best_fwhm", "best_ph"):
+            assert k not in aq
+
+    def test_aif_metrics_gamma_augmentation_merges(self):
+        """The gamma-augmented aif_metrics input merges on top of the
+        upstream aif_qc.aif_metrics block — gamma_* keys are added,
+        producer-side keys preserved.
+        """
+        meta = _build_dsc_resume_meta(
+            aif_qc={
+                "detection_method": "atlas_strict",
+                "aif_metrics": {
+                    "peak_conc": 12.5,
+                    "ttp": 22.0,
+                    "fwhm": 6.0,
+                    "psr": 78.0,
+                },
+            },
+            aif_metrics={
+                "peak_conc": 12.5,
+                "gamma_fit": True,
+                "gamma_r_squared": 0.97,
+                "gamma_auc_ratio": 1.02,
+            },
+        )
+        am = meta["aif_qc"]["aif_metrics"]
+        # Producer-side keys preserved
+        assert am["ttp"] == pytest.approx(22.0)
+        assert am["fwhm"] == pytest.approx(6.0)
+        assert am["psr"] == pytest.approx(78.0)
+        # Gamma augmentation keys added
+        assert am["gamma_fit"] is True
+        assert am["gamma_r_squared"] == pytest.approx(0.97)
+        assert am["gamma_auc_ratio"] == pytest.approx(1.02)
 
     def test_minimal_inputs_match_legacy_shape(self):
         """Without motion_qc / aif_metrics, output is shape-equivalent to

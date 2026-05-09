@@ -579,7 +579,9 @@ def generate_dsc_fit_qc_plot(
     voxel_metrics: dict[str, Any] = {
         "qc_voxel": f"({vx}, {vy}, {vz})",
         "qc_voxel_cbf": round(voxel_cbf, 4),
-        "qc_voxel_r2": round(voxel_r2, 4) if not np.isnan(voxel_r2) else None,
+        "qc_voxel_rsquared": (
+            round(voxel_r2, 4) if not np.isnan(voxel_r2) else None
+        ),
     }
     return str(out), voxel_metrics
 

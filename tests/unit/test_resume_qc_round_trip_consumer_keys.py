@@ -24,20 +24,21 @@ from pmriprep.workflows.dsc.datasinks import _write_resume_sidecar
 
 
 # Keys read by downstream consumers from the producer dicts. Sources:
-# - dsc_cbv_constraint.py:_normalize_aif_qc_keys (translates best_psr →
-#   aif_peak_height, best_brr → baseline_return_ratio,
-#   gamma_fit_auto_metrics.peak_ratio → gamma_peak_ratio)
+# - dsc_cbv_constraint.py:_normalize_aif_qc_keys (translates
+#   aif_metrics.psr → aif_peak_height, aif_metrics.brr →
+#   baseline_return_ratio, gamma_fit_auto_metrics.peak_ratio →
+#   gamma_peak_ratio)
 # - dsc_cbv_constraint.py:assess_dsc_cbv_quality
 # - dce_compute.py:1567-1620 PK setup
 # - utils/dsc_aif_provenance.py
 # - utils/qc_standards.py:recommend_dsc_qc
 #
-# These are the FLAT keys present in the producer dicts (pre-translation).
+# Detection-time AIF metrics live under the nested ``aif_metrics`` key;
+# the round-trip oracle compares the nested dict by value.
 _AIF_QC_CONSUMER_KEYS = {
     "detection_method",
     "n_aif_voxels_selected",
-    "best_psr",                          # → consumer aif_peak_height
-    "best_brr",                          # → consumer baseline_return_ratio
+    "aif_metrics",                       # nested: psr, brr, peak_conc, ttp, fwhm, ...
     "cbv_auc_denominator_is_synthetic",
     "synthetic",
     "gamma_fit_applied",
@@ -71,8 +72,13 @@ def representative_in_process_dicts():
     aif_qc = {
         "detection_method": "atlas_strict",
         "n_aif_voxels_selected": 6,
-        "best_psr": 78.0,
-        "best_brr": 92.0,
+        "aif_metrics": {
+            "peak_conc": 12.5,
+            "fwhm": 6.2,
+            "ttp": 18.0,
+            "psr": 78.0,
+            "brr": 92.0,
+        },
         "cbv_auc_denominator_is_synthetic": False,
         "synthetic": False,
         "gamma_fit_applied": True,
@@ -80,7 +86,6 @@ def representative_in_process_dicts():
         "hematocrit": 0.42,
         # Bonus producer keys (not consumed but should still round-trip)
         "quality_score": 0.81,
-        "aif_metrics": {"peak_conc": 12.5, "fwhm": 6.2},
     }
     preload_qc = {
         "preload_classification": "none",

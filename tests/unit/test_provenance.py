@@ -188,7 +188,7 @@ class TestEnrichDSC:
                 "detection_method": "atlas_strict",
                 "n_aif_voxels_selected": 6,
                 "quality_score": 0.91,
-                "best_fwhm": 4.0,
+                "aif_metrics": {"fwhm": 4.0},
                 "arrival_time_seconds": 3.2,
                 "baseline_frames_used": 10,
                 "baseline_detection_method": "auto_p99",

@@ -218,14 +218,16 @@ class VpConstraintResult:
 def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
     """Normalize DSC AIF QC keys to the quality assessment schema.
 
-    Maps PMRIPrep DSC AIF detection output (best_psr, best_brr) to the
-    expected keys (aif_peak_height, baseline_return_ratio). Returns data
-    unchanged if expected keys are already present.
+    Maps the producer-shape ``aif_qc.aif_metrics`` block (``psr``,
+    ``brr``) to the assessment-schema keys (``aif_peak_height``,
+    ``baseline_return_ratio``). Returns data unchanged if expected
+    keys are already present.
 
     Args:
-        aif_qc_data: Raw AIF QC dictionary, possibly with PMRIPrep-native
-            keys (best_psr, best_brr) instead of the assessment schema keys
-            (aif_peak_height, baseline_return_ratio, cnr_whole_brain).
+        aif_qc_data: Raw AIF QC dictionary, possibly carrying the
+            producer-shape ``aif_metrics`` nested dict instead of the
+            assessment schema keys (``aif_peak_height``,
+            ``baseline_return_ratio``, ``cnr_whole_brain``).
 
     Returns:
         Dictionary with normalized keys suitable for assess_dsc_cbv_quality.
@@ -262,20 +264,19 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
         _set_cnr_default(data)
         return data
 
+    aif_metrics = data.get("aif_metrics") or {}
+
     # --- AIF peak height from PSR ---
-    # best_psr = 100 * (S_tail - S_min) / (S0 - S_min)
+    # psr = 100 * (S_tail - S_min) / (S0 - S_min)
     # Higher = better signal recovery. Thresholds: 0.25 (high), 0.15 (moderate)
-    if "best_psr" in data and "aif_peak_height" not in data:
-        data["aif_peak_height"] = data["best_psr"] / 100.0
-    elif "aif_metrics" in data and isinstance(data["aif_metrics"], dict):
-        if "psr" in data["aif_metrics"] and "aif_peak_height" not in data:
-            data["aif_peak_height"] = data["aif_metrics"]["psr"] / 100.0
+    if "psr" in aif_metrics and "aif_peak_height" not in data:
+        data["aif_peak_height"] = aif_metrics["psr"] / 100.0
 
     # --- Baseline return ratio from BRR ---
-    # best_brr = 100 * tail_conc / peak_conc
+    # brr = 100 * tail_conc / peak_conc
     # Lower = better (more recovery). Thresholds: 0.30 (marginal), 0.40 (fail)
-    if "best_brr" in data and "baseline_return_ratio" not in data:
-        data["baseline_return_ratio"] = data["best_brr"] / 100.0
+    if "brr" in aif_metrics and "baseline_return_ratio" not in data:
+        data["baseline_return_ratio"] = aif_metrics["brr"] / 100.0
 
     # --- CNR coverage: default to moderate if not available ---
     _set_cnr_default(data)

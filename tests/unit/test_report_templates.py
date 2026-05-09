@@ -138,7 +138,7 @@ def _dsc_ctx_with_deconv(method: str, **deconv_extra) -> dict:
         "images": {"aif_curve": ""},
         "display_status": {
             "leaky_voxels": "pass",
-            "fit_r2": "pass",
+            "rsquared": "pass",
             "fallback": "pass",
         },
     }
