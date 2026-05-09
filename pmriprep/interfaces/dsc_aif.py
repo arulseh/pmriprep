@@ -28,7 +28,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dsc_constants import (
-    AIF_PEAK_SPREAD_MAX_FRAMES,
+    AIF_PEAK_SPREAD_MAX_SECONDS,
     AIF_TAIL_FRACTION_MAX,
     AIF_TAIL_WINDOW_S,
     EPSILON_CONCENTRATION,
@@ -1487,6 +1487,7 @@ class AIFDetection(BaseInterface):
     @staticmethod
     def _apply_postscore_aif_filters(
         scored: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
+        tr: float,
     ) -> tuple[
         list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         dict[str, Any],
@@ -1495,13 +1496,18 @@ class AIFDetection(BaseInterface):
 
         Two filters in order:
 
-        1. **1-TR peak-spread filter**: keep voxels whose
-           ``peak_time_frame`` is within ``AIF_PEAK_SPREAD_MAX_FRAMES``
-           of the input pool's earliest peak. The reference
-           ``earliest_pt`` is fixed to the input pool's minimum — it
-           is **not** recomputed after the peak-spread filter prunes
-           the pool, so a single reference frame governs the whole
-           pass.
+        1. **TR-scaled peak-spread filter**: keep voxels whose
+           ``peak_time_frame`` is within
+           ``ceil(AIF_PEAK_SPREAD_MAX_SECONDS / tr)`` frames of the
+           input pool's 20th-percentile peak time. The 20th-percentile
+           reference (rather than ``min``) is robust to a single
+           early-peaking outlier (e.g. a noise voxel that would
+           otherwise drag the gate down by 1-2 frames and reject
+           legitimate co-arterial voxels). The TR-scaled spread limit
+           accommodates frame quantization on argmax peak detection
+           plus per-voxel argmax jitter at SNR 20-40 (~±1 frame), so
+           true co-arterial voxels at TR=1.5 s spanning 2 measured
+           frames are retained.
         2. **Tail/peak filter**: keep voxels with
            ``tail_fraction_late <= AIF_TAIL_FRACTION_MAX`` (default
            0.15 — see ``dsc_constants.py`` for the Bleeker 2009 PVF
@@ -1511,10 +1517,7 @@ class AIFDetection(BaseInterface):
         it is the responsibility of ``_score_candidate_cost`` upstream
         (``_score_and_select_candidates`` rejects ``frames_before_tissue
         < -2`` outright and applies graduated penalties for borderline
-        cases). Layering a second hard TTP gate here was introduced in
-        an earlier release as belt-and-suspenders; it conflicted with
-        the scorer's softer logic and over-rejected valid arterial
-        voxels in fast-perfusing brains at TR=1.5 s.
+        cases).
 
         Args:
             scored: List of ``(cost, coord, metrics)`` tuples from
@@ -1522,6 +1525,9 @@ class AIFDetection(BaseInterface):
                 must contain ``peak_time_frame`` (float, frame index
                 of first-pass peak) and ``tail_fraction_late`` (float,
                 last 30 s mean ΔR2* / first-pass peak).
+            tr: Repetition time in seconds. Used to convert the
+                ``AIF_PEAK_SPREAD_MAX_SECONDS`` physiologic spread
+                ceiling to a frame-count gate at runtime.
 
         Returns:
             ``(filtered, diagnostics)`` where ``filtered`` is the
@@ -1541,12 +1547,22 @@ class AIFDetection(BaseInterface):
         if not scored:
             return [], zero_diag
 
-        # Filter 1: 1-TR peak-spread (earliest_pt fixed for the whole pass)
-        earliest_pt = min(
+        # Filter 1: TR-scaled peak-spread with 20th-percentile reference.
+        # Compute reference from finite peak_time_frames only (NaN/inf
+        # would poison np.percentile); if no finite values exist, reject
+        # the whole pool.
+        peak_times_all = [
             float(m.get("peak_time_frame", float("inf")))
             for _, _, m in scored
+        ]
+        finite_peak_times = [pt for pt in peak_times_all if np.isfinite(pt)]
+        if not finite_peak_times:
+            return [], zero_diag
+        earliest_pt = float(np.percentile(finite_peak_times, 20))
+        max_frame_spread = max(
+            1, int(np.ceil(AIF_PEAK_SPREAD_MAX_SECONDS / max(tr, 1e-3)))
         )
-        spread_max = earliest_pt + float(AIF_PEAK_SPREAD_MAX_FRAMES)
+        spread_max = earliest_pt + max_frame_spread
         spread_pass: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
         n_filtered_spread = 0
         for cost, coord, metrics in scored:
@@ -2752,10 +2768,11 @@ class AIFDetection(BaseInterface):
                     continue
 
                 # Post-score kinetic-coherence filters: peak-spread
-                # (1-frame max from earliest) and tail/peak ≤ threshold.
-                # TTP causality is enforced by the scorer above.
+                # (TR-scaled max from 20th-percentile peak time) and
+                # tail/peak ≤ threshold. TTP causality is enforced by
+                # the scorer above.
                 scored, postfilter_diag = self._apply_postscore_aif_filters(
-                    scored,
+                    scored, tr=tr,
                 )
                 postfilter_diags_per_tier[level_name] = postfilter_diag
                 if not scored:

@@ -265,12 +265,15 @@ AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
 # AIF Per-Voxel Kinetic Filters (post-score, pre-averaging)
 # =============================================================================
 
-#: Maximum peak-time spread (frames) within an averaged AIF voxel pool.
+#: Maximum peak-time spread (seconds) within an averaged AIF voxel pool.
 #: True intra-arterial dispersion across the MCA tree (M1 → M3) is sub-
-#: second; multi-frame spread is diagnostic of capillary-bed transit (i.e.
-#: partial-volume contamination), not arterial branching (Calamante NMR
-#: Biomed 2013; Bleeker MRM 2011).
-AIF_PEAK_SPREAD_MAX_FRAMES: Final[int] = 1
+#: second (Calamante NMR Biomed 2013; Bleeker MRM 2011), but the MEASURED
+#: spread among co-arterial voxels at typical DSC TR (1-2 s) exceeds this
+#: due to (a) frame quantization on argmax peak detection and (b) per-voxel
+#: argmax jitter at SNR 20-40 (~±1 frame). Converted at runtime to a frame
+#: count via ``max(1, ceil(SECONDS / tr))``. At TR=1.5 s → 2 frames; at
+#: TR=2.0 s → 2 frames; at TR=0.5 s (high-temp DSC) → 6 frames.
+AIF_PEAK_SPREAD_MAX_SECONDS: Final[float] = 3.0
 
 #: Maximum tail/peak fraction for an AIF voxel (mean ΔR2* over the last
 #: ``AIF_TAIL_WINDOW_S`` divided by first-pass peak). Catches BBB-leakage
