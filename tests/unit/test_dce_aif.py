@@ -645,11 +645,7 @@ class TestTwoPassCascade:
             AIFDetection, "_find_candidates_in_mask",
             side_effect=side_effects,
         ) as mock_find:
-            (
-                candidates, scores, metrics_list,
-                detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes, _tier_result,
-            ) = detector._run_two_pass_cascade(
+            _cascade_res = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
                 atlas_names=atlas_names,
@@ -658,6 +654,13 @@ class TestTwoPassCascade:
                 baseline_frames=5,
                 tissue_ttp_frame=10.0,
             )
+            candidates = _cascade_res.candidates
+            scores = _cascade_res.scores
+            metrics_list = _cascade_res.metrics_list
+            detection_method = _cascade_res.detection_method
+            atlas_tier_used = _cascade_res.atlas_tier_used
+            n_attempted = _cascade_res.cascade_tiers_attempted
+            anchor_outcomes = _cascade_res.anchor_outcomes
 
         assert detection_method == "atlas"
         assert atlas_tier_used == "MCA_ACA_relaxed"
@@ -697,11 +700,7 @@ class TestTwoPassCascade:
             AIFDetection, "_find_candidates_in_mask",
             side_effect=side_effects,
         ):
-            (
-                candidates, scores, metrics_list,
-                detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes, _tier_result,
-            ) = detector._run_two_pass_cascade(
+            _cascade_res = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
                 atlas_names=atlas_names,
@@ -710,6 +709,13 @@ class TestTwoPassCascade:
                 baseline_frames=5,
                 tissue_ttp_frame=10.0,
             )
+            candidates = _cascade_res.candidates
+            scores = _cascade_res.scores
+            metrics_list = _cascade_res.metrics_list
+            detection_method = _cascade_res.detection_method
+            atlas_tier_used = _cascade_res.atlas_tier_used
+            n_attempted = _cascade_res.cascade_tiers_attempted
+            anchor_outcomes = _cascade_res.anchor_outcomes
 
         assert n_attempted == 10  # all tiers run, none short-circuited
         # Highest single-keeper max-score was 0.62 at MCA_ACA_dil_relaxed.
@@ -742,11 +748,7 @@ class TestTwoPassCascade:
             AIFDetection, "_find_candidates_in_mask",
             side_effect=side_effects,
         ) as mock_find:
-            (
-                candidates, scores, metrics_list,
-                detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes, _tier_result,
-            ) = detector._run_two_pass_cascade(
+            _cascade_res = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
                 atlas_names=atlas_names,
@@ -755,6 +757,13 @@ class TestTwoPassCascade:
                 baseline_frames=5,
                 tissue_ttp_frame=10.0,
             )
+            candidates = _cascade_res.candidates
+            scores = _cascade_res.scores
+            metrics_list = _cascade_res.metrics_list
+            detection_method = _cascade_res.detection_method
+            atlas_tier_used = _cascade_res.atlas_tier_used
+            n_attempted = _cascade_res.cascade_tiers_attempted
+            anchor_outcomes = _cascade_res.anchor_outcomes
 
         assert detection_method == "population"
         assert atlas_tier_used is None
@@ -787,11 +796,7 @@ class TestTwoPassCascade:
             AIFDetection, "_find_candidates_in_mask",
             side_effect=side_effects,
         ) as mock_find:
-            (
-                _candidates, _scores, _metrics,
-                detection_method, atlas_tier_used, n_attempted,
-                _anchor_outcomes, _tier_result,
-            ) = detector._run_two_pass_cascade(
+            _cascade_res = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
                 atlas_names=atlas_names,
@@ -800,6 +805,9 @@ class TestTwoPassCascade:
                 baseline_frames=5,
                 tissue_ttp_frame=10.0,
             )
+            detection_method = _cascade_res.detection_method
+            atlas_tier_used = _cascade_res.atlas_tier_used
+            n_attempted = _cascade_res.cascade_tiers_attempted
 
         assert detection_method == "atlas"
         assert atlas_tier_used == "MCA_ACA_strict"
@@ -933,11 +941,7 @@ class TestAnchorGateInCascade:
             AIFDetection, "_find_candidates_in_mask",
             side_effect=side_effects,
         ):
-            (
-                candidates, scores, _metrics,
-                detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes, _tier_result,
-            ) = detector._run_two_pass_cascade(
+            _cascade_res = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
                 atlas_names=atlas_names,
@@ -946,6 +950,12 @@ class TestAnchorGateInCascade:
                 baseline_frames=5,
                 tissue_ttp_frame=10.0,
             )
+            candidates = _cascade_res.candidates
+            scores = _cascade_res.scores
+            detection_method = _cascade_res.detection_method
+            atlas_tier_used = _cascade_res.atlas_tier_used
+            n_attempted = _cascade_res.cascade_tiers_attempted
+            anchor_outcomes = _cascade_res.anchor_outcomes
 
         assert detection_method == "population"
         assert atlas_tier_used is None
@@ -984,11 +994,7 @@ class TestAnchorGateInCascade:
             AIFDetection, "_find_candidates_in_mask",
             side_effect=side_effects,
         ) as mock_find:
-            (
-                candidates, _scores, _metrics,
-                detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes, _tier_result,
-            ) = detector._run_two_pass_cascade(
+            _cascade_res = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
                 atlas_names=atlas_names,
@@ -997,6 +1003,11 @@ class TestAnchorGateInCascade:
                 baseline_frames=5,
                 tissue_ttp_frame=10.0,
             )
+            candidates = _cascade_res.candidates
+            detection_method = _cascade_res.detection_method
+            atlas_tier_used = _cascade_res.atlas_tier_used
+            n_attempted = _cascade_res.cascade_tiers_attempted
+            anchor_outcomes = _cascade_res.anchor_outcomes
 
         assert detection_method == "atlas"
         assert atlas_tier_used == "MCA_ACA_relaxed"
@@ -1037,11 +1048,7 @@ class TestAnchorGateInCascade:
             AIFDetection, "_find_candidates_in_mask",
             side_effect=side_effects,
         ):
-            (
-                candidates, scores, _metrics,
-                detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes, _tier_result,
-            ) = detector._run_two_pass_cascade(
+            _cascade_res = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
                 atlas_names=atlas_names,
@@ -1050,6 +1057,12 @@ class TestAnchorGateInCascade:
                 baseline_frames=5,
                 tissue_ttp_frame=10.0,
             )
+            candidates = _cascade_res.candidates
+            scores = _cascade_res.scores
+            detection_method = _cascade_res.detection_method
+            atlas_tier_used = _cascade_res.atlas_tier_used
+            n_attempted = _cascade_res.cascade_tiers_attempted
+            anchor_outcomes = _cascade_res.anchor_outcomes
 
         assert detection_method == "atlas"
         assert atlas_tier_used == "MCA_ACA_strict"
@@ -1076,11 +1089,7 @@ class TestAnchorGateInCascade:
             AIFDetection, "_find_candidates_in_mask",
             side_effect=side_effects,
         ):
-            (
-                candidates, scores, _metrics,
-                detection_method, _atlas_tier, n_attempted,
-                _anchor_outcomes, _tier_result,
-            ) = detector._run_two_pass_cascade(
+            _cascade_res = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
                 atlas_names=atlas_names,
@@ -1089,6 +1098,10 @@ class TestAnchorGateInCascade:
                 baseline_frames=5,
                 tissue_ttp_frame=10.0,
             )
+            candidates = _cascade_res.candidates
+            scores = _cascade_res.scores
+            detection_method = _cascade_res.detection_method
+            n_attempted = _cascade_res.cascade_tiers_attempted
 
         assert detection_method != "population"
         assert n_attempted == 10
@@ -1113,11 +1126,7 @@ class TestAnchorGateInCascade:
             AIFDetection, "_find_candidates_in_mask",
             side_effect=side_effects,
         ):
-            (
-                candidates, _scores, _metrics,
-                detection_method, _atlas_tier, n_attempted,
-                _anchor_outcomes, _tier_result,
-            ) = detector._run_two_pass_cascade(
+            _cascade_res = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
                 atlas_names=atlas_names,
@@ -1126,6 +1135,9 @@ class TestAnchorGateInCascade:
                 baseline_frames=5,
                 tissue_ttp_frame=10.0,
             )
+            candidates = _cascade_res.candidates
+            detection_method = _cascade_res.detection_method
+            n_attempted = _cascade_res.cascade_tiers_attempted
 
         assert detection_method == "population"
         assert n_attempted == 10
@@ -2206,3 +2218,594 @@ def test_select_worst_for_trim_g6_f_falls_through_to_score():
     scores = [0.9, 0.3, 0.7]
     assert _select_worst_for_trim(metrics, scores, "G6_f") == 1
     assert _select_worst_for_trim(metrics, scores, "G6_g") == 1
+
+
+# =============================================================================
+# Fix 1: brain-wide tissue_ttp_frame threading into _apply_arterial_criteria
+# =============================================================================
+
+
+class TestTissueTtpFrameThreading:
+    """Atlas-constrained search must use the brain-wide tissue_ttp.
+
+    Without the threading, ``_apply_arterial_criteria`` recomputes
+    ``tissue_ttp`` from the moderate-enhancement IQR of the masked
+    voxels. When the mask is atlas-constrained (mostly arterial voxels),
+    that median collapses onto the arterial peak time and the
+    downstream ``is_likely_venous`` flag rejects every arterial voxel.
+    """
+
+    @staticmethod
+    def _build_atlas_arterial_chars(
+        n_arterial: int = 200,
+        n_tissue: int = 50,
+        arterial_peak_frame: int = 5,
+        tissue_peak_frame: int = 25,
+    ) -> dict:
+        """Mimic _compute_signal_characteristics output for an atlas-
+        constrained mask: majority arterial-peak voxels, a few tissue."""
+        rng = np.random.default_rng(0)
+        n = n_arterial + n_tissue
+        peak_indices = np.empty(n, dtype=np.int64)
+        peak_indices[:n_arterial] = arterial_peak_frame + rng.integers(-1, 2, n_arterial)
+        peak_indices[n_arterial:] = tissue_peak_frame + rng.integers(-1, 2, n_tissue)
+        peak_values = np.empty(n, dtype=np.float64)
+        peak_values[:n_arterial] = 6.0 + rng.normal(0, 0.5, n_arterial)
+        peak_values[n_arterial:] = 1.0 + rng.normal(0, 0.1, n_tissue)
+        enhancement = peak_values.copy()
+        return {
+            "peak_indices": peak_indices,
+            "peak_values": peak_values,
+            "enhancement": enhancement,
+            "fwhm_frames": np.full(n, 3.0),
+            "fwhm_seconds": np.full(n, 12.0),
+            "washout_fraction": np.full(n, 0.85),
+            "upstroke_slope": np.full(n, 0.5),
+        }
+
+    def test_brain_wide_tissue_ttp_overrides_local(self):
+        chars = self._build_atlas_arterial_chars()
+        spatial_exclude = np.zeros(len(chars["peak_indices"]), dtype=bool)
+        # Local IQR median collapses onto arterial timing (~frame 5);
+        # brain-wide tissue_ttp from a real parenchymal reference would
+        # be ~frame 25.
+        idx_local, ttp_local, _tier_local = AIFDetection._apply_arterial_criteria(
+            chars, spatial_exclude, nt=40, tr=4.0,
+        )
+        idx_passed, ttp_passed, _tier_passed = AIFDetection._apply_arterial_criteria(
+            chars, spatial_exclude, nt=40, tr=4.0, tissue_ttp_frame=25.0,
+        )
+        # Local computation collapses onto arterial peak (~5)
+        assert ttp_local <= 7.0, f"local tissue_ttp should collapse onto arterial timing, got {ttp_local}"
+        # Passed value is preserved
+        assert ttp_passed == 25.0
+
+    def test_kwarg_default_preserves_local_path(self):
+        """Omitting tissue_ttp_frame must give the pre-fix behavior."""
+        chars = self._build_atlas_arterial_chars()
+        spatial_exclude = np.zeros(len(chars["peak_indices"]), dtype=bool)
+        idx_a, ttp_a, tier_a = AIFDetection._apply_arterial_criteria(
+            chars, spatial_exclude, nt=40, tr=4.0,
+        )
+        idx_b, ttp_b, tier_b = AIFDetection._apply_arterial_criteria(
+            chars, spatial_exclude, nt=40, tr=4.0, tissue_ttp_frame=None,
+        )
+        np.testing.assert_array_equal(idx_a, idx_b)
+        assert ttp_a == ttp_b
+        assert tier_a == tier_b
+
+    def test_fix1_byte_identical_on_healthy_session(self):
+        """Regression guard for the ‘13 healthy OSIPI sessions
+        unaffected’ claim.
+
+        On a healthy session the atlas-local ``tissue_ttp`` (IQR median
+        of moderate-enhancement voxels in atlas territory) sits within
+        ~1 frame of the brain-wide reference because the atlas is not
+        yet collapsed onto the arterial peak (sufficient parenchymal
+        contamination in the IQR). In that regime, threading the brain-
+        wide value must be a no-op: candidate set, scores, and
+        ``is_likely_venous`` flags must be byte-identical.
+        """
+        # Build a synthetic 4D where the atlas mask covers a mix of
+        # arterial-like AND parenchymal-like voxels — its local IQR
+        # median tissue_ttp lands at ~tissue_peak_frame.
+        nx = ny = nz = 20
+        nt = 40
+        t = np.arange(nt, dtype=np.float64)
+        tissue_curve = 0.6 * np.exp(-0.5 * ((t - 20) / 6.0) ** 2)
+        tissue_curve[:5] = 0.0
+        conc = np.broadcast_to(
+            tissue_curve[None, None, None, :], (nx, ny, nz, nt),
+        ).copy()
+        # Small arterial cluster — only 3 voxels, won't dominate IQR
+        arterial_curve = 6.0 * np.exp(-0.5 * ((t - 5) / 1.5) ** 2)
+        arterial_curve[:5] = 0.0
+        for x, y, z in [(10, 10, 10), (10, 11, 10), (11, 10, 10)]:
+            conc[x, y, z, :] = arterial_curve
+        # Atlas mask covers a 6×6×6 block where most voxels are
+        # parenchymal — atlas-local tissue_ttp ≈ brain-wide.
+        atlas_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
+        atlas_mask[8:14, 8:14, 8:14] = 1
+
+        det = AIFDetection.__new__(AIFDetection)
+        det.inputs = type("FI", (), {
+            "hematocrit": 0.42, "r1_relaxivity": 4.1,
+            "agent_standard_dose": 0.1, "agent_r1_known": True,
+            "field_strength": 3.0, "dose": 1.0, "target_peak": 0.0,
+            "baseline_frames": 5, "lesion_mask_file": None,
+            "mr_acquisition_type": "3D",
+        })()
+        # Sanity: confirm local and brain-wide tissue_ttp agree (this
+        # IS a healthy-session-like setup, not a regressed one).
+        # Both will be ≈ 20 in this synthetic.
+        cands_default, scores_default, mets_default = det._find_candidates_in_mask(
+            conc, atlas_mask, n_candidates=4, tr=4.0,
+            baseline_frames=5, criteria="strict", atlas_constrained=True,
+        )
+        cands_brainwide, scores_brainwide, mets_brainwide = det._find_candidates_in_mask(
+            conc, atlas_mask, n_candidates=4, tr=4.0,
+            baseline_frames=5, criteria="strict", atlas_constrained=True,
+            tissue_ttp_frame=20.0,
+        )
+        # Byte-identical candidates + scores + venous flags
+        assert cands_default == cands_brainwide
+        assert scores_default == scores_brainwide
+        assert (
+            [m.get("is_likely_venous", False) for m in mets_default]
+            == [m.get("is_likely_venous", False) for m in mets_brainwide]
+        )
+
+    def test_atlas_arterial_voxels_not_flagged_venous_with_brain_wide_ttp(self):
+        """End-to-end via _find_candidates_in_mask: atlas-constrained
+        search on a synthetic brain where all atlas voxels are arterial
+        must NOT flag them as venous when brain-wide tissue_ttp is
+        passed."""
+        nx = ny = nz = 20
+        nt = 40
+        # Tissue background peaks at frame 25
+        t = np.arange(nt, dtype=np.float64)
+        tissue_curve = 0.6 * np.exp(-0.5 * ((t - 25) / 6.0) ** 2)
+        tissue_curve[:5] = 0.0
+        conc = np.broadcast_to(
+            tissue_curve[None, None, None, :],
+            (nx, ny, nz, nt),
+        ).copy()
+        # A small atlas-territory cluster of ARTERIAL voxels at frame 5
+        arterial_coords = [(10, 10, 10), (10, 11, 10), (11, 10, 10), (11, 11, 10)]
+        arterial_curve = 6.0 * np.exp(-0.5 * ((t - 5) / 1.5) ** 2)
+        arterial_curve[:5] = 0.0
+        for x, y, z in arterial_coords:
+            conc[x, y, z, :] = arterial_curve
+        atlas_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
+        for x, y, z in arterial_coords:
+            atlas_mask[x, y, z] = 1
+        # Add a few tissue voxels into the atlas mask to give the local
+        # IQR computation something to misinterpret as "tissue_ttp".
+        for x in range(8, 13):
+            for y in range(8, 13):
+                atlas_mask[x, y, 9] = 1
+
+        det = AIFDetection.__new__(AIFDetection)
+        det.inputs = type("FI", (), {
+            "hematocrit": 0.42, "r1_relaxivity": 4.1,
+            "agent_standard_dose": 0.1, "agent_r1_known": True,
+            "field_strength": 3.0, "dose": 1.0, "target_peak": 0.0,
+            "baseline_frames": 5, "lesion_mask_file": None,
+            "mr_acquisition_type": "3D",
+        })()
+
+        # Without brain-wide ttp, atlas-local IQR collapses to ~5 →
+        # arterial voxels at peak=5 get frames_before_tissue=0 → flagged
+        # venous (with TR>0 timing_margin=1).
+        cands_no, scores_no, mets_no = det._find_candidates_in_mask(
+            conc, atlas_mask, n_candidates=4, tr=4.0,
+            baseline_frames=5, criteria="strict", atlas_constrained=True,
+        )
+        # With brain-wide ttp threaded in, no false-venous flag.
+        cands_fix, scores_fix, mets_fix = det._find_candidates_in_mask(
+            conc, atlas_mask, n_candidates=4, tr=4.0,
+            baseline_frames=5, criteria="strict", atlas_constrained=True,
+            tissue_ttp_frame=25.0,
+        )
+        n_venous_no = sum(1 for m in mets_no if m.get("is_likely_venous", False))
+        n_venous_fix = sum(1 for m in mets_fix if m.get("is_likely_venous", False))
+        assert n_venous_fix == 0, "arterial atlas voxels must not be flagged venous when brain-wide tissue_ttp is passed"
+        # The unfixed path should have flagged at least some arterial
+        # voxels (regression guard against silently restoring the bug).
+        assert n_venous_no >= n_venous_fix
+
+    def test_low_tr_residual_effect_on_venous_flag(self):
+        """At TR > 5 s, the cascade selector path bypasses arterial_timing
+        (uses early_arrival instead). But the per-voxel is_likely_venous
+        flag and the scorer's timing contribution still consume tissue_ttp,
+        so Fix 1's effect is preserved at low TR."""
+        nx = ny = nz = 20
+        nt = 30
+        t = np.arange(nt, dtype=np.float64)
+        tissue_curve = 0.6 * np.exp(-0.5 * ((t - 18) / 4.0) ** 2)
+        tissue_curve[:5] = 0.0
+        conc = np.broadcast_to(
+            tissue_curve[None, None, None, :], (nx, ny, nz, nt),
+        ).copy()
+        arterial_coords = [(10, 10, 10), (10, 11, 10), (11, 10, 10), (11, 11, 10)]
+        arterial_curve = 6.0 * np.exp(-0.5 * ((t - 6) / 1.5) ** 2)
+        arterial_curve[:5] = 0.0
+        for x, y, z in arterial_coords:
+            conc[x, y, z, :] = arterial_curve
+        atlas_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
+        for x, y, z in arterial_coords:
+            atlas_mask[x, y, z] = 1
+
+        det = AIFDetection.__new__(AIFDetection)
+        det.inputs = type("FI", (), {
+            "hematocrit": 0.42, "r1_relaxivity": 4.1,
+            "agent_standard_dose": 0.1, "agent_r1_known": True,
+            "field_strength": 3.0, "dose": 1.0, "target_peak": 0.0,
+            "baseline_frames": 5, "lesion_mask_file": None,
+            "mr_acquisition_type": "3D",
+        })()
+        # TR=8 s → low_tr=True
+        cands, scores, mets = det._find_candidates_in_mask(
+            conc, atlas_mask, n_candidates=4, tr=8.0,
+            baseline_frames=5, criteria="strict", atlas_constrained=True,
+            tissue_ttp_frame=18.0,
+        )
+        n_venous = sum(1 for m in mets if m.get("is_likely_venous", False))
+        assert n_venous == 0, "low-TR mode must still respect brain-wide tissue_ttp for venous flag"
+
+
+# =============================================================================
+# Fix 2: 10mm physical erosion on WB fallback search mask
+# =============================================================================
+
+
+class TestPhysicalErosionWBFallback:
+    """Verify ``physical_erosion_mm`` excludes lateral surface voxels in
+    physical mm (not voxel count), and that the thin-slab fallback
+    triggers when the cut would evacuate the mask."""
+
+    @staticmethod
+    def _make_brain_mask(shape, voxel_sizes):
+        mask = np.zeros(shape, dtype=np.uint8)
+        # Spherical-ish brain centered in volume
+        cx, cy, cz = (s // 2 for s in shape)
+        for x in range(shape[0]):
+            for y in range(shape[1]):
+                for z in range(shape[2]):
+                    rx = (x - cx) * voxel_sizes[0]
+                    ry = (y - cy) * voxel_sizes[1]
+                    rz = (z - cz) * voxel_sizes[2]
+                    if rx * rx + ry * ry + rz * rz <= 60.0 ** 2:
+                        mask[x, y, z] = 1
+        return mask
+
+    def test_physical_erosion_excludes_5mm_voxel(self):
+        """A voxel at edge_d=5mm must be excluded with physical_erosion_mm=10
+        and included with 0.0."""
+        from scipy.ndimage import distance_transform_edt
+        shape = (60, 60, 60)
+        voxel_sizes = (1.0, 1.0, 1.0)
+        brain = self._make_brain_mask(shape, voxel_sizes)
+        dist = distance_transform_edt(brain > 0.5, sampling=voxel_sizes)
+        # Find a voxel at edge_d≈5mm
+        target = np.argwhere((dist >= 4.5) & (dist <= 5.5))
+        assert len(target) > 0
+        x, y, z = target[0]
+        assert dist[x, y, z] < 10.0
+
+        no_erode = AIFDetection._prepare_search_mask(
+            brain, voxel_sizes, skip_midline=False,
+            slab_edge_inferior_mm=2.0, slab_edge_superior_mm=2.0,
+            erosion_iterations=0, physical_erosion_mm=0.0,
+        )
+        eroded = AIFDetection._prepare_search_mask(
+            brain, voxel_sizes, skip_midline=False,
+            slab_edge_inferior_mm=2.0, slab_edge_superior_mm=2.0,
+            erosion_iterations=0, physical_erosion_mm=10.0,
+        )
+        # The 5mm-edge voxel must be present in no_erode and absent in eroded
+        # (assuming it survives the small slab/midline/top-25 cuts; pick a
+        # central voxel).
+        # Find a voxel surviving all non-erosion cuts at edge_d≈5
+        in_no_erode = (no_erode > 0.5) & (dist >= 4.5) & (dist <= 5.5)
+        assert int(np.sum(in_no_erode)) > 0
+        survivors_no = np.argwhere(in_no_erode)
+        # None of these should survive in eroded
+        for x, y, z in survivors_no[:10]:
+            assert eroded[x, y, z] == 0, f"voxel at edge_d={dist[x,y,z]:.1f}mm should be eroded"
+
+    def test_physical_erosion_anisotropic_voxels(self):
+        """1×1×5mm voxels: physical_erosion_mm=10 must measure mm,
+        not voxel count. Catches the bug where someone passes 10
+        as a voxel-count threshold (which would erode 50mm in z)."""
+        from scipy.ndimage import distance_transform_edt
+        shape = (80, 80, 16)
+        voxel_sizes = (1.0, 1.0, 5.0)
+        brain = np.zeros(shape, dtype=np.uint8)
+        # Cylinder spanning full z, radius 30mm in xy: large enough that
+        # 10mm erosion + slab/top-25% cuts leaves >>BRAIN_EROSION_MIN_VOXELS.
+        cx, cy = 40, 40
+        for x in range(shape[0]):
+            for y in range(shape[1]):
+                if (x - cx) ** 2 + (y - cy) ** 2 <= 30 ** 2:
+                    brain[x, y, :] = 1
+        dist = distance_transform_edt(brain > 0.5, sampling=voxel_sizes)
+        z_test = 5
+        # Find voxels at edge_d ≈ 7mm in plane at z=z_test
+        target_xy = np.argwhere(
+            (dist[:, :, z_test] >= 6.5) & (dist[:, :, z_test] <= 7.5)
+        )
+        assert len(target_xy) > 0
+
+        eroded = AIFDetection._prepare_search_mask(
+            brain, voxel_sizes, skip_midline=True,
+            slab_edge_inferior_mm=2.0, slab_edge_superior_mm=2.0,
+            erosion_iterations=0, physical_erosion_mm=10.0,
+        )
+        assert int(np.sum(eroded[..., z_test])) > 0, (
+            "test setup invalid: erosion evacuated z slice"
+        )
+        # 7mm-edge voxels must all be excluded
+        excluded = sum(1 for x, y in target_xy if eroded[x, y, z_test] == 0)
+        assert excluded == len(target_xy), (
+            f"voxels at edge_d≈7mm should be eroded; "
+            f"{excluded}/{len(target_xy)} excluded"
+        )
+        # Deep voxels (edge_d ≥ 11mm) must survive
+        deep_xy = np.argwhere(dist[:, :, z_test] >= 11.0)
+        assert len(deep_xy) > 0
+        survived = sum(1 for x, y in deep_xy if eroded[x, y, z_test] == 1)
+        assert survived > 0
+
+    def test_thin_slab_fallback_keeps_pre_erosion_mask(self, caplog):
+        """If physical_erosion_mm would evacuate the mask below
+        BRAIN_EROSION_MIN_VOXELS, fall back to pre-erosion + log warning."""
+        from pmriprep.utils.dce_constants import BRAIN_EROSION_MIN_VOXELS
+        # Tiny brain — most voxels are within 10mm of edge
+        shape = (8, 8, 8)
+        voxel_sizes = (1.0, 1.0, 1.0)
+        brain = np.zeros(shape, dtype=np.uint8)
+        brain[1:7, 1:7, 1:7] = 1
+        # Without erosion this mask has ~216 voxels (above min). With
+        # 10mm physical erosion all voxels are within 10mm so candidate
+        # mask collapses to 0; fallback triggers.
+        with caplog.at_level("WARNING"):
+            mask = AIFDetection._prepare_search_mask(
+                brain, voxel_sizes, skip_midline=True,
+                slab_edge_inferior_mm=0.0, slab_edge_superior_mm=0.0,
+                erosion_iterations=0, physical_erosion_mm=10.0,
+            )
+        assert int(np.sum(mask > 0.5)) >= BRAIN_EROSION_MIN_VOXELS or int(np.sum(mask > 0.5)) == int(np.sum(brain > 0.5))
+        # The warning must be emitted
+        assert any("Physical erosion" in rec.message and "falling back" in rec.message
+                   for rec in caplog.records)
+
+    def test_physical_erosion_zero_no_op(self):
+        """physical_erosion_mm=0.0 must produce identical output to the
+        prior signature (no Step 6 invocation)."""
+        shape = (40, 40, 40)
+        voxel_sizes = (1.0, 1.0, 1.0)
+        brain = self._make_brain_mask(shape, voxel_sizes)
+        baseline = AIFDetection._prepare_search_mask(
+            brain, voxel_sizes, skip_midline=False,
+            slab_edge_inferior_mm=4.0, slab_edge_superior_mm=4.0,
+            erosion_iterations=2,
+        )
+        with_zero = AIFDetection._prepare_search_mask(
+            brain, voxel_sizes, skip_midline=False,
+            slab_edge_inferior_mm=4.0, slab_edge_superior_mm=4.0,
+            erosion_iterations=2, physical_erosion_mm=0.0,
+        )
+        np.testing.assert_array_equal(baseline, with_zero)
+
+    def test_physical_erosion_after_lesion_exclusion(self):
+        """Lesion exclusion is Step 5, physical erosion is Step 6.
+
+        Place the lesion DEEP (edge_d ≥ 12 mm) so the 10 mm physical
+        erosion alone wouldn't strip those voxels.  Then assert:
+        - With lesion + erosion enabled: lesion voxels are excluded
+          (Step 5 must run regardless of erosion).
+        - With lesion enabled but erosion disabled: lesion voxels are
+          still excluded (Step 5 alone is sufficient).
+        - With erosion enabled but no lesion: lesion voxels survive
+          (Step 6 alone wouldn't strip a deep lesion).
+
+        This isolates Step 5's contribution from Step 6's, so the test
+        actually pins the order and catches a regression where Step 6
+        accidentally precedes Step 5 (or replaces it).
+        """
+        shape = (40, 40, 40)
+        voxel_sizes = (1.0, 1.0, 1.0)
+        brain = self._make_brain_mask(shape, voxel_sizes)
+        from scipy.ndimage import distance_transform_edt
+        dist = distance_transform_edt(brain > 0.5, sampling=voxel_sizes)
+        # Deep lesion: well past the 10 mm physical erosion threshold.
+        deep_voxels = np.argwhere(dist >= 12.0)
+        assert len(deep_voxels) >= 20
+        lesion = np.zeros(shape, dtype=np.uint8)
+        for x, y, z in deep_voxels[:20]:
+            lesion[x, y, z] = 1
+
+        mask_both = AIFDetection._prepare_search_mask(
+            brain, voxel_sizes, lesion_mask=lesion,
+            lesion_distance_mm=0.0, skip_midline=False,
+            slab_edge_inferior_mm=2.0, slab_edge_superior_mm=2.0,
+            erosion_iterations=0, physical_erosion_mm=10.0,
+        )
+        mask_lesion_only = AIFDetection._prepare_search_mask(
+            brain, voxel_sizes, lesion_mask=lesion,
+            lesion_distance_mm=0.0, skip_midline=False,
+            slab_edge_inferior_mm=2.0, slab_edge_superior_mm=2.0,
+            erosion_iterations=0, physical_erosion_mm=0.0,
+        )
+        mask_erosion_only = AIFDetection._prepare_search_mask(
+            brain, voxel_sizes, lesion_mask=None,
+            skip_midline=False,
+            slab_edge_inferior_mm=2.0, slab_edge_superior_mm=2.0,
+            erosion_iterations=0, physical_erosion_mm=10.0,
+        )
+
+        for x, y, z in deep_voxels[:10]:
+            # Lesion alone strips the deep lesion (Step 5)
+            assert mask_lesion_only[x, y, z] == 0, (
+                f"deep lesion at edge_d={dist[x,y,z]:.1f}mm should be "
+                "excluded by lesion mask alone"
+            )
+            # Erosion alone leaves the deep lesion intact (proves
+            # Step 5 contribution isn't masked by Step 6).
+            assert mask_erosion_only[x, y, z] == 1, (
+                f"deep voxel at edge_d={dist[x,y,z]:.1f}mm should "
+                "survive 10mm erosion when no lesion is present"
+            )
+            # Combined: lesion still excluded (regression guard for
+            # accidentally inverting Step 5 / Step 6 order).
+            assert mask_both[x, y, z] == 0
+
+
+# =============================================================================
+# Fix 3: per-tier cascade_gate_decisions
+# =============================================================================
+
+
+class TestCascadeGateDecisions:
+    """Verify the cascade exposes per-tier gate decisions for all
+    attempted tiers (winner, trim-exhausted, and skipped), in the same
+    order as ``anchor_outcomes``."""
+
+    @staticmethod
+    def _build_det():
+        det = AIFDetection.__new__(AIFDetection)
+        det.inputs = type("FI", (), {
+            "hematocrit": 0.42, "r1_relaxivity": 4.1,
+            "agent_standard_dose": 0.1, "agent_r1_known": True,
+            "field_strength": 3.0, "dose": 1.0, "target_peak": 0.0,
+            "baseline_frames": 5, "lesion_mask_file": None,
+            "mr_acquisition_type": "3D",
+        })()
+        return det
+
+    def test_evaluation_returns_decisions_on_failure(self):
+        """``_evaluate_pool_with_gates_and_trim`` must expose its per-
+        iteration gate-decision log even when trim exhausts and result
+        is None."""
+        from pmriprep.interfaces.dce_aif import TierEvaluation
+        det = self._build_det()
+        # 2 candidates with peak below the wb floor → G1 hard-fail on
+        # any pool size; trim exhausts.
+        nx = ny = nz = 20
+        nt = 30
+        conc = np.zeros((nx, ny, nz, nt), dtype=np.float64)
+        t = np.arange(nt, dtype=np.float64)
+        weak_curve = 0.4 * np.exp(-0.5 * ((t - 8) / 2.0) ** 2)
+        weak_curve[:5] = 0.0
+        coords = [(10, 10, 10), (11, 10, 10)]
+        for x, y, z in coords:
+            conc[x, y, z, :] = weak_curve
+        brain = np.ones((nx, ny, nz), dtype=np.uint8)
+        affine = np.eye(4)
+        evaluation = det._evaluate_pool_with_gates_and_trim(
+            coords, [0.7, 0.6],
+            [{"peak_mm": 0.4}, {"peak_mm": 0.4}],
+            conc, brain, affine, tr=4.0, baseline_frames=5,
+            hct=0.42, target_peak=0.0,
+            atlas_tier_label="MCA_ACA_dce_strict",
+        )
+        assert isinstance(evaluation, TierEvaluation)
+        assert evaluation.result is None
+        assert len(evaluation.gate_decisions) >= 1
+        # All decisions must be from the same tier
+        assert all(d["tier"] == "MCA_ACA_dce_strict" for d in evaluation.gate_decisions)
+
+    def test_cascade_gate_decisions_entry_order_matches_anchor_outcomes(self):
+        """tier_gate_decisions must have one entry per attempted tier,
+        in the same order as anchor_outcomes."""
+        # Build a synthetic where atlas tiers all skip on quorum (no
+        # candidates pass per-voxel score floor) and wb_relaxed accepts.
+        nx = ny = nz = 16
+        nt = 30
+        t = np.arange(nt, dtype=np.float64)
+        # Tissue background, no arterial in atlas territory
+        tissue = 0.6 * np.exp(-0.5 * ((t - 18) / 5.0) ** 2)
+        tissue[:5] = 0.0
+        conc = np.broadcast_to(
+            tissue[None, None, None, :], (nx, ny, nz, nt),
+        ).copy()
+        # Arterial cluster OUTSIDE atlas masks (deep central, gets WB tier)
+        arterial = 6.0 * np.exp(-0.5 * ((t - 6) / 1.5) ** 2)
+        arterial[:5] = 0.0
+        for x, y, z in [(8, 8, 8), (8, 9, 8), (9, 8, 8), (9, 9, 8)]:
+            conc[x, y, z, :] = arterial
+        brain = np.ones((nx, ny, nz), dtype=np.uint8)
+        # Two atlas masks (in unrelated location, will fail)
+        atlas1 = np.zeros((nx, ny, nz), dtype=np.uint8)
+        atlas1[1:3, 1:3, 1:3] = 1
+        atlas2 = np.zeros((nx, ny, nz), dtype=np.uint8)
+        atlas2[14:16, 14:16, 14:16] = 1
+
+        det = self._build_det()
+        # Run cascade without gates (still records gate decisions for
+        # PASS / skipped paths; just no trim_exhausted).
+        result = det._run_two_pass_cascade(
+            conc,
+            atlas_search_mask=brain.astype(np.uint8),
+            wb_search_mask=brain.astype(np.uint8),
+            atlas_masks=[atlas1, atlas2],
+            atlas_names=["A1", "A2"],
+            n_candidates=4,
+            tr=4.0,
+            baseline_frames=5,
+            tissue_ttp_frame=18.0,
+        )
+        # tier_gate_decisions length matches anchor_outcomes length
+        assert len(result.tier_gate_decisions) == len(result.anchor_outcomes)
+        # Pin the absolute cascade order (atlas tightest → broadest ×
+        # strict → permissive, then wb_relaxed). Asserting only the
+        # transitive zip-equality with anchor_outcomes wouldn't catch a
+        # silent regression where BOTH orderings reverse together.
+        expected_order = [
+            "A1_strict", "A1_relaxed", "A1_permissive",
+            "A2_strict", "A2_relaxed", "A2_permissive",
+            "wb_relaxed",
+        ]
+        assert [e["tier"] for e in result.tier_gate_decisions] == expected_order
+        assert [e["tier"] for e in result.anchor_outcomes] == expected_order
+
+    def test_cascade_records_skipped_quorum(self):
+        """Tiers skipped because quorum<2 must record outcome
+        ``"skipped_quorum"`` with empty decisions."""
+        nx = ny = nz = 16
+        nt = 30
+        # All-tissue concentration: no voxels score above quorum.
+        t = np.arange(nt, dtype=np.float64)
+        tissue = 0.4 * np.exp(-0.5 * ((t - 18) / 5.0) ** 2)
+        tissue[:5] = 0.0
+        conc = np.broadcast_to(
+            tissue[None, None, None, :], (nx, ny, nz, nt),
+        ).copy()
+        brain = np.ones((nx, ny, nz), dtype=np.uint8)
+        atlas = np.zeros((nx, ny, nz), dtype=np.uint8)
+        atlas[5:11, 5:11, 5:11] = 1
+
+        det = self._build_det()
+        result = det._run_two_pass_cascade(
+            conc,
+            atlas_search_mask=brain.astype(np.uint8),
+            wb_search_mask=brain.astype(np.uint8),
+            atlas_masks=[atlas],
+            atlas_names=["A"],
+            n_candidates=4,
+            tr=4.0,
+            baseline_frames=5,
+            tissue_ttp_frame=18.0,
+        )
+        # All tiers should have skipped outcome (quorum or anchor),
+        # never PASS, since no arterial voxels exist anywhere.
+        assert result.detection_method == "population"
+        assert all(
+            entry["outcome"] in ("skipped_quorum", "skipped_anchor", "trim_exhausted")
+            for entry in result.tier_gate_decisions
+        )
+        # Skipped entries have empty decision logs
+        for entry in result.tier_gate_decisions:
+            if entry["outcome"].startswith("skipped"):
+                assert entry["decisions"] == []

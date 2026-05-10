@@ -74,6 +74,7 @@ from pmriprep.utils.dce_constants import (
     SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
     SSS_EXCLUSION_MM,
     SUPERIOR_EXCLUSION_FRACTION,
+    WB_FALLBACK_DEPTH_EROSION_MM,
     compute_fwhm_threshold_frames,
     compute_timing_margin_frames,
     get_aif_thresholds,
@@ -893,6 +894,40 @@ class TierResult:
     gate_decisions: list[GateDecision] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class TierEvaluation:
+    """Outcome of one tier's gate-and-trim evaluation.
+
+    Carries both the accepted ``TierResult`` (when one is found) and the
+    full per-iteration ``gate_decisions`` log so that failing tiers
+    contribute their diagnostics to the QC sidecar even though their
+    pool was discarded.
+    """
+
+    result: TierResult | None
+    gate_decisions: list[GateDecision] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CascadeResult:
+    """Aggregated result of ``_run_two_pass_cascade``.
+
+    Replaces the prior positional-tuple return so adding new fields
+    (e.g. per-tier gate-decision logs in this revision) doesn't shift
+    consumers' positional unpacking.
+    """
+
+    candidates: list[tuple[int, int, int]]
+    scores: list[float]
+    metrics_list: list[dict[str, float]]
+    detection_method: str
+    atlas_tier_used: str | None
+    cascade_tiers_attempted: int
+    anchor_outcomes: list[dict[str, Any]]
+    tier_result: TierResult | None
+    tier_gate_decisions: list[dict[str, Any]] = field(default_factory=list)
+
+
 # =============================================================================
 # DCE AIF Detection Interface
 # =============================================================================
@@ -1351,6 +1386,7 @@ class AIFDetection(BaseInterface):
         percentile_threshold: float = 98.0,
         n_candidates: int = 100,
         tr: float = 2.0,
+        tissue_ttp_frame: float | None = None,
     ) -> tuple[npt.NDArray[Any], float, int]:
         """Apply arterial criteria with 7-tier fallback cascade.
 
@@ -1358,19 +1394,46 @@ class AIFDetection(BaseInterface):
         criteria are replaced with early_arrival (40% fraction) which is
         TR-independent. FWHM thresholds are adapted to seconds-based limits.
 
-        Args:
-            chars: Signal characteristics dictionary from _compute_signal_characteristics.
-            spatial_exclude: Boolean array of voxels to exclude (midline, superior, etc).
-            nt: Number of timepoints.
-            percentile_threshold: Percentile for peak threshold (default 98).
-            n_candidates: Target number of candidates.
-            tr: Temporal resolution in seconds (for TR-adaptive thresholds).
+        Parameters
+        ----------
+        chars : dict
+            Signal characteristics from ``_compute_signal_characteristics``.
+        spatial_exclude : ndarray
+            Boolean array of voxels to exclude (midline, superior, etc).
+        nt : int
+            Number of timepoints.
+        percentile_threshold : float
+            Percentile for peak threshold (default 98).
+        n_candidates : int
+            Target number of candidates.
+        tr : float
+            Temporal resolution in seconds (for TR-adaptive thresholds).
+        tissue_ttp_frame : float, optional
+            Brain-wide tissue TTP frame from
+            ``_calculate_tissue_ttp_reference``.  When provided, overrides
+            the local IQR-of-moderate-enhancement reference for the
+            ``arterial_timing`` / ``arterial_timing_relaxed`` masks AND
+            for the returned ``tissue_ttp`` value.  When ``None``, falls
+            back to the local computation (preserves whole-brain
+            semantics on callers that don't have a brain-wide reference
+            available).
 
-        Returns:
-            (candidate_indices, tissue_ttp, tier_used) where:
-            - candidate_indices: Array of indices passing criteria
-            - tissue_ttp: Median tissue TTP frame
-            - tier_used: Which tier (1-7) produced the result
+        Returns
+        -------
+        tuple
+            ``(candidate_indices, tissue_ttp, tier_used)``:
+            - ``candidate_indices``: array of indices passing criteria
+            - ``tissue_ttp``: tissue TTP frame (brain-wide when
+              ``tissue_ttp_frame`` was supplied, else local)
+            - ``tier_used``: which tier (1-7) produced the result
+
+        Notes
+        -----
+        Atlas-constrained callers must pass ``tissue_ttp_frame`` because
+        the local IQR is computed inside the atlas mask, where the
+        moderate-enhancement subset is dominated by arterial structures
+        and collapses onto the arterial peak time itself — falsely
+        flagging arterial voxels as venous downstream.
         """
         n_voxels = len(chars["peak_values"])
         low_tr = is_low_temporal_resolution(tr)
@@ -1385,16 +1448,23 @@ class AIFDetection(BaseInterface):
         peak_threshold_relaxed = float(np.percentile(chars["peak_values"], 95.0))
         high_peak_relaxed = (chars["peak_values"] > peak_threshold_relaxed) & (~spatial_exclude)
 
-        # 2. Tissue reference timing (median TTP of 25th-75th percentile enhancement voxels)
+        # 2. Tissue reference timing.  Prefer the brain-wide value passed
+        # by the cascade; otherwise compute the IQR-of-moderate-enhancement
+        # median locally.  Atlas-constrained callers must pass the
+        # brain-wide value: the local IQR inside an atlas mask is
+        # arterial-dominated and collapses onto the arterial peak time.
         enh_values = chars["enhancement"]
-        p25 = float(np.percentile(enh_values, 25))
-        p75 = float(np.percentile(enh_values, 75))
-        moderate_enh = (enh_values > p25) & (enh_values < p75)
-
-        if np.sum(moderate_enh) > 100:
-            tissue_ttp = float(np.median(chars["peak_indices"][moderate_enh]))
+        if tissue_ttp_frame is not None:
+            tissue_ttp = float(tissue_ttp_frame)
         else:
-            tissue_ttp = float(np.median(chars["peak_indices"]))
+            p25 = float(np.percentile(enh_values, 25))
+            p75 = float(np.percentile(enh_values, 75))
+            moderate_enh = (enh_values > p25) & (enh_values < p75)
+
+            if np.sum(moderate_enh) > 100:
+                tissue_ttp = float(np.median(chars["peak_indices"][moderate_enh]))
+            else:
+                tissue_ttp = float(np.median(chars["peak_indices"]))
 
         # 3. Arterial timing: AIF should peak BEFORE tissue (by timing margin)
         arterial_timing = chars["peak_indices"] < (tissue_ttp - timing_margin)
@@ -1562,48 +1632,80 @@ class AIFDetection(BaseInterface):
         slab_edge_inferior_mm: float = SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
         slab_edge_superior_mm: float = SSS_EXCLUSION_MM,
         erosion_iterations: int = BRAIN_EROSION_ITERATIONS,
+        physical_erosion_mm: float = 0.0,
     ) -> npt.NDArray[Any]:
         """Prepare the search mask with erosion, slab exclusion, and lesion distance.
 
-        Steps:
-        1. Erode brain mask (``erosion_iterations``) to exclude cortical
-           surface veins.
-        2. Directional slab-edge exclusion: separate inferior/superior
-           margins to allow a larger inferior cut for 3D-slab entry-slice
-           inflow contamination while keeping the superior side small for
-           B1/profile rolloff only.
-        3. Midline exclusion (skipped when ``skip_midline=True`` for
-           atlas-constrained search where the atlas already excludes sinuses).
-        4. Superior slice exclusion (top 25%, dominates Step 2's superior
-           cut for typical acquisitions).
+        Steps (in order):
+
+        1. Binary erosion of brain mask (``erosion_iterations``).
+        2. Directional slab-edge exclusion: separate inferior / superior
+           margins (inferior usually larger to remove 3D-slab entry-slice
+           inflow contamination).
+        3. Midline exclusion (skipped when ``skip_midline=True``).
+        4. Top-25% superior cut (``SUPERIOR_EXCLUSION_FRACTION``).
         5. Lesion exclusion (binary + distance-based).
+        6. Physical-distance erosion in mm (``physical_erosion_mm``),
+           applied last so its mm-from-edge measurement uses the
+           ORIGINAL ``brain_mask``, not the post-step-1..5 search mask.
 
-        Args:
-            brain_mask: 3D brain mask.
-            voxel_sizes: Voxel dimensions (dx, dy, dz) in mm.
-            lesion_mask: Optional 3D lesion mask.
-            lesion_distance_mm: Minimum distance (mm) from lesion.
-            skip_midline: Skip midline exclusion for atlas-constrained search.
-            slab_edge_inferior_mm: Distance (mm) from the INFERIOR slab
-                edge (low-z under RAS+; pipeline enforces RAS+
-                reorientation upstream). Callers should pass
-                ``_inflow_exclusion_mm(...)`` to remove entry-slice
-                inflow contamination (van der Schaaf MRM 2006).
-                Default ``SLAB_EDGE_EXCLUSION_MM_ROLLOFF`` is rolloff-
-                only; production call sites override.
-            slab_edge_superior_mm: Distance (mm) from the SUPERIOR slab
-                edge. Whole-brain callers should pass
-                ``SSS_EXCLUSION_MM`` (default) to keep the superior
-                sagittal sinus out of candidates; atlas-constrained
-                callers should pass ``SLAB_EDGE_EXCLUSION_MM_ROLLOFF``
-                since the atlas already excludes SSS by anatomy. Step 4
-                below applies an additional ``SUPERIOR_EXCLUSION_FRACTION``
-                (top 25%) cut on top of this for typical acquisitions.
-            erosion_iterations: Number of binary erosion iterations. Use
-                ``BRAIN_EROSION_ITERATIONS_ATLAS`` for atlas-constrained
-                search.
+        Atlas vs WB asymmetry: atlas callers rely on the MRA-derived
+        anatomical specificity of the atlas mask itself, so they use a
+        small ``BRAIN_EROSION_ITERATIONS_ATLAS=2`` + ``SLAB_EDGE_
+        EXCLUSION_MM_ROLLOFF=4 mm`` rolloff edge and ``physical_erosion_mm
+        =0``. Whole-brain fallback callers have no anatomical prior and
+        need a depth-protective margin, so they layer ``BRAIN_EROSION_
+        ITERATIONS=8`` + ``WB_FALLBACK_DEPTH_EROSION_MM=10 mm`` physical
+        depth on top.
 
-        Returns:
+        Parameters
+        ----------
+        brain_mask : ndarray
+            3D brain mask.
+        voxel_sizes : tuple of float
+            Voxel dimensions ``(dx, dy, dz)`` in mm.
+        lesion_mask : ndarray, optional
+            3D lesion mask.
+        lesion_distance_mm : float
+            Minimum distance (mm) from lesion.
+        skip_midline : bool
+            Skip midline exclusion for atlas-constrained search.
+        slab_edge_inferior_mm : float
+            Distance (mm) from the INFERIOR slab edge (low-z under RAS+;
+            pipeline enforces RAS+ reorientation upstream). Callers
+            should pass ``_inflow_exclusion_mm(...)`` to remove entry-
+            slice inflow contamination (van der Schaaf MRM 2006). Default
+            ``SLAB_EDGE_EXCLUSION_MM_ROLLOFF`` is rolloff-only; production
+            call sites override.
+        slab_edge_superior_mm : float
+            Distance (mm) from the SUPERIOR slab edge. Whole-brain
+            callers should pass ``SSS_EXCLUSION_MM`` (default) to keep
+            the superior sagittal sinus out of candidates; atlas-
+            constrained callers should pass
+            ``SLAB_EDGE_EXCLUSION_MM_ROLLOFF`` since the atlas already
+            excludes SSS by anatomy. Step 4 below applies an additional
+            ``SUPERIOR_EXCLUSION_FRACTION`` (top 25%) cut on top of this.
+        erosion_iterations : int
+            Number of binary erosion iterations. Use
+            ``BRAIN_EROSION_ITERATIONS_ATLAS`` for atlas-constrained
+            search.
+        physical_erosion_mm : float
+            Additional physical-distance erosion in mm, applied as Step 6
+            on top of the slab/midline/top-25%/lesion cuts. Used by the
+            whole-brain fallback caller to strip the lateral cortical
+            surface where cortical-vein drainage produces arterial-shaped
+            curves at clinical TR (Rhoton 2002 Neurosurgery 51 supp;
+            Tanriover 2003 Neurosurgery 53:1326). Atlas callers leave at
+            ``0.0`` (preserves full atlas territory). Computed via
+            ``distance_transform_edt(brain_mask, sampling=voxel_sizes)``
+            so anisotropic voxels are handled in physical mm. If the
+            depth cut would leave fewer than ``BRAIN_EROSION_MIN_VOXELS``
+            voxels (thin sagittal slab / pediatric / atrophic case), the
+            cut is skipped and a warning is logged.
+
+        Returns
+        -------
+        ndarray
             Prepared 3D search mask.
         """
         from scipy.ndimage import binary_erosion
@@ -1680,6 +1782,32 @@ class AIFDetection(BaseInterface):
                     lesion_mask < 0.5, sampling=voxel_sizes[:3]
                 )
                 search_mask[lesion_distance_map < lesion_distance_mm] = 0
+
+        # Step 6: Physical-distance erosion (mm). Removes the lateral
+        # cortical surface where cortical-vein drainage produces
+        # arterial-shaped curves at clinical TR. Distance is measured
+        # against the ORIGINAL brain mask, in physical mm, so anisotropic
+        # voxels are handled correctly. Falls back to the pre-erosion
+        # mask if the cut would evacuate the search space (thin sagittal
+        # slab / pediatric / atrophic acquisitions).
+        if physical_erosion_mm > 0:
+            from scipy.ndimage import distance_transform_edt
+
+            depth_mm = distance_transform_edt(
+                brain_mask > 0.5, sampling=voxel_sizes[:3]
+            )
+            candidate_mask = (search_mask > 0.5) & (depth_mm >= physical_erosion_mm)
+            n_kept = int(np.sum(candidate_mask))
+            if n_kept >= BRAIN_EROSION_MIN_VOXELS:
+                search_mask = candidate_mask.astype(brain_mask.dtype)
+            else:
+                logger.warning(
+                    "Physical erosion of %.1f mm leaves %d voxels "
+                    "(<%d minimum); falling back to pre-erosion mask.",
+                    physical_erosion_mm,
+                    n_kept,
+                    BRAIN_EROSION_MIN_VOXELS,
+                )
 
         return np.asarray(search_mask)
 
@@ -2466,15 +2594,19 @@ class AIFDetection(BaseInterface):
         hct: float,
         target_peak: float,
         atlas_tier_label: str,
-    ) -> TierResult | None:
+    ) -> TierEvaluation:
         """Run progressive trim with G1-G7 gates on a candidate pool.
 
         Per iteration: average pool -> Hct-correct -> rescale -> compute
         QC -> evaluate gates. On acceptance (PASS / PASS_WARN /
-        G6_ADMIT) returns a ``TierResult``. On rejection, drops the
-        worst candidate by composite G-aware metric and retries. Returns
-        ``None`` when the pool falls below ``DCE_AIF_MIN_TRIM_POOL``
-        without acceptance (caller continues cascade).
+        G6_ADMIT) returns a ``TierEvaluation`` with the accepted
+        ``TierResult`` and the gate-decision log up to that iteration.
+        On rejection, drops the worst candidate by composite G-aware
+        metric and retries. When the pool falls below
+        ``DCE_AIF_MIN_TRIM_POOL`` without acceptance, returns a
+        ``TierEvaluation`` with ``result=None`` and the full per-
+        iteration ``gate_decisions`` log preserved (caller writes them
+        to the per-tier QC trail before continuing the cascade).
         """
         pool_idx = list(range(len(candidates)))
         gate_decisions: list[GateDecision] = []
@@ -2523,18 +2655,21 @@ class AIFDetection(BaseInterface):
             gate_decisions.append(decision)
 
             if status in ("PASS", "PASS_WARN", "G6_ADMIT"):
-                return TierResult(
-                    candidates=sub_cands,
-                    scores=sub_scores,
-                    metrics=sub_metrics,
-                    curve_unscaled=curve_plasma,
-                    curve_scaled=curve_scaled,
-                    scale_factor=scale_factor,
-                    qc=qc,
-                    atlas_tier=atlas_tier_label,
-                    hemisphere=hemisphere,
-                    n_slabs=n_slabs,
-                    status=status,
+                return TierEvaluation(
+                    result=TierResult(
+                        candidates=sub_cands,
+                        scores=sub_scores,
+                        metrics=sub_metrics,
+                        curve_unscaled=curve_plasma,
+                        curve_scaled=curve_scaled,
+                        scale_factor=scale_factor,
+                        qc=qc,
+                        atlas_tier=atlas_tier_label,
+                        hemisphere=hemisphere,
+                        n_slabs=n_slabs,
+                        status=status,
+                        gate_decisions=gate_decisions,
+                    ),
                     gate_decisions=gate_decisions,
                 )
 
@@ -2549,7 +2684,7 @@ class AIFDetection(BaseInterface):
             )
             pool_idx.pop(worst_local)
 
-        return None
+        return TierEvaluation(result=None, gate_decisions=gate_decisions)
 
     def _run_two_pass_cascade(
         self,
@@ -2566,16 +2701,7 @@ class AIFDetection(BaseInterface):
         affine: npt.NDArray[Any] | None = None,
         hct: float | None = None,
         target_peak: float | None = None,
-    ) -> tuple[
-        list[tuple[int, int, int]],
-        list[float],
-        list[dict[str, float]],
-        str,
-        str | None,
-        int,
-        list[dict[str, Any]],
-        TierResult | None,
-    ]:
+    ) -> CascadeResult:
         """Run the two-pass multi-level AIF detection cascade.
 
         Pass 1: descend through every tier (4 atlases × {strict, relaxed,
@@ -2594,31 +2720,49 @@ class AIFDetection(BaseInterface):
         spatial constraint is what makes permissive-tier candidates safe;
         without it, permissive admits tissue voxels.
 
-        Args:
-            conc_data: 4D DCE concentration data (x, y, z, t).
-            atlas_search_mask: Search mask for atlas-constrained tiers.
-            wb_search_mask: Whole-brain search mask for the WB-relaxed tier.
-            atlas_masks: List of atlas masks ordered tightest → broadest.
-                Empty list skips the atlas cascade.
-            atlas_names: Names parallel to ``atlas_masks`` (used for the
-                ``atlas_tier_used`` provenance string).
-            n_candidates: Target candidate count per tier.
-            tr: Temporal resolution in seconds.
-            baseline_frames: Number of pre-bolus baseline frames.
-            tissue_ttp_frame: Reference tissue time-to-peak frame.
+        Parameters
+        ----------
+        conc_data : ndarray
+            4D DCE concentration data ``(x, y, z, t)``.
+        atlas_search_mask : ndarray
+            Search mask for atlas-constrained tiers.
+        wb_search_mask : ndarray
+            Whole-brain search mask for the WB-relaxed tier.
+        atlas_masks : list of ndarray
+            Atlas masks ordered tightest → broadest. Empty list skips
+            the atlas cascade.
+        atlas_names : list of str
+            Names parallel to ``atlas_masks`` (used for the
+            ``atlas_tier_used`` provenance string).
+        n_candidates : int
+            Target candidate count per tier.
+        tr : float
+            Temporal resolution in seconds.
+        baseline_frames : int
+            Number of pre-bolus baseline frames.
+        tissue_ttp_frame : float, optional
+            Reference tissue time-to-peak frame (brain-wide).
 
-        Returns:
-            Tuple of ``(candidates, scores, metrics_list, detection_method,
-            atlas_tier_used, cascade_tiers_attempted, anchor_outcomes)``.
-            ``detection_method`` is one of ``"atlas"``, ``"automatic"``,
-            or ``"population"``; ``"population"`` indicates no anchored
-            keeper anywhere — caller handles the Parker fallback.
-            ``atlas_tier_used`` is the ``f"{atlas_name}_{crit}"`` label
-            of the accepted tier (or ``"wb_relaxed"`` for the whole-brain
-            tier), or ``None`` for population. ``anchor_outcomes`` is a
-            per-tier diagnostic list (one dict per tier attempted) with
-            keys ``tier``, ``n_candidates``, ``quorum_count``,
-            ``earliest_post_arr_s``, ``has_anchor``.
+        Returns
+        -------
+        CascadeResult
+            Aggregated cascade outcome. Notable fields:
+            - ``detection_method``: ``"atlas"`` / ``"automatic"`` /
+              ``"population"``; ``"population"`` indicates no anchored
+              keeper anywhere (caller handles Parker fallback).
+            - ``atlas_tier_used``: ``f"{atlas_name}_{crit}"`` for the
+              accepted tier (or ``"wb_relaxed"`` for whole-brain),
+              ``None`` for population.
+            - ``anchor_outcomes``: per-tier dicts with keys ``tier``,
+              ``n_candidates``, ``quorum_count``, ``earliest_post_arr_s``,
+              ``has_anchor``.
+            - ``tier_gate_decisions``: per-tier dicts with keys
+              ``tier``, ``outcome`` (``"PASS"`` / ``"trim_exhausted"`` /
+              ``"skipped_quorum"`` / ``"skipped_anchor"``), and
+              ``decisions`` (the per-iteration ``GateDecision`` log;
+              empty when the tier was skipped before gates ran).
+              Order matches ``anchor_outcomes`` (atlas tightest →
+              broadest × strict → permissive, then ``wb_relaxed``).
         """
         candidates: list[tuple[int, int, int]] = []
         scores: list[float] = []
@@ -2627,6 +2771,7 @@ class AIFDetection(BaseInterface):
         atlas_tier_used: str | None = None
         cascade_tiers_attempted = 0
         anchor_outcomes: list[dict[str, Any]] = []
+        tier_gate_decisions: list[dict[str, Any]] = []
         tier_result: TierResult | None = None
 
         # Per-tier gate evaluation is enabled when the caller supplies
@@ -2659,6 +2804,26 @@ class AIFDetection(BaseInterface):
                 "quorum_count": self._quorum_count(scs),
                 "earliest_post_arr_s": earliest_post_arr_s,
                 "has_anchor": has_anchor,
+            })
+
+        def _record_tier_gate_outcome(
+            label: str,
+            outcome: str,
+            decisions: list[GateDecision] | None = None,
+        ) -> None:
+            """Append a per-tier gate-evaluation entry for QC.
+
+            Mirrors ``anchor_outcomes`` ordering. Captures the gate
+            decisions even from rejected tiers so the QC consumer can
+            see which gate killed each pool. ``decisions`` is the full
+            per-iteration log from ``_evaluate_pool_with_gates_and_trim``;
+            ``None`` (rendered as an empty list) when the tier was
+            skipped before gates ran.
+            """
+            tier_gate_decisions.append({
+                "tier": label,
+                "outcome": outcome,
+                "decisions": list(decisions) if decisions else [],
             })
 
         def _record_single_keeper(
@@ -2723,7 +2888,7 @@ class AIFDetection(BaseInterface):
                         and has_anchor
                     ):
                         if gates_enabled:
-                            tier_result = self._evaluate_pool_with_gates_and_trim(
+                            evaluation = self._evaluate_pool_with_gates_and_trim(
                                 cands, scs, mets,
                                 conc_data, brain_mask, affine,  # type: ignore[arg-type]
                                 tr, baseline_frames,
@@ -2731,19 +2896,36 @@ class AIFDetection(BaseInterface):
                                 target_peak,  # type: ignore[arg-type]
                                 label,
                             )
+                            tier_result = evaluation.result
                             if tier_result is None:
-                                # Trim exhausted this tier — continue cascade.
+                                # Trim exhausted this tier — record the
+                                # full gate-decision log and continue
+                                # cascade.
+                                _record_tier_gate_outcome(
+                                    label, "trim_exhausted",
+                                    evaluation.gate_decisions,
+                                )
                                 _record_single_keeper(cands, scs, mets, "atlas", label)
                                 continue
                             candidates = tier_result.candidates
                             scores = tier_result.scores
                             metrics_list = tier_result.metrics
+                            _record_tier_gate_outcome(
+                                label, "PASS", evaluation.gate_decisions,
+                            )
                         else:
                             candidates, scores, metrics_list = cands, scs, mets
+                            _record_tier_gate_outcome(label, "PASS", None)
                         detection_method = "atlas"
                         atlas_tier_used = label
                         pass1_succeeded = True
                         break
+                    # Skipped: failed quorum or anchor before gates ran.
+                    _record_tier_gate_outcome(
+                        label,
+                        "skipped_anchor" if not has_anchor else "skipped_quorum",
+                        None,
+                    )
                     _record_single_keeper(cands, scs, mets, "atlas", label)
                 if pass1_succeeded:
                     break
@@ -2766,7 +2948,7 @@ class AIFDetection(BaseInterface):
                 and has_anchor
             ):
                 if gates_enabled:
-                    tier_result = self._evaluate_pool_with_gates_and_trim(
+                    evaluation = self._evaluate_pool_with_gates_and_trim(
                         cands, scs, mets,
                         conc_data, brain_mask, affine,  # type: ignore[arg-type]
                         tr, baseline_frames,
@@ -2774,7 +2956,12 @@ class AIFDetection(BaseInterface):
                         target_peak,  # type: ignore[arg-type]
                         "wb_relaxed",
                     )
+                    tier_result = evaluation.result
                     if tier_result is None:
+                        _record_tier_gate_outcome(
+                            "wb_relaxed", "trim_exhausted",
+                            evaluation.gate_decisions,
+                        )
                         _record_single_keeper(
                             cands, scs, mets, "automatic", "wb_relaxed",
                         )
@@ -2782,13 +2969,22 @@ class AIFDetection(BaseInterface):
                         candidates = tier_result.candidates
                         scores = tier_result.scores
                         metrics_list = tier_result.metrics
+                        _record_tier_gate_outcome(
+                            "wb_relaxed", "PASS", evaluation.gate_decisions,
+                        )
                         detection_method = "automatic"
                         pass1_succeeded = True
                 else:
                     candidates, scores, metrics_list = cands, scs, mets
+                    _record_tier_gate_outcome("wb_relaxed", "PASS", None)
                     detection_method = "automatic"
                     pass1_succeeded = True
             else:
+                _record_tier_gate_outcome(
+                    "wb_relaxed",
+                    "skipped_anchor" if not has_anchor else "skipped_quorum",
+                    None,
+                )
                 _record_single_keeper(
                     cands, scs, mets, "automatic", "wb_relaxed",
                 )
@@ -2800,10 +2996,16 @@ class AIFDetection(BaseInterface):
                 detection_method, atlas_tier_used, _,
             ) = best_single_keeper
 
-        return (
-            candidates, scores, metrics_list,
-            detection_method, atlas_tier_used, cascade_tiers_attempted,
-            anchor_outcomes, tier_result,
+        return CascadeResult(
+            candidates=candidates,
+            scores=scores,
+            metrics_list=metrics_list,
+            detection_method=detection_method,
+            atlas_tier_used=atlas_tier_used,
+            cascade_tiers_attempted=cascade_tiers_attempted,
+            anchor_outcomes=anchor_outcomes,
+            tier_result=tier_result,
+            tier_gate_decisions=tier_gate_decisions,
         )
 
     def _find_candidates_in_mask(
@@ -2828,17 +3030,39 @@ class AIFDetection(BaseInterface):
         6. Peak + FWHM only
         7. Peak only (last resort)
 
-        Args:
-            concentration_data: 4D concentration data.
-            mask: 3D search mask.
-            n_candidates: Number of candidates to return.
-            tr: Temporal resolution in seconds.
-            baseline_frames: Number of pre-contrast frames.
-            criteria: Quality criteria level (used for final scoring only).
-            tissue_ttp_frame: Ignored (computed internally from data).
+        Parameters
+        ----------
+        concentration_data : ndarray
+            4D concentration data.
+        mask : ndarray
+            3D search mask.
+        n_candidates : int
+            Number of candidates to return.
+        tr : float
+            Temporal resolution in seconds.
+        baseline_frames : int
+            Number of pre-contrast frames.
+        criteria : str
+            Quality criteria level (used for final scoring only).
+        tissue_ttp_frame : float, optional
+            Brain-wide tissue TTP frame (from
+            ``_calculate_tissue_ttp_reference``).  Threaded into
+            ``_apply_arterial_criteria`` and used downstream as
+            ``tissue_ttp_computed`` for the per-voxel
+            ``is_likely_venous`` flag and the scorer's timing
+            contribution.  Atlas-constrained callers must supply this:
+            the local IQR-of-moderate-enhancement reference inside an
+            atlas mask is arterial-dominated and collapses onto the
+            arterial peak time, falsely flagging arterial voxels as
+            venous.  When ``None``, falls back to the local computation
+            (preserves whole-brain semantics).
+        atlas_constrained : bool
+            Whether the mask is an atlas-restricted search region.
 
-        Returns:
-            (candidates, scores, metrics_list) — top N voxels.
+        Returns
+        -------
+        tuple
+            ``(candidates, scores, metrics_list)`` — top N voxels.
         """
         brain_shape = concentration_data.shape[:3]
         n_timepoints = concentration_data.shape[3]
@@ -2874,11 +3098,16 @@ class AIFDetection(BaseInterface):
             (z == 0 or z == nz - 1) for x, y, z in mask_coords
         ], dtype=bool)
 
-        # Apply 7-tier arterial criteria cascade (TR-adaptive)
+        # Apply 7-tier arterial criteria cascade (TR-adaptive).  Pass the
+        # caller-supplied brain-wide tissue_ttp_frame through so the
+        # downstream venous-flag test (line below) and the scorer's
+        # timing contribution use the parenchymal reference rather than
+        # an atlas-local IQR collapsing onto arterial timing.
         candidate_idx_in_masked, tissue_ttp_computed, tier_used = self._apply_arterial_criteria(
             chars, spatial_exclude, n_timepoints,
             percentile_threshold=98.0, n_candidates=n_candidates * 2,
             tr=tr,
+            tissue_ttp_frame=tissue_ttp_frame,
         )
 
         logger.debug(
@@ -3078,9 +3307,17 @@ class AIFDetection(BaseInterface):
                 aif_mask[x, y, z] = 1
                 aif_curve = conc_data[x, y, z, :]
         else:
-            # Inverse-score weighting (lower cost = higher weight)
-            score_arr = np.array(scores)
-            weights = score_arr / np.sum(score_arr)  # higher score → higher weight
+            # Inverse-score weighting (higher score = higher weight).
+            # Guard against an all-zero score array (e.g., trim pool that
+            # outlived its keepers); fall back to uniform weights so the
+            # averaged curve stays defined and downstream gates / fallback
+            # logic still see a real curve.
+            score_arr = np.array(scores, dtype=np.float64)
+            score_sum = float(np.sum(score_arr))
+            if score_sum <= 0.0:
+                weights = np.full(score_arr.shape, 1.0 / max(score_arr.size, 1))
+            else:
+                weights = score_arr / score_sum
 
             weighted_aif = np.zeros(nt, dtype=np.float64)
             for i, (x, y, z) in enumerate(candidates):
@@ -3559,7 +3796,32 @@ class AIFDetection(BaseInterface):
     # -----------------------------------------------------------------
 
     def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE AIF detection."""
+        """Execute DCE AIF detection.
+
+        Notes
+        -----
+        Two distinct gate-decision QC fields are emitted to the
+        ``Metrics.aif_detection`` block of the per-session sidecar:
+
+        - ``aif_gate_decisions``: per-iteration ``GateDecision`` log of
+          the **winning** tier's progressive trim loop. Empty when no
+          tier wins (population fallback). Consumers reading this for
+          QC pass/fail summaries see only the accepted pool's history.
+        - ``cascade_gate_decisions``: per-tier outcome list, one entry
+          per attempted tier in cascade order (atlas tightest →
+          broadest × strict → permissive, then ``wb_relaxed``). Each
+          entry has ``tier`` (label), ``outcome`` (``"PASS"`` /
+          ``"trim_exhausted"`` / ``"skipped_quorum"`` /
+          ``"skipped_anchor"``), and ``decisions`` (the full
+          per-iteration ``GateDecision`` log; empty when the tier was
+          skipped before gates ran). This field captures the
+          diagnostic trail for tiers whose pool was discarded — needed
+          for diagnosing cascades that exhaust to population.
+
+        Order of ``cascade_gate_decisions`` matches
+        ``cascade_anchor_outcomes`` and is asserted in
+        ``tests/unit/test_dce_aif.py``.
+        """
         import nibabel as nib  # type: ignore[import-untyped]
 
         # Load data
@@ -3684,9 +3946,13 @@ class AIFDetection(BaseInterface):
                 slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
                 erosion_iterations=BRAIN_EROSION_ITERATIONS_ATLAS,
             )
-            # Whole-brain fallback: full erosion, midline exclusion, and
-            # SSS-sized superior margin to keep the superior sagittal
-            # sinus out of the unconstrained candidate pool.
+            # Whole-brain fallback: full erosion, midline exclusion,
+            # SSS-sized superior margin, and a 10 mm physical-depth cut
+            # to strip the lateral cortical surface where cortical-vein
+            # drainage produces arterial-shaped curves at clinical TR
+            # (Rhoton 2002 Neurosurgery 51 supp; Tanriover 2003
+            # Neurosurgery 53:1326). Atlas search skips this cut so it
+            # retains 75-94 % of MCA_ACA territory.
             wb_search_mask = self._prepare_search_mask(
                 brain_mask,
                 voxel_sizes,
@@ -3696,6 +3962,7 @@ class AIFDetection(BaseInterface):
                 slab_edge_inferior_mm=inferior_inflow_mm,
                 slab_edge_superior_mm=SSS_EXCLUSION_MM,
                 erosion_iterations=BRAIN_EROSION_ITERATIONS,
+                physical_erosion_mm=WB_FALLBACK_DEPTH_EROSION_MM,
             )
 
             # ===== Phase 3: Compute tissue TTP reference =====
@@ -3709,11 +3976,7 @@ class AIFDetection(BaseInterface):
             # G1-G7 acceptance gates with progressive trim; without them
             # the cascade falls back to its legacy quorum + anchor
             # acceptance criterion.
-            (
-                candidates, scores, metrics_list,
-                detection_method_str, atlas_tier_used, cascade_tiers_attempted,
-                anchor_outcomes, tier_result,
-            ) = self._run_two_pass_cascade(
+            cascade_result = self._run_two_pass_cascade(
                 conc_data,
                 atlas_search_mask=atlas_search_mask,
                 wb_search_mask=wb_search_mask,
@@ -3728,6 +3991,15 @@ class AIFDetection(BaseInterface):
                 hct=float(self.inputs.hematocrit),
                 target_peak=target_peak,
             )
+            candidates = cascade_result.candidates
+            scores = cascade_result.scores
+            metrics_list = cascade_result.metrics_list
+            detection_method_str = cascade_result.detection_method
+            atlas_tier_used = cascade_result.atlas_tier_used
+            cascade_tiers_attempted = cascade_result.cascade_tiers_attempted
+            anchor_outcomes = cascade_result.anchor_outcomes
+            tier_result = cascade_result.tier_result
+            tier_gate_decisions = cascade_result.tier_gate_decisions
             # Narrow back to Literal for the typed local.
             detection_method = (  # type: ignore[assignment]
                 "atlas" if detection_method_str == "atlas"
@@ -3930,6 +4202,35 @@ class AIFDetection(BaseInterface):
             # reviewers can see which tiers were tried even on success.
             if anchor_outcomes:
                 qc_metrics["cascade_anchor_outcomes"] = anchor_outcomes
+
+            # Per-tier gate-decision log (parallel to
+            # ``cascade_anchor_outcomes`` ordering). Captures the full
+            # trim-loop history for tiers that were rejected by gates,
+            # which the existing winner-only ``aif_gate_decisions``
+            # field cannot show. Each entry: ``tier`` label,
+            # ``outcome`` (``"PASS"`` / ``"trim_exhausted"`` /
+            # ``"skipped_quorum"`` / ``"skipped_anchor"``), and the
+            # per-iteration ``decisions`` log.
+            if tier_gate_decisions:
+                qc_metrics["cascade_gate_decisions"] = [
+                    {
+                        "tier": entry["tier"],
+                        "outcome": entry["outcome"],
+                        "decisions": [
+                            {
+                                "tier": d["tier"],
+                                "n_pool": d["n_pool"],
+                                "scale_factor": d["scale_factor"],
+                                "status": d["status"],
+                                "failing_gate": d["failing_gate"],
+                                "warns": list(d["warns"]),
+                                "qc": dict(d["qc"]),
+                            }
+                            for d in entry["decisions"]
+                        ],
+                    }
+                    for entry in tier_gate_decisions
+                ]
 
             # Per-tier gate decisions and acceptance status from the
             # progressive trim loop. Sets aif_confidence + inflation
