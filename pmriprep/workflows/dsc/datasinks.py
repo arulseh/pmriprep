@@ -654,12 +654,21 @@ def _add_anat_sink(
     skull_stripped: bool = False,
     ce_value: Optional[str] = None,
     source_attr: str = "source_dsc",
+    dismiss_entities: tuple = ("acquisition",),
 ) -> pe.Node:
     """Wire one anat/-side DSC sink (mask, structural underlay).
 
     Forces ``datatype="anat"`` because the source_file is a perf-datatype
     NIfTI; structural suffixes (T1w/FLAIR/T2w) in perf/ violate BIDS, and
     even masks belong under anat/ when they describe anatomy in DSC space.
+
+    ``dismiss_entities`` strips entities the niworkflows ``DerivativesDataSink``
+    would otherwise inherit from the source DSC file. Default drops
+    ``acquisition`` because the DSC source's acquisition (e.g. EP2D) doesn't
+    describe T1w/mask data — it describes the spatial-reference grid.
+    Pre-contrast-derived masks (brain, NAWM) should additionally pass
+    ``("acquisition", "ceagent")`` to drop ``ce-GAD`` since they were computed
+    from pre-con T1w.
     """
     meta = pe.Node(
         niu.Function(
@@ -678,6 +687,7 @@ def _add_anat_sink(
             check_hdr=True, compress=True,
             allowed_entities=("space", "datatype", "ceagent"),
             space="dsc", suffix=suffix, datatype="anat",
+            dismiss_entities=list(dismiss_entities),
         ),
         name=f"{name}_sink",
     )
@@ -1264,6 +1274,8 @@ def init_dsc_datasinks_wf(
 
     # --- Anat-side: brain mask, NAWM mask in DSC space ---
     if "brain_mask_dsc" in present:
+        # Brain mask was computed from pre-contrast T1w (HD-BET on MPRAGE pre);
+        # drop ce-GAD which would falsely imply post-contrast derivation.
         sink = _add_anat_sink(
             workflow, inputnode, base_minimal,
             name="brain_mask_dsc",
@@ -1271,15 +1283,19 @@ def init_dsc_datasinks_wf(
             desc_value="brain", suffix="mask",
             description="Brain mask in DSC space",
             skull_stripped=True,
+            dismiss_entities=("acquisition", "ceagent"),
         )
         sink_outputs.append((sink, "out_file"))
     if "nawm_mask_dsc" in present:
+        # NAWM mask is FAST-derived from pre-contrast tissue probabilities;
+        # drop ce-GAD for the same reason as brain_mask.
         sink = _add_anat_sink(
             workflow, inputnode, base_minimal,
             name="nawm_mask_dsc",
             in_attr="nawm_mask_dsc",
             desc_value="nawm", suffix="mask",
             description="Normal-appearing white matter mask in DSC space",
+            dismiss_entities=("acquisition", "ceagent"),
         )
         sink_outputs.append((sink, "out_file"))
     if "lesion_mask_dsc" in present:

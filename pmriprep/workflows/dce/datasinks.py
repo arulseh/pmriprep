@@ -803,6 +803,7 @@ def _add_anat_image_sink(
     skull_stripped: bool = False,
     units: Optional[str] = None,
     source_attr: str = "source_dce",
+    dismiss_entities: tuple = ("acquisition",),
 ) -> pe.Node:
     """Wire an anat-side DCE sink (T1w/FLAIR/T2w/T1map in DCE space).
 
@@ -810,6 +811,18 @@ def _add_anat_image_sink(
     ``DerivativesDataSink`` subclass) for BIDS-canonical anat suffixes. The
     space-dce entity correctly indicates cross-modality registration to DCE
     acquisition geometry.
+
+    ``dismiss_entities`` strips entities the niworkflows ``DerivativesDataSink``
+    would otherwise inherit from the source DCE file. Default drops
+    ``acquisition`` because the DCE source's acquisition (e.g. VIBE) describes
+    the spatial-reference grid, not the T1w/FLAIR/T2w content being resampled.
+
+    No current caller overrides this default — the kwarg is plumbed defensively
+    for symmetry with DSC's ``_add_anat_sink`` (which DOES have call sites
+    needing ``("acquisition", "ceagent")`` for pre-con-derived masks). DCE
+    masks go through ``_add_anat_mask_sink`` → ``_copy_perf_map`` (manual
+    filename construction; no entity inheritance), so the DCE side has no
+    pre-con-mask sinks routed through this helper today.
     """
     meta = pe.Node(
         niu.Function(
@@ -829,6 +842,7 @@ def _add_anat_image_sink(
             check_hdr=True, compress=True,
             allowed_entities=("space", "datatype", "ceagent"),
             space="dce", suffix=label, datatype="anat",
+            dismiss_entities=list(dismiss_entities),
         ),
         name=f"{name}_sink",
     )
