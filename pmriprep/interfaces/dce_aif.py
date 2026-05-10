@@ -13,7 +13,8 @@ The DCE AIF differs from DSC AIF in several important ways:
 
 import logging
 from pathlib import Path
-from typing import Any, Literal, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Literal, Optional, TypedDict
 
 import numpy as np
 import numpy.typing as npt
@@ -47,6 +48,17 @@ from pmriprep.utils.dce_constants import (
     BRAIN_EROSION_ITERATIONS_ATLAS,
     BRAIN_EROSION_MIN_VOXELS,
     DCE_AIF_EXPECTED_FULL_DOSE,
+    DCE_AIF_GATE_FWHM_MAX_SECONDS,
+    DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL,
+    DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL,
+    DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL,
+    DCE_AIF_GATE_LATE_TAIL_RATIO_MAX,
+    DCE_AIF_GATE_MULTIBUMP_MAX,
+    DCE_AIF_GATE_RATIO30_HARD,
+    DCE_AIF_GATE_RATIO30_WARN,
+    DCE_AIF_GATE_SCALE_G6_CEILING,
+    DCE_AIF_GATE_SCALE_HARD,
+    DCE_AIF_MIN_TRIM_POOL,
     DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
     DCE_AIF_TAIL_MIN_SEPARATION_SECONDS,
     DCE_AIF_TAIL_PEAK_FRACTION,
@@ -516,6 +528,371 @@ def compute_dce_aif_auc(
     return auc
 
 
+def compute_dce_aif_ratio_30s(
+    aif_curve: npt.NDArray[Any],
+    tr: float,
+    peak_idx: int | None = None,
+) -> float | None:
+    """Compute the ratio C[peak + 30s] / C[peak] for the AIF curve.
+
+    The post-peak sample is taken at the larger of 4 frames or
+    ``ceil(30 / tr)`` frames after the peak, so the gate behaves
+    consistently across temporal resolutions from sub-second compressed-
+    sensing 4D up to ~7 s clinical DCE-VIBE. Parker bi-exponential gives
+    ratio ~0.32 at peak+30 s; venous AIFs sit at >=0.55 (Bleeker 2009 MRM
+    62:96).
+
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        1D AIF concentration curve.
+    tr : float
+        Temporal resolution in seconds.
+    peak_idx : int, optional
+        Pre-computed peak index. If None, uses ``argmax(aif_curve)``.
+
+    Returns
+    -------
+    float or None
+        ``C[peak + 30s] / C[peak]``, or ``None`` if the curve is too
+        short or the peak is non-positive.
+    """
+    if tr <= 0 or aif_curve.size < 3:
+        return None
+    if peak_idx is None:
+        peak_idx = int(np.argmax(aif_curve))
+    pk = float(aif_curve[peak_idx])
+    if pk <= 0:
+        return None
+    f_post = peak_idx + max(4, int(np.ceil(30.0 / tr)))
+    if f_post >= aif_curve.size:
+        return None
+    return float(aif_curve[f_post] / pk)
+
+
+# =============================================================================
+# DCE AIF acceptance gates (G1-G7 + G6 escape)
+# =============================================================================
+
+
+class GateQC(TypedDict):
+    """Per-pool gate metrics computed inside the progressive trim loop."""
+
+    peak_mm: float
+    fwhm_seconds: float
+    auc_mm_s: float
+    washout: float
+    multi_bump_count: int
+    late_tail_per_peak: float | None
+    ratio_30: float | None
+
+
+GateStatus = Literal[
+    "PASS",
+    "PASS_WARN",
+    "G6_ADMIT",
+    "FAIL_G1",
+    "FAIL_G2",
+    "FAIL_G3",
+    "FAIL_G4",
+    "FAIL_G5",
+    "FAIL_G6_a",
+    "FAIL_G6_f",
+    "FAIL_G6_g",
+    "FAIL_G7",
+    "SKIP_G5",
+]
+
+
+class GateDecision(TypedDict):
+    """Per-trim-iteration gate decision record (for QC provenance)."""
+
+    tier: str
+    n_pool: int
+    scale_factor: float
+    qc: GateQC
+    status: GateStatus
+    failing_gate: str | None
+    warns: list[str]
+
+
+def _apply_aif_scale(
+    aif_curve: npt.NDArray[Any],
+    hct: float,
+    target_peak: float,
+    expected_range_fn: Callable[[], tuple[float, float]],
+) -> tuple[npt.NDArray[Any], float]:
+    """Pure-function AIF amplitude rescale to a dose-corrected target.
+
+    Mirrors the production scaling block but is callable per trim
+    iteration. Preserves the EPSILON_T1 peak-amplitude guard: when the
+    detected peak is below ``EPSILON_T1`` the input curve is returned
+    unscaled with a scaling factor of 1.0.
+
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        Plasma-converted AIF curve (already divided by ``1 - Hct``).
+    hct : float
+        Arterial hematocrit (used to convert Parker blood-voxel target
+        amplitudes to plasma units; matches Parker 2006 convention).
+    target_peak : float
+        User-supplied target peak (mM blood). When ``> 0``, overrides
+        the field-strength default; when ``<= 0``, falls back to the
+        midpoint of ``expected_range_fn()``.
+    expected_range_fn : Callable
+        Zero-arg callable returning ``(peak_min, peak_max)`` in blood
+        units for the current dose / field strength.
+
+    Returns
+    -------
+    (np.ndarray, float)
+        ``(scaled_curve, scaling_factor)``.
+    """
+    current_peak = float(np.max(aif_curve))
+    if current_peak <= EPSILON_T1:
+        return aif_curve, 1.0
+    plasma_conv = 1.0 / (1.0 - hct)
+    if target_peak > 0:
+        target = target_peak * plasma_conv
+    else:
+        peak_min, peak_max = expected_range_fn()
+        target = (peak_min + peak_max) / 2.0 * plasma_conv
+    scaling_factor = target / current_peak
+    return aif_curve * scaling_factor, float(scaling_factor)
+
+
+def _compute_pool_qc(
+    scaled_curve: npt.NDArray[Any],
+    tr: float,
+    baseline_frames: int,
+) -> GateQC:
+    """Run all QC functions a single time on a (scaled) AIF curve.
+
+    Wraps ``compute_dce_aif_*`` helpers + ``compute_dce_aif_ratio_30s``
+    + ``detect_dce_aif_multi_bump_tail`` (using the new shoulder=60 s
+    and fraction=0.40 constants) into a flat ``GateQC`` dict. Pure;
+    safe to call inside a progressive trim loop.
+    """
+    n_volumes = int(scaled_curve.size)
+    peak_idx = int(np.argmax(scaled_curve))
+    peak_val = float(scaled_curve[peak_idx])
+
+    fwhm_s = compute_dce_aif_fwhm_seconds(scaled_curve, tr, baseline_frames)
+    auc = compute_dce_aif_auc(scaled_curve, tr)
+    washout = compute_dce_aif_washout(scaled_curve, baseline_frames)
+    bump_count, _ = detect_dce_aif_multi_bump_tail(
+        scaled_curve, tr=tr, baseline_frames=baseline_frames,
+    )
+    r30 = compute_dce_aif_ratio_30s(scaled_curve, tr, peak_idx=peak_idx)
+
+    if tr > 0 and peak_val > 0:
+        idx_120 = int(120.0 / tr)
+        if idx_120 < n_volumes:
+            late_tail = float(scaled_curve[idx_120:].mean() / peak_val)
+        else:
+            late_tail = None
+    else:
+        late_tail = None
+
+    return GateQC(
+        peak_mm=peak_val,
+        fwhm_seconds=float(fwhm_s),
+        auc_mm_s=float(auc),
+        washout=float(washout),
+        multi_bump_count=int(bump_count),
+        late_tail_per_peak=late_tail,
+        ratio_30=r30,
+    )
+
+
+def _evaluate_gates(
+    scale_factor: float,
+    qc: GateQC,
+    atlas_tier: str | None,
+    n_voxels: int,
+    hemisphere: str,
+    n_slabs_spanned: int,
+) -> tuple[GateStatus, GateDecision]:
+    """Evaluate the 7 acceptance gates against a candidate pool.
+
+    G2/G3/G4/G5' HARD failures take precedence over G1; if any of those
+    fire, the status is ``FAIL_G{N}`` and G6 is NOT consulted (G6
+    escapes amplitude failures only). When G1 is the sole HARD failure,
+    G6 sub-criteria (a)/(f)/(g) are checked: if all hold, status is
+    ``G6_ADMIT``; otherwise the failing G6 sub-criterion is reported.
+
+    G7 aggregation (>=2 WARNs) overrides PASS_WARN. G5' is the only
+    WARN-tier gate currently; the design supports future WARN gates.
+
+    Parameters
+    ----------
+    scale_factor : float
+        Output of ``_apply_aif_scale`` for the current pool.
+    qc : GateQC
+        Output of ``_compute_pool_qc``.
+    atlas_tier : str or None
+        Tier label like ``"MCA_ACA_dce_strict"``. Used only by G6 (f).
+    n_voxels : int
+        Pool size (used by G6 (g)).
+    hemisphere : str
+        ``"bilateral"`` / ``"unilateral_left"`` / ``"unilateral_right"``.
+    n_slabs_spanned : int
+        Distinct z-slice count in the pool (used by G6 (g) unilateral).
+
+    Returns
+    -------
+    (GateStatus, GateDecision)
+        Decision record carrying status + accumulated WARNs + failing
+        gate (if any).
+    """
+    warns: list[str] = []
+
+    g2_fail = (
+        qc["late_tail_per_peak"] is not None
+        and qc["late_tail_per_peak"] > DCE_AIF_GATE_LATE_TAIL_RATIO_MAX
+    )
+    g3_fail = qc["fwhm_seconds"] > DCE_AIF_GATE_FWHM_MAX_SECONDS
+    g4_fail = qc["multi_bump_count"] > DCE_AIF_GATE_MULTIBUMP_MAX
+
+    r30 = qc["ratio_30"]
+    if r30 is None:
+        g5_state: Literal["PASS", "WARN", "HARD", "SKIP"] = "SKIP"
+    elif r30 > DCE_AIF_GATE_RATIO30_HARD:
+        g5_state = "HARD"
+    elif r30 > DCE_AIF_GATE_RATIO30_WARN:
+        g5_state = "WARN"
+        warns.append("G5")
+    else:
+        g5_state = "PASS"
+
+    g1_fail = scale_factor > DCE_AIF_GATE_SCALE_HARD
+
+    def _record(status: GateStatus, failing: str | None) -> tuple[GateStatus, GateDecision]:
+        return status, GateDecision(
+            tier=atlas_tier or "",
+            n_pool=n_voxels,
+            scale_factor=float(scale_factor),
+            qc=qc,
+            status=status,
+            failing_gate=failing,
+            warns=warns,
+        )
+
+    if g2_fail:
+        return _record("FAIL_G2", "G2")
+    if g3_fail:
+        return _record("FAIL_G3", "G3")
+    if g4_fail:
+        return _record("FAIL_G4", "G4")
+    if g5_state == "HARD":
+        return _record("FAIL_G5", "G5")
+    if len(warns) >= 2:
+        return _record("FAIL_G7", "G7")
+
+    if not g1_fail:
+        if warns:
+            return _record("PASS_WARN", None)
+        return _record("PASS", None)
+
+    # G1 fails — consult G6 escape clause.
+    g6_a = scale_factor <= DCE_AIF_GATE_SCALE_G6_CEILING
+    g6_f = atlas_tier == "MCA_ACA_dce_strict"
+    if hemisphere == "bilateral":
+        g6_g = n_voxels >= DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL
+    else:
+        g6_g = (
+            n_voxels >= DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL
+            and n_slabs_spanned >= DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL
+        )
+
+    if g6_a and g6_f and g6_g:
+        warns_with_g6 = list(warns) + ["G1_via_G6"]
+        return "G6_ADMIT", GateDecision(
+            tier=atlas_tier or "",
+            n_pool=n_voxels,
+            scale_factor=float(scale_factor),
+            qc=qc,
+            status="G6_ADMIT",
+            failing_gate=None,
+            warns=warns_with_g6,
+        )
+
+    if not g6_a:
+        return _record("FAIL_G6_a", "G6_a")
+    if not g6_f:
+        return _record("FAIL_G6_f", "G6_f")
+    return _record("FAIL_G6_g", "G6_g")
+
+
+def _select_worst_for_trim(
+    metrics_list: list[dict[str, float]],
+    scores: list[float],
+    failing_gate: str,
+) -> int:
+    """Composite G-aware "worst candidate" selector for progressive trim.
+
+    Returns the index into ``metrics_list`` of the candidate to drop.
+    Branches are aligned with the failing gate so that the trim
+    direction physically helps the failing check on the next iteration.
+    Tie-breaking on argmin / argmax: lowest index (deterministic).
+
+    Branches:
+
+      ``G1`` / ``G6_a``  -> argmin(``peak_mm``)         most diluted
+      ``G2`` / ``G5``    -> argmin(``washout``)         most venous-like
+      ``G3``             -> argmax(``fwhm_seconds``)    widest bolus
+      ``G4``             -> argmin(``washout``)         bumps correlate
+                                                          with low washout
+      ``G7`` / fallback  -> argmin(``scores``)          composite quality
+    """
+    if not metrics_list:
+        return 0
+    failing_root = failing_gate or "fallback"
+    if failing_root in ("G1", "G6_a"):
+        return int(np.argmin([m.get("peak_mm", 0.0) for m in metrics_list]))
+    if failing_root in ("G2", "G5"):
+        return int(np.argmin([m.get("washout", 0.0) for m in metrics_list]))
+    if failing_root == "G3":
+        return int(np.argmax([m.get("fwhm_seconds", 0.0) for m in metrics_list]))
+    if failing_root == "G4":
+        return int(np.argmin([m.get("washout", 0.0) for m in metrics_list]))
+    # G7 / G6_f / G6_g / unknown — drop lowest composite score.
+    return int(np.argmin(scores))
+
+
+def _count_slabs_spanned(candidates: list[tuple[int, int, int]]) -> int:
+    """Count unique z-slice indices in a candidate ``(i, j, k)`` list.
+
+    Used by G6 (g) unilateral path: ``n>=10 AND n_slabs_spanned>=2``.
+    """
+    if not candidates:
+        return 0
+    return len({int(k) for (_i, _j, k) in candidates})
+
+
+@dataclass
+class TierResult:
+    """Outcome of a single tier's progressive-trim acceptance attempt.
+
+    Returned by ``_evaluate_tier_with_trim`` on accept; ``None`` on
+    cascade fall-through.
+    """
+
+    candidates: list[tuple[int, int, int]]
+    scores: list[float]
+    metrics: list[dict[str, float]]
+    curve_unscaled: npt.NDArray[Any]
+    curve_scaled: npt.NDArray[Any]
+    scale_factor: float
+    qc: GateQC
+    atlas_tier: str
+    hemisphere: str
+    n_slabs: int
+    status: GateStatus
+    gate_decisions: list[GateDecision] = field(default_factory=list)
+
+
 # =============================================================================
 # DCE AIF Detection Interface
 # =============================================================================
@@ -698,6 +1075,20 @@ class DCEAIFDetectionOutputSpec(TraitedSpec):
     scaling_factor = traits.Float(desc="Scaling factor applied to AIF (1.0 if unscaled)")
     candidate_count = traits.Int(desc="Number of candidate voxels used")
     qc_metrics = traits.Dict(desc="Detailed QC metrics dictionary")
+    aif_confidence = traits.Str(
+        "standard",
+        usedefault=True,
+        desc="AIF acceptance-gate confidence: 'standard' or 'reduced' "
+             "(G6-admitted PV-diluted but anatomically correct).",
+    )
+    aif_uncertainty_inflation_factor = traits.Float(
+        1.0,
+        usedefault=True,
+        desc="Base multiplier on PK posterior sigma from upstream AIF "
+             "confidence. 1.0 = standard AIF; 2.0 = G6-admitted "
+             "reduced-confidence AIF. Mapped per-parameter downstream "
+             "via DCE_AIF_G6_SIGMA_INFLATION (ve uninflated).",
+    )
 
 
 class AIFDetection(BaseInterface):
@@ -2062,6 +2453,104 @@ class AIFDetection(BaseInterface):
             earliest_post_arr_s,
         )
 
+    def _evaluate_pool_with_gates_and_trim(
+        self,
+        candidates: list[tuple[int, int, int]],
+        scores: list[float],
+        metrics_list: list[dict[str, float]],
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        affine: npt.NDArray[Any],
+        tr: float,
+        baseline_frames: int,
+        hct: float,
+        target_peak: float,
+        atlas_tier_label: str,
+    ) -> TierResult | None:
+        """Run progressive trim with G1-G7 gates on a candidate pool.
+
+        Per iteration: average pool -> Hct-correct -> rescale -> compute
+        QC -> evaluate gates. On acceptance (PASS / PASS_WARN /
+        G6_ADMIT) returns a ``TierResult``. On rejection, drops the
+        worst candidate by composite G-aware metric and retries. Returns
+        ``None`` when the pool falls below ``DCE_AIF_MIN_TRIM_POOL``
+        without acceptance (caller continues cascade).
+        """
+        pool_idx = list(range(len(candidates)))
+        gate_decisions: list[GateDecision] = []
+
+        while len(pool_idx) >= DCE_AIF_MIN_TRIM_POOL:
+            sub_cands = [candidates[i] for i in pool_idx]
+            sub_scores = [scores[i] for i in pool_idx]
+            sub_metrics = [metrics_list[i] for i in pool_idx]
+
+            # Average + plasma-convert + rescale.
+            curve_blood, _ = self._compute_weighted_roi_aif(
+                sub_cands, sub_scores, conc_data, brain_mask, tr=tr,
+            )
+            curve_plasma = curve_blood / (1.0 - hct) if hct < 1.0 else curve_blood
+            curve_scaled, scale_factor = _apply_aif_scale(
+                curve_plasma,
+                hct,
+                target_peak,
+                self._get_expected_peak_range,
+            )
+
+            qc = _compute_pool_qc(curve_scaled, tr, baseline_frames)
+
+            # Hemisphere + slab span on the current pool (recomputed each iter
+            # because dropping a candidate may change them).
+            n_left = 0
+            n_right = 0
+            for cx, cy, cz in sub_cands:
+                world = affine[:3, :3] @ np.array([cx, cy, cz]) + affine[:3, 3]
+                if world[0] < 0:
+                    n_left += 1
+                else:
+                    n_right += 1
+            if n_left > 0 and n_right > 0:
+                hemisphere = "bilateral"
+            elif n_left > 0:
+                hemisphere = "unilateral_left"
+            else:
+                hemisphere = "unilateral_right"
+            n_slabs = _count_slabs_spanned(sub_cands)
+
+            status, decision = _evaluate_gates(
+                scale_factor, qc, atlas_tier_label,
+                len(pool_idx), hemisphere, n_slabs,
+            )
+            gate_decisions.append(decision)
+
+            if status in ("PASS", "PASS_WARN", "G6_ADMIT"):
+                return TierResult(
+                    candidates=sub_cands,
+                    scores=sub_scores,
+                    metrics=sub_metrics,
+                    curve_unscaled=curve_plasma,
+                    curve_scaled=curve_scaled,
+                    scale_factor=scale_factor,
+                    qc=qc,
+                    atlas_tier=atlas_tier_label,
+                    hemisphere=hemisphere,
+                    n_slabs=n_slabs,
+                    status=status,
+                    gate_decisions=gate_decisions,
+                )
+
+            # Pass the failing gate through unmodified so the trim
+            # selector can distinguish G6_a (amplitude-escape denied,
+            # drop lowest peak) from other G6_* sub-criteria (drop
+            # lowest score). Stripping the "_a" suffix here used to
+            # silently route G6_a to the score-fallback branch.
+            failing_gate = decision.get("failing_gate") or ""
+            worst_local = _select_worst_for_trim(
+                sub_metrics, sub_scores, failing_gate,
+            )
+            pool_idx.pop(worst_local)
+
+        return None
+
     def _run_two_pass_cascade(
         self,
         conc_data: npt.NDArray[Any],
@@ -2073,6 +2562,10 @@ class AIFDetection(BaseInterface):
         tr: float,
         baseline_frames: int,
         tissue_ttp_frame: float | None,
+        brain_mask: npt.NDArray[Any] | None = None,
+        affine: npt.NDArray[Any] | None = None,
+        hct: float | None = None,
+        target_peak: float | None = None,
     ) -> tuple[
         list[tuple[int, int, int]],
         list[float],
@@ -2081,6 +2574,7 @@ class AIFDetection(BaseInterface):
         str | None,
         int,
         list[dict[str, Any]],
+        TierResult | None,
     ]:
         """Run the two-pass multi-level AIF detection cascade.
 
@@ -2133,6 +2627,18 @@ class AIFDetection(BaseInterface):
         atlas_tier_used: str | None = None
         cascade_tiers_attempted = 0
         anchor_outcomes: list[dict[str, Any]] = []
+        tier_result: TierResult | None = None
+
+        # Per-tier gate evaluation is enabled when the caller supplies
+        # the inputs needed to average + rescale + compute QC. Older
+        # call sites that omit them get the legacy quorum + anchor
+        # acceptance contract.
+        gates_enabled = (
+            brain_mask is not None
+            and affine is not None
+            and hct is not None
+            and target_peak is not None
+        )
 
         # Pass 2 tracking: (cands, scores, metrics, method, label, max_score)
         best_single_keeper: tuple[
@@ -2216,7 +2722,24 @@ class AIFDetection(BaseInterface):
                         self._quorum_count(scs) >= _MIN_CANDIDATES_FOR_DETECTED
                         and has_anchor
                     ):
-                        candidates, scores, metrics_list = cands, scs, mets
+                        if gates_enabled:
+                            tier_result = self._evaluate_pool_with_gates_and_trim(
+                                cands, scs, mets,
+                                conc_data, brain_mask, affine,  # type: ignore[arg-type]
+                                tr, baseline_frames,
+                                hct,  # type: ignore[arg-type]
+                                target_peak,  # type: ignore[arg-type]
+                                label,
+                            )
+                            if tier_result is None:
+                                # Trim exhausted this tier — continue cascade.
+                                _record_single_keeper(cands, scs, mets, "atlas", label)
+                                continue
+                            candidates = tier_result.candidates
+                            scores = tier_result.scores
+                            metrics_list = tier_result.metrics
+                        else:
+                            candidates, scores, metrics_list = cands, scs, mets
                         detection_method = "atlas"
                         atlas_tier_used = label
                         pass1_succeeded = True
@@ -2242,9 +2765,29 @@ class AIFDetection(BaseInterface):
                 self._quorum_count(scs) >= _MIN_CANDIDATES_FOR_DETECTED
                 and has_anchor
             ):
-                candidates, scores, metrics_list = cands, scs, mets
-                detection_method = "automatic"
-                pass1_succeeded = True
+                if gates_enabled:
+                    tier_result = self._evaluate_pool_with_gates_and_trim(
+                        cands, scs, mets,
+                        conc_data, brain_mask, affine,  # type: ignore[arg-type]
+                        tr, baseline_frames,
+                        hct,  # type: ignore[arg-type]
+                        target_peak,  # type: ignore[arg-type]
+                        "wb_relaxed",
+                    )
+                    if tier_result is None:
+                        _record_single_keeper(
+                            cands, scs, mets, "automatic", "wb_relaxed",
+                        )
+                    else:
+                        candidates = tier_result.candidates
+                        scores = tier_result.scores
+                        metrics_list = tier_result.metrics
+                        detection_method = "automatic"
+                        pass1_succeeded = True
+                else:
+                    candidates, scores, metrics_list = cands, scs, mets
+                    detection_method = "automatic"
+                    pass1_succeeded = True
             else:
                 _record_single_keeper(
                     cands, scs, mets, "automatic", "wb_relaxed",
@@ -2260,7 +2803,7 @@ class AIFDetection(BaseInterface):
         return (
             candidates, scores, metrics_list,
             detection_method, atlas_tier_used, cascade_tiers_attempted,
-            anchor_outcomes,
+            anchor_outcomes, tier_result,
         )
 
     def _find_candidates_in_mask(
@@ -2733,7 +3276,7 @@ class AIFDetection(BaseInterface):
         validation_qc["aif_validation_final_roi_size"] = 1
         if best_attempt[1] > 2.0:
             validation_qc["aif_fwhm_warning"] = True
-            validation_qc["aif_confidence"] = "reduced"
+            validation_qc["aif_fwhm_confidence"] = "reduced"
 
         return best_curve, best_mask, validation_qc
 
@@ -3102,6 +3645,7 @@ class AIFDetection(BaseInterface):
         atlas_tier_used: str | None = None
         validation_qc: dict[str, Any] = {}
         anchor_outcomes: list[dict[str, Any]] = []
+        tier_result: TierResult | None = None
 
         # Skip auto detection if population method requested
         if aif_method == "population":
@@ -3161,10 +3705,14 @@ class AIFDetection(BaseInterface):
 
             # ===== Two-pass multi-level detection cascade =====
             # See ``_run_two_pass_cascade`` docstring for contract details.
+            # Brain mask, affine, hct, and target_peak enable per-tier
+            # G1-G7 acceptance gates with progressive trim; without them
+            # the cascade falls back to its legacy quorum + anchor
+            # acceptance criterion.
             (
                 candidates, scores, metrics_list,
                 detection_method_str, atlas_tier_used, cascade_tiers_attempted,
-                anchor_outcomes,
+                anchor_outcomes, tier_result,
             ) = self._run_two_pass_cascade(
                 conc_data,
                 atlas_search_mask=atlas_search_mask,
@@ -3175,6 +3723,10 @@ class AIFDetection(BaseInterface):
                 tr=tr,
                 baseline_frames=baseline_frames,
                 tissue_ttp_frame=tissue_ttp_frame,
+                brain_mask=brain_mask,
+                affine=affine,
+                hct=float(self.inputs.hematocrit),
+                target_peak=target_peak,
             )
             # Narrow back to Literal for the typed local.
             detection_method = (  # type: ignore[assignment]
@@ -3308,20 +3860,36 @@ class AIFDetection(BaseInterface):
 
         if candidates:
             # Phase 5: Weighted ROI averaging + smoothing
-            aif_curve, aif_mask = self._compute_weighted_roi_aif(
-                candidates, scores, conc_data, brain_mask, tr=tr,
-            )
+            # When the cascade ran G1-G7 acceptance gates with progressive
+            # trim (gates_enabled in _run_two_pass_cascade), the accepted
+            # tier's averaged + Hct-corrected + rescaled curve is already
+            # in ``tier_result``; reuse it to avoid double-scaling and to
+            # propagate the per-iteration gate decisions downstream. The
+            # legacy averaging path runs only when the cascade fell back to
+            # its pre-gate accept-on-quorum-and-anchor contract (no inputs
+            # were supplied to enable gates).
+            if tier_result is not None:
+                aif_curve = tier_result.curve_scaled
+                # Reconstruct the AIF mask from the (post-trim) candidates.
+                aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+                for cx, cy, cz in tier_result.candidates:
+                    aif_mask[cx, cy, cz] = 1
+                scaling_factor = tier_result.scale_factor
+            else:
+                aif_curve, aif_mask = self._compute_weighted_roi_aif(
+                    candidates, scores, conc_data, brain_mask, tr=tr,
+                )
 
-            # Phase 5b: Validate averaged AIF FWHM against candidate FWHM
-            aif_curve, aif_mask, validation_qc = self._validate_dce_averaged_aif(
-                aif_curve, candidates, scores, metrics_list,
-                conc_data, brain_mask, tr, baseline_frames,
-            )
+                # Phase 5b: Validate averaged AIF FWHM against candidate FWHM
+                aif_curve, aif_mask, validation_qc = self._validate_dce_averaged_aif(
+                    aif_curve, candidates, scores, metrics_list,
+                    conc_data, brain_mask, tr, baseline_frames,
+                )
 
-            # Convert measured AIF from blood to plasma concentration
-            # (tissue conc is in blood units; AIF must be in plasma units
-            #  for Tofts model: plasma = blood / (1 - Hct))
-            aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
+                # Convert measured AIF from blood to plasma concentration
+                # (tissue conc is in blood units; AIF must be in plasma units
+                #  for Tofts model: plasma = blood / (1 - Hct))
+                aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
             quality_score = float(np.mean(scores))
 
             # Aggregate QC metrics
@@ -3362,6 +3930,31 @@ class AIFDetection(BaseInterface):
             # reviewers can see which tiers were tried even on success.
             if anchor_outcomes:
                 qc_metrics["cascade_anchor_outcomes"] = anchor_outcomes
+
+            # Per-tier gate decisions and acceptance status from the
+            # progressive trim loop. Sets aif_confidence + inflation
+            # factor for downstream PK posterior sigma scaling.
+            if tier_result is not None:
+                qc_metrics["aif_gate_decisions"] = [
+                    {
+                        "tier": d["tier"],
+                        "n_pool": d["n_pool"],
+                        "scale_factor": d["scale_factor"],
+                        "status": d["status"],
+                        "failing_gate": d["failing_gate"],
+                        "warns": list(d["warns"]),
+                        "qc": dict(d["qc"]),
+                    }
+                    for d in tier_result.gate_decisions
+                ]
+                if tier_result.status == "G6_ADMIT":
+                    qc_metrics["aif_confidence"] = "reduced"
+                    qc_metrics["aif_g6_admitted"] = True
+                    qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
+                else:
+                    qc_metrics["aif_confidence"] = "standard"
+                    qc_metrics["aif_g6_admitted"] = False
+                    qc_metrics["aif_uncertainty_inflation_factor"] = 1.0
 
             # Merge FWHM validation QC
             if validation_qc:
@@ -3505,7 +4098,13 @@ class AIFDetection(BaseInterface):
         # Apply AIF scaling if requested
         # External AIFs bypass this block: they must be supplied in plasma
         # [Gd] (mM), Hct-corrected; the pipeline does not re-scale. See README.
-        if scale_aif and detection_method not in ("population", "external"):
+        # The cascade-with-gates path also bypasses (already scaled inside
+        # the per-tier trim loop; tier_result.scale_factor was recorded).
+        if (
+            scale_aif
+            and detection_method not in ("population", "external")
+            and tier_result is None
+        ):
             current_peak = float(np.max(aif_curve))
             if current_peak > EPSILON_T1:
                 # Unit convention:
@@ -3662,6 +4261,10 @@ class AIFDetection(BaseInterface):
             "scaling_factor": scaling_factor,
             "candidate_count": len(candidates),
             "qc_metrics": qc_metrics,
+            "aif_confidence": str(qc_metrics.get("aif_confidence", "standard")),
+            "aif_uncertainty_inflation_factor": float(
+                qc_metrics.get("aif_uncertainty_inflation_factor", 1.0)
+            ),
         }
 
         return runtime

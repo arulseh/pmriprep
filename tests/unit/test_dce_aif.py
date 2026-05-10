@@ -648,7 +648,7 @@ class TestTwoPassCascade:
             (
                 candidates, scores, metrics_list,
                 detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes,
+                anchor_outcomes, _tier_result,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -700,7 +700,7 @@ class TestTwoPassCascade:
             (
                 candidates, scores, metrics_list,
                 detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes,
+                anchor_outcomes, _tier_result,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -745,7 +745,7 @@ class TestTwoPassCascade:
             (
                 candidates, scores, metrics_list,
                 detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes,
+                anchor_outcomes, _tier_result,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -790,7 +790,7 @@ class TestTwoPassCascade:
             (
                 _candidates, _scores, _metrics,
                 detection_method, atlas_tier_used, n_attempted,
-                _anchor_outcomes,
+                _anchor_outcomes, _tier_result,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -936,7 +936,7 @@ class TestAnchorGateInCascade:
             (
                 candidates, scores, _metrics,
                 detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes,
+                anchor_outcomes, _tier_result,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -987,7 +987,7 @@ class TestAnchorGateInCascade:
             (
                 candidates, _scores, _metrics,
                 detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes,
+                anchor_outcomes, _tier_result,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -1040,7 +1040,7 @@ class TestAnchorGateInCascade:
             (
                 candidates, scores, _metrics,
                 detection_method, atlas_tier_used, n_attempted,
-                anchor_outcomes,
+                anchor_outcomes, _tier_result,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -1079,7 +1079,7 @@ class TestAnchorGateInCascade:
             (
                 candidates, scores, _metrics,
                 detection_method, _atlas_tier, n_attempted,
-                _anchor_outcomes,
+                _anchor_outcomes, _tier_result,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -1116,7 +1116,7 @@ class TestAnchorGateInCascade:
             (
                 candidates, _scores, _metrics,
                 detection_method, _atlas_tier, n_attempted,
-                _anchor_outcomes,
+                _anchor_outcomes, _tier_result,
             ) = detector._run_two_pass_cascade(
                 **inputs,
                 atlas_masks=atlas_masks,
@@ -1525,63 +1525,67 @@ class TestMultiBumpTailDetector:
         return curve
 
     def test_clean_aif_one_recirculation_bump_not_flagged(self) -> None:
-        """One physiologic recirculation bump → count == 1 → caller
-        treats count > 1 as the abnormality threshold."""
+        """Physiologic recirculation hump (~30 s post-peak) is excluded
+        by the 60 s shoulder; one true late-tail bump at 100 s post-peak
+        with amplitude > 40% is counted as 1."""
         aif = self._build_aif(
-            tr=4.0, duration_s=200.0, baseline_frames=5,
+            tr=4.0, duration_s=300.0, baseline_frames=5,
             first_pass_peak_s=20.0, first_pass_amplitude=5.0,
-            secondary_peaks=[(60.0, 1.5)],  # 30% of 5.0
+            # recirculation hump (excluded by sh60) + 1 true late bump
+            secondary_peaks=[(50.0, 1.5), (140.0, 2.5)],  # 50% amplitude
         )
         count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
         assert count == 1
 
     def test_two_secondary_bumps_flagged(self) -> None:
+        """Two true late-tail bumps (>60 s post-peak, >40% amplitude)."""
         aif = self._build_aif(
-            tr=4.0, duration_s=240.0, baseline_frames=5,
+            tr=4.0, duration_s=320.0, baseline_frames=5,
             first_pass_peak_s=20.0, first_pass_amplitude=5.0,
-            secondary_peaks=[(60.0, 1.5), (120.0, 1.4)],
+            secondary_peaks=[(110.0, 2.5), (180.0, 2.3)],
         )
         count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
         assert count == 2
 
     def test_three_motion_bumps_flagged(self) -> None:
+        """Three true late-tail bumps (>60 s post-peak, >40% amplitude)."""
         aif = self._build_aif(
-            tr=4.0, duration_s=300.0, baseline_frames=5,
+            tr=4.0, duration_s=400.0, baseline_frames=5,
             first_pass_peak_s=20.0, first_pass_amplitude=5.0,
-            secondary_peaks=[(60.0, 1.5), (120.0, 1.4), (180.0, 1.6)],
+            secondary_peaks=[(110.0, 2.5), (180.0, 2.3), (260.0, 2.7)],
         )
         count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
         assert count == 3
 
     def test_below_threshold_not_counted(self) -> None:
-        """Secondary peak at 20% of first-pass (< 25%) is not counted."""
+        """Secondary peak at 30% of first-pass (< 40%) is not counted."""
         aif = self._build_aif(
-            tr=4.0, duration_s=200.0, baseline_frames=5,
+            tr=4.0, duration_s=300.0, baseline_frames=5,
             first_pass_peak_s=20.0, first_pass_amplitude=5.0,
-            secondary_peaks=[(60.0, 1.0)],  # 20% of 5.0
+            secondary_peaks=[(120.0, 1.5)],  # 30% of 5.0
         )
         count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
         assert count == 0
 
     def test_separation_distance_enforced(self) -> None:
-        """Two secondary maxima 8s apart (< min_separation_seconds=10s)
-        — find_peaks deduplicates, count == 1."""
+        """Two secondary maxima 8 s apart (< min_separation_seconds=10s)
+        deduplicate to 1."""
         aif = self._build_aif(
-            tr=4.0, duration_s=200.0, baseline_frames=5,
+            tr=4.0, duration_s=300.0, baseline_frames=5,
             first_pass_peak_s=20.0, first_pass_amplitude=5.0,
-            secondary_peaks=[(60.0, 1.5), (68.0, 1.5)],
+            secondary_peaks=[(120.0, 2.5), (128.0, 2.5)],
         )
         count, _ = detect_dce_aif_multi_bump_tail(aif, tr=4.0)
         assert count == 1
 
     def test_sub_second_tr_window_scales(self) -> None:
-        """TR=0.5s — windows scale to frames preserving physical-time
-        semantics. Two secondary bumps at 60s and 120s should still be
-        counted as 2."""
+        """TR=0.5 s — windows scale in seconds; two true late-tail bumps
+        at 100 s and 180 s post-peak (well beyond 60 s shoulder) count
+        as 2."""
         aif = self._build_aif(
-            tr=0.5, duration_s=240.0, baseline_frames=5,
+            tr=0.5, duration_s=300.0, baseline_frames=5,
             first_pass_peak_s=20.0, first_pass_amplitude=5.0,
-            secondary_peaks=[(60.0, 1.5), (120.0, 1.4)],
+            secondary_peaks=[(120.0, 2.5), (200.0, 2.3)],
         )
         count, _ = detect_dce_aif_multi_bump_tail(aif, tr=0.5)
         assert count == 2
@@ -1620,19 +1624,20 @@ class TestMultiBumpTailDetector:
         assert heights == []
 
     def test_shoulder_skip_does_not_count_descending_limb(self) -> None:
-        """A noise spike on the descending shoulder of the first-pass
-        peak (within tail_shoulder_seconds=6.0 of the peak) is excluded
-        by *time*, not amplitude. At TR=4s the shoulder is round(6/4)=2
-        frames, so a spike one frame post-peak (at peak+4s) is skipped
-        even when its amplitude exceeds the 25%-of-peak threshold."""
+        """A bump on the recirculation shoulder (within
+        tail_shoulder_seconds=60.0 of the peak) is excluded by *time*,
+        not amplitude. At TR=4 s the shoulder is round(60/4)=15
+        frames, so a bump 5 frames post-peak (at peak+20 s) is skipped
+        even when its amplitude exceeds the 40 %-of-peak threshold."""
         tr = 4.0
         aif = self._build_aif(
-            tr=tr, duration_s=200.0, baseline_frames=5,
+            tr=tr, duration_s=300.0, baseline_frames=5,
             first_pass_peak_s=20.0, first_pass_amplitude=5.0,
             secondary_peaks=[],
         )
         peak_idx = int(round(20.0 / tr))
-        aif[peak_idx + 1] = 0.5 * 5.0  # 50% of first-pass peak
+        # Inside the recirculation window (peak+20 s < shoulder of 60 s)
+        aif[peak_idx + 5] = 0.5 * 5.0  # 50 % of first-pass peak
         count, _ = detect_dce_aif_multi_bump_tail(aif, tr=tr)
         assert count == 0
 
@@ -1658,11 +1663,13 @@ class TestMultiBumpCallSiteSuppression:
 
     @staticmethod
     def _three_bump_curve(tr: float) -> np.ndarray:
-        n = int(300 / tr)
+        """Build a 3-late-tail-bump curve: peak at 20 s, bumps well past
+        the 60 s shoulder at amplitudes >40 % of the first-pass peak."""
+        n = int(400 / tr)
         t = np.arange(n) * tr
         aif = 5.0 * np.exp(-0.5 * ((t - 20) / 4) ** 2)
-        for c in (60.0, 120.0, 180.0):
-            aif += 1.5 * np.exp(-0.5 * ((t - c) / 4) ** 2)
+        for c in (110.0, 180.0, 260.0):
+            aif += 2.5 * np.exp(-0.5 * ((t - c) / 4) ** 2)
         aif[:5] = 0.0
         return aif
 
@@ -1683,10 +1690,10 @@ class TestMultiBumpCallSiteSuppression:
 
 
 class TestMultiBumpTailConstantValue:
-    """Regression for the 25% threshold value."""
+    """Regression for the 40 % threshold value."""
 
-    def test_tail_peak_fraction_is_25_percent(self) -> None:
-        assert DCE_AIF_TAIL_PEAK_FRACTION == 0.25
+    def test_tail_peak_fraction_is_40_percent(self) -> None:
+        assert DCE_AIF_TAIL_PEAK_FRACTION == 0.40
 
 
 class TestDCEAIFDetectionLesionMaskFileTrait:
@@ -1757,3 +1764,445 @@ class TestDCEAIFDetectionLesionMaskFileTrait:
         # time. Pre-v0.50.1 it raised TraitError; post-fix it must succeed.
         aif.inputs.lesion_mask_file = upstream_value
         assert aif.inputs.lesion_mask_file == ""
+
+
+# =============================================================================
+# Acceptance gates G1-G7 + G6 escape (v0.51.0)
+# =============================================================================
+
+from pmriprep.interfaces.dce_aif import (  # noqa: E402
+    GateQC,
+    _apply_aif_scale,
+    _compute_pool_qc,
+    _count_slabs_spanned,
+    _evaluate_gates,
+    _select_worst_for_trim,
+    compute_dce_aif_ratio_30s,
+)
+from pmriprep.utils.dce_constants import (  # noqa: E402
+    DCE_AIF_GATE_FWHM_MAX_SECONDS,
+    DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL,
+    DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL,
+    DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL,
+    DCE_AIF_GATE_LATE_TAIL_RATIO_MAX,
+    DCE_AIF_GATE_MULTIBUMP_MAX,
+    DCE_AIF_GATE_RATIO30_HARD,
+    DCE_AIF_GATE_RATIO30_WARN,
+    DCE_AIF_GATE_SCALE_G6_CEILING,
+    DCE_AIF_GATE_SCALE_HARD,
+    DCE_AIF_TAIL_PEAK_FRACTION,
+    DCE_AIF_TAIL_SHOULDER_SECONDS,
+)
+
+
+def _make_qc(
+    *,
+    peak: float = 8.0,
+    fwhm: float = 14.0,
+    auc: float = 800.0,
+    washout: float = 0.8,
+    bumps: int = 0,
+    late_tail: float | None = 0.20,
+    ratio_30: float | None = 0.30,
+) -> GateQC:
+    return GateQC(
+        peak_mm=peak,
+        fwhm_seconds=fwhm,
+        auc_mm_s=auc,
+        washout=washout,
+        multi_bump_count=bumps,
+        late_tail_per_peak=late_tail,
+        ratio_30=ratio_30,
+    )
+
+
+# ----- Constants -----------------------------------------------------------
+
+def test_bump_detector_constants_updated():
+    """sh60 + f0.40 are the v0.51.0 defaults."""
+    assert DCE_AIF_TAIL_PEAK_FRACTION == 0.40
+    assert DCE_AIF_TAIL_SHOULDER_SECONDS == 60.0
+
+
+# ----- ratio_30 helper -----------------------------------------------------
+
+def test_compute_ratio_30s_basic():
+    tr = 4.0
+    curve = np.zeros(40)
+    curve[5] = 10.0  # peak
+    curve[5 + max(4, int(np.ceil(30.0 / tr)))] = 3.0
+    r = compute_dce_aif_ratio_30s(curve, tr=tr, peak_idx=5)
+    assert r == pytest.approx(0.30, abs=1e-6)
+
+
+def test_compute_ratio_30s_short_scan_returns_none():
+    tr = 4.0
+    curve = np.zeros(8)
+    curve[5] = 10.0
+    assert compute_dce_aif_ratio_30s(curve, tr=tr, peak_idx=5) is None
+
+
+def test_compute_ratio_30s_zero_peak_returns_none():
+    assert compute_dce_aif_ratio_30s(np.zeros(50), tr=4.0, peak_idx=0) is None
+
+
+# ----- _apply_aif_scale ---------------------------------------------------
+
+def test_apply_aif_scale_preserves_epsilon_guard():
+    """Below-EPSILON_T1 peak returns input unchanged."""
+    curve = np.full(20, 1e-6)
+    out, sf = _apply_aif_scale(curve, hct=0.42, target_peak=0.0,
+                                expected_range_fn=lambda: (5.0, 7.6))
+    assert sf == 1.0
+    assert np.array_equal(out, curve)
+
+
+def test_apply_aif_scale_target_peak_explicit():
+    curve = np.array([0, 0, 0, 1.0, 0.5, 0.25])
+    out, sf = _apply_aif_scale(curve, hct=0.42, target_peak=6.0,
+                                expected_range_fn=lambda: (5.0, 7.6))
+    # target = 6.0 / (1 - 0.42) = 10.345
+    expected_target = 6.0 / (1 - 0.42)
+    assert sf == pytest.approx(expected_target / 1.0, rel=1e-6)
+    assert out.max() == pytest.approx(expected_target, rel=1e-6)
+
+
+# ----- Per-gate basic tests -----------------------------------------------
+
+def test_g1_pass():
+    status, _ = _evaluate_gates(scale_factor=2.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "PASS"
+
+
+def test_g1_fail_no_g6_escape():
+    """G1 fails, G6 sub-criteria fail too -> revert."""
+    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dil_dce_strict",
+                                 n_voxels=2, hemisphere="unilateral_left",
+                                 n_slabs_spanned=1)
+    assert status.startswith("FAIL_G6")
+
+
+def test_g2_hard_fail():
+    status, _ = _evaluate_gates(scale_factor=1.0,
+                                 qc=_make_qc(late_tail=0.50),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "FAIL_G2"
+
+
+def test_g3_hard_fail():
+    status, _ = _evaluate_gates(scale_factor=1.0,
+                                 qc=_make_qc(fwhm=25.0),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "FAIL_G3"
+
+
+def test_g4_hard_fail():
+    status, _ = _evaluate_gates(scale_factor=1.0,
+                                 qc=_make_qc(bumps=5),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "FAIL_G4"
+
+
+def test_g5_warn():
+    status, dec = _evaluate_gates(scale_factor=1.0,
+                                   qc=_make_qc(ratio_30=0.45),
+                                   atlas_tier="MCA_ACA_dce_strict",
+                                   n_voxels=10, hemisphere="bilateral",
+                                   n_slabs_spanned=3)
+    assert status == "PASS_WARN"
+    assert "G5" in dec["warns"]
+
+
+def test_g5_hard_fail():
+    status, _ = _evaluate_gates(scale_factor=1.0,
+                                 qc=_make_qc(ratio_30=0.55),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "FAIL_G5"
+
+
+def test_skip_g5_when_ratio_unevaluable():
+    """ratio_30 = None (short TR / scan) does not silently pass; recorded."""
+    status, dec = _evaluate_gates(scale_factor=1.0,
+                                   qc=_make_qc(ratio_30=None),
+                                   atlas_tier="MCA_ACA_dce_strict",
+                                   n_voxels=10, hemisphere="bilateral",
+                                   n_slabs_spanned=3)
+    assert status == "PASS"
+    assert dec["qc"]["ratio_30"] is None
+
+
+# ----- G6 admit / sub-criteria boundaries ---------------------------------
+
+def test_g6_admit_sub08_archetype():
+    """sub-08 case: scale 4.11, strict tier, bilateral n=10, all shape pass."""
+    status, dec = _evaluate_gates(scale_factor=4.11,
+                                   qc=_make_qc(fwhm=17.0, ratio_30=0.48,
+                                               late_tail=0.30, bumps=0),
+                                   atlas_tier="MCA_ACA_dce_strict",
+                                   n_voxels=10, hemisphere="bilateral",
+                                   n_slabs_spanned=3)
+    assert status == "G6_ADMIT"
+    assert "G1_via_G6" in dec["warns"]
+
+
+def test_g6_reject_sub0081_v1_archetype():
+    """sub-0081 V1 case: dilated tier (G6_f), n=2 unilateral (G6_g), scale 8.83 (G6_a)."""
+    status, _ = _evaluate_gates(scale_factor=8.83, qc=_make_qc(ratio_30=0.41),
+                                 atlas_tier="MCA_ACA_dil_dce_strict",
+                                 n_voxels=2, hemisphere="unilateral_left",
+                                 n_slabs_spanned=1)
+    assert status.startswith("FAIL_G6")
+
+
+def test_g6_g_bilateral_boundary_n4_reject():
+    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=4, hemisphere="bilateral",
+                                 n_slabs_spanned=2)
+    assert status == "FAIL_G6_g"
+
+
+def test_g6_g_bilateral_boundary_n5_admit():
+    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=5, hemisphere="bilateral",
+                                 n_slabs_spanned=2)
+    assert status == "G6_ADMIT"
+
+
+def test_g6_g_unilateral_n9_2slabs_reject():
+    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=9, hemisphere="unilateral_right",
+                                 n_slabs_spanned=2)
+    assert status == "FAIL_G6_g"
+
+
+def test_g6_g_unilateral_n10_2slabs_admit():
+    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="unilateral_right",
+                                 n_slabs_spanned=2)
+    assert status == "G6_ADMIT"
+
+
+def test_g6_g_unilateral_n10_1slab_reject():
+    """G6(g) unilateral path requires n>=10 AND >=2 distinct slabs."""
+    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="unilateral_right",
+                                 n_slabs_spanned=1)
+    assert status == "FAIL_G6_g"
+
+
+def test_g6_a_boundary_scale_5p99_admit():
+    status, _ = _evaluate_gates(scale_factor=5.99, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "G6_ADMIT"
+
+
+def test_g6_a_boundary_scale_6p01_reject():
+    status, _ = _evaluate_gates(scale_factor=6.01, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "FAIL_G6_a"
+
+
+def test_g6_f_wrong_tier_isolated_reject():
+    """Isolates G6(f) from (a)/(g): scale 4 OK, n=10 bilateral OK, but tier=dilated."""
+    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dil_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "FAIL_G6_f"
+
+
+# ----- Threshold boundaries -----------------------------------------------
+
+def test_g3_fwhm_boundary_22p0_pass():
+    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(fwhm=22.0),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "PASS"
+
+
+def test_g3_fwhm_boundary_22p01_hard():
+    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(fwhm=22.01),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "FAIL_G3"
+
+
+def test_g4_bumps_boundary_2_pass():
+    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(bumps=2),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "PASS"
+
+
+def test_g4_bumps_boundary_3_hard():
+    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(bumps=3),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "FAIL_G4"
+
+
+def test_g5_boundary_0p40_pass():
+    """ratio_30 == 0.40 is at the WARN floor (strict ineq for WARN)."""
+    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(ratio_30=0.40),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "PASS"
+
+
+def test_g5_boundary_0p50_warn():
+    """ratio_30 == 0.50 still WARN (HARD requires strict >0.50)."""
+    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(ratio_30=0.50),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "PASS_WARN"
+
+
+def test_g5_boundary_0p501_hard():
+    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(ratio_30=0.501),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "FAIL_G5"
+
+
+# ----- Composite trim metric selection ------------------------------------
+
+def test_select_worst_for_trim_g1_drops_lowest_peak():
+    metrics = [{"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 14.0},
+               {"peak_mm": 1.0, "washout": 0.9, "fwhm_seconds": 14.0},
+               {"peak_mm": 3.0, "washout": 0.9, "fwhm_seconds": 14.0}]
+    assert _select_worst_for_trim(metrics, [1.0, 1.0, 1.0], "G1") == 1
+
+
+def test_select_worst_for_trim_g2_drops_lowest_washout():
+    metrics = [{"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 14.0},
+               {"peak_mm": 5.0, "washout": 0.3, "fwhm_seconds": 14.0},
+               {"peak_mm": 5.0, "washout": 0.8, "fwhm_seconds": 14.0}]
+    assert _select_worst_for_trim(metrics, [1.0, 1.0, 1.0], "G2") == 1
+
+
+def test_select_worst_for_trim_g3_drops_widest_fwhm():
+    metrics = [{"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 14.0},
+               {"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 25.0},
+               {"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 18.0}]
+    assert _select_worst_for_trim(metrics, [1.0, 1.0, 1.0], "G3") == 1
+
+
+def test_select_worst_for_trim_g4_drops_lowest_washout():
+    metrics = [{"peak_mm": 5.0, "washout": 0.9},
+               {"peak_mm": 5.0, "washout": 0.2}]
+    assert _select_worst_for_trim(metrics, [1.0, 1.0], "G4") == 1
+
+
+def test_select_worst_for_trim_fallback_drops_lowest_score():
+    metrics = [{"peak_mm": 5.0, "washout": 0.9},
+               {"peak_mm": 5.0, "washout": 0.9}]
+    assert _select_worst_for_trim(metrics, [0.9, 0.3], "G7") == 1
+
+
+def test_select_worst_tiebreak_lowest_index():
+    metrics = [{"peak_mm": 5.0, "washout": 0.9},
+               {"peak_mm": 5.0, "washout": 0.9}]
+    assert _select_worst_for_trim(metrics, [1.0, 1.0], "G1") == 0
+
+
+# ----- _count_slabs_spanned ----------------------------------------------
+
+def test_count_slabs_spanned_unique_z():
+    cands = [(0, 0, 5), (0, 0, 5), (0, 0, 7), (0, 0, 9)]
+    assert _count_slabs_spanned(cands) == 3
+
+
+def test_count_slabs_spanned_empty():
+    assert _count_slabs_spanned([]) == 0
+
+
+# ----- Bump-detector new constants ----------------------------------------
+
+def test_bump_detector_short_shoulder_excludes_recirculation():
+    """sh60+f0.40 excludes physiologic recirculation hump."""
+    tr = 7.5
+    curve = np.zeros(60)
+    curve[7] = 10.0  # peak
+    # Recirculation hump at ~30s post-peak (sub-shoulder under sh60)
+    curve[7 + int(30 / tr)] = 4.5  # 45% of peak
+    # True late-tail anomaly at ~90s post-peak
+    curve[7 + int(90 / tr)] = 4.5
+    n, _ = detect_dce_aif_multi_bump_tail(
+        curve, tr=tr, baseline_frames=5,
+        secondary_peak_fraction=0.40,
+        tail_shoulder_seconds=60.0,
+    )
+    assert n == 1  # only the true late-tail bump (recirculation excluded)
+
+
+# ----- Dose / B0 independence -------------------------------------------
+
+def test_g1_dimensionless_against_dose_corrected_target():
+    """Half-dose AIF with proportionally-halved target gives scale ~1.
+
+    Half-dose plasma peak ~5 mM; expected_range halved to (2.5, 3.8)
+    so midpoint = 3.15 mM blood, target = 3.15 / (1 - 0.42) = 5.43 mM
+    plasma. scaling_factor = 5.43 / 5.0 = 1.087 — passes G1 <= 3.
+    """
+    curve = np.array([0, 0, 0, 5.0, 2.5, 1.25])
+    _out, sf = _apply_aif_scale(
+        curve, hct=0.42, target_peak=0.0,
+        expected_range_fn=lambda: (2.5, 3.8),
+    )
+    assert sf == pytest.approx(1.087, abs=0.05)
+    assert sf <= DCE_AIF_GATE_SCALE_HARD
+
+
+# ----- Trim metric routing regression --------------------------------------
+
+def test_select_worst_for_trim_g6_a_drops_lowest_peak():
+    """Regression for the failing-gate routing bug: G6_a (G1 fail with G6
+    escape denied via amplitude ceiling) must drop the lowest-peak voxel,
+    not the lowest score. Without the fix the call site stripped '_a' and
+    routed to the score-fallback branch."""
+    metrics = [
+        {"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 14.0},
+        {"peak_mm": 1.0, "washout": 0.9, "fwhm_seconds": 14.0},
+        {"peak_mm": 3.0, "washout": 0.9, "fwhm_seconds": 14.0},
+    ]
+    # Highest score on the lowest-peak candidate to disambiguate the
+    # peak-routed branch from the score-fallback.
+    scores = [0.3, 0.9, 0.5]
+    assert _select_worst_for_trim(metrics, scores, "G6_a") == 1
+
+
+def test_select_worst_for_trim_g6_f_falls_through_to_score():
+    """G6_f / G6_g (tier or consensus failures) cannot be remediated by
+    dropping a single voxel — fall through to the score-fallback."""
+    metrics = [{"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 14.0}] * 3
+    scores = [0.9, 0.3, 0.7]
+    assert _select_worst_for_trim(metrics, scores, "G6_f") == 1
+    assert _select_worst_for_trim(metrics, scores, "G6_g") == 1

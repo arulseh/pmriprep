@@ -1255,14 +1255,33 @@ def enrich_dce_pk_map_sidecar(
     Mutates and returns ``sidecar``. Adds ``PK*`` keys from
     ``qc_metrics["pk_modeling"]``; cross-modality fields land only on
     the maps they apply to (``DSCDCECrossValCorrelation`` on ``ktrans``,
-    ``CBVNegativeFraction`` on ``vp``). Per-map ``LesionStats`` fragment
-    attached when present.
+    ``CBVNegativeFraction`` on ``vp``). AIF acceptance-gate provenance
+    (``AIFConfidence``, ``AIFG6Admitted``,
+    ``AIFUncertaintyInflationFactor``, ``AIFFwhmConfidence``,
+    ``AIFGateDecisions``) attached on every PK map sidecar so
+    downstream tools can detect reduced-confidence runs without
+    cross-referencing the resume sidecar. Per-map ``LesionStats``
+    fragment attached when present.
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         if lesion_fragment:
             sidecar["LesionStats"] = dict(lesion_fragment)
         return sidecar
     sidecar.update(_dce_pk_cosmetic_keys(qc_metrics.get("pk_modeling")))
+    aif_block = qc_metrics.get("aif_detection")
+    if isinstance(aif_block, dict):
+        if "aif_confidence" in aif_block:
+            sidecar["AIFConfidence"] = str(aif_block["aif_confidence"])
+        if "aif_g6_admitted" in aif_block:
+            sidecar["AIFG6Admitted"] = bool(aif_block["aif_g6_admitted"])
+        if "aif_uncertainty_inflation_factor" in aif_block:
+            sidecar["AIFUncertaintyInflationFactor"] = float(
+                aif_block["aif_uncertainty_inflation_factor"]
+            )
+        if "aif_fwhm_confidence" in aif_block:
+            sidecar["AIFFwhmConfidence"] = str(aif_block["aif_fwhm_confidence"])
+        if "aif_gate_decisions" in aif_block:
+            sidecar["AIFGateDecisions"] = list(aif_block["aif_gate_decisions"])
     if map_key == "ktrans":
         xval = qc_metrics.get("dsc_dce_validation")
         if isinstance(xval, dict):

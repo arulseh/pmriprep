@@ -539,3 +539,40 @@ class TestMCMCQualityFlag:
         assert len(result.ess) > 0, "ess should be populated for MCMC"
         assert "Ktrans" in result.rhat
         assert "ve" in result.rhat
+
+
+# =============================================================================
+# v0.51.0 — Per-parameter sigma inflation from upstream AIF confidence
+# =============================================================================
+
+from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
+
+
+def test_g6_sigma_inflation_dict_shape():
+    """Per-parameter inflation map covers the directly-fitted PK params
+    with the physics-expert sensitivity hierarchy (Buckley 2002 MRM
+    47:601). kep is omitted: it is derived downstream as Ktrans/ve and
+    inherits Ktrans's inflation through that derivation."""
+    expected_keys = {"Ktrans", "vp", "ve", "Fp", "PS"}
+    assert set(DCE_AIF_G6_SIGMA_INFLATION.keys()) == expected_keys
+    assert DCE_AIF_G6_SIGMA_INFLATION["Ktrans"] == 2.0
+    assert DCE_AIF_G6_SIGMA_INFLATION["vp"] == 1.5
+    # ve is decoupled from AIF peak amplitude — uninflated
+    assert DCE_AIF_G6_SIGMA_INFLATION["ve"] == 1.0
+    assert DCE_AIF_G6_SIGMA_INFLATION["Fp"] == 2.0
+    assert DCE_AIF_G6_SIGMA_INFLATION["PS"] == 2.0
+
+
+def test_compute_dce_maps_inflation_input_default():
+    """ComputeDCEMaps default: aif_uncertainty_inflation_factor = 1.0."""
+    from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+    iface = ComputeDCEMaps()
+    assert iface.inputs.aif_uncertainty_inflation_factor == 1.0
+
+
+def test_compute_dce_maps_inflation_input_g6():
+    """ComputeDCEMaps accepts G6-admitted inflation factor 2.0."""
+    from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+    iface = ComputeDCEMaps()
+    iface.inputs.aif_uncertainty_inflation_factor = 2.0
+    assert iface.inputs.aif_uncertainty_inflation_factor == 2.0

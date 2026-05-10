@@ -990,6 +990,16 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
              "BAT correction is applied only for population AIFs.",
     )
 
+    aif_uncertainty_inflation_factor = traits.Float(
+        1.0,
+        usedefault=True,
+        desc="Base multiplier on PK posterior sigma from upstream AIF "
+             "confidence (1.0 = standard AIF, 2.0 = G6-admitted reduced-"
+             "confidence AIF). Applied per-parameter via "
+             "DCE_AIF_G6_SIGMA_INFLATION map; ve is uninflated "
+             "(decoupled from AIF peak amplitude per Buckley 2002).",
+    )
+
     # Sloppy / reproducibility
     sloppy = traits.Bool(
         False,
@@ -1847,6 +1857,20 @@ class ComputeDCEMaps(BaseInterface):
         fp_std = np.zeros(spatial_shape, dtype=np.float64)
         ps_std = np.zeros(spatial_shape, dtype=np.float64)
 
+        # Per-parameter posterior sigma inflation when upstream AIF is
+        # G6-admitted (reduced confidence). Base inflation 1.0 (standard
+        # AIF) yields all 1.0x regardless of map; base 2.0 propagates
+        # the per-parameter Tofts/2CXM sensitivity hierarchy from
+        # DCE_AIF_G6_SIGMA_INFLATION (Buckley 2002 MRM 47:601).
+        from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
+        _base_inflation = float(self.inputs.aif_uncertainty_inflation_factor)
+        if _base_inflation <= 1.0 + 1e-9:
+            _sigma_factor: dict[str, float] = {
+                k: 1.0 for k in DCE_AIF_G6_SIGMA_INFLATION
+            }
+        else:
+            _sigma_factor = dict(DCE_AIF_G6_SIGMA_INFLATION)
+
         # Per-voxel indicator that vp ended at a bound in the SOFT NLLS
         # active-set path. Populated only by batched NLLS SOFT; 0 elsewhere
         # (SKIP / Bayesian fits). Emitted as a NIfTI + whole-brain
@@ -2081,17 +2105,34 @@ class ComputeDCEMaps(BaseInterface):
                 ps_map[x, y, z] = params.get("PS", 0.0)
                 e_map[x, y, z] = params.get("E", 0.0)
 
-            # Uncertainty (Bayesian only)
+            # Uncertainty (Bayesian only). Per-parameter inflation
+            # propagates AIF reduced-confidence to PK posterior sigma;
+            # ve uninflated.
             if inference != "nlls" and res["uncertainties"]:
-                ktrans_std[x, y, z] = res["uncertainties"].get("Ktrans", 0.0)
+                ktrans_std[x, y, z] = (
+                    res["uncertainties"].get("Ktrans", 0.0)
+                    * _sigma_factor.get("Ktrans", 1.0)
+                )
                 if self._has_ve(effective_model_name):
-                    ve_std[x, y, z] = res["uncertainties"].get("ve", 0.0)
+                    ve_std[x, y, z] = (
+                        res["uncertainties"].get("ve", 0.0)
+                        * _sigma_factor.get("ve", 1.0)
+                    )
                 if self._has_vp(effective_model_name):
-                    vp_std[x, y, z] = res["uncertainties"].get("vp", 0.0)
+                    vp_std[x, y, z] = (
+                        res["uncertainties"].get("vp", 0.0)
+                        * _sigma_factor.get("vp", 1.0)
+                    )
                 # 2CXM-specific: Fp and PS uncertainties
                 if effective_model_name == "2cxm":
-                    fp_std[x, y, z] = res["uncertainties"].get("Fp", 0.0)
-                    ps_std[x, y, z] = res["uncertainties"].get("PS", 0.0)
+                    fp_std[x, y, z] = (
+                        res["uncertainties"].get("Fp", 0.0)
+                        * _sigma_factor.get("Fp", 1.0)
+                    )
+                    ps_std[x, y, z] = (
+                        res["uncertainties"].get("PS", 0.0)
+                        * _sigma_factor.get("PS", 1.0)
+                    )
 
             # Fitted curve
             if save_fitted_curves and fitted_curves is not None:

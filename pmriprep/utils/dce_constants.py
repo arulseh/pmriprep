@@ -331,22 +331,101 @@ AIF_THRESHOLDS_DEGRADED: Final[AIFThresholds] = AIFThresholds(
 #: Suppressed for population-AIF fallback by construction.
 DCE_AIF_PEAK_RATIO_WARN_THRESHOLD: Final[float] = 1.5
 
-#: Multi-bump tail detection (QC-only flag). Fraction of first-pass
-#: peak (absolute) above which a post-peak local maximum is counted as
-#: a "bump." Physiologic recirculation produces 1 bump at ~30s
-#: post-peak; >1 bump indicates motion / inflow / venous mixing.
-DCE_AIF_TAIL_PEAK_FRACTION: Final[float] = 0.25
+#: Multi-bump tail detection. Fraction of first-pass peak above which a
+#: post-peak local maximum is counted as a "bump." Parker plasma late
+#: tail (post-60 s) sits at 25-30% of peak; threshold above that level
+#: requires a true anomaly above Parker's predicted decay envelope.
+DCE_AIF_TAIL_PEAK_FRACTION: Final[float] = 0.40
 
 #: Time (seconds) to skip immediately after the first-pass peak before
-#: searching for secondary maxima — avoids counting the descending
-#: shoulder of the first pass as a peak. ~half a typical first-pass
-#: FWHM; consistent across TRs from sub-second to ~6s.
-DCE_AIF_TAIL_SHOULDER_SECONDS: Final[float] = 6.0
+#: searching for secondary maxima. Skips the physiologic recirculation
+#: hump (~25-35 s post-peak per Parker 2006 second Gaussian) plus its
+#: descending shoulder (~45-60 s). True late-tail anomalies (motion,
+#: inflow, venous mixing) live beyond 60 s post-peak.
+DCE_AIF_TAIL_SHOULDER_SECONDS: Final[float] = 60.0
 
 #: Minimum time (seconds) between detected secondary peaks
 #: (~1/3 of the typical recirculation period; ``scipy.signal.find_peaks``
 #: ``distance`` parameter, converted to frames using AIF tr).
 DCE_AIF_TAIL_MIN_SEPARATION_SECONDS: Final[float] = 10.0
+
+# =============================================================================
+# DCE AIF acceptance gates (G1-G7 + G6 escape)
+# =============================================================================
+
+#: G1 — scale_aif amplitude floor. Scaling factor above this threshold
+#: triggers HARD reject; G6 escape allows up to G6_SCALE_CEILING.
+#: Parker plasma peak ~10 mM at 1.5T full-dose Gd-DTPA (Parker 2006 MRM
+#: 56:993); scale_factor is dimensionless against the dose-corrected
+#: target so the threshold is field-strength and dose independent.
+DCE_AIF_GATE_SCALE_HARD: Final[float] = 3.0
+
+#: G6 (a) — escape ceiling for amplitude floor when shape gates pass.
+#: 6x corresponds to partial-volume fill fraction of about 0.17 (1 mm
+#: caliber artery in 3.5 mm slab, off-axis); below this, surrounding
+#: tissue uptake bleed distorts AIF shape during first pass for
+#: tumor-adjacent K^trans of about 0.05 min^-1.
+DCE_AIF_GATE_SCALE_G6_CEILING: Final[float] = 6.0
+
+#: G2 — late-tail/peak ratio HARD reject threshold.
+#: Parker bi-exponential arterial plasma decays to <=0.20 by 2 min
+#: post-peak; venous mixing produces persistent late-tail above 0.40
+#: (Calamante 2003 NMR Biomed 16:467).
+DCE_AIF_GATE_LATE_TAIL_RATIO_MAX: Final[float] = 0.35
+
+#: G3 — FWHM HARD reject threshold (seconds).
+#: Assumes power injection >=2 mL/s. For hand-injection cohorts,
+#: override to ~28 s (Calamante 2003 NMR Biomed 16:467). Distal-ACA
+#: broadens FWHM by 2-4 s relative to M1 (Calamante 2010 JCBFM 30:1393).
+DCE_AIF_GATE_FWHM_MAX_SECONDS: Final[float] = 22.0
+
+#: G4 — multi-bump tail HARD reject threshold (count).
+#: Smooth Reynolds-regime arterial flow has exactly one secondary
+#: maximum (recirculation hump at ~30 s post-peak); more than 2 bumps
+#: in the late tail indicates motion, inflow, or venous mixing.
+DCE_AIF_GATE_MULTIBUMP_MAX: Final[int] = 2
+
+#: G5' — ratio_30 thresholds (post-peak frame at max(4, ceil(30/TR))).
+#: Parker bi-exponential gives ratio ~0.32 at peak+30 s; venous AIFs
+#: sit at >=0.55 (Bleeker 2009 MRM 62:96). HARD threshold leaves
+#: headroom for distal-ACA broadening, Hct correction, and
+#: recirculation pickup. WARN tier flags borderline cases for G7
+#: aggregation.
+DCE_AIF_GATE_RATIO30_HARD: Final[float] = 0.50
+DCE_AIF_GATE_RATIO30_WARN: Final[float] = 0.40
+
+#: G6 (g) — minimum voxel count and spatial consensus for amplitude-
+#: floor escape. Bilateral n>=5 OR unilateral n>=10 with >=2 distinct
+#: z-slabs provides independent-spatial-consensus rule-out of
+#: localized artifact. n>=10 is the empirical reliability floor for
+#: individual AIFs (Calamante 2010 JCBFM 30:1393).
+DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL: Final[int] = 5
+DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL: Final[int] = 10
+DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL: Final[int] = 2
+
+#: G6-admitted reduced-confidence AIF: per-parameter PK posterior sigma
+#: multiplier reflecting Tofts/2CXM AIF-peak sensitivity hierarchy
+#: (Buckley 2002 MRM 47:601). ve is uninflated because ve fits late-
+#: phase washout slope, decoupled from AIF peak amplitude. Workflow
+#: base inflation=2.0 propagates per-parameter via this map; base=1.0
+#: (standard AIF) yields all 1.0x regardless of map.
+#:
+#: kep is omitted because it is not a directly-fitted parameter; it is
+#: derived downstream as Ktrans/ve and inherits Ktrans's inflation
+#: through that derivation. Add explicit kep_std propagation here only
+#: if the pipeline begins emitting a separate kep uncertainty map.
+DCE_AIF_G6_SIGMA_INFLATION: Final[dict[str, float]] = {
+    "Ktrans": 2.0,
+    "vp": 1.5,
+    "ve": 1.0,
+    "Fp": 2.0,
+    "PS": 2.0,
+}
+
+#: Minimum candidate pool size for progressive trim acceptance.
+#: Matches DSC's MIN_AIF_CANDIDATES_ACCEPT and the existing DCE
+#: _MIN_CANDIDATES_FOR_DETECTED for cross-modality consistency.
+DCE_AIF_MIN_TRIM_POOL: Final[int] = 2
 
 
 def get_aif_thresholds(criteria: str = "strict", tr: float = 0.0) -> AIFThresholds:
