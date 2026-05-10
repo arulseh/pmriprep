@@ -744,7 +744,7 @@ def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, sessi
     """Normalize CBV to NAWM median.
 
     This is a Function node wrapper for CBV normalization.
-    Returns (None, None) when NAWM mask is not available - normalization
+    Returns ("", None) when NAWM mask is not available - normalization
     requires NAWM reference for clinically valid results.
 
     Args:
@@ -756,17 +756,23 @@ def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, sessi
         session_id: Session ID for auto-detection.
 
     Returns:
-        Tuple of (ncbv_file, normalization_factor), or (None, None) if no NAWM mask.
+        Tuple of (ncbv_file, normalization_factor). The first element is the
+        empty-string sentinel ``""`` (not ``None``) when no NAWM mask is
+        available, so the downstream ``traits.Str`` consumers
+        (``lesion_stats.ncbv_map`` / ``roi_stats.ncbv_map``) accept it
+        without TraitError. The second element is ``None`` because it feeds
+        a Function-node consumer (``_merge_qc_metrics``) that embeds the
+        value into a dict.
     """
     from pathlib import Path
 
     # Skip normalization if no NAWM mask available
     if nawm_mask_file is None:
-        return None, None
+        return "", None
 
     nawm_path = Path(nawm_mask_file)
     if not nawm_path.is_file():
-        return None, None
+        return "", None
 
     from pmriprep.utils.dsc_signal import normalize_cbv_from_files
 
@@ -795,7 +801,7 @@ def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, sessi
 def _normalize_cbf(cbf_file, brain_mask_file, derivatives_dir, subject_id, session_id, nawm_mask_file=None):  # type: ignore[no-untyped-def]
     """Normalize CBF to NAWM median (same method as CBV normalization).
 
-    Returns (None, None) when NAWM mask is not available - normalization
+    Returns ("", None) when NAWM mask is not available - normalization
     requires NAWM reference for clinically valid results.
 
     Args:
@@ -807,17 +813,19 @@ def _normalize_cbf(cbf_file, brain_mask_file, derivatives_dir, subject_id, sessi
         nawm_mask_file: Path to NAWM mask NIfTI (required for normalization).
 
     Returns:
-        Tuple of (ncbf_file, normalization_factor), or (None, None) if no NAWM mask.
+        Tuple of (ncbf_file, normalization_factor). First element is the
+        ``""`` empty-string sentinel (not ``None``) on the no-NAWM path —
+        same rationale as :func:`_normalize_cbv`.
     """
     from pathlib import Path
 
     # Skip normalization if no NAWM mask available
     if nawm_mask_file is None:
-        return None, None
+        return "", None
 
     nawm_path = Path(nawm_mask_file)
     if not nawm_path.is_file():
-        return None, None
+        return "", None
 
     from pmriprep.utils.dsc_signal import normalize_cbv_from_files
 

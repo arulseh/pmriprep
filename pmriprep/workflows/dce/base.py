@@ -1803,7 +1803,7 @@ def init_dce_preproc_wf(
         (tortuosity_corr, collect_qc, [
             ("was_corrected", "tortuosity_applied"),
         ]),
-        # out_file is truthy (path) when normalization ran, None otherwise
+        # out_file is a path (truthy) when normalization ran, "" otherwise
         (normalize_ktrans, collect_qc, [
             ("out_file", "nawm_available"),
         ]),
@@ -4279,7 +4279,10 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyp
         nawm_mask: Path to NAWM mask NIfTI file in the same space.
 
     Returns:
-        Path to normalized parameter map, or None if normalization failed.
+        Path to normalized parameter map, or "" if normalization failed.
+        Empty string (not None) is the project-wide Function-node-returns-empty
+        sentinel — downstream consumers declare ``traits.Str`` which rejects
+        ``None`` (see ``TestTransformHelpersReturnEmptyString`` for the contract).
     """
     from pathlib import Path
 
@@ -4288,13 +4291,13 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyp
     from nipype.interfaces.base import isdefined
 
     if not isdefined(nawm_mask) or nawm_mask is None:
-        return None
+        return ""
     if not isdefined(param_map) or param_map is None:
-        return None
+        return ""
     if not Path(nawm_mask).is_file():
-        return None
+        return ""
     if not Path(param_map).is_file():
-        return None
+        return ""
 
     param_img = nib.load(param_map)
     nawm_img = nib.load(nawm_mask)
@@ -4304,17 +4307,17 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyp
 
     # Check shapes match
     if param_data.shape[:3] != nawm_data.shape[:3]:
-        return None
+        return ""
 
     nawm_values = param_data[nawm_data]
     nawm_values = nawm_values[np.isfinite(nawm_values) & (nawm_values > 0)]
     if len(nawm_values) < 10:
         # Not enough valid NAWM voxels
-        return None
+        return ""
 
     nawm_median = float(np.median(nawm_values))
     if nawm_median <= 0:
-        return None
+        return ""
 
     # Normalize
     normalized = param_data / nawm_median

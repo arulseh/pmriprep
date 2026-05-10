@@ -606,6 +606,93 @@ class TestTransformHelpersReturnEmptyString:
         ) == ""
 
 
+class TestNormalizeHelpersReturnEmptyString:
+    """Contract: NAWM normalization Function nodes return ``""`` (not ``None``).
+
+    These helpers feed ``traits.Str`` consumers in DCE/DSC lesion-stats
+    (``nktrans_map``, ``niauc60_map``, ``ncbv_map``, ``ncbf_map``). Returning
+    ``None`` triggers a TraitError that under the MultiProc plugin manifests
+    as a silent dispatch hang (no work-dir created, no log line) — the same
+    failure mode :class:`TestCombineTumorMasksReturnsEmptyString` documents.
+    """
+
+    def test_normalize_by_nawm_no_inputs(self) -> None:
+        from pmriprep.workflows.dce.base import _normalize_by_nawm
+
+        assert _normalize_by_nawm(param_map=None, nawm_mask=None) == ""
+
+    def test_normalize_by_nawm_nonexistent_nawm(self) -> None:
+        from pmriprep.workflows.dce.base import _normalize_by_nawm
+
+        assert _normalize_by_nawm(
+            param_map="/nonexistent/ktrans.nii.gz",
+            nawm_mask="/nonexistent/nawm.nii.gz",
+        ) == ""
+
+    def test_normalize_cbv_no_nawm(self) -> None:
+        from pmriprep.workflows.dsc.base import _normalize_cbv
+
+        assert _normalize_cbv(
+            cbv_file="/nonexistent/cbv.nii.gz",
+            brain_mask_file=None,
+            derivatives_dir="/tmp",
+            subject_id="0081",
+            session_id="0001",
+            nawm_mask_file=None,
+        ) == ("", None)
+
+    def test_normalize_cbf_no_nawm(self) -> None:
+        from pmriprep.workflows.dsc.base import _normalize_cbf
+
+        assert _normalize_cbf(
+            cbf_file="/nonexistent/cbf.nii.gz",
+            brain_mask_file=None,
+            derivatives_dir="/tmp",
+            subject_id="0081",
+            session_id="0001",
+            nawm_mask_file=None,
+        ) == ("", None)
+
+
+class TestLesionStatsAcceptsEmptyMapTrait:
+    """Dispatch-time invariant: setting ``""`` on a normalized-map trait must not
+    raise TraitError.
+
+    The plain pure-function tests above lock the producer contract; this test
+    locks the consumer contract. If a future refactor re-widens
+    :func:`_normalize_by_nawm` (or its DSC siblings) to return ``None`` while
+    the consumer trait is still strict ``traits.Str``, the silent MultiProc
+    hang documented in 0.50.4's commit message resurfaces. This guards
+    against that regression.
+    """
+
+    def test_dce_lesion_stats_accepts_empty_string_for_normalized_maps(self) -> None:
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        iface = DCELesionStats()
+        iface.inputs.subject_id = "0081"
+        iface.inputs.session_id = "0001"
+        # Should not raise TraitError — these are the values produced by
+        # _normalize_by_nawm on the no-NAWM path.
+        iface.inputs.nktrans_map = ""
+        iface.inputs.niauc60_map = ""
+        assert iface.inputs.nktrans_map == ""
+        assert iface.inputs.niauc60_map == ""
+
+    def test_dsc_lesion_stats_accepts_empty_string_for_normalized_maps(self) -> None:
+        from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+
+        iface = DSCLesionStats()
+        iface.inputs.subject_id = "0081"
+        iface.inputs.session_id = "0001"
+        # Should not raise TraitError — these are the values produced by
+        # _normalize_cbv / _normalize_cbf on the no-NAWM path.
+        iface.inputs.ncbv_map = ""
+        iface.inputs.ncbf_map = ""
+        assert iface.inputs.ncbv_map == ""
+        assert iface.inputs.ncbf_map == ""
+
+
 class TestMapStatisticsHistogramMetrics:
     """Phase 2a: p98/p99/skewness/kurtosis/entropy + compute_advanced gating."""
 
