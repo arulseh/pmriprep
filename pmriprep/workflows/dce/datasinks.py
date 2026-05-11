@@ -202,6 +202,7 @@ def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
     provenance_dict=None,
     preflight_warnings=None,
     presence_warnings=None,
+    config_dict=None,
 ):
     """Compose the ``desc-dcePreproc_dce.json`` sidecar with flat-key QC.
 
@@ -211,10 +212,14 @@ def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
     attaches QC recommendation/warnings flat keys via
     ``enrich_recommendation_keys`` so the HTML aggregator can read the
     overall recommendation banner directly from this anchor sidecar.
+    ``PipelineQC`` and ``PipelineConfiguration`` nest the full merged
+    QC envelope and processing config for the HTML aggregator.
     """
     from pmriprep.utils.sidecar_builders import (
+        build_provenance_block,
         enrich_dce_preproc_sidecar,
         enrich_recommendation_keys,
+        filter_pipeline_qc,
     )
 
     out = dict(base)
@@ -237,46 +242,12 @@ def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
             list(presence_warnings) if presence_warnings else None
         ),
     )
+    if isinstance(qc_metrics, dict):
+        out["PipelineQC"] = filter_pipeline_qc(qc_metrics)
+    if isinstance(config_dict, dict):
+        out["PipelineConfiguration"] = build_provenance_block(config_dict)
     return out
 
-
-def _build_dce_resume_meta(  # type: ignore[no-untyped-def]
-    qc_metrics=None,
-):
-    """Compose the verbatim ``desc-dceResume_pmriprep.json`` sidecar.
-
-    Mirror of the DSC resume sidecar shipped in v0.45.0. Stores the
-    full producer-shape ``qc_metrics`` envelope verbatim so the HTML
-    aggregator can recover the nested dict shape its boilerplate
-    generators expect without translating from flat per-image sidecar
-    keys.
-    """
-    from pmriprep.utils.sidecar_builders import build_dce_resume_sidecar
-
-    return build_dce_resume_sidecar(
-        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
-    )
-
-
-def _write_dce_resume_sidecar(  # type: ignore[no-untyped-def]
-    output_dir, subject, session, meta_dict,
-):
-    """Write the DCE resume-only JSON sidecar (no companion data file)."""
-    import json as _json
-    from pathlib import Path
-
-    out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
-    if session:
-        out_root = out_root / f"ses-{session}"
-    out_root = out_root / "perf"
-    out_root.mkdir(parents=True, exist_ok=True)
-
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
-    out_path = out_root / f"{prefix}_desc-dceResume_pmriprep.json"
-    out_path.write_text(_json.dumps(meta_dict, indent=2, default=str))
-    return str(out_path)
 
 
 def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
@@ -1000,6 +971,7 @@ def init_dce_datasinks_wf(
                 "roi_mask_dce", "roi_stats_json",
                 # Sidecar drivers
                 "qc_metrics", "provenance_dict", "preflight_warnings",
+                "config_dict",
                 # Figures
                 "brain_mask_filmstrip", "motion_qc_plot",
                 "aif_curve_plot", "aif_location_plot", "aif_candidates_plot",
@@ -1331,7 +1303,7 @@ def init_dce_datasinks_wf(
                 input_names=[
                     "base", "description", "qc_metrics",
                     "provenance_dict", "preflight_warnings",
-                    "presence_warnings",
+                    "presence_warnings", "config_dict",
                 ],
                 output_names=["meta_dict"],
                 function=_build_dce_preproc_meta,
@@ -1346,6 +1318,7 @@ def init_dce_datasinks_wf(
                 ("qc_metrics", "qc_metrics"),
                 ("provenance_dict", "provenance_dict"),
                 ("preflight_warnings", "preflight_warnings"),
+                ("config_dict", "config_dict"),
             ]),
         ])
         moco_sink = pe.Node(
@@ -1376,39 +1349,6 @@ def init_dce_datasinks_wf(
         ])
         sink_outputs.append((moco_sink, "out_file"))
 
-        # Pipeline-internal resume sidecar (no companion data file)
-        # mirroring the DSC resume sidecar. Carries the verbatim
-        # producer-shape qc_metrics envelope so the HTML aggregator can
-        # recover the nested-dict shape without translating per-image
-        # flat keys.
-        resume_meta = pe.Node(
-            niu.Function(
-                input_names=["qc_metrics"],
-                output_names=["meta_dict"],
-                function=_build_dce_resume_meta,
-            ),
-            name="dce_resume_meta",
-        )
-        workflow.connect([
-            (inputnode, resume_meta, [("qc_metrics", "qc_metrics")]),
-        ])
-        resume_sink = pe.Node(
-            niu.Function(
-                input_names=["output_dir", "subject", "session", "meta_dict"],
-                output_names=["out_file"],
-                function=_write_dce_resume_sidecar,
-            ),
-            name="dce_resume_sink",
-        )
-        workflow.connect([
-            (inputnode, resume_sink, [
-                ("output_dir", "output_dir"),
-                ("subject_id", "subject"),
-                ("session_id", "session"),
-            ]),
-            (resume_meta, resume_sink, [("meta_dict", "meta_dict")]),
-        ])
-        sink_outputs.append((resume_sink, "out_file"))
     if "dce_mean" in present:
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,

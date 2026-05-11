@@ -118,6 +118,7 @@ def test_tumor_seg_datasinks_smoke(
         ses / "sub-01_ses-0001_space-anat_desc-lesionStats.json",
         ses / "sub-01_ses-0001_desc-tumorsegQC_quality.json",
         anat / "sub-01_ses-0001_desc-tumorClinicalContext.json",
+        anat / "sub-01_ses-0001_desc-tumorResume_pmriprep.json",
     ]
     for p in legacy:
         assert not p.exists(), f"Legacy orphan should be gone: {p.name}"
@@ -161,12 +162,7 @@ def test_tumor_seg_sidecar_sources_populated(
     wf.run()
 
     anat = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    # Pipeline-internal sidecars without a NIfTI companion (PMRIPrepInternal=True)
-    # do not carry image provenance fields; skip them here.
-    sidecars = [
-        p for p in sorted(anat.glob("*.json"))
-        if "desc-tumorResume_pmriprep" not in p.name
-    ]
+    sidecars = sorted(anat.glob("*.json"))
     assert sidecars, "No sidecars written"
 
     for sc in sidecars:

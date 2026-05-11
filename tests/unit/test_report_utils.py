@@ -264,39 +264,24 @@ class TestRunEntityHandling:
 
 
 # ---------------------------------------------------------------------------
-# DSC loader: prefer canonical desc-dsc_qc.json over resume sidecar
+# DSC loader: reads PipelineQC from anchor sidecar
 # ---------------------------------------------------------------------------
 
 
 class TestDscLoader:
-    """`_load_pipeline_sidecars("dsc", ...)` must read the canonical
-    full-envelope ``desc-dsc_qc.json`` so the report context exposes
-    ``deconvolution / registration / normalization_factor / config``
-    blocks. The legacy resume sidecar
-    (``aif_qc + preload_qc + preprocessing_stats`` only) is the
-    fallback for partial-failure runs.
-    """
-
     PREFIX = "sub-09_ses-01"
 
     def _make_perf(self, tmp_path) -> "Path":  # noqa: F821
         perf = tmp_path / "perf"
         perf.mkdir(parents=True, exist_ok=True)
-        # The presence-probe anchor is needed for _load_pipeline_sidecars
-        # to even attempt the DSC branch.
-        (perf / f"{self.PREFIX}_desc-dscPreproc_dsc.json").write_text("{}")
         return tmp_path
 
-    def test_dsc_loader_reads_canonical_qc_json(self, tmp_path) -> None:
-        """When `desc-dsc_qc.json` is present, every Metrics block
-        surfaces in the returned qc_metrics dict (including the four
-        currently-missing blocks: deconvolution / registration /
-        normalization_factor / config)."""
+    def test_dsc_loader_reads_pipeline_qc(self, tmp_path) -> None:
         import json as _json
         from pmriprep.utils.report_utils import _load_pipeline_sidecars
         ses = self._make_perf(tmp_path)
-        (ses / "perf" / f"{self.PREFIX}_desc-dsc_qc.json").write_text(_json.dumps({
-            "Metrics": {
+        (ses / "perf" / f"{self.PREFIX}_desc-dscPreproc_dsc.json").write_text(_json.dumps({
+            "PipelineQC": {
                 "preprocessing": {"motion_status": "GOOD"},
                 "preload": {"percent_leaky_voxels": 5},
                 "aif_detection": {"detection_method": "atlas_relaxed"},
@@ -311,53 +296,13 @@ class TestDscLoader:
         assert out.get("preload", {}).get("percent_leaky_voxels") == 5
         assert out.get("aif_detection", {}).get("detection_method") == "atlas_relaxed"
         assert out.get("deconvolution", {}).get("method") == "oSVD"
-        assert out.get("deconvolution", {}).get("qc_voxel") == "[1,2,3]"
-        assert out.get("registration", {}).get("registration_method") == "flirt"
         assert out.get("normalization_factor") == 1.234
-        assert out.get("config", {}).get("aif_source") == "auto"
 
-    def test_dsc_loader_falls_back_to_resume_when_qc_json_missing(
-        self, tmp_path,
-    ) -> None:
-        """When `desc-dsc_qc.json` is absent (e.g. partial-failure run
-        that wrote the resume but not the canonical QC), the loader
-        falls back to the resume sidecar's flat keys mapped to the
-        canonical envelope shape."""
+    def test_dsc_loader_empty_pipeline_qc(self, tmp_path) -> None:
         import json as _json
         from pmriprep.utils.report_utils import _load_pipeline_sidecars
         ses = self._make_perf(tmp_path)
-        (ses / "perf" / f"{self.PREFIX}_desc-dscResume_pmriprep.json").write_text(
-            _json.dumps({
-                "aif_qc": {"detection_method": "synthetic"},
-                "preload_qc": {"percent_leaky_voxels": 99},
-                "preprocessing_stats": {"motion_status": "POOR"},
-            })
-        )
+        (ses / "perf" / f"{self.PREFIX}_desc-dscPreproc_dsc.json").write_text(_json.dumps({}))
         out = _load_pipeline_sidecars(ses, self.PREFIX, "dsc")
-        assert out.get("aif_detection", {}).get("detection_method") == "synthetic"
-        assert out.get("preload", {}).get("percent_leaky_voxels") == 99
-        assert out.get("preprocessing", {}).get("motion_status") == "POOR"
-        # Deconvolution etc. NOT in resume — should be absent
+        assert "preprocessing" not in out
         assert "deconvolution" not in out
-
-    def test_dsc_loader_prefers_qc_json_over_resume(self, tmp_path) -> None:
-        """When BOTH files are present, the canonical qc_json wins
-        (so the resume's stale flat keys can't shadow new metrics)."""
-        import json as _json
-        from pmriprep.utils.report_utils import _load_pipeline_sidecars
-        ses = self._make_perf(tmp_path)
-        (ses / "perf" / f"{self.PREFIX}_desc-dsc_qc.json").write_text(_json.dumps({
-            "Metrics": {
-                "preprocessing": {"motion_status": "FROM_QC_JSON"},
-                "deconvolution": {"method": "oSVD"},
-            },
-        }))
-        (ses / "perf" / f"{self.PREFIX}_desc-dscResume_pmriprep.json").write_text(
-            _json.dumps({
-                "preprocessing_stats": {"motion_status": "FROM_RESUME"},
-            })
-        )
-        out = _load_pipeline_sidecars(ses, self.PREFIX, "dsc")
-        # Canonical qc_json wins
-        assert out.get("preprocessing", {}).get("motion_status") == "FROM_QC_JSON"
-        assert out.get("deconvolution", {}).get("method") == "oSVD"

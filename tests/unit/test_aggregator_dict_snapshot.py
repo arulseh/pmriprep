@@ -25,11 +25,10 @@ def _write(path: Path, payload: dict) -> None:
 
 
 def test_load_pipeline_sidecars_dsc(tmp_path: Path) -> None:
-    """DSC: anchor QC* keys + resume aif_qc/preload_qc/preprocessing_stats."""
+    """DSC: anchor PipelineQC + QC* flat keys."""
     ses = tmp_path / "pmriprep" / "sub-01" / "ses-0001"
     prefix = "sub-01_ses-0001"
 
-    # Anchor sidecar with QC* flat keys
     _write(
         ses / "perf" / f"{prefix}_desc-dscPreproc_dsc.json",
         {
@@ -39,26 +38,19 @@ def test_load_pipeline_sidecars_dsc(tmp_path: Path) -> None:
             "QCWarnings": ["Brain mask in DSC space not available"],
             "QCProvenanceWarnings": ["DSC preload auto-detected"],
             "QCAcquisitionWarnings": ["AIF fell back to template"],
-        },
-    )
-    # Resume sidecar with verbatim producer-shape dicts
-    _write(
-        ses / "perf" / f"{prefix}_desc-dscResume_pmriprep.json",
-        {
-            "PMRIPrepInternal": True,
-            "aif_qc": {"detection_method": "atlas_strict", "quality_score": 0.8},
-            "preload_qc": {"k2_method": "bsw", "preload_classification": "none"},
-            "preprocessing_stats": {"fd_mean": 0.12, "n_volumes": 60},
+            "PipelineQC": {
+                "aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.8},
+                "preload": {"k2_method": "bsw", "preload_classification": "none"},
+                "preprocessing": {"fd_mean": 0.12, "n_volumes": 60},
+            },
         },
     )
 
     out = _load_pipeline_sidecars(ses, prefix, "dsc")
 
-    # Resume content surfaces under the legacy nested top-level keys
     assert out["aif_detection"]["detection_method"] == "atlas_strict"
     assert out["preload"]["k2_method"] == "bsw"
     assert out["preprocessing"]["fd_mean"] == 0.12
-    # Anchor QC* keys translate back to the legacy nested shape
     assert out["recommendation"]["action"] == "review"
     assert out["recommendation"]["reason"] == "AIF marginal"
     assert out["warnings"] == ["Brain mask in DSC space not available"]
@@ -67,7 +59,7 @@ def test_load_pipeline_sidecars_dsc(tmp_path: Path) -> None:
 
 
 def test_load_pipeline_sidecars_dce(tmp_path: Path) -> None:
-    """DCE: anchor QC* keys + resume qc_metrics envelope verbatim."""
+    """DCE: anchor PipelineQC + QC* flat keys."""
     ses = tmp_path / "pmriprep" / "sub-02" / "ses-0001"
     prefix = "sub-02_ses-0001"
 
@@ -77,13 +69,7 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path) -> None:
             "QCRecommendationAction": "include",
             "QCRecommendationReason": "AIF good",
             "QCWarnings": ["NAWM mask in DCE space not available"],
-        },
-    )
-    _write(
-        ses / "perf" / f"{prefix}_desc-dceResume_pmriprep.json",
-        {
-            "PMRIPrepInternal": True,
-            "qc_metrics": {
+            "PipelineQC": {
                 "t1_mapping": {"method": "hybrid", "b1_correction": "afi"},
                 "pk_modeling": {"model": "tofts", "qc_voxel_rsquared": 0.85},
                 "tortuosity_applied": False,
@@ -242,20 +228,15 @@ def test_load_pipeline_sidecars_anchor_without_qc_keys(tmp_path: Path) -> None:
     ses = tmp_path / "pmriprep" / "sub-05" / "ses-0001"
     prefix = "sub-05_ses-0001"
 
-    # Anchor with provenance fields only (no QC* keys at all)
+    # Anchor with provenance fields only (no PipelineQC or QC* keys)
     _write(
         ses / "perf" / f"{prefix}_desc-dscPreproc_dsc.json",
         {"Description": "x", "SkullStripped": True},
     )
-    # Empty resume sidecar
-    _write(
-        ses / "perf" / f"{prefix}_desc-dscResume_pmriprep.json",
-        {"PMRIPrepInternal": True},
-    )
 
     out = _load_pipeline_sidecars(ses, prefix, "dsc")
     assert out == {}, (
-        "Loader should return empty dict when no QC* keys and no resume content "
+        "Loader should return empty dict when no PipelineQC or QC* keys "
         f"are present; got {out!r}"
     )
 

@@ -6,68 +6,11 @@ import json
 import logging
 import platform
 from pathlib import Path
-from typing import Any, Dict, Final, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import pmriprep
 
 logger = logging.getLogger(__name__)
-
-_DCE_AIF_QC_USER_FIELDS: Final[frozenset[str]] = frozenset({
-    "detection_method",
-    "aif_source",
-    "aif_confidence",
-    "aif_status",
-    "quality_score",
-    "atlas_tier_used",
-    "n_aif_voxels_selected",
-    "n_aif_voxels_filtered_out",
-    "hemisphere_coverage",
-    "peak_mm_mean",
-    "fwhm_seconds_mean",
-    "cnr_mean",
-    "washout_mean",
-    "final_peak_mm",
-    "final_fwhm_seconds",
-    "final_auc",
-    "final_washout",
-    "scaling_factor",
-    "peak_amplitude_ratio",
-    "aif_ttp_frame",
-    "tissue_ttp_frame",
-    "is_likely_venous",
-    "blood_t1_seconds",
-    "field_strength_t",
-    "hematocrit",
-    "baseline_frames",
-    "aif_uncertainty_inflation_factor",
-})
-
-_DSC_AIF_QC_USER_FIELDS: Final[frozenset[str]] = frozenset({
-    "detection_method",
-    "quality_score",
-    "aif_quality",
-    "n_aif_voxels_selected",
-    "n_aif_voxels_available",
-    "hemisphere_coverage",
-    "aif_metrics",
-    "arrival_time_seconds",
-    "n_baseline_frames",
-    "cascade_final_level",
-    "cascade_downgraded",
-    "gamma_fit_applied",
-    "gamma_fit_mode",
-    "gamma_fit_r_squared",
-    "gamma_recirculation_removed",
-    "synthetic",
-    "synthetic_aif_warnings",
-    "cbv_auc_denominator_is_synthetic",
-})
-
-_DCE_AIF_RESUME_FIELDS: Final[frozenset[str]] = _DCE_AIF_QC_USER_FIELDS | frozenset({
-    "aif_fwhm_confidence",
-    "aif_gate_decisions",
-})
-
 
 def get_software_versions() -> Dict[str, str]:
     """Get versions of key software dependencies.
@@ -219,81 +162,6 @@ def write_provenance_json(
 
     return output_path
 
-
-def write_modality_provenance(
-    modality: str,
-    qc_metrics: Optional[Dict[str, Any]],
-    derivatives_dir: str,
-    subject_id: str,
-    session_id: Optional[str],
-    config_dict: Optional[Dict[str, Any]],
-    source_file: Optional[str],
-) -> tuple[str, str]:
-    """Write QC JSON and provenance JSON for a perfusion modality.
-
-    Shared implementation for DSC and DCE pipelines. Writes two files
-    into the perf/ subdirectory of the BIDS-Derivatives output:
-      - ``desc-{modality}_qc.json`` — comprehensive QC metrics
-      - ``desc-{modality}_provenance.json`` — processing config and versions
-
-    Args:
-        modality: Pipeline modality identifier (``"dsc"`` or ``"dce"``).
-        qc_metrics: Merged QC metrics dictionary from all pipeline steps.
-        derivatives_dir: Path to BIDS derivatives directory.
-        subject_id: Subject ID (without ``sub-`` prefix).
-        session_id: Session ID (without ``ses-`` prefix), or ``None``.
-        config_dict: Processing config as a dictionary.
-        source_file: Path to the source perfusion file.
-
-    Returns:
-        Tuple of ``(qc_json_path, provenance_json_path)``.
-    """
-    from pmriprep.utils.outputs import write_qc_json
-
-    sub_dir = f"sub-{subject_id}"
-    ses_part = f"ses-{session_id}" if session_id else ""
-    if ses_part:
-        out_dir = Path(derivatives_dir) / "pmriprep" / sub_dir / ses_part / "perf"
-    else:
-        out_dir = Path(derivatives_dir) / "pmriprep" / sub_dir / "perf"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    filtered_metrics = copy.deepcopy(qc_metrics) if qc_metrics else {}
-    aif_block = filtered_metrics.get("aif_detection")
-    if isinstance(aif_block, dict):
-        user_fields = (
-            _DCE_AIF_QC_USER_FIELDS if modality == "dce"
-            else _DSC_AIF_QC_USER_FIELDS
-        )
-        filtered_metrics["aif_detection"] = {
-            k: v for k, v in aif_block.items() if k in user_fields
-        }
-
-    qc_path = out_dir / f"{sub_dir}{'_' + ses_part if ses_part else ''}_desc-{modality}_qc.json"
-    qc_json_path = str(write_qc_json(
-        output_path=qc_path,
-        metrics=filtered_metrics,
-        subject=subject_id,
-        session=session_id,
-        pipeline_step=modality,
-    ))
-
-    descriptions = {
-        "dsc": "DSC perfusion pipeline (PMRIPrep)",
-        "dce": "DCE perfusion pipeline (PMRIPrep)",
-    }
-    provenance = create_provenance_dict(
-        source_files=[source_file] if source_file else None,
-        processing_description=descriptions.get(modality, f"{modality} pipeline (PMRIPrep)"),
-        config_used=config_dict if config_dict else None,
-    )
-    prov_path = out_dir / f"{sub_dir}{'_' + ses_part if ses_part else ''}_desc-{modality}_provenance.json"
-    prov_json_path = str(write_provenance_json(
-        output_path=prov_path,
-        provenance=provenance,
-    ))
-
-    return qc_json_path, prov_json_path
 
 
 def get_bids_derivative_provenance(

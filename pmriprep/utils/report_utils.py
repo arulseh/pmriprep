@@ -825,16 +825,6 @@ def _resolve_bids_anchor(
     )
     return matches[0] if matches else (ses_dir / glob_pattern)
 
-# Pipeline-internal resume sidecars carrying the verbatim producer-shape
-# qc_metrics envelope. Used by the HTML aggregator to recover the
-# nested-dict shape boilerplate generators expect, mirroring the
-# DSC --skip-dsc round-trip pattern.
-_PIPELINE_RESUME_SIDECARS: dict[str, str] = {
-    "dsc": "perf/{prefix}_desc-dscResume_pmriprep.json",
-    "dce": "perf/{prefix}_desc-dceResume_pmriprep.json",
-    "tumor_seg": "anat/{prefix}_desc-tumorResume_pmriprep.json",
-}
-
 
 def figure_filename(
     subject_id: str,
@@ -1042,51 +1032,13 @@ def _load_pipeline_sidecars(
 
     qc_metrics: dict[str, Any] = {}
 
-    resume_pattern = _PIPELINE_RESUME_SIDECARS.get(pipeline)
-    if pipeline == "dsc":
-        # The canonical full-envelope sidecar is desc-dsc_qc.json
-        # (written by write_perfusion_qc_and_provenance). Resume sidecar
-        # only carries flat aif_qc/preload_qc/preprocessing_stats and is
-        # missing deconvolution/registration/normalization_factor/config —
-        # which two DSC report sub-sections (Example Voxel Fit, DSC
-        # Perfusion Maps) gate on. Prefer the canonical sidecar.
-        qc_path = (
-            ses_dir / "perf" / f"{prefix}_desc-dsc_qc.json"
-        )
-        qc_doc = _read_json_safe(qc_path)
-        metrics = qc_doc.get("Metrics") if isinstance(qc_doc, dict) else None
-        if isinstance(metrics, dict):
-            qc_metrics.update(dict(metrics))
-        elif resume_pattern:
-            # Fallback for partial-failure runs where desc-dsc_qc.json
-            # never landed but the resume sidecar did. Both files are
-            # written every successful run today; resume is the
-            # intermediate that backs --skip-dsc round-trips.
-            resume_path = ses_dir / resume_pattern.format(prefix=prefix)
-            resume = _read_json_safe(resume_path)
-            aif_qc = resume.get("aif_qc")
-            if isinstance(aif_qc, dict):
-                qc_metrics["aif_detection"] = dict(aif_qc)
-            preload = resume.get("preload_qc")
-            if isinstance(preload, dict):
-                qc_metrics["preload"] = dict(preload)
-            preproc = resume.get("preprocessing_stats")
-            if isinstance(preproc, dict):
-                qc_metrics["preprocessing"] = dict(preproc)
-    elif resume_pattern:
-        resume_path = ses_dir / resume_pattern.format(prefix=prefix)
-        resume = _read_json_safe(resume_path)
-        if pipeline == "dce":
-            # DCE resume stores the full producer-shape envelope verbatim.
-            envelope = resume.get("qc_metrics")
-            if isinstance(envelope, dict):
-                qc_metrics.update(dict(envelope))
-        elif pipeline == "tumor_seg":
-            # Tumor-seg resume carries the same envelope as DCE
-            # (preprocessing / segmentation / nawm blocks).
-            envelope = resume.get("qc_metrics")
-            if isinstance(envelope, dict):
-                qc_metrics.update(dict(envelope))
+    pqc = anchor.get("PipelineQC")
+    if isinstance(pqc, dict):
+        qc_metrics.update(pqc)
+    elif pipeline == "tumor_seg":
+        tsqc = anchor.get("TumorSegQC")
+        if isinstance(tsqc, dict):
+            qc_metrics.update(tsqc)
 
     if pipeline == "anat":
         qc_metrics.update(_anat_nested_from_sidecars(ses_dir, prefix, anchor))

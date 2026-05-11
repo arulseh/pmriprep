@@ -2246,31 +2246,6 @@ def init_dce_preproc_wf(
         if isinstance(v, Path):
             config_dict[k] = str(v)
 
-    write_dce_provenance = pe.Node(
-        niu.Function(
-            input_names=[
-                "qc_metrics",
-                "derivatives_dir",
-                "subject_id",
-                "session_id",
-                "config_dict",
-                "source_file",
-            ],
-            output_names=["qc_json_path", "provenance_json_path"],
-            function=_write_dce_pipeline_provenance,
-        ),
-        name="write_dce_provenance",
-    )
-    write_dce_provenance.inputs.derivatives_dir = str(output_dir)
-    write_dce_provenance.inputs.subject_id = subject_id
-    write_dce_provenance.inputs.session_id = session_id
-    write_dce_provenance.inputs.config_dict = config_dict
-
-    workflow.connect([
-        (collect_qc, write_dce_provenance, [("qc_metrics", "qc_metrics")]),
-        (inputnode, write_dce_provenance, [("dce_file", "source_file")]),
-    ])
-
     return workflow
 
 
@@ -2278,27 +2253,6 @@ def init_dce_preproc_wf(
 # Helper Functions for Function Nodes
 # =============================================================================
 
-
-def _write_dce_pipeline_provenance(  # type: ignore[no-untyped-def]
-    qc_metrics,
-    derivatives_dir,
-    subject_id,
-    session_id,
-    config_dict,
-    source_file,
-):
-    """Write DCE QC JSON and provenance JSON to derivatives directory."""
-    from pmriprep.utils.provenance import write_modality_provenance
-
-    return write_modality_provenance(
-        modality="dce",
-        qc_metrics=qc_metrics,
-        derivatives_dir=derivatives_dir,
-        subject_id=subject_id,
-        session_id=session_id,
-        config_dict=config_dict,
-        source_file=source_file,
-    )
 
 
 def _transform_mask_to_dce(  # type: ignore[no-untyped-def]

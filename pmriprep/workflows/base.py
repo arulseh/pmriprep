@@ -5,6 +5,7 @@ components (anatomical, tumor segmentation, DSC, DCE) based on available data
 and user-specified skip flags.
 """
 
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 import logging
@@ -721,6 +722,7 @@ def _find_previous_dsc_outputs(
     output_dir: Path,
     subject_id: str,
     session_id: Optional[str],
+    work_dir: Optional[Path] = None,
 ) -> dict[str, Optional[str]]:
     """Find previously-computed DSC outputs in the derivatives directory.
 
@@ -731,10 +733,13 @@ def _find_previous_dsc_outputs(
         output_dir: Path to output derivatives directory.
         subject_id: BIDS subject ID (without 'sub-' prefix).
         session_id: BIDS session ID (without 'ses-' prefix), or None.
+        work_dir: Path to Nipype work directory. When provided, the DSC
+            resume checkpoint (``dsc_resume.json``) is read from here to
+            recover AIF/preload/preprocessing QC dicts for DCE handoff.
 
     Returns:
-        Dict with keys: rel_cbv_map, dsc_to_t1w_xfm, aif_qc, preload_qc, preprocessing_stats.
-        Values are file paths (str) or None if not found.
+        Dict with keys: rel_cbv_map, ncbv_map, dsc_to_t1w_xfm (str paths
+        or None), aif_qc, preload_qc, preprocessing_stats (dict or None).
     """
     outputs: dict[str, Optional[str]] = {
         "rel_cbv_map": None,
@@ -749,9 +754,6 @@ def _find_previous_dsc_outputs(
     dsc_dir = output_dir / "pmriprep" / f"sub-{subject_id}"
     if ses_label:
         dsc_dir = dsc_dir / ses_label
-
-    if not dsc_dir.exists():
-        return outputs
 
     # AUC-based CBV map (primary); fall back to deconv CBV for older outputs
     perf_dir = dsc_dir / "perf"
@@ -778,18 +780,13 @@ def _find_previous_dsc_outputs(
         for f in anat_dir.glob("*from-dscref_to-T1w*_xfm.mat"):
             outputs["dsc_to_t1w_xfm"] = str(f)
 
-    # AIF / preload / preprocessing QC from the pipeline-internal resume
-    # sidecar at perf/. Carries verbatim producer-shape dicts so the
-    # downstream consumers (PK setup + dsc_cbv_constraint) receive the
-    # same dict structure they would on the in-process DSC→DCE path.
-    prefix = f"sub-{subject_id}"
-    if ses_label:
-        prefix += f"_{ses_label}"
-    if perf_dir.exists():
-        resume_json = perf_dir / f"{prefix}_desc-dscResume_pmriprep.json"
+    if work_dir is not None:
+        import json
+
+        wf_name = f"pmriprep_single_subject_{subject_id}_wf"
+        resume_json = Path(work_dir) / wf_name / "dsc_resume.json"
         if resume_json.exists():
             try:
-                import json
                 with open(resume_json) as fh:
                     data = json.load(fh)
             except Exception:
@@ -801,6 +798,11 @@ def _find_previous_dsc_outputs(
                     outputs["preload_qc"] = data["preload_qc"]
                 if isinstance(data.get("preprocessing_stats"), dict):
                     outputs["preprocessing_stats"] = data["preprocessing_stats"]
+        else:
+            logging.getLogger("pmriprep.workflows").warning(
+                "DSC resume checkpoint not found in work directory — "
+                "AIF/preload/preprocessing QC will not be available for DCE.",
+            )
 
     return outputs
 
@@ -2030,6 +2032,12 @@ def init_pmriprep_wf(
             present_inputs=dsc_present,
             has_smoothing=dsc_config.smooth_fwhm > 0,
         )
+        _dsc_cfg = dataclasses.asdict(dsc_config)
+        for _k, _v in _dsc_cfg.items():
+            if isinstance(_v, Path):
+                _dsc_cfg[_k] = str(_v)
+        dsc_datasinks_wf.inputs.inputnode.config_dict = _dsc_cfg
+        dsc_datasinks_wf.inputs.inputnode.work_dir = str(work_dir)
         if dsc_provenance:
             dsc_datasinks_wf.inputs.inputnode.provenance_dict = dsc_provenance
         if dsc_preflight_warnings:
@@ -2846,6 +2854,7 @@ def init_pmriprep_wf(
             # DSC skipped but DCE needs CBV: look for previous DSC outputs
             prev_dsc = _find_previous_dsc_outputs(
                 Path(output_dir), subject_id, session_id,
+                work_dir=Path(work_dir) if work_dir else None,
             )
             if prev_dsc["rel_cbv_map"] and prev_dsc["dsc_to_t1w_xfm"]:
                 dce_wf.inputs.inputnode.dsc_cbv_file = prev_dsc["rel_cbv_map"]
@@ -3034,6 +3043,11 @@ def init_pmriprep_wf(
             present_inputs=dce_present,
             has_smoothing=dce_config.smooth_fwhm > 0,
         )
+        _dce_cfg = dataclasses.asdict(dce_config)
+        for _k, _v in _dce_cfg.items():
+            if isinstance(_v, Path):
+                _dce_cfg[_k] = str(_v)
+        dce_datasinks_wf.inputs.inputnode.config_dict = _dce_cfg
         if dce_provenance:
             dce_datasinks_wf.inputs.inputnode.provenance_dict = dce_provenance
         if dce_preflight_warnings:

@@ -22,6 +22,7 @@ Sidecar field strategy (M3):
 """
 from __future__ import annotations
 
+import copy
 import math
 import os
 import subprocess
@@ -29,6 +30,51 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 PathLike = Union[str, Path]
+
+_PIPELINE_QC_STRIP_KEYS = frozenset({
+    "fd_list", "rms_list", "outlier_frames",
+    "candidate_coords", "candidate_scores",
+    "cascade_anchor_outcomes", "motion_summary",
+    "ktrans_histogram", "ktrans_histogram_edges",
+    "ve_histogram", "ve_histogram_edges",
+    "gamma_fit_auto_metrics",
+    "aif_centroid_mm", "aif_voxel_coord",
+})
+
+_CONFIG_STRIP_KEYS = frozenset({
+    "n_procs", "nprocs", "hdbet_device", "tumor_seg_device",
+    "disable_aif_fallback", "n_aif_candidates", "cpi_infer_cpt",
+    "underlays", "no_t1", "no_tortuosity", "no_dsc_validation",
+    "scale_aif",
+})
+
+
+def filter_pipeline_qc(qc: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip per-frame arrays and debugging internals from the QC envelope."""
+    filtered = copy.deepcopy(qc)
+
+    def _strip(d: dict) -> None:
+        for key in list(d):
+            if key in _PIPELINE_QC_STRIP_KEYS:
+                del d[key]
+            elif isinstance(d[key], dict):
+                _strip(d[key])
+
+    _strip(filtered)
+    return filtered
+
+
+def build_provenance_block(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the ``PipelineConfiguration`` block for a paired sidecar."""
+    from pmriprep.utils.provenance import get_software_versions
+
+    return {
+        "ProcessingConfiguration": {
+            k: v for k, v in config_dict.items()
+            if k not in _CONFIG_STRIP_KEYS
+        },
+        "SoftwareVersions": get_software_versions(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +420,7 @@ def build_tumor_seg_dseg_sidecar(
     subject: str,
     session: Optional[str],
     is_postcon_ref: bool = False,
+    qc_metrics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Sidecar for the multi-class tumor ``dseg`` label map.
 
@@ -383,10 +430,11 @@ def build_tumor_seg_dseg_sidecar(
     ``Columns`` block documents the TSV columns; ``TumorVolumetrics``
     carries per-region volumes and the enhancing fraction (replaces the
     removed standalone ``desc-tumorClinicalContext.json``).
+    ``TumorSegQC`` carries preprocessing/segmentation/nawm QC blocks.
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
-    return {
+    sc: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
         "Description": "Deep learning tumor segmentation",
         "Manual": False,
@@ -428,6 +476,9 @@ def build_tumor_seg_dseg_sidecar(
             },
         },
     }
+    if isinstance(qc_metrics, dict) and qc_metrics:
+        sc["TumorSegQC"] = qc_metrics
+    return sc
 
 
 def build_tumor_seg_mask_sidecar(
@@ -981,106 +1032,6 @@ def enrich_dsc_preproc_sidecar(
     return sidecar
 
 
-# ---------------------------------------------------------------------------
-# DSC resume sidecar (Phase 2b)
-#
-# Pipeline-internal sidecar that round-trips the verbatim producer-shape
-# QC dicts so the ``--skip-dsc`` resume helper can recover them without
-# JSON-loading the legacy ``desc-dscQC_quality.json``.
-# ---------------------------------------------------------------------------
-
-
-def build_dsc_resume_sidecar(
-    *,
-    aif_qc: Optional[Dict[str, Any]] = None,
-    preload_qc: Optional[Dict[str, Any]] = None,
-    preprocessing_stats: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Build the verbatim resume sidecar for ``--skip-dsc`` round-trip.
-
-    Stores the producer-shape ``aif_qc``, ``preload_qc``, and
-    ``preprocessing_stats`` dicts verbatim under top-level snake_case
-    keys. The resume helper at ``workflows/base.py:_find_previous_dsc_outputs``
-    reads these and feeds them to the same downstream consumers
-    (``dce_compute.py`` PK setup, ``dsc_cbv_constraint.py``) that the
-    in-process flow uses, so no key translation happens at the resume
-    boundary.
-
-    The ``_pmriprep`` filename suffix and ``PMRIPrepInternal: true`` flag
-    mark this as pipeline-internal scope (per NiPreps precedent for
-    non-canonical-tree files).
-    """
-    from pmriprep.utils.provenance import get_bids_derivative_provenance
-
-    sidecar: Dict[str, Any] = {
-        **get_bids_derivative_provenance(),
-        "Description": "Pipeline-internal resume state for --skip-dsc.",
-        "PMRIPrepInternal": True,
-    }
-    if aif_qc:
-        sidecar["aif_qc"] = dict(aif_qc)
-    if preload_qc:
-        sidecar["preload_qc"] = dict(preload_qc)
-    if preprocessing_stats:
-        sidecar["preprocessing_stats"] = dict(preprocessing_stats)
-    return sidecar
-
-
-def build_dce_resume_sidecar(
-    *,
-    qc_metrics: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Build the resume sidecar carrying trimmed DCE QC for HTML reports.
-
-    Stores ``qc_metrics`` under the ``qc_metrics`` key for the HTML
-    aggregator, with ``aif_detection`` trimmed to the fields needed by
-    the report template and PK enrichment.
-    """
-    import copy
-
-    from pmriprep.utils.provenance import (
-        _DCE_AIF_RESUME_FIELDS,
-        get_bids_derivative_provenance,
-    )
-
-    sidecar: Dict[str, Any] = {
-        **get_bids_derivative_provenance(),
-        "Description": "Pipeline-internal resume state for DCE.",
-        "PMRIPrepInternal": True,
-    }
-    if qc_metrics:
-        trimmed = copy.deepcopy(qc_metrics)
-        aif_block = trimmed.get("aif_detection")
-        if isinstance(aif_block, dict):
-            trimmed["aif_detection"] = {
-                k: v for k, v in aif_block.items()
-                if k in _DCE_AIF_RESUME_FIELDS
-            }
-        sidecar["qc_metrics"] = trimmed
-    return sidecar
-
-
-def build_tumor_resume_sidecar(
-    *,
-    qc_metrics: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Build the resume sidecar carrying tumor-segmentation + NAWM QC.
-
-    Stores the producer-shape ``qc_metrics`` envelope (``preprocessing``
-    / ``segmentation`` / ``nawm`` blocks) verbatim under ``qc_metrics``
-    so the HTML aggregator can recover the nested shape that
-    ``section_tumor_seg.html`` consumes.
-    """
-    from pmriprep.utils.provenance import get_bids_derivative_provenance
-
-    sidecar: Dict[str, Any] = {
-        **get_bids_derivative_provenance(),
-        "Description": "Pipeline-internal resume state for tumor segmentation.",
-        "PMRIPrepInternal": True,
-    }
-    if qc_metrics:
-        sidecar["qc_metrics"] = dict(qc_metrics)
-    return sidecar
 
 
 # ---------------------------------------------------------------------------

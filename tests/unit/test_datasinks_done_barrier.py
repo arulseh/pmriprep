@@ -74,8 +74,8 @@ def test_tumor_seg_done_barrier_routed_through_dd_node(tmp_path: Path) -> None:
     assert "figures_writer" in ancestors
 
 
-def test_dsc_done_barrier_includes_resume_sink(tmp_path: Path) -> None:
-    """DSC: dsc_resume_sink must be reachable from outputnode.done."""
+def test_dsc_done_barrier_includes_resume_checkpoint(tmp_path: Path) -> None:
+    """DSC: resume_checkpoint must be reachable from outputnode.done."""
     from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
 
     _write_bids(tmp_path)
@@ -88,28 +88,7 @@ def test_dsc_done_barrier_includes_resume_sink(tmp_path: Path) -> None:
     )
     ancestors = _ancestors_of(wf, "outputnode")
     assert "dataset_description" in ancestors
-    assert "resume_sink" in ancestors, (
-        "DSC resume_sink must join outputnode.done so unified_report cannot "
-        "race ahead of the resume sidecar writer"
-    )
-
-
-def test_dce_done_barrier_includes_resume_sink(tmp_path: Path) -> None:
-    """DCE: dce_resume_sink must be reachable from outputnode.done."""
-    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
-
-    _write_bids(tmp_path)
-    wf = init_dce_datasinks_wf(
-        output_dir=str(tmp_path / "out"),
-        bids_dir=str(tmp_path / "bids"),
-        subject_id="01",
-        session_id="0001",
-        pk_model="extended_tofts",
-        present_inputs={"dce_moco"},
-    )
-    ancestors = _ancestors_of(wf, "outputnode")
-    assert "dataset_description" in ancestors
-    assert "dce_resume_sink" in ancestors, (
-        "dce_resume_sink must join outputnode.done so unified_report cannot "
-        "race ahead of the resume sidecar writer"
+    assert "resume_checkpoint" in ancestors, (
+        "DSC resume_checkpoint must join outputnode.done so unified_report "
+        "cannot race ahead of the checkpoint writer"
     )

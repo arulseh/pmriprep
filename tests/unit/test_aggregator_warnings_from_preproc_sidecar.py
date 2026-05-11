@@ -41,20 +41,12 @@ def test_recommendation_and_warnings_propagate(tmp_path: Path) -> None:
         },
     )
     _write(
-        ses / "perf" / f"{prefix}_desc-dscResume_pmriprep.json",
-        {"PMRIPrepInternal": True},
-    )
-    _write(
         ses / "perf" / f"{prefix}_desc-dcePreproc_dce.json",
         {
             "QCRecommendationAction": "include",
             "QCRecommendationReason": "AIF good",
             "QCWarnings": ["Lesion mask in DCE space not available"],
         },
-    )
-    _write(
-        ses / "perf" / f"{prefix}_desc-dceResume_pmriprep.json",
-        {"PMRIPrepInternal": True, "qc_metrics": {}},
     )
 
     pipeline_data = {

@@ -29,6 +29,13 @@ _FORBIDDEN_FILENAME_PATTERNS = (
     re.compile(r"space-dceref_desc-roiStats\.json"),
     re.compile(r"desc-tumorseg_volumes\.txt"),
     re.compile(r"desc-tumorClinicalContext\.json"),
+    re.compile(r"desc-dsc_qc\.json"),
+    re.compile(r"desc-dce_qc\.json"),
+    re.compile(r"desc-dsc_provenance\.json"),
+    re.compile(r"desc-dce_provenance\.json"),
+    re.compile(r"desc-dscResume_pmriprep\.json"),
+    re.compile(r"desc-dceResume_pmriprep\.json"),
+    re.compile(r"desc-tumorResume_pmriprep\.json"),
 )
 
 

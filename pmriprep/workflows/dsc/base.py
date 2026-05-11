@@ -1311,20 +1311,6 @@ def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc,
     return merged
 
 
-def _write_pipeline_provenance(merged_qc, derivatives_dir, subject_id, session_id, config_dict, dsc_file):  # type: ignore[no-untyped-def]
-    """Write DSC QC JSON and provenance JSON to derivatives directory."""
-    from pmriprep.utils.provenance import write_modality_provenance
-
-    return write_modality_provenance(
-        modality="dsc",
-        qc_metrics=merged_qc,
-        derivatives_dir=derivatives_dir,
-        subject_id=subject_id,
-        session_id=session_id,
-        config_dict=config_dict,
-        source_file=dsc_file,
-    )
-
 
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
@@ -2210,26 +2196,6 @@ def init_dsc_preproc_wf(
         if isinstance(v, Path):
             config_dict[k] = str(v)
 
-    write_provenance = pe.Node(
-        niu.Function(
-            input_names=[
-                "merged_qc",
-                "derivatives_dir",
-                "subject_id",
-                "session_id",
-                "config_dict",
-                "dsc_file",
-            ],
-            output_names=["qc_json_path", "provenance_json_path"],
-            function=_write_pipeline_provenance,
-        ),
-        name="write_provenance",
-    )
-    write_provenance.inputs.derivatives_dir = str(derivatives_dir)
-    write_provenance.inputs.subject_id = subject_id
-    write_provenance.inputs.session_id = session_id
-    write_provenance.inputs.config_dict = config_dict
-
     # -------------------------------------------------------------------
     # Workflow Connections
     # -------------------------------------------------------------------
@@ -2769,12 +2735,6 @@ def init_dsc_preproc_wf(
         (motion_qc_plot, merge_qc, [("motion_summary", "motion_summary")]),
         (aif_qc_plot, merge_qc, [("out_aif_metrics", "aif_metrics")]),
         (dsc_preproc_qc, merge_qc, [("stats", "preprocessing_stats")]),
-    ])
-
-    # Provenance logging
-    workflow.connect([
-        (merge_qc, write_provenance, [("merged_qc", "merged_qc")]),
-        (inputnode, write_provenance, [("dsc_file", "dsc_file")]),
     ])
 
     # Connect to Output Node

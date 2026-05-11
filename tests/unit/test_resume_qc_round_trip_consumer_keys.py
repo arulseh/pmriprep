@@ -1,16 +1,8 @@
-"""Round-trip parity oracle: consumer-key set survives resume sidecar.
+"""Round-trip parity oracle: consumer-key set survives work/ checkpoint.
 
-Code-reviewer round 2 requirement. Defines the set of keys actually read
-by downstream consumers (``dsc_cbv_constraint.py``, ``dce_compute.py``)
-from the producer-shape ``aif_qc`` / ``preload_qc`` /
-``preprocessing_stats`` dicts. Asserts the round-trip
-in-process-dict → resume sidecar → resume helper recovers each consumer
-key verbatim.
-
-This guards against silent field omissions in the resume sidecar — the
-verbatim-companion design only works if the dict round-trip is truly
-verbatim. Future filtering ("PII protection", schema enforcement, etc.)
-must add to / not remove from this oracle.
+Defines the set of keys read by downstream consumers from the
+producer-shape dicts. Asserts the round-trip via the work/ checkpoint
+recovers each consumer key verbatim.
 """
 from __future__ import annotations
 
@@ -18,31 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from pmriprep.utils.sidecar_builders import build_dsc_resume_sidecar
 from pmriprep.workflows.base import _find_previous_dsc_outputs
-from pmriprep.workflows.dsc.datasinks import _write_resume_sidecar
+from pmriprep.workflows.dsc.datasinks import _write_dsc_resume_checkpoint
 
-
-# Keys read by downstream consumers from the producer dicts. Sources:
-# - dsc_cbv_constraint.py:_normalize_aif_qc_keys (translates
-#   aif_metrics.psr → aif_peak_height, aif_metrics.brr →
-#   baseline_return_ratio, gamma_fit_auto_metrics.peak_ratio →
-#   gamma_peak_ratio)
-# - dsc_cbv_constraint.py:assess_dsc_cbv_quality
-# - dce_compute.py:1567-1620 PK setup
-# - utils/dsc_aif_provenance.py
-# - utils/qc_standards.py:recommend_dsc_qc
-#
-# Detection-time AIF metrics live under the nested ``aif_metrics`` key;
-# the round-trip oracle compares the nested dict by value.
 _AIF_QC_CONSUMER_KEYS = {
     "detection_method",
     "n_aif_voxels_selected",
-    "aif_metrics",                       # nested: psr, brr, peak_conc, ttp, fwhm, ...
+    "aif_metrics",
     "cbv_auc_denominator_is_synthetic",
     "synthetic",
     "gamma_fit_applied",
-    "gamma_fit_auto_metrics",            # contains peak_ratio sub-key
+    "gamma_fit_auto_metrics",
     "hematocrit",
 }
 
@@ -68,7 +46,6 @@ _PREPROC_STATS_CONSUMER_KEYS = {
 
 @pytest.fixture
 def representative_in_process_dicts():
-    """Producer-shape dicts populated with every consumer key."""
     aif_qc = {
         "detection_method": "atlas_strict",
         "n_aif_voxels_selected": 6,
@@ -84,7 +61,6 @@ def representative_in_process_dicts():
         "gamma_fit_applied": True,
         "gamma_fit_auto_metrics": {"peak_ratio": 1.05, "shape_score": 0.9},
         "hematocrit": 0.42,
-        # Bonus producer keys (not consumed but should still round-trip)
         "quality_score": 0.81,
     }
     preload_qc = {
@@ -105,7 +81,6 @@ def representative_in_process_dicts():
         "fd_mean": 0.18, "fd_max": 0.62,
         "percent_outliers": 1.5,
         "motion_status": "PASS",
-        # Bonus
         "tr_ms": 1500.0, "n_volumes": 60,
     }
     return aif_qc, preload_qc, preprocessing_stats
@@ -113,20 +88,17 @@ def representative_in_process_dicts():
 
 def test_consumer_keys_round_trip(tmp_path, representative_in_process_dicts):
     aif_qc, preload_qc, preprocessing_stats = representative_in_process_dicts
-    meta = build_dsc_resume_sidecar(
+    _write_dsc_resume_checkpoint(
+        work_dir=str(tmp_path),
+        subject_id="X", session_id="Y",
         aif_qc=aif_qc, preload_qc=preload_qc,
         preprocessing_stats=preprocessing_stats,
     )
-    _write_resume_sidecar(
-        output_dir=str(tmp_path), subject="X", session="Y", meta_dict=meta,
-    )
     recovered = _find_previous_dsc_outputs(
         output_dir=tmp_path, subject_id="X", session_id="Y",
+        work_dir=tmp_path,
     )
 
-    # Every consumer key in the in-process dict MUST appear in the
-    # recovered dict with the same value. Future filtering of the
-    # resume sidecar would silently break consumers; this test catches it.
     rec_aif = recovered["aif_qc"]
     assert rec_aif is not None
     for key in _AIF_QC_CONSUMER_KEYS:
@@ -149,23 +121,21 @@ def test_consumer_keys_round_trip(tmp_path, representative_in_process_dicts):
 
 
 def test_normalizer_handles_round_tripped_aif_qc(tmp_path, representative_in_process_dicts):
-    """End-to-end: round-tripped dict feeds dsc_cbv_constraint normalizer cleanly."""
     aif_qc, preload_qc, preprocessing_stats = representative_in_process_dicts
-    meta = build_dsc_resume_sidecar(
+    _write_dsc_resume_checkpoint(
+        work_dir=str(tmp_path),
+        subject_id="X", session_id="Y",
         aif_qc=aif_qc, preload_qc=preload_qc,
         preprocessing_stats=preprocessing_stats,
     )
-    _write_resume_sidecar(
-        output_dir=str(tmp_path), subject="X", session="Y", meta_dict=meta,
-    )
     recovered = _find_previous_dsc_outputs(
         output_dir=tmp_path, subject_id="X", session_id="Y",
+        work_dir=tmp_path,
     )
 
     from pmriprep.utils.dsc_cbv_constraint import _normalize_aif_qc_keys
 
     normalized = _normalize_aif_qc_keys(dict(recovered["aif_qc"]))
-    # Translator creates the post-normalization keys from producer keys
     assert "aif_peak_height" in normalized
     assert normalized["aif_peak_height"] == pytest.approx(0.78)
     assert "baseline_return_ratio" in normalized

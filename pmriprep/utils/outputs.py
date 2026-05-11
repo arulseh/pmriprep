@@ -27,52 +27,6 @@ BIDS_DERIVATIVES_VERSION: Final[str] = "1.9.0"
 PMRIPREP_CODE_URL: Final[str] = "https://github.com/arulseh/pmriprep"
 
 
-def write_qc_json(
-    output_path: Union[str, Path],
-    metrics: Dict[str, Any],
-    subject: str,
-    session: Optional[str] = None,
-    pipeline_step: Optional[str] = None,
-) -> Path:
-    """Write a QC metrics JSON file.
-
-    Args:
-        output_path: Path for the output JSON file.
-        metrics: Dictionary of QC metrics.
-        subject: Subject ID.
-        session: Session ID, optional.
-        pipeline_step: Name of the pipeline step (e.g., 'aif_detection', 'registration').
-
-    Returns:
-        Path to the written JSON file.
-    """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    qc_data: Dict[str, Any] = {
-        "Subject": f"sub-{subject}",
-        "GeneratedBy": [
-            {
-                "Name": "pmriprep",
-                "Version": pmriprep.__version__,
-            }
-        ],
-    }
-
-    if session:
-        qc_data["Session"] = f"ses-{session}"
-
-    if pipeline_step:
-        qc_data["PipelineStep"] = pipeline_step
-
-    qc_data["Metrics"] = metrics
-    qc_data["SoftwareVersions"] = get_software_versions()
-
-    with open(output_path, "w") as f:
-        json.dump(qc_data, f, indent=2, default=str)
-
-    return output_path
-
 
 # -----------------------------------------------------------------------
 # Shared utilities for BIDS-Derivatives output writers

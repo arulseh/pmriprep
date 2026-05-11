@@ -24,7 +24,6 @@ from pmriprep.utils.outputs import (
     copy_derivative,
     has_input,
     write_json_sidecar,
-    write_qc_json,
 )
 from pmriprep.utils.dce_aif import (
     DCEAIFQualityMetrics,
@@ -96,7 +95,6 @@ __all__ = [
     "copy_derivative",
     "has_input",
     "write_json_sidecar",
-    "write_qc_json",
     # dce_aif
     "DCEAIFQualityMetrics",
     "DCEAIFQualityResult",

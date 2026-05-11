@@ -225,6 +225,7 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
     provenance_dict=None,
     preflight_warnings=None,
     presence_warnings=None,
+    config_dict=None,
 ):
     """Compose the ``desc-dscPreproc_dsc.json`` sidecar.
 
@@ -233,10 +234,14 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
     QC recommendation/warnings flat keys via
     ``enrich_recommendation_keys`` so the HTML aggregator can read the
     overall recommendation banner directly from this anchor sidecar.
+    ``PipelineQC`` and ``PipelineConfiguration`` nest the full merged
+    QC envelope and processing config for the HTML aggregator.
     """
     from pmriprep.utils.sidecar_builders import (
+        build_provenance_block,
         enrich_dsc_preproc_sidecar,
         enrich_recommendation_keys,
+        filter_pipeline_qc,
     )
 
     out = dict(base)
@@ -262,22 +267,24 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
             list(presence_warnings) if presence_warnings else None
         ),
     )
+    if isinstance(qc_metrics, dict):
+        out["PipelineQC"] = filter_pipeline_qc(qc_metrics)
+    if isinstance(config_dict, dict):
+        out["PipelineConfiguration"] = build_provenance_block(config_dict)
     return out
 
 
-def _build_dsc_resume_meta(  # type: ignore[no-untyped-def]
+def _write_dsc_resume_checkpoint(  # type: ignore[no-untyped-def]
+    work_dir, subject_id, session_id,
     aif_qc=None, preload_qc=None, preprocessing_stats=None,
     motion_qc=None, aif_metrics=None,
 ):
-    """Compose the ``desc-dscResume_pmriprep.json`` sidecar.
+    """Write the DSC→DCE handoff checkpoint to the work directory."""
+    import json as _json
+    from pathlib import Path
 
-    Folds motion fields into ``preprocessing_stats`` and merges the
-    gamma-augmented ``aif_metrics`` from ``aif_qc_plot`` on top of the
-    producer-side ``aif_qc.aif_metrics`` block (from ``aif_detect``)
-    so the cosmetic-key builder and the HTML aggregator see the full
-    annotated shape.
-    """
-    from pmriprep.utils.sidecar_builders import build_dsc_resume_sidecar
+    if not isinstance(work_dir, str):
+        return None
 
     pp = dict(preprocessing_stats) if isinstance(preprocessing_stats, dict) else {}
     if isinstance(motion_qc, dict):
@@ -299,31 +306,19 @@ def _build_dsc_resume_meta(  # type: ignore[no-untyped-def]
     if merged_metrics:
         aq["aif_metrics"] = merged_metrics
 
-    return build_dsc_resume_sidecar(
-        aif_qc=aq if aq else None,
-        preload_qc=preload_qc if isinstance(preload_qc, dict) else None,
-        preprocessing_stats=pp if pp else None,
-    )
+    checkpoint: dict = {}
+    if aq:
+        checkpoint["aif_qc"] = aq
+    if isinstance(preload_qc, dict) and preload_qc:
+        checkpoint["preload_qc"] = dict(preload_qc)
+    if pp:
+        checkpoint["preprocessing_stats"] = pp
 
-
-def _write_resume_sidecar(  # type: ignore[no-untyped-def]
-    output_dir, subject, session, meta_dict,
-):
-    """Write the resume-only JSON sidecar (no companion data file)."""
-    import json as _json
-    from pathlib import Path
-
-    out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
-    if session:
-        out_root = out_root / f"ses-{session}"
-    out_root = out_root / "perf"
-    out_root.mkdir(parents=True, exist_ok=True)
-
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
-    out_path = out_root / f"{prefix}_desc-dscResume_pmriprep.json"
-    out_path.write_text(_json.dumps(meta_dict, indent=2, default=str))
+    wf_name = f"pmriprep_single_subject_{subject_id}_wf"
+    out_dir = Path(work_dir) / wf_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "dsc_resume.json"
+    out_path.write_text(_json.dumps(checkpoint, indent=2, default=str))
     return str(out_path)
 
 
@@ -787,6 +782,7 @@ def init_dsc_datasinks_wf(
         niu.IdentityInterface(
             fields=[
                 "output_dir", "bids_dir", "subject_id", "session_id",
+                "work_dir",
                 # Sources
                 "source_dsc",
                 # Always-present perfusion maps
@@ -1190,7 +1186,7 @@ def init_dsc_datasinks_wf(
                 input_names=[
                     "base", "description", "preload_qc", "preprocessing_stats",
                     "qc_metrics", "provenance_dict", "preflight_warnings",
-                    "presence_warnings",
+                    "presence_warnings", "config_dict",
                 ],
                 output_names=["meta_dict"],
                 function=_build_dsc_preproc_meta,
@@ -1207,6 +1203,7 @@ def init_dsc_datasinks_wf(
                 ("qc_metrics", "qc_metrics"),
                 ("provenance_dict", "provenance_dict"),
                 ("preflight_warnings", "preflight_warnings"),
+                ("config_dict", "config_dict"),
             ]),
         ])
         moco_sink = pe.Node(
@@ -1236,23 +1233,23 @@ def init_dsc_datasinks_wf(
         ])
         sink_outputs.append((moco_sink, "out_file"))
 
-        # Phase 2b: pipeline-internal resume sidecar (no companion data
-        # file). Carries the verbatim aif_qc / preload_qc /
-        # preprocessing_stats dicts so --skip-dsc resume reads them
-        # directly without round-tripping through the legacy QC JSON.
-        resume_meta = pe.Node(
+        resume_checkpoint = pe.Node(
             niu.Function(
                 input_names=[
+                    "work_dir", "subject_id", "session_id",
                     "aif_qc", "preload_qc", "preprocessing_stats",
                     "motion_qc", "aif_metrics",
                 ],
-                output_names=["meta_dict"],
-                function=_build_dsc_resume_meta,
+                output_names=["out_file"],
+                function=_write_dsc_resume_checkpoint,
             ),
-            name="resume_meta",
+            name="resume_checkpoint",
         )
         workflow.connect([
-            (inputnode, resume_meta, [
+            (inputnode, resume_checkpoint, [
+                ("work_dir", "work_dir"),
+                ("subject_id", "subject_id"),
+                ("session_id", "session_id"),
                 ("aif_qc", "aif_qc"),
                 ("preload_qc", "preload_qc"),
                 ("preprocessing_stats", "preprocessing_stats"),
@@ -1260,23 +1257,7 @@ def init_dsc_datasinks_wf(
                 ("aif_metrics", "aif_metrics"),
             ]),
         ])
-        resume_sink = pe.Node(
-            niu.Function(
-                input_names=["output_dir", "subject", "session", "meta_dict"],
-                output_names=["out_file"],
-                function=_write_resume_sidecar,
-            ),
-            name="resume_sink",
-        )
-        workflow.connect([
-            (inputnode, resume_sink, [
-                ("output_dir", "output_dir"),
-                ("subject_id", "subject"),
-                ("session_id", "session"),
-            ]),
-            (resume_meta, resume_sink, [("meta_dict", "meta_dict")]),
-        ])
-        sink_outputs.append((resume_sink, "out_file"))
+        sink_outputs.append((resume_checkpoint, "out_file"))
     if "dsc_mean" in present:
         sink_outputs.append((_add_minimal_perf_sink(
             "mean", "dsc_mean", "dscMean", "",

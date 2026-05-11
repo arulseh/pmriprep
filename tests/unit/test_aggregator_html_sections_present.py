@@ -33,22 +33,17 @@ def test_unified_report_renders_recommendation_and_warnings(tmp_path: Path) -> N
             ],
         },
     )
-    # DSC anchor + minimal resume
     _write(
         ses / "perf" / f"{prefix}_desc-dscPreproc_dsc.json",
         {
             "QCRecommendationAction": "review",
             "QCRecommendationReason": "AIF detection marginal",
-        },
-    )
-    _write(
-        ses / "perf" / f"{prefix}_desc-dscResume_pmriprep.json",
-        {
-            "PMRIPrepInternal": True,
-            "aif_qc": {"detection_method": "atlas_relaxed"},
-            "preload_qc": {},
-            "preprocessing_stats": {"fd_mean": 0.1, "fd_max": 0.4,
-                                    "n_volumes": 60, "tr_ms": 1500.0},
+            "PipelineQC": {
+                "aif_detection": {"detection_method": "atlas_relaxed"},
+                "preload": {},
+                "preprocessing": {"fd_mean": 0.1, "fd_max": 0.4,
+                                  "n_volumes": 60, "tr_ms": 1500.0},
+            },
         },
     )
 

@@ -182,63 +182,6 @@ def _write_aif_timeseries_sidecar(
 
 
 
-class TumorSegResumeWriterInputSpec(BaseInterfaceInputSpec):
-    output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
-    subject_id = traits.Str(mandatory=True)
-    session_id = traits.Str("", usedefault=True)
-    qc_metrics = traits.Dict(
-        desc="Producer-shape qc_metrics envelope (preprocessing/segmentation/nawm).",
-    )
-
-
-class TumorSegResumeWriterOutputSpec(TraitedSpec):
-    out_file = File(
-        desc="Path to anat/<prefix>_desc-tumorResume_pmriprep.json",
-    )
-
-
-class TumorSegResumeWriter(SimpleInterface):
-    """Writes the tumor-segmentation resume sidecar.
-
-    The sidecar carries the producer-shape ``qc_metrics`` envelope
-    (preprocessing / segmentation / nawm blocks) so the HTML aggregator
-    can recover the nested shape that ``section_tumor_seg.html``
-    consumes.
-    """
-
-    input_spec = TumorSegResumeWriterInputSpec
-    output_spec = TumorSegResumeWriterOutputSpec
-
-    def _run_interface(self, runtime: Any) -> Any:
-        from pmriprep.utils.sidecar_builders import build_tumor_resume_sidecar
-
-        output_dir = Path(self.inputs.output_dir)
-        subject = self.inputs.subject_id
-        session = self.inputs.session_id or ""
-
-        prefix = f"sub-{subject}"
-        if session:
-            prefix += f"_ses-{session}"
-
-        ses_dir = output_dir / "pmriprep" / f"sub-{subject}"
-        if session:
-            ses_dir = ses_dir / f"ses-{session}"
-        anat_dir = ses_dir / "anat"
-        anat_dir.mkdir(parents=True, exist_ok=True)
-
-        qc_metrics = (
-            dict(self.inputs.qc_metrics)
-            if isdefined(self.inputs.qc_metrics)
-            and isinstance(self.inputs.qc_metrics, dict)
-            else None
-        )
-        sidecar = build_tumor_resume_sidecar(qc_metrics=qc_metrics)
-
-        out_path = anat_dir / f"{prefix}_desc-tumorResume_pmriprep.json"
-        out_path.write_text(json.dumps(sidecar, indent=2, default=str))
-        self._results["out_file"] = str(out_path)
-        return runtime
-
 
 class TumorSegFiguresWriterInputSpec(BaseInterfaceInputSpec):
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
