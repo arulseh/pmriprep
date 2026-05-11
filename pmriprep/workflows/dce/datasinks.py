@@ -462,7 +462,7 @@ def _copy_b1plusmap(  # type: ignore[no-untyped-def]
 def _copy_dce_xfm(  # type: ignore[no-untyped-def]
     in_file, output_dir, subject, session,
 ):
-    """Copy DCE-to-T1w transform .mat into the derivatives anat/."""
+    """Copy DCE-to-T1w transform .h5 into the derivatives anat/."""
     import logging
     import shutil
     from pathlib import Path
@@ -488,7 +488,7 @@ def _copy_dce_xfm(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    fname = f"{prefix}_from-dceref_to-T1w_mode-image_xfm.mat"
+    fname = f"{prefix}_from-dceref_to-T1w_mode-image_xfm.h5"
     out_path = out_root / fname
     shutil.copy2(in_file, out_path)
     return str(out_path)

@@ -125,6 +125,13 @@ from pmriprep.interfaces.dsc_aif_qc import AIFQCPlot
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
 
+def _fsl_to_x5_node(mat_path, reference, moving):  # type: ignore[no-untyped-def]
+    """Nipype Function-node wrapper for FSL .mat to ITK X5 conversion."""
+    from pmriprep.utils.transforms import fsl_to_x5
+
+    return fsl_to_x5(mat_path, reference, moving)
+
+
 def _histogram_match_t1w_to_dsc(
     t1w_file: str, dsc_brain_file: str, brain_mask_file: str,
 ) -> str:
@@ -1530,6 +1537,8 @@ def init_dsc_preproc_wf(
                 # Registration
                 "dsc_to_t1w_xfm",
                 "t1w_to_dsc_xfm",
+                "dsc_to_t1w_h5",
+                "t1w_to_dsc_h5",
                 "registration_filmstrip",
                 # Structural underlays
                 "t1w_in_dsc",
@@ -2804,10 +2813,28 @@ def init_dsc_preproc_wf(
         # Normalized CBV and CBF
         (normalize, outputnode, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, outputnode, [("ncbf_file", "ncbf_map")]),
-        # Registration
+        # Registration (.mat for internal consumers)
         (invert_dsc_xfm, outputnode, [("out_file", "dsc_to_t1w_xfm")]),
         (register, outputnode, [("out_matrix", "t1w_to_dsc_xfm")]),
+        # Registration (.h5 for derivatives)
+        (register, outputnode, [("out_h5", "t1w_to_dsc_h5")]),
         (reg_filmstrip, outputnode, [("filmstrip_file", "registration_filmstrip")]),
+    ])
+
+    # Convert inverted DSC→T1w .mat to .h5 (ref/mov swapped for inverse)
+    convert_inv_h5 = pe.Node(
+        niu.Function(
+            input_names=["mat_path", "reference", "moving"],
+            output_names=["out_h5"],
+            function=_fsl_to_x5_node,
+        ),
+        name="convert_inv_dsc_h5",
+    )
+    workflow.connect([
+        (invert_dsc_xfm, convert_inv_h5, [("out_file", "mat_path")]),
+        (inputnode, convert_inv_h5, [("t1w_reference", "reference")]),
+        (hdbet_dsc, convert_inv_h5, [("dsc_brain_file", "moving")]),
+        (convert_inv_h5, outputnode, [("out_h5", "dsc_to_t1w_h5")]),
     ])
 
     # Structural underlay connections (conditional)

@@ -329,7 +329,7 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
     from_space,
     to_space,
 ):
-    """Copy a transform .mat into the derivatives anat/ directory."""
+    """Copy a transform .h5 into the derivatives anat/ directory."""
     import logging
     import shutil
     from pathlib import Path
@@ -356,7 +356,7 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    fname = f"{prefix}_from-{from_space}_to-{to_space}_mode-image_xfm.mat"
+    fname = f"{prefix}_from-{from_space}_to-{to_space}_mode-image_xfm.h5"
     out_path = out_root / fname
     shutil.copy2(in_file, out_path)
     return str(out_path)
@@ -372,7 +372,7 @@ def _add_one_xfm_sink(
     to_space: str,
     source_attr: str,
 ) -> pe.Node:
-    """Wire a Function-node copier for a transform .mat (no sidecar)."""
+    """Wire a Function-node copier for a transform .h5 (no sidecar)."""
     sink = pe.Node(
         niu.Function(
             input_names=["in_file", "output_dir", "subject", "session",

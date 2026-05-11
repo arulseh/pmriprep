@@ -325,7 +325,7 @@ def _write_dsc_resume_checkpoint(  # type: ignore[no-untyped-def]
 def _copy_xfm(  # type: ignore[no-untyped-def]
     in_file, output_dir, subject, session, from_space, to_space, datatype="anat",
 ):
-    """Copy a transform .mat into the derivatives ``anat/`` directory."""
+    """Copy a transform .h5 into the derivatives ``anat/`` directory."""
     import logging
     import shutil
     from pathlib import Path
@@ -352,7 +352,7 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    fname = f"{prefix}_from-{from_space}_to-{to_space}_mode-image_xfm.mat"
+    fname = f"{prefix}_from-{from_space}_to-{to_space}_mode-image_xfm.h5"
     out_path = out_root / fname
     shutil.copy2(in_file, out_path)
     return str(out_path)

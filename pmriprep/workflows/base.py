@@ -774,11 +774,14 @@ def _find_previous_dsc_outputs(
                 subject_id, perf_dir,
             )
 
-    # DSC→T1w transform (now in anat/ instead of xfm/)
-    anat_dir = dsc_dir / "anat"
-    if anat_dir.exists():
-        for f in anat_dir.glob("*from-dscref_to-T1w*_xfm.mat"):
-            outputs["dsc_to_t1w_xfm"] = str(f)
+    # DSC→T1w transform: read from work/ (internal .mat), not derivatives (.h5)
+    if work_dir is not None:
+        wf_name = f"pmriprep_single_subject_{subject_id}_wf"
+        inv_dir = work_dir / wf_name / "dsc_wf" / "invert_dsc_xfm"
+        if inv_dir.exists():
+            candidates = sorted(inv_dir.glob("*.mat"))
+            if candidates:
+                outputs["dsc_to_t1w_xfm"] = str(candidates[0])
 
     if work_dir is not None:
         import json
@@ -1325,7 +1328,7 @@ def init_pmriprep_wf(
             (anat_wf, anat_datasinks_wf, [
                 ("outputnode.t1w_preproc", "inputnode.t1w_preproc"),
                 ("outputnode.brain_mask", "inputnode.brain_mask"),
-                ("outputnode.t1w_to_mni_xfm", "inputnode.acpc_xfm"),
+                ("outputnode.t1w_to_mni_h5", "inputnode.acpc_xfm"),
                 ("outputnode.qc_metrics", "inputnode.qc_metrics"),
                 ("outputnode.brain_mask_filmstrip", "inputnode.brain_mask_filmstrip"),
                 ("outputnode.acpc_filmstrip", "inputnode.acpc_filmstrip"),
@@ -2100,8 +2103,8 @@ def init_pmriprep_wf(
                 # AIF outputs
                 ("outputnode.aif_curve", "inputnode.aif_curve"),
                 ("outputnode.aif_mask", "inputnode.aif_mask"),
-                # Registration
-                ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
+                # Registration (.h5 for derivatives)
+                ("outputnode.dsc_to_t1w_h5", "inputnode.dsc_to_t1w_xfm"),
                 ("outputnode.registration_filmstrip",
                  "inputnode.registration_filmstrip"),
                 # Structural underlays
@@ -2109,7 +2112,7 @@ def init_pmriprep_wf(
                 ("outputnode.t1w_postcon_in_dsc", "inputnode.t1w_postcon_in_dsc"),
                 ("outputnode.flair_in_dsc", "inputnode.flair_in_dsc"),
                 ("outputnode.t2w_in_dsc", "inputnode.t2w_in_dsc"),
-                ("outputnode.t1w_to_dsc_xfm", "inputnode.t1w_to_dsc_xfm"),
+                ("outputnode.t1w_to_dsc_h5", "inputnode.t1w_to_dsc_xfm"),
                 # AIF QC plots
                 ("outputnode.aif_curve_plot", "inputnode.aif_curve_plot"),
                 ("outputnode.aif_location_plot", "inputnode.aif_location_plot"),

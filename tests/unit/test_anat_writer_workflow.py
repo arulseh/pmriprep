@@ -215,7 +215,7 @@ def test_postcon_only_writes_unconditional_outputs(tmp_path: Path) -> None:
     # All three unconditional outputs must be present
     t1w_out = anat_dir / "sub-01_ses-0001_ce-GAD_space-T1w_desc-preproc_T1w.nii.gz"
     mask_out = anat_dir / "sub-01_ses-0001_ce-GAD_space-T1w_desc-brain_mask.nii.gz"
-    xfm_out = anat_dir / "sub-01_ses-0001_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.mat"
+    xfm_out = anat_dir / "sub-01_ses-0001_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.h5"
 
     assert t1w_out.exists(), f"Missing t1w preproc in postcon-only: {t1w_out}"
     assert mask_out.exists(), f"Missing brain mask in postcon-only: {mask_out}"
@@ -346,10 +346,10 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
         "sub-01_ses-0001_space-T1w_desc-preproc_T2w.nii.gz",
         "sub-01_ses-0001_space-T1w_desc-preproc_FLAIR.nii.gz",
         "sub-01_ses-0001_space-T1w_desc-subtraction_T1w.nii.gz",
-        "sub-01_ses-0001_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.mat",
-        "sub-01_ses-0001_from-T1wCE_to-T1w_mode-image_xfm.mat",
-        "sub-01_ses-0001_from-T2w_to-T1w_mode-image_xfm.mat",
-        "sub-01_ses-0001_from-FLAIR_to-T1w_mode-image_xfm.mat",
+        "sub-01_ses-0001_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.h5",
+        "sub-01_ses-0001_from-T1wCE_to-T1w_mode-image_xfm.h5",
+        "sub-01_ses-0001_from-T2w_to-T1w_mode-image_xfm.h5",
+        "sub-01_ses-0001_from-FLAIR_to-T1w_mode-image_xfm.h5",
     ]
     for name in expected:
         assert (anat_dir / name).exists(), f"Missing: {name}"

@@ -229,12 +229,12 @@ def get_xfm_filename(
     from_space: str,
     to_space: str,
 ) -> str:
-    """BIDS xfm filename ``sub-X[_ses-Y]_from-A_to-B_mode-image_xfm.mat``."""
+    """BIDS xfm filename ``sub-X[_ses-Y]_from-A_to-B_mode-image_xfm.h5``."""
     parts = [f"sub-{subject}"]
     if session:
         parts.append(f"ses-{session}")
     parts.extend([f"from-{from_space}", f"to-{to_space}", "mode-image"])
-    return "_".join(parts) + "_xfm.mat"
+    return "_".join(parts) + "_xfm.h5"
 
 
 def extract_contrast_agent(source_nifti_path: str) -> Optional[str]:

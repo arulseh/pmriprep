@@ -283,9 +283,27 @@ def _get_anat_path(subject: str, session: str) -> Path:
 
 
 def _get_dce_to_anat_xfm(subject: str, session: str) -> Path:
-    """Get path to the pipeline's DCE-to-T1w FLIRT transform."""
-    fname = f"{subject}_{session}_from-dceref_to-T1w_mode-image_xfm.mat"
-    return OUTPUT_ROOT / subject / session / "anat" / fname
+    """Get path to the pipeline's DCE-to-T1w transform (.h5, with .mat fallback)."""
+    base = OUTPUT_ROOT / subject / session / "anat"
+    h5 = base / f"{subject}_{session}_from-dceref_to-T1w_mode-image_xfm.h5"
+    if h5.exists():
+        return h5
+    return base / f"{subject}_{session}_from-dceref_to-T1w_mode-image_xfm.mat"
+
+
+def _ensure_fsl_mat(
+    xfm_path: Path, reference: Path, moving: Path, out_dir: Path,
+) -> Path:
+    """If *xfm_path* is .h5, convert to a temp .mat in *out_dir*; otherwise return as-is."""
+    if xfm_path.suffix == ".h5":
+        from nitransforms.linear import Affine  # type: ignore[import-untyped]
+
+        mat_out = out_dir / xfm_path.with_suffix(".mat").name
+        xfm = Affine.from_filename(str(xfm_path))
+        xfm.reference = reference
+        xfm.to_filename(str(mat_out), fmt="fsl", moving=str(moving))
+        return mat_out
+    return xfm_path
 
 
 def _invert_xfm(mat_in: Path, mat_out: Path) -> bool:
@@ -419,14 +437,18 @@ def register_sessions(
             pass
 
     # --- Approach 2: Anat-mediated registration ---
-    xfm_dce2anat_mov = _get_dce_to_anat_xfm(subject, ses_mov)
-    xfm_dce2anat_ref = _get_dce_to_anat_xfm(subject, ses_ref)
+    xfm_dce2anat_mov_raw = _get_dce_to_anat_xfm(subject, ses_mov)
+    xfm_dce2anat_ref_raw = _get_dce_to_anat_xfm(subject, ses_ref)
     t1_ref = _get_anat_path(subject, ses_ref)
     t1_mov = _get_anat_path(subject, ses_mov)
     anat_mat_path = out_dir / f"{ses_mov}_to_{ses_ref}_anat.mat"
 
-    if (xfm_dce2anat_mov.exists() and xfm_dce2anat_ref.exists()
+    if (xfm_dce2anat_mov_raw.exists() and xfm_dce2anat_ref_raw.exists()
             and t1_ref.exists() and t1_mov.exists()):
+        dce_mov = get_ref_dce_path(subject, ses_mov)
+        dce_ref = get_ref_dce_path(subject, ses_ref)
+        xfm_dce2anat_mov = _ensure_fsl_mat(xfm_dce2anat_mov_raw, t1_mov, dce_mov, out_dir)
+        xfm_dce2anat_ref = _ensure_fsl_mat(xfm_dce2anat_ref_raw, t1_ref, dce_ref, out_dir)
         # Step 1: T1(ses_mov) → T1(ses_ref)
         t1_mat = out_dir / f"{ses_mov}_anat_to_{ses_ref}_anat.mat"
         cmd = [

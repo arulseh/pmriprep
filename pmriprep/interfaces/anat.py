@@ -443,6 +443,7 @@ class CoregistrationOutputSpec(TraitedSpec):
 
     out_file = File(exists=True, desc="Registered image in reference space")
     out_matrix = File(exists=True, desc="Affine transformation matrix (FLIRT format)")
+    out_h5 = File(exists=True, desc="Affine transform in ITK composite (.h5) format")
 
 
 class Coregistration(CommandLine):
@@ -546,9 +547,16 @@ class Coregistration(CommandLine):
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
+        from pmriprep.utils.transforms import fsl_to_x5
+
         outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
         outputs["out_file"] = self._gen_outfilename()
         outputs["out_matrix"] = self._gen_matfilename()
+        outputs["out_h5"] = fsl_to_x5(
+            outputs["out_matrix"],
+            reference=str(self.inputs.reference),
+            moving=str(self.inputs.in_file),
+        )
         return outputs
 
     def _gen_filename(self, name: str) -> Optional[str]:
@@ -1612,6 +1620,7 @@ class ACPCAlignmentOutputSpec(TraitedSpec):
 
     out_file = File(exists=True, desc="ACPC-aligned image")
     out_matrix = File(exists=True, desc="Affine transformation matrix")
+    out_h5 = File(exists=True, desc="Affine transform in ITK composite (.h5) format")
 
 
 class ACPCAlignment(CommandLine):
@@ -1729,9 +1738,16 @@ class ACPCAlignment(CommandLine):
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""
+        from pmriprep.utils.transforms import fsl_to_x5
+
         outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
         outputs["out_file"] = self._gen_outfilename()
         outputs["out_matrix"] = self._gen_matfilename()
+        outputs["out_h5"] = fsl_to_x5(
+            outputs["out_matrix"],
+            reference=self._get_mni_template(),
+            moving=str(self.inputs.in_file),
+        )
         return outputs
 
     def _gen_filename(self, name: str) -> Optional[str]:

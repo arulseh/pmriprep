@@ -506,6 +506,7 @@ def init_anat_preproc_wf(
                 "t1w_acpc",
                 "acpc_xfm",
                 "t1w_to_mni_xfm",
+                "t1w_to_mni_h5",
                 # Coregistered modalities
                 "t1w_postcon_coreg",
                 "t2w_coreg",
@@ -1215,8 +1216,9 @@ def init_anat_preproc_wf(
         (acpc_align, outputnode, [
             ("out_file", "t1w_acpc"),
             ("out_matrix", "acpc_xfm"),
-            # ACPC transform is also the T1w to MNI transform (rigid)
+            # ACPC transform: .mat for internal consumers, .h5 for derivatives
             ("out_matrix", "t1w_to_mni_xfm"),
+            ("out_h5", "t1w_to_mni_h5"),
         ]),
         # Processing mode flag
         (determine_mode, outputnode, [("is_postcon_ref", "is_postcon_ref")]),
@@ -1269,22 +1271,22 @@ def init_anat_preproc_wf(
     if has_t1w_postcon:
         workflow.connect([
             (mask_postcon, outputnode, [("out_file", "t1w_postcon_coreg")]),
-            (coreg_postcon, outputnode, [("out_matrix", "t1w_postcon_to_t1w_xfm")]),
+            (coreg_postcon, outputnode, [("out_h5", "t1w_postcon_to_t1w_xfm")]),
         ])
     if has_t2w:
         workflow.connect([
             (mask_t2w, outputnode, [("out_file", "t2w_coreg")]),
-            (coreg_t2w, outputnode, [("out_matrix", "t2w_to_t1w_xfm")]),
+            (coreg_t2w, outputnode, [("out_h5", "t2w_to_t1w_xfm")]),
         ])
     if has_flair:
         workflow.connect([
             (mask_flair, outputnode, [("out_file", "flair_coreg")]),
-            (coreg_flair, outputnode, [("out_matrix", "flair_to_t1w_xfm")]),
+            (coreg_flair, outputnode, [("out_h5", "flair_to_t1w_xfm")]),
         ])
     if has_flair_postcon:
         workflow.connect([
             (mask_flair_postcon, outputnode, [("out_file", "flair_postcon_coreg")]),
-            (coreg_flair_postcon, outputnode, [("out_matrix", "flair_postcon_to_t1w_xfm")]),
+            (coreg_flair_postcon, outputnode, [("out_h5", "flair_postcon_to_t1w_xfm")]),
         ])
     # Subtraction image
     if config.create_subtraction and has_t1w_postcon:

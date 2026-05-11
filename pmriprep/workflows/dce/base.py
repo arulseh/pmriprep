@@ -2056,9 +2056,9 @@ def init_dce_preproc_wf(
             ("out_aif_curve", "aif_curve"),
             ("out_aif_mask", "aif_mask"),
         ]),
-        # Registration outputs
+        # Registration outputs (.h5 for derivatives)
         (dce_registration, outputnode, [
-            ("out_matrix", "dce_to_t1w_xfm"),
+            ("out_h5", "dce_to_t1w_xfm"),
         ]),
         # QC metrics
         (collect_qc, outputnode, [

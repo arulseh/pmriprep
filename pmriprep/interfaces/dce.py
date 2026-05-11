@@ -3755,6 +3755,7 @@ class DCERegistrationOutputSpec(TraitedSpec):
 
     out_file = File(exists=True, desc="Registered T1w in DCE space")
     out_matrix = File(exists=True, desc="Affine transformation matrix (FLIRT format)")
+    out_h5 = File(exists=True, desc="Affine transform in ITK composite (.h5) format")
     dice = traits.Float(desc="DICE coefficient (if brain mask provided)")
     correlation = traits.Float(desc="Correlation coefficient (if brain mask provided)")
     nmi = traits.Float(desc="Normalized mutual information")
@@ -3909,8 +3910,15 @@ class DCERegistration(SimpleInterface):
         }
 
         # Set outputs
+        from pmriprep.utils.transforms import fsl_to_x5
+
         self._results["out_file"] = out_file
         self._results["out_matrix"] = out_matrix
+        self._results["out_h5"] = fsl_to_x5(
+            out_matrix,
+            reference=str(self.inputs.dce_mean),
+            moving=str(self.inputs.t1w_file),
+        )
         self._results["qc_metrics"] = qc_metrics
 
         if "dice" in qc_metrics:
