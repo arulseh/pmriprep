@@ -3906,6 +3906,7 @@ class AIFDetection(BaseInterface):
         atlas_tier_used: str | None = None
         validation_qc: dict[str, Any] = {}
         anchor_outcomes: list[dict[str, Any]] = []
+        tier_gate_decisions: list[dict[str, Any]] = []
         tier_result: TierResult | None = None
 
         # Skip auto detection if population method requested
@@ -4207,67 +4208,6 @@ class AIFDetection(BaseInterface):
                 if atlas_tier_used is not None:
                     qc_metrics["atlas_tier_used"] = atlas_tier_used
 
-            # Merge cascade anchor outcomes (per-tier diagnostics from
-            # ``_run_two_pass_cascade``). Written whenever the cascade
-            # ran (empty when ``aif_method == "population"``), so
-            # reviewers can see which tiers were tried even on success.
-            if anchor_outcomes:
-                qc_metrics["cascade_anchor_outcomes"] = anchor_outcomes
-
-            # Per-tier gate-decision log (parallel to
-            # ``cascade_anchor_outcomes`` ordering). Captures the full
-            # trim-loop history for tiers that were rejected by gates,
-            # which the existing winner-only ``aif_gate_decisions``
-            # field cannot show. Each entry: ``tier`` label,
-            # ``outcome`` (``"PASS"`` / ``"trim_exhausted"`` /
-            # ``"skipped_quorum"`` / ``"skipped_anchor"``), and the
-            # per-iteration ``decisions`` log.
-            if tier_gate_decisions:
-                qc_metrics["cascade_gate_decisions"] = [
-                    {
-                        "tier": entry["tier"],
-                        "outcome": entry["outcome"],
-                        "decisions": [
-                            {
-                                "tier": d["tier"],
-                                "n_pool": d["n_pool"],
-                                "scale_factor": d["scale_factor"],
-                                "status": d["status"],
-                                "failing_gate": d["failing_gate"],
-                                "warns": list(d["warns"]),
-                                "qc": dict(d["qc"]),
-                            }
-                            for d in entry["decisions"]
-                        ],
-                    }
-                    for entry in tier_gate_decisions
-                ]
-
-            # Per-tier gate decisions and acceptance status from the
-            # progressive trim loop. Sets aif_confidence + inflation
-            # factor for downstream PK posterior sigma scaling.
-            if tier_result is not None:
-                qc_metrics["aif_gate_decisions"] = [
-                    {
-                        "tier": d["tier"],
-                        "n_pool": d["n_pool"],
-                        "scale_factor": d["scale_factor"],
-                        "status": d["status"],
-                        "failing_gate": d["failing_gate"],
-                        "warns": list(d["warns"]),
-                        "qc": dict(d["qc"]),
-                    }
-                    for d in tier_result.gate_decisions
-                ]
-                if tier_result.status == "G6_ADMIT":
-                    qc_metrics["aif_confidence"] = "reduced"
-                    qc_metrics["aif_g6_admitted"] = True
-                    qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
-                else:
-                    qc_metrics["aif_confidence"] = "standard"
-                    qc_metrics["aif_g6_admitted"] = False
-                    qc_metrics["aif_uncertainty_inflation_factor"] = 1.0
-
             # Merge FWHM validation QC
             if validation_qc:
                 qc_metrics.update(validation_qc)
@@ -4406,6 +4346,59 @@ class AIFDetection(BaseInterface):
                 qc_metrics["original_bat_seconds"] = original_bat_seconds
             if _detection_attempt is not None:
                 qc_metrics.update(_detection_attempt)
+
+        # ===== Cascade provenance (fires on both detected and population) =====
+        if anchor_outcomes:
+            qc_metrics["cascade_anchor_outcomes"] = anchor_outcomes
+        if tier_gate_decisions:
+            qc_metrics["cascade_gate_decisions"] = [
+                {
+                    "tier": entry["tier"],
+                    "outcome": entry["outcome"],
+                    "decisions": [
+                        {
+                            "tier": d["tier"],
+                            "n_pool": d["n_pool"],
+                            "scale_factor": d["scale_factor"],
+                            "status": d["status"],
+                            "failing_gate": d["failing_gate"],
+                            "warns": list(d["warns"]),
+                            "qc": dict(d["qc"]),
+                        }
+                        for d in entry["decisions"]
+                    ],
+                }
+                for entry in tier_gate_decisions
+            ]
+        if tier_result is not None:
+            qc_metrics["aif_gate_decisions"] = [
+                {
+                    "tier": d["tier"],
+                    "n_pool": d["n_pool"],
+                    "scale_factor": d["scale_factor"],
+                    "status": d["status"],
+                    "failing_gate": d["failing_gate"],
+                    "warns": list(d["warns"]),
+                    "qc": dict(d["qc"]),
+                }
+                for d in tier_result.gate_decisions
+            ]
+            if tier_result.status == "G6_ADMIT":
+                qc_metrics["aif_confidence"] = "reduced"
+                qc_metrics["aif_g6_admitted"] = True
+                qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
+            else:
+                qc_metrics["aif_confidence"] = "standard"
+                qc_metrics["aif_g6_admitted"] = False
+                qc_metrics["aif_uncertainty_inflation_factor"] = 1.0
+        elif detection_method == "population":
+            qc_metrics["aif_confidence"] = "low"
+            qc_metrics["aif_g6_admitted"] = False
+            qc_metrics["aif_uncertainty_inflation_factor"] = 3.0
+        else:
+            qc_metrics["aif_confidence"] = "standard"
+            qc_metrics["aif_g6_admitted"] = False
+            qc_metrics["aif_uncertainty_inflation_factor"] = 1.0
 
         # Apply AIF scaling if requested
         # External AIFs bypass this block: they must be supplied in plasma
