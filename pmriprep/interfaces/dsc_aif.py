@@ -11,7 +11,7 @@ scoring, 3x3x3 ROI averaging, and Savitzky-Golay smoothing.
 
 import math
 from pathlib import Path
-from typing import Any, Final, NamedTuple, Optional
+from typing import Any, Final, NamedTuple, Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -134,6 +134,41 @@ def _clear_stale_real_aif_keys(qc_metrics: dict[str, Any]) -> None:
     """Pop real-AIF QC fields that would be stale under synthetic fallback."""
     for k in _STALE_REAL_AIF_KEYS:
         qc_metrics.pop(k, None)
+
+
+def _stamp_synthetic_fallback_common(
+    qc_metrics: dict[str, Any],
+    *,
+    reason: str,
+    tiers_attempted: Sequence[str],
+) -> None:
+    """Set core synthetic-fallback QC fields consistently across all paths.
+
+    Parameters
+    ----------
+    qc_metrics : dict
+        Mutable QC dict to stamp (fresh or prepopulated).
+    reason : str
+        Fallback reason (``"no_candidates"`` or ``"gamma_r2_floor"``).
+    tiers_attempted : Sequence[str]
+        Cascade tiers tried before fallback.  Only written when the
+        key is absent (Path B inherits from the real-AIF run).
+
+    Notes
+    -----
+    ``detection_method`` is intentionally NOT set here — callers set it
+    via the shared ``detection_level`` variable.  Fields handled by the
+    common block downstream (``synthetic_aif_warnings``,
+    ``cbv_auc_denominator_is_synthetic``) are also omitted; they key on
+    ``detection_level == "synthetic"`` and fire for any synthetic path.
+    """
+    qc_metrics["synthetic"] = True
+    qc_metrics["n_aif_voxels_selected"] = 0
+    qc_metrics["n_aif_voxels_available"] = 0
+    qc_metrics["synthetic_fallback_reason"] = reason
+    qc_metrics["aif_quality"] = "degraded"
+    if "cascade_tiers_attempted" not in qc_metrics:
+        qc_metrics["cascade_tiers_attempted"] = list(tiers_attempted)
 
 
 def _costs_to_scores(costs: list[float]) -> list[float]:
@@ -3119,18 +3154,12 @@ class AIFDetection(BaseInterface):
                 )
             detection_level = "synthetic"
             quality_score = 0.3
-            qc_metrics = {
-                "synthetic": True,
-                "n_aif_voxels_selected": 0,
-                "n_aif_voxels_available": 0,
-                "synthetic_fallback_reason": "no_candidates",
-                "cascade_tiers_attempted": list(tiers_attempted),
-                "aif_quality": "degraded",
-            }
+            qc_metrics = {}
+            _stamp_synthetic_fallback_common(
+                qc_metrics, reason="no_candidates",
+                tiers_attempted=tiers_attempted,
+            )
             qc_metrics.update(synth_metrics)
-            # Defensive: this path constructs a fresh dict so the pop is
-            # a no-op today, but stays robust under future reorgs that
-            # share state with the real-AIF path.
             _clear_stale_real_aif_keys(qc_metrics)
         else:
             raise RuntimeError(
@@ -3139,7 +3168,8 @@ class AIFDetection(BaseInterface):
             )
 
         qc_metrics["detection_method"] = detection_level
-        qc_metrics["n_aif_voxels_selected"] = len(top_candidates)
+        if detection_level != "synthetic":
+            qc_metrics["n_aif_voxels_selected"] = len(top_candidates)
         qc_metrics["s0_rejection_available"] = signal_data is not None
         qc_metrics["tr_used"] = tr
         qc_metrics["baseline_frames_initial"] = baseline_frames  # configured S0 baseline
@@ -3210,16 +3240,12 @@ class AIFDetection(BaseInterface):
                 detection_level = "synthetic"
                 quality_score = 0.3
                 aif_mask_arr[:] = 0  # Clear AIF mask (no voxels used)
-                # Drop spatial QC fields populated from the rejected
-                # real-AIF candidate so they don't contradict the
-                # synthetic provenance downstream.
                 _clear_stale_real_aif_keys(qc_metrics)
-                # Update QC metrics
+                _stamp_synthetic_fallback_common(
+                    qc_metrics, reason="gamma_r2_floor",
+                    tiers_attempted=tiers_attempted,
+                )
                 qc_metrics["detection_method"] = detection_level
-                qc_metrics["synthetic"] = True
-                qc_metrics["n_aif_voxels_selected"] = 0
-                qc_metrics["n_aif_voxels_available"] = 0
-                qc_metrics["synthetic_fallback_reason"] = "gamma_r2_floor"
                 qc_metrics["gamma_r2_at_fallback"] = gamma_r2
                 qc_metrics.update(synth_metrics)
                 qc_metrics["synthetic_aif_warnings"] = [

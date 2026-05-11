@@ -288,6 +288,24 @@ class TestTemplateAifUsageCoverage:
             f"{extra}"
         )
 
+    def test_qc_standards_tiers_cover_canonical_enum(self) -> None:
+        """The tier sets used by ``qc_standards`` must cover all canonical
+        detection levels so new tiers don't silently route to 'unknown'."""
+        from pmriprep.utils.dsc_constants import DSC_DETECTION_LEVELS
+        _QC_ROUTED_TIERS = {
+            "atlas_strict", "atlas_relaxed", "atlas_permissive",
+            "full_atlas_permissive", "brain_relaxed", "brain_permissive",
+            "external", "synthetic",
+        }
+        _QC_GENERIC_REVIEW = {"accumulated", "single_best"}
+        covered = _QC_ROUTED_TIERS | _QC_GENERIC_REVIEW
+        missing = set(DSC_DETECTION_LEVELS) - covered
+        assert not missing, (
+            f"Canonical DSCDetectionLevel members not routed in "
+            f"qc_standards: {missing}. Add explicit routing or "
+            f"include in the generic-REVIEW set."
+        )
+
 
 # =============================================================================
 # End-to-end factory integration

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Final, Literal
 
-from pmriprep.utils.dsc_constants import DSC_DETECTION_LEVELS
+from pmriprep.utils.dsc_constants import DSC_DETECTION_LEVELS, is_valid_detection_level
 
 logger = logging.getLogger(__name__)
 
@@ -145,15 +145,7 @@ def build_aif_provenance_block(
     if not aif_qc or "detection_method" not in aif_qc:
         return {}
     detection_level = aif_qc.get("detection_method")
-    # Cascade may emit "+"-joined unions when union-pool fallback accepts
-    # voxels from multiple tiers (see dsc_aif.py:~2906). Validate each
-    # part against the flat enum; reject only if any part is unknown.
-    parts = (
-        str(detection_level).split("+")
-        if isinstance(detection_level, str) and detection_level
-        else []
-    )
-    if not parts or any(p not in DSC_DETECTION_LEVELS for p in parts):
+    if not is_valid_detection_level(str(detection_level) if detection_level else ""):
         logger.warning(
             "Unknown DSC AIF detection_level %r; expected one or more "
             "(joined with '+') of %s. Skipping AIF provenance block.",

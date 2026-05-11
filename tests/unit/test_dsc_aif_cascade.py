@@ -967,3 +967,50 @@ class TestSyntheticFallbackQcConsistency:
                     f"Synthetic-fallback consistency violated: stale "
                     f"key {k!r} present alongside detection_method='synthetic'"
                 )
+
+    # --- _stamp_synthetic_fallback_common tests ---
+
+    _COMMON_KEYS = {
+        "synthetic", "n_aif_voxels_selected", "n_aif_voxels_available",
+        "synthetic_fallback_reason", "aif_quality", "cascade_tiers_attempted",
+    }
+
+    def test_stamp_common_on_fresh_dict(self) -> None:
+        """Helper sets all expected keys on an empty dict."""
+        from pmriprep.interfaces.dsc_aif import _stamp_synthetic_fallback_common
+        qc: dict[str, object] = {}
+        _stamp_synthetic_fallback_common(
+            qc, reason="no_candidates",
+            tiers_attempted=["atlas_strict", "atlas_relaxed"],
+        )
+        for k in self._COMMON_KEYS:
+            assert k in qc, f"Expected key {k!r} not set by helper"
+        assert qc["synthetic"] is True
+        assert qc["n_aif_voxels_selected"] == 0
+        assert qc["aif_quality"] == "degraded"
+        assert qc["synthetic_fallback_reason"] == "no_candidates"
+
+    def test_stamp_common_overwrites_aif_quality(self) -> None:
+        """Helper overwrites ``aif_quality='detected'`` to ``'degraded'``
+        (the Path B bug: gamma-R2 fallback left aif_quality as 'detected').
+        """
+        from pmriprep.interfaces.dsc_aif import _stamp_synthetic_fallback_common
+        qc: dict[str, object] = {"aif_quality": "detected"}
+        _stamp_synthetic_fallback_common(
+            qc, reason="gamma_r2_floor",
+            tiers_attempted=["atlas_strict"],
+        )
+        assert qc["aif_quality"] == "degraded"
+
+    def test_stamp_common_preserves_existing_cascade_tiers(self) -> None:
+        """Helper does NOT overwrite ``cascade_tiers_attempted`` if already
+        present (Path B inherits from the real-AIF detection run).
+        """
+        from pmriprep.interfaces.dsc_aif import _stamp_synthetic_fallback_common
+        original = ["atlas_strict", "atlas_relaxed", "atlas_permissive"]
+        qc: dict[str, object] = {"cascade_tiers_attempted": original}
+        _stamp_synthetic_fallback_common(
+            qc, reason="gamma_r2_floor",
+            tiers_attempted=["should_not_appear"],
+        )
+        assert qc["cascade_tiers_attempted"] is original

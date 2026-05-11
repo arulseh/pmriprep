@@ -430,12 +430,10 @@ def assess_dsc_cbv_quality(
     # atlas_relaxed") under v3 accumulate-to-quorum semantics; treat the
     # union as high-quality only when EVERY contributing tier is in the
     # bypass set (otherwise a looser tier dilutes the bypass guarantee).
+    from pmriprep.utils.dsc_constants import split_detection_level
+
     _detection_level_for_cnr = str(aif_qc_data.get("detection_method", ""))
-    _contributing_tiers = (
-        set(_detection_level_for_cnr.split("+"))
-        if _detection_level_for_cnr
-        else set()
-    )
+    _contributing_tiers = set(split_detection_level(_detection_level_for_cnr))
     _AIF_BYPASS_TIERS = {"atlas_strict", "atlas_relaxed"}
     aif_high_quality = bool(_contributing_tiers) and _contributing_tiers.issubset(
         _AIF_BYPASS_TIERS
@@ -508,9 +506,7 @@ def assess_dsc_cbv_quality(
 
     detection_level = str(aif_qc_data.get("detection_method", ""))
     result.detection_level = detection_level or None
-    _contributing = (
-        set(detection_level.split("+")) if detection_level else set()
-    )
+    _contributing = set(split_detection_level(detection_level))
 
     if _contributing & _AIF_LEVELS_LOW:
         confidence = _downgrade_confidence(confidence, "low")

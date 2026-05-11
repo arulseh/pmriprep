@@ -477,20 +477,16 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     # fallback accepts contributions from multiple tiers.  Apply
     # worst-tier-wins semantics: any contributing tier downgrades the
     # recommendation.
+    from pmriprep.utils.dsc_constants import DSC_DETECTION_LEVELS, split_detection_level
+
     aif_qc = qc_metrics.get("aif_detection", {})
     detection_level = aif_qc.get("detection_method", "unknown")
-    parts = (
-        str(detection_level).split("+")
-        if isinstance(detection_level, str) and detection_level
-        else ["unknown"]
-    )
+    parts = split_detection_level(str(detection_level))
+    if not parts:
+        parts = ["unknown"]
     parts_set = set(parts)
-    _KNOWN_TIERS = {
-        "atlas_strict", "atlas_relaxed", "atlas_permissive",
-        "full_atlas_permissive", "brain_relaxed", "brain_permissive",
-        "external", "synthetic", "none", "unknown",
-    }
-    _unknown_parts = parts_set - _KNOWN_TIERS
+    _SENTINEL_TIERS = {"none", "unknown"}
+    _unknown_parts = parts_set - set(DSC_DETECTION_LEVELS) - _SENTINEL_TIERS
     if parts_set & {"synthetic", "none", "unknown"} or _unknown_parts:
         # Unknown parts are treated as ``unknown`` semantically — no way
         # to vouch for an AIF tier we don't recognise.

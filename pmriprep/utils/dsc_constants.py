@@ -28,6 +28,45 @@ DSCDetectionLevel = Literal[
 #: Runtime tuple of valid detection-level strings.
 DSC_DETECTION_LEVELS: Final[tuple[str, ...]] = get_args(DSCDetectionLevel)
 
+
+def split_detection_level(detection_level: str) -> list[str]:
+    """Split a possibly compound ``+``-joined detection_level into parts.
+
+    Parameters
+    ----------
+    detection_level : str
+        Single tier name or ``+``-joined compound (e.g.
+        ``"atlas_relaxed+atlas_permissive"``).  Non-string or empty
+        inputs return ``[]``.
+
+    Returns
+    -------
+    list[str]
+        Individual tier name strings.
+    """
+    if not isinstance(detection_level, str) or not detection_level:
+        return []
+    return detection_level.split("+")
+
+
+def is_valid_detection_level(detection_level: str) -> bool:
+    """Check whether every part of a detection_level is canonical.
+
+    Parameters
+    ----------
+    detection_level : str
+        Single or ``+``-joined compound detection level string.
+
+    Returns
+    -------
+    bool
+        ``True`` if non-empty and every part is in
+        :data:`DSC_DETECTION_LEVELS`.
+    """
+    parts = split_detection_level(detection_level)
+    return bool(parts) and all(p in DSC_DETECTION_LEVELS for p in parts)
+
+
 # =============================================================================
 # Epsilon Guards
 # =============================================================================

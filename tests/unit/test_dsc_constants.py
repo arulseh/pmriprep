@@ -7,6 +7,7 @@ from pmriprep.utils.dsc_constants import (
     CBV_BOUNDS,
     DEFAULT_OI_THRESHOLD,
     DEFAULT_SVD_THRESHOLD,
+    DSC_DETECTION_LEVELS,
     EPSILON_CONCENTRATION,
     EPSILON_DELTA_R2,
     EPSILON_SIGNAL,
@@ -17,6 +18,8 @@ from pmriprep.utils.dsc_constants import (
     calculate_k_h,
     get_r2_star,
     get_r2_star_tissue,
+    is_valid_detection_level,
+    split_detection_level,
 )
 
 
@@ -105,3 +108,44 @@ class TestEpsilonGuards:
         assert EPSILON_SIGNAL > 0
         assert EPSILON_DELTA_R2 > 0
         assert EPSILON_CONCENTRATION > 0
+
+
+class TestSplitDetectionLevel:
+    """Tests for the centralized compound detection_level splitter."""
+
+    def test_single(self) -> None:
+        assert split_detection_level("atlas_strict") == ["atlas_strict"]
+
+    def test_compound(self) -> None:
+        assert split_detection_level("atlas_relaxed+atlas_permissive") == [
+            "atlas_relaxed", "atlas_permissive",
+        ]
+
+    def test_empty_string(self) -> None:
+        assert split_detection_level("") == []
+
+    def test_none(self) -> None:
+        assert split_detection_level(None) == []  # type: ignore[arg-type]
+
+
+class TestIsValidDetectionLevel:
+    """Tests for the centralized compound detection_level validator."""
+
+    def test_single_valid(self) -> None:
+        assert is_valid_detection_level("atlas_strict") is True
+
+    def test_compound_valid(self) -> None:
+        assert is_valid_detection_level("atlas_relaxed+atlas_permissive") is True
+
+    def test_all_canonical_levels_valid(self) -> None:
+        for level in DSC_DETECTION_LEVELS:
+            assert is_valid_detection_level(level) is True, f"{level!r} should be valid"
+
+    def test_invalid(self) -> None:
+        assert is_valid_detection_level("bogus") is False
+
+    def test_partial_invalid(self) -> None:
+        assert is_valid_detection_level("atlas_strict+bogus") is False
+
+    def test_empty(self) -> None:
+        assert is_valid_detection_level("") is False
