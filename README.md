@@ -208,32 +208,32 @@ dce:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| | | | **Method** |
+| **Method** | | | |
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
 | `inference` | str | `"vi"` | Inference engine: `nlls`, `map`, `vi`, `svb` (CPI and Vascular only; SVD and Tikhonov ignore) |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
-| | | | **Dosing** |
+| **Dosing** | | | |
 | `preload` | str or float | `"auto"` | Preload dose fraction: `"auto"` (detect from signal) or a float (0.0–2.0) |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
-| | | | **AIF** |
+| **AIF** | | | |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
 | `aif_file` | path | `null` | External AIF curve (ΔR2* in s⁻¹). Bypasses AIF detection |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |
-| | | | **Leakage correction** |
+| **Leakage correction** | | | |
 | `leakage_method` | str | `"bsw"` | K2 leakage correction: `bsw` (standard), `bidirectional` |
 | `kep` | float | `0.005` | EES efflux rate for bidirectional correction (s⁻¹); ignored for bsw |
-| | | | **Preprocessing** |
+| **Preprocessing** | | | |
 | `pre_bolus` | int | `5` | Initial baseline for motion correction. Baseline is re-estimated after AIF detection |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
-| | | | **Masks & ROIs** |
+| **Masks & ROIs** | | | |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
-| | | | **Output** |
+| **Output** | | | |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
 
@@ -241,14 +241,14 @@ dce:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| | | | **Model** |
+| **Model** | | | |
 | `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection (Patlak, Extended Tofts, 2CXM). Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
 | `inference` | str | `"nlls"` | Inference engine: `nlls`, `vi`, `map` (and `mcmc` via YAML only) |
-| | | | **Dosing & pharmacology** |
+| **Dosing & pharmacology** | | | |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
 | `hematocrit` | float | `0.42` | Arterial hematocrit for AIF plasma correction |
-| | | | **AIF** |
+| **AIF** | | | |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
 | `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected). Bypasses AIF detection |
 | `scale_aif` | bool | `true` | Scale AIF to population reference |
@@ -256,24 +256,24 @@ dce:
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
-| | | | **T1 mapping** |
+| **T1 mapping** | | | |
 | `no_t1` | bool | `false` | Skip T1 mapping |
 | `t1_method` | str | `"hybrid"` | VFA T1 fitting: `hybrid`, `wlls`, `nlls` |
 | `t1_map_file` | path | `null` | External T1 map (NIfTI, ms). Bypasses VFA fitting |
 | `t1_correction_mode` | str | `"auto"` | T1 correction mode: `auto`, `none`, `offset`, `fallback` |
 | `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `tfl_b1map`, `none` |
-| | | | **DSC cross-validation** |
+| **DSC cross-validation** | | | |
 | `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto`: `soft` prior when DSC CBV is available, `skip` otherwise. Options: `auto`, `soft`, `skip` |
 | `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation. Requires a NAWM mask; automatically skipped when unavailable |
 | `no_tortuosity` | bool | `false` | Skip DWI-based tortuosity correction |
-| | | | **Preprocessing** |
+| **Preprocessing** | | | |
 | `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect) |
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
-| | | | **Masks & ROIs** |
+| **Masks & ROIs** | | | |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction |
-| | | | **Output** |
+| **Output** | | | |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
 
