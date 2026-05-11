@@ -572,7 +572,7 @@ def compute_dce_aif_ratio_30s(
 
 
 # =============================================================================
-# DCE AIF acceptance gates (G1-G7 + G6 escape)
+# DCE AIF acceptance gates (G1-G6 + G6 escape)
 # =============================================================================
 
 
@@ -600,7 +600,6 @@ GateStatus = Literal[
     "FAIL_G6_a",
     "FAIL_G6_f",
     "FAIL_G6_g",
-    "FAIL_G7",
     "SKIP_G5",
 ]
 
@@ -723,8 +722,8 @@ def _evaluate_gates(
     G6 sub-criteria (a)/(f)/(g) are checked: if all hold, status is
     ``G6_ADMIT``; otherwise the failing G6 sub-criterion is reported.
 
-    G7 aggregation (>=2 WARNs) overrides PASS_WARN. G5' is the only
-    WARN-tier gate currently; the design supports future WARN gates.
+    G5 is the only WARN-tier gate currently; the design supports future
+    WARN gates (aggregate-warn check reserved for when a second is added).
 
     Parameters
     ----------
@@ -788,8 +787,6 @@ def _evaluate_gates(
         return _record("FAIL_G4", "G4")
     if g5_state == "HARD":
         return _record("FAIL_G5", "G5")
-    if len(warns) >= 2:
-        return _record("FAIL_G7", "G7")
 
     if not g1_fail:
         if warns:
@@ -845,7 +842,7 @@ def _select_worst_for_trim(
       ``G3``             -> argmax(``fwhm_seconds``)    widest bolus
       ``G4``             -> argmin(``washout``)         bumps correlate
                                                           with low washout
-      ``G7`` / fallback  -> argmin(``scores``)          composite quality
+      fallback           -> argmin(``scores``)          composite quality
     """
     if not metrics_list:
         return 0
@@ -858,7 +855,7 @@ def _select_worst_for_trim(
         return int(np.argmax([m.get("fwhm_seconds", 0.0) for m in metrics_list]))
     if failing_root == "G4":
         return int(np.argmin([m.get("washout", 0.0) for m in metrics_list]))
-    # G7 / G6_f / G6_g / unknown — drop lowest composite score.
+    # Fallback — drop lowest composite score.
     return int(np.argmin(scores))
 
 
@@ -2176,12 +2173,12 @@ class AIFDetection(BaseInterface):
         cnr_score = min(1.0, cnr / 50.0)
         score += 0.15 * cnr_score
 
-        # Washout contribution: closer to 0.5 is ideal
-        washout_score = 1.0 - abs(washout - 0.5) / 0.5
+        # Washout contribution: higher washout = more arterial
+        washout_score = min(1.0, washout / 0.7)
         score += w_washout * max(0.0, washout_score)
 
-        # FWHM contribution: closer to ~15s is ideal for DCE
-        ideal_fwhm = 15.0
+        # FWHM contribution: closer to ideal first-pass width
+        ideal_fwhm = AIF_IDEAL_FWHM_SECONDS
         fwhm_range = thresholds.fwhm_max_seconds - thresholds.fwhm_min_seconds
         fwhm_score = 1.0 - abs(fwhm - ideal_fwhm) / max(fwhm_range / 2, 1.0)
         score += w_fwhm * max(0.0, fwhm_score)
@@ -2218,7 +2215,10 @@ class AIFDetection(BaseInterface):
             score += timing_weight * timing_score
             metrics["timing_score"] = timing_score
 
-        return min(1.0, score), metrics
+        weight_sum = 0.20 + 0.15 + w_washout + w_fwhm + 0.15
+        if tissue_ttp_frame is not None:
+            weight_sum += timing_weight
+        return min(1.0, score / max(weight_sum, 0.01)), metrics
 
     # -----------------------------------------------------------------
     # Rescue Scoring
@@ -2595,7 +2595,7 @@ class AIFDetection(BaseInterface):
         target_peak: float,
         atlas_tier_label: str,
     ) -> TierEvaluation:
-        """Run progressive trim with G1-G7 gates on a candidate pool.
+        """Run progressive trim with G1-G6 gates on a candidate pool.
 
         Per iteration: average pool -> Hct-correct -> rescale -> compute
         QC -> evaluate gates. On acceptance (PASS / PASS_WARN /
@@ -2673,12 +2673,11 @@ class AIFDetection(BaseInterface):
                     gate_decisions=gate_decisions,
                 )
 
-            # Pass the failing gate through unmodified so the trim
-            # selector can distinguish G6_a (amplitude-escape denied,
-            # drop lowest peak) from other G6_* sub-criteria (drop
-            # lowest score). Stripping the "_a" suffix here used to
-            # silently route G6_a to the score-fallback branch.
             failing_gate = decision.get("failing_gate") or ""
+
+            if failing_gate in ("G6_f", "G6_g"):
+                return TierEvaluation(result=None, gate_decisions=gate_decisions)
+
             worst_local = _select_worst_for_trim(
                 sub_metrics, sub_scores, failing_gate,
             )
@@ -3973,7 +3972,7 @@ class AIFDetection(BaseInterface):
             # ===== Two-pass multi-level detection cascade =====
             # See ``_run_two_pass_cascade`` docstring for contract details.
             # Brain mask, affine, hct, and target_peak enable per-tier
-            # G1-G7 acceptance gates with progressive trim; without them
+            # G1-G6 acceptance gates with progressive trim; without them
             # the cascade falls back to its legacy quorum + anchor
             # acceptance criterion.
             cascade_result = self._run_two_pass_cascade(
@@ -4132,7 +4131,7 @@ class AIFDetection(BaseInterface):
 
         if candidates:
             # Phase 5: Weighted ROI averaging + smoothing
-            # When the cascade ran G1-G7 acceptance gates with progressive
+            # When the cascade ran G1-G6 acceptance gates with progressive
             # trim (gates_enabled in _run_two_pass_cascade), the accepted
             # tier's averaged + Hct-corrected + rescaled curve is already
             # in ``tier_result``; reuse it to avoid double-scaling and to
@@ -4141,12 +4140,24 @@ class AIFDetection(BaseInterface):
             # its pre-gate accept-on-quorum-and-anchor contract (no inputs
             # were supplied to enable gates).
             if tier_result is not None:
-                aif_curve = tier_result.curve_scaled
-                # Reconstruct the AIF mask from the (post-trim) candidates.
+                tier_cand_set = set(tuple(c) for c in tier_result.candidates)
+                cur_cand_set = set(tuple(c) for c in candidates)
+                if cur_cand_set != tier_cand_set:
+                    aif_curve, aif_mask = self._compute_weighted_roi_aif(
+                        candidates, scores, conc_data, brain_mask, tr=tr,
+                    )
+                    hct = float(self.inputs.hematocrit)
+                    aif_curve = aif_curve / (1.0 - hct)
+                    aif_curve, scaling_factor = _apply_aif_scale(
+                        aif_curve, hct, target_peak,
+                        self._get_expected_peak_range,
+                    )
+                else:
+                    aif_curve = tier_result.curve_scaled
+                    scaling_factor = tier_result.scale_factor
                 aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
-                for cx, cy, cz in tier_result.candidates:
+                for cx, cy, cz in candidates:
                     aif_mask[cx, cy, cz] = 1
-                scaling_factor = tier_result.scale_factor
             else:
                 aif_curve, aif_mask = self._compute_weighted_roi_aif(
                     candidates, scores, conc_data, brain_mask, tr=tr,

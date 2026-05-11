@@ -1779,7 +1779,7 @@ class TestDCEAIFDetectionLesionMaskFileTrait:
 
 
 # =============================================================================
-# Acceptance gates G1-G7 + G6 escape (v0.51.0)
+# Acceptance gates G1-G6 + G6 escape
 # =============================================================================
 
 from pmriprep.interfaces.dce_aif import (  # noqa: E402
@@ -2136,7 +2136,7 @@ def test_select_worst_for_trim_g4_drops_lowest_washout():
 def test_select_worst_for_trim_fallback_drops_lowest_score():
     metrics = [{"peak_mm": 5.0, "washout": 0.9},
                {"peak_mm": 5.0, "washout": 0.9}]
-    assert _select_worst_for_trim(metrics, [0.9, 0.3], "G7") == 1
+    assert _select_worst_for_trim(metrics, [0.9, 0.3], "unknown") == 1
 
 
 def test_select_worst_tiebreak_lowest_index():

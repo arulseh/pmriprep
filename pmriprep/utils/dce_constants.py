@@ -350,7 +350,7 @@ DCE_AIF_TAIL_SHOULDER_SECONDS: Final[float] = 60.0
 DCE_AIF_TAIL_MIN_SEPARATION_SECONDS: Final[float] = 10.0
 
 # =============================================================================
-# DCE AIF acceptance gates (G1-G7 + G6 escape)
+# DCE AIF acceptance gates (G1-G6 + G6 escape)
 # =============================================================================
 
 #: G1 — scale_aif amplitude floor. Scaling factor above this threshold
@@ -389,8 +389,8 @@ DCE_AIF_GATE_MULTIBUMP_MAX: Final[int] = 2
 #: Parker bi-exponential gives ratio ~0.32 at peak+30 s; venous AIFs
 #: sit at >=0.55 (Bleeker 2009 MRM 62:96). HARD threshold leaves
 #: headroom for distal-ACA broadening, Hct correction, and
-#: recirculation pickup. WARN tier flags borderline cases for G7
-#: aggregation.
+#: recirculation pickup. WARN tier flags borderline cases for future
+#: aggregate-warn gating.
 DCE_AIF_GATE_RATIO30_HARD: Final[float] = 0.50
 DCE_AIF_GATE_RATIO30_WARN: Final[float] = 0.40
 
