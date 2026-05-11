@@ -2027,8 +2027,34 @@ def test_g6_a_boundary_scale_5p99_admit():
     assert status == "G6_ADMIT"
 
 
-def test_g6_a_boundary_scale_6p01_reject():
+def test_g6_a_boundary_scale_6p01_admit():
+    """6.01 is below the 8.0 ceiling — admitted via G6."""
     status, _ = _evaluate_gates(scale_factor=6.01, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "G6_ADMIT"
+
+
+def test_g6_a_scale_7p5_admit():
+    status, _ = _evaluate_gates(scale_factor=7.5, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "G6_ADMIT"
+
+
+def test_g6_a_boundary_scale_8p0_admit():
+    """Exact ceiling boundary — 8.0 passes via <=."""
+    status, _ = _evaluate_gates(scale_factor=8.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_strict",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "G6_ADMIT"
+
+
+def test_g6_a_scale_8p5_reject():
+    status, _ = _evaluate_gates(scale_factor=8.5, qc=_make_qc(),
                                  atlas_tier="MCA_ACA_dce_strict",
                                  n_voxels=10, hemisphere="bilateral",
                                  n_slabs_spanned=3)
@@ -2042,6 +2068,31 @@ def test_g6_f_wrong_tier_isolated_reject():
                                  n_voxels=10, hemisphere="bilateral",
                                  n_slabs_spanned=3)
     assert status == "FAIL_G6_f"
+
+
+def test_g6_f_relaxed_tier_admit():
+    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_relaxed",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "G6_ADMIT"
+
+
+def test_g6_f_permissive_tier_admit():
+    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_permissive",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "G6_ADMIT"
+
+
+def test_g6_relaxed_tier_high_scale_admit():
+    """Combined: relaxed tier at scale 7.0 — exercises both ceiling raise and tier extension."""
+    status, _ = _evaluate_gates(scale_factor=7.0, qc=_make_qc(),
+                                 atlas_tier="MCA_ACA_dce_relaxed",
+                                 n_voxels=10, hemisphere="bilateral",
+                                 n_slabs_spanned=3)
+    assert status == "G6_ADMIT"
 
 
 # ----- Threshold boundaries -----------------------------------------------

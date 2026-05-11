@@ -994,10 +994,11 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         1.0,
         usedefault=True,
         desc="Base multiplier on PK posterior sigma from upstream AIF "
-             "confidence (1.0 = standard AIF, 2.0 = G6-admitted reduced-"
-             "confidence AIF). Applied per-parameter via "
-             "DCE_AIF_G6_SIGMA_INFLATION map; ve is uninflated "
-             "(decoupled from AIF peak amplitude per Buckley 2002).",
+             "confidence (1.0 = standard, 2.0 = G6-admitted low-scale, "
+             "3.0 = G6-admitted high-scale or population AIF). Applied "
+             "per-parameter via DCE_AIF_G6_SIGMA_INFLATION map; ve is "
+             "uninflated (decoupled from AIF peak amplitude per "
+             "Buckley 2002).",
     )
 
     # Sloppy / reproducibility
@@ -1869,7 +1870,10 @@ class ComputeDCEMaps(BaseInterface):
                 k: 1.0 for k in DCE_AIF_G6_SIGMA_INFLATION
             }
         else:
-            _sigma_factor = dict(DCE_AIF_G6_SIGMA_INFLATION)
+            _sigma_factor = {
+                k: 1.0 + (v - 1.0) * (_base_inflation - 1.0)
+                for k, v in DCE_AIF_G6_SIGMA_INFLATION.items()
+            }
 
         # Per-voxel indicator that vp ended at a bound in the SOFT NLLS
         # active-set path. Populated only by batched NLLS SOFT; 0 elsewhere

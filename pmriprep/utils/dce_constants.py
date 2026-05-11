@@ -361,11 +361,16 @@ DCE_AIF_TAIL_MIN_SEPARATION_SECONDS: Final[float] = 10.0
 DCE_AIF_GATE_SCALE_HARD: Final[float] = 3.0
 
 #: G6 (a) — escape ceiling for amplitude floor when shape gates pass.
-#: 6x corresponds to partial-volume fill fraction of about 0.17 (1 mm
-#: caliber artery in 3.5 mm slab, off-axis); below this, surrounding
-#: tissue uptake bleed distorts AIF shape during first pass for
-#: tumor-adjacent K^trans of about 0.05 min^-1.
-DCE_AIF_GATE_SCALE_G6_CEILING: Final[float] = 6.0
+#: 8x corresponds to partial-volume fill fraction of about 0.12
+#: (0.8-1.5 mm caliber branch artery in 5 mm slab at oblique
+#: orientation). Roberts JMRI 2006 23:519 documented 1-12 mM blood
+#: AIF peaks at 1.5T; Calamante NMR Biomed 2013 26:913 confirms
+#: partial-volume dilution of 2-10x is typical.
+DCE_AIF_GATE_SCALE_G6_CEILING: Final[float] = 8.0
+
+#: G6 graded uncertainty threshold — above this scale factor,
+#: AIF noise amplification warrants population-equivalent uncertainty.
+DCE_AIF_GATE_SCALE_G6_HIGH: Final[float] = 6.0
 
 #: G2 — late-tail/peak ratio HARD reject threshold.
 #: Parker bi-exponential arterial plasma decays to <=0.20 by 2 min

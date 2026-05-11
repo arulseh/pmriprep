@@ -57,6 +57,7 @@ from pmriprep.utils.dce_constants import (
     DCE_AIF_GATE_RATIO30_HARD,
     DCE_AIF_GATE_RATIO30_WARN,
     DCE_AIF_GATE_SCALE_G6_CEILING,
+    DCE_AIF_GATE_SCALE_G6_HIGH,
     DCE_AIF_GATE_SCALE_HARD,
     DCE_AIF_MIN_TRIM_POOL,
     DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
@@ -732,7 +733,8 @@ def _evaluate_gates(
     qc : GateQC
         Output of ``_compute_pool_qc``.
     atlas_tier : str or None
-        Tier label like ``"MCA_ACA_dce_strict"``. Used only by G6 (f).
+        Tier label (e.g. ``"MCA_ACA_dce_strict"`` / ``"..._relaxed"`` /
+        ``"..._permissive"``). Used only by G6 (f).
     n_voxels : int
         Pool size (used by G6 (g)).
     hemisphere : str
@@ -795,7 +797,11 @@ def _evaluate_gates(
 
     # G1 fails — consult G6 escape clause.
     g6_a = scale_factor <= DCE_AIF_GATE_SCALE_G6_CEILING
-    g6_f = atlas_tier == "MCA_ACA_dce_strict"
+    g6_f = atlas_tier in (
+        "MCA_ACA_dce_strict",
+        "MCA_ACA_dce_relaxed",
+        "MCA_ACA_dce_permissive",
+    )
     if hemisphere == "bilateral":
         g6_g = n_voxels >= DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL
     else:
@@ -1117,9 +1123,10 @@ class DCEAIFDetectionOutputSpec(TraitedSpec):
         1.0,
         usedefault=True,
         desc="Base multiplier on PK posterior sigma from upstream AIF "
-             "confidence. 1.0 = standard AIF; 2.0 = G6-admitted "
-             "reduced-confidence AIF. Mapped per-parameter downstream "
-             "via DCE_AIF_G6_SIGMA_INFLATION (ve uninflated).",
+             "confidence (1.0 = standard, 2.0 = G6-admitted low-scale, "
+             "3.0 = G6-admitted high-scale or population AIF). Mapped "
+             "per-parameter downstream via DCE_AIF_G6_SIGMA_INFLATION "
+             "(ve uninflated).",
     )
 
 
@@ -4386,7 +4393,11 @@ class AIFDetection(BaseInterface):
             if tier_result.status == "G6_ADMIT":
                 qc_metrics["aif_confidence"] = "reduced"
                 qc_metrics["aif_g6_admitted"] = True
-                qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
+                sf = tier_result.scale_factor
+                if sf > DCE_AIF_GATE_SCALE_G6_HIGH:
+                    qc_metrics["aif_uncertainty_inflation_factor"] = 3.0
+                else:
+                    qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
             else:
                 qc_metrics["aif_confidence"] = "standard"
                 qc_metrics["aif_g6_admitted"] = False
