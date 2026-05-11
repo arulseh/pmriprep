@@ -985,15 +985,18 @@ def build_dce_resume_sidecar(
     *,
     qc_metrics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Build the verbatim resume sidecar carrying producer-shape DCE QC.
+    """Build the resume sidecar carrying trimmed DCE QC for HTML reports.
 
-    Mirror of :func:`build_dsc_resume_sidecar` for DCE. Stores the full
-    producer-shape ``qc_metrics`` envelope verbatim under
-    ``qc_metrics`` so the HTML aggregator (and any future ``--skip-dce``
-    resume helper) can recover the nested-dict shape without translating
-    from flat per-image sidecar keys.
+    Stores ``qc_metrics`` under the ``qc_metrics`` key for the HTML
+    aggregator, with ``aif_detection`` trimmed to the fields needed by
+    the report template and PK enrichment.
     """
-    from pmriprep.utils.provenance import get_bids_derivative_provenance
+    import copy
+
+    from pmriprep.utils.provenance import (
+        _DCE_AIF_RESUME_FIELDS,
+        get_bids_derivative_provenance,
+    )
 
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
@@ -1001,7 +1004,14 @@ def build_dce_resume_sidecar(
         "PMRIPrepInternal": True,
     }
     if qc_metrics:
-        sidecar["qc_metrics"] = dict(qc_metrics)
+        trimmed = copy.deepcopy(qc_metrics)
+        aif_block = trimmed.get("aif_detection")
+        if isinstance(aif_block, dict):
+            trimmed["aif_detection"] = {
+                k: v for k, v in aif_block.items()
+                if k in _DCE_AIF_RESUME_FIELDS
+            }
+        sidecar["qc_metrics"] = trimmed
     return sidecar
 
 
@@ -1255,13 +1265,12 @@ def enrich_dce_pk_map_sidecar(
     Mutates and returns ``sidecar``. Adds ``PK*`` keys from
     ``qc_metrics["pk_modeling"]``; cross-modality fields land only on
     the maps they apply to (``DSCDCECrossValCorrelation`` on ``ktrans``,
-    ``CBVNegativeFraction`` on ``vp``). AIF acceptance-gate provenance
-    (``AIFConfidence``, ``AIFG6Admitted``,
-    ``AIFUncertaintyInflationFactor``, ``AIFFwhmConfidence``,
-    ``AIFGateDecisions``) attached on every PK map sidecar so
-    downstream tools can detect reduced-confidence runs without
-    cross-referencing the resume sidecar. Per-map ``LesionStats``
-    fragment attached when present.
+    ``CBVNegativeFraction`` on ``vp``). AIF provenance
+    (``AIFConfidence``, ``AIFUncertaintyInflationFactor``,
+    ``AIFFwhmConfidence``, ``AIFGateDecisions``) attached on every PK
+    map sidecar so downstream tools can detect reduced-confidence runs
+    without cross-referencing the resume sidecar. Per-map
+    ``LesionStats`` fragment attached when present.
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         if lesion_fragment:
@@ -1272,8 +1281,6 @@ def enrich_dce_pk_map_sidecar(
     if isinstance(aif_block, dict):
         if "aif_confidence" in aif_block:
             sidecar["AIFConfidence"] = str(aif_block["aif_confidence"])
-        if "aif_g6_admitted" in aif_block:
-            sidecar["AIFG6Admitted"] = bool(aif_block["aif_g6_admitted"])
         if "aif_uncertainty_inflation_factor" in aif_block:
             sidecar["AIFUncertaintyInflationFactor"] = float(
                 aif_block["aif_uncertainty_inflation_factor"]
