@@ -2,7 +2,7 @@
 
 PR2 collapse: ``_compute_overall_recommendation`` /
 ``_collect_all_warnings`` / ``_collect_provenance_warnings`` /
-``_collect_acquisition_warnings`` operate on the legacy nested shape
+``_collect_pipeline_warnings`` operate on the legacy nested shape
 returned by ``_load_pipeline_sidecars``. This test feeds those helpers
 the dict the loader produces from anchor-sidecar QC* flat keys and
 confirms they pick up the recommendation + three warnings flavors.
@@ -13,8 +13,8 @@ import json
 from pathlib import Path
 
 from pmriprep.utils.report_utils import (
-    _collect_acquisition_warnings,
     _collect_all_warnings,
+    _collect_pipeline_warnings,
     _collect_provenance_warnings,
     _compute_overall_recommendation,
     _load_pipeline_sidecars,
@@ -37,7 +37,8 @@ def test_recommendation_and_warnings_propagate(tmp_path: Path) -> None:
             "QCRecommendationReason": "AIF marginal",
             "QCWarnings": ["Brain mask in DSC space not available"],
             "QCProvenanceWarnings": ["DSC preload auto-detected"],
-            "QCAcquisitionWarnings": ["AIF fell back to template"],
+            "QCAcquisitionWarnings": ["Low effective dose"],
+            "QCProcessingWarnings": ["AIF fell back to template"],
         },
     )
     _write(
@@ -73,5 +74,8 @@ def test_recommendation_and_warnings_propagate(tmp_path: Path) -> None:
     prov = _collect_provenance_warnings(pipeline_data)
     assert prov.get("DSC Perfusion") == ["DSC preload auto-detected"]
 
-    acq = _collect_acquisition_warnings(pipeline_data)
-    assert acq.get("DSC Perfusion") == ["AIF fell back to template"]
+    acq = _collect_pipeline_warnings(pipeline_data, "acquisition_warnings")
+    assert acq.get("DSC Perfusion") == ["Low effective dose"]
+
+    proc = _collect_pipeline_warnings(pipeline_data, "processing_warnings")
+    assert proc.get("DSC Perfusion") == ["AIF fell back to template"]

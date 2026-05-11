@@ -27,11 +27,26 @@
     </div>
     {% endif %}
 
-    <!-- Acquisition / data-quality advisories (low dose, AIF saturation, AIF template fallback) -->
+    <!-- Acquisition / data-quality advisories (low dose, missing TE/TR, etc.) -->
     {% if acquisition_warnings %}
     <div class="section review acquisition-warning">
         <h3>&#9888; Acquisition Advisory</h3>
         {% for pipeline_name, warnings in acquisition_warnings.items() %}
+        <h4>{{ pipeline_name }}</h4>
+        <ul>
+            {% for warning in warnings %}
+            <li>{{ warning }}</li>
+            {% endfor %}
+        </ul>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Processing advisories (AIF fallback to population/template) -->
+    {% if processing_warnings %}
+    <div class="section review processing-warning">
+        <h3>&#9888; Processing Advisory</h3>
+        {% for pipeline_name, warnings in processing_warnings.items() %}
         <h4>{{ pipeline_name }}</h4>
         <ul>
             {% for warning in warnings %}

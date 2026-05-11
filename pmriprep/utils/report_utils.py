@@ -975,7 +975,8 @@ def _qc_keys_from_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
     """Translate flat ``QC*`` recommendation/warnings keys to legacy nested.
 
     The pre-v0.46.0 aggregator read ``recommendation``, ``warnings``,
-    ``provenance_warnings``, and ``acquisition_warnings`` as top-level
+    ``provenance_warnings``, ``acquisition_warnings``, and
+    ``processing_warnings`` as top-level
     keys on ``qc_metrics``. PR2 moves them onto the canonical anchor
     sidecars as flat ``QC*``-prefixed keys (per bids-spec-expert
     guidance). This translates them back to the nested shape so
@@ -999,6 +1000,9 @@ def _qc_keys_from_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
     acq = anchor.get("QCAcquisitionWarnings")
     if acq:
         out["acquisition_warnings"] = list(acq)
+    proc = anchor.get("QCProcessingWarnings")
+    if proc:
+        out["processing_warnings"] = list(proc)
     return out
 
 
@@ -1048,7 +1052,7 @@ def _load_pipeline_sidecars(
     #     brain_extraction / tissue_segmentation / aif_detection /
     #     preload / pk_modeling / etc.
     # _qc_keys_from_anchor → recommendation / warnings /
-    #     provenance_warnings / acquisition_warnings.
+    #     provenance_warnings / acquisition_warnings / processing_warnings.
     # Ordering does not matter; if the key sets ever overlap, audit
     # both helpers — the silent overwrite would be a regression.
     qc_metrics.update(_qc_keys_from_anchor(anchor))
@@ -1232,20 +1236,18 @@ def _collect_provenance_warnings(
     return result
 
 
-def _collect_acquisition_warnings(
+def _collect_pipeline_warnings(
     pipeline_data: dict[str, Optional[dict[str, Any]]],
+    key: str,
 ) -> dict[str, list[str]]:
-    """Collect acquisition/data-quality warnings for dedicated HTML banner.
-
-    Reads the ``acquisition_warnings`` key from QC metrics, which holds
-    preflight warnings and AIF fallback messages.
+    """Collect per-pipeline warnings of a given type for HTML banners.
 
     Args:
         pipeline_data: Dict of pipeline name to data dict (or None).
+        key: QC metrics key to read (e.g. ``"acquisition_warnings"``).
 
     Returns:
-        Dict mapping pipeline display name to list of acquisition warning
-        strings. Empty dict if no acquisition warnings exist.
+        Dict mapping pipeline display name to list of warning strings.
     """
     result: dict[str, list[str]] = {}
     display_names = {
@@ -1256,9 +1258,9 @@ def _collect_acquisition_warnings(
         data = pipeline_data.get(name)
         if data is None:
             continue
-        acq_w = data.get("qc_metrics", {}).get("acquisition_warnings", [])
-        if acq_w:
-            result[display_names[name]] = acq_w
+        warnings = data.get("qc_metrics", {}).get(key, [])
+        if warnings:
+            result[display_names[name]] = warnings
     return result
 
 
@@ -1391,7 +1393,12 @@ def generate_unified_report(
     overall_rec = _compute_overall_recommendation(pipeline_data)
     all_warnings = _collect_all_warnings(pipeline_data)
     provenance_warnings = _collect_provenance_warnings(pipeline_data)
-    acquisition_warnings = _collect_acquisition_warnings(pipeline_data)
+    acquisition_warnings = _collect_pipeline_warnings(
+        pipeline_data, "acquisition_warnings",
+    )
+    processing_warnings = _collect_pipeline_warnings(
+        pipeline_data, "processing_warnings",
+    )
     boilerplate_text = _generate_boilerplate_text(
         pmriprep.__version__, ran_pipelines, pipeline_data
     )
@@ -1413,6 +1420,7 @@ def generate_unified_report(
         "all_warnings": all_warnings,
         "provenance_warnings": provenance_warnings,
         "acquisition_warnings": acquisition_warnings,
+        "processing_warnings": processing_warnings,
         # Boilerplate methods text
         "boilerplate_text": boilerplate_text,
     }

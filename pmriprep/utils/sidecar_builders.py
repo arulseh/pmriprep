@@ -1053,7 +1053,7 @@ def enrich_recommendation_keys(
 
     The aggregator reads these keys from the canonical anchor sidecars
     (the same files used as pipeline presence probes) to build the
-    overall recommendation banner and the three warnings banners in the
+    overall recommendation banner and the four warnings banners in the
     HTML report. Empty fields are omitted (per fmriprep convention for
     optional sidecar fields).
 
@@ -1117,14 +1117,15 @@ def enrich_recommendation_keys(
         from pmriprep.utils.contrast_agent import collect_aif_fallback_warning
 
         acq: List[str] = []
-        if qc_metrics:
-            aif_warn = collect_aif_fallback_warning(qc_metrics, modality)
-            if aif_warn:
-                acq.append(aif_warn)
         if preflight_warnings:
             acq.extend(str(w) for w in preflight_warnings if w)
         if acq:
             sidecar["QCAcquisitionWarnings"] = acq
+
+        if qc_metrics:
+            aif_warn = collect_aif_fallback_warning(qc_metrics, modality)
+            if aif_warn:
+                sidecar["QCProcessingWarnings"] = [aif_warn]
 
     return sidecar
 

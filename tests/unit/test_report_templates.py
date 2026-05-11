@@ -213,6 +213,7 @@ def _summary_ctx(**overrides) -> dict:
         "overall_recommendation": None,
         "provenance_warnings": {},
         "acquisition_warnings": {},
+        "processing_warnings": {},
         "ran_pipelines": {
             "anat": True, "tumor_seg": False, "dsc": True, "dce": False,
         },
@@ -239,3 +240,22 @@ def test_summary_hides_acquisition_warnings_when_empty(env):
     ctx = _summary_ctx()
     rendered = template.render(**ctx)
     assert "Acquisition Advisory" not in rendered
+
+
+def test_summary_renders_processing_warnings(env):
+    """Processing advisory section renders when AIF fallback present."""
+    template = env.get_template("sections/section_summary.html")
+    ctx = _summary_ctx(processing_warnings={
+        "DSC Perfusion": ["AIF fell back to Parker population template"],
+    })
+    rendered = template.render(**ctx)
+    assert "Processing Advisory" in rendered
+    assert "Parker population template" in rendered
+
+
+def test_summary_hides_processing_warnings_when_empty(env):
+    """Processing advisory section hidden when no warnings."""
+    template = env.get_template("sections/section_summary.html")
+    ctx = _summary_ctx()
+    rendered = template.render(**ctx)
+    assert "Processing Advisory" not in rendered
