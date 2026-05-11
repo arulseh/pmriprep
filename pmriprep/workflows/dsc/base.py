@@ -1311,65 +1311,6 @@ def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc,
     return merged
 
 
-def _save_transforms(dsc_to_t1w_matrix, t1w_to_dsc_matrix, derivatives_dir, subject_id, session_id):  # type: ignore[no-untyped-def]
-    """Copy transform matrices to BIDS xfm/ directory with proper naming.
-
-    Args:
-        dsc_to_t1w_matrix: Path to DSC-to-T1w transform matrix.
-        t1w_to_dsc_matrix: Path to T1w-to-DSC transform matrix (inverted).
-        derivatives_dir: Path to BIDS derivatives directory.
-        subject_id: Subject ID (without 'sub-' prefix).
-        session_id: Session ID (without 'ses-' prefix), or None.
-
-    Returns:
-        Tuple of (dsc_to_t1w_path, t1w_to_dsc_path) in BIDS layout, or
-        ``("", "")`` when either input is Undefined/None/'' (upstream
-        registration produced no transform).
-    """
-    import logging
-    import shutil
-    from pathlib import Path
-
-    from nipype.interfaces.base import isdefined
-
-    # Defensive no-op when upstream registration produced no transform.
-    # See pmriprep.workflows.dce.datasinks._copy_perf_map for the
-    # sentinel-handling rationale (Undefined/None/"" all need explicit
-    # handling — isdefined(None) == True is a Nipype gotcha).
-    def _missing(x):  # type: ignore[no-untyped-def]
-        return not isdefined(x) or x is None or x == ""
-
-    if _missing(dsc_to_t1w_matrix) or _missing(t1w_to_dsc_matrix):
-        logging.getLogger("nipype.workflow").warning(
-            "Skipping _save_transforms: upstream produced no transform "
-            "(dsc_to_t1w=%r, t1w_to_dsc=%r)",
-            dsc_to_t1w_matrix, t1w_to_dsc_matrix,
-        )
-        return "", ""
-
-    sub_dir = f"sub-{subject_id}"
-    ses_part = f"ses-{session_id}" if session_id else ""
-    if ses_part:
-        out_dir = Path(derivatives_dir) / "pmriprep" / sub_dir / ses_part / "xfm"
-    else:
-        out_dir = Path(derivatives_dir) / "pmriprep" / sub_dir / "xfm"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    prefix = f"{sub_dir}{'_' + ses_part if ses_part else ''}"
-
-    dsc_to_t1w_path = str(
-        out_dir / f"{prefix}_from-dsc_to-T1w_mode-image_xfm.mat"
-    )
-    t1w_to_dsc_path = str(
-        out_dir / f"{prefix}_from-T1w_to-dsc_mode-image_xfm.mat"
-    )
-
-    shutil.copy2(dsc_to_t1w_matrix, dsc_to_t1w_path)
-    shutil.copy2(t1w_to_dsc_matrix, t1w_to_dsc_path)
-
-    return dsc_to_t1w_path, t1w_to_dsc_path
-
-
 def _write_pipeline_provenance(merged_qc, derivatives_dir, subject_id, session_id, config_dict, dsc_file):  # type: ignore[no-untyped-def]
     """Write DSC QC JSON and provenance JSON to derivatives directory."""
     from pmriprep.utils.provenance import write_modality_provenance
@@ -2290,27 +2231,6 @@ def init_dsc_preproc_wf(
     write_provenance.inputs.config_dict = config_dict
 
     # -------------------------------------------------------------------
-    # Node 11: Save Registration Transforms
-    # -------------------------------------------------------------------
-    save_transforms = pe.Node(
-        niu.Function(
-            input_names=[
-                "dsc_to_t1w_matrix",
-                "t1w_to_dsc_matrix",
-                "derivatives_dir",
-                "subject_id",
-                "session_id",
-            ],
-            output_names=["dsc_to_t1w_path", "t1w_to_dsc_path"],
-            function=_save_transforms,
-        ),
-        name="save_transforms",
-    )
-    save_transforms.inputs.derivatives_dir = str(derivatives_dir)
-    save_transforms.inputs.subject_id = subject_id
-    save_transforms.inputs.session_id = session_id
-
-    # -------------------------------------------------------------------
     # Workflow Connections
     # -------------------------------------------------------------------
 
@@ -2855,14 +2775,6 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (merge_qc, write_provenance, [("merged_qc", "merged_qc")]),
         (inputnode, write_provenance, [("dsc_file", "dsc_file")]),
-    ])
-
-    # Save registration transforms to BIDS xfm/ directory
-    # register.out_matrix is T1w→DSC (FLIRT: -in T1w -ref DSC)
-    # invert_dsc_xfm.out_file is DSC→T1w (inverted)
-    workflow.connect([
-        (register, save_transforms, [("out_matrix", "t1w_to_dsc_matrix")]),
-        (invert_dsc_xfm, save_transforms, [("out_file", "dsc_to_t1w_matrix")]),
     ])
 
     # Connect to Output Node

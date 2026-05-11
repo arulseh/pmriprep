@@ -72,7 +72,7 @@ class TestDCECopyPerfMapNoneTolerance:
             desc="dceTortuosityCorr", suffix="Ktrans",
             meta_dict={"Description": "test"},
         )
-        assert out.endswith("sub-X_ses-Y_desc-dceTortuosityCorr_Ktrans.nii.gz")
+        assert out.endswith("sub-X_ses-Y_desc-dceTortuosityCorrKtrans_stat.nii.gz")
         assert Path(out).is_file()
         assert Path(out.replace(".nii.gz", ".json")).is_file()
 
@@ -120,59 +120,8 @@ class TestDSCCopyPerfMapNoneTolerance:
             desc="dsc", suffix="cbv",
             meta_dict={"Description": "test"},
         )
-        assert out.endswith("sub-X_ses-Y_desc-dsc_cbv.nii.gz")
+        assert out.endswith("sub-X_ses-Y_desc-dscCbv_stat.nii.gz")
         assert Path(out).is_file()
         assert Path(out.replace(".nii.gz", ".json")).is_file()
 
 
-class TestSaveTransformsNoneTolerance:
-    """Regression: dsc/base.py:_save_transforms must no-op on Undefined/None/''.
-
-    Same conditional-producer-feeds-unconditional-sink pattern as the
-    datasinks helpers. ``_save_transforms`` writes both DSC→T1w and
-    T1w→DSC transform matrices; if either upstream registration produces
-    no transform the function would crash inside ``shutil.copy2(None, ...)``.
-    """
-
-    def test_undefined_dsc_to_t1w_returns_empty_tuple(self, tmp_path) -> None:
-        from pmriprep.workflows.dsc.base import _save_transforms
-        result = _save_transforms(
-            dsc_to_t1w_matrix=Undefined,
-            t1w_to_dsc_matrix=str(tmp_path / "t1w_to_dsc.mat"),
-            derivatives_dir=str(tmp_path), subject_id="X", session_id="Y",
-        )
-        assert result == ("", "")
-        assert not list(tmp_path.rglob("*.mat"))
-
-    def test_undefined_t1w_to_dsc_returns_empty_tuple(self, tmp_path) -> None:
-        from pmriprep.workflows.dsc.base import _save_transforms
-        result = _save_transforms(
-            dsc_to_t1w_matrix=str(tmp_path / "dsc_to_t1w.mat"),
-            t1w_to_dsc_matrix=Undefined,
-            derivatives_dir=str(tmp_path), subject_id="X", session_id="Y",
-        )
-        assert result == ("", "")
-
-    def test_none_inputs_return_empty_tuple(self, tmp_path) -> None:
-        from pmriprep.workflows.dsc.base import _save_transforms
-        result = _save_transforms(
-            dsc_to_t1w_matrix=None, t1w_to_dsc_matrix=None,
-            derivatives_dir=str(tmp_path), subject_id="X", session_id="Y",
-        )
-        assert result == ("", "")
-
-    def test_real_inputs_still_copy(self, tmp_path) -> None:
-        from pmriprep.workflows.dsc.base import _save_transforms
-        src1 = tmp_path / "dsc_to_t1w.mat"
-        src2 = tmp_path / "t1w_to_dsc.mat"
-        src1.write_text("identity")
-        src2.write_text("identity")
-        out_dir = tmp_path / "out"
-        result = _save_transforms(
-            dsc_to_t1w_matrix=str(src1), t1w_to_dsc_matrix=str(src2),
-            derivatives_dir=str(out_dir), subject_id="X", session_id="Y",
-        )
-        assert result[0].endswith("sub-X_ses-Y_from-dsc_to-T1w_mode-image_xfm.mat")
-        assert result[1].endswith("sub-X_ses-Y_from-T1w_to-dsc_mode-image_xfm.mat")
-        assert Path(result[0]).is_file()
-        assert Path(result[1]).is_file()

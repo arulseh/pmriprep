@@ -284,8 +284,11 @@ def test_aif_sidecar_flat_keys_populated(tmp_path: Path) -> None:
 
 def test_tumor_seg_dseg_sidecar_describes_tsv_columns(tmp_path: Path) -> None:
     # build_tumor_seg_dseg_sidecar reads voxel sizes from the reference NIfTI
-    ref = tmp_path / "T1w.nii.gz"
-    nib.save(nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.int16), affine=np.eye(4)), str(ref))
+    # Use a segmentation with label values so TumorVolumetrics computes real counts
+    seg_data = np.zeros((4, 4, 4), dtype=np.int16)
+    seg_data[1:3, 1:3, 1:3] = 2  # 8 enhancing voxels
+    ref = tmp_path / "seg.nii.gz"
+    nib.save(nib.Nifti1Image(seg_data, affine=np.eye(4)), str(ref))
     sc = build_tumor_seg_dseg_sidecar(
         source_paths=[ref],
         reference_voxel_source=ref,
@@ -302,3 +305,42 @@ def test_tumor_seg_dseg_sidecar_describes_tsv_columns(tmp_path: Path) -> None:
     assert "Description" in sc["Columns"]["voxel_count"]
     assert sc["Columns"]["voxel_count"]["Units"] == "voxels"
     assert "Description" in sc["Columns"]["abbreviation"]
+
+    # TumorVolumetrics block carries per-region volumes
+    assert "TumorVolumetrics" in sc
+    tv = sc["TumorVolumetrics"]
+    assert tv["TotalLesionVoxels"] == 8
+    assert tv["Regions"]["contrast_enhancing_tumor"]["voxel_count"] == 8
+    assert tv["Regions"]["non_enhancing_tumor"]["voxel_count"] == 0
+    assert tv["EnhancingFraction"] == 1.0
+
+
+def test_tumor_volumetrics_mixed_labels(tmp_path: Path) -> None:
+    """Mixed label segmentation produces 0 < EnhancingFraction < 1."""
+    seg_data = np.zeros((4, 4, 4), dtype=np.int16)
+    seg_data[0, 0, 0] = 1  # 1 non-enhancing
+    seg_data[1, 1, 1] = 2  # 1 enhancing
+    ref = tmp_path / "seg.nii.gz"
+    nib.save(nib.Nifti1Image(seg_data, affine=np.eye(4)), str(ref))
+    sc = build_tumor_seg_dseg_sidecar(
+        source_paths=[ref], reference_voxel_source=ref,
+        bids_dir=tmp_path, subject="01", session="01",
+    )
+    tv = sc["TumorVolumetrics"]
+    assert tv["TotalLesionVoxels"] == 2
+    assert tv["Regions"]["contrast_enhancing_tumor"]["voxel_count"] == 1
+    assert tv["Regions"]["non_enhancing_tumor"]["voxel_count"] == 1
+    assert tv["EnhancingFraction"] == 0.5
+
+
+def test_tumor_volumetrics_empty_segmentation(tmp_path: Path) -> None:
+    """All-zeros segmentation yields EnhancingFraction=None (JSON null)."""
+    ref = tmp_path / "seg.nii.gz"
+    nib.save(nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.int16), affine=np.eye(4)), str(ref))
+    sc = build_tumor_seg_dseg_sidecar(
+        source_paths=[ref], reference_voxel_source=ref,
+        bids_dir=tmp_path, subject="01", session="01",
+    )
+    tv = sc["TumorVolumetrics"]
+    assert tv["TotalLesionVoxels"] == 0
+    assert tv["EnhancingFraction"] is None

@@ -112,6 +112,9 @@ _MF_UNITS = {
     "wash_in_slope": "mM/min", "wash_out_slope": "mM/min",
 }
 
+# curveType is a discrete segmentation (dseg), not a continuous stat.
+_BIDS_SUFFIX_OVERRIDE: dict[str, str] = {"curveType": "dseg"}
+
 # BIDS-correct suffixes for smoothed-map sinks live inline in
 # ``_split_dce_smoothed`` (nipype reconstructs Function helpers in an
 # empty namespace, so the lookup tables can't be shared via module
@@ -382,13 +385,15 @@ def _build_delta_bic_meta(  # type: ignore[no-untyped-def]
 
 def _copy_perf_map(  # type: ignore[no-untyped-def]
     in_file, output_dir, subject, session, desc, suffix, meta_dict,
-    datatype="perf", model_entity="",
+    datatype="perf", model_entity="", bids_suffix="stat",
 ):
-    """Copy a DCE NIfTI + sidecar with explicit naming.
+    """Copy a DCE NIfTI + sidecar with BIDS-compliant naming.
 
-    ``model_entity`` is the resolved ``model-{name}`` token (or empty
-    string for model-free outputs). ``datatype`` distinguishes
-    ``perf/`` (perfusion maps) from ``anat/`` (T1map/B1+map/masks).
+    ``suffix`` is the parameter name (e.g. ``"Ktrans"``, ``"mtt"``)
+    which gets folded into the ``desc-`` entity.  ``bids_suffix`` is
+    the BIDS-canonical suffix (``stat``, ``mask``, ``dseg``, …).  Pass
+    ``suffix=""`` when ``desc`` already encodes everything and only the
+    BIDS suffix is needed.
     """
     import json as _json
     import logging
@@ -426,8 +431,9 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     if model_entity:
         parts.append(model_entity)
     if desc:
-        parts.append(f"desc-{desc}")
-    parts.append(suffix)
+        folded = suffix[:1].upper() + suffix[1:] if suffix else ""
+        parts.append(f"desc-{desc}{folded}")
+    parts.append(bids_suffix)
     stem = "_".join(parts)
     nii_out = out_root / f"{stem}.nii.gz"
     json_out = out_root / f"{stem}.json"
@@ -473,7 +479,7 @@ def _copy_b1plusmap(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    stem = f"{prefix}_space-dce_B1plusmap"
+    stem = f"{prefix}_space-dceref_B1plusmap"
     nii_out = out_root / f"{stem}.nii.gz"
     json_out = out_root / f"{stem}.json"
 
@@ -511,7 +517,7 @@ def _copy_dce_xfm(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    fname = f"{prefix}_from-dce_to-T1w_mode-image_xfm.mat"
+    fname = f"{prefix}_from-dceref_to-T1w_mode-image_xfm.mat"
     out_path = out_root / fname
     shutil.copy2(in_file, out_path)
     return str(out_path)
@@ -637,6 +643,7 @@ def _add_perf_map_sink(
     model_entity: str = "",
     minimal_base: bool = False,
     map_key: str = "",
+    bids_suffix: str = "stat",
 ) -> pe.Node:
     """Wire one DCE perf-space map sink (Function builder + Function copy).
 
@@ -670,6 +677,7 @@ def _add_perf_map_sink(
             input_names=[
                 "in_file", "output_dir", "subject", "session",
                 "desc", "suffix", "meta_dict", "datatype", "model_entity",
+                "bids_suffix",
             ],
             output_names=["out_file"],
             function=_copy_perf_map,
@@ -680,6 +688,7 @@ def _add_perf_map_sink(
     sink.inputs.suffix = suffix
     sink.inputs.datatype = "perf"
     sink.inputs.model_entity = model_entity
+    sink.inputs.bids_suffix = bids_suffix
     workflow.connect([
         (inputnode, sink, [
             ("output_dir", "output_dir"),
@@ -733,6 +742,7 @@ def _add_dce_pk_map_sink(
     units: Optional[str],
     map_key: str,
     model_entity: str = "",
+    bids_suffix: str = "stat",
 ) -> pe.Node:
     """Wire a DCE PK-map sink with flat-key cosmetic enrichment.
 
@@ -768,6 +778,7 @@ def _add_dce_pk_map_sink(
             input_names=[
                 "in_file", "output_dir", "subject", "session",
                 "desc", "suffix", "meta_dict", "datatype", "model_entity",
+                "bids_suffix",
             ],
             output_names=["out_file"],
             function=_copy_perf_map,
@@ -778,6 +789,7 @@ def _add_dce_pk_map_sink(
     sink.inputs.suffix = suffix
     sink.inputs.datatype = "perf"
     sink.inputs.model_entity = model_entity
+    sink.inputs.bids_suffix = bids_suffix
     workflow.connect([
         (inputnode, sink, [
             ("output_dir", "output_dir"),
@@ -809,7 +821,7 @@ def _add_anat_image_sink(
 
     Mirrors DSC's ``_add_anat_sink`` — uses ``PMRIPrepDataSink`` (niworkflows
     ``DerivativesDataSink`` subclass) for BIDS-canonical anat suffixes. The
-    space-dce entity correctly indicates cross-modality registration to DCE
+    space-dceref entity correctly indicates cross-modality registration to DCE
     acquisition geometry.
 
     ``dismiss_entities`` strips entities the niworkflows ``DerivativesDataSink``
@@ -841,7 +853,7 @@ def _add_anat_image_sink(
         PMRIPrepDataSink(
             check_hdr=True, compress=True,
             allowed_entities=("space", "datatype", "ceagent"),
-            space="dce", suffix=label, datatype="anat",
+            space="dceref", suffix=label, datatype="anat",
             dismiss_entities=list(dismiss_entities),
         ),
         name=f"{name}_sink",
@@ -889,6 +901,7 @@ def _add_anat_mask_sink(
             input_names=[
                 "in_file", "output_dir", "subject", "session",
                 "desc", "suffix", "meta_dict", "datatype", "model_entity",
+                "bids_suffix",
             ],
             output_names=["out_file"],
             function=_copy_perf_map,
@@ -896,9 +909,10 @@ def _add_anat_mask_sink(
         name=f"{name}_sink",
     )
     sink.inputs.desc = desc_value
-    sink.inputs.suffix = "mask"
+    sink.inputs.suffix = ""
     sink.inputs.datatype = "anat"
     sink.inputs.model_entity = ""
+    sink.inputs.bids_suffix = "mask"
     workflow.connect([
         (inputnode, sink, [
             ("output_dir", "output_dir"),
@@ -1123,6 +1137,7 @@ def init_dce_datasinks_wf(
             description=description, units=units, extra=extra,
             model_entity="",
             map_key=_MF_LESIONSTATS_MAP_KEY.get(in_attr, ""),
+            bids_suffix=_BIDS_SUFFIX_OVERRIDE.get(suffix, "stat"),
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -1140,9 +1155,10 @@ def init_dce_datasinks_wf(
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
             name="qc_mask", in_attr="qc_mask",
-            desc_value="dceQc", suffix="mask",
+            desc_value="dceQc", suffix="",
             description="QC mask (1=good fit, 0=unfitted/poor)",
             units=None, extra=None, model_entity="",
+            bids_suffix="mask",
         )
         sink_outputs.append((sink, "out_file"))
     if "r2_map" in present:
@@ -1161,12 +1177,13 @@ def init_dce_datasinks_wf(
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
             name="quality_flag_map", in_attr="quality_flag_map",
-            desc_value="dceQualityFlag", suffix="mask",
+            desc_value="dceQualityFlag", suffix="",
             description=(
                 "Quality flag map (0=unfitted, 1=good, 2=poor_convergence, "
                 "3=high_uncertainty)"
             ),
             units=None, extra=None, model_entity=model_entity,
+            bids_suffix="mask",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -1189,6 +1206,7 @@ def init_dce_datasinks_wf(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype", "model_entity",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1196,9 +1214,10 @@ def init_dce_datasinks_wf(
             name="model_selection_sink",
         )
         ms_sink.inputs.desc = "dceModelSelection"
-        ms_sink.inputs.suffix = "dseg"
+        ms_sink.inputs.suffix = ""
         ms_sink.inputs.datatype = "perf"
         ms_sink.inputs.model_entity = model_entity
+        ms_sink.inputs.bids_suffix = "dseg"
         workflow.connect([
             (inputnode, ms_sink, [
                 ("output_dir", "output_dir"),
@@ -1228,6 +1247,7 @@ def init_dce_datasinks_wf(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype", "model_entity",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1235,9 +1255,10 @@ def init_dce_datasinks_wf(
             name="delta_bic_sink",
         )
         dbic_sink.inputs.desc = "dceDeltaBIC"
-        dbic_sink.inputs.suffix = "stat"
+        dbic_sink.inputs.suffix = ""
         dbic_sink.inputs.datatype = "perf"
         dbic_sink.inputs.model_entity = model_entity
+        dbic_sink.inputs.bids_suffix = "stat"
         workflow.connect([
             (inputnode, dbic_sink, [
                 ("output_dir", "output_dir"),
@@ -1332,6 +1353,7 @@ def init_dce_datasinks_wf(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype", "model_entity",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1339,9 +1361,10 @@ def init_dce_datasinks_wf(
             name="dce_moco_sink",
         )
         moco_sink.inputs.desc = "dcePreproc"
-        moco_sink.inputs.suffix = "dce"
+        moco_sink.inputs.suffix = ""
         moco_sink.inputs.datatype = "perf"
         moco_sink.inputs.model_entity = ""
+        moco_sink.inputs.bids_suffix = "dce"
         workflow.connect([
             (inputnode, moco_sink, [
                 ("output_dir", "output_dir"),
@@ -1390,18 +1413,20 @@ def init_dce_datasinks_wf(
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
             name="dce_mean", in_attr="dce_mean",
-            desc_value="dceMean", suffix="ref",
+            desc_value="dceMean", suffix="",
             description="Mean DCE reference image",
             units=None, extra=None, model_entity="",
+            bids_suffix="stat",
         )
         sink_outputs.append((sink, "out_file"))
     if "aif_mask" in present:
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
             name="aif_mask", in_attr="aif_mask",
-            desc_value="dceAif", suffix="mask",
+            desc_value="dceAif", suffix="",
             description="AIF detection mask in DCE space",
             units=None, extra=None, model_entity="",
+            bids_suffix="mask",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -1597,6 +1622,7 @@ def init_dce_datasinks_wf(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype", "model_entity",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1605,6 +1631,7 @@ def init_dce_datasinks_wf(
             name="smoothed_sink",
         )
         sm_sink.inputs.datatype = "perf"
+        sm_sink.inputs.bids_suffix = "stat"
         workflow.connect([
             (inputnode, sm_sink, [
                 ("output_dir", "output_dir"),

@@ -322,6 +322,50 @@ _TUMOR_SEG_LABELS = {
 }
 
 
+def _tumor_volumetrics(seg_path: PathLike) -> Dict[str, Any]:
+    """Compute per-region tumor volumes from the dseg NIfTI."""
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    from pmriprep.utils.lesion_stats import compute_region_volume
+
+    img = nib.load(str(seg_path))
+    seg_data = np.asarray(img.dataobj, dtype=np.int16)  # type: ignore[attr-defined]
+    zooms = img.header.get_zooms()[:3]  # type: ignore[attr-defined]
+    voxel_sizes = (float(zooms[0]), float(zooms[1]), float(zooms[2]))
+
+    # Labels must match _TUMOR_SEG_LABELS: 1=non-enhancing, 2=enhancing
+    enh_count, enh_mm3, enh_ml = compute_region_volume(seg_data == 2, voxel_sizes)
+    nenh_count, nenh_mm3, nenh_ml = compute_region_volume(seg_data == 1, voxel_sizes)
+    wt_count, wt_mm3, wt_ml = compute_region_volume(seg_data > 0, voxel_sizes)
+
+    enhancing_fraction: Optional[float] = None
+    if wt_ml > 0:
+        enhancing_fraction = round(enh_ml / wt_ml, 4)
+
+    return {
+        "TotalLesionVoxels": wt_count,
+        "EnhancingFraction": enhancing_fraction,
+        "Regions": {
+            "contrast_enhancing_tumor": {
+                "voxel_count": enh_count,
+                "volume_mm3": round(enh_mm3, 2),
+                "volume_ml": round(enh_ml, 3),
+            },
+            "non_enhancing_tumor": {
+                "voxel_count": nenh_count,
+                "volume_mm3": round(nenh_mm3, 2),
+                "volume_ml": round(nenh_ml, 3),
+            },
+            "whole_tumor": {
+                "voxel_count": wt_count,
+                "volume_mm3": round(wt_mm3, 2),
+                "volume_ml": round(wt_ml, 3),
+            },
+        },
+    }
+
+
 def build_tumor_seg_dseg_sidecar(
     *,
     source_paths: Sequence[PathLike],
@@ -336,9 +380,9 @@ def build_tumor_seg_dseg_sidecar(
     Per BIDS-Common-Derivatives, a single ``_dseg.json`` describes both
     the ``_dseg.nii.gz`` label NIfTI and the ``_dseg.tsv`` lookup table
     (when the latter is present) since they share a basename. The
-    ``Columns`` block here documents the TSV columns
-    (``index, name, abbreviation, voxel_count, volume_mm3``) for any
-    consumer reading the companion ``_dseg.tsv``.
+    ``Columns`` block documents the TSV columns; ``TumorVolumetrics``
+    carries per-region volumes and the enhancing fraction (replaces the
+    removed standalone ``desc-tumorClinicalContext.json``).
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
@@ -351,6 +395,7 @@ def build_tumor_seg_dseg_sidecar(
         "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
+        "TumorVolumetrics": _tumor_volumetrics(reference_voxel_source),
         "Columns": {
             "index": {
                 "LongName": "Region label index",
@@ -440,7 +485,7 @@ def build_tumor_seg_nawm_sidecar(
 
 def dce_reference_basename() -> str:
     """Basename of the DCE reference image inside the derivatives tree."""
-    return "desc-dceMean_ref.nii.gz"
+    return "desc-dceMean_stat.nii.gz"
 
 
 def _dce_spatial_reference(subject: str, session: Optional[str]) -> str:
@@ -492,7 +537,7 @@ def build_dce_base_sidecar(
 
 def dsc_reference_basename() -> str:
     """Basename of the DSC reference image inside the derivatives tree."""
-    return "desc-dscMean_ref.nii.gz"
+    return "desc-dscMean_stat.nii.gz"
 
 
 def _dsc_spatial_reference(subject: str, session: Optional[str]) -> str:

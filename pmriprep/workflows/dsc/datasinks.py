@@ -365,13 +365,15 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
 
 def _copy_perf_map(  # type: ignore[no-untyped-def]
     in_file, output_dir, subject, session, desc, suffix, meta_dict,
-    datatype="perf",
+    datatype="perf", bids_suffix="stat",
 ):
-    """Copy a DSC perfusion map + write its sidecar with explicit naming.
+    """Copy a DSC perfusion map + write its sidecar with BIDS-compliant naming.
 
-    Bypasses niworkflows DataSink so non-BIDS-canonical suffixes (mtt,
-    cbf, cbv, k2, alpha, beta, cth, ...) are accepted. Header validation
-    is skipped to match the legacy bespoke writer's ``shutil.copy2``.
+    ``suffix`` is the parameter name (e.g. ``"mtt"``, ``"cbf"``) which
+    gets folded into the ``desc-`` entity.  ``bids_suffix`` is the
+    BIDS-canonical suffix (``stat``, ``mask``, ``dseg``, …).  Pass
+    ``suffix=""`` when ``desc`` already encodes everything and only the
+    BIDS suffix is needed.
     """
     import json as _json
     import logging
@@ -402,7 +404,8 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    stem = f"{prefix}_desc-{desc}_{suffix}"
+    folded = suffix[:1].upper() + suffix[1:] if suffix else ""
+    stem = f"{prefix}_desc-{desc}{folded}_{bids_suffix}"
     nii_out = out_root / f"{stem}.nii.gz"
     json_out = out_root / f"{stem}.json"
 
@@ -585,12 +588,12 @@ def _add_perf_map_sink(
     map_key: str,
     units: Optional[str],
     extra: Optional[dict],
+    bids_suffix: str = "stat",
 ) -> pe.Node:
     """Wire one perf-space DSC map copier (Function builder + Function copy).
 
-    Uses a Function-based copy rather than niworkflows DataSink because
-    DSC perfusion suffixes (mtt, tmax, cbf, cbv, k2, alpha, ...) are not
-    BIDS-canonical and pybids' default path patterns reject them.
+    ``suffix`` is the parameter name folded into ``desc-``.
+    ``bids_suffix`` is the BIDS-canonical suffix (``stat``, ``mask``, …).
     """
     meta = pe.Node(
         niu.Function(
@@ -620,6 +623,7 @@ def _add_perf_map_sink(
             input_names=[
                 "in_file", "output_dir", "subject", "session",
                 "desc", "suffix", "meta_dict", "datatype",
+                "bids_suffix",
             ],
             output_names=["out_file"],
             function=_copy_perf_map,
@@ -629,6 +633,7 @@ def _add_perf_map_sink(
     sink.inputs.desc = desc_value
     sink.inputs.suffix = suffix
     sink.inputs.datatype = "perf"
+    sink.inputs.bids_suffix = bids_suffix
     workflow.connect([
         (inputnode, sink, [
             ("output_dir", "output_dir"),
@@ -686,7 +691,7 @@ def _add_anat_sink(
         PMRIPrepDataSink(
             check_hdr=True, compress=True,
             allowed_entities=("space", "datatype", "ceagent"),
-            space="dsc", suffix=suffix, datatype="anat",
+            space="dscref", suffix=suffix, datatype="anat",
             dismiss_entities=list(dismiss_entities),
         ),
         name=f"{name}_sink",
@@ -949,6 +954,7 @@ def init_dsc_datasinks_wf(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -958,6 +964,7 @@ def init_dsc_datasinks_wf(
         b_sink.inputs.desc = desc_value
         b_sink.inputs.suffix = suffix
         b_sink.inputs.datatype = "perf"
+        b_sink.inputs.bids_suffix = "stat"
         workflow.connect([
             (inputnode, b_sink, [
                 ("output_dir", "output_dir"),
@@ -1010,6 +1017,7 @@ def init_dsc_datasinks_wf(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1019,6 +1027,7 @@ def init_dsc_datasinks_wf(
         k2_sink.inputs.desc = "dsc"
         k2_sink.inputs.suffix = "k2"
         k2_sink.inputs.datatype = "perf"
+        k2_sink.inputs.bids_suffix = "stat"
         workflow.connect([
             (inputnode, k2_sink, [
                 ("output_dir", "output_dir"),
@@ -1049,11 +1058,11 @@ def init_dsc_datasinks_wf(
         "(cbf_std, cbv_std, CV, CI95) are zero-filled in these voxels. "
         "0 = the parametric fit was retained."
     )
-    for in_attr, desc_value, suffix, description, key in (
+    for in_attr, desc_value, suffix, description, key, bids_sfx in (
         ("parametric_r2_map", "dscParametric", "Rsquared",
-         _PARAMETRIC_R2_DESC, "parametric_r2"),
-        ("fallback_mask", "dscFallback", "mask",
-         _FALLBACK_DESC, "fallback"),
+         _PARAMETRIC_R2_DESC, "parametric_r2", "stat"),
+        ("fallback_mask", "dscFallback", "",
+         _FALLBACK_DESC, "fallback", "mask"),
     ):
         if in_attr not in present:
             continue
@@ -1091,6 +1100,7 @@ def init_dsc_datasinks_wf(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1100,6 +1110,7 @@ def init_dsc_datasinks_wf(
         sink.inputs.desc = desc_value
         sink.inputs.suffix = suffix
         sink.inputs.datatype = "perf"
+        sink.inputs.bids_suffix = bids_sfx
         workflow.connect([
             (inputnode, sink, [
                 ("output_dir", "output_dir"),
@@ -1116,6 +1127,7 @@ def init_dsc_datasinks_wf(
     # Function-based copy bypassing pybids path validation).
     def _add_minimal_perf_sink(
         nm: str, in_attr: str, desc_value: str, suffix: str, description: str,
+        bids_sfx: str = "stat",
     ) -> pe.Node:
         meta = pe.Node(
             niu.Function(
@@ -1133,6 +1145,7 @@ def init_dsc_datasinks_wf(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1142,6 +1155,7 @@ def init_dsc_datasinks_wf(
         sink.inputs.desc = desc_value
         sink.inputs.suffix = suffix
         sink.inputs.datatype = "perf"
+        sink.inputs.bids_suffix = bids_sfx
         workflow.connect([
             (inputnode, sink, [
                 ("output_dir", "output_dir"),
@@ -1200,6 +1214,7 @@ def init_dsc_datasinks_wf(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1207,8 +1222,9 @@ def init_dsc_datasinks_wf(
             name="moco_sink",
         )
         moco_sink.inputs.desc = "dscPreproc"
-        moco_sink.inputs.suffix = "dsc"
+        moco_sink.inputs.suffix = ""
         moco_sink.inputs.datatype = "perf"
+        moco_sink.inputs.bids_suffix = "dsc"
         workflow.connect([
             (inputnode, moco_sink, [
                 ("output_dir", "output_dir"),
@@ -1263,13 +1279,13 @@ def init_dsc_datasinks_wf(
         sink_outputs.append((resume_sink, "out_file"))
     if "dsc_mean" in present:
         sink_outputs.append((_add_minimal_perf_sink(
-            "mean", "dsc_mean", "dscMean", "ref",
-            "Mean DSC reference image",
+            "mean", "dsc_mean", "dscMean", "",
+            "Mean DSC reference image", "stat",
         ), "out_file"))
     if "aif_mask" in present:
         sink_outputs.append((_add_minimal_perf_sink(
-            "aif_mask", "aif_mask", "dscAif", "mask",
-            "AIF detection mask in DSC space",
+            "aif_mask", "aif_mask", "dscAif", "",
+            "AIF detection mask in DSC space", "mask",
         ), "out_file"))
 
     # --- Anat-side: brain mask, NAWM mask in DSC space ---
@@ -1363,7 +1379,7 @@ def init_dsc_datasinks_wf(
             workflow, inputnode,
             name="dsc_to_t1w_xfm",
             in_attr="dsc_to_t1w_xfm",
-            from_space="dsc", to_space="T1w",
+            from_space="dscref", to_space="T1w",
         )
         sink_outputs.append((sink, "out_file"))
     if "t1w_to_dsc_xfm" in present:
@@ -1371,7 +1387,7 @@ def init_dsc_datasinks_wf(
             workflow, inputnode,
             name="t1w_to_dsc_xfm",
             in_attr="t1w_to_dsc_xfm",
-            from_space="T1w", to_space="dsc",
+            from_space="T1w", to_space="dscref",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -1420,12 +1436,12 @@ def init_dsc_datasinks_wf(
             ]),
         ])
 
-        # MapNode sink (Function-based copy; non-canonical suffixes).
         sm_sink = pe.MapNode(
             niu.Function(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
                     "desc", "suffix", "meta_dict", "datatype",
+                    "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1434,6 +1450,7 @@ def init_dsc_datasinks_wf(
             name="smoothed_sink",
         )
         sm_sink.inputs.datatype = "perf"
+        sm_sink.inputs.bids_suffix = "stat"
         workflow.connect([
             (inputnode, sm_sink, [
                 ("output_dir", "output_dir"),

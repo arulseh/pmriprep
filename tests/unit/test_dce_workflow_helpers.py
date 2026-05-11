@@ -317,14 +317,14 @@ class TestFindPreviousDscOutputsNcbv:
         return perf_dir
 
     def test_ncbv_glob_discovers_file(self, tmp_path: Any) -> None:
-        """Presence of ``*desc-dscNawmNorm_cbv.nii.gz`` populates ``ncbv_map``."""
+        """Presence of ``*desc-dscNawmNormCbv_stat.nii.gz`` populates ``ncbv_map``."""
         from pmriprep.workflows.base import _find_previous_dsc_outputs
 
         perf_dir = self._make_layout(tmp_path, "01", "01")
-        ncbv_path = perf_dir / "sub-01_ses-01_desc-dscNawmNorm_cbv.nii.gz"
+        ncbv_path = perf_dir / "sub-01_ses-01_desc-dscNawmNormCbv_stat.nii.gz"
         _write_nifti(ncbv_path, np.ones((2, 2, 2)))
         _write_nifti(
-            perf_dir / "sub-01_ses-01_desc-dscRelAUC_cbv.nii.gz",
+            perf_dir / "sub-01_ses-01_desc-dscRelAUCCbv_stat.nii.gz",
             np.ones((2, 2, 2)),
         )
 
@@ -338,12 +338,12 @@ class TestFindPreviousDscOutputsNcbv:
     def test_ncbv_missing_warns_and_sets_none(
         self, tmp_path: Any, caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Pre-v0.25.0 layout (no dscNawmNorm_cbv) → ``ncbv_map is None`` and a warning fires."""
+        """Pre-v0.25.0 layout (no dscNawmNormCbv_stat) → ``ncbv_map is None`` and a warning fires."""
         from pmriprep.workflows.base import _find_previous_dsc_outputs
 
         perf_dir = self._make_layout(tmp_path, "02", "01")
         _write_nifti(
-            perf_dir / "sub-02_ses-01_desc-dscRelAUC_cbv.nii.gz",
+            perf_dir / "sub-02_ses-01_desc-dscRelAUCCbv_stat.nii.gz",
             np.ones((2, 2, 2)),
         )
 

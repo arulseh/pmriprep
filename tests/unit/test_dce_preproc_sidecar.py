@@ -16,7 +16,7 @@ def base_sidecar() -> dict[str, Any]:
     return {
         "Description": "Motion-corrected 4D DCE time series",
         "SkullStripped": False,
-        "SpatialReference": "bids::pmriprep/sub-X/perf/sub-X_desc-dceMean_ref.nii.gz",
+        "SpatialReference": "bids::pmriprep/sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
         "Sources": ["bids::sub-X/perf/sub-X_dce.nii.gz"],
         "Resolution": "native",
         "VoxelSize": [1.0, 1.0, 3.0],

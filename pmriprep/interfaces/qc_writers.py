@@ -20,6 +20,8 @@ import shutil
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
+
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterfaceInputSpec,
     File,
@@ -179,77 +181,6 @@ def _write_aif_timeseries_sidecar(
 # ---------------------------------------------------------------------------
 
 
-def _write_tumor_clinical_context_json(
-    segmentation_file: str,
-    subject: str,
-    session: str,
-    output_path: Path,
-) -> None:
-    """Write per-region tumor-volume context JSON to the anat/ scope.
-
-    Replaces the legacy session-root ``space-anat_desc-lesionStats.json``
-    orphan with an anat-scoped clinical-context sidecar carrying region
-    voxel counts, volumes (mm³ / mL), and the enhancing fraction. The
-    canonical voxel-count/volume table lives in
-    ``<prefix>_space-T1w_desc-tumorseg_dseg.tsv`` (BIDS-Common-Derivatives
-    dseg lookup).
-    """
-    from datetime import datetime, timezone
-
-    import nibabel as nib  # type: ignore[import-untyped]
-    import numpy as np
-
-    import pmriprep
-    from pmriprep.utils.lesion_stats import compute_region_volume
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    img = nib.load(segmentation_file)
-    seg_data = np.asarray(img.dataobj, dtype=np.int16)  # type: ignore[attr-defined]
-    zooms = img.header.get_zooms()[:3]  # type: ignore[attr-defined]
-    voxel_sizes = (float(zooms[0]), float(zooms[1]), float(zooms[2]))
-
-    enh_count, enh_mm3, enh_ml = compute_region_volume(seg_data == 2, voxel_sizes)
-    nenh_count, nenh_mm3, nenh_ml = compute_region_volume(seg_data == 1, voxel_sizes)
-    wt_count, wt_mm3, wt_ml = compute_region_volume(seg_data > 0, voxel_sizes)
-
-    enhancing_fraction: Optional[float] = None
-    if wt_ml > 0:
-        enhancing_fraction = round(enh_ml / wt_ml, 4)
-
-    result: dict = {
-        "Description": (
-            "Whole-tumor clinical context (volumes + enhancing fraction). "
-            "Per-region voxel counts and volumes are also available in "
-            "the companion desc-tumorseg_dseg.tsv."
-        ),
-        "GeneratedBy": [{"Name": "pmriprep", "Version": pmriprep.__version__}],
-        "GeneratedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "Subject": f"sub-{subject}",
-        "Session": f"ses-{session}" if session else "",
-        "SegmentationSource": Path(segmentation_file).name,
-        "SegmentationMethod": "HD-GLIO",
-        "TotalLesionVoxels": wt_count,
-        "Regions": {
-            "contrast_enhancing_tumor": {
-                "voxel_count": enh_count,
-                "volume_mm3": round(enh_mm3, 2),
-                "volume_ml": round(enh_ml, 3),
-            },
-            "non_enhancing_tumor": {
-                "voxel_count": nenh_count,
-                "volume_mm3": round(nenh_mm3, 2),
-                "volume_ml": round(nenh_ml, 3),
-            },
-            "whole_tumor": {
-                "voxel_count": wt_count,
-                "volume_mm3": round(wt_mm3, 2),
-                "volume_ml": round(wt_ml, 3),
-            },
-        },
-        "derived_metrics": {"enhancing_fraction": enhancing_fraction},
-    }
-    output_path.write_text(json.dumps(result, indent=2, default=str))
-
 
 class TumorSegResumeWriterInputSpec(BaseInterfaceInputSpec):
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
@@ -313,10 +244,6 @@ class TumorSegFiguresWriterInputSpec(BaseInterfaceInputSpec):
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
     subject_id = traits.Str(mandatory=True)
     session_id = traits.Str("", usedefault=True)
-    segmentation = File(
-        exists=True, mandatory=True,
-        desc="Multi-class tumor segmentation NIfTI",
-    )
 
     # Figure filmstrips (optional)
     seg_filmstrip_postcon = _optional_figure_file()
@@ -325,21 +252,14 @@ class TumorSegFiguresWriterInputSpec(BaseInterfaceInputSpec):
 
 
 class TumorSegFiguresWriterOutputSpec(TraitedSpec):
-    clinical_context_json = File(
-        desc="Path to anat/<prefix>_desc-tumorClinicalContext.json",
-    )
+    done = traits.Str(desc="Sentinel for Nipype barrier synchronization")
 
 
 class TumorSegFiguresWriter(SimpleInterface):
-    """Writes the tumor-clinical-context JSON + tumor figure filmstrips.
+    """Copies tumor figure filmstrips into ``figures/``.
 
-    The legacy session-root ``desc-tumorsegQC_quality.json``,
-    ``desc-tumorseg_volumes.txt``, and ``space-anat_desc-lesionStats.json``
-    files are gone after v0.46.0. Per-region voxel counts and volumes
-    live in the canonical ``desc-tumorseg_dseg.tsv`` (BIDS dseg lookup
-    table); whole-tumor clinical context (enhancing fraction + summary
-    volumes) is now anat-scoped at
-    ``anat/<prefix>_desc-tumorClinicalContext.json``.
+    Per-region voxel counts, volumes, and the enhancing fraction live in
+    the ``desc-tumorseg_dseg.json`` sidecar (``TumorVolumetrics`` block).
     """
 
     input_spec = TumorSegFiguresWriterInputSpec
@@ -352,26 +272,9 @@ class TumorSegFiguresWriter(SimpleInterface):
         subject = self.inputs.subject_id
         session = self.inputs.session_id or ""
 
-        prefix = f"sub-{subject}"
-        if session:
-            prefix += f"_ses-{session}"
-
         ses_dir = output_dir / "pmriprep" / f"sub-{subject}"
         if session:
             ses_dir = ses_dir / f"ses-{session}"
-        anat_dir = ses_dir / "anat"
-        anat_dir.mkdir(parents=True, exist_ok=True)
-
-        clinical_context_path = (
-            anat_dir / f"{prefix}_desc-tumorClinicalContext.json"
-        )
-        _write_tumor_clinical_context_json(
-            segmentation_file=self.inputs.segmentation,
-            subject=subject,
-            session=session,
-            output_path=clinical_context_path,
-        )
-        self._results["clinical_context_json"] = str(clinical_context_path)
 
         figures_dir = ses_dir / "figures"
         fig_inputs = {
@@ -386,6 +289,7 @@ class TumorSegFiguresWriter(SimpleInterface):
             fname = figure_filename(subject, session, fig_key, "tumor_seg")
             shutil.copy2(src, figures_dir / fname)
 
+        self._results["done"] = "done"
         return runtime
 
 
@@ -473,8 +377,9 @@ class DSCFiguresWriter(SimpleInterface):
 
         self._results["aif_curve_txt"] = ""
         if isdefined(self.inputs.aif_curve) and self.inputs.aif_curve:
-            dst = perf_dir / f"{prefix}_desc-dscAif_timeseries.txt"
-            shutil.copy2(self.inputs.aif_curve, dst)
+            dst = perf_dir / f"{prefix}_desc-dscAif_timeseries.tsv"
+            vals = np.loadtxt(str(self.inputs.aif_curve), dtype=np.float64)
+            np.savetxt(str(dst), vals, header="concentration_mM", comments="")
             self._results["aif_curve_txt"] = str(dst)
             _write_aif_timeseries_sidecar(
                 modality="DSC",
@@ -608,8 +513,9 @@ class DCEFiguresWriter(SimpleInterface):
 
         self._results["aif_curve_txt"] = ""
         if isdefined(self.inputs.aif_curve) and self.inputs.aif_curve:
-            dst = perf_dir / f"{prefix}_desc-dceAif_timeseries.txt"
-            shutil.copy2(self.inputs.aif_curve, dst)
+            dst = perf_dir / f"{prefix}_desc-dceAif_timeseries.tsv"
+            vals = np.loadtxt(str(self.inputs.aif_curve), dtype=np.float64)
+            np.savetxt(str(dst), vals, header="concentration_mM", comments="")
             self._results["aif_curve_txt"] = str(dst)
             _write_aif_timeseries_sidecar(
                 modality="DCE",

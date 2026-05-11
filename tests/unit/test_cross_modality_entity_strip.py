@@ -49,7 +49,7 @@ class TestDSCAnatSinkStripsAcq:
         sink = PMRIPrepDataSink(
             base_directory=str(out_dir), check_hdr=False,
             allowed_entities=("space", "datatype", "ceagent"),
-            space="dsc", suffix="T1w", datatype="anat",
+            space="dscref", suffix="T1w", datatype="anat",
             dismiss_entities=["acquisition"],
         )
         sink.inputs.source_file = str(src)
@@ -58,7 +58,7 @@ class TestDSCAnatSinkStripsAcq:
         out_files = res.outputs.out_file
         out_name = Path(out_files[0] if isinstance(out_files, list) else out_files).name
         assert "acq-" not in out_name, f"acq- should be stripped: {out_name}"
-        assert "space-dsc" in out_name, f"space-dsc should be present: {out_name}"
+        assert "space-dscref" in out_name, f"space-dscref should be present: {out_name}"
         assert "T1w" in out_name, f"T1w suffix should be present: {out_name}"
         # ce-GAD should still propagate (post-con T1w-in-DSC retains ce)
         assert "ce-GAD" in out_name, f"ce-GAD should propagate: {out_name}"
@@ -80,7 +80,7 @@ class TestDSCAnatSinkStripsAcqAndCe:
         sink = PMRIPrepDataSink(
             base_directory=str(out_dir), check_hdr=False,
             allowed_entities=("space", "datatype", "ceagent"),
-            space="dsc", desc="brain", suffix="mask", datatype="anat",
+            space="dscref", desc="brain", suffix="mask", datatype="anat",
             dismiss_entities=["acquisition", "ceagent"],
         )
         sink.inputs.source_file = str(src)
@@ -89,10 +89,10 @@ class TestDSCAnatSinkStripsAcqAndCe:
         out_files = res.outputs.out_file
         out_name = Path(out_files[0] if isinstance(out_files, list) else out_files).name
         assert "acq-" not in out_name, f"acq- should be stripped: {out_name}"
-        # `ce-` precise check: avoid matching `ce-d` inside `space-dsc`
+        # `ce-` precise check: avoid matching `ce-d` inside `space-dscref`
         assert "_ce-" not in out_name and not out_name.startswith("ce-"), \
             f"ce-* should be stripped (brain mask is pre-con): {out_name}"
-        assert "space-dsc" in out_name, f"space-dsc should be present: {out_name}"
+        assert "space-dscref" in out_name, f"space-dscref should be present: {out_name}"
         assert "desc-brain" in out_name, f"desc-brain should be present: {out_name}"
         assert "_mask" in out_name, f"mask suffix should be present: {out_name}"
 
@@ -113,7 +113,7 @@ class TestDCEAnatImageSinkStripsAcq:
         sink = PMRIPrepDataSink(
             base_directory=str(out_dir), check_hdr=False,
             allowed_entities=("space", "datatype", "ceagent"),
-            space="dce", suffix="T1w", datatype="anat",
+            space="dceref", suffix="T1w", datatype="anat",
             dismiss_entities=["acquisition"],
         )
         sink.inputs.source_file = str(src)
@@ -122,7 +122,7 @@ class TestDCEAnatImageSinkStripsAcq:
         out_files = res.outputs.out_file
         out_name = Path(out_files[0] if isinstance(out_files, list) else out_files).name
         assert "acq-" not in out_name, f"acq-vibe should be stripped: {out_name}"
-        assert "space-dce" in out_name, f"space-dce should be present: {out_name}"
+        assert "space-dceref" in out_name, f"space-dceref should be present: {out_name}"
         assert "T1w" in out_name, f"T1w suffix should be present: {out_name}"
 
 
@@ -143,7 +143,7 @@ class TestDSCAnatSinkBaselinePropagation:
         sink = PMRIPrepDataSink(
             base_directory=str(out_dir), check_hdr=False,
             allowed_entities=("space", "datatype", "ceagent"),
-            space="dsc", suffix="T1w", datatype="anat",
+            space="dscref", suffix="T1w", datatype="anat",
             dismiss_entities=["acquisition"],
         )
         sink.inputs.source_file = str(src)
@@ -153,6 +153,6 @@ class TestDSCAnatSinkBaselinePropagation:
         out_name = Path(out_files[0] if isinstance(out_files, list) else out_files).name
         # Should look the same as before — no change for sub-01
         assert "acq-" not in out_name
-        assert "space-dsc" in out_name
+        assert "space-dscref" in out_name
         assert "ce-GAD" in out_name
         assert "T1w" in out_name

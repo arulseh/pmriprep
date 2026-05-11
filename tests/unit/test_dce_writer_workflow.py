@@ -48,10 +48,10 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    ktrans = perf_out / "sub-01_ses-0001_desc-dce_Ktrans.nii.gz"
+    ktrans = perf_out / "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz"
     assert ktrans.exists(), f"Missing: {ktrans}"
     sidecar = json.loads(
-        (perf_out / "sub-01_ses-0001_desc-dce_Ktrans.json").read_text()
+        (perf_out / "sub-01_ses-0001_desc-dceKtrans_stat.json").read_text()
     )
     assert sidecar["Description"].startswith("Volume transfer constant")
     assert sidecar["Units"] == "1/min"
@@ -93,13 +93,13 @@ def test_dce_factory_with_bayesian_uncertainty(
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
     expected = [
-        "sub-01_ses-0001_desc-dce_Ktrans.nii.gz",
-        "sub-01_ses-0001_desc-dce_ve.nii.gz",
-        "sub-01_ses-0001_desc-dce_vp.nii.gz",
-        "sub-01_ses-0001_desc-dceUncertainty_Ktrans.nii.gz",
-        "sub-01_ses-0001_desc-dceCV_Ktrans.nii.gz",
-        "sub-01_ses-0001_desc-dceCI95lower_Ktrans.nii.gz",
-        "sub-01_ses-0001_desc-dceCI95upper_Ktrans.nii.gz",
+        "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceVe_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceVp_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceUncertaintyKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceCVKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceCI95lowerKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceCI95upperKtrans_stat.nii.gz",
     ]
     for fname in expected:
         assert (perf_out / fname).exists(), f"Missing: {fname}"
@@ -132,10 +132,10 @@ def test_dce_factory_model_free_no_model_entity(
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
     # No model entity in filename
-    assert (perf_out / "sub-01_ses-0001_desc-dce_IAUC60.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_desc-dce_peakEnhancement.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dceIAUC60_stat.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dcePeakEnhancement_stat.nii.gz").exists()
     bat_sidecar = json.loads(
-        (perf_out / "sub-01_ses-0001_desc-dce_BAT.json").read_text()
+        (perf_out / "sub-01_ses-0001_desc-dceBAT_stat.json").read_text()
     )
     assert bat_sidecar["DetectionMethod"] == "threshold_then_gradient_fallback"
 
@@ -164,11 +164,10 @@ def test_patlak_only_no_ve_kep(tmp_path: Path, minimal_bids: tuple[Path, str]) -
     wf.run()  # Must not crash
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    assert (perf_out / "sub-01_ses-0001_desc-dce_Ktrans.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_desc-dce_vp.nii.gz").exists()
-    # No ve/kep files
-    assert not list(perf_out.glob("*_ve.nii.gz"))
-    assert not list(perf_out.glob("*_kep.nii.gz"))
+    assert (perf_out / "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dceVp_stat.nii.gz").exists()
+    assert not list(perf_out.glob("*Ve_stat.nii.gz"))
+    assert not list(perf_out.glob("*Kep_stat.nii.gz"))
 
 
 def test_2cxm_bayesian_fp_ps_uncertainty(
@@ -200,8 +199,8 @@ def test_2cxm_bayesian_fp_ps_uncertainty(
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    assert (perf_out / "sub-01_ses-0001_desc-dceUncertainty_Fp.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_desc-dceUncertainty_PS.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dceUncertaintyFp_stat.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dceUncertaintyPS_stat.nii.gz").exists()
 
 
 def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:
@@ -359,12 +358,12 @@ def test_dce_t1w_precon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_space-dce_T1w.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz"
     assert expected.exists(), (
         f"precon underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
     )
-    assert not (anat_dir / "sub-01_ses-0001_ce-GAD_space-dce_T1w.nii.gz").exists()
+    assert not (anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_T1w.nii.gz").exists()
     sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
     assert "Pre-contrast" in sidecar["Description"]
 
@@ -385,12 +384,12 @@ def test_dce_t1w_postcon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_ce-GAD_space-dce_T1w.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_T1w.nii.gz"
     assert expected.exists(), (
         f"postcon underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
     )
-    assert not (anat_dir / "sub-01_ses-0001_space-dce_T1w.nii.gz").exists()
+    assert not (anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz").exists()
     sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
     assert "Post-contrast" in sidecar["Description"]
 
@@ -413,8 +412,8 @@ def test_dce_both_t1w_underlays(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    precon = anat_dir / "sub-01_ses-0001_space-dce_T1w.nii.gz"
-    postcon = anat_dir / "sub-01_ses-0001_ce-GAD_space-dce_T1w.nii.gz"
+    precon = anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz"
+    postcon = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_T1w.nii.gz"
     assert precon.exists() and postcon.exists(), (
         f"both underlays expected; anat/ contains: "
         f"{sorted(p.name for p in anat_dir.iterdir())}"
@@ -649,7 +648,6 @@ def test_tumor_seg_figures_writer_accepts_none_for_optional_figures(
     writer = TumorSegFiguresWriter()
     writer.inputs.output_dir = str(tmp_path)
     writer.inputs.subject_id = "test"
-    writer.inputs.segmentation = _write_nii(tmp_path / "seg.nii.gz")
     for field in _TUMOR_SEG_OPTIONAL_FIGURES:
         setattr(writer.inputs, field, None)
 
@@ -704,7 +702,6 @@ def test_tumor_seg_figures_writer_run_with_all_none_figures(tmp_path: Path) -> N
     writer = TumorSegFiguresWriter()
     writer.inputs.output_dir = str(tmp_path)
     writer.inputs.subject_id = "test"
-    writer.inputs.segmentation = _write_nii(tmp_path / "seg.nii.gz")
     for field in _TUMOR_SEG_OPTIONAL_FIGURES:
         setattr(writer.inputs, field, None)
     writer.run()

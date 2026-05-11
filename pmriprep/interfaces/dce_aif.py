@@ -3645,8 +3645,9 @@ class AIFDetection(BaseInterface):
                 )
         elif suffix == ".npy":
             aif_curve = np.load(str(ext_path)).astype(np.float64)
+        elif suffix == ".tsv":
+            aif_curve = np.loadtxt(str(ext_path), dtype=np.float64, skiprows=1)
         else:
-            # Plain text: try whitespace-delimited first, then comma
             try:
                 aif_curve = np.loadtxt(str(ext_path), dtype=np.float64)
             except ValueError:

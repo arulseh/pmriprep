@@ -20,7 +20,7 @@ def base_sidecar() -> dict[str, Any]:
     return {
         "Description": "Motion-corrected 4D DSC time series",
         "SkullStripped": False,
-        "SpatialReference": "bids::pmriprep/sub-X/perf/sub-X_desc-dscMean_ref.nii.gz",
+        "SpatialReference": "bids::pmriprep/sub-X/perf/sub-X_desc-dscMean_stat.nii.gz",
         "Sources": ["bids::sub-X/perf/sub-X_dsc.nii.gz"],
         "Resolution": "native",
         "VoxelSize": [3.0, 3.0, 5.0],

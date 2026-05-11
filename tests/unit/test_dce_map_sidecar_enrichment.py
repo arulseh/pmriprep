@@ -19,7 +19,7 @@ def base_sidecar() -> dict[str, Any]:
     return {
         "Description": "Volume transfer constant (1/min)",
         "Units": "1/min",
-        "SpatialReference": "bids::pmriprep/sub-X/perf/sub-X_desc-dceMean_ref.nii.gz",
+        "SpatialReference": "bids::pmriprep/sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
         "KtransConvention": "plasma_Tofts1999",
     }
 

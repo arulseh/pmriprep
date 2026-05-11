@@ -135,8 +135,10 @@ class TestExternalAifSubsetShape:
     ``best_*`` keys at top level.
     """
 
-    def test_external_aif_subset_shape(self, tmp_path):
+    def test_external_aif_subset_shape(self, tmp_path, monkeypatch):
         import nibabel as nib
+
+        monkeypatch.chdir(tmp_path)
 
         # Synthetic concentration NIfTI: 60 timepoints
         n_t = 60

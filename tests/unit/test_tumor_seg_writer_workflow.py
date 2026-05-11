@@ -108,16 +108,16 @@ def test_tumor_seg_datasinks_smoke(
         anat / "sub-01_ses-0001_space-T1w_desc-wholetumor_mask.nii.gz",
         anat / "sub-01_ses-0001_space-T1w_desc-lesion_mask.nii.gz",
         anat / "sub-01_ses-0001_space-T1w_desc-nawm_mask.nii.gz",
-        anat / "sub-01_ses-0001_desc-tumorClinicalContext.json",
     ]
     for p in expected:
         assert p.exists(), f"Missing: {p.name}"
 
-    # Legacy session-root orphans must not exist after v0.46.0
+    # Legacy / eliminated orphans must not exist
     legacy = [
         anat / "sub-01_ses-0001_desc-tumorseg_volumes.txt",
         ses / "sub-01_ses-0001_space-anat_desc-lesionStats.json",
         ses / "sub-01_ses-0001_desc-tumorsegQC_quality.json",
+        anat / "sub-01_ses-0001_desc-tumorClinicalContext.json",
     ]
     for p in legacy:
         assert not p.exists(), f"Legacy orphan should be gone: {p.name}"
@@ -165,8 +165,7 @@ def test_tumor_seg_sidecar_sources_populated(
     # do not carry image provenance fields; skip them here.
     sidecars = [
         p for p in sorted(anat.glob("*.json"))
-        if "desc-tumorClinicalContext" not in p.name
-        and "desc-tumorResume_pmriprep" not in p.name
+        if "desc-tumorResume_pmriprep" not in p.name
     ]
     assert sidecars, "No sidecars written"
 
@@ -182,10 +181,10 @@ def test_tumor_seg_sidecar_sources_populated(
         assert isinstance(body.get("VoxelSize"), list), sc.name
 
 
-def test_tumor_seg_lesion_stats_json_content(
+def test_tumor_seg_dseg_sidecar_has_volumetrics(
     tmp_path: Path, minimal_bids_with_tumor_inputs: tuple[Path, dict]
 ) -> None:
-    """Lesion stats JSON computes per-region volumes from the segmentation."""
+    """dseg.json TumorVolumetrics block carries per-region volumes."""
     from pmriprep.workflows.tumor_seg.datasinks import init_tumor_seg_datasinks_wf
 
     bids, sources = minimal_bids_with_tumor_inputs
@@ -212,15 +211,16 @@ def test_tumor_seg_lesion_stats_json_content(
     inp.qc_metrics = {}
     wf.run()
 
-    clinical_path = (
+    dseg_json = (
         out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-        / "sub-01_ses-0001_desc-tumorClinicalContext.json"
+        / "sub-01_ses-0001_space-T1w_desc-tumorseg_dseg.json"
     )
-    body = json.loads(clinical_path.read_text())
-    assert body["TotalLesionVoxels"] == 8
-    assert body["Regions"]["contrast_enhancing_tumor"]["voxel_count"] == 8
-    assert body["Regions"]["non_enhancing_tumor"]["voxel_count"] == 0
-    assert body["derived_metrics"]["enhancing_fraction"] == 1.0
+    body = json.loads(dseg_json.read_text())
+    tv = body["TumorVolumetrics"]
+    assert tv["TotalLesionVoxels"] == 8
+    assert tv["Regions"]["contrast_enhancing_tumor"]["voxel_count"] == 8
+    assert tv["Regions"]["non_enhancing_tumor"]["voxel_count"] == 0
+    assert tv["EnhancingFraction"] == 1.0
 
 
 def test_init_pmriprep_wf_skip_anat_with_tumor_seg(tmp_path: Path) -> None:

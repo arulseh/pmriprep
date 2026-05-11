@@ -19,7 +19,7 @@ Two rules enforced here:
 
 Cross-modality outputs in ``anat/`` (T1w/FLAIR/T2w resampled to DCE/DSC
 space, masks describing anatomy in perf-space) DO carry
-``space-dce``/``space-dsc`` — that is the canonical use of the entity
+``space-dceref``/``space-dscref`` — that is the canonical use of the entity
 and is intentionally NOT covered by this test.
 """
 from __future__ import annotations

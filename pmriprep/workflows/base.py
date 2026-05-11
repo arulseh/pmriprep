@@ -756,31 +756,26 @@ def _find_previous_dsc_outputs(
     # AUC-based CBV map (primary); fall back to deconv CBV for older outputs
     perf_dir = dsc_dir / "perf"
     if perf_dir.exists():
-        for f in perf_dir.glob("*desc-dscRelAUC_cbv.nii.gz"):
+        for f in perf_dir.glob("*desc-dscRelAUCCbv_stat.nii.gz"):
             outputs["rel_cbv_map"] = str(f)
         if outputs["rel_cbv_map"] is None:
-            for f in perf_dir.glob("*desc-dscRel_cbv.nii.gz"):
+            for f in perf_dir.glob("*desc-dscRelCbv_stat.nii.gz"):
                 outputs["rel_cbv_map"] = str(f)
-        # NAWM-normalized CBV (required for the vp prior path).
-        # Missing → vp constraint cleanly SKIPs in prepare_vp_constraint_from_data.
-        for f in perf_dir.glob("*desc-dscNawmNorm_cbv.nii.gz"):
+        for f in perf_dir.glob("*desc-dscNawmNormCbv_stat.nii.gz"):
             outputs["ncbv_map"] = str(f)
         if outputs["rel_cbv_map"] is not None and outputs["ncbv_map"] is None:
-            # Older derivatives without NAWM-normalized CBV. The DCE vp
-            # constraint anchors on nCBV; without it the constraint falls
-            # back to SKIP. Warn so the user knows the skip-DSC run cannot
-            # reuse the old (known-biased) absolute-CBV path for the prior.
             logging.getLogger("pmriprep.workflows").warning(
                 "Found previous DSC outputs for sub-%s without a NAWM-"
-                "normalized CBV map (no *desc-dscNawmNorm_cbv.nii.gz in %s). "
-                "DCE vp constraint will SKIP. Re-run DSC to obtain nCBV.",
+                "normalized CBV map (no *desc-dscNawmNormCbv_stat.nii.gz "
+                "in %s). DCE vp constraint will SKIP. Re-run DSC to "
+                "obtain nCBV.",
                 subject_id, perf_dir,
             )
 
     # DSC→T1w transform (now in anat/ instead of xfm/)
     anat_dir = dsc_dir / "anat"
     if anat_dir.exists():
-        for f in anat_dir.glob("*from-dsc_to-T1w*_xfm.mat"):
+        for f in anat_dir.glob("*from-dscref_to-T1w*_xfm.mat"):
             outputs["dsc_to_t1w_xfm"] = str(f)
 
     # AIF / preload / preprocessing QC from the pipeline-internal resume

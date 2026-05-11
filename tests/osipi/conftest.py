@@ -67,23 +67,23 @@ DRO_SESSIONS = list(DRO_SESSION_MAP.keys())
 # File name patterns (BIDS-Common-Derivatives compliant).
 # Native-space perf/ outputs omit the space- entity (perf/ directory
 # implies native acquisition space). Cross-modality anat/ outputs
-# (e.g., a brain mask describing anat in DCE space) keep space-dce.
+# (e.g., a brain mask describing anat in DCE space) keep space-dceref.
 PERF_SPACE_PREFIX = ""
-ANAT_SPACE_PREFIX = "space-dce_"
+ANAT_SPACE_PREFIX = "space-dceref_"
 
 # Map suffix patterns
 MAP_SUFFIXES = {
-    "Ktrans": "desc-dce_Ktrans",
-    "ve": "desc-dce_ve",
-    "vp": "desc-dce_vp",
-    "kep": "desc-dce_kep",
-    "Rsquared": "desc-dce_Rsquared",
-    "IAUC60": "desc-dce_IAUC60",
-    "IAUC90": "desc-dce_IAUC90",
-    "IAUC120": "desc-dce_IAUC120",
-    "SER": "desc-dce_SER",
-    "TTP": "desc-dce_ttp",
-    "tSNR": "desc-dce_tsnr",
+    "Ktrans": "desc-dceKtrans_stat",
+    "ve": "desc-dceVe_stat",
+    "vp": "desc-dceVp_stat",
+    "kep": "desc-dceKep_stat",
+    "Rsquared": "desc-dceRsquared_stat",
+    "IAUC60": "desc-dceIAUC60_stat",
+    "IAUC90": "desc-dceIAUC90_stat",
+    "IAUC120": "desc-dceIAUC120_stat",
+    "SER": "desc-dceSER_stat",
+    "TTP": "desc-dceTtp_stat",
+    "tSNR": "desc-dceTsnr_stat",
 }
 
 
@@ -171,7 +171,7 @@ def load_ref_dce(
     """
     import nibabel as nib
 
-    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_ref.nii.gz"
+    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_stat.nii.gz"
     fpath = OUTPUT_ROOT / subject / session / "perf" / fname
 
     if not fpath.exists():
@@ -183,7 +183,7 @@ def load_ref_dce(
 
 def get_ref_dce_path(subject: str, session: str) -> Path:
     """Get path to DCE reference image."""
-    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_ref.nii.gz"
+    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_stat.nii.gz"
     return OUTPUT_ROOT / subject / session / "perf" / fname
 
 
@@ -284,7 +284,7 @@ def _get_anat_path(subject: str, session: str) -> Path:
 
 def _get_dce_to_anat_xfm(subject: str, session: str) -> Path:
     """Get path to the pipeline's DCE-to-T1w FLIRT transform."""
-    fname = f"{subject}_{session}_from-dce_to-T1w_mode-image_xfm.mat"
+    fname = f"{subject}_{session}_from-dceref_to-T1w_mode-image_xfm.mat"
     return OUTPUT_ROOT / subject / session / "anat" / fname
 
 
@@ -773,7 +773,7 @@ def load_ci_map(
     """
     import nibabel as nib
 
-    suffix = f"desc-dceCI95{bound}_{parameter}"
+    suffix = f"desc-dceCI95{bound}{parameter[:1].upper()}{parameter[1:]}_stat"
     fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{suffix}.nii.gz"
     fpath = OUTPUT_ROOT / subject / session / "perf" / fname
 

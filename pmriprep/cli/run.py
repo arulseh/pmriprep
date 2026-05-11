@@ -565,7 +565,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         parser.error(f"config_file does not exist: {args.config_file}")
 
     # Validate dce_aif_file exists if specified
-    _VALID_AIF_EXTENSIONS = {".txt", ".npz", ".npy"}
+    _VALID_AIF_EXTENSIONS = {".txt", ".tsv", ".npz", ".npy"}
     if args.dce_aif_file is not None:
         if not args.dce_aif_file.is_file():
             parser.error(f"--dce-aif-file does not exist: {args.dce_aif_file}")

@@ -303,9 +303,9 @@ class TestWriterAifBlockPresentOnAllMaps:
         qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.85}}
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
 
-        for suffix in ["dscRelAUC_cbv", "dscRel_cbv", "dscRel_cbf",
-                       "dscNawmNorm_cbv", "dscNawmNorm_cbf",
-                       "dsc_mtt", "dsc_tmax", "dsc_psr", "dsc_ph"]:
+        for suffix in ["dscRelAUCCbv_stat", "dscRelCbv_stat", "dscRelCbf_stat",
+                       "dscNawmNormCbv_stat", "dscNawmNormCbf_stat",
+                       "dscMtt_stat", "dscTmax_stat", "dscPsr_stat", "dscPh_stat"]:
             sidecar = _load_sidecar(derivatives, suffix)
             assert _aif_block(sidecar)["Source"] == "measured", suffix
             assert _aif_block(sidecar)["QualityFlag"] == "pass", suffix
@@ -316,7 +316,7 @@ class TestWriterAifBlockPresentOnAllMaps:
         minimal_inputs["k2_map"] = _write_dummy_nifti(tmp_path / "k2.nii.gz")
         qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.9}}
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-        sidecar = _load_sidecar(derivatives, "dsc_k2")
+        sidecar = _load_sidecar(derivatives, "dscK2_stat")
         assert sidecar["AIFDependent"] is False
         assert sidecar["TemplateAIFUsage"] == "safe"
 
@@ -326,14 +326,14 @@ class TestWriterAifBlockPresentOnAllMaps:
             "synthetic_fallback_reason": "no_candidates",
         }
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-        cbv = _load_sidecar(derivatives, "dscRelAUC_cbv")
+        cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
         assert _aif_block(cbv)["Source"] == "template"
         assert _aif_block(cbv)["CrossSubjectComparable"] is False
         assert _aif_block(cbv)["SyntheticFallbackReason"] == "no_candidates"
         assert cbv["AIFDependent"] is True
         assert cbv["TemplateAIFUsage"] == "ratio_defensible"
 
-        mtt = _load_sidecar(derivatives, "dsc_mtt")
+        mtt = _load_sidecar(derivatives, "dscMtt_stat")
         assert mtt["TemplateAIFUsage"] == "qualitative_only"
 
     def test_gamma_fit_measured_source(self, minimal_inputs, tmp_path) -> None:
@@ -343,7 +343,7 @@ class TestWriterAifBlockPresentOnAllMaps:
             "gamma_fit_applied": True,
         }}
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-        cbv = _load_sidecar(derivatives, "dscRelAUC_cbv")
+        cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
         assert _aif_block(cbv)["Source"] == "gamma_fit_measured"
         assert _aif_block(cbv)["GammaFitApplied"] is True
         assert _aif_block(cbv)["CrossSubjectComparable"] is True
@@ -358,10 +358,10 @@ class TestSmoothedSidecars:
         }
         qc = {"aif_detection": {"detection_method": "synthetic", "quality_score": 0.3}}
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-        raw = _load_sidecar(derivatives, "dscRelAUCSm3_cbv")
+        raw = _load_sidecar(derivatives, "dscRelAUCSm3Cbv_stat")
         assert _aif_block(raw)["Source"] == "template"
         assert raw["TemplateAIFUsage"] == "ratio_defensible"
-        ncbv_sm = _load_sidecar(derivatives, "dscNawmNormSm3_cbv")
+        ncbv_sm = _load_sidecar(derivatives, "dscNawmNormSm3Cbv_stat")
         assert _aif_block(ncbv_sm)["Source"] == "template"
         assert ncbv_sm["TemplateAIFUsage"] == "safe"
 
@@ -371,7 +371,7 @@ class TestMissingAifQc:
         """Without qc_metrics the AIF block cannot be assembled, but
         per-map AIFDependent/TemplateAIFUsage tags are still stamped."""
         derivatives = _run_writer(minimal_inputs, None, tmp_path)
-        sidecar = _load_sidecar(derivatives, "dscRelAUC_cbv")
+        sidecar = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
         assert sidecar["AIFDependent"] is True
         assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
 
@@ -420,12 +420,12 @@ class TestStructuralUnderlayDatatype:
 
         anat_dir = ses / "anat"
         perf_dir = ses / "perf"
-        expected = anat_dir / "sub-test01_ses-01_space-dsc_T1w.nii.gz"
+        expected = anat_dir / "sub-test01_ses-01_space-dscref_T1w.nii.gz"
         assert expected.exists(), (
             f"precon underlay missing at {expected}; "
             f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
         )
-        assert not (anat_dir / "sub-test01_ses-01_ce-GAD_space-dsc_T1w.nii.gz").exists()
+        assert not (anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_T1w.nii.gz").exists()
         perf_t1w = list(perf_dir.glob("*T1w.nii.gz")) if perf_dir.exists() else []
         assert not perf_t1w, f"T1w must not land in perf/; got {perf_t1w}"
 
@@ -437,13 +437,13 @@ class TestStructuralUnderlayDatatype:
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-postcon")
 
         anat_dir = ses / "anat"
-        expected = anat_dir / "sub-test01_ses-01_ce-GAD_space-dsc_T1w.nii.gz"
+        expected = anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_T1w.nii.gz"
         assert expected.exists(), (
             f"postcon underlay missing at {expected}; "
             f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
         )
         # Precon file must NOT exist.
-        assert not (anat_dir / "sub-test01_ses-01_space-dsc_T1w.nii.gz").exists()
+        assert not (anat_dir / "sub-test01_ses-01_space-dscref_T1w.nii.gz").exists()
 
     def test_both_t1w_underlays_in_dsc(self, minimal_inputs, tmp_path) -> None:
         """Both underlays configured: two anat/ outputs differing by ce- entity."""
@@ -454,8 +454,8 @@ class TestStructuralUnderlayDatatype:
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-both")
 
         anat_dir = ses / "anat"
-        precon = anat_dir / "sub-test01_ses-01_space-dsc_T1w.nii.gz"
-        postcon = anat_dir / "sub-test01_ses-01_ce-GAD_space-dsc_T1w.nii.gz"
+        precon = anat_dir / "sub-test01_ses-01_space-dscref_T1w.nii.gz"
+        postcon = anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_T1w.nii.gz"
         assert precon.exists() and postcon.exists(), (
             f"both underlays expected; anat/ contains: "
             f"{sorted(p.name for p in anat_dir.iterdir())}"

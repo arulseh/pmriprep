@@ -2,9 +2,9 @@
 
 Wires one ``PMRIPrepDataSink`` per output (NIfTI + sidecar), a
 ``_dseg.tsv`` companion writer, and a ``TumorSegFiguresWriter`` for
-the figure filmstrips and ``anat/desc-tumorClinicalContext.json``
-sidecar. Per-region voxel counts and volumes live in the canonical
-``desc-tumorseg_dseg.tsv`` lookup table.
+figure filmstrips. Per-region voxel counts and volumes live in the
+``desc-tumorseg_dseg.json`` sidecar (``TumorVolumetrics`` block) and
+the companion ``desc-tumorseg_dseg.tsv`` lookup table.
 """
 from __future__ import annotations
 
@@ -411,14 +411,13 @@ def init_tumor_seg_datasinks_wf(
 
     sink_outputs.append((_add_nawm_sink(workflow, inputnode, is_postcon_ref), "out_file"))
 
-    # Figures writer (figure filmstrips + anat/desc-tumorClinicalContext.json)
+    # Figures writer (figure filmstrips only; clinical context now in dseg.json)
     figures_writer = pe.Node(TumorSegFiguresWriter(), name="figures_writer")
     workflow.connect([
         (inputnode, figures_writer, [
             ("output_dir", "output_dir"),
             ("subject_id", "subject_id"),
             ("session_id", "session_id"),
-            ("segmentation", "segmentation"),
             ("seg_filmstrip_postcon", "seg_filmstrip_postcon"),
             ("seg_filmstrip_flair", "seg_filmstrip_flair"),
             ("nawm_filmstrip_flair", "nawm_filmstrip_flair"),
@@ -446,7 +445,7 @@ def init_tumor_seg_datasinks_wf(
     for i, (sink, attr) in enumerate(sink_outputs, start=1):
         workflow.connect(sink, attr, merge, f"in{i}")
     workflow.connect(
-        figures_writer, "clinical_context_json", merge,
+        figures_writer, "done", merge,
         f"in{len(sink_outputs) + 1}",
     )
 
@@ -468,14 +467,11 @@ def init_tumor_seg_datasinks_wf(
 
     outputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["done", "clinical_context_json", "dataset_description_done"],
+            fields=["done", "dataset_description_done"],
         ),
         name="outputnode",
     )
     workflow.connect([
-        (figures_writer, outputnode, [
-            ("clinical_context_json", "clinical_context_json"),
-        ]),
         (dd_node, outputnode, [
             ("dd_path", "done"),
             ("dd_path", "dataset_description_done"),
