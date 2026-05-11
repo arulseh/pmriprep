@@ -24,6 +24,7 @@ from nipype.interfaces.base import (
     traits,
 )
 
+from pmriprep.config.constants import HDGLIO_LABEL_TO_NAME
 from pmriprep.utils.lesion_stats import (
     LesionStatisticsResult,
     RegionStatistics,
@@ -35,13 +36,6 @@ from pmriprep.utils.lesion_stats import (
     extract_label_mask,
     get_dce_clinical_context,
 )
-
-
-# Region label definitions (enhancing first for clinical priority)
-TUMOR_SEG_LABELS = {
-    2: "contrast_enhancing_tumor",
-    1: "non_enhancing_tumor",
-}
 
 
 class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
@@ -173,7 +167,7 @@ class DCELesionStats(BaseInterface):
 
             # Extract statistics for each region
             if mask_type == "multi_label_tumor_seg":
-                for label, region_name in TUMOR_SEG_LABELS.items():
+                for label, region_name in HDGLIO_LABEL_TO_NAME.items():
                     if label > max_label:
                         continue
                     label_mask = extract_label_mask(lesion_data, label)
@@ -192,7 +186,7 @@ class DCELesionStats(BaseInterface):
                 # generic "tumor"
                 mask_origin = self.inputs.mask_origin
                 if mask_origin == "tumor_segmentation" and max_label == 1:
-                    region_name = TUMOR_SEG_LABELS[1]  # "non_enhancing_tumor"
+                    region_name = HDGLIO_LABEL_TO_NAME[1]  # "non_enhancing_tumor"
                 else:
                     region_name = "tumor"
                 region_stats = self._compute_region_stats(

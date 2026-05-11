@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 import pmriprep
+from pmriprep.config.constants import HDGLIO_DSEG_ROWS
 
 
 @dataclass
@@ -199,10 +200,10 @@ class LesionStatisticsResult:
         if self.clinical_context:
             result["ClinicalContext"] = self.clinical_context
         if self.nawm_reference:
-            result["nawm_reference"] = self.nawm_reference
+            result["NAWMReference"] = self.nawm_reference
         result["Regions"] = {k: v.to_dict() for k, v in self.regions.items()}
         if self.derived_metrics:
-            result["derived_metrics"] = self.derived_metrics
+            result["DerivedMetrics"] = self.derived_metrics
         return result
 
 
@@ -841,28 +842,6 @@ def compute_nawm_reference(
 #
 # This is the canonical TSV companion for the existing
 # `desc-tumorseg_dseg.nii.gz` label map. Per BIDS, a `_dseg.tsv` is the
-# label-lookup table; integer values match the NIfTI's voxel labels.
-# Per BIDS, index 0 is reserved for background and is NOT emitted here
-# (otherwise pybids and downstream label-remappers misclassify background
-# as a tumor region). The TSV emits one row per non-background label
-# (1 = non-enhancing, 2 = contrast-enhancing); the whole-tumor union
-# is recoverable by summing voxel/volume columns or via the existing
-# `desc-wholetumor_mask.nii.gz` / `desc-wholetumor_mask.json` artifact.
-#
-# The label name strings come from the existing `_TUMOR_SEG_LABELS`
-# table in `pmriprep.utils.sidecar_builders` (single source of truth);
-# this module exposes a mapping with snake_case names suitable as TSV
-# `name` column values.
-# ---------------------------------------------------------------------------
-
-# Mapping: integer label → (snake_case TSV name, NiPreps abbreviation, human description).
-# Index 0 (background) intentionally excluded per BIDS dseg semantics.
-_TUMOR_DSEG_ROWS: Tuple[Tuple[int, str, str, str], ...] = (
-    (1, "non_enhancing_tumor", "NET", "Non-enhancing tumor (HD-GLIO label 1)"),
-    (2, "contrast_enhancing_tumor", "ET", "Contrast-enhancing tumor (HD-GLIO label 2)"),
-)
-
-
 def write_tumor_dseg_tsv(
     segmentation_file: Union[str, Path],
     output_path: Union[str, Path],
@@ -910,7 +889,7 @@ def write_tumor_dseg_tsv(
     voxel_sizes = (float(zooms[0]), float(zooms[1]), float(zooms[2]))
 
     rows: List[Dict[str, Any]] = []
-    for index, name, abbreviation, _description in _TUMOR_DSEG_ROWS:
+    for index, name, abbreviation, _description in HDGLIO_DSEG_ROWS:
         mask = seg_data == index
         voxel_count, volume_mm3, _volume_ml = compute_region_volume(mask, voxel_sizes)
         rows.append({
@@ -1078,12 +1057,12 @@ def extract_per_map_lesion_stats(
         out_regions[region_name] = fragment
 
     nawm_block = _slice_nawm_for_map(
-        aggregate.get("nawm_reference"), map_name,
+        aggregate.get("NAWMReference"), map_name,
     )
     threshold_block = _build_clinical_threshold_block(map_name)
 
     fractional_volumes = None
-    derived = aggregate.get("derived_metrics")
+    derived = aggregate.get("DerivedMetrics")
     if isinstance(derived, dict):
         fv_block = derived.get("fractional_volumes")
         if isinstance(fv_block, dict) and map_name in fv_block:
@@ -1114,8 +1093,8 @@ def extract_per_map_lesion_stats(
     # consumer of either map clearly distinguish AIF-corrected from raw
     # rather than rely on filename inference.
     if map_name == "ttp":
-        out["aif_corrected"] = False
+        out["AIFCorrected"] = False
     elif map_name == "ttpCorrected":
-        out["aif_corrected"] = True
+        out["AIFCorrected"] = True
 
     return out

@@ -494,6 +494,24 @@ class TestLesionStatisticsResultToDict:
         assert "TotalLesionVoxels" in d
         assert "Regions" in d
 
+    def test_to_dict_pascal_case_keys(self) -> None:
+        """to_dict() emits PascalCase for NAWMReference and DerivedMetrics."""
+        result = LesionStatisticsResult(
+            subject_id="0001",
+            session_id="0002",
+            modality="DSC",
+            mask_type="binary",
+            mask_source="/path/to/mask.nii.gz",
+            total_voxels=500,
+            nawm_reference={"cbv": {"median": 1.0}},
+            derived_metrics={"fractional_volumes": {}},
+        )
+        d = result.to_dict()
+        assert "NAWMReference" in d
+        assert "DerivedMetrics" in d
+        assert "nawm_reference" not in d
+        assert "derived_metrics" not in d
+
 
 class TestLesionStatisticsAifProvenance:
     """PerfusionProcessing.AIF sidecar block (v0.29.0)."""
@@ -848,7 +866,7 @@ class TestExtractPerMapLesionStatsEnrichment:
                     },
                 },
             },
-            "nawm_reference": {
+            "NAWMReference": {
                 "voxel_count": 1000, "volume_ml": 50.0,
                 "ncbv": {"median": 1.0, "std": 0.1, "p25": 0.95, "p75": 1.05,
                          "value_qc_status": "PASS"},
@@ -859,7 +877,7 @@ class TestExtractPerMapLesionStatsEnrichment:
                 "value_qc_status": "WARNING",
                 "value_qc_notes": "Out-of-range NAWM medians: cbv. Hematocrit=0.45.",
             },
-            "derived_metrics": {
+            "DerivedMetrics": {
                 "fractional_volumes": {
                     "ncbv": {"above_1.75": 0.45, "above_2.5": 0.18,
                              "above_3.0": 0.09, "above_4.0": 0.02},
@@ -896,8 +914,8 @@ class TestExtractPerMapLesionStatsEnrichment:
 
         raw = extract_per_map_lesion_stats(aggregate, "ttp")
         corrected = extract_per_map_lesion_stats(aggregate, "ttpCorrected")
-        assert raw["aif_corrected"] is False
-        assert corrected["aif_corrected"] is True
+        assert raw["AIFCorrected"] is False
+        assert corrected["AIFCorrected"] is True
 
     def test_map_with_no_threshold_no_fv_just_stats(self, aggregate):
         from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats

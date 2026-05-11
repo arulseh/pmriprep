@@ -29,6 +29,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
+from pmriprep.config.constants import HDGLIO_BIDS_LABELS
+
 PathLike = Union[str, Path]
 
 _PIPELINE_QC_STRIP_KEYS = frozenset({
@@ -361,18 +363,12 @@ def build_anat_mask_sidecar(
     }
 
 
-_TUMOR_SEG_LABELS = {
-    "0": "Background",
-    "1": "Non-enhancing tumor",
-    "2": "Enhancing tumor",
-}
-
-
 def _tumor_volumetrics(seg_path: PathLike) -> Dict[str, Any]:
     """Compute per-region tumor volumes from the dseg NIfTI."""
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
+    from pmriprep.config.constants import HDGLIO_LABEL_TO_NAME
     from pmriprep.utils.lesion_stats import compute_region_volume
 
     img = nib.load(str(seg_path))
@@ -380,7 +376,6 @@ def _tumor_volumetrics(seg_path: PathLike) -> Dict[str, Any]:
     zooms = img.header.get_zooms()[:3]  # type: ignore[attr-defined]
     voxel_sizes = (float(zooms[0]), float(zooms[1]), float(zooms[2]))
 
-    # Labels must match _TUMOR_SEG_LABELS: 1=non-enhancing, 2=enhancing
     enh_count, enh_mm3, enh_ml = compute_region_volume(seg_data == 2, voxel_sizes)
     nenh_count, nenh_mm3, nenh_ml = compute_region_volume(seg_data == 1, voxel_sizes)
     wt_count, wt_mm3, wt_ml = compute_region_volume(seg_data > 0, voxel_sizes)
@@ -393,12 +388,12 @@ def _tumor_volumetrics(seg_path: PathLike) -> Dict[str, Any]:
         "TotalLesionVoxels": wt_count,
         "EnhancingFraction": enhancing_fraction,
         "Regions": {
-            "contrast_enhancing_tumor": {
+            HDGLIO_LABEL_TO_NAME[2]: {
                 "voxel_count": enh_count,
                 "volume_mm3": round(enh_mm3, 2),
                 "volume_ml": round(enh_ml, 3),
             },
-            "non_enhancing_tumor": {
+            HDGLIO_LABEL_TO_NAME[1]: {
                 "voxel_count": nenh_count,
                 "volume_mm3": round(nenh_mm3, 2),
                 "volume_ml": round(nenh_ml, 3),
@@ -438,7 +433,7 @@ def build_tumor_seg_dseg_sidecar(
         **get_bids_derivative_provenance(),
         "Description": "Deep learning tumor segmentation",
         "Manual": False,
-        "SegmentationLabels": dict(_TUMOR_SEG_LABELS),
+        "SegmentationLabels": dict(HDGLIO_BIDS_LABELS),
         "Method": "HD-GLIO (Isensee et al.)",
         "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
         "Sources": build_sources_list(source_paths, bids_dir),
