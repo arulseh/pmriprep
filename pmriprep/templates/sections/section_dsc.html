@@ -492,10 +492,10 @@
                 <div class="metric-value">{{ "%.4f"|format(dsc.qc_metrics.deconvolution.lambda_mean) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.r2_mean is defined %}
+            {% if dsc.qc_metrics.deconvolution.r_squared_mean is defined %}
             <div class="metric">
                 <div class="metric-label">R&sup2; Mean</div>
-                <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.deconvolution.r2_mean) }}</div>
+                <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.deconvolution.r_squared_mean) }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.deconvolution.fallback_rate is defined and dsc.qc_metrics.deconvolution.method in ["cpi", "vascular"] %}
