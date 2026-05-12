@@ -452,7 +452,8 @@ def generate_pk_modeling_qc_plot(
     ktrans_display = ktrans.copy().astype(float)
     ktrans_display[~mask_bool] = np.nan
     ktrans_slice = get_radiological_slice(ktrans_display, axis=2, slice_idx=vz)
-    kt_vmax = 0.25
+    kt_vals = ktrans_display[np.isfinite(ktrans_display) & (ktrans_display > 0)]
+    kt_vmax = float(np.percentile(kt_vals, 95)) if kt_vals.size > 0 else 0.25
     im = ax.imshow(ktrans_slice, cmap="hot", vmin=0, vmax=kt_vmax, aspect="equal")
     ax.set_title(f"Ktrans Map (z={vz})", fontsize=10)
     ax.axis("off")
@@ -534,11 +535,11 @@ def generate_pk_parameter_maps_qc_plot(
     # Parameter display config: (colormap, vmin, vmax_mode, unit_label)
     # vmax_mode: "pct95" = 95th percentile of nonzero, "fixed" = use vmax directly
     param_config: dict[str, tuple[str, float, str, float | None, str]] = {
-        "Ktrans": ("hot", 0.0, "fixed", 0.25, "min\u207b\u00b9"),
-        "ve": ("viridis", 0.0, "fixed", 1.0, "fraction"),
-        "vp": ("plasma", 0.0, "pct95", None, "fraction"),
-        "Fp": ("inferno", 0.0, "pct95", None, "mL/100g/min"),
-        "PS": ("magma", 0.0, "pct95", None, "mL/100g/min"),
+        "Ktrans": ("hot", 0.0, "pct95", 0.25, "min\u207b\u00b9"),
+        "ve": ("viridis", 0.0, "pct95", 1.0, "fraction"),
+        "vp": ("plasma", 0.0, "pct95", 0.05, "fraction"),
+        "Fp": ("inferno", 0.0, "pct95", 50.0, "mL/100g/min"),
+        "PS": ("magma", 0.0, "pct95", 5.0, "mL/100g/min"),
     }
 
     # Filter to params that exist in the input
@@ -576,7 +577,7 @@ def generate_pk_parameter_maps_qc_plot(
         cmap, vmin, vmax_mode, vmax_fixed, unit_label = param_config[name]
 
         # Determine vmax
-        data_masked = data[mask_bool & (data > 0)]
+        data_masked = data[mask_bool & np.isfinite(data) & (data > 0)]
         if vmax_mode == "pct95" and len(data_masked) > 0:
             vmax = float(np.percentile(data_masked, 95))
         elif vmax_fixed is not None:
