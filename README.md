@@ -593,7 +593,7 @@ Use `--report-only` to regenerate reports from existing outputs without re-runni
 
 ## License
 
-PMRIPrep is licensed under the BSD 3-Clause License.
+PMRIPrep is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full text.
 
 ## Citation
 

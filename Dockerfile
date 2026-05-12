@@ -33,7 +33,7 @@ LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 LABEL org.opencontainers.image.version="0.54.4"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
-LABEL org.opencontainers.image.licenses="BSD-3-Clause"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive

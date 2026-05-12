@@ -128,7 +128,7 @@ def write_dataset_description(
             f"Please cite PMRIPrep (version {pmriprep.__version__}), "
             f"{PMRIPREP_CODE_URL}"
         ),
-        "License": "BSD-3-Clause",
+        "License": "Apache-2.0",
     }
     with open(desc_path, "w") as f:
         json.dump(description, f, indent=2)
