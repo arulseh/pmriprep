@@ -1,0 +1,13 @@
+PMRIPrep
+Copyright 2024-2026, PMRIPrep Developers.
+
+This software includes code derived from or inspired by:
+
+- fMRIPrep (https://github.com/nipreps/fmriprep)
+  Copyright 2017, NiPreps Developers. Apache License, Version 2.0.
+
+- ASLPrep (https://github.com/PennLINC/aslprep)
+  Copyright 2020, NiPreps Developers. Apache License, Version 2.0.
+
+- niworkflows (https://github.com/nipreps/niworkflows)
+  Copyright 2017, NiPreps Developers. Apache License, Version 2.0.
