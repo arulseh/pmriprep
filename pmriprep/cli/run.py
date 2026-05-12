@@ -828,6 +828,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         load_config,
         merge_cli_config,
     )
+    from pmriprep.utils.naming import workflow_dirname
     from pmriprep.workflows.base import (
         PipelineSkipFlags,
         get_pipeline_summary,
@@ -963,7 +964,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     mem_limit_gb=args.mem_gb,
                     command_string=args.command_string,
                     user_specified=user_specified,
-                    name=f"pmriprep_sub_{subject_id}_ses_{session_id}_wf" if session_id else f"pmriprep_sub_{subject_id}_wf",
+                    name=workflow_dirname(subject_id, session_id),
                     layout=bids_layout,
                 )
 

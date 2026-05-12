@@ -774,19 +774,20 @@ def _find_previous_dsc_outputs(
                 subject_id, perf_dir,
             )
 
-    # DSC→T1w transform: read from work/ (internal .mat), not derivatives (.h5)
+    # DSC→T1w transform and resume checkpoint: read from work/ directory
     if work_dir is not None:
-        wf_name = f"pmriprep_single_subject_{subject_id}_wf"
+        from pmriprep.utils.naming import workflow_dirname
+
+        wf_name = workflow_dirname(subject_id, session_id)
+
         inv_dir = work_dir / wf_name / "dsc_wf" / "invert_dsc_xfm"
         if inv_dir.exists():
             candidates = sorted(inv_dir.glob("*.mat"))
             if candidates:
                 outputs["dsc_to_t1w_xfm"] = str(candidates[0])
 
-    if work_dir is not None:
         import json
 
-        wf_name = f"pmriprep_single_subject_{subject_id}_wf"
         resume_json = Path(work_dir) / wf_name / "dsc_resume.json"
         if resume_json.exists():
             try:

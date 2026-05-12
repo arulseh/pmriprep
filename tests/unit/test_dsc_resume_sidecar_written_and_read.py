@@ -2,7 +2,7 @@
 
 Asserts:
   * ``_write_dsc_resume_checkpoint`` lands the file at
-    ``work/pmriprep_single_subject_<sub>_wf/dsc_resume.json``
+    ``work/pmriprep_sub_<sub>_ses_<ses>_wf/dsc_resume.json``
   * ``_find_previous_dsc_outputs`` reads it back and recovers the
     in-memory dicts (no key translation)
 """
@@ -58,7 +58,19 @@ class TestCheckpointFileWrite:
         assert out is not None
         assert Path(out).exists()
         assert Path(out).name == "dsc_resume.json"
-        assert "pmriprep_single_subject_X_wf" in str(out)
+        assert "pmriprep_sub_X_ses_Y_wf" in str(out)
+
+    @pytest.mark.parametrize("session_id", [None, ""])
+    def test_landing_path_no_session(
+        self, tmp_path: Path, session_id: Any,
+    ) -> None:
+        out = _write_dsc_resume_checkpoint(
+            work_dir=str(tmp_path),
+            subject_id="X", session_id=session_id,
+        )
+        assert out is not None
+        assert "pmriprep_sub_X_wf" in str(out)
+        assert "ses_" not in str(out)
 
     def test_undefined_work_dir_returns_none(self) -> None:
         from nipype.interfaces.base import Undefined
@@ -108,7 +120,7 @@ class TestRoundTripViaResumeHelper:
         assert recovered["preprocessing_stats"] is None
 
     def test_malformed_json_fails_closed(self, tmp_path: Path) -> None:
-        wf_dir = tmp_path / "pmriprep_single_subject_X_wf"
+        wf_dir = tmp_path / "pmriprep_sub_X_ses_Y_wf"
         wf_dir.mkdir(parents=True)
         (wf_dir / "dsc_resume.json").write_text("this is not json {{{")
         recovered = _find_previous_dsc_outputs(
@@ -120,7 +132,7 @@ class TestRoundTripViaResumeHelper:
         assert recovered["preprocessing_stats"] is None
 
     def test_partial_checkpoint(self, tmp_path: Path) -> None:
-        wf_dir = tmp_path / "pmriprep_single_subject_X_wf"
+        wf_dir = tmp_path / "pmriprep_sub_X_ses_Y_wf"
         wf_dir.mkdir(parents=True)
         (wf_dir / "dsc_resume.json").write_text(
             json.dumps({"aif_qc": {"detection_method": "synthetic"}}),

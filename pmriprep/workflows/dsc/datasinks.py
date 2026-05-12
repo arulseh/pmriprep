@@ -314,7 +314,9 @@ def _write_dsc_resume_checkpoint(  # type: ignore[no-untyped-def]
     if pp:
         checkpoint["preprocessing_stats"] = pp
 
-    wf_name = f"pmriprep_single_subject_{subject_id}_wf"
+    from pmriprep.utils.naming import workflow_dirname
+
+    wf_name = workflow_dirname(subject_id, session_id)
     out_dir = Path(work_dir) / wf_name
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "dsc_resume.json"
