@@ -363,6 +363,8 @@ def _enrich_dce(
             pk_block["convergence_rate"] = _safe_float(pk["convergence_rate"])
         if "r2_median" in pk:
             pk_block["r2_median"] = _safe_float(pk["r2_median"])
+        if "qc_voxel_rsquared" in pk:
+            pk_block["voxel_rsquared"] = _safe_float(pk["qc_voxel_rsquared"])
         if pk_block:
             perf["PKModeling"] = pk_block
 
@@ -406,7 +408,7 @@ def _enrich_dsc(
         if "preload_classification" in preload:
             preload_det["classification"] = str(preload["preload_classification"])
         if "preload_classification_source" in preload:
-            preload_det["source"] = str(preload["preload_classification_source"])
+            preload_det["classification_source"] = str(preload["preload_classification_source"])
         if "preload_k2_classification" in preload:
             preload_det["k2_classification"] = str(
                 preload["preload_k2_classification"]

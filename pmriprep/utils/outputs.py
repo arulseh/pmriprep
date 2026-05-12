@@ -133,6 +133,38 @@ def write_dataset_description(
     with open(desc_path, "w") as f:
         json.dump(description, f, indent=2)
 
+    write_bidsignore(pipeline_dir)
+
+
+_BIDSIGNORE_CONTENT = """\
+# QC reports
+**/*.html
+
+# QC figures
+**/figures/
+
+# Pipeline logs
+log/
+
+# ITK/ANTs composite transforms (.h5 not yet in BIDS schema)
+**/*_xfm.h5
+"""
+
+
+def write_bidsignore(pipeline_dir: Path) -> None:
+    """Write a ``.bidsignore`` file at the derivative root.
+
+    Idempotent — overwrites any existing file with the canonical
+    content so it stays in sync with pipeline changes.
+
+    Parameters
+    ----------
+    pipeline_dir : Path
+        Root directory of the BIDS-Derivatives tree.
+    """
+    ignore_path = pipeline_dir / ".bidsignore"
+    ignore_path.write_text(_BIDSIGNORE_CONTENT)
+
 
 # -----------------------------------------------------------------------
 # Shared helpers for derivative writer interfaces

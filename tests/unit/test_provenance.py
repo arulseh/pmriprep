@@ -51,6 +51,7 @@ class TestEnrichDCE:
                 "inference": "vi",
                 "convergence_rate": 0.98,
                 "r2_median": 0.87,
+                "qc_voxel_rsquared": 0.95,
             },
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DCE")
@@ -76,6 +77,7 @@ class TestEnrichDCE:
         assert perf["PKModeling"]["model"] == "extended_tofts"
         assert perf["PKModeling"]["inference"] == "vi"
         assert perf["PKModeling"]["convergence_rate"] == pytest.approx(0.98, abs=0.001)
+        assert perf["PKModeling"]["voxel_rsquared"] == pytest.approx(0.95, abs=0.001)
 
     def test_population_aif(self) -> None:
         """Population AIF includes model name and dose factor."""
@@ -206,7 +208,7 @@ class TestEnrichDSC:
 
         assert perf["PreloadDetection"]["classification"] == "none"
         assert perf["PreloadDetection"]["baseline_delta_r2_advisory"] == pytest.approx(0.12, abs=0.001)
-        assert perf["PreloadDetection"]["source"] == "k2_primary"
+        assert perf["PreloadDetection"]["classification_source"] == "k2_primary"
         assert perf["PreloadDetection"]["k2_classification"] == "none"
 
         assert perf["AIF"]["method"] == "atlas_strict"

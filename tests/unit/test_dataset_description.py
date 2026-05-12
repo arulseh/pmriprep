@@ -12,6 +12,7 @@ from pathlib import Path
 from pmriprep.utils.outputs import (
     BIDS_DERIVATIVES_VERSION,
     PMRIPREP_CODE_URL,
+    write_bidsignore,
     write_dataset_description,
 )
 
@@ -34,6 +35,23 @@ def test_first_run_writes_pmriprep_entry(tmp_path: Path) -> None:
     assert "DOI" not in pmri  # not provided
     # SourceDatasets uses canonical bids:: prefix, not the bids:raw: typo
     assert desc["SourceDatasets"][0]["URL"].startswith("bids::")
+    # .bidsignore written alongside dataset_description.json
+    bidsignore = pipeline_dir / ".bidsignore"
+    assert bidsignore.exists()
+    content = bidsignore.read_text()
+    assert "**/*.html" in content
+    assert "**/*_xfm.h5" in content
+    assert "**/figures/" in content
+    assert "log/" in content
+
+
+def test_write_bidsignore_idempotent(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pmriprep"
+    pipeline_dir.mkdir(parents=True)
+    write_bidsignore(pipeline_dir)
+    first = (pipeline_dir / ".bidsignore").read_text()
+    write_bidsignore(pipeline_dir)
+    assert (pipeline_dir / ".bidsignore").read_text() == first
 
 
 def test_preserves_prior_tool_generated_by(tmp_path: Path) -> None:

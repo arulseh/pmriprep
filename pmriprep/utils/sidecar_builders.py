@@ -1227,24 +1227,6 @@ def enrich_dce_preproc_sidecar(
     return sidecar
 
 
-def _dce_pk_cosmetic_keys(pk_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Flat ``PK*`` keys for DCE per-PK-map sidecars."""
-    if not pk_qc or not isinstance(pk_qc, dict):
-        return {}
-    out: Dict[str, Any] = {}
-    if "model" in pk_qc:
-        out["PKModel"] = str(pk_qc["model"])
-    if "candidate_models" in pk_qc:
-        candidates = pk_qc["candidate_models"]
-        if isinstance(candidates, (list, tuple)):
-            out["PKCandidateModels"] = [str(m) for m in candidates]
-    if "qc_voxel_rsquared" in pk_qc:
-        out["PKVoxelRsquared"] = float(pk_qc["qc_voxel_rsquared"])
-    if "inference" in pk_qc:
-        out["PKInferenceEngine"] = str(pk_qc["inference"])
-    return out
-
-
 def enrich_dce_pk_map_sidecar(
     sidecar: Dict[str, Any],
     *,
@@ -1252,10 +1234,9 @@ def enrich_dce_pk_map_sidecar(
     map_key: str = "",
     lesion_fragment: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Add flat-prefixed cosmetic keys to a DCE per-PK-map sidecar.
+    """Enrich a DCE per-PK-map sidecar with cross-modality and AIF fields.
 
-    Mutates and returns ``sidecar``. Adds ``PK*`` keys from
-    ``qc_metrics["pk_modeling"]``; cross-modality fields land only on
+    Mutates and returns ``sidecar``. Cross-modality fields land only on
     the maps they apply to (``DSCDCECrossValCorrelation`` on ``ktrans``,
     ``CBVNegativeFraction`` on ``vp``). AIF provenance
     (``AIFConfidence``, ``AIFUncertaintyInflationFactor``,
@@ -1268,7 +1249,6 @@ def enrich_dce_pk_map_sidecar(
         if lesion_fragment:
             sidecar["LesionStats"] = dict(lesion_fragment)
         return sidecar
-    sidecar.update(_dce_pk_cosmetic_keys(qc_metrics.get("pk_modeling")))
     aif_block = qc_metrics.get("aif_detection")
     if isinstance(aif_block, dict):
         if "aif_confidence" in aif_block:

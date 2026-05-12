@@ -38,24 +38,6 @@ def pk_qc_metrics() -> dict[str, Any]:
     }
 
 
-class TestPKKeys:
-    def test_pk_flat_keys(self, base_sidecar, pk_qc_metrics):
-        out = enrich_dce_pk_map_sidecar(
-            dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ktrans",
-        )
-        assert out["PKModel"] == "auto"
-        assert out["PKCandidateModels"] == ["tofts", "extended_tofts", "patlak"]
-        assert out["PKVoxelRsquared"] == pytest.approx(0.87)
-        assert out["PKInferenceEngine"] == "vi"
-
-    def test_pk_candidate_models_is_list(self, base_sidecar, pk_qc_metrics):
-        """bids-spec-expert PR1: emit as JSON array, not joined string."""
-        out = enrich_dce_pk_map_sidecar(
-            dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ktrans",
-        )
-        assert isinstance(out["PKCandidateModels"], list)
-
-
 class TestCrossModalityFields:
     def test_dsc_dce_correlation_only_on_ktrans(self, base_sidecar, pk_qc_metrics):
         out_ktrans = enrich_dce_pk_map_sidecar(
