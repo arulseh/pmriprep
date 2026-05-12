@@ -1,5 +1,5 @@
 """Tests that the CLI builds exactly one BIDSLayout per invocation and threads
-the ``--skip-bids-validation`` flag end-to-end.
+the ``--bids-validation`` flag end-to-end.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _make_bids(tmp_path: Path) -> Path:
 
 
 def test_skip_flag_blocks_validator(monkeypatch, tmp_path: Path) -> None:
-    """--skip-bids-validation must short-circuit subprocess invocation."""
+    """skip=True must short-circuit subprocess invocation."""
     from pmriprep.utils import bids as bids_mod
 
     called: list[Any] = []
@@ -73,19 +73,19 @@ def test_helpers_reuse_supplied_layout(monkeypatch, tmp_path: Path) -> None:
     )
 
 
-def test_skip_bids_validation_argparse_dest() -> None:
-    """``--skip-bids-validation`` parses to ``args.skip_bids_validation``."""
+def test_bids_validation_argparse_dest() -> None:
+    """``--bids-validation`` parses to ``args.bids_validation``."""
     from pmriprep.cli.run import _build_parser
 
     parser = _build_parser()
     args = parser.parse_args([
         "/tmp/bids", "/tmp/out", "participant",
-        "--skip-bids-validation",
+        "--bids-validation",
     ])
-    assert args.skip_bids_validation is True
+    assert args.bids_validation is True
 
     args2 = parser.parse_args(["/tmp/bids", "/tmp/out", "participant"])
-    assert args2.skip_bids_validation is False
+    assert args2.bids_validation is False
 
 
 def test_collect_participants_returns_empty_on_typo(tmp_path: Path) -> None:

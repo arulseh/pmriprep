@@ -188,13 +188,13 @@ Examples:
         "(without 'ses-' prefix). If not provided, all sessions are processed.",
     )
     parser.add_argument(
-        "--skip-bids-validation",
-        "--skip_bids_validation",
+        "--bids-validation",
+        "--bids_validation",
         action="store_true",
         default=False,
-        help="Skip the bids-validator pre-flight check on the input dataset. "
-        "If the validator binary is not on PATH, validation is skipped with "
-        "a warning regardless of this flag.",
+        help="Run the bids-validator pre-flight check on the input dataset. "
+        "Disabled by default because perfusion MRI suffixes (_dsc, _dce) are "
+        "not yet in the stable BIDS specification.",
     )
 
     # Resource arguments
@@ -551,7 +551,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     # Run BIDS validator (warn-and-skip if binary missing; sys.exit on failure).
     from pmriprep.utils.bids import validate_bids_input
 
-    validate_bids_input(args.bids_dir, skip=args.skip_bids_validation)
+    validate_bids_input(args.bids_dir, skip=not args.bids_validation)
 
     # Create output_dir if it doesn't exist
     args.output_dir.mkdir(parents=True, exist_ok=True)

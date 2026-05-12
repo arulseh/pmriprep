@@ -39,7 +39,7 @@ def validate_bids_input(
     - Validator returns non-zero → log error and ``SystemExit(1)``.
     """
     if skip:
-        logger.info("Skipping BIDS validation (--skip-bids-validation)")
+        logger.info("Skipping BIDS validation (pass --bids-validation to enable)")
         return
 
     binary = shutil.which("bids-validator")
@@ -47,7 +47,7 @@ def validate_bids_input(
         logger.warning(
             "bids-validator not found on PATH — skipping validation. "
             "Install via `npm install -g bids-validator` or use the official "
-            "container. Pass --skip-bids-validation to silence this warning."
+            "container."
         )
         return
 
@@ -57,7 +57,7 @@ def validate_bids_input(
     if result.returncode != 0:
         logger.error(
             "bids-validator failed (exit %d). Fix the reported issues or "
-            "rerun with --skip-bids-validation.",
+            "rerun without --bids-validation.",
             result.returncode,
         )
         sys.exit(1)
