@@ -33,8 +33,8 @@ class DSCVoxelResult:
             typically shows Tmax > 6s.
 
         # AUC metrics
-        auc_raw: Area under uncorrected concentration curve (mM*s).
-        auc_corr: Area under leakage-corrected concentration curve (mM*s).
+        auc_raw: Area under uncorrected ΔR2* curve (a.u.).
+        auc_corr: Area under leakage-corrected ΔR2* curve (a.u.).
 
         # Leakage correction
         k2: K2 leakage correction factor (s^-1). Values ~0 indicate intact BBB,

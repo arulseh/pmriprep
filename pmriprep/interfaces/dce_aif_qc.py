@@ -274,7 +274,7 @@ class DCEAIFQCPlot(BaseInterface):
             ax.axvspan(0, baseline_end_t, alpha=0.08, color="gray", label=f"Baseline ({baseline_frames} fr)")
 
             ax.set_xlabel("Time (s)", fontsize=11)
-            ax.set_ylabel("Concentration (mM)", fontsize=11)  # DCE uses mM
+            ax.set_ylabel("Plasma concentration (mM)", fontsize=11)
             ax.legend(loc="upper right", fontsize=9)
             ax.grid(True, alpha=0.3)
 

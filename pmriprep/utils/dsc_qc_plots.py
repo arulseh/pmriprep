@@ -304,8 +304,8 @@ def generate_dsc_parameter_maps_qc_plot(
 
     # Parameter display config: (colormap, vmin, vmax_mode, vmax_fixed, unit_label)
     param_config: dict[str, tuple[str, float, str, float | None, str]] = {
-        "rCBF": ("hot", 0.0, "pct98", None, "s\u207b\u00b9"),
-        "rCBV": ("hot", 0.0, "pct98", None, "dimensionless"),
+        "rCBF": ("hot", 0.0, "pct98", None, "a.u."),
+        "rCBV": ("hot", 0.0, "pct98", None, "a.u."),
         "MTT": ("viridis", 0.0, "fixed", 30.0, "seconds"),
         "Tmax": ("plasma", 0.0, "fixed", 30.0, "seconds"),
         "PSR": ("coolwarm", 0.0, "fixed", 200.0, "%"),
@@ -506,7 +506,7 @@ def generate_dsc_fit_qc_plot(
         ax.plot(time_points_s, voxel_conc, "o", color=COLORBLIND_PALETTE.primary,
                 markersize=4, label="Measured", alpha=0.7)
         ax.set_title(f"Tissue Concentration \u2014 Voxel ({vx}, {vy}, {vz})", fontsize=10)
-        ax.set_ylabel("Concentration (a.u.)")
+        ax.set_ylabel(r"$\Delta$R$_2^*$ (s$^{-1}$)")
         ax.legend(fontsize=8)
     ax.set_xlabel("Time (s)")
     ax.grid(True, alpha=0.3)
@@ -527,7 +527,7 @@ def generate_dsc_fit_qc_plot(
                 bbox=dict(boxstyle="round,pad=0.3", facecolor=badge_color, alpha=0.9))
     ax.set_title("Model Fit", fontsize=10)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Concentration (a.u.)")
+    ax.set_ylabel(r"$\Delta$R$_2^*$ (s$^{-1}$)")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
@@ -538,7 +538,7 @@ def generate_dsc_fit_qc_plot(
     ax.fill_between(aif_time, aif, alpha=0.2, color=COLORBLIND_PALETTE.secondary)
     ax.set_title("Arterial Input Function", fontsize=10)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("AIF Concentration (a.u.)")
+    ax.set_ylabel(r"AIF $\Delta$R$_2^*$ (s$^{-1}$)")
     ax.grid(True, alpha=0.3)
 
     # --- (1,1) CBF Map with voxel marker ---
@@ -554,7 +554,7 @@ def generate_dsc_fit_qc_plot(
     im = ax.imshow(cbf_slice, cmap="hot", vmin=0, vmax=cbf_vmax, aspect="equal")
     ax.set_title(f"CBF Map (z={vz})", fontsize=10)
     ax.axis("off")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="s\u207b\u00b9")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="a.u.")
     # R/L markers
     ax.text(0.02, 0.5, "R", transform=ax.transAxes, fontsize=9,
             color="white", fontweight="bold", va="center")
@@ -729,7 +729,7 @@ def generate_dsc_leakage_qc_plot(
                 transform=ax.transAxes, ha="center", va="center", fontsize=10)
         ax.set_title("Example Voxel Curves", fontsize=10)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Concentration (a.u.)")
+    ax.set_ylabel(r"$\Delta$R$_2^*$ (s$^{-1}$)")
     ax.grid(True, alpha=0.3)
 
     # --- (1,2) K2 vs PSR Scatter ---

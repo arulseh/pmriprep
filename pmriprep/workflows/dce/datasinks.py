@@ -104,7 +104,7 @@ _MODEL_FREE_MAPS: tuple[tuple[str, str, str, str, dict | None], ...] = (
 
 _PK_UNITS = {
     "ktrans": "1/min", "ve": "fraction", "kep": "1/min", "vp": "fraction",
-    "fp": "mL/100g/min", "ps": "mL/100g/min",
+    "fp": "mL/min/100mL", "ps": "mL/min/100mL",
 }
 _MF_UNITS = {
     "iauc60": "mM*min", "iauc90": "mM*min", "iauc120": "mM*min",

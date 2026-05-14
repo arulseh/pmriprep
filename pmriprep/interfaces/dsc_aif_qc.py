@@ -327,7 +327,7 @@ class AIFQCPlot(BaseInterface):
             ax.axvspan(0, baseline_end_t, alpha=0.08, color="gray", label=f"Baseline ({baseline_frames} fr)")
 
             ax.set_xlabel("Time (s)", fontsize=11)
-            ax.set_ylabel("Concentration (a.u.)", fontsize=11)
+            ax.set_ylabel(r"$\Delta$R$_2^*$ (s$^{-1}$)", fontsize=11)
             ax.legend(loc="upper right", fontsize=9)
             ax.grid(True, alpha=0.3)
 

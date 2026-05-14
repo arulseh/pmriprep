@@ -459,13 +459,13 @@
             {% if dce.qc_metrics.pk_modeling.qc_voxel_fp is defined and dce.qc_metrics.pk_modeling.qc_voxel_fp is not none %}
             <div class="metric">
                 <div class="metric-label">Fp</div>
-                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_fp) }} mL/100g/min</div>
+                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_fp) }} mL/min/100mL</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.pk_modeling.qc_voxel_ps is defined and dce.qc_metrics.pk_modeling.qc_voxel_ps is not none %}
             <div class="metric">
                 <div class="metric-label">PS</div>
-                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_ps) }} mL/100g/min</div>
+                <div class="metric-value">{{ "%.4f"|format(dce.qc_metrics.pk_modeling.qc_voxel_ps) }} mL/min/100mL</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.pk_modeling.qc_voxel_rsquared is defined %}
@@ -516,13 +516,13 @@
             {% if dce.qc_metrics.pk_modeling.fp_median is defined %}
             <div class="metric">
                 <div class="metric-label">Median Fp</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.fp_median) }} mL/100g/min</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.fp_median) }} mL/min/100mL</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.pk_modeling.ps_median is defined %}
             <div class="metric">
                 <div class="metric-label">Median PS</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.ps_median) }} mL/100g/min</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.pk_modeling.ps_median) }} mL/min/100mL</div>
             </div>
             {% endif %}
         </div>

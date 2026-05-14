@@ -444,7 +444,7 @@ def generate_pk_modeling_qc_plot(
     ax.fill_between(aif_time, aif, alpha=0.2, color=COLORBLIND_PALETTE.secondary)
     ax.set_title("Arterial Input Function", fontsize=10)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("AIF Concentration (mM)")
+    ax.set_ylabel("AIF Plasma concentration (mM)")
     ax.grid(True, alpha=0.3)
 
     # --- (1,1) Ktrans Map with voxel marker ---
@@ -538,8 +538,8 @@ def generate_pk_parameter_maps_qc_plot(
         "Ktrans": ("hot", 0.0, "pct95", 0.25, "min\u207b\u00b9"),
         "ve": ("viridis", 0.0, "pct95", 1.0, "fraction"),
         "vp": ("plasma", 0.0, "pct95", 0.05, "fraction"),
-        "Fp": ("inferno", 0.0, "pct95", 50.0, "mL/100g/min"),
-        "PS": ("magma", 0.0, "pct95", 5.0, "mL/100g/min"),
+        "Fp": ("inferno", 0.0, "pct95", 50.0, "mL/min/100mL"),
+        "PS": ("magma", 0.0, "pct95", 5.0, "mL/min/100mL"),
     }
 
     # Filter to params that exist in the input
