@@ -1121,8 +1121,10 @@ class ComputeDCEMaps(BaseInterface):
     - 2cxm: Two-Compartment Exchange Model (Fp, PS, ve, vp)
 
     Auto-selection logic (when model='auto'):
-    - If TR < 5s: Extended Tofts (better temporal resolution)
-    - If TR >= 5s: Standard Tofts (reduced parameters for stability)
+    - Patlak is always included
+    - Extended Tofts included if TR <= 10s
+    - 2CXM included if TR <= 3s
+    - Winner selected by BIC (Standard Tofts excluded; vp=0 invalid in brain)
 
     Output maps:
     - Ktrans: Volume transfer constant (min⁻¹)
@@ -1242,20 +1244,6 @@ class ComputeDCEMaps(BaseInterface):
         else:
             base = in_file.stem
         return str(Path.cwd() / f"{base}{suffix}.nii.gz")
-
-    def _select_model(self, tr_seconds: float) -> str:
-        """Auto-select model based on TR.
-
-        Args:
-            tr_seconds: Repetition time in seconds.
-
-        Returns:
-            Model name: 'extended_tofts' if TR < 5s, else 'tofts'.
-        """
-        if tr_seconds < 5.0:
-            return "extended_tofts"
-        else:
-            return "tofts"
 
     def _compute_tsnr(
         self,
