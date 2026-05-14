@@ -132,35 +132,3 @@ def test_find_dsc_prefers_bold_or_perf_named_files(tmp_path: Path) -> None:
     assert chosen is not None and "_bold" in chosen.name
 
 
-def test_find_dwi_prefers_multi_bvalue_over_b0(tmp_path: Path) -> None:
-    """Multiple DWI: a 2-bvalue file beats a b0-only file (>=2 unique bvals)."""
-    from pmriprep.workflows.discovery import _find_dwi
-
-    bids = tmp_path / "bids"
-    dwi_dir = bids / "sub-01" / "dwi"
-    dwi_dir.mkdir(parents=True)
-    _write_dd(bids)
-
-    nib.save(
-        nib.Nifti1Image(np.zeros((4, 4, 4, 2), dtype=np.float32), np.eye(4)),
-        dwi_dir / "sub-01_acq-trace_dwi.nii.gz",
-    )
-    (dwi_dir / "sub-01_acq-trace_dwi.bval").write_text("0 1000\n")
-    (dwi_dir / "sub-01_acq-trace_dwi.bvec").write_text("0 0\n0 0\n0 1\n")
-    (dwi_dir / "sub-01_acq-trace_dwi.json").write_text(
-        json.dumps({"PhaseEncodingDirection": "j-"})
-    )
-
-    nib.save(
-        nib.Nifti1Image(np.zeros((4, 4, 4, 1), dtype=np.float32), np.eye(4)),
-        dwi_dir / "sub-01_acq-b0_dwi.nii.gz",
-    )
-    (dwi_dir / "sub-01_acq-b0_dwi.bval").write_text("0\n")
-    (dwi_dir / "sub-01_acq-b0_dwi.bvec").write_text("0\n0\n0\n")
-    (dwi_dir / "sub-01_acq-b0_dwi.json").write_text(
-        json.dumps({"PhaseEncodingDirection": "j-"})
-    )
-
-    layout = BIDSLayout(str(bids), validate=False)
-    chosen = _find_dwi(layout, "01", None)
-    assert chosen is not None and "trace" in chosen.name

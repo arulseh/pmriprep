@@ -51,8 +51,6 @@ class DCEConfig:
         tfl_b1map (pre-computed flip angle map), none (skip B1+ correction).
     no_t1 : bool
         Skip T1 mapping (use field-strength-appropriate default T1).
-    no_tortuosity : bool
-        Skip DWI-based tortuosity correction.
     no_dsc_validation : bool
         Skip DSC-DCE cross-validation.
     smooth_fwhm : float
@@ -102,7 +100,6 @@ class DCEConfig:
     t1_method: Literal["hybrid", "wlls", "nlls"] = "hybrid"
     t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
     # Processing settings
-    no_tortuosity: bool = False
     no_dsc_validation: bool = False
     smooth_fwhm: float = 0.0  # No smoothing by default
     baseline_frames: int = 0  # 0 = auto-detect

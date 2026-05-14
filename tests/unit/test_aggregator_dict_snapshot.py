@@ -74,7 +74,6 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path) -> None:
             "PipelineQC": {
                 "t1_mapping": {"method": "hybrid", "b1_correction": "afi"},
                 "pk_modeling": {"model": "tofts", "qc_voxel_rsquared": 0.85},
-                "tortuosity_applied": False,
             },
         },
     )
@@ -83,7 +82,6 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path) -> None:
 
     assert out["t1_mapping"]["method"] == "hybrid"
     assert out["pk_modeling"]["model"] == "tofts"
-    assert out["tortuosity_applied"] is False
     assert out["recommendation"]["action"] == "include"
     assert out["warnings"] == ["NAWM mask in DCE space not available"]
 

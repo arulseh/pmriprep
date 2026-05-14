@@ -30,7 +30,6 @@ class ModalityAvailability:
         dce: Path to DCE perfusion image, if available.
         vfa: List of paths to VFA (Variable Flip Angle) images for T1 mapping.
         afi: List of paths to AFI (Actual Flip Angle Imaging) images for B1+ mapping.
-        dwi: Path to DWI image, if available.
         b1_precomputed_file: Path to pre-computed B1+ flip angle map (e.g., tfl_b1map famp).
         b1_nominal_prep_fa: Nominal preparation flip angle (degrees) from famp JSON sidecar.
         b1_method_detected: Detected B1+ method ("afi" or "tfl_b1map"), if any.
@@ -45,7 +44,6 @@ class ModalityAvailability:
     dce: Optional[Path] = None
     vfa: List[Path] = field(default_factory=list)
     afi: List[Path] = field(default_factory=list)
-    dwi: Optional[Path] = None
     afi_mode: Optional[str] = None  # "4d" or "precomputed"
     afi_4d_file: Optional[Path] = None  # Set when afi_mode="4d"
     afi_tr1_ms: Optional[float] = None  # TR1 in ms (from sidecar)
@@ -634,82 +632,6 @@ def _classify_b1_data(
     return result
 
 
-def _find_dwi(
-    layout: "BIDSLayout",
-    subject: str,
-    session: Optional[str],
-) -> Optional[Path]:
-    """Find DWI image best suited for ADC calculation.
-
-    When multiple DWI files exist, prefers the one with fewest volumes that
-    still has >= 2 unique b-values (sufficient for mono-exponential ADC).
-    """
-    matches = [
-        Path(p) for p in layout.get(
-            subject=subject,
-            session=session,
-            datatype="dwi",
-            suffix="dwi",
-            extension=["nii", "nii.gz"],
-            return_type="filename",
-        )
-    ]
-
-    if not matches:
-        return None
-
-    if len(matches) == 1:
-        return matches[0]
-
-    # Multiple DWI files: prefer trace over DTI, AP/PA over LR/RL, fewer volumes
-    import numpy as np
-
-    from pmriprep.utils.dce_tortuosity import is_trace_dwi
-
-    scored: List[tuple[tuple[int, int, float], Path]] = []
-    for m in matches:
-        bval_path = str(m).replace(".nii.gz", ".bval").replace(".nii", ".bval")
-        bvec_path = str(m).replace(".nii.gz", ".bvec").replace(".nii", ".bvec")
-
-        is_dti = 1  # default: assume DTI (worse)
-        is_lr_pe = 0  # default: assume AP/PA (better)
-        n_vols: float = float("inf")
-
-        try:
-            if Path(bval_path).exists():
-                bvals = np.atleast_1d(np.loadtxt(bval_path))
-                if len(np.unique(bvals)) >= 2:
-                    n_vols = float(len(bvals))
-                    bvecs = None
-                    if Path(bvec_path).exists():
-                        bvecs = np.loadtxt(bvec_path)
-                    is_dti = 0 if is_trace_dwi(bvals, bvecs) else 1
-        except Exception as exc:
-            logger.warning("Could not read %s: %s", bval_path, exc)
-
-        try:
-            sidecar = layout.get_metadata(str(m)) or {}
-        except Exception:
-            sidecar = {}
-        pe_dir = sidecar.get("PhaseEncodingDirection", "")
-        if isinstance(pe_dir, str) and pe_dir.startswith("i"):
-            is_lr_pe = 1
-
-        scored.append(((is_dti, is_lr_pe, n_vols), m))
-
-    scored.sort(key=lambda x: x[0])
-    winner_key, winner_path = scored[0]
-    logger.info(
-        "Multiple DWI files found, selected %s "
-        "(is_dti=%d, is_lr_pe=%d, n_vols=%s)",
-        winner_path.name,
-        winner_key[0],
-        winner_key[1],
-        winner_key[2] if winner_key[2] != float("inf") else "unknown",
-    )
-    return winner_path
-
-
 def _determine_pipeline_availability(modalities: ModalityAvailability) -> PipelineAvailability:
     """Determine which pipelines can run based on available modalities.
 
@@ -845,8 +767,6 @@ def discover_session_data(
             modalities.b1_nominal_prep_fa = float(b1_info["b1_nominal_prep_fa"])  # type: ignore[arg-type]
         if b1_info.get("b1_method_detected") is not None:
             modalities.b1_method_detected = str(b1_info["b1_method_detected"])
-
-    modalities.dwi = _find_dwi(layout, subject, session)
 
     # Determine pipeline availability
     pipelines = _determine_pipeline_availability(modalities)

@@ -166,7 +166,7 @@ class Reorient(CommandLine):
     this does NOT apply robustfov (which would incorrectly crop 4D data or
     non-structural images like perfusion data).
 
-    Use this for: DCE, DSC, VFA, AFI, DWI
+    Use this for: DCE, DSC, VFA, AFI
     Use ReorientAndCrop for: T1w, T2w, FLAIR (structurals)
 
     Examples

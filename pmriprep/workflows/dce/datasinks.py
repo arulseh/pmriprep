@@ -374,10 +374,9 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
     # Defensive no-op when upstream conditional producer returned no output
-    # (e.g., tortuosity correction skipped due to bad b-values, NAWM
-    # normalization had < 10 NAWM voxels, optional transform absent). The
-    # producer's None-return is the canonical "I had nothing to write"
-    # signal — see _tortuosity_correction_node, _normalize_by_nawm.
+    # (e.g., NAWM normalization had < 10 NAWM voxels, optional transform
+    # absent). The producer's None-return is the canonical "I had nothing
+    # to write" signal — see _normalize_by_nawm.
     # Sentinels: isdefined(Undefined) == False, BUT isdefined(None) == True
     # (Nipype gotcha) and "" is the documented Function-node-returns-empty
     # convention — all three need explicit handling.
@@ -495,10 +494,10 @@ def _copy_dce_xfm(  # type: ignore[no-untyped-def]
 
 
 def _split_dce_smoothed(  # type: ignore[no-untyped-def]
-    smooth_pk=None, smooth_mf=None, smooth_uncertainty=None, smooth_tort=None,
+    smooth_pk=None, smooth_mf=None, smooth_uncertainty=None,
     pk_units=None, mf_units=None,
 ):
-    """Flatten the four smoothed-map dicts into per-output tuples."""
+    """Flatten the three smoothed-map dicts into per-output tuples."""
     import re as _re
     from pathlib import Path
 
@@ -572,19 +571,6 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
             units_list.append(pk_units.get(param, ""))
             desc_values.append(f"dceUncertainty{fwhm_str}")
             suffixes.append(param)
-            use_model.append(True)
-
-    if isinstance(smooth_tort, dict):
-        for name, src in smooth_tort.items():
-            if not (src and Path(src).exists()):
-                continue
-            fwhm_str, fwhm_mm = _extract_fwhm(src)
-            in_files.append(str(src))
-            descs.append("Smoothed Ktrans corrected for tissue tortuosity")
-            fwhms.append(fwhm_mm)
-            units_list.append("1/min")
-            desc_values.append(f"dceTortuosityCorr{fwhm_str}")
-            suffixes.append("Ktrans")
             use_model.append(True)
 
     return in_files, descs, fwhms, units_list, desc_values, suffixes, use_model
@@ -916,7 +902,7 @@ def init_dce_datasinks_wf(
 
     ``pk_model`` is the resolved (non-"auto") model name; the
     ``model-{pk_model}`` entity is added to PK / uncertainty / CV / CI95 /
-    R²/qualityFlag/modelSelection/deltaBIC/tortuosity-corrected/normalized
+    R²/qualityFlag/modelSelection/deltaBIC/normalized
     sinks. Model-free maps (IAUC, peakEnhancement, ttp, SER, washIn/Out,
     BAT, curveType, tsnr, qcMask, nIAUC60) drop the model entity.
     """
@@ -953,11 +939,11 @@ def init_dce_datasinks_wf(
                 # QC + model-selection
                 "tsnr_map", "qc_mask", "r2_map", "quality_flag_map",
                 "model_selection_map", "delta_bic_map",
-                # Tortuosity + NAWM-norm
-                "ktrans_tortuosity_corrected", "nktrans_map", "niauc60_map",
+                # NAWM-norm
+                "nktrans_map", "niauc60_map",
                 # Smoothed dicts (variable cardinality)
                 "smooth_pk_maps", "smooth_model_free_maps",
-                "smooth_uncertainty_maps", "smooth_tortuosity_maps",
+                "smooth_uncertainty_maps",
                 # T1/B1 + masks (anat/)
                 "t1_map", "b1_map", "brain_mask", "nawm_mask",
                 # Motion + AIF
@@ -1242,17 +1228,7 @@ def init_dce_datasinks_wf(
         ])
         sink_outputs.append((dbic_sink, "out_file"))
 
-    # --- Tortuosity-corrected Ktrans + NAWM-normalized maps ---
-    if "ktrans_tortuosity_corrected" in present:
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
-            name="ktrans_tortuosity_corrected",
-            in_attr="ktrans_tortuosity_corrected",
-            desc_value="dceTortuosityCorr", suffix="Ktrans",
-            description="Ktrans corrected for tissue tortuosity using DWI-derived ADC",
-            units=None, extra=None, model_entity=model_entity,
-        )
-        sink_outputs.append((sink, "out_file"))
+    # --- NAWM-normalized maps ---
     if "nktrans_map" in present:
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
@@ -1505,7 +1481,7 @@ def init_dce_datasinks_wf(
             niu.Function(
                 input_names=[
                     "smooth_pk", "smooth_mf",
-                    "smooth_uncertainty", "smooth_tort",
+                    "smooth_uncertainty",
                     "pk_units", "mf_units",
                 ],
                 output_names=[
@@ -1523,7 +1499,6 @@ def init_dce_datasinks_wf(
                 ("smooth_pk_maps", "smooth_pk"),
                 ("smooth_model_free_maps", "smooth_mf"),
                 ("smooth_uncertainty_maps", "smooth_uncertainty"),
-                ("smooth_tortuosity_maps", "smooth_tort"),
             ]),
         ])
 
@@ -1545,7 +1520,7 @@ def init_dce_datasinks_wf(
             ]),
         ])
 
-        # Per-item model_entity (PK + uncertainty + tort use it; MF doesn't)
+        # Per-item model_entity (PK + uncertainty use it; MF doesn't)
         model_picker = pe.Node(
             niu.Function(
                 input_names=["use_model_flags", "model_entity"],

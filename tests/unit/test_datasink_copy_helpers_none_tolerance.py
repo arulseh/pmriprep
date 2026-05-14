@@ -2,12 +2,10 @@
 
 The 6 ``_copy_*`` Function-node helpers across DCE/DSC/anat datasinks
 all call ``shutil.copy2(in_file, ...)``. Conditional producers like
-``_tortuosity_correction_node`` and ``_normalize_by_nawm`` legitimately
-return ``None`` when their preconditions aren't met. Pre-v0.50.2 this
-would crash the whole subject inside ``shutil.copy2(None, ...)`` with
-``TypeError: stat: path should be string, bytes, os.PathLike or
-integer, not NoneType``. Reproduced on sub-0081 (OSIPI test-retest) at
-the ``ktrans_tortuosity_corrected_sink`` node.
+``_normalize_by_nawm`` legitimately return ``None`` when their
+preconditions aren't met. Pre-v0.50.2 this would crash the whole
+subject inside ``shutil.copy2(None, ...)`` with ``TypeError: stat:
+path should be string, bytes, os.PathLike or integer, not NoneType``.
 
 Each helper now early-returns ``""`` when given Undefined/None/"".
 These tests cover the two perfusion-map helpers explicitly (the most
@@ -30,7 +28,7 @@ class TestDCECopyPerfMapNoneTolerance:
         from pmriprep.workflows.dce.datasinks import _copy_perf_map
         out = _copy_perf_map(
             in_file=Undefined, output_dir=str(tmp_path), subject="X",
-            session="Y", desc="dceTortuosityCorr", suffix="Ktrans",
+            session="Y", desc="dceKtrans", suffix="Ktrans",
             meta_dict={},
         )
         assert out == ""
@@ -42,7 +40,7 @@ class TestDCECopyPerfMapNoneTolerance:
         from pmriprep.workflows.dce.datasinks import _copy_perf_map
         out = _copy_perf_map(
             in_file=None, output_dir=str(tmp_path), subject="X",
-            session="Y", desc="dceTortuosityCorr", suffix="Ktrans",
+            session="Y", desc="dceKtrans", suffix="Ktrans",
             meta_dict={},
         )
         assert out == ""
@@ -54,7 +52,7 @@ class TestDCECopyPerfMapNoneTolerance:
         from pmriprep.workflows.dce.datasinks import _copy_perf_map
         out = _copy_perf_map(
             in_file="", output_dir=str(tmp_path), subject="X",
-            session="Y", desc="dceTortuosityCorr", suffix="Ktrans",
+            session="Y", desc="dceKtrans", suffix="Ktrans",
             meta_dict={},
         )
         assert out == ""
@@ -69,10 +67,10 @@ class TestDCECopyPerfMapNoneTolerance:
         out = _copy_perf_map(
             in_file=str(src), output_dir=str(out_dir),
             subject="X", session="Y",
-            desc="dceTortuosityCorr", suffix="Ktrans",
+            desc="dceKtrans", suffix="Ktrans",
             meta_dict={"Description": "test"},
         )
-        assert out.endswith("sub-X_ses-Y_desc-dceTortuosityCorrKtrans_stat.nii.gz")
+        assert out.endswith("sub-X_ses-Y_desc-dceKtransKtrans_stat.nii.gz")
         assert Path(out).is_file()
         assert Path(out.replace(".nii.gz", ".json")).is_file()
 

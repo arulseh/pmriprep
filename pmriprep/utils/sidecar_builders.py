@@ -46,7 +46,7 @@ _PIPELINE_QC_STRIP_KEYS = frozenset({
 _CONFIG_STRIP_KEYS = frozenset({
     "n_procs", "nprocs", "hdbet_device", "tumor_seg_device",
     "disable_aif_fallback", "n_aif_candidates", "cpi_infer_cpt",
-    "underlays", "no_t1", "no_tortuosity", "no_dsc_validation",
+    "underlays", "no_t1", "no_dsc_validation",
     "scale_aif",
 })
 
@@ -1210,7 +1210,7 @@ def enrich_dce_preproc_sidecar(
     """Add flat-prefixed cosmetic QC keys to a DCE preproc-4D sidecar.
 
     Mutates and returns ``sidecar``. Adds ``T1*``, ``B1*``, motion/signal,
-    and top-level ``TortuosityCorrectionApplied`` / ``NAWMNormalizationApplied``
+    and top-level ``NAWMNormalizationApplied``
     flags from the producer-shape ``qc_metrics`` envelope. Existing
     sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
     ``Resolution``, ``KtransConvention``) are preserved.
@@ -1220,8 +1220,6 @@ def enrich_dce_preproc_sidecar(
     sidecar.update(_dce_t1_cosmetic_keys(qc_metrics.get("t1_mapping")))
     sidecar.update(_dce_b1_cosmetic_keys(qc_metrics.get("b1_mapping")))
     sidecar.update(_dce_preprocessing_cosmetic_keys(qc_metrics.get("preprocessing")))
-    if "tortuosity_applied" in qc_metrics:
-        sidecar["TortuosityCorrectionApplied"] = bool(qc_metrics["tortuosity_applied"])
     if "nawm_normalization" in qc_metrics:
         sidecar["NAWMNormalizationApplied"] = bool(qc_metrics["nawm_normalization"])
     return sidecar

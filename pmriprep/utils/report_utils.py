@@ -694,15 +694,6 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
         elif inference == "map":
             refs.add("woolrich_2009")
 
-    # Tortuosity correction
-    if dce_qc.get("tortuosity_applied", False):
-        sentences.append(
-            "A tortuosity-corrected Ktrans map was additionally "
-            "computed using DWI-derived ADC "
-            "(Nicholson & Syková, 1998; Tofts, 1997)."
-        )
-        refs.update(["nicholson_1998", "tofts_1997"])
-
     # NAWM normalization
     if dce_qc.get("nawm_normalization", False):
         sentences.append(

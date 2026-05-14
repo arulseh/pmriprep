@@ -993,7 +993,6 @@ def init_pmriprep_wf(
                 # Mapping inputs
                 "vfa_files",
                 "afi_files",
-                "dwi_file",
                 # Lesion mask (from external source or previous run)
                 "lesion_mask",
             ]
@@ -1020,9 +1019,6 @@ def init_pmriprep_wf(
         inputnode.inputs.vfa_files = [str(p) for p in session_data.modalities.vfa]
     if session_data.modalities.afi:
         inputnode.inputs.afi_files = [str(p) for p in session_data.modalities.afi]
-    if session_data.modalities.dwi:
-        inputnode.inputs.dwi_file = str(session_data.modalities.dwi)
-
     # -------------------------------------------------------------------
     # Structural reference selection (confidence-scored)
     # Determine which anat output to use for DSC and DCE registration,
@@ -2760,44 +2756,6 @@ def init_pmriprep_wf(
             if session_data.modalities.afi_flip_angle is not None:
                 dce_wf.inputs.inputnode.afi_flip_angle = session_data.modalities.afi_flip_angle
 
-        # Connect DWI for tortuosity if available
-        if session_data.modalities.dwi:
-            workflow.connect([
-                (inputnode, dce_wf, [("dwi_file", "inputnode.dwi_file")]),
-            ])
-            # Pass full b-value array from BIDS .bval sidecar for tortuosity
-            import logging as _logging
-            import numpy as _np
-            _log = _logging.getLogger("pmriprep.workflows")
-            dwi_path = session_data.modalities.dwi
-            bval_path = str(dwi_path).replace(".nii.gz", ".bval").replace(".nii", ".bval")
-            if Path(bval_path).exists():
-                try:
-                    bvals = _np.atleast_1d(_np.loadtxt(bval_path))
-                    dce_wf.inputs.inputnode.dwi_bvals = bvals.tolist()
-                    _log.info(
-                        "DWI: loaded %d b-values from %s (range %.0f-%.0f s/mm²)",
-                        len(bvals), bval_path, bvals.min(), bvals.max(),
-                    )
-                except Exception as exc:
-                    _log.warning("DWI: failed to read b-values from %s: %s", bval_path, exc)
-
-            # Read b-vectors for DTI direction averaging
-            bvec_path = str(dwi_path).replace(".nii.gz", ".bvec").replace(".nii", ".bvec")
-            if Path(bvec_path).exists():
-                try:
-                    bvecs = _np.loadtxt(bvec_path)
-                    # Normalise (3, N) -> (N, 3) for consistent passing
-                    if bvecs.ndim == 2 and bvecs.shape[0] == 3 and bvecs.shape[1] != 3:
-                        bvecs = bvecs.T
-                    dce_wf.inputs.inputnode.dwi_bvecs = bvecs.tolist()
-                    _log.info(
-                        "DWI: loaded %d b-vectors from %s",
-                        bvecs.shape[0], bvec_path,
-                    )
-                except Exception as exc:
-                    _log.warning("DWI: failed to read b-vectors from %s: %s", bvec_path, exc)
-
         # DSC dose (bolus multiplier + agent standard dose) flows into the
         # DCE constraint quality gate so CNR coverage thresholds scale with
         # administered Gd fraction. Read from dsc_config; defaults
@@ -2993,9 +2951,6 @@ def init_pmriprep_wf(
                 dce_present |= {"ve_ci95_lower", "ve_ci95_upper"}
             if dce_model in _has_vp_models:
                 dce_present |= {"vp_ci95_lower", "vp_ci95_upper"}
-        # Tortuosity correction (DWI-derived ADC)
-        if not dce_config.no_tortuosity and session_data.modalities.dwi:
-            dce_present.add("ktrans_tortuosity_corrected")
         # NAWM normalization + NAWM mask
         if dce_has_nawm:
             dce_present.add("nktrans_map")
@@ -3117,8 +3072,6 @@ def init_pmriprep_wf(
                 ("outputnode.ve_ci95_upper", "inputnode.ve_ci95_upper"),
                 ("outputnode.vp_ci95_lower", "inputnode.vp_ci95_lower"),
                 ("outputnode.vp_ci95_upper", "inputnode.vp_ci95_upper"),
-                # Tortuosity-corrected Ktrans
-                ("outputnode.ktrans_tortuosity_corrected", "inputnode.ktrans_tortuosity_corrected"),
                 # Normalized maps (NAWM-normalized)
                 ("outputnode.nktrans_map", "inputnode.nktrans_map"),
                 ("outputnode.niauc60_map", "inputnode.niauc60_map"),
@@ -3126,7 +3079,6 @@ def init_pmriprep_wf(
                 ("outputnode.smooth_pk_maps", "inputnode.smooth_pk_maps"),
                 ("outputnode.smooth_model_free_maps", "inputnode.smooth_model_free_maps"),
                 ("outputnode.smooth_uncertainty_maps", "inputnode.smooth_uncertainty_maps"),
-                ("outputnode.smooth_tortuosity_maps", "inputnode.smooth_tortuosity_maps"),
                 # QC metrics
                 ("outputnode.qc_metrics", "inputnode.qc_metrics"),
                 # QC plots

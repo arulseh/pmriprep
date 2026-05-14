@@ -42,7 +42,6 @@ def dce_qc_metrics() -> dict[str, Any]:
             "baseline_tsnr": 32.4, "peak_enh_pct": 65.0,
             "n_volumes": 75, "tr_ms": 4060.0,
         },
-        "tortuosity_applied": True,
         "nawm_normalization": True,
     }
 
@@ -80,9 +79,8 @@ class TestMotionAndSignalKeys:
 
 
 class TestTopLevelFlags:
-    def test_tortuosity_and_nawm(self, base_sidecar, dce_qc_metrics):
+    def test_nawm_normalization(self, base_sidecar, dce_qc_metrics):
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
-        assert out["TortuosityCorrectionApplied"] is True
         assert out["NAWMNormalizationApplied"] is True
 
 

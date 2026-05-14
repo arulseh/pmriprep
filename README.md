@@ -265,7 +265,6 @@ dce:
 | **DSC cross-validation** | | | |
 | `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto`: `soft` prior when DSC CBV is available, `skip` otherwise. Options: `auto`, `soft`, `skip` |
 | `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation. Requires a NAWM mask; automatically skipped when unavailable |
-| `no_tortuosity` | bool | `false` | Skip DWI-based tortuosity correction |
 | **Preprocessing** | | | |
 | `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect) |
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
@@ -322,11 +321,6 @@ bids_dir/
         sub-01_ses-01_ce-GAD_run-1_dsc.json
         sub-01_ses-01_ce-GAD_run-1_dce.nii.gz                # DCE
         sub-01_ses-01_ce-GAD_run-1_dce.json
-      dwi/
-        sub-01_ses-01_run-1_dwi.nii.gz                       # DWI (for ADC / tortuosity)
-        sub-01_ses-01_run-1_dwi.json
-        sub-01_ses-01_run-1_dwi.bvec
-        sub-01_ses-01_run-1_dwi.bval
       fmap/
         sub-01_ses-01_run-1_TB1AFI.nii.gz                    # B1+ mapping (AFI)
         sub-01_ses-01_run-1_TB1AFI.json
@@ -341,7 +335,7 @@ bids_dir/
 | Pipeline | Required | Optional |
 |----------|----------|----------|
 | DSC | `*_dsc.nii.gz`, T1w | — |
-| DCE | `*_dce.nii.gz`, T1w | VFA (T1 mapping), B1+ map (`*_TB1AFI` or `*_TB1TFL`), DWI (tortuosity) |
+| DCE | `*_dce.nii.gz`, T1w | VFA (T1 mapping), B1+ map (`*_TB1AFI` or `*_TB1TFL`) |
 | HD-GLIO | T1w pre-contrast, T1w post-contrast, T2w, FLAIR | — |
 
 B1+ correction accepts either AFI (`*_TB1AFI`) or Siemens pre-computed flip angle maps (`*_TB1TFL`). Auto-detected via `--dce-b1-method auto`.
@@ -469,7 +463,6 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dceKep_stat.nii.gz
       sub-01_ses-01_desc-dceRsquared_stat.nii.gz
       sub-01_ses-01_desc-dceNawmNormKtrans_stat.nii.gz
-      sub-01_ses-01_desc-dceTortuosityCorrKtrans_stat.nii.gz
       # DCE PK uncertainty (inference: vi/map/mcmc only)
       sub-01_ses-01_desc-dceUncertaintyKtrans_stat.nii.gz
       sub-01_ses-01_desc-dceCVKtrans_stat.nii.gz
@@ -570,7 +563,6 @@ output_dir/pmriprep/
 | `*_desc-dceTsnr_stat` | Temporal signal-to-noise ratio | arbitrary |
 | `*_desc-dceNawmNormKtrans_stat` | NAWM-normalized Ktrans | ratio |
 | `*_desc-dceNawmNormIAUC60_stat` | NAWM-normalized IAUC60 | ratio |
-| `*_desc-dceTortuosityCorrKtrans_stat` | Tortuosity-corrected Ktrans (requires DWI) | 1/min |
 | `*_desc-dceUncertainty{Param}_stat` | Posterior std (Bayesian only) | varies |
 | `*_desc-dceCV{Param}_stat` | Coefficient of variation (Bayesian only) | fraction |
 | `*_desc-dceCI95lower{Param}_stat` | 95% credible interval lower bound (Bayesian only) | varies |
