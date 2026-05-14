@@ -1423,7 +1423,7 @@ def init_dsc_preproc_wf(
     2. Signal-to-concentration conversion (ΔR2*)
     3. AIF detection (atlas-based → automatic → synthetic fallback)
     4. Preload detection and K2 leakage correction (if needed)
-    5. Deconvolution (method from config: sSVD, cSVD, oSVD, tikhonov, vascular, cpi)
+    5. Deconvolution (method from config: sSVD, oSVD, tikhonov, vascular, cpi)
     6. Perfusion parameter extraction (CBF, CBV, MTT, Tmax, PSR, PH)
     7. Registration to T1w space
     8. CBV normalization (if NAWM mask available)

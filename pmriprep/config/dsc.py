@@ -50,7 +50,7 @@ class DSCConfig:
         Agent's recommended dose in mmol Gd/kg. Default 0.1 (standard).
         Use 0.05 for gadopiclenol, 0.04 for gadoquatrane.
     method : str
-        Deconvolution method: sSVD, cSVD, oSVD, tikhonov, vascular, or cpi.
+        Deconvolution method: sSVD, oSVD, tikhonov, vascular, or cpi.
     inference : str
         Inference method for parametric deconvolution:
         ``vi`` (default — Variational Inference, FABBER VB), ``svb`` (spatial

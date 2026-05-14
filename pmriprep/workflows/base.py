@@ -1966,7 +1966,7 @@ def init_pmriprep_wf(
         dsc_present.add("ttp_corrected_map")
         if dsc_has_nawm:
             dsc_present.add("rttp_map")
-        # Parametric methods only (oSVD/cSVD/sSVD/tikhonov produce no
+        # Parametric methods only (oSVD/sSVD/tikhonov produce no
         # vascular params, no Bayesian uncertainty, no parametric R²)
         if dsc_method in ("cpi", "vascular"):
             dsc_present |= {"parametric_r2_map", "fallback_mask"}

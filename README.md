@@ -6,7 +6,7 @@ PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and 
 
 ## Features
 
-- **DSC Processing**: Six deconvolution methods (sSVD, cSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction
+- **DSC Processing**: Five deconvolution methods (sSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction
 - **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps
 - **Bayesian Inference**: Variational inference (VI), spatial variational Bayes (SVB), and maximum a posteriori (MAP) estimation with uncertainty quantification
 - **Automatic AIF Detection**: Multi-level arterial input function detection with population fallback, or user-supplied external AIF
@@ -133,7 +133,7 @@ pmriprep bids_dir output_dir {participant} [options]
 
 | Flag | Description |
 |------|-------------|
-| `--dsc-deconv-method {sSVD,cSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
+| `--dsc-deconv-method {sSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
 | `--dsc-inference {nlls,map,vi,svb}` | Inference engine for parametric methods (cpi, vascular). Default: `vi` (FABBER variational Bayes). SVD/Tikhonov ignore. |
 | `--dsc-preload {auto\|FLOAT}` | Preload: `auto` (detect from signal) or float dose multiplier (0.0–2.0, e.g. `0.5` for half-dose preload) |
 | `--dsc-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
@@ -209,7 +209,7 @@ dce:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | **Method** | | | |
-| `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `cSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
+| `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
 | `inference` | str | `"vi"` | Inference engine: `nlls`, `map`, `vi`, `svb` (CPI and Vascular only; SVD and Tikhonov ignore) |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
 | **Dosing** | | | |

@@ -386,13 +386,12 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     # Deconvolution method
     method = traits.Enum(
         "sSVD",
-        "cSVD",
         "oSVD",
         "tikhonov",
         "vascular",
         "cpi",
         usedefault=True,
-        desc="Deconvolution method: sSVD, cSVD, oSVD, tikhonov, vascular, or cpi",
+        desc="Deconvolution method: sSVD, oSVD, tikhonov, vascular, or cpi",
     )
 
     # Method-specific parameters
@@ -560,7 +559,7 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_qc_fit_data = File(desc="JSON with QC voxel fit data for fit QC plot")
 
     # Optional extras
-    out_delay = File(desc="Delay map (cSVD and oSVD methods)")
+    out_delay = File(desc="Delay map (oSVD method)")
     out_residues = File(desc="Residue functions (if save_residue=True)")
     out_alpha = File(desc="Alpha map (vascular method only)")
     out_beta = File(desc="Beta map (vascular method only)")
@@ -593,8 +592,7 @@ class ComputeDSCMaps(BaseInterface):
 
     Supported deconvolution methods:
     - sSVD: Standard SVD (Østergaard method)
-    - cSVD: Circulant SVD (delay-insensitive)
-    - oSVD: Oscillation-index limited SVD (adaptive regularization)
+    - oSVD: Oscillation-index limited SVD (adaptive regularization, delay-insensitive)
     - tikhonov: Tikhonov regularization with GCV
     - vascular: Gamma-variate vascular model
     - cpi: Control Point Interpolation model
@@ -650,7 +648,7 @@ class ComputeDSCMaps(BaseInterface):
     out_snr, out_tsnr : str
         Paths to SNR and tSNR quality metric maps.
     out_delay : str, optional
-        Path to delay map (cSVD and oSVD).
+        Path to delay map (oSVD).
     out_residues : str, optional
         Path to residue functions (if save_residue=True).
     qc_metrics : dict
@@ -673,8 +671,8 @@ class ComputeDSCMaps(BaseInterface):
     For Bayesian methods (map, vi, mcmc), uncertainty maps are also
     generated when method is 'vascular' or 'cpi'.
 
-    The cSVD and oSVD methods additionally output a delay map showing
-    the estimated tracer arrival delay relative to the AIF.
+    The oSVD method additionally outputs a delay map showing the
+    estimated tracer arrival delay relative to the AIF.
 
     References
     ----------
@@ -815,7 +813,7 @@ class ComputeDSCMaps(BaseInterface):
         npt.NDArray[Any],  # cbv
         npt.NDArray[Any],  # mtt
         npt.NDArray[Any],  # tmax
-        Optional[npt.NDArray[Any]],  # delay (cSVD and oSVD)
+        Optional[npt.NDArray[Any]],  # delay (oSVD)
         Optional[npt.NDArray[Any]],  # residues
         dict[str, Any],  # qc_metrics
     ]:
@@ -846,18 +844,6 @@ class ComputeDSCMaps(BaseInterface):
             )
             # Extract tmax from residues
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
-            residues = res if self.inputs.save_residue else None
-
-        elif method == "cSVD":
-            res, cbf, cbv, mtt, delay = svd_deconvolve_circulant_batch(  # type: ignore[assignment]
-                concentration_data,
-                aif,
-                dt=dt,
-                threshold=threshold,
-                mask=mask_bool,
-            )
-            # For cSVD, Tmax = delay (Calamante, Stroke 2010)
-            tmax = delay.copy()
             residues = res if self.inputs.save_residue else None
 
         elif method == "oSVD":
@@ -1786,8 +1772,8 @@ class ComputeDSCMaps(BaseInterface):
             aif: 1D AIF concentration curve.
             mask_bool: 3D boolean brain mask.
             dt: Temporal resolution in seconds.
-            method: Deconvolution method ('sSVD', 'cSVD', 'oSVD', 'tikhonov').
-            threshold: SVD truncation threshold (for sSVD/cSVD).
+            method: Deconvolution method ('sSVD', 'oSVD', 'tikhonov').
+            threshold: SVD truncation threshold (for sSVD).
             oi_threshold: Oscillation index target (for oSVD).
             signal_data: 4D raw signal data (optional, for QC plot).
         """
@@ -1852,13 +1838,6 @@ class ComputeDSCMaps(BaseInterface):
                     tissue_curve, aif, dt=dt, threshold=threshold,
                 ).residue
                 c_recon = build_toeplitz_matrix(aif, dt) @ residue
-            elif method == "cSVD":
-                # cSVD uses block-circulant matrix; reconstruct via matrix multiply
-                full_residue = svd_deconvolve_circulant(
-                    tissue_curve, aif, dt=dt, threshold=threshold,
-                ).residue
-                matrix = build_block_circulant_matrix(aif, dt)
-                c_recon = (matrix @ full_residue)[:n_timepoints]
             elif method == "oSVD":
                 full_residue = svd_deconvolve_oscillation(
                     tissue_curve, aif, dt=dt, oi_target=oi_threshold,
@@ -1951,7 +1930,7 @@ class ComputeDSCMaps(BaseInterface):
 
         # SVD methods are direct matrix decompositions — Bayesian/NLLS
         # inference only applies to parametric fitting (cpi, vascular).
-        if method in ("sSVD", "cSVD", "oSVD", "tikhonov") and inference != "vi":
+        if method in ("sSVD", "oSVD", "tikhonov") and inference != "vi":
             logger.debug(
                 "inference='%s' ignored for SVD method '%s'.",
                 inference, method,
@@ -2123,7 +2102,7 @@ class ComputeDSCMaps(BaseInterface):
                 n_downweighted, conc_data.shape[3], float(np.min(motion_weights)),
             )
 
-        if method in ("sSVD", "cSVD", "oSVD", "tikhonov"):
+        if method in ("sSVD", "oSVD", "tikhonov"):
             cbf, cbv, mtt, tmax, delay, residues, qc_metrics = self._deconvolve_svd(
                 conc_data, aif, mask, method, dt, threshold, oi_threshold
             )
@@ -2516,7 +2495,7 @@ class ComputeDSCMaps(BaseInterface):
             nib.save(k2_fallback_img, k2_fallback_path)  # type: ignore[attr-defined]
             self._results["out_k2"] = k2_fallback_path
 
-        # Save delay map if cSVD or oSVD
+        # Save delay map if oSVD
         if delay is not None:
             self._results["out_delay"] = _save_map(delay, "_delay")
 

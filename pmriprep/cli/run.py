@@ -280,7 +280,7 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-deconv-method",
-        choices=["sSVD", "cSVD", "oSVD", "tikhonov", "vascular", "cpi"],
+        choices=["sSVD", "oSVD", "tikhonov", "vascular", "cpi"],
         default=None,
         help="Deconvolution method for DSC (default: oSVD).",
     )

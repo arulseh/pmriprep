@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 # Boilerplate text mappings for DSC deconvolution methods
 _DSC_DECONV_TEXT: dict[str, str] = {
     "sSVD": "standard singular value decomposition (sSVD; Ostergaard et al., 1996)",
-    "cSVD": "block-circulant singular value decomposition (cSVD; Wu et al., 2003)",
     "oSVD": "oscillation-index regularized SVD (oSVD; Wu et al., 2003)",
     "tikhonov": (
         "Tikhonov-regularized deconvolution with generalized cross-validation "
@@ -476,7 +475,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
     method_lower = method.lower()
     if method_lower == "ssvd":
         refs.add("ostergaard_1996")
-    elif method_lower in ("csvd", "osvd"):
+    elif method_lower == "osvd":
         refs.add("wu_2003")
     elif method_lower == "tikhonov":
         refs.update(["hansen_1992", "calamante_2000"])
