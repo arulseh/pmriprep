@@ -188,7 +188,7 @@ DEFAULT_SVD_THRESHOLD: Final[float] = 0.2
 #: linspace search upward to a higher truncation threshold, suppressing
 #: noise-driven MTT inflation. Loosening (e.g. to Wu's 0.095) lets the
 #: algorithm pick smaller thresholds where residue-tail noise inflates
-#: AUC and hence MTT. See Calamante 2013 NMR Biomed 26:792 §4.2 on the
+#: AUC and hence MTT. See Willats Calamante 2013 NMR Biomed 26:913 on the
 #: intrinsic MTT noise sensitivity of oSVD at clinical SNR.
 DEFAULT_OI_THRESHOLD: Final[float] = 0.065
 

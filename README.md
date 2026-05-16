@@ -313,7 +313,7 @@ bids_dir/
         sub-01_ses-01_acq-famp_run-1_TB1TFL.json
 ```
 
-> The `acq-<label>` entity is optional and ignored during discovery. The pipeline matches files by suffix (`_T1w`, `_FLAIR`, `_dsc`, etc.) and functional entities (`ce-`, `flip-`), not by `acq-` label.
+> The `acq-<label>` entity is optional but used to rank candidates when multiple files share the same suffix: T1w prefers `acq-mprage` over other sequences and excludes `acq-se`; FLAIR prefers `acq-3d`; B1+ mapping matches `acq-famp` for Siemens tfl_b1map.
 
 ### Required Files
 
