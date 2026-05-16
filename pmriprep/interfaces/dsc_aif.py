@@ -35,6 +35,7 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_SIGNAL,
     GD_DOTA_STANDARD_DOSE,
     LESION_EXCLUSION_DISTANCE_MM,
+    LESION_EXCLUSION_FLOOR_MM,
     SYNTH_AIF_BASE_PEAK_3T,
     SYNTH_AIF_DOSE_CAP,
     SYNTH_AIF_MIN_PEAK,
@@ -2659,6 +2660,21 @@ class AIFDetection(BaseInterface):
         gamma_fit_mode = "auto"
         disable_fallback = bool(self.inputs.disable_fallback)
         lesion_distance = float(self.inputs.lesion_distance)
+        if lesion_distance < LESION_EXCLUSION_FLOOR_MM:
+            _logger.warning(
+                "lesion_distance=%.1f mm is below hard minimum (%.1f mm); "
+                "clamping to %.1f mm.",
+                lesion_distance, LESION_EXCLUSION_FLOOR_MM,
+                LESION_EXCLUSION_FLOOR_MM,
+            )
+            lesion_distance = LESION_EXCLUSION_FLOOR_MM
+        elif lesion_distance < LESION_EXCLUSION_DISTANCE_MM:
+            _logger.warning(
+                "lesion_distance=%.1f mm is below recommended minimum "
+                "(%.1f mm); peritumoral vascular abnormalities may "
+                "contaminate AIF candidates.",
+                lesion_distance, LESION_EXCLUSION_DISTANCE_MM,
+            )
         n_timepoints = conc_data.shape[3]
         field_strength = (
             float(self.inputs.field_strength)

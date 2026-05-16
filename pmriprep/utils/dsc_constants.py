@@ -330,7 +330,12 @@ AIF_TAIL_FRACTION_MAX: Final[float] = 0.15
 #: indicates extravasation/PVE rather than residual recirculation.
 AIF_TAIL_WINDOW_S: Final[float] = 30.0
 
-#: Minimum distance (mm) from lesion for AIF candidate voxels.
+#: Hard minimum distance (mm) from lesion for AIF candidates. Below this,
+#: partial volume with tumor feeding vessels corrupts bolus shape.
+#: Lu JMRI 2004;19:546, Jain Radiology 2007;245:842.
+LESION_EXCLUSION_FLOOR_MM: Final[float] = 10.0
+
+#: Recommended minimum distance (mm) from lesion for AIF candidate voxels.
 LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
 
 

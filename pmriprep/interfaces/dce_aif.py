@@ -70,6 +70,7 @@ from pmriprep.utils.dce_constants import (
     INFLOW_EXCLUSION_MAX_SLAB_FRACTION,
     INFLOW_EXCLUSION_MM_INFERIOR_BASE,
     LESION_EXCLUSION_DISTANCE_MM,
+    LESION_EXCLUSION_FLOOR_MM,
     MIDLINE_EXCLUSION_FRACTION,
     PARKER_R1_REFERENCE,
     SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
@@ -3922,7 +3923,24 @@ class AIFDetection(BaseInterface):
             pass
         else:
             # ===== Phase 1: Prepare search masks =====
-            _lesion_dist = max(lesion_distance, LESION_EXCLUSION_DISTANCE_MM)
+            if lesion_distance < LESION_EXCLUSION_FLOOR_MM:
+                logger.warning(
+                    "lesion_distance=%.1f mm is below hard minimum (%.1f mm); "
+                    "clamping to %.1f mm.",
+                    lesion_distance, LESION_EXCLUSION_FLOOR_MM,
+                    LESION_EXCLUSION_FLOOR_MM,
+                )
+                _lesion_dist = LESION_EXCLUSION_FLOOR_MM
+            elif lesion_distance < LESION_EXCLUSION_DISTANCE_MM:
+                logger.warning(
+                    "lesion_distance=%.1f mm is below recommended minimum "
+                    "(%.1f mm); peritumoral vascular abnormalities may "
+                    "contaminate AIF candidates.",
+                    lesion_distance, LESION_EXCLUSION_DISTANCE_MM,
+                )
+                _lesion_dist = lesion_distance
+            else:
+                _lesion_dist = lesion_distance
             # Inferior inflow exclusion is applied universally — BIDS
             # MRAcquisitionType does not reliably distinguish slab-
             # selective 2D-prep sequences (Look-Locker, FAIR, MOTSA
