@@ -1009,7 +1009,7 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         desc="Number of AIF candidate voxels to average",
     )
     lesion_distance = traits.Float(
-        20.0,
+        LESION_EXCLUSION_DISTANCE_MM,
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
     )

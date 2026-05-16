@@ -34,6 +34,7 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
     GD_DOTA_STANDARD_DOSE,
+    LESION_EXCLUSION_DISTANCE_MM,
     SYNTH_AIF_BASE_PEAK_3T,
     SYNTH_AIF_DOSE_CAP,
     SYNTH_AIF_MIN_PEAK,
@@ -447,7 +448,7 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         desc="Number of AIF candidate voxels to average",
     )
     lesion_distance = traits.Float(
-        15.0,
+        LESION_EXCLUSION_DISTANCE_MM,
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
     )
@@ -1434,7 +1435,7 @@ class AIFDetection(BaseInterface):
         lesion_mask: Optional[npt.NDArray[Any]],
         affine: npt.NDArray[Any],
         voxel_sizes: tuple[float, ...],
-        lesion_min_distance_mm: float = 15.0,
+        lesion_min_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
         enhancing_mask: Optional[npt.NDArray[Any]] = None,
     ) -> tuple[
         list[tuple[float, tuple[int, int, int], dict[str, Any]]],

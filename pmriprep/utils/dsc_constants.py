@@ -330,6 +330,9 @@ AIF_TAIL_FRACTION_MAX: Final[float] = 0.15
 #: indicates extravasation/PVE rather than residual recirculation.
 AIF_TAIL_WINDOW_S: Final[float] = 30.0
 
+#: Minimum distance (mm) from lesion for AIF candidate voxels.
+LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
+
 
 # =============================================================================
 # Field-Strength Dependent Constants

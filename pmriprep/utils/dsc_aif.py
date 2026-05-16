@@ -18,6 +18,7 @@ from scipy import optimize
 
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
+    LESION_EXCLUSION_DISTANCE_MM,
     QC_CNR_THRESHOLD,
 )
 from pmriprep.utils.qc_standards import QCStatus
@@ -841,7 +842,7 @@ def exclude_near_lesion(
     search_mask: npt.NDArray[Any],
     lesion_mask: npt.NDArray[Any],
     voxel_sizes: Tuple[float, float, float],
-    min_distance_mm: float = 20.0,
+    min_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
 ) -> npt.NDArray[Any]:
     """Exclude voxels within specified distance of lesion.
 
@@ -930,7 +931,7 @@ def atlas_based_aif_search(
     criteria: Literal["strict", "relaxed"] = "strict",
     n_candidates: int = 10,
     baseline_frames: int = 5,
-    lesion_distance_mm: float = 20.0,
+    lesion_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
 ) -> AIFSearchResult:
     """Perform atlas-constrained AIF search.
 
@@ -1168,7 +1169,7 @@ def atlas_based_aif_search_from_files(
     criteria: Literal["strict", "relaxed"] = "strict",
     n_candidates: int = 10,
     baseline_frames: int = 5,
-    lesion_distance_mm: float = 20.0,
+    lesion_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
 ) -> AIFSearchResult:
     """Perform atlas-based AIF search from NIfTI files.
 
