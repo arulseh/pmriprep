@@ -51,11 +51,11 @@ class TestBlockCirculantMatrix:
     """Tests for build_block_circulant_matrix."""
 
     def test_block_circulant_matrix_size(self) -> None:
-        """AIF of length N produces a matrix of shape (2N-1, 2N-1)."""
+        """AIF of length N produces a matrix of shape (2N, 2N)."""
         n = 10
         aif = np.arange(n, dtype=np.float64) * 0.5
         matrix = build_block_circulant_matrix(aif, dt=1.0)
-        expected_size = 2 * n - 1
+        expected_size = 2 * n
         assert matrix.shape == (expected_size, expected_size)
 
     def test_block_circulant_matrix_circulant_structure(self) -> None:
@@ -64,7 +64,7 @@ class TestBlockCirculantMatrix:
         aif = np.arange(1, n + 1, dtype=np.float64)
         dt = 1.0
         matrix = build_block_circulant_matrix(aif, dt=dt)
-        m = 2 * n - 1
+        m = 2 * n
 
         # For a circulant matrix C, C[i, j] = C[0, (j - i) mod m]
         # Check rows 0, 1, 2 against this pattern
@@ -327,3 +327,43 @@ class TestBatchMethods:
         for i in [0, 1, 3]:
             single = svd_deconvolve_oscillation(tissues[i], aif, dt=dt)
             assert batch_cbf[i] == pytest.approx(single.cbf, rel=1e-8)
+
+
+class TestOIComputationOrder:
+    """OI must be computed on raw (unclipped) residue per Wu 2003."""
+
+    def test_oi_from_raw_residue(self) -> None:
+        """Returned OI should reflect raw negative oscillations, not clipped."""
+        n = 40
+        dt = 1.5
+        t = np.arange(n, dtype=np.float64) * dt
+
+        aif = (t / 3.0) * np.exp(-t / 5.0)
+        aif[0] = 0.0
+
+        true_residue = 2.0 * np.exp(-t / 8.0)
+        matrix = build_block_circulant_matrix(aif, dt=dt)
+        m = 2 * n
+        residue_padded = np.zeros(m, dtype=np.float64)
+        residue_padded[:n] = true_residue
+        tissue = (matrix @ residue_padded)[:n]
+
+        rng = np.random.default_rng(99)
+        tissue_noisy = tissue + rng.normal(0, 0.15 * np.max(tissue), size=n)
+
+        result = svd_deconvolve_oscillation(
+            tissue_noisy, aif, dt=dt, apply_non_negativity=True,
+        )
+
+        assert np.all(result.residue >= 0.0), "Returned residue must be non-negative"
+
+        peak = int(np.argmax(result.residue))
+        causal = result.residue[
+            (peak + np.arange(n)) % len(result.residue)
+        ]
+        oi_from_clipped = float(compute_oscillation_index(causal))
+
+        assert result.oscillation_index >= oi_from_clipped, (
+            f"Raw OI ({result.oscillation_index:.4f}) should be >= clipped OI "
+            f"({oi_from_clipped:.4f}) because clipping hides negative oscillations"
+        )

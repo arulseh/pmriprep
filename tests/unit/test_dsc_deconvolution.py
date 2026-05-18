@@ -148,7 +148,7 @@ class TestSVDDeconvolveCirculant:
         """
         n = 40
         dt = 1.5
-        m = 2 * n - 1
+        m = 2 * n
 
         t = np.arange(n, dtype=np.float64) * dt
         aif = (t / 5.0) * np.exp(-t / 7.0)
@@ -178,7 +178,7 @@ class TestSVDDeconvolveCirculant:
         """
         n = 40
         dt = 1.5
-        m = 2 * n - 1
+        m = 2 * n
 
         t = np.arange(n, dtype=np.float64) * dt
         aif = (t / 5.0) * np.exp(-t / 7.0)
@@ -217,7 +217,7 @@ class TestOSVDDelayDetection:
         """
         n = 40
         dt = 1.5
-        m = 2 * n - 1
+        m = 2 * n
 
         t = np.arange(n, dtype=np.float64) * dt
         aif = (t / 5.0) * np.exp(-t / 7.0)

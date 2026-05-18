@@ -598,13 +598,13 @@ def dsc_forward_model_circulant(
         dt: Time step in seconds.
 
     Returns:
-        Tissue concentration array (length N, truncated from 2N-1).
+        Tissue concentration array (length N, truncated from 2N).
     """
     from pmriprep.utils.dsc_deconvolution import build_block_circulant_matrix
 
     n = len(aif)
     A = build_block_circulant_matrix(aif, dt)
-    residue_padded = np.zeros(2 * n - 1, dtype=np.float64)
+    residue_padded = np.zeros(2 * n, dtype=np.float64)
     residue_padded[:n] = residue
     return np.asarray((A @ residue_padded)[:n], dtype=np.float64)
 

@@ -424,7 +424,7 @@ def build_block_circulant_matrix(
 ) -> npt.NDArray[np.floating]:
     """Build block-circulant convolution matrix for delay-insensitive deconvolution.
 
-    Creates a circulant matrix by zero-padding the AIF to length 2N-1 and
+    Creates a circulant matrix by zero-padding the AIF to length 2N and
     constructing a circulant (periodic) convolution matrix. This allows
     the deconvolution to estimate arbitrary positive or negative delays
     between the AIF and tissue curve.
@@ -437,7 +437,7 @@ def build_block_circulant_matrix(
         dt: Time step in seconds for integration weighting.
 
     Returns:
-        Block-circulant matrix of shape (2N-1, 2N-1) where N = len(aif).
+        Block-circulant matrix of shape (2N, 2N) where N = len(aif).
 
     References:
         Wu O, Østergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG.
@@ -447,9 +447,9 @@ def build_block_circulant_matrix(
         Magn Reson Med. 2003;50(1):164-174.
     """
     n = len(aif)
-    m = 2 * n - 1
+    m = 2 * n
 
-    # Zero-pad AIF to length 2N-1 for full delay range
+    # Zero-pad AIF to length 2N for full delay range (Wu 2003 Eq. 4)
     aif_padded = np.zeros(m, dtype=np.float64)
     aif_padded[:n] = aif
 
@@ -470,7 +470,7 @@ def svd_deconvolve_circulant(
 
     Performs deconvolution using a block-circulant matrix approach that is
     insensitive to delays between the AIF and tissue curve. The method
-    zero-pads both the AIF and tissue curve to length 2N-1 and constructs
+    zero-pads both the AIF and tissue curve to length 2N and constructs
     a circulant convolution matrix, allowing the residue function to peak
     at any time point (positive or negative delay).
 
@@ -479,9 +479,9 @@ def svd_deconvolve_circulant(
 
     The delay is extracted from the position of the residue maximum:
         if argmax(R) < N:  delay = argmax(R)          (positive delay)
-        else:              delay = argmax(R) - (2N-1)  (negative / wrap-around)
+        else:              delay = argmax(R) - 2N      (negative / wrap-around)
 
-    where N is the original curve length and 2N-1 is the padded length.
+    where N is the original curve length and 2N is the padded length.
     Index 0 in the block-circulant residue corresponds to zero delay
     (Wu et al. 2003, Eq. 5).
 
@@ -508,7 +508,7 @@ def svd_deconvolve_circulant(
         ValueError: If threshold is not in (0, 1).
 
     Notes:
-        - The residue function has length 2N-1, allowing delays from -(N-1) to +(N-1)
+        - The residue function has length 2N, allowing delays from -N to +(N-1)
         - CBF is extracted as max(R(t))
         - CBV is computed as integral of R(t) using trapezoidal rule
         - MTT = CBV / CBF (central volume theorem)
@@ -536,9 +536,9 @@ def svd_deconvolve_circulant(
         raise ValueError(f"threshold must be in (0, 1), got {threshold}")
 
     n = len(tissue_curve)
-    m = 2 * n - 1  # Padded length
+    m = 2 * n  # Padded length (Wu 2003 Eq. 4)
 
-    # Zero-pad tissue curve to length 2N-1
+    # Zero-pad tissue curve to length 2N
     tissue_padded = np.zeros(m, dtype=np.float64)
     tissue_padded[:n] = tissue_curve
 
@@ -646,13 +646,13 @@ def svd_deconvolve_circulant_batch(
 
     Returns:
         Tuple of (residues, cbf, cbv, mtt, delay) arrays.
-        - residues has shape (..., 2N-1) where N is the number of timepoints
+        - residues has shape (..., 2N) where N is the number of timepoints
         - cbf, cbv, mtt, delay have the same spatial shape as input
     """
     # Store original shape for reshaping output
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
-    m = 2 * n_timepoints - 1  # Padded length
+    m = 2 * n_timepoints  # Padded length
 
     # Reshape to 2D (n_voxels, n_timepoints)
     if tissue_curves.ndim > 2:
@@ -697,7 +697,7 @@ def svd_deconvolve_circulant_batch(
     if len(masked_indices) > 0:
         tissue_masked = tissue_2d[masked_indices, :]
 
-        # Zero-pad tissue curves to length 2N-1
+        # Zero-pad tissue curves to length 2N
         tissue_padded = np.zeros((len(masked_indices), m), dtype=np.float64)
         tissue_padded[:, :n_timepoints] = tissue_masked
 
@@ -719,7 +719,7 @@ def svd_deconvolve_circulant_batch(
         )
         delay_masked = delay_frames.astype(np.float64) * dt
 
-        # Extract N causal points from each voxel's 2N-1 residue
+        # Extract N causal points from each voxel's 2N residue
         # (Østergaard 1996: CBV = integral over causal response only)
         vox_idx = np.arange(len(masked_indices))[:, None]
         time_idx = (peak_positions[:, None] + np.arange(n_timepoints)[None, :]) % m
@@ -857,15 +857,19 @@ def _deconvolve_with_threshold(
 ) -> tuple[npt.NDArray[np.floating], float, int, float, int]:
     """Helper: deconvolve with a given threshold using block-circulant SVD.
 
+    OI is computed on the raw (unclipped) causal residue per Wu 2003
+    (MRM 50:164). The returned residue is clipped when
+    apply_non_negativity is True, for downstream parameter extraction.
+
     Args:
-        tissue_padded: Zero-padded tissue curve, length 2N-1.
+        tissue_padded: Zero-padded tissue curve, length 2N.
         n_original: Original (unpadded) number of timepoints N.
         threshold: SVD truncation threshold (fraction of max singular value).
         u, s, vh: Pre-computed SVD of block-circulant matrix.
         apply_non_negativity: Whether to clip negative values.
 
     Returns:
-        Tuple of (residue_2N1, oscillation_index, n_retained,
+        Tuple of (residue, oscillation_index, n_retained,
         condition_number, peak_position).
     """
     m = len(tissue_padded)
@@ -892,19 +896,21 @@ def _deconvolve_with_threshold(
         condition_number = float("inf")
 
     # Solve: R = Vh^T @ (S_inv * (U^T @ C_padded))
-    residue = vh.T @ (s_inv * (u.T @ tissue_padded))
+    residue_raw = vh.T @ (s_inv * (u.T @ tissue_padded))
 
-    # Apply non-negativity constraint
+    # Non-negativity for peak detection and parameter extraction
     if apply_non_negativity:
-        residue = np.maximum(residue, 0.0)
+        residue = np.maximum(residue_raw, 0.0)
+    else:
+        residue = residue_raw
 
-    # Extract peak and N causal points for OI computation
+    # Peak from clipped residue (physical peak)
     peak_position = int(np.argmax(residue))
     causal_indices = (peak_position + np.arange(n_original)) % m
-    causal_residue = residue[causal_indices]
 
-    # OI computed on causal subset only (Wu 2003)
-    oi = compute_oscillation_index(causal_residue)
+    # OI from raw causal residue — negative oscillations are the signal
+    # OI is designed to detect (Wu 2003 MRM 50:164)
+    oi = compute_oscillation_index(residue_raw[causal_indices])
 
     return residue, oi, n_retained, condition_number, peak_position
 
@@ -926,7 +932,7 @@ def svd_deconvolve_oscillation(
 
     The oscillation index is defined as:
         OI = (1/N) * sum|R(t+1) - R(t)| / max(R)
-    computed on the N causal points extracted from the 2N-1 circulant residue.
+    computed on the N causal points extracted from the 2N circulant residue.
 
     A linear search from low to high threshold finds the first (lowest)
     threshold that achieves OI <= oi_target.
@@ -943,7 +949,7 @@ def svd_deconvolve_oscillation(
         apply_non_negativity: If True, clip negative residue values to zero.
 
     Returns:
-        OscillationDeconvolutionResult with 2N-1 residue, delay, and
+        OscillationDeconvolutionResult with 2N residue, delay, and
         perfusion parameters derived from the N causal points.
 
     Raises:
@@ -971,7 +977,7 @@ def svd_deconvolve_oscillation(
         raise ValueError(f"oi_target must be positive, got {oi_target}")
 
     n = len(tissue_curve)
-    m = 2 * n - 1
+    m = 2 * n
 
     if np.max(np.abs(aif)) < EPSILON_CONCENTRATION:
         raise ValueError(
@@ -979,7 +985,7 @@ def svd_deconvolve_oscillation(
             "Check AIF detection."
         )
 
-    # Zero-pad tissue curve to 2N-1
+    # Zero-pad tissue curve to 2N
     tissue_padded = np.zeros(m, dtype=np.float64)
     tissue_padded[:n] = tissue_curve
 
@@ -1066,7 +1072,7 @@ def svd_deconvolve_oscillation_batch(
     apply_non_negativity: bool = True,
     mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> tuple[
-    npt.NDArray[np.floating],  # residues (2N-1 per voxel)
+    npt.NDArray[np.floating],  # residues (2N per voxel)
     npt.NDArray[np.floating],  # cbf
     npt.NDArray[np.floating],  # cbv
     npt.NDArray[np.floating],  # mtt
@@ -1077,7 +1083,7 @@ def svd_deconvolve_oscillation_batch(
     """Batch oSVD deconvolution using block-circulant matrix (Wu 2003).
 
     Each voxel gets an individually optimized threshold via OI-based
-    linear search. Returns 2N-1 residues and delay maps.
+    linear search. Returns 2N residues and delay maps.
 
     Args:
         tissue_curves: Tissue concentration curves, shape (n_voxels, n_timepoints)
@@ -1093,12 +1099,12 @@ def svd_deconvolve_oscillation_batch(
 
     Returns:
         Tuple of (residues, cbf, cbv, mtt, oscillation_index, threshold_used,
-        delay) arrays. Residues have time dimension 2N-1. All spatial arrays
+        delay) arrays. Residues have time dimension 2N. All spatial arrays
         match the input spatial shape.
     """
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
-    m = 2 * n_timepoints - 1
+    m = 2 * n_timepoints
 
     # Reshape to 2D (n_voxels, n_timepoints)
     if tissue_curves.ndim > 2:
@@ -1126,7 +1132,7 @@ def svd_deconvolve_oscillation_batch(
     matrix = build_block_circulant_matrix(aif, dt)
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Initialize output arrays (residues are 2N-1 long)
+    # Initialize output arrays (residues are 2N long)
     residues = np.zeros((n_voxels, m), dtype=np.float64)
     cbf = np.zeros(n_voxels, dtype=np.float64)
     cbv = np.zeros(n_voxels, dtype=np.float64)
@@ -1139,7 +1145,7 @@ def svd_deconvolve_oscillation_batch(
     thresholds = np.linspace(threshold_min, threshold_max, max_iterations)
 
     for idx in masked_indices:
-        # Zero-pad tissue to 2N-1
+        # Zero-pad tissue to 2N
         tissue_padded = np.zeros(m, dtype=np.float64)
         tissue_padded[:n_timepoints] = tissue_2d[idx, :]
 
