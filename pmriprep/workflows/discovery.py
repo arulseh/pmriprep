@@ -187,6 +187,199 @@ def _find_t1w_ce_gad(
     return _select_t1w_by_acquisition(gad if gad else all_ce, "ce-GAD")
 
 
+def _normalize_scanning_sequence(val: object) -> Optional[frozenset]:
+    """Normalize ScanningSequence to a comparable frozenset.
+
+    Handles list (``["GR", "IR"]``), slash-separated string
+    (``"GR/IR"``), or single token (``"GR"``).  Returns ``None``
+    on empty or unparseable input.
+    """
+    if not val:
+        return None
+    try:
+        if isinstance(val, list):
+            return frozenset(str(s).upper() for s in val)
+        tokens = [s.strip().upper() for s in str(val).replace("\\", "/").split("/")]
+        return frozenset(tokens)
+    except (TypeError, AttributeError):
+        return None
+
+
+def _scalar(val: object) -> Optional[float]:
+    """Extract a scalar float from metadata that may be list-typed (Philips).
+
+    Returns ``None`` on missing, empty, or non-numeric input.
+    """
+    if val is None:
+        return None
+    try:
+        if isinstance(val, list):
+            return float(val[0]) if val else None
+        if isinstance(val, (int, float)):
+            return float(val)
+        return float(str(val))
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def _check_t1w_sequence_compatibility(
+    t1w_pre: Path,
+    t1w_postcon: Path,
+    layout: "BIDSLayout",
+) -> None:
+    """Warn if pre- and post-contrast T1w use different pulse sequences.
+
+    Compares acquisition metadata across three tiers of severity. Logs
+    warnings when mismatches are detected; logs info when compatibility
+    is confirmed. Never raises — all metadata access is defensive.
+
+    Parameters
+    ----------
+    t1w_pre : Path
+        Path to pre-contrast T1w image.
+    t1w_postcon : Path
+        Path to post-contrast T1w image.
+    layout : BIDSLayout
+        BIDS layout for metadata access (sidecar inheritance honored).
+
+    Notes
+    -----
+    Tier 1 detects fundamentally different sequence types (e.g., MPRAGE vs
+    SPGR). Tier 2 catches parameter drift within the same sequence type
+    that alters tissue contrast. Tier 3 flags structural acquisition
+    differences (2D vs 3D).
+
+    Sequence mismatch can produce subtraction-map artifacts that exceed
+    gadolinium enhancement signal in low-grade gliomas (5-15% signal
+    change vs 10-25% sequence-related difference at 3T).
+    """
+    try:
+        meta_pre = layout.get_metadata(str(t1w_pre)) or {}
+    except Exception:
+        meta_pre = {}
+    try:
+        meta_post = layout.get_metadata(str(t1w_postcon)) or {}
+    except Exception:
+        meta_post = {}
+
+    warned = False
+
+    # --- Tier 1: sequence type mismatch ---
+
+    try:
+        entities_pre = layout.parse_file_entities(str(t1w_pre))
+    except Exception:
+        entities_pre = {}
+    try:
+        entities_post = layout.parse_file_entities(str(t1w_postcon))
+    except Exception:
+        entities_post = {}
+
+    acq_pre = (entities_pre.get("acquisition") or "").lower() or None
+    acq_post = (entities_post.get("acquisition") or "").lower() or None
+
+    if acq_pre and acq_post and acq_pre != acq_post:
+        logger.warning(
+            "Pre- and post-contrast T1w use different pulse sequences "
+            "(acq-%s vs acq-%s). Subtraction map may show apparent signal "
+            "differences unrelated to gadolinium enhancement, particularly "
+            "at gray-white matter boundaries.",
+            acq_pre, acq_post,
+        )
+        warned = True
+
+    seq_pre = _normalize_scanning_sequence(meta_pre.get("ScanningSequence"))
+    seq_post = _normalize_scanning_sequence(meta_post.get("ScanningSequence"))
+
+    if seq_pre and seq_post and seq_pre != seq_post and not warned:
+        logger.warning(
+            "Pre- and post-contrast T1w use different pulse sequences "
+            "(ScanningSequence %s vs %s). Subtraction map may show apparent "
+            "signal differences unrelated to gadolinium enhancement, "
+            "particularly at gray-white matter boundaries.",
+            sorted(seq_pre), sorted(seq_post),
+        )
+        warned = True
+
+    ti_pre = _scalar(meta_pre.get("InversionTime"))
+    ti_post = _scalar(meta_post.get("InversionTime"))
+
+    if (ti_pre is not None) != (ti_post is not None) and not warned:
+        logger.warning(
+            "Pre- and post-contrast T1w differ in inversion recovery usage "
+            "(InversionTime: precon=%s, postcon=%s). Subtraction map may "
+            "show apparent signal differences unrelated to gadolinium "
+            "enhancement, particularly at gray-white matter boundaries.",
+            ti_pre, ti_post,
+        )
+        warned = True
+
+    # --- Tier 2: parameter mismatch within same sequence type ---
+    # Only fires when Tier 1 did not already identify a fundamental sequence
+    # mismatch — parameter differences are expected across different sequences.
+
+    if not warned:
+        if ti_pre is not None and ti_post is not None:
+            if abs(ti_pre - ti_post) > 0.050:
+                logger.warning(
+                    "Pre- and post-contrast T1w use the same sequence type "
+                    "but differ in InversionTime (%.0f ms vs %.0f ms). This "
+                    "may introduce tissue-contrast differences that mimic or "
+                    "mask true enhancement.",
+                    ti_pre * 1000, ti_post * 1000,
+                )
+                warned = True
+
+        tr_pre = _scalar(meta_pre.get("RepetitionTime"))
+        tr_post = _scalar(meta_post.get("RepetitionTime"))
+
+        if tr_pre and tr_post and tr_pre > 0 and tr_post > 0:
+            ratio = max(tr_pre, tr_post) / min(tr_pre, tr_post)
+            if ratio > 1.5:
+                logger.warning(
+                    "Pre- and post-contrast T1w use the same sequence type "
+                    "but differ in RepetitionTime (%.3f s vs %.3f s, ratio "
+                    "%.1fx). This may introduce tissue-contrast differences "
+                    "that mimic or mask true enhancement.",
+                    tr_pre, tr_post, ratio,
+                )
+                warned = True
+
+        fa_pre = _scalar(meta_pre.get("FlipAngle"))
+        fa_post = _scalar(meta_post.get("FlipAngle"))
+
+        if fa_pre is not None and fa_post is not None:
+            if abs(fa_pre - fa_post) > 3.0:
+                logger.warning(
+                    "Pre- and post-contrast T1w use the same sequence type "
+                    "but differ in FlipAngle (%.1f deg vs %.1f deg). This "
+                    "may introduce tissue-contrast differences that mimic or "
+                    "mask true enhancement.",
+                    fa_pre, fa_post,
+                )
+                warned = True
+
+    # --- Tier 3: acquisition type mismatch (2D vs 3D) ---
+
+    acq_type_pre = meta_pre.get("MRAcquisitionType")
+    acq_type_post = meta_post.get("MRAcquisitionType")
+
+    if (acq_type_pre and acq_type_post
+            and acq_type_pre != acq_type_post):
+        logger.warning(
+            "Pre-contrast T1w is %s and post-contrast is %s. Slice profile "
+            "and resolution differences may degrade subtraction map quality "
+            "near slice boundaries.",
+            acq_type_pre, acq_type_post,
+        )
+        warned = True
+
+    if not warned:
+        logger.info(
+            "T1w sequence compatibility confirmed for subtraction map.",
+        )
+
+
 def _classify_orientation(iop: List[float]) -> str:
     """Classify image orientation as axial, coronal, or sagittal.
 
@@ -712,6 +905,12 @@ def discover_session_data(
 
     modalities.t1w_pre = _find_t1w_precontrast(layout, subject, session)
     modalities.t1w_ce_gad = _find_t1w_ce_gad(layout, subject, session)
+
+    if modalities.t1w_pre and modalities.t1w_ce_gad:
+        _check_t1w_sequence_compatibility(
+            modalities.t1w_pre, modalities.t1w_ce_gad, layout
+        )
+
     modalities.flair = _find_flair_precontrast(layout, subject, session)
     modalities.flair_postcon = _find_flair_postcontrast(layout, subject, session)
     modalities.t2w = _find_t2w(
