@@ -73,16 +73,16 @@ class TestFlatKeyShape:
         assert sidecar["AIFPeakAmplitude"] == pytest.approx(12.5)
         assert sidecar["AIFFWHM"] == pytest.approx(6.2)
         assert sidecar["AIFTimeToPeak"] == pytest.approx(18.0)
-        assert sidecar["AIFArrival"] == pytest.approx(9.5)
-        assert sidecar["AIFBaselineReturnRatio"] == pytest.approx(0.92)
-        assert sidecar["AIFPeakSignalRatio"] == pytest.approx(0.78)
+        assert "AIFArrival" not in sidecar
+        assert "AIFBaselineReturnRatio" not in sidecar
+        assert "AIFPeakSignalRatio" not in sidecar
         assert sidecar["AIFQualityScore"] == pytest.approx(0.81)
         assert sidecar["AIFArterialCascadeTier"] == "atlas_strict"
         assert sidecar["AIFHemisphereCoverage"] == "bilateral"
         assert sidecar["AIFGammaFitApplied"] is True
         assert sidecar["AIFGammaFitRSquared"] == pytest.approx(0.94)
         assert sidecar["AIFGammaFitAUCRatio"] == pytest.approx(0.97)
-        assert sidecar["AIFSynthetic"] is False
+        assert "AIFFallback" not in sidecar
         assert sidecar["AIFUsedAsCBVDenominator"] is False
         assert sidecar["AIFHematocrit"] == pytest.approx(0.42)
 
@@ -141,7 +141,7 @@ class TestOptionalKeysOmitted:
             aif_qc={"detection_method": "synthetic", "synthetic": True},
         )
         assert sidecar["AIFMethod"] == "synthetic"
-        assert sidecar["AIFSynthetic"] is True
+        assert sidecar["AIFFallback"] is True
         # Keys not in source dict are omitted, not null
         assert "AIFFWHM" not in sidecar
         assert "AIFGammaFitApplied" not in sidecar

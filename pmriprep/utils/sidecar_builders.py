@@ -23,6 +23,7 @@ Sidecar field strategy (M3):
 from __future__ import annotations
 
 import copy
+import logging
 import math
 import os
 import subprocess
@@ -31,12 +32,15 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pmriprep.config.constants import HDGLIO_BIDS_LABELS
 
+logger = logging.getLogger(__name__)
+
 PathLike = Union[str, Path]
 
 _PIPELINE_QC_STRIP_KEYS = frozenset({
     "fd_list", "rms_list", "outlier_frames",
     "candidate_coords", "candidate_scores",
-    "cascade_anchor_outcomes", "motion_summary",
+    "cascade_anchor_outcomes", "cascade_gate_decisions",
+    "aif_gate_decisions", "motion_summary",
     "ktrans_histogram", "ktrans_histogram_edges",
     "ve_histogram", "ve_histogram_edges",
     "gamma_fit_auto_metrics",
@@ -636,7 +640,7 @@ def build_dsc_map_sidecar(
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Per-output DSC sidecar with description + units + AIF stamp + extras."""
-    from pmriprep.utils.dsc_aif_provenance import apply_aif_sidecar
+    from pmriprep.utils.aif_provenance import apply_aif_sidecar
 
     sidecar: Dict[str, Any] = {**base, "Description": description}
     if units is not None:
@@ -833,12 +837,6 @@ def _aif_cosmetic_keys(aif_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         out["AIFFWHM"] = float(metrics["fwhm"])
     if "ttp" in metrics:
         out["AIFTimeToPeak"] = float(metrics["ttp"])
-    if "arrival" in metrics:
-        out["AIFArrival"] = float(metrics["arrival"])
-    if "brr" in metrics:
-        out["AIFBaselineReturnRatio"] = float(metrics["brr"]) / 100.0
-    if "psr" in metrics:
-        out["AIFPeakSignalRatio"] = float(metrics["psr"]) / 100.0
     if "quality_score" in aif_qc:
         out["AIFQualityScore"] = float(aif_qc["quality_score"])
     if "cascade_final_level" in aif_qc:
@@ -851,8 +849,8 @@ def _aif_cosmetic_keys(aif_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         out["AIFGammaFitRSquared"] = float(aif_qc["gamma_fit_r_squared"])
     if "gamma_fit_auc_ratio" in aif_qc:
         out["AIFGammaFitAUCRatio"] = float(aif_qc["gamma_fit_auc_ratio"])
-    if "synthetic" in aif_qc:
-        out["AIFSynthetic"] = bool(aif_qc["synthetic"])
+    if aif_qc.get("synthetic") or aif_qc.get("population_aif"):
+        out["AIFFallback"] = True
     if "cbv_auc_denominator_is_synthetic" in aif_qc:
         out["AIFUsedAsCBVDenominator"] = bool(aif_qc["cbv_auc_denominator_is_synthetic"])
     if "hematocrit" in aif_qc:
@@ -1232,33 +1230,20 @@ def enrich_dce_pk_map_sidecar(
     map_key: str = "",
     lesion_fragment: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Enrich a DCE per-PK-map sidecar with cross-modality and AIF fields.
+    """Enrich a DCE per-PK-map sidecar with AIF provenance and cross-modality fields.
 
-    Mutates and returns ``sidecar``. Cross-modality fields land only on
-    the maps they apply to (``DSCDCECrossValCorrelation`` on ``ktrans``,
-    ``CBVNegativeFraction`` on ``vp``). AIF provenance
-    (``AIFConfidence``, ``AIFUncertaintyInflationFactor``,
-    ``AIFFwhmConfidence``, ``AIFGateDecisions``) attached on every PK
-    map sidecar so downstream tools can detect reduced-confidence runs
-    without cross-referencing the resume sidecar. Per-map
-    ``LesionStats`` fragment attached when present.
+    Stamps ``PerfusionProcessing.AIF`` block plus flat ``AIFDependent``
+    and ``TemplateAIFUsage`` tags via the shared AIF provenance module.
+    Cross-modality fields land only on the maps they apply to.
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         if lesion_fragment:
             sidecar["LesionStats"] = dict(lesion_fragment)
         return sidecar
-    aif_block = qc_metrics.get("aif_detection")
-    if isinstance(aif_block, dict):
-        if "aif_confidence" in aif_block:
-            sidecar["AIFConfidence"] = str(aif_block["aif_confidence"])
-        if "aif_uncertainty_inflation_factor" in aif_block:
-            sidecar["AIFUncertaintyInflationFactor"] = float(
-                aif_block["aif_uncertainty_inflation_factor"]
-            )
-        if "aif_fwhm_confidence" in aif_block:
-            sidecar["AIFFwhmConfidence"] = str(aif_block["aif_fwhm_confidence"])
-        if "aif_gate_decisions" in aif_block:
-            sidecar["AIFGateDecisions"] = list(aif_block["aif_gate_decisions"])
+    if map_key:
+        from pmriprep.utils.aif_provenance import apply_aif_sidecar
+
+        apply_aif_sidecar(sidecar, map_key, qc_metrics, modality="DCE")
     if map_key == "ktrans":
         xval = qc_metrics.get("dsc_dce_validation")
         if isinstance(xval, dict):

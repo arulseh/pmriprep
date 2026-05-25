@@ -7,7 +7,7 @@ figure filmstrips. QC summary fields live on
 live on the per-PK-map sidecars as ``LesionStats`` fragments.
 
 Per-output sidecar enrichment uses ``apply_aif_sidecar`` from
-``pmriprep.utils.dsc_aif_provenance`` to stamp every map with the
+``pmriprep.utils.aif_provenance`` to stamp every map with the
 detection-method block + ``AIFDependent`` + ``TemplateAIFUsage`` tags.
 """
 from __future__ import annotations

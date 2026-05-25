@@ -4,7 +4,21 @@ Centralized constants for DCE-MRI processing including signal conversion,
 pharmacokinetic modeling, T1 mapping, and AIF quality assessment.
 """
 
-from typing import Final, NamedTuple
+from typing import Final, Literal, NamedTuple, get_args
+
+
+# =============================================================================
+# AIF Detection Levels
+# =============================================================================
+
+DCEDetectionLevel = Literal[
+    "atlas",
+    "automatic",
+    "population",
+    "external",
+]
+
+DCE_DETECTION_LEVELS: Final[tuple[str, ...]] = get_args(DCEDetectionLevel)
 
 
 # =============================================================================

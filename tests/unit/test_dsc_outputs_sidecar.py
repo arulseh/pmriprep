@@ -17,7 +17,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from pmriprep.utils.dsc_aif_provenance import (
+from pmriprep.utils.aif_provenance import (
     AIF_INDEPENDENT_MAPS,
     TEMPLATE_AIF_USAGE,
     apply_aif_sidecar,
@@ -137,7 +137,7 @@ class TestBuildAifProvenanceBlock:
             "aif_detection": {"detection_method": "synthetic", "quality_score": 0.2},
             "synthetic_fallback_reason": "no_candidates",
         })
-        assert block["Source"] == "template"
+        assert block["Source"] == "synthetic"
         assert block["QualityFlag"] == "poor"
         assert block["CrossSubjectComparable"] is False
         assert block["SyntheticFallbackReason"] == "no_candidates"
@@ -345,7 +345,7 @@ class TestWriterAifBlockPresentOnAllMaps:
         }
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
         cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
-        assert _aif_block(cbv)["Source"] == "template"
+        assert _aif_block(cbv)["Source"] == "synthetic"
         assert _aif_block(cbv)["CrossSubjectComparable"] is False
         assert _aif_block(cbv)["SyntheticFallbackReason"] == "no_candidates"
         assert cbv["AIFDependent"] is True
@@ -377,10 +377,10 @@ class TestSmoothedSidecars:
         qc = {"aif_detection": {"detection_method": "synthetic", "quality_score": 0.3}}
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
         raw = _load_sidecar(derivatives, "dscRelAUCSm3Cbv_stat")
-        assert _aif_block(raw)["Source"] == "template"
+        assert _aif_block(raw)["Source"] == "synthetic"
         assert raw["TemplateAIFUsage"] == "ratio_defensible"
         ncbv_sm = _load_sidecar(derivatives, "dscNawmNormSm3Cbv_stat")
-        assert _aif_block(ncbv_sm)["Source"] == "template"
+        assert _aif_block(ncbv_sm)["Source"] == "synthetic"
         assert ncbv_sm["TemplateAIFUsage"] == "safe"
 
 

@@ -168,12 +168,17 @@ def _build_dce_meta(  # type: ignore[no-untyped-def]
     Used for model-free maps and NAWM-normalized maps that aren't routed
     through ``_build_dce_pk_map_meta``.
     """
+    from pmriprep.utils.aif_provenance import stamp_aif_dependency
+
     out = dict(base)
     out["Description"] = description
     if units is not None:
         out["Units"] = units
     if extra:
         out.update(extra)
+
+    if map_key:
+        stamp_aif_dependency(out, map_key, modality="DCE")
 
     if map_key and lesion_stats_json:
         import json as _json
@@ -297,8 +302,10 @@ def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
 
 
 def _build_dce_smoothed_meta(  # type: ignore[no-untyped-def]
-    base, description, fwhm_mm, units=None,
+    base, description, fwhm_mm, units=None, map_key="",
 ):
+    from pmriprep.utils.aif_provenance import stamp_aif_dependency
+
     out = dict(base)
     out["Description"] = description
     out["SmoothingFWHM"] = (
@@ -310,12 +317,16 @@ def _build_dce_smoothed_meta(  # type: ignore[no-untyped-def]
     out["Note"] = "Use non-smoothed maps for quantitative ROI analysis"
     if units is not None:
         out["Units"] = units
+    if map_key:
+        stamp_aif_dependency(out, map_key, modality="DCE")
     return out
 
 
 def _build_model_selection_meta(  # type: ignore[no-untyped-def]
     base, qc_metrics=None,
 ):
+    from pmriprep.utils.aif_provenance import stamp_aif_dependency
+
     out = dict(base)
     out["Description"] = (
         "Per-voxel BIC model selection: complexity-ordered encoding"
@@ -327,6 +338,7 @@ def _build_model_selection_meta(  # type: ignore[no-untyped-def]
         "3": "extended_tofts",
         "4": "2cxm",
     }
+    stamp_aif_dependency(out, "model_selection", modality="DCE")
     if isinstance(qc_metrics, dict):
         regions = (qc_metrics.get("pk_modeling") or {}).get(
             "model_selection_regions",
@@ -339,12 +351,15 @@ def _build_model_selection_meta(  # type: ignore[no-untyped-def]
 def _build_delta_bic_meta(  # type: ignore[no-untyped-def]
     base, qc_metrics=None,
 ):
+    from pmriprep.utils.aif_provenance import stamp_aif_dependency
+
     out = dict(base)
     out["Description"] = (
         "BIC confidence: runner-up minus winner. "
         ">2 = positive, >6 = strong, >10 = very strong "
         "(Kass & Raftery 1995)"
     )
+    stamp_aif_dependency(out, "delta_bic", modality="DCE")
     if isinstance(qc_metrics, dict):
         pk = qc_metrics.get("pk_modeling") or {}
         if pk.get("r2_median") is not None:
@@ -532,6 +547,7 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
     desc_values = []
     suffixes = []
     use_model = []
+    map_keys = []
 
     if isinstance(smooth_pk, dict):
         for name, src in smooth_pk.items():
@@ -545,6 +561,7 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
             desc_values.append(f"dce{fwhm_str}")
             suffixes.append(pk_suffix_bids.get(name, name))
             use_model.append(True)
+            map_keys.append(f"{name}_sm")
 
     if isinstance(smooth_mf, dict):
         for name, src in smooth_mf.items():
@@ -558,7 +575,15 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
             desc_values.append(f"dce{fwhm_str}")
             suffixes.append(mf_suffix_bids.get(name, name))
             use_model.append(False)
+            map_keys.append(name)
 
+    uncertainty_map_key = {
+        "Ktrans_std": "ktrans_uncertainty",
+        "ve_std": "ve_uncertainty",
+        "vp_std": "vp_uncertainty",
+        "Fp_std": "fp_uncertainty",
+        "PS_std": "ps_uncertainty",
+    }
     if isinstance(smooth_uncertainty, dict):
         for name, src in smooth_uncertainty.items():
             if not (src and Path(src).exists()):
@@ -572,8 +597,9 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
             desc_values.append(f"dceUncertainty{fwhm_str}")
             suffixes.append(param)
             use_model.append(True)
+            map_keys.append(uncertainty_map_key.get(name, ""))
 
-    return in_files, descs, fwhms, units_list, desc_values, suffixes, use_model
+    return in_files, descs, fwhms, units_list, desc_values, suffixes, use_model, map_keys
 
 
 def _model_entity_per_item(use_model_flags, model_entity):  # type: ignore[no-untyped-def]
@@ -676,6 +702,19 @@ _MF_LESIONSTATS_MAP_KEY: dict[str, str] = {
     "iauc120_map": "iauc120",
     "peak_enhancement_map": "peak_enhancement",
     "time_to_peak_map": "ttp",
+}
+
+_MF_AIF_MAP_KEY: dict[str, str] = {
+    "iauc60_map": "iauc60",
+    "iauc90_map": "iauc90",
+    "iauc120_map": "iauc120",
+    "peak_enhancement_map": "peak_enhancement",
+    "time_to_peak_map": "ttp",
+    "ser_map": "ser",
+    "wash_in_slope_map": "wash_in_slope",
+    "wash_out_slope_map": "wash_out_slope",
+    "bat_map": "bat",
+    "curve_type_map": "curve_type",
 }
 
 
@@ -1054,6 +1093,7 @@ def init_dce_datasinks_wf(
             desc_value="dceUncertainty", suffix=suffix,
             description=description, units=None, extra=None,
             model_entity=model_entity,
+            map_key=in_attr,
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -1066,6 +1106,7 @@ def init_dce_datasinks_wf(
             desc_value="dceCV", suffix=suffix,
             description=description, units=None, extra=None,
             model_entity=model_entity,
+            map_key=in_attr,
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -1078,13 +1119,11 @@ def init_dce_datasinks_wf(
             desc_value=f"dceCI95{bound}", suffix=suffix,
             description=description, units=None, extra=None,
             model_entity=model_entity,
+            map_key=in_attr,
         )
         sink_outputs.append((sink, "out_file"))
 
     # --- Model-free maps (no model entity) ---
-    # Map keys come from module-level _MF_LESIONSTATS_MAP_KEY; maps not
-    # in that dict (SER/wash slopes/BAT/curve_type) get map_key="" and
-    # skip LesionStats injection.
     for in_attr, suffix, description, units, extra in _MODEL_FREE_MAPS:
         if in_attr not in present:
             continue
@@ -1094,7 +1133,7 @@ def init_dce_datasinks_wf(
             desc_value="dce", suffix=suffix,
             description=description, units=units, extra=extra,
             model_entity="",
-            map_key=_MF_LESIONSTATS_MAP_KEY.get(in_attr, ""),
+            map_key=_MF_AIF_MAP_KEY.get(in_attr, ""),
             bids_suffix=_BIDS_SUFFIX_OVERRIDE.get(suffix, "stat"),
         )
         sink_outputs.append((sink, "out_file"))
@@ -1486,7 +1525,7 @@ def init_dce_datasinks_wf(
                 ],
                 output_names=[
                     "in_files", "descs", "fwhms", "units_list",
-                    "desc_values", "suffixes", "use_model",
+                    "desc_values", "suffixes", "use_model", "map_keys",
                 ],
                 function=_split_dce_smoothed,
             ),
@@ -1504,11 +1543,12 @@ def init_dce_datasinks_wf(
 
         sm_meta = pe.MapNode(
             niu.Function(
-                input_names=["base", "description", "fwhm_mm", "units"],
+                input_names=["base", "description", "fwhm_mm", "units",
+                             "map_key"],
                 output_names=["meta_dict"],
                 function=_build_dce_smoothed_meta,
             ),
-            iterfield=["description", "fwhm_mm", "units"],
+            iterfield=["description", "fwhm_mm", "units", "map_key"],
             name="smoothed_meta",
         )
         workflow.connect([
@@ -1517,6 +1557,7 @@ def init_dce_datasinks_wf(
                 ("descs", "description"),
                 ("fwhms", "fwhm_mm"),
                 ("units_list", "units"),
+                ("map_keys", "map_key"),
             ]),
         ])
 
