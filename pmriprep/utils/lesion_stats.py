@@ -9,7 +9,6 @@ Key features:
 - Comprehensive statistics (mean, std, percentiles, CV, IQR)
 - Fractional volume calculations (voxels above threshold)
 - NAWM reference value extraction
-- Clinical context with glioma grading thresholds
 """
 
 from dataclasses import dataclass, field
@@ -123,8 +122,7 @@ class LesionStatisticsResult:
         total_voxels: Total number of lesion voxels.
         regions: Dictionary mapping region name to its statistics.
         nawm_reference: NAWM reference values for normalization context.
-        derived_metrics: Derived metrics (fractional volumes, hotspots).
-        clinical_context: Clinical interpretation thresholds.
+        derived_metrics: Derived metrics (fractional volumes).
     """
 
     subject_id: str
@@ -136,7 +134,6 @@ class LesionStatisticsResult:
     regions: Dict[str, RegionStatistics] = field(default_factory=dict)
     nawm_reference: Optional[Dict[str, Any]] = None
     derived_metrics: Optional[Dict[str, Any]] = None
-    clinical_context: Optional[Dict[str, Any]] = None
     # AIF provenance for DSC stats: a prebuilt ``PerfusionProcessing.AIF``
     # sub-block (Source, DetectionLevel, QualityFlag, GammaFitApplied,
     # CrossSubjectComparable, optionally SyntheticFallbackReason /
@@ -197,8 +194,6 @@ class LesionStatisticsResult:
         }
         if self.aif_provenance:
             result["PerfusionProcessing"] = {"AIF": self.aif_provenance}
-        if self.clinical_context:
-            result["ClinicalContext"] = self.clinical_context
         if self.nawm_reference:
             result["NAWMReference"] = self.nawm_reference
         result["Regions"] = {k: v.to_dict() for k, v in self.regions.items()}
@@ -465,69 +460,17 @@ def compute_region_volume(
     return voxel_count, volume_mm3, volume_ml
 
 
-# Per-map clinical thresholds. Map keys correspond to the keys used in
-# DSCLesionStats / DCELesionStats `_load_maps`. Each entry maps to a
-# threshold dict that becomes ``ClinicalThreshold`` in the per-map sidecar.
-#
-# Where a threshold is defined on a normalized companion map (e.g.,
-# nCBV → high_grade=1.75 lives on dscNawmNorm_cbv), the un-normalized
-# companion (cbv → dscRel_cbv) carries an ``applies_to`` breadcrumb so
-# readers know where the threshold value lives. This is built lazily by
-# extract_per_map_lesion_stats based on the ``_INFORMATIONAL_THRESHOLDS``
-# table below.
-DSC_CLINICAL_THRESHOLDS: Dict[str, Dict[str, float]] = {
-    "ncbv": {"high_grade": 1.75},  # Law Radiology 2003
-    "ncbf": {"high_grade": 2.0},   # Law Radiology 2003
-}
-DCE_CLINICAL_THRESHOLDS: Dict[str, Dict[str, float]] = {
-    "Ktrans": {"high_grade": 0.1},   # Zhang Radiology 2014
-    "ktrans": {"high_grade": 0.1},
-    "niauc60": {"high_grade": 2.0},  # Zhang Radiology 2014
-}
-
-# Maps that should carry an informational ClinicalThreshold breadcrumb
-# pointing at the normalized companion where the threshold actually
-# applies. Per physics-expert review.
-_INFORMATIONAL_THRESHOLDS: Dict[str, Tuple[str, Dict[str, float]]] = {
-    # un-normalized DSC maps reference the normalized companion's threshold
-    "cbv": ("ncbv", {"high_grade": 1.75}),
-    "cbf": ("ncbf", {"high_grade": 2.0}),
-}
-
-
-def get_dsc_clinical_context() -> Dict[str, Any]:
-    """Get aggregate clinical context for DSC (legacy aggregate-only field).
-
-    Kept for backward compatibility within ``LesionStatisticsResult``; the
-    canonical per-map slice now lives in ``DSC_CLINICAL_THRESHOLDS``.
-    """
-    return {
-        "nCBV_threshold_high_grade": 1.75,
-        "nCBF_threshold_high_grade": 2.0,
-    }
-
-
-def get_dce_clinical_context() -> Dict[str, Any]:
-    """Get aggregate clinical context for DCE (legacy aggregate-only field).
-
-    Kept for backward compatibility within ``LesionStatisticsResult``; the
-    canonical per-map slice now lives in ``DCE_CLINICAL_THRESHOLDS``.
-    """
-    return {
-        "Ktrans_threshold_high_grade": 0.1,
-        "nIAUC60_threshold_high_grade": 2.0,
-    }
-
-
 # Per-map fractional-volume thresholds. Each map key may have multiple
 # thresholds; output is keyed by ``above_<threshold>`` (e.g., ``above_1.75``).
 DSC_FRACTIONAL_THRESHOLDS: Dict[str, Tuple[float, ...]] = {
-    "ncbv": (1.75, 2.5, 3.0, 4.0),  # add 3.0 — Hilario AJNR 2012
-    "ncbf": (1.5, 2.0, 3.0),         # NEW — Kickingereder Radiology 2015
+    "ncbv": (1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0),
+    "ncbf": (1.5, 2.0, 3.0),
 }
 DCE_FRACTIONAL_THRESHOLDS: Dict[str, Tuple[float, ...]] = {
-    "Ktrans": (0.05, 0.1, 0.2),  # add 0.05 — Patankar AJNR 2005
-    "ktrans": (0.05, 0.1, 0.2),
+    "ktrans": (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5),
+    "nktrans": (2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0),
+    "niauc60": (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0),
+    "vp": (0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10),
 }
 
 
@@ -593,18 +536,17 @@ def compute_dce_derived_metrics(
     ve_data: Optional[np.ndarray],
     vp_data: Optional[np.ndarray],
     mask: np.ndarray,
+    niauc60_data: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """Compute DCE-specific derived metrics.
 
     Returns a dict with ``fractional_volumes`` keyed per-map (one
-    sub-dict per available map). The legacy ``hotspot_summary`` key is
-    no longer emitted — per-map ``Regions.<r>.stats.p98`` is now the
-    canonical hotspot for each map.
+    sub-dict per available map).
     """
     derived: Dict[str, Any] = {}
     fractions = _per_map_fractional_volumes(
-        {"Ktrans": ktrans_data, "nktrans": nktrans_data,
-         "ve": ve_data, "vp": vp_data},
+        {"ktrans": ktrans_data, "nktrans": nktrans_data,
+         "ve": ve_data, "vp": vp_data, "niauc60": niauc60_data},
         DCE_FRACTIONAL_THRESHOLDS,
         mask,
     )
@@ -918,31 +860,6 @@ def write_tumor_dseg_tsv(
 # ---------------------------------------------------------------------------
 
 
-def _build_clinical_threshold_block(
-    map_name: str,
-) -> Optional[Dict[str, Any]]:
-    """Return ClinicalThreshold sub-block for a map, or None.
-
-    Two flavors:
-        - direct: map has its own clinical threshold (e.g.,
-          ``ncbv → {"high_grade": 1.75}``).
-        - informational: map is the un-normalized companion of one that
-          carries a threshold (e.g., ``cbv → {"high_grade": 1.75,
-          "applies_to": "ncbv"}``). The breadcrumb signals to a reader
-          that the threshold is defined on the normalized map next door.
-    """
-    direct = DSC_CLINICAL_THRESHOLDS.get(map_name) or DCE_CLINICAL_THRESHOLDS.get(map_name)
-    if direct is not None:
-        return dict(direct)
-    info = _INFORMATIONAL_THRESHOLDS.get(map_name)
-    if info is not None:
-        applies_to, payload = info
-        block: Dict[str, Any] = dict(payload)
-        block["applies_to"] = applies_to
-        return block
-    return None
-
-
 def _slice_nawm_for_map(
     nawm_reference: Optional[Dict[str, Any]],
     map_name: str,
@@ -1009,9 +926,9 @@ def extract_per_map_lesion_stats(
     Used to inject per-map ``LesionStats`` blocks into perfusion map
     sidecars. The aggregate dict (output of
     :meth:`LesionStatisticsResult.to_dict`) carries per-region per-map
-    stats plus modality-level context (NAWM reference, clinical
-    thresholds, fractional volumes, mask type). This function slices
-    out everything relevant to ``map_name``.
+    stats plus modality-level context (NAWM reference, fractional
+    volumes, mask type). This function slices out everything relevant
+    to ``map_name``.
 
     Returns a fragment of the form::
 
@@ -1024,15 +941,14 @@ def extract_per_map_lesion_stats(
             }, ...
           },
           "NAWMReference": {... per-map slice in that map's units ...},
-          "ClinicalThreshold": {"high_grade": 1.75[, "applies_to": "ncbv"]},
           "FractionalVolumes": {"above_1.75": 0.137, "above_2.5": ...},
         }
 
     Optional fields are omitted when not applicable. Returns ``None``
     when the aggregate is empty or the requested map has no per-region
-    stats AND no NAWM/threshold/fractional-volume context to forward
-    (so the caller can skip injecting the field entirely rather than
-    emit an empty block).
+    stats AND no NAWM/fractional-volume context to forward (so the
+    caller can skip injecting the field entirely rather than emit an
+    empty block).
     """
     if not aggregate or not isinstance(aggregate, dict):
         return None
@@ -1059,7 +975,6 @@ def extract_per_map_lesion_stats(
     nawm_block = _slice_nawm_for_map(
         aggregate.get("NAWMReference"), map_name,
     )
-    threshold_block = _build_clinical_threshold_block(map_name)
 
     fractional_volumes = None
     derived = aggregate.get("DerivedMetrics")
@@ -1071,9 +986,8 @@ def extract_per_map_lesion_stats(
     mask_type = aggregate.get("LesionMaskType")
 
     # Require some substantive data — region stats or NAWM reference — to
-    # emit a fragment. Standalone context (LesionMaskType, ClinicalThreshold
-    # breadcrumb, FractionalVolumes) is only useful when paired with actual
-    # measurements.
+    # emit a fragment. Standalone context (LesionMaskType, FractionalVolumes)
+    # is only useful when paired with actual measurements.
     if not out_regions and not nawm_block:
         return None
 
@@ -1084,8 +998,6 @@ def extract_per_map_lesion_stats(
         out["Regions"] = out_regions
     if nawm_block:
         out["NAWMReference"] = nawm_block
-    if threshold_block:
-        out["ClinicalThreshold"] = threshold_block
     if fractional_volumes:
         out["FractionalVolumes"] = fractional_volumes
 

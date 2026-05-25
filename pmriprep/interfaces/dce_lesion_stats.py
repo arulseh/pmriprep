@@ -34,7 +34,6 @@ from pmriprep.utils.lesion_stats import (
     compute_region_volume,
     detect_mask_type,
     extract_label_mask,
-    get_dce_clinical_context,
 )
 
 
@@ -217,10 +216,8 @@ class DCELesionStats(BaseInterface):
                 ve_data=maps.get("ve"),
                 vp_data=maps.get("vp"),
                 mask=primary_mask,
+                niauc60_data=maps.get("niauc60"),
             )
-
-            # Add clinical context
-            result.clinical_context = get_dce_clinical_context()
 
             # Augment per-region per-map stats with Cohen's d vs NAWM
             # (no-op when nawm_reference is empty).

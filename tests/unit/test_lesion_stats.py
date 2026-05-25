@@ -197,14 +197,10 @@ class TestComputeDSCDerivedMetrics:
             mask=mask,
         )
         assert "fractional_volumes" in derived
-        # New per-map dict shape (Phase 1b refactor):
         assert "ncbv" in derived["fractional_volumes"]
         ncbv_fv = derived["fractional_volumes"]["ncbv"]
-        # Phase 2d expanded thresholds: nCBV {1.75, 2.5, 3.0, 4.0}
-        for t in (1.75, 2.5, 3.0, 4.0):
+        for t in (1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0):
             assert f"above_{t}" in ncbv_fv
-        # hotspot_summary deliberately removed — per-map p98 is the canonical
-        # hotspot now and lives on each MapStatistics block.
         assert "hotspot_summary" not in derived
 
     def test_all_none_maps_returns_empty(self) -> None:
@@ -239,13 +235,54 @@ class TestComputeDCEDerivedMetrics:
             mask=mask,
         )
         assert "fractional_volumes" in derived
-        assert "Ktrans" in derived["fractional_volumes"]
-        ktrans_fv = derived["fractional_volumes"]["Ktrans"]
-        # Phase 2d expanded thresholds: Ktrans {0.05, 0.1, 0.2}
-        for t in (0.05, 0.1, 0.2):
+        assert "ktrans" in derived["fractional_volumes"]
+        ktrans_fv = derived["fractional_volumes"]["ktrans"]
+        for t in (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5):
             assert f"above_{t}" in ktrans_fv
-        # hotspot_summary removed — per-map p98 is canonical now.
         assert "hotspot_summary" not in derived
+
+    def test_nktrans_fractional_volumes(self) -> None:
+        """nKtrans data produces per-map fractional volumes."""
+        mask = np.ones((10, 10, 1), dtype=bool)
+        nktrans = np.zeros((10, 10, 1))
+        nktrans.flat[:100] = np.linspace(0.0, 60.0, 100)
+
+        derived = compute_dce_derived_metrics(
+            ktrans_data=None, nktrans_data=nktrans,
+            ve_data=None, vp_data=None, mask=mask,
+        )
+        assert "nktrans" in derived["fractional_volumes"]
+        for t in (2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0):
+            assert f"above_{t}" in derived["fractional_volumes"]["nktrans"]
+
+    def test_niauc60_fractional_volumes(self) -> None:
+        """nIAUC60 data produces per-map fractional volumes."""
+        mask = np.ones((10, 10, 1), dtype=bool)
+        niauc60 = np.zeros((10, 10, 1))
+        niauc60.flat[:100] = np.linspace(0.0, 8.0, 100)
+
+        derived = compute_dce_derived_metrics(
+            ktrans_data=None, nktrans_data=None,
+            ve_data=None, vp_data=None, mask=mask,
+            niauc60_data=niauc60,
+        )
+        assert "niauc60" in derived["fractional_volumes"]
+        for t in (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0):
+            assert f"above_{t}" in derived["fractional_volumes"]["niauc60"]
+
+    def test_vp_fractional_volumes(self) -> None:
+        """vp data produces per-map fractional volumes."""
+        mask = np.ones((10, 10, 1), dtype=bool)
+        vp = np.zeros((10, 10, 1))
+        vp.flat[:100] = np.linspace(0.0, 0.12, 100)
+
+        derived = compute_dce_derived_metrics(
+            ktrans_data=None, nktrans_data=None,
+            ve_data=None, vp_data=vp, mask=mask,
+        )
+        assert "vp" in derived["fractional_volumes"]
+        for t in (0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10):
+            assert f"above_{t}" in derived["fractional_volumes"]["vp"]
 
 
 class TestComputeNAWMReference:
@@ -857,6 +894,8 @@ class TestExtractPerMapLesionStatsEnrichment:
                                  "p98": 3.2, "n_valid": 100, "n_total": 100},
                         "cbv": {"mean": 0.6, "std": 0.2, "median": 0.55,
                                 "n_valid": 100, "n_total": 100},
+                        "ktrans": {"mean": 0.12, "std": 0.05, "median": 0.10,
+                                   "n_valid": 100, "n_total": 100},
                         "k2": {"median": 0.0008, "std": 0.0005, "ppp": 0.12,
                                "n_valid": 100, "n_total": 100},
                         "ttp": {"median": 65.0, "std": 5.0,
@@ -881,30 +920,29 @@ class TestExtractPerMapLesionStatsEnrichment:
                 "fractional_volumes": {
                     "ncbv": {"above_1.75": 0.45, "above_2.5": 0.18,
                              "above_3.0": 0.09, "above_4.0": 0.02},
-                    "Ktrans": {"above_0.05": 0.20, "above_0.1": 0.10},
+                    "ktrans": {"above_0.05": 0.20, "above_0.1": 0.10},
                 },
             },
         }
 
-    def test_normalized_map_gets_direct_threshold_and_fv(self, aggregate):
+    def test_normalized_map_gets_fv(self, aggregate):
         from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
 
         out = extract_per_map_lesion_stats(aggregate, "ncbv")
         assert out["LesionMaskType"] == "multi_label_tumor_seg"
         assert "Regions" in out
-        assert out["ClinicalThreshold"] == {"high_grade": 1.75}
+        assert "ClinicalThreshold" not in out
         assert "FractionalVolumes" in out
         assert "above_3.0" in out["FractionalVolumes"]
         # NAWM in normalized units, slice for ncbv only
         assert out["NAWMReference"]["median"] == 1.0
         assert out["NAWMReference"]["voxel_count"] == 1000
 
-    def test_unnormalized_companion_gets_informational_breadcrumb(self, aggregate):
+    def test_unnormalized_companion_no_fv(self, aggregate):
         from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
 
         out = extract_per_map_lesion_stats(aggregate, "cbv")
-        assert out["ClinicalThreshold"] == {"high_grade": 1.75, "applies_to": "ncbv"}
-        # FractionalVolumes does NOT live on the un-normalized companion
+        assert "ClinicalThreshold" not in out
         assert "FractionalVolumes" not in out
         # NAWM in deconv units
         assert out["NAWMReference"]["median"] == 0.34
@@ -917,14 +955,22 @@ class TestExtractPerMapLesionStatsEnrichment:
         assert raw["AIFCorrected"] is False
         assert corrected["AIFCorrected"] is True
 
-    def test_map_with_no_threshold_no_fv_just_stats(self, aggregate):
+    def test_ktrans_gets_fractional_volumes(self, aggregate):
+        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+        out = extract_per_map_lesion_stats(aggregate, "ktrans")
+        assert "Regions" in out
+        assert "ClinicalThreshold" not in out
+        assert "FractionalVolumes" in out
+        assert "above_0.05" in out["FractionalVolumes"]
+
+    def test_map_with_no_fv_just_stats(self, aggregate):
         from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
 
         out = extract_per_map_lesion_stats(aggregate, "k2")
         assert "Regions" in out
         assert "ClinicalThreshold" not in out
         assert "FractionalVolumes" not in out
-        # No NAWM entry for k2 → no NAWMReference
         assert "NAWMReference" not in out
 
     def test_map_absent_from_regions_but_nawm_present_returns_nawm_only(self, aggregate):
