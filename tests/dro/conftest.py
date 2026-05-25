@@ -72,8 +72,8 @@ class DSCTissueParams:
 
 
 DSC_TISSUE_PARAMS: Dict[str, DSCTissueParams] = {
-    "gm": DSCTissueParams(60.0, 4.6, "gray_matter"),
-    "wm": DSCTissueParams(20.0, 4.3, "white_matter"),
+    "gm": DSCTissueParams(60.0, 4.0, "gray_matter"),
+    "wm": DSCTissueParams(20.0, 4.8, "white_matter"),
     "tumor": DSCTissueParams(100.0, 6.0, "tumor"),
 }
 
