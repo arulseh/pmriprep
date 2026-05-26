@@ -479,10 +479,11 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="K2 map from preload_correct (passed through when baseline not recomputed)",
     )
-    enhancing_mask_file = File(
-        exists=True,
+    enhancing_mask_file = traits.Either(
+        File(exists=True),
+        traits.Enum(""),
         mandatory=False,
-        desc="Enhancing tumor mask (any space, resampled internally to DSC)",
+        desc="Enhancing tumor mask in DSC space for QC voxel selection",
     )
     nawm_mask_file = traits.Str(
         desc="NAWM mask in DSC space for rTTP normalization",

@@ -399,20 +399,15 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="Optional user-supplied AIF search mask (overrides atlas mask)",
     )
-    # The optional mask traits below assume the upstream workflow connects
-    # them directly from inputnode (so Undefined propagates and
-    # mandatory=False is sufficient). If a future refactor interposes a
-    # Function node returning '' per the transform-helper convention used
-    # by _transform_lesion_mask_to_dsc / _transform_lesion_mask_to_dce,
-    # widen the trait to traits.Either(File(exists=True), traits.Enum(""))
-    # — see DCEAIFDetectionInputSpec.lesion_mask_file.
-    lesion_mask_file = File(
-        exists=True,
+    lesion_mask_file = traits.Either(
+        File(exists=True),
+        traits.Enum(""),
         mandatory=False,
         desc="Optional 3D lesion mask for exclusion",
     )
-    enhancing_mask_file = File(
-        exists=True,
+    enhancing_mask_file = traits.Either(
+        File(exists=True),
+        traits.Enum(""),
         mandatory=False,
         desc="Optional 3D enhancing tumor mask for laterality determination",
     )

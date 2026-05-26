@@ -732,7 +732,7 @@ def _transform_lesion_mask_to_dsc(  # type: ignore[no-untyped-def]
 
 def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
     user_lesion_mask=None,
-    whole_tumor_mask=None,
+    transformed_lesion_mask=None,
 ):
     """Pick the AIF exclusion mask: user-supplied overrides tumor seg.
 
@@ -740,23 +740,23 @@ def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
     ----------
     user_lesion_mask : str or None
         User-supplied lesion mask in DSC native space.
-    whole_tumor_mask : str or None
-        Tumor segmentation whole-tumor mask (T1w space).
+    transformed_lesion_mask : str or None
+        Combined tumor mask FLIRT-transformed to DSC native space.
 
     Returns
     -------
-    str or None
-        Selected mask path, or None if neither is available.
+    str
+        Selected mask path, or ``""`` if neither is available.
     """
     from nipype.interfaces.base import isdefined
 
     if isdefined(user_lesion_mask) and user_lesion_mask is not None:
         if user_lesion_mask != "":
             return user_lesion_mask
-    if isdefined(whole_tumor_mask) and whole_tumor_mask is not None:
-        if whole_tumor_mask != "":
-            return whole_tumor_mask
-    return None
+    if isdefined(transformed_lesion_mask) and transformed_lesion_mask is not None:
+        if transformed_lesion_mask != "":
+            return transformed_lesion_mask
+    return ""
 
 
 def _validate_native_mask(  # type: ignore[no-untyped-def]
@@ -2060,6 +2060,18 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
+    # Node 6e-b: Transform enhancing mask from T1w to DSC space
+    # -------------------------------------------------------------------
+    transform_enhancing_mask = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dsc_file"],
+            function=_transform_lesion_mask_to_dsc,
+        ),
+        name="transform_enhancing_mask",
+    )
+
+    # -------------------------------------------------------------------
     # Node 6f: Lesion Statistics Extraction
     # Conditional - only run if lesion mask is available
     # -------------------------------------------------------------------
@@ -2412,7 +2424,7 @@ def init_dsc_preproc_wf(
     # AIF exclusion mask: user-supplied lesion mask overrides tumor seg
     select_aif_exclusion = pe.Node(
         niu.Function(
-            input_names=["user_lesion_mask", "whole_tumor_mask"],
+            input_names=["user_lesion_mask", "transformed_lesion_mask"],
             output_names=["out_mask"],
             function=_select_aif_exclusion_mask,
         ),
@@ -2422,8 +2434,8 @@ def init_dsc_preproc_wf(
         (validate_user_lesion_mask, select_aif_exclusion, [
             ("validated_mask", "user_lesion_mask"),
         ]),
-        (inputnode, select_aif_exclusion, [
-            ("whole_tumor_mask", "whole_tumor_mask"),
+        (transform_lesion, select_aif_exclusion, [
+            ("lesion_mask_dsc_file", "transformed_lesion_mask"),
         ]),
     ])
 
@@ -2441,8 +2453,10 @@ def init_dsc_preproc_wf(
         (select_aif_exclusion, aif_detect, [
             ("out_mask", "lesion_mask_file"),
         ]),
+        (transform_enhancing_mask, aif_detect, [
+            ("lesion_mask_dsc_file", "enhancing_mask_file"),
+        ]),
         (inputnode, aif_detect, [
-            ("enhancing_mask", "enhancing_mask_file"),
             ("tr", "tr"),
             ("field_strength", "field_strength"),
         ]),
@@ -2489,11 +2503,13 @@ def init_dsc_preproc_wf(
         (hdbet_dsc, compute_maps, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
+        (transform_enhancing_mask, compute_maps, [
+            ("lesion_mask_dsc_file", "enhancing_mask_file"),
+        ]),
         (inputnode, compute_maps, [
             ("tr", "tr"),
             ("te", "te"),
             ("field_strength", "field_strength"),
-            ("enhancing_mask", "enhancing_mask_file"),
         ]),
         (motion_correct, compute_maps, [
             ("fd", "fd_values"),
@@ -2712,6 +2728,13 @@ def init_dsc_preproc_wf(
         (combine_masks, transform_lesion, [("combined_mask_file", "lesion_mask_file")]),
         (prebolus_mean, transform_lesion, [("prebolus_mean_file", "reference_file")]),
         (register, transform_lesion, [("out_matrix", "transform_matrix")]),
+    ])
+
+    # Transform enhancing mask from T1w to DSC space
+    workflow.connect([
+        (inputnode, transform_enhancing_mask, [("enhancing_mask", "lesion_mask_file")]),
+        (prebolus_mean, transform_enhancing_mask, [("prebolus_mean_file", "reference_file")]),
+        (register, transform_enhancing_mask, [("out_matrix", "transform_matrix")]),
     ])
 
     # Lesion statistics extraction
