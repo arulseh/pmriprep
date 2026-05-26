@@ -226,7 +226,7 @@ dce:
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
-| `roi_mask` | path | `null` | ROI mask for statistics extraction |
+| `roi_mask` | path | `null` | ROI mask for statistics extraction. Multi-label integer masks produce per-label stats |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
 
@@ -257,7 +257,7 @@ dce:
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
 | `nawm_mask` | path | `null` | NAWM mask for normalization |
-| `roi_mask` | path | `null` | ROI mask for statistics extraction |
+| `roi_mask` | path | `null` | ROI mask for statistics extraction. Multi-label integer masks produce per-label stats |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
 

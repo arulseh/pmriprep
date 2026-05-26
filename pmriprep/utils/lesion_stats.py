@@ -11,15 +11,19 @@ Key features:
 - NAWM reference value extraction
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import nibabel as nib
 import numpy as np
 
 import pmriprep
 from pmriprep.config.constants import HDGLIO_DSEG_ROWS
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -438,6 +442,56 @@ def extract_label_mask(
         Boolean 3D array where mask_data == label.
     """
     return mask_data == label  # type: ignore[no-any-return]
+
+
+def validate_mask_ndim(
+    mask_path: Union[Path, str],
+    source_name: str = "mask",
+) -> None:
+    """Validate that a user-supplied mask file is 3D.
+
+    Parameters
+    ----------
+    mask_path : Path or str
+        Path to the NIfTI mask file.
+    source_name : str
+        Descriptive name for error messages.
+
+    Raises
+    ------
+    ValueError
+        If mask is not 3D.
+    """
+    mask_path = Path(mask_path)
+    img = nib.load(mask_path)
+    shape = img.header.get_data_shape()  # type: ignore[attr-defined]
+    ndim = len(shape)
+    if ndim != 3:
+        raise ValueError(
+            f"{source_name} ({mask_path.name}): expected a 3D mask, "
+            f"got {ndim}D (shape {shape})"
+        )
+
+
+def is_integer_valued(arr: np.ndarray) -> bool:
+    """Check whether a numeric array contains only integer values.
+
+    Parameters
+    ----------
+    arr : ndarray
+        Array to check.
+
+    Returns
+    -------
+    bool
+        True if all finite nonzero values are integers.
+    """
+    if np.issubdtype(arr.dtype, np.integer):
+        return True
+    finite = arr[np.isfinite(arr) & (arr != 0)]
+    if len(finite) == 0:
+        return True
+    return bool(np.all(finite == np.round(finite)))
 
 
 def compute_region_volume(

@@ -973,6 +973,8 @@ def init_dce_preproc_wf(
 
     # Wire user-supplied AIF mask if provided (overrides atlas mask)
     if config.aif_mask_file is not None:
+        from pmriprep.utils.lesion_stats import validate_mask_ndim
+        validate_mask_ndim(config.aif_mask_file, "dce.aif_mask_file")
         aif_detection.inputs.aif_mask_file = str(config.aif_mask_file)
 
     workflow.connect([

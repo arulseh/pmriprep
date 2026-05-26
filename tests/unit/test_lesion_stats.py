@@ -17,6 +17,8 @@ from pmriprep.utils.lesion_stats import (
     compute_region_volume,
     detect_mask_type,
     extract_label_mask,
+    is_integer_valued,
+    validate_mask_ndim,
 )
 
 
@@ -1029,3 +1031,195 @@ class TestDCELesionStatsMapKeyCoverage:
             "nktrans_map": "nktrans",
             "niauc60_map": "niauc60",
         }
+
+
+class TestValidateMaskNdim:
+    """Tests for validate_mask_ndim()."""
+
+    def test_3d_passes(self, tmp_path) -> None:
+        """3D mask raises no error."""
+        import nibabel as nib
+        img = nib.Nifti1Image(np.ones((5, 5, 5), dtype=np.float32), np.eye(4))
+        path = tmp_path / "mask_3d.nii.gz"
+        nib.save(img, path)
+        validate_mask_ndim(path, "test_mask")
+
+    def test_4d_raises(self, tmp_path) -> None:
+        """4D mask raises ValueError."""
+        import nibabel as nib
+        img = nib.Nifti1Image(np.ones((5, 5, 5, 3), dtype=np.float32), np.eye(4))
+        path = tmp_path / "mask_4d.nii.gz"
+        nib.save(img, path)
+        with pytest.raises(ValueError, match="expected a 3D mask.*got 4D"):
+            validate_mask_ndim(path, "test_mask")
+
+    def test_5d_raises(self, tmp_path) -> None:
+        """5D mask raises ValueError."""
+        import nibabel as nib
+        img = nib.Nifti1Image(np.ones((5, 5, 5, 3, 2), dtype=np.float32), np.eye(4))
+        path = tmp_path / "mask_5d.nii.gz"
+        nib.save(img, path)
+        with pytest.raises(ValueError, match="expected a 3D mask.*got 5D"):
+            validate_mask_ndim(path, "test_mask")
+
+    def test_error_includes_source_name(self, tmp_path) -> None:
+        """Error message includes source_name."""
+        import nibabel as nib
+        img = nib.Nifti1Image(np.ones((5, 5, 5, 2), dtype=np.float32), np.eye(4))
+        path = tmp_path / "bad.nii.gz"
+        nib.save(img, path)
+        with pytest.raises(ValueError, match="my_lesion_mask"):
+            validate_mask_ndim(path, "my_lesion_mask")
+
+    def test_2d_raises(self, tmp_path) -> None:
+        """2D mask raises ValueError."""
+        import nibabel as nib
+        img = nib.Nifti1Image(np.ones((5, 5), dtype=np.float32), np.eye(4))
+        path = tmp_path / "mask_2d.nii.gz"
+        nib.save(img, path)
+        with pytest.raises(ValueError, match="expected a 3D mask.*got 2D"):
+            validate_mask_ndim(path, "test_mask")
+
+    def test_accepts_str_path(self, tmp_path) -> None:
+        """Accepts str path without crashing."""
+        import nibabel as nib
+        img = nib.Nifti1Image(np.ones((5, 5, 5), dtype=np.float32), np.eye(4))
+        path = tmp_path / "mask_3d.nii.gz"
+        nib.save(img, path)
+        validate_mask_ndim(str(path), "test_mask")
+
+
+class TestIsIntegerValued:
+    """Tests for is_integer_valued()."""
+
+    def test_integer_dtype(self) -> None:
+        assert is_integer_valued(np.array([0, 1, 2, 3], dtype=np.int16))
+
+    def test_float_with_integer_values(self) -> None:
+        assert is_integer_valued(np.array([0.0, 1.0, 2.0, 3.0]))
+
+    def test_float_with_non_integer_values(self) -> None:
+        assert not is_integer_valued(np.array([0.0, 0.5, 1.0, 2.5]))
+
+    def test_all_zeros(self) -> None:
+        assert is_integer_valued(np.zeros(10))
+
+    def test_nan_ignored_finite_values_checked(self) -> None:
+        assert is_integer_valued(np.array([0.0, 1.0, np.nan]))
+
+    def test_inf_ignored_finite_values_checked(self) -> None:
+        assert is_integer_valued(np.array([0.0, 1.0, np.inf]))
+
+    def test_empty_array(self) -> None:
+        assert is_integer_valued(np.array([]))
+
+
+class TestMultiLabelRoiStats:
+    """Tests for multi-label ROI stats via force_binary path."""
+
+    def _make_mask(self, tmp_path, data: np.ndarray) -> str:
+        import nibabel as nib
+        img = nib.Nifti1Image(data.astype(np.float32), np.eye(4))
+        path = tmp_path / "roi_mask.nii.gz"
+        nib.save(img, path)
+        return str(path)
+
+    def _make_map(self, tmp_path, shape: tuple, value: float, name: str) -> str:
+        import nibabel as nib
+        data = np.full(shape, value, dtype=np.float32)
+        path = tmp_path / f"{name}.nii.gz"
+        nib.save(nib.Nifti1Image(data, np.eye(4)), path)
+        return str(path)
+
+    def test_multi_label_produces_per_label_regions(self, tmp_path) -> None:
+        """3-label mask with force_binary=True produces label_1, label_2, label_3."""
+        from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+
+        shape = (10, 10, 10)
+        mask_data = np.zeros(shape)
+        mask_data[1:3, 1:3, 1:3] = 1
+        mask_data[4:6, 4:6, 4:6] = 2
+        mask_data[7:9, 7:9, 7:9] = 3
+
+        iface = DSCLesionStats()
+        iface.inputs.lesion_mask = self._make_mask(tmp_path, mask_data)
+        iface.inputs.subject_id = "01"
+        iface.inputs.session_id = "01"
+        iface.inputs.force_binary = True
+        iface.inputs.cbv_map = self._make_map(tmp_path, shape, 2.0, "cbv")
+
+        result = iface.run()
+        import json
+        stats = json.loads(open(result.outputs.stats_json).read())
+        regions = stats["Regions"]
+        assert "label_1" in regions
+        assert "label_2" in regions
+        assert "label_3" in regions
+        assert "roi" not in regions
+        assert stats["LesionMaskType"] == "multi_label_roi"
+
+    def test_non_contiguous_labels(self, tmp_path) -> None:
+        """Non-contiguous labels (1, 3, 7) produce correct keys."""
+        from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+
+        shape = (10, 10, 10)
+        mask_data = np.zeros(shape)
+        mask_data[1:3, 1:3, 1:3] = 1
+        mask_data[4:6, 4:6, 4:6] = 3
+        mask_data[7:9, 7:9, 7:9] = 7
+
+        iface = DSCLesionStats()
+        iface.inputs.lesion_mask = self._make_mask(tmp_path, mask_data)
+        iface.inputs.subject_id = "01"
+        iface.inputs.session_id = "01"
+        iface.inputs.force_binary = True
+        iface.inputs.cbv_map = self._make_map(tmp_path, shape, 2.0, "cbv")
+
+        result = iface.run()
+        import json
+        stats = json.loads(open(result.outputs.stats_json).read())
+        region_keys = set(stats["Regions"].keys())
+        assert region_keys == {"label_1", "label_3", "label_7"}
+
+    def test_binary_mask_backward_compat(self, tmp_path) -> None:
+        """Single-label binary mask still produces single 'roi' region."""
+        from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+
+        shape = (10, 10, 10)
+        mask_data = np.zeros(shape)
+        mask_data[2:5, 2:5, 2:5] = 1
+
+        iface = DSCLesionStats()
+        iface.inputs.lesion_mask = self._make_mask(tmp_path, mask_data)
+        iface.inputs.subject_id = "01"
+        iface.inputs.session_id = "01"
+        iface.inputs.force_binary = True
+        iface.inputs.cbv_map = self._make_map(tmp_path, shape, 2.0, "cbv")
+
+        result = iface.run()
+        import json
+        stats = json.loads(open(result.outputs.stats_json).read())
+        assert set(stats["Regions"].keys()) == {"roi"}
+        assert stats["LesionMaskType"] == "binary"
+
+    def test_float_mask_falls_back_to_binary(self, tmp_path) -> None:
+        """Float-valued mask with max >= 2 falls back to binary."""
+        from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+
+        shape = (10, 10, 10)
+        mask_data = np.zeros(shape)
+        mask_data[1:3, 1:3, 1:3] = 0.5
+        mask_data[4:6, 4:6, 4:6] = 2.7
+
+        iface = DSCLesionStats()
+        iface.inputs.lesion_mask = self._make_mask(tmp_path, mask_data)
+        iface.inputs.subject_id = "01"
+        iface.inputs.session_id = "01"
+        iface.inputs.force_binary = True
+        iface.inputs.cbv_map = self._make_map(tmp_path, shape, 2.0, "cbv")
+
+        result = iface.run()
+        import json
+        stats = json.loads(open(result.outputs.stats_json).read())
+        assert set(stats["Regions"].keys()) == {"roi"}
+        assert stats["LesionMaskType"] == "binary"

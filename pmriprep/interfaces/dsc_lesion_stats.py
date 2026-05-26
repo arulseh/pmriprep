@@ -34,6 +34,7 @@ from pmriprep.utils.lesion_stats import (
     compute_region_volume,
     detect_mask_type,
     extract_label_mask,
+    is_integer_valued,
 )
 
 
@@ -139,22 +140,61 @@ class DSCLesionStats(BaseInterface):
         maps = self._load_maps()
 
         if self.inputs.force_binary:
-            # ROI mode: treat as binary, label as "roi", skip clinical context
-            mask_type = "binary"
-            result = LesionStatisticsResult(
-                subject_id=self.inputs.subject_id,
-                session_id=self.inputs.session_id,
-                modality="DSC",
-                mask_type="binary",
-                mask_source=Path(self.inputs.lesion_mask).name,
-                total_voxels=int(np.sum(lesion_data > 0)),
+            import logging
+            _log = logging.getLogger(__name__)
+
+            finite_vals = lesion_data[np.isfinite(lesion_data)]
+            max_label = int(np.max(finite_vals)) if len(finite_vals) > 0 else 0
+            use_multi_label = (
+                max_label >= 2
+                and is_integer_valued(lesion_data)
             )
-            binary_mask = lesion_data > 0
-            region_stats = self._compute_region_stats(
-                "roi", binary_mask, maps, voxel_sizes
-            )
-            if region_stats is not None:
-                result.regions["roi"] = region_stats
+
+            if use_multi_label:
+                unique_labels = sorted(
+                    int(lbl) for lbl in np.unique(finite_vals) if lbl > 0
+                )
+                if len(unique_labels) > 50:
+                    _log.warning(
+                        "ROI mask has %d labels; stats output will be large",
+                        len(unique_labels),
+                    )
+                result = LesionStatisticsResult(
+                    subject_id=self.inputs.subject_id,
+                    session_id=self.inputs.session_id,
+                    modality="DSC",
+                    mask_type="multi_label_roi",
+                    mask_source=Path(self.inputs.lesion_mask).name,
+                    total_voxels=int(np.sum(lesion_data > 0)),
+                )
+                for label in unique_labels:
+                    label_mask = extract_label_mask(lesion_data, label)
+                    if np.sum(label_mask) == 0:
+                        continue
+                    region_stats = self._compute_region_stats(
+                        f"label_{label}", label_mask, maps, voxel_sizes
+                    )
+                    if region_stats is not None:
+                        result.regions[f"label_{label}"] = region_stats
+            else:
+                if max_label >= 2 and not is_integer_valued(lesion_data):
+                    _log.warning(
+                        "ROI mask has non-integer values; treating as binary"
+                    )
+                result = LesionStatisticsResult(
+                    subject_id=self.inputs.subject_id,
+                    session_id=self.inputs.session_id,
+                    modality="DSC",
+                    mask_type="binary",
+                    mask_source=Path(self.inputs.lesion_mask).name,
+                    total_voxels=int(np.sum(lesion_data > 0)),
+                )
+                binary_mask = lesion_data > 0
+                region_stats = self._compute_region_stats(
+                    "roi", binary_mask, maps, voxel_sizes
+                )
+                if region_stats is not None:
+                    result.regions["roi"] = region_stats
         else:
             # Standard lesion stats mode
             mask_type, max_label = detect_mask_type(lesion_data)

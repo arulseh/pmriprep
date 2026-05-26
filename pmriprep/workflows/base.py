@@ -1715,6 +1715,11 @@ def init_pmriprep_wf(
         _user_nawm = dsc_config.nawm_mask
         _user_roi = dsc_config.roi_mask
 
+        from pmriprep.utils.lesion_stats import validate_mask_ndim
+        for _name, _path in [("lesion_mask", _user_lesion), ("nawm_mask", _user_nawm), ("roi_mask", _user_roi)]:
+            if _path:
+                validate_mask_ndim(_path, f"dsc.{_name}")
+
         # Reorient user-supplied masks to RAS (they may have different
         # orientation than pipeline-processed images, causing registration
         # failures or left-right flips)
@@ -2512,6 +2517,11 @@ def init_pmriprep_wf(
         _dce_user_lesion = dce_config.lesion_mask
         _dce_user_nawm = dce_config.nawm_mask
         _dce_user_roi = dce_config.roi_mask
+
+        from pmriprep.utils.lesion_stats import validate_mask_ndim
+        for _name, _path in [("lesion_mask", _dce_user_lesion), ("nawm_mask", _dce_user_nawm), ("roi_mask", _dce_user_roi)]:
+            if _path:
+                validate_mask_ndim(_path, f"dce.{_name}")
 
         if _dce_user_roi:
             dce_roi_reorient = pe.Node(Reorient(), name="dce_roi_reorient")
