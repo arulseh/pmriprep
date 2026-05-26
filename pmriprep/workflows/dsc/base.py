@@ -602,20 +602,30 @@ def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
     nawm_mask_file=None,
     reference_file=None,
     transform_matrix=None,
+    needs_transform=True,
 ):
-    """Transform NAWM mask from T1w space to DSC space.
+    """Transform NAWM mask to DSC space, or pass through if already native.
 
-    Uses FSL FLIRT with nearest-neighbour interpolation to resample
-    the NAWM mask into DSC space.
+    When ``needs_transform`` is True (tumor-seg NAWM in T1w space), applies
+    FSL FLIRT with nearest-neighbour interpolation.  When False (user-supplied
+    mask already in DSC native space), validates geometry and returns the
+    input path unchanged.
 
-    Args:
-        nawm_mask_file: Path to NAWM mask in T1w space (or None).
-        reference_file: Path to DSC reference image for output geometry.
-        transform_matrix: Path to T1w→DSC FLIRT matrix.
+    Parameters
+    ----------
+    nawm_mask_file : str or None
+        Path to NAWM mask (or None).
+    reference_file : str or None
+        Path to DSC reference image for output geometry.
+    transform_matrix : str or None
+        Path to T1w→DSC FLIRT matrix (only used when needs_transform=True).
+    needs_transform : bool
+        If False, skip FLIRT and return input path as-is.
 
-    Returns:
-        Path to transformed NAWM mask in DSC space, or "" if no mask.
-        Returns "" (not None) because downstream traits.Str rejects None.
+    Returns
+    -------
+    str
+        Path to NAWM mask in DSC space, or "" if no mask.
     """
     from nipype.interfaces.base import isdefined
 
@@ -623,11 +633,33 @@ def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
         return ""
 
     from pathlib import Path
-    import subprocess
 
     nawm_path = Path(nawm_mask_file)
     if not nawm_path.is_file():
         return ""
+
+    if not needs_transform:
+        import nibabel as nib
+        import numpy as np
+
+        mask_img = nib.load(str(nawm_mask_file))
+        ref_img = nib.load(str(reference_file))
+        if mask_img.shape[:3] != ref_img.shape[:3]:
+            raise ValueError(
+                f"User-supplied NAWM mask shape {mask_img.shape[:3]} does not "
+                f"match DSC volume shape {ref_img.shape[:3]}. "
+                f"Masks under [dsc] config must be in DSC native space."
+            )
+        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+        if affine_diff > 1.0:
+            raise ValueError(
+                f"User-supplied NAWM mask affine differs from DSC volume by "
+                f"{affine_diff:.2f} (max element). "
+                f"Masks under [dsc] config must be in DSC native space."
+            )
+        return str(nawm_mask_file)
+
+    import subprocess
 
     out_dir = Path.cwd()
     out_file = str(out_dir / "nawm_mask_dsc.nii.gz")
@@ -696,6 +728,82 @@ def _transform_lesion_mask_to_dsc(  # type: ignore[no-untyped-def]
     subprocess.run(cmd, check=True, capture_output=True)
 
     return out_file
+
+
+def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
+    user_lesion_mask=None,
+    whole_tumor_mask=None,
+):
+    """Pick the AIF exclusion mask: user-supplied overrides tumor seg.
+
+    Parameters
+    ----------
+    user_lesion_mask : str or None
+        User-supplied lesion mask in DSC native space.
+    whole_tumor_mask : str or None
+        Tumor segmentation whole-tumor mask (T1w space).
+
+    Returns
+    -------
+    str or None
+        Selected mask path, or None if neither is available.
+    """
+    from nipype.interfaces.base import isdefined
+
+    if isdefined(user_lesion_mask) and user_lesion_mask is not None:
+        if user_lesion_mask != "":
+            return user_lesion_mask
+    if isdefined(whole_tumor_mask) and whole_tumor_mask is not None:
+        if whole_tumor_mask != "":
+            return whole_tumor_mask
+    return None
+
+
+def _validate_native_mask(  # type: ignore[no-untyped-def]
+    mask_file=None,
+    reference_file=None,
+    mask_label="mask",
+):
+    """Validate that a user-supplied mask matches the perfusion volume grid.
+
+    Parameters
+    ----------
+    mask_file : str or None
+        Path to the mask NIfTI.
+    reference_file : str or None
+        Path to the perfusion reference volume.
+    mask_label : str
+        Human-readable label for error messages (e.g. "dsc.roi_mask").
+
+    Returns
+    -------
+    str
+        The validated mask path, or "" if no mask.
+    """
+    from nipype.interfaces.base import isdefined
+
+    if not isdefined(mask_file) or mask_file is None or mask_file == "":
+        return ""
+
+    import nibabel as nib
+    import numpy as np
+
+    mask_img = nib.load(str(mask_file))
+    ref_img = nib.load(str(reference_file))
+    if mask_img.shape[:3] != ref_img.shape[:3]:
+        raise ValueError(
+            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "
+            f"match perfusion volume shape {ref_img.shape[:3]}. "
+            f"Masks under config must be in perfusion native space."
+        )
+    affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+    if affine_diff > 1.0:
+        raise ValueError(
+            f"User-supplied {mask_label} affine differs from perfusion volume "
+            f"by {affine_diff:.2f} (max element). "
+            f"Masks under config must be in perfusion native space."
+        )
+    return str(mask_file)
 
 
 def _transform_structural_to_dsc(structural_file=None, reference_file=None, transform_matrix=None, output_name='structural_in_dsc.nii.gz'):  # type: ignore[no-untyped-def]
@@ -1457,11 +1565,13 @@ def init_dsc_preproc_wf(
                 "t1w_postcon_underlay",  # postcontrast T1w underlay (independent of t1w_underlay)
                 "brain_mask",  # Brain mask in T1w space
                 "wm_probseg",  # White matter probability map (optional)
-                "whole_tumor_mask",  # Whole-tumor mask for AIF exclusion + lesion stats (optional)
-                "enhancing_mask",  # Enhancing tumor mask for laterality (optional)
-                "tumor_segmentation",  # Multi-label tumor segmentation for lesion stats (optional)
+                "whole_tumor_mask",  # Whole-tumor mask for AIF exclusion + lesion stats (optional, T1w space)
+                "enhancing_mask",  # Enhancing tumor mask for laterality (optional, T1w space)
+                "tumor_segmentation",  # Multi-label tumor segmentation for lesion stats (optional, T1w space)
+                "user_lesion_mask",  # User-supplied lesion mask in DSC native space (optional)
                 "nawm_mask",  # NAWM mask for normalization (optional)
-                "roi_mask",  # Generic ROI mask for stats extraction only (optional)
+                "nawm_needs_transform",  # True if nawm_mask is in T1w space (tumor seg)
+                "roi_mask",  # Generic ROI mask in DSC native space (optional)
                 "t1w_to_mni_xfm",  # T1w to MNI transform (from ACPC alignment)
                 "te",  # Echo time in seconds
                 "field_strength",  # Magnetic field strength
@@ -1477,6 +1587,7 @@ def init_dsc_preproc_wf(
     inputnode.inputs.te = 0.035  # 35ms echo time (typical DSC-MRI at 3T)
     inputnode.inputs.field_strength = 3.0  # 3T
     inputnode.inputs.tr = 1.5  # 1.5s TR
+    inputnode.inputs.nawm_needs_transform = True
 
     # -------------------------------------------------------------------
     # Output Node
@@ -1564,6 +1675,9 @@ def init_dsc_preproc_wf(
                 # Lesion statistics (conditional on lesion mask)
                 "lesion_stats_json",
                 "lesion_mask_dsc",
+                # User lesion statistics (conditional on user_lesion_mask)
+                "user_lesion_stats_json",
+                "user_lesion_mask_dsc",
                 # ROI statistics (conditional on roi_mask)
                 "roi_stats_json",
                 "roi_mask_dsc",
@@ -1883,12 +1997,36 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     transform_nawm = pe.Node(
         niu.Function(
-            input_names=["nawm_mask_file", "reference_file", "transform_matrix"],
+            input_names=["nawm_mask_file", "reference_file", "transform_matrix",
+                         "needs_transform"],
             output_names=["nawm_mask_dsc_file"],
             function=_transform_nawm_to_dsc,
         ),
         name="transform_nawm",
     )
+
+    # -------------------------------------------------------------------
+    # Node 6c-ii: Validate user-supplied masks against DSC reference grid
+    # -------------------------------------------------------------------
+    validate_roi_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "mask_label"],
+            output_names=["validated_mask"],
+            function=_validate_native_mask,
+        ),
+        name="validate_roi_mask",
+    )
+    validate_roi_mask.inputs.mask_label = "dsc.roi_mask"
+
+    validate_user_lesion_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "mask_label"],
+            output_names=["validated_mask"],
+            function=_validate_native_mask,
+        ),
+        name="validate_user_lesion_mask",
+    )
+    validate_user_lesion_mask.inputs.mask_label = "dsc.lesion_mask"
 
     # -------------------------------------------------------------------
     # Node 6d: Select tumor mask for lesion statistics
@@ -2271,6 +2409,24 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
+    # AIF exclusion mask: user-supplied lesion mask overrides tumor seg
+    select_aif_exclusion = pe.Node(
+        niu.Function(
+            input_names=["user_lesion_mask", "whole_tumor_mask"],
+            output_names=["out_mask"],
+            function=_select_aif_exclusion_mask,
+        ),
+        name="select_aif_exclusion",
+    )
+    workflow.connect([
+        (validate_user_lesion_mask, select_aif_exclusion, [
+            ("validated_mask", "user_lesion_mask"),
+        ]),
+        (inputnode, select_aif_exclusion, [
+            ("whole_tumor_mask", "whole_tumor_mask"),
+        ]),
+    ])
+
     # Signal Conversion to AIF Detection
     # Use DSC-space brain mask (not T1w-space) for proper geometry match
     # Pass raw signal for S0-based partial volume rejection
@@ -2282,8 +2438,10 @@ def init_dsc_preproc_wf(
         (hdbet_dsc, aif_detect, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
+        (select_aif_exclusion, aif_detect, [
+            ("out_mask", "lesion_mask_file"),
+        ]),
         (inputnode, aif_detect, [
-            ("whole_tumor_mask", "lesion_mask_file"),  # Undilated mask for AIF distance exclusion
             ("enhancing_mask", "enhancing_mask_file"),
             ("tr", "tr"),
             ("field_strength", "field_strength"),
@@ -2407,11 +2565,25 @@ def init_dsc_preproc_wf(
             (transform_full_atlas, aif_detect, [("out_file", "full_atlas_mask_file")]),
         ])
 
-    # Transform NAWM mask from T1w to DSC space
+    # Transform NAWM mask to DSC space (FLIRT when from tumor seg, passthrough
+    # when user-supplied in DSC native space)
     workflow.connect([
-        (inputnode, transform_nawm, [("nawm_mask", "nawm_mask_file")]),
+        (inputnode, transform_nawm, [
+            ("nawm_mask", "nawm_mask_file"),
+            ("nawm_needs_transform", "needs_transform"),
+        ]),
         (prebolus_mean, transform_nawm, [("prebolus_mean_file", "reference_file")]),
         (register, transform_nawm, [("out_matrix", "transform_matrix")]),
+    ])
+
+    # Validate user-supplied masks against DSC reference grid
+    workflow.connect([
+        (inputnode, validate_roi_mask, [("roi_mask", "mask_file")]),
+        (prebolus_mean, validate_roi_mask, [("prebolus_mean_file", "reference_file")]),
+        (inputnode, validate_user_lesion_mask, [("user_lesion_mask", "mask_file")]),
+        (prebolus_mean, validate_user_lesion_mask, [
+            ("prebolus_mean_file", "reference_file"),
+        ]),
     ])
 
     # Wire NAWM mask to compute_maps for rTTP normalization
@@ -2580,16 +2752,8 @@ def init_dsc_preproc_wf(
 
     # -------------------------------------------------------------------
     # ROI statistics (conditional on roi_mask input)
+    # roi_mask is user-supplied in DSC native space — no FLIRT transform.
     # -------------------------------------------------------------------
-    transform_roi = pe.Node(
-        niu.Function(
-            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
-            output_names=["lesion_mask_dsc_file"],
-            function=_transform_lesion_mask_to_dsc,
-        ),
-        name="transform_roi",
-    )
-
     from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats as _DSCLesionStatsROI
 
     roi_stats = pe.Node(
@@ -2599,15 +2763,11 @@ def init_dsc_preproc_wf(
     roi_stats.inputs.subject_id = subject_id
     roi_stats.inputs.session_id = session_id
 
-    # Transform ROI mask from T1w to DSC space
+    # Connect validated ROI mask
     workflow.connect([
-        (inputnode, transform_roi, [("roi_mask", "lesion_mask_file")]),
-        (prebolus_mean, transform_roi, [("prebolus_mean_file", "reference_file")]),
-        (register, transform_roi, [("out_matrix", "transform_matrix")]),
-    ])
-    # Connect perfusion maps to ROI stats
-    workflow.connect([
-        (transform_roi, roi_stats, [("lesion_mask_dsc_file", "lesion_mask")]),
+        (validate_roi_mask, roi_stats, [("validated_mask", "lesion_mask")]),
+        (transform_nawm, roi_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
+        (inputnode, roi_stats, [("field_strength", "field_strength_t")]),
         (compute_maps, roi_stats, [
             ("out_rel_cbf", "cbf_map"),
             ("out_rel_cbv_auc", "cbv_map"),
@@ -2615,20 +2775,65 @@ def init_dsc_preproc_wf(
             ("out_tmax", "tmax_map"),
             ("out_psr", "psr_map"),
             ("out_ph", "ph_map"),
+            ("out_ttp", "ttp_map"),
             ("out_ttp_corrected", "ttp_corrected_map"),
             ("out_rttp", "rttp_map"),
         ]),
         (normalize, roi_stats, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, roi_stats, [("ncbf_file", "ncbf_map")]),
         (compute_maps, roi_stats, [("out_k2", "k2_map")]),
-        # AIF provenance — same as lesion_stats.
         (aif_detect, roi_stats, [("qc_metrics", "aif_qc")]),
     ])
     # Connect ROI stats outputs to outputnode
     workflow.connect([
-        (transform_roi, outputnode, [("lesion_mask_dsc_file", "roi_mask_dsc")]),
+        (validate_roi_mask, outputnode, [("validated_mask", "roi_mask_dsc")]),
         (roi_stats, outputnode, [
             ("stats_json", "roi_stats_json"),
+        ]),
+    ])
+
+    # -------------------------------------------------------------------
+    # User lesion statistics (conditional on user_lesion_mask input)
+    # user_lesion_mask is in DSC native space — no FLIRT transform.
+    # Additive: runs alongside tumor seg lesion_stats when both exist.
+    # -------------------------------------------------------------------
+    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats as _DSCLesionStatsUser
+
+    user_lesion_stats = pe.Node(
+        _DSCLesionStatsUser(force_binary=True),
+        name="user_lesion_stats",
+    )
+    user_lesion_stats.inputs.subject_id = subject_id
+    user_lesion_stats.inputs.session_id = session_id
+
+    workflow.connect([
+        (validate_user_lesion_mask, user_lesion_stats, [
+            ("validated_mask", "lesion_mask"),
+        ]),
+        (transform_nawm, user_lesion_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
+        (inputnode, user_lesion_stats, [("field_strength", "field_strength_t")]),
+        (compute_maps, user_lesion_stats, [
+            ("out_rel_cbf", "cbf_map"),
+            ("out_rel_cbv_auc", "cbv_map"),
+            ("out_mtt", "mtt_map"),
+            ("out_tmax", "tmax_map"),
+            ("out_psr", "psr_map"),
+            ("out_ph", "ph_map"),
+            ("out_ttp", "ttp_map"),
+            ("out_ttp_corrected", "ttp_corrected_map"),
+            ("out_rttp", "rttp_map"),
+        ]),
+        (normalize, user_lesion_stats, [("ncbv_file", "ncbv_map")]),
+        (normalize_cbf, user_lesion_stats, [("ncbf_file", "ncbf_map")]),
+        (compute_maps, user_lesion_stats, [("out_k2", "k2_map")]),
+        (aif_detect, user_lesion_stats, [("qc_metrics", "aif_qc")]),
+    ])
+    workflow.connect([
+        (validate_user_lesion_mask, outputnode, [
+            ("validated_mask", "user_lesion_mask_dsc"),
+        ]),
+        (user_lesion_stats, outputnode, [
+            ("stats_json", "user_lesion_stats_json"),
         ]),
     ])
 

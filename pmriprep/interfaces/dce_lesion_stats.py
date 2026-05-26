@@ -234,34 +234,34 @@ class DCELesionStats(BaseInterface):
                 if region_stats is not None:
                     result.regions[region_name] = region_stats
 
-            # Compute NAWM reference if mask provided
-            if self._has_input("nawm_mask"):
-                nawm_img = nib.load(self.inputs.nawm_mask)
-                nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
-                nawm_maps = {
-                    k: v for k, v in maps.items()
-                    if k in ["ktrans", "nktrans", "ve", "vp", "kep"]
-                }
-                fs = float(self.inputs.field_strength_t) or None
-                result.nawm_reference = compute_nawm_reference(
-                    nawm_data, nawm_maps, voxel_sizes,
-                    field_strength_t=fs,
-                )
-
-            # Compute derived metrics for primary region
-            primary_mask = lesion_data > 0
-            result.derived_metrics = compute_dce_derived_metrics(
-                ktrans_data=maps.get("ktrans"),
-                nktrans_data=maps.get("nktrans"),
-                ve_data=maps.get("ve"),
-                vp_data=maps.get("vp"),
-                mask=primary_mask,
-                niauc60_data=maps.get("niauc60"),
+        # Compute NAWM reference if mask provided
+        if self._has_input("nawm_mask"):
+            nawm_img = nib.load(self.inputs.nawm_mask)
+            nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
+            nawm_maps = {
+                k: v for k, v in maps.items()
+                if k in ["ktrans", "nktrans", "ve", "vp", "kep"]
+            }
+            fs = float(self.inputs.field_strength_t) or None
+            result.nawm_reference = compute_nawm_reference(
+                nawm_data, nawm_maps, voxel_sizes,
+                field_strength_t=fs,
             )
 
-            # Augment per-region per-map stats with Cohen's d vs NAWM
-            # (no-op when nawm_reference is empty).
-            result.augment_with_cohens_d()
+        # Compute derived metrics for primary region
+        primary_mask = lesion_data > 0
+        result.derived_metrics = compute_dce_derived_metrics(
+            ktrans_data=maps.get("ktrans"),
+            nktrans_data=maps.get("nktrans"),
+            ve_data=maps.get("ve"),
+            vp_data=maps.get("vp"),
+            mask=primary_mask,
+            niauc60_data=maps.get("niauc60"),
+        )
+
+        # Augment per-region per-map stats with Cohen's d vs NAWM
+        # (no-op when nawm_reference is empty).
+        result.augment_with_cohens_d()
 
         # Write outputs
         output_dir = Path(runtime.cwd)

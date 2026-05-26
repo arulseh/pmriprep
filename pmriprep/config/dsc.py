@@ -72,11 +72,12 @@ class DSCConfig:
     disable_aif_fallback : bool
         Disable synthetic AIF fallback when detection fails.
     lesion_mask : Optional[Path]
-        Path to lesion mask for AIF exclusion and lesion statistics.
+        Path to lesion mask in DSC native space for AIF exclusion and
+        lesion statistics.
     nawm_mask : Optional[Path]
-        Path to NAWM mask for CBV normalization.
+        Path to NAWM mask in DSC native space for CBV normalization.
     roi_mask : Optional[Path]
-        Path to ROI mask for stats extraction only (no processing impact).
+        Path to ROI mask in DSC native space for stats extraction only.
     registration : Literal["flirt", "flirt_bbr"]
         Registration method: 'flirt' (FLIRT only) or 'flirt_bbr' (FLIRT + BBR
         refinement, keeping whichever is best).
@@ -128,10 +129,12 @@ class DSCConfig:
     disable_aif_fallback: bool = False
     aif_method: Literal["auto", "synthetic"] = "auto"
 
-    # Registration settings
+    # User-supplied masks (DSC native space)
     lesion_mask: Optional[Path] = None
     nawm_mask: Optional[Path] = None
     roi_mask: Optional[Path] = None
+
+    # Registration settings
     registration: Literal["flirt", "flirt_bbr"] = "flirt"
 
     # Processing settings

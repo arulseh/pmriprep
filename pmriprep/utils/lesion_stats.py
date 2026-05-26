@@ -11,6 +11,7 @@ Key features:
 - NAWM reference value extraction
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -969,6 +970,43 @@ def _slice_nawm_for_map(
     # value_qc_notes — the map is fine, no cross-map context needed.
 
     return out
+
+
+def load_lesion_stats_fragment(
+    stats_json_path: Optional[str],
+    map_key: str,
+) -> Optional[Dict[str, Any]]:
+    """Load an aggregate lesion-stats JSON and return the per-map fragment.
+
+    Parameters
+    ----------
+    stats_json_path : str or None
+        Path to the aggregate lesion-stats JSON file.
+    map_key : str
+        Perfusion map name (e.g. "ktrans", "cbf").
+
+    Returns
+    -------
+    dict or None
+        Per-map lesion stats fragment, or None.
+    """
+    from nipype.interfaces.base import isdefined
+
+    if not isdefined(stats_json_path) or not stats_json_path:
+        return None
+    path = Path(stats_json_path)
+    if not path.exists():
+        return None
+    try:
+        with open(path) as fh:
+            aggregate = json.load(fh)
+        return extract_per_map_lesion_stats(aggregate, map_key)
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        logger.debug(
+            "Failed to load lesion stats from %s", stats_json_path,
+            exc_info=True,
+        )
+        return None
 
 
 def extract_per_map_lesion_stats(

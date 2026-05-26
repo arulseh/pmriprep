@@ -24,11 +24,12 @@ class DCEConfig:
     Attributes
     ----------
     lesion_mask : Optional[Path]
-        Path to lesion mask for AIF exclusion and lesion statistics.
+        Path to lesion mask in DCE native space for AIF exclusion and
+        lesion statistics.
     nawm_mask : Optional[Path]
-        Path to NAWM mask in T1w space (NAWM normalization).
+        Path to NAWM mask in DCE native space for Ktrans normalization.
     roi_mask : Optional[Path]
-        Path to ROI mask for stats extraction only (no processing impact).
+        Path to ROI mask in DCE native space for stats extraction only.
     aif_method : Literal["auto", "population"]
         AIF detection method: auto or population.
     scale_aif : bool
@@ -76,7 +77,7 @@ class DCEConfig:
         Device for HD-BET brain extraction: auto, cuda, mps, or cpu.
     """
 
-    # Registration settings
+    # User-supplied masks (DCE native space)
     lesion_mask: Optional[Path] = None
     nawm_mask: Optional[Path] = None
     roi_mask: Optional[Path] = None

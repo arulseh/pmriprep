@@ -162,6 +162,7 @@ def _build_map_meta(  # type: ignore[no-untyped-def]
     units=None,
     extra=None,
     lesion_stats_json=None,
+    user_lesion_stats_json=None,
 ):
     """Compose a DSC per-map sidecar; injects per-map LesionStats fragment.
 
@@ -171,29 +172,18 @@ def _build_map_meta(  # type: ignore[no-untyped-def]
     the ``extra`` dict alongside any caller-provided extras (e.g.
     K2/Bayesian/Vascular extras).
     """
-    import json as _json
-    from pathlib import Path
-
-    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
-
-    from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment
     from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar
 
-    fragment = None
-    if isdefined(lesion_stats_json) and lesion_stats_json:
-        path = Path(lesion_stats_json)
-        if path.exists():
-            try:
-                with open(path) as fh:
-                    aggregate = _json.load(fh)
-                fragment = extract_per_map_lesion_stats(aggregate, map_key)
-            except Exception:
-                fragment = None
+    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)
+    user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)
 
+    merged_extra = dict(extra) if extra else {}
     if fragment:
-        merged_extra = dict(extra) if extra else {}
         merged_extra["LesionStats"] = fragment
-    else:
+    if user_fragment:
+        merged_extra["UserLesionStats"] = user_fragment
+    if not merged_extra:
         merged_extra = extra
 
     return build_dsc_map_sidecar(
@@ -596,7 +586,7 @@ def _add_perf_map_sink(
         niu.Function(
             input_names=[
                 "base", "description", "map_key", "qc_metrics", "units",
-                "extra", "lesion_stats_json",
+                "extra", "lesion_stats_json", "user_lesion_stats_json",
             ],
             output_names=["meta_dict"],
             function=_build_map_meta,
@@ -612,6 +602,7 @@ def _add_perf_map_sink(
         (inputnode, meta, [
             ("qc_metrics", "qc_metrics"),
             ("lesion_stats_json", "lesion_stats_json"),
+            ("user_lesion_stats_json", "user_lesion_stats_json"),
         ]),
     ])
 
@@ -815,6 +806,7 @@ def init_dsc_datasinks_wf(
                 # Anat-side: masks + structural underlays + xfms + lesion/roi
                 "brain_mask_dsc", "nawm_mask_dsc",
                 "lesion_mask_dsc", "lesion_stats_json",
+                "user_lesion_mask_dsc", "user_lesion_stats_json",
                 "roi_mask_dsc", "roi_stats_json",
                 "t1w_in_dsc", "t1w_postcon_in_dsc",
                 "flair_in_dsc", "t2w_in_dsc",
@@ -992,7 +984,7 @@ def init_dsc_datasinks_wf(
             niu.Function(
                 input_names=[
                     "base", "description", "map_key", "qc_metrics", "units",
-                    "extra", "lesion_stats_json",
+                    "extra", "lesion_stats_json", "user_lesion_stats_json",
                 ],
                 output_names=["meta_dict"],
                 function=_build_map_meta,
@@ -1007,6 +999,7 @@ def init_dsc_datasinks_wf(
             (inputnode, k2_meta, [
                 ("qc_metrics", "qc_metrics"),
                 ("lesion_stats_json", "lesion_stats_json"),
+                ("user_lesion_stats_json", "user_lesion_stats_json"),
             ]),
             (k2_extra_node, k2_meta, [("extra", "extra")]),
         ])
@@ -1304,6 +1297,15 @@ def init_dsc_datasinks_wf(
             in_attr="lesion_mask_dsc",
             desc_value="lesion", suffix="mask",
             description="Lesion mask registered to DSC space",
+        )
+        sink_outputs.append((sink, "out_file"))
+    if "user_lesion_mask_dsc" in present:
+        sink = _add_anat_sink(
+            workflow, inputnode, base_minimal,
+            name="user_lesion_mask_dsc",
+            in_attr="user_lesion_mask_dsc",
+            desc_value="userLesion", suffix="mask",
+            description="User-supplied lesion mask in DSC native space",
         )
         sink_outputs.append((sink, "out_file"))
     if "roi_mask_dsc" in present:

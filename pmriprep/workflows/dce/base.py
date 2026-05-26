@@ -223,11 +223,12 @@ def init_dce_preproc_wf(
                 "t1w_postcon_underlay",  # postcontrast T1w underlay (independent of t1w_underlay)
                 "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
                 "t2w_in_t1w",  # T2w coregistered to T1w space (from anat)
-                # NAWM mask input (from tumor segmentation, for normalization)
-                "nawm_mask",  # NAWM mask in T1w space for nKtrans, nIAUC60
-                # Generic ROI mask for stats extraction only (optional)
+                # NAWM mask input (for normalization)
+                "nawm_mask",
+                "nawm_needs_transform",  # True if nawm_mask is in T1w space (tumor seg)
+                # Generic ROI mask in DCE native space (optional)
                 "roi_mask",
-                # User-supplied lesion mask (T1w space) for QC bars
+                # User-supplied lesion mask in DCE native space for QC bars
                 "user_lesion_mask",
             ]
         ),
@@ -243,6 +244,8 @@ def init_dce_preproc_wf(
     # in the same session.
     inputnode.inputs.dsc_dose = 1.0
     inputnode.inputs.dsc_agent_standard_dose = 0.1
+
+    inputnode.inputs.nawm_needs_transform = True
 
     # Default structural underlay inputs to None
     inputnode.inputs.t1w_underlay = None
@@ -330,6 +333,9 @@ def init_dce_preproc_wf(
                 # Lesion statistics (conditional on lesion mask)
                 "lesion_stats_json",
                 "lesion_mask_dce",
+                # User lesion statistics (conditional on user_lesion_mask)
+                "user_lesion_stats_json",
+                "user_lesion_mask_dce",
                 # ROI statistics (conditional on roi_mask)
                 "roi_stats_json",
                 "roi_mask_dce",
@@ -1134,20 +1140,55 @@ def init_dce_preproc_wf(
 
     # ==========================================================================
     # Node 8: Transform NAWM mask to DCE space (for normalization)
+    # FLIRT when from tumor seg (T1w space), passthrough when user-supplied
     # ==========================================================================
     transform_nawm_mask = pe.Node(
         niu.Function(
-            input_names=["mask_file", "reference_file", "transform_matrix"],
+            input_names=["mask_file", "reference_file", "transform_matrix",
+                         "needs_transform"],
             output_names=["out_file"],
-            function=_transform_mask_to_dce,
+            function=_transform_mask_to_dce_conditional,
         ),
         name="transform_nawm_mask",
     )
 
     workflow.connect([
-        (inputnode, transform_nawm_mask, [("nawm_mask", "mask_file")]),
+        (inputnode, transform_nawm_mask, [
+            ("nawm_mask", "mask_file"),
+            ("nawm_needs_transform", "needs_transform"),
+        ]),
         (dce_preprocess, transform_nawm_mask, [("mean_img", "reference_file")]),
         (dce_registration, transform_nawm_mask, [("out_matrix", "transform_matrix")]),
+    ])
+
+    # Validate user-supplied masks against DCE reference grid
+    validate_roi_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "mask_label"],
+            output_names=["validated_mask"],
+            function=_validate_native_mask,
+        ),
+        name="validate_roi_mask",
+    )
+    validate_roi_mask.inputs.mask_label = "dce.roi_mask"
+
+    validate_user_lesion_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "mask_label"],
+            output_names=["validated_mask"],
+            function=_validate_native_mask,
+        ),
+        name="validate_user_lesion_mask",
+    )
+    validate_user_lesion_mask.inputs.mask_label = "dce.lesion_mask"
+
+    workflow.connect([
+        (inputnode, validate_roi_mask, [("roi_mask", "mask_file")]),
+        (dce_preprocess, validate_roi_mask, [("mean_img", "reference_file")]),
+        (inputnode, validate_user_lesion_mask, [("user_lesion_mask", "mask_file")]),
+        (dce_preprocess, validate_user_lesion_mask, [
+            ("mean_img", "reference_file"),
+        ]),
     ])
 
     # Transform non-enhancing mask to DCE space (for model selection QC)
@@ -1179,20 +1220,7 @@ def init_dce_preproc_wf(
         (dce_registration, transform_enhancing_mask, [("out_matrix", "transform_matrix")]),
     ])
 
-    # Transform user-supplied lesion mask to DCE space (for QC bars)
-    transform_user_lesion_mask = pe.Node(
-        niu.Function(
-            input_names=["mask_file", "reference_file", "transform_matrix"],
-            output_names=["out_file"],
-            function=_transform_mask_to_dce,
-        ),
-        name="transform_user_lesion_mask",
-    )
-    workflow.connect([
-        (inputnode, transform_user_lesion_mask, [("user_lesion_mask", "mask_file")]),
-        (dce_preprocess, transform_user_lesion_mask, [("mean_img", "reference_file")]),
-        (dce_registration, transform_user_lesion_mask, [("out_matrix", "transform_matrix")]),
-    ])
+    # User-supplied lesion mask is already in DCE native space — no FLIRT.
 
     # ==========================================================================
     # Node 8a: NAWM Normalization (nKtrans, nIAUC60)
@@ -1369,8 +1397,8 @@ def init_dce_preproc_wf(
         (transform_nawm_mask, dce_pk_maps_qc, [
             ("out_file", "nawm_mask_file"),
         ]),
-        (transform_user_lesion_mask, dce_pk_maps_qc, [
-            ("out_file", "user_lesion_mask_file"),
+        (validate_user_lesion_mask, dce_pk_maps_qc, [
+            ("validated_mask", "user_lesion_mask_file"),
         ]),
     ])
 
@@ -1706,10 +1734,24 @@ def init_dce_preproc_wf(
         (dce_registration, transform_lesion, [("out_matrix", "transform_matrix")]),
     ])
 
-    # Connect transformed lesion mask to AIF detection (must be in DCE space)
+    # AIF exclusion: user-supplied lesion mask overrides tumor seg
+    select_aif_exclusion = pe.Node(
+        niu.Function(
+            input_names=["user_lesion_mask", "transformed_lesion_mask"],
+            output_names=["out_mask"],
+            function=_select_aif_exclusion_mask,
+        ),
+        name="select_aif_exclusion",
+    )
     workflow.connect([
-        (transform_lesion, aif_detection, [
-            ("lesion_mask_dce_file", "lesion_mask_file"),
+        (validate_user_lesion_mask, select_aif_exclusion, [
+            ("validated_mask", "user_lesion_mask"),
+        ]),
+        (transform_lesion, select_aif_exclusion, [
+            ("lesion_mask_dce_file", "transformed_lesion_mask"),
+        ]),
+        (select_aif_exclusion, aif_detection, [
+            ("out_mask", "lesion_mask_file"),
         ]),
     ])
 
@@ -1782,6 +1824,49 @@ def init_dce_preproc_wf(
         (normalize_ktrans, lesion_stats, [("out_file", "nktrans_map")]),
         (normalize_iauc60, lesion_stats, [("out_file", "niauc60_map")]),
         (inputnode, lesion_stats, [("field_strength", "field_strength_t")]),
+    ])
+
+    # ==========================================================================
+    # Node 11b: User lesion statistics (conditional on user_lesion_mask)
+    # user_lesion_mask is in DCE native space — no FLIRT transform.
+    # Additive: runs alongside tumor seg lesion_stats when both exist.
+    # ==========================================================================
+    from pmriprep.interfaces.dce_lesion_stats import DCELesionStats as _DCELesionStatsUser
+
+    user_lesion_stats = pe.Node(
+        _DCELesionStatsUser(force_binary=True),
+        name="user_lesion_stats",
+    )
+    user_lesion_stats.inputs.subject_id = subject_id
+    user_lesion_stats.inputs.session_id = session_id
+
+    workflow.connect([
+        (validate_user_lesion_mask, user_lesion_stats, [
+            ("validated_mask", "lesion_mask"),
+        ]),
+        (transform_nawm_mask, user_lesion_stats, [("out_file", "nawm_mask")]),
+        (pk_modeling, user_lesion_stats, [
+            ("out_ktrans", "ktrans_map"),
+            ("out_ve", "ve_map"),
+            ("out_vp", "vp_map"),
+            ("out_kep", "kep_map"),
+            ("out_iauc60", "iauc60_map"),
+            ("out_iauc90", "iauc90_map"),
+            ("out_iauc120", "iauc120_map"),
+            ("out_peak_enhancement", "peak_enhancement_map"),
+            ("out_time_to_peak", "ttp_map"),
+        ]),
+        (normalize_ktrans, user_lesion_stats, [("out_file", "nktrans_map")]),
+        (normalize_iauc60, user_lesion_stats, [("out_file", "niauc60_map")]),
+        (inputnode, user_lesion_stats, [("field_strength", "field_strength_t")]),
+    ])
+    workflow.connect([
+        (validate_user_lesion_mask, outputnode, [
+            ("validated_mask", "user_lesion_mask_dce"),
+        ]),
+        (user_lesion_stats, outputnode, [
+            ("stats_json", "user_lesion_stats_json"),
+        ]),
     ])
 
     # ==========================================================================
@@ -2035,16 +2120,8 @@ def init_dce_preproc_wf(
 
     # -------------------------------------------------------------------
     # ROI statistics (conditional on roi_mask input)
+    # roi_mask is user-supplied in DCE native space — no FLIRT transform.
     # -------------------------------------------------------------------
-    transform_roi = pe.Node(
-        niu.Function(
-            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
-            output_names=["lesion_mask_dce_file"],
-            function=_transform_lesion_mask_to_dce,
-        ),
-        name="transform_roi",
-    )
-
     from pmriprep.interfaces.dce_lesion_stats import DCELesionStats as _DCELesionStatsROI
 
     roi_stats = pe.Node(
@@ -2054,19 +2131,14 @@ def init_dce_preproc_wf(
     roi_stats.inputs.subject_id = subject_id
     roi_stats.inputs.session_id = session_id
 
-    # Transform ROI mask from T1w to DCE space
+    # Connect validated ROI mask
     workflow.connect([
-        (inputnode, transform_roi, [("roi_mask", "lesion_mask_file")]),
-        (dce_preprocess, transform_roi, [("mean_img", "reference_file")]),
-        (dce_registration, transform_roi, [("out_matrix", "transform_matrix")]),
-        # Wire transformed ROI mask to model selection QC bars
-        (transform_roi, dce_pk_maps_qc, [
-            ("lesion_mask_dce_file", "roi_mask_file"),
+        (validate_roi_mask, roi_stats, [("validated_mask", "lesion_mask")]),
+        (transform_nawm_mask, roi_stats, [("out_file", "nawm_mask")]),
+        (inputnode, roi_stats, [("field_strength", "field_strength_t")]),
+        (validate_roi_mask, dce_pk_maps_qc, [
+            ("validated_mask", "roi_mask_file"),
         ]),
-    ])
-    # Connect perfusion maps to ROI stats
-    workflow.connect([
-        (transform_roi, roi_stats, [("lesion_mask_dce_file", "lesion_mask")]),
         (pk_modeling, roi_stats, [
             ("out_ktrans", "ktrans_map"),
             ("out_ve", "ve_map"),
@@ -2081,7 +2153,7 @@ def init_dce_preproc_wf(
     ])
     # Connect ROI stats outputs to outputnode
     workflow.connect([
-        (transform_roi, outputnode, [("lesion_mask_dce_file", "roi_mask_dce")]),
+        (validate_roi_mask, outputnode, [("validated_mask", "roi_mask_dce")]),
         (roi_stats, outputnode, [
             ("stats_json", "roi_stats_json"),
         ]),
@@ -2126,6 +2198,82 @@ def init_dce_preproc_wf(
 
 
 
+def _validate_native_mask(  # type: ignore[no-untyped-def]
+    mask_file=None,
+    reference_file=None,
+    mask_label="mask",
+):
+    """Validate that a user-supplied mask matches the perfusion volume grid.
+
+    Parameters
+    ----------
+    mask_file : str or None
+        Path to the mask NIfTI.
+    reference_file : str or None
+        Path to the perfusion reference volume.
+    mask_label : str
+        Human-readable label for error messages (e.g. "dce.roi_mask").
+
+    Returns
+    -------
+    str
+        The validated mask path, or "" if no mask.
+    """
+    from nipype.interfaces.base import isdefined
+
+    if not isdefined(mask_file) or mask_file is None or mask_file == "":
+        return ""
+
+    import nibabel as nib
+    import numpy as np
+
+    mask_img = nib.load(str(mask_file))
+    ref_img = nib.load(str(reference_file))
+    if mask_img.shape[:3] != ref_img.shape[:3]:
+        raise ValueError(
+            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "
+            f"match perfusion volume shape {ref_img.shape[:3]}. "
+            f"Masks under config must be in perfusion native space."
+        )
+    affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+    if affine_diff > 1.0:
+        raise ValueError(
+            f"User-supplied {mask_label} affine differs from perfusion volume "
+            f"by {affine_diff:.2f} (max element). "
+            f"Masks under config must be in perfusion native space."
+        )
+    return str(mask_file)
+
+
+def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
+    user_lesion_mask=None,
+    transformed_lesion_mask=None,
+):
+    """Pick the AIF exclusion mask: user-supplied overrides tumor seg.
+
+    Parameters
+    ----------
+    user_lesion_mask : str or None
+        User-supplied lesion mask in DCE native space.
+    transformed_lesion_mask : str or None
+        FLIRT-transformed tumor seg lesion mask in DCE space.
+
+    Returns
+    -------
+    str or None
+        Selected mask path, or None if neither is available.
+    """
+    from nipype.interfaces.base import isdefined
+
+    if isdefined(user_lesion_mask) and user_lesion_mask is not None:
+        if user_lesion_mask != "":
+            return user_lesion_mask
+    if isdefined(transformed_lesion_mask) and transformed_lesion_mask is not None:
+        if transformed_lesion_mask != "":
+            return transformed_lesion_mask
+    return None
+
+
 def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
     mask_file=None,
     reference_file=None,
@@ -2139,14 +2287,84 @@ def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
     via ``inspect.getsource`` and runs it in a worker that cannot see
     module-level imports.
 
-    Args:
-        mask_file: Path to brain mask in T1w space (or None).
-        reference_file: Path to DCE reference image for output geometry.
-        transform_matrix: Path to T1w→DCE FLIRT matrix.
+    Parameters
+    ----------
+    mask_file : str or None
+        Path to brain mask in T1w space (or None).
+    reference_file : str or None
+        Path to DCE reference image for output geometry.
+    transform_matrix : str or None
+        Path to T1w→DCE FLIRT matrix.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to transformed brain mask in DCE space, or "" if no mask.
     """
+    from pmriprep.utils.registration import transform_mask_to_grid
+
+    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)
+
+
+def _transform_mask_to_dce_conditional(  # type: ignore[no-untyped-def]
+    mask_file=None,
+    reference_file=None,
+    transform_matrix=None,
+    needs_transform=True,
+):
+    """Transform mask to DCE space, or pass through if already native.
+
+    When ``needs_transform`` is True (tumor-seg mask in T1w space), delegates
+    to ``transform_mask_to_grid``.  When False (user-supplied mask already in
+    DCE native space), validates geometry and returns the input path.
+
+    Parameters
+    ----------
+    mask_file : str or None
+        Path to mask (or None).
+    reference_file : str or None
+        Path to DCE reference image for output geometry.
+    transform_matrix : str or None
+        Path to T1w→DCE FLIRT matrix (only used when needs_transform=True).
+    needs_transform : bool
+        If False, skip FLIRT and return input path as-is.
+
+    Returns
+    -------
+    str
+        Path to mask in DCE space, or "" if no mask.
+    """
+    from nipype.interfaces.base import isdefined
+
+    if not isdefined(mask_file) or mask_file is None:
+        return ""
+
+    from pathlib import Path
+
+    if not Path(mask_file).is_file():
+        return ""
+
+    if not needs_transform:
+        import nibabel as nib
+        import numpy as np
+
+        mask_img = nib.load(str(mask_file))
+        ref_img = nib.load(str(reference_file))
+        if mask_img.shape[:3] != ref_img.shape[:3]:
+            raise ValueError(
+                f"User-supplied mask shape {mask_img.shape[:3]} does not "
+                f"match DCE volume shape {ref_img.shape[:3]}. "
+                f"Masks under [dce] config must be in DCE native space."
+            )
+        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+        if affine_diff > 1.0:
+            raise ValueError(
+                f"User-supplied mask affine differs from DCE volume by "
+                f"{affine_diff:.2f} (max element). "
+                f"Masks under [dce] config must be in DCE native space."
+            )
+        return str(mask_file)
+
     from pmriprep.utils.registration import transform_mask_to_grid
 
     return transform_mask_to_grid(mask_file, reference_file, transform_matrix)

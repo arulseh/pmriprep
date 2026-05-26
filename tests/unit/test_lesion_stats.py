@@ -1117,6 +1117,10 @@ class TestIsIntegerValued:
 class TestMultiLabelRoiStats:
     """Tests for multi-label ROI stats via force_binary path."""
 
+    @pytest.fixture(autouse=True)
+    def _run_in_tmp(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
     def _make_mask(self, tmp_path, data: np.ndarray) -> str:
         import nibabel as nib
         img = nib.Nifti1Image(data.astype(np.float32), np.eye(4))

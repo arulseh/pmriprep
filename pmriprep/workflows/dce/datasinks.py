@@ -158,7 +158,7 @@ def _build_dce_base(  # type: ignore[no-untyped-def]
 
 def _build_dce_meta(  # type: ignore[no-untyped-def]
     base, description, units=None, extra=None,
-    map_key="", lesion_stats_json=None,
+    map_key="", lesion_stats_json=None, user_lesion_stats_json=None,
 ):
     """Compose a generic DCE sidecar; optionally inject LesionStats fragment.
 
@@ -169,6 +169,7 @@ def _build_dce_meta(  # type: ignore[no-untyped-def]
     through ``_build_dce_pk_map_meta``.
     """
     from pmriprep.utils.aif_provenance import stamp_aif_dependency
+    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment
 
     out = dict(base)
     out["Description"] = description
@@ -179,26 +180,14 @@ def _build_dce_meta(  # type: ignore[no-untyped-def]
 
     if map_key:
         stamp_aif_dependency(out, map_key, modality="DCE")
-
-    if map_key and lesion_stats_json:
-        import json as _json
-        from pathlib import Path
-
-        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
-
-        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
-
-        if isdefined(lesion_stats_json) and lesion_stats_json:
-            path = Path(lesion_stats_json)
-            if path.exists():
-                try:
-                    with open(path) as fh:
-                        aggregate = _json.load(fh)
-                    fragment = extract_per_map_lesion_stats(aggregate, map_key)
-                    if fragment:
-                        out["LesionStats"] = fragment
-                except Exception:
-                    pass
+        fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)
+        if fragment:
+            out["LesionStats"] = fragment
+        user_fragment = load_lesion_stats_fragment(
+            user_lesion_stats_json, map_key,
+        )
+        if user_fragment:
+            out["UserLesionStats"] = user_fragment
     return out
 
 
@@ -257,7 +246,7 @@ def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
 
 def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
     base, description, units=None, qc_metrics=None, map_key="",
-    lesion_stats_json=None,
+    lesion_stats_json=None, user_lesion_stats_json=None,
 ):
     """Compose a DCE per-PK-map sidecar with cosmetic enrichment + lesion fragment.
 
@@ -268,12 +257,7 @@ def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
     (``DSCDCECrossValCorrelation``, ``CBVNegativeFraction``) land only on
     the maps they apply to per the bids-spec-expert PR1 review.
     """
-    import json as _json
-    from pathlib import Path
-
-    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
-
-    from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment
     from pmriprep.utils.sidecar_builders import enrich_dce_pk_map_sidecar
 
     out = dict(base)
@@ -281,16 +265,7 @@ def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
     if units is not None:
         out["Units"] = units
 
-    fragment = None
-    if isdefined(lesion_stats_json) and lesion_stats_json:
-        path = Path(lesion_stats_json)
-        if path.exists():
-            try:
-                with open(path) as fh:
-                    aggregate = _json.load(fh)
-                fragment = extract_per_map_lesion_stats(aggregate, map_key)
-            except Exception:
-                fragment = None
+    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)
 
     enrich_dce_pk_map_sidecar(
         out,
@@ -298,6 +273,12 @@ def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
         map_key=map_key,
         lesion_fragment=fragment,
     )
+
+    user_fragment = load_lesion_stats_fragment(
+        user_lesion_stats_json, map_key,
+    )
+    if user_fragment:
+        out["UserLesionStats"] = user_fragment
     return out
 
 
@@ -640,7 +621,7 @@ def _add_perf_map_sink(
         niu.Function(
             input_names=[
                 "base", "description", "units", "extra",
-                "map_key", "lesion_stats_json",
+                "map_key", "lesion_stats_json", "user_lesion_stats_json",
             ],
             output_names=["meta_dict"],
             function=_build_dce_meta,
@@ -654,6 +635,10 @@ def _add_perf_map_sink(
     workflow.connect(base_node, "meta_dict", meta, "base")
     if map_key:
         workflow.connect(inputnode, "lesion_stats_json", meta, "lesion_stats_json")
+        workflow.connect(
+            inputnode, "user_lesion_stats_json",
+            meta, "user_lesion_stats_json",
+        )
 
     sink = pe.Node(
         niu.Function(
@@ -751,7 +736,7 @@ def _add_dce_pk_map_sink(
         niu.Function(
             input_names=[
                 "base", "description", "units", "qc_metrics", "map_key",
-                "lesion_stats_json",
+                "lesion_stats_json", "user_lesion_stats_json",
             ],
             output_names=["meta_dict"],
             function=_build_dce_pk_map_meta,
@@ -766,6 +751,7 @@ def _add_dce_pk_map_sink(
         (inputnode, meta, [
             ("qc_metrics", "qc_metrics"),
             ("lesion_stats_json", "lesion_stats_json"),
+            ("user_lesion_stats_json", "user_lesion_stats_json"),
         ]),
     ])
 
@@ -993,6 +979,7 @@ def init_dce_datasinks_wf(
                 "flair_in_dce", "t2w_in_dce", "dce_to_t1w_xfm",
                 # Lesion/ROI
                 "lesion_mask_dce", "lesion_stats_json",
+                "user_lesion_mask_dce", "user_lesion_stats_json",
                 "roi_mask_dce", "roi_stats_json",
                 # Sidecar drivers
                 "qc_metrics", "provenance_dict", "preflight_warnings",
@@ -1451,6 +1438,14 @@ def init_dce_datasinks_wf(
             name="lesion_mask_dce", in_attr="lesion_mask_dce",
             desc_value="lesion",
             description="Lesion mask registered to DCE space",
+        )
+        sink_outputs.append((sink, "out_file"))
+    if "user_lesion_mask_dce" in present:
+        sink = _add_anat_mask_sink(
+            workflow, inputnode, base_minimal,
+            name="user_lesion_mask_dce", in_attr="user_lesion_mask_dce",
+            desc_value="userLesion",
+            description="User-supplied lesion mask in DCE native space",
         )
         sink_outputs.append((sink, "out_file"))
     if "roi_mask_dce" in present:
