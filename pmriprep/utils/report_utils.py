@@ -32,8 +32,8 @@ _DSC_DECONV_TEXT: dict[str, str] = {
     "sSVD": "standard singular value decomposition (sSVD; Ostergaard et al., 1996)",
     "oSVD": "oscillation-index regularized SVD (oSVD; Wu et al., 2003)",
     "tikhonov": (
-        "Tikhonov-regularized deconvolution with generalized cross-validation "
-        "(Hansen, 1992; Calamante et al., 2000)"
+        "Tikhonov-regularized deconvolution with L-curve corner detection "
+        "(Hansen, 1998; Calamante et al., 2003)"
     ),
     "vascular": (
         "the vascular model with gamma-variate transit time distribution "
@@ -47,7 +47,7 @@ _DCE_PK_MODEL_TEXT: dict[str, str] = {
     "tofts": "the standard Tofts model (Tofts & Kermode, 1991)",
     "extended_tofts": "the extended Tofts model (Tofts et al., 1999)",
     "patlak": "the Patlak model (Patlak et al., 1983)",
-    "2cxm": "the two-compartment exchange model (Sourbron & Buckley, 2011)",
+    "2cxm": "the two-compartment exchange model (Sourbron & Buckley, 2013)",
 }
 
 # Boilerplate text for T1 mapping methods
@@ -116,11 +116,11 @@ _REFERENCES: dict[str, str] = {
         "significantly correlate with glioma tumor grade, whereas uncorrected maps do not. "
         "AJNR Am J Neuroradiol. 2006;27(4):859-867."
     ),
-    "calamante_2000": (
+    "calamante_2003": (
         "Calamante F, Gadian DG, Connelly A. "
-        "Delay and dispersion effects in dynamic susceptibility contrast MRI: "
-        "simulations using singular value decomposition. "
-        "Magn Reson Med. 2000;44(3):466-473. doi:10.1002/1522-2594(200009)44:3<466::AID-MRM18>3.0.CO;2-M"
+        "Quantification of bolus-tracking MRI: improved characterization of the tissue "
+        "residue function using Tikhonov regularization. "
+        "Magn Reson Med. 2003;50(6):1237-1247. doi:10.1002/mrm.10643"
     ),
     "chappell_2009": (
         "Chappell MA, Groves AR, Whitcher B, Woolrich MW. "
@@ -132,15 +132,21 @@ _REFERENCES: dict[str, str] = {
         "Rapid combined T1 and T2 mapping using gradient recalled acquisition in the steady state. "
         "Magn Reson Med. 2003;49(3):515-526. doi:10.1002/mrm.10407"
     ),
+    "groves_2009": (
+        "Groves AR, Chappell MA, Woolrich MW. "
+        "Combined spatial and non-spatial prior for inference on MRI time-series. "
+        "NeuroImage. 2009;45(3):795-809. doi:10.1016/j.neuroimage.2008.12.027"
+    ),
     "gorgolewski_2011": (
         "Gorgolewski K, Burns CD, Madison C, et al. "
         "Nipype: a flexible, lightweight and extensible neuroimaging data processing framework in Python. "
         "Front Neuroinform. 2011;5:13. doi:10.3389/fninf.2011.00013"
     ),
-    "hansen_1992": (
+    "hansen_1998": (
         "Hansen PC. "
-        "Analysis of discrete ill-posed problems by means of the L-curve. "
-        "SIAM Rev. 1992;34(4):561-580. doi:10.1137/1034115"
+        "Rank-Deficient and Discrete Ill-Posed Problems: "
+        "Numerical Aspects of Linear Inversion. "
+        "Philadelphia: SIAM; 1998."
     ),
     "isensee_2019": (
         "Isensee F, Schell M, Pflueger I, et al. "
@@ -186,6 +192,11 @@ _REFERENCES: dict[str, str] = {
         "arterial input function for dynamic contrast-enhanced MRI. "
         "Magn Reson Med. 2006;56(5):993-1000. doi:10.1002/mrm.21066"
     ),
+    "penny_2005": (
+        "Penny WD, Trujillo-Barreto NJ, Friston KJ. "
+        "Bayesian fMRI time series analysis with spatial priors. "
+        "NeuroImage. 2005;24(2):350-362. doi:10.1016/j.neuroimage.2004.08.034"
+    ),
     "patlak_1983": (
         "Patlak CS, Blasberg RG, Fenstermacher JD. "
         "Graphical evaluation of blood-to-brain transfer constants from multiple-time uptake data. "
@@ -196,10 +207,10 @@ _REFERENCES: dict[str, str] = {
         "PMRIPrep: A standardized preprocessing pipeline for perfusion and permeability MRI. "
         "In preparation."
     ),
-    "sourbron_2011": (
+    "sourbron_2013": (
         "Sourbron SP, Buckley DL. "
-        "On the scope and interpretation of the Tofts models for DCE-MRI. "
-        "Magn Reson Med. 2011;66(3):735-745. doi:10.1002/mrm.22861"
+        "Classic models for dynamic contrast-enhanced MRI. "
+        "NMR Biomed. 2013;26(8):1004-1027. doi:10.1002/nbm.2940"
     ),
     "tofts_1997": (
         "Tofts PS. "
@@ -478,7 +489,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
     elif method_lower == "osvd":
         refs.add("wu_2003")
     elif method_lower == "tikhonov":
-        refs.update(["hansen_1992", "calamante_2000"])
+        refs.update(["hansen_1998", "calamante_2003"])
     elif method_lower == "vascular":
         refs.add("mouridsen_2006")
     elif method_lower == "cpi":
@@ -679,7 +690,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
         elif m_lower == "patlak":
             refs.add("patlak_1983")
         elif m_lower == "2cxm":
-            refs.add("sourbron_2011")
+            refs.add("sourbron_2013")
 
     # Inference engine — DCE NLLS path produces no boilerplate sentence
     # (the `nlls` entry is generic; emit only when a Bayesian engine
