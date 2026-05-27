@@ -119,6 +119,16 @@ class TestBuildProvenanceBlockDSC:
         assert block["CrossSubjectComparable"] is False
         assert block["SyntheticFallbackReason"] == "no_candidates"
 
+    def test_missing_quality_score_omits_key(self) -> None:
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        block = build_aif_provenance_block(
+            {"aif_detection": {"detection_method": "atlas_strict"}},
+            modality="DSC",
+        )
+        assert "QualityScore" not in block
+        assert block["Source"] == "measured"
+
 
 class TestBuildProvenanceBlockDCE:
     def test_detected(self) -> None:

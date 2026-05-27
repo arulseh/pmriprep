@@ -77,7 +77,7 @@ def build_provenance_block(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "ProcessingConfiguration": {
             k: v for k, v in config_dict.items()
-            if k not in _CONFIG_STRIP_KEYS
+            if k not in _CONFIG_STRIP_KEYS and v is not None
         },
         "SoftwareVersions": get_software_versions(),
     }
@@ -554,12 +554,20 @@ def build_dce_base_sidecar(
     provenance_dict: Optional[Dict[str, Any]] = None,
     qc_metrics: Optional[Dict[str, Any]] = None,
     minimal: bool = False,
+    ktrans_convention: bool = True,
 ) -> Dict[str, Any]:
     """Common base sidecar for DCE derivatives.
 
-    ``minimal=True`` suppresses perfusion-specific provenance enrichment
-    and the ``KtransConvention`` block (used for masks, structural
-    underlays, motion-corrected 4D, T1map, B1+map, etc.).
+    Parameters
+    ----------
+    minimal
+        Suppress perfusion-specific provenance enrichment and
+        KtransConvention (used for masks, structural underlays,
+        motion-corrected 4D, T1map, B1+map, etc.).
+    ktrans_convention
+        Stamp ``KtransConvention`` / ``KtransConventionHct``.
+        Only relevant when ``minimal=False``; set to ``False`` for
+        model-free and QC maps whose values are convention-independent.
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
@@ -577,11 +585,12 @@ def build_dce_base_sidecar(
 
             enriched = enrich_provenance_from_qc(sidecar, qc_metrics, "DCE")
             sidecar.update(enriched)
-        sidecar["KtransConvention"] = "plasma_Tofts1999"
-        if isinstance(qc_metrics, dict):
-            hct = qc_metrics.get("aif_detection", {}).get("hematocrit")
-            if hct is not None:
-                sidecar["KtransConventionHct"] = float(hct)
+        if ktrans_convention:
+            sidecar["KtransConvention"] = "plasma_Tofts1999"
+            if isinstance(qc_metrics, dict):
+                hct = qc_metrics.get("aif_detection", {}).get("hematocrit")
+                if hct is not None:
+                    sidecar["KtransConventionHct"] = float(hct)
     return sidecar
 
 
@@ -622,7 +631,13 @@ def build_dsc_base_sidecar(
     }
     if provenance_dict:
         sidecar.update(provenance_dict)
-    if not minimal and provenance_dict and qc_metrics:
+    if minimal:
+        pp = sidecar.get("PerfusionProcessing")
+        if isinstance(pp, dict):
+            for key in ("Deconvolution", "LeakageCorrection",
+                        "PreloadDetection"):
+                pp.pop(key, None)
+    elif provenance_dict and qc_metrics:
         from pmriprep.utils.provenance import enrich_provenance_from_qc
 
         enriched = enrich_provenance_from_qc(sidecar, qc_metrics, "DSC")

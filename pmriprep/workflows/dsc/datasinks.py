@@ -54,7 +54,7 @@ _REL_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
     ("rel_auc_raw_map", "dscRel", "auc",
      "AUC raw concentration (relative)", "arbitrary", "auc", None),
     ("rel_auc_corr_map", "dscRelCorrected", "auc",
-     "AUC corrected concentration (relative)", "arbitrary", "auc_corr", None),
+     "AUC corrected concentration (relative)", "arbitrary", "rel_auc_corr", None),
 )
 
 

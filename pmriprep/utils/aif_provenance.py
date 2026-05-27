@@ -229,12 +229,14 @@ def build_aif_provenance_block(
     block: dict[str, Any] = {
         "Source": source,
         "DetectionLevel": aif_qc.get("detection_method", "unknown"),
-        "QualityScore": aif_qc.get("quality_score"),
         "QualityFlag": _derive_quality_flag(aif_qc, source),
         "CrossSubjectComparable": source in {
             "measured", "gamma_fit_measured", "external",
         },
     }
+    qs = aif_qc.get("quality_score")
+    if qs is not None:
+        block["QualityScore"] = float(qs)
     hct = aif_qc.get("hematocrit") or aif_qc.get("hematocrit_used")
     if hct is not None:
         block["Hematocrit"] = float(hct)

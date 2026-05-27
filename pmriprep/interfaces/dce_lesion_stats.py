@@ -80,8 +80,8 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     peak_enhancement_map = traits.Str(desc="Peak enhancement map path")
     wash_in_map = traits.Str(desc="Wash-in rate map path")
     wash_out_map = traits.Str(desc="Wash-out rate map path")
+    ser_map = traits.Str(desc="Signal enhancement ratio map path")
     ttp_map = traits.Str(desc="Time to peak map path")
-    auc_map = traits.Str(desc="Total AUC map path")
 
     # Field strength (T) for NAWM physiological-range QC. When omitted
     # (None / 0), value-level NAWM QC is reported as UNKNOWN; outside
@@ -304,10 +304,10 @@ class DCELesionStats(BaseInterface):
             ("iauc120_map", "iauc120"),
             ("niauc60_map", "niauc60"),
             ("peak_enhancement_map", "peak_enhancement"),
-            ("wash_in_map", "wash_in"),
-            ("wash_out_map", "wash_out"),
+            ("wash_in_map", "wash_in_slope"),
+            ("wash_out_map", "wash_out_slope"),
+            ("ser_map", "ser"),
             ("ttp_map", "ttp"),
-            ("auc_map", "auc"),
         ]
 
         for attr, name in map_attrs:

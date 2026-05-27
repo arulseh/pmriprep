@@ -3180,6 +3180,7 @@ class AIFDetection(BaseInterface):
             )
 
         qc_metrics["detection_method"] = detection_level
+        qc_metrics["quality_score"] = quality_score
         if detection_level != "synthetic":
             qc_metrics["n_aif_voxels_selected"] = len(top_candidates)
         qc_metrics["s0_rejection_available"] = signal_data is not None
@@ -3258,6 +3259,7 @@ class AIFDetection(BaseInterface):
                     tiers_attempted=tiers_attempted,
                 )
                 qc_metrics["detection_method"] = detection_level
+                qc_metrics["quality_score"] = quality_score
                 qc_metrics["gamma_r2_at_fallback"] = gamma_r2
                 qc_metrics.update(synth_metrics)
                 qc_metrics["synthetic_aif_warnings"] = [

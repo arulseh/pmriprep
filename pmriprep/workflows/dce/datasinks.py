@@ -141,6 +141,7 @@ def _build_dce_base(  # type: ignore[no-untyped-def]
     provenance_dict=None,
     qc_metrics=None,
     minimal=False,
+    ktrans_convention=True,
 ):
     from pmriprep.utils.sidecar_builders import build_dce_base_sidecar
 
@@ -153,6 +154,7 @@ def _build_dce_base(  # type: ignore[no-untyped-def]
         provenance_dict=provenance_dict,
         qc_metrics=qc_metrics,
         minimal=minimal,
+        ktrans_convention=ktrans_convention,
     )
 
 
@@ -687,15 +689,18 @@ _PK_MAP_KEY: dict[str, str] = {
 
 
 # Model-free maps that should carry per-region LesionStats. Excluded
-# (intentional, per physics-expert review): ser_map, wash_in_slope_map,
-# wash_out_slope_map, bat_map, curve_type_map — model-free curve features
-# without established per-ROI biomarker conventions.
+# (intentional, per physics-expert review): bat_map (timing offset, not
+# magnitude biomarker), curve_type_map (categorical, not amenable to
+# ROI summary stats).
 _MF_LESIONSTATS_MAP_KEY: dict[str, str] = {
     "iauc60_map": "iauc60",
     "iauc90_map": "iauc90",
     "iauc120_map": "iauc120",
     "peak_enhancement_map": "peak_enhancement",
     "time_to_peak_map": "ttp",
+    "ser_map": "ser",
+    "wash_in_slope_map": "wash_in_slope",
+    "wash_out_slope_map": "wash_out_slope",
 }
 
 _MF_AIF_MAP_KEY: dict[str, str] = {
@@ -1017,19 +1022,23 @@ def init_dce_datasinks_wf(
     perf_src_merge = pe.Node(niu.Merge(numinputs=1), name="perf_sources")
     workflow.connect(inputnode, "source_dce", perf_src_merge, "in1")
 
+    _base_input_names = [
+        "source_paths", "reference_voxel_source", "bids_dir",
+        "subject", "session",
+        "provenance_dict", "qc_metrics", "minimal",
+        "ktrans_convention",
+    ]
+
     base_perf = pe.Node(
         niu.Function(
-            input_names=[
-                "source_paths", "reference_voxel_source", "bids_dir",
-                "subject", "session",
-                "provenance_dict", "qc_metrics", "minimal",
-            ],
+            input_names=_base_input_names,
             output_names=["meta_dict"],
             function=_build_dce_base,
         ),
         name="base_perf_meta",
     )
     base_perf.inputs.minimal = False
+    base_perf.inputs.ktrans_convention = True
     workflow.connect([
         (perf_src_merge, base_perf, [("out", "source_paths")]),
         (inputnode, base_perf, [
@@ -1042,19 +1051,38 @@ def init_dce_datasinks_wf(
         ]),
     ])
 
+    base_perf_no_ktrans = pe.Node(
+        niu.Function(
+            input_names=_base_input_names,
+            output_names=["meta_dict"],
+            function=_build_dce_base,
+        ),
+        name="base_perf_no_ktrans_meta",
+    )
+    base_perf_no_ktrans.inputs.minimal = False
+    base_perf_no_ktrans.inputs.ktrans_convention = False
+    workflow.connect([
+        (perf_src_merge, base_perf_no_ktrans, [("out", "source_paths")]),
+        (inputnode, base_perf_no_ktrans, [
+            ("bids_dir", "bids_dir"),
+            ("subject_id", "subject"),
+            ("session_id", "session"),
+            ("ktrans_map", "reference_voxel_source"),
+            ("provenance_dict", "provenance_dict"),
+            ("qc_metrics", "qc_metrics"),
+        ]),
+    ])
+
     base_minimal = pe.Node(
         niu.Function(
-            input_names=[
-                "source_paths", "reference_voxel_source", "bids_dir",
-                "subject", "session",
-                "provenance_dict", "qc_metrics", "minimal",
-            ],
+            input_names=_base_input_names,
             output_names=["meta_dict"],
             function=_build_dce_base,
         ),
         name="base_minimal_meta",
     )
     base_minimal.inputs.minimal = True
+    base_minimal.inputs.ktrans_convention = False
     base_minimal.inputs.qc_metrics = None
     workflow.connect([
         (perf_src_merge, base_minimal, [("out", "source_paths")]),
@@ -1123,12 +1151,12 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- Model-free maps (no model entity) ---
+    # --- Model-free maps (no model entity, no KtransConvention) ---
     for in_attr, suffix, description, units, extra in _MODEL_FREE_MAPS:
         if in_attr not in present:
             continue
         sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
+            workflow, inputnode, base_perf_no_ktrans,
             name=in_attr, in_attr=in_attr,
             desc_value="dce", suffix=suffix,
             description=description, units=units, extra=extra,
@@ -1138,10 +1166,10 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- QC maps ---
+    # --- QC maps (no KtransConvention) ---
     if "tsnr_map" in present:
         sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
+            workflow, inputnode, base_perf_no_ktrans,
             name="tsnr_map", in_attr="tsnr_map",
             desc_value="dce", suffix="tsnr",
             description="Temporal signal-to-noise ratio", units="arbitrary",
@@ -1150,7 +1178,7 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
     if "qc_mask" in present:
         sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
+            workflow, inputnode, base_perf_no_ktrans,
             name="qc_mask", in_attr="qc_mask",
             desc_value="dceQc", suffix="",
             description="QC mask (1=good fit, 0=unfitted/poor)",
@@ -1172,7 +1200,7 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
     if "quality_flag_map" in present:
         sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
+            workflow, inputnode, base_perf_no_ktrans,
             name="quality_flag_map", in_attr="quality_flag_map",
             desc_value="dceQualityFlag", suffix="",
             description=(
@@ -1280,7 +1308,7 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
     if "niauc60_map" in present:
         sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
+            workflow, inputnode, base_perf_no_ktrans,
             name="niauc60_map", in_attr="niauc60_map",
             desc_value="dceNawmNorm", suffix="IAUC60",
             description="IAUC at 60s normalized by NAWM (normal-appearing white matter) mean",
@@ -1366,7 +1394,7 @@ def init_dce_datasinks_wf(
 
     if "dce_mean" in present:
         sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
+            workflow, inputnode, base_perf_no_ktrans,
             name="dce_mean", in_attr="dce_mean",
             desc_value="dceMean", suffix="",
             description="Mean DCE reference image",
@@ -1376,7 +1404,7 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
     if "aif_mask" in present:
         sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
+            workflow, inputnode, base_perf_no_ktrans,
             name="aif_mask", in_attr="aif_mask",
             desc_value="dceAif", suffix="",
             description="AIF detection mask in DCE space",
