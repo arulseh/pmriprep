@@ -825,6 +825,8 @@ class AIFDetection(BaseInterface):
     def _apply_spatial_exclusions(
         candidate_indices: npt.NDArray[Any],
         brain_shape: tuple[int, ...],
+        *,
+        skip_sss: bool = False,
     ) -> npt.NDArray[Any]:
         """Exclude SSS (midline + superior/posterior) and edge-slice voxels.
 
@@ -834,6 +836,9 @@ class AIFDetection(BaseInterface):
             Nx3 array of voxel coordinates.
         brain_shape : tuple
             (nx, ny, nz) spatial dimensions.
+        skip_sss : bool
+            Skip SSS exclusion (atlas-constrained search already excludes
+            venous structures). Edge-slice exclusion still applies.
 
         Returns
         -------
@@ -844,23 +849,24 @@ class AIFDetection(BaseInterface):
             return candidate_indices
 
         nx, ny, nz = brain_shape[:3]
-        x_center = nx // 2
-        x_exclude = int(nx * 0.1)  # Central 20% (+/-10%)
-        z_superior = int(nz * 0.65)  # Superior 35%
-        y_posterior = int(ny * 0.45)  # Posterior 45%
+        kept: list[npt.NDArray[Any]] = list(candidate_indices)
 
-        # SSS exclusion
-        kept = []
-        for idx in candidate_indices:
-            x, y, z = int(idx[0]), int(idx[1]), int(idx[2])
-            is_midline = (x_center - x_exclude) <= x <= (x_center + x_exclude)
-            if is_midline and (z > z_superior or y < y_posterior):
-                continue  # SSS region
-            kept.append(idx)
+        if not skip_sss:
+            x_center = nx // 2
+            x_exclude = int(nx * 0.1)  # Central 20% (+/-10%)
+            z_superior = int(nz * 0.65)  # Superior 35%
+            y_posterior = int(ny * 0.45)  # Posterior 45%
 
-        if len(kept) == 0:
-            # Would remove all — keep originals
-            kept = list(candidate_indices)
+            filtered = []
+            for idx in kept:
+                x, y, z = int(idx[0]), int(idx[1]), int(idx[2])
+                is_midline = (x_center - x_exclude) <= x <= (x_center + x_exclude)
+                if is_midline and (z > z_superior or y < y_posterior):
+                    continue
+                filtered.append(idx)
+
+            if len(filtered) > 0:
+                kept = filtered
 
         # Edge slice exclusion (z == 0 or z == nz-1)
         non_edge = [idx for idx in kept if 0 < int(idx[2]) < nz - 1]
@@ -878,6 +884,8 @@ class AIFDetection(BaseInterface):
         conc_data: npt.NDArray[Any],
         search_mask: npt.NDArray[Any],
         baseline_frames: int,
+        *,
+        skip_sss: bool = False,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
         """Find initial candidate voxels via percentile thresholding.
 
@@ -895,6 +903,8 @@ class AIFDetection(BaseInterface):
             3D boolean mask.
         baseline_frames : int
             Number of pre-bolus frames.
+        skip_sss : bool
+            Skip SSS spatial exclusion (for atlas-constrained search).
 
         Returns
         -------
@@ -924,7 +934,7 @@ class AIFDetection(BaseInterface):
 
         # Apply spatial exclusions
         candidates = self._apply_spatial_exclusions(
-            candidates, conc_data.shape[:3]
+            candidates, conc_data.shape[:3], skip_sss=skip_sss,
         )
 
         return candidates, peak_conc_map
@@ -2589,10 +2599,12 @@ class AIFDetection(BaseInterface):
 
         # Optional atlas mask (user-supplied aif_mask_file takes priority)
         atlas_mask: Optional[npt.NDArray[Any]] = None
+        atlas_is_mra: bool = False
         if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
             atlas_img = nib.load(self.inputs.aif_mask_file)
             atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
         elif self.inputs.atlas_mask_file:
+            atlas_is_mra = True
             atlas_img = nib.load(self.inputs.atlas_mask_file)
             atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
 
@@ -2783,27 +2795,31 @@ class AIFDetection(BaseInterface):
             except ValueError:
                 start_idx = 0
 
-            all_attempts: list[tuple[str, Optional[npt.NDArray[Any]], str]] = []
+            all_attempts: list[
+                tuple[str, Optional[npt.NDArray[Any]], str, bool]
+            ] = []
             if atlas_mask is not None:
                 for crit in ["strict", "relaxed", "permissive"]:
-                    all_attempts.append((crit, atlas_mask, f"atlas_{crit}"))
+                    all_attempts.append(
+                        (crit, atlas_mask, f"atlas_{crit}", atlas_is_mra)
+                    )
 
             # Full atlas tier (posterior circulation, undilated) —
             # between atlas_permissive and brain-wide search
             if full_atlas_mask is not None:
                 all_attempts.append(
-                    ("permissive", full_atlas_mask, "full_atlas_permissive")
+                    ("permissive", full_atlas_mask, "full_atlas_permissive", True)
                 )
 
             has_roi_constraint = atlas_mask is not None
             strict_roi = bool(self.inputs.strict_roi_constraint)
             if not (has_roi_constraint and strict_roi):
                 for crit in ["relaxed", "permissive"]:
-                    all_attempts.append((crit, None, f"brain_{crit}"))
+                    all_attempts.append((crit, None, f"brain_{crit}", False))
 
             attempts = [
-                (crit, roi, name)
-                for crit, roi, name in all_attempts
+                (crit, roi, name, is_atlas)
+                for crit, roi, name, is_atlas in all_attempts
                 if criteria_order.index(crit) >= start_idx
             ]
 
@@ -2815,7 +2831,7 @@ class AIFDetection(BaseInterface):
                 conc_data, brain_mask, aif_baseline_frames
             )
 
-            for crit, roi, level_name in attempts:
+            for crit, roi, level_name, is_atlas in attempts:
                 frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
                 level_n_candidates = max(
                     MIN_AIF_CANDIDATES_ACCEPT,
@@ -2826,7 +2842,8 @@ class AIFDetection(BaseInterface):
                     brain_mask, roi, lesion_mask
                 )
                 cands, peak_map = self._find_aif_candidate_voxels(
-                    conc_data, search, aif_baseline_frames
+                    conc_data, search, aif_baseline_frames,
+                    skip_sss=is_atlas,
                 )
                 if cands.shape[0] == 0:
                     continue
@@ -2984,7 +3001,7 @@ class AIFDetection(BaseInterface):
                         # acceptances stay as plain tier names for
                         # back-compat with downstream consumers.
                         contributing = [
-                            lvl for _, _, lvl in attempts
+                            lvl for _, _, lvl, _ in attempts
                             if union_tier_provenance.get(lvl, 0) > 0
                         ]
                         detection_level = (
