@@ -159,12 +159,13 @@ def _build_dce_base(  # type: ignore[no-untyped-def]
 def _build_dce_meta(  # type: ignore[no-untyped-def]
     base, description, units=None, extra=None,
     map_key="", lesion_stats_json=None, user_lesion_stats_json=None,
+    roi_stats_json=None,
 ):
-    """Compose a generic DCE sidecar; optionally inject LesionStats fragment.
+    """Compose a generic DCE sidecar; optionally inject stats fragments.
 
-    When ``map_key`` and ``lesion_stats_json`` are both provided and the
-    aggregate JSON exists, the per-map fragment from
-    :func:`extract_per_map_lesion_stats` is attached as ``LesionStats``.
+    When ``map_key`` is non-empty the per-map fragment from each
+    aggregate stats JSON is attached as ``LesionStats``,
+    ``UserLesionStats``, or ``ROIStats`` respectively.
     Used for model-free maps and NAWM-normalized maps that aren't routed
     through ``_build_dce_pk_map_meta``.
     """
@@ -188,6 +189,9 @@ def _build_dce_meta(  # type: ignore[no-untyped-def]
         )
         if user_fragment:
             out["UserLesionStats"] = user_fragment
+        roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)
+        if roi_fragment:
+            out["ROIStats"] = roi_fragment
     return out
 
 
@@ -247,15 +251,15 @@ def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
 def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
     base, description, units=None, qc_metrics=None, map_key="",
     lesion_stats_json=None, user_lesion_stats_json=None,
+    roi_stats_json=None,
 ):
-    """Compose a DCE per-PK-map sidecar with cosmetic enrichment + lesion fragment.
+    """Compose a DCE per-PK-map sidecar with cosmetic enrichment + stats fragments.
 
-    Reads ``lesion_stats_json`` (path to the aggregate per-pipeline lesion
-    stats JSON the upstream interface emits) and extracts the per-map
-    fragment for ``map_key`` (e.g. ``"ktrans"``) via
-    ``extract_per_map_lesion_stats``. Cross-modality fields
+    Extracts the per-map fragment for ``map_key`` (e.g. ``"ktrans"``)
+    from each aggregate stats JSON and attaches as ``LesionStats``,
+    ``UserLesionStats``, or ``ROIStats``. Cross-modality fields
     (``DSCDCECrossValCorrelation``, ``CBVNegativeFraction``) land only on
-    the maps they apply to per the bids-spec-expert PR1 review.
+    the maps they apply to.
     """
     from pmriprep.utils.lesion_stats import load_lesion_stats_fragment
     from pmriprep.utils.sidecar_builders import enrich_dce_pk_map_sidecar
@@ -279,6 +283,9 @@ def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
     )
     if user_fragment:
         out["UserLesionStats"] = user_fragment
+    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)
+    if roi_fragment:
+        out["ROIStats"] = roi_fragment
     return out
 
 
@@ -613,17 +620,16 @@ def _add_perf_map_sink(
 ) -> pe.Node:
     """Wire one DCE perf-space map sink (Function builder + Function copy).
 
-    When ``map_key`` is non-empty, the meta builder also slices the
-    per-map ``LesionStats`` fragment from the aggregate
-    ``lesion_stats_json`` (sourced from inputnode). This unlocks
-    LesionStats injection on model-free + NAWM-normalized maps that
-    aren't routed through the PK-map meta builder.
+    When ``map_key`` is non-empty, the meta builder also slices per-map
+    fragments from the aggregate stats JSONs (``LesionStats``,
+    ``UserLesionStats``, ``ROIStats``) sourced from inputnode.
     """
     meta = pe.Node(
         niu.Function(
             input_names=[
                 "base", "description", "units", "extra",
                 "map_key", "lesion_stats_json", "user_lesion_stats_json",
+                "roi_stats_json",
             ],
             output_names=["meta_dict"],
             function=_build_dce_meta,
@@ -641,6 +647,7 @@ def _add_perf_map_sink(
             inputnode, "user_lesion_stats_json",
             meta, "user_lesion_stats_json",
         )
+        workflow.connect(inputnode, "roi_stats_json", meta, "roi_stats_json")
 
     sink = pe.Node(
         niu.Function(
@@ -739,6 +746,7 @@ def _add_dce_pk_map_sink(
             input_names=[
                 "base", "description", "units", "qc_metrics", "map_key",
                 "lesion_stats_json", "user_lesion_stats_json",
+                "roi_stats_json",
             ],
             output_names=["meta_dict"],
             function=_build_dce_pk_map_meta,
@@ -754,6 +762,7 @@ def _add_dce_pk_map_sink(
             ("qc_metrics", "qc_metrics"),
             ("lesion_stats_json", "lesion_stats_json"),
             ("user_lesion_stats_json", "user_lesion_stats_json"),
+            ("roi_stats_json", "roi_stats_json"),
         ]),
     ])
 

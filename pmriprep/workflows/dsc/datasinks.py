@@ -163,14 +163,15 @@ def _build_map_meta(  # type: ignore[no-untyped-def]
     extra=None,
     lesion_stats_json=None,
     user_lesion_stats_json=None,
+    roi_stats_json=None,
 ):
-    """Compose a DSC per-map sidecar; injects per-map LesionStats fragment.
+    """Compose a DSC per-map sidecar; injects per-map stats fragments.
 
-    The aggregate lesion-stats JSON (one file per pipeline) is loaded
-    when present and split into per-map fragments via
-    :func:`extract_per_map_lesion_stats`. The fragment is merged into
-    the ``extra`` dict alongside any caller-provided extras (e.g.
-    K2/Bayesian/Vascular extras).
+    Each aggregate stats JSON (lesion, user-lesion, ROI) is loaded when
+    present and split into per-map fragments via
+    :func:`extract_per_map_lesion_stats`. Fragments are merged into
+    the ``extra`` dict as ``LesionStats``, ``UserLesionStats``, and
+    ``ROIStats`` alongside any caller-provided extras.
     """
     from pmriprep.utils.lesion_stats import load_lesion_stats_fragment
     from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar
@@ -183,6 +184,9 @@ def _build_map_meta(  # type: ignore[no-untyped-def]
         merged_extra["LesionStats"] = fragment
     if user_fragment:
         merged_extra["UserLesionStats"] = user_fragment
+    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)
+    if roi_fragment:
+        merged_extra["ROIStats"] = roi_fragment
     if not merged_extra:
         merged_extra = extra
 
@@ -587,6 +591,7 @@ def _add_perf_map_sink(
             input_names=[
                 "base", "description", "map_key", "qc_metrics", "units",
                 "extra", "lesion_stats_json", "user_lesion_stats_json",
+                "roi_stats_json",
             ],
             output_names=["meta_dict"],
             function=_build_map_meta,
@@ -603,6 +608,7 @@ def _add_perf_map_sink(
             ("qc_metrics", "qc_metrics"),
             ("lesion_stats_json", "lesion_stats_json"),
             ("user_lesion_stats_json", "user_lesion_stats_json"),
+            ("roi_stats_json", "roi_stats_json"),
         ]),
     ])
 
@@ -985,6 +991,7 @@ def init_dsc_datasinks_wf(
                 input_names=[
                     "base", "description", "map_key", "qc_metrics", "units",
                     "extra", "lesion_stats_json", "user_lesion_stats_json",
+                    "roi_stats_json",
                 ],
                 output_names=["meta_dict"],
                 function=_build_map_meta,
@@ -1000,6 +1007,7 @@ def init_dsc_datasinks_wf(
                 ("qc_metrics", "qc_metrics"),
                 ("lesion_stats_json", "lesion_stats_json"),
                 ("user_lesion_stats_json", "user_lesion_stats_json"),
+                ("roi_stats_json", "roi_stats_json"),
             ]),
             (k2_extra_node, k2_meta, [("extra", "extra")]),
         ])
@@ -1071,7 +1079,9 @@ def init_dsc_datasinks_wf(
         param_meta = pe.Node(
             niu.Function(
                 input_names=[
-                    "base", "description", "map_key", "qc_metrics", "units", "extra",
+                    "base", "description", "map_key", "qc_metrics", "units",
+                    "extra", "lesion_stats_json", "user_lesion_stats_json",
+                    "roi_stats_json",
                 ],
                 output_names=["meta_dict"],
                 function=_build_map_meta,
@@ -1083,7 +1093,12 @@ def init_dsc_datasinks_wf(
         param_meta.inputs.units = None
         workflow.connect([
             (base_perf, param_meta, [("meta_dict", "base")]),
-            (inputnode, param_meta, [("qc_metrics", "qc_metrics")]),
+            (inputnode, param_meta, [
+                ("qc_metrics", "qc_metrics"),
+                ("lesion_stats_json", "lesion_stats_json"),
+                ("user_lesion_stats_json", "user_lesion_stats_json"),
+                ("roi_stats_json", "roi_stats_json"),
+            ]),
             (param_extra, param_meta, [("extra", "extra")]),
         ])
         sink = pe.Node(
