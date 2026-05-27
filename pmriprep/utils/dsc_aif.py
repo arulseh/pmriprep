@@ -1894,7 +1894,7 @@ def should_apply_gamma_fit(
         return (
             GammaAutoDecision(
                 apply=False,
-                reason=f"R²={fit_result.r_squared:.3f} < {GAMMA_R2_THRESHOLD}",
+                reason=f"R2={fit_result.r_squared:.3f} < {GAMMA_R2_THRESHOLD}",
             ),
             metrics,
         )
@@ -2002,7 +2002,7 @@ def should_apply_gamma_fit(
                 apply=True,
                 reason=(
                     f"Noise (ratio={noise_ratio:.2f}) and negative tail "
-                    f"({neg_frames} frames, min={neg_min_fraction:.3f}×peak)"
+                    f"({neg_frames} frames, min={neg_min_fraction:.3f}*peak)"
                 ),
                 defect_detected="noise_and_negative_tail",
             ),
@@ -2012,7 +2012,7 @@ def should_apply_gamma_fit(
     return (
         GammaAutoDecision(
             apply=False,
-            reason="No defect detected — AIF is clean",
+            reason="No defect detected -- AIF is clean",
         ),
         metrics,
     )

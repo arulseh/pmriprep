@@ -1038,20 +1038,20 @@ def init_dsc_datasinks_wf(
         ])
         sink_outputs.append((k2_sink, "out_file"))
 
-    # --- Parametric R² + fallback mask ---
+    # --- Parametric R2 + fallback mask ---
     # Verbatim long descriptions from the legacy writer — they explain that
-    # R² is preserved on fallback voxels, that those voxels' CBF/CBV/MTT/Tmax
-    # come from oSVD (NOT from the parametric fit with this R²), and that
+    # R2 is preserved on fallback voxels, that those voxels' CBF/CBV/MTT/Tmax
+    # come from oSVD (NOT from the parametric fit with this R2), and that
     # uncertainty maps are zero-filled in fallback voxels.
     _PARAMETRIC_R2_DESC = (
-        "Per-voxel R² (coefficient of determination) of the parametric DSC "
+        "Per-voxel R2 (coefficient of determination) of the parametric DSC "
         "fit (CPI / Vascular) against the K2-corrected tissue concentration. "
-        "Raw parametric R² is preserved on voxels that fell back to oSVD — "
+        "Raw parametric R2 is preserved on voxels that fell back to oSVD -- "
         "see dscFallback_mask to identify those. The CBF/CBV/MTT/Tmax saved "
-        "in fallback voxels comes from oSVD, NOT from a fit with this R²."
+        "in fallback voxels comes from oSVD, NOT from a fit with this R2."
     )
     _FALLBACK_DESC = (
-        "Binary oSVD-fallback mask. 1 = the parametric R²<0.5 gate rejected "
+        "Binary oSVD-fallback mask. 1 = the parametric R2<0.5 gate rejected "
         "this voxel and the saved CBF/CBV/MTT/Tmax come from "
         "svd_deconvolve_oscillation; the parametric uncertainty maps "
         "(cbf_std, cbv_std, CV, CI95) are zero-filled in these voxels. "

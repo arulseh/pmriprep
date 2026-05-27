@@ -919,7 +919,7 @@ def build_aif_timeseries_sidecar(
         units = "1/s"
         column_description = (
             "Susceptibility-induced change in transverse relaxation rate "
-            "(ΔR2*) at the AIF voxel(s)."
+            "(delta-R2*) at the AIF voxel(s)."
         )
     else:  # DCE
         column_name = "plasma_concentration_mM"

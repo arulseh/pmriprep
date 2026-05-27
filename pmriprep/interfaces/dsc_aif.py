@@ -3263,7 +3263,7 @@ class AIFDetection(BaseInterface):
                 qc_metrics["gamma_r2_at_fallback"] = gamma_r2
                 qc_metrics.update(synth_metrics)
                 qc_metrics["synthetic_aif_warnings"] = [
-                    "Synthetic AIF used - gamma fit R² below threshold",
+                    "Synthetic AIF used - gamma fit R2 below threshold",
                     "Relative quantification only (rCBV, rCBF normalized to contralateral)",
                     "TTP and Tmax are valid (timing independent of AIF amplitude)",
                     "Manual AIF selection recommended for clinical use",

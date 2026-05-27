@@ -127,7 +127,7 @@ SKIP_REASON_NO_NAWM_MASK = "no_nawm_mask"
 SKIP_REASON_SYNTHETIC_AIF = "synthetic_aif"
 NO_DSC_RUN_REASON_STRING = "No DSC data provided"
 SYNTHETIC_AIF_REASON_STRING = (
-    "AIF is synthetic (cascade exhausted or gamma-R² fallback); "
+    "AIF is synthetic (cascade exhausted or gamma-R2 fallback); "
     "absolute CBV magnitudes are not calibrated"
 )
 
@@ -511,12 +511,12 @@ def assess_dsc_cbv_quality(
     if _contributing & _AIF_LEVELS_LOW:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
-            f"AIF detection level '{detection_level}' — CBV unreliable"
+            f"AIF detection level '{detection_level}' -- CBV unreliable"
         )
     elif _contributing & _AIF_LEVELS_MODERATE:
         confidence = _downgrade_confidence(confidence, "moderate")
         result.reasons.append(
-            f"AIF detection level '{detection_level}' — CBV quality uncertain"
+            f"AIF detection level '{detection_level}' -- CBV quality uncertain"
         )
 
     # --- AIF Candidate Count ---
@@ -529,12 +529,12 @@ def assess_dsc_cbv_quality(
     if n_candidates < 2:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
-            f"Only {n_candidates} AIF voxel(s) — no noise averaging"
+            f"Only {n_candidates} AIF voxel(s) -- no noise averaging"
         )
     elif n_candidates < 3:
         confidence = _downgrade_confidence(confidence, "moderate")
         result.reasons.append(
-            f"Only {n_candidates} AIF voxels — limited averaging"
+            f"Only {n_candidates} AIF voxels -- limited averaging"
         )
 
     # --- AIF Peak Height ---
@@ -825,7 +825,7 @@ def determine_constraint_mode(
             vp_uncertainty=0.0,
             reason=(
                 "K2-primary preload classification unavailable "
-                "(UNKNOWN) — constraint skipped"
+                "(UNKNOWN) -- constraint skipped"
             ),
         )
 
@@ -842,7 +842,7 @@ def determine_constraint_mode(
                 user_override,
             )
             reason = (
-                f"Unrecognized user_override {user_override!r} → SKIP "
+                f"Unrecognized user_override {user_override!r} -> SKIP "
                 "(valid: 'auto', 'soft', 'skip')"
             )
         if mode == ConstraintMode.SOFT:
@@ -865,7 +865,7 @@ def determine_constraint_mode(
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,
             vp_uncertainty=SIGMA_SOFT_DEFAULT,
-            reason="high DSC quality (auto → SOFT, σ unified)",
+            reason="high DSC quality (auto -> SOFT, sigma unified)",
         )
     elif confidence == "moderate":
         uncertainty = SIGMA_SOFT_DEFAULT

@@ -458,7 +458,7 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
     qc_metrics["preload_advisory_classification"] = advisory_class
     qc_metrics["preload_advisory_method"] = preload_result.detection_method
     qc_metrics["preload_advisory_note"] = (
-        "ΔR2* advisory: tissue-heterogeneity-biased; used for acquisition "
+        "delta-R2* advisory: tissue-heterogeneity-biased; used for acquisition "
         "QC (motion, S0 baseline) only. Not used to classify preload."
     )
 
