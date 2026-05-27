@@ -216,7 +216,7 @@ dce:
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
 | `aif_file` | path | `null` | External AIF curve (ΔR2* in s⁻¹). Bypasses AIF detection |
-| `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
+| `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DSC space) |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |
@@ -224,9 +224,9 @@ dce:
 | `kep` | float | `0.005` | EES efflux rate for bidirectional correction (s⁻¹); ignored for bsw |
 | `pre_bolus` | int | `5` | Initial baseline for motion correction. Baseline is re-estimated after AIF detection |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
-| `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
-| `nawm_mask` | path | `null` | NAWM mask for normalization |
-| `roi_mask` | path | `null` | ROI mask for statistics extraction. Multi-label integer masks produce per-label stats |
+| `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics (DSC space) |
+| `nawm_mask` | path | `null` | NAWM mask for normalization (DSC space) |
+| `roi_mask` | path | `null` | ROI mask for statistics extraction. Multi-label integer masks produce per-label stats (DSC space) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
 
@@ -240,10 +240,10 @@ dce:
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
 | `hematocrit` | float | `0.42` | Arterial hematocrit for AIF plasma correction |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
-| `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected). Bypasses AIF detection |
 | `scale_aif` | bool | `true` | Scale AIF to population reference |
 | `target_peak` | float | `null` | Target AIF peak (mM); null = field-strength default |
-| `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint) |
+| `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected). Bypasses AIF detection |
+| `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DCE space) |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `no_t1` | bool | `false` | Skip T1 mapping |
@@ -255,9 +255,9 @@ dce:
 | `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation. Requires a NAWM mask; automatically skipped when unavailable |
 | `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect) |
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
-| `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics |
-| `nawm_mask` | path | `null` | NAWM mask for normalization |
-| `roi_mask` | path | `null` | ROI mask for statistics extraction. Multi-label integer masks produce per-label stats |
+| `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics (DCE space) |
+| `nawm_mask` | path | `null` | NAWM mask for normalization (DCE space) |
+| `roi_mask` | path | `null` | ROI mask for statistics extraction. Multi-label integer masks produce per-label stats (DCE space) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
 | `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
 
