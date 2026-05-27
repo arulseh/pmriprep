@@ -113,6 +113,28 @@ def test_dsc_copy_perf_map_lacks_space_entity(tmp_path) -> None:
     )
 
 
+def test_dce_copy_perf_map_anat_mask_has_space_entity(tmp_path) -> None:
+    """Anat-side masks include space-dceref with correct entity ordering."""
+    from pmriprep.workflows.dce.datasinks import _copy_perf_map
+
+    src = tmp_path / "in.nii.gz"
+    src.write_bytes(b"")
+    out_path = _copy_perf_map(
+        in_file=str(src),
+        output_dir=str(tmp_path / "out"),
+        subject="01",
+        session="01",
+        desc="brain",
+        suffix="",
+        meta_dict={"Description": "test"},
+        datatype="anat",
+        bids_suffix="mask",
+        space="dceref",
+    )
+    assert "space-dceref" in out_path
+    assert out_path.index("space-dceref") < out_path.index("desc-brain")
+
+
 # -----------------------------------------------------------------------------
 # Rule 2: no `space-anat` / `from-anat` / `to-anat` in source (with allowlist)
 # -----------------------------------------------------------------------------

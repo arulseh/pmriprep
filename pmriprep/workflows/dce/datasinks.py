@@ -352,7 +352,7 @@ def _build_delta_bic_meta(  # type: ignore[no-untyped-def]
 
 def _copy_perf_map(  # type: ignore[no-untyped-def]
     in_file, output_dir, subject, session, desc, suffix, meta_dict,
-    datatype="perf", model_entity="", bids_suffix="stat",
+    datatype="perf", model_entity="", bids_suffix="stat", space="",
 ):
     """Copy a DCE NIfTI + sidecar with BIDS-compliant naming.
 
@@ -394,6 +394,8 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     if session:
         prefix += f"_ses-{session}"
     parts = [prefix]
+    if space:
+        parts.append(f"space-{space}")
     if model_entity:
         parts.append(model_entity)
     if desc:
@@ -863,6 +865,7 @@ def _add_anat_mask_sink(
     desc_value: str,
     description: str,
     skull_stripped: bool = False,
+    space: str = "dceref",
 ) -> pe.Node:
     """Wire a DCE-space mask (brain/nawm/lesion/roi) into anat/."""
     meta = pe.Node(
@@ -883,7 +886,7 @@ def _add_anat_mask_sink(
             input_names=[
                 "in_file", "output_dir", "subject", "session",
                 "desc", "suffix", "meta_dict", "datatype", "model_entity",
-                "bids_suffix",
+                "bids_suffix", "space",
             ],
             output_names=["out_file"],
             function=_copy_perf_map,
@@ -895,6 +898,7 @@ def _add_anat_mask_sink(
     sink.inputs.datatype = "anat"
     sink.inputs.model_entity = ""
     sink.inputs.bids_suffix = "mask"
+    sink.inputs.space = space
     workflow.connect([
         (inputnode, sink, [
             ("output_dir", "output_dir"),
