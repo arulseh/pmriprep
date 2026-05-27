@@ -307,6 +307,12 @@ class DSCFiguresWriter(SimpleInterface):
         output_dir = Path(self.inputs.output_dir)
         subject = self.inputs.subject_id
         session = self.inputs.session_id or ""
+        bids_dir = self.inputs.bids_dir if isdefined(self.inputs.bids_dir) else ""
+        source_path = (
+            self.inputs.source_dsc
+            if isdefined(self.inputs.source_dsc) and self.inputs.source_dsc
+            else None
+        )
 
         prefix = f"sub-{subject}"
         if session:
@@ -331,15 +337,8 @@ class DSCFiguresWriter(SimpleInterface):
                     self.inputs.qc_metrics
                     if isdefined(self.inputs.qc_metrics) else None
                 ),
-                bids_dir=(
-                    self.inputs.bids_dir
-                    if isdefined(self.inputs.bids_dir) else ""
-                ),
-                source_path=(
-                    self.inputs.source_dsc
-                    if isdefined(self.inputs.source_dsc) and self.inputs.source_dsc
-                    else None
-                ),
+                bids_dir=bids_dir,
+                source_path=source_path,
                 subject=subject,
                 session=session,
             )
@@ -349,7 +348,7 @@ class DSCFiguresWriter(SimpleInterface):
             tsv_path = perf_dir / f"{prefix}_desc-dscConfounds_timeseries.tsv"
             json_path = perf_dir / f"{prefix}_desc-dscConfounds_timeseries.json"
             par_to_confounds_tsv(self.inputs.motion_params, tsv_path)
-            write_confounds_sidecar(json_path)
+            write_confounds_sidecar(json_path, source_path=source_path, bids_dir=bids_dir)
             self._results["confounds_tsv"] = str(tsv_path)
 
         figures_dir = ses_dir / "figures"
@@ -442,6 +441,12 @@ class DCEFiguresWriter(SimpleInterface):
         output_dir = Path(self.inputs.output_dir)
         subject = self.inputs.subject_id
         session = self.inputs.session_id or ""
+        bids_dir = self.inputs.bids_dir if isdefined(self.inputs.bids_dir) else ""
+        source_path = (
+            self.inputs.source_dce
+            if isdefined(self.inputs.source_dce) and self.inputs.source_dce
+            else None
+        )
 
         prefix = f"sub-{subject}"
         if session:
@@ -467,15 +472,8 @@ class DCEFiguresWriter(SimpleInterface):
                     self.inputs.qc_metrics
                     if isdefined(self.inputs.qc_metrics) else None
                 ),
-                bids_dir=(
-                    self.inputs.bids_dir
-                    if isdefined(self.inputs.bids_dir) else ""
-                ),
-                source_path=(
-                    self.inputs.source_dce
-                    if isdefined(self.inputs.source_dce) and self.inputs.source_dce
-                    else None
-                ),
+                bids_dir=bids_dir,
+                source_path=source_path,
                 subject=subject,
                 session=session,
             )
@@ -485,7 +483,7 @@ class DCEFiguresWriter(SimpleInterface):
             tsv_path = perf_dir / f"{prefix}_desc-dceConfounds_timeseries.tsv"
             json_path = perf_dir / f"{prefix}_desc-dceConfounds_timeseries.json"
             par_to_confounds_tsv(self.inputs.motion_params, tsv_path)
-            write_confounds_sidecar(json_path)
+            write_confounds_sidecar(json_path, source_path=source_path, bids_dir=bids_dir)
             self._results["confounds_tsv"] = str(tsv_path)
 
         # Stale AIF location figure cleanup (population/external AIF)

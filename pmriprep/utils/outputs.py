@@ -305,7 +305,11 @@ def par_to_confounds_tsv(
     return output_path
 
 
-def write_confounds_sidecar(output_path: Union[str, Path]) -> Path:
+def write_confounds_sidecar(
+    output_path: Union[str, Path],
+    source_path: Optional[str] = None,
+    bids_dir: str = "",
+) -> Path:
     """Write the JSON sidecar for a BIDS confounds TSV.
 
     Describes each column's meaning and units following the BIDS
@@ -313,14 +317,25 @@ def write_confounds_sidecar(output_path: Union[str, Path]) -> Path:
 
     Args:
         output_path: Path for the output ``.json`` sidecar file.
+        source_path: Raw BIDS source NIfTI (for Sources URI).
+        bids_dir: BIDS rawdata root (for Sources URI construction).
 
     Returns:
         Path to the written JSON file.
     """
+    from pmriprep.utils.provenance import get_bids_derivative_provenance
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    sources = build_sources_list(
+        [source_path] if source_path else [], bids_dir or ".",
+    )
+
     sidecar: Dict[str, Any] = {
+        **get_bids_derivative_provenance(),
+        **({"Sources": sources} if sources else {}),
         "trans_x": {
             "Description": "Translation along the x-axis",
             "Units": "mm",
