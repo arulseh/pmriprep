@@ -235,7 +235,7 @@ dce:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection (Patlak, Extended Tofts, 2CXM). Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
-| `inference` | str | `"nlls"` | Inference engine: `nlls`, `vi`, `map` (and `mcmc` via YAML only) |
+| `inference` | str | `"nlls"` | Inference engine: `nlls`, `vi`, `map` |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
 | `hematocrit` | float | `0.42` | Arterial hematocrit for AIF plasma correction |
@@ -428,7 +428,7 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dscNawmNormCbf_stat.nii.gz
       sub-01_ses-01_desc-dscNawmNormCbv_stat.nii.gz
       sub-01_ses-01_desc-dscNawmRelTtp_stat.nii.gz
-      # DSC parametric uncertainty (inference: vi/svb/map only)
+      # DSC parametric uncertainty (inference)
       sub-01_ses-01_desc-dscUncertaintyCbf_stat.nii.gz
       sub-01_ses-01_desc-dscCVCbf_stat.nii.gz
       sub-01_ses-01_desc-dscCI95lowerCbf_stat.nii.gz
@@ -448,7 +448,7 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dceKep_stat.nii.gz
       sub-01_ses-01_desc-dceRsquared_stat.nii.gz
       sub-01_ses-01_desc-dceNawmNormKtrans_stat.nii.gz
-      # DCE PK uncertainty (inference: vi/map/mcmc only)
+      # DCE PK uncertainty (inference)
       sub-01_ses-01_desc-dceUncertaintyKtrans_stat.nii.gz
       sub-01_ses-01_desc-dceCVKtrans_stat.nii.gz
       sub-01_ses-01_desc-dceCI95lowerKtrans_stat.nii.gz
