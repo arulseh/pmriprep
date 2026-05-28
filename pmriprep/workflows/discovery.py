@@ -188,21 +188,9 @@ def _find_t1w_ce_gad(
 
 
 def _normalize_scanning_sequence(val: object) -> Optional[frozenset]:
-    """Normalize ScanningSequence to a comparable frozenset.
-
-    Handles list (``["GR", "IR"]``), slash-separated string
-    (``"GR/IR"``), or single token (``"GR"``).  Returns ``None``
-    on empty or unparseable input.
-    """
-    if not val:
-        return None
-    try:
-        if isinstance(val, list):
-            return frozenset(str(s).upper() for s in val)
-        tokens = [s.strip().upper() for s in str(val).replace("\\", "/").split("/")]
-        return frozenset(tokens)
-    except (TypeError, AttributeError):
-        return None
+    """Normalize ScanningSequence — delegates to :func:`pmriprep.utils.bids.normalize_scanning_sequence`."""
+    from pmriprep.utils.bids import normalize_scanning_sequence
+    return normalize_scanning_sequence(val)
 
 
 def _scalar(val: object) -> Optional[float]:

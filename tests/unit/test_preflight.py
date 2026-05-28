@@ -36,6 +36,8 @@ def _valid_dsc_sidecar() -> dict:
         "flip_angle": 90.0,
         "r1_relaxivity": None,
         "contrast_agent": None,
+        "scanning_sequence": frozenset({"GR", "EP"}),
+        "echo_entity": False,
     }
 
 
@@ -231,6 +233,60 @@ class TestValidateDSCMetadata:
         fs_msgs = [m for m in msgs if m.code == "DSC_MISSING_FIELD_STRENGTH"]
         assert len(fs_msgs) == 1
         assert fs_msgs[0].level == "error"
+
+    # --- Sequence type validation ---
+
+    def test_gre_epi_no_sequence_error(self):
+        sc = _valid_dsc_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR", "EP"})
+        msgs = validate_dsc_metadata(sc)
+        seq_codes = {m.code for m in msgs if "ECHO" in m.code or "SPIN" in m.code
+                     or "HYBRID" in m.code or "SEQUENCE_TYPE" in m.code}
+        assert len(seq_codes) == 0
+
+    def test_spin_echo_error(self):
+        sc = _valid_dsc_sidecar()
+        sc["scanning_sequence"] = frozenset({"SE", "EP"})
+        msgs = validate_dsc_metadata(sc)
+        assert any(m.code == "DSC_SPIN_ECHO_UNSUPPORTED" for m in msgs)
+        assert any(m.level == "error" for m in msgs
+                   if m.code == "DSC_SPIN_ECHO_UNSUPPORTED")
+
+    def test_pure_spin_echo_error(self):
+        sc = _valid_dsc_sidecar()
+        sc["scanning_sequence"] = frozenset({"SE"})
+        msgs = validate_dsc_metadata(sc)
+        assert any(m.code == "DSC_SPIN_ECHO_UNSUPPORTED" for m in msgs)
+
+    def test_hybrid_gr_se_warning(self):
+        sc = _valid_dsc_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR", "SE"})
+        msgs = validate_dsc_metadata(sc)
+        assert any(m.code == "DSC_HYBRID_SEQUENCE" for m in msgs)
+        assert any(m.level == "warning" for m in msgs
+                   if m.code == "DSC_HYBRID_SEQUENCE")
+
+    def test_missing_scanning_sequence_info(self):
+        sc = _valid_dsc_sidecar()
+        sc["scanning_sequence"] = None
+        msgs = validate_dsc_metadata(sc)
+        assert any(m.code == "DSC_SEQUENCE_TYPE_UNKNOWN" for m in msgs)
+        assert any(m.level == "info" for m in msgs
+                   if m.code == "DSC_SEQUENCE_TYPE_UNKNOWN")
+
+    def test_multi_echo_entity_error(self):
+        sc = _valid_dsc_sidecar()
+        sc["echo_entity"] = True
+        msgs = validate_dsc_metadata(sc)
+        assert any(m.code == "DSC_MULTI_ECHO_UNSUPPORTED" for m in msgs)
+        assert any(m.level == "error" for m in msgs
+                   if m.code == "DSC_MULTI_ECHO_UNSUPPORTED")
+
+    def test_no_echo_entity_no_error(self):
+        sc = _valid_dsc_sidecar()
+        sc["echo_entity"] = False
+        msgs = validate_dsc_metadata(sc)
+        assert not any(m.code == "DSC_MULTI_ECHO_UNSUPPORTED" for m in msgs)
 
 
 # ===========================================================================

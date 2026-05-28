@@ -6,6 +6,7 @@ and user-specified skip flags.
 """
 
 import dataclasses
+import re
 from dataclasses import dataclass
 from pathlib import Path
 import logging
@@ -433,16 +434,19 @@ def _read_bids_sidecar(
 
     Returns:
         Dict with keys: te, tr, volume_tr, pulse_tr, field_strength, flip_angle,
-        r1_relaxivity, contrast_agent.
+        r1_relaxivity, contrast_agent, scanning_sequence, echo_entity.
         - tr: Pulse TR for signal equation (defaults to pulse_tr)
         - volume_tr: Volume TR for temporal resolution (model selection, time vector)
         - pulse_tr: Pulse TR for SPGR signal equation
         - r1_relaxivity: r1 from contrast agent lookup, or None
         - contrast_agent: Contrast agent name from DICOM, or None
+        - scanning_sequence: frozenset of DICOM ScanningSequence tokens, or None
+        - echo_entity: True if filename contains echo-<N> BIDS entity
         Values are floats/str or None if not found in the sidecar.
     """
     import json
 
+    from pmriprep.utils.bids import normalize_scanning_sequence
     from pmriprep.utils.contrast_agent import get_r1_from_sidecar_dict
 
     result: dict[str, Any] = {
@@ -457,9 +461,13 @@ def _read_bids_sidecar(
         "bids_agent_string": None,  # Original ContrastBolusAgent from sidecar
         "agent_standard_dose": 0.1,  # Default standard dose (mmol/kg)
         "mr_acquisition_type": "",   # BIDS MRAcquisitionType ('3D'/'2D')
+        "scanning_sequence": None,   # frozenset from ScanningSequence
+        "echo_entity": False,        # True if filename has echo-<N> entity
     }
 
     nifti = Path(nifti_path)
+    result["echo_entity"] = bool(re.search(r"_echo-\d+", nifti.name))
+
     sidecar = nifti.with_name(
         nifti.name.replace(".nii.gz", ".json").replace(".nii", ".json")
     )
@@ -500,6 +508,11 @@ def _read_bids_sidecar(
     # (van der Schaaf MRM 2006); 2D multi-slice does not.
     if "MRAcquisitionType" in meta:
         result["mr_acquisition_type"] = str(meta["MRAcquisitionType"])
+
+    if "ScanningSequence" in meta:
+        result["scanning_sequence"] = normalize_scanning_sequence(
+            meta["ScanningSequence"]
+        )
 
     # Extract contrast agent r1 relaxivity from DICOM metadata
     # This enables agent-specific r1 values (e.g., Gadovist r1=5.0 at 3T)

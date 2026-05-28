@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING, FrozenSet, List, Optional, Union
 
 if TYPE_CHECKING:
     from bids.layout import BIDSLayout
@@ -127,3 +127,21 @@ def collect_sessions(
         return list(present) if present else [None]
 
     return sorted(sessions)
+
+
+def normalize_scanning_sequence(val: object) -> Optional[FrozenSet[str]]:
+    """Normalize BIDS ``ScanningSequence`` to a comparable frozenset.
+
+    Handles list (``["GR", "IR"]``), slash-separated string
+    (``"GR/IR"``), or single token (``"GR"``).  Returns ``None``
+    on empty or unparseable input.
+    """
+    if not val or isinstance(val, (int, float, bool)):
+        return None
+    try:
+        if isinstance(val, list):
+            return frozenset(str(s).upper() for s in val)
+        tokens = [s.strip().upper() for s in str(val).replace("\\", "/").split("/")]
+        return frozenset(tokens)
+    except (TypeError, AttributeError):
+        return None

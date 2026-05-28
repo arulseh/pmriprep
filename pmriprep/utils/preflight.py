@@ -218,6 +218,54 @@ def validate_dsc_metadata(
             ),
         ))
 
+    # Multi-echo detection (BIDS echo-<N> entity in filename)
+    if sidecar.get("echo_entity"):
+        msgs.append(PreflightMessage(
+            level="error",
+            code="DSC_MULTI_ECHO_UNSUPPORTED",
+            message=(
+                "Multi-echo DSC detected (echo entity in filename). "
+                "PMRIPrep supports single-echo GRE-EPI only."
+            ),
+        ))
+
+    # Sequence type validation
+    scanning_seq = sidecar.get("scanning_sequence")
+    if scanning_seq is not None:
+        has_se = "SE" in scanning_seq
+        has_gr = "GR" in scanning_seq
+        if has_se and not has_gr:
+            msgs.append(PreflightMessage(
+                level="error",
+                code="DSC_SPIN_ECHO_UNSUPPORTED",
+                message=(
+                    f"Spin-echo DSC detected "
+                    f"(ScanningSequence={'/'.join(sorted(scanning_seq))}). "
+                    f"PMRIPrep assumes T2*-weighted (gradient-echo) "
+                    f"signal conversion."
+                ),
+            ))
+        elif has_se and has_gr:
+            msgs.append(PreflightMessage(
+                level="warning",
+                code="DSC_HYBRID_SEQUENCE",
+                message=(
+                    f"Hybrid GR+SE scanning sequence detected "
+                    f"(ScanningSequence={'/'.join(sorted(scanning_seq))}). "
+                    f"PMRIPrep uses single-echo T2*-weighted signal "
+                    f"conversion only."
+                ),
+            ))
+    else:
+        msgs.append(PreflightMessage(
+            level="info",
+            code="DSC_SEQUENCE_TYPE_UNKNOWN",
+            message=(
+                "ScanningSequence not found in sidecar. "
+                "PMRIPrep assumes single-echo GRE-EPI."
+            ),
+        ))
+
     # --- Agent-specific checks ---
     agent_raw = sidecar.get("contrast_agent")
     agent_name: Optional[str] = None
