@@ -37,6 +37,7 @@ def _valid_dsc_sidecar() -> dict:
         "r1_relaxivity": None,
         "contrast_agent": None,
         "scanning_sequence": frozenset({"GR", "EP"}),
+        "sequence_variant": None,
         "echo_entity": False,
     }
 
@@ -52,6 +53,9 @@ def _valid_dce_sidecar() -> dict:
         "flip_angle": 15.0,
         "r1_relaxivity": 5.0,
         "contrast_agent": "Gadovist",
+        "scanning_sequence": frozenset({"GR"}),
+        "sequence_variant": frozenset({"SP"}),
+        "echo_entity": False,
     }
 
 
@@ -348,6 +352,114 @@ class TestValidateDCEMetadata:
         sc["volume_tr"] = 7.0
         msgs = validate_dce_metadata(sc, DCEConfig())
         assert any(m.code == "DCE_NO_PULSE_TR" for m in msgs)
+
+    # --- Sequence type validation ---
+
+    def test_valid_spgr_no_sequence_errors(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR"})
+        sc["sequence_variant"] = frozenset({"SP"})
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        seq_codes = {m.code for m in msgs if "SPIN" in m.code or "IR_" in m.code
+                     or "BSSFP" in m.code or "UNSPOILED" in m.code
+                     or "EPI_READOUT" in m.code or "SEQUENCE_TYPE" in m.code}
+        assert len(seq_codes) == 0
+
+    def test_dce_spin_echo_error(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"SE"})
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_SPIN_ECHO_UNSUPPORTED" for m in msgs)
+        assert any(m.level == "error" for m in msgs
+                   if m.code == "DCE_SPIN_ECHO_UNSUPPORTED")
+
+    def test_dce_spin_echo_epi_error(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"SE", "EP"})
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_SPIN_ECHO_UNSUPPORTED" for m in msgs)
+
+    def test_dce_ir_error(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR", "IR"})
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_IR_UNSUPPORTED" for m in msgs)
+        assert any(m.level == "error" for m in msgs
+                   if m.code == "DCE_IR_UNSUPPORTED")
+
+    def test_dce_bssfp_error(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR"})
+        sc["sequence_variant"] = frozenset({"SS"})
+        sc["te"] = 0.002
+        sc["pulse_tr"] = 0.004  # TE/TR = 0.5
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_BSSFP_UNSUPPORTED" for m in msgs)
+        assert any(m.level == "error" for m in msgs
+                   if m.code == "DCE_BSSFP_UNSUPPORTED")
+
+    def test_dce_unspoiled_gr_warning(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR"})
+        sc["sequence_variant"] = frozenset({"SS"})
+        sc["te"] = 0.002
+        sc["pulse_tr"] = 0.008  # TE/TR = 0.25, below bSSFP threshold
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_UNSPOILED_GR" for m in msgs)
+        assert any(m.level == "warning" for m in msgs
+                   if m.code == "DCE_UNSPOILED_GR")
+        assert not any(m.code == "DCE_BSSFP_UNSUPPORTED" for m in msgs)
+
+    def test_dce_unspoiled_gr_missing_pulse_tr(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR"})
+        sc["sequence_variant"] = frozenset({"SS"})
+        sc["pulse_tr"] = None
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_UNSPOILED_GR" for m in msgs)
+        assert not any(m.code == "DCE_BSSFP_UNSUPPORTED" for m in msgs)
+
+    def test_dce_epi_readout_info(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR", "EP"})
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_EPI_READOUT" for m in msgs)
+        assert any(m.level == "info" for m in msgs
+                   if m.code == "DCE_EPI_READOUT")
+
+    def test_dce_missing_scanning_sequence_info(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = None
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_SEQUENCE_TYPE_UNKNOWN" for m in msgs)
+        assert any(m.level == "info" for m in msgs
+                   if m.code == "DCE_SEQUENCE_TYPE_UNKNOWN")
+
+    def test_dce_missing_variant_no_variant_messages(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR"})
+        sc["sequence_variant"] = None
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert not any(m.code in ("DCE_BSSFP_UNSUPPORTED", "DCE_UNSPOILED_GR")
+                       for m in msgs)
+
+    def test_dce_bssfp_missing_te_falls_to_unspoiled(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"GR"})
+        sc["sequence_variant"] = frozenset({"SS"})
+        sc["te"] = None
+        sc["pulse_tr"] = 0.004
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_UNSPOILED_GR" for m in msgs)
+        assert not any(m.code == "DCE_BSSFP_UNSUPPORTED" for m in msgs)
+
+    def test_dce_se_ir_fires_both_errors(self):
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset({"SE", "IR"})
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        codes = {m.code for m in msgs}
+        assert "DCE_SPIN_ECHO_UNSUPPORTED" in codes
+        assert "DCE_IR_UNSUPPORTED" in codes
 
     def test_r1_override_info(self):
         sc = _valid_dce_sidecar()

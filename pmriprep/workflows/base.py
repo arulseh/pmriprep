@@ -434,19 +434,21 @@ def _read_bids_sidecar(
 
     Returns:
         Dict with keys: te, tr, volume_tr, pulse_tr, field_strength, flip_angle,
-        r1_relaxivity, contrast_agent, scanning_sequence, echo_entity.
+        r1_relaxivity, contrast_agent, scanning_sequence, sequence_variant,
+        echo_entity.
         - tr: Pulse TR for signal equation (defaults to pulse_tr)
         - volume_tr: Volume TR for temporal resolution (model selection, time vector)
         - pulse_tr: Pulse TR for SPGR signal equation
         - r1_relaxivity: r1 from contrast agent lookup, or None
         - contrast_agent: Contrast agent name from DICOM, or None
         - scanning_sequence: frozenset of DICOM ScanningSequence tokens, or None
+        - sequence_variant: frozenset of DICOM SequenceVariant tokens, or None
         - echo_entity: True if filename contains echo-<N> BIDS entity
         Values are floats/str or None if not found in the sidecar.
     """
     import json
 
-    from pmriprep.utils.bids import normalize_scanning_sequence
+    from pmriprep.utils.bids import normalize_dicom_multi_value
     from pmriprep.utils.contrast_agent import get_r1_from_sidecar_dict
 
     result: dict[str, Any] = {
@@ -462,6 +464,7 @@ def _read_bids_sidecar(
         "agent_standard_dose": 0.1,  # Default standard dose (mmol/kg)
         "mr_acquisition_type": "",   # BIDS MRAcquisitionType ('3D'/'2D')
         "scanning_sequence": None,   # frozenset from ScanningSequence
+        "sequence_variant": None,    # frozenset from SequenceVariant
         "echo_entity": False,        # True if filename has echo-<N> entity
     }
 
@@ -510,8 +513,13 @@ def _read_bids_sidecar(
         result["mr_acquisition_type"] = str(meta["MRAcquisitionType"])
 
     if "ScanningSequence" in meta:
-        result["scanning_sequence"] = normalize_scanning_sequence(
+        result["scanning_sequence"] = normalize_dicom_multi_value(
             meta["ScanningSequence"]
+        )
+
+    if "SequenceVariant" in meta:
+        result["sequence_variant"] = normalize_dicom_multi_value(
+            meta["SequenceVariant"]
         )
 
     # Extract contrast agent r1 relaxivity from DICOM metadata

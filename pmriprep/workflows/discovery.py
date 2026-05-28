@@ -188,9 +188,9 @@ def _find_t1w_ce_gad(
 
 
 def _normalize_scanning_sequence(val: object) -> Optional[frozenset]:
-    """Normalize ScanningSequence — delegates to :func:`pmriprep.utils.bids.normalize_scanning_sequence`."""
-    from pmriprep.utils.bids import normalize_scanning_sequence
-    return normalize_scanning_sequence(val)
+    """Normalize ScanningSequence — delegates to :func:`pmriprep.utils.bids.normalize_dicom_multi_value`."""
+    from pmriprep.utils.bids import normalize_dicom_multi_value
+    return normalize_dicom_multi_value(val)
 
 
 def _scalar(val: object) -> Optional[float]:

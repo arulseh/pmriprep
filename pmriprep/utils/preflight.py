@@ -461,6 +461,93 @@ def validate_dce_metadata(
             ),
         ))
 
+    # Sequence type validation
+    scanning_seq = sidecar.get("scanning_sequence")
+    sequence_var = sidecar.get("sequence_variant")
+    te = sidecar.get("te")
+
+    if scanning_seq is not None:
+        has_se = "SE" in scanning_seq
+        has_gr = "GR" in scanning_seq
+        has_ir = "IR" in scanning_seq
+        has_ep = "EP" in scanning_seq
+
+        if has_se and not has_gr:
+            msgs.append(PreflightMessage(
+                level="error",
+                code="DCE_SPIN_ECHO_UNSUPPORTED",
+                message=(
+                    f"Spin-echo DCE detected "
+                    f"(ScanningSequence={'/'.join(sorted(scanning_seq))}). "
+                    f"PMRIPrep uses the SPGR/Ernst signal equation, which "
+                    f"requires spoiled gradient-echo acquisition."
+                ),
+            ))
+
+        if has_ir:
+            msgs.append(PreflightMessage(
+                level="error",
+                code="DCE_IR_UNSUPPORTED",
+                message=(
+                    f"Inversion-recovery prepared DCE detected "
+                    f"(ScanningSequence={'/'.join(sorted(scanning_seq))}). "
+                    f"The SPGR signal equation does not model inversion "
+                    f"preparation."
+                ),
+            ))
+
+        if sequence_var is not None and "SS" in sequence_var:
+            is_bssfp = (
+                te is not None
+                and pulse_tr is not None
+                and pulse_tr > 0
+                and te > 0.4 * pulse_tr
+            )
+            if is_bssfp:
+                msgs.append(PreflightMessage(
+                    level="error",
+                    code="DCE_BSSFP_UNSUPPORTED",
+                    message=(
+                        f"Balanced steady-state free precession (bSSFP) DCE "
+                        f"detected (SequenceVariant="
+                        f"{'/'.join(sorted(sequence_var))}, "
+                        f"TE/TR={te:.4f}/{pulse_tr:.4f}s). The bSSFP signal "
+                        f"equation differs fundamentally from SPGR."
+                    ),
+                ))
+            elif "SP" not in sequence_var:
+                msgs.append(PreflightMessage(
+                    level="warning",
+                    code="DCE_UNSPOILED_GR",
+                    message=(
+                        f"Non-spoiled gradient echo (SSFP-FID) detected "
+                        f"(SequenceVariant="
+                        f"{'/'.join(sorted(sequence_var))}). "
+                        f"The SPGR signal model assumes complete spoiling. "
+                        f"Results may contain systematic bias."
+                    ),
+                ))
+
+        if has_ep:
+            msgs.append(PreflightMessage(
+                level="info",
+                code="DCE_EPI_READOUT",
+                message=(
+                    "EPI-based DCE acquisition detected. The EPI readout "
+                    "introduces T2* sensitivity that may confound T1-based "
+                    "concentration estimates at high concentrations."
+                ),
+            ))
+    else:
+        msgs.append(PreflightMessage(
+            level="info",
+            code="DCE_SEQUENCE_TYPE_UNKNOWN",
+            message=(
+                "ScanningSequence not found in sidecar. "
+                "PMRIPrep assumes spoiled gradient-echo (SPGR) acquisition."
+            ),
+        ))
+
     # r1 relaxivity warnings (skip if user supplied override)
     contrast_agent = sidecar.get("contrast_agent")
     if dce_config.r1_relaxivity is None:
