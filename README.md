@@ -102,7 +102,7 @@ The pipeline has no strict hardware minimums and will run on a single core. Reco
 | CPU | 4+ cores |
 | RAM | 8+ GB |
 | Disk (working directory) | 2 GB per subject |
-| GPU | Optional; 4+ GB VRAM (NVIDIA CUDA or Apple MPS) |
+| GPU | Optional |
 
 - Runtime scales with `--nprocs`. A typical subject completes in ~12 minutes on 16 cores.
 - GPU is used only for brain extraction (HD-BET) and tumor segmentation (HD-GLIO). Without a GPU, HD-BET falls back to CPU and tumor segmentation is skipped.
