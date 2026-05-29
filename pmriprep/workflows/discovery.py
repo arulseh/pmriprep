@@ -33,6 +33,8 @@ class ModalityAvailability:
         b1_precomputed_file: Path to pre-computed B1+ flip angle map (e.g., tfl_b1map famp).
         b1_nominal_prep_fa: Nominal preparation flip angle (degrees) from famp JSON sidecar.
         b1_method_detected: Detected B1+ method ("afi" or "tfl_b1map"), if any.
+        dsc_n_volumes: Number of volumes in the DSC 4D series, if loaded.
+        dce_n_volumes: Number of volumes in the DCE 4D series, if loaded.
     """
 
     t1w_pre: Optional[Path] = None
@@ -49,6 +51,8 @@ class ModalityAvailability:
     afi_tr1_ms: Optional[float] = None  # TR1 in ms (from sidecar)
     afi_tr2_ms: Optional[float] = None  # TR2 in ms (from sidecar)
     afi_flip_angle: Optional[float] = None  # Nominal flip angle in degrees (from sidecar)
+    dsc_n_volumes: Optional[int] = None
+    dce_n_volumes: Optional[int] = None
     b1_precomputed_file: Optional[Path] = None  # Pre-computed B1+ map (e.g., tfl_b1map famp)
     b1_nominal_prep_fa: Optional[float] = None  # FlipAngle from famp JSON sidecar
     b1_method_detected: Optional[str] = None  # "afi" or "tfl_b1map"
@@ -923,6 +927,8 @@ def discover_session_data(
                 modalities.dsc.name, len(_shape), _shape,
             )
             modalities.dsc = None
+        else:
+            modalities.dsc_n_volumes = _shape[3]
 
     if modalities.dce:
         _shape = nib.load(modalities.dce).header.get_data_shape()  # type: ignore[attr-defined]
@@ -934,6 +940,8 @@ def discover_session_data(
                 modalities.dce.name, len(_shape), _shape,
             )
             modalities.dce = None
+        else:
+            modalities.dce_n_volumes = _shape[3]
 
     if modalities.afi:
         b1_info = _classify_b1_data(modalities.afi, layout)

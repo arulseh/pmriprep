@@ -25,6 +25,18 @@ HIGH_R1_THRESHOLD: float = 8.0  # s⁻¹/mM — above this, T1 effects dominate
 LOW_GD_DOSE_THRESHOLD: float = 0.05  # mmol-Gd/kg — DSC deconvolution floor
 LOW_DCE_DOSE_R1_THRESHOLD: float = 0.15  # kg⁻¹·s⁻¹ — DCE tissue enhancement floor
 
+# Temporal sufficiency: baseline (~8-10) + first-pass (~10) + post-bolus (~10)
+DSC_MIN_VOLUMES: int = 30
+DSC_MARGINAL_VOLUMES: int = 40
+DSC_MIN_DURATION_S: float = 40.0
+DSC_MARGINAL_DURATION_S: float = 60.0
+
+# Temporal sufficiency: baseline (~5) + wash-in (~3) + washout (~5+)
+DCE_MIN_VOLUMES: int = 15
+DCE_MARGINAL_VOLUMES: int = 20
+DCE_MIN_DURATION_S: float = 60.0
+DCE_MARGINAL_DURATION_S: float = 120.0
+
 
 class PreflightError(RuntimeError):
     """Raised when pre-flight validation finds fatal errors."""
@@ -729,6 +741,144 @@ def validate_afi_metadata(
     return msgs
 
 
+def validate_dsc_temporal_sufficiency(
+    n_volumes: int,
+    tr: Optional[float],
+) -> list[PreflightMessage]:
+    """Validate DSC temporal sampling sufficiency.
+
+    Parameters
+    ----------
+    n_volumes : int
+        Number of temporal volumes (NIfTI shape[3]).
+    tr : float or None
+        Repetition time in seconds, or None if unavailable.
+
+    Returns
+    -------
+    list of PreflightMessage
+    """
+    msgs: list[PreflightMessage] = []
+
+    if n_volumes < DSC_MIN_VOLUMES:
+        msgs.append(PreflightMessage(
+            level="error",
+            code="DSC_TOO_FEW_VOLUMES",
+            message=(
+                f"DSC acquisition has {n_volumes} volumes "
+                f"(minimum: {DSC_MIN_VOLUMES}). Insufficient timepoints "
+                f"for baseline estimation, bolus tracking, and "
+                f"deconvolution."
+            ),
+        ))
+    elif n_volumes < DSC_MARGINAL_VOLUMES:
+        msgs.append(PreflightMessage(
+            level="warning",
+            code="DSC_MARGINAL_VOLUMES",
+            message=(
+                f"DSC acquisition has {n_volumes} volumes "
+                f"({DSC_MIN_VOLUMES}-{DSC_MARGINAL_VOLUMES} is marginal). "
+                f"Leakage correction and AIF quality scoring have "
+                f"reduced reliability."
+            ),
+        ))
+
+    if tr is not None and tr > 0:
+        duration = n_volumes * tr
+        if duration < DSC_MIN_DURATION_S:
+            msgs.append(PreflightMessage(
+                level="error",
+                code="DSC_SHORT_DURATION",
+                message=(
+                    f"DSC acquisition duration is {duration:.1f}s "
+                    f"({n_volumes} volumes x TR={tr:.3f}s), below the "
+                    f"{DSC_MIN_DURATION_S:.0f}s minimum required for "
+                    f"first-pass bolus capture and recirculation."
+                ),
+            ))
+        elif duration < DSC_MARGINAL_DURATION_S:
+            msgs.append(PreflightMessage(
+                level="warning",
+                code="DSC_MARGINAL_DURATION",
+                message=(
+                    f"DSC acquisition duration is {duration:.1f}s "
+                    f"({n_volumes} volumes x TR={tr:.3f}s). "
+                    f"Post-bolus sampling may be insufficient for "
+                    f"leakage correction."
+                ),
+            ))
+
+    return msgs
+
+
+def validate_dce_temporal_sufficiency(
+    n_volumes: int,
+    volume_tr: Optional[float],
+) -> list[PreflightMessage]:
+    """Validate DCE temporal sampling sufficiency.
+
+    Parameters
+    ----------
+    n_volumes : int
+        Number of temporal volumes (NIfTI shape[3]).
+    volume_tr : float or None
+        Volume TR in seconds (temporal resolution), or None if unavailable.
+
+    Returns
+    -------
+    list of PreflightMessage
+    """
+    msgs: list[PreflightMessage] = []
+
+    if n_volumes < DCE_MIN_VOLUMES:
+        msgs.append(PreflightMessage(
+            level="error",
+            code="DCE_TOO_FEW_VOLUMES",
+            message=(
+                f"DCE acquisition has {n_volumes} volumes "
+                f"(minimum: {DCE_MIN_VOLUMES}). Insufficient timepoints "
+                f"for pharmacokinetic model fitting."
+            ),
+        ))
+    elif n_volumes < DCE_MARGINAL_VOLUMES:
+        msgs.append(PreflightMessage(
+            level="warning",
+            code="DCE_MARGINAL_VOLUMES",
+            message=(
+                f"DCE acquisition has {n_volumes} volumes "
+                f"({DCE_MIN_VOLUMES}-{DCE_MARGINAL_VOLUMES} is marginal). "
+                f"Only Patlak model is recommended at this sampling."
+            ),
+        ))
+
+    if volume_tr is not None and volume_tr > 0:
+        duration = n_volumes * volume_tr
+        if duration < DCE_MIN_DURATION_S:
+            msgs.append(PreflightMessage(
+                level="error",
+                code="DCE_SHORT_DURATION",
+                message=(
+                    f"DCE acquisition duration is {duration:.1f}s "
+                    f"({n_volumes} volumes x TR={volume_tr:.3f}s), below "
+                    f"the {DCE_MIN_DURATION_S:.0f}s minimum required for "
+                    f"contrast wash-in and washout characterization."
+                ),
+            ))
+        elif duration < DCE_MARGINAL_DURATION_S:
+            msgs.append(PreflightMessage(
+                level="warning",
+                code="DCE_MARGINAL_DURATION",
+                message=(
+                    f"DCE acquisition duration is {duration:.1f}s "
+                    f"({n_volumes} volumes x TR={volume_tr:.3f}s). "
+                    f"Washout phase sampling may be insufficient for "
+                    f"Extended Tofts or 2CXM fitting."
+                ),
+            ))
+
+    return msgs
+
+
 def run_preflight(
     session_data: Any,
     decision: Any,
@@ -767,6 +917,13 @@ def run_preflight(
             report.messages.extend(
                 validate_dsc_metadata(dsc_sidecar, dsc_config=dsc_config)
             )
+        if session_data.modalities.dsc_n_volumes is not None:
+            report.messages.extend(
+                validate_dsc_temporal_sufficiency(
+                    session_data.modalities.dsc_n_volumes,
+                    tr=dsc_sidecar.get("tr") if dsc_sidecar else None,
+                )
+            )
 
     # DCE validation
     if decision.run_dce and session_data.modalities.dce is not None:
@@ -778,6 +935,16 @@ def run_preflight(
         if dce_sidecar is not None and dce_config is not None:
             report.messages.extend(
                 validate_dce_metadata(dce_sidecar, dce_config)
+            )
+        if session_data.modalities.dce_n_volumes is not None:
+            report.messages.extend(
+                validate_dce_temporal_sufficiency(
+                    session_data.modalities.dce_n_volumes,
+                    volume_tr=(
+                        dce_sidecar.get("volume_tr")
+                        if dce_sidecar else None
+                    ),
+                )
             )
 
         # VFA validation (only if VFA data present)

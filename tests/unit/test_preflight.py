@@ -14,7 +14,9 @@ from pmriprep.utils.preflight import (
     PreflightReport,
     validate_afi_metadata,
     validate_dce_metadata,
+    validate_dce_temporal_sufficiency,
     validate_dsc_metadata,
+    validate_dsc_temporal_sufficiency,
     validate_sidecar_exists,
     validate_vfa_metadata,
     run_preflight,
@@ -68,6 +70,8 @@ def _make_modalities(**kwargs):
         "afi": [],
         "afi_tr1_ms": None,
         "afi_tr2_ms": None,
+        "dsc_n_volumes": None,
+        "dce_n_volumes": None,
     }
     defaults.update(kwargs)
     mock = MagicMock()
@@ -929,6 +933,92 @@ class TestDCEAgentGuardrails:
         msgs = validate_dce_metadata(sc, cfg)
         codes = [m.code for m in msgs]
         assert "DCE_LOW_EFFECTIVE_DOSE" not in codes
+
+
+# ===========================================================================
+# Temporal sufficiency tests
+# ===========================================================================
+
+class TestDSCTemporalSufficiency:
+    def test_too_few_volumes(self):
+        msgs = validate_dsc_temporal_sufficiency(20, tr=1.5)
+        assert any(m.code == "DSC_TOO_FEW_VOLUMES" for m in msgs)
+        assert any(m.level == "error" for m in msgs
+                   if m.code == "DSC_TOO_FEW_VOLUMES")
+
+    def test_at_threshold_no_error_but_marginal(self):
+        msgs = validate_dsc_temporal_sufficiency(30, tr=1.5)
+        assert not any(m.code == "DSC_TOO_FEW_VOLUMES" for m in msgs)
+        assert any(m.code == "DSC_MARGINAL_VOLUMES" for m in msgs)
+
+    def test_marginal_volumes(self):
+        msgs = validate_dsc_temporal_sufficiency(35, tr=None)
+        assert any(m.code == "DSC_MARGINAL_VOLUMES" for m in msgs)
+        assert not any("DURATION" in m.code for m in msgs)
+
+    def test_sufficient_volumes(self):
+        msgs = validate_dsc_temporal_sufficiency(60, tr=1.5)
+        vol_msgs = [m for m in msgs if "VOLUME" in m.code]
+        assert len(vol_msgs) == 0
+
+    def test_short_duration(self):
+        msgs = validate_dsc_temporal_sufficiency(20, tr=1.5)
+        assert any(m.code == "DSC_SHORT_DURATION" for m in msgs)
+
+    def test_marginal_duration(self):
+        msgs = validate_dsc_temporal_sufficiency(30, tr=1.5)
+        assert any(m.code == "DSC_MARGINAL_DURATION" for m in msgs)
+
+    def test_sufficient_duration(self):
+        msgs = validate_dsc_temporal_sufficiency(60, tr=1.5)
+        dur_msgs = [m for m in msgs if "DURATION" in m.code]
+        assert len(dur_msgs) == 0
+
+    def test_tr_none_skips_duration(self):
+        msgs = validate_dsc_temporal_sufficiency(20, tr=None)
+        assert any(m.code == "DSC_TOO_FEW_VOLUMES" for m in msgs)
+        assert not any("DURATION" in m.code for m in msgs)
+
+
+class TestDCETemporalSufficiency:
+    def test_too_few_volumes(self):
+        msgs = validate_dce_temporal_sufficiency(10, volume_tr=7.0)
+        assert any(m.code == "DCE_TOO_FEW_VOLUMES" for m in msgs)
+        assert any(m.level == "error" for m in msgs
+                   if m.code == "DCE_TOO_FEW_VOLUMES")
+
+    def test_at_threshold_no_error_but_marginal(self):
+        msgs = validate_dce_temporal_sufficiency(15, volume_tr=7.0)
+        assert not any(m.code == "DCE_TOO_FEW_VOLUMES" for m in msgs)
+        assert any(m.code == "DCE_MARGINAL_VOLUMES" for m in msgs)
+
+    def test_marginal_volumes(self):
+        msgs = validate_dce_temporal_sufficiency(18, volume_tr=None)
+        assert any(m.code == "DCE_MARGINAL_VOLUMES" for m in msgs)
+        assert not any("DURATION" in m.code for m in msgs)
+
+    def test_sufficient_volumes(self):
+        msgs = validate_dce_temporal_sufficiency(40, volume_tr=7.0)
+        vol_msgs = [m for m in msgs if "VOLUME" in m.code]
+        assert len(vol_msgs) == 0
+
+    def test_short_duration(self):
+        msgs = validate_dce_temporal_sufficiency(5, volume_tr=7.0)
+        assert any(m.code == "DCE_SHORT_DURATION" for m in msgs)
+
+    def test_marginal_duration(self):
+        msgs = validate_dce_temporal_sufficiency(12, volume_tr=7.0)
+        assert any(m.code == "DCE_MARGINAL_DURATION" for m in msgs)
+
+    def test_sufficient_duration(self):
+        msgs = validate_dce_temporal_sufficiency(40, volume_tr=7.0)
+        dur_msgs = [m for m in msgs if "DURATION" in m.code]
+        assert len(dur_msgs) == 0
+
+    def test_volume_tr_none_skips_duration(self):
+        msgs = validate_dce_temporal_sufficiency(10, volume_tr=None)
+        assert any(m.code == "DCE_TOO_FEW_VOLUMES" for m in msgs)
+        assert not any("DURATION" in m.code for m in msgs)
 
 
 class TestWarningStrings:
