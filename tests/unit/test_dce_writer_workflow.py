@@ -230,7 +230,7 @@ def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:
         _json.dumps({"RepetitionTime": 2.0})
     )
     nib.save(
-        nib.Nifti1Image(np.zeros((4, 4, 4, 5), dtype=np.float32), np.eye(4)),
+        nib.Nifti1Image(np.zeros((4, 4, 4, 20), dtype=np.float32), np.eye(4)),
         raw / "perf" / "sub-01_ses-0001_dce.nii.gz",
     )
     (raw / "perf" / "sub-01_ses-0001_dce.json").write_text(
@@ -483,6 +483,7 @@ def _build_dce_wf_for_tr_gate(
     tmp_path: Path, *, volume_tr: float, model: str, inference: str,
 ):
     """Build init_pmriprep_wf with a minimal DCE-only fixture at the given TR."""
+    import math
     import json as _json
 
     from pmriprep.config.tumor_seg import TumorSegConfig
@@ -490,6 +491,8 @@ def _build_dce_wf_for_tr_gate(
     from pmriprep.config.dsc import DSCConfig
     from pmriprep.config.dce import DCEConfig
     from pmriprep.workflows.base import PipelineSkipFlags, init_pmriprep_wf
+
+    n_volumes = max(20, math.ceil(121.0 / volume_tr))
 
     bids = tmp_path / "bids"
     raw = bids / "sub-01" / "ses-0001"
@@ -506,7 +509,7 @@ def _build_dce_wf_for_tr_gate(
         _json.dumps({"RepetitionTime": 2.0})
     )
     nib.save(
-        nib.Nifti1Image(np.zeros((4, 4, 4, 5), dtype=np.float32), np.eye(4)),
+        nib.Nifti1Image(np.zeros((4, 4, 4, n_volumes), dtype=np.float32), np.eye(4)),
         raw / "perf" / "sub-01_ses-0001_dce.nii.gz",
     )
     (raw / "perf" / "sub-01_ses-0001_dce.json").write_text(
