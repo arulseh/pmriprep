@@ -93,6 +93,21 @@ pip install pmriprep
 
 Requires FSL and ANTs on `$PATH`. See the Dockerfile for the full list of system dependencies.
 
+## System Requirements
+
+The pipeline has no strict hardware minimums and will run on a single core. Recommended minimums for practical use:
+
+| Resource | Recommended |
+|----------|-------------|
+| CPU | 4+ cores |
+| RAM | 8+ GB |
+| Disk (working directory) | 2 GB per subject |
+| GPU | Optional; 4+ GB VRAM (NVIDIA CUDA or Apple MPS) |
+
+- Runtime scales with `--nprocs`. A typical subject completes in ~12 minutes on 16 cores.
+- GPU is used only for brain extraction (HD-BET) and tumor segmentation (HD-GLIO). Without a GPU, HD-BET falls back to CPU and tumor segmentation is skipped.
+- Working directory (`-w`) holds intermediate files and can be removed after successful completion.
+
 ## Quick Start
 
 ```bash
