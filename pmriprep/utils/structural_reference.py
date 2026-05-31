@@ -15,10 +15,10 @@ Applications have different requirements:
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -52,13 +52,20 @@ ISOTROPY_POOR = 2.0  # Highly anisotropic
 class ImageResolutionInfo:
     """Resolution information for a structural image.
 
-    Attributes:
-        path: Path to the NIfTI file.
-        voxel_sizes: Tuple of (x, y, z) voxel dimensions in mm.
-        geometric_mean: Geometric mean resolution (x*y*z)^(1/3).
-        isotropy_ratio: Anisotropy measure max(v)/min(v).
-        resolution_tier: Quality classification.
-        is_postcontrast: Whether this is a post-contrast image.
+    Attributes
+    ----------
+    path : Path
+        Path to the NIfTI file.
+    voxel_sizes : tuple
+        Tuple of (x, y, z) voxel dimensions in mm.
+    geometric_mean : float
+        Geometric mean resolution (x*y*z)^(1/3).
+    isotropy_ratio : float
+        Anisotropy measure max(v)/min(v).
+    resolution_tier : ResolutionTier
+        Quality classification.
+    is_postcontrast : bool
+        Whether this is a post-contrast image.
     """
 
     path: Path
@@ -86,13 +93,18 @@ def get_geometric_mean_resolution(
     The geometric mean provides a single scalar representing the "effective"
     isotropic resolution of an anisotropic image.
 
-    Args:
-        voxel_sizes: Tuple of (voxel_x, voxel_y, voxel_z) in mm.
+    Parameters
+    ----------
+    voxel_sizes : tuple
+        Tuple of (voxel_x, voxel_y, voxel_z) in mm.
 
-    Returns:
+    Returns
+    -------
+    float
         Geometric mean resolution: (Vx × Vy × Vz)^(1/3) in mm.
 
-    Example:
+    Examples
+    --------
         >>> get_geometric_mean_resolution((1.0, 1.0, 1.0))
         1.0
         >>> get_geometric_mean_resolution((0.5, 0.5, 2.0))  # 2mm slices
@@ -111,13 +123,18 @@ def get_isotropy_ratio(
     A ratio of 1.0 indicates perfectly isotropic voxels.
     Higher values indicate more anisotropic (non-cubic) voxels.
 
-    Args:
-        voxel_sizes: Tuple of (voxel_x, voxel_y, voxel_z) in mm.
+    Parameters
+    ----------
+    voxel_sizes : tuple
+        Tuple of (voxel_x, voxel_y, voxel_z) in mm.
 
-    Returns:
+    Returns
+    -------
+    float
         Isotropy ratio: max(V)/min(V), always >= 1.0.
 
-    Example:
+    Examples
+    --------
         >>> get_isotropy_ratio((1.0, 1.0, 1.0))  # Isotropic
         1.0
         >>> get_isotropy_ratio((0.5, 0.5, 2.0))  # 4x anisotropic
@@ -142,17 +159,22 @@ def classify_resolution(
         - acceptable: 1.5-2.0 mm (low-resolution structural)
         - poor: > 2.0 mm (likely functional or low-quality structural)
 
-    Args:
-        geometric_mean: Geometric mean resolution in mm.
+    Parameters
+    ----------
+    geometric_mean : float
+        Geometric mean resolution in mm.
 
-    Returns:
+    Returns
+    -------
+    ResolutionTier
         ResolutionTier classification.
 
-    Example:
-        >>> classify_resolution(0.8)
-        ResolutionTier.EXCELLENT
-        >>> classify_resolution(1.2)
-        ResolutionTier.GOOD
+    Examples
+    --------
+        >>> classify_resolution(0.8).name
+        'EXCELLENT'
+        >>> classify_resolution(1.2).name
+        'GOOD'
     """
     if geometric_mean <= RESOLUTION_THRESHOLDS[ResolutionTier.EXCELLENT]:
         return ResolutionTier.EXCELLENT
@@ -170,10 +192,14 @@ def is_postcontrast_image(path: Union[str, Path]) -> bool:
     Checks for the 'ce-' (contrast entity) in the BIDS filename,
     which indicates a contrast-enhanced acquisition.
 
-    Args:
-        path: Path to the NIfTI file.
+    Parameters
+    ----------
+    path : Path or str
+        Path to the NIfTI file.
 
-    Returns:
+    Returns
+    -------
+    bool
         True if the image appears to be post-contrast.
     """
     path = Path(path)
@@ -197,14 +223,20 @@ def get_image_resolution_info(
 ) -> ImageResolutionInfo:
     """Get resolution information for a NIfTI image.
 
-    Args:
-        path: Path to the NIfTI file.
+    Parameters
+    ----------
+    path : Path or str
+        Path to the NIfTI file.
 
-    Returns:
+    Returns
+    -------
+    ImageResolutionInfo
         ImageResolutionInfo with all resolution metrics.
 
-    Raises:
-        FileNotFoundError: If the file does not exist.
+    Raises
+    ------
+    FileNotFoundError
+        If the file does not exist.
     """
     path = Path(path)
     if not path.exists():
@@ -295,14 +327,22 @@ _LESION_MASK_OVERRIDES: Dict[Tuple[ImageType, bool], float] = {
 class StructuralCandidate:
     """A candidate structural image for reference selection.
 
-    Attributes:
-        path: Path to the NIfTI file.
-        image_type: Classification of the image type.
-        voxel_sizes: Tuple of (x, y, z) voxel dimensions in mm.
-        geometric_mean: Geometric mean resolution.
-        isotropy_ratio: Anisotropy measure max(v)/min(v).
-        is_high_res: Whether geometric mean <= 1.5mm.
-        has_lesion_mask: Whether a lesion mask will be available.
+    Attributes
+    ----------
+    path : Path
+        Path to the NIfTI file.
+    image_type : ImageType
+        Classification of the image type.
+    voxel_sizes : tuple
+        Tuple of (x, y, z) voxel dimensions in mm.
+    geometric_mean : float
+        Geometric mean resolution.
+    isotropy_ratio : float
+        Anisotropy measure max(v)/min(v).
+    is_high_res : bool
+        Whether geometric mean <= 1.5mm.
+    has_lesion_mask : bool
+        Whether a lesion mask will be available.
     """
 
     path: Path
@@ -318,14 +358,22 @@ class StructuralCandidate:
 class StructuralReferenceSelection:
     """Result of confidence-based structural reference selection.
 
-    Attributes:
-        candidate: The selected candidate.
-        confidence: Final confidence score (0.0-1.0).
-        application: Application context used for selection.
-        bbr_eligible: Whether BBR registration is appropriate.
-        all_candidates: All candidates that were considered.
-        selection_reason: Human-readable explanation.
-        coverage_fraction: FOV overlap fraction (1.0 if not computed).
+    Attributes
+    ----------
+    candidate : StructuralCandidate
+        The selected candidate.
+    confidence : float
+        Final confidence score (0.0-1.0).
+    application : ApplicationType
+        Application context used for selection.
+    bbr_eligible : bool
+        Whether BBR registration is appropriate.
+    all_candidates : list
+        All candidates that were considered.
+    selection_reason : str
+        Human-readable explanation.
+    coverage_fraction : float
+        FOV overlap fraction (1.0 if not computed).
     """
 
     candidate: StructuralCandidate
@@ -360,10 +408,14 @@ def classify_image_type(path: Union[str, Path]) -> ImageType:
     Uses the filename to determine modality (T1w/T2w/FLAIR) and contrast
     state (pre/post-contrast).
 
-    Args:
-        path: Path to the NIfTI file.
+    Parameters
+    ----------
+    path : Path or str
+        Path to the NIfTI file.
 
-    Returns:
+    Returns
+    -------
+    ImageType
         ImageType classification.
     """
     path = Path(path)
@@ -383,10 +435,14 @@ def classify_image_type(path: Union[str, Path]) -> ImageType:
 def _compute_base_confidence(candidate: StructuralCandidate) -> float:
     """Compute base confidence from the physics-validated lookup table.
 
-    Args:
-        candidate: Structural candidate with image type and resolution info.
+    Parameters
+    ----------
+    candidate : StructuralCandidate
+        Structural candidate with image type and resolution info.
 
-    Returns:
+    Returns
+    -------
+    float
         Base confidence score (0.0-1.0).
     """
     key = (candidate.image_type, candidate.is_high_res)
@@ -407,11 +463,16 @@ def _apply_isotropy_adjustment(
     Nearly isotropic images get a small bonus; highly anisotropic images
     get a penalty.
 
-    Args:
-        confidence: Current confidence score.
-        isotropy_ratio: max(voxel)/min(voxel), >= 1.0.
+    Parameters
+    ----------
+    confidence : float
+        Current confidence score.
+    isotropy_ratio : float
+        max(voxel)/min(voxel), >= 1.0.
 
-    Returns:
+    Returns
+    -------
+    float
         Adjusted confidence score, clamped to [0.0, 1.0].
     """
     if isotropy_ratio < _ISOTROPY_BONUS_THRESHOLD:
@@ -434,13 +495,20 @@ def _apply_application_overrides(
 ) -> float:
     """Apply application-specific confidence overrides.
 
-    Args:
-        confidence: Current confidence score.
-        candidate: The candidate being scored.
-        application: Target application context.
-        has_postcon_available: Whether any post-contrast image is available.
+    Parameters
+    ----------
+    confidence : float
+        Current confidence score.
+    candidate : StructuralCandidate
+        The candidate being scored.
+    application : ApplicationType
+        Target application context.
+    has_postcon_available : bool
+        Whether any post-contrast image is available.
 
-    Returns:
+    Returns
+    -------
+    float
         Override-adjusted confidence, clamped to [0.0, 1.0].
     """
     img_type = candidate.image_type
@@ -473,10 +541,14 @@ def _determine_bbr_eligibility(candidate: StructuralCandidate) -> bool:
     has disrupted boundaries from gadolinium, making BBR unreliable
     unless a lesion mask is available (post-contrast FLAIR case).
 
-    Args:
-        candidate: The candidate to evaluate.
+    Parameters
+    ----------
+    candidate : StructuralCandidate
+        The candidate to evaluate.
 
-    Returns:
+    Returns
+    -------
+    bool
         True if BBR registration is appropriate.
     """
     img_type = candidate.image_type
@@ -501,11 +573,16 @@ def compute_fov_coverage(
 
     Uses world-coordinate bounding boxes to compute the overlap ratio.
 
-    Args:
-        structural_path: Path to structural NIfTI.
-        perfusion_path: Path to perfusion NIfTI.
+    Parameters
+    ----------
+    structural_path : Path or str
+        Path to structural NIfTI.
+    perfusion_path : Path or str
+        Path to perfusion NIfTI.
 
-    Returns:
+    Returns
+    -------
+    float
         Coverage fraction (0.0-1.0). 1.0 means structural fully covers
         the perfusion FOV.
     """
@@ -564,12 +641,18 @@ def _score_candidate(
 
     Chains: base confidence -> isotropy adjustment -> application overrides.
 
-    Args:
-        candidate: Structural candidate to score.
-        application: Target application context.
-        has_postcon_available: Whether any post-contrast image is available.
+    Parameters
+    ----------
+    candidate : StructuralCandidate
+        Structural candidate to score.
+    application : ApplicationType
+        Target application context.
+    has_postcon_available : bool
+        Whether any post-contrast image is available.
 
-    Returns:
+    Returns
+    -------
+    float
         Final confidence score (0.0-1.0).
     """
     confidence = _compute_base_confidence(candidate)
@@ -586,12 +669,17 @@ def build_candidates_from_session(
 ) -> List[StructuralCandidate]:
     """Build candidate list from a ModalityAvailability object.
 
-    Args:
-        modalities: ModalityAvailability from discovery.
-        has_lesion_mask: Whether a lesion mask will be available at
-            perfusion registration time.
+    Parameters
+    ----------
+    modalities : Any
+        ModalityAvailability from discovery.
+    has_lesion_mask : bool
+        Whether a lesion mask will be available at
+        perfusion registration time.
 
-    Returns:
+    Returns
+    -------
+    list
         List of StructuralCandidate objects for all available modalities.
     """
     candidates: List[StructuralCandidate] = []
@@ -698,12 +786,18 @@ def select_structural_reference_v2(
     Chains base confidence -> isotropy adjustment -> application overrides
     -> coverage check -> selects highest confidence.
 
-    Args:
-        candidates: List of structural candidates.
-        application: Target application context.
-        perfusion_path: Path to perfusion NIfTI for FOV coverage check.
+    Parameters
+    ----------
+    candidates : list
+        List of structural candidates.
+    application : ApplicationType
+        Target application context.
+    perfusion_path : Path or str, optional
+        Path to perfusion NIfTI for FOV coverage check.
 
-    Returns:
+    Returns
+    -------
+    StructuralReferenceSelection or None
         StructuralReferenceSelection, or None if no candidates.
     """
     if not candidates:
@@ -776,18 +870,25 @@ def _determine_processing_mode_v2(
     Returns 3 values enabling the hybrid FAST path: when postcon wins as
     reference, FAST can still run on the precon if it meets a quality gate.
 
-    Args:
-        t1w_precon: Path to T1w pre-contrast image, or None.
-        t1w_postcon: Path to T1w post-contrast image, or None.
+    Parameters
+    ----------
+    t1w_precon : Path or str, optional
+        Path to T1w pre-contrast image, or None.
+    t1w_postcon : Path or str, optional
+        Path to T1w post-contrast image, or None.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of:
             reference_t1w: Path to T1w image to use as reference.
             is_postcon_reference: True if postcon is the reference.
             fast_t1w: Path to T1w for FAST (precon if acceptable), or None.
 
-    Raises:
-        ValueError: If neither precon nor postcon T1w is available.
+    Raises
+    ------
+    ValueError
+        If neither precon nor postcon T1w is available.
     """
     has_precon = t1w_precon is not None and Path(t1w_precon).exists()
     has_postcon = t1w_postcon is not None and Path(t1w_postcon).exists()
@@ -888,10 +989,14 @@ def _map_selection_to_anat_output(
 ) -> str:
     """Map an ImageType to the corresponding anat workflow output field.
 
-    Args:
-        image_type: The selected image type.
+    Parameters
+    ----------
+    image_type : ImageType
+        The selected image type.
 
-    Returns:
+    Returns
+    -------
+    str
         Anat workflow output field name (e.g., "outputnode.t1w_preproc").
     """
     mapping = {

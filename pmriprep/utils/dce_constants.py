@@ -103,16 +103,22 @@ def get_r1_relaxivity(field_strength: float) -> float:
     Delegates to :func:`pmriprep.utils.contrast_agent.lookup_r1` with
     ``"gd-dtpa"``, so all per-agent values come from one table.
 
-    Args:
-        field_strength: Magnetic field strength in Tesla.
+    Parameters
+    ----------
+    field_strength : float
+        Magnetic field strength in Tesla.
 
-    Returns:
+    Returns
+    -------
+    float
         r1 relaxivity in s^-1 per mM.
 
-    Raises:
-        ValueError: If field_strength > 5.0 T and no peer-reviewed 7T value
-            exists for the fallback agent. Gd-DTPA has a Noebauer-Huhmann
-            2010 7T value, so this should not raise in practice.
+    Raises
+    ------
+    ValueError
+        If field_strength > 5.0 T and no peer-reviewed 7T value
+        exists for the fallback agent. Gd-DTPA has a Noebauer-Huhmann
+        2010 7T value, so this should not raise in practice.
     """
     from pmriprep.utils.contrast_agent import lookup_r1
 
@@ -124,7 +130,7 @@ def get_r1_relaxivity(field_strength: float) -> float:
 # =============================================================================
 
 #: Blood T1 values (seconds) by field strength at 37°C
-#: Values from Lu et al. (2004), Stanisz et al. (2005)
+#: Values from Lu 2004 MRM 52:679, Stanisz 2005 MRM 54:507
 BLOOD_T1_BY_FIELD: Final[dict[float, float]] = {
     1.5: 1.35,  # Blood T1 at 1.5T
     3.0: 1.65,  # Blood T1 at 3.0T
@@ -137,10 +143,14 @@ def get_blood_t1(field_strength: float) -> float:
 
     Uses linear interpolation between known values.
 
-    Args:
-        field_strength: Magnetic field strength in Tesla
+    Parameters
+    ----------
+    field_strength : float
+        Magnetic field strength in Tesla
 
-    Returns:
+    Returns
+    -------
+    float
         Blood T1 in seconds
     """
     # Direct lookup for known field strengths
@@ -177,12 +187,14 @@ def get_blood_t1(field_strength: float) -> float:
 
 class T1Range(NamedTuple):
     """Expected T1 range for a tissue type in milliseconds."""
+
     min: float
     max: float
 
 
 class TissueT1Ranges(NamedTuple):
     """Expected T1 ranges for different tissue types."""
+
     white_matter: T1Range
     gray_matter: T1Range
     csf: T1Range
@@ -214,10 +226,14 @@ def get_tissue_t1_ranges(field_strength: float) -> TissueT1Ranges:
 
     Returns the nearest field strength's ranges (no interpolation for QC).
 
-    Args:
-        field_strength: Magnetic field strength in Tesla
+    Parameters
+    ----------
+    field_strength : float
+        Magnetic field strength in Tesla
 
-    Returns:
+    Returns
+    -------
+    TissueT1Ranges
         TissueT1Ranges with WM, GM, and CSF expected ranges in ms
     """
     # Find nearest known field strength
@@ -256,18 +272,22 @@ HEMATOCRIT = HEMATOCRIT_ARTERIAL
 #: Red blood cells travel faster than plasma in small vessels,
 #: reducing capillary hematocrit relative to arterial.
 #: MRI CBV includes arterioles + capillaries + venules.
-#: Refs: Lipowsky, Microcirculation 2005; Levin et al., MRM 2004;
-#: Boxerman et al., MRM 1995. Literature range: 0.80-0.90.
+#: Refs: Lipowsky 2005 Microcirculation 12:5; Boxerman 1995 MRM 34:555.
+#: Literature range: 0.80-0.90.
 FAHRAEUS_RATIO: Final[float] = 0.85
 
 
 def capillary_hematocrit(hct_arterial: float = HEMATOCRIT_ARTERIAL) -> float:
     """Derive capillary hematocrit from arterial via Fåhræus effect.
 
-    Args:
-        hct_arterial: Arterial hematocrit (default 0.42).
+    Parameters
+    ----------
+    hct_arterial : float, optional
+        Arterial hematocrit (default 0.42).
 
-    Returns:
+    Returns
+    -------
+    float
         Capillary hematocrit (default 0.42 × 0.85 = 0.357).
     """
     return hct_arterial * FAHRAEUS_RATIO
@@ -279,6 +299,7 @@ def capillary_hematocrit(hct_arterial: float = HEMATOCRIT_ARTERIAL) -> float:
 
 class AIFThresholds(NamedTuple):
     """Thresholds for AIF quality assessment."""
+
     washout_min: float          # Minimum washout fraction
     fwhm_min_seconds: float     # Minimum FWHM in seconds
     fwhm_max_seconds: float     # Maximum FWHM in seconds
@@ -303,7 +324,7 @@ AIF_THRESHOLDS_RELAXED: Final[AIFThresholds] = AIFThresholds(
 
 #: Permissive AIF quality thresholds (for very difficult cases)
 #: Note: ``washout_min`` matches the relaxed value (0.10) — physics review
-#: (Calamante NMR Biomed 2013) showed the CNR relaxation (5.0→2.0) is
+#: (Willats & Calamante 2013 NMR Biomed 26:913) showed the CNR relaxation (5.0→2.0) is
 #: sufficient for the sensitivity gain on low-dose/preloaded protocols, and
 #: lowering washout below 0.10 admits tissue voxels without proportional
 #: arterial-detection benefit.
@@ -377,8 +398,8 @@ DCE_AIF_GATE_SCALE_HARD: Final[float] = 3.0
 #: G6 (a) — escape ceiling for amplitude floor when shape gates pass.
 #: 8x corresponds to partial-volume fill fraction of about 0.12
 #: (0.8-1.5 mm caliber branch artery in 5 mm slab at oblique
-#: orientation). Roberts JMRI 2006 23:519 documented 1-12 mM blood
-#: AIF peaks at 1.5T; Calamante NMR Biomed 2013 26:913 confirms
+#: orientation). Blood AIF peaks of 1-12 mM at 1.5T (Parker 2006 MRM
+#: 56:993); Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1 confirms
 #: partial-volume dilution of 2-10x is typical.
 DCE_AIF_GATE_SCALE_G6_CEILING: Final[float] = 8.0
 
@@ -389,13 +410,13 @@ DCE_AIF_GATE_SCALE_G6_HIGH: Final[float] = 6.0
 #: G2 — late-tail/peak ratio HARD reject threshold.
 #: Parker bi-exponential arterial plasma decays to <=0.20 by 2 min
 #: post-peak; venous mixing produces persistent late-tail above 0.40
-#: (Calamante 2003 NMR Biomed 16:467).
+#: (Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1).
 DCE_AIF_GATE_LATE_TAIL_RATIO_MAX: Final[float] = 0.35
 
 #: G3 — FWHM HARD reject threshold (seconds).
 #: Assumes power injection >=2 mL/s. For hand-injection cohorts,
-#: override to ~28 s (Calamante 2003 NMR Biomed 16:467). Distal-ACA
-#: broadens FWHM by 2-4 s relative to M1 (Calamante 2010 JCBFM 30:1393).
+#: override to ~28 s (Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1). Distal-ACA
+#: broadens FWHM by 2-4 s relative to M1.
 DCE_AIF_GATE_FWHM_MAX_SECONDS: Final[float] = 22.0
 
 #: G4 — multi-bump tail HARD reject threshold (count).
@@ -406,7 +427,7 @@ DCE_AIF_GATE_MULTIBUMP_MAX: Final[int] = 2
 
 #: G5' — ratio_30 thresholds (post-peak frame at max(4, ceil(30/TR))).
 #: Parker bi-exponential gives ratio ~0.32 at peak+30 s; venous AIFs
-#: sit at >=0.55 (Bleeker 2009 MRM 62:96). HARD threshold leaves
+#: sit at >=0.55 (Bleeker 2011 MRM 65:448). HARD threshold leaves
 #: headroom for distal-ACA broadening, Hct correction, and
 #: recirculation pickup. WARN tier flags borderline cases for future
 #: aggregate-warn gating.
@@ -417,7 +438,7 @@ DCE_AIF_GATE_RATIO30_WARN: Final[float] = 0.40
 #: floor escape. Bilateral n>=5 OR unilateral n>=10 with >=2 distinct
 #: z-slabs provides independent-spatial-consensus rule-out of
 #: localized artifact. n>=10 is the empirical reliability floor for
-#: individual AIFs (Calamante 2010 JCBFM 30:1393).
+#: individual AIFs.
 DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL: Final[int] = 5
 DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL: Final[int] = 10
 DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL: Final[int] = 2
@@ -453,16 +474,23 @@ def get_aif_thresholds(criteria: str = "strict", tr: float = 0.0) -> AIFThreshol
     Supports TR-adaptive FWHM minimum for low temporal resolution DCE
     acquisitions (TR > 5s), where the bolus may span only 1-2 samples.
 
-    Args:
-        criteria: One of "strict", "relaxed", "permissive", or "degraded".
-        tr: Temporal resolution in seconds. If > 5.0, FWHM minimum is
-            adapted to ``max(tr * 0.8, base_fwhm_min)``.
+    Parameters
+    ----------
+    criteria : str, optional
+        One of "strict", "relaxed", "permissive", or "degraded".
+    tr : float, optional
+        Temporal resolution in seconds. If > 5.0, FWHM minimum is
+        adapted to ``max(tr * 0.8, base_fwhm_min)``.
 
-    Returns:
+    Returns
+    -------
+    AIFThresholds
         AIFThresholds with appropriate values.
 
-    Raises:
-        ValueError: If criteria is not a recognized level.
+    Raises
+    ------
+    ValueError
+        If criteria is not a recognized level.
     """
     thresholds_map: dict[str, AIFThresholds] = {
         "strict": AIF_THRESHOLDS_STRICT,
@@ -489,6 +517,7 @@ def get_aif_thresholds(criteria: str = "strict", tr: float = 0.0) -> AIFThreshol
 
 class AIFExpectedValues(NamedTuple):
     """Expected AIF peak concentration ranges for dose validation."""
+
     peak_min_mm: float      # Minimum expected peak in mM
     peak_max_mm: float      # Maximum expected peak in mM
     auc_min: float          # Minimum expected AUC
@@ -511,6 +540,7 @@ DCE_AIF_EXPECTED_FULL_DOSE: Final[AIFExpectedValues] = AIFExpectedValues(
 
 class ParameterBounds(NamedTuple):
     """Min/max bounds for a physiological parameter."""
+
     min: float
     max: float
 
@@ -571,18 +601,30 @@ class B1Thresholds(NamedTuple):
     B1+ to 1.8 or higher in the brain centre while temporal lobes may drop
     to 0.3 (Teeuwisse MRM 2012).  Thresholds must widen accordingly.
 
-    Attributes:
-        clip_low: AFI computation clipping lower bound.
-        clip_high: AFI computation clipping upper bound.
-        vfa_clip_low: VFA T1 mapping clipping lower bound.
-        vfa_clip_high: VFA T1 mapping clipping upper bound.
-        dce_clip_low: DCE signal conversion clipping lower bound.
-        dce_clip_high: DCE signal conversion clipping upper bound.
-        outlier_deviation: Local deviation threshold for outlier rejection.
-        max_std: QC max whole-brain B1+ standard deviation.
-        extreme_low: QC flagging threshold (low).
-        extreme_high: QC flagging threshold (high).
-        mean_range: QC acceptable mean range.
+    Attributes
+    ----------
+    clip_low : float
+        AFI computation clipping lower bound.
+    clip_high : float
+        AFI computation clipping upper bound.
+    vfa_clip_low : float
+        VFA T1 mapping clipping lower bound.
+    vfa_clip_high : float
+        VFA T1 mapping clipping upper bound.
+    dce_clip_low : float
+        DCE signal conversion clipping lower bound.
+    dce_clip_high : float
+        DCE signal conversion clipping upper bound.
+    outlier_deviation : float
+        Local deviation threshold for outlier rejection.
+    max_std : float
+        QC max whole-brain B1+ standard deviation.
+    extreme_low : float
+        QC flagging threshold (low).
+    extreme_high : float
+        QC flagging threshold (high).
+    mean_range : tuple[float, float]
+        QC acceptable mean range.
     """
 
     clip_low: float
@@ -599,7 +641,7 @@ class B1Thresholds(NamedTuple):
 
 
 #: B1+ threshold lookup by field strength (Tesla).
-#: References: Yarnykh MRM 2007, Teeuwisse MRM 2012, Nehrke & Bornert MRM 2014.
+#: References: Yarnykh 2007 MRM 57:192, Nehrke & Börnert 2012 MRM 68:1517.
 B1_THRESHOLDS_BY_FIELD: Final[dict[float, B1Thresholds]] = {
     1.5: B1Thresholds(
         clip_low=0.4,
@@ -650,10 +692,14 @@ def get_b1_thresholds(field_strength: float) -> B1Thresholds:
     :func:`get_tissue_t1_ranges`.  No interpolation — thresholds are
     inherently discrete (literature-validated per field strength).
 
-    Args:
-        field_strength: Magnetic field strength in Tesla.
+    Parameters
+    ----------
+    field_strength : float
+        Magnetic field strength in Tesla.
 
-    Returns:
+    Returns
+    -------
+    B1Thresholds
         B1Thresholds for the closest catalogued field strength.
     """
     fields = sorted(B1_THRESHOLDS_BY_FIELD.keys())
@@ -799,7 +845,6 @@ WB_FALLBACK_DEPTH_EROSION_MM: Final[float] = 10.0
 
 #: Hard minimum distance (mm) from lesion for AIF candidates. Below this,
 #: partial volume with tumor feeding vessels corrupts bolus shape.
-#: Lu JMRI 2004;19:546, Jain Radiology 2007;245:842.
 LESION_EXCLUSION_FLOOR_MM: Final[float] = 10.0
 
 #: Recommended minimum distance (mm) from lesion for AIF candidate voxels.
@@ -905,7 +950,7 @@ AIF_LOW_TR_THRESHOLD: Final[float] = 5.0
 
 #: Minimum peak enhancement for reliable DCE quantification (%)
 #: 5% ≈ 2σ above noise floor; failed injection shows <3%
-#: Heye et al., NMR Biomed 2016: WM enhancement can be 15% in elderly
+#: Subtle WM BBB enhancement occurs in normal aging (Heye 2016 NeuroImage 125:446)
 QC_PEAK_ENHANCEMENT_MIN: Final[float] = 5.0
 
 #: Peak enhancement below this triggers REVIEW (%)
@@ -913,11 +958,11 @@ QC_PEAK_ENHANCEMENT_MIN: Final[float] = 5.0
 QC_PEAK_ENHANCEMENT_WARN: Final[float] = 20.0
 
 #: Minimum baseline tSNR for reliable PK fitting
-#: Tofts JMRI 2010: Ktrans CV >50% at tSNR<3
+#: Below tSNR ~3, Ktrans precision degrades severely (CV >50%)
 QC_DCE_BASELINE_TSNR_MIN: Final[float] = 3.0
 
 #: Baseline tSNR below this triggers REVIEW
-#: Tofts JMRI 2010: Ktrans CV ~20% at tSNR=8
+#: Below tSNR ~8, Ktrans wCV is expected to exceed the QIBA 20% target (QIBA DCE v2.0)
 QC_DCE_BASELINE_TSNR_WARN: Final[float] = 8.0
 
 #: B1+ mean acceptable range for QC gating
@@ -943,10 +988,14 @@ def compute_timing_margin_frames(tr: float) -> int:
     At TR=2s, returns 2 frames (4s / 2s). At TR>=4s, returns 1 frame.
     Ensures the timing margin is physiologically meaningful at any TR.
 
-    Args:
-        tr: Temporal resolution in seconds.
+    Parameters
+    ----------
+    tr : float
+        Temporal resolution in seconds.
 
-    Returns:
+    Returns
+    -------
+    int
         Timing margin in frames (minimum 1).
     """
     if tr <= 0:
@@ -963,11 +1012,16 @@ def compute_fwhm_threshold_frames(tr: float, strict: bool = True) -> float:
     - At TR=2s: min(5, 25/2=12.5) = 5 frames (frame-based dominates)
     - At TR=8s: min(5, 25/8=3.1) = 3.1 frames (seconds-based dominates)
 
-    Args:
-        tr: Temporal resolution in seconds.
-        strict: If True, use strict thresholds; otherwise relaxed.
+    Parameters
+    ----------
+    tr : float
+        Temporal resolution in seconds.
+    strict : bool, optional
+        If True, use strict thresholds; otherwise relaxed.
 
-    Returns:
+    Returns
+    -------
+    float
         FWHM threshold in frames.
     """
     if tr <= 0:
@@ -984,10 +1038,14 @@ def is_low_temporal_resolution(tr: float) -> bool:
     At TR > 5s, the 2-frame timing margin exceeds physiological
     arterial-tissue transit time, making timing criteria unreliable.
 
-    Args:
-        tr: Temporal resolution in seconds.
+    Parameters
+    ----------
+    tr : float
+        Temporal resolution in seconds.
 
-    Returns:
+    Returns
+    -------
+    bool
         True if TR is above the low-TR threshold.
     """
     return tr > AIF_LOW_TR_THRESHOLD
@@ -1076,7 +1134,7 @@ ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD: Final[float] = 0.7
 
 #: Widened lower edge of the vp/nCBV ratio band, applied only when the
 #: ``acquisition_limited`` flag fires. Pinned at the brain-capillary
-#: physiological floor (Pardridge 2011, vp ≥ 0.005) so it does not
+#: physiological floor (Larsson 2009 MRM 62:1270, vp ≥ 0.005) so it does not
 #: undercut the magnitude-plausibility gate. Acquisition-limited CRLB band
 #: from Buckley MRM 2002 first-pass temporal-undersampling analysis —
 #: independent of ``NAWM_VP_REFERENCE`` position (physics-expert 2026-04-19).

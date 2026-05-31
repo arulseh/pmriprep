@@ -16,12 +16,18 @@ from pmriprep.utils.dce_constants import MIN_ENHANCEMENT_MM, MIN_SIGNAL_STD
 class VoxelPrepResult:
     """Result of voxel preparation for PK fitting.
 
-    Attributes:
-        concentration: Prepared concentration time course.
-        is_valid: Whether the voxel passed all validation checks.
-        failure_reason: Reason for failure or "ok" if valid.
-        baseline_mean: Mean baseline concentration (should be ~0 after subtraction).
-        enhancement_max: Maximum enhancement in mM.
+    Attributes
+    ----------
+    concentration : numpy.ndarray
+        Prepared concentration time course.
+    is_valid : bool
+        Whether the voxel passed all validation checks.
+    failure_reason : str
+        Reason for failure or "ok" if valid.
+    baseline_mean : float
+        Mean baseline concentration (should be ~0 after subtraction).
+    enhancement_max : float
+        Maximum enhancement in mM.
     """
 
     concentration: npt.NDArray[np.floating]
@@ -42,14 +48,20 @@ def prepare_voxel_for_fitting(
     1. Signal variation: std(curve) > MIN_SIGNAL_STD (skipped if skip_variation_check)
     2. Enhancement: max(curve) > MIN_ENHANCEMENT_MM
 
-    Args:
-        tissue_curve: Concentration time course for one voxel (1D array, mM).
-        baseline_frames: Number of baseline frames for quality checks.
-        skip_variation_check: If True, skip concentration-based variation check.
-            Set True when raw signal variation filtering is done upstream
-            (raw signal std >= 1.0).
+    Parameters
+    ----------
+    tissue_curve : numpy.ndarray
+        Concentration time course for one voxel (1D array, mM).
+    baseline_frames : int, optional
+        Number of baseline frames for quality checks.
+    skip_variation_check : bool, optional
+        If True, skip concentration-based variation check.
+        Set True when raw signal variation filtering is done upstream
+        (raw signal std >= 1.0).
 
-    Returns:
+    Returns
+    -------
+    VoxelPrepResult
         VoxelPrepResult with validation outcome and prepared curve.
     """
     baseline_mean = float(np.mean(tissue_curve[:baseline_frames]))

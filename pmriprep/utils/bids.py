@@ -130,7 +130,7 @@ def collect_sessions(
 
 
 def normalize_dicom_multi_value(val: object) -> Optional[FrozenSet[str]]:
-    """Normalize a DICOM multi-value field to a comparable frozenset.
+    r"""Normalize a DICOM multi-value field to a comparable frozenset.
 
     Handles list (``["GR", "IR"]``), backslash- or slash-separated string
     (``"SP\\\\SS"``), or single token (``"GR"``).  Works for both

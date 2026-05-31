@@ -17,11 +17,6 @@ from pmriprep.interfaces.qc_writers import (
     PMRIPrepDataSink,
     write_dataset_description_node,
 )
-from pmriprep.utils.sidecar_builders import (
-    build_anat_mask_sidecar,
-    build_anat_preproc_sidecar,
-    build_anat_probseg_sidecar,
-)
 
 
 def _build_preproc_meta(  # type: ignore[no-untyped-def]

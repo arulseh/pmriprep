@@ -37,16 +37,24 @@ def _select_qc_voxel(
         5. Eroded brain mask with nonzero Ktrans
         6. Brain mask center (ultimate fallback)
 
-    Args:
-        ktrans: 3D Ktrans map.
-        brain_mask: 3D boolean brain mask.
-        qc_mask: 3D QC mask (physiological + R² filtered). May be None.
-        binary_erosion: scipy.ndimage.binary_erosion function.
-        enhancing_mask: 3D enhancing tumor mask (optional). In native
-            perfusion space. When available, voxel selection strongly
-            prefers the enhancing region.
+    Parameters
+    ----------
+    ktrans : numpy.ndarray
+        3D Ktrans map.
+    brain_mask : numpy.ndarray
+        3D boolean brain mask.
+    qc_mask : numpy.ndarray or None
+        3D QC mask (physiological + R² filtered). May be None.
+    binary_erosion : Any
+        scipy.ndimage.binary_erosion function.
+    enhancing_mask : numpy.ndarray or None, optional
+        3D enhancing tumor mask (optional). In native
+        perfusion space. When available, voxel selection strongly
+        prefers the enhancing region.
 
-    Returns:
+    Returns
+    -------
+    tuple of (int, int, int)
         (x, y, z) voxel coordinates.
     """
     def _near_median(search_mask: npt.NDArray[np.bool_]) -> tuple[int, int, int] | None:
@@ -129,17 +137,28 @@ def generate_preprocessing_qc_plot(
     FD and summary text are omitted — FD is shown in the dedicated
     motion_qc.png, and summary stats are rendered as HTML metric boxes.
 
-    Args:
-        dce_signal_4d: 4D raw DCE signal array (x, y, z, t).
-        brain_mask: 3D boolean brain mask.
-        baseline_frames: Number of baseline (pre-bolus) frames.
-        bolus_arrival_frame: Frame index of bolus arrival.
-        volume_tr_s: Temporal resolution between volumes in seconds.
-        subject_id: Subject identifier for title.
-        session_id: Session identifier for title.
-        output_path: Path to save PNG. If None, uses CWD.
+    Parameters
+    ----------
+    dce_signal_4d : numpy.ndarray
+        4D raw DCE signal array (x, y, z, t).
+    brain_mask : numpy.ndarray
+        3D boolean brain mask.
+    baseline_frames : int
+        Number of baseline (pre-bolus) frames.
+    bolus_arrival_frame : int
+        Frame index of bolus arrival.
+    volume_tr_s : float
+        Temporal resolution between volumes in seconds.
+    subject_id : str, optional
+        Subject identifier for title.
+    session_id : str, optional
+        Session identifier for title.
+    output_path : str or None, optional
+        Path to save PNG. If None, uses CWD.
 
-    Returns:
+    Returns
+    -------
+    tuple of (str, dict)
         Tuple of (path to saved QC plot PNG, stats dict with
         ``peak_enh_pct`` and ``mean_tsnr``).
     """
@@ -345,28 +364,50 @@ def generate_pk_modeling_qc_plot(
         4. Eroded brain mask with nonzero Ktrans
         5. Brain mask center (fallback)
 
-    Args:
-        conc_data: 4D concentration array (x, y, z, t).
-        signal_data: 4D raw signal array (optional, for signal panel).
-        aif: 1D AIF concentration array.
-        time_points_s: 1D time array in seconds.
-        ktrans: 3D Ktrans map.
-        ve: 3D ve map.
-        vp: 3D vp map (None if model has no vp).
-        r2_map: 3D R^2 goodness-of-fit map.
-        brain_mask: 3D boolean brain mask.
-        fitted_curves: 4D fitted curves (optional).
-        model_name: Name of the PK model used.
-        baseline_frames: Number of baseline frames.
-        qc_mask: 3D QC mask (physiological bounds + R² filter). Optional.
-        qc_fitted_curve: Pre-computed 1D fitted curve for QC voxel. Optional.
-        fp: 3D Fp map for 2CXM (optional).
-        ps: 3D PS map for 2CXM (optional).
-        subject_id: Subject identifier for title.
-        session_id: Session identifier for title.
-        output_path: Path to save PNG. If None, uses CWD.
+    Parameters
+    ----------
+    conc_data : numpy.ndarray
+        4D concentration array (x, y, z, t).
+    signal_data : numpy.ndarray or None
+        4D raw signal array (optional, for signal panel).
+    aif : numpy.ndarray
+        1D AIF concentration array.
+    time_points_s : numpy.ndarray
+        1D time array in seconds.
+    ktrans : numpy.ndarray
+        3D Ktrans map.
+    ve : numpy.ndarray or None
+        3D ve map.
+    vp : numpy.ndarray or None
+        3D vp map (None if model has no vp).
+    r2_map : numpy.ndarray
+        3D R^2 goodness-of-fit map.
+    brain_mask : numpy.ndarray
+        3D boolean brain mask.
+    fitted_curves : numpy.ndarray or None
+        4D fitted curves (optional).
+    model_name : str
+        Name of the PK model used.
+    baseline_frames : int
+        Number of baseline frames.
+    qc_mask : numpy.ndarray or None, optional
+        3D QC mask (physiological bounds + R² filter). Optional.
+    qc_fitted_curve : numpy.ndarray or None, optional
+        Pre-computed 1D fitted curve for QC voxel. Optional.
+    fp : numpy.ndarray or None, optional
+        3D Fp map for 2CXM (optional).
+    ps : numpy.ndarray or None, optional
+        3D PS map for 2CXM (optional).
+    subject_id : str, optional
+        Subject identifier for title.
+    session_id : str, optional
+        Session identifier for title.
+    output_path : str or None, optional
+        Path to save PNG. If None, uses CWD.
 
-    Returns:
+    Returns
+    -------
+    tuple of (str, dict)
         Tuple of (path to saved QC plot PNG, voxel metrics dict).
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
@@ -515,15 +556,23 @@ def generate_pk_parameter_maps_qc_plot(
     Each row shows one PK parameter across 3 evenly-spaced axial slices
     (25%, 50%, 75% of brain extent). Per-row colorbar with unit labels.
 
-    Args:
-        param_maps: Dict mapping parameter name to 3D array.
-            Expected keys: "Ktrans", "ve", optionally "vp".
-        brain_mask: 3D boolean brain mask.
-        subject_id: Subject identifier for title.
-        session_id: Session identifier for title.
-        output_path: Path to save PNG. If None, uses CWD.
+    Parameters
+    ----------
+    param_maps : dict
+        Dict mapping parameter name to 3D array.
+        Expected keys: "Ktrans", "ve", optionally "vp".
+    brain_mask : numpy.ndarray
+        3D boolean brain mask.
+    subject_id : str, optional
+        Subject identifier for title.
+    session_id : str, optional
+        Session identifier for title.
+    output_path : str or None, optional
+        Path to save PNG. If None, uses CWD.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the saved QC plot PNG.
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
@@ -661,24 +710,39 @@ def generate_model_selection_qc_plot(
     Regional model distribution statistics are computed and returned via
     the *regional_stats_out* mutable dict (not rendered in the figure).
 
-    Args:
-        model_selection_map: 3D int8 array (0=unfitted, 1=patlak, 2=tofts,
-            3=extended_tofts, 4=2cxm).
-        delta_bic_map: 3D float32 delta-BIC confidence map.
-        brain_mask: 3D brain mask.
-        enhancing_mask: 3D enhancing tumor mask (optional).
-        non_enhancing_mask: 3D non-enhancing tumor mask (optional).
-        nawm_mask: 3D NAWM mask (optional).
-        user_lesion_mask: 3D user-supplied lesion mask (optional).
-        roi_mask: 3D user-supplied ROI mask (optional).
-        subject_id: Subject identifier for title.
-        session_id: Session identifier for title.
-        output_path: Path to save PNG. If None, uses CWD.
-        regional_stats_out: If provided, populated with per-region model
-            distribution percentages.  Format:
-            ``{"Whole Brain": {"Patlak": 45.2, ...}, "Enhancing": {...}}``.
+    Parameters
+    ----------
+    model_selection_map : numpy.ndarray
+        3D int8 array (0=unfitted, 1=patlak, 2=tofts,
+        3=extended_tofts, 4=2cxm).
+    delta_bic_map : numpy.ndarray
+        3D float32 delta-BIC confidence map.
+    brain_mask : numpy.ndarray
+        3D brain mask.
+    enhancing_mask : numpy.ndarray or None, optional
+        3D enhancing tumor mask (optional).
+    non_enhancing_mask : numpy.ndarray or None, optional
+        3D non-enhancing tumor mask (optional).
+    nawm_mask : numpy.ndarray or None, optional
+        3D NAWM mask (optional).
+    user_lesion_mask : numpy.ndarray or None, optional
+        3D user-supplied lesion mask (optional).
+    roi_mask : numpy.ndarray or None, optional
+        3D user-supplied ROI mask (optional).
+    subject_id : str, optional
+        Subject identifier for title.
+    session_id : str, optional
+        Session identifier for title.
+    output_path : str or None, optional
+        Path to save PNG. If None, uses CWD.
+    regional_stats_out : dict or None, optional
+        If provided, populated with per-region model
+        distribution percentages.  Format:
+        ``{"Whole Brain": {"Patlak": 45.2, ...}, "Enhancing": {...}}``.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the saved QC plot PNG, or empty string on failure.
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]

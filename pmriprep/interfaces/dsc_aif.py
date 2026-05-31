@@ -55,8 +55,8 @@ MIN_AIF_CANDIDATES_ACCEPT: int = 3
 #: Gamma peak ratio band for cascade quality gate.
 #: If averaged AIF peak ratio falls outside this range, continue cascading
 #: to the next tier (keeping the current result as fallback).
-#: Physics: >12% AIF peak error exceeds normal CBF CoV (~10%,
-#: Mutsaerts et al., JCBFM 2015).
+#: Physics: >12% AIF peak error exceeds the ~10% CBF CoV expected in
+#: normal brain.
 GAMMA_PEAK_RATIO_CASCADE_MIN: float = 0.88
 GAMMA_PEAK_RATIO_CASCADE_MAX: float = 1.12
 
@@ -69,8 +69,8 @@ GAMMA_R2_SYNTHETIC_FALLBACK: float = 0.0
 #: BRR = mean(tail) / peak × 100. True arterial washout produces +5 to +30%;
 #: slightly negative (≥-2%) is within T1-recirculation noise.  Below -3%
 #: indicates T1-leakage dominance or motion breaking the mono-exponential
-#: ΔR2* assumption (Boxerman 2006, AJNR 27:859; Calamante 2013,
-#: NMR Biomed 26:862).  Tighter than the per-candidate permissive floor
+#: ΔR2* assumption (Boxerman 2006, AJNR 27:859; Willats & Calamante 2013
+#: NMR Biomed 26:913).  Tighter than the per-candidate permissive floor
 #: (-10%) because averaging should reduce noise, not let bad voxels
 #: dominate.
 AIF_AVG_BRR_MIN: float = -3.0
@@ -92,6 +92,7 @@ _CASCADE_N_CANDIDATES_FRACTION: dict[str, float] = {
 
 class AifQualityResult(NamedTuple):
     """Return type for ``_aif_passes_quality``."""
+
     passes: bool
     spr: float
     peak_ratio: Optional[float]
@@ -100,6 +101,7 @@ class AifQualityResult(NamedTuple):
 
 class DualRoiResult(NamedTuple):
     """Return type for ``_try_aif_dual_roi``."""
+
     curve: npt.NDArray[Any]
     mask: npt.NDArray[Any]
     roi_size: int
@@ -316,12 +318,18 @@ def _compute_aif_peak_ratio(
     Fits a gamma-variate model and returns peak_fit / peak_orig.
     Used by the cascade quality gate to assess AIF shape fidelity.
 
-    Args:
-        aif_curve: Averaged AIF concentration-time curve.
-        baseline_frames: Number of pre-bolus baseline frames.
-        tr: Repetition time in seconds.
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        Averaged AIF concentration-time curve.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+    tr : float
+        Repetition time in seconds.
 
-    Returns:
+    Returns
+    -------
+    float or None
         Peak ratio (fitted/measured), or None if gamma fit fails.
     """
     from pmriprep.utils.dsc_aif import fit_gamma_variate
@@ -1129,12 +1137,18 @@ class AIFDetection(BaseInterface):
     ) -> float:
         """Effective Gd dose relative to 0.1 mmol/kg reference (unclamped).
 
-        Args:
-            dose: Override; falls back to self.inputs.dose.
-            agent_standard_dose: Override; falls back to self.inputs.agent_standard_dose.
-            gd_multiplicity: Override; falls back to self.inputs.gd_multiplicity.
+        Parameters
+        ----------
+        dose : float, optional
+            Override; falls back to self.inputs.dose.
+        agent_standard_dose : float, optional
+            Override; falls back to self.inputs.agent_standard_dose.
+        gd_multiplicity : int, optional
+            Override; falls back to self.inputs.gd_multiplicity.
 
-        Returns:
+        Returns
+        -------
+        float
             Raw multiplier ``(agent_std * dose * gd_mult) / GD_DOTA_STANDARD_DOSE``.
             Consumers apply their own clamping.
         """
@@ -1593,17 +1607,22 @@ class AIFDetection(BaseInterface):
         < -2`` outright and applies graduated penalties for borderline
         cases).
 
-        Args:
-            scored: List of ``(cost, coord, metrics)`` tuples from
-                ``_score_and_select_candidates``. Each ``metrics`` dict
-                must contain ``peak_time_frame`` (float, frame index
-                of first-pass peak) and ``tail_fraction_late`` (float,
-                last 30 s mean ΔR2* / first-pass peak).
-            tr: Repetition time in seconds. Used to convert the
-                ``AIF_PEAK_SPREAD_MAX_SECONDS`` physiologic spread
-                ceiling to a frame-count gate at runtime.
+        Parameters
+        ----------
+        scored : list
+            List of ``(cost, coord, metrics)`` tuples from
+            ``_score_and_select_candidates``. Each ``metrics`` dict
+            must contain ``peak_time_frame`` (float, frame index
+            of first-pass peak) and ``tail_fraction_late`` (float,
+            last 30 s mean ΔR2* / first-pass peak).
+        tr : float
+            Repetition time in seconds. Used to convert the
+            ``AIF_PEAK_SPREAD_MAX_SECONDS`` physiologic spread
+            ceiling to a frame-count gate at runtime.
 
-        Returns:
+        Returns
+        -------
+        tuple
             ``(filtered, diagnostics)`` where ``filtered`` is the
             survivor list (preserving input order) and ``diagnostics``
             is a dict with per-filter rejection counts and pool stats:
@@ -1766,7 +1785,7 @@ class AIFDetection(BaseInterface):
         # Negative ΔR2* is physically valid (symmetric noise, T1 recirculation).
         # Do NOT clip to zero — it biases the AIF integral, corrupts the SVD
         # Toeplitz matrix, and disables the gamma-fit defect detector.
-        # (Calamante MRM 1999, Willats NMR Biomed 2006)
+        # (Willats 2006 MRM 56:146)
 
         return aif_curve, aif_mask
 
@@ -1823,7 +1842,7 @@ class AIFDetection(BaseInterface):
         baseline_frames: int,
         tr: float,
     ) -> bool:
-        """True if global maximum falls within the first-pass window."""
+        """Return True if global maximum falls within the first-pass window."""
         n_time = len(curve)
         fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
         fp_end = min(baseline_frames + int(40.0 / tr), n_time)
@@ -1999,7 +2018,7 @@ class AIFDetection(BaseInterface):
             return spr, fp_peak_abs, fp_peak_val
 
         def _global_max_in_fp(curve: npt.NDArray[Any]) -> bool:
-            """True if global maximum falls within the first-pass window."""
+            """Return True if global maximum falls within the first-pass window."""
             fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
             fp_end = min(baseline_frames + int(40.0 / tr), n_time)
             global_max_frame = int(np.argmax(curve))
@@ -2120,18 +2139,27 @@ class AIFDetection(BaseInterface):
         """Generate synthetic AIF using physiologically calibrated gamma-variate.
 
         Peak amplitude is dose- and B0-scaled from population-median arterial
-        ΔR2* at 3T (Vonken MRM 1999, Willats PMB 2006).
+        ΔR2* at 3T (Kjølby 2006 MRM 56:187).
 
-        Args:
-            n_timepoints: Number of time frames.
-            tr: Repetition time in seconds.
-            baseline_frames: Number of pre-bolus baseline frames.
-            tissue_max_delta_r2star: 95th percentile of max ΔR2* across brain
-                voxels. QC diagnostic only — does not drive peak amplitude.
-            field_strength: Magnetic field strength in Tesla.
-            effective_dose: ``(agent_std * dose * gd_mult) / 0.1``, clamped.
+        Parameters
+        ----------
+        n_timepoints : int
+            Number of time frames.
+        tr : float, optional
+            Repetition time in seconds.
+        baseline_frames : int, optional
+            Number of pre-bolus baseline frames.
+        tissue_max_delta_r2star : float or None, optional
+            95th percentile of max ΔR2* across brain
+            voxels. QC diagnostic only — does not drive peak amplitude.
+        field_strength : float, optional
+            Magnetic field strength in Tesla.
+        effective_dose : float, optional
+            ``(agent_std * dose * gd_mult) / 0.1``, clamped.
 
-        Returns:
+        Returns
+        -------
+        tuple
             Tuple of (aif_curve, qc_metrics_dict).
         """
         # --- First-pass gamma-variate parameters ---

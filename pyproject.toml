@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.56.8"
+version = "0.57.1"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -54,6 +54,7 @@ test = [
 dev = [
     "pmriprep[test]",
     "mypy>=1.0.0",
+    "ruff>=0.6.0",
 ]
 all = [
     "pmriprep[test,dev]",
@@ -61,6 +62,25 @@ all = [
 
 [project.scripts]
 pmriprep = "pmriprep.cli.run:main"
+
+[tool.ruff.lint]
+# Enforce NumPy-style docstrings (the NiPreps standard) repo-wide. Only the pydocstyle
+# (`D`) rules are selected — ruff's default E/F rules are intentionally left off to keep
+# this guard scoped to docstring convention. The `convention = "numpy"` setting below
+# disables the Google/rST-incompatible D rules; D417 is re-ignored deliberately (see note).
+select = ["D"]
+ignore = [
+    "D105",  # magic-method docstrings (__repr__, etc.)
+    "D107",  # __init__ docstring (documented on the class)
+    "D417",  # undocumented-param: numpy convention enables this, but inputnode/outputnode
+             #   fields live under custom Workflow Inputs/Outputs sections, not Parameters;
+             #   param coverage is handled by mypy + review instead
+    "D203",  # conflicts with D211 (numpy picks D211)
+    "D213",  # conflicts with D212 (numpy picks D212)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
 
 [tool.mypy]
 python_version = "3.10"
@@ -80,6 +100,7 @@ markers = [
 ]
 addopts = "--strict-markers"
 testpaths = ["tests"]
+doctest_optionflags = "ALLOW_UNICODE NORMALIZE_WHITESPACE ELLIPSIS"
 
 [tool.setuptools.packages.find]
 where = ["."]

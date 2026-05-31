@@ -556,7 +556,7 @@ def build_dce_base_sidecar(
     minimal: bool = False,
     ktrans_convention: bool = True,
 ) -> Dict[str, Any]:
-    """Common base sidecar for DCE derivatives.
+    """Build common base sidecar for DCE derivatives.
 
     Parameters
     ----------
@@ -616,7 +616,7 @@ def build_dsc_base_sidecar(
     qc_metrics: Optional[Dict[str, Any]] = None,
     minimal: bool = False,
 ) -> Dict[str, Any]:
-    """Common base sidecar for DSC derivatives.
+    """Build common base sidecar for DSC derivatives.
 
     ``minimal=True`` suppresses perfusion-specific provenance enrichment
     (used for masks, structural underlays, motion-corrected 4D, etc.).
@@ -894,16 +894,25 @@ def build_aif_timeseries_sidecar(
     sidecar attaches metadata regardless and the validator treats it as
     a free sidecar.
 
-    Args:
-        modality: ``"DCE"`` or ``"DSC"``.
-        source_paths: Source 4D NIfTI paths the AIF was extracted from.
-        bids_dir: BIDS rawdata root for ``Sources`` BIDS-URI construction.
-        subject: Subject ID without ``sub-`` prefix.
-        session: Session ID without ``ses-`` prefix (or None).
-        aif_qc: Producer-shape AIF QC dict (the ``aif_qc`` dict from the
-            DSC outputnode for DSC, or the equivalent for DCE).
+    Parameters
+    ----------
+    modality : str
+        ``"DCE"`` or ``"DSC"``.
+    source_paths : Sequence of PathLike
+        Source 4D NIfTI paths the AIF was extracted from.
+    bids_dir : PathLike
+        BIDS rawdata root for ``Sources`` BIDS-URI construction.
+    subject : str
+        Subject ID without ``sub-`` prefix.
+    session : str or None
+        Session ID without ``ses-`` prefix (or None).
+    aif_qc : dict, optional
+        Producer-shape AIF QC dict (the ``aif_qc`` dict from the
+        DSC outputnode for DSC, or the equivalent for DCE).
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict suitable for ``json.dumps``.
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -1070,22 +1079,31 @@ def enrich_recommendation_keys(
     HTML report. Empty fields are omitted (per fmriprep convention for
     optional sidecar fields).
 
-    Args:
-        sidecar: Sidecar dict to mutate.
-        modality: ``"DSC"``, ``"DCE"``, or ``"ANAT"`` (case-insensitive).
-            ANAT does not have a recommendation pathway today; only
-            ``QCWarnings`` is populated for ANAT.
-        qc_metrics: Producer-shape QC metrics envelope. Required for
-            recommendation + acquisition-warnings derivation.
-        provenance_dict: Provenance dict (DSC/DCE only) — drives
-            ``QCProvenanceWarnings``.
-        preflight_warnings: Pre-pipeline preflight warnings. Folded into
-            ``QCAcquisitionWarnings`` for DSC/DCE; ignored for ANAT.
-        presence_warnings: Modality-presence warnings (e.g.,
-            "Brain mask in DSC space not available"). Written to
-            ``QCWarnings``.
+    Parameters
+    ----------
+    sidecar : dict
+        Sidecar dict to mutate.
+    modality : str
+        ``"DSC"``, ``"DCE"``, or ``"ANAT"`` (case-insensitive).
+        ANAT does not have a recommendation pathway today; only
+        ``QCWarnings`` is populated for ANAT.
+    qc_metrics : dict, optional
+        Producer-shape QC metrics envelope. Required for
+        recommendation + acquisition-warnings derivation.
+    provenance_dict : dict, optional
+        Provenance dict (DSC/DCE only) — drives
+        ``QCProvenanceWarnings``.
+    preflight_warnings : Sequence of str, optional
+        Pre-pipeline preflight warnings. Folded into
+        ``QCAcquisitionWarnings`` for DSC/DCE; ignored for ANAT.
+    presence_warnings : Sequence of str, optional
+        Modality-presence warnings (e.g.,
+        "Brain mask in DSC space not available"). Written to
+        ``QCWarnings``.
 
-    Returns:
+    Returns
+    -------
+    dict
         The mutated *sidecar* dict (for chaining).
     """
     modality = modality.upper()

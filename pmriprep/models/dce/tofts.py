@@ -38,7 +38,8 @@ class ToftsModel(PKModel):
         C_t(t) = Ktrans × ∫[Cp(τ) × exp(-kep×(t-τ))]dτ
                = Ktrans × [Cp ⊗ exp(-kep×t)]
 
-    Parameters:
+    Parameters
+    ----------
         Ktrans: Volume transfer constant (min⁻¹), 0-3 min⁻¹
             - Reflects permeability × surface area per unit tissue volume
             - Typical tumor values: 0.01-0.5 min⁻¹
@@ -53,7 +54,8 @@ class ToftsModel(PKModel):
         kep = Ktrans / ve: Efflux rate constant (min⁻¹)
             - Rate of contrast efflux from EES back to plasma
 
-    References:
+    References
+    ----------
         Tofts PS, Kermode AG. Measurement of the blood-brain barrier
         permeability and leakage space using dynamic MR imaging.
         1. Fundamental concepts. Magn Reson Med. 1991;17(2):357-367.
@@ -72,7 +74,9 @@ class ToftsModel(PKModel):
     def get_parameter_definitions(self) -> Sequence[ModelParameter]:
         """Get parameter definitions for Standard Tofts model.
 
-        Returns:
+        Returns
+        -------
+        Sequence[ModelParameter]
             List of two ModelParameter objects:
                 - Ktrans: volume transfer constant
                 - ve: extravascular extracellular volume fraction
@@ -107,12 +111,18 @@ class ToftsModel(PKModel):
         Estimates Ktrans from early uptake slope relative to AIF, and ve
         from the washout decay rate.
 
-        Args:
-            tissue_curve: Observed tissue concentration C_t(t).
-            aif: Arterial input function Cp(t).
-            time_points: Time points in minutes.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration C_t(t).
+        aif : np.ndarray
+            Arterial input function Cp(t).
+        time_points : np.ndarray
+            Time points in minutes.
 
-        Returns:
+        Returns
+        -------
+        list of float
             List of [Ktrans_init, ve_init].
         """
         try:
@@ -140,12 +150,18 @@ class ToftsModel(PKModel):
         The convolution is implemented using the rectangular rule
         (left Riemann sum via np.convolve).
 
-        Args:
-            params: Parameter values [Ktrans, ve].
-            aif: Arterial input function plasma concentration values Cp(t) in mM.
-            time_points: Time points (minutes) at which to evaluate C_t.
+        Parameters
+        ----------
+        params : ParamsType
+            Parameter values [Ktrans, ve].
+        aif : np.ndarray
+            Arterial input function plasma concentration values Cp(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes) at which to evaluate C_t.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Tissue concentration values C_t(t) at each time point in mM.
         """
         ktrans = params[0]
@@ -186,17 +202,26 @@ class ToftsModel(PKModel):
         TRF natively returns parameter covariance for uncertainty estimation.
         On TRF failure, parameters are zeroed (no fallback optimizer).
 
-        Args:
-            tissue_curve: Observed tissue concentration values C_t(t) in mM.
-            aif: Arterial input function plasma concentration values Cp(t) in mM.
-            time_points: Time points (minutes) corresponding to measurements.
-            initial_guess: Optional initial parameter values [Ktrans, ve].
-                If None, uses data-driven estimate or default.
-            weights: Optional per-frame weights for motion-weighted fitting.
-            vp_bounds: Accepted for interface compatibility but ignored
-                (standard Tofts has no vp parameter).
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration values C_t(t) in mM.
+        aif : np.ndarray
+            Arterial input function plasma concentration values Cp(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes) corresponding to measurements.
+        initial_guess : Sequence[float], optional
+            Optional initial parameter values [Ktrans, ve].
+            If None, uses data-driven estimate or default.
+        weights : np.ndarray, optional
+            Optional per-frame weights for motion-weighted fitting.
+        vp_bounds : tuple, optional
+            Accepted for interface compatibility but ignored
+            (standard Tofts has no vp parameter).
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult containing:
                 - parameters: Fitted Ktrans and ve values
                 - derived parameters: kep
@@ -307,10 +332,14 @@ class ToftsModel(PKModel):
 
         kep = Ktrans / ve
 
-        Args:
-            params: Fitted parameter values [Ktrans, ve].
+        Parameters
+        ----------
+        params : ParamsType
+            Fitted parameter values [Ktrans, ve].
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary with 'kep' value.
         """
         ktrans = params[0]

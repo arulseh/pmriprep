@@ -7,8 +7,7 @@ and classification of residual contrast effects on DSC signal.
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-from typing import Any, Final, NamedTuple, Optional, Union
+from typing import Any, Final, NamedTuple, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -16,7 +15,6 @@ from scipy.stats import norm
 
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
-    EPSILON_DELTA_R2,
     EPSILON_SIGNAL,
     GD_DOTA_STANDARD_DOSE,
     K2_PRIMARY_ADEQUATE,
@@ -117,14 +115,19 @@ def get_preload_thresholds(
     (Gd³⁺ susceptibility), so linear dose-normalization is the correct
     correction: ``effective_threshold = base_threshold × (agent_standard_dose / 0.1)``.
 
-    Args:
-        field_strength: Magnetic field strength in Tesla. Uses nearest
-            available field strength if exact match not in table.
-        agent_standard_dose: Agent's recommended standard single dose in
-            mmol Gd/kg. Default 0.1 (Gd-DOTA class). Thresholds scale
-            linearly; values outside [0.01, 0.2] produce a warning.
+    Parameters
+    ----------
+    field_strength : float, optional
+        Magnetic field strength in Tesla. Uses nearest
+        available field strength if exact match not in table.
+    agent_standard_dose : float, optional
+        Agent's recommended standard single dose in
+        mmol Gd/kg. Default 0.1 (Gd-DOTA class). Thresholds scale
+        linearly; values outside [0.01, 0.2] produce a warning.
 
-    Returns:
+    Returns
+    -------
+    PreloadThresholds
         PreloadThresholds (in ΔR2* s⁻¹) scaled for the specified agent.
     """
     if agent_standard_dose <= 0:
@@ -186,15 +189,20 @@ def preload_class_from_dose(preload_dose: float) -> PreloadClass:
     Bin edges are right-exclusive half-open intervals ``[lo, hi)``, matching
     :func:`classify_preload` and :func:`get_preload_thresholds` semantics.
 
-    Args:
-        preload_dose: Administered preload as a fraction of the agent's
-            standard single dose (0.0 = no preload, 0.5 = half-dose,
-            1.0 = full dose). Must be finite and non-negative.
+    Parameters
+    ----------
+    preload_dose : float
+        Administered preload as a fraction of the agent's
+        standard single dose (0.0 = no preload, 0.5 = half-dose,
+        1.0 = full dose). Must be finite and non-negative.
 
-    Returns:
+    Returns
+    -------
+    PreloadClass
         PreloadClass enum value for K2 uncertainty tuning.
 
-    Raises:
+    Raises
+    ------
         ValueError: If ``preload_dose`` is negative or non-finite.
     """
     if not np.isfinite(preload_dose) or preload_dose < 0:
@@ -226,16 +234,23 @@ def residual_equivalent_fraction_from_delta_r2(
     user-specified administered dose (different physical quantities, same
     class system for bucketing).
 
-    Args:
-        delta_r2: Baseline ΔR2* in s⁻¹ (from detect_preload_from_signal).
-        field_strength: Magnetic field in Tesla.
-        agent_standard_dose: Agent's standard dose in mmol Gd/kg.
+    Parameters
+    ----------
+    delta_r2 : float
+        Baseline ΔR2* in s⁻¹ (from detect_preload_from_signal).
+    field_strength : float, optional
+        Magnetic field in Tesla.
+    agent_standard_dose : float, optional
+        Agent's standard dose in mmol Gd/kg.
 
-    Returns:
+    Returns
+    -------
+    float
         Residual-equivalent fraction. 0.0 if ``delta_r2 <= 0`` (no detectable
         preload signal — valid physical edge case).
 
-    Raises:
+    Raises
+    ------
         ValueError: If ``agent_standard_dose <= 0`` (consistent with
             :func:`get_preload_thresholds`).
     """
@@ -264,7 +279,8 @@ def residual_equivalent_fraction_from_delta_r2(
 class PreloadResult:
     """Result of preload detection analysis.
 
-    Attributes:
+    Attributes
+    ----------
         classification: Preload severity classification.
         baseline_delta_r2: Measured baseline ΔR2* in s⁻¹.
         estimated_residual: Estimated residual concentration in mM (if available).
@@ -316,7 +332,7 @@ def classify_preload_adequacy_from_k2(
     """Classify preload adequacy from K2 residual distribution.
 
     K2 is the direct physical signature of T1-leakage contamination in
-    DSC (Boxerman AJNR 2006; Leu JMRI 2016; Welker ASFNR AJNR 2015). Low
+    DSC (Boxerman AJNR 2006; Leu AJNR 2016; Welker ASFNR AJNR 2015). Low
     K2 means the CBV correction is reliable, regardless of whether preload
     was physically given (low K2 also occurs in intact-BBB tissue);
     operationally these are equivalent for the downstream constraint.
@@ -342,12 +358,16 @@ def classify_preload_adequacy_from_k2(
     cases mean K2 correction wasn't needed, which is operationally
     equivalent for sigma selection.
 
-    Args:
-        k2_metrics: QC dict with keys ``k2_median`` (s⁻¹) and
-            ``percent_leaky_voxels`` (%). When `None` or missing either
-            key, returns UNKNOWN.
+    Parameters
+    ----------
+    k2_metrics : Optional[dict[str, Any]]
+        QC dict with keys ``k2_median`` (s⁻¹) and
+        ``percent_leaky_voxels`` (%). When `None` or missing either
+        key, returns UNKNOWN.
 
-    Returns:
+    Returns
+    -------
+    tuple[PreloadClass, float, str]
         Tuple of (classification, confidence ∈ [0, 1], reason string).
         Confidence is ~0.9 far from thresholds and drops toward 0.5 at
         the boundaries.
@@ -408,13 +428,19 @@ def classify_preload(
     Thresholds scale linearly with ``agent_standard_dose`` — see
     :func:`get_preload_thresholds` for rationale.
 
-    Args:
-        baseline_delta_r2: Baseline ΔR2* value in s⁻¹.
-        field_strength: Magnetic field strength in Tesla.
-        agent_standard_dose: Agent's standard dose in mmol Gd/kg
-            (default 0.1 for Gd-DOTA class).
+    Parameters
+    ----------
+    baseline_delta_r2 : float
+        Baseline ΔR2* value in s⁻¹.
+    field_strength : float, optional
+        Magnetic field strength in Tesla.
+    agent_standard_dose : float, optional
+        Agent's standard dose in mmol Gd/kg
+        (default 0.1 for Gd-DOTA class).
 
-    Returns:
+    Returns
+    -------
+    PreloadClass
         PreloadClass indicating severity level.
     """
     thresholds = get_preload_thresholds(field_strength, agent_standard_dose)
@@ -451,20 +477,30 @@ def detect_preload_from_signal(
         3. Estimate baseline ΔR2* = -ln(S_baseline/S_reference) / TE
         4. Classify based on ΔR2* thresholds
 
-    Args:
-        signal: 4D DSC signal array (x, y, z, time).
-        te: Echo time in seconds.
-        baseline_frames: Number of pre-bolus frames to analyze.
-        brain_mask: Optional 3D binary mask for brain voxels.
-        field_strength: Magnetic field strength in Tesla.
-        reference_signal: Expected signal without preload. If None,
-            uses the 95th percentile of baseline signal as reference
-            (assuming some voxels have minimal preload effect).
+    Parameters
+    ----------
+    signal : npt.NDArray[np.floating]
+        4D DSC signal array (x, y, z, time).
+    te : float
+        Echo time in seconds.
+    baseline_frames : int, optional
+        Number of pre-bolus frames to analyze.
+    brain_mask : npt.NDArray[np.bool_], optional
+        Optional 3D binary mask for brain voxels.
+    field_strength : float, optional
+        Magnetic field strength in Tesla.
+    reference_signal : float, optional
+        Expected signal without preload. If None,
+        uses the 95th percentile of baseline signal as reference
+        (assuming some voxels have minimal preload effect).
 
-    Returns:
+    Returns
+    -------
+    PreloadResult
         PreloadResult with classification and metrics.
 
-    Raises:
+    Raises
+    ------
         ValueError: If signal is not 4D.
         ValueError: If TE is not positive.
     """
@@ -630,16 +666,24 @@ def detect_preload_from_dce_protocol(
 
     Uses knowledge of prior DCE acquisition to estimate preload.
 
-    Args:
-        dce_ran: Whether DCE was acquired before DSC.
-        dce_end_time: Time when DCE acquisition ended (seconds from session start).
-        dsc_start_time: Time when DSC acquisition started.
-        dce_dose: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
-        field_strength: Magnetic field strength in Tesla. Used to scale the
-            base ΔR2* (which scales linearly with B0 in tissue) and to
-            select field-appropriate preload thresholds.
+    Parameters
+    ----------
+    dce_ran : bool
+        Whether DCE was acquired before DSC.
+    dce_end_time : float, optional
+        Time when DCE acquisition ended (seconds from session start).
+    dsc_start_time : float, optional
+        Time when DSC acquisition started.
+    dce_dose : float, optional
+        Dose multiplier (0.5=half, 1.0=full, 2.0=double).
+    field_strength : float, optional
+        Magnetic field strength in Tesla. Used to scale the
+        base ΔR2* (which scales linearly with B0 in tissue) and to
+        select field-appropriate preload thresholds.
 
-    Returns:
+    Returns
+    -------
+    PreloadResult
         PreloadResult with estimated preload from protocol.
     """
     if not dce_ran:
@@ -704,13 +748,18 @@ def detect_preload_from_dicom(
 
     Looks for contrast agent administration information in DICOM tags.
 
-    Args:
-        dicom_metadata: Dictionary of DICOM metadata fields.
-        field_strength: Magnetic field strength in Tesla. ΔR2* per
-            unit Gd scales linearly with B0; the dose-bin estimates
-            below are calibrated at 3T and scaled accordingly.
+    Parameters
+    ----------
+    dicom_metadata : dict[str, Any]
+        Dictionary of DICOM metadata fields.
+    field_strength : float, optional
+        Magnetic field strength in Tesla. ΔR2* per
+        unit Gd scales linearly with B0; the dose-bin estimates
+        below are calibrated at 3T and scaled accordingly.
 
-    Returns:
+    Returns
+    -------
+    PreloadResult
         PreloadResult based on DICOM information.
     """
     # Look for contrast administration tags
@@ -789,21 +838,33 @@ def detect_preload(
     2. DCE protocol information
     3. DICOM metadata
 
-    Args:
-        signal: 4D DSC signal array (x, y, z, time). Optional.
-        te: Echo time in seconds. Required if signal provided.
-        baseline_frames: Number of pre-bolus frames for signal analysis.
-        brain_mask: Optional 3D binary mask for brain voxels.
-        field_strength: Magnetic field strength in Tesla.
-        dce_ran: Whether DCE was acquired before DSC. Optional.
-        dce_metadata: DCE protocol information (dose, timing). Optional.
-        dicom_metadata: DICOM metadata dictionary. Optional.
-        agent_standard_dose: Agent's standard dose in mmol Gd/kg
-            (default 0.1 for Gd-DOTA class). Forwarded to the signal-based
-            detector so classification thresholds scale linearly with the
-            administered agent's standard dose.
+    Parameters
+    ----------
+    signal : npt.NDArray[np.floating], optional
+        4D DSC signal array (x, y, z, time). Optional.
+    te : float, optional
+        Echo time in seconds. Required if signal provided.
+    baseline_frames : int, optional
+        Number of pre-bolus frames for signal analysis.
+    brain_mask : npt.NDArray[np.bool_], optional
+        Optional 3D binary mask for brain voxels.
+    field_strength : float, optional
+        Magnetic field strength in Tesla.
+    dce_ran : bool, optional
+        Whether DCE was acquired before DSC. Optional.
+    dce_metadata : dict[str, Any], optional
+        DCE protocol information (dose, timing). Optional.
+    dicom_metadata : dict[str, Any], optional
+        DICOM metadata dictionary. Optional.
+    agent_standard_dose : float, optional
+        Agent's standard dose in mmol Gd/kg
+        (default 0.1 for Gd-DOTA class). Forwarded to the signal-based
+        detector so classification thresholds scale linearly with the
+        administered agent's standard dose.
 
-    Returns:
+    Returns
+    -------
+    PreloadResult
         PreloadResult from the most reliable detection method.
     """
     results: list[PreloadResult] = []
@@ -876,7 +937,8 @@ class K2CorrectionResult:
     the blood-brain barrier (BBB). Based on the Boxerman-Schmainda-Weisskoff
     (BSW) model for leakage correction in DSC-MRI.
 
-    Attributes:
+    Attributes
+    ----------
         concentration_corrected: Leakage-corrected concentration curves (4D).
         k2_map: K2 parameter map (3D). Units: min⁻¹ or dimensionless rate.
         auc_tissue: Area under tissue curve before correction (3D).
@@ -905,12 +967,17 @@ def _compute_mean_brain_reference(
     Excludes voxels with negative mean post-bolus concentration
     (T1 leakage dominance) if enough non-enhancing voxels remain.
 
-    Args:
-        concentration: 4D concentration array (x, y, z, time).
-        brain_mask: Optional 3D brain mask. If None, uses voxels
-            with max concentration above noise floor.
+    Parameters
+    ----------
+    concentration : npt.NDArray[np.floating]
+        4D concentration array (x, y, z, time).
+    brain_mask : Optional[npt.NDArray[np.bool_]]
+        Optional 3D brain mask. If None, uses voxels
+        with max concentration above noise floor.
 
-    Returns:
+    Returns
+    -------
+    Optional[npt.NDArray[np.floating]]
         1D array (n_timepoints,) or None if insufficient voxels.
     """
     _MIN_VOXELS = 10
@@ -995,20 +1062,28 @@ def estimate_k2_per_voxel(
           → clipped to K2_physical = 0 (conservative: no correction
           rather than wrong-sign correction)
 
-    Args:
-        concentration: 4D concentration array (x, y, z, time).
-        brain_mask: Optional 3D brain mask.
-        tr: Repetition time in seconds for integration.
+    Parameters
+    ----------
+    concentration : npt.NDArray[np.floating]
+        4D concentration array (x, y, z, time).
+    brain_mask : Optional[npt.NDArray[np.bool_]]
+        Optional 3D brain mask.
+    tr : float, optional
+        Repetition time in seconds for integration.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         3D K2 map with leakage rate per voxel (s⁻¹).
 
-    Notes:
+    Notes
+    -----
         - K2 ≈ 0: Intact blood-brain barrier
         - K2 > 0: BBB disruption (T1 leakage)
         - Uses vectorized OLS for efficiency
 
-    References:
+    References
+    ----------
         Boxerman JL, Schmainda KM, Weisskoff RM. AJNR 2006;27:859-867.
     """
     if concentration.ndim != 4:
@@ -1104,18 +1179,27 @@ def apply_k2_correction(
     BSW model assumption C(t)=0 at baseline is satisfied. This is critical
     for preloaded acquisitions where residual Gd creates a DC offset.
 
-    Args:
-        concentration: 4D concentration array (x, y, z, time).
-        brain_mask: Optional 3D brain mask for voxel selection.
-        tr: Repetition time in seconds for integration.
-        k2_map: Pre-computed K2 map. If None, K2 is estimated per voxel.
-        baseline_frames: Number of pre-bolus baseline frames for
-            baseline subtraction. Default: 5.
+    Parameters
+    ----------
+    concentration : npt.NDArray[np.floating]
+        4D concentration array (x, y, z, time).
+    brain_mask : Optional[npt.NDArray[np.bool_]]
+        Optional 3D brain mask for voxel selection.
+    tr : float, optional
+        Repetition time in seconds for integration.
+    k2_map : Optional[npt.NDArray[np.floating]]
+        Pre-computed K2 map. If None, K2 is estimated per voxel.
+    baseline_frames : int, optional
+        Number of pre-bolus baseline frames for
+        baseline subtraction. Default: 5.
 
-    Returns:
+    Returns
+    -------
+    K2CorrectionResult
         K2CorrectionResult with corrected concentration and K2 map.
 
-    References:
+    References
+    ----------
         Boxerman JL, Schmainda KM, Weisskoff RM. AJNR 2006;27(4):859-867.
     """
     if concentration.ndim != 4:
@@ -1204,12 +1288,18 @@ def _compute_k2_qc_metrics(
 ) -> dict[str, Any]:
     """Compute QC metrics for K2 leakage correction.
 
-    Args:
-        k2_map: 3D K2 parameter map.
-        brain_mask: Optional 3D brain mask.
-        auc_tissue: 3D area under tissue curve.
+    Parameters
+    ----------
+    k2_map : npt.NDArray[np.floating]
+        3D K2 parameter map.
+    brain_mask : Optional[npt.NDArray[np.bool_]]
+        Optional 3D brain mask.
+    auc_tissue : npt.NDArray[np.floating]
+        3D area under tissue curve.
 
-    Returns:
+    Returns
+    -------
+    dict[str, Any]
         Dictionary of QC metrics.
     """
     # Select values within brain
@@ -1285,15 +1375,22 @@ def _compute_ees_concentration(
     When kep → 0, exp(-kep × t) → 1, and C_e(t) → cumsum(C̄) × TR
     (approaches standard BSW cumulative integral).
 
-    Args:
-        c_bar: Mean brain reference curve, shape (n_timepoints,).
-        kep: EES efflux rate constant in s⁻¹.
-        tr: Repetition time in seconds.
+    Parameters
+    ----------
+    c_bar : npt.NDArray[np.floating]
+        Mean brain reference curve, shape (n_timepoints,).
+    kep : float
+        EES efflux rate constant in s⁻¹.
+    tr : float
+        Repetition time in seconds.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Instantaneous EES concentration C_e(t), shape (n_timepoints,).
 
-    References:
+    References
+    ----------
         Leu K et al. AJNR 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759
     """
     n_tp = len(c_bar)
@@ -1324,16 +1421,24 @@ def estimate_k2_bidirectional(
     where C_e(t) = C̄(t) ⊗ exp(-kep × t) is the instantaneous EES
     concentration accounting for washout.
 
-    Args:
-        concentration: 4D concentration array (x, y, z, time).
-        brain_mask: Optional 3D brain mask.
-        tr: Repetition time in seconds for integration.
-        kep: EES efflux rate constant in s⁻¹.
+    Parameters
+    ----------
+    concentration : npt.NDArray[np.floating]
+        4D concentration array (x, y, z, time).
+    brain_mask : Optional[npt.NDArray[np.bool_]]
+        Optional 3D brain mask.
+    tr : float, optional
+        Repetition time in seconds for integration.
+    kep : float, optional
+        EES efflux rate constant in s⁻¹.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         3D K2 map with leakage rate per voxel (s⁻¹).
 
-    References:
+    References
+    ----------
         Leu K et al. AJNR 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759
     """
     if concentration.ndim != 4:
@@ -1425,18 +1530,28 @@ def apply_k2_correction_bidirectional(
     This produces ~16.6% lower rCBV in high-grade gliomas because standard
     BSW overcorrects late timepoints (Leu 2016).
 
-    Args:
-        concentration: 4D concentration array (x, y, z, time).
-        brain_mask: Optional 3D brain mask for voxel selection.
-        tr: Repetition time in seconds.
-        kep: EES efflux rate in s⁻¹. If None, uses KEP_DSC_DEFAULT (0.005).
-        k2_map: Pre-computed K2 map. If None, K2 is estimated per voxel.
-        baseline_frames: Number of pre-bolus baseline frames.
+    Parameters
+    ----------
+    concentration : npt.NDArray[np.floating]
+        4D concentration array (x, y, z, time).
+    brain_mask : Optional[npt.NDArray[np.bool_]]
+        Optional 3D brain mask for voxel selection.
+    tr : float, optional
+        Repetition time in seconds.
+    kep : float, optional
+        EES efflux rate in s⁻¹. If None, uses KEP_DSC_DEFAULT (0.005).
+    k2_map : Optional[npt.NDArray[np.floating]]
+        Pre-computed K2 map. If None, K2 is estimated per voxel.
+    baseline_frames : int, optional
+        Number of pre-bolus baseline frames.
 
-    Returns:
+    Returns
+    -------
+    K2CorrectionResult
         K2CorrectionResult with corrected concentration and K2 map.
 
-    References:
+    References
+    ----------
         Leu K et al. AJNR 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759
     """
     if concentration.ndim != 4:
@@ -1524,11 +1639,16 @@ def estimate_preload_correction_factor(
     The correction factor can be used to adjust quantitative
     perfusion values for preload-induced signal loss.
 
-    Args:
-        preload_result: Result from preload detection.
-        field_strength: Magnetic field strength in Tesla.
+    Parameters
+    ----------
+    preload_result : PreloadResult
+        Result from preload detection.
+    field_strength : float, optional
+        Magnetic field strength in Tesla.
 
-    Returns:
+    Returns
+    -------
+    float
         Correction factor (>= 1.0, multiply CBV/CBF by this).
     """
     if not preload_result.is_preloaded:

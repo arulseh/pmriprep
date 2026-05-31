@@ -372,14 +372,21 @@ def detect_baseline_ensemble(
 
     **Phase 4:** Confidence scoring (HIGH/MEDIUM/LOW).
 
-    Args:
-        signal: 1D signal time course (positive bolus polarity).
-        tr: Repetition time in seconds.
-        min_baseline: Minimum allowed baseline frames.
-        additional_signals: Optional list of additional signal curves
-            (e.g., p90, mean) for multi-signal consensus.
+    Parameters
+    ----------
+    signal : numpy.ndarray
+        1D signal time course (positive bolus polarity).
+    tr : float, optional
+        Repetition time in seconds.
+    min_baseline : int, optional
+        Minimum allowed baseline frames.
+    additional_signals : list of numpy.ndarray, optional
+        Optional list of additional signal curves
+        (e.g., p90, mean) for multi-signal consensus.
 
-    Returns:
+    Returns
+    -------
+    tuple of (int, dict)
         Tuple of ``(arrival_frame, diagnostics)`` where diagnostics
         includes ``"confidence"`` (high/medium/low), per-phase details,
         and per-signal results when multi-signal is used.

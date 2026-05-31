@@ -65,6 +65,8 @@ def _optional_figure_file(desc: str = "") -> traits.Either:
 
 
 class AnatFiguresWriterInputSpec(BaseInterfaceInputSpec):
+    """Input specification for AnatFiguresWriter interface."""
+
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
     subject_id = traits.Str(mandatory=True)
     session_id = traits.Str("", usedefault=True)
@@ -80,6 +82,8 @@ class AnatFiguresWriterInputSpec(BaseInterfaceInputSpec):
 
 
 class AnatFiguresWriterOutputSpec(TraitedSpec):
+    """Output specification for AnatFiguresWriter interface."""
+
     figures_dir = traits.Str(desc="Path to per-session figures/ directory")
 
 
@@ -184,6 +188,8 @@ def _write_aif_timeseries_sidecar(
 
 
 class TumorSegFiguresWriterInputSpec(BaseInterfaceInputSpec):
+    """Input specification for TumorSegFiguresWriter interface."""
+
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
     subject_id = traits.Str(mandatory=True)
     session_id = traits.Str("", usedefault=True)
@@ -195,6 +201,8 @@ class TumorSegFiguresWriterInputSpec(BaseInterfaceInputSpec):
 
 
 class TumorSegFiguresWriterOutputSpec(TraitedSpec):
+    """Output specification for TumorSegFiguresWriter interface."""
+
     done = traits.Str(desc="Sentinel for Nipype barrier synchronization")
 
 
@@ -256,6 +264,8 @@ _DSC_FIGURE_KEYS = {
 
 
 class DSCFiguresWriterInputSpec(BaseInterfaceInputSpec):
+    """Input specification for DSCFiguresWriter interface."""
+
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
     subject_id = traits.Str(mandatory=True)
     session_id = traits.Str("", usedefault=True)
@@ -279,6 +289,8 @@ class DSCFiguresWriterInputSpec(BaseInterfaceInputSpec):
 
 
 class DSCFiguresWriterOutputSpec(TraitedSpec):
+    """Output specification for DSCFiguresWriter interface."""
+
     aif_curve_txt = File(desc="Path to copied AIF curve TXT (empty if not provided)")
     confounds_tsv = File(desc="Path to derived confounds TSV (empty if no motion params)")
 
@@ -386,6 +398,8 @@ _DCE_FIGURE_KEYS = {
 
 
 class DCEFiguresWriterInputSpec(BaseInterfaceInputSpec):
+    """Input specification for DCEFiguresWriter interface."""
+
     output_dir = traits.Either(traits.Str, File(exists=True), mandatory=True)
     subject_id = traits.Str(mandatory=True)
     session_id = traits.Str("", usedefault=True)
@@ -412,6 +426,8 @@ class DCEFiguresWriterInputSpec(BaseInterfaceInputSpec):
 
 
 class DCEFiguresWriterOutputSpec(TraitedSpec):
+    """Output specification for DCEFiguresWriter interface."""
+
     aif_curve_txt = File(desc="Path to copied AIF curve TXT (empty if not provided)")
     confounds_tsv = File(desc="Path to derived confounds TSV (empty if no motion params)")
 

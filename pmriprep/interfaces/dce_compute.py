@@ -98,19 +98,26 @@ def _compute_motion_weights(
     Wash-in frames (bolus ± 4) use 2x stricter threshold.
     Threshold = min(voxel_dims) * 0.25 (scales with acquisition resolution).
 
-    Args:
-        fd_values: Framewise displacement per volume (mm).
-        bolus_frame: Bolus arrival frame index.
-        n_frames: Number of time frames.
-        min_voxel_dim: Minimum voxel dimension (mm) for threshold scaling.
+    Parameters
+    ----------
+    fd_values : list of float
+        Framewise displacement per volume (mm).
+    bolus_frame : int
+        Bolus arrival frame index.
+    n_frames : int
+        Number of time frames.
+    min_voxel_dim : float
+        Minimum voxel dimension (mm) for threshold scaling.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Per-frame weight array (1.0 = full weight, <1.0 = downweighted).
 
-    References:
-        Melbourne A, et al. MRM 2007.
-        Buckley DL. MRM 2002.
-        Ortiz-Ramon R, et al. Eur Radiol 2017.
+    References
+    ----------
+    Melbourne A, et al. Phys Med Biol. 2007;52(17):5147-5156.
+    Buckley DL. Magn Reson Med. 2002;47(3):601-606.
     """
     weights = np.ones(n_frames, dtype=np.float64)
     fd_arr = np.array(fd_values[:n_frames], dtype=np.float64)
@@ -214,10 +221,14 @@ def _fit_single_voxel(
 ) -> dict[str, Any]:
     """Fit a single voxel using the worker-local model/fitter.
 
-    Args:
-        voxel_data: VoxelInput with (x, y, z, tissue_curve, voxel_vp).
+    Parameters
+    ----------
+    voxel_data : VoxelInput
+        VoxelInput with (x, y, z, tissue_curve, voxel_vp).
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with keys: coords, params, r_squared, converged, uncertainties,
         fitted_curve, quality_flag, failed, failure_reason, constrained.
     """
@@ -423,7 +434,7 @@ def _fit_single_voxel(
             # Kass & Raftery (1995): ΔBIC ≥ 6 = "strong evidence".
             # Prevents noise-driven model selection in low-enhancement
             # voxels where complex models have unidentifiable parameters.
-            # Refs: Bagher-Ebadian MRM 2012, Sourbron & Buckley MRM 2013.
+            # Refs: Bagher-Ebadian 2012 MRM 68:241, Sourbron & Buckley 2011 MRM 66:735.
             _MIN_DELTA_BIC_UPGRADE = 6.0
             simplest = min(all_results, key=lambda r: r.n_parameters)
             if (best.model_name != simplest.model_name
@@ -572,10 +583,14 @@ _K2_QC_KEYS = {
 def _normalize_param_name(pname: str) -> str:
     """Normalize batched result param name to output format.
 
-    Args:
-        pname: Raw parameter name from batched result (e.g. 'ktrans', 'fp', 'ps').
+    Parameters
+    ----------
+    pname : str
+        Raw parameter name from batched result (e.g. 'ktrans', 'fp', 'ps').
 
-    Returns:
+    Returns
+    -------
+    str
         Normalized name matching output format.
     """
     if pname == "ktrans":
@@ -593,9 +608,12 @@ def _compute_derived_params(
 ) -> None:
     """Compute derived parameters (kep, E, Ktrans) in place.
 
-    Args:
-        params_out: Parameter dict to augment with derived values.
-        model_name: Model name for determining which derivations to apply.
+    Parameters
+    ----------
+    params_out : dict
+        Parameter dict to augment with derived values.
+    model_name : str
+        Model name for determining which derivations to apply.
     """
     if model_name in ("tofts", "extended_tofts"):
         ve_val = params_out.get("ve", EPSILON_VE)
@@ -622,15 +640,24 @@ def _merge_fit_results(
 
     Scatters constrained and free results back into full (N,) arrays.
 
-    Args:
-        r_const: FitResult for constrained voxels.
-        const_idx: Global indices of constrained voxels.
-        r_free: FitResult for free (unconstrained) voxels.
-        free_idx: Global indices of free voxels.
-        n_voxels: Total number of voxels.
-        model_name: Model name for the merged result.
+    Parameters
+    ----------
+    r_const : Any
+        FitResult for constrained voxels.
+    const_idx : numpy.ndarray
+        Global indices of constrained voxels.
+    r_free : Any
+        FitResult for free (unconstrained) voxels.
+    free_idx : numpy.ndarray
+        Global indices of free voxels.
+    n_voxels : int
+        Total number of voxels.
+    model_name : str
+        Model name for the merged result.
 
-    Returns:
+    Returns
+    -------
+    Any
         Merged FitResult with all voxels at their original positions.
     """
     from pmriprep.models.dce.batched_fitting import FitResult
@@ -720,16 +747,26 @@ def _fit_with_split_constraint(
     unconstrained batch receives ``vp_uncertainty=None`` since there is no
     prior to apply to those voxels.
 
-    Args:
-        fit_fn: Fitting function (batched_lm_fit or batched_patlak_lstsq).
-        tissue_curves: Observed tissue curves, shape (N, T).
-        fixed_vp: Fixed vp values or None. Zeros = unconstrained.
-        model_name: Model name.
-        n_voxels: Total number of voxels.
-        vp_uncertainty: Relative σ for SOFT box constraint (None = HARD).
-        **fit_kwargs: Additional kwargs passed to fit_fn.
+    Parameters
+    ----------
+    fit_fn : Any
+        Fitting function (batched_lm_fit or batched_patlak_lstsq).
+    tissue_curves : numpy.ndarray
+        Observed tissue curves, shape (N, T).
+    fixed_vp : numpy.ndarray or None
+        Fixed vp values or None. Zeros = unconstrained.
+    model_name : str
+        Model name.
+    n_voxels : int
+        Total number of voxels.
+    vp_uncertainty : float, optional
+        Relative σ for SOFT box constraint (None = HARD).
+    **fit_kwargs : Any
+        Additional kwargs passed to fit_fn.
 
-    Returns:
+    Returns
+    -------
+    Any
         FitResult with all voxels correctly handled.
     """
     if fixed_vp is None or model_name not in _MODEL_HAS_VP:
@@ -791,7 +828,9 @@ def _fit_chunk_nlls(args: BatchedChunkArgs) -> Any:
     (e.g. the historical `vp_uncertainty` drop that caused SOFT to behave
     as HARD in the batched NLLS path).
 
-    Returns:
+    Returns
+    -------
+    Any
         Per-chunk FitResult.
     """
     from pmriprep.models.dce.batched_fitting import (
@@ -1255,12 +1294,18 @@ class ComputeDCEMaps(BaseInterface):
 
         tSNR = mean(baseline) / std(baseline)
 
-        Args:
-            data: 4D concentration data (x, y, z, t).
-            mask: 3D brain mask.
-            baseline_frames: Number of baseline frames.
+        Parameters
+        ----------
+        data : numpy.ndarray
+            4D concentration data (x, y, z, t).
+        mask : numpy.ndarray
+            3D brain mask.
+        baseline_frames : int
+            Number of baseline frames.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             3D tSNR map.
         """
         spatial_shape = data.shape[:3]
@@ -1297,11 +1342,16 @@ class ComputeDCEMaps(BaseInterface):
 
         For DCE, signal INCREASES at bolus arrival (T1 shortening).
 
-        Args:
-            data: 4D concentration data.
-            mask: 3D brain mask.
+        Parameters
+        ----------
+        data : numpy.ndarray
+            4D concentration data.
+        mask : numpy.ndarray
+            3D brain mask.
 
-        Returns:
+        Returns
+        -------
+        int
             Number of baseline frames.
         """
         n_volumes = data.shape[3]
@@ -1338,10 +1388,14 @@ class ComputeDCEMaps(BaseInterface):
         vp is estimated by extended_tofts, patlak, and 2cxm.
         Standard Tofts assumes vp=0 and does not estimate it.
 
-        Args:
-            model_name: Model name.
+        Parameters
+        ----------
+        model_name : str
+            Model name.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if model outputs vp.
         """
         return model_name in ("extended_tofts", "patlak", "2cxm")
@@ -1352,10 +1406,14 @@ class ComputeDCEMaps(BaseInterface):
         ve (and derived kep = Ktrans/ve) is estimated by tofts,
         extended_tofts, and 2cxm. Patlak does not estimate ve.
 
-        Args:
-            model_name: Model name.
+        Parameters
+        ----------
+        model_name : str
+            Model name.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if model outputs ve.
         """
         return model_name in ("tofts", "extended_tofts", "2cxm")
@@ -1375,10 +1433,14 @@ class ComputeDCEMaps(BaseInterface):
         nested hierarchy for brain DCE. Standard Tofts remains available
         via explicit ``model=tofts`` selection.
 
-        Args:
-            volume_tr: Volume TR in seconds.
+        Parameters
+        ----------
+        volume_tr : float
+            Volume TR in seconds.
 
-        Returns:
+        Returns
+        -------
+        list
             List of candidate model names, ordered by complexity.
         """
         candidates = ["patlak"]
@@ -2189,8 +2251,8 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["failure_reasons"] = failure_reason_counts
 
         # FXL-suspect whole-brain flag. Tissue Ct peaks above ~0.8 mM
-        # violate the Tofts fast-exchange-limit assumption (Landis MRM
-        # 2000; Li MRM 2005). conc_data is already baseline-subtracted
+        # violate the Tofts fast-exchange-limit assumption (Landis 2000
+        # MRM 44:563; Li 2005 MRM 54:1351). conc_data is already baseline-subtracted
         # (C_t = (R1(t) - R1(0))/r1). Tumor-mask-stratified fraction
         # emitted in _generate_dce_pk_fit_qc. Shutter-speed model is not
         # viable at this pipeline's clinical TR_vol — report only.
@@ -2741,29 +2803,52 @@ class ComputeDCEMaps(BaseInterface):
         Fits all voxels simultaneously using batched LM/lstsq,
         then optionally refines with CPU-based MAP/MCMC.
 
-        Args:
-            conc_data: Concentration data, shape (X, Y, Z, T).
-            mask_coords: Tuple of coordinate arrays from np.where(fitting_mask).
-            aif: AIF, shape (T,).
-            time_points: Time points, shape (T,).
-            model_name: Primary model name.
-            inference: Inference engine ('nlls', 'map', 'vi', 'mcmc').
-            is_auto: Whether auto-mode BIC selection is active.
-            candidate_names: List of candidate model names for auto mode.
-            vp_constraint_map: vp constraint map or None.
-            constraint_mode: Constraint mode (SKIP, SOFT).
-            constraint_vp_uncertainty: Uncertainty for soft constraint.
-            motion_weights: Per-frame motion weights or None.
-            save_fitted_curves: Whether to save fitted curves.
-            sloppy: Whether to use sloppy mode.
-            mcmc_samples: Number of MCMC samples.
-            baseline_frames: Number of baseline frames.
-            n_procs: Number of CPU processes for MAP/MCMC refinement.
-            random_seed: Random seed or None.
-            init_args: Worker init args for CPU fallback.
-            voxel_data_list: List of VoxelInput for CPU fallback paths.
+        Parameters
+        ----------
+        conc_data : numpy.ndarray
+            Concentration data, shape (X, Y, Z, T).
+        mask_coords : tuple of numpy.ndarray
+            Tuple of coordinate arrays from np.where(fitting_mask).
+        aif : numpy.ndarray
+            AIF, shape (T,).
+        time_points : numpy.ndarray
+            Time points, shape (T,).
+        model_name : str
+            Primary model name.
+        inference : str
+            Inference engine ('nlls', 'map', 'vi', 'mcmc').
+        is_auto : bool
+            Whether auto-mode BIC selection is active.
+        candidate_names : list
+            List of candidate model names for auto mode.
+        vp_constraint_map : numpy.ndarray or None
+            vp constraint map or None.
+        constraint_mode : ConstraintMode
+            Constraint mode (SKIP, SOFT).
+        constraint_vp_uncertainty : float
+            Uncertainty for soft constraint.
+        motion_weights : numpy.ndarray or None
+            Per-frame motion weights or None.
+        save_fitted_curves : bool
+            Whether to save fitted curves.
+        sloppy : bool
+            Whether to use sloppy mode.
+        mcmc_samples : int
+            Number of MCMC samples.
+        baseline_frames : int
+            Number of baseline frames.
+        n_procs : int
+            Number of CPU processes for MAP/MCMC refinement.
+        random_seed : int or None
+            Random seed or None.
+        init_args : tuple
+            Worker init args for CPU fallback.
+        voxel_data_list : list of VoxelInput
+            List of VoxelInput for CPU fallback paths.
 
-        Returns:
+        Returns
+        -------
+        list
             List of result dicts matching _fit_single_voxel output format.
         """
         from pmriprep.models.dce.batched_fitting import FitResult
@@ -3036,13 +3121,20 @@ class ComputeDCEMaps(BaseInterface):
         Computes derived parameters (kep, E, Ktrans_derived) and builds
         dicts matching _fit_single_voxel output format.
 
-        Args:
-            fit_result: FitResult from batched fitting.
-            coords: Voxel coordinates, shape (N, 3).
-            model_name: Model name.
-            fixed_vp: Fixed vp values or None.
+        Parameters
+        ----------
+        fit_result : Any
+            FitResult from batched fitting.
+        coords : numpy.ndarray
+            Voxel coordinates, shape (N, 3).
+        model_name : str
+            Model name.
+        fixed_vp : numpy.ndarray, optional
+            Fixed vp values or None.
 
-        Returns:
+        Returns
+        -------
+        list
             List of result dicts.
         """
         n_voxels = len(coords)
@@ -3106,17 +3198,24 @@ class ComputeDCEMaps(BaseInterface):
         init_args: tuple[Any, ...],
         n_procs: int,
     ) -> list[dict[str, Any]]:
-        """Runs CPU MAP fitting on all voxels.
+        """Run CPU MAP fitting on all voxels.
 
         Uses CPU MAP where it converges, falling back to batched NLLS otherwise.
 
-        Args:
-            batched_results: Per-voxel result dicts from batched fitting.
-            voxel_data_list: VoxelInput list for CPU fitting.
-            init_args: Worker initialization args.
-            n_procs: Number of CPU processes.
+        Parameters
+        ----------
+        batched_results : list
+            Per-voxel result dicts from batched fitting.
+        voxel_data_list : list of VoxelInput
+            VoxelInput list for CPU fitting.
+        init_args : tuple
+            Worker initialization args.
+        n_procs : int
+            Number of CPU processes.
 
-        Returns:
+        Returns
+        -------
+        list
             Refined result dicts (CPU MAP where converged, batched NLLS otherwise).
         """
         # CPU MAP refinement using multiprocessing

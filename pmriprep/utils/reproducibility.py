@@ -4,7 +4,8 @@ This module provides pure-computation functions for quantifying
 test-retest reproducibility of perfusion parameter maps. All functions
 operate on numpy arrays with no I/O dependencies.
 
-References:
+References
+----------
     Shrout PE, Fleiss JL. Intraclass correlations: uses in assessing
     rater reliability. Psychol Bull 1979;86:420-428.
 
@@ -17,7 +18,7 @@ References:
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 from numpy.typing import NDArray
@@ -27,7 +28,8 @@ from numpy.typing import NDArray
 class BlandAltmanResult:
     """Results from a Bland-Altman analysis.
 
-    Attributes:
+    Attributes
+    ----------
         bias: Mean difference (v1 - v2).
         lower_limit: Lower 95% limit of agreement (bias - 1.96*sd).
         upper_limit: Upper 95% limit of agreement (bias + 1.96*sd).
@@ -46,7 +48,8 @@ class BlandAltmanResult:
 class ReproducibilityResult:
     """Container for all reproducibility metrics for a parameter.
 
-    Attributes:
+    Attributes
+    ----------
         parameter_name: Name of the perfusion parameter (e.g., "Ktrans").
         median_ses1: Median value in session 1.
         median_ses2: Median value in session 2.
@@ -83,15 +86,22 @@ def compute_percent_difference(
     For array inputs, computes the median of voxel-wise percent differences,
     excluding voxels where both values are near zero.
 
-    Args:
-        v1: First measurement (scalar-like or 1D array).
-        v2: Second measurement (same shape as v1).
+    Parameters
+    ----------
+    v1 : NDArray
+        First measurement (scalar-like or 1D array).
+    v2 : NDArray
+        Second measurement (same shape as v1).
 
-    Returns:
+    Returns
+    -------
+    float
         Percent difference. Returns 0.0 if both inputs are zero.
 
-    Raises:
-        ValueError: If inputs have different shapes.
+    Raises
+    ------
+    ValueError
+        If inputs have different shapes.
     """
     v1 = np.atleast_1d(np.asarray(v1, dtype=np.float64))
     v2 = np.atleast_1d(np.asarray(v2, dtype=np.float64))
@@ -129,11 +139,16 @@ def compute_within_subject_cv(
     For two repeated measurements, CV = median_%diff / 2.
     This is the standard approach for test-retest CV with k=2 sessions.
 
-    Args:
-        v1: First measurement (scalar-like or 1D array).
-        v2: Second measurement (same shape as v1).
+    Parameters
+    ----------
+    v1 : NDArray
+        First measurement (scalar-like or 1D array).
+    v2 : NDArray
+        Second measurement (same shape as v1).
 
-    Returns:
+    Returns
+    -------
+    float
         Within-subject CV as a percentage.
     """
     return compute_percent_difference(v1, v2) / 2.0
@@ -154,16 +169,23 @@ def compute_icc_2_1(
         EMS = error (residual) mean square
         n = number of subjects (voxels)
 
-    Args:
-        v1: First session values (1D array).
-        v2: Second session values (1D array, same length).
+    Parameters
+    ----------
+    v1 : NDArray
+        First session values (1D array).
+    v2 : NDArray
+        Second session values (1D array, same length).
 
-    Returns:
+    Returns
+    -------
+    float
         ICC(2,1) value. Typically in range [-1, 1], but can exceed
         these bounds with small samples.
 
-    Raises:
-        ValueError: If inputs have different lengths or fewer than 3 elements.
+    Raises
+    ------
+    ValueError
+        If inputs have different lengths or fewer than 3 elements.
     """
     v1 = np.asarray(v1, dtype=np.float64).ravel()
     v2 = np.asarray(v2, dtype=np.float64).ravel()
@@ -238,15 +260,22 @@ def compute_bland_altman(
         - Bias = mean(v1 - v2)
         - Limits = bias +/- 1.96 * SD(v1 - v2)
 
-    Args:
-        v1: First session values (1D array).
-        v2: Second session values (1D array, same length).
+    Parameters
+    ----------
+    v1 : NDArray
+        First session values (1D array).
+    v2 : NDArray
+        Second session values (1D array, same length).
 
-    Returns:
+    Returns
+    -------
+    BlandAltmanResult
         BlandAltmanResult with bias, limits of agreement, and sample size.
 
-    Raises:
-        ValueError: If inputs have different lengths or fewer than 2 elements.
+    Raises
+    ------
+    ValueError
+        If inputs have different lengths or fewer than 2 elements.
     """
     v1 = np.asarray(v1, dtype=np.float64).ravel()
     v2 = np.asarray(v2, dtype=np.float64).ravel()

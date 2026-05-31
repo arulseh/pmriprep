@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
-import numpy.typing as npt
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterfaceInputSpec,
@@ -520,47 +519,66 @@ class DSCRegistration(SimpleInterface):
     voxels) that can tip a single-path coarse search into a different
     basin of attraction.
 
-    Args:
-        t1w_file: T1-weighted image to register to DSC space.
-        dsc_mean: Mean DSC image (target space).
-        brain_mask: Brain mask for computing QC metrics.
-        registration: Method: 'flirt' or 'flirt_bbr'.
-        dof: Degrees of freedom (default: 6 for rigid body).
-        cost: Cost function for FLIRT (default: normmi).
-        wm_seg: White matter segmentation (required for flirt_bbr).
-        displacement_threshold: Max displacement (mm) for BBR acceptance
-            in flirt_bbr mode (default: 10mm).
+    Parameters
+    ----------
+    t1w_file : str
+        T1-weighted image to register to DSC space.
+    dsc_mean : str
+        Mean DSC image (target space).
+    brain_mask : str, optional
+        Brain mask for computing QC metrics.
+    registration : {'flirt', 'flirt_bbr'}, optional
+        Method: 'flirt' or 'flirt_bbr'.
+    dof : int, optional
+        Degrees of freedom (default: 6 for rigid body).
+    cost : {'normmi', 'normcorr', 'corratio', 'mutualinfo', 'leastsq'}, optional
+        Cost function for FLIRT (default: normmi).
+    wm_seg : str, optional
+        White matter segmentation (required for flirt_bbr).
+    displacement_threshold : float, optional
+        Max displacement (mm) for BBR acceptance in flirt_bbr mode
+        (default: 10mm).
 
-    Returns:
-        out_file: Registered T1w in DSC space.
-        out_matrix: FSL FLIRT transformation matrix.
-        dice: DICE coefficient of brain masks (if brain_mask provided).
-        correlation: Correlation coefficient within brain mask.
-        nmi: Normalized mutual information.
-        qc_metrics: Complete QC metrics dictionary including selection metadata.
+    Returns
+    -------
+    out_file : str
+        Registered T1w in DSC space.
+    out_matrix : str
+        FSL FLIRT transformation matrix.
+    dice : float
+        DICE coefficient of brain masks (if brain_mask provided).
+    correlation : float
+        Correlation coefficient within brain mask.
+    nmi : float
+        Normalized mutual information.
+    qc_metrics : dict
+        Complete QC metrics dictionary including selection metadata.
 
-    Example:
-        Auto mode (recommended)::
+    Examples
+    --------
+    Auto mode (recommended):
 
-            >>> reg = DSCRegistration()
-            >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
-            >>> reg.inputs.dsc_mean = 'dsc_mean.nii.gz'
-            >>> reg.inputs.wm_seg = 'T1w_wm_probseg.nii.gz'
-            >>> result = reg.run()  # doctest: +SKIP
+    >>> reg = DSCRegistration()
+    >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
+    >>> reg.inputs.dsc_mean = 'dsc_mean.nii.gz'
+    >>> reg.inputs.wm_seg = 'T1w_wm_probseg.nii.gz'
+    >>> result = reg.run()  # doctest: +SKIP
 
-    Note:
-        BBR (Boundary-Based Registration) uses white matter segmentation to
-        drive registration based on WM/GM boundary contrast. For DSC (EPI),
-        this can fail due to susceptibility distortion, contrast agent effects,
-        and tumor enhancement disrupting boundaries.
+    Notes
+    -----
+    BBR (Boundary-Based Registration) uses white matter segmentation to
+    drive registration based on WM/GM boundary contrast. For DSC (EPI),
+    this can fail due to susceptibility distortion, contrast agent effects,
+    and tumor enhancement disrupting boundaries.
 
-        In auto mode, BBR must demonstrably improve on FLIRT to be accepted:
-        transform displacement must be < threshold AND DICE must improve.
-        This provides a bias toward the more robust FLIRT result.
+    In auto mode, BBR must demonstrably improve on FLIRT to be accepted:
+    transform displacement must be < threshold AND DICE must improve.
+    This provides a bias toward the more robust FLIRT result.
 
-    See Also:
-        - FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
-        - FSL BBR: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT_BBR
+    See Also
+    --------
+    FSL FLIRT : https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
+    FSL BBR : https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT_BBR
     """
 
     input_spec = DSCRegistrationInputSpec
@@ -602,10 +620,14 @@ class DSCRegistration(SimpleInterface):
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DSC to T1w registration with dual-path selection.
 
-        Args:
-            runtime: Nipype runtime object.
+        Parameters
+        ----------
+        runtime : Any
+            Nipype runtime object.
 
-        Returns:
+        Returns
+        -------
+        Any
             Updated runtime object.
         """
         import logging
@@ -942,18 +964,29 @@ class DSCRegistration(SimpleInterface):
     ) -> None:
         """Run BBR registration initialized from FLIRT matrix.
 
-        Args:
-            t1w_file: T1w input image.
-            dsc_mean: DSC reference image.
-            init_matrix: FLIRT initialization matrix.
-            out_file: Output registered image.
-            out_matrix: Output BBR matrix.
-            dof: Degrees of freedom.
-            temp_path: Temporary directory.
-            ext: File extension.
+        Parameters
+        ----------
+        t1w_file : str
+            T1w input image.
+        dsc_mean : str
+            DSC reference image.
+        init_matrix : str
+            FLIRT initialization matrix.
+        out_file : str
+            Output registered image.
+        out_matrix : str
+            Output BBR matrix.
+        dof : int
+            Degrees of freedom.
+        temp_path : Path
+            Temporary directory.
+        ext : str
+            File extension.
 
-        Raises:
-            RuntimeError: If WM thresholding or BBR fails.
+        Raises
+        ------
+        RuntimeError
+            If WM thresholding or BBR fails.
         """
         import subprocess
 
@@ -981,11 +1014,16 @@ class DSCRegistration(SimpleInterface):
     ) -> dict[str, Any]:
         """Compute registration QC metrics.
 
-        Args:
-            out_file: Registered T1w image path.
-            dsc_mean: DSC reference image path.
+        Parameters
+        ----------
+        out_file : str
+            Registered T1w image path.
+        dsc_mean : str
+            DSC reference image path.
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary of QC metrics.
         """
         import nibabel as nib

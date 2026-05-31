@@ -5,7 +5,7 @@ following the NiPreps/fMRIPrep workflow design patterns.
 """
 
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
@@ -23,7 +23,7 @@ from pmriprep.interfaces.dce import (
 from pmriprep.interfaces.dce_aif import AIFDetection
 from pmriprep.interfaces.dce_aif_qc import DCEAIFQCPlot
 from pmriprep.interfaces.dce_compute import ComputeDCEMaps
-from pmriprep.data import get_arterial_atlas, get_arterial_atlas_cascade
+from pmriprep.data import get_arterial_atlas_cascade
 
 
 def init_dce_preproc_wf(
@@ -62,82 +62,88 @@ def init_dce_preproc_wf(
     has_tissue_seg : bool
         Whether tissue segmentation maps (CSF/WM probseg) are available.
         False in postcon-only mode where FAST is skipped. Default: True.
+    random_seed : int, optional
+        Random seed for reproducible PK model fitting (Bayesian inference).
+    mem_gb : float, optional
+        Memory estimate (GB) for heavy nodes. If None, uses a capped default.
+    mem_limit_gb : float, optional
+        Upper bound (GB) used to cap per-node memory estimates.
     name : str
         Name of the workflow (default: "dce_preproc_wf").
 
     Returns
     -------
-    workflow : pe.Workflow
+    pe.Workflow
         A Nipype workflow with defined inputs and outputs.
 
-    Inputs (from inputnode)
-    -----------------------
-    dce_file : str
+    Inputs
+    ------
+    dce_file
         Path to 4D DCE NIfTI file.
-    t1w_reference : str
+    t1w_reference
         Path to T1-weighted reference image (typically post-contrast T1w).
-    brain_mask : str
+    brain_mask
         Path to brain mask NIfTI file.
-    wm_probseg : str
+    wm_probseg
         Path to white matter probability map for BBR registration.
-    vfa_files : list of str
+    vfa_files
         Paths to VFA (Variable Flip Angle) images for T1 mapping.
-    vfa_flip_angles : list of float
+    vfa_flip_angles
         Flip angles (degrees) for each VFA image.
-    afi_tr1 : float, optional
+    afi_tr1
         TR1 value (ms) for AFI B1+ mapping.
-    afi_tr2 : float, optional
+    afi_tr2
         TR2 value (ms) for AFI B1+ mapping.
-    dsc_cbv_file : str, optional
+    dsc_cbv_file
         Path to DSC-derived CBV map for vp constraint (DSC native space).
         Will be resampled to DCE space via dsc_to_t1w_xfm + t1w_to_dce_xfm.
-    dsc_to_t1w_xfm : str, optional
+    dsc_to_t1w_xfm
         Path to DSC→T1w FLIRT transform matrix (for CBV resampling).
-    dsc_aif_qc_file : str, optional
+    dsc_aif_qc_file
         Path to DSC AIF QC JSON for CBV quality assessment.
-    flip_angle : float
+    flip_angle
         DCE nominal flip angle in degrees.
-    tr : float
+    tr
         DCE repetition time in seconds.
-    te : float
+    te
         DCE echo time in seconds.
-    field_strength : float
+    field_strength
         Magnetic field strength in Tesla.
-    r1_relaxivity : float, optional
+    r1_relaxivity
         r1 relaxivity of contrast agent (L/mmol/s). If None, use lookup.
 
-    Outputs (from outputnode)
-    -------------------------
-    dce_moco : str
+    Outputs
+    -------
+    dce_moco
         Path to motion-corrected 4D DCE NIfTI.
-    dce_mean : str
+    dce_mean
         Path to mean DCE image (temporal average).
-    motion_params : str
+    motion_params
         Path to motion parameters file.
-    b1_map : str, optional
+    b1_map
         Path to B1+ map from AFI acquisition.
-    t1_map : str
+    t1_map
         Path to T1 map from VFA acquisition.
-    ktrans_map : str
+    ktrans_map
         Path to Ktrans (transfer constant) map.
-    ve_map : str, optional
+    ve_map
         Path to ve (extravascular extracellular volume fraction) map.
         Not produced by Patlak model.
-    vp_map : str, optional
+    vp_map
         Path to vp (plasma volume fraction) map (extended Tofts/2CXM).
-    kep_map : str, optional
+    kep_map
         Path to kep (rate constant) map. Not produced by Patlak model.
-    aif_curve : str
+    aif_curve
         Path to AIF curve text file.
-    aif_mask : str
+    aif_mask
         Path to AIF detection mask.
-    dce_to_t1w_xfm : str
+    dce_to_t1w_xfm
         Path to DCE to T1w transformation matrix.
-    ktrans_uncertainty : str, optional
+    ktrans_uncertainty
         Path to Ktrans uncertainty map (if Bayesian).
-    ve_uncertainty : str, optional
+    ve_uncertainty
         Path to ve uncertainty map (if Bayesian).
-    qc_metrics : dict
+    qc_metrics
         Dictionary of QC metrics from all processing steps.
 
     Notes
@@ -2392,12 +2398,18 @@ def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
     probability maps, unlike nearest-neighbour for binary masks). Clips output
     to [0, 1] to correct slight over/undershoot from interpolation.
 
-    Args:
-        probseg_file: Path to probability map in T1w space (or None).
-        reference_file: Path to DCE reference image for output geometry.
-        transform_matrix: Path to T1w→DCE FLIRT matrix.
+    Parameters
+    ----------
+    probseg_file : str or None
+        Path to probability map in T1w space (or None).
+    reference_file : str or None
+        Path to DCE reference image for output geometry.
+    transform_matrix : str or None
+        Path to T1w→DCE FLIRT matrix.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to transformed probability map in DCE space, or None if no input.
     """
     from nipype.interfaces.base import isdefined
@@ -2477,12 +2489,18 @@ def _transform_lesion_mask_to_dce(  # type: ignore[no-untyped-def]
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
     the lesion mask into DCE space, preserving integer label values.
 
-    Args:
-        lesion_mask_file: Path to lesion mask in T1w space (or None).
-        reference_file: Path to DCE reference image for output geometry.
-        transform_matrix: Path to T1w→DCE FLIRT matrix.
+    Parameters
+    ----------
+    lesion_mask_file : str or None
+        Path to lesion mask in T1w space (or None).
+    reference_file : str or None
+        Path to DCE reference image for output geometry.
+    transform_matrix : str or None
+        Path to T1w→DCE FLIRT matrix.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to transformed lesion mask in DCE space, or "" if no mask.
         Returns "" (not None) because downstream traits.Str rejects None.
     """
@@ -2534,11 +2552,16 @@ def _create_aif_search_mask(  # type: ignore[no-untyped-def]
     2. Regions outside DCE brain extraction are excluded
     3. Only voxels in both masks are used for AIF search
 
-    Args:
-        t1w_mask_in_dce: Path to T1w brain mask transformed to DCE space.
-        dce_native_mask: Path to native DCE brain mask from DCEBrainExtract.
+    Parameters
+    ----------
+    t1w_mask_in_dce : str or None
+        Path to T1w brain mask transformed to DCE space.
+    dce_native_mask : str or None
+        Path to native DCE brain mask from DCEBrainExtract.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to conservative AIF search mask, or None if inputs missing.
     """
     if not t1w_mask_in_dce or t1w_mask_in_dce is None:
@@ -2596,13 +2619,20 @@ def _transform_atlas_to_dce(
     atlas mask. Includes morphological refinement (dilate-dilate-erode)
     to clean up edges after interpolation.
 
-    Args:
-        atlas_file: Path to MNI-space atlas mask (e.g., MCA/ACA territories).
-        t1w_to_mni_xfm: Path to T1w→MNI FLIRT matrix (from anat pipeline).
-        t1w_to_dce_xfm: Path to T1w→DCE FLIRT matrix (from DCE registration).
-        reference_file: Path to DCE reference image for output geometry.
+    Parameters
+    ----------
+    atlas_file : str, optional
+        Path to MNI-space atlas mask (e.g., MCA/ACA territories).
+    t1w_to_mni_xfm : str, optional
+        Path to T1w→MNI FLIRT matrix (from anat pipeline).
+    t1w_to_dce_xfm : str, optional
+        Path to T1w→DCE FLIRT matrix (from DCE registration).
+    reference_file : str, optional
+        Path to DCE reference image for output geometry.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to atlas mask in DCE space, or None if inputs missing.
     """
     from nipype.interfaces.base import isdefined
@@ -2702,13 +2732,20 @@ def _transform_atlas_cascade_to_dce(atlas_files=None, t1w_to_mni_xfm=None, t1w_t
     serialize and execute functions in isolation — calls to sibling
     functions in the same module are not in scope at runtime.
 
-    Args:
-        atlas_files: List of MNI-space atlas mask paths (ordered tightest first).
-        t1w_to_mni_xfm: Path to T1w→MNI FLIRT matrix.
-        t1w_to_dce_xfm: Path to T1w→DCE FLIRT matrix.
-        reference_file: Path to DCE reference image for output geometry.
+    Parameters
+    ----------
+    atlas_files : list of str or None
+        List of MNI-space atlas mask paths (ordered tightest first).
+    t1w_to_mni_xfm : str or None
+        Path to T1w→MNI FLIRT matrix.
+    t1w_to_dce_xfm : str or None
+        Path to T1w→DCE FLIRT matrix.
+    reference_file : str or None
+        Path to DCE reference image for output geometry.
 
-    Returns:
+    Returns
+    -------
+    list of str
         List of atlas mask paths in DCE space. Empty if inputs are missing
         or all transforms fail.
     """
@@ -2793,10 +2830,36 @@ def _transform_atlas_cascade_to_dce(atlas_files=None, t1w_to_mni_xfm=None, t1w_t
 
 
 def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle, tr, field_strength, r1_relaxivity, baseline_frames, no_t1):  # type: ignore[no-untyped-def]
-    """Function node for signal to concentration conversion.
+    """Convert DCE signal to contrast-agent concentration.
 
     This function wraps the signal_to_concentration utility for use in
     a Nipype workflow.
+
+    Parameters
+    ----------
+    dce_file : str
+        Path to 4D DCE NIfTI file.
+    t1_map_file : str or None
+        Path to T1 map in DCE space (None when no_t1 is True).
+    b1_map_file : str or None
+        Path to B1+ map in DCE space (None when no B1 correction).
+    flip_angle : float
+        DCE nominal flip angle in degrees.
+    tr : float
+        Pulse repetition time for the SPGR signal equation.
+    field_strength : float
+        Magnetic field strength in Tesla.
+    r1_relaxivity : float or None
+        r1 relaxivity of the contrast agent (L/mmol/s); None to use lookup.
+    baseline_frames : int
+        Number of pre-contrast baseline frames.
+    no_t1 : bool
+        If True, skip T1 mapping and use a field-strength default T1.
+
+    Returns
+    -------
+    str
+        Path to the 4D concentration NIfTI file.
     """
     from pathlib import Path
 
@@ -2871,22 +2934,37 @@ def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle
 
 
 def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None, brain_mask=None, no_dsc_validation=False, pk_qc=None, dsc_preload_configured=None):  # type: ignore[no-untyped-def]
-    """Function node for DSC-DCE cross-validation.
+    """Run DSC-DCE cross-validation.
 
-    Args:
-        dsc_ncbv_file: Optional NAWM-normalized CBV. When provided, validation
-            uses the nCBV-anchored expected ratio (``NAWM_VP_REFERENCE``) and
-            the scaled circular-std threshold.
-        pk_qc: Full ``pk_modeling.qc_metrics`` dict (or a bare string for
-            backwards compatibility). The function extracts
-            ``dsc_cbv_constraint.mode`` and
-            ``dsc_cbv_constraint.aif_tissue_overshoot_fraction`` — the
-            latter is only emitted for NAWM-anchored auto-mode subjects
-            with ≥100 valid voxels; missing values fall back to legacy
-            tight-band behavior cleanly.
-        dsc_preload_configured: Whether DSC preload was configured.
+    Parameters
+    ----------
+    vp_file : str or None
+        Path to the DCE vp (plasma volume) map.
+    dsc_cbv_file : str or None
+        Path to resampled DSC CBV map in DCE space.
+    dsc_ncbv_file : str or None
+        Optional NAWM-normalized CBV. When provided, validation
+        uses the nCBV-anchored expected ratio (``NAWM_VP_REFERENCE``) and
+        the scaled circular-std threshold.
+    brain_mask : str or None
+        Path to brain mask in DCE space.
+    no_dsc_validation : bool
+        If True, skip cross-validation.
+    pk_qc : dict or str or None
+        Full ``pk_modeling.qc_metrics`` dict (or a bare string for
+        backwards compatibility). The function extracts
+        ``dsc_cbv_constraint.mode`` and
+        ``dsc_cbv_constraint.aif_tissue_overshoot_fraction`` — the
+        latter is only emitted for NAWM-anchored auto-mode subjects
+        with ≥100 valid voxels; missing values fall back to legacy
+        tight-band behavior cleanly.
+    dsc_preload_configured : bool or None
+        Whether DSC preload was configured.
 
-    Returns a dictionary with validation results.
+    Returns
+    -------
+    dict
+        Dictionary with validation results.
     """
     import os
 
@@ -2949,8 +3027,8 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
     # xval requires nCBV (NAWM-normalized). get_expected_ratio ≈ 0.669
     # is derived for absolute mL/100g CBV (Tofts 1999); pmriprep only
     # produces dimensionless rel-AUC-CBV. No universal expected ratio
-    # exists for vp / rel_AUC_CBV without NAWM anchoring (Rempp 1994;
-    # Knutsson 2010). Skip cleanly rather than emit false POOR on
+    # exists for vp / rel_AUC_CBV without NAWM anchoring (Rempp 1994
+    # Radiology 193:637; Knutsson 2010 MAGMA 23:1). Skip cleanly rather than emit false POOR on
     # subjects with no NAWM mask.
     if not have_ncbv:
         return {
@@ -3005,11 +3083,16 @@ def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
     correction. The first few frames are guaranteed pre-contrast,
     producing clean gray/white contrast without gadolinium effects.
 
-    Args:
-        dce_file: Path to reoriented 4D DCE NIfTI.
-        n_frames: Number of early frames to average (default 3).
+    Parameters
+    ----------
+    dce_file : str
+        Path to reoriented 4D DCE NIfTI.
+    n_frames : int, optional
+        Number of early frames to average (default 3).
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the 3D mean NIfTI file.
     """
     from pathlib import Path
@@ -3035,18 +3118,37 @@ def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
 
 
 def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None, brain_mask=None, validation_result=None, subject_id='', session_id='', pk_qc=None, model_selection_file=None):  # type: ignore[no-untyped-def]
-    """Function node for DSC-DCE cross-validation plot generation.
+    """Generate the DSC-DCE cross-validation plot.
 
-    Args:
-        dsc_ncbv_file: Optional NAWM-normalized CBV. When provided (and the
-            validation ran under use_ncbv_scale=True), the plot is drawn on
-            the dimensionless nCBV scale with expected ratio =
-            ``NAWM_VP_REFERENCE``, matching the validation metrics.
-        pk_qc: Full ``pk_modeling.qc_metrics`` dict (or a bare mode string
-            for backwards compatibility); the function extracts
-            ``dsc_cbv_constraint.mode``.
+    Parameters
+    ----------
+    vp_file : str or None
+        Path to the DCE vp (plasma volume) map.
+    dsc_cbv_file : str or None
+        Path to resampled DSC CBV map in DCE space.
+    dsc_ncbv_file : str or None
+        Optional NAWM-normalized CBV. When provided (and the
+        validation ran under use_ncbv_scale=True), the plot is drawn on
+        the dimensionless nCBV scale with expected ratio =
+        ``NAWM_VP_REFERENCE``, matching the validation metrics.
+    brain_mask : str or None
+        Path to brain mask in DCE space.
+    validation_result : dict or None
+        Result dict from the DSC-DCE validation node.
+    subject_id : str, optional
+        Subject identifier.
+    session_id : str, optional
+        Session identifier.
+    pk_qc : dict or str or None
+        Full ``pk_modeling.qc_metrics`` dict (or a bare mode string
+        for backwards compatibility); the function extracts
+        ``dsc_cbv_constraint.mode``.
+    model_selection_file : str or None
+        Path to the model selection map NIfTI (auto mode), for coloring.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to plot PNG, or None if skipped.
     """
     import os
@@ -3117,24 +3219,42 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
 def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk_qc, validation_result, preproc_display=None, pk_fit_qc_metrics=None, pk_maps_qc_metrics=None, vp_at_bound_fractions=None, use_external_t1=False, no_t1=False, b1_method='auto', nawm_available=False):  # type: ignore[no-untyped-def]
     """Collect all QC metrics into a single dictionary.
 
-    Args:
-        b1_qc: B1+ mapping QC metrics (None if not performed).
-        t1_qc: T1 mapping QC metrics (None if external or no_t1).
-        preprocess_qc: Preprocessing QC metrics.
-        registration_qc: Registration QC metrics.
-        aif_qc: AIF detection QC metrics.
-        pk_qc: Pharmacokinetic modeling QC metrics.
-        validation_result: DSC-DCE validation result.
-        preproc_display: Preprocessing display stats.
-        pk_fit_qc_metrics: PK fit QC metrics from plot node.
-        pk_maps_qc_metrics: Region→model-distribution mapping from plot node.
-        vp_at_bound_fractions: Scalar whole-brain/ROI vp-at-bound fractions.
-        use_external_t1: Whether external T1 map was used.
-        no_t1: Whether T1 mapping was skipped (assumed T1).
-        b1_method: B1 correction method used.
-        nawm_available: Whether NAWM mask was available for normalization.
+    Parameters
+    ----------
+    b1_qc : dict or None
+        B1+ mapping QC metrics (None if not performed).
+    t1_qc : dict or None
+        T1 mapping QC metrics (None if external or no_t1).
+    preprocess_qc : dict or None
+        Preprocessing QC metrics.
+    registration_qc : dict or None
+        Registration QC metrics.
+    aif_qc : dict or None
+        AIF detection QC metrics.
+    pk_qc : dict or None
+        Pharmacokinetic modeling QC metrics.
+    validation_result : dict or None
+        DSC-DCE validation result.
+    preproc_display : dict, optional
+        Preprocessing display stats.
+    pk_fit_qc_metrics : dict, optional
+        PK fit QC metrics from plot node.
+    pk_maps_qc_metrics : dict, optional
+        Region→model-distribution mapping from plot node.
+    vp_at_bound_fractions : dict, optional
+        Scalar whole-brain/ROI vp-at-bound fractions.
+    use_external_t1 : bool, optional
+        Whether external T1 map was used.
+    no_t1 : bool, optional
+        Whether T1 mapping was skipped (assumed T1).
+    b1_method : str, optional
+        B1 correction method used.
+    nawm_available : bool, optional
+        Whether NAWM mask was available for normalization.
 
-    Returns:
+    Returns
+    -------
+    dict
         Combined QC metrics dictionary.
     """
     qc_metrics = {}
@@ -3200,11 +3320,16 @@ def _transform_b1_to_vfa(  # type: ignore[no-untyped-def]
     Uses nilearn continuous interpolation via NIfTI affine headers.
     Passes through None unchanged if B1 mapping was skipped.
 
-    Args:
-        b1_map_file: Path to B1+ map in AFI space (or None).
-        vfa_ref_file: Path to VFA reference image for output geometry.
+    Parameters
+    ----------
+    b1_map_file : str or None
+        Path to B1+ map in AFI space (or None).
+    vfa_ref_file : str or None
+        Path to VFA reference image for output geometry.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to B1+ map resampled to VFA space, or original if same space.
     """
     if b1_map_file is None or vfa_ref_file is None:
@@ -3257,11 +3382,16 @@ def _transform_b1_to_dce(  # type: ignore[no-untyped-def]
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
 
-    Args:
-        b1_map_file: Path to B1+ map (or None).
-        reference_file: Path to DCE mean image for output geometry.
+    Parameters
+    ----------
+    b1_map_file : str or None
+        Path to B1+ map (or None).
+    reference_file : str or None
+        Path to DCE mean image for output geometry.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to B1+ map resampled to DCE space, or original if same space.
     """
     if b1_map_file is None or reference_file is None:
@@ -3319,14 +3449,20 @@ def _resample_dsc_cbv_to_dce(  # type: ignore[no-untyped-def]
     then applies the combined transform with trilinear interpolation
     (not spline, to avoid negative CBV values).
 
-    Args:
-        dsc_cbv_file: Path to DSC-derived relative CBV map (DSC native space).
-        dsc_to_t1w_xfm: Path to DSC→T1w FLIRT transform matrix.
-        t1w_to_dce_xfm: Path to T1w→DCE FLIRT transform matrix
-            (from DCE registration step).
-        dce_reference: Path to DCE reference image for output geometry.
+    Parameters
+    ----------
+    dsc_cbv_file : str or None
+        Path to DSC-derived relative CBV map (DSC native space).
+    dsc_to_t1w_xfm : str or None
+        Path to DSC→T1w FLIRT transform matrix.
+    t1w_to_dce_xfm : str or None
+        Path to T1w→DCE FLIRT transform matrix (from DCE registration step).
+    dce_reference : str or None
+        Path to DCE reference image for output geometry.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to CBV map resampled to DCE space, or empty string if inputs
         are missing (empty string avoids nipype File trait validation errors
         when None flows through workflow connections).
@@ -3501,11 +3637,16 @@ def _transform_t1_to_dce(  # type: ignore[no-untyped-def]
     This is critical to avoid shape mismatches in signal_to_concentration
     and pk_modeling.
 
-    Args:
-        t1_map_file: Path to T1 map in VFA space (or None).
-        reference_file: Path to DCE mean image for output geometry.
+    Parameters
+    ----------
+    t1_map_file : str or None
+        Path to T1 map in VFA space (or None).
+    reference_file : str or None
+        Path to DCE mean image for output geometry.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to T1 map resampled to DCE space, or original if same space.
     """
     if t1_map_file is None or reference_file is None:
@@ -3554,11 +3695,16 @@ def _transform_external_t1_to_dce(  # type: ignore[no-untyped-def]
     pipeline). If median T1 < 10, assumes values are in seconds and
     auto-converts, then resamples to DCE space.
 
-    Args:
-        t1_map_file: Path to external T1 map (NIfTI).
-        reference_file: Path to DCE mean image for output geometry.
+    Parameters
+    ----------
+    t1_map_file : str or None
+        Path to external T1 map (NIfTI).
+    reference_file : str or None
+        Path to DCE mean image for output geometry.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to T1 map resampled to DCE space in milliseconds.
     """
     if t1_map_file is None or reference_file is None:
@@ -3636,14 +3782,22 @@ def _transform_structural_to_dce(  # type: ignore[no-untyped-def]
 ):
     """Transform structural image from T1w space to DCE space via FLIRT.
 
-    Args:
-        structural_file: Path to structural image in T1w space (or None).
-        reference_file: Path to DCE reference image for output geometry.
-        transform_matrix: Path to T1w→DCE FLIRT matrix.
-        output_name: Output filename.
+    Parameters
+    ----------
+    structural_file : str or None
+        Path to structural image in T1w space (or None).
+    reference_file : str or None
+        Path to DCE reference image for output geometry.
+    transform_matrix : str or None
+        Path to T1w→DCE FLIRT matrix.
+    output_name : str, optional
+        Output filename.
 
-    Returns:
-        Path to transformed structural image in DCE space, or None if inputs missing.
+    Returns
+    -------
+    str or None
+        Path to transformed structural image in DCE space, or None if inputs
+        missing.
     """
     from nipype.interfaces.base import isdefined
 
@@ -3689,11 +3843,20 @@ def _generate_dce_motion_qc_plot(
     Creates a two-panel figure showing raw motion parameters and
     framewise displacement over time.
 
-    Args:
-        motion_params_file: Path to motion parameters text file.
-        tr: Repetition time in seconds.
+    Parameters
+    ----------
+    motion_params_file : str
+        Path to motion parameters text file.
+    tr : float
+        Repetition time in seconds.
+    subject_id : str, optional
+        Subject identifier.
+    session_id : str, optional
+        Session identifier.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the generated motion QC plot PNG.
     """
     import numpy as np
@@ -3715,18 +3878,30 @@ def _generate_preprocessing_qc(dce_file, brain_mask_file, baseline_frames, bolus
     Thin wrapper that loads NIfTI data and delegates to
     generate_preprocessing_qc_plot().
 
-    Args:
-        dce_file: Path to 4D motion-corrected DCE NIfTI.
-        brain_mask_file: Path to brain mask NIfTI.
-        baseline_frames: Number of baseline frames.
-        bolus_arrival_frame: Bolus arrival frame index.
-        tr_ms: Pulse TR in seconds (from inputnode ``tr``).
-        volume_tr_s: Volume TR in seconds.
-        te: Echo time in seconds (optional; surfaced as ms in QC row).
-        subject_id: Subject identifier.
-        session_id: Session identifier.
+    Parameters
+    ----------
+    dce_file : str
+        Path to 4D motion-corrected DCE NIfTI.
+    brain_mask_file : str
+        Path to brain mask NIfTI.
+    baseline_frames : int
+        Number of baseline frames.
+    bolus_arrival_frame : int
+        Bolus arrival frame index.
+    tr_ms : float
+        Pulse TR in seconds (from inputnode ``tr``).
+    volume_tr_s : float
+        Volume TR in seconds.
+    te : float, optional
+        Echo time in seconds (optional; surfaced as ms in QC row).
+    subject_id : str, optional
+        Subject identifier.
+    session_id : str, optional
+        Session identifier.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (plot_file path, preproc_display_stats dict).
     """
     from pathlib import Path
@@ -3783,12 +3958,22 @@ def _create_dce_registration_filmstrip(dce_mean_file=None, registered_t1w_file=N
     contours of the registered T1w image overlaid. This allows visual
     assessment of registration quality.
 
-    Args:
-        dce_mean_file: Path to DCE mean image.
-        registered_t1w_file: Path to T1w image registered to DCE space.
-        brain_mask_file: Path to brain mask in DCE space (optional).
+    Parameters
+    ----------
+    dce_mean_file : str or None
+        Path to DCE mean image.
+    registered_t1w_file : str or None
+        Path to T1w image registered to DCE space.
+    brain_mask_file : str or None
+        Path to brain mask in DCE space (optional).
+    subject_id : str, optional
+        Subject identifier.
+    session_id : str, optional
+        Session identifier.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to registration QC filmstrip PNG, or None if inputs missing.
     """
     from pathlib import Path
@@ -3845,12 +4030,18 @@ def _smooth_dce_maps(  # type: ignore[no-untyped-def]
     voxels would otherwise contribute 0 to the Gaussian kernel.
     Reference: Knutsson & Westin, CVPR 1993.
 
-    Args:
-        map_files: Dict mapping map name to file path.
-        brain_mask_file: Path to brain mask for re-masking after smoothing.
-        fwhm: Smoothing FWHM in mm.
+    Parameters
+    ----------
+    map_files : dict
+        Dict mapping map name to file path.
+    brain_mask_file : str
+        Path to brain mask for re-masking after smoothing.
+    fwhm : float
+        Smoothing FWHM in mm.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict mapping map name to smoothed file path.
     """
     import logging
@@ -4016,11 +4207,16 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyp
     FAST classifies as WM (notably globus pallidus, parts of thalamus and
     hippocampus, where iron- and myelin-rich T1 intensity matches WM).
 
-    Args:
-        param_map: Path to parameter map NIfTI file.
-        nawm_mask: Path to NAWM mask NIfTI file in the same space.
+    Parameters
+    ----------
+    param_map : str or None
+        Path to parameter map NIfTI file.
+    nawm_mask : str or None
+        Path to NAWM mask NIfTI file in the same space.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to normalized parameter map, or "" if normalization failed.
         Empty string (not None) is the project-wide Function-node-returns-empty
         sentinel — downstream consumers declare ``traits.Str`` which rejects
@@ -4098,25 +4294,46 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
     Lightweight wrapper that loads saved NIfTIs and calls plot functions.
     Follows the DSC QC wrapper pattern (dsc/base.py).
 
-    Args:
-        ktrans_file: Path to Ktrans map NIfTI.
-        ve_file: Path to ve map NIfTI (may be undefined for patlak).
-        vp_file: Path to vp map NIfTI (may be undefined for tofts).
-        fp_file: Path to Fp map NIfTI (may be undefined for non-2cxm).
-        ps_file: Path to PS map NIfTI (may be undefined for non-2cxm).
-        brain_mask_file: Path to brain mask NIfTI.
-        model_selection_file: Path to model selection map NIfTI (auto mode).
-        delta_bic_file: Path to delta-BIC map NIfTI (auto mode).
-        enhancing_mask_file: Path to enhancing tumor mask NIfTI (optional).
-        non_enhancing_mask_file: Path to non-enhancing tumor mask NIfTI (optional).
-        nawm_mask_file: Path to NAWM mask NIfTI (optional).
-        user_lesion_mask_file: Path to user-supplied lesion mask NIfTI (optional).
-        roi_mask_file: Path to user-supplied ROI mask NIfTI (optional).
-        model_name: PK model name.
-        subject_id: Subject identifier.
-        session_id: Session identifier.
+    Parameters
+    ----------
+    ktrans_file : str
+        Path to Ktrans map NIfTI.
+    ve_file : str, optional
+        Path to ve map NIfTI (may be undefined for patlak).
+    vp_file : str, optional
+        Path to vp map NIfTI (may be undefined for tofts).
+    fp_file : str, optional
+        Path to Fp map NIfTI (may be undefined for non-2cxm).
+    ps_file : str, optional
+        Path to PS map NIfTI (may be undefined for non-2cxm).
+    brain_mask_file : str, optional
+        Path to brain mask NIfTI.
+    model_selection_file : str, optional
+        Path to model selection map NIfTI (auto mode).
+    delta_bic_file : str, optional
+        Path to delta-BIC map NIfTI (auto mode).
+    enhancing_mask_file : str, optional
+        Path to enhancing tumor mask NIfTI (optional).
+    non_enhancing_mask_file : str, optional
+        Path to non-enhancing tumor mask NIfTI (optional).
+    nawm_mask_file : str, optional
+        Path to NAWM mask NIfTI (optional).
+    user_lesion_mask_file : str, optional
+        Path to user-supplied lesion mask NIfTI (optional).
+    roi_mask_file : str, optional
+        Path to user-supplied ROI mask NIfTI (optional).
+    vp_at_bound_map_file : str, optional
+        Path to the vp-at-bound map NIfTI (optional).
+    model_name : str, optional
+        PK model name.
+    subject_id : str, optional
+        Subject identifier.
+    session_id : str, optional
+        Session identifier.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (pk_param_maps_qc_plot, model_selection_qc_plot,
         model_selection_regions, vp_at_bound_fractions).
         ``model_selection_regions`` is a pure ``{region: {model: pct}}``
@@ -4292,28 +4509,52 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
     fitted curve, and calls the QC plot function. Follows the DSC QC wrapper
     pattern (dsc/base.py).
 
-    Args:
-        concentration_file: Path to 4D concentration NIfTI.
-        dce_signal_file: Path to 4D raw DCE signal NIfTI.
-        aif_file: Path to AIF curve (.npy or NIfTI).
-        brain_mask_file: Path to brain mask NIfTI.
-        ktrans_file: Path to Ktrans map NIfTI.
-        ve_file: Path to ve map NIfTI (may be undefined).
-        vp_file: Path to vp map NIfTI (may be undefined).
-        fp_file: Path to Fp map NIfTI (may be undefined).
-        ps_file: Path to PS map NIfTI (may be undefined).
-        r2_file: Path to R² map NIfTI.
-        qc_mask_file: Path to QC mask NIfTI.
-        fitted_curves_file: Path to 4D fitted curves NIfTI (optional).
-        model_selection_file: Path to model selection map NIfTI (auto mode).
-        enhancing_mask_file: Path to enhancing tumor mask NIfTI (optional).
-        volume_tr: Volume TR in seconds.
-        baseline_frames: Number of baseline frames.
-        model_name: PK model name.
-        subject_id: Subject identifier.
-        session_id: Session identifier.
+    Parameters
+    ----------
+    concentration_file : str
+        Path to 4D concentration NIfTI.
+    dce_signal_file : str, optional
+        Path to 4D raw DCE signal NIfTI.
+    aif_file : str, optional
+        Path to AIF curve (.npy or NIfTI).
+    brain_mask_file : str, optional
+        Path to brain mask NIfTI.
+    ktrans_file : str, optional
+        Path to Ktrans map NIfTI.
+    ve_file : str, optional
+        Path to ve map NIfTI (may be undefined).
+    vp_file : str, optional
+        Path to vp map NIfTI (may be undefined).
+    fp_file : str, optional
+        Path to Fp map NIfTI (may be undefined).
+    ps_file : str, optional
+        Path to PS map NIfTI (may be undefined).
+    r2_file : str, optional
+        Path to R² map NIfTI.
+    qc_mask_file : str, optional
+        Path to QC mask NIfTI.
+    fitted_curves_file : str, optional
+        Path to 4D fitted curves NIfTI (optional).
+    model_selection_file : str, optional
+        Path to model selection map NIfTI (auto mode).
+    enhancing_mask_file : str, optional
+        Path to enhancing tumor mask NIfTI (optional).
+    non_enhancing_mask_file : str, optional
+        Path to non-enhancing tumor mask NIfTI (optional).
+    volume_tr : float, optional
+        Volume TR in seconds.
+    baseline_frames : int, optional
+        Number of baseline frames.
+    model_name : str, optional
+        PK model name.
+    subject_id : str, optional
+        Subject identifier.
+    session_id : str, optional
+        Session identifier.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (pk_modeling_qc_plot path, pk_voxel_metrics dict).
     """
     import logging
@@ -4472,7 +4713,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
 
         # FXL-suspect tumor-stratified flag and ROI-stratified Patlak fractions.
         # conc_data is already baseline-subtracted; np.nanmax gives peak tissue Ct
-        # per Landis MRM 2000 / Li MRM 2005. Report-only diagnostic — shutter-speed
+        # per Landis 2000 MRM 44:563 / Li 2005 MRM 54:1351. Report-only diagnostic — shutter-speed
         # model not viable at clinical TR_vol.
         peak_ct = np.nanmax(conc_data, axis=-1)
 
@@ -4508,8 +4749,9 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
 
         # ROI-stratified Patlak fraction: intersect model-selection map with
         # each tissue class. Whole-brain patlak_fraction emitted by
-        # ComputeDCEMaps is only meaningful stratified (Heye NeuroImage Clin
-        # 2014: enhancing tumor 20-40%, NAWM/GM 70-90%).
+        # ComputeDCEMaps is only meaningful stratified by tissue class (BBB-DCE
+        # methodology: Heye 2014 NeuroImage Clin 6:262; tissue fractions are
+        # pipeline-empirical: enhancing tumor 20-40%, NAWM/GM 70-90%).
         _PATLAK_CODE = 1  # from _MODEL_SELECTION_CODES in dce_compute.py
         if is_auto and model_sel_data is not None:
             ne_data = _safe_load(non_enhancing_mask_file)

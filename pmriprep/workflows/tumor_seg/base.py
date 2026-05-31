@@ -295,38 +295,38 @@ def init_tumor_seg_wf(
     pe.Workflow
         Nipype workflow for HD-GLIO tumor segmentation.
 
-    Workflow Inputs
-    ---------------
-    inputnode.t1w_pre : str
+    Inputs
+    ------
+    t1w_pre
         Path to pre-contrast T1-weighted image (brain-extracted).
-    inputnode.t1w_postcon : str
+    t1w_postcon
         Path to post-contrast T1-weighted image (ce-GAD, brain-extracted).
-    inputnode.t2w : str
+    t2w
         Path to T2-weighted image (brain-extracted).
-    inputnode.flair : str
+    flair
         Path to FLAIR image (brain-extracted).
-    inputnode.brain_mask : str
+    brain_mask
         Path to brain mask from anatomical preprocessing.
-    inputnode.wm_probseg : str
+    wm_probseg
         Path to white matter probability map for NAWM ROI creation.
-    inputnode.t1w_to_mni_xfm : str, optional
+    t1w_to_mni_xfm
         Path to T1w-to-MNI transform for atlas-based NAWM restriction.
-    inputnode.t1w_preproc : str, optional
+    t1w_preproc
         Path to preprocessed T1w image (reference for atlas transformation).
 
-    Workflow Outputs
-    ----------------
-    outputnode.segmentation : str
+    Outputs
+    -------
+    segmentation
         Path to HD-GLIO segmentation output (labels: 0=bg, 1=non-enhancing, 2=enhancing).
-    outputnode.enhancing_mask : str
+    enhancing_mask
         Path to enhancing tumor mask (label 2).
-    outputnode.non_enhancing_mask : str
+    non_enhancing_mask
         Path to non-enhancing tumor mask (label 1).
-    outputnode.whole_tumor_mask : str
+    whole_tumor_mask
         Path to whole tumor mask (labels 1 + 2).
-    outputnode.nawm_mask : str
+    nawm_mask
         Path to contralateral NAWM mask for CBV normalization.
-    outputnode.qc_metrics : dict
+    qc_metrics
         Dictionary of QC metrics from segmentation.
 
     Notes

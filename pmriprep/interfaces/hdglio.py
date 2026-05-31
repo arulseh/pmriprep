@@ -15,12 +15,11 @@ HDGLIOSegment
 import platform
 import re
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterface,
     BaseInterfaceInputSpec,
-    CommandLine,
     CommandLineInputSpec,
     File,
     TraitedSpec,
@@ -280,8 +279,6 @@ class HDGLIOPrep(BaseInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute the interface."""
-        import nibabel as nib  # type: ignore[import-untyped]
-
         # Collect input images
         images = {
             "t1w_pre": str(self.inputs.t1w_pre),

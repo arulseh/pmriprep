@@ -5,7 +5,7 @@ following the NiPreps/fMRIPrep workflow design patterns.
 """
 
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
@@ -22,6 +22,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 # Custom FSL wrappers to avoid nipype FSL module import bug (LooseVersion issue)
 class _ConvertXFMInputSpec(CommandLineInputSpec):
     """Input spec for convert_xfm."""
+
     # Explicit positions for correct FSL convert_xfm syntax:
     # -omat out.mat -inverse in.mat  OR  -omat out.mat -concat second.mat first.mat
     out_file = File(argstr="-omat %s", position=0, genfile=True, desc="Output matrix file")
@@ -37,11 +38,13 @@ class _ConvertXFMInputSpec(CommandLineInputSpec):
 
 class _ConvertXFMOutputSpec(TraitedSpec):
     """Output spec for convert_xfm."""
+
     out_file = File(exists=True, desc="Output transform matrix")
 
 
 class ConvertXFM(CommandLine):
     """FSL convert_xfm - transform matrix manipulation."""
+
     _cmd = "convert_xfm"
     input_spec = _ConvertXFMInputSpec
     output_spec = _ConvertXFMOutputSpec
@@ -73,6 +76,7 @@ class ConvertXFM(CommandLine):
 
 class _FLIRTApplyXFMInputSpec(CommandLineInputSpec):
     """Input spec for FLIRT applyxfm."""
+
     in_file = File(exists=True, mandatory=True, argstr="-in %s",
                    desc="Input file to transform")
     reference = File(exists=True, mandatory=True, argstr="-ref %s",
@@ -88,11 +92,13 @@ class _FLIRTApplyXFMInputSpec(CommandLineInputSpec):
 
 class _FLIRTApplyXFMOutputSpec(TraitedSpec):
     """Output spec for FLIRT applyxfm."""
+
     out_file = File(exists=True, desc="Transformed output file")
 
 
 class FLIRTApplyXFM(CommandLine):
     """FSL FLIRT - apply transform to image."""
+
     _cmd = "flirt"
     input_spec = _FLIRTApplyXFMInputSpec
     output_spec = _FLIRTApplyXFMOutputSpec
@@ -144,12 +150,18 @@ def _histogram_match_t1w_to_dsc(
     The T1w is brain-extracted via *brain_mask_file* before matching so
     that skull/scalp/background voxels do not distort the histogram.
 
-    Args:
-        t1w_file: Path to whole-head bias-corrected T1w image.
-        dsc_brain_file: Path to DSC brain-extracted image.
-        brain_mask_file: Path to T1w brain mask (binary).
+    Parameters
+    ----------
+    t1w_file : str
+        Path to whole-head bias-corrected T1w image.
+    dsc_brain_file : str
+        Path to DSC brain-extracted image.
+    brain_mask_file : str
+        Path to T1w brain mask (binary).
 
-    Returns:
+    Returns
+    -------
+    str
         Path to histogram-matched T1w image.
     """
     import numpy as np
@@ -254,13 +266,20 @@ def _transform_brain_mask_to_dsc(brain_mask_file, reference_file, transform_matr
 
     Optionally computes DICE overlap with the HD-BET mask for QC.
 
-    Args:
-        brain_mask_file: Path to brain mask in T1w space.
-        reference_file: Path to DSC reference image for output geometry.
-        transform_matrix: Path to T1w→DSC FLIRT matrix.
-        hdbet_mask_file: Path to HD-BET DSC mask for DICE QC (optional).
+    Parameters
+    ----------
+    brain_mask_file : str
+        Path to brain mask in T1w space.
+    reference_file : str
+        Path to DSC reference image for output geometry.
+    transform_matrix : str
+        Path to T1w→DSC FLIRT matrix.
+    hdbet_mask_file : str, optional
+        Path to HD-BET DSC mask for DICE QC.
 
-    Returns:
+    Returns
+    -------
+    tuple of (str, float)
         Tuple of (dsc_brain_mask_file, dice_score).
     """
     import subprocess
@@ -314,12 +333,18 @@ def _signal_to_concentration(dsc_file, te, baseline_frames):  # type: ignore[no-
     This is a Function node wrapper for the signal_to_concentration utility.
     Always returns ΔR2* in s⁻¹. All downstream quantification is relative.
 
-    Args:
-        dsc_file: Path to motion-corrected 4D DSC NIfTI.
-        te: Echo time in seconds.
-        baseline_frames: Number of pre-bolus baseline frames.
+    Parameters
+    ----------
+    dsc_file : str
+        Path to motion-corrected 4D DSC NIfTI.
+    te : float
+        Echo time in seconds.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
 
-    Returns:
+    Returns
+    -------
+    tuple of (str, str)
         Tuple of (concentration_file, signal_file) paths.
     """
     import numpy as np
@@ -364,35 +389,49 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
 
     This is a Function node wrapper for preload detection and K2 correction.
 
-    Args:
-        concentration_file: Path to 4D concentration NIfTI.
-        aif_file: Path to AIF curve text file.
-        brain_mask_file: Path to brain mask NIfTI.
-        te: Echo time in seconds.
-        field_strength: Magnetic field strength in Tesla.
-        tr: Repetition time in seconds.
-        preload: User-specified preload — "auto" for signal-based detection,
-            or a float administered dose fraction (0.0 = none, 0.5 = half).
-            Auto-detection always runs; user override (if not "auto") takes
-            precedence for the effective class emitted to downstream. User
-            administered fraction is binned separately from auto-detection
-            residual ΔR2* thresholds (different physical quantities, same
-            class names). Disagreement is logged to QC when both exist.
-        signal_file: Optional path to raw signal NIfTI for preload detection.
-        baseline_frames: Number of pre-bolus baseline frames.
-        leakage_method: K2 correction method ("bsw" or "bidirectional").
-        kep: EES efflux rate in s⁻¹ (bidirectional only).
-        agent_standard_dose: Agent's standard dose in mmol Gd/kg. Scales
-            auto-detection ΔR2* thresholds linearly.
+    Parameters
+    ----------
+    concentration_file : str
+        Path to 4D concentration NIfTI.
+    aif_file : str
+        Path to AIF curve text file.
+    brain_mask_file : str
+        Path to brain mask NIfTI.
+    te : float
+        Echo time in seconds.
+    field_strength : float
+        Magnetic field strength in Tesla.
+    tr : float
+        Repetition time in seconds.
+    preload : str or float
+        User-specified preload — "auto" for signal-based detection,
+        or a float administered dose fraction (0.0 = none, 0.5 = half).
+        Auto-detection always runs; user override (if not "auto") takes
+        precedence for the effective class emitted to downstream. User
+        administered fraction is binned separately from auto-detection
+        residual ΔR2* thresholds (different physical quantities, same
+        class names). Disagreement is logged to QC when both exist.
+    signal_file : str, optional
+        Optional path to raw signal NIfTI for preload detection.
+    baseline_frames : int, optional
+        Number of pre-bolus baseline frames.
+    leakage_method : str, optional
+        K2 correction method ("bsw" or "bidirectional").
+    kep : float, optional
+        EES efflux rate in s⁻¹ (bidirectional only).
+    agent_standard_dose : float, optional
+        Agent's standard dose in mmol Gd/kg. Scales auto-detection
+        ΔR2* thresholds linearly.
 
-    Returns:
+    Returns
+    -------
+    tuple of (str, str, dict)
         Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
     """
     import logging
     import numpy as np
     import nibabel as nib  # type: ignore[import-untyped]
     from pathlib import Path
-    from typing import Optional
 
     from pmriprep.utils.dsc_preload import (
         apply_k2_correction,
@@ -570,11 +609,16 @@ def _compute_prebolus_mean(moco_file: str, baseline_frames: int) -> str:
     frames provides a cleaner reference for brain extraction and
     registration.
 
-    Args:
-        moco_file: Path to motion-corrected 4D DSC NIfTI.
-        baseline_frames: Number of pre-bolus frames to average.
+    Parameters
+    ----------
+    moco_file : str
+        Path to motion-corrected 4D DSC NIfTI.
+    baseline_frames : int
+        Number of pre-bolus frames to average.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to pre-bolus mean NIfTI file.
     """
     import numpy as np
@@ -688,12 +732,18 @@ def _transform_lesion_mask_to_dsc(  # type: ignore[no-untyped-def]
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
     the lesion mask into DSC space, preserving integer labels.
 
-    Args:
-        lesion_mask_file: Path to lesion mask in T1w space (or None).
-        reference_file: Path to DSC reference image for output geometry.
-        transform_matrix: Path to T1w→DSC FLIRT matrix.
+    Parameters
+    ----------
+    lesion_mask_file : str or None
+        Path to lesion mask in T1w space (or None).
+    reference_file : str or None
+        Path to DSC reference image for output geometry.
+    transform_matrix : str or None
+        Path to T1w→DSC FLIRT matrix.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to transformed lesion mask in DSC space, or "" if no mask.
         Returns "" (not None) because downstream traits.Str rejects None.
     """
@@ -811,13 +861,20 @@ def _transform_structural_to_dsc(structural_file=None, reference_file=None, tran
 
     Handles None/undefined inputs gracefully by returning None.
 
-    Args:
-        structural_file: Path to structural image in T1w space (or None).
-        reference_file: Path to DSC reference image for output geometry.
-        transform_matrix: Path to T1w→DSC FLIRT matrix.
-        output_name: Output filename.
+    Parameters
+    ----------
+    structural_file : str or None
+        Path to structural image in T1w space (or None).
+    reference_file : str or None
+        Path to DSC reference image for output geometry.
+    transform_matrix : str or None
+        Path to T1w→DSC FLIRT matrix.
+    output_name : str
+        Output filename.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to transformed structural image in DSC space, or None if no input.
     """
     from nipype.interfaces.base import isdefined
@@ -862,15 +919,24 @@ def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, sessi
     Returns ("", None) when NAWM mask is not available - normalization
     requires NAWM reference for clinically valid results.
 
-    Args:
-        cbv_file: Path to CBV map NIfTI.
-        nawm_mask_file: Path to NAWM mask NIfTI (required for normalization).
-        brain_mask_file: Path to brain mask (unused, kept for interface compat).
-        derivatives_dir: Path to derivatives directory for auto-detection.
-        subject_id: Subject ID for auto-detection.
-        session_id: Session ID for auto-detection.
+    Parameters
+    ----------
+    cbv_file : str
+        Path to CBV map NIfTI.
+    brain_mask_file : str
+        Path to brain mask (unused, kept for interface compat).
+    derivatives_dir : str
+        Path to derivatives directory for auto-detection.
+    subject_id : str
+        Subject ID for auto-detection.
+    session_id : str
+        Session ID for auto-detection.
+    nawm_mask_file : str, optional
+        Path to NAWM mask NIfTI (required for normalization).
 
-    Returns:
+    Returns
+    -------
+    tuple of (str, float or None)
         Tuple of (ncbv_file, normalization_factor). The first element is the
         empty-string sentinel ``""`` (not ``None``) when no NAWM mask is
         available, so the downstream ``traits.Str`` consumers
@@ -919,15 +985,24 @@ def _normalize_cbf(cbf_file, brain_mask_file, derivatives_dir, subject_id, sessi
     Returns ("", None) when NAWM mask is not available - normalization
     requires NAWM reference for clinically valid results.
 
-    Args:
-        cbf_file: Path to CBF map NIfTI.
-        brain_mask_file: Path to brain mask (unused, kept for interface compat).
-        derivatives_dir: Path to derivatives directory for auto-detection.
-        subject_id: Subject ID for auto-detection.
-        session_id: Session ID for auto-detection.
-        nawm_mask_file: Path to NAWM mask NIfTI (required for normalization).
+    Parameters
+    ----------
+    cbf_file : str
+        Path to CBF map NIfTI.
+    brain_mask_file : str
+        Path to brain mask (unused, kept for interface compat).
+    derivatives_dir : str
+        Path to derivatives directory for auto-detection.
+    subject_id : str
+        Subject ID for auto-detection.
+    session_id : str
+        Session ID for auto-detection.
+    nawm_mask_file : str, optional
+        Path to NAWM mask NIfTI (required for normalization).
 
-    Returns:
+    Returns
+    -------
+    tuple of (str, float or None)
         Tuple of (ncbf_file, normalization_factor). First element is the
         ``""`` empty-string sentinel (not ``None``) on the no-NAWM path —
         same rationale as :func:`_normalize_cbv`.
@@ -978,14 +1053,22 @@ def _create_registration_filmstrip(
     Generates a multi-slice overlay showing the registered T1w on the DSC mean
     with brain mask contours for visual QC of registration quality.
 
-    Args:
-        dsc_mean_file: Path to mean DSC image (reference).
-        registered_t1w_file: Path to registered T1w in DSC space.
-        brain_mask_file: Path to DSC brain mask.
-        subject_id: Subject ID for QC figure title.
-        session_id: Session ID for QC figure title.
+    Parameters
+    ----------
+    dsc_mean_file : str
+        Path to mean DSC image (reference).
+    registered_t1w_file : str
+        Path to registered T1w in DSC space.
+    brain_mask_file : str
+        Path to DSC brain mask.
+    subject_id : str, optional
+        Subject ID for QC figure title.
+    session_id : str, optional
+        Session ID for QC figure title.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the registration filmstrip PNG file.
     """
     import nibabel as nib
@@ -1016,10 +1099,14 @@ def _create_registration_filmstrip(
 def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]
     """Extract preload classification from preload_correct QC dict.
 
-    Args:
-        qc_dict: QC metrics dictionary from preload correction node.
+    Parameters
+    ----------
+    qc_dict : dict
+        QC metrics dictionary from preload correction node.
 
-    Returns:
+    Returns
+    -------
+    str
         Preload classification string (e.g. 'none', 'minimal', 'half_dose').
     """
     if not qc_dict:
@@ -1035,13 +1122,20 @@ def _generate_motion_qc_plot(  # type: ignore[no-untyped-def]
     Creates a three-panel figure showing raw motion parameters and
     framewise displacement over time.
 
-    Args:
-        motion_params_file: Path to motion parameters text file.
-        tr: Repetition time in seconds.
-        subject_id: Subject ID for QC figure title.
-        session_id: Session ID for QC figure title.
+    Parameters
+    ----------
+    motion_params_file : str
+        Path to motion parameters text file.
+    tr : float
+        Repetition time in seconds.
+    subject_id : str, optional
+        Subject ID for QC figure title.
+    session_id : str, optional
+        Session ID for QC figure title.
 
-    Returns:
+    Returns
+    -------
+    tuple of (str, dict)
         Tuple of (plot_file path, motion_summary dict).
     """
     import numpy as np
@@ -1060,15 +1154,26 @@ def _generate_motion_qc_plot(  # type: ignore[no-untyped-def]
 def _generate_dsc_preprocessing_qc(dsc_signal_file, brain_mask_file, baseline_frames, tr, te=None, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
     """Generate DSC preprocessing QC plot.
 
-    Args:
-        dsc_signal_file: Path to motion-corrected 4D DSC signal NIfTI.
-        brain_mask_file: Path to brain mask NIfTI.
-        baseline_frames: Number of pre-bolus baseline frames.
-        tr: Repetition time in seconds.
-        subject_id: Subject identifier.
-        session_id: Session identifier.
+    Parameters
+    ----------
+    dsc_signal_file : str
+        Path to motion-corrected 4D DSC signal NIfTI.
+    brain_mask_file : str
+        Path to brain mask NIfTI.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+    tr : float
+        Repetition time in seconds.
+    te : float, optional
+        Echo time in seconds.
+    subject_id : str, optional
+        Subject identifier.
+    session_id : str, optional
+        Session identifier.
 
-    Returns:
+    Returns
+    -------
+    tuple of (str, dict)
         Tuple of (plot_file path, stats dict).
     """
     import nibabel as nib
@@ -1099,18 +1204,30 @@ def _generate_dsc_preprocessing_qc(dsc_signal_file, brain_mask_file, baseline_fr
 def _generate_dsc_param_maps_qc(rel_cbf_file, rel_cbv_file, mtt_file, tmax_file, psr_file, ttp_file, brain_mask_file, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
     """Generate DSC parameter maps QC plot.
 
-    Args:
-        rel_cbf_file: Path to relative CBF map NIfTI.
-        rel_cbv_file: Path to relative CBV map NIfTI.
-        mtt_file: Path to MTT map NIfTI.
-        tmax_file: Path to Tmax map NIfTI.
-        psr_file: Path to PSR map NIfTI.
-        ttp_file: Path to TTP map NIfTI.
-        brain_mask_file: Path to brain mask NIfTI.
-        subject_id: Subject identifier.
-        session_id: Session identifier.
+    Parameters
+    ----------
+    rel_cbf_file : str
+        Path to relative CBF map NIfTI.
+    rel_cbv_file : str
+        Path to relative CBV map NIfTI.
+    mtt_file : str
+        Path to MTT map NIfTI.
+    tmax_file : str
+        Path to Tmax map NIfTI.
+    psr_file : str
+        Path to PSR map NIfTI.
+    ttp_file : str
+        Path to TTP map NIfTI.
+    brain_mask_file : str
+        Path to brain mask NIfTI.
+    subject_id : str, optional
+        Subject identifier.
+    session_id : str, optional
+        Session identifier.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the generated QC plot PNG.
     """
     import nibabel as nib
@@ -1144,21 +1261,36 @@ def _generate_dsc_param_maps_qc(rel_cbf_file, rel_cbv_file, mtt_file, tmax_file,
 def _generate_dsc_leakage_qc(k2_map_file, auc_raw_file, auc_corr_file, auc_diff_file, brain_mask_file, concentration_file=None, corrected_concentration_file=None, psr_file=None, tr=1.5, subject_id='', session_id='', preload_qc=None):  # type: ignore[no-untyped-def]
     """Generate DSC leakage correction QC plot.
 
-    Args:
-        k2_map_file: Path to K2 map NIfTI.
-        auc_raw_file: Path to AUC raw map NIfTI.
-        auc_corr_file: Path to AUC corrected map NIfTI.
-        auc_diff_file: Path to AUC diff map NIfTI.
-        brain_mask_file: Path to brain mask NIfTI.
-        concentration_file: Path to pre-K2 4D concentration NIfTI (optional).
-        corrected_concentration_file: Path to post-K2 4D concentration NIfTI (optional).
-        psr_file: Path to PSR map NIfTI (optional).
-        tr: Repetition time in seconds.
-        subject_id: Subject identifier.
-        session_id: Session identifier.
-        preload_qc: Preload/K2 QC metrics dict (optional).
+    Parameters
+    ----------
+    k2_map_file : str
+        Path to K2 map NIfTI.
+    auc_raw_file : str
+        Path to AUC raw map NIfTI.
+    auc_corr_file : str
+        Path to AUC corrected map NIfTI.
+    auc_diff_file : str
+        Path to AUC diff map NIfTI.
+    brain_mask_file : str
+        Path to brain mask NIfTI.
+    concentration_file : str, optional
+        Path to pre-K2 4D concentration NIfTI.
+    corrected_concentration_file : str, optional
+        Path to post-K2 4D concentration NIfTI.
+    psr_file : str, optional
+        Path to PSR map NIfTI.
+    tr : float, optional
+        Repetition time in seconds.
+    subject_id : str, optional
+        Subject identifier.
+    session_id : str, optional
+        Session identifier.
+    preload_qc : dict, optional
+        Preload/K2 QC metrics dict.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the generated QC plot PNG, or empty string if K2 unavailable.
     """
     from pathlib import Path as _P
@@ -1224,14 +1356,22 @@ def _generate_dsc_fit_qc(
 ) -> str:
     """Generate DSC fit QC plot from saved QC fit data JSON.
 
-    Args:
-        qc_fit_data_file: Path to QC fit data JSON from ComputeDSCMaps.
-        brain_mask_file: Path to brain mask NIfTI.
-        cbf_file: Path to relative CBF map NIfTI.
-        subject_id: Subject identifier.
-        session_id: Session identifier.
+    Parameters
+    ----------
+    qc_fit_data_file : str
+        Path to QC fit data JSON from ComputeDSCMaps.
+    brain_mask_file : str
+        Path to brain mask NIfTI.
+    cbf_file : str
+        Path to relative CBF map NIfTI.
+    subject_id : str
+        Subject identifier.
+    session_id : str
+        Session identifier.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the generated QC plot PNG, or "" if unavailable.
     """
     import json
@@ -1301,12 +1441,18 @@ def _smooth_maps(  # type: ignore[no-untyped-def]
     dilution where unfitted voxels would otherwise contribute 0 to the
     Gaussian kernel. Reference: Knutsson & Westin, CVPR 1993.
 
-    Args:
-        map_files: Dict mapping map name to file path.
-        brain_mask_file: Path to brain mask for re-masking after smoothing.
-        fwhm: Smoothing FWHM in mm.
+    Parameters
+    ----------
+    map_files : dict
+        Dict mapping map name to file path.
+    brain_mask_file : str
+        Path to brain mask for re-masking after smoothing.
+    fwhm : float
+        Smoothing FWHM in mm.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict mapping map name to smoothed file path.
     """
     import logging
@@ -1381,20 +1527,34 @@ def _smooth_maps(  # type: ignore[no-untyped-def]
 def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc, normalization_factor, motion_summary=None, aif_metrics=None, preprocessing_stats=None, aif_source='auto', registration_bbr=False):  # type: ignore[no-untyped-def]
     """Merge all QC metrics into a single dictionary.
 
-    Args:
-        motion_qc: Motion correction QC metrics.
-        preload_qc: Preload detection and correction QC metrics.
-        aif_qc: AIF detection QC metrics.
-        deconv_qc: Deconvolution QC metrics.
-        registration_qc: Registration QC metrics.
-        normalization_factor: CBV normalization factor.
-        motion_summary: Motion summary dict from plot_motion_qc (optional).
-        aif_metrics: AIF metrics dict from AIFQCPlot (optional).
-        preprocessing_stats: Preprocessing stats dict (optional).
-        aif_source: AIF source type ("auto", "synthetic", or "external").
-        registration_bbr: Whether BBR refinement was used for registration.
+    Parameters
+    ----------
+    motion_qc : dict
+        Motion correction QC metrics.
+    preload_qc : dict
+        Preload detection and correction QC metrics.
+    aif_qc : dict
+        AIF detection QC metrics.
+    deconv_qc : dict
+        Deconvolution QC metrics.
+    registration_qc : dict
+        Registration QC metrics.
+    normalization_factor : float
+        CBV normalization factor.
+    motion_summary : dict, optional
+        Motion summary dict from plot_motion_qc.
+    aif_metrics : dict, optional
+        AIF metrics dict from AIFQCPlot.
+    preprocessing_stats : dict, optional
+        Preprocessing stats dict.
+    aif_source : str, optional
+        AIF source type ("auto", "synthetic", or "external").
+    registration_bbr : bool, optional
+        Whether BBR refinement was used for registration.
 
-    Returns:
+    Returns
+    -------
+    dict
         Combined QC metrics dictionary.
     """
     motion_data = motion_qc if motion_qc else {}
@@ -1465,63 +1625,63 @@ def init_dsc_preproc_wf(
     pe.Workflow
         Nipype workflow for DSC perfusion processing.
 
-    Workflow Inputs
-    ---------------
-    inputnode.dsc_file : str
+    Inputs
+    ------
+    dsc_file
         Path to raw 4D DSC perfusion image.
-    inputnode.t1w_reference : str
+    t1w_reference
         Path to T1-weighted reference image for registration.
-    inputnode.t1w_underlay : str
+    t1w_underlay
         T1w image to transform to DSC space as anatomical underlay.
         CE-T1w if post-contrast available, otherwise native T1w.
-    inputnode.brain_mask : str
+    brain_mask
         Path to brain mask in T1w space.
-    inputnode.wm_probseg : str, optional
+    wm_probseg
         Path to white matter probability map for NAWM mask.
-    inputnode.nawm_mask : str, optional
+    nawm_mask
         Path to pre-computed NAWM mask for CBV normalization.
-    inputnode.te : float, optional
+    te
         Echo time in seconds (default from config or 0.03).
-    inputnode.field_strength : float, optional
+    field_strength
         Magnetic field strength in Tesla (default 3.0).
-    inputnode.tr : float, optional
+    tr
         Repetition time in seconds (default 1.5).
 
-    Workflow Outputs
-    ----------------
-    outputnode.dsc_moco : str
+    Outputs
+    -------
+    dsc_moco
         Path to motion-corrected DSC image.
-    outputnode.dsc_mean : str
+    dsc_mean
         Path to mean DSC image across time.
-    outputnode.motion_params : str
+    motion_params
         Path to motion parameters file.
-    outputnode.rel_cbf_map, outputnode.rel_cbv_map : str
+    rel_cbf_map, rel_cbv_map
         Relative cerebral blood flow/volume maps (always produced).
-    outputnode.rel_auc_raw_map, outputnode.rel_auc_corr_map : str
+    rel_auc_raw_map, rel_auc_corr_map
         Relative AUC maps (always produced).
-    outputnode.mtt_map, outputnode.tmax_map : str
+    mtt_map, tmax_map
         Mean transit time and time-to-maximum maps.
-    outputnode.psr_map, outputnode.ph_map : str
+    psr_map, ph_map
         Percent signal recovery and peak height maps.
-    outputnode.ttp_map, outputnode.cnr_map : str
+    ttp_map, cnr_map
         Time-to-peak and contrast-to-noise ratio maps.
-    outputnode.auc_diff_map : str
+    auc_diff_map
         AUC leakage contribution (raw - corrected).
-    outputnode.snr_map, outputnode.tsnr_map : str
+    snr_map, tsnr_map
         SNR (baseline) and tSNR (temporal) quality metric maps.
-    outputnode.aif_curve : str
+    aif_curve
         Path to detected/used AIF curve.
-    outputnode.aif_mask : str
+    aif_mask
         Path to AIF detection mask.
-    outputnode.k2_map : str
+    k2_map
         Path to K2 leakage correction map.
-    outputnode.ncbv_map, outputnode.ncbf_map : str, optional
+    ncbv_map, ncbf_map
         Normalized CBV/CBF maps (if NAWM mask available).
-    outputnode.smooth_quant_indep, outputnode.smooth_rel, outputnode.smooth_abs : dict, optional
+    smooth_quant_indep, smooth_rel, smooth_abs
         Smoothed map dictionaries (if smooth_fwhm > 0).
-    outputnode.dsc_to_t1w_xfm : str
+    dsc_to_t1w_xfm
         Path to DSC to T1w transform.
-    outputnode.qc_metrics : dict
+    qc_metrics
         Dictionary of QC metrics from processing steps.
 
     Notes
@@ -1907,7 +2067,7 @@ def init_dsc_preproc_wf(
         n_procs=config.num_processes if config.num_processes > 0 else 1,
         # baseline_frames wired dynamically from aif_detect.aif_baseline_frames
         fallback_baseline_frames=config.pre_bolus,
-        tail_frames=5,  # Post-bolus frames for PSR (Cha et al. AJNR 2002)
+        tail_frames=5,  # Post-bolus frames for PSR (Cha 2002 Radiology 223:11)
         sloppy=config.sloppy,
     )
     if random_seed is not None:

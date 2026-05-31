@@ -3,10 +3,11 @@
 Standardized quality control thresholds and colorblind-safe color palette
 for consistent QC assessment and visualization across the pipeline.
 
-References:
-    - Paul Tol's color schemes: https://personal.sron.nl/~pault/
-    - Motion QC thresholds based on Power et al. (2012)
-    - Physiological T1 values from Stanisz et al. (2005)
+References
+----------
+- Paul Tol's color schemes: https://personal.sron.nl/~pault/
+- Motion QC thresholds based on Power et al. (2012)
+- Physiological T1 values from Stanisz et al. (2005)
 """
 
 from typing import Any, Final, NamedTuple
@@ -24,6 +25,7 @@ class ColorPalette(NamedTuple):
 
     Colors are hex values suitable for matplotlib and other plotting libraries.
     """
+
     primary: str        # Main/default color
     secondary: str      # Secondary/alternate color
     success: str        # Pass/good status
@@ -85,6 +87,7 @@ DIVERGING_COLORMAP: Final[tuple[str, str, str]] = (
 
 class QCThresholds(NamedTuple):
     """QC thresholds for pass/warn/poor classification."""
+
     pass_threshold: float   # Values below this: PASS
     warn_threshold: float   # Values between pass and warn: WARN; above warn: POOR
 
@@ -187,6 +190,7 @@ NMI_THRESHOLDS: Final[QCThresholds] = QCThresholds(
 
 class QCStatus:
     """QC status strings for consistent reporting."""
+
     PASS: Final[str] = "PASS"
     WARN: Final[str] = "WARN"
     POOR: Final[str] = "POOR"
@@ -202,14 +206,20 @@ class QCStatus:
     def worst(cls, statuses: list[str]) -> str:
         """Return the most severe status from a list.
 
-        Args:
-            statuses: List of QC status strings (PASS, WARN, POOR).
+        Parameters
+        ----------
+        statuses : list of str
+            List of QC status strings (PASS, WARN, POOR).
 
-        Returns:
+        Returns
+        -------
+        str
             The worst (highest severity) status.
 
-        Raises:
-            KeyError: If any status is not in PASS/WARN/POOR.
+        Raises
+        ------
+        KeyError
+            If any status is not in PASS/WARN/POOR.
         """
         return max(statuses, key=lambda s: cls._SEVERITY[s])
 
@@ -217,13 +227,19 @@ class QCStatus:
 def get_qc_status(value: float, thresholds: QCThresholds, higher_is_better: bool = True) -> str:
     """Determine QC status based on value and thresholds.
 
-    Args:
-        value: The metric value to evaluate
-        thresholds: QCThresholds with pass/warn thresholds
-        higher_is_better: If True, values above pass_threshold are PASS.
-                         If False, values below pass_threshold are PASS.
+    Parameters
+    ----------
+    value : float
+        The metric value to evaluate
+    thresholds : QCThresholds
+        QCThresholds with pass/warn thresholds
+    higher_is_better : bool, optional
+        If True, values above pass_threshold are PASS.
+        If False, values below pass_threshold are PASS.
 
-    Returns:
+    Returns
+    -------
+    str
         QC status string: "PASS", "WARN", or "POOR"
     """
     if higher_is_better:
@@ -255,15 +271,22 @@ def get_composite_motion_status(
     percent outlier frames. Mean FD alone is insufficient for perfusion
     MRI where even single large spikes can corrupt bolus-tracking.
 
-    Args:
-        fd_mean: Mean framewise displacement in mm (excluding first frame).
-        fd_max: Maximum framewise displacement in mm.
-        pct_outliers: Percentage of frames exceeding the motion threshold.
+    Parameters
+    ----------
+    fd_mean : float
+        Mean framewise displacement in mm (excluding first frame).
+    fd_max : float
+        Maximum framewise displacement in mm.
+    pct_outliers : float
+        Percentage of frames exceeding the motion threshold.
 
-    Returns:
+    Returns
+    -------
+    str
         QC status string: "PASS", "WARN", or "POOR".
 
-    References:
+    References
+    ----------
         Power et al. (2012). doi:10.1016/j.neuroimage.2011.10.018
         Satterthwaite et al. (2013). doi:10.1016/j.neuroimage.2012.08.052
         Boxerman et al. (2020). doi:10.3174/ajnr.A6365
@@ -284,10 +307,14 @@ def get_composite_motion_status(
 def get_status_color(status: str) -> str:
     """Get the appropriate color for a QC status.
 
-    Args:
-        status: QC status string ("PASS", "WARN", "POOR", or "UNKNOWN")
+    Parameters
+    ----------
+    status : str
+        QC status string ("PASS", "WARN", "POOR", or "UNKNOWN")
 
-    Returns:
+    Returns
+    -------
+    str
         Hex color code from the colorblind-safe palette
     """
     status_colors = {
@@ -310,11 +337,13 @@ class QCRecommendation(NamedTuple):
 
     Following NiPreps conventions for providing actionable QC feedback.
 
-    Attributes:
+    Attributes
+    ----------
         action: Recommended action ("include", "review", "exclude").
         reason: Brief explanation of the recommendation.
         severity: Severity level (0=none, 1=minor, 2=moderate, 3=severe).
     """
+
     action: str
     reason: str
     severity: int
@@ -323,6 +352,7 @@ class QCRecommendation(NamedTuple):
 #: Action constants for QC recommendations
 class QCAction:
     """QC action strings for consistent recommendations."""
+
     INCLUDE: Final[str] = "include"
     REVIEW: Final[str] = "review"
     EXCLUDE: Final[str] = "exclude"
@@ -340,14 +370,22 @@ def get_qc_recommendation(
     Follows NiPreps convention of providing actionable exclusion recommendations
     rather than just pass/warn/fail status.
 
-    Args:
-        status: QC status string from get_qc_status().
-        metric_name: Human-readable name of the metric (e.g., "FD mean").
-        value: The metric value.
-        thresholds: QCThresholds used for evaluation.
-        higher_is_better: Whether higher values indicate better quality.
+    Parameters
+    ----------
+    status : str
+        QC status string from get_qc_status().
+    metric_name : str
+        Human-readable name of the metric (e.g., "FD mean").
+    value : float
+        The metric value.
+    thresholds : QCThresholds
+        QCThresholds used for evaluation.
+    higher_is_better : bool, optional
+        Whether higher values indicate better quality.
 
-    Returns:
+    Returns
+    -------
+    QCRecommendation
         QCRecommendation with action, reason, and severity.
     """
     if status == QCStatus.PASS:
@@ -381,10 +419,14 @@ def aggregate_qc_recommendations(
 
     Uses the most severe recommendation as the overall action.
 
-    Args:
-        recommendations: List of QCRecommendation objects.
+    Parameters
+    ----------
+    recommendations : list of QCRecommendation
+        List of QCRecommendation objects.
 
-    Returns:
+    Returns
+    -------
+    QCRecommendation
         Aggregated QCRecommendation with combined reasons.
     """
     if not recommendations:
@@ -429,12 +471,18 @@ def build_qc_summary(
     Creates a structured QC summary that includes both detailed metrics
     and actionable recommendations, following MRIQC/fMRIPrep conventions.
 
-    Args:
-        metrics: Dictionary mapping metric names to (value, status) tuples.
-        overall_status: Overall QC status (PASS/WARN/POOR).
-        overall_recommendation: Aggregated QC recommendation.
+    Parameters
+    ----------
+    metrics : dict
+        Dictionary mapping metric names to (value, status) tuples.
+    overall_status : str
+        Overall QC status (PASS/WARN/POOR).
+    overall_recommendation : QCRecommendation
+        Aggregated QC recommendation.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary suitable for JSON serialization with:
         - overall_status: The aggregate status
         - recommendation: Action recommendation with reason

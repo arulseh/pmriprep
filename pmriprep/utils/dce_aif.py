@@ -12,17 +12,12 @@ The DCE AIF differs from DSC AIF in several important ways:
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
 
 from pmriprep.utils.dce_constants import (
-    AIF_THRESHOLDS_DEGRADED,
-    AIF_THRESHOLDS_PERMISSIVE,
-    AIF_THRESHOLDS_RELAXED,
-    AIF_THRESHOLDS_STRICT,
-    DCE_AIF_EXPECTED_FULL_DOSE,
     EPSILON_CONCENTRATION,
     EPSILON_T1,
     get_aif_thresholds,
@@ -463,12 +458,13 @@ def assess_dce_aif_quality(
 
     Examples
     --------
-    >>> import numpy as np
     >>> # Assess a DCE AIF curve with TR=5s
+    >>> t = np.arange(60)
+    >>> aif_curve = np.zeros(60)
+    >>> aif_curve[5:] = 10 * ((t[5:] - 5) ** 2) * np.exp(-(t[5:] - 5) / 3)
     >>> result = assess_dce_aif_quality(aif_curve, tr=5.0, baseline_frames=5)
-    >>> print(f"Status: {result.status}, Score: {result.quality_score:.2f}")
-    >>> print(f"Peak: {result.metrics.peak_concentration:.2f} mM")
-    >>> print(f"FWHM: {result.metrics.fwhm_seconds:.1f} s")
+    >>> print(0.0 <= result.quality_score <= 1.0)
+    True
     """
     # Compute all metrics
     peak = compute_dce_peak_concentration(aif_curve)

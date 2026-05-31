@@ -12,19 +12,20 @@ TwoCompartmentExchangeModel.
 The constraint ve + vp <= 1.0 is enforced during sampling for models
 that have both ve and vp parameters.
 
-References:
-    Tofts PS, Brix G, Buckley DL, et al. (1999).
-    "Estimating kinetic parameters from dynamic contrast-enhanced
-    T1-weighted MRI of a diffusable tracer."
-    J Magn Reson Imaging 10(3):223-232.
+References
+----------
+Tofts PS, Brix G, Buckley DL, et al. (1999).
+"Estimating kinetic parameters from dynamic contrast-enhanced
+T1-weighted MRI of a diffusable tracer."
+J Magn Reson Imaging 10(3):223-232.
 
-    Goodman J, Weare J. (2010).
-    "Ensemble samplers with affine invariance."
-    Comm App Math Comp Sci 5(1):65-80.
+Goodman J, Weare J. (2010).
+"Ensemble samplers with affine invariance."
+Comm App Math Comp Sci 5(1):65-80.
 
-    Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
-    "Variational Bayesian Inference for a Nonlinear Forward Model."
-    IEEE Trans Med Imaging 28(1):94-104.
+Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
+"Variational Bayesian Inference for a Nonlinear Forward Model."
+IEEE Trans Signal Process 57(1):223-236.
 """
 
 from typing import Callable
@@ -32,7 +33,6 @@ from typing import Callable
 import numpy as np
 import numpy.typing as npt
 from scipy import optimize  # type: ignore[import-untyped]
-from scipy.optimize import Bounds  # type: ignore[import-untyped]
 
 from pmriprep.models.bayesian_utils import (
     BayesianPrior,
@@ -100,17 +100,22 @@ class BayesianPKFitter:
     For models with both ve and vp parameters (Extended Tofts, 2CXM), the
     constraint ve + vp <= 1.0 is enforced during sampling.
 
-    Example:
-        >>> model = ExtendedToftsModel()
-        >>> fitter = BayesianPKFitter(model)
-        >>> result = fitter.fit_map(tissue_curve, aif, time_points)
-        >>> print(result.parameters)
-        >>> print(result.uncertainties)
+    Attributes
+    ----------
+    model : PKModel
+        PK model to fit (ToftsModel, ExtendedToftsModel, etc.)
+    priors : list of BayesianPrior
+        Gaussian priors for each parameter
+    noise_std : float or None
+        Assumed noise standard deviation (estimated if not provided)
 
-    Attributes:
-        model: PK model to fit (ToftsModel, ExtendedToftsModel, etc.)
-        priors: Gaussian priors for each parameter
-        noise_std: Assumed noise standard deviation (estimated if not provided)
+    Examples
+    --------
+    >>> model = ExtendedToftsModel()  # doctest: +SKIP
+    >>> fitter = BayesianPKFitter(model)  # doctest: +SKIP
+    >>> result = fitter.fit_map(tissue_curve, aif, time_points)  # doctest: +SKIP
+    >>> print(result.parameters)  # doctest: +SKIP
+    >>> print(result.uncertainties)  # doctest: +SKIP
     """
 
     def __init__(
@@ -121,13 +126,17 @@ class BayesianPKFitter:
     ) -> None:
         """Initialize the Bayesian fitter.
 
-        Args:
-            model: PK model implementing the PKModel interface.
-            noise_std: Optional noise standard deviation. If None, will be
-                estimated from the data during fitting.
-            vp_prior_override: Optional informative prior for vp parameter,
-                typically derived from DSC CBV. If provided, replaces the
-                default vp prior built from model parameter definitions.
+        Parameters
+        ----------
+        model : PKModel
+            PK model implementing the PKModel interface.
+        noise_std : float or None, optional
+            Optional noise standard deviation. If None, will be
+            estimated from the data during fitting.
+        vp_prior_override : BayesianPrior or None, optional
+            Optional informative prior for vp parameter,
+            typically derived from DSC CBV. If provided, replaces the
+            default vp prior built from model parameter definitions.
         """
         self.model = model
         self.noise_std = noise_std
@@ -153,13 +162,19 @@ class BayesianPKFitter:
     ) -> None:
         """Validate input arrays for NaN/Inf values and length consistency.
 
-        Args:
-            tissue_curve: Measured tissue concentration time course.
-            aif: Arterial input function.
-            time_points: Time points (minutes).
+        Parameters
+        ----------
+        tissue_curve : numpy.ndarray
+            Measured tissue concentration time course.
+        aif : numpy.ndarray
+            Arterial input function.
+        time_points : numpy.ndarray
+            Time points (minutes).
 
-        Raises:
-            ValueError: If inputs contain NaN/Inf or lengths don't match.
+        Raises
+        ------
+        ValueError
+            If inputs contain NaN/Inf or lengths don't match.
         """
         validate_bayesian_inputs(
             ("tissue_curve", tissue_curve),
@@ -177,11 +192,16 @@ class BayesianPKFitter:
         Uses the standard deviation of the first few baseline frames
         as an estimate of measurement noise.
 
-        Args:
-            tissue_curve: Measured tissue concentration time course.
-            baseline_frames: Number of baseline frames to use.
+        Parameters
+        ----------
+        tissue_curve : numpy.ndarray
+            Measured tissue concentration time course.
+        baseline_frames : int, optional
+            Number of baseline frames to use.
 
-        Returns:
+        Returns
+        -------
+        float
             Estimated noise standard deviation.
         """
         if len(tissue_curve) < baseline_frames:
@@ -200,10 +220,14 @@ class BayesianPKFitter:
 
         Uses simple Gaussian priors for all parameters (no log transform).
 
-        Args:
-            params: Parameter values.
+        Parameters
+        ----------
+        params : numpy.ndarray
+            Parameter values.
 
-        Returns:
+        Returns
+        -------
+        float
             Log prior probability (unnormalized).
         """
         return compute_log_prior(params, self.priors)
@@ -213,10 +237,14 @@ class BayesianPKFitter:
     ) -> bool:
         """Check if ve + vp <= 1.0 constraint is satisfied.
 
-        Args:
-            params: Parameter values.
+        Parameters
+        ----------
+        params : numpy.ndarray
+            Parameter values.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if constraint is satisfied (or not applicable).
         """
         if not self._has_volume_constraint:
@@ -235,10 +263,14 @@ class BayesianPKFitter:
         If the sum exceeds the constraint, scales both ve and vp
         proportionally while maintaining their ratio.
 
-        Args:
-            params: Parameter values.
+        Parameters
+        ----------
+        params : numpy.ndarray
+            Parameter values.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             Constrained parameter values.
         """
         if not self._has_volume_constraint:
@@ -275,22 +307,32 @@ class BayesianPKFitter:
         residuals to estimate noise variance, and the effective sample size
         is sum(weights) instead of n. This downweights high-motion frames.
 
-        Note: With profile likelihood, the log-likelihood reduces to
+        Parameters
+        ----------
+        params : numpy.ndarray
+            Parameter values.
+        tissue_curve : numpy.ndarray
+            Measured tissue concentration.
+        aif : numpy.ndarray
+            Arterial input function.
+        time_points : numpy.ndarray
+            Time points (minutes).
+        weights : numpy.ndarray or None, optional
+            Optional per-frame weights in [0, 1]. If provided,
+            inflates noise variance for high-FD frames.
+
+        Returns
+        -------
+        float
+            Log likelihood (unnormalized).
+
+        Notes
+        -----
+        With profile likelihood, the log-likelihood reduces to
         -n * log(std(residuals)) + const, equivalent to penalized least
         squares with the Gaussian prior providing L2 regularization.
         Laplace approximation uncertainties are approximate under profile
         likelihood -- use for relative voxel comparison, not calibrated CIs.
-
-        Args:
-            params: Parameter values.
-            tissue_curve: Measured tissue concentration.
-            aif: Arterial input function.
-            time_points: Time points (minutes).
-            weights: Optional per-frame weights in [0, 1]. If provided,
-                inflates noise variance for high-FD frames.
-
-        Returns:
-            Log likelihood (unnormalized).
         """
         # Compute model prediction
         try:
@@ -343,17 +385,26 @@ class BayesianPKFitter:
         uses the provided sigma directly, suitable for MCMC where sigma
         is sampled as a free parameter.
 
-        Args:
-            params: Parameter values.
-            tissue_curve: Measured tissue concentration.
-            aif: Arterial input function.
-            time_points: Time points (minutes).
-            sigma: Noise standard deviation.
-            weights: Optional per-frame weights in [0, 1]. If provided,
-                uses weighted Gaussian log-likelihood with effective
-                sample size n_eff = sum(weights).
+        Parameters
+        ----------
+        params : numpy.ndarray
+            Parameter values.
+        tissue_curve : numpy.ndarray
+            Measured tissue concentration.
+        aif : numpy.ndarray
+            Arterial input function.
+        time_points : numpy.ndarray
+            Time points (minutes).
+        sigma : float
+            Noise standard deviation.
+        weights : numpy.ndarray or None, optional
+            Optional per-frame weights in [0, 1]. If provided,
+            uses weighted Gaussian log-likelihood with effective
+            sample size n_eff = sum(weights).
 
-        Returns:
+        Returns
+        -------
+        float
             Log likelihood (unnormalized).
         """
         try:
@@ -390,14 +441,20 @@ class BayesianPKFitter:
         non-finite objective values), falls back to using prior curvature
         for those entries.
 
-        Args:
-            params: Parameter values at which to evaluate Hessian.
-            objective: Negative log posterior function.
-            relative_epsilon: Relative step size for finite differences.
-                Actual step for parameter i is max(relative_epsilon,
-                relative_epsilon * |params[i]|).
+        Parameters
+        ----------
+        params : numpy.ndarray
+            Parameter values at which to evaluate Hessian.
+        objective : callable
+            Negative log posterior function.
+        relative_epsilon : float, optional
+            Relative step size for finite differences.
+            Actual step for parameter i is max(relative_epsilon,
+            relative_epsilon * |params[i]|).
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             Hessian matrix (n_params x n_params).
         """
         n = len(params)
@@ -483,11 +540,16 @@ class BayesianPKFitter:
         The Laplace approximation uses the inverse Hessian at the MAP
         estimate as an approximation to the posterior covariance.
 
-        Args:
-            params: MAP parameter estimates.
-            objective: Negative log posterior function.
+        Parameters
+        ----------
+        params : numpy.ndarray
+            MAP parameter estimates.
+        objective : callable
+            Negative log posterior function.
 
-        Returns:
+        Returns
+        -------
+        tuple
             Tuple of:
                 - uncertainties: dict mapping param names to std deviations
                 - credible_intervals: dict mapping param names to 95% CIs
@@ -554,18 +616,28 @@ class BayesianPKFitter:
         Uncertainties are estimated using the Laplace approximation
         (inverse Hessian at the mode).
 
-        Args:
-            tissue_curve: Measured tissue concentration curve (mM).
-            aif: Arterial input function (mM).
-            time_points: Time points (minutes).
-            max_iter: Maximum optimizer iterations.
-            compute_uncertainties: Whether to compute Laplace uncertainties.
-                Set to False to skip the expensive Hessian computation.
-            weights: Optional per-frame weights for motion-weighted fitting.
-                Values in [0, 1] where 1.0 = full weight.
-            sloppy: Use fast, low-quality settings for testing.
+        Parameters
+        ----------
+        tissue_curve : numpy.ndarray
+            Measured tissue concentration curve (mM).
+        aif : numpy.ndarray
+            Arterial input function (mM).
+        time_points : numpy.ndarray
+            Time points (minutes).
+        max_iter : int, optional
+            Maximum optimizer iterations.
+        compute_uncertainties : bool, optional
+            Whether to compute Laplace uncertainties.
+            Set to False to skip the expensive Hessian computation.
+        weights : numpy.ndarray or None, optional
+            Optional per-frame weights for motion-weighted fitting.
+            Values in [0, 1] where 1.0 = full weight.
+        sloppy : bool, optional
+            Use fast, low-quality settings for testing.
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult with parameters, uncertainties, and credible intervals.
         """
         if sloppy:
@@ -791,32 +863,43 @@ class BayesianPKFitter:
         """Fit model using FABBER-style linearized Variational Bayes.
 
         Implements the linearized VB algorithm from Chappell et al. (2009,
-        IEEE TMI 28(1):94-104). At each iteration the forward model is
+        IEEE Trans Signal Process 57(1):223-236). At each iteration the forward model is
         linearized around the current posterior mean, enabling analytic
         Gaussian posterior updates. Noise precision is treated as a conjugate
         Gamma random variable.
 
-        Args:
-            tissue_curve: Measured tissue concentration curve (mM).
-            aif: Arterial input function (mM).
-            time_points: Time points (minutes).
-            n_iterations: Maximum VB iterations (default 20).
-            noise_prior: Optional (c0, s0) Gamma prior on noise precision
-                tau = 1/sigma^2. If None, uses non-informative prior.
-                If noise_std was provided to the constructor, uses an
-                informative prior centered on that value.
-            weights: Optional per-frame motion weights (1.0 = full weight).
-                Weights modify data fidelity terms (J^T W J, k^T W k) but
-                NOT the observation count in Gamma shape/ELBO (Chappell 2009).
-            sloppy: Use fast, low-quality settings for testing.
+        Parameters
+        ----------
+        tissue_curve : numpy.ndarray
+            Measured tissue concentration curve (mM).
+        aif : numpy.ndarray
+            Arterial input function (mM).
+        time_points : numpy.ndarray
+            Time points (minutes).
+        n_iterations : int, optional
+            Maximum VB iterations (default 20).
+        noise_prior : tuple of float or None, optional
+            Optional (c0, s0) Gamma prior on noise precision
+            tau = 1/sigma^2. If None, uses non-informative prior.
+            If noise_std was provided to the constructor, uses an
+            informative prior centered on that value.
+        weights : numpy.ndarray or None, optional
+            Optional per-frame motion weights (1.0 = full weight).
+            Weights modify data fidelity terms (J^T W J, k^T W k) but
+            NOT the observation count in Gamma shape/ELBO (Chappell 2009).
+        sloppy : bool, optional
+            Use fast, low-quality settings for testing.
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult with parameters, uncertainties, and credible intervals.
 
-        References:
-            Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
-            "Variational Bayesian Inference for a Nonlinear Forward Model."
-            IEEE Trans Med Imaging 28(1):94-104.
+        References
+        ----------
+        Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
+        "Variational Bayesian Inference for a Nonlinear Forward Model."
+        IEEE Trans Signal Process 57(1):223-236.
         """
         if sloppy:
             n_iterations = 8
@@ -1100,18 +1183,29 @@ class BayesianPKFitter:
         The constraint ve + vp <= 1.0 is enforced during sampling for
         models with both ve and vp parameters.
 
-        Args:
-            tissue_curve: Measured tissue concentration curve (mM).
-            aif: Arterial input function (mM).
-            time_points: Time points (minutes).
-            n_samples: Number of samples to draw (after burn-in).
-            n_walkers: Number of ensemble walkers (default: 2 * n_dims + 2).
-            n_burnin: Number of burn-in samples (default: n_samples // 2).
-            sloppy: Use fast, low-quality settings for testing.
-            weights: Optional per-frame weights for motion-weighted fitting.
-                Values in [0, 1] where 1.0 = full weight.
+        Parameters
+        ----------
+        tissue_curve : numpy.ndarray
+            Measured tissue concentration curve (mM).
+        aif : numpy.ndarray
+            Arterial input function (mM).
+        time_points : numpy.ndarray
+            Time points (minutes).
+        n_samples : int, optional
+            Number of samples to draw (after burn-in).
+        n_walkers : int or None, optional
+            Number of ensemble walkers (default: 2 * n_dims + 2).
+        n_burnin : int or None, optional
+            Number of burn-in samples (default: n_samples // 2).
+        sloppy : bool, optional
+            Use fast, low-quality settings for testing.
+        weights : numpy.ndarray or None, optional
+            Optional per-frame weights for motion-weighted fitting.
+            Values in [0, 1] where 1.0 = full weight.
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult with parameters, uncertainties, credible intervals,
             and MCMC diagnostics (R-hat, ESS).
         """
@@ -1308,12 +1402,17 @@ def create_vp_prior_from_dsc(
 
     A minimum std of 0.001 prevents degenerate priors when vp is very small.
 
-    Args:
-        vp_value: DSC-derived vp value for this voxel.
-        relative_uncertainty: Relative uncertainty (fraction). Default 0.2
-            means +/- 20% of the vp value.
+    Parameters
+    ----------
+    vp_value : float
+        DSC-derived vp value for this voxel.
+    relative_uncertainty : float, optional
+        Relative uncertainty (fraction). Default 0.2
+        means +/- 20% of the vp value.
 
-    Returns:
+    Returns
+    -------
+    BayesianPrior
         BayesianPrior with informative mean and std for vp.
     """
     std = max(vp_value * relative_uncertainty, 0.001)
@@ -1343,23 +1442,36 @@ def fit_pk_model(
     noise_std: float | None = None,
     sloppy: bool = False,
 ) -> FitResult:
-    """Convenience function to fit a PK model using specified Bayesian method.
+    """Fit a PK model using the specified Bayesian method (convenience wrapper).
 
-    Args:
-        model: PK model to fit.
-        tissue_curve: Measured tissue concentration (mM).
-        aif: Arterial input function (mM).
-        time_points: Time points (minutes).
-        method: Fitting method: 'map', 'vi', or 'mcmc'.
-        mcmc_samples: Number of MCMC samples (for method='mcmc').
-        noise_std: Optional noise standard deviation.
-        sloppy: Use fast, low-quality settings for testing.
+    Parameters
+    ----------
+    model : PKModel
+        PK model to fit.
+    tissue_curve : numpy.ndarray
+        Measured tissue concentration (mM).
+    aif : numpy.ndarray
+        Arterial input function (mM).
+    time_points : numpy.ndarray
+        Time points (minutes).
+    method : str, optional
+        Fitting method: 'map', 'vi', or 'mcmc'.
+    mcmc_samples : int, optional
+        Number of MCMC samples (for method='mcmc').
+    noise_std : float or None, optional
+        Optional noise standard deviation.
+    sloppy : bool, optional
+        Use fast, low-quality settings for testing.
 
-    Returns:
+    Returns
+    -------
+    FitResult
         FitResult with fitted parameters and uncertainties.
 
-    Raises:
-        ValueError: If method is not recognized.
+    Raises
+    ------
+    ValueError
+        If method is not recognized.
     """
     fitter = BayesianPKFitter(model, noise_std=noise_std)
 

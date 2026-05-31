@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 from pmriprep.utils.dce_constants import (
     DEFAULT_BASELINE_FRAMES,
-    DEFAULT_T1_MS,
     EPSILON_E1_UPPER,
     EPSILON_SIGNAL,
     EPSILON_T1,
@@ -30,13 +29,20 @@ from pmriprep.utils.dce_constants import (
 class DCEConversionResult:
     """Result of DCE signal to concentration conversion.
 
-    Attributes:
-        concentration: Concentration array in mM.
-        r1_dynamic: Dynamic R1 values (1/T1) in s^-1.
-        r1_baseline: Baseline R1 value (1/T1_pre) in s^-1.
-        is_plasma: Whether concentration is plasma (vs whole blood).
-        effective_r1: The r1 relaxivity used for conversion (s^-1/mM).
-        baseline_signal: Mean baseline signal used for normalization.
+    Attributes
+    ----------
+    concentration : numpy.ndarray
+        Concentration array in mM.
+    r1_dynamic : numpy.ndarray
+        Dynamic R1 values (1/T1) in s^-1.
+    r1_baseline : float or numpy.ndarray
+        Baseline R1 value (1/T1_pre) in s^-1.
+    is_plasma : bool
+        Whether concentration is plasma (vs whole blood).
+    effective_r1 : float
+        The r1 relaxivity used for conversion (s^-1/mM).
+    baseline_signal : float or numpy.ndarray
+        Mean baseline signal used for normalization.
     """
 
     concentration: npt.NDArray[np.floating]
@@ -62,19 +68,27 @@ def ernst_signal_model(
 
     where E1 = exp(-TR/T1)
 
-    Args:
-        s0: Proton density / fully relaxed signal.
-        flip_angle_rad: Flip angle in radians.
-        tr: Repetition time in seconds.
-        t1: T1 relaxation time in seconds.
+    Parameters
+    ----------
+    s0 : float or numpy.ndarray
+        Proton density / fully relaxed signal.
+    flip_angle_rad : float
+        Flip angle in radians.
+    tr : float
+        Repetition time in seconds.
+    t1 : float or numpy.ndarray
+        T1 relaxation time in seconds.
 
-    Returns:
+    Returns
+    -------
+    float or numpy.ndarray
         Computed signal intensity.
 
-    Notes:
-        - Input T1 should be positive. Values <= 0 will produce NaN.
-        - Typical flip angles are 5-30 degrees (0.087-0.524 radians).
-        - The Ernst angle (optimal flip angle) = arccos(exp(-TR/T1)).
+    Notes
+    -----
+    - Input T1 should be positive. Values <= 0 will produce NaN.
+    - Typical flip angles are 5-30 degrees (0.087-0.524 radians).
+    - The Ernst angle (optimal flip angle) = arccos(exp(-TR/T1)).
     """
     # Compute E1 = exp(-TR/T1) with T1 safety guard
     t1_safe = np.maximum(t1, EPSILON_T1)
@@ -102,17 +116,24 @@ def solve_e1_from_signal_ratio(
 
     This function solves for E1(t) given the signal ratio and baseline E1.
 
-    Args:
-        signal_ratio: S(t) / S(baseline).
-        flip_angle_rad: Flip angle in radians. Can be scalar or per-voxel array.
-        e1_baseline: Baseline E1 value = exp(-TR/T1_baseline).
+    Parameters
+    ----------
+    signal_ratio : float or numpy.ndarray
+        S(t) / S(baseline).
+    flip_angle_rad : float or numpy.ndarray
+        Flip angle in radians. Can be scalar or per-voxel array.
+    e1_baseline : float or numpy.ndarray
+        Baseline E1 value = exp(-TR/T1_baseline).
 
-    Returns:
+    Returns
+    -------
+    float or numpy.ndarray
         E1(t) values corresponding to the signal ratio.
 
-    Notes:
-        - This is an analytical solution derived from the Ernst equation.
-        - E1 values are clipped to (0, 1) to ensure physical validity.
+    Notes
+    -----
+    - This is an analytical solution derived from the Ernst equation.
+    - E1 values are clipped to (0, 1) to ensure physical validity.
     """
     cos_alpha = np.cos(flip_angle_rad)
 
@@ -168,16 +189,22 @@ def e1_to_r1(
     E1 = exp(-TR/T1) = exp(-TR × R1)
     => R1 = -ln(E1) / TR
 
-    Args:
-        e1: E1 values, where E1 = exp(-TR/T1).
-        tr: Repetition time in seconds.
+    Parameters
+    ----------
+    e1 : float or numpy.ndarray
+        E1 values, where E1 = exp(-TR/T1).
+    tr : float
+        Repetition time in seconds.
 
-    Returns:
+    Returns
+    -------
+    float or numpy.ndarray
         R1 values in s^-1 (reciprocal of T1).
 
-    Notes:
-        - E1 must be in range (0, 1) for valid R1.
-        - R1 = 1/T1, so typical values are 0.5-2.0 s^-1 for tissue.
+    Notes
+    -----
+    - E1 must be in range (0, 1) for valid R1.
+    - R1 = 1/T1, so typical values are 0.5-2.0 s^-1 for tissue.
     """
     # Ensure E1 is in valid range for log
     e1_safe = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
@@ -213,58 +240,83 @@ def signal_to_concentration(
     6. Clip to non-negative
     7. Optionally convert to plasma concentration
 
-    Args:
-        signal: 4D DCE signal array (x, y, z, time) or 1D time series.
-        flip_angle_deg: Flip angle in degrees. Typical values: 10-30°.
-        tr: Repetition time in seconds. Typical values: 0.003-0.010s.
-        t1_map: 3D pre-contrast T1 map in milliseconds. If None, uses
-            t1_default_ms for all voxels.
-        t1_default_ms: Default T1 value in milliseconds when t1_map is None.
-            If None, uses field-strength-appropriate literature value
-            from T1_TISSUE_REFERENCE (e.g., 900ms at 1.5T, 1200ms at 3T).
-        b1_map: Optional 3D B1+ correction map (relative flip angle).
-            Values typically 0.8-1.2. If provided, actual flip angle =
-            nominal flip angle × B1+.
-        r1_relaxivity: Longitudinal relaxivity in s^-1/mM. If None, will
-            be looked up from field_strength.
-        field_strength: Magnetic field strength in Tesla. Used for r1
-            lookup if r1_relaxivity is not provided. Default is 3.0T.
-        baseline_frames: Number of pre-contrast frames for baseline.
-            Default is 5 frames.
-        convert_to_plasma: If True, converts to plasma concentration using
-            hematocrit correction: C_plasma = C_blood / (1 - Hct).
-            Default is True.
-        hematocrit: Hematocrit value for plasma conversion. Default is 0.42.
+    Parameters
+    ----------
+    signal : numpy.ndarray
+        4D DCE signal array (x, y, z, time) or 1D time series.
+    flip_angle_deg : float
+        Flip angle in degrees. Typical values: 10-30°.
+    tr : float
+        Repetition time in seconds. Typical values: 0.003-0.010s.
+    t1_map : numpy.ndarray, optional
+        3D pre-contrast T1 map in milliseconds. If None, uses
+        t1_default_ms for all voxels.
+    t1_default_ms : float, optional
+        Default T1 value in milliseconds when t1_map is None.
+        If None, uses field-strength-appropriate literature value
+        from T1_TISSUE_REFERENCE (e.g., 900ms at 1.5T, 1200ms at 3T).
+    b1_map : numpy.ndarray, optional
+        Optional 3D B1+ correction map (relative flip angle).
+        Values typically 0.8-1.2. If provided, actual flip angle =
+        nominal flip angle × B1+.
+    r1_relaxivity : float, optional
+        Longitudinal relaxivity in s^-1/mM. If None, will
+        be looked up from field_strength.
+    field_strength : float, optional
+        Magnetic field strength in Tesla. Used for r1
+        lookup if r1_relaxivity is not provided. Default is 3.0T.
+    baseline_frames : int, optional
+        Number of pre-contrast frames for baseline.
+        Default is 5 frames.
+    convert_to_plasma : bool, optional
+        If True, converts to plasma concentration using
+        hematocrit correction: C_plasma = C_blood / (1 - Hct).
+        Default is True.
+    hematocrit : float, optional
+        Hematocrit value for plasma conversion. Default is 0.42.
 
-    Returns:
+    Returns
+    -------
+    DCEConversionResult
         DCEConversionResult containing concentration and intermediate values.
 
-    Raises:
-        ValueError: If signal is empty or has invalid dimensions.
-        ValueError: If flip_angle_deg is not in valid range (0, 90).
-        ValueError: If tr is not positive.
-        ValueError: If baseline_frames exceeds signal timepoints.
-        ValueError: If T1 map dimensions don't match signal spatial dims.
-        ValueError: If B1 map dimensions don't match signal spatial dims.
+    Raises
+    ------
+    ValueError
+        If signal is empty or has invalid dimensions.
+    ValueError
+        If flip_angle_deg is not in valid range (0, 90).
+    ValueError
+        If tr is not positive.
+    ValueError
+        If baseline_frames exceeds signal timepoints.
+    ValueError
+        If T1 map dimensions don't match signal spatial dims.
+    ValueError
+        If B1 map dimensions don't match signal spatial dims.
 
-    Notes:
-        - Concentration is in mM (millimolar).
-        - T1 map should be in milliseconds (will be converted to seconds).
-        - For AIF voxels, concentration represents whole blood or plasma
-          depending on convert_to_plasma setting.
-        - Tissue concentration is typically lower than plasma due to
-          extravascular extracellular space distribution.
+    Notes
+    -----
+    - Concentration is in mM (millimolar).
+    - T1 map should be in milliseconds (will be converted to seconds).
+    - For AIF voxels, concentration represents whole blood or plasma
+      depending on convert_to_plasma setting.
+    - Tissue concentration is typically lower than plasma due to
+      extravascular extracellular space distribution.
 
-    Example:
-        >>> # Convert DCE signal with T1 map at 3T
-        >>> result = signal_to_concentration(
-        ...     signal=dce_data,       # (x, y, z, time)
-        ...     flip_angle_deg=15.0,
-        ...     tr=0.0050,             # 5ms
-        ...     t1_map=t1_data,        # (x, y, z) in ms
-        ...     field_strength=3.0,
-        ... )
-        >>> concentration = result.concentration  # (x, y, z, time) in mM
+    Examples
+    --------
+    >>> # Convert DCE signal with T1 map at 3T
+    >>> dce_data = np.linspace(100, 200, 80).reshape(2, 2, 2, 10)
+    >>> t1_data = np.full((2, 2, 2), 1200.0)  # (x, y, z) in ms
+    >>> result = signal_to_concentration(
+    ...     signal=dce_data,       # (x, y, z, time)
+    ...     flip_angle_deg=15.0,
+    ...     tr=0.0050,             # 5 ms
+    ...     t1_map=t1_data,
+    ...     field_strength=3.0,
+    ... )
+    >>> concentration = result.concentration  # (x, y, z, time) in mM
     """
     # Validate inputs
     if signal.size == 0:
@@ -521,18 +573,29 @@ def signal_to_concentration_simple(
     Convenience function that returns only the concentration array,
     using a single T1 value for all voxels.
 
-    Args:
-        signal: DCE signal array (1D or 4D).
-        flip_angle_deg: Flip angle in degrees.
-        tr: Repetition time in seconds.
-        t1_pre_ms: Pre-contrast T1 value in milliseconds. If None,
-            uses field-strength-appropriate literature value.
-        r1_relaxivity: Longitudinal relaxivity in s^-1/mM.
-        field_strength: Field strength in Tesla for r1 lookup.
-        baseline_frames: Number of baseline frames.
-        convert_to_plasma: If True, convert to plasma concentration.
+    Parameters
+    ----------
+    signal : numpy.ndarray
+        DCE signal array (1D or 4D).
+    flip_angle_deg : float
+        Flip angle in degrees.
+    tr : float
+        Repetition time in seconds.
+    t1_pre_ms : float, optional
+        Pre-contrast T1 value in milliseconds. If None,
+        uses field-strength-appropriate literature value.
+    r1_relaxivity : float, optional
+        Longitudinal relaxivity in s^-1/mM.
+    field_strength : float, optional
+        Field strength in Tesla for r1 lookup.
+    baseline_frames : int, optional
+        Number of baseline frames.
+    convert_to_plasma : bool, optional
+        If True, convert to plasma concentration.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Concentration array in mM.
     """
     result = signal_to_concentration(
@@ -562,19 +625,25 @@ def concentration_to_plasma(
 
         C_plasma = C_blood / (1 - Hct)
 
-    Args:
-        concentration_blood: Whole blood concentration in mM.
-        hematocrit: Hematocrit value (volume fraction of red blood cells).
-            Default is 0.42 (42%).
+    Parameters
+    ----------
+    concentration_blood : numpy.ndarray
+        Whole blood concentration in mM.
+    hematocrit : float, optional
+        Hematocrit value (volume fraction of red blood cells).
+        Default is 0.42 (42%).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Plasma concentration in mM.
 
-    Notes:
-        - Typical hematocrit values: 0.38-0.46 (38-46%)
-        - For typical Hct=0.42: C_plasma ≈ 1.72 × C_blood
-        - This conversion is important for AIF measurements, as
-          pharmacokinetic models assume plasma concentration.
+    Notes
+    -----
+    - Typical hematocrit values: 0.38-0.46 (38-46%)
+    - For typical Hct=0.42: C_plasma ≈ 1.72 × C_blood
+    - This conversion is important for AIF measurements, as
+      pharmacokinetic models assume plasma concentration.
     """
     return concentration_blood / (1.0 - hematocrit)
 
@@ -589,11 +658,16 @@ def plasma_to_blood_concentration(
 
         C_blood = C_plasma × (1 - Hct)
 
-    Args:
-        concentration_plasma: Plasma concentration in mM.
-        hematocrit: Hematocrit value. Default is 0.42.
+    Parameters
+    ----------
+    concentration_plasma : numpy.ndarray
+        Plasma concentration in mM.
+    hematocrit : float, optional
+        Hematocrit value. Default is 0.42.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Whole blood concentration in mM.
     """
     return concentration_plasma * (1.0 - hematocrit)
@@ -617,25 +691,41 @@ def signal_to_concentration_from_files(
     File-based convenience wrapper that loads the DCE signal, performs
     conversion, and saves the result.
 
-    Args:
-        signal_file: Path to input DCE NIfTI file.
-        output_file: Path to save concentration NIfTI.
-        flip_angle_deg: Flip angle in degrees.
-        tr: Repetition time in seconds.
-        t1_map_file: Optional path to T1 map NIfTI file (in ms).
-        t1_default_ms: Default T1 value in ms if no T1 map. If None,
-            uses field-strength-appropriate literature value.
-        b1_map_file: Optional path to B1+ map NIfTI file.
-        r1_relaxivity: Longitudinal relaxivity in s^-1/mM.
-        field_strength: Field strength in Tesla.
-        baseline_frames: Number of baseline frames.
-        convert_to_plasma: If True, convert to plasma concentration.
+    Parameters
+    ----------
+    signal_file : str or pathlib.Path
+        Path to input DCE NIfTI file.
+    output_file : str or pathlib.Path
+        Path to save concentration NIfTI.
+    flip_angle_deg : float
+        Flip angle in degrees.
+    tr : float
+        Repetition time in seconds.
+    t1_map_file : str or pathlib.Path, optional
+        Optional path to T1 map NIfTI file (in ms).
+    t1_default_ms : float, optional
+        Default T1 value in ms if no T1 map. If None,
+        uses field-strength-appropriate literature value.
+    b1_map_file : str or pathlib.Path, optional
+        Optional path to B1+ map NIfTI file.
+    r1_relaxivity : float, optional
+        Longitudinal relaxivity in s^-1/mM.
+    field_strength : float, optional
+        Field strength in Tesla.
+    baseline_frames : int, optional
+        Number of baseline frames.
+    convert_to_plasma : bool, optional
+        If True, convert to plasma concentration.
 
-    Returns:
+    Returns
+    -------
+    tuple of (pathlib.Path, DCEConversionResult)
         Tuple of (output_path, DCEConversionResult).
 
-    Raises:
-        FileNotFoundError: If input signal file does not exist.
+    Raises
+    ------
+    FileNotFoundError
+        If input signal file does not exist.
     """
     import nibabel as nib  # type: ignore[import-untyped]
 

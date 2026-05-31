@@ -2,7 +2,7 @@
 
 Implements a parametric model where the residue function is based on
 a gamma-variate distribution of capillary transit times, following
-Mouridsen et al. (2006) and Jesperson et al. (2012).
+Mouridsen et al. (2006) and Jespersen et al. (2012).
 
 The model accounts for transit time heterogeneity (CTH) in the
 microvasculature, which affects the relationship between CBF and CBV.
@@ -40,7 +40,8 @@ class VascularModel(DSCModel):
     heterogeneity (CTH), which affects oxygen extraction and is
     altered in various pathological conditions.
 
-    Parameters:
+    Parameters
+    ----------
         cbf: Cerebral blood flow (mL/100g/min). This is R(0), the
              maximum height of the residue function.
         alpha: Shape parameter of the gamma distribution (dimensionless).
@@ -61,8 +62,9 @@ class VascularModel(DSCModel):
               Also known as coefficient of variation (CV) of transit times.
               RCTH = CTH / MTT = 1/√α
 
-    References:
-        Mouridsen K, Friston K, Hajnal N, et al. (2006).
+    References
+    ----------
+        Mouridsen K, Friston K, Hjort N, et al. (2006).
         "Bayesian estimation of cerebral perfusion using a physiological
         model of microvasculature." NeuroImage 33(2):570-579.
 
@@ -85,7 +87,9 @@ class VascularModel(DSCModel):
     def get_parameter_definitions(self) -> list[DSCModelParameter]:
         """Get parameter definitions for the vascular model.
 
-        Returns:
+        Returns
+        -------
+        list of DSCModelParameter
             List of DSCModelParameter objects for CBF, alpha, beta, delay.
         """
         from pmriprep.models.bayesian_utils import TransformType
@@ -129,7 +133,9 @@ class VascularModel(DSCModel):
     def get_parameter_names(self) -> list[str]:
         """Get list of parameter names.
 
-        Returns:
+        Returns
+        -------
+        list of str
             List: ['cbf', 'alpha', 'beta', 'delay']
         """
         return ["cbf", "alpha", "beta", "delay"]
@@ -142,7 +148,9 @@ class VascularModel(DSCModel):
         since MTT = alpha * beta is directly identifiable from the residue
         function area, while alpha captures only the shape.
 
-        Returns:
+        Returns
+        -------
+        list of DSCModelParameter
             List of DSCModelParameter objects for CBF, MTT, alpha, delay.
         """
         from pmriprep.models.bayesian_utils import TransformType
@@ -190,10 +198,14 @@ class VascularModel(DSCModel):
     ) -> npt.NDArray[np.float64]:
         """Convert fitting-space (CBF, MTT, alpha, delay) to model-space (CBF, alpha, beta, delay).
 
-        Args:
-            fitting_params: [cbf, mtt, alpha, delay] in fitting space.
+        Parameters
+        ----------
+        fitting_params : npt.NDArray[np.floating]
+            [cbf, mtt, alpha, delay] in fitting space.
 
-        Returns:
+        Returns
+        -------
+        npt.NDArray[np.float64]
             [cbf, alpha, beta, delay] in model space.
         """
         cbf, mtt, alpha, delay = fitting_params
@@ -205,10 +217,14 @@ class VascularModel(DSCModel):
     ) -> npt.NDArray[np.float64]:
         """Convert model-space (CBF, alpha, beta, delay) to fitting-space (CBF, MTT, alpha, delay).
 
-        Args:
-            model_params: [cbf, alpha, beta, delay] in model space.
+        Parameters
+        ----------
+        model_params : npt.NDArray[np.floating]
+            [cbf, alpha, beta, delay] in model space.
 
-        Returns:
+        Returns
+        -------
+        npt.NDArray[np.float64]
             [cbf, mtt, alpha, delay] in fitting space.
         """
         cbf, alpha, beta, delay = model_params
@@ -221,7 +237,9 @@ class VascularModel(DSCModel):
         CBF=0.08 is the midpoint of typical_range in relative s⁻¹ units.
         Alpha=3, beta=2 gives MTT=6s (physiologically reasonable).
 
-        Returns:
+        Returns
+        -------
+        list of float
             List of initial parameter values [CBF, alpha, beta, delay].
         """
         return [0.08, 3.0, 2.0, 0.0]
@@ -240,11 +258,16 @@ class VascularModel(DSCModel):
 
         For t < delay, R(t) = CBF (no contrast has left yet).
 
-        Args:
-            params: [cbf, alpha, beta, delay] parameter values.
-            time_points: Time points (seconds) at which to evaluate R(t).
+        Parameters
+        ----------
+        params : ParamsLike
+            [cbf, alpha, beta, delay] parameter values.
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds) at which to evaluate R(t).
 
-        Returns:
+        Returns
+        -------
+        npt.NDArray[np.floating]
             Residue function values R(t) at each time point.
         """
         cbf, alpha, beta, delay = params
@@ -290,12 +313,18 @@ class VascularModel(DSCModel):
         The residue is computed without delay, then the convolved result is
         shifted by delay_samples to apply the arrival time offset.
 
-        Args:
-            params: [cbf, alpha, beta, delay] parameter values.
-            aif: Arterial input function concentration values.
-            time_points: Time points (seconds) at which to evaluate C(t).
+        Parameters
+        ----------
+        params : ParamsLike
+            [cbf, alpha, beta, delay] parameter values.
+        aif : npt.NDArray[np.floating]
+            Arterial input function concentration values.
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds) at which to evaluate C(t).
 
-        Returns:
+        Returns
+        -------
+        npt.NDArray[np.floating]
             Tissue concentration values C(t) at each time point.
         """
         n_times = len(time_points)
@@ -351,10 +380,14 @@ class VascularModel(DSCModel):
             rcth: Relative CTH = 1/√α (dimensionless)
                   Also known as CV (coefficient of variation) of transit times
 
-        Args:
-            params: [cbf, alpha, beta, delay] parameter values.
+        Parameters
+        ----------
+        params : ParamsLike
+            [cbf, alpha, beta, delay] parameter values.
 
-        Returns:
+        Returns
+        -------
+        dict of str to float
             Dictionary with derived parameter values.
         """
         cbf, alpha, beta, _ = params
@@ -391,11 +424,16 @@ class VascularModel(DSCModel):
 
         This is a convenience method for direct calculation.
 
-        Args:
-            alpha: Gamma shape parameter.
-            beta: Gamma scale parameter (seconds).
+        Parameters
+        ----------
+        alpha : float
+            Gamma shape parameter.
+        beta : float
+            Gamma scale parameter (seconds).
 
-        Returns:
+        Returns
+        -------
+        float
             Mean transit time in seconds.
         """
         return alpha * beta
@@ -408,11 +446,16 @@ class VascularModel(DSCModel):
         This represents the standard deviation of the transit time
         distribution and is a marker of microvascular dysfunction.
 
-        Args:
-            alpha: Gamma shape parameter.
-            beta: Gamma scale parameter (seconds).
+        Parameters
+        ----------
+        alpha : float
+            Gamma shape parameter.
+        beta : float
+            Gamma scale parameter (seconds).
 
-        Returns:
+        Returns
+        -------
+        float
             Capillary transit heterogeneity in seconds.
         """
         return float(beta * np.sqrt(alpha))
@@ -425,10 +468,14 @@ class VascularModel(DSCModel):
         This is the coefficient of variation (CV) of the transit time
         distribution. Lower values indicate more homogeneous transit times.
 
-        Args:
-            alpha: Gamma shape parameter.
+        Parameters
+        ----------
+        alpha : float
+            Gamma shape parameter.
 
-        Returns:
+        Returns
+        -------
+        float
             Relative CTH (dimensionless).
         """
         alpha_safe = max(float(alpha), 1e-10)

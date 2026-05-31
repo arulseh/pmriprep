@@ -46,7 +46,8 @@ class PreflightError(RuntimeError):
 class PreflightMessage:
     """A single validation message.
 
-    Attributes:
+    Attributes
+    ----------
         level: Severity — "error", "warning", or "info".
         code: Machine-readable code (e.g. "DSC_MISSING_TE").
         message: Human-readable description.
@@ -61,7 +62,8 @@ class PreflightMessage:
 class PreflightReport:
     """Aggregated validation report.
 
-    Attributes:
+    Attributes
+    ----------
         messages: All validation messages collected.
     """
 
@@ -100,11 +102,15 @@ class PreflightReport:
     def warning_strings(self, prefix: str = "") -> list[str]:
         """Return formatted warning strings, optionally filtered by code prefix.
 
-        Args:
-            prefix: If non-empty, only return warnings whose code starts
-                with this string (e.g. ``"DSC_"``).
+        Parameters
+        ----------
+        prefix : str, optional
+            If non-empty, only return warnings whose code starts
+            with this string (e.g. ``"DSC_"``).
 
-        Returns:
+        Returns
+        -------
+        list of str
             List of ``"[CODE] message"`` strings for warning-level messages.
         """
         return [
@@ -120,11 +126,16 @@ def validate_sidecar_exists(
 ) -> list[PreflightMessage]:
     """Check that a JSON sidecar exists for the given NIfTI file.
 
-    Args:
-        nifti_path: Path to the NIfTI file.
-        modality: Modality label for messages (e.g. "DSC", "DCE").
+    Parameters
+    ----------
+    nifti_path : Path
+        Path to the NIfTI file.
+    modality : str
+        Modality label for messages (e.g. "DSC", "DCE").
 
-    Returns:
+    Returns
+    -------
+    list of PreflightMessage
         List of validation messages.
     """
     msgs: list[PreflightMessage] = []
@@ -152,11 +163,16 @@ def validate_dsc_metadata(
 ) -> list[PreflightMessage]:
     """Validate DSC acquisition metadata.
 
-    Args:
-        sidecar: Dict returned by ``_read_bids_sidecar()``.
-        dsc_config: DSC configuration for preload and dose checks.
+    Parameters
+    ----------
+    sidecar : dict
+        Dict returned by ``_read_bids_sidecar()``.
+    dsc_config : DSCConfig, optional
+        DSC configuration for preload and dose checks.
 
-    Returns:
+    Returns
+    -------
+    list of PreflightMessage
         List of validation messages.
     """
     msgs: list[PreflightMessage] = []
@@ -371,11 +387,16 @@ def validate_dce_metadata(
 ) -> list[PreflightMessage]:
     """Validate DCE acquisition metadata.
 
-    Args:
-        sidecar: Dict returned by ``_read_bids_sidecar()``.
-        dce_config: DCE configuration for r1 override checks.
+    Parameters
+    ----------
+    sidecar : dict
+        Dict returned by ``_read_bids_sidecar()``.
+    dce_config : DCEConfig
+        DCE configuration for r1 override checks.
 
-    Returns:
+    Returns
+    -------
+    list of PreflightMessage
         List of validation messages.
     """
     msgs: list[PreflightMessage] = []
@@ -653,11 +674,16 @@ def validate_vfa_metadata(
 
     Only called when VFA data IS present (VFA is optional).
 
-    Args:
-        vfa_flip_angles: Flip angles extracted from VFA sidecars.
-        vfa_trs: TR values extracted from VFA sidecars.
+    Parameters
+    ----------
+    vfa_flip_angles : list of float
+        Flip angles extracted from VFA sidecars.
+    vfa_trs : list of float
+        TR values extracted from VFA sidecars.
 
-    Returns:
+    Returns
+    -------
+    list of PreflightMessage
         List of validation messages.
     """
     msgs: list[PreflightMessage] = []
@@ -710,11 +736,16 @@ def validate_afi_metadata(
 
     Only called when AFI data IS present (AFI is optional).
 
-    Args:
-        tr1: First AFI TR in ms, or None.
-        tr2: Second AFI TR in ms, or None.
+    Parameters
+    ----------
+    tr1 : float or None
+        First AFI TR in ms, or None.
+    tr2 : float or None
+        Second AFI TR in ms, or None.
 
-    Returns:
+    Returns
+    -------
+    list of PreflightMessage
         List of validation messages.
     """
     msgs: list[PreflightMessage] = []
@@ -891,17 +922,28 @@ def run_preflight(
 ) -> PreflightReport:
     """Run all pre-flight validations based on pipeline decisions.
 
-    Args:
-        session_data: SessionData from discovery.
-        decision: PipelineDecision from decide_pipelines().
-        dsc_sidecar: DSC sidecar dict, or None if DSC not running.
-        dce_sidecar: DCE sidecar dict, or None if DCE not running.
-        dce_config: DCE configuration, or None if DCE not running.
-        vfa_flip_angles: VFA flip angles, if VFA data present.
-        vfa_trs: VFA TR values, if VFA data present.
-        dsc_config: DSC configuration, or None if DSC not running.
+    Parameters
+    ----------
+    session_data : Any
+        SessionData from discovery.
+    decision : Any
+        PipelineDecision from decide_pipelines().
+    dsc_sidecar : dict or None
+        DSC sidecar dict, or None if DSC not running.
+    dce_sidecar : dict or None
+        DCE sidecar dict, or None if DCE not running.
+    dce_config : DCEConfig or None
+        DCE configuration, or None if DCE not running.
+    vfa_flip_angles : list of float, optional
+        VFA flip angles, if VFA data present.
+    vfa_trs : list of float or None, optional
+        VFA TR values, if VFA data present.
+    dsc_config : DSCConfig, optional
+        DSC configuration, or None if DSC not running.
 
-    Returns:
+    Returns
+    -------
+    PreflightReport
         PreflightReport with all collected messages.
     """
     report = PreflightReport()

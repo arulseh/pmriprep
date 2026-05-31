@@ -41,7 +41,8 @@ class DSCFitResult:
     Contains fitted parameter values, uncertainty estimates (for Bayesian
     fitting), credible intervals, and goodness-of-fit metrics.
 
-    Attributes:
+    Attributes
+    ----------
         # Fitted parameter values (dict: parameter_name -> value)
         parameters: Dictionary mapping parameter names to fitted values.
 
@@ -111,7 +112,9 @@ class DSCFitResult:
     def has_uncertainty(self) -> bool:
         """Check if uncertainty estimates are available.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if uncertainties are populated.
         """
         return len(self.uncertainties) > 0
@@ -119,7 +122,9 @@ class DSCFitResult:
     def has_credible_intervals(self) -> bool:
         """Check if credible intervals are available.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if credible intervals are populated.
         """
         return len(self.credible_intervals) > 0
@@ -127,11 +132,16 @@ class DSCFitResult:
     def passes_convergence(self, rhat_max: float = 1.1, ess_min: int = 100) -> bool:
         """Check if MCMC convergence diagnostics pass.
 
-        Args:
-            rhat_max: Maximum acceptable R-hat value.
-            ess_min: Minimum acceptable effective sample size.
+        Parameters
+        ----------
+        rhat_max : float, optional
+            Maximum acceptable R-hat value.
+        ess_min : int, optional
+            Minimum acceptable effective sample size.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if converged and all R-hat < rhat_max and all ESS > ess_min,
             or True if not MCMC (no diagnostics to check).
         """
@@ -147,11 +157,16 @@ class DSCFitResult:
     def get_parameter(self, name: str, default: float = 0.0) -> float:
         """Get a parameter value by name.
 
-        Args:
-            name: Parameter name.
-            default: Default value if parameter not found.
+        Parameters
+        ----------
+        name : str
+            Parameter name.
+        default : float, optional
+            Default value if parameter not found.
 
-        Returns:
+        Returns
+        -------
+        float
             Parameter value or default.
         """
         return self.parameters.get(name, default)
@@ -159,11 +174,16 @@ class DSCFitResult:
     def get_uncertainty(self, name: str, default: float = 0.0) -> float:
         """Get uncertainty (std) for a parameter.
 
-        Args:
-            name: Parameter name.
-            default: Default value if uncertainty not available.
+        Parameters
+        ----------
+        name : str
+            Parameter name.
+        default : float, optional
+            Default value if uncertainty not available.
 
-        Returns:
+        Returns
+        -------
+        float
             Parameter uncertainty (standard deviation) or default.
         """
         return self.uncertainties.get(name, default)
@@ -173,11 +193,16 @@ class DSCFitResult:
     ) -> tuple[float, float]:
         """Get credible interval for a parameter.
 
-        Args:
-            name: Parameter name.
-            default: Default interval if not available.
+        Parameters
+        ----------
+        name : str
+            Parameter name.
+        default : tuple[float, float], optional
+            Default interval if not available.
 
-        Returns:
+        Returns
+        -------
+        tuple[float, float]
             (lower, upper) 95% credible interval or default.
         """
         return self.credible_intervals.get(name, default)
@@ -215,7 +240,9 @@ class DSCModel(ABC):
     def get_parameter_definitions(self) -> Sequence[DSCModelParameter]:
         """Get parameter definitions for this model.
 
-        Returns:
+        Returns
+        -------
+        Sequence[DSCModelParameter]
             List of DSCModelParameter objects defining each parameter's
             bounds, typical range, and transformation properties.
         """
@@ -225,7 +252,9 @@ class DSCModel(ABC):
     def get_parameter_names(self) -> list[str]:
         """Get list of parameter names.
 
-        Returns:
+        Returns
+        -------
+        list[str]
             List of parameter name strings in the order expected by
             residue_function() and tissue_curve().
         """
@@ -242,11 +271,16 @@ class DSCModel(ABC):
         The residue function represents the fraction of contrast agent
         remaining in the tissue at time t after an ideal impulse input.
 
-        Args:
-            params: Parameter values in the order from get_parameter_names().
-            time_points: Time points (seconds) at which to evaluate R(t).
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values in the order from get_parameter_names().
+        time_points : np.ndarray
+            Time points (seconds) at which to evaluate R(t).
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Residue function values R(t) at each time point.
         """
         pass
@@ -262,12 +296,18 @@ class DSCModel(ABC):
 
         C_tissue(t) = AIF(t) ⊗ R(t)
 
-        Args:
-            params: Parameter values in the order from get_parameter_names().
-            aif: Arterial input function concentration values.
-            time_points: Time points (seconds) at which to evaluate C(t).
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values in the order from get_parameter_names().
+        aif : np.ndarray
+            Arterial input function concentration values.
+        time_points : np.ndarray
+            Time points (seconds) at which to evaluate C(t).
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Tissue concentration values C(t) at each time point.
         """
         pass
@@ -279,7 +319,9 @@ class DSCModel(ABC):
         parameterization (e.g., VascularModel: alpha/beta -> MTT/alpha).
         Default: returns get_parameter_definitions() (no reparameterization).
 
-        Returns:
+        Returns
+        -------
+        Sequence[DSCModelParameter]
             Sequence of DSCModelParameter objects for fitting-space parameters.
         """
         return self.get_parameter_definitions()
@@ -291,10 +333,14 @@ class DSCModel(ABC):
 
         Default: identity (no conversion).
 
-        Args:
-            fitting_params: Parameter values in fitting space.
+        Parameters
+        ----------
+        fitting_params : np.ndarray
+            Parameter values in fitting space.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Parameter values in model space.
         """
         return np.asarray(fitting_params, dtype=np.float64)
@@ -306,10 +352,14 @@ class DSCModel(ABC):
 
         Default: identity (no conversion).
 
-        Args:
-            model_params: Parameter values in model space.
+        Parameters
+        ----------
+        model_params : np.ndarray
+            Parameter values in model space.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Parameter values in fitting space.
         """
         return np.asarray(model_params, dtype=np.float64)
@@ -327,12 +377,18 @@ class DSCModel(ABC):
         VI/MAP, preventing poor initialization from collapsing the noise
         precision estimate.
 
-        Args:
-            concentration: Measured tissue concentration curve.
-            aif: Arterial input function.
-            time_points: Time points (seconds).
+        Parameters
+        ----------
+        concentration : np.ndarray
+            Measured tissue concentration curve.
+        aif : np.ndarray
+            Arterial input function.
+        time_points : np.ndarray
+            Time points (seconds).
 
-        Returns:
+        Returns
+        -------
+        np.ndarray or None
             Parameter array from NLLS fit, or None if not available.
         """
         return None
@@ -384,11 +440,16 @@ class DSCModel(ABC):
         residue_function() returns a dimensionless form (e.g. CPI) should
         override this to include the appropriate scaling (e.g. CBF × R).
 
-        Args:
-            params: Parameter values.
-            time_points: Time points (seconds).
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values.
+        time_points : np.ndarray
+            Time points (seconds).
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Residue function suitable for downstream CBF/CBV extraction.
         """
         return self.residue_function(params, time_points)
@@ -396,7 +457,9 @@ class DSCModel(ABC):
     def get_bounds(self) -> list[tuple[float, float]]:
         """Get parameter bounds for optimization.
 
-        Returns:
+        Returns
+        -------
+        list[tuple[float, float]]
             List of (lower, upper) bound tuples for each parameter.
         """
         return [p.bounds for p in self.get_parameter_definitions()]
@@ -404,7 +467,9 @@ class DSCModel(ABC):
     def get_initial_guess(self) -> list[float]:
         """Get initial parameter guess from prior means.
 
-        Returns:
+        Returns
+        -------
+        list[float]
             List of initial parameter values (center of typical range).
         """
         return [p.get_prior_mean() for p in self.get_parameter_definitions()]
@@ -412,10 +477,14 @@ class DSCModel(ABC):
     def validate_params(self, params: ParamsLike) -> bool:
         """Check if parameters are within bounds.
 
-        Args:
-            params: Parameter values to validate.
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values to validate.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if all parameters are within their defined bounds.
         """
         definitions = self.get_parameter_definitions()
@@ -426,10 +495,14 @@ class DSCModel(ABC):
     def clip_params(self, params: ParamsLike) -> list[float]:
         """Clip parameters to bounds.
 
-        Args:
-            params: Parameter values to clip.
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values to clip.
 
-        Returns:
+        Returns
+        -------
+        list[float]
             List of parameter values clipped to bounds.
         """
         definitions = self.get_parameter_definitions()
@@ -438,10 +511,14 @@ class DSCModel(ABC):
     def params_to_dict(self, params: ParamsLike) -> dict[str, float]:
         """Convert parameter array to named dictionary.
 
-        Args:
-            params: Parameter values in order from get_parameter_names().
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values in order from get_parameter_names().
 
-        Returns:
+        Returns
+        -------
+        dict[str, float]
             Dictionary mapping parameter names to values.
         """
         names = self.get_parameter_names()
@@ -450,10 +527,14 @@ class DSCModel(ABC):
     def dict_to_params(self, param_dict: dict[str, float]) -> list[float]:
         """Convert parameter dictionary to array.
 
-        Args:
-            param_dict: Dictionary mapping parameter names to values.
+        Parameters
+        ----------
+        param_dict : dict[str, float]
+            Dictionary mapping parameter names to values.
 
-        Returns:
+        Returns
+        -------
+        list[float]
             List of parameter values in order from get_parameter_names().
         """
         names = self.get_parameter_names()

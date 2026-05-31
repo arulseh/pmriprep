@@ -39,12 +39,18 @@ def compute_iauc(
 
     Integrates concentration from t=0 up to cutoff_s seconds.
 
-    Args:
-        concentration: 4D concentration data (x, y, z, time) in mM.
-        time_points: 1D time array in minutes.
-        cutoff_s: Integration cutoff in seconds.
+    Parameters
+    ----------
+    concentration : numpy.ndarray
+        4D concentration data (x, y, z, time) in mM.
+    time_points : numpy.ndarray
+        1D time array in minutes.
+    cutoff_s : float
+        Integration cutoff in seconds.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         3D IAUC map (mM·min).
     """
     cutoff_min = cutoff_s / 60.0
@@ -74,13 +80,19 @@ def compute_peak_enhancement(
     Concentration has baseline ~0 by definition, causing division by
     near-zero and overflow.
 
-    Args:
-        signal_data: 4D raw signal data (x, y, z, time).
-        baseline_frames: Number of pre-contrast baseline frames.
-        max_cap: Maximum enhancement percentage (default 5000%).
-            No tissue produces >5000% signal enhancement.
+    Parameters
+    ----------
+    signal_data : numpy.ndarray
+        4D raw signal data (x, y, z, time).
+    baseline_frames : int, optional
+        Number of pre-contrast baseline frames.
+    max_cap : float, optional
+        Maximum enhancement percentage (default 5000%).
+        No tissue produces >5000% signal enhancement.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         3D peak enhancement percentage map.
     """
     baseline_mean = np.mean(signal_data[..., :baseline_frames], axis=-1)
@@ -100,11 +112,16 @@ def compute_time_to_peak(
 ) -> npt.NDArray[np.floating]:
     """Compute time of maximum enhancement in seconds.
 
-    Args:
-        concentration: 4D concentration data (x, y, z, time) in mM.
-        time_points: 1D time array in minutes.
+    Parameters
+    ----------
+    concentration : numpy.ndarray
+        4D concentration data (x, y, z, time) in mM.
+    time_points : numpy.ndarray
+        1D time array in minutes.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         3D time-to-peak map in seconds.
     """
     peak_indices = np.argmax(concentration, axis=-1)
@@ -130,18 +147,27 @@ def compute_signal_enhancement_ratio(
     length, so the metric is valid for both short (<6 min) and long (>10 min)
     acquisitions.
 
-    Args:
-        concentration: 4D concentration data (x, y, z, time) in mM.
-        time_points: 1D time array in minutes.
-        bolus_arrival_frame: Frame index of bolus arrival.
-        early_offset: (start, end) in minutes post-bolus for early phase.
-        late_fraction: Fraction of post-bolus duration for late window
-            (capped at 5 min for very long acquisitions).
-        max_cap: Maximum SER value (default 10.0). Concentration-based SER
-            can diverge when late-phase concentration is near zero; values
-            above this cap are clamped.
+    Parameters
+    ----------
+    concentration : numpy.ndarray
+        4D concentration data (x, y, z, time) in mM.
+    time_points : numpy.ndarray
+        1D time array in minutes.
+    bolus_arrival_frame : int, optional
+        Frame index of bolus arrival.
+    early_offset : tuple of (float, float), optional
+        (start, end) in minutes post-bolus for early phase.
+    late_fraction : float, optional
+        Fraction of post-bolus duration for late window
+        (capped at 5 min for very long acquisitions).
+    max_cap : float, optional
+        Maximum SER value (default 10.0). Concentration-based SER
+        can diverge when late-phase concentration is near zero; values
+        above this cap are clamped.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         3D SER map, clamped to [0, max_cap]. Returns ones where windows
         have insufficient frames.
     """
@@ -189,15 +215,24 @@ def compute_wash_in_slope(
     Uses Savitzky-Golay smoothing followed by finite differences to estimate
     the maximum rate of concentration increase between bolus arrival and peak.
 
-    Args:
-        concentration: 4D concentration data (x, y, z, time) in mM.
-        time_points: 1D time array in minutes.
-        bolus_arrival_frame: Frame index of bolus arrival.
-        volume_tr_s: Volume TR in seconds (for temporal resolution gating).
-        savgol_window: Savitzky-Golay filter window length.
-        savgol_polyorder: Savitzky-Golay polynomial order.
+    Parameters
+    ----------
+    concentration : numpy.ndarray
+        4D concentration data (x, y, z, time) in mM.
+    time_points : numpy.ndarray
+        1D time array in minutes.
+    bolus_arrival_frame : int, optional
+        Frame index of bolus arrival.
+    volume_tr_s : float or None, optional
+        Volume TR in seconds (for temporal resolution gating).
+    savgol_window : int, optional
+        Savitzky-Golay filter window length.
+    savgol_polyorder : int, optional
+        Savitzky-Golay polynomial order.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         3D wash-in slope map (mM/min). NaN where slope is unreliable.
     """
     spatial_shape = concentration.shape[:3]
@@ -277,15 +312,24 @@ def compute_wash_out_slope(
     Uses a TTP-relative window (per-voxel) for regression. Fully vectorized
     via 4D boolean mask broadcasting.
 
-    Args:
-        concentration: 4D concentration data (x, y, z, time) in mM.
-        time_points: 1D time array in minutes.
-        volume_tr_s: Volume TR in seconds. If None, estimated from time_points.
-        post_peak_start_s: Start of washout window relative to TTP (seconds).
-        post_peak_end_s: End of washout window relative to TTP (seconds).
-        min_points: Minimum points required for regression.
+    Parameters
+    ----------
+    concentration : numpy.ndarray
+        4D concentration data (x, y, z, time) in mM.
+    time_points : numpy.ndarray
+        1D time array in minutes.
+    volume_tr_s : float or None, optional
+        Volume TR in seconds. If None, estimated from time_points.
+    post_peak_start_s : float, optional
+        Start of washout window relative to TTP (seconds).
+    post_peak_end_s : float, optional
+        End of washout window relative to TTP (seconds).
+    min_points : int, optional
+        Minimum points required for regression.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         3D wash-out slope map (mM/min, signed: negative=washout).
         NaN where insufficient data points.
     """
@@ -343,15 +387,22 @@ def compute_bolus_arrival_time(
     iterating over all brain voxels. Low-confidence or default-method
     results are set to NaN.
 
-    Args:
-        concentration: 4D concentration data (x, y, z, time) in mM.
-        time_points: 1D time array in minutes.
-        baseline_frames: Number of pre-contrast baseline frames.
-        brain_mask: Optional 3D brain mask. When provided, voxels where
-            mask <= 0 are skipped (remain NaN), avoiding ~50-70% of
-            the per-voxel loop iterations.
+    Parameters
+    ----------
+    concentration : numpy.ndarray
+        4D concentration data (x, y, z, time) in mM.
+    time_points : numpy.ndarray
+        1D time array in minutes.
+    baseline_frames : int, optional
+        Number of pre-contrast baseline frames.
+    brain_mask : numpy.ndarray, optional
+        Optional 3D brain mask. When provided, voxels where
+        mask <= 0 are skipped (remain NaN), avoiding ~50-70% of
+        the per-voxel loop iterations.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         3D BAT map in seconds. NaN for low-confidence detections.
     """
     from pmriprep.utils.dce_bat import detect_bolus_arrival_time
@@ -410,12 +461,18 @@ def compute_curve_type(
     - Type II (plateau): persistent_threshold <= SER <= washout_threshold
     - Type III (washout): SER > washout_threshold
 
-    Args:
-        ser: 3D Signal Enhancement Ratio map.
-        persistent_threshold: SER below this is persistent (default 0.9).
-        washout_threshold: SER above this is washout (default 1.1).
+    Parameters
+    ----------
+    ser : numpy.ndarray
+        3D Signal Enhancement Ratio map.
+    persistent_threshold : float, optional
+        SER below this is persistent (default 0.9).
+    washout_threshold : float, optional
+        SER above this is washout (default 1.1).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         3D int8 map: 0=unclassified (NaN SER), 1=persistent,
         2=plateau, 3=washout.
     """

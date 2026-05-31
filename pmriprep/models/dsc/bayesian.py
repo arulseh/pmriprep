@@ -8,8 +8,9 @@ Provides Bayesian fitting methods for DSC models including:
 The BayesianDSCFitter class works with any model implementing the DSCModel
 interface, including VascularModel and CPIModel.
 
-References:
-    Mouridsen K, Friston K, Hajnal N, et al. (2006).
+References
+----------
+    Mouridsen K, Friston K, Hjort N, et al. (2006).
     "Bayesian estimation of cerebral perfusion using a physiological
     model of microvasculature." NeuroImage 33(2):570-579.
 
@@ -64,14 +65,16 @@ class BayesianDSCFitter:
     The fitter constructs Gaussian priors from the model's parameter definitions,
     using the typical_range to determine prior mean and standard deviation.
 
-    Example:
-        >>> model = VascularModel()
-        >>> fitter = BayesianDSCFitter(model)
-        >>> result = fitter.fit_map(concentration, aif, time_points)
-        >>> print(result.parameters)
-        >>> print(result.uncertainties)
+    Examples
+    --------
+        >>> model = VascularModel()  # doctest: +SKIP
+        >>> fitter = BayesianDSCFitter(model)  # doctest: +SKIP
+        >>> result = fitter.fit_map(concentration, aif, time_points)  # doctest: +SKIP
+        >>> print(result.parameters)  # doctest: +SKIP
+        >>> print(result.uncertainties)  # doctest: +SKIP
 
-    Attributes:
+    Attributes
+    ----------
         model: DSC model to fit (VascularModel, CPIModel, etc.)
         priors: Gaussian priors for each parameter
         noise_std: Assumed noise standard deviation (estimated if not provided)
@@ -84,10 +87,13 @@ class BayesianDSCFitter:
     ) -> None:
         """Initialize the Bayesian fitter.
 
-        Args:
-            model: DSC model implementing the DSCModel interface.
-            noise_std: Optional noise standard deviation. If None, will be
-                estimated from the data during fitting.
+        Parameters
+        ----------
+        model : DSCModel
+            DSC model implementing the DSCModel interface.
+        noise_std : float or None, optional
+            Optional noise standard deviation. If None, will be
+            estimated from the data during fitting.
         """
         self.model = model
         self.noise_std = noise_std
@@ -107,13 +113,19 @@ class BayesianDSCFitter:
     ) -> None:
         """Validate input arrays for NaN/Inf values and length consistency.
 
-        Args:
-            concentration: Measured concentration time course.
-            aif: Arterial input function.
-            time_points: Time points (seconds).
+        Parameters
+        ----------
+        concentration : npt.NDArray[np.floating]
+            Measured concentration time course.
+        aif : npt.NDArray[np.floating]
+            Arterial input function.
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds).
 
-        Raises:
-            ValueError: If inputs contain NaN/Inf or lengths don't match.
+        Raises
+        ------
+        ValueError
+            If inputs contain NaN/Inf or lengths don't match.
         """
         validate_bayesian_inputs(
             ("concentration", concentration),
@@ -131,11 +143,16 @@ class BayesianDSCFitter:
         Uses the standard deviation of the first few baseline frames
         as an estimate of measurement noise.
 
-        Args:
-            concentration: Measured concentration time course.
-            baseline_frames: Number of baseline frames to use.
+        Parameters
+        ----------
+        concentration : npt.NDArray[np.floating]
+            Measured concentration time course.
+        baseline_frames : int, optional
+            Number of baseline frames to use.
 
-        Returns:
+        Returns
+        -------
+        float
             Estimated noise standard deviation.
         """
         if len(concentration) < baseline_frames:
@@ -158,10 +175,14 @@ class BayesianDSCFitter:
         space, hard-clipped to parameter bounds.  Parameter transforms
         (LOG, LOG_LOGIT) are applied in VI/MAP fitting loops, not here.
 
-        Args:
-            params: Parameter values.
+        Parameters
+        ----------
+        params : npt.NDArray[np.floating]
+            Parameter values.
 
-        Returns:
+        Returns
+        -------
+        float
             Log prior probability (unnormalized).
         """
         lp = compute_log_prior(params, self.priors)
@@ -182,15 +203,24 @@ class BayesianDSCFitter:
         Assumes independent Gaussian noise on each time point, optionally
         weighted by per-frame motion weights.
 
-        Args:
-            params: Parameter values.
-            concentration: Measured concentration.
-            aif: Arterial input function.
-            time_points: Time points (seconds).
-            noise_std: Noise standard deviation.
-            weights: Optional per-frame weights (1.0 = full, <1.0 = downweighted).
+        Parameters
+        ----------
+        params : npt.NDArray[np.floating]
+            Parameter values.
+        concentration : npt.NDArray[np.floating]
+            Measured concentration.
+        aif : npt.NDArray[np.floating]
+            Arterial input function.
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds).
+        noise_std : float
+            Noise standard deviation.
+        weights : npt.NDArray[np.floating] or None, optional
+            Optional per-frame weights (1.0 = full, <1.0 = downweighted).
 
-        Returns:
+        Returns
+        -------
+        float
             Log likelihood (unnormalized).
         """
         # Convert fitting-space params to model-space for tissue_curve.
@@ -229,15 +259,24 @@ class BayesianDSCFitter:
 
         log p(θ|y) ∝ log p(y|θ) + log p(θ)
 
-        Args:
-            params: Parameter values.
-            concentration: Measured concentration.
-            aif: Arterial input function.
-            time_points: Time points (seconds).
-            noise_std: Noise standard deviation.
-            weights: Optional per-frame motion weights.
+        Parameters
+        ----------
+        params : npt.NDArray[np.floating]
+            Parameter values.
+        concentration : npt.NDArray[np.floating]
+            Measured concentration.
+        aif : npt.NDArray[np.floating]
+            Arterial input function.
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds).
+        noise_std : float
+            Noise standard deviation.
+        weights : npt.NDArray[np.floating] or None, optional
+            Optional per-frame motion weights.
 
-        Returns:
+        Returns
+        -------
+        float
             Log posterior probability (unnormalized).
         """
         # Check bounds in fitting space
@@ -272,14 +311,20 @@ class BayesianDSCFitter:
         non-finite objective values), falls back to using prior curvature
         for those entries.
 
-        Args:
-            params: Parameter values at which to evaluate Hessian.
-            objective: Negative log posterior function.
-            relative_epsilon: Relative step size for finite differences.
-                Actual step for parameter i is max(relative_epsilon,
-                relative_epsilon * |params[i]|).
+        Parameters
+        ----------
+        params : npt.NDArray[np.floating]
+            Parameter values at which to evaluate Hessian.
+        objective : Callable[[npt.NDArray[np.floating]], float]
+            Negative log posterior function.
+        relative_epsilon : float, optional
+            Relative step size for finite differences.
+            Actual step for parameter i is max(relative_epsilon,
+            relative_epsilon * |params[i]|).
 
-        Returns:
+        Returns
+        -------
+        npt.NDArray[np.floating]
             Hessian matrix (n_params x n_params).
         """
         n = len(params)
@@ -349,14 +394,19 @@ class BayesianDSCFitter:
         Parameters and Hessian are in fitting space; names and bounds
         use fitting-space definitions.
 
-        Args:
-            params: MAP parameter estimates (fitting space).
-            objective: Negative log posterior function (fitting space).
+        Parameters
+        ----------
+        params : npt.NDArray[np.floating]
+            MAP parameter estimates (fitting space).
+        objective : Callable[[npt.NDArray[np.floating]], float]
+            Negative log posterior function (fitting space).
 
-        Returns:
-            Tuple of:
-                - uncertainties: dict mapping fitting param names to std deviations
-                - credible_intervals: dict mapping fitting param names to 95% CIs
+        Returns
+        -------
+        uncertainties : dict
+            dict mapping fitting param names to std deviations
+        credible_intervals : dict
+            dict mapping fitting param names to 95% CIs
         """
         fitting_defs = self.model.get_fitting_parameter_definitions()
         names = [p.name for p in fitting_defs]
@@ -411,11 +461,16 @@ class BayesianDSCFitter:
     ) -> dict[str, float]:
         """Compute goodness-of-fit metrics.
 
-        Args:
-            concentration: Measured concentration.
-            fitted_tissue: Model-predicted concentration.
+        Parameters
+        ----------
+        concentration : npt.NDArray[np.floating]
+            Measured concentration.
+        fitted_tissue : npt.NDArray[np.floating]
+            Model-predicted concentration.
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary with r_squared, rss, aic, bic.
         """
         return compute_goodness_of_fit(
@@ -438,17 +493,27 @@ class BayesianDSCFitter:
         Uncertainties are estimated using the Laplace approximation
         (inverse Hessian at the mode).
 
-        Args:
-            concentration: Measured tissue concentration curve.
-            aif: Arterial input function.
-            time_points: Time points (seconds).
-            max_iter: Maximum optimizer iterations.
-            compute_uncertainties: Whether to compute Laplace uncertainties.
-                Set to False to skip the expensive Hessian computation.
-            weights: Optional per-frame motion weights (1.0 = full weight).
-            sloppy: Use fast, low-quality settings for testing.
+        Parameters
+        ----------
+        concentration : npt.NDArray[np.floating]
+            Measured tissue concentration curve.
+        aif : npt.NDArray[np.floating]
+            Arterial input function.
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds).
+        max_iter : int, optional
+            Maximum optimizer iterations.
+        compute_uncertainties : bool, optional
+            Whether to compute Laplace uncertainties.
+            Set to False to skip the expensive Hessian computation.
+        weights : npt.NDArray[np.floating] or None, optional
+            Optional per-frame motion weights (1.0 = full weight).
+        sloppy : bool, optional
+            Use fast, low-quality settings for testing.
 
-        Returns:
+        Returns
+        -------
+        DSCFitResult
             DSCFitResult with parameters, uncertainties, and credible intervals.
         """
         if sloppy:
@@ -643,7 +708,7 @@ class BayesianDSCFitter:
         """Fit model using FABBER-style linearized Variational Bayes.
 
         Implements the linearized VB algorithm from Chappell et al. (2009,
-        IEEE TMI 28(1):94-104). At each iteration the forward model is
+        IEEE Trans Signal Process 57(1):223-236). At each iteration the forward model is
         linearized around the current posterior mean, enabling analytic
         Gaussian posterior updates. Noise precision is treated as a conjugate
         Gamma random variable.
@@ -651,25 +716,36 @@ class BayesianDSCFitter:
         This is ~125-500x faster than the previous black-box VI
         (90-180 forward model calls vs ~45,000).
 
-        Args:
-            concentration: Measured tissue concentration curve.
-            aif: Arterial input function.
-            time_points: Time points (seconds).
-            n_iterations: Maximum VB iterations (default 20).
-            noise_prior: Optional (c0, s0) Gamma prior on noise precision
-                tau = 1/sigma^2. If None, uses non-informative prior.
-                If noise_std was provided to the constructor, uses an
-                informative prior centered on that value.
-            weights: Optional per-frame motion weights (1.0 = full weight).
-            sloppy: Use fast, low-quality settings for testing.
+        Parameters
+        ----------
+        concentration : npt.NDArray[np.floating]
+            Measured tissue concentration curve.
+        aif : npt.NDArray[np.floating]
+            Arterial input function.
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds).
+        n_iterations : int, optional
+            Maximum VB iterations (default 20).
+        noise_prior : tuple[float, float] or None, optional
+            Optional (c0, s0) Gamma prior on noise precision
+            tau = 1/sigma^2. If None, uses non-informative prior.
+            If noise_std was provided to the constructor, uses an
+            informative prior centered on that value.
+        weights : npt.NDArray[np.floating] or None, optional
+            Optional per-frame motion weights (1.0 = full weight).
+        sloppy : bool, optional
+            Use fast, low-quality settings for testing.
 
-        Returns:
+        Returns
+        -------
+        DSCFitResult
             DSCFitResult with parameters, uncertainties, and credible intervals.
 
-        References:
+        References
+        ----------
             Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
             "Variational Bayesian Inference for a Nonlinear Forward Model."
-            IEEE Trans Med Imaging 28(1):94-104.
+            IEEE Trans Signal Process 57(1):223-236.
         """
         if sloppy:
             n_iterations = 8
@@ -1013,17 +1089,28 @@ class BayesianDSCFitter:
         Noise sigma is sampled as a free parameter (log_sigma) with a
         HalfNormal prior, following Gelman et al. (BDA3, Ch. 3).
 
-        Args:
-            concentration: Measured tissue concentration curve.
-            aif: Arterial input function.
-            time_points: Time points (seconds).
-            n_samples: Number of samples to draw (after burn-in).
-            n_walkers: Number of ensemble walkers (default: 2 * n_dims + 2).
-            n_burnin: Number of burn-in samples (default: n_samples // 2).
-            weights: Optional per-frame motion weights (1.0 = full weight).
-            sloppy: Use fast, low-quality settings for testing.
+        Parameters
+        ----------
+        concentration : npt.NDArray[np.floating]
+            Measured tissue concentration curve.
+        aif : npt.NDArray[np.floating]
+            Arterial input function.
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds).
+        n_samples : int, optional
+            Number of samples to draw (after burn-in).
+        n_walkers : int or None, optional
+            Number of ensemble walkers (default: 2 * n_dims + 2).
+        n_burnin : int or None, optional
+            Number of burn-in samples (default: n_samples // 2).
+        weights : npt.NDArray[np.floating] or None, optional
+            Optional per-frame motion weights (1.0 = full weight).
+        sloppy : bool, optional
+            Use fast, low-quality settings for testing.
 
-        Returns:
+        Returns
+        -------
+        DSCFitResult
             DSCFitResult with parameters, uncertainties, credible intervals,
             and MCMC diagnostics (R-hat, ESS).
         """
@@ -1230,25 +1317,40 @@ def fit_dsc_model(
     weights: npt.NDArray[np.floating] | None = None,
     sloppy: bool = False,
 ) -> DSCFitResult:
-    """Convenience function to fit a DSC model using specified Bayesian method.
+    """Fit a DSC model using specified Bayesian method.
 
-    Args:
-        model: DSC model to fit.
-        concentration: Measured tissue concentration.
-        aif: Arterial input function.
-        time_points: Time points (seconds).
-        method: Fitting method: 'map', 'vi', or 'mcmc'.
-        mcmc_samples: Number of MCMC samples (for method='mcmc').
-        noise_std: Optional noise standard deviation.
-        compute_uncertainties: Whether to compute Laplace uncertainties for MAP.
-        weights: Optional per-frame motion weights (1.0 = full weight).
-        sloppy: Use fast, low-quality settings for testing.
+    Parameters
+    ----------
+    model : DSCModel
+        DSC model to fit.
+    concentration : npt.NDArray[np.floating]
+        Measured tissue concentration.
+    aif : npt.NDArray[np.floating]
+        Arterial input function.
+    time_points : npt.NDArray[np.floating]
+        Time points (seconds).
+    method : str, optional
+        Fitting method: 'map', 'vi', or 'mcmc'.
+    mcmc_samples : int, optional
+        Number of MCMC samples (for method='mcmc').
+    noise_std : float or None, optional
+        Optional noise standard deviation.
+    compute_uncertainties : bool, optional
+        Whether to compute Laplace uncertainties for MAP.
+    weights : npt.NDArray[np.floating] or None, optional
+        Optional per-frame motion weights (1.0 = full weight).
+    sloppy : bool, optional
+        Use fast, low-quality settings for testing.
 
-    Returns:
+    Returns
+    -------
+    DSCFitResult
         DSCFitResult with fitted parameters and uncertainties.
 
-    Raises:
-        ValueError: If method is not recognized.
+    Raises
+    ------
+    ValueError
+        If method is not recognized.
     """
     fitter = BayesianDSCFitter(model, noise_std=noise_std)
 

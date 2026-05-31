@@ -4,7 +4,6 @@ This module implements automatic detection of available imaging modalities
 in a BIDS dataset and determines which pipeline components can run.
 """
 
-import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,21 +19,36 @@ logger = logging.getLogger("pmriprep.workflows.discovery")
 class ModalityAvailability:
     """Tracks availability of different imaging modalities.
 
-    Attributes:
-        t1w_pre: Path to pre-contrast T1w image, if available.
-        t1w_ce_gad: Path to contrast-enhanced T1w (GAD) image, if available.
-        t2w: Path to T2w image, if available.
-        flair: Path to pre-contrast FLAIR image, if available.
-        flair_postcon: Path to post-contrast FLAIR image, if available.
-        dsc: Path to DSC perfusion image, if available.
-        dce: Path to DCE perfusion image, if available.
-        vfa: List of paths to VFA (Variable Flip Angle) images for T1 mapping.
-        afi: List of paths to AFI (Actual Flip Angle Imaging) images for B1+ mapping.
-        b1_precomputed_file: Path to pre-computed B1+ flip angle map (e.g., tfl_b1map famp).
-        b1_nominal_prep_fa: Nominal preparation flip angle (degrees) from famp JSON sidecar.
-        b1_method_detected: Detected B1+ method ("afi" or "tfl_b1map"), if any.
-        dsc_n_volumes: Number of volumes in the DSC 4D series, if loaded.
-        dce_n_volumes: Number of volumes in the DCE 4D series, if loaded.
+    Attributes
+    ----------
+    t1w_pre : Path, optional
+        Path to pre-contrast T1w image, if available.
+    t1w_ce_gad : Path, optional
+        Path to contrast-enhanced T1w (GAD) image, if available.
+    t2w : Path, optional
+        Path to T2w image, if available.
+    flair : Path, optional
+        Path to pre-contrast FLAIR image, if available.
+    flair_postcon : Path, optional
+        Path to post-contrast FLAIR image, if available.
+    dsc : Path, optional
+        Path to DSC perfusion image, if available.
+    dce : Path, optional
+        Path to DCE perfusion image, if available.
+    vfa : list of Path
+        List of paths to VFA (Variable Flip Angle) images for T1 mapping.
+    afi : list of Path
+        List of paths to AFI (Actual Flip Angle Imaging) images for B1+ mapping.
+    b1_precomputed_file : Path, optional
+        Path to pre-computed B1+ flip angle map (e.g., tfl_b1map famp).
+    b1_nominal_prep_fa : float, optional
+        Nominal preparation flip angle (degrees) from famp JSON sidecar.
+    b1_method_detected : str, optional
+        Detected B1+ method ("afi" or "tfl_b1map"), if any.
+    dsc_n_volumes : int, optional
+        Number of volumes in the DSC 4D series, if loaded.
+    dce_n_volumes : int, optional
+        Number of volumes in the DCE 4D series, if loaded.
     """
 
     t1w_pre: Optional[Path] = None
@@ -62,14 +76,22 @@ class ModalityAvailability:
 class PipelineAvailability:
     """Tracks which pipelines can run based on available data.
 
-    Attributes:
-        anat: Whether anatomical pipeline can run (always True).
-        tumor_seg: Whether tumor segmentation can run.
-        dsc: Whether DSC perfusion pipeline can run.
-        dce: Whether DCE perfusion pipeline can run.
-        tumor_seg_reason: Reason why tumor segmentation cannot run, if applicable.
-        dsc_reason: Reason why DSC cannot run, if applicable.
-        dce_reason: Reason why DCE cannot run, if applicable.
+    Attributes
+    ----------
+    anat : bool
+        Whether anatomical pipeline can run (always True).
+    tumor_seg : bool
+        Whether tumor segmentation can run.
+    dsc : bool
+        Whether DSC perfusion pipeline can run.
+    dce : bool
+        Whether DCE perfusion pipeline can run.
+    tumor_seg_reason : str, optional
+        Reason why tumor segmentation cannot run, if applicable.
+    dsc_reason : str, optional
+        Reason why DSC cannot run, if applicable.
+    dce_reason : str, optional
+        Reason why DCE cannot run, if applicable.
     """
 
     anat: bool = True
@@ -85,11 +107,16 @@ class PipelineAvailability:
 class SessionData:
     """Complete data discovery result for a session.
 
-    Attributes:
-        subject: Subject ID (without 'sub-' prefix).
-        session: Session ID (without 'ses-' prefix), if applicable.
-        modalities: Available modalities.
-        pipelines: Available pipelines.
+    Attributes
+    ----------
+    subject : str
+        Subject ID (without 'sub-' prefix).
+    session : str, optional
+        Session ID (without 'ses-' prefix), if applicable.
+    modalities : ModalityAvailability
+        Available modalities.
+    pipelines : PipelineAvailability
+        Available pipelines.
     """
 
     subject: str
@@ -375,10 +402,14 @@ def _check_t1w_sequence_compatibility(
 def _classify_orientation(iop: List[float]) -> str:
     """Classify image orientation as axial, coronal, or sagittal.
 
-    Args:
-        iop: ImageOrientationPatientDICOM (6 direction cosines).
+    Parameters
+    ----------
+    iop : list of float
+        ImageOrientationPatientDICOM (6 direction cosines).
 
-    Returns:
+    Returns
+    -------
+    str
         One of "axial", "coronal", "sagittal".
     """
     # Normal vector = cross product of row and column direction cosines
@@ -684,7 +715,16 @@ def _classify_b1_data(
     honored. NIfTI shape inspection still uses nibabel (pybids exposes
     no shape API).
 
-    Returns:
+    Parameters
+    ----------
+    b1_files : list of Path
+        Candidate B1+ mapping files to classify.
+    layout : BIDSLayout
+        BIDS layout for metadata access (sidecar inheritance honored).
+
+    Returns
+    -------
+    dict
         Dict with keys: afi_mode ("precomputed", "4d", or None),
         b1_precomputed_file, b1_nominal_prep_fa, b1_method_detected,
         afi_4d_file, afi_tr1_ms, afi_tr2_ms, afi_flip_angle.
@@ -826,10 +866,14 @@ def _determine_pipeline_availability(modalities: ModalityAvailability) -> Pipeli
     - dsc: Requires DSC data
     - dce: Requires DCE data
 
-    Args:
-        modalities: Available modalities.
+    Parameters
+    ----------
+    modalities : ModalityAvailability
+        Available modalities.
 
-    Returns:
+    Returns
+    -------
+    PipelineAvailability
         Pipeline availability with reasons for unavailable pipelines.
     """
     pipelines = PipelineAvailability()
@@ -879,14 +923,21 @@ def discover_session_data(
 ) -> SessionData:
     """Discover available imaging modalities for a subject/session.
 
-    Args:
-        bids_dir: Path to the BIDS dataset root.
-        subject: Subject ID (without 'sub-' prefix).
-        session: Session ID (without 'ses-' prefix), optional.
-        layout: Pre-built ``BIDSLayout`` for the dataset. If ``None``,
-            built lazily; passing one in amortizes indexing cost.
+    Parameters
+    ----------
+    bids_dir : Path or str
+        Path to the BIDS dataset root.
+    subject : str
+        Subject ID (without 'sub-' prefix).
+    session : str, optional
+        Session ID (without 'ses-' prefix), optional.
+    layout : BIDSLayout, optional
+        Pre-built ``BIDSLayout`` for the dataset. If ``None``,
+        built lazily; passing one in amortizes indexing cost.
 
-    Returns:
+    Returns
+    -------
+    SessionData
         SessionData containing available modalities and runnable pipelines.
     """
     if layout is None:

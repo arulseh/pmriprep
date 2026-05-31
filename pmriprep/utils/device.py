@@ -10,10 +10,14 @@ logger = logging.getLogger(__name__)
 def resolve_device_uses_gpu(device_str: str) -> bool:
     """Resolve ``'auto'`` device and return whether it uses GPU.
 
-    Args:
-        device_str: Device string (``'auto'``, ``'cuda'``, ``'mps'``, or ``'cpu'``).
+    Parameters
+    ----------
+    device_str : str
+        Device string (``'auto'``, ``'cuda'``, ``'mps'``, or ``'cpu'``).
 
-    Returns:
+    Returns
+    -------
+    bool
         True if the resolved device is a GPU (CUDA or MPS).
     """
     if device_str == "auto":

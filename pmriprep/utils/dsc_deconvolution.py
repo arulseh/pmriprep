@@ -10,7 +10,8 @@ The deconvolution problem is:
 where R(t) is the residue function (impulse response), which encodes
 the tissue microvascular transit time distribution.
 
-References:
+References
+----------
     Østergaard et al. (1996) High resolution measurement of cerebral
     blood flow using intravascular tracer bolus passages. Part I.
     Magn Reson Med 36(5):715-725.
@@ -45,7 +46,8 @@ logger = logging.getLogger(__name__)
 class DeconvolutionResultBase:
     """Base result fields shared by all deconvolution methods.
 
-    Attributes:
+    Attributes
+    ----------
         residue: Residue function R(t).
         cbf: Cerebral blood flow, max(R(t)).
         cbv: Cerebral blood volume, integral of R(t).
@@ -60,10 +62,14 @@ class DeconvolutionResultBase:
     def get_tmax(self, dt: float = 1.0) -> float:
         """Get time to maximum of residue function.
 
-        Args:
-            dt: Time step in seconds (default 1.0 for frame units).
+        Parameters
+        ----------
+        dt : float
+            Time step in seconds (default 1.0 for frame units).
 
-        Returns:
+        Returns
+        -------
+        float
             Tmax in seconds (or frames if dt=1.0).
         """
         return float(np.argmax(self.residue)) * dt
@@ -73,7 +79,8 @@ class DeconvolutionResultBase:
 class DeconvolutionResult(DeconvolutionResultBase):
     """Result from standard SVD (sSVD) deconvolution.
 
-    Attributes:
+    Attributes
+    ----------
         threshold_used: SVD truncation threshold that was applied.
         n_singular_values: Number of singular values retained after truncation.
         condition_number: Condition number of the truncated matrix.
@@ -101,16 +108,22 @@ def build_toeplitz_matrix(
     points of each row's integration interval, and 1.0× to interior
     points.
 
-    Args:
-        aif: Arterial input function concentration curve, shape (n_timepoints,).
-        dt: Time step in seconds for integration.
+    Parameters
+    ----------
+    aif : np.ndarray
+        Arterial input function concentration curve, shape (n_timepoints,).
+    dt : float
+        Time step in seconds for integration.
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         Toeplitz matrix of shape (n_timepoints, n_timepoints).
 
-    References:
+    References
+    ----------
         Østergaard L, et al. Magn Reson Med. 1996;36(5):715-725.
-        Sourbron S, Luypaert R. Phys Med Biol. 2007;52:6761-6783.
+        Sourbron S, Luypaert R. Phys Med Biol. 2007;52:6761-6778.
     """
     from scipy.linalg import toeplitz  # type: ignore[import-untyped]
 
@@ -137,7 +150,7 @@ def svd_deconvolve_standard(
     threshold: float = DEFAULT_SVD_THRESHOLD,
     apply_non_negativity: bool = True,
 ) -> DeconvolutionResult:
-    """Standard SVD deconvolution (sSVD) using the Østergaard method.
+    """Perform standard SVD deconvolution (sSVD) using the Østergaard method.
 
     Performs deconvolution by constructing a Toeplitz convolution matrix
     from the AIF and solving via truncated SVD. Singular values below
@@ -151,35 +164,46 @@ def svd_deconvolve_standard(
 
     where A is the Toeplitz matrix built from AIF.
 
-    Args:
-        tissue_curve: Tissue concentration curve, shape (n_timepoints,).
-        aif: Arterial input function, shape (n_timepoints,).
-            Must have same length as tissue_curve.
-        dt: Time step in seconds. Default 1.0 gives results in frame units.
-            Provide actual TR for timing parameters (MTT, Tmax) in seconds.
-        threshold: SVD truncation threshold as fraction of maximum singular
-            value. Singular values below threshold × max(s) are set to zero.
-            Default is 0.2 (20% of max). Higher values = more regularization.
-        apply_non_negativity: If True, apply non-negativity constraint to
-            residue function by clipping negative values to zero.
-            Default is True.
+    Parameters
+    ----------
+    tissue_curve : np.ndarray
+        Tissue concentration curve, shape (n_timepoints,).
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,).
+        Must have same length as tissue_curve.
+    dt : float, optional
+        Time step in seconds. Default 1.0 gives results in frame units.
+        Provide actual TR for timing parameters (MTT, Tmax) in seconds.
+    threshold : float, optional
+        SVD truncation threshold as fraction of maximum singular
+        value. Singular values below threshold × max(s) are set to zero.
+        Default is 0.2 (20% of max). Higher values = more regularization.
+    apply_non_negativity : bool, optional
+        If True, apply non-negativity constraint to
+        residue function by clipping negative values to zero.
+        Default is True.
 
-    Returns:
+    Returns
+    -------
+    DeconvolutionResult
         DeconvolutionResult containing residue function and perfusion parameters.
 
-    Raises:
+    Raises
+    ------
         ValueError: If tissue_curve and aif have different lengths.
         ValueError: If arrays are empty.
         ValueError: If threshold is not in (0, 1).
 
-    Notes:
+    Notes
+    -----
         - CBF is extracted as max(R(t))
         - CBV is computed as integral of R(t) using trapezoidal rule
         - MTT = CBV / CBF (central volume theorem)
         - This method is NOT delay-insensitive; delays cause CBF underestimation
         - For delay-insensitive deconvolution, use svd_deconvolve_circulant()
 
-    References:
+    References
+    ----------
         Østergaard L, Weisskoff RM, Chesler DA, Gyldensted C, Rosen BR.
         High resolution measurement of cerebral blood flow using
         intravascular tracer bolus passages. Part I: Mathematical approach
@@ -276,17 +300,26 @@ def svd_deconvolve_standard_batch(
     Efficiently deconvolves multiple tissue curves by precomputing
     the SVD decomposition of the Toeplitz matrix once.
 
-    Args:
-        tissue_curves: Tissue concentration curves, shape (n_voxels, n_timepoints)
-            or (x, y, z, n_timepoints) for 4D data.
-        aif: Arterial input function, shape (n_timepoints,).
-        dt: Time step in seconds.
-        threshold: SVD truncation threshold (default 0.2).
-        apply_non_negativity: Apply non-negativity constraint on residue.
-        mask: Optional boolean mask of voxels to process. If None, process all.
-            Shape must match spatial dimensions of tissue_curves.
+    Parameters
+    ----------
+    tissue_curves : np.ndarray
+        Tissue concentration curves, shape (n_voxels, n_timepoints)
+        or (x, y, z, n_timepoints) for 4D data.
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,).
+    dt : float, optional
+        Time step in seconds.
+    threshold : float, optional
+        SVD truncation threshold (default 0.2).
+    apply_non_negativity : bool, optional
+        Apply non-negativity constraint on residue.
+    mask : np.ndarray, optional
+        Optional boolean mask of voxels to process. If None, process all.
+        Shape must match spatial dimensions of tissue_curves.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (residues, cbf, cbv, mtt) arrays with same spatial shape as input.
     """
     # Store original shape for reshaping output
@@ -386,7 +419,8 @@ def svd_deconvolve_standard_batch(
 class CirculantDeconvolutionResult(DeconvolutionResultBase):
     """Result from circulant SVD (cSVD) deconvolution.
 
-    Attributes:
+    Attributes
+    ----------
         delay: Estimated delay between AIF and tissue in seconds.
             Positive = tissue delayed relative to AIF.
             Negative = tissue arrives before AIF.
@@ -406,13 +440,17 @@ class CirculantDeconvolutionResult(DeconvolutionResultBase):
         """Get Tmax for cSVD (= delay).
 
         For cSVD, Tmax represents the time delay of the tissue residue
-        function relative to the AIF (Calamante, Stroke 2010). This is
+        function relative to the AIF (Calamante et al. Stroke 2010). This is
         the standard definition used in DEFUSE-3 and DAWN trials.
 
-        Args:
-            dt: Time step in seconds (default 1.0 for frame units).
+        Parameters
+        ----------
+        dt : float
+            Time step in seconds (default 1.0 for frame units).
 
-        Returns:
+        Returns
+        -------
+        float
             Tmax in seconds (or frames if dt=1.0).
         """
         return float(self.delay_frames) * dt
@@ -432,14 +470,20 @@ def build_block_circulant_matrix(
     The block-circulant matrix approach treats the convolution as circular,
     so that delays "wrap around" rather than causing boundary artifacts.
 
-    Args:
-        aif: Arterial input function concentration curve, shape (n_timepoints,).
-        dt: Time step in seconds for integration weighting.
+    Parameters
+    ----------
+    aif : np.ndarray
+        Arterial input function concentration curve, shape (n_timepoints,).
+    dt : float
+        Time step in seconds for integration weighting.
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         Block-circulant matrix of shape (2N, 2N) where N = len(aif).
 
-    References:
+    References
+    ----------
         Wu O, Østergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG.
         Tracer arrival timing-insensitive technique for estimating flow in
         MR perfusion-weighted imaging using singular value decomposition
@@ -483,31 +527,41 @@ def svd_deconvolve_circulant(
 
     where N is the original curve length and 2N is the padded length.
     Index 0 in the block-circulant residue corresponds to zero delay
-    (Wu et al. 2003, Eq. 5).
+    (Wu et al. 2003).
 
-    Args:
-        tissue_curve: Tissue concentration curve, shape (n_timepoints,).
-        aif: Arterial input function, shape (n_timepoints,).
-            Must have same length as tissue_curve.
-        dt: Time step in seconds. Default 1.0 gives delay in frame units.
-            For absolute timing, provide actual TR.
-        threshold: SVD truncation threshold as fraction of maximum singular
-            value. Singular values below threshold × max(s) are set to zero.
-            Default is 0.2 (20% of max). Higher values = more regularization.
-        apply_non_negativity: If True, apply non-negativity constraint to
-            residue function by clipping negative values to zero.
-            Default is True.
+    Parameters
+    ----------
+    tissue_curve : np.ndarray
+        Tissue concentration curve, shape (n_timepoints,).
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,).
+        Must have same length as tissue_curve.
+    dt : float, optional
+        Time step in seconds. Default 1.0 gives delay in frame units.
+        For absolute timing, provide actual TR.
+    threshold : float, optional
+        SVD truncation threshold as fraction of maximum singular
+        value. Singular values below threshold × max(s) are set to zero.
+        Default is 0.2 (20% of max). Higher values = more regularization.
+    apply_non_negativity : bool, optional
+        If True, apply non-negativity constraint to
+        residue function by clipping negative values to zero.
+        Default is True.
 
-    Returns:
+    Returns
+    -------
+    CirculantDeconvolutionResult
         CirculantDeconvolutionResult containing residue function, perfusion
         parameters, and estimated delay.
 
-    Raises:
+    Raises
+    ------
         ValueError: If tissue_curve and aif have different lengths.
         ValueError: If arrays are empty.
         ValueError: If threshold is not in (0, 1).
 
-    Notes:
+    Notes
+    -----
         - The residue function has length 2N, allowing delays from -N to +(N-1)
         - CBF is extracted as max(R(t))
         - CBV is computed as integral of R(t) using trapezoidal rule
@@ -515,7 +569,8 @@ def svd_deconvolve_circulant(
         - Delay is estimated from the position of max(R(t))
         - For large delays, consider if the delay is physiologically reasonable
 
-    References:
+    References
+    ----------
         Wu O, Østergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG.
         Tracer arrival timing-insensitive technique for estimating flow in
         MR perfusion-weighted imaging using singular value decomposition
@@ -634,17 +689,26 @@ def svd_deconvolve_circulant_batch(
     Efficiently deconvolves multiple tissue curves using the circulant SVD
     approach by precomputing the SVD decomposition once.
 
-    Args:
-        tissue_curves: Tissue concentration curves, shape (n_voxels, n_timepoints)
-            or (x, y, z, n_timepoints) for 4D data.
-        aif: Arterial input function, shape (n_timepoints,).
-        dt: Time step in seconds.
-        threshold: SVD truncation threshold (default 0.2).
-        apply_non_negativity: Apply non-negativity constraint on residue.
-        mask: Optional boolean mask of voxels to process. If None, process all.
-            Shape must match spatial dimensions of tissue_curves.
+    Parameters
+    ----------
+    tissue_curves : np.ndarray
+        Tissue concentration curves, shape (n_voxels, n_timepoints)
+        or (x, y, z, n_timepoints) for 4D data.
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,).
+    dt : float, optional
+        Time step in seconds.
+    threshold : float, optional
+        SVD truncation threshold (default 0.2).
+    apply_non_negativity : bool, optional
+        Apply non-negativity constraint on residue.
+    mask : np.ndarray, optional
+        Optional boolean mask of voxels to process. If None, process all.
+        Shape must match spatial dimensions of tissue_curves.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (residues, cbf, cbv, mtt, delay) arrays.
         - residues has shape (..., 2N) where N is the number of timepoints
         - cbf, cbv, mtt, delay have the same spatial shape as input
@@ -767,7 +831,8 @@ def svd_deconvolve_circulant_batch(
 class OscillationDeconvolutionResult(DeconvolutionResultBase):
     """Result from oscillation-index limited SVD (oSVD) deconvolution.
 
-    Attributes:
+    Attributes
+    ----------
         delay: Tracer arrival delay in seconds.
         delay_frames: Tracer arrival delay in frame units.
         oscillation_index: OI = (1/N) * sum|R(t+1) - R(t)| / max(R).
@@ -790,10 +855,14 @@ class OscillationDeconvolutionResult(DeconvolutionResultBase):
     def get_tmax(self, dt: float = 1.0) -> float:
         """Get time to maximum of residue function (delay-based).
 
-        Args:
-            dt: Time step in seconds (default 1.0 for frame units).
+        Parameters
+        ----------
+        dt : float
+            Time step in seconds (default 1.0 for frame units).
 
-        Returns:
+        Returns
+        -------
+        float
             Tmax in seconds (or frames if dt=1.0).
         """
         return float(self.delay_frames) * dt
@@ -814,14 +883,19 @@ def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
     Typical target: OI ≤ 0.065 provides good balance between noise suppression
     and preserving physiological detail.
 
-    Args:
-        residue: Residue function, shape (n_timepoints,).
+    Parameters
+    ----------
+    residue : np.ndarray
+        Residue function, shape (n_timepoints,).
 
-    Returns:
+    Returns
+    -------
+    float
         Oscillation index (dimensionless, typically in range 0-0.5).
         Returns 0.0 if residue is all zeros.
 
-    References:
+    References
+    ----------
         Wu O, Østergaard L, Korber M, Yenari M, Weisskoff RM, Sorensen AG.
         Oscillation index: a novel technique for measurement of cerebral
         blood flow using an oscillation-index-driven deconvolution method.
@@ -855,20 +929,28 @@ def _deconvolve_with_threshold(
     vh: npt.NDArray[np.floating],
     apply_non_negativity: bool,
 ) -> tuple[npt.NDArray[np.floating], float, int, float, int]:
-    """Helper: deconvolve with a given threshold using block-circulant SVD.
+    """Deconvolve with a given threshold using block-circulant SVD (helper).
 
     OI is computed on the raw (unclipped) causal residue per Wu 2003
     (MRM 50:164). The returned residue is clipped when
     apply_non_negativity is True, for downstream parameter extraction.
 
-    Args:
-        tissue_padded: Zero-padded tissue curve, length 2N.
-        n_original: Original (unpadded) number of timepoints N.
-        threshold: SVD truncation threshold (fraction of max singular value).
-        u, s, vh: Pre-computed SVD of block-circulant matrix.
-        apply_non_negativity: Whether to clip negative values.
+    Parameters
+    ----------
+    tissue_padded : np.ndarray
+        Zero-padded tissue curve, length 2N.
+    n_original : int
+        Original (unpadded) number of timepoints N.
+    threshold : float
+        SVD truncation threshold (fraction of max singular value).
+    u, s, vh : np.ndarray
+        Pre-computed SVD of block-circulant matrix.
+    apply_non_negativity : bool
+        Whether to clip negative values.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (residue, oscillation_index, n_retained,
         condition_number, peak_position).
     """
@@ -937,27 +1019,40 @@ def svd_deconvolve_oscillation(
     A linear search from low to high threshold finds the first (lowest)
     threshold that achieves OI <= oi_target.
 
-    Args:
-        tissue_curve: Tissue concentration curve, shape (n_timepoints,).
-        aif: Arterial input function, shape (n_timepoints,).
-            Must have same length as tissue_curve.
-        dt: Time step in seconds. Default 1.0 gives results in frame units.
-        oi_target: Target oscillation index threshold. Default is 0.065.
-        threshold_min: Minimum SVD threshold to consider. Default 0.01.
-        threshold_max: Maximum SVD threshold to consider. Default 0.50.
-        max_iterations: Number of evenly-spaced thresholds. Default 20.
-        apply_non_negativity: If True, clip negative residue values to zero.
+    Parameters
+    ----------
+    tissue_curve : np.ndarray
+        Tissue concentration curve, shape (n_timepoints,).
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,).
+        Must have same length as tissue_curve.
+    dt : float, optional
+        Time step in seconds. Default 1.0 gives results in frame units.
+    oi_target : float, optional
+        Target oscillation index threshold. Default is 0.065.
+    threshold_min : float, optional
+        Minimum SVD threshold to consider. Default 0.01.
+    threshold_max : float, optional
+        Maximum SVD threshold to consider. Default 0.50.
+    max_iterations : int, optional
+        Number of evenly-spaced thresholds. Default 20.
+    apply_non_negativity : bool, optional
+        If True, clip negative residue values to zero.
 
-    Returns:
+    Returns
+    -------
+    OscillationDeconvolutionResult
         OscillationDeconvolutionResult with 2N residue, delay, and
         perfusion parameters derived from the N causal points.
 
-    Raises:
+    Raises
+    ------
         ValueError: If tissue_curve and aif have different lengths.
         ValueError: If arrays are empty.
         ValueError: If oi_target is not positive.
 
-    References:
+    References
+    ----------
         Wu O, Ostergaard L, Weisskoff RM, et al. Tracer arrival
         timing-insensitive technique for estimating flow in MR
         perfusion-weighted imaging using singular value decomposition
@@ -1085,19 +1180,31 @@ def svd_deconvolve_oscillation_batch(
     Each voxel gets an individually optimized threshold via OI-based
     linear search. Returns 2N residues and delay maps.
 
-    Args:
-        tissue_curves: Tissue concentration curves, shape (n_voxels, n_timepoints)
-            or (x, y, z, n_timepoints) for 4D data.
-        aif: Arterial input function, shape (n_timepoints,).
-        dt: Time step in seconds.
-        oi_target: Target oscillation index threshold. Default 0.065.
-        threshold_min: Minimum SVD threshold. Default 0.01.
-        threshold_max: Maximum SVD threshold. Default 0.50.
-        max_iterations: Number of linear search steps per voxel. Default 20.
-        apply_non_negativity: Apply non-negativity constraint on residue.
-        mask: Optional boolean mask of voxels to process.
+    Parameters
+    ----------
+    tissue_curves : np.ndarray
+        Tissue concentration curves, shape (n_voxels, n_timepoints)
+        or (x, y, z, n_timepoints) for 4D data.
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,).
+    dt : float, optional
+        Time step in seconds.
+    oi_target : float, optional
+        Target oscillation index threshold. Default 0.065.
+    threshold_min : float, optional
+        Minimum SVD threshold. Default 0.01.
+    threshold_max : float, optional
+        Maximum SVD threshold. Default 0.50.
+    max_iterations : int, optional
+        Number of linear search steps per voxel. Default 20.
+    apply_non_negativity : bool, optional
+        Apply non-negativity constraint on residue.
+    mask : np.ndarray, optional
+        Optional boolean mask of voxels to process.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (residues, cbf, cbv, mtt, oscillation_index, threshold_used,
         delay) arrays. Residues have time dimension 2N. All spatial arrays
         match the input spatial shape.
@@ -1219,7 +1326,8 @@ class TikhonovDeconvolutionResult(DeconvolutionResultBase):
     (Hansen 1998). Replaces the legacy zeroth-order + GCV implementation
     that failed on noisy DSC data.
 
-    Attributes:
+    Attributes
+    ----------
         lambda_optimal: λ at the L-curve corner (or fallback default).
         residual_norm: ||A·r - C||² at the unclipped solution.
         solution_norm: ||L·r||² at the unclipped solution (where L is
@@ -1332,27 +1440,36 @@ def tikhonov_deconvolve(
     sweep λ on a log grid, record (||A·r_λ - C||, ||L·r_λ||), find the
     point of maximum curvature in log-log space.
 
-    Args:
-        tissue_curve: Tissue concentration curve, shape (n_timepoints,).
-        aif: Arterial input function, shape (n_timepoints,). Must match
-            ``tissue_curve`` length.
-        dt: Frame period in seconds. Default 1.0 gives frame-unit timings;
-            provide the actual TR for MTT/Tmax in seconds.
-        lambda_min, lambda_max: Bounds of the log-spaced λ sweep,
-            **expressed as fractions of σ_max(A)** (the largest singular
-            value of the AIF Toeplitz matrix). The natural scale for
-            first-order Tikhonov is the operator norm; absolute λ values
-            are AIF-dependent and not portable. Defaults from
-            ``DEFAULT_LAMBDA_RANGE`` = (1e-3, 10.0).
-        apply_non_negativity: If True, clip negative residue values to zero
-            after solving.
+    Parameters
+    ----------
+    tissue_curve : np.ndarray
+        Tissue concentration curve, shape (n_timepoints,).
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,). Must match
+        ``tissue_curve`` length.
+    dt : float, optional
+        Frame period in seconds. Default 1.0 gives frame-unit timings;
+        provide the actual TR for MTT/Tmax in seconds.
+    lambda_min, lambda_max : float, optional
+        Bounds of the log-spaced λ sweep,
+        **expressed as fractions of σ_max(A)** (the largest singular
+        value of the AIF Toeplitz matrix). The natural scale for
+        first-order Tikhonov is the operator norm; absolute λ values
+        are AIF-dependent and not portable. Defaults from
+        ``DEFAULT_LAMBDA_RANGE`` = (1e-3, 10.0).
+    apply_non_negativity : bool, optional
+        If True, clip negative residue values to zero
+        after solving.
 
-    Returns:
+    Returns
+    -------
+    TikhonovDeconvolutionResult
         TikhonovDeconvolutionResult with the residue, perfusion parameters,
         chosen λ, and a flag indicating whether the L-curve had a detectable
         corner.
 
-    References:
+    References
+    ----------
         Hansen PC. Rank-Deficient and Discrete Ill-Posed Problems. SIAM, 1998.
         Wirestam R et al. MRM 43:691-700 (2000).
         Calamante F et al. MRM 50:1237-1247 (2003).
@@ -1470,18 +1587,28 @@ def tikhonov_deconvolve_batch(
     eigendecomposition are computed once and shared across all voxels;
     each voxel runs its own L-curve corner search.
 
-    Args:
-        tissue_curves: Tissue concentration curves, shape
-            (n_voxels, n_timepoints) or (x, y, z, n_timepoints) for 4D data.
-        aif: Arterial input function, shape (n_timepoints,).
-        dt: Time step in seconds.
-        lambda_min: Minimum λ value (log-grid lower bound).
-        lambda_max: Maximum λ value (log-grid upper bound).
-        apply_non_negativity: Apply non-negativity constraint on residue.
-        mask: Optional boolean mask of voxels to process. If None, process all.
-            Shape must match spatial dimensions of tissue_curves.
+    Parameters
+    ----------
+    tissue_curves : np.ndarray
+        Tissue concentration curves, shape
+        (n_voxels, n_timepoints) or (x, y, z, n_timepoints) for 4D data.
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,).
+    dt : float, optional
+        Time step in seconds.
+    lambda_min : float, optional
+        Minimum λ value (log-grid lower bound).
+    lambda_max : float, optional
+        Maximum λ value (log-grid upper bound).
+    apply_non_negativity : bool, optional
+        Apply non-negativity constraint on residue.
+    mask : np.ndarray, optional
+        Optional boolean mask of voxels to process. If None, process all.
+        Shape must match spatial dimensions of tissue_curves.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (residues, cbf, cbv, mtt, lambda_optimal, corner_found_map)
         arrays. All spatial outputs share the input spatial shape (excluding
         time). corner_found_map is True where L-curve found a corner; False

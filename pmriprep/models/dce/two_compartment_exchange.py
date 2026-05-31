@@ -13,11 +13,12 @@ The model describes contrast agent kinetics in terms of:
 The tissue concentration is computed using an analytical solution based on
 eigenvalue decomposition of the two-compartment system.
 
-References:
+References
+----------
     Sourbron SP, Buckley DL. On the scope and interpretation of the Tofts
     models for DCE-MRI. Magn Reson Med. 2011;66(3):735-745.
 
-    Brix G, Kiessling F, Luecht R, et al. Microcirculation and microvasculature
+    Brix G, Kiessling F, Lucht R, et al. Microcirculation and microvasculature
     in breast tumors: pharmacokinetic analysis of dynamic MR image series.
     Magn Reson Med. 2004;52(2):420-429.
 """
@@ -71,7 +72,8 @@ class TwoCompartmentExchangeModel(PKModel):
     where K1, K2 are eigenvalues and A1, A2 are coefficients derived from
     the model parameters.
 
-    Parameters:
+    Parameters
+    ----------
         Fp: Plasma flow rate (mL/min/100mL), 0-200
             - Represents blood plasma flow through the tissue
             - Higher values indicate more perfusion
@@ -112,11 +114,12 @@ class TwoCompartmentExchangeModel(PKModel):
         - Permeability-limited (Fp >> PS): Ktrans ≈ PS
         - Mixed regime: Ktrans = E × Fp
 
-    References:
+    References
+    ----------
         Sourbron SP, Buckley DL. On the scope and interpretation of the Tofts
         models for DCE-MRI. Magn Reson Med. 2011;66(3):735-745.
 
-        Brix G, Kiessling F, Luecht R, et al. Microcirculation and
+        Brix G, Kiessling F, Lucht R, et al. Microcirculation and
         microvasculature in breast tumors: pharmacokinetic analysis of
         dynamic MR image series. Magn Reson Med. 2004;52(2):420-429.
     """
@@ -134,7 +137,9 @@ class TwoCompartmentExchangeModel(PKModel):
     def get_parameter_definitions(self) -> Sequence[ModelParameter]:
         """Get parameter definitions for 2CXM model.
 
-        Returns:
+        Returns
+        -------
+        Sequence[ModelParameter]
             List of four ModelParameter objects:
                 - Fp: plasma flow rate
                 - PS: permeability-surface area product
@@ -187,12 +192,18 @@ class TwoCompartmentExchangeModel(PKModel):
         Uses peak ratio for vp, early slope for PS, and late decay for ve.
         Fp is estimated from the initial uptake rate.
 
-        Args:
-            tissue_curve: Observed tissue concentration C_t(t).
-            aif: Arterial input function Cp(t).
-            time_points: Time points in minutes.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration C_t(t).
+        aif : np.ndarray
+            Arterial input function Cp(t).
+        time_points : np.ndarray
+            Time points in minutes.
 
-        Returns:
+        Returns
+        -------
+        list of float
             List of [Fp_init, PS_init, ve_init, vp_init].
         """
         try:
@@ -259,13 +270,20 @@ class TwoCompartmentExchangeModel(PKModel):
         where A is the system matrix. The eigenvalues of A give the decay
         rates K1 and K2, and the eigenvectors give the coefficients A1 and A2.
 
-        Args:
-            fp: Plasma flow rate (mL/min/100mL)
-            ps: Permeability-surface area product (mL/min/100mL)
-            ve: Extravascular extracellular volume fraction
-            vp: Plasma volume fraction
+        Parameters
+        ----------
+        fp : float
+            Plasma flow rate (mL/min/100mL)
+        ps : float
+            Permeability-surface area product (mL/min/100mL)
+        ve : float
+            Extravascular extracellular volume fraction
+        vp : float
+            Plasma volume fraction
 
-        Returns:
+        Returns
+        -------
+        tuple
             Tuple of (K1, K2, A1, A2) where:
                 K1, K2: Eigenvalues (decay rates, min⁻¹)
                 A1, A2: Coefficients for exponential terms
@@ -353,12 +371,18 @@ class TwoCompartmentExchangeModel(PKModel):
         where ⊗ denotes convolution, and K1, K2, A1, A2 are computed from
         the model parameters using eigenvalue decomposition.
 
-        Args:
-            params: Parameter values [Fp, PS, ve, vp].
-            aif: Arterial input function plasma concentration values Ca(t) in mM.
-            time_points: Time points (minutes) at which to evaluate C_t.
+        Parameters
+        ----------
+        params : ParamsType
+            Parameter values [Fp, PS, ve, vp].
+        aif : np.ndarray
+            Arterial input function plasma concentration values Ca(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes) at which to evaluate C_t.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Tissue concentration values C_t(t) at each time point in mM.
         """
         fp = params[0]
@@ -400,10 +424,14 @@ class TwoCompartmentExchangeModel(PKModel):
         If the sum exceeds 1.0, scales both ve and vp proportionally
         to satisfy the constraint while maintaining their ratio.
 
-        Args:
-            params: Parameter values [Fp, PS, ve, vp].
+        Parameters
+        ----------
+        params : ParamsType
+            Parameter values [Fp, PS, ve, vp].
 
-        Returns:
+        Returns
+        -------
+        tuple
             Tuple of (Fp, PS, ve, vp) with constraint satisfied.
         """
         fp = params[0]
@@ -435,15 +463,23 @@ class TwoCompartmentExchangeModel(PKModel):
         On TRF failure, parameters are zeroed (no fallback optimizer).
         Enforces the constraint ve + vp <= 1.0 after fitting.
 
-        Args:
-            tissue_curve: Observed tissue concentration values C_t(t) in mM.
-            aif: Arterial input function plasma concentration values Ca(t) in mM.
-            time_points: Time points (minutes) corresponding to measurements.
-            initial_guess: Optional initial parameter values [Fp, PS, ve, vp].
-                If None, uses data-driven estimate or default.
-            weights: Optional per-frame weights for motion-weighted fitting.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration values C_t(t) in mM.
+        aif : np.ndarray
+            Arterial input function plasma concentration values Ca(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes) corresponding to measurements.
+        initial_guess : Sequence[float], optional
+            Optional initial parameter values [Fp, PS, ve, vp].
+            If None, uses data-driven estimate or default.
+        weights : np.ndarray, optional
+            Optional per-frame weights for motion-weighted fitting.
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult containing fitted parameters, uncertainties, and quality flag.
         """
         n_obs = len(tissue_curve)
@@ -561,16 +597,25 @@ class TwoCompartmentExchangeModel(PKModel):
         Free parameters are [Fp, PS, ve] with vp held constant.
         The ve upper bound is adjusted so that ve + fixed_vp <= 1.0.
 
-        Args:
-            tissue_curve: Observed tissue concentration values C_t(t) in mM.
-            aif: Arterial input function plasma concentration values Cp(t) in mM.
-            time_points: Time points (minutes) corresponding to measurements.
-            fixed_vp: Fixed plasma volume fraction from DSC CBV.
-            initial_guess: Optional initial values [Fp, PS, ve].
-                If None, uses parameter definition prior means.
-            weights: Optional per-frame weights for motion-weighted fitting.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration values C_t(t) in mM.
+        aif : np.ndarray
+            Arterial input function plasma concentration values Cp(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes) corresponding to measurements.
+        fixed_vp : float
+            Fixed plasma volume fraction from DSC CBV.
+        initial_guess : Sequence[float], optional
+            Optional initial values [Fp, PS, ve].
+            If None, uses parameter definition prior means.
+        weights : np.ndarray, optional
+            Optional per-frame weights for motion-weighted fitting.
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult with n_parameters=3 and fitting_method='nlls_constrained_vp'.
         """
         n_obs = len(tissue_curve)
@@ -663,10 +708,14 @@ class TwoCompartmentExchangeModel(PKModel):
             Ktrans = E × Fp: Volume transfer constant (min⁻¹)
             kep = Ktrans / ve: Efflux rate constant (min⁻¹)
 
-        Args:
-            params: Fitted parameter values [Fp, PS, ve, vp].
+        Parameters
+        ----------
+        params : ParamsType
+            Fitted parameter values [Fp, PS, ve, vp].
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary with 'E', 'Ktrans', and 'kep' values.
         """
         fp = params[0]

@@ -49,26 +49,39 @@ def generate_xval_plot(
 ) -> str:
     """Generate a 3-panel cross-validation QC figure.
 
-    Args:
-        vp_data: 3D vp map (fraction, 0-1).
-        cbv_data: 3D CBV map. If ``use_ncbv_scale=False`` (default), treated
-            as absolute/relative CBV in mL/100g. If True, treated as
-            dimensionless NAWM-normalized CBV (nCBV) and the axes, filtering
-            bounds, identity line and ratio map are switched accordingly.
-        mask: 3D brain mask.
-        validation_result: Validation result dict from validate_vp_cbv.
-        subject_id: BIDS subject ID.
-        session_id: BIDS session ID.
-        output_path: Output PNG path. If None, uses cwd.
-        hematocrit: Hematocrit for unit conversion (absolute-CBV path only).
-        model_selection: Optional 3D model selection map (int8).
-            When provided, scatter points are colored by model
-            (0=unfitted, 1=Patlak, 2=Tofts, 3=ExtTofts, 4=2CXM).
-        use_ncbv_scale: When True, plot with the nCBV-anchored expected
-            ratio (NAWM_VP_REFERENCE ≈ 0.02) and dimensionless axes to match
-            the validation metrics computed under ``use_ncbv_scale=True``.
+    Parameters
+    ----------
+    vp_data : npt.NDArray[Any]
+        3D vp map (fraction, 0-1).
+    cbv_data : npt.NDArray[Any]
+        3D CBV map. If ``use_ncbv_scale=False`` (default), treated
+        as absolute/relative CBV in mL/100g. If True, treated as
+        dimensionless NAWM-normalized CBV (nCBV) and the axes, filtering
+        bounds, identity line and ratio map are switched accordingly.
+    mask : npt.NDArray[Any]
+        3D brain mask.
+    validation_result : dict[str, Any]
+        Validation result dict from validate_vp_cbv.
+    subject_id : str, optional
+        BIDS subject ID.
+    session_id : str, optional
+        BIDS session ID.
+    output_path : str, optional
+        Output PNG path. If None, uses cwd.
+    hematocrit : float, optional
+        Hematocrit for unit conversion (absolute-CBV path only).
+    model_selection : npt.NDArray[Any], optional
+        Optional 3D model selection map (int8).
+        When provided, scatter points are colored by model
+        (0=unfitted, 1=Patlak, 2=Tofts, 3=ExtTofts, 4=2CXM).
+    use_ncbv_scale : bool, optional
+        When True, plot with the nCBV-anchored expected
+        ratio (NAWM_VP_REFERENCE ≈ 0.02) and dimensionless axes to match
+        the validation metrics computed under ``use_ncbv_scale=True``.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to saved PNG file.
     """
     import matplotlib

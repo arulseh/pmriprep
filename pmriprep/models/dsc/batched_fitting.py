@@ -10,10 +10,11 @@ Supported models:
     Vectorized Fritsch-Carlson PCHIP on CPU + shared Toeplitz matmul.
 - **Vascular**: Gamma-variate residue with FFT convolution + delay shift.
 
-References:
+References
+----------
     Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
     Variational Bayesian Inference for a Nonlinear Forward Model.
-    IEEE Trans Med Imaging 28(1):94-104.
+    IEEE Trans Signal Process 57(1):223-236.
 
     Mouridsen K, Friston K, Hjort N, et al. (2006). Bayesian estimation
     of cerebral perfusion using a physiological model of microvasculature.
@@ -58,7 +59,8 @@ _EPSILON_NUMERICAL: Final[float] = 1e-30
 class DSCBatchedFitResult:
     """Result from DSC batched fitting.
 
-    Attributes:
+    Attributes
+    ----------
         params: Parameter arrays, param_name -> (N,).
         r_squared: R-squared values, shape (N,).
         converged: Convergence flags, shape (N,).
@@ -101,15 +103,24 @@ def batched_vascular_forward(
     Computes tissue concentration via FFT convolution of AIF with
     gamma-variate residue function, with post-hoc delay shift.
 
-    Args:
-        cbf: CBF values, shape (N,).
-        alpha: Gamma shape, shape (N,).
-        beta: Gamma scale (seconds), shape (N,).
-        delay: Bolus arrival delay (seconds), shape (N,).
-        aif: Arterial input function, shape (T,).
-        time_points: Time points (seconds), shape (T,).
+    Parameters
+    ----------
+    cbf : npt.NDArray[np.floating]
+        CBF values, shape (N,).
+    alpha : npt.NDArray[np.floating]
+        Gamma shape, shape (N,).
+    beta : npt.NDArray[np.floating]
+        Gamma scale (seconds), shape (N,).
+    delay : npt.NDArray[np.floating]
+        Bolus arrival delay (seconds), shape (N,).
+    aif : npt.NDArray[np.floating]
+        Arterial input function, shape (T,).
+    time_points : npt.NDArray[np.floating]
+        Time points (seconds), shape (T,).
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Tissue concentration curves, shape (N, T).
     """
     n_voxels = len(cbf)
@@ -186,13 +197,19 @@ def _append_terminal_anchor(
     Mirrors FABBER's CPI boundary conditions: prepend (t=0, amp=1) when the
     first CP sits beyond t=0, and append (t_terminal, amp=0).
 
-    Args:
-        cp_times: Control point times, shape (K,).
-        cp_vals: Control point values, shape (N, K).
-        t_terminal: Optional explicit terminal time. If None, defaults to
-            ``cp_times[-1] + (cp_times[-1] - cp_times[-2])``.
+    Parameters
+    ----------
+    cp_times : npt.NDArray[np.floating]
+        Control point times, shape (K,).
+    cp_vals : npt.NDArray[np.floating]
+        Control point values, shape (N, K).
+    t_terminal : float or None, optional
+        Optional explicit terminal time. If None, defaults to
+        ``cp_times[-1] + (cp_times[-1] - cp_times[-2])``.
 
-    Returns:
+    Returns
+    -------
+    tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Extended (cp_times, cp_vals) with anchors applied.
     """
     if t_terminal is None:
@@ -218,11 +235,16 @@ def _append_terminal_anchor_per_voxel(
 ) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
     """Per-voxel variant of ``_append_terminal_anchor`` (for ``infer_cpt``).
 
-    Args:
-        cp_times: Control point times per voxel, shape (N, K).
-        cp_vals: Control point values, shape (N, K).
+    Parameters
+    ----------
+    cp_times : npt.NDArray[np.floating]
+        Control point times per voxel, shape (N, K).
+    cp_vals : npt.NDArray[np.floating]
+        Control point values, shape (N, K).
 
-    Returns:
+    Returns
+    -------
+    tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Extended (cp_times, cp_vals) each shape (N, K+2): prepended (0, 1)
         and appended (t_terminal, 0) per voxel.
     """
@@ -258,17 +280,26 @@ def batched_cpi_forward(
     are interpreted as log-spacings between CPs (FABBER ``infer-cpt``)
     and per-voxel CP times are reconstructed via cumulative-sum.
 
-    Args:
-        params: Parameter matrix, shape (N, P).
-            P = n_cp: column 0 = CBF, columns 1..n_cp-1 = fractions.
-            P = 2*n_cp - 1: above plus columns [n_cp..2*n_cp-2] = log-spacings.
-        aif: Arterial input function, shape (T,).
-        time_points: Time points (seconds), shape (T,).
-        control_point_times: Default control point time locations, shape (K,).
-        toeplitz_matrix: Precomputed Toeplitz convolution matrix, shape (T, T).
-        t_terminal: Terminal anchor time (seconds) for fixed-CP layout.
+    Parameters
+    ----------
+    params : npt.NDArray[np.floating]
+        Parameter matrix, shape (N, P).
+        P = n_cp: column 0 = CBF, columns 1..n_cp-1 = fractions.
+        P = 2*n_cp - 1: above plus columns [n_cp..2*n_cp-2] = log-spacings.
+    aif : npt.NDArray[np.floating]
+        Arterial input function, shape (T,).
+    time_points : npt.NDArray[np.floating]
+        Time points (seconds), shape (T,).
+    control_point_times : npt.NDArray[np.floating]
+        Default control point time locations, shape (K,).
+    toeplitz_matrix : npt.NDArray[np.floating]
+        Precomputed Toeplitz convolution matrix, shape (T, T).
+    t_terminal : float or None, optional
+        Terminal anchor time (seconds) for fixed-CP layout.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Tissue concentration curves, shape (N, T).
     """
     n_voxels = params.shape[0]
@@ -325,12 +356,18 @@ def _batched_pchip(
     Uses Fritsch-Carlson monotone slopes computed on (N, K) arrays
     simultaneously, avoiding per-voxel scipy.interpolate calls.
 
-    Args:
-        x: Knot positions, shape (K,). Must be strictly increasing.
-        y: Knot values, shape (N, K).
-        xi: Evaluation points, shape (T,).
+    Parameters
+    ----------
+    x : npt.NDArray[np.floating]
+        Knot positions, shape (K,). Must be strictly increasing.
+    y : npt.NDArray[np.floating]
+        Knot values, shape (N, K).
+    xi : npt.NDArray[np.floating]
+        Evaluation points, shape (T,).
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Interpolated values, shape (N, T).
     """
     n_voxels, n_knots = y.shape
@@ -406,13 +443,19 @@ def _batched_pchip_per_voxel(
 ) -> npt.NDArray[np.floating]:
     """Per-voxel PCHIP for ``infer_cpt`` (CP times vary per voxel).
 
-    Args:
-        x: Knot positions per voxel, shape (N, K). Must be strictly
-            increasing along axis=1.
-        y: Knot values per voxel, shape (N, K).
-        xi: Evaluation points (shared), shape (T,).
+    Parameters
+    ----------
+    x : npt.NDArray[np.floating]
+        Knot positions per voxel, shape (N, K). Must be strictly
+        increasing along axis=1.
+    y : npt.NDArray[np.floating]
+        Knot values per voxel, shape (N, K).
+    xi : npt.NDArray[np.floating]
+        Evaluation points (shared), shape (T,).
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Interpolated values, shape (N, T).
     """
     n_voxels, n_knots = y.shape
@@ -502,20 +545,33 @@ def _compute_jacobian_columns(
     a looser FD step is used because PCHIP knot-shift roundoff dominates the
     default 1e-5 step.
 
-    Args:
-        m_a: Transformed parameters, shape (n_active, P).
-        m_nat_a: Natural-space parameters, shape (n_active, P).
-        g_m: Forward model at current params, shape (n_active, T).
-        evaluate_fn: Batched forward model callable.
-        transforms: Per-parameter transform types.
-        upper_bounds: Per-parameter upper bounds for LOG_LOGIT.
-        bounds_lo: Lower bounds in natural space, shape (P,).
-        bounds_hi: Upper bounds in natural space, shape (P,).
-        cbf_idx: Index of CBF parameter (uses analytical Jacobian).
-        fitting_param_names: Optional parameter names; used to detect
-            log-spacing columns (starting with "s") for relaxed FD step.
+    Parameters
+    ----------
+    m_a : npt.NDArray[np.floating]
+        Transformed parameters, shape (n_active, P).
+    m_nat_a : npt.NDArray[np.floating]
+        Natural-space parameters, shape (n_active, P).
+    g_m : npt.NDArray[np.floating]
+        Forward model at current params, shape (n_active, T).
+    evaluate_fn : Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]
+        Batched forward model callable.
+    transforms : list[TransformType]
+        Per-parameter transform types.
+    upper_bounds : list[float | None]
+        Per-parameter upper bounds for LOG_LOGIT.
+    bounds_lo : npt.NDArray[np.floating]
+        Lower bounds in natural space, shape (P,).
+    bounds_hi : npt.NDArray[np.floating]
+        Upper bounds in natural space, shape (P,).
+    cbf_idx : int
+        Index of CBF parameter (uses analytical Jacobian).
+    fitting_param_names : list[str] or None, optional
+        Optional parameter names; used to detect
+        log-spacing columns (starting with "s") for relaxed FD step.
 
-    Returns:
+    Returns
+    -------
+    list[npt.NDArray[np.floating]]
         List of P arrays, each shape (n_active, T).
     """
     n_params = m_a.shape[1]
@@ -573,14 +629,21 @@ def _assemble_JtWJ(
 ) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
     """Assemble J^T W J and J^T W k from Jacobian columns.
 
-    Args:
-        J_columns: List of P arrays, each shape (n_active, T).
-        k_res: Residuals, shape (n_active, T).
-        w: Per-frame weights, shape (T,).
+    Parameters
+    ----------
+    J_columns : list[npt.NDArray[np.floating]]
+        List of P arrays, each shape (n_active, T).
+    k_res : npt.NDArray[np.floating]
+        Residuals, shape (n_active, T).
+    w : npt.NDArray[np.floating]
+        Per-frame weights, shape (T,).
 
-    Returns:
-        JtWJ: shape (n_active, P, P).
-        JtWk: shape (n_active, P).
+    Returns
+    -------
+    JtWJ : npt.NDArray[np.floating]
+        shape (n_active, P, P).
+    JtWk : npt.NDArray[np.floating]
+        shape (n_active, P).
     """
     n_params = len(J_columns)
     n_active = J_columns[0].shape[0]
@@ -602,11 +665,16 @@ def _compute_r_squared(
 ) -> npt.NDArray[np.floating]:
     """Compute R-squared for each voxel.
 
-    Args:
-        observed: Observed curves, shape (N, T).
-        predicted: Predicted curves, shape (N, T).
+    Parameters
+    ----------
+    observed : npt.NDArray[np.floating]
+        Observed curves, shape (N, T).
+    predicted : npt.NDArray[np.floating]
+        Predicted curves, shape (N, T).
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         R-squared values, shape (N,).
     """
     ss_res = np.sum((observed - predicted) ** 2, axis=1)
@@ -656,8 +724,10 @@ def _init_blas_single_threaded() -> None:
 
 
 def _split_chunks(n: int, nprocs: int) -> list[tuple[int, int]]:
-    """Split ``range(n)`` into ``nprocs`` contiguous (start, end) chunks
-    of approximately equal size."""
+    """Split ``range(n)`` into ``nprocs`` contiguous (start, end) chunks.
+
+    Chunks are of approximately equal size.
+    """
     nprocs = max(1, int(nprocs))
     base, extra = divmod(n, nprocs)
     chunks: list[tuple[int, int]] = []
@@ -672,9 +742,10 @@ def _split_chunks(n: int, nprocs: int) -> list[tuple[int, int]]:
 
 
 def _chunk_kwargs(full_kwargs: dict, start: int, end: int) -> dict:
-    """Return a copy of ``full_kwargs`` with voxel-axis arrays sliced
-    to ``[start:end]``. ``nprocs`` is forced to 1 so the worker takes
-    the single-process path (no recursion footgun).
+    """Return a copy of ``full_kwargs`` with voxel-axis arrays sliced.
+
+    Arrays are sliced to ``[start:end]``. ``nprocs`` is forced to 1 so
+    the worker takes the single-process path (no recursion footgun).
     """
     out = dict(full_kwargs)
     for key in _VOXEL_AXIS_KWARGS:
@@ -761,8 +832,9 @@ def _run_chunked_in_pool(
     nprocs: int,
     worker: Callable[[dict], "DSCBatchedFitResult"],
 ) -> "DSCBatchedFitResult":
-    """Common chunk + ProcessPoolExecutor + concat workflow shared by
-    the parallel VI and MAP dispatchers.
+    """Run the chunk + ProcessPoolExecutor + concat workflow.
+
+    Shared by the parallel VI and MAP dispatchers.
     """
     from concurrent.futures import ProcessPoolExecutor
 
@@ -819,52 +891,81 @@ def batched_dsc_vi_fit(
     Implements the linearized VB algorithm from Chappell et al. (2009)
     vectorized across all voxels. Supports both CPI and Vascular models.
 
-    Args:
-        model_type: 'cpi' or 'vascular'.
-        tissue_curves: Observed tissue curves, shape (N, T).
-        aif: Arterial input function, shape (T,).
-        time_points: Time points (seconds), shape (T,).
-        prior_means_nat: Prior means in natural (fitting) space, shape (P,).
-        prior_stds_nat: Prior stds in natural (fitting) space, shape (P,).
-        transforms: Per-parameter transform types, length P.
-        upper_bounds: Per-parameter upper bounds for LOG_LOGIT, length P.
-        fitting_param_names: Parameter names in fitting space, length P.
-        fitting_bounds: Per-parameter bounds in fitting space, length P.
-        mono_prec: CPI monotonicity precision matrix, shape (P, P) or None.
-        control_point_times: CPI control point times, shape (K,) or None.
-        toeplitz_matrix: Precomputed Toeplitz matrix, shape (T, T) or None.
-        nlls_seeds: NLLS seed parameters for initialization, shape (N, P) or None.
-        prior_means_transformed: Pre-computed prior means in transformed space,
-            shape (P,). If provided, bypasses internal transform_prior() call.
-            Use this to preserve transformed_prior_sigma overrides from
-            BayesianPrior objects (e.g., FABBER sigma=1.0 convention).
-        prior_stds_transformed: Pre-computed prior stds in transformed space,
-            shape (P,). Must be provided alongside prior_means_transformed.
-        weights: Per-frame motion weights, shape (T,). None = uniform.
-        n_iterations: Maximum VB iterations (default 20).
-        sloppy: Use fast, low-quality settings (8 iterations).
-        save_fitted_curves: Whether to store fitted curves in result.
-        spatial_prec_diag: Per-voxel spatial precision diagonal, shape (N, P).
-            N must match tissue_curves.shape[0].
-        spatial_eta: Per-voxel spatial mean contribution, shape (N, P).
-        return_posteriors: If True, populate posterior_means_transformed and
-            posterior_cov_diag on the result.
-        n_iterations_override: When set, overrides n_iterations and sloppy,
-            and disables ELBO-based step-size reduction. Used by spatial VB
-            wrapper where the ELBO is invalidated by spatial terms.
-        nprocs: When > 1, split the voxel batch across worker processes.
-            Per-voxel updates are independent so chunked == single-process
-            up to floating-point reduction order. Spatial VB
-            (``spatial_prec_diag`` / ``spatial_eta`` set) is rejected with
-            ``ValueError`` because voxels are coupled via the M-prior.
-            Default 1 (single process). The dispatcher silently
-            short-circuits to single-process when ``n_voxels <
-            parallel_chunk_min`` to avoid worker-spawn overhead.
-        parallel_chunk_min: Minimum voxel count to actually use the
-            parallel path when ``nprocs > 1``. Default 5000 — below this,
-            the worker spawn + import overhead (~1-3s per worker) dominates.
+    Parameters
+    ----------
+    model_type : str
+        'cpi' or 'vascular'.
+    tissue_curves : npt.NDArray[np.floating]
+        Observed tissue curves, shape (N, T).
+    aif : npt.NDArray[np.floating]
+        Arterial input function, shape (T,).
+    time_points : npt.NDArray[np.floating]
+        Time points (seconds), shape (T,).
+    prior_means_nat : npt.NDArray[np.floating]
+        Prior means in natural (fitting) space, shape (P,).
+    prior_stds_nat : npt.NDArray[np.floating]
+        Prior stds in natural (fitting) space, shape (P,).
+    transforms : list[TransformType]
+        Per-parameter transform types, length P.
+    upper_bounds : list[float | None]
+        Per-parameter upper bounds for LOG_LOGIT, length P.
+    fitting_param_names : list[str]
+        Parameter names in fitting space, length P.
+    fitting_bounds : list[tuple[float, float]]
+        Per-parameter bounds in fitting space, length P.
+    mono_prec : npt.NDArray[np.floating], optional
+        CPI monotonicity precision matrix, shape (P, P) or None.
+    control_point_times : npt.NDArray[np.floating], optional
+        CPI control point times, shape (K,) or None.
+    toeplitz_matrix : npt.NDArray[np.floating], optional
+        Precomputed Toeplitz matrix, shape (T, T) or None.
+    nlls_seeds : npt.NDArray[np.floating], optional
+        NLLS seed parameters for initialization, shape (N, P) or None.
+    prior_means_transformed : npt.NDArray[np.floating], optional
+        Pre-computed prior means in transformed space,
+        shape (P,). If provided, bypasses internal transform_prior() call.
+        Use this to preserve transformed_prior_sigma overrides from
+        BayesianPrior objects (e.g., FABBER sigma=1.0 convention).
+    prior_stds_transformed : npt.NDArray[np.floating], optional
+        Pre-computed prior stds in transformed space,
+        shape (P,). Must be provided alongside prior_means_transformed.
+    weights : npt.NDArray[np.floating], optional
+        Per-frame motion weights, shape (T,). None = uniform.
+    n_iterations : int, optional
+        Maximum VB iterations (default 20).
+    sloppy : bool, optional
+        Use fast, low-quality settings (8 iterations).
+    save_fitted_curves : bool, optional
+        Whether to store fitted curves in result.
+    spatial_prec_diag : npt.NDArray[np.floating], optional
+        Per-voxel spatial precision diagonal, shape (N, P).
+        N must match tissue_curves.shape[0].
+    spatial_eta : npt.NDArray[np.floating], optional
+        Per-voxel spatial mean contribution, shape (N, P).
+    return_posteriors : bool, optional
+        If True, populate posterior_means_transformed and
+        posterior_cov_diag on the result.
+    n_iterations_override : int, optional
+        When set, overrides n_iterations and sloppy,
+        and disables ELBO-based step-size reduction. Used by spatial VB
+        wrapper where the ELBO is invalidated by spatial terms.
+    nprocs : int, optional
+        When > 1, split the voxel batch across worker processes.
+        Per-voxel updates are independent so chunked == single-process
+        up to floating-point reduction order. Spatial VB
+        (``spatial_prec_diag`` / ``spatial_eta`` set) is rejected with
+        ``ValueError`` because voxels are coupled via the M-prior.
+        Default 1 (single process). The dispatcher silently
+        short-circuits to single-process when ``n_voxels <
+        parallel_chunk_min`` to avoid worker-spawn overhead.
+    parallel_chunk_min : int, optional
+        Minimum voxel count to actually use the
+        parallel path when ``nprocs > 1``. Default 5000 — below this,
+        the worker spawn + import overhead (~1-3s per worker) dominates.
 
-    Returns:
+    Returns
+    -------
+    DSCBatchedFitResult
         DSCBatchedFitResult with fitted parameters, R², convergence, uncertainties.
     """
     # ----- Multiprocess dispatch -----
@@ -1361,25 +1462,44 @@ def _run_map_gauss_newton(
 ]:
     """Run Gauss-Newton MAP optimization with profile likelihood noise.
 
-    Args:
-        y: Observed curves, shape (n_valid, T).
-        m_init: Initial transformed parameters, shape (n_valid, P).
-        sigma_sq_init: Initial noise variance, shape (n_valid,).
-        prior_means_t: Prior means in transformed space, shape (P,).
-        prior_prec: Prior precision matrix, shape (P, P).
-        mono_eta: CPI monotonicity bias, shape (P,) or None.
-        transforms: Per-parameter transform types.
-        upper_bounds: Per-parameter LOG_LOGIT upper bounds.
-        bounds_lo: Lower bounds in natural space, shape (P,).
-        bounds_hi: Upper bounds in natural space, shape (P,).
-        cbf_idx: Index of CBF parameter.
-        w: Per-frame weights, shape (T,).
-        n_eff: Effective number of observations for noise estimation.
-        evaluate_fn: Batched forward model.
-        n_iterations: Gauss-Newton iterations per noise loop.
-        n_noise_iterations: Profile likelihood outer iterations.
+    Parameters
+    ----------
+    y : npt.NDArray[np.floating]
+        Observed curves, shape (n_valid, T).
+    m_init : npt.NDArray[np.floating]
+        Initial transformed parameters, shape (n_valid, P).
+    sigma_sq_init : npt.NDArray[np.floating]
+        Initial noise variance, shape (n_valid,).
+    prior_means_t : npt.NDArray[np.floating]
+        Prior means in transformed space, shape (P,).
+    prior_prec : npt.NDArray[np.floating]
+        Prior precision matrix, shape (P, P).
+    mono_eta : npt.NDArray[np.floating] or None
+        CPI monotonicity bias, shape (P,) or None.
+    transforms : list[TransformType]
+        Per-parameter transform types.
+    upper_bounds : list[float | None]
+        Per-parameter LOG_LOGIT upper bounds.
+    bounds_lo : npt.NDArray[np.floating]
+        Lower bounds in natural space, shape (P,).
+    bounds_hi : npt.NDArray[np.floating]
+        Upper bounds in natural space, shape (P,).
+    cbf_idx : int
+        Index of CBF parameter.
+    w : npt.NDArray[np.floating]
+        Per-frame weights, shape (T,).
+    n_eff : float
+        Effective number of observations for noise estimation.
+    evaluate_fn : Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]
+        Batched forward model.
+    n_iterations : int
+        Gauss-Newton iterations per noise loop.
+    n_noise_iterations : int
+        Profile likelihood outer iterations.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (best_m, best_nlp, best_sigma_sq, converged, last_iteration).
     """
     n_valid = y.shape[0]
@@ -1619,41 +1739,69 @@ def batched_dsc_map_fit(
 
     Does not support spatial VB (SVB).
 
-    Args:
-        model_type: 'cpi' or 'vascular'.
-        tissue_curves: Observed tissue curves, shape (N, T).
-        aif: Arterial input function, shape (T,).
-        time_points: Time points (seconds), shape (T,).
-        prior_means_nat: Prior means in natural space, shape (P,).
-        prior_stds_nat: Prior stds in natural space, shape (P,).
-        transforms: Per-parameter transform types, length P.
-        upper_bounds: Per-parameter upper bounds for LOG_LOGIT, length P.
-        fitting_param_names: Parameter names in fitting space, length P.
-        fitting_bounds: Per-parameter bounds in fitting space, length P.
-        mono_prec: CPI monotonicity precision matrix, shape (P, P) or None.
-        mono_eta: CPI monotonicity bias, shape (P,) or None.
-        control_point_times: CPI control point times, shape (K,) or None.
-        toeplitz_matrix: Precomputed Toeplitz matrix, shape (T, T) or None.
-        nlls_seeds: NLLS seed parameters for multi-start init, shape (N, P)
-            or None. Used as second start point alongside prior means.
-        prior_means_transformed: Pre-computed prior means in transformed space,
-            shape (P,). Bypasses internal transform_prior() call.
-        prior_stds_transformed: Pre-computed prior stds in transformed space,
-            shape (P,). Must be provided alongside prior_means_transformed.
-        weights: Per-frame motion weights, shape (T,). None = uniform.
-        n_iterations: Gauss-Newton iterations per noise loop (default 15).
-        n_noise_iterations: Profile likelihood outer loops (default 3).
-        sloppy: Fast mode: 8 iters, 1 noise loop, no uncertainties.
-        save_fitted_curves: Whether to store fitted curves in result.
-        compute_uncertainties: Whether to compute Laplace uncertainties.
-        nprocs: When > 1, split the voxel batch across worker processes.
-            Default 1. See ``batched_dsc_vi_fit`` for parallel-dispatch
-            semantics. MAP has no spatial-VB equivalent so no spatial
-            guard applies.
-        parallel_chunk_min: Minimum voxel count to actually use the
-            parallel path. Default 5000. See ``batched_dsc_vi_fit``.
+    Parameters
+    ----------
+    model_type : str
+        'cpi' or 'vascular'.
+    tissue_curves : npt.NDArray[np.floating]
+        Observed tissue curves, shape (N, T).
+    aif : npt.NDArray[np.floating]
+        Arterial input function, shape (T,).
+    time_points : npt.NDArray[np.floating]
+        Time points (seconds), shape (T,).
+    prior_means_nat : npt.NDArray[np.floating]
+        Prior means in natural space, shape (P,).
+    prior_stds_nat : npt.NDArray[np.floating]
+        Prior stds in natural space, shape (P,).
+    transforms : list[TransformType]
+        Per-parameter transform types, length P.
+    upper_bounds : list[float | None]
+        Per-parameter upper bounds for LOG_LOGIT, length P.
+    fitting_param_names : list[str]
+        Parameter names in fitting space, length P.
+    fitting_bounds : list[tuple[float, float]]
+        Per-parameter bounds in fitting space, length P.
+    mono_prec : npt.NDArray[np.floating], optional
+        CPI monotonicity precision matrix, shape (P, P) or None.
+    mono_eta : npt.NDArray[np.floating], optional
+        CPI monotonicity bias, shape (P,) or None.
+    control_point_times : npt.NDArray[np.floating], optional
+        CPI control point times, shape (K,) or None.
+    toeplitz_matrix : npt.NDArray[np.floating], optional
+        Precomputed Toeplitz matrix, shape (T, T) or None.
+    nlls_seeds : npt.NDArray[np.floating], optional
+        NLLS seed parameters for multi-start init, shape (N, P)
+        or None. Used as second start point alongside prior means.
+    prior_means_transformed : npt.NDArray[np.floating], optional
+        Pre-computed prior means in transformed space,
+        shape (P,). Bypasses internal transform_prior() call.
+    prior_stds_transformed : npt.NDArray[np.floating], optional
+        Pre-computed prior stds in transformed space,
+        shape (P,). Must be provided alongside prior_means_transformed.
+    weights : npt.NDArray[np.floating], optional
+        Per-frame motion weights, shape (T,). None = uniform.
+    n_iterations : int, optional
+        Gauss-Newton iterations per noise loop (default 15).
+    n_noise_iterations : int, optional
+        Profile likelihood outer loops (default 3).
+    sloppy : bool, optional
+        Fast mode: 8 iters, 1 noise loop, no uncertainties.
+    save_fitted_curves : bool, optional
+        Whether to store fitted curves in result.
+    compute_uncertainties : bool, optional
+        Whether to compute Laplace uncertainties.
+    nprocs : int, optional
+        When > 1, split the voxel batch across worker processes.
+        Default 1. See ``batched_dsc_vi_fit`` for parallel-dispatch
+        semantics. MAP has no spatial-VB equivalent so no spatial
+        guard applies.
+    parallel_chunk_min : int, optional
+        Minimum voxel count to actually use the
+        parallel path. Default 5000. See ``batched_dsc_vi_fit``.
 
-    Returns:
+    Returns
+    -------
+    DSCBatchedFitResult
         DSCBatchedFitResult with fitted parameters, R², convergence,
         and Laplace uncertainties.
     """

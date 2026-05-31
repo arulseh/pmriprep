@@ -11,7 +11,6 @@ from typing import Any, Optional
 
 from pmriprep.utils.nifti import nifti_gz_name
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
-    BaseInterface,
     BaseInterfaceInputSpec,
     CommandLine,
     CommandLineInputSpec,
@@ -1658,7 +1657,7 @@ class ACPCAlignment(CommandLine):
 
     >>> acpc = ACPCAlignment()
     >>> acpc.inputs.in_file = 'T1w_brain.nii.gz'
-    >>> acpc.inputs.mni_template = '/path/to/MNI152_T1_1mm_brain.nii.gz'
+    >>> acpc.inputs.mni_template = 'MNI152_T1_1mm_brain.nii.gz'
     >>> result = acpc.run()  # doctest: +SKIP
 
     Notes

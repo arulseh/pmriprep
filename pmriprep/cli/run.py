@@ -527,7 +527,7 @@ Examples:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
-    """Main entry point for pmriprep CLI.
+    """Run the pmriprep CLI entry point.
 
     Parameters
     ----------

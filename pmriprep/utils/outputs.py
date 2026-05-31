@@ -15,7 +15,6 @@ from typing import Any, Dict, Final, List, Optional, Union
 import numpy as np
 
 import pmriprep
-from pmriprep.utils.provenance import get_software_versions
 
 #: BIDS specification version that the derivative naming and JSON sidecars
 #: target. Bump deliberately when migrating to a newer spec; downstream
@@ -50,10 +49,14 @@ def sanitize_model_entity(model_name: str) -> str:
     This function maps known model names to their BIDS-safe equivalents
     and applies camelCase conversion for unknown names.
 
-    Args:
-        model_name: Raw model name (e.g., "extended_tofts", "2cxm").
+    Parameters
+    ----------
+    model_name : str
+        Raw model name (e.g., "extended_tofts", "2cxm").
 
-    Returns:
+    Returns
+    -------
+    str
         BIDS-safe entity value (e.g., "extendedTofts", "2cxm").
     """
     lowered = model_name.lower().strip()
@@ -79,11 +82,15 @@ def write_dataset_description(
     entry with any pre-existing entries from other NiPreps tools that
     wrote into the same derivative root, preserving cross-tool provenance.
 
-    Args:
-        pipeline_dir: Path to the ``pmriprep/`` derivative root directory.
-        bids_dir: Path to the source BIDS dataset root.
-        citation_doi: Optional DOI string to attach to the pmriprep
-            ``GeneratedBy`` entry (e.g. for cite-by-version manuscripts).
+    Parameters
+    ----------
+    pipeline_dir : Path
+        Path to the ``pmriprep/`` derivative root directory.
+    bids_dir : str
+        Path to the source BIDS dataset root.
+    citation_doi : str, optional
+        Optional DOI string to attach to the pmriprep
+        ``GeneratedBy`` entry (e.g. for cite-by-version manuscripts).
     """
     desc_path = pipeline_dir / "dataset_description.json"
     pipeline_dir.mkdir(parents=True, exist_ok=True)
@@ -177,11 +184,16 @@ def has_input(inputs: Any, name: str) -> bool:
     Handles all sentinel patterns used by Nipype traits (``Undefined``,
     empty strings, ``"None"``, and ``"."``).
 
-    Args:
-        inputs: A Nipype ``BaseInterfaceInputSpec`` instance (e.g. ``self.inputs``).
-        name: Name of the input attribute to check.
+    Parameters
+    ----------
+    inputs : Any
+        A Nipype ``BaseInterfaceInputSpec`` instance (e.g. ``self.inputs``).
+    name : str
+        Name of the input attribute to check.
 
-    Returns:
+    Returns
+    -------
+    bool
         ``True`` if the input is set and points to an existing file.
     """
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
@@ -202,9 +214,12 @@ def copy_derivative(src: str, dst: Path) -> None:
     Creates parent directories as needed. Preserves filesystem metadata
     via :func:`shutil.copy2`.
 
-    Args:
-        src: Source file path.
-        dst: Destination file path.
+    Parameters
+    ----------
+    src : str
+        Source file path.
+    dst : Path
+        Destination file path.
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(src), str(dst))
@@ -216,9 +231,12 @@ def write_json_sidecar(data: dict, path: Path) -> None:
     Creates parent directories as needed.  Non-serialisable values are
     converted to strings via the ``default=str`` fallback.
 
-    Args:
-        data: Dictionary to serialise.
-        path: Output JSON file path.
+    Parameters
+    ----------
+    data : dict
+        Dictionary to serialise.
+    path : Path
+        Output JSON file path.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
@@ -256,11 +274,16 @@ def par_to_confounds_tsv(
     The first row of ``framewise_displacement`` is ``n/a`` because FD is
     undefined for the reference frame.
 
-    Args:
-        par_file: Path to the ``.par`` motion parameters file.
-        output_path: Path for the output ``.tsv`` file.
+    Parameters
+    ----------
+    par_file : str or Path
+        Path to the ``.par`` motion parameters file.
+    output_path : str or Path
+        Path for the output ``.tsv`` file.
 
-    Returns:
+    Returns
+    -------
+    Path
         Path to the written TSV file.
     """
     from pmriprep.utils.motion import (
@@ -315,12 +338,18 @@ def write_confounds_sidecar(
     Describes each column's meaning and units following the BIDS
     common derivatives specification.
 
-    Args:
-        output_path: Path for the output ``.json`` sidecar file.
-        source_path: Raw BIDS source NIfTI (for Sources URI).
-        bids_dir: BIDS rawdata root (for Sources URI construction).
+    Parameters
+    ----------
+    output_path : str or Path
+        Path for the output ``.json`` sidecar file.
+    source_path : str, optional
+        Raw BIDS source NIfTI (for Sources URI).
+    bids_dir : str, optional
+        BIDS rawdata root (for Sources URI construction).
 
-    Returns:
+    Returns
+    -------
+    Path
         Path to the written JSON file.
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance

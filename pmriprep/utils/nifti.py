@@ -11,11 +11,16 @@ def nifti_gz_name(filename: Union[str, Path], suffix: str) -> str:
     returns .nii.gz. This ensures consistency with FSLOUTPUTTYPE=NIFTI_GZ,
     which makes FSL tools write .nii.gz regardless of the specified output.
 
-    Args:
-        filename: Input NIfTI file path.
-        suffix: Suffix to append (e.g., "_reoriented", "_brain").
+    Parameters
+    ----------
+    filename : Path or str
+        Input NIfTI file path.
+    suffix : str
+        Suffix to append (e.g., "_reoriented", "_brain").
 
-    Returns:
+    Returns
+    -------
+    str
         Filename string with suffix and .nii.gz extension.
     """
     name = Path(filename).name

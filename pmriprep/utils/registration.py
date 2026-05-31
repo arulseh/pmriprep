@@ -38,17 +38,25 @@ def compare_transforms(
 
     Adapted from niworkflows ``compare_xforms()`` (Esteban et al., 2019).
 
-    Args:
-        mat1: First 4x4 affine matrix (FSL format).
-        mat2: Second 4x4 affine matrix (FSL format).
-        radius: Distance (mm) of test points from the origin.
-            Default 70mm approximates the brain radius.
+    Parameters
+    ----------
+    mat1 : np.ndarray
+        First 4x4 affine matrix (FSL format).
+    mat2 : np.ndarray
+        Second 4x4 affine matrix (FSL format).
+    radius : float
+        Distance (mm) of test points from the origin.
+        Default 70mm approximates the brain radius.
 
-    Returns:
+    Returns
+    -------
+    float
         Maximum displacement in mm across all test points.
 
-    Raises:
-        ValueError: If matrices are not 4x4.
+    Raises
+    ------
+    ValueError
+        If matrices are not 4x4.
     """
     if mat1.shape != (4, 4) or mat2.shape != (4, 4):
         raise ValueError(
@@ -87,16 +95,24 @@ def compare_transforms_from_files(
 ) -> float:
     """Compute maximum displacement between two FSL affine matrix files.
 
-    Args:
-        mat1_path: Path to first FSL .mat file.
-        mat2_path: Path to second FSL .mat file.
-        radius: Distance (mm) of test points from origin (default: 70mm).
+    Parameters
+    ----------
+    mat1_path : Path or str
+        Path to first FSL .mat file.
+    mat2_path : Path or str
+        Path to second FSL .mat file.
+    radius : float
+        Distance (mm) of test points from origin (default: 70mm).
 
-    Returns:
+    Returns
+    -------
+    float
         Maximum displacement in mm.
 
-    Raises:
-        FileNotFoundError: If either file does not exist.
+    Raises
+    ------
+    FileNotFoundError
+        If either file does not exist.
     """
     mat1_path = Path(mat1_path)
     mat2_path = Path(mat2_path)
@@ -121,16 +137,24 @@ def calculate_dice(
 
     DICE = 2 * |A ∩ B| / (|A| + |B|)
 
-    Args:
-        mask1: First mask array (will be binarized).
-        mask2: Second mask array (will be binarized).
-        threshold: Threshold for binarization of non-binary masks.
+    Parameters
+    ----------
+    mask1 : np.ndarray
+        First mask array (will be binarized).
+    mask2 : np.ndarray
+        Second mask array (will be binarized).
+    threshold : float
+        Threshold for binarization of non-binary masks.
 
-    Returns:
+    Returns
+    -------
+    float
         DICE coefficient in range [0, 1]. Returns 0.0 if both masks are empty.
 
-    Raises:
-        ValueError: If masks have different shapes.
+    Raises
+    ------
+    ValueError
+        If masks have different shapes.
     """
     if mask1.shape != mask2.shape:
         raise ValueError(
@@ -160,17 +184,26 @@ def calculate_dice_from_files(
 ) -> float:
     """Calculate DICE coefficient from two NIfTI mask files.
 
-    Args:
-        mask1_path: Path to first mask NIfTI file.
-        mask2_path: Path to second mask NIfTI file.
-        threshold: Threshold for binarization.
+    Parameters
+    ----------
+    mask1_path : Path or str
+        Path to first mask NIfTI file.
+    mask2_path : Path or str
+        Path to second mask NIfTI file.
+    threshold : float
+        Threshold for binarization.
 
-    Returns:
+    Returns
+    -------
+    float
         DICE coefficient in range [0, 1].
 
-    Raises:
-        FileNotFoundError: If either file does not exist.
-        ValueError: If masks have different shapes.
+    Raises
+    ------
+    FileNotFoundError
+        If either file does not exist.
+    ValueError
+        If masks have different shapes.
     """
     import nibabel as nib
 
@@ -207,19 +240,28 @@ def calculate_correlation(
 
     Optionally restricted to voxels within a mask.
 
-    Args:
-        image1: First image array.
-        image2: Second image array (must match shape of image1).
-        mask: Optional mask array. If provided, correlation is computed
-              only for voxels where mask > threshold.
-        threshold: Threshold for mask binarization.
+    Parameters
+    ----------
+    image1 : np.ndarray
+        First image array.
+    image2 : np.ndarray
+        Second image array (must match shape of image1).
+    mask : np.ndarray, optional
+        Optional mask array. If provided, correlation is computed
+        only for voxels where mask > threshold.
+    threshold : float
+        Threshold for mask binarization.
 
-    Returns:
+    Returns
+    -------
+    float
         Pearson correlation coefficient in range [-1, 1].
         Returns 0.0 if insufficient valid voxels.
 
-    Raises:
-        ValueError: If images have different shapes.
+    Raises
+    ------
+    ValueError
+        If images have different shapes.
     """
     if image1.shape != image2.shape:
         raise ValueError(
@@ -272,18 +314,28 @@ def calculate_correlation_from_files(
 ) -> float:
     """Calculate correlation coefficient from two NIfTI image files.
 
-    Args:
-        image1_path: Path to first image NIfTI file.
-        image2_path: Path to second image NIfTI file.
-        mask_path: Optional path to mask NIfTI file.
-        threshold: Threshold for mask binarization.
+    Parameters
+    ----------
+    image1_path : Path or str
+        Path to first image NIfTI file.
+    image2_path : Path or str
+        Path to second image NIfTI file.
+    mask_path : Path or str, optional
+        Optional path to mask NIfTI file.
+    threshold : float
+        Threshold for mask binarization.
 
-    Returns:
+    Returns
+    -------
+    float
         Pearson correlation coefficient in range [-1, 1].
 
-    Raises:
-        FileNotFoundError: If any required file does not exist.
-        ValueError: If images have different shapes.
+    Raises
+    ------
+    FileNotFoundError
+        If any required file does not exist.
+    ValueError
+        If images have different shapes.
     """
     import nibabel as nib
 
@@ -334,21 +386,31 @@ def calculate_nmi(
 
     where I(A,B) is mutual information and H(A), H(B) are marginal entropies.
 
-    Args:
-        image1: First image array.
-        image2: Second image array (must match shape of image1).
-        mask: Optional mask array. If provided, NMI is computed
-              only for voxels where mask > threshold.
-        threshold: Threshold for mask binarization.
-        n_bins: Number of histogram bins for entropy calculation.
+    Parameters
+    ----------
+    image1 : np.ndarray
+        First image array.
+    image2 : np.ndarray
+        Second image array (must match shape of image1).
+    mask : np.ndarray, optional
+        Optional mask array. If provided, NMI is computed
+        only for voxels where mask > threshold.
+    threshold : float
+        Threshold for mask binarization.
+    n_bins : int
+        Number of histogram bins for entropy calculation.
 
-    Returns:
+    Returns
+    -------
+    float
         Normalized mutual information in range [0, 2].
         0 indicates no mutual information, 2 indicates perfect correlation.
         Returns 0.0 if insufficient valid voxels.
 
-    Raises:
-        ValueError: If images have different shapes.
+    Raises
+    ------
+    ValueError
+        If images have different shapes.
     """
     if image1.shape != image2.shape:
         raise ValueError(
@@ -436,19 +498,30 @@ def calculate_nmi_from_files(
 ) -> float:
     """Calculate NMI from two NIfTI image files.
 
-    Args:
-        image1_path: Path to first image NIfTI file.
-        image2_path: Path to second image NIfTI file.
-        mask_path: Optional path to mask NIfTI file.
-        threshold: Threshold for mask binarization.
-        n_bins: Number of histogram bins.
+    Parameters
+    ----------
+    image1_path : Path or str
+        Path to first image NIfTI file.
+    image2_path : Path or str
+        Path to second image NIfTI file.
+    mask_path : Path or str, optional
+        Optional path to mask NIfTI file.
+    threshold : float
+        Threshold for mask binarization.
+    n_bins : int
+        Number of histogram bins.
 
-    Returns:
+    Returns
+    -------
+    float
         Normalized mutual information in range [0, 2].
 
-    Raises:
-        FileNotFoundError: If any required file does not exist.
-        ValueError: If images have different shapes.
+    Raises
+    ------
+    FileNotFoundError
+        If any required file does not exist.
+    ValueError
+        If images have different shapes.
     """
     import nibabel as nib
 
@@ -496,17 +569,24 @@ def compute_aif_preservation(
     peak is preserved after spatial transformation. A ratio close to 1.0
     indicates good preservation.
 
-    Args:
-        aif_before: AIF curve before transformation (1D array, time series).
-        aif_after: AIF curve after transformation (1D array, same length).
+    Parameters
+    ----------
+    aif_before : np.ndarray
+        AIF curve before transformation (1D array, time series).
+    aif_after : np.ndarray
+        AIF curve after transformation (1D array, same length).
 
-    Returns:
+    Returns
+    -------
+    float
         Peak preservation ratio: peak_after / peak_before.
         Returns 1.0 if peaks are identical, <1.0 if peak is reduced,
         >1.0 if peak is increased. Returns 0.0 if before peak is zero.
 
-    Raises:
-        ValueError: If arrays have different lengths or are not 1D.
+    Raises
+    ------
+    ValueError
+        If arrays have different lengths or are not 1D.
     """
     if aif_before.ndim != 1 or aif_after.ndim != 1:
         raise ValueError("AIF arrays must be 1D time series")
@@ -538,20 +618,28 @@ def compute_aif_preservation_with_auc(
     Computes both peak ratio and AUC (area under curve) ratio to
     provide a complete picture of AIF preservation after transformation.
 
-    Args:
-        aif_before: AIF curve before transformation (1D array).
-        aif_after: AIF curve after transformation (1D array).
-        dt: Time step between samples (for AUC calculation).
+    Parameters
+    ----------
+    aif_before : np.ndarray
+        AIF curve before transformation (1D array).
+    aif_after : np.ndarray
+        AIF curve after transformation (1D array).
+    dt : float
+        Time step between samples (for AUC calculation).
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary with:
             - peak_ratio: peak_after / peak_before
             - auc_ratio: auc_after / auc_before
             - peak_time_shift: Difference in peak time indices
             - quality: 'good' if both ratios in [0.9, 1.1], else 'degraded'
 
-    Raises:
-        ValueError: If arrays have different lengths or are not 1D.
+    Raises
+    ------
+    ValueError
+        If arrays have different lengths or are not 1D.
     """
     if aif_before.ndim != 1 or aif_after.ndim != 1:
         raise ValueError("AIF arrays must be 1D time series")
@@ -610,10 +698,14 @@ def _fsl_vox2mm(img: Any) -> NDArray[np.floating]:
     (neurological convention), the x-axis is flipped and an offset is
     added so that the origin stays at the first voxel corner.
 
-    Args:
-        img: Nibabel image object (Nifti1Image or similar).
+    Parameters
+    ----------
+    img : Any
+        Nibabel image object (Nifti1Image or similar).
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         4x4 scaling matrix in FSL mm coordinates.
     """
     zooms = np.array(img.header.get_zooms()[:3], dtype=np.float64)
@@ -645,19 +737,25 @@ def compute_header_init_matrix(
     ``.mat`` file can be passed as ``-init`` to FLIRT so that the
     coarse search starts near the header-aligned solution.
 
-    The formula is::
+    The formula is:
 
         M_flirt = S_ref @ inv(W_ref) @ W_mov @ inv(S_mov)
 
     where ``S`` is FSL's voxel-to-mm scaling matrix and ``W`` is the
     NIfTI sform affine.
 
-    Args:
-        moving_file: Path to the moving image (e.g. T1w).
-        reference_file: Path to the reference image (e.g. DSC mean).
-        output_dir: Directory for the output ``.mat`` file.
+    Parameters
+    ----------
+    moving_file : Path or str
+        Path to the moving image (e.g. T1w).
+    reference_file : Path or str
+        Path to the reference image (e.g. DSC mean).
+    output_dir : Path or str
+        Directory for the output ``.mat`` file.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the FLIRT-format ``.mat`` file.
     """
     import nibabel as nib
@@ -692,13 +790,20 @@ def create_header_aligned(
     exploits sform/qform information so that FLIRT starts from a
     reasonable initialisation even without a global angular search.
 
-    Args:
-        moving_file: Path to moving image (e.g. T1w).
-        reference_file: Path to reference image (e.g. DSC/DCE mean).
-        output_dir: Directory for the output file.
-        ext: File extension (.nii or .nii.gz).
+    Parameters
+    ----------
+    moving_file : Path or str
+        Path to moving image (e.g. T1w).
+    reference_file : Path or str
+        Path to reference image (e.g. DSC/DCE mean).
+    output_dir : Path or str
+        Directory for the output file.
+    ext : str
+        File extension (.nii or .nii.gz).
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the header-aligned image.
     """
     import nibabel as nib
@@ -725,11 +830,16 @@ def compute_dice_for_selection(
     intentionally simple: the masks need only be consistent enough to
     discriminate a good registration from a bad one.
 
-    Args:
-        registered_file: Path to registered image.
-        reference_file: Path to reference image.
+    Parameters
+    ----------
+    registered_file : Path or str
+        Path to registered image.
+    reference_file : Path or str
+        Path to reference image.
 
-    Returns:
+    Returns
+    -------
+    float
         DICE coefficient in [0, 1].  Returns 0.0 on failure.
     """
     import nibabel as nib
@@ -789,17 +899,24 @@ def transform_mask_to_grid(
     geometry (matching shape and affine within 1e-4): the mask is
     binarised and hole-filled in place without invoking FLIRT.
 
-    Args:
-        mask_file: Path to source mask.  May be ``None`` or a Nipype
-            ``Undefined``; in either case the function returns ``""``.
-        reference_file: Path to reference image whose grid the output
-            should match.
-        transform_matrix: Path to FLIRT 4x4 affine matrix mapping the
-            mask's source frame into the reference frame.
-        out_dir: Directory for output and temporary files.  Defaults to
-            ``Path.cwd()``, matching the legacy Function-node behaviour.
+    Parameters
+    ----------
+    mask_file : Path or str, optional
+        Path to source mask.  May be ``None`` or a Nipype
+        ``Undefined``; in either case the function returns ``""``.
+    reference_file : Path or str, optional
+        Path to reference image whose grid the output
+        should match.
+    transform_matrix : Path or str, optional
+        Path to FLIRT 4x4 affine matrix mapping the
+        mask's source frame into the reference frame.
+    out_dir : Path, optional
+        Directory for output and temporary files.  Defaults to
+        ``Path.cwd()``, matching the legacy Function-node behaviour.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the transformed mask, or ``""`` if any input is unset
         or the mask file does not exist.  Downstream Nipype
         ``traits.Str`` ports reject ``None``, so ``""`` is the correct

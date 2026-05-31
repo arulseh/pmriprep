@@ -8,7 +8,7 @@ concentration curves and AIF using various deconvolution methods.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Literal, Optional, cast
+from typing import Any, Optional, cast
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ from typing import NamedTuple
 
 class _DSCVoxelInput(NamedTuple):
     """Lightweight struct for a single voxel's data."""
+
     x: int
     y: int
     z: int
@@ -63,19 +64,28 @@ def _compute_dsc_motion_weights(
     Same weight function as DCE: w_i = (threshold / FD_i)^2 for FD > threshold.
     DSC-specific: critical window = entire first-pass (~15s), not just bolus ± 4.
 
-    Args:
-        fd_values: Framewise displacement per volume (mm).
-        bolus_frame: Bolus arrival frame index.
-        n_frames: Number of time frames.
-        min_voxel_dim: Minimum voxel dimension (mm) for threshold scaling.
-        tr: Repetition time (seconds) for first-pass duration calculation.
+    Parameters
+    ----------
+    fd_values : list of float
+        Framewise displacement per volume (mm).
+    bolus_frame : int
+        Bolus arrival frame index.
+    n_frames : int
+        Number of time frames.
+    min_voxel_dim : float
+        Minimum voxel dimension (mm) for threshold scaling.
+    tr : float
+        Repetition time (seconds) for first-pass duration calculation.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Per-frame weight array (1.0 = full weight, <1.0 = downweighted).
 
-    References:
-        Melbourne A, et al. MRM 2007.
-        Buckley DL. MRM 2002.
+    References
+    ----------
+    Melbourne A, et al. Phys Med Biol. 2007;52(17):5147-5156.
+    Buckley DL. Magn Reson Med. 2002;47(3):601-606.
     """
     weights = np.ones(n_frames, dtype=np.float64)
     fd_arr = np.array(fd_values[:n_frames], dtype=np.float64)
@@ -112,10 +122,14 @@ def _warn_invalid_cpi_combo(
       fails to find the multimodal posterior basin and CBF variance is
       ~7x higher than VI at 5% noise.
 
-    Args:
-        method: DSC deconvolution method name.
-        inference: Parametric inference engine ('nlls', 'map', 'vi', 'svb').
-        cpi_infer_cpt: Whether CPI control point times are inferred.
+    Parameters
+    ----------
+    method : str
+        DSC deconvolution method name.
+    inference : str
+        Parametric inference engine ('nlls', 'map', 'vi', 'svb').
+    cpi_infer_cpt : bool
+        Whether CPI control point times are inferred.
     """
     if method != "cpi":
         return
@@ -714,13 +728,20 @@ class ComputeDSCMaps(BaseInterface):
         itself.  Falls back to the configured ``pre_bolus`` value when the
         primary is unavailable (e.g., synthetic AIF).
 
-        Args:
-            aif: 1D AIF concentration curve.
-            configured_baseline: AIF-detected baseline (or pre_bolus fallback).
-            concentration_data: Optional 4D concentration array for fallback.
-            mask: Optional 3D brain mask for fallback.
+        Parameters
+        ----------
+        aif : npt.NDArray[Any]
+            1D AIF concentration curve.
+        configured_baseline : int
+            AIF-detected baseline (or pre_bolus fallback).
+        concentration_data : npt.NDArray[Any], optional
+            Optional 4D concentration array for fallback.
+        mask : npt.NDArray[Any], optional
+            Optional 3D brain mask for fallback.
 
-        Returns:
+        Returns
+        -------
+        tuple of (int, dict)
             Tuple of (n_baseline, detection_info dict).
         """
         import logging as _logging
@@ -821,7 +842,6 @@ class ComputeDSCMaps(BaseInterface):
         """Run SVD-based deconvolution methods."""
         from pmriprep.utils.dsc_deconvolution import (
             svd_deconvolve_standard_batch,
-            svd_deconvolve_circulant_batch,
             svd_deconvolve_oscillation_batch,
             tikhonov_deconvolve_batch,
         )
@@ -924,7 +944,6 @@ class ComputeDSCMaps(BaseInterface):
 
         Uses multiprocessing.Pool when n_procs > 1.
         """
-
         from pmriprep.models.dsc import estimate_bolus_duration
 
         spatial_shape = concentration_data.shape[:3]
@@ -1202,7 +1221,9 @@ class ComputeDSCMaps(BaseInterface):
 
         Shared by both batched VI and batched MAP paths.
 
-        Returns:
+        Returns
+        -------
+        dict
             Dict with keys: tissue_curves, fitting_names, fitting_bounds,
             mono_prec, mono_eta, cp_times, toeplitz, means_nat, stds_nat,
             means_t, stds_t, transforms, ubs.
@@ -1299,21 +1320,36 @@ class ComputeDSCMaps(BaseInterface):
         Extracts priors from model definitions and calls batched_dsc_vi_fit.
         Runs in a single process with vectorized numpy operations.
 
-        Args:
-            concentration_data: Concentration data, shape (X, Y, Z, T).
-            mask_coords: Tuple of coordinate arrays.
-            aif: AIF, shape (T,).
-            time_points: Time points (seconds), shape (T,).
-            method: 'cpi' or 'vascular'.
-            dt: Time step (seconds).
-            n_voxels: Number of voxels.
-            cpi_control_points: Number of CPI control points.
-            bolus_duration_frames: Bolus duration in frames.
-            motion_weights: Per-frame weights or None.
-            sloppy: Whether to use sloppy mode.
-            spatial: Use spatial VB wrapper (MRF neighbor coupling).
+        Parameters
+        ----------
+        concentration_data : npt.NDArray[Any]
+            Concentration data, shape (X, Y, Z, T).
+        mask_coords : tuple of npt.NDArray[Any]
+            Tuple of coordinate arrays.
+        aif : npt.NDArray[np.floating]
+            AIF, shape (T,).
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds), shape (T,).
+        method : str
+            'cpi' or 'vascular'.
+        dt : float
+            Time step (seconds).
+        n_voxels : int
+            Number of voxels.
+        cpi_control_points : int
+            Number of CPI control points.
+        bolus_duration_frames : int
+            Bolus duration in frames.
+        motion_weights : npt.NDArray[np.floating] or None
+            Per-frame weights or None.
+        sloppy : bool
+            Whether to use sloppy mode.
+        spatial : bool
+            Use spatial VB wrapper (MRF neighbor coupling).
 
-        Returns:
+        Returns
+        -------
+        list of dict
             List of per-voxel result dicts.
         """
         from pmriprep.models.dsc.batched_fitting import batched_dsc_vi_fit
@@ -1388,16 +1424,26 @@ class ComputeDSCMaps(BaseInterface):
 
         Shared by both batched VI and batched MAP paths.
 
-        Args:
-            batched_result: DSCBatchedFitResult from VI or MAP.
-            mask_coords: Tuple of coordinate arrays.
-            method: 'cpi' or 'vascular'.
-            n_voxels: Number of voxels.
-            dt: Time step (seconds).
-            cp_times: CPI control point times or None.
-            time_points: Time points (seconds), shape (T,).
+        Parameters
+        ----------
+        batched_result : Any
+            DSCBatchedFitResult from VI or MAP.
+        mask_coords : tuple of npt.NDArray[Any]
+            Tuple of coordinate arrays.
+        method : str
+            'cpi' or 'vascular'.
+        n_voxels : int
+            Number of voxels.
+        dt : float
+            Time step (seconds).
+        cp_times : npt.NDArray[np.floating] or None
+            CPI control point times or None.
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds), shape (T,).
 
-        Returns:
+        Returns
+        -------
+        list of dict
             List of per-voxel result dicts.
         """
         from pmriprep.models.dsc.batched_fitting import (
@@ -1526,20 +1572,34 @@ class ComputeDSCMaps(BaseInterface):
         Extracts priors from model definitions and calls batched_dsc_map_fit.
         Runs in a single process with vectorized numpy operations.
 
-        Args:
-            concentration_data: Concentration data, shape (X, Y, Z, T).
-            mask_coords: Tuple of coordinate arrays.
-            aif: AIF, shape (T,).
-            time_points: Time points (seconds), shape (T,).
-            method: 'cpi' or 'vascular'.
-            dt: Time step (seconds).
-            n_voxels: Number of voxels.
-            cpi_control_points: Number of CPI control points.
-            bolus_duration_frames: Bolus duration in frames.
-            motion_weights: Per-frame weights or None.
-            sloppy: Whether to use sloppy mode.
+        Parameters
+        ----------
+        concentration_data : npt.NDArray[Any]
+            Concentration data, shape (X, Y, Z, T).
+        mask_coords : tuple of npt.NDArray[Any]
+            Tuple of coordinate arrays.
+        aif : npt.NDArray[np.floating]
+            AIF, shape (T,).
+        time_points : npt.NDArray[np.floating]
+            Time points (seconds), shape (T,).
+        method : str
+            'cpi' or 'vascular'.
+        dt : float
+            Time step (seconds).
+        n_voxels : int
+            Number of voxels.
+        cpi_control_points : int
+            Number of CPI control points.
+        bolus_duration_frames : int
+            Bolus duration in frames.
+        motion_weights : npt.NDArray[np.floating] or None
+            Per-frame weights or None.
+        sloppy : bool
+            Whether to use sloppy mode.
 
-        Returns:
+        Returns
+        -------
+        list of dict
             List of per-voxel result dicts.
         """
         from pmriprep.models.dsc.batched_fitting import batched_dsc_map_fit
@@ -1601,17 +1661,28 @@ class ComputeDSCMaps(BaseInterface):
         is saved alongside the measured concentration and AIF for the
         fit QC plot.
 
-        Args:
-            cbf_map: 3D relative CBF map (masked).
-            conc_data: 4D concentration data.
-            aif: 1D AIF concentration curve.
-            mask_bool: 3D boolean brain mask.
-            dt: Temporal resolution in seconds.
-            method: Deconvolution method ('vascular' or 'cpi').
-            inference: Inference engine ('nlls', 'map', 'vi', 'svb').
-            mcmc_samples: Number of MCMC samples.
-            cpi_control_points: Number of CPI control points (0=auto).
-            signal_data: 4D raw signal data (optional, for QC plot).
+        Parameters
+        ----------
+        cbf_map : npt.NDArray[Any]
+            3D relative CBF map (masked).
+        conc_data : npt.NDArray[Any]
+            4D concentration data.
+        aif : npt.NDArray[Any]
+            1D AIF concentration curve.
+        mask_bool : npt.NDArray[np.bool_]
+            3D boolean brain mask.
+        dt : float
+            Temporal resolution in seconds.
+        method : str
+            Deconvolution method ('vascular' or 'cpi').
+        inference : str
+            Inference engine ('nlls', 'map', 'vi', 'svb').
+        mcmc_samples : int
+            Number of MCMC samples.
+        cpi_control_points : int
+            Number of CPI control points (0=auto).
+        signal_data : npt.NDArray[Any] or None, optional
+            4D raw signal data (optional, for QC plot).
         """
         import json
         import nibabel as nib  # type: ignore[import-untyped]
@@ -1767,16 +1838,26 @@ class ComputeDSCMaps(BaseInterface):
         The R² between measured and reconstructed concentration serves as
         a QC metric for deconvolution quality.
 
-        Args:
-            cbf_map: 3D relative CBF map (masked).
-            conc_data: 4D concentration data.
-            aif: 1D AIF concentration curve.
-            mask_bool: 3D boolean brain mask.
-            dt: Temporal resolution in seconds.
-            method: Deconvolution method ('sSVD', 'oSVD', 'tikhonov').
-            threshold: SVD truncation threshold (for sSVD).
-            oi_threshold: Oscillation index target (for oSVD).
-            signal_data: 4D raw signal data (optional, for QC plot).
+        Parameters
+        ----------
+        cbf_map : npt.NDArray[Any]
+            3D relative CBF map (masked).
+        conc_data : npt.NDArray[Any]
+            4D concentration data.
+        aif : npt.NDArray[Any]
+            1D AIF concentration curve.
+        mask_bool : npt.NDArray[np.bool_]
+            3D boolean brain mask.
+        dt : float
+            Temporal resolution in seconds.
+        method : str
+            Deconvolution method ('sSVD', 'oSVD', 'tikhonov').
+        threshold : float
+            SVD truncation threshold (for sSVD).
+        oi_threshold : float
+            Oscillation index target (for oSVD).
+        signal_data : npt.NDArray[Any] or None, optional
+            4D raw signal data (optional, for QC plot).
         """
         import json
         import nibabel as nib  # type: ignore[import-untyped]
@@ -1784,7 +1865,6 @@ class ComputeDSCMaps(BaseInterface):
         from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
         from pmriprep.utils.dsc_deconvolution import (
             svd_deconvolve_standard,
-            svd_deconvolve_circulant,
             svd_deconvolve_oscillation,
             tikhonov_deconvolve,
             build_block_circulant_matrix,
@@ -2226,14 +2306,14 @@ class ComputeDSCMaps(BaseInterface):
         # Upper bound 10000 rejects sentinel/overflow voxels. No lower
         # bound: half-rectifying symmetric noise biases NAWM voxels (the
         # nCBV denominator) upward, depressing tumor nCBV near the 1.75
-        # progression cutoff (Boxerman Neuro-Oncology 2020).
+        # progression cutoff (Boxerman 2020 Neuro Oncol 22:1262).
         auc_corr = np.minimum(np.sum(conc_data, axis=-1) * dt, 10000.0)
         auc_raw = np.minimum(np.sum(raw_conc_for_auc, axis=-1) * dt, 10000.0)
         auc_diff = auc_raw - auc_corr
 
         # -----------------------------------------------------------
         # AUC-based CBV: full bolus passage per ASFNR/NCI/ABTC consensus
-        # (Boxerman Neuro-Oncology 2020; Boxerman AJNR 2006 "nlCBV").
+        # (Boxerman 2020 Neuro Oncol 22:1262; Boxerman 2006 AJNR 27:859).
         # Window: BAT → end of acquisition on K2-corrected tissue ΔR2*;
         # denominator is measured AIF over the same window. Recirculation
         # contributes to both integrals and cancels in the ratio.

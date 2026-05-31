@@ -10,7 +10,8 @@ Supported models:
 - Patlak: C_t(t) = vp * Cp(t) + Ktrans * ∫Cp(τ)dτ
 - 2CXM: C_t(t) = [A1*exp(-K1*t) + A2*exp(-K2*t)] ⊗ Ca(t)
 
-References:
+References
+----------
     Tofts PS, Kermode AG. Measurement of the blood-brain barrier
     permeability and leakage space using dynamic MR imaging.
     1. Fundamental concepts. Magn Reson Med. 1991;17(2):357-367.
@@ -54,11 +55,15 @@ class ModelResult:
     Contains tissue concentration curves computed via vectorized
     FFT-based convolution.
 
-    Attributes:
-        tissue_curves: Computed tissue concentration curves.
-            Shape: (n_voxels, n_timepoints).
-        n_voxels_processed: Number of voxels processed.
-        model_type: Model used ('tofts', 'extended_tofts', 'patlak', or '2cxm').
+    Attributes
+    ----------
+    tissue_curves : np.ndarray
+        Computed tissue concentration curves.
+        Shape: (n_voxels, n_timepoints).
+    n_voxels_processed : int
+        Number of voxels processed.
+    model_type : str
+        Model used ('tofts', 'extended_tofts', 'patlak', or '2cxm').
     """
 
     tissue_curves: npt.NDArray[np.floating]
@@ -76,12 +81,18 @@ def _fft_convolve(
     Computes the convolution: result = aif ⊗ exp_kernel
     using the convolution theorem: conv(a, b) = ifft(fft(a) * fft(b))
 
-    Args:
-        aif: Arterial input function, shape (n_timepoints,).
-        exp_kernel: Exponential decay kernel, shape (n_voxels, n_timepoints).
-        dt: Time step in minutes.
+    Parameters
+    ----------
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,).
+    exp_kernel : np.ndarray
+        Exponential decay kernel, shape (n_voxels, n_timepoints).
+    dt : float
+        Time step in minutes.
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         Convolution result, shape (n_voxels, n_timepoints).
     """
     n_timepoints = aif.shape[0]
@@ -113,11 +124,16 @@ def _build_exp_kernel(
 
     Computes exp(-kep * t) for each voxel.
 
-    Args:
-        kep: Efflux rate constants, shape (n_voxels,).
-        time_points: Time points in minutes, shape (n_timepoints,).
+    Parameters
+    ----------
+    kep : np.ndarray
+        Efflux rate constants, shape (n_voxels,).
+    time_points : np.ndarray
+        Time points in minutes, shape (n_timepoints,).
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         Exponential kernels, shape (n_voxels, n_timepoints).
     """
     lag_times = time_points - time_points[0]
@@ -133,10 +149,14 @@ def _validate_uniform_time_points(
     FFT convolution assumes uniform temporal spacing. Warns if variation
     exceeds 5% but does not error, since DCE data is almost always uniform.
 
-    Args:
-        time_points: Time points in minutes, shape (T,).
+    Parameters
+    ----------
+    time_points : np.ndarray
+        Time points in minutes, shape (T,).
 
-    Returns:
+    Returns
+    -------
+    float
         Time step dt in minutes.
     """
     n = len(time_points)
@@ -177,19 +197,30 @@ def batched_tofts_model(
 
     where kep = Ktrans / ve.
 
-    Args:
-        ktrans: Volume transfer constants, shape (n_voxels,) in min^-1.
-        ve: Extravascular extracellular volume fractions, shape (n_voxels,).
-        aif: Arterial input function, shape (n_timepoints,) in mM.
-        time_points: Time points in minutes, shape (n_timepoints,).
-        batch_size: Number of voxels per batch. If None, uses default.
+    Parameters
+    ----------
+    ktrans : np.ndarray
+        Volume transfer constants, shape (n_voxels,) in min^-1.
+    ve : np.ndarray
+        Extravascular extracellular volume fractions, shape (n_voxels,).
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,) in mM.
+    time_points : np.ndarray
+        Time points in minutes, shape (n_timepoints,).
+    batch_size : int, optional
+        Number of voxels per batch. If None, uses default.
 
-    Returns:
+    Returns
+    -------
+    ModelResult
         ModelResult containing tissue concentration curves and metadata.
 
-    Raises:
-        ValueError: If ktrans and ve have different shapes.
-        ValueError: If aif and time_points have different lengths.
+    Raises
+    ------
+    ValueError
+        If ktrans and ve have different shapes.
+    ValueError
+        If aif and time_points have different lengths.
     """
     if ktrans.shape != ve.shape:
         raise ValueError(
@@ -265,20 +296,32 @@ def batched_extended_tofts_model(
 
     where kep = Ktrans / ve.
 
-    Args:
-        ktrans: Volume transfer constants, shape (n_voxels,) in min^-1.
-        ve: Extravascular extracellular volume fractions, shape (n_voxels,).
-        vp: Plasma volume fractions, shape (n_voxels,).
-        aif: Arterial input function, shape (n_timepoints,) in mM.
-        time_points: Time points in minutes, shape (n_timepoints,).
-        batch_size: Number of voxels per batch. If None, uses default.
+    Parameters
+    ----------
+    ktrans : np.ndarray
+        Volume transfer constants, shape (n_voxels,) in min^-1.
+    ve : np.ndarray
+        Extravascular extracellular volume fractions, shape (n_voxels,).
+    vp : np.ndarray
+        Plasma volume fractions, shape (n_voxels,).
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,) in mM.
+    time_points : np.ndarray
+        Time points in minutes, shape (n_timepoints,).
+    batch_size : int, optional
+        Number of voxels per batch. If None, uses default.
 
-    Returns:
+    Returns
+    -------
+    ModelResult
         ModelResult containing tissue concentration curves and metadata.
 
-    Raises:
-        ValueError: If ktrans, ve, and vp have different shapes.
-        ValueError: If aif and time_points have different lengths.
+    Raises
+    ------
+    ValueError
+        If ktrans, ve, and vp have different shapes.
+    ValueError
+        If aif and time_points have different lengths.
     """
     if ktrans.shape != ve.shape or ktrans.shape != vp.shape:
         raise ValueError(
@@ -355,20 +398,31 @@ def batched_patlak_model(
 
     No convolution kernel needed — uses cumulative trapezoidal integration.
 
-    Args:
-        ktrans: Volume transfer constants, shape (n_voxels,) in min^-1.
-        vp: Plasma volume fractions, shape (n_voxels,).
-        aif: Arterial input function, shape (n_timepoints,) in mM.
-        time_points: Time points in minutes, shape (n_timepoints,).
-        batch_size: Unused (kept for API consistency). Patlak is trivially
-            vectorizable with minimal memory.
+    Parameters
+    ----------
+    ktrans : np.ndarray
+        Volume transfer constants, shape (n_voxels,) in min^-1.
+    vp : np.ndarray
+        Plasma volume fractions, shape (n_voxels,).
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,) in mM.
+    time_points : np.ndarray
+        Time points in minutes, shape (n_timepoints,).
+    batch_size : int, optional
+        Unused (kept for API consistency). Patlak is trivially
+        vectorizable with minimal memory.
 
-    Returns:
+    Returns
+    -------
+    ModelResult
         ModelResult containing tissue concentration curves and metadata.
 
-    Raises:
-        ValueError: If ktrans and vp have different shapes.
-        ValueError: If aif and time_points have different lengths.
+    Raises
+    ------
+    ValueError
+        If ktrans and vp have different shapes.
+    ValueError
+        If aif and time_points have different lengths.
     """
     if ktrans.shape != vp.shape:
         raise ValueError(
@@ -430,23 +484,37 @@ def batched_2cxm_model(
     fractional rates (/100) before eigenvalue computation, matching the
     CPU model at two_compartment_exchange.py:277-278.
 
-    Args:
-        fp: Plasma flow rates, shape (n_voxels,) in mL/min/100mL.
-        ps: Permeability-surface area products, shape (n_voxels,) in mL/min/100mL.
-        ve: Extravascular extracellular volume fractions, shape (n_voxels,).
-        vp: Plasma volume fractions, shape (n_voxels,).
-        aif: Arterial input function, shape (n_timepoints,) in mM.
-        time_points: Time points in minutes, shape (n_timepoints,).
-        batch_size: Number of voxels per batch. If None, uses default.
+    Parameters
+    ----------
+    fp : np.ndarray
+        Plasma flow rates, shape (n_voxels,) in mL/min/100mL.
+    ps : np.ndarray
+        Permeability-surface area products, shape (n_voxels,) in mL/min/100mL.
+    ve : np.ndarray
+        Extravascular extracellular volume fractions, shape (n_voxels,).
+    vp : np.ndarray
+        Plasma volume fractions, shape (n_voxels,).
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,) in mM.
+    time_points : np.ndarray
+        Time points in minutes, shape (n_timepoints,).
+    batch_size : int, optional
+        Number of voxels per batch. If None, uses default.
 
-    Returns:
+    Returns
+    -------
+    ModelResult
         ModelResult containing tissue concentration curves and metadata.
 
-    Raises:
-        ValueError: If parameter arrays have different shapes.
-        ValueError: If aif and time_points have different lengths.
+    Raises
+    ------
+    ValueError
+        If parameter arrays have different shapes.
+    ValueError
+        If aif and time_points have different lengths.
 
-    References:
+    References
+    ----------
         Sourbron SP, Buckley DL. On the scope and interpretation of the
         Tofts models for DCE-MRI. Magn Reson Med. 2011;66(3):735-745.
     """
@@ -556,24 +624,35 @@ def evaluate_model(
     This is a convenience wrapper that dispatches to the appropriate
     batched model evaluation function based on the model name.
 
-    Args:
-        model_name: Model to evaluate ('tofts', 'extended_tofts', 'patlak',
-            or '2cxm').
-        params: Dictionary of parameter arrays:
+    Parameters
+    ----------
+    model_name : str
+        Model to evaluate ('tofts', 'extended_tofts', 'patlak',
+        or '2cxm').
+    params : dict
+        Dictionary of parameter arrays:
             - For 'tofts': {'ktrans': ..., 've': ...}
             - For 'extended_tofts': {'ktrans': ..., 've': ..., 'vp': ...}
             - For 'patlak': {'ktrans': ..., 'vp': ...}
             - For '2cxm': {'fp': ..., 'ps': ..., 've': ..., 'vp': ...}
-        aif: Arterial input function, shape (n_timepoints,) in mM.
-        time_points: Time points in minutes, shape (n_timepoints,).
-        batch_size: Number of voxels per batch. Auto-determined if None.
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,) in mM.
+    time_points : np.ndarray
+        Time points in minutes, shape (n_timepoints,).
+    batch_size : int, optional
+        Number of voxels per batch. Auto-determined if None.
 
-    Returns:
+    Returns
+    -------
+    ModelResult
         ModelResult containing tissue concentration curves.
 
-    Raises:
-        ValueError: If model_name is not recognized.
-        KeyError: If required parameters are missing from params dict.
+    Raises
+    ------
+    ValueError
+        If model_name is not recognized.
+    KeyError
+        If required parameters are missing from params dict.
     """
     if model_name == "tofts":
         return batched_tofts_model(

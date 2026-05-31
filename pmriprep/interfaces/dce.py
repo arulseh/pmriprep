@@ -8,7 +8,6 @@ signal processing.
 import logging
 import shutil
 import tempfile
-import warnings
 from pathlib import Path
 from typing import Any, Optional
 
@@ -16,7 +15,6 @@ import nibabel as nib  # type: ignore[import-untyped]
 import numpy as np
 import numpy.typing as npt
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
-    BaseInterface,
     BaseInterfaceInputSpec,
     File,
     SimpleInterface,
@@ -32,10 +30,14 @@ logger = logging.getLogger("pmriprep.interfaces.dce")
 def _reorient_to_ras(in_file: Optional[str]) -> Optional[str]:
     """Reorient NIfTI to RAS orientation using fslreorient2std.
 
-    Args:
-        in_file: Path to input NIfTI file, or None.
+    Parameters
+    ----------
+    in_file : str or None
+        Path to input NIfTI file, or None.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to reoriented NIfTI file, or None if input was None.
     """
     if in_file is None:
@@ -84,11 +86,16 @@ def _b1_interior_mask(valid: np.ndarray, iterations: int = 2) -> np.ndarray:
     outer brain boundary, then intersects with the original valid mask
     to exclude filled-but-invalid voxels.
 
-    Args:
-        valid: Boolean mask of valid B1+ voxels.
-        iterations: Number of erosion iterations (default 2).
+    Parameters
+    ----------
+    valid : numpy.ndarray
+        Boolean mask of valid B1+ voxels.
+    iterations : int
+        Number of erosion iterations (default 2).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Boolean interior mask.
     """
     from scipy.ndimage import binary_erosion, binary_fill_holes  # type: ignore[import-untyped]
@@ -2061,20 +2068,31 @@ class T1Mapping(SimpleInterface):
         signal S. Without weighting, the correlated errors systematically
         bias E1 (and thus T1) upward.
 
-        Args:
-            x_data: S/tan(a) data, shape (n_fa, x, y, z)
-            y_data: S/sin(a) data, shape (n_fa, x, y, z)
-            sin_fa: sin(corrected_fa), shape (n_fa, x, y, z)
-            cos_fa: cos(corrected_fa), shape (n_fa, x, y, z)
-            tr_s: TR in seconds
-            shape: Output shape (x, y, z)
-            n_iterations: Number of IRLS iterations (default: 3)
+        Parameters
+        ----------
+        x_data : numpy.ndarray
+            S/tan(a) data, shape (n_fa, x, y, z)
+        y_data : numpy.ndarray
+            S/sin(a) data, shape (n_fa, x, y, z)
+        sin_fa : numpy.ndarray
+            sin(corrected_fa), shape (n_fa, x, y, z)
+        cos_fa : numpy.ndarray
+            cos(corrected_fa), shape (n_fa, x, y, z)
+        tr_s : float
+            TR in seconds
+        shape : tuple
+            Output shape (x, y, z)
+        n_iterations : int
+            Number of IRLS iterations (default: 3)
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             T1 map in seconds
 
-        References:
-            Chang et al. (2008) PMC4196213, Eq. 5
+        References
+        ----------
+        Chang LC, et al. Magn Reson Med. 2008;60(2):496-501.
         """
         from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1
 
@@ -2103,7 +2121,7 @@ class T1Mapping(SimpleInterface):
         e1 = (n_fa * sum_xy - sum_x * sum_y) / denom
         e1 = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
 
-        # Iterative reweighting (Chang et al. 2008, Eq. 5)
+        # Iterative reweighting (Chang 2008 MRM 60:496)
         for _ in range(n_iterations):
             # w_i = (sin(a_i) / (1 - E1 * cos(a_i)))^2
             denom_w = 1.0 - e1[np.newaxis, :] * cos_flat  # (n_fa, n_voxels)
@@ -2163,17 +2181,27 @@ class T1Mapping(SimpleInterface):
         exactly determined — residual-based QC (R², chi²) is degenerate
         (always perfect). This is a known limitation documented here.
 
-        Args:
-            signal_data: Raw VFA signal, shape (n_fa, x, y, z).
-            sin_fa: sin(corrected_fa), shape (n_fa, x, y, z).
-            cos_fa: cos(corrected_fa), shape (n_fa, x, y, z).
-            tr_s: TR in seconds.
-            shape: Output volume shape (x, y, z).
-            e1_init: Optional initial E1 from WLLS, shape (n_voxels,).
-                If None, uses unweighted GLLS estimate as starting point.
-            mask: Boolean mask of voxels to fit. If None, fits all voxels.
+        Parameters
+        ----------
+        signal_data : numpy.ndarray
+            Raw VFA signal, shape (n_fa, x, y, z).
+        sin_fa : numpy.ndarray
+            sin(corrected_fa), shape (n_fa, x, y, z).
+        cos_fa : numpy.ndarray
+            cos(corrected_fa), shape (n_fa, x, y, z).
+        tr_s : float
+            TR in seconds.
+        shape : tuple
+            Output volume shape (x, y, z).
+        e1_init : numpy.ndarray, optional
+            Optional initial E1 from WLLS, shape (n_voxels,).
+            If None, uses unweighted GLLS estimate as starting point.
+        mask : numpy.ndarray, optional
+            Boolean mask of voxels to fit. If None, fits all voxels.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             T1 map in seconds, shape (x, y, z). Unfitted voxels are 0.
         """
         from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1
@@ -2438,7 +2466,6 @@ class VFAPreprocess(SimpleInterface):
         import subprocess
 
         import nibabel as nib  # type: ignore[import-untyped]
-        from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
         vfa_files = list(self.inputs.vfa_files)
         flip_angles = list(self.inputs.flip_angles)
@@ -3069,11 +3096,16 @@ class DCEPreprocess(SimpleInterface):
         delay that affects the mean brain signal.  Falls back to mean
         when the mask has too few voxels for a stable percentile.
 
-        Args:
-            dce_data: 4D DCE data array (x, y, z, t).
-            brain_mask: Optional 3D boolean brain mask.
+        Parameters
+        ----------
+        dce_data : numpy.ndarray
+            4D DCE data array (x, y, z, t).
+        brain_mask : numpy.ndarray or None
+            Optional 3D boolean brain mask.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             1D signal time course of length n_volumes.
         """
         n_volumes = dce_data.shape[3]
@@ -3106,11 +3138,16 @@ class DCEPreprocess(SimpleInterface):
         using the 95th percentile signal, which captures arterial timing
         without the transit delay that makes the mean lag by 0-1 frames.
 
-        Args:
-            dce_data: 4D DCE data array (x, y, z, t)
-            brain_mask: Optional brain mask
+        Parameters
+        ----------
+        dce_data : numpy.ndarray
+            4D DCE data array (x, y, z, t)
+        brain_mask : numpy.ndarray or None
+            Optional brain mask
 
-        Returns:
+        Returns
+        -------
+        tuple
             Tuple of (baseline_frames, bolus_arrival_frame, diagnostics).
             ``diagnostics`` is the per-call diag dict from
             ``detect_baseline_ensemble`` (method, confidence, ...) so
@@ -3135,11 +3172,16 @@ class DCEPreprocess(SimpleInterface):
     ) -> tuple[int, dict[str, Any]]:
         """Detect bolus arrival frame from data.
 
-        Args:
-            dce_data: 4D DCE data array
-            brain_mask: Optional brain mask
+        Parameters
+        ----------
+        dce_data : numpy.ndarray
+            4D DCE data array
+        brain_mask : numpy.ndarray or None
+            Optional brain mask
 
-        Returns:
+        Returns
+        -------
+        tuple
             Tuple of (bolus_arrival_frame, diagnostics) — see
             ``_auto_detect_baseline`` for the diag contract.
         """
@@ -3210,11 +3252,16 @@ class DCEPreprocess(SimpleInterface):
     ) -> npt.NDArray[Any]:
         """Calculate framewise displacement from motion parameters.
 
-        Args:
-            motion_params: Motion parameters (N, 6)
-            head_radius: Head radius in mm
+        Parameters
+        ----------
+        motion_params : numpy.ndarray
+            Motion parameters (N, 6)
+        head_radius : float
+            Head radius in mm
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             Framewise displacement array
         """
         if motion_params.ndim == 1:
@@ -3427,8 +3474,6 @@ class DCEBrainExtract(SimpleInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE brain extraction."""
-        import subprocess
-
         dce_mean = Path(self.inputs.dce_mean)
 
         # Generate output filenames
@@ -3775,45 +3820,62 @@ class DCERegistration(SimpleInterface):
       Path B: Original T1w -> FLIRT
       Best path selected by DICE overlap.
 
-    Args:
-        t1w_file: T1-weighted image to register to DCE space.
-        dce_mean: Mean DCE image (target space).
-        brain_mask: Brain mask for computing QC metrics.
-        dof: Degrees of freedom (default: 6 for rigid body).
-        cost: Cost function for FLIRT (default: normmi).
-        reference_type: Expected T1w type: postcon (default for DCE), precon,
-            or any.
-    Returns:
-        out_file: Registered T1w in DCE space.
-        out_matrix: FSL FLIRT transformation matrix.
-        dice: DICE coefficient of brain masks (if brain_mask provided).
-        correlation: Correlation coefficient within brain mask.
-        nmi: Normalized mutual information.
-        qc_metrics: Complete QC metrics dictionary.
+    Parameters
+    ----------
+    t1w_file : str
+        T1-weighted image to register to DCE space.
+    dce_mean : str
+        Mean DCE image (target space).
+    brain_mask : str, optional
+        Brain mask for computing QC metrics.
+    dof : int, optional
+        Degrees of freedom (default: 6 for rigid body).
+    cost : {'normmi', 'normcorr', 'corratio', 'mutualinfo', 'leastsq'}, optional
+        Cost function for FLIRT (default: normmi).
+    reference_type : {'postcon', 'precon', 'any'}, optional
+        Expected T1w type: postcon (default for DCE), precon, or any.
 
-    Example:
-        Standard usage::
+    Returns
+    -------
+    out_file : str
+        Registered T1w in DCE space.
+    out_matrix : str
+        FSL FLIRT transformation matrix.
+    dice : float
+        DICE coefficient of brain masks (if brain_mask provided).
+    correlation : float
+        Correlation coefficient within brain mask.
+    nmi : float
+        Normalized mutual information.
+    qc_metrics : dict
+        Complete QC metrics dictionary.
 
-            >>> reg = DCERegistration()
-            >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
-            >>> reg.inputs.dce_mean = 'dce_mean.nii.gz'
-            >>> result = reg.run()  # doctest: +SKIP
+    Examples
+    --------
+    Standard usage:
 
-    Note:
-        For DCE, the default reference is post-contrast T1w since DCE has contrast
-        enhancement similar to post-contrast T1w, providing better intensity
-        correspondence for registration.
+    >>> reg = DCERegistration()
+    >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
+    >>> reg.inputs.dce_mean = 'dce_mean.nii.gz'
+    >>> result = reg.run()  # doctest: +SKIP
 
-        QC metrics computed:
+    Notes
+    -----
+    For DCE, the default reference is post-contrast T1w since DCE has contrast
+    enhancement similar to post-contrast T1w, providing better intensity
+    correspondence for registration.
 
-        - DICE: Overlap of brain masks (requires brain_mask input)
-        - Correlation: Pearson correlation within brain mask
-        - NMI: Normalized mutual information (intensity correspondence)
+    QC metrics computed:
 
-        Requires FSL to be installed and available in PATH.
+    - DICE: Overlap of brain masks (requires brain_mask input)
+    - Correlation: Pearson correlation within brain mask
+    - NMI: Normalized mutual information (intensity correspondence)
 
-    See Also:
-        - FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
+    Requires FSL to be installed and available in PATH.
+
+    See Also
+    --------
+    FSL FLIRT : https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
     """
 
     input_spec = DCERegistrationInputSpec
@@ -3828,14 +3890,20 @@ class DCERegistration(SimpleInterface):
         - Path B: Original T1w → FLIRT
         - Select path with best DICE (B must beat A by margin)
 
-        Args:
-            runtime: Nipype runtime object.
+        Parameters
+        ----------
+        runtime : Any
+            Nipype runtime object.
 
-        Returns:
+        Returns
+        -------
+        Any
             Updated runtime object.
 
-        Raises:
-            RuntimeError: If both registration paths fail or produce no output.
+        Raises
+        ------
+        RuntimeError
+            If both registration paths fail or produce no output.
         """
         # Generate output filenames
         out_file = self._gen_outfilename()
@@ -3948,20 +4016,33 @@ class DCERegistration(SimpleInterface):
         Path A uses header-aligned T1w, Path B uses original T1w.
         At least one path must succeed.
 
-        Args:
-            header_aligned_file: Header-aligned T1w image.
-            t1w_file: Original T1w image.
-            dce_mean: DCE mean reference image.
-            out_file_a: Output file for path A.
-            out_matrix_a: Output matrix for path A.
-            out_file_b: Output file for path B.
-            out_matrix_b: Output matrix for path B.
-            dof: Degrees of freedom.
-            cost: Cost function name.
-            search_range: Search range in degrees.
+        Parameters
+        ----------
+        header_aligned_file : str
+            Header-aligned T1w image.
+        t1w_file : str
+            Original T1w image.
+        dce_mean : str
+            DCE mean reference image.
+        out_file_a : str
+            Output file for path A.
+        out_matrix_a : str
+            Output matrix for path A.
+        out_file_b : str
+            Output file for path B.
+        out_matrix_b : str
+            Output matrix for path B.
+        dof : int
+            Degrees of freedom.
+        cost : str
+            Cost function name.
+        search_range : int
+            Search range in degrees.
 
-        Raises:
-            RuntimeError: If both registration paths fail.
+        Raises
+        ------
+        RuntimeError
+            If both registration paths fail.
         """
         # Path A: header-aligned T1w
         flirt_a = FLIRT()
@@ -4030,18 +4111,28 @@ class DCERegistration(SimpleInterface):
         Path B must exceed Path A by DICE_SELECTION_MARGIN to be selected,
         providing a preference for the header-aligned path when close.
 
-        Args:
-            out_file_a: Output file from path A.
-            out_matrix_a: Output matrix from path A.
-            out_file_b: Output file from path B.
-            out_matrix_b: Output matrix from path B.
-            dce_mean: DCE mean reference for DICE computation.
+        Parameters
+        ----------
+        out_file_a : str
+            Output file from path A.
+        out_matrix_a : str
+            Output matrix from path A.
+        out_file_b : str
+            Output file from path B.
+        out_matrix_b : str
+            Output matrix from path B.
+        dce_mean : str
+            DCE mean reference for DICE computation.
 
-        Returns:
+        Returns
+        -------
+        tuple
             Tuple of (selected_file, selected_matrix, dice_a, dice_b, path_name).
 
-        Raises:
-            RuntimeError: If neither path produced valid output.
+        Raises
+        ------
+        RuntimeError
+            If neither path produced valid output.
         """
         file_a_exists = Path(out_file_a).exists()
         file_b_exists = Path(out_file_b).exists()
@@ -4088,11 +4179,16 @@ class DCERegistration(SimpleInterface):
     ) -> dict[str, Any]:
         """Compute registration QC metrics with validation thresholds.
 
-        Args:
-            registered_t1w: Path to registered T1w image.
-            dce_mean: Path to reference DCE mean image.
+        Parameters
+        ----------
+        registered_t1w : str
+            Path to registered T1w image.
+        dce_mean : str
+            Path to reference DCE mean image.
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary of QC metrics including qc_status (PASS/WARN/FAIL).
         """
         qc_metrics: dict[str, Any] = {}
@@ -4248,10 +4344,14 @@ class DCERegistration(SimpleInterface):
         be near 1.0 for a rigid body transform. Values significantly
         different from 1.0 indicate scaling/shearing.
 
-        Args:
-            mat_file: Path to FLIRT .mat file.
+        Parameters
+        ----------
+        mat_file : str
+            Path to FLIRT .mat file.
 
-        Returns:
+        Returns
+        -------
+        float
             Determinant of the 3x3 rotation/scale submatrix.
         """
         mat = np.loadtxt(mat_file)
@@ -4261,7 +4361,9 @@ class DCERegistration(SimpleInterface):
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified.
 
-        Returns:
+        Returns
+        -------
+        str
             Path to output registered T1w file.
         """
         if isdefined(self.inputs.out_file):
@@ -4274,7 +4376,9 @@ class DCERegistration(SimpleInterface):
     def _gen_matfilename(self) -> str:
         """Generate output matrix filename if not specified.
 
-        Returns:
+        Returns
+        -------
+        str
             Path to output transformation matrix file.
         """
         if isdefined(self.inputs.out_matrix):

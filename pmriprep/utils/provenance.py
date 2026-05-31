@@ -1,6 +1,5 @@
 """Provenance tracking utilities for BIDS-Derivatives."""
 
-import copy
 import datetime
 import json
 import logging
@@ -24,7 +23,9 @@ def get_software_versions() -> Dict[str, str]:
     - scipy
     - nilearn
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary mapping package names to version strings.
     """
     versions: Dict[str, str] = {
@@ -74,16 +75,26 @@ def create_provenance_dict(
     including information about source files, processing parameters, and
     software versions.
 
-    Args:
-        source_files: List of paths to input files used to generate this output.
-        processing_description: Human-readable description of the processing.
-        config_used: Configuration parameters used for processing.
-        scanner_metadata: Scanner metadata from BIDS JSON sidecar.
-        include_versions: Whether to include software version information.
-        include_timestamp: Whether to include processing timestamp.
-        additional_metadata: Any additional key-value pairs to include.
+    Parameters
+    ----------
+    source_files : list of str or Path, optional
+        List of paths to input files used to generate this output.
+    processing_description : str, optional
+        Human-readable description of the processing.
+    config_used : dict, optional
+        Configuration parameters used for processing.
+    scanner_metadata : dict, optional
+        Scanner metadata from BIDS JSON sidecar.
+    include_versions : bool, optional
+        Whether to include software version information.
+    include_timestamp : bool, optional
+        Whether to include processing timestamp.
+    additional_metadata : dict, optional
+        Any additional key-value pairs to include.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary suitable for JSON serialization as a sidecar file.
     """
     provenance: Dict[str, Any] = {}
@@ -144,12 +155,18 @@ def write_provenance_json(
 ) -> Path:
     """Write a provenance dictionary to a JSON file.
 
-    Args:
-        output_path: Path for the output JSON file.
-        provenance: Provenance dictionary to write.
-        indent: JSON indentation level (default: 2).
+    Parameters
+    ----------
+    output_path : str or Path
+        Path for the output JSON file.
+    provenance : dict
+        Provenance dictionary to write.
+    indent : int, optional
+        JSON indentation level (default: 2).
 
-    Returns:
+    Returns
+    -------
+    Path
         Path to the written file.
     """
     output_path = Path(output_path)
@@ -174,12 +191,18 @@ def get_bids_derivative_provenance(
     This creates the standard "GeneratedBy" field used in dataset_description.json
     and individual derivative sidecars.
 
-    Args:
-        pipeline_name: Name of the pipeline (default: "pmriprep").
-        pipeline_version: Version string. If None, uses pmriprep.__version__.
-        description: Optional description of what the pipeline does.
+    Parameters
+    ----------
+    pipeline_name : str, optional
+        Name of the pipeline (default: "pmriprep").
+    pipeline_version : str, optional
+        Version string. If None, uses pmriprep.__version__.
+    description : str, optional
+        Optional description of what the pipeline does.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary with GeneratedBy field following BIDS spec.
     """
     version = pipeline_version or pmriprep.__version__
@@ -216,13 +239,19 @@ def enrich_provenance_from_qc(
     PerfusionProcessing namespace in the sidecar. Missing QC keys
     are silently skipped.
 
-    Args:
-        sidecar: Existing sidecar dict (must contain PerfusionProcessing
-            from Phase 1 static provenance).
-        qc_metrics: QC metrics dict from the writer's qc_metrics input.
-        modality: "DCE" or "DSC".
+    Parameters
+    ----------
+    sidecar : dict
+        Existing sidecar dict (must contain PerfusionProcessing
+        from Phase 1 static provenance).
+    qc_metrics : dict
+        QC metrics dict from the writer's qc_metrics input.
+    modality : {"DCE", "DSC"}
+        "DCE" or "DSC".
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with updated PerfusionProcessing to merge into sidecar.
     """
     perf = sidecar.get("PerfusionProcessing", {})

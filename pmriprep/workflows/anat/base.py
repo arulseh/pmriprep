@@ -5,7 +5,7 @@ following the NiPreps/fMRIPrep workflow design patterns.
 """
 
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 from nipype.interfaces import utility as niu  # type: ignore[import-untyped]
 from nipype.pipeline import engine as pe  # type: ignore[import-untyped]
@@ -398,52 +398,52 @@ def init_anat_preproc_wf(
     pe.Workflow
         Nipype workflow for anatomical preprocessing.
 
-    Workflow Inputs
-    ---------------
-    inputnode.t1w_precon : str, optional
+    Inputs
+    ------
+    t1w_precon
         Path to T1-weighted pre-contrast image.
-    inputnode.t1w_postcon : str, optional
+    t1w_postcon
         Path to post-contrast T1-weighted image.
-    inputnode.t2w : str, optional
+    t2w
         Path to T2-weighted image.
-    inputnode.flair : str, optional
+    flair
         Path to FLAIR image.
 
-    Workflow Outputs
-    ----------------
-    outputnode.t1w_preproc : str
+    Outputs
+    -------
+    t1w_preproc
         Path to preprocessed T1-weighted image (bias-corrected, brain-extracted).
-    outputnode.brain_mask : str
+    brain_mask
         Path to brain mask in T1w space.
-    outputnode.wm_probseg : str
+    wm_probseg
         Path to white matter probability map (None if postcon is reference).
-    outputnode.gm_probseg : str
+    gm_probseg
         Path to gray matter probability map (None if postcon is reference).
-    outputnode.csf_probseg : str
+    csf_probseg
         Path to CSF probability map (None if postcon is reference).
-    outputnode.t1w_acpc : str, optional
+    t1w_acpc
         Path to ACPC-aligned T1w (if not skipped).
-    outputnode.acpc_xfm : str, optional
+    acpc_xfm
         Path to ACPC alignment transform.
-    outputnode.t1w_to_mni_xfm : str, optional
+    t1w_to_mni_xfm
         Path to T1w to MNI transform.
-    outputnode.t1w_postcon_coreg : str, optional
+    t1w_postcon_coreg
         T1w post-contrast coregistered to pre-contrast.
-    outputnode.t2w_coreg : str, optional
+    t2w_coreg
         T2w coregistered to T1w.
-    outputnode.flair_coreg : str, optional
+    flair_coreg
         FLAIR coregistered to T1w.
-    outputnode.t1w_postcon_to_t1w_xfm : str, optional
+    t1w_postcon_to_t1w_xfm
         T1w postcon to T1w transform.
-    outputnode.t2w_to_t1w_xfm : str, optional
+    t2w_to_t1w_xfm
         T2w to T1w transform.
-    outputnode.flair_to_t1w_xfm : str, optional
+    flair_to_t1w_xfm
         FLAIR to T1w transform.
-    outputnode.t1w_subtraction : str, optional
+    t1w_subtraction
         T1w subtraction image (post - pre).
-    outputnode.is_postcon_ref : bool
+    is_postcon_ref
         Flag indicating postcon is the structural reference.
-    outputnode.qc_metrics : dict
+    qc_metrics
         Dictionary of QC metrics from preprocessing steps.
 
     Notes

@@ -57,10 +57,10 @@ def extract_tumor_masks(
 
     Examples
     --------
-    >>> masks = extract_tumor_masks("hdglio_seg.nii.gz", output_dir="/out")
-    >>> masks["enhancing"]
+    >>> masks = extract_tumor_masks("hdglio_seg.nii.gz", output_dir="/out")  # doctest: +SKIP
+    >>> masks["enhancing"]  # doctest: +SKIP
     '/out/desc-enhancing_mask.nii.gz'
-    >>> masks["whole_tumor"]
+    >>> masks["whole_tumor"]  # doctest: +SKIP
     '/out/desc-wholetumor_mask.nii.gz'
 
     Notes
@@ -236,7 +236,7 @@ def dilate_mask_from_array(
     >>> mask = np.zeros((100, 100, 50), dtype=bool)
     >>> mask[40:60, 40:60, 20:30] = True
     >>> dilated = dilate_mask_from_array(mask, 5.0, (1.0, 1.0, 2.0))
-    >>> dilated.sum() > mask.sum()
+    >>> bool(dilated.sum() > mask.sum())
     True
 
     """
@@ -303,8 +303,8 @@ def get_mask_volume_ml(
 
     Examples
     --------
-    >>> volume = get_mask_volume_ml("tumor_mask.nii.gz")
-    >>> print(f"Tumor volume: {volume:.1f} mL")
+    >>> volume = get_mask_volume_ml("tumor_mask.nii.gz")  # doctest: +SKIP
+    >>> print(f"Tumor volume: {volume:.1f} mL")  # doctest: +SKIP
     Tumor volume: 42.5 mL
 
     Notes
@@ -353,9 +353,9 @@ def get_mask_statistics(
 
     Examples
     --------
-    >>> stats = get_mask_statistics("tumor_mask.nii.gz")
-    >>> print(f"Volume: {stats['volume_ml']:.1f} mL")
-    >>> print(f"Centroid: {stats['centroid_voxels']}")
+    >>> stats = get_mask_statistics("tumor_mask.nii.gz")  # doctest: +SKIP
+    >>> print(f"Volume: {stats['volume_ml']:.1f} mL")  # doctest: +SKIP
+    >>> print(f"Centroid: {stats['centroid_voxels']}")  # doctest: +SKIP
     """
     import nibabel as nib  # type: ignore[import-untyped]
     from scipy import ndimage  # type: ignore[import-untyped]
@@ -848,13 +848,13 @@ def create_nawm_roi(
 
     Examples
     --------
-    >>> result = create_nawm_roi(
+    >>> result = create_nawm_roi(  # doctest: +SKIP
     ...     "tumor_mask.nii.gz",
     ...     "wm_probseg.nii.gz",
     ...     nawm_erosion=2,
     ...     nawm_min_voxels=500
     ... )
-    >>> print(f"NAWM voxels: {result['analysis']['n_voxels']}")
+    >>> print(f"NAWM voxels: {result['analysis']['n_voxels']}")  # doctest: +SKIP
     NAWM voxels: 2847
 
     Notes

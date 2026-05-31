@@ -47,40 +47,43 @@ class FitResult:
     fitting), credible intervals, goodness-of-fit metrics, and model
     selection criteria.
 
-    Attributes:
-        # Fitted parameter values (dict: parameter_name -> value)
-        parameters: Dictionary mapping parameter names to fitted values.
-
-        # Uncertainty estimates (for Bayesian methods)
-        uncertainties: Dictionary mapping parameter names to standard deviations.
-            Only populated for MAP with Laplace approximation or MCMC.
-
-        # Credible intervals (for Bayesian methods)
-        credible_intervals: Dictionary mapping parameter names to (lower, upper)
-            tuples representing 95% credible intervals. Only populated for
-            Bayesian methods.
-
-        # Goodness-of-fit metrics
-        r_squared: Coefficient of determination (R²) for the fit.
-        residual_sum_squares: Sum of squared residuals.
-        aic: Akaike Information Criterion for model selection.
-        bic: Bayesian Information Criterion for model selection.
-
-        # MCMC diagnostics (only for MCMC fitting)
-        rhat: Dictionary of Gelman-Rubin R-hat values per parameter.
-            Values should be < 1.1 for convergence.
-        ess: Dictionary of effective sample sizes per parameter.
-            Values should be > 100 for reliable inference.
-
-        # Model information
-        model_name: Name of the model used for fitting.
-        n_parameters: Number of free parameters in the model.
-        n_observations: Number of time points used in fitting.
-        converged: Whether the fitting algorithm converged.
-        fitting_method: Method used ('nlls', 'map', 'mcmc').
-
-        # Fitted curve
-        fitted_curve: Fitted tissue concentration curve C_t(t).
+    Attributes
+    ----------
+    parameters : dict
+        Dictionary mapping parameter names to fitted values.
+    uncertainties : dict
+        Dictionary mapping parameter names to standard deviations.
+        Only populated for MAP with Laplace approximation or MCMC.
+    credible_intervals : dict
+        Dictionary mapping parameter names to (lower, upper)
+        tuples representing 95% credible intervals. Only populated for
+        Bayesian methods.
+    r_squared : float
+        Coefficient of determination (R²) for the fit.
+    residual_sum_squares : float
+        Sum of squared residuals.
+    aic : float
+        Akaike Information Criterion for model selection.
+    bic : float
+        Bayesian Information Criterion for model selection.
+    rhat : dict
+        Dictionary of Gelman-Rubin R-hat values per parameter.
+        Values should be < 1.1 for convergence.
+    ess : dict
+        Dictionary of effective sample sizes per parameter.
+        Values should be > 100 for reliable inference.
+    model_name : str
+        Name of the model used for fitting.
+    n_parameters : int
+        Number of free parameters in the model.
+    n_observations : int
+        Number of time points used in fitting.
+    converged : bool
+        Whether the fitting algorithm converged.
+    fitting_method : str
+        Method used ('nlls', 'map', 'mcmc').
+    fitted_curve : np.ndarray
+        Fitted tissue concentration curve C_t(t).
     """
 
     # Fitted parameter values
@@ -118,7 +121,9 @@ class FitResult:
     def has_uncertainty(self) -> bool:
         """Check if uncertainty estimates are available.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if uncertainties are populated.
         """
         return len(self.uncertainties) > 0
@@ -126,7 +131,9 @@ class FitResult:
     def has_credible_intervals(self) -> bool:
         """Check if credible intervals are available.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if credible intervals are populated.
         """
         return len(self.credible_intervals) > 0
@@ -134,11 +141,16 @@ class FitResult:
     def passes_convergence(self, rhat_max: float = 1.1, ess_min: int = 100) -> bool:
         """Check if MCMC convergence diagnostics pass.
 
-        Args:
-            rhat_max: Maximum acceptable R-hat value.
-            ess_min: Minimum acceptable effective sample size.
+        Parameters
+        ----------
+        rhat_max : float
+            Maximum acceptable R-hat value.
+        ess_min : int
+            Minimum acceptable effective sample size.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if converged and all R-hat < rhat_max and all ESS > ess_min,
             or True if not MCMC (no diagnostics to check).
         """
@@ -154,11 +166,16 @@ class FitResult:
     def get_parameter(self, name: str, default: float = 0.0) -> float:
         """Get a parameter value by name.
 
-        Args:
-            name: Parameter name.
-            default: Default value if parameter not found.
+        Parameters
+        ----------
+        name : str
+            Parameter name.
+        default : float, optional
+            Default value if parameter not found.
 
-        Returns:
+        Returns
+        -------
+        float
             Parameter value or default.
         """
         return self.parameters.get(name, default)
@@ -166,11 +183,16 @@ class FitResult:
     def get_uncertainty(self, name: str, default: float = 0.0) -> float:
         """Get uncertainty (std) for a parameter.
 
-        Args:
-            name: Parameter name.
-            default: Default value if uncertainty not available.
+        Parameters
+        ----------
+        name : str
+            Parameter name.
+        default : float, optional
+            Default value if uncertainty not available.
 
-        Returns:
+        Returns
+        -------
+        float
             Parameter uncertainty (standard deviation) or default.
         """
         return self.uncertainties.get(name, default)
@@ -180,11 +202,16 @@ class FitResult:
     ) -> tuple[float, float]:
         """Get credible interval for a parameter.
 
-        Args:
-            name: Parameter name.
-            default: Default interval if not available.
+        Parameters
+        ----------
+        name : str
+            Parameter name.
+        default : tuple, optional
+            Default interval if not available.
 
-        Returns:
+        Returns
+        -------
+        tuple
             (lower, upper) 95% credible interval or default.
         """
         return self.credible_intervals.get(name, default)
@@ -192,15 +219,22 @@ class FitResult:
     def is_better_than(self, other: "FitResult", criterion: str = "aic") -> bool:
         """Compare fit quality with another result using model selection criterion.
 
-        Args:
-            other: Another FitResult to compare against.
-            criterion: Model selection criterion ('aic', 'bic', 'r_squared').
+        Parameters
+        ----------
+        other : FitResult
+            Another FitResult to compare against.
+        criterion : str, optional
+            Model selection criterion ('aic', 'bic', 'r_squared').
 
-        Returns:
+        Returns
+        -------
+        bool
             True if this result is better than other.
 
-        Raises:
-            ValueError: If criterion is not recognized.
+        Raises
+        ------
+        ValueError
+            If criterion is not recognized.
         """
         if criterion == "aic":
             return self.aic < other.aic
@@ -252,7 +286,9 @@ class PKModel(ABC):
     def get_parameter_definitions(self) -> Sequence[ModelParameter]:
         """Get parameter definitions for this model.
 
-        Returns:
+        Returns
+        -------
+        list of ModelParameter
             List of ModelParameter objects defining each parameter's
             bounds, typical range, and transformation properties.
         """
@@ -269,12 +305,18 @@ class PKModel(ABC):
 
         Computes C_t(t) for the given parameters and arterial input function.
 
-        Args:
-            params: Parameter values in the order from get_parameter_names().
-            aif: Arterial input function plasma concentration values Cp(t).
-            time_points: Time points (minutes) at which to evaluate C_t.
+        Parameters
+        ----------
+        params : ParamsType
+            Parameter values in the order from get_parameter_names().
+        aif : np.ndarray
+            Arterial input function plasma concentration values Cp(t).
+        time_points : np.ndarray
+            Time points (minutes) at which to evaluate C_t.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Tissue concentration values C_t(t) at each time point.
         """
         pass
@@ -290,17 +332,25 @@ class PKModel(ABC):
     ) -> FitResult:
         """Fit the model to observed tissue concentration data.
 
-        Args:
-            tissue_curve: Observed tissue concentration values C_t(t).
-            aif: Arterial input function plasma concentration values Cp(t).
-            time_points: Time points (minutes) corresponding to measurements.
-            initial_guess: Optional initial parameter values. If None, uses
-                default initial guess from get_initial_guess().
-            weights: Optional per-frame weights for motion-weighted fitting.
-                Values in [0, 1] where 1.0 = full weight. If None, uniform
-                weighting is used.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration values C_t(t).
+        aif : np.ndarray
+            Arterial input function plasma concentration values Cp(t).
+        time_points : np.ndarray
+            Time points (minutes) corresponding to measurements.
+        initial_guess : Sequence[float], optional
+            Optional initial parameter values. If None, uses
+            default initial guess from get_initial_guess().
+        weights : np.ndarray, optional
+            Optional per-frame weights for motion-weighted fitting.
+            Values in [0, 1] where 1.0 = full weight. If None, uniform
+            weighting is used.
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult containing fitted parameters and diagnostics.
         """
         pass
@@ -308,7 +358,9 @@ class PKModel(ABC):
     def get_parameter_names(self) -> list[str]:
         """Get list of parameter names.
 
-        Returns:
+        Returns
+        -------
+        list of str
             List of parameter name strings in the order expected by evaluate().
         """
         return [p.name for p in self.get_parameter_definitions()]
@@ -316,7 +368,9 @@ class PKModel(ABC):
     def get_bounds(self) -> list[tuple[float, float]]:
         """Get parameter bounds for optimization.
 
-        Returns:
+        Returns
+        -------
+        list of tuple
             List of (lower, upper) bound tuples for each parameter.
         """
         return [p.bounds for p in self.get_parameter_definitions()]
@@ -328,11 +382,16 @@ class PKModel(ABC):
     ) -> list[tuple[float, float]]:
         """Override vp bounds in a bounds list.
 
-        Args:
-            bounds: List of (lo, hi) per parameter from get_bounds().
-            vp_bounds: New (lo, hi) for the vp parameter.
+        Parameters
+        ----------
+        bounds : list of tuple
+            List of (lo, hi) per parameter from get_bounds().
+        vp_bounds : tuple
+            New (lo, hi) for the vp parameter.
 
-        Returns:
+        Returns
+        -------
+        list of tuple
             Modified bounds list with vp entry replaced.
         """
         names = self.get_parameter_names()
@@ -345,7 +404,9 @@ class PKModel(ABC):
     def get_initial_guess(self) -> list[float]:
         """Get initial parameter guess from prior means.
 
-        Returns:
+        Returns
+        -------
+        list of float
             List of initial parameter values (center of typical range).
         """
         return [p.get_prior_mean() for p in self.get_parameter_definitions()]
@@ -361,12 +422,18 @@ class PKModel(ABC):
         Override in subclasses for model-specific heuristics.
         Default falls back to prior midpoints via get_initial_guess().
 
-        Args:
-            tissue_curve: Observed tissue concentration C_t(t).
-            aif: Arterial input function Cp(t).
-            time_points: Time points in minutes.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration C_t(t).
+        aif : np.ndarray
+            Arterial input function Cp(t).
+        time_points : np.ndarray
+            Time points in minutes.
 
-        Returns:
+        Returns
+        -------
+        list of float
             List of initial parameter values.
         """
         return self.get_initial_guess()
@@ -374,10 +441,14 @@ class PKModel(ABC):
     def validate_params(self, params: ParamsType) -> bool:
         """Check if parameters are within bounds.
 
-        Args:
-            params: Parameter values to validate.
+        Parameters
+        ----------
+        params : ParamsType
+            Parameter values to validate.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if all parameters are within their defined bounds.
         """
         definitions = self.get_parameter_definitions()
@@ -388,10 +459,14 @@ class PKModel(ABC):
     def clip_params(self, params: ParamsType) -> list[float]:
         """Clip parameters to bounds.
 
-        Args:
-            params: Parameter values to clip.
+        Parameters
+        ----------
+        params : ParamsType
+            Parameter values to clip.
 
-        Returns:
+        Returns
+        -------
+        list of float
             List of parameter values clipped to bounds.
         """
         definitions = self.get_parameter_definitions()
@@ -400,10 +475,14 @@ class PKModel(ABC):
     def params_to_dict(self, params: ParamsType) -> dict[str, float]:
         """Convert parameter array to named dictionary.
 
-        Args:
-            params: Parameter values in order from get_parameter_names().
+        Parameters
+        ----------
+        params : ParamsType
+            Parameter values in order from get_parameter_names().
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary mapping parameter names to values.
         """
         names = self.get_parameter_names()
@@ -412,10 +491,14 @@ class PKModel(ABC):
     def dict_to_params(self, param_dict: dict[str, float]) -> list[float]:
         """Convert parameter dictionary to array.
 
-        Args:
-            param_dict: Dictionary mapping parameter names to values.
+        Parameters
+        ----------
+        param_dict : dict
+            Dictionary mapping parameter names to values.
 
-        Returns:
+        Returns
+        -------
+        list of float
             List of parameter values in order from get_parameter_names().
         """
         names = self.get_parameter_names()
@@ -429,10 +512,14 @@ class PKModel(ABC):
         Override in subclasses to compute model-specific derived parameters
         like kep = Ktrans/ve for Tofts models.
 
-        Args:
-            params: Fitted parameter values.
+        Parameters
+        ----------
+        params : ParamsType
+            Fitted parameter values.
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary of derived parameter names to values.
             Default implementation returns empty dict.
         """
@@ -447,11 +534,16 @@ class PKModel(ABC):
 
         AIC = n × ln(RSS/n) + 2k
 
-        Args:
-            residual_sum_squares: Sum of squared residuals.
-            n_observations: Number of data points.
+        Parameters
+        ----------
+        residual_sum_squares : float
+            Sum of squared residuals.
+        n_observations : int
+            Number of data points.
 
-        Returns:
+        Returns
+        -------
+        float
             AIC value. Lower is better.
         """
         n = n_observations
@@ -470,11 +562,16 @@ class PKModel(ABC):
 
         BIC = n × ln(RSS/n) + k × ln(n)
 
-        Args:
-            residual_sum_squares: Sum of squared residuals.
-            n_observations: Number of data points.
+        Parameters
+        ----------
+        residual_sum_squares : float
+            Sum of squared residuals.
+        n_observations : int
+            Number of data points.
 
-        Returns:
+        Returns
+        -------
+        float
             BIC value. Lower is better.
         """
         n = n_observations
@@ -493,11 +590,16 @@ class PKModel(ABC):
 
         R² = 1 - SS_res / SS_tot
 
-        Args:
-            observed: Observed data values.
-            predicted: Model-predicted values.
+        Parameters
+        ----------
+        observed : np.ndarray
+            Observed data values.
+        predicted : np.ndarray
+            Model-predicted values.
 
-        Returns:
+        Returns
+        -------
+        float
             R² value. Higher is better (max 1.0).
         """
         ss_res = float(np.sum((observed - predicted) ** 2))

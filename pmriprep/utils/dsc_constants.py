@@ -96,7 +96,7 @@ EPSILON_SHAPE: Final[float] = 1e-10
 #: treats K2 > 0.5 as "severe leakage."
 K2_UPPER_BOUND: Final[float] = 0.5
 
-# Bidirectional K2 (Leu et al. AJNR 2016, PMID 27079371)
+# Bidirectional K2 (Leu 2016 AJNR 37:1440)
 # kep = EES efflux rate in s^-1 (NOT min^-1 like DCE literature).
 # Using s^-1 for consistency with K2 units and Leu 2016 convention.
 # To convert from DCE (min^-1): kep_s = kep_min / 60.0
@@ -132,8 +132,8 @@ GD_DOTA_STANDARD_DOSE: Final[float] = 0.1
 # =============================================================================
 
 #: Population-median arterial peak ΔR2* (s⁻¹) at 3T for standard single-dose
-#: monomeric Gd (0.1 mmol/kg). Vonken MRM 41:524 (1999) reports arterial peak
-#: ΔR2* of 30–50 s⁻¹ at 3T; Willats PMB 51:5007 (2006) AIF characterisation.
+#: monomeric Gd (0.1 mmol/kg). Arterial peak ΔR2* of 30–50 s⁻¹ at 3T is
+#: consistent with the intravascular-ΔR2* model of Kjølby 2006 MRM 56:187.
 #: 35.0 is the population median. For tetrameric agents at standard molecular
 #: dose, linear gd_multiplicity scaling may overestimate by up to 30% due to
 #: partial saturation of the static dephasing regime above ~15 mM blood [Gd].
@@ -167,7 +167,7 @@ K2_SIGMA_CORRECTION: Final[float] = 0.005     # s⁻¹
 #: literature-derived 0.003 to 0.005 per physics consult 2026-04-18:
 #: observed well-suppressed half-dose GBM cohort sits at k2_median
 #: 0.0018–0.0048, so 0.005 captures it without reclassifying as partial.
-#: References: Boxerman AJNR 2006, Leu JMRI 2016, Welker AJNR 2015.
+#: References: Boxerman 2006 AJNR 27:859, Leu 2016 AJNR 37:1440, Welker 2015 AJNR 36:E41.
 K2_PRIMARY_ADEQUATE: Final[float] = 0.005     # s⁻¹
 K2_PRIMARY_INADEQUATE: Final[float] = 0.01    # s⁻¹, == K2_SIGMA_SUPPRESSED
 LEAKY_PRIMARY_ADEQUATE: Final[float] = 1.0    # percent
@@ -183,12 +183,12 @@ DEFAULT_SVD_THRESHOLD: Final[float] = 0.2
 
 #: Default oscillation index threshold for oSVD.
 #: Adapted for 3T clinical SNR (~20-40); literature range 0.04-0.10
-#: (Liu 2010 NMR Biomed 23:286; Wu 2003 used 0.095 at SNR~100).
+#: (Liu 1999 MRM 42:167; Wu 2003 used 0.095 at SNR~100).
 #: OI(λ) is decreasing in λ, so tightening the OI target forces the
 #: linspace search upward to a higher truncation threshold, suppressing
 #: noise-driven MTT inflation. Loosening (e.g. to Wu's 0.095) lets the
 #: algorithm pick smaller thresholds where residue-tail noise inflates
-#: AUC and hence MTT. See Willats Calamante 2013 NMR Biomed 26:913 on the
+#: AUC and hence MTT. See Willats & Calamante 2013 NMR Biomed 26:913 on the
 #: intrinsic MTT noise sensitivity of oSVD at clinical SNR.
 DEFAULT_OI_THRESHOLD: Final[float] = 0.065
 
@@ -199,6 +199,7 @@ DEFAULT_OI_THRESHOLD: Final[float] = 0.065
 
 class TikhonovRange(NamedTuple):
     """Range for Tikhonov regularization parameter lambda."""
+
     min: float
     max: float
 
@@ -234,6 +235,7 @@ LCURVE_CURVATURE_FALLBACK: Final[float] = 2.0
 
 class ParameterBounds(NamedTuple):
     """Min/max bounds for a physiological parameter."""
+
     min: float
     max: float
 
@@ -306,7 +308,7 @@ AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
 
 #: Maximum peak-time spread (seconds) within an averaged AIF voxel pool.
 #: True intra-arterial dispersion across the MCA tree (M1 → M3) is sub-
-#: second (Calamante NMR Biomed 2013; Bleeker MRM 2011), but the MEASURED
+#: second (Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1; Bleeker 2011 MRM 65:448), but the MEASURED
 #: spread among co-arterial voxels at typical DSC TR (1-2 s) exceeds this
 #: due to (a) frame quantization on argmax peak detection and (b) per-voxel
 #: argmax jitter at SNR 20-40 (~±1 frame). Converted at runtime to a frame
@@ -317,7 +319,7 @@ AIF_PEAK_SPREAD_MAX_SECONDS: Final[float] = 3.0
 #: Maximum tail/peak fraction for an AIF voxel (mean ΔR2* over the last
 #: ``AIF_TAIL_WINDOW_S`` divided by first-pass peak). Catches BBB-leakage
 #: and tissue-PVE-driven late plateau. Threshold of 0.15 (not the
-#: physiologically tighter 0.10) is set per Bleeker MRM 2009 PVF analysis
+#: physiologically tighter 0.10) is set per Bleeker 2009 JCBFM 29:840 PVF analysis
 #: at ~1.875 mm in-plane resolution: M1 lumen (~2.5 mm) fills <30% of a
 #: voxel, so PVE-inflated tails of 10-15% are physically expected for
 #: arterial voxels at this resolution.
@@ -325,14 +327,13 @@ AIF_TAIL_FRACTION_MAX: Final[float] = 0.15
 
 #: Late-tail measurement window (seconds, from end of acquisition). At
 #: typical bolus arrival ~30 s and recirculation decay <5% peak by t > 4×
-#: MTT (Willats MRM 2006, Vonken MRM 1999), 30 s places the window well
+#: MTT, 30 s places the window well
 #: past first-pass + recirculation in normal tissue, so a 15% tail
 #: indicates extravasation/PVE rather than residual recirculation.
 AIF_TAIL_WINDOW_S: Final[float] = 30.0
 
 #: Hard minimum distance (mm) from lesion for AIF candidates. Below this,
 #: partial volume with tumor feeding vessels corrupts bolus shape.
-#: Lu JMRI 2004;19:546, Jain Radiology 2007;245:842.
 LESION_EXCLUSION_FLOOR_MM: Final[float] = 10.0
 
 #: Recommended minimum distance (mm) from lesion for AIF candidate voxels.
@@ -350,9 +351,7 @@ LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
 #:   Kjølby BF, Østergaard L, Kiselev VG. "Theoretical model of intravascular
 #:     paramagnetic tracers effect on tissue relaxation." Magn Reson Med
 #:     2006;56:187-197.
-#:   Calamante F, Vonken EJPA, van Osch MJP. "Contrast agent concentration
-#:     measurements affecting quantification of bolus-tracking perfusion MRI."
-#:     Magn Reson Med 2007;58:544-553 (blood vs tissue r2* distinction).
+#:   Calamante 2007 MRM 58:544 (blood vs tissue r2* distinction).
 #:
 #: The earlier value 28.9 s^-1·T^-1·mM^-1 from van Osch 2003 is whole-blood
 #: Gd-DTPA r2* (used for AIF quantification), not tissue r2*. Applying it
@@ -387,10 +386,14 @@ def get_r2_star_tissue(field_strength: float) -> float:
     Gd-DTPA in cortical tissue. See the constant docstring for caveats
     (Gd-DTPA assumed; cortical-GM numbers; 7T extrapolated).
 
-    Args:
-        field_strength: Magnetic field strength in Tesla.
+    Parameters
+    ----------
+    field_strength : float
+        Magnetic field strength in Tesla.
 
-    Returns:
+    Returns
+    -------
+    float
         Tissue r2* relaxivity in s^-1 per mM tissue Gd.
     """
     # Direct lookup for known field strengths
@@ -426,10 +429,14 @@ def get_r2_star(field_strength: float) -> float:
 
     See get_r2_star_tissue() for details.
 
-    Args:
-        field_strength: Magnetic field strength in Tesla.
+    Parameters
+    ----------
+    field_strength : float
+        Magnetic field strength in Tesla.
 
-    Returns:
+    Returns
+    -------
+    float
         Tissue r2* relaxivity in s^-1 per mM.
     """
     return get_r2_star_tissue(field_strength)
@@ -464,17 +471,23 @@ def calculate_k_h(
     The (1 - hematocrit) term accounts for Gd distributing in plasma
     (fraction = 1 - Hct), not whole blood.
 
-    Args:
-        hematocrit: Large vessel hematocrit fraction.
-        rho_brain: Brain tissue density in g/mL.
-        rho_blood: Blood density in g/mL.
+    Parameters
+    ----------
+    hematocrit : float, optional
+        Large vessel hematocrit fraction.
+    rho_brain : float, optional
+        Brain tissue density in g/mL.
+    rho_blood : float, optional
+        Blood density in g/mL.
 
-    Returns:
+    Returns
+    -------
+    float
         K_H calibration factor (dimensionless scaling).
 
-    References:
-        Østergaard L, et al. Magn Reson Med. 1996;36(5):715-725, Eq. 1.
-        Rempp KA, et al. Radiology. 1994;193(3):637-641.
-        Calamante F, et al. Magn Reson Med. 1999;41(1):95-103.
+    References
+    ----------
+    Østergaard L, et al. Magn Reson Med. 1996;36(5):715-725.
+    Rempp KA, et al. Radiology. 1994;193(3):637-641.
     """
     return (rho_brain / rho_blood) * (1.0 / (1.0 - hematocrit)) * 100.0

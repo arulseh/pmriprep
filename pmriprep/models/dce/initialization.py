@@ -32,13 +32,20 @@ def estimate_ktrans_patlak(
     using post-bolus time points where the AIF is above 5% of the peak.
     Requires at least 4 valid post-bolus points.
 
-    Args:
-        tissue_curve: Observed tissue concentration C_t(t).
-        aif: Arterial input function Cp(t).
-        time_points: Time points in minutes.
-        peak_idx: Index of AIF peak.
+    Parameters
+    ----------
+    tissue_curve : np.ndarray
+        Observed tissue concentration C_t(t).
+    aif : np.ndarray
+        Arterial input function Cp(t).
+    time_points : np.ndarray
+        Time points in minutes.
+    peak_idx : int
+        Index of AIF peak.
 
-    Returns:
+    Returns
+    -------
+    float
         Estimated Ktrans value, or 0.1 if regression cannot be performed.
     """
     n = len(time_points)
@@ -74,12 +81,18 @@ def estimate_ve_late_phase(
     equilibrium: C_t/C_p -> ve. Uses the mean ratio of tissue-to-AIF
     concentration starting 12 frames after peak.
 
-    Args:
-        tissue_curve: Observed tissue concentration C_t(t).
-        aif: Arterial input function Cp(t).
-        peak_idx: Index of AIF peak.
+    Parameters
+    ----------
+    tissue_curve : np.ndarray
+        Observed tissue concentration C_t(t).
+    aif : np.ndarray
+        Arterial input function Cp(t).
+    peak_idx : int
+        Index of AIF peak.
 
-    Returns:
+    Returns
+    -------
+    float
         Estimated ve value (clipped to 0.01-0.8), or 0.2 if estimation
         cannot be performed.
     """
@@ -108,11 +121,16 @@ def estimate_vp_peak_ratio(
     At the bolus peak, the vascular contribution dominates:
     C_t(peak) ~ vp * C_p(peak), so vp ~ C_t(peak) / C_p(peak).
 
-    Args:
-        tissue_curve: Observed tissue concentration C_t(t).
-        aif: Arterial input function Cp(t).
+    Parameters
+    ----------
+    tissue_curve : np.ndarray
+        Observed tissue concentration C_t(t).
+    aif : np.ndarray
+        Arterial input function Cp(t).
 
-    Returns:
+    Returns
+    -------
+    float
         Estimated vp value (unclipped — caller should clip to VP_BOUNDS),
         or 0.02 if AIF peak is near zero.
     """

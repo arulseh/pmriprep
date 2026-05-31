@@ -10,9 +10,10 @@ The constraint pipeline:
     2. Convert CBV to vp: vp = CBV * (1 - Hct) / (100 * rho)
     3. Determine constraint mode: hard (fix vp), soft (Bayesian prior), skip
 
-References:
-    Prah MA, Schmainda KM. "Quality-gated DSC-MRI-based cerebral blood
-    volume maps for glioma assessment." AJNR. 2024.
+References
+----------
+    Prah MA, Schmainda KM. "Practical guidance to identify and troubleshoot
+    suboptimal DSC-MRI results." Front Radiol. 2024;4:1307586.
 
     Boxerman JL, et al. "Relative cerebral blood volume maps corrected for
     contrast agent extravasation significantly correlate with glioma tumor
@@ -112,7 +113,7 @@ CBV_NAWM_LITERATURE: float = 2.5
 # Gamma peak ratio thresholds for constraint quality gating.
 # Moderate band [0.90, 1.10] imported from dsc_aif.py (single source of truth).
 # Wider low-confidence band captures severe AIF corruption.
-# Ref: peak error >12% exceeds normal CBF CoV (~10%, Mutsaerts JCBFM 2015).
+# Ref: peak error >12% exceeds the ~10% CBF CoV expected in normal brain.
 GAMMA_PEAK_RATIO_LOW_MIN: float = 0.80
 GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
 
@@ -146,7 +147,8 @@ class ConstraintMode(Enum):
 class CBVQualityAssessment:
     """Result of DSC CBV quality assessment.
 
-    Attributes:
+    Attributes
+    ----------
         confidence: Quality tier - 'high', 'moderate', or 'low'.
         use_constraint: Whether the CBV is reliable enough for constraining.
         cnr_coverage: Fraction of brain voxels with CNR > 4.
@@ -182,7 +184,8 @@ class CBVQualityAssessment:
 class ConstraintConfig:
     """Configuration for vp constraint application.
 
-    Attributes:
+    Attributes
+    ----------
         mode: Constraint mode (hard, soft, skip).
         vp_uncertainty: Relative uncertainty for soft prior (fraction, 0-1).
         reason: Human-readable explanation for the chosen mode.
@@ -197,7 +200,8 @@ class ConstraintConfig:
 class VpConstraintResult:
     """Result from prepare_vp_constraint_from_data orchestrator.
 
-    Attributes:
+    Attributes
+    ----------
         vp_map: 3D vp map (plasma volume fraction), or None if skipped.
         config: Constraint configuration (mode, uncertainty).
         quality: CBV quality assessment.
@@ -223,16 +227,21 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
     ``baseline_return_ratio``). Returns data unchanged if expected
     keys are already present.
 
-    Args:
-        aif_qc_data: Raw AIF QC dictionary, possibly carrying the
-            producer-shape ``aif_metrics`` nested dict instead of the
-            assessment schema keys (``aif_peak_height``,
-            ``baseline_return_ratio``, ``cnr_whole_brain``).
+    Parameters
+    ----------
+    aif_qc_data : dict[str, Any]
+        Raw AIF QC dictionary, possibly carrying the
+        producer-shape ``aif_metrics`` nested dict instead of the
+        assessment schema keys (``aif_peak_height``,
+        ``baseline_return_ratio``, ``cnr_whole_brain``).
 
-    Returns:
+    Returns
+    -------
+    dict[str, Any]
         Dictionary with normalized keys suitable for assess_dsc_cbv_quality.
 
-    Note:
+    Notes
+    -----
         This function defines the contract for the producer-shape ``aif_qc``
         dict that the ``--skip-dsc`` resume sidecar must round-trip
         verbatim. If you add a new producer key consumed here, also add it
@@ -296,11 +305,16 @@ def _is_auto(user_override: Optional[str]) -> bool:
 def _downgrade_confidence(current: str, target: str) -> str:
     """Downgrade confidence level but never upgrade.
 
-    Args:
-        current: Current confidence level.
-        target: Target confidence level.
+    Parameters
+    ----------
+    current : str
+        Current confidence level.
+    target : str
+        Target confidence level.
 
-    Returns:
+    Returns
+    -------
+    str
         The lower of the two confidence levels.
     """
     levels = {"high": 2, "moderate": 1, "low": 0}
@@ -315,11 +329,16 @@ def _classify_preload_k2(
 ) -> tuple[bool, bool, bool]:
     """Classify preload/K2 status for quality and uncertainty logic.
 
-    Args:
-        preload_classification: Preload classification string from DSC QC.
-        k2_metrics: K2 leakage correction metrics from dsc_preload.
+    Parameters
+    ----------
+    preload_classification : Optional[str]
+        Preload classification string from DSC QC.
+    k2_metrics : Optional[dict[str, Any]]
+        K2 leakage correction metrics from dsc_preload.
 
-    Returns:
+    Returns
+    -------
+    tuple[bool, bool, bool]
         Tuple of (is_preloaded, well_suppressed, high_correction).
     """
     if not k2_metrics or not preload_classification:
@@ -349,16 +368,22 @@ def _bolus_gd_fraction(
     standard dose must be scaled by this fraction to remain valid on
     reduced-dose protocols or lower-dose agents.
 
-    Args:
-        dose: Bolus dose multiplier (1.0 = full standard, 0.5 = half).
-            Must be positive.
-        agent_standard_dose: Agent's standard clinical dose in mmol Gd/kg.
-            Must be positive.
+    Parameters
+    ----------
+    dose : float, optional
+        Bolus dose multiplier (1.0 = full standard, 0.5 = half).
+        Must be positive.
+    agent_standard_dose : float, optional
+        Agent's standard clinical dose in mmol Gd/kg.
+        Must be positive.
 
-    Returns:
+    Returns
+    -------
+    float
         Effective Gd fraction relative to 0.1 mmol/kg reference.
 
-    Raises:
+    Raises
+    ------
         ValueError: If ``dose`` or ``agent_standard_dose`` is non-positive.
             A zero or negative dose would collapse the CNR gate and let
             garbage CBV through unchecked — fail loudly instead.
@@ -397,18 +422,28 @@ def assess_dsc_cbv_quality(
     gadoquatrane 0.04) produce inherently lower CNR; scaling prevents
     spurious SKIP decisions on otherwise-adequate acquisitions.
 
-    Args:
-        aif_qc_data: Dictionary from DSC AIF QC JSON containing metrics
-            like cnr_whole_brain, aif_peak_height, baseline_return_ratio.
-        cbv_data: Optional 3D CBV map for value range validation.
-        brain_mask: Optional 3D brain mask for CBV statistics.
-        preload_classification: DSC preload classification string.
-        k2_metrics: K2 leakage correction metrics from dsc_preload.
-        dose: DSC bolus dose multiplier (1.0 = full standard).
-        agent_standard_dose: Agent's standard dose in mmol Gd/kg
-            (default 0.1 for Gd-DOTA class).
+    Parameters
+    ----------
+    aif_qc_data : dict[str, Any]
+        Dictionary from DSC AIF QC JSON containing metrics
+        like cnr_whole_brain, aif_peak_height, baseline_return_ratio.
+    cbv_data : npt.NDArray[np.floating], optional
+        Optional 3D CBV map for value range validation.
+    brain_mask : npt.NDArray[np.floating], optional
+        Optional 3D brain mask for CBV statistics.
+    preload_classification : str, optional
+        DSC preload classification string.
+    k2_metrics : dict[str, Any], optional
+        K2 leakage correction metrics from dsc_preload.
+    dose : float, optional
+        DSC bolus dose multiplier (1.0 = full standard).
+    agent_standard_dose : float, optional
+        Agent's standard dose in mmol Gd/kg
+        (default 0.1 for Gd-DOTA class).
 
-    Returns:
+    Returns
+    -------
+    CBVQualityAssessment
         CBVQualityAssessment with confidence tier and detailed metrics.
     """
     aif_qc_data = _normalize_aif_qc_keys(aif_qc_data)
@@ -670,13 +705,19 @@ def cbv_to_vp(
         GM CBV 4.5 mL/100g -> vp ~0.028
         Tumor 5-15 mL/100g -> vp ~0.031-0.093
 
-    Args:
-        cbv_data: 3D CBV map in mL/100g.
-        hematocrit: Arterial hematocrit (default 0.42). Capillary Hct
-            derived internally via Fåhræus ratio.
-        tissue_density: Tissue density in g/mL (default 1.04).
+    Parameters
+    ----------
+    cbv_data : npt.NDArray[np.floating]
+        3D CBV map in mL/100g.
+    hematocrit : float, optional
+        Arterial hematocrit (default 0.42). Capillary Hct
+        derived internally via Fåhræus ratio.
+    tissue_density : float, optional
+        Tissue density in g/mL (default 1.04).
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         3D vp map (dimensionless, 0-0.2). Invalid values set to NaN.
     """
     hct_cap = capillary_hematocrit(hematocrit)
@@ -722,14 +763,20 @@ def ncbv_to_vp_prior(
     large-vessel-Hct (for AIF conversion) across a single quantitative
     chain violates plasma-fraction closure.
 
-    Args:
-        ncbv_data: 3D nCBV map (CBV / median(CBV_NAWM)), dimensionless.
-        nawm_vp_reference: Assumed NAWM vp. Default NAWM_VP_REFERENCE (0.010).
+    Parameters
+    ----------
+    ncbv_data : npt.NDArray[np.floating]
+        3D nCBV map (CBV / median(CBV_NAWM)), dimensionless.
+    nawm_vp_reference : float, optional
+        Assumed NAWM vp. Default NAWM_VP_REFERENCE (0.010).
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         3D vp prior map (dimensionless), clipped to [0, VP_MAX_PHYSIOLOGICAL].
 
-    References:
+    References
+    ----------
         Larsson HBW et al., MRM 2009;62:1270 (NAWM vp = 0.0089 ± 0.0038,
         direct DCE measurement at matched Hct = 0.42).
         Sourbron SP, Buckley DL, NMR Biomed 2013;26:1004 (WM vp 0.005–0.02
@@ -775,16 +822,23 @@ def determine_constraint_mode(
     does not reduce with better DSC SNR. The ``SIGMA_SOFT_*`` constants
     are kept as separate names (future-hook), but currently all = 0.40.
 
-    Args:
-        dsc_quality: Quality assessment from assess_dsc_cbv_quality.
-        user_override: User-specified mode override ('auto', 'soft',
-            'skip'). If 'auto' or None, auto-determined from quality.
-        preload_classification: DSC preload classification string from QC
-            (e.g., 'half_dose', 'significant', 'severe', 'none').
-        k2_metrics: K2 leakage correction metrics dict from dsc_preload,
-            containing 'k2_median', 'percent_leaky_voxels', etc.
+    Parameters
+    ----------
+    dsc_quality : CBVQualityAssessment
+        Quality assessment from assess_dsc_cbv_quality.
+    user_override : str, optional
+        User-specified mode override ('auto', 'soft',
+        'skip'). If 'auto' or None, auto-determined from quality.
+    preload_classification : str, optional
+        DSC preload classification string from QC
+        (e.g., 'half_dose', 'significant', 'severe', 'none').
+    k2_metrics : dict[str, Any], optional
+        K2 leakage correction metrics dict from dsc_preload,
+        containing 'k2_median', 'percent_leaky_voxels', etc.
 
-    Returns:
+    Returns
+    -------
+    ConstraintConfig
         ConstraintConfig with mode, uncertainty, and reason.
     """
     # Synthetic-AIF short-circuit: overrides every user selection. If the
@@ -932,16 +986,26 @@ def prepare_vp_constraint_from_data(
     outcome when the upstream DSC workflow could not produce an nCBV map
     (no NAWM mask from tumor segmentation and none user-supplied).
 
-    Args:
-        ncbv_file: Path to DSC nCBV NIfTI, or None / missing → clean SKIP.
-        aif_qc_data: DSC AIF QC metrics dictionary (from workflow).
-        brain_mask_file: Path to brain mask NIfTI.
-        mode_override: User-specified constraint mode override.
-        hematocrit: Blood hematocrit (retained for provenance).
-        preload_classification: DSC preload classification string from QC.
-        k2_metrics: K2 leakage correction metrics dict from dsc_preload.
+    Parameters
+    ----------
+    ncbv_file : Optional[Union[str, Path]]
+        Path to DSC nCBV NIfTI, or None / missing → clean SKIP.
+    aif_qc_data : dict[str, Any]
+        DSC AIF QC metrics dictionary (from workflow).
+    brain_mask_file : Union[str, Path]
+        Path to brain mask NIfTI.
+    mode_override : str, optional
+        User-specified constraint mode override.
+    hematocrit : float, optional
+        Blood hematocrit (retained for provenance).
+    preload_classification : str, optional
+        DSC preload classification string from QC.
+    k2_metrics : dict[str, Any], optional
+        K2 leakage correction metrics dict from dsc_preload.
 
-    Returns:
+    Returns
+    -------
+    VpConstraintResult
         VpConstraintResult with vp_map (None for SKIP), config, quality,
         and qc_report with unit keys and (on SKIP) a ``skip_reason`` field.
     """

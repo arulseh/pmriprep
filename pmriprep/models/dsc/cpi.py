@@ -13,11 +13,8 @@ The parameterization follows Mehndiratta et al. (2013) / Quantiphyse:
 - CBF is a **separate** scaling parameter
 - C_tissue(t) = CBF × [A_trap @ R_norm]
 
-References:
-    Mouridsen K, Christensen S, Gyldensted L, Østergaard L. (2006).
-    "Automatic selection of arterial input function using cluster analysis."
-    Magnetic Resonance in Medicine 55(3):524-531.
-
+References
+----------
     Mehndiratta A, MacIntosh BJ, Crane DE, et al. (2013).
     "A control point interpolation method for the non-parametric quantification
     of cerebral haemodynamics from dynamic susceptibility contrast MRI."
@@ -69,17 +66,20 @@ class CPIModel(DSCModel):
     zero (median R(t_5) = 0.5^5 ≈ 0.03 for N=6). This matches FABBER and
     is directionally correct for tumor perfusion (short MTT).
 
-    Attributes:
+    Attributes
+    ----------
         n_control_points: Number of control points in the spline (4-24).
         n_acquisition_frames: Number of frames in the DSC time series.
         dt: Frame period in seconds.
 
-    Parameters:
+    Parameters
+    ----------
         - cbf: CBF scaling parameter (relative units, s⁻¹)
         - f1, f2, ..., f(N-1): Multiplicative fractions (0-1).
           R(t_i) = f_1 × f_2 × ... × f_i (cumulative product).
 
-    Example:
+    Examples
+    --------
         For N=6 control points:
         - Parameters: [cbf, f1, f2, f3, f4, f5]
         - cbf = flow scaling (max of unnormalized residue)
@@ -87,7 +87,8 @@ class CPIModel(DSCModel):
         - R(t_1) = f1, R(t_2) = f1*f2, ..., R(t_5) = f1*f2*f3*f4*f5
         - Control point times: uniformly spaced from 0 to t_max
 
-    References:
+    References
+    ----------
         Mehndiratta A, et al. (2013). "A control point interpolation method
         for the non-parametric quantification of cerebral haemodynamics from
         dynamic susceptibility contrast MRI." NeuroImage 64:560-570.
@@ -107,16 +108,21 @@ class CPIModel(DSCModel):
         Terminal zero anchor sits one frame beyond the data:
         ``t_terminal = (n_acquisition_frames + 1) * dt``.
 
-        Args:
-            n_control_points: Number of control points (4-24, default 6).
-                Mehndiratta 2013 / FABBER paper used 5; production default is 6
-                with ``select_n_control_points`` available for auto-selection.
-            n_acquisition_frames: Number of frames in the DSC acquisition
-                (length of the time series). Used to lay out CPs uniformly
-                across the acquisition.
-            dt: Frame period in seconds.
-            infer_cpt: If True, optimize control point positions (log-spacing
-                parameterization). Doubles parameter count to 2N-1.
+        Parameters
+        ----------
+        n_control_points : int, optional
+            Number of control points (4-24, default 6).
+            Mehndiratta 2013 / FABBER paper used 5; production default is 6
+            with ``select_n_control_points`` available for auto-selection.
+        n_acquisition_frames : int, optional
+            Number of frames in the DSC acquisition
+            (length of the time series). Used to lay out CPs uniformly
+            across the acquisition.
+        dt : float, optional
+            Frame period in seconds.
+        infer_cpt : bool, optional
+            If True, optimize control point positions (log-spacing
+            parameterization). Doubles parameter count to 2N-1.
         """
         self._n_control_points = max(CPI_N_MIN, min(CPI_N_MAX, n_control_points))
         self._infer_cpt = infer_cpt
@@ -206,7 +212,9 @@ class CPIModel(DSCModel):
         - Log-spacings (infer_cpt): identity, mean=log(uniform_spacing),
           var=10 (FABBER ``cpt_i`` variance, units anchored to seconds).
 
-        Returns:
+        Returns
+        -------
+        list[DSCModelParameter]
             List of DSCModelParameter objects.
         """
         params = []
@@ -272,7 +280,9 @@ class CPIModel(DSCModel):
         Mirrors FABBER's ``GetInitialPosterior`` for ``dsc_cpi`` — no
         data-driven warm-start.
 
-        Returns:
+        Returns
+        -------
+        list[float]
             List: [cbf=1.0, f1=0.378, ..., fN=0.378] (+ N log-spacings
             anchored at log(uniform_spacing) when infer_cpt is True).
         """
@@ -296,7 +306,9 @@ class CPIModel(DSCModel):
     def get_parameter_names(self) -> list[str]:
         """Get list of parameter names.
 
-        Returns:
+        Returns
+        -------
+        list[str]
             List: ['cbf', 'f1', ..., 'fN'] (+ 's1'...'sN' when infer_cpt).
         """
         names = ["cbf"] + [f"f{i + 1}" for i in range(self._n_control_points)]
@@ -316,11 +328,15 @@ class CPIModel(DSCModel):
         forward, so the first-CP amplitude is a free parameter rather
         than a forced 1.0.
 
-        Args:
-            params: [cbf, f1, f2, ..., fN] where cbf is the scaling
-                parameter and f_i are multiplicative fractions.
+        Parameters
+        ----------
+        params : ParamsLike
+            [cbf, f1, f2, ..., fN] where cbf is the scaling
+            parameter and f_i are multiplicative fractions.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Dimensionless control point values (cumprod of fractions),
             length = n_control_points.
         """
@@ -339,10 +355,14 @@ class CPIModel(DSCModel):
         ``s_i`` is the log-spacing between the (i-1)-th anchor and the
         i-th CP, so cp_times[i] = sum_{k<=i} exp(s_k).
 
-        Args:
-            params: Full parameter vector.
+        Parameters
+        ----------
+        params : ParamsLike
+            Full parameter vector.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Control point times array, shape (N,).
         """
         if not self._infer_cpt:
@@ -367,11 +387,16 @@ class CPIModel(DSCModel):
         when ``infer_cpt`` is False; under ``infer_cpt`` the terminal sits
         one inferred-spacing past the last CP.
 
-        Args:
-            params: Parameter values [cbf, f1, ..., f(N-1), [s1, ..., s(N-1)]].
-            time_points: Time points (seconds) at which to evaluate R(t).
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values [cbf, f1, ..., f(N-1), [s1, ..., s(N-1)]].
+        time_points : np.ndarray
+            Time points (seconds) at which to evaluate R(t).
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Dimensionless residue function values R(t) at each time point.
         """
         control_values = self.enforce_constraints(params)
@@ -419,11 +444,16 @@ class CPIModel(DSCModel):
         but downstream code expects fitted_residue = CBF × R(t) so that
         CBF = max(residue) and CBV = trapezoid(residue, dx=dt).
 
-        Args:
-            params: Parameter values [cbf, f1, ..., f(N-1)].
-            time_points: Time points (seconds).
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values [cbf, f1, ..., f(N-1)].
+        time_points : np.ndarray
+            Time points (seconds).
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             CBF-scaled residue function (CBF × R_norm).
         """
         cbf = max(float(params[0]), 0.0)
@@ -442,12 +472,18 @@ class CPIModel(DSCModel):
         Uses trapezoidal Toeplitz matrix for convolution, consistent with
         the SVD deconvolution path (Sourbron & Luypaert PMB 2007).
 
-        Args:
-            params: Parameter values [cbf, f1, ..., f(N-1)].
-            aif: Arterial input function concentration values.
-            time_points: Time points (seconds) at which to evaluate C(t).
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values [cbf, f1, ..., f(N-1)].
+        aif : np.ndarray
+            Arterial input function concentration values.
+        time_points : np.ndarray
+            Time points (seconds) at which to evaluate C(t).
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Tissue concentration values C(t) at each time point.
         """
         n_times = len(time_points)
@@ -482,10 +518,14 @@ class CPIModel(DSCModel):
     def get_cbf(self, params: ParamsLike) -> float:
         """Get CBF from the scaling parameter.
 
-        Args:
-            params: Parameter values [cbf, f1, ..., f(N-1)].
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values [cbf, f1, ..., f(N-1)].
 
-        Returns:
+        Returns
+        -------
+        float
             CBF value (relative, s⁻¹).
         """
         return float(params[0]) if len(params) > 0 else 0.0
@@ -503,12 +543,17 @@ class CPIModel(DSCModel):
         has units of (dimensionless), matching the SVD path where
         CBV = trapezoid(residue, dx=dt).
 
-        Args:
-            params: Parameter values [cbf, f1, ..., f(N-1)].
-            time_points: Optional time points for integration.
-                        If None, uses control point times extended.
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values [cbf, f1, ..., f(N-1)].
+        time_points : np.ndarray, optional
+            Optional time points for integration.
+            If None, uses control point times extended.
 
-        Returns:
+        Returns
+        -------
+        float
             CBV value (relative, dimensionless).
         """
         if time_points is None:
@@ -535,11 +580,16 @@ class CPIModel(DSCModel):
 
         MTT = CBV / CBF = ∫R_norm(t) dt  (seconds)
 
-        Args:
-            params: Parameter values [cbf, f1, ..., f(N-1)].
-            time_points: Optional time points for CBV integration.
+        Parameters
+        ----------
+        params : ParamsLike
+            Parameter values [cbf, f1, ..., f(N-1)].
+        time_points : np.ndarray, optional
+            Optional time points for CBV integration.
 
-        Returns:
+        Returns
+        -------
+        float
             MTT value (seconds).
         """
         cbf = self.get_cbf(params)
@@ -611,20 +661,31 @@ def select_n_control_points(
     back to the legacy formula (callers without mean_tissue can't use the
     adaptive path).
 
-    Args:
-        bolus_duration_frames: Duration of bolus passage in frames.
-        data_duration_sec: Total data duration in seconds.
-        target_spacing_sec: Target CP spacing in seconds.
-        min_n: Minimum number of control points.
-        max_n: Maximum number of control points.
-        infer_cpt: When True and ``mean_tissue``/``dt`` are provided, use
-            the tail-decay-adaptive formula instead of the legacy
-            heuristic.
-        mean_tissue: Mean tissue concentration across in-mask voxels,
-            shape (T,). Required for the adaptive path.
-        dt: Frame period in seconds. Required for the adaptive path.
+    Parameters
+    ----------
+    bolus_duration_frames : int
+        Duration of bolus passage in frames.
+    data_duration_sec : float, optional
+        Total data duration in seconds.
+    target_spacing_sec : float, optional
+        Target CP spacing in seconds.
+    min_n : int, optional
+        Minimum number of control points.
+    max_n : int, optional
+        Maximum number of control points.
+    infer_cpt : bool, optional
+        When True and ``mean_tissue``/``dt`` are provided, use
+        the tail-decay-adaptive formula instead of the legacy
+        heuristic.
+    mean_tissue : np.ndarray, optional
+        Mean tissue concentration across in-mask voxels,
+        shape (T,). Required for the adaptive path.
+    dt : float, optional
+        Frame period in seconds. Required for the adaptive path.
 
-    Returns:
+    Returns
+    -------
+    int
         Recommended number of control points, clamped to ``[min_n, max_n]``.
     """
     if infer_cpt and mean_tissue is not None and dt is not None:
@@ -647,11 +708,16 @@ def estimate_bolus_duration(
     Finds the number of frames where concentration exceeds a threshold
     fraction of the peak value.
 
-    Args:
-        concentration: Concentration time course.
-        threshold_fraction: Fraction of peak defining bolus region (default 0.1).
+    Parameters
+    ----------
+    concentration : np.ndarray
+        Concentration time course.
+    threshold_fraction : float, optional
+        Fraction of peak defining bolus region (default 0.1).
 
-    Returns:
+    Returns
+    -------
+    int
         Estimated bolus duration in frames.
     """
     if len(concentration) == 0:
@@ -678,8 +744,7 @@ def estimate_tail_decay_time_seconds(
     fallback_sec: float = 30.0,
     max_decay_fraction: float = 0.5,
 ) -> float:
-    """Time from post-peak frame to first frame at <``threshold_fraction``
-    of peak.
+    """Time from post-peak frame to first frame at <``threshold_fraction`` of peak.
 
     Returns a property of the mean tissue concentration curve. For
     exponential residues this scales roughly with mean MTT, but it
@@ -687,19 +752,27 @@ def estimate_tail_decay_time_seconds(
     proxy and apply an empirically-calibrated divisor to derive an N
     floor. See :func:`select_n_control_points` for the calibration.
 
-    Args:
-        mean_tissue: Mean tissue concentration across in-mask voxels,
-            shape (T,). Pre-computed by the caller.
-        dt: Frame period in seconds.
-        threshold_fraction: Fraction of peak defining the tail end.
-            Matches ``estimate_bolus_duration``'s convention (default 0.1).
-        fallback_sec: Returned when peak detection fails (zero curve,
-            peak at last frame, etc.).
-        max_decay_fraction: Cap returned decay time at
-            ``max_decay_fraction × T·dt``. Prevents runaway N on
-            preloaded studies where the tail never drops below threshold.
+    Parameters
+    ----------
+    mean_tissue : np.ndarray
+        Mean tissue concentration across in-mask voxels,
+        shape (T,). Pre-computed by the caller.
+    dt : float
+        Frame period in seconds.
+    threshold_fraction : float, optional
+        Fraction of peak defining the tail end.
+        Matches ``estimate_bolus_duration``'s convention (default 0.1).
+    fallback_sec : float, optional
+        Returned when peak detection fails (zero curve,
+        peak at last frame, etc.).
+    max_decay_fraction : float, optional
+        Cap returned decay time at
+        ``max_decay_fraction × T·dt``. Prevents runaway N on
+        preloaded studies where the tail never drops below threshold.
 
-    Returns:
+    Returns
+    -------
+    float
         Decay time in seconds, in [0, max_decay_fraction × T·dt].
     """
     n_frames = len(mean_tissue)
@@ -744,14 +817,22 @@ def select_n_by_bic(
         RSS = residual sum of squares
         k = number of parameters (control points)
 
-    Args:
-        concentration: Measured tissue concentration curve.
-        aif: Arterial input function.
-        time_points: Time points (seconds).
-        n_candidates: Candidate numbers of control points to evaluate.
-        noise_std: Optional noise standard deviation for weighting.
+    Parameters
+    ----------
+    concentration : np.ndarray
+        Measured tissue concentration curve.
+    aif : np.ndarray
+        Arterial input function.
+    time_points : np.ndarray
+        Time points (seconds).
+    n_candidates : Sequence[int], optional
+        Candidate numbers of control points to evaluate.
+    noise_std : float, optional
+        Optional noise standard deviation for weighting.
 
-    Returns:
+    Returns
+    -------
+    tuple[int, list[tuple[int, float, float]]]
         Tuple of:
             - Optimal number of control points
             - List of (n, BIC, RSS) for each candidate
@@ -818,15 +899,24 @@ def _fit_cpi_simple(
     using the Jacobian returned by ``scipy.optimize.least_squares``.
     Natural-space std on CBF and CBV is recovered via the delta method.
 
-    Args:
-        model: CPIModel instance.
-        concentration: Measured tissue concentration.
-        aif: Arterial input function.
-        time_points: Time points (seconds).
-        weights: Optional per-frame motion weights (1.0 = full weight).
-        sloppy: Use fewer iterations for benchmarks/tests.
+    Parameters
+    ----------
+    model : CPIModel
+        CPIModel instance.
+    concentration : np.ndarray
+        Measured tissue concentration.
+    aif : np.ndarray
+        Arterial input function.
+    time_points : np.ndarray
+        Time points (seconds).
+    weights : np.ndarray, optional
+        Optional per-frame motion weights (1.0 = full weight).
+    sloppy : bool, optional
+        Use fewer iterations for benchmarks/tests.
 
-    Returns:
+    Returns
+    -------
+    DSCFitResult or None
         DSCFitResult with fitted parameters in NATURAL space, or None on
         failure. ``fitted_residue`` contains CBF × R_norm so downstream
         code can extract CBF = max(residue) and CBV = trapezoid(residue, dx=dt).

@@ -16,7 +16,8 @@ class DSCVoxelResult:
     including basic hemodynamic parameters, model-derived metrics,
     vascular model parameters, and Bayesian uncertainty estimates.
 
-    Attributes:
+    Attributes
+    ----------
         # Core perfusion parameters
         cbf: Cerebral blood flow (mL/100g/min). Relative if no r2* provided,
             absolute if r2* is used. Extracted from max(R(t)).
@@ -116,7 +117,9 @@ class DSCVoxelResult:
     def has_uncertainty(self) -> bool:
         """Check if Bayesian uncertainty estimates are available.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if any uncertainty estimates are populated.
         """
         return any([
@@ -128,7 +131,9 @@ class DSCVoxelResult:
     def has_vascular_params(self) -> bool:
         """Check if vascular model parameters are available.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if vascular model parameters (alpha, beta) are populated.
         """
         return self.alpha is not None and self.beta is not None
@@ -138,7 +143,8 @@ class DSCVoxelResult:
 class DSCQCMetrics:
     """Quality control metrics for DSC perfusion analysis.
 
-    Attributes:
+    Attributes
+    ----------
         cnr: Contrast-to-noise ratio of the bolus passage.
         motion_max_fd: Maximum framewise displacement during acquisition.
         motion_mean_fd: Mean framewise displacement during acquisition.
@@ -163,10 +169,14 @@ class DSCQCMetrics:
     def passes_motion_qc(self, threshold: float = 0.5) -> bool:
         """Check if motion QC passes based on framewise displacement.
 
-        Args:
-            threshold: Maximum FD threshold in mm (default 0.5).
+        Parameters
+        ----------
+        threshold : float, optional
+            Maximum FD threshold in mm (default 0.5).
 
-        Returns:
+        Returns
+        -------
+        bool
             True if motion QC passes (max FD < threshold).
         """
         return self.motion_max_fd < threshold
@@ -174,7 +184,9 @@ class DSCQCMetrics:
     def passes_bayesian_qc(self) -> bool:
         """Check if Bayesian convergence diagnostics pass.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if R-hat < 1.1 and ESS > 100, or if not applicable.
         """
         if self.rhat_max is None or self.ess_min is None:
@@ -186,7 +198,8 @@ class DSCQCMetrics:
 class DSCAIFResult:
     """Result from AIF detection.
 
-    Attributes:
+    Attributes
+    ----------
         aif_curve: The arterial input function concentration time course.
         aif_mask: Binary mask indicating AIF voxel locations.
         detection_level: Method used ('atlas', 'relaxed', 'synthetic').
@@ -207,7 +220,9 @@ class DSCAIFResult:
     def is_valid(self) -> bool:
         """Check if AIF detection was successful.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if AIF curve has non-zero values and quality is acceptable.
         """
         if not self.aif_curve:
@@ -217,7 +232,9 @@ class DSCAIFResult:
     def is_synthetic(self) -> bool:
         """Check if synthetic (population) AIF was used.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if synthetic AIF was used as fallback.
         """
         return self.detection_level == "synthetic"

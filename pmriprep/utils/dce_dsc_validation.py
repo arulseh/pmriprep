@@ -19,12 +19,12 @@ Ratio deviations indicate:
 - Ratio << expected: preload effect (reduced DSC signal from prior contrast).
 - Ratio >> expected: DCE overestimation or DSC underestimation.
 
-References:
-    - Boxerman et al., Neuro-Oncology 2020 (ASFNR/NCI consensus — NAWM
-      normalization is the reference scale for clinical DSC).
-    - Larsson et al., MRM 2009;62:1270 (direct DCE-measured NAWM vp ≈ 0.0089
-      at matched Hct=0.42; anchor for ``NAWM_VP_REFERENCE``).
-    - Schmainda et al., Theory and Application of Quantitative DCE-MRI (2021).
+References
+----------
+- Boxerman et al., Neuro-Oncology 2020 (ASFNR/NCI consensus — NAWM
+  normalization is the reference scale for clinical DSC).
+- Larsson et al., MRM 2009;62:1270 (direct DCE-measured NAWM vp ≈ 0.0089
+  at matched Hct=0.42; anchor for ``NAWM_VP_REFERENCE``).
 """
 
 import logging
@@ -75,8 +75,9 @@ MAX_VP_FOR_VALIDATION: float = 0.15
 MAX_CBV_FOR_VALIDATION: float = 8.0
 
 #: Spearman rank correlation thresholds for unconstrained vp-CBV validation.
-#: ρ=0.40 → ~16% shared variance, "moderate" in literature (Quarles et al.,
-#: NMR Biomed 2009; Shin et al., JMRI 2013). ρ<0.20 is effectively noise.
+#: ρ=0.40 → ~16% shared variance, a conventional "moderate" cutoff. DSC and
+#: DCE measure related but distinct vascular features (Quarles 2019 NeuroImage
+#: 187:32). ρ<0.20 is effectively noise.
 CORRELATION_PASS_UNCONSTRAINED: float = 0.40
 CORRELATION_WARN_UNCONSTRAINED: float = 0.20
 
@@ -122,24 +123,38 @@ CIRCULAR_STD_RATIO_THRESHOLD: float = 0.01
 class ValidationMetrics:
     """Detailed metrics from DSC-DCE cross-validation.
 
-    Attributes:
-        mean_ratio: Mean (vp * 100) / CBV ratio across valid voxels.
-        median_ratio: Median ratio across valid voxels.
-        std_ratio: Standard deviation of ratio.
-        p10_ratio: 10th percentile ratio.
-        p90_ratio: 90th percentile ratio.
-        n_valid_voxels: Number of voxels included in validation.
-        n_total_voxels: Total number of voxels in mask.
-        fraction_valid: Fraction of voxels with valid values.
-        correlation: Spearman rank correlation between vp and CBV.
-            Robust to outliers and non-linear monotonic relationships,
-            which is the expected vp-CBV relationship (different contrast
-            mechanisms: T1 vs T2*).
-        pearson_correlation: Supplementary Pearson correlation.
-            Discrepancy with Spearman indicates outlier leverage inflation.
-        mean_vp: Mean vp value in valid voxels (fraction).
-        mean_cbv: Mean CBV value in valid voxels (mL/100g).
-        expected_ratio: Expected ratio based on hematocrit and tissue density.
+    Attributes
+    ----------
+    mean_ratio : float
+        Mean (vp * 100) / CBV ratio across valid voxels.
+    median_ratio : float
+        Median ratio across valid voxels.
+    std_ratio : float
+        Standard deviation of ratio.
+    p10_ratio : float
+        10th percentile ratio.
+    p90_ratio : float
+        90th percentile ratio.
+    n_valid_voxels : int
+        Number of voxels included in validation.
+    n_total_voxels : int
+        Total number of voxels in mask.
+    fraction_valid : float
+        Fraction of voxels with valid values.
+    correlation : float
+        Spearman rank correlation between vp and CBV.
+        Robust to outliers and non-linear monotonic relationships,
+        which is the expected vp-CBV relationship (different contrast
+        mechanisms: T1 vs T2*).
+    pearson_correlation : float
+        Supplementary Pearson correlation.
+        Discrepancy with Spearman indicates outlier leverage inflation.
+    mean_vp : float
+        Mean vp value in valid voxels (fraction).
+    mean_cbv : float
+        Mean CBV value in valid voxels (mL/100g).
+    expected_ratio : float
+        Expected ratio based on hematocrit and tissue density.
     """
 
     mean_ratio: float = 0.0
@@ -179,24 +194,34 @@ class ValidationMetrics:
 class ValidationResult:
     """Result of DSC-DCE cross-validation.
 
-    Attributes:
-        status: Overall validation status (PASS/WARN/POOR/CIRCULAR).
-        preload_effect_detected: Whether preload effect is suspected from
-            vp/CBV ratio analysis. Distinct from DSC config ``preload`` which
-            records the user/scanner configuration.
-        dsc_preload_configured: True when user explicitly overrode
-            auto-detection with a preload class (i.e., ``preload != "auto"``).
-            None if unknown.
-        constraint_mode: CBV constraint mode used (soft/skip/None).
-        circular: Reserved (always False — no circular constraint mode is
-            currently supported).
-        correction_factor: Suggested correction factor to align vp with CBV.
-        metrics: Detailed validation metrics.
-        interpretation: Human-readable interpretation of results.
-        acquisition_limited: True when the AIF-tissue overshoot fraction
-            exceeds the prior-dominance threshold and the nCBV-anchored
-            ratio tolerance was widened (Buckley MRM 2002). Informational
-            flag; does not imply data-quality failure.
+    Attributes
+    ----------
+    status : str
+        Overall validation status (PASS/WARN/POOR/CIRCULAR).
+    preload_effect_detected : bool
+        Whether preload effect is suspected from
+        vp/CBV ratio analysis. Distinct from DSC config ``preload`` which
+        records the user/scanner configuration.
+    dsc_preload_configured : bool, optional
+        True when user explicitly overrode
+        auto-detection with a preload class (i.e., ``preload != "auto"``).
+        None if unknown.
+    constraint_mode : str, optional
+        CBV constraint mode used (soft/skip/None).
+    circular : bool
+        Reserved (always False — no circular constraint mode is
+        currently supported).
+    correction_factor : float
+        Suggested correction factor to align vp with CBV.
+    metrics : ValidationMetrics
+        Detailed validation metrics.
+    interpretation : str
+        Human-readable interpretation of results.
+    acquisition_limited : bool
+        True when the AIF-tissue overshoot fraction
+        exceeds the prior-dominance threshold and the nCBV-anchored
+        ratio tolerance was widened (Buckley MRM 2002). Informational
+        flag; does not imply data-quality failure.
     """
 
     status: str = QCStatus.UNKNOWN
@@ -235,11 +260,16 @@ def calculate_vp_cbv_ratio(
 ) -> npt.NDArray[np.floating[npt.NBitBase]]:
     """Calculate (vp * 100) / CBV ratio.
 
-    Args:
-        vp: Plasma volume fraction array (0-1 scale).
-        cbv: Cerebral blood volume array (mL/100g scale).
+    Parameters
+    ----------
+    vp : numpy.ndarray
+        Plasma volume fraction array (0-1 scale).
+    cbv : numpy.ndarray
+        Cerebral blood volume array (mL/100g scale).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Ratio array with same shape as inputs.
     """
     # Avoid division by zero
@@ -259,11 +289,16 @@ def get_expected_ratio(
 
     Capillary hematocrit is derived from arterial via Fåhræus ratio (0.85).
 
-    Args:
-        hematocrit: Arterial hematocrit (default: 0.42).
-        tissue_density: Tissue density in g/mL (default: 1.04).
+    Parameters
+    ----------
+    hematocrit : float, optional
+        Arterial hematocrit (default: 0.42).
+    tissue_density : float, optional
+        Tissue density in g/mL (default: 1.04).
 
-    Returns:
+    Returns
+    -------
+    float
         Expected (vp * 100) / CBV ratio.
     """
     hct_cap = capillary_hematocrit(hematocrit)
@@ -280,11 +315,16 @@ def calculate_correction_factor(
         vp_corrected = vp * correction_factor
         cbv_corrected = cbv / correction_factor
 
-    Args:
-        observed_ratio: Observed mean or median vp/CBV ratio.
-        expected_ratio: Expected ratio from get_expected_ratio().
+    Parameters
+    ----------
+    observed_ratio : float
+        Observed mean or median vp/CBV ratio.
+    expected_ratio : float
+        Expected ratio from get_expected_ratio().
 
-    Returns:
+    Returns
+    -------
+    float
         Correction factor (>1 if observed ratio is low, <1 if high).
     """
     if observed_ratio <= 0:
@@ -343,29 +383,41 @@ def validate_vp_cbv(
       center); the non-nCBV path's 0.01 would misflag genuine 50%
       posterior spread as circular at this scale.
 
-    Args:
-        vp_data: 3D vp map array (fraction, 0-1 scale).
-        cbv_data: 3D CBV map array — absolute/relative in mL/100g if
-            ``use_ncbv_scale=False``, dimensionless nCBV if True.
-        mask: 3D boolean mask for analysis region.
-        hematocrit: Hematocrit value (only used when ``use_ncbv_scale=False``).
-        tissue_density: Tissue density (only used when ``use_ncbv_scale=False``).
-        constraint_mode: CBV constraint mode ("soft", "skip", or None).
-        dsc_preload_configured: Whether DSC preload was configured.
-        use_ncbv_scale: When True, interpret ``cbv_data`` as NAWM-normalized
-            nCBV and use the NAWM-anchored expected ratio + scaled circular
-            threshold. Default False (legacy behavior).
-        aif_tissue_overshoot_fraction: Upstream constraint-block diagnostic
-            (fraction of voxels where ``vp_prior × Cp(peak) > observed
-            C_tissue(peak)``). When greater than
-            ``ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD`` on the nCBV path,
-            vp is prior-dominated by first-pass temporal undersampling
-            (Buckley MRM 2002); the ratio tolerance is widened to
-            [``VP_NCBV_RATIO_MIN_LIMITED``, ``VP_NCBV_RATIO_MAX_LIMITED``]
-            and ``result.acquisition_limited`` is set. Pass ``None`` to
-            skip (legacy tight-band behavior).
+    Parameters
+    ----------
+    vp_data : numpy.ndarray
+        3D vp map array (fraction, 0-1 scale).
+    cbv_data : numpy.ndarray
+        3D CBV map array — absolute/relative in mL/100g if
+        ``use_ncbv_scale=False``, dimensionless nCBV if True.
+    mask : numpy.ndarray
+        3D boolean mask for analysis region.
+    hematocrit : float, optional
+        Hematocrit value (only used when ``use_ncbv_scale=False``).
+    tissue_density : float, optional
+        Tissue density (only used when ``use_ncbv_scale=False``).
+    constraint_mode : str, optional
+        CBV constraint mode ("soft", "skip", or None).
+    dsc_preload_configured : bool, optional
+        Whether DSC preload was configured.
+    use_ncbv_scale : bool, optional
+        When True, interpret ``cbv_data`` as NAWM-normalized
+        nCBV and use the NAWM-anchored expected ratio + scaled circular
+        threshold. Default False (legacy behavior).
+    aif_tissue_overshoot_fraction : float, optional
+        Upstream constraint-block diagnostic
+        (fraction of voxels where ``vp_prior × Cp(peak) > observed
+        C_tissue(peak)``). When greater than
+        ``ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD`` on the nCBV path,
+        vp is prior-dominated by first-pass temporal undersampling
+        (Buckley MRM 2002); the ratio tolerance is widened to
+        [``VP_NCBV_RATIO_MIN_LIMITED``, ``VP_NCBV_RATIO_MAX_LIMITED``]
+        and ``result.acquisition_limited`` is set. Pass ``None`` to
+        skip (legacy tight-band behavior).
 
-    Returns:
+    Returns
+    -------
+    ValidationResult
         ValidationResult with status, preload detection, and metrics.
     """
     from pmriprep.utils.dce_constants import (
@@ -522,7 +574,7 @@ def validate_vp_cbv(
     result.acquisition_limited = acquisition_limited
 
     if acquisition_limited:
-        # --- Widened ratio band (Pardridge 2011 physiological floor → NAWM ceiling) ---
+        # --- Widened ratio band (vp ≥ 0.005 physiological floor → NAWM ceiling) ---
         if (VP_NCBV_RATIO_MIN_LIMITED
                 <= metrics.median_ratio
                 <= VP_NCBV_RATIO_MAX_LIMITED):
@@ -688,27 +740,41 @@ def validate_vp_cbv_from_files(
 
     Convenience wrapper for validate_vp_cbv() that loads data from files.
 
-    Args:
-        vp_path: Path to DCE vp NIfTI file.
-        cbv_path: Path to DSC CBV NIfTI file (absolute/relative mL/100g).
-            Only used when ``ncbv_path`` is None; may be None if ``ncbv_path``
-            is provided.
-        mask_path: Path to mask NIfTI file (brain or tissue mask).
-        hematocrit: Hematocrit value for expected ratio calculation.
-        tissue_density: Tissue density for expected ratio calculation.
-        constraint_mode: CBV constraint mode ("soft", "skip", or None).
-        dsc_preload_configured: Whether DSC preload was configured.
-        ncbv_path: Optional path to NAWM-normalized CBV (dimensionless nCBV).
-            When provided, validation uses the nCBV path: expected ratio is
-            NAWM_VP_REFERENCE and the circular-std threshold is scaled to
-            match (CIRCULAR_STD_THRESHOLD_NCBV ≈ 0.002).
+    Parameters
+    ----------
+    vp_path : str or pathlib.Path
+        Path to DCE vp NIfTI file.
+    cbv_path : str or pathlib.Path, optional
+        Path to DSC CBV NIfTI file (absolute/relative mL/100g).
+        Only used when ``ncbv_path`` is None; may be None if ``ncbv_path``
+        is provided.
+    mask_path : str or pathlib.Path
+        Path to mask NIfTI file (brain or tissue mask).
+    hematocrit : float, optional
+        Hematocrit value for expected ratio calculation.
+    tissue_density : float, optional
+        Tissue density for expected ratio calculation.
+    constraint_mode : str, optional
+        CBV constraint mode ("soft", "skip", or None).
+    dsc_preload_configured : bool, optional
+        Whether DSC preload was configured.
+    ncbv_path : str or pathlib.Path, optional
+        Optional path to NAWM-normalized CBV (dimensionless nCBV).
+        When provided, validation uses the nCBV path: expected ratio is
+        NAWM_VP_REFERENCE and the circular-std threshold is scaled to
+        match (CIRCULAR_STD_THRESHOLD_NCBV ≈ 0.002).
 
-    Returns:
+    Returns
+    -------
+    ValidationResult
         ValidationResult with status, preload detection, and metrics.
 
-    Raises:
-        FileNotFoundError: If any required input file does not exist.
-        ValueError: If both ``cbv_path`` and ``ncbv_path`` are None.
+    Raises
+    ------
+    FileNotFoundError
+        If any required input file does not exist.
+    ValueError
+        If both ``cbv_path`` and ``ncbv_path`` are None.
     """
     import nibabel as nib  # type: ignore[import-untyped]
 

@@ -14,11 +14,16 @@ import numpy.typing as npt
 class BATResult:
     """Result of bolus arrival time detection.
 
-    Attributes:
-        bat_seconds: Bolus arrival time in seconds.
-        peak_seconds: Time of peak enhancement in seconds.
-        confidence: Detection confidence ("high" or "low").
-        method: Method used ("threshold", "gradient", or "default").
+    Attributes
+    ----------
+    bat_seconds : float
+        Bolus arrival time in seconds.
+    peak_seconds : float
+        Time of peak enhancement in seconds.
+    confidence : str
+        Detection confidence ("high" or "low").
+    method : str
+        Method used ("threshold", "gradient", or "default").
     """
 
     bat_seconds: float
@@ -42,12 +47,18 @@ def detect_bolus_arrival_time(
     Uses adaptive baseline frame count and MAD-based outlier
     detection to handle frame 0 artifacts.
 
-    Args:
-        curve: 1D concentration time course (mM).
-        time_points: 1D time array in minutes.
-        baseline_frames: Number of pre-contrast baseline frames.
+    Parameters
+    ----------
+    curve : numpy.ndarray
+        1D concentration time course (mM).
+    time_points : numpy.ndarray
+        1D time array in minutes.
+    baseline_frames : int, optional
+        Number of pre-contrast baseline frames.
 
-    Returns:
+    Returns
+    -------
+    BATResult
         BATResult with detected BAT and metadata.
     """
     n = len(curve)

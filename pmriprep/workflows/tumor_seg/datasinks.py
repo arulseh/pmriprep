@@ -8,8 +8,7 @@ the companion ``desc-tumorseg_dseg.tsv`` lookup table.
 """
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]

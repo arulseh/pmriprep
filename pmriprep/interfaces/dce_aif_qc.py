@@ -10,7 +10,7 @@ Adapted from DSC AIF QC with DCE-specific modifications:
 """
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -467,16 +467,26 @@ def plot_aif_candidates_glass_brain(
 ) -> None:
     """Plot AIF candidates on a glass brain in MNI space.
 
-    Args:
-        candidate_coords: Voxel coordinates [[x, y, z], ...].
-        candidate_scores: Quality scores per candidate (0-1).
-        native_img: NIfTI image in native (DCE/DSC) space.
-        t1w_to_native_xfm: FLIRT matrix file (T1w → native space).
-        t1w_to_mni_xfm: FLIRT matrix file (T1w → MNI space).
-        subject_id: Subject ID for title.
-        session_id: Session ID for title.
-        output_path: Output PNG path.
-        modality: "DCE" or "DSC" for title.
+    Parameters
+    ----------
+    candidate_coords : list of list of int
+        Voxel coordinates [[x, y, z], ...].
+    candidate_scores : list of float
+        Quality scores per candidate (0-1).
+    native_img : Any
+        NIfTI image in native (DCE/DSC) space.
+    t1w_to_native_xfm : str
+        FLIRT matrix file (T1w → native space).
+    t1w_to_mni_xfm : str
+        FLIRT matrix file (T1w → MNI space).
+    subject_id : str
+        Subject ID for title.
+    session_id : str
+        Session ID for title.
+    output_path : str
+        Output PNG path.
+    modality : str, optional
+        "DCE" or "DSC" for title.
     """
     import matplotlib.pyplot as plt
     from matplotlib.gridspec import GridSpec

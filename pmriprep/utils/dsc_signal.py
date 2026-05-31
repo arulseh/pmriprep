@@ -28,22 +28,30 @@ def signal_to_concentration(
 
     Always returns ΔR2* in s⁻¹. All downstream quantification is relative.
 
-    Args:
-        signal: 4D array of DSC signal (x, y, z, time) or 1D time series.
-            Signal values should be positive.
-        te: Echo time in seconds. Typical values: 0.025-0.040s.
-        baseline_frames: Number of pre-bolus frames for S0 estimation.
-            Default is 5 frames.
+    Parameters
+    ----------
+    signal : np.ndarray
+        4D array of DSC signal (x, y, z, time) or 1D time series.
+        Signal values should be positive.
+    te : float
+        Echo time in seconds. Typical values: 0.025-0.040s.
+    baseline_frames : int, optional
+        Number of pre-bolus frames for S0 estimation.
+        Default is 5 frames.
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         ΔR2* array with same shape as input signal, units s⁻¹.
 
-    Raises:
+    Raises
+    ------
         ValueError: If signal array is empty or has invalid dimensions.
         ValueError: If te is not positive.
         ValueError: If baseline_frames exceeds signal length.
 
-    Notes:
+    Notes
+    -----
         - Signal ratio is lower-bounded at EPSILON_SIGNAL to prevent
           log(0). No upper bound: S(t)/S0 > 1 produces negative ΔR2*,
           which preserves symmetric noise in post-bolus frames.
@@ -111,12 +119,18 @@ def signal_to_delta_r2_star(
     Convenience alias for signal_to_concentration, which now always
     returns ΔR2* in s⁻¹.
 
-    Args:
-        signal: 4D array of DSC signal (x, y, z, time) or 1D time series.
-        te: Echo time in seconds.
-        baseline_frames: Number of pre-bolus frames for S0 estimation.
+    Parameters
+    ----------
+    signal : np.ndarray
+        4D array of DSC signal (x, y, z, time) or 1D time series.
+    te : float
+        Echo time in seconds.
+    baseline_frames : int, optional
+        Number of pre-bolus frames for S0 estimation.
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         ΔR2* array with same shape as input signal, units s⁻¹.
     """
     return signal_to_concentration(
@@ -132,11 +146,16 @@ def get_baseline_signal(
 ) -> Union[float, npt.NDArray[np.floating]]:
     """Compute baseline signal S0 from pre-bolus frames.
 
-    Args:
-        signal: DSC signal array (1D, 3D, or 4D).
-        baseline_frames: Number of pre-bolus frames to average.
+    Parameters
+    ----------
+    signal : np.ndarray
+        DSC signal array (1D, 3D, or 4D).
+    baseline_frames : int, optional
+        Number of pre-bolus frames to average.
 
-    Returns:
+    Returns
+    -------
+    float or np.ndarray
         Baseline signal value (scalar for 1D) or array (for 3D/4D).
     """
     if signal.ndim == 1:
@@ -157,16 +176,23 @@ def find_bolus_arrival(
     Detects when signal drops significantly below baseline,
     indicating contrast agent arrival.
 
-    Args:
-        signal: 1D DSC signal time course.
-        baseline_frames: Number of pre-bolus frames.
-        threshold_factor: Number of baseline standard deviations
-            for threshold (default 3.0).
+    Parameters
+    ----------
+    signal : np.ndarray
+        1D DSC signal time course.
+    baseline_frames : int, optional
+        Number of pre-bolus frames.
+    threshold_factor : float, optional
+        Number of baseline standard deviations
+        for threshold (default 3.0).
 
-    Returns:
+    Returns
+    -------
+    int
         Index of bolus arrival frame.
 
-    Raises:
+    Raises
+    ------
         ValueError: If signal is not 1D.
         ValueError: If no bolus arrival is detected.
     """
@@ -203,17 +229,23 @@ def detect_bolus_arrival(
     any constant scaling factor, so detection returns the same frame
     whether input is in ΔR2* (s⁻¹) or concentration (mM).
 
-    Args:
-        concentration_curve: 1D concentration time course (positive values
-            indicate contrast arrival in concentration space).
-        baseline_frames: Number of initial frames for baseline estimation.
-            Default is 3 to avoid early bolus contamination.
-        n_consecutive: Number of consecutive frames that must all exceed
-            the 3-sigma threshold to count as bolus arrival. Using
-            n_consecutive >= 2 rejects isolated noise spikes common in
-            preloaded acquisitions with noisy elevated baselines.
+    Parameters
+    ----------
+    concentration_curve : np.ndarray
+        1D concentration time course (positive values
+        indicate contrast arrival in concentration space).
+    baseline_frames : int, optional
+        Number of initial frames for baseline estimation.
+        Default is 3 to avoid early bolus contamination.
+    n_consecutive : int, optional
+        Number of consecutive frames that must all exceed
+        the 3-sigma threshold to count as bolus arrival. Using
+        n_consecutive >= 2 rejects isolated noise spikes common in
+        preloaded acquisitions with noisy elevated baselines.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (arrival_idx, n_baseline_frames):
             - arrival_idx: Frame index where bolus arrives
             - n_baseline_frames: Number of usable pre-bolus frames
@@ -268,19 +300,26 @@ def detect_bolus_arrival_gradient(
     spike.  Z-scoring the gradient cleanly separates these two regimes at
     any baseline elevation.
 
-    Args:
-        concentration_curve: 1D concentration time course.
-        baseline_window: Maximum number of initial frames used to estimate
-            gradient baseline statistics.  Clipped to ``len // 4`` so it
-            never exceeds one quarter of the curve.  Default 20 provides
-            stable mean/std for most acquisition lengths.
-        z_threshold: Number of standard deviations above baseline gradient
-            mean to count as significant.  Default 3.0.
-        n_consecutive: Number of consecutive above-threshold gradient
-            frames required.  Should be TR-adaptive at the call site
-            (e.g. ``max(1, min(3, int(4.0 / tr)))``).
+    Parameters
+    ----------
+    concentration_curve : np.ndarray
+        1D concentration time course.
+    baseline_window : int, optional
+        Maximum number of initial frames used to estimate
+        gradient baseline statistics.  Clipped to ``len // 4`` so it
+        never exceeds one quarter of the curve.  Default 20 provides
+        stable mean/std for most acquisition lengths.
+    z_threshold : float, optional
+        Number of standard deviations above baseline gradient
+        mean to count as significant.  Default 3.0.
+    n_consecutive : int, optional
+        Number of consecutive above-threshold gradient
+        frames required.  Should be TR-adaptive at the call site
+        (e.g. ``max(1, min(3, int(4.0 / tr)))``).
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (arrival_idx, n_baseline_frames):
             - arrival_idx: Frame index where bolus arrives.
             - n_baseline_frames: Usable pre-bolus frames (always >= 2).
@@ -363,28 +402,36 @@ def compute_psr(
         - PSR 70-90%: Partial BBB disruption
         - PSR > 90%: Intact blood-brain barrier
 
-    Args:
-        signal: DSC signal array. Can be:
+    Parameters
+    ----------
+    signal : np.ndarray
+        DSC signal array. Can be:
             - 1D (time,): Single voxel time course
             - 4D (x, y, z, time): Full 4D volume
-        baseline_frames: Number of pre-bolus frames for S_baseline.
-            Default is 10.
-        tail_frames: Number of post-bolus frames for S_tail.
-            Default is 10 (last 10 frames).
+    baseline_frames : int, optional
+        Number of pre-bolus frames for S_baseline.
+        Default is 10.
+    tail_frames : int, optional
+        Number of post-bolus frames for S_tail.
+        Default is 10 (last 10 frames).
 
-    Returns:
+    Returns
+    -------
+    float or np.ndarray
         PSR value(s) as percentage (0-100+ range).
         - Scalar float for 1D input
         - 3D array (x, y, z) for 4D input
 
-    Raises:
+    Raises
+    ------
         ValueError: If signal has invalid dimensions.
         ValueError: If baseline_frames or tail_frames exceeds signal length.
 
-    Notes:
+    Notes
+    -----
         - This is the physics-correct version for post-integration expert
           review. The legacy version (compute_psr_legacy) uses the
-          Cha et al. (AJNR 2002) formula for validation ground truth.
+          Cha et al. (Radiology 2002) formula for validation ground truth.
         - s_min uses post-baseline frames only (signal[..., baseline_frames:])
           to avoid baseline contamination.
         - PSR can exceed 100% in cases where the signal overshoots baseline
@@ -452,9 +499,9 @@ def compute_psr_legacy(
     baseline_frames: int = 5,
     tail_frames: int = 5,
 ) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute PSR using the legacy formula (Cha et al., AJNR 2002).
+    """Compute PSR using the legacy formula (Cha et al., Radiology 2002).
 
-    Legacy formula (Cha et al., AJNR 2002):
+    Legacy formula (Cha et al., Radiology 2002):
         PSR = 100 × (S1 - Smin) / (S0 - Smin)
     where S0 = mean baseline signal, S1 = mean tail signal,
     Smin = minimum signal in post-baseline frames.
@@ -462,12 +509,18 @@ def compute_psr_legacy(
     Returns percentage (~0-100+ range). Kept for integration test
     compatibility with validation ground truth.
 
-    Args:
-        signal: DSC signal array (1D or 4D).
-        baseline_frames: Number of pre-bolus frames for S0.
-        tail_frames: Number of post-bolus tail frames for S1 (recovery).
+    Parameters
+    ----------
+    signal : np.ndarray
+        DSC signal array (1D or 4D).
+    baseline_frames : int, optional
+        Number of pre-bolus frames for S0.
+    tail_frames : int, optional
+        Number of post-bolus tail frames for S1 (recovery).
 
-    Returns:
+    Returns
+    -------
+    float or np.ndarray
         PSR as percentage (0-100+ range).
     """
     if signal.ndim == 1:
@@ -508,23 +561,30 @@ def compute_peak_height(
         - PH correlates with cerebral blood volume (CBV)
         - Typical values: 20-60% in normal tissue, may be higher in tumors
 
-    Args:
-        signal: DSC signal array. Can be:
+    Parameters
+    ----------
+    signal : np.ndarray
+        DSC signal array. Can be:
             - 1D (time,): Single voxel time course
             - 4D (x, y, z, time): Full 4D volume
-        baseline_frames: Number of pre-bolus frames for S_baseline.
-            Default is 10.
+    baseline_frames : int, optional
+        Number of pre-bolus frames for S_baseline.
+        Default is 10.
 
-    Returns:
+    Returns
+    -------
+    float or np.ndarray
         Peak height value(s) as percentage (0-100 range typically).
         - Scalar float for 1D input
         - 3D array (x, y, z) for 4D input
 
-    Raises:
+    Raises
+    ------
         ValueError: If signal has invalid dimensions.
         ValueError: If baseline_frames exceeds signal length.
 
-    Notes:
+    Notes
+    -----
         - This is the physics-correct version for post-integration expert
           review. The legacy version (compute_peak_height_legacy) is kept
           for validation ground truth.
@@ -593,11 +653,16 @@ def compute_peak_height_legacy(
     Returns percentage (0-100 range). Kept for integration test
     compatibility with validation ground truth.
 
-    Args:
-        signal: DSC signal array (1D or 4D).
-        baseline_frames: Number of pre-bolus frames for S0.
+    Parameters
+    ----------
+    signal : np.ndarray
+        DSC signal array (1D or 4D).
+    baseline_frames : int, optional
+        Number of pre-bolus frames for S0.
 
-    Returns:
+    Returns
+    -------
+    float or np.ndarray
         Peak height as percentage (0-100 range).
     """
     if signal.ndim == 1:
@@ -628,12 +693,18 @@ def compute_peak_height_conc(
     PH = max(delta_R2*) in s^-1 units. Linear with contrast agent
     concentration, TE-independent, compatible with K2 correction.
 
-    Args:
-        signal: DSC signal array (4D: x,y,z,time).
-        te_seconds: Echo time in seconds.
-        baseline_end: Index of end of baseline period.
+    Parameters
+    ----------
+    signal : np.ndarray
+        DSC signal array (4D: x,y,z,time).
+    te_seconds : float
+        Echo time in seconds.
+    baseline_end : int
+        Index of end of baseline period.
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         Peak height in s^-1 units.
     """
     s0 = np.mean(signal[..., :baseline_end], axis=-1, keepdims=True)
@@ -655,15 +726,22 @@ def compute_ttp_legacy(
     Returns unclipped TTP so callers can compute derived maps (TTPc, rTTP)
     before applying their own clipping.
 
-    Args:
-        concentration: Concentration array (4D: x,y,z,time or 1D: time).
-        pre_bolus_frames: Number of pre-bolus baseline frames to skip.
-        dt: Time step in seconds (TR).
+    Parameters
+    ----------
+    concentration : np.ndarray
+        Concentration array (4D: x,y,z,time or 1D: time).
+    pre_bolus_frames : int
+        Number of pre-bolus baseline frames to skip.
+    dt : float
+        Time step in seconds (TR).
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         TTP map in seconds (unclipped).
 
-    Raises:
+    Raises
+    ------
         ValueError: If pre_bolus_frames >= number of timepoints.
     """
     n_timepoints = concentration.shape[-1]
@@ -694,12 +772,18 @@ def find_nawm_mask(
 
     Searches for HD-GLIO or other NAWM ROI outputs.
 
-    Args:
-        derivatives_dir: Path to the derivatives directory.
-        subject: Subject ID (without 'sub-' prefix).
-        session: Session ID (without 'ses-' prefix), optional.
+    Parameters
+    ----------
+    derivatives_dir : str or Path
+        Path to the derivatives directory.
+    subject : str
+        Subject ID (without 'sub-' prefix).
+    session : str, optional
+        Session ID (without 'ses-' prefix), optional.
 
-    Returns:
+    Returns
+    -------
+    Path or None
         Path to the NAWM mask, or None if not found.
     """
     deriv_path = Path(derivatives_dir)
@@ -764,31 +848,44 @@ def normalize_cbv(
     The NAWM mask can be provided directly, loaded from a file path, or
     auto-detected from the derivatives directory (HD-GLIO outputs).
 
-    Args:
-        cbv_map: 3D array of CBV values to normalize.
-        nawm_mask: Binary 3D mask of NAWM region. If None, will attempt
-            to load from nawm_mask_file or auto-detect.
-        nawm_mask_file: Path to a NAWM mask NIfTI file. Used if nawm_mask
-            is not provided.
-        derivatives_dir: Path to derivatives directory for auto-detection.
-            Used if neither nawm_mask nor nawm_mask_file is provided.
-        subject: Subject ID (without 'sub-' prefix) for auto-detection.
-        session: Session ID (without 'ses-' prefix) for auto-detection.
-        brain_mask: Optional brain mask for fallback normalization if NAWM
-            mask is unavailable. Uses whole-brain median.
-        return_normalization_factor: If True, returns tuple of (nCBV, factor).
+    Parameters
+    ----------
+    cbv_map : np.ndarray
+        3D array of CBV values to normalize.
+    nawm_mask : np.ndarray, optional
+        Binary 3D mask of NAWM region. If None, will attempt
+        to load from nawm_mask_file or auto-detect.
+    nawm_mask_file : str or Path, optional
+        Path to a NAWM mask NIfTI file. Used if nawm_mask
+        is not provided.
+    derivatives_dir : str or Path, optional
+        Path to derivatives directory for auto-detection.
+        Used if neither nawm_mask nor nawm_mask_file is provided.
+    subject : str, optional
+        Subject ID (without 'sub-' prefix) for auto-detection.
+    session : str, optional
+        Session ID (without 'ses-' prefix) for auto-detection.
+    brain_mask : np.ndarray, optional
+        Optional brain mask for fallback normalization if NAWM
+        mask is unavailable. Uses whole-brain median.
+    return_normalization_factor : bool, optional
+        If True, returns tuple of (nCBV, factor).
 
-    Returns:
+    Returns
+    -------
+    np.ndarray or tuple
         If return_normalization_factor is False:
             Normalized CBV map (nCBV) as a 3D array.
         If return_normalization_factor is True:
             Tuple of (nCBV map, normalization factor).
 
-    Raises:
+    Raises
+    ------
         ValueError: If CBV map is not 3D.
         ValueError: If mask dimensions don't match CBV map.
 
-    Notes:
+    Notes
+    -----
         - If no NAWM mask is available and no brain mask is provided,
           the function returns the original CBV map unchanged with
           a normalization factor of 1.0.
@@ -907,19 +1004,30 @@ def normalize_cbv_from_files(
     Convenience wrapper that loads the CBV map from a file, performs
     NAWM normalization, and saves the result.
 
-    Args:
-        cbv_file: Path to input CBV NIfTI file.
-        output_file: Path to save normalized CBV NIfTI.
-        nawm_mask_file: Path to NAWM mask NIfTI file.
-        derivatives_dir: Path to derivatives for auto-detection.
-        subject: Subject ID for auto-detection.
-        session: Session ID for auto-detection.
-        brain_mask_file: Path to brain mask for fallback normalization.
+    Parameters
+    ----------
+    cbv_file : str or Path
+        Path to input CBV NIfTI file.
+    output_file : str or Path
+        Path to save normalized CBV NIfTI.
+    nawm_mask_file : str or Path, optional
+        Path to NAWM mask NIfTI file.
+    derivatives_dir : str or Path, optional
+        Path to derivatives for auto-detection.
+    subject : str, optional
+        Subject ID for auto-detection.
+    session : str, optional
+        Session ID for auto-detection.
+    brain_mask_file : str or Path, optional
+        Path to brain mask for fallback normalization.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (output_file path, normalization_factor).
 
-    Raises:
+    Raises
+    ------
         FileNotFoundError: If CBV file does not exist.
     """
     import nibabel as nib  # type: ignore[import-untyped]

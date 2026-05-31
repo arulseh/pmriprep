@@ -5,9 +5,10 @@ registration assessment, motion correction QC, and other pipeline
 outputs. All visualizations use the colorblind-safe palette from
 qc_standards.py.
 
-References:
-    - Power et al. (2012) for framewise displacement
-    - Paul Tol color schemes for accessibility
+References
+----------
+- Power et al. (2012) for framewise displacement
+- Paul Tol color schemes for accessibility
 """
 
 from pathlib import Path
@@ -18,21 +19,25 @@ import numpy.typing as npt
 
 from .qc_standards import (
     COLORBLIND_PALETTE,
-    EXTENDED_PALETTE,
     MOTION_FD_THRESHOLDS,
-    get_status_color,
 )
 
 
 def qc_figure_title(subject_id: str, session_id: str, title: str) -> str:
     """Build a standardized QC figure title.
 
-    Args:
-        subject_id: Subject ID (without 'sub-' prefix).
-        session_id: Session ID (without 'ses-' prefix).
-        title: The main title text.
+    Parameters
+    ----------
+    subject_id : str
+        Subject ID (without 'sub-' prefix).
+    session_id : str
+        Session ID (without 'ses-' prefix).
+    title : str
+        The main title text.
 
-    Returns:
+    Returns
+    -------
+    str
         Formatted title like "sub-X | ses-Y | Title".
     """
     parts = []
@@ -56,17 +61,25 @@ def get_radiological_slice(
     - Coronal (axis=1): Left on right side of image, superior at top
     - Sagittal (axis=0): Anterior on left, superior at top
 
-    Args:
-        data: 3D numpy array (x, y, z)
-        axis: Slice axis (0=sagittal, 1=coronal, 2=axial). Default is axial.
-        slice_idx: Index of slice to extract. If None, uses middle slice.
+    Parameters
+    ----------
+    data : npt.NDArray[Any]
+        3D numpy array (x, y, z)
+    axis : int, optional
+        Slice axis (0=sagittal, 1=coronal, 2=axial). Default is axial.
+    slice_idx : int, optional
+        Index of slice to extract. If None, uses middle slice.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[Any]
         2D numpy array with proper radiological orientation (flipped/rotated
         as needed for display)
 
-    Raises:
-        ValueError: If data is not 3D or axis is invalid
+    Raises
+    ------
+    ValueError
+        If data is not 3D or axis is invalid
     """
     if data.ndim != 3:
         raise ValueError(f"Expected 3D array, got {data.ndim}D")
@@ -108,20 +121,27 @@ def calculate_framewise_displacement(
     that accepts the ``radius`` keyword (used by QC plotting code) and
     handles 12-column affine parameter arrays by extracting the first 6 columns.
 
-    Args:
-        motion_params: Motion parameters array of shape (N, 6) in MCFLIRT
-            format where columns are [rx, ry, rz, tx, ty, tz] (rotations
-            in radians, translations in mm), or shape (N, 12) for affine
-            parameters (uses first 6).
-        radius: Head radius in mm for converting rotations to displacements.
-            Default is 50.0mm.
+    Parameters
+    ----------
+    motion_params : npt.NDArray[Any]
+        Motion parameters array of shape (N, 6) in MCFLIRT
+        format where columns are [rx, ry, rz, tx, ty, tz] (rotations
+        in radians, translations in mm), or shape (N, 12) for affine
+        parameters (uses first 6).
+    radius : float, optional
+        Head radius in mm for converting rotations to displacements.
+        Default is 50.0mm.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.float64]
         1D array of framewise displacement values (length N, with first
         element set to 0 as FD is undefined for first frame).
 
-    Raises:
-        ValueError: If motion_params has wrong shape
+    Raises
+    ------
+    ValueError
+        If motion_params has wrong shape
     """
     from pmriprep.utils.motion import (
         calculate_framewise_displacement as _calculate_fd,
@@ -157,14 +177,21 @@ def _compute_brain_slice_indices(
     spaced indices within that range.  Follows the niworkflows
     ``cuts_from_bbox()`` convention of excluding the very edge slices.
 
-    Args:
-        data: 3D volume used as fallback when *mask* is None.
-        axis: Projection axis (0=sagittal, 1=coronal, 2=axial).
-        n_slices: Number of slice indices to return.
-        mask: Optional binary brain mask.  When provided, the extent is
-            derived from the mask; otherwise from ``data > 0``.
+    Parameters
+    ----------
+    data : npt.NDArray[Any]
+        3D volume used as fallback when *mask* is None.
+    axis : int
+        Projection axis (0=sagittal, 1=coronal, 2=axial).
+    n_slices : int
+        Number of slice indices to return.
+    mask : npt.NDArray[Any], optional
+        Optional binary brain mask.  When provided, the extent is
+        derived from the mask; otherwise from ``data > 0``.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.intp]
         1-D integer array of slice indices (length *n_slices*).
     """
     if mask is not None:
@@ -213,22 +240,35 @@ def plot_registration_qc_filmstrip(
     background.  Follows the fmriprep ``add_contours(linewidths=0.5)``
     convention for thin, clean structural boundary visualization.
 
-    Args:
-        fixed: 3D background image array (e.g. DSC/DCE mean)
-        moving: 3D image for edge overlay (e.g. T1w in functional space)
-        output_path: Path to save the output PNG image
-        mask: Optional 3D brain mask to restrict display region
-        title: Optional title for the figure
-        n_slices: Number of slices per row (default 7)
-        contour_color: Color for contour overlay. If None, uses palette primary.
-        voxel_sizes: Voxel dimensions (dx, dy, dz) in mm for correct aspect
-            ratios. If None, uses equal aspect.
+    Parameters
+    ----------
+    fixed : npt.NDArray[Any]
+        3D background image array (e.g. DSC/DCE mean)
+    moving : npt.NDArray[Any]
+        3D image for edge overlay (e.g. T1w in functional space)
+    output_path : str or Path
+        Path to save the output PNG image
+    mask : npt.NDArray[Any], optional
+        Optional 3D brain mask to restrict display region
+    title : str, optional
+        Optional title for the figure
+    n_slices : int, optional
+        Number of slices per row (default 7)
+    contour_color : str, optional
+        Color for contour overlay. If None, uses palette primary.
+    voxel_sizes : tuple of float, optional
+        Voxel dimensions (dx, dy, dz) in mm for correct aspect
+        ratios. If None, uses equal aspect.
 
-    Returns:
+    Returns
+    -------
+    Path
         Path to the saved figure
 
-    Raises:
-        ValueError: If image shapes don't match or arrays aren't 3D
+    Raises
+    ------
+    ValueError
+        If image shapes don't match or arrays aren't 3D
     """
     # Import matplotlib here to avoid import overhead when not needed
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
@@ -398,18 +438,28 @@ def plot_segmentation_qc_filmstrip(
     sagittal) showing the background image as grayscale with colored
     contour outlines from one or more binary label masks overlaid.
 
-    Args:
-        background: 3D background image array (e.g. T1w post-contrast).
-        label_masks: List of (name, mask_3d, color) tuples. Each mask
-            is a binary 3D array; contour edges are drawn in the given color.
-        output_path: Path to save the output PNG image.
-        mask: Optional 3D brain mask to restrict display region.
-        title: Optional title for the figure.
-        n_slices: Number of slices per row (default 7).
-        voxel_sizes: Voxel dimensions (dx, dy, dz) in mm for correct aspect
-            ratios. If None, uses equal aspect.
+    Parameters
+    ----------
+    background : npt.NDArray[Any]
+        3D background image array (e.g. T1w post-contrast).
+    label_masks : list of tuple
+        List of (name, mask_3d, color) tuples. Each mask
+        is a binary 3D array; contour edges are drawn in the given color.
+    output_path : str or Path
+        Path to save the output PNG image.
+    mask : npt.NDArray[Any], optional
+        Optional 3D brain mask to restrict display region.
+    title : str, optional
+        Optional title for the figure.
+    n_slices : int, optional
+        Number of slices per row (default 7).
+    voxel_sizes : tuple of float, optional
+        Voxel dimensions (dx, dy, dz) in mm for correct aspect
+        ratios. If None, uses equal aspect.
 
-    Returns:
+    Returns
+    -------
+    Path
         Path to the saved figure.
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
@@ -559,23 +609,33 @@ def plot_motion_qc(
     2. Middle panel: Rotation parameters (degrees)
     3. Bottom panel: Framewise displacement with threshold and outlier shading
 
-    Args:
-        motion_params: Motion parameters array of shape (N, 6) in MCFLIRT
-            format where columns are [rx, ry, rz, tx, ty, tz] (rotations
-            in radians, translations in mm), or shape (N, 12) for affine
-            parameters (uses first 6).
-        output_path: Path to save the output PNG image
-        tr: Repetition time in seconds (unused, x-axis is volume number)
-        title: Optional title for the figure
-        radius: Head radius in mm for FD calculation (default 50.0)
+    Parameters
+    ----------
+    motion_params : npt.NDArray[Any]
+        Motion parameters array of shape (N, 6) in MCFLIRT
+        format where columns are [rx, ry, rz, tx, ty, tz] (rotations
+        in radians, translations in mm), or shape (N, 12) for affine
+        parameters (uses first 6).
+    output_path : str or Path
+        Path to save the output PNG image
+    tr : float, optional
+        Repetition time in seconds (unused, x-axis is volume number)
+    title : str, optional
+        Optional title for the figure
+    radius : float, optional
+        Head radius in mm for FD calculation (default 50.0)
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (path to saved figure, motion metrics dict with
         ``fd_mean``, ``fd_max``, ``n_outliers``, ``percent_outliers``,
         ``fd_threshold``).
 
-    Raises:
-        ValueError: If motion_params has wrong shape
+    Raises
+    ------
+    ValueError
+        If motion_params has wrong shape
     """
     # Import matplotlib here to avoid import overhead when not needed
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]

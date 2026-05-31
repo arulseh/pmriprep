@@ -29,19 +29,12 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dce_constants import (
-    AIF_FWHM_MAX_RELAXED_FRAMES,
-    AIF_FWHM_MAX_STRICT_FRAMES,
     AIF_FWHM_NOISE_SCORE,
     AIF_FWHM_SCORING_WIDTH,
     AIF_FWHM_VENOUS_SCORE,
-    AIF_FWHM_VENOUS_THRESHOLD_FRAMES,
-    AIF_IDEAL_FWHM_FRAMES,
     AIF_FWHM_MAX_RELAXED_SECONDS,
     AIF_IDEAL_FWHM_SECONDS,
     AIF_PEAK_TIMING_FRACTION,
-    AIF_THRESHOLDS_RELAXED,
-    AIF_THRESHOLDS_STRICT,
-    AIF_TIMING_BEFORE_TISSUE_FRAMES,
     AIF_WASHOUT_THRESHOLD_RELAXED,
     AIF_WASHOUT_THRESHOLD_STRICT,
     BRAIN_EROSION_ITERATIONS,
@@ -94,7 +87,7 @@ _MIN_CANDIDATES_FOR_DETECTED = 2
 # Maximum post-arrival peak time (seconds) for the EARLIEST candidate in a
 # tier to be considered "anchored" by an arterial-grade voxel. Derived from
 # physiological arterial bolus arrival range (4-12s post-injection,
-# Calamante NMR Biomed 2013) plus capillary MTT margin (~4s in GM) for
+# Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1) plus capillary MTT margin (~4s in GM) for
 # adult brain DCE. Tiers whose earliest candidate peaks later than this
 # are treated as venous-only clusters and fail Pass-1 acceptance. If
 # pediatric or extreme-cardiac-output cohorts are added later, expose as
@@ -117,11 +110,16 @@ def _inflow_exclusion_mm(
     this function on ``MRAcquisitionType == "3D"``; 2D multi-slice
     excitation does not produce slab-entry inflow.
 
-    Args:
-        slice_thickness_mm: Through-plane voxel size in mm.
-        n_slices: Number of slices in the acquisition slab.
+    Parameters
+    ----------
+    slice_thickness_mm : float
+        Through-plane voxel size in mm.
+    n_slices : int
+        Number of slices in the acquisition slab.
 
-    Returns:
+    Returns
+    -------
+    float
         Recommended inferior-side exclusion distance in mm.
     """
     slab_depth_mm = slice_thickness_mm * n_slices
@@ -183,23 +181,30 @@ def parker_population_aif(
     peak amplitudes, producing ~6 mM peak for full dose (0.1 mmol/kg), which
     matches Parker et al. 2006 reported values (6.3 ± 1.5 mM).
 
-    Args:
-        t: Time array in seconds.
-        dose_factor: Scaling factor for dose (1.0 = full dose 0.1 mmol/kg,
-            0.5 = half dose, 2.0 = double dose).
-        r1_actual: Actual r1 relaxivity (s^-1 mM^-1) of the contrast agent
-            used.  If provided, a relaxivity correction is applied:
-            ``effective_factor = dose_factor * (r1_actual / PARKER_R1_REFERENCE)``
-            where ``PARKER_R1_REFERENCE = 4.1`` (Gd-DTPA at 1.5T).
-            Use this for non-Gd-DTPA agents (e.g. Vueway r1=11.6).
+    Parameters
+    ----------
+    t : np.ndarray
+        Time array in seconds.
+    dose_factor : float, optional
+        Scaling factor for dose (1.0 = full dose 0.1 mmol/kg,
+        0.5 = half dose, 2.0 = double dose).
+    r1_actual : float or None, optional
+        Actual r1 relaxivity (s^-1 mM^-1) of the contrast agent
+        used.  If provided, a relaxivity correction is applied:
+        ``effective_factor = dose_factor * (r1_actual / PARKER_R1_REFERENCE)``
+        where ``PARKER_R1_REFERENCE = 4.1`` (Gd-DTPA at 1.5T).
+        Use this for non-Gd-DTPA agents (e.g. Vueway r1=11.6).
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         Concentration time course in mM.
 
-    References:
-        Parker GJM et al. "Experimentally-derived functional form for a
-        population-averaged high-temporal-resolution arterial input function
-        for dynamic contrast-enhanced MRI." Magn Reson Med. 2006;56:993-1000.
+    References
+    ----------
+    Parker GJM et al. "Experimentally-derived functional form for a
+    population-averaged high-temporal-resolution arterial input function
+    for dynamic contrast-enhanced MRI." Magn Reson Med. 2006;56:993-1000.
     """
     # Convert time to minutes
     t_min = t / 60.0
@@ -246,10 +251,14 @@ def compute_dce_aif_peak_concentration(
 ) -> float:
     """Compute peak concentration of DCE AIF in mM.
 
-    Args:
-        aif_curve: AIF concentration time course in mM.
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        AIF concentration time course in mM.
 
-    Returns:
+    Returns
+    -------
+    float
         Peak concentration in mM.
     """
     return float(np.max(aif_curve))
@@ -265,12 +274,18 @@ def compute_dce_aif_fwhm_seconds(
     Uses linear interpolation between frames for sub-frame precision at
     half-maximum crossings.
 
-    Args:
-        aif_curve: AIF concentration time course in mM.
-        tr: Temporal resolution in seconds.
-        baseline_frames: Number of pre-contrast baseline frames.
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        AIF concentration time course in mM.
+    tr : float
+        Temporal resolution in seconds.
+    baseline_frames : int, optional
+        Number of pre-contrast baseline frames.
 
-    Returns:
+    Returns
+    -------
+    float
         FWHM in seconds.
     """
     if len(aif_curve) < baseline_frames + 1:
@@ -325,12 +340,18 @@ def compute_dce_aif_washout(
 
     Washout fraction = (peak - tail_mean) / (peak - baseline_mean)
 
-    Args:
-        aif_curve: AIF concentration time course in mM.
-        baseline_frames: Number of pre-contrast baseline frames.
-        tail_frames: Number of tail frames to average.
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        AIF concentration time course in mM.
+    baseline_frames : int, optional
+        Number of pre-contrast baseline frames.
+    tail_frames : int, optional
+        Number of tail frames to average.
 
-    Returns:
+    Returns
+    -------
+    float
         Washout fraction (0-1).
     """
     if len(aif_curve) < baseline_frames + tail_frames + 1:
@@ -361,18 +382,25 @@ def compute_dce_aif_peak_amplitude_warning(
     ratio exceeds ``threshold``. Suppressed for population-AIF fallback
     (population AIF is tautologically within its own expected range).
 
-    Args:
-        final_peak: Cluster-mean AIF peak concentration (plasma, mM).
-        expected_max_mm: Dose-scaled Parker plasma ``peak_max`` (mM).
-        detection_method: Cascade detection method label
-            ("atlas" / "automatic" / "population" / "external" /
-            "fallback"). Warning is suppressed when this equals
-            ``"population"``.
-        threshold: Multiplier on ``expected_max_mm`` above which the
-            warning fires. Defaults to
-            ``DCE_AIF_PEAK_RATIO_WARN_THRESHOLD``.
+    Parameters
+    ----------
+    final_peak : float
+        Cluster-mean AIF peak concentration (plasma, mM).
+    expected_max_mm : float
+        Dose-scaled Parker plasma ``peak_max`` (mM).
+    detection_method : str
+        Cascade detection method label
+        ("atlas" / "automatic" / "population" / "external" /
+        "fallback"). Warning is suppressed when this equals
+        ``"population"``.
+    threshold : float, optional
+        Multiplier on ``expected_max_mm`` above which the
+        warning fires. Defaults to
+        ``DCE_AIF_PEAK_RATIO_WARN_THRESHOLD``.
 
-    Returns:
+    Returns
+    -------
+    tuple of (float, bool)
         ``(ratio, warning)`` — ``ratio`` is ``final_peak / expected_max_mm``
         (NaN when suppressed or when ``expected_max_mm <= 0``);
         ``warning`` is ``True`` iff the ratio exceeds ``threshold`` and
@@ -408,22 +436,31 @@ def detect_dce_aif_multi_bump_tail(
     with TRs from sub-second (compressed-sensing 4D) to ~6s (clinical
     DCE-VIBE).
 
-    Args:
-        aif_curve: 1D AIF concentration curve.
-        tr: Repetition time of the AIF time series (seconds).
-        baseline_frames: Number of pre-contrast frames defining baseline.
-        secondary_peak_fraction: Fraction of first-pass peak amplitude
-            (absolute) above which a tail maximum is counted.
-        tail_shoulder_seconds: Time (seconds) to skip immediately after
-            the first-pass peak before searching for secondary maxima
-            (avoids counting the descending shoulder of the first pass
-            as a separate peak; ~half a typical first-pass FWHM).
-        min_separation_seconds: Minimum time (seconds) between detected
-            secondary peaks (~1/3 of the typical recirculation period;
-            ``scipy.signal.find_peaks`` ``distance`` parameter,
-            converted to frames using ``tr``).
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        1D AIF concentration curve.
+    tr : float
+        Repetition time of the AIF time series (seconds).
+    baseline_frames : int, optional
+        Number of pre-contrast frames defining baseline.
+    secondary_peak_fraction : float, optional
+        Fraction of first-pass peak amplitude
+        (absolute) above which a tail maximum is counted.
+    tail_shoulder_seconds : float, optional
+        Time (seconds) to skip immediately after
+        the first-pass peak before searching for secondary maxima
+        (avoids counting the descending shoulder of the first pass
+        as a separate peak; ~half a typical first-pass FWHM).
+    min_separation_seconds : float, optional
+        Minimum time (seconds) between detected
+        secondary peaks (~1/3 of the typical recirculation period;
+        ``scipy.signal.find_peaks`` ``distance`` parameter,
+        converted to frames using ``tr``).
 
-    Returns:
+    Returns
+    -------
+    tuple of (int, list of float)
         ``(count, heights)`` where ``count`` is the number of secondary
         peaks and ``heights`` is their absolute concentrations.
     """
@@ -463,11 +500,16 @@ def compute_dce_aif_baseline_stability(
 
     For DCE, baseline should be approximately zero (pre-contrast).
 
-    Args:
-        aif_curve: AIF concentration time course in mM.
-        baseline_frames: Number of pre-contrast baseline frames.
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        AIF concentration time course in mM.
+    baseline_frames : int, optional
+        Number of pre-contrast baseline frames.
 
-    Returns:
+    Returns
+    -------
+    float
         Standard deviation of baseline in mM.
     """
     if len(aif_curve) < baseline_frames:
@@ -487,11 +529,16 @@ def compute_dce_aif_cnr(
 
     For DCE, baseline should be near zero (pre-contrast).
 
-    Args:
-        aif_curve: AIF concentration time course in mM.
-        baseline_frames: Number of pre-contrast baseline frames.
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        AIF concentration time course in mM.
+    baseline_frames : int, optional
+        Number of pre-contrast baseline frames.
 
-    Returns:
+    Returns
+    -------
+    float
         Contrast-to-noise ratio.
     """
     if len(aif_curve) < baseline_frames + 1:
@@ -516,11 +563,16 @@ def compute_dce_aif_auc(
 ) -> float:
     """Compute area under the curve for DCE AIF.
 
-    Args:
-        aif_curve: AIF concentration time course in mM.
-        tr: Temporal resolution in seconds.
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        AIF concentration time course in mM.
+    tr : float
+        Temporal resolution in seconds.
 
-    Returns:
+    Returns
+    -------
+    float
         AUC in mM·s.
     """
     # Use trapezoidal integration
@@ -542,8 +594,8 @@ def compute_dce_aif_ratio_30s(
     ``ceil(30 / tr)`` frames after the peak, so the gate behaves
     consistently across temporal resolutions from sub-second compressed-
     sensing 4D up to ~7 s clinical DCE-VIBE. Parker bi-exponential gives
-    ratio ~0.32 at peak+30 s; venous AIFs sit at >=0.55 (Bleeker 2009 MRM
-    62:96).
+    ratio ~0.32 at peak+30 s; venous AIFs sit at >=0.55 (Bleeker 2011 MRM
+    65:448).
 
     Parameters
     ----------
@@ -1255,11 +1307,12 @@ class AIFDetection(BaseInterface):
 
         dose_factor = (agent_standard_dose * multiplier) / 0.1
 
-        Examples:
-          - Standard agent, full dose:  (0.1 * 1.0) / 0.1 = 1.0
-          - Standard agent, half dose:  (0.1 * 0.5) / 0.1 = 0.5
-          - Vueway, half dose:          (0.05 * 0.5) / 0.1 = 0.25
-          - Vueway, full dose:          (0.05 * 1.0) / 0.1 = 0.5
+        Examples
+        --------
+        - Standard agent, full dose:  (0.1 * 1.0) / 0.1 = 1.0
+        - Standard agent, half dose:  (0.1 * 0.5) / 0.1 = 0.5
+        - Vueway, half dose:          (0.05 * 0.5) / 0.1 = 0.25
+        - Vueway, full dose:          (0.05 * 1.0) / 0.1 = 0.5
         """
         std_dose = float(self.inputs.agent_standard_dose)
         multiplier = float(self.inputs.dose)
@@ -1303,12 +1356,18 @@ class AIFDetection(BaseInterface):
         Computes peak values, timing, enhancement, washout, upstroke slope,
         and sub-frame FWHM for each candidate voxel curve.
 
-        Args:
-            curves: 2D array (n_voxels, n_timepoints) of concentration curves.
-            baseline_frames: Number of pre-contrast baseline frames.
-            tr: Temporal resolution in seconds.
+        Parameters
+        ----------
+        curves : np.ndarray
+            2D array (n_voxels, n_timepoints) of concentration curves.
+        baseline_frames : int, optional
+            Number of pre-contrast baseline frames.
+        tr : float, optional
+            Temporal resolution in seconds.
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary with arrays (one value per voxel):
             - peak_values: Peak concentration after baseline.
             - peak_times: Time-to-peak in seconds.
@@ -1588,12 +1647,18 @@ class AIFDetection(BaseInterface):
         parenchymal tissue voxels (avoiding vessels and CSF), then
         returns the median time-to-peak as a reference for cross-validation.
 
-        Args:
-            conc_data: 4D concentration data (x, y, z, t).
-            brain_mask: 3D brain mask.
-            baseline_frames: Number of pre-contrast baseline frames.
+        Parameters
+        ----------
+        conc_data : np.ndarray
+            4D concentration data (x, y, z, t).
+        brain_mask : np.ndarray
+            3D brain mask.
+        baseline_frames : int
+            Number of pre-contrast baseline frames.
 
-        Returns:
+        Returns
+        -------
+        float
             Median tissue TTP as frame index (float).
         """
         # Peak time and concentration maps (post-baseline)
@@ -1679,7 +1744,7 @@ class AIFDetection(BaseInterface):
             Distance (mm) from the INFERIOR slab edge (low-z under RAS+;
             pipeline enforces RAS+ reorientation upstream). Callers
             should pass ``_inflow_exclusion_mm(...)`` to remove entry-
-            slice inflow contamination (van der Schaaf MRM 2006). Default
+            slice inflow contamination. Default
             ``SLAB_EDGE_EXCLUSION_MM_ROLLOFF`` is rolloff-only; production
             call sites override.
         slab_edge_superior_mm : float
@@ -1699,8 +1764,7 @@ class AIFDetection(BaseInterface):
             on top of the slab/midline/top-25%/lesion cuts. Used by the
             whole-brain fallback caller to strip the lateral cortical
             surface where cortical-vein drainage produces arterial-shaped
-            curves at clinical TR (Rhoton 2002 Neurosurgery 51 supp;
-            Tanriover 2003 Neurosurgery 53:1326). Atlas callers leave at
+            curves at clinical TR. Atlas callers leave at
             ``0.0`` (preserves full atlas territory). Computed via
             ``distance_transform_edt(brain_mask, sampling=voxel_sizes)``
             so anisotropic voxels are handled in physical mm. If the
@@ -1842,11 +1906,16 @@ class AIFDetection(BaseInterface):
     ) -> str | None:
         """Determine tumor laterality from lesion mask center-of-mass.
 
-        Args:
-            lesion_mask: 3D lesion mask.
-            affine: 4x4 NIfTI affine matrix (voxel→RAS world).
+        Parameters
+        ----------
+        lesion_mask : np.ndarray
+            3D lesion mask.
+        affine : np.ndarray
+            4x4 NIfTI affine matrix (voxel→RAS world).
 
-        Returns:
+        Returns
+        -------
+        str or None
             'left', 'right', 'bilateral', or None if no lesion.
         """
         lesion_coords = np.argwhere(lesion_mask > 0.5)
@@ -1887,15 +1956,24 @@ class AIFDetection(BaseInterface):
         preserves bilateral representation while preferring contralateral
         voxels.
 
-        Args:
-            candidates: Candidate voxel coordinates.
-            scores: Candidate scores (higher is better).
-            metrics_list: Candidate metrics.
-            brain_shape: Spatial dimensions.
-            affine: Affine matrix.
-            tumor_laterality: 'left', 'right', 'bilateral', or None.
+        Parameters
+        ----------
+        candidates : list
+            Candidate voxel coordinates.
+        scores : list
+            Candidate scores (higher is better).
+        metrics_list : list
+            Candidate metrics.
+        brain_shape : tuple
+            Spatial dimensions.
+        affine : np.ndarray
+            Affine matrix.
+        tumor_laterality : str or None
+            'left', 'right', 'bilateral', or None.
 
-        Returns:
+        Returns
+        -------
+        tuple of (list, list, list)
             All (candidates, scores, metrics) with ipsilateral scores
             penalized. Not sorted (caller handles sorting).
         """
@@ -1937,14 +2015,22 @@ class AIFDetection(BaseInterface):
 
         ``min_per_hemisphere`` is adaptive: ``max(1, min(2, n_select // 4))``
 
-        Args:
-            candidates: Candidate voxel coordinates.
-            scores: Candidate scores (higher is better).
-            metrics_list: Candidate metrics.
-            affine: 4x4 affine matrix (voxel -> RAS world).
-            n_select: Number of candidates to select.
+        Parameters
+        ----------
+        candidates : list
+            Candidate voxel coordinates.
+        scores : list
+            Candidate scores (higher is better).
+        metrics_list : list
+            Candidate metrics.
+        affine : np.ndarray
+            4x4 affine matrix (voxel -> RAS world).
+        n_select : int
+            Number of candidates to select.
 
-        Returns:
+        Returns
+        -------
+        tuple of (list, list, list)
             Selected (candidates, scores, metrics) with bilateral guarantee,
             sorted by score descending.
         """
@@ -2008,20 +2094,27 @@ class AIFDetection(BaseInterface):
         enforced elsewhere in the pipeline. It should be called unconditionally
         after candidate selection to remove venous contamination.
 
-        Args:
-            candidates: Candidate voxel coordinates.
-            scores: Candidate scores.
-            metrics_list: Candidate metrics (must contain is_likely_venous flag).
-            min_non_venous: Minimum non-venous candidates required to apply filter.
+        Parameters
+        ----------
+        candidates : list
+            Candidate voxel coordinates.
+        scores : list
+            Candidate scores.
+        metrics_list : list
+            Candidate metrics (must contain is_likely_venous flag).
+        min_non_venous : int, optional
+            Minimum non-venous candidates required to apply filter.
 
-        Returns:
+        Returns
+        -------
+        tuple of (list, list, list)
             Filtered (candidates, scores, metrics) with venous candidates
             removed. If at least one non-venous candidate survives, drops
             only the venous-flagged ones (preserving the survivors). If
             ALL candidates are flagged venous, returns ``([], [], [])`` so
-            the cascade treats the tier as failed (Calamante NMR Biomed
-            2013: venous-derived AIFs produce quantitatively biased PK
-            estimates).
+            the cascade treats the tier as failed (Willats & Calamante 2013
+            NMR Biomed 26:913: venous-derived AIFs produce quantitatively
+            biased PK estimates).
         """
         if not candidates:
             return candidates, scores, metrics_list
@@ -2059,7 +2152,7 @@ class AIFDetection(BaseInterface):
             )
 
         # All flagged venous — fail the tier. The cascade will descend or
-        # fall to Parker (Calamante NMR Biomed 2013: venous-derived AIFs
+        # fall to Parker (Willats & Calamante 2013 NMR Biomed 26:913: venous-derived AIFs
         # produce quantitatively biased PK estimates).
         logger.warning(
             "Tier rejected: %d/%d candidates flagged as likely venous "
@@ -2086,14 +2179,24 @@ class AIFDetection(BaseInterface):
         Returns a composite quality score and individual metrics.
         Score is 0 if thresholds are not met, otherwise 0-1.
 
-        Args:
-            curve: Candidate concentration time course.
-            tr: Temporal resolution in seconds.
-            baseline_frames: Number of pre-contrast frames.
-            criteria: Quality criteria level.
-            tissue_ttp_frame: Tissue TTP for timing validation (optional).
+        Parameters
+        ----------
+        curve : np.ndarray
+            Candidate concentration time course.
+        tr : float
+            Temporal resolution in seconds.
+        baseline_frames : int
+            Number of pre-contrast frames.
+        criteria : str
+            Quality criteria level.
+        tissue_ttp_frame : float or None, optional
+            Tissue TTP for timing validation (optional).
+        atlas_constrained : bool, optional
+            Whether detection used atlas spatial constraint.
 
-        Returns:
+        Returns
+        -------
+        tuple of (float, dict)
             (score, metrics) tuple.
         """
         metrics: dict[str, float] = {}
@@ -2251,15 +2354,24 @@ class AIFDetection(BaseInterface):
         measured peaks (0.8-1.3 mM at full dose) are expected from temporal
         undersampling + partial volume in known arterial territory.
 
-        Args:
-            candidate_peak: Candidate's peak concentration in mM.
-            peak_min_expected: Expected minimum arterial peak for this dose.
-            peak_floor: Minimum peak to allow rescue (criteria/mode-dependent).
-            tier_used: Arterial cascade tier (1=strict, 7=last resort).
-            is_likely_venous: Whether timing-based venous flag was set.
-            atlas_constrained: Whether detection used atlas spatial constraint.
+        Parameters
+        ----------
+        candidate_peak : float
+            Candidate's peak concentration in mM.
+        peak_min_expected : float
+            Expected minimum arterial peak for this dose.
+        peak_floor : float
+            Minimum peak to allow rescue (criteria/mode-dependent).
+        tier_used : int
+            Arterial cascade tier (1=strict, 7=last resort).
+        is_likely_venous : bool
+            Whether timing-based venous flag was set.
+        atlas_constrained : bool
+            Whether detection used atlas spatial constraint.
 
-        Returns:
+        Returns
+        -------
+        float
             Rescue score (0.0 if rejected, else tier-based score x peak adequacy).
         """
         if candidate_peak < peak_floor:
@@ -2290,15 +2402,22 @@ class AIFDetection(BaseInterface):
     ) -> list[tuple[int, int, int]]:
         """Exclude edge-slice voxels (z == 0 or z == nz-1).
 
-        Note: Midline and superior exclusions are now handled in
+        Notes
+        -----
+        Midline and superior exclusions are now handled in
         _prepare_search_mask() for earlier, more comprehensive filtering.
         This method now only handles edge slice exclusion as a final check.
 
-        Args:
-            candidate_indices: List of (x, y, z) voxel coordinates.
-            brain_shape: (nx, ny, nz) spatial dimensions.
+        Parameters
+        ----------
+        candidate_indices : list
+            List of (x, y, z) voxel coordinates.
+        brain_shape : tuple
+            (nx, ny, nz) spatial dimensions.
 
-        Returns:
+        Returns
+        -------
+        list
             Filtered list of coordinates.
         """
         if not candidate_indices:
@@ -2320,12 +2439,18 @@ class AIFDetection(BaseInterface):
     ) -> list[tuple[int, int, int]]:
         """Reject candidates peaking after 40% of timepoints.
 
-        Args:
-            candidates: Candidate voxel coordinates.
-            concentration_data: 4D concentration data.
-            n_timepoints: Total number of timepoints.
+        Parameters
+        ----------
+        candidates : list
+            Candidate voxel coordinates.
+        concentration_data : np.ndarray
+            4D concentration data.
+        n_timepoints : int
+            Total number of timepoints.
 
-        Returns:
+        Returns
+        -------
+        list
             Filtered candidates with valid peak timing.
         """
         if not candidates:
@@ -2360,14 +2485,22 @@ class AIFDetection(BaseInterface):
         Uses 26-connectivity labeling and composite scoring:
         0.3 * FWHM_score + 0.3 * washout_score + 0.15 * upstroke_score + 0.25 * size_score
 
-        Args:
-            candidates: Candidate voxel coordinates.
-            scores: Per-candidate quality scores.
-            metrics_list: Per-candidate metric dictionaries.
-            brain_shape: Spatial dimensions (nx, ny, nz).
-            tr: Temporal resolution in seconds (for FWHM frame conversion).
+        Parameters
+        ----------
+        candidates : list
+            Candidate voxel coordinates.
+        scores : list
+            Per-candidate quality scores.
+        metrics_list : list
+            Per-candidate metric dictionaries.
+        brain_shape : tuple
+            Spatial dimensions (nx, ny, nz).
+        tr : float, optional
+            Temporal resolution in seconds (for FWHM frame conversion).
 
-        Returns:
+        Returns
+        -------
+        tuple of (list, list, list)
             (candidates, scores, metrics) for the best cluster.
             If only 1 cluster exists or clustering fails, returns input unchanged.
         """
@@ -2495,15 +2628,20 @@ class AIFDetection(BaseInterface):
         ``candidates`` is non-empty, so this helper is the only path that
         captures Pass-3 exhaustion.
 
-        Args:
-            cascade_tiers_attempted: Total tier attempts executed by the
-                cascade (max 13 = 4 atlases × 3 criteria + 1 whole-brain).
-            anchor_outcomes: Per-tier anchor diagnostics from the cascade.
-                When provided, embedded under ``cascade_anchor_outcomes``
-                so QC reviewers can see why each tier failed (quorum,
-                anchor, or both).
+        Parameters
+        ----------
+        cascade_tiers_attempted : int
+            Total tier attempts executed by the
+            cascade (max 13 = 4 atlases × 3 criteria + 1 whole-brain).
+        anchor_outcomes : list or None, optional
+            Per-tier anchor diagnostics from the cascade.
+            When provided, embedded under ``cascade_anchor_outcomes``
+            so QC reviewers can see why each tier failed (quorum,
+            anchor, or both).
 
-        Returns:
+        Returns
+        -------
+        dict
             Provenance dict consumed by ``qc_metrics.update(...)`` in
             ``_run_interface``.
         """
@@ -2533,10 +2671,14 @@ class AIFDetection(BaseInterface):
         cascade only short-circuits when ``_quorum_count(scores) >=
         _MIN_CANDIDATES_FOR_DETECTED``.
 
-        Args:
-            scores: Per-candidate composite scores.
+        Parameters
+        ----------
+        scores : list
+            Per-candidate composite scores.
 
-        Returns:
+        Returns
+        -------
+        int
             Number of candidates with score at or above the keeper threshold.
         """
         return sum(1 for s in scores if s >= _MIN_CANDIDATE_SCORE)
@@ -2561,14 +2703,20 @@ class AIFDetection(BaseInterface):
         the time it is called, cluster selection and venous filtering
         have already run.
 
-        Args:
-            metrics_list: Per-candidate metrics dicts; each must contain
-                ``peak_time_frame``.
-            baseline_frames: Bolus arrival frame in the AIF (from
-                baseline detection — same value used by the cascade).
-            tr: Temporal resolution in seconds.
+        Parameters
+        ----------
+        metrics_list : list
+            Per-candidate metrics dicts; each must contain
+            ``peak_time_frame``.
+        baseline_frames : int
+            Bolus arrival frame in the AIF (from
+            baseline detection — same value used by the cascade).
+        tr : float
+            Temporal resolution in seconds.
 
-        Returns:
+        Returns
+        -------
+        tuple of (bool, float)
             ``(has_anchor, earliest_post_arr_s)``. ``has_anchor`` is True
             iff the earliest candidate's post-arrival peak time is at or
             below ``_MAX_ANCHOR_POST_ARRIVAL_S``. ``earliest_post_arr_s``
@@ -3279,15 +3427,24 @@ class AIFDetection(BaseInterface):
         avoids tissue contamination that
         broadens the AIF at high spatial resolution.
 
-        Args:
-            candidates: Candidate voxel coordinates.
-            scores: Quality scores (higher is better).
-            conc_data: 4D concentration data.
-            brain_mask: 3D brain mask.
-            roi_size: Side length of cubic ROI (1 = single voxel).
-            tr: Temporal resolution in seconds (for adaptive smoothing).
+        Parameters
+        ----------
+        candidates : list
+            Candidate voxel coordinates.
+        scores : list
+            Quality scores (higher is better).
+        conc_data : np.ndarray
+            4D concentration data.
+        brain_mask : np.ndarray
+            3D brain mask.
+        roi_size : int, optional
+            Side length of cubic ROI (1 = single voxel).
+        tr : float, optional
+            Temporal resolution in seconds (for adaptive smoothing).
 
-        Returns:
+        Returns
+        -------
+        tuple of (np.ndarray, np.ndarray)
             (aif_curve, aif_mask) — smoothed 1D AIF and 3D boolean mask.
         """
         from scipy.signal import savgol_filter
@@ -3390,17 +3547,28 @@ class AIFDetection(BaseInterface):
         Ported from DSC ``_validate_averaged_aif`` (dsc_aif.py:1333) with
         DCE-specific criteria (FWHM ratio instead of SPR).
 
-        Args:
-            aif_curve: 1D averaged AIF from ``_compute_weighted_roi_aif``.
-            candidates: Candidate voxel coordinates.
-            scores: Candidate quality scores.
-            metrics_list: Per-candidate metric dicts (must contain ``fwhm_seconds``).
-            conc_data: 4D concentration data.
-            brain_mask: 3D brain mask.
-            tr: Temporal resolution in seconds.
-            baseline_frames: Number of pre-bolus baseline frames.
+        Parameters
+        ----------
+        aif_curve : np.ndarray
+            1D averaged AIF from ``_compute_weighted_roi_aif``.
+        candidates : list
+            Candidate voxel coordinates.
+        scores : list
+            Candidate quality scores.
+        metrics_list : list
+            Per-candidate metric dicts (must contain ``fwhm_seconds``).
+        conc_data : np.ndarray
+            4D concentration data.
+        brain_mask : np.ndarray
+            3D brain mask.
+        tr : float
+            Temporal resolution in seconds.
+        baseline_frames : int
+            Number of pre-bolus baseline frames.
 
-        Returns:
+        Returns
+        -------
+        tuple of (np.ndarray, np.ndarray, dict)
             (aif_curve, aif_mask, validation_qc) — validated AIF, mask, and QC dict.
         """
         validation_qc: dict[str, Any] = {}
@@ -3542,15 +3710,24 @@ class AIFDetection(BaseInterface):
         Candidates with baseline signal (S0) above median brain S0 indicate
         tissue contamination (large tissue fraction = partial volume AIF).
 
-        Args:
-            candidates: Candidate coordinates.
-            scores: Candidate scores.
-            metrics_list: Candidate metrics.
-            conc_data: 4D concentration data.
-            brain_mask: 3D brain mask.
-            baseline_frames: Number of baseline frames.
+        Parameters
+        ----------
+        candidates : list
+            Candidate coordinates.
+        scores : list
+            Candidate scores.
+        metrics_list : list
+            Candidate metrics.
+        conc_data : np.ndarray
+            4D concentration data.
+        brain_mask : np.ndarray
+            3D brain mask.
+        baseline_frames : int
+            Number of baseline frames.
 
-        Returns:
+        Returns
+        -------
+        tuple of (list, list, list)
             Filtered (candidates, scores, metrics).
         """
         if not candidates or baseline_frames < 1:

@@ -19,12 +19,17 @@ def _system_ram_gb() -> float:
 def cap_mem_gb(value: float, mem_limit_gb: Optional[float] = None) -> float:
     """Cap a mem_gb value so the node is schedulable by nipype.
 
-    Args:
-        value: Desired mem_gb for the node.
-        mem_limit_gb: User-specified ``--mem-gb``. When None, caps at
-            90% of system RAM.
+    Parameters
+    ----------
+    value : float
+        Desired mem_gb for the node.
+    mem_limit_gb : float, optional
+        User-specified ``--mem-gb``. When None, caps at
+        90% of system RAM.
 
-    Returns:
+    Returns
+    -------
+    float
         mem_gb clamped to [0.5, limit].
     """
     limit = mem_limit_gb if mem_limit_gb is not None else (_system_ram_gb() * 0.9)
@@ -41,15 +46,21 @@ def estimate_4d_mem_gb(
     Reads only the NIfTI header (no data loaded). Assumes float64
     (8 bytes) since nibabel upcasts on load regardless of on-disk dtype.
 
-    Args:
-        nifti_path: Path to 4D NIfTI file.
-        n_buffers: Number of concurrent array copies in memory.
-            DSC deconvolution: 4 (conc + signal + recomputed + transient).
-            DCE PK fitting: 5 (conc + signal + model arrays + Bayesian).
-        mem_limit_gb: User-specified memory limit (``--mem-gb``).
-            When None, caps at 90% of system RAM.
+    Parameters
+    ----------
+    nifti_path : Path
+        Path to 4D NIfTI file.
+    n_buffers : int
+        Number of concurrent array copies in memory.
+        DSC deconvolution: 4 (conc + signal + recomputed + transient).
+        DCE PK fitting: 5 (conc + signal + model arrays + Bayesian).
+    mem_limit_gb : float, optional
+        User-specified memory limit (``--mem-gb``).
+        When None, caps at 90% of system RAM.
 
-    Returns:
+    Returns
+    -------
+    tuple of float
         Tuple of (capped_estimate, raw_estimate) in GB.
         capped_estimate is used for nipype scheduling.
         raw_estimate is the true memory requirement for user warnings.

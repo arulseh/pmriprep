@@ -18,7 +18,7 @@ Rooney WD et al. "Magnetic field and tissue dependencies of human
 brain longitudinal 1H2O relaxation in vivo." MRM. 2007;57(2):308-318.
 
 Wright PJ et al. "Water proton T1 measurements in brain tissue at 7,
-3, and 1.5 T using IR-EPI, IR-TSE, and MPRAGE." MRM. 2008;26(10):1362-1368.
+3, and 1.5 T using IR-EPI, IR-TSE, and MPRAGE." MAGMA. 2008;21(1-2):121-130.
 
 Marques JP et al. "MP2RAGE, a self bias-field corrected sequence for
 improved segmentation and T1-mapping at high field." NeuroImage.
@@ -26,7 +26,7 @@ improved segmentation and T1-mapping at high field." NeuroImage.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Final, Optional, Tuple
 
 import numpy as np
@@ -60,7 +60,7 @@ _E1_CONDITIONAL_FALLBACK: Final[float] = 0.993
 # ============================================================================
 
 # brain_mean = 0.60 * wm_midpoint + 0.40 * gm_midpoint
-# (approximate whole-brain WM:GM volume ratio, Ge et al. AJNR 2002)
+# (approximate whole-brain WM:GM volume ratio, Ge 2002 AJNR 23:1327)
 # Derived values: qc_max_strict = gm[1], qc_max_lenient = qc_max_strict + brain_sd,
 # expected_median = brain_mean, warn_high = expected_median + brain_sd
 T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {

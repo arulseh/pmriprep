@@ -275,10 +275,14 @@ _REFERENCES: dict[str, str] = {
 def _generate_references_text(used_refs: set[str]) -> str:
     """Generate formatted references section for used citations.
 
-    Args:
-        used_refs: Set of reference keys that were used.
+    Parameters
+    ----------
+    used_refs : set of str
+        Set of reference keys that were used.
 
-    Returns:
+    Returns
+    -------
+    str
         Formatted references text with numbered entries.
     """
     if not used_refs:
@@ -299,12 +303,18 @@ def _generate_boilerplate_text(
     Creates CC0-licensed methods text suitable for inclusion in manuscripts,
     reflecting the actual processing performed based on QC metrics.
 
-    Args:
-        version: PMRIPrep version string.
-        ran_pipelines: Dict indicating which pipelines ran.
-        pipeline_data: QC metrics dicts for each pipeline (None if not run).
+    Parameters
+    ----------
+    version : str
+        PMRIPrep version string.
+    ran_pipelines : dict
+        Dict indicating which pipelines ran.
+    pipeline_data : dict
+        QC metrics dicts for each pipeline (None if not run).
 
-    Returns:
+    Returns
+    -------
+    str
         Formatted methods text with references section.
     """
     sentences: list[str] = []
@@ -365,10 +375,14 @@ def _generate_boilerplate_text(
 def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> tuple[str, set[str]]:
     """Build anatomical preprocessing boilerplate text.
 
-    Args:
-        anat_qc: Anatomical QC metrics dict.
+    Parameters
+    ----------
+    anat_qc : dict
+        Anatomical QC metrics dict.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (methods text, set of reference keys used).
     """
     sentences: list[str] = []
@@ -425,10 +439,14 @@ def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> tuple[str, set[str]]:
 def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
     """Build DSC perfusion boilerplate text.
 
-    Args:
-        dsc_qc: DSC QC metrics dict.
+    Parameters
+    ----------
+    dsc_qc : dict
+        DSC QC metrics dict.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (methods text, set of reference keys used).
     """
     sentences: list[str] = []
@@ -545,10 +563,14 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
 def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
     """Build DCE perfusion boilerplate text.
 
-    Args:
-        dce_qc: DCE QC metrics dict.
+    Parameters
+    ----------
+    dce_qc : dict
+        DCE QC metrics dict.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (methods text, set of reference keys used).
     """
     sentences: list[str] = []
@@ -835,19 +857,28 @@ def figure_filename(
 ) -> str:
     """Build a BIDS-compliant figure filename for the given image key.
 
-    Args:
-        subject_id: BIDS subject ID (without ``sub-`` prefix).
-        session_id: BIDS session ID (without ``ses-`` prefix).
-        key: Internal image key (must be in ``FIGURE_NAME_MAP``).
-        pipeline: Pipeline name (``'dsc'`` or ``'dce'``).  Used to
-            disambiguate shared keys.
+    Parameters
+    ----------
+    subject_id : str
+        BIDS subject ID (without ``sub-`` prefix).
+    session_id : str
+        BIDS session ID (without ``ses-`` prefix).
+    key : str
+        Internal image key (must be in ``FIGURE_NAME_MAP``).
+    pipeline : str, optional
+        Pipeline name (``'dsc'`` or ``'dce'``).  Used to
+        disambiguate shared keys.
 
-    Returns:
+    Returns
+    -------
+    str
         Filename string, e.g.
         ``sub-0011_ses-0001_desc-motion_dsc.png``.
 
-    Raises:
-        KeyError: If *key* is not in ``FIGURE_NAME_MAP``.
+    Raises
+    ------
+    KeyError
+        If *key* is not in ``FIGURE_NAME_MAP``.
     """
     desc_label, suffix = FIGURE_NAME_MAP[key]
 
@@ -874,13 +905,20 @@ def _collect_pipeline_images(
     Scans *figures_dir* for matching files and returns relative paths
     suitable for ``<img src="...">`` in the HTML report (NiPreps pattern).
 
-    Args:
-        subject_id: BIDS subject ID.
-        session_id: BIDS session ID.
-        pipeline: Pipeline name.
-        figures_dir: Absolute path to figures directory.
+    Parameters
+    ----------
+    subject_id : str
+        BIDS subject ID.
+    session_id : str
+        BIDS session ID.
+    pipeline : str
+        Pipeline name.
+    figures_dir : Path
+        Absolute path to figures directory.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict mapping image key to relative path string
         (e.g. ``figures/sub-01_ses-01_desc-brainmask_dsc.png``).
     """
@@ -900,12 +938,18 @@ def _classify_metric(
 ) -> str:
     """Classify a QC metric as pass/warn/poor for template display.
 
-    Args:
-        value: Metric value (or None/NaN if unavailable).
-        warn_threshold: Values >= this are "pass".
-        min_threshold: Values >= this (but < warn) are "warn".
+    Parameters
+    ----------
+    value : float or None
+        Metric value (or None/NaN if unavailable).
+    warn_threshold : float
+        Values >= this are "pass".
+    min_threshold : float
+        Values >= this (but < warn) are "warn".
 
-    Returns:
+    Returns
+    -------
+    str
         Status string: "pass", "warn", "poor", or "na".
     """
     if value is None or (isinstance(value, float) and math.isnan(value)):
@@ -920,12 +964,18 @@ def _classify_metric(
 def _classify_b1(value: float | None, low: float, high: float) -> str:
     """Classify B1+ bias as pass/warn for template display.
 
-    Args:
-        value: Mean B1+ value (or None/NaN if unavailable).
-        low: Lower acceptable bound (inclusive).
-        high: Upper acceptable bound (inclusive).
+    Parameters
+    ----------
+    value : float or None
+        Mean B1+ value (or None/NaN if unavailable).
+    low : float
+        Lower acceptable bound (inclusive).
+    high : float
+        Upper acceptable bound (inclusive).
 
-    Returns:
+    Returns
+    -------
+    str
         Status string: "pass", "warn", or "na".
     """
     if value is None or (isinstance(value, float) and math.isnan(value)):
@@ -942,12 +992,18 @@ def _classify_metric_inverse(
 ) -> str:
     """Classify a QC metric where lower is better for template display.
 
-    Args:
-        value: Metric value (or None/NaN if unavailable).
-        warn_threshold: Values < this are "pass".
-        poor_threshold: Values < this (but >= warn) are "warn".
+    Parameters
+    ----------
+    value : float or None
+        Metric value (or None/NaN if unavailable).
+    warn_threshold : float
+        Values < this are "pass".
+    poor_threshold : float
+        Values < this (but >= warn) are "warn".
 
-    Returns:
+    Returns
+    -------
+    str
         Status string: "pass", "warn", "poor", or "na".
     """
     if value is None or (isinstance(value, float) and math.isnan(value)):
@@ -1154,10 +1210,14 @@ def _compute_overall_recommendation(
 ) -> Optional[dict[str, str]]:
     """Compute the worst-case recommendation across all pipelines.
 
-    Args:
-        pipeline_data: Dict of pipeline name to data dict (or None).
+    Parameters
+    ----------
+    pipeline_data : dict
+        Dict of pipeline name to data dict (or None).
 
-    Returns:
+    Returns
+    -------
+    dict or None
         Overall recommendation dict, or None if no recommendations exist.
     """
     severity = {"include": 0, "review": 1, "exclude": 2}
@@ -1184,10 +1244,14 @@ def _collect_all_warnings(
 ) -> dict[str, list[str]]:
     """Collect warnings from all pipelines, grouped by pipeline name.
 
-    Args:
-        pipeline_data: Dict of pipeline name to data dict (or None).
+    Parameters
+    ----------
+    pipeline_data : dict
+        Dict of pipeline name to data dict (or None).
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict mapping pipeline display name to list of warning strings.
     """
     all_warnings: dict[str, list[str]] = {}
@@ -1215,10 +1279,14 @@ def _collect_provenance_warnings(
     :func:`~pmriprep.utils.contrast_agent.collect_default_warnings`),
     which is structurally separate from data-quality warnings.
 
-    Args:
-        pipeline_data: Dict of pipeline name to data dict (or None).
+    Parameters
+    ----------
+    pipeline_data : dict
+        Dict of pipeline name to data dict (or None).
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict mapping pipeline display name to list of provenance warning
         strings. Empty dict if no provenance warnings exist.
     """
@@ -1243,11 +1311,16 @@ def _collect_pipeline_warnings(
 ) -> dict[str, list[str]]:
     """Collect per-pipeline warnings of a given type for HTML banners.
 
-    Args:
-        pipeline_data: Dict of pipeline name to data dict (or None).
-        key: QC metrics key to read (e.g. ``"acquisition_warnings"``).
+    Parameters
+    ----------
+    pipeline_data : dict
+        Dict of pipeline name to data dict (or None).
+    key : str
+        QC metrics key to read (e.g. ``"acquisition_warnings"``).
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict mapping pipeline display name to list of warning strings.
     """
     result: dict[str, list[str]] = {}
@@ -1280,16 +1353,26 @@ def generate_unified_report(
     for each pipeline that ran. Figures are referenced via relative paths
     (``figures/<filename>``).
 
-    Args:
-        subject_id: BIDS subject ID (without sub- prefix).
-        session_id: BIDS session ID (without ses- prefix).
-        output_path: Output HTML file path.
-        ses_dir: Session directory path (contains QC JSONs and figures/).
-        figures_dir: Directory containing figure PNG files.
-        ran_pipelines: Dict mapping pipeline name to whether it ran.
-        command_string: CLI command used to run PMRIPrep (for reproducibility).
+    Parameters
+    ----------
+    subject_id : str
+        BIDS subject ID (without sub- prefix).
+    session_id : str
+        BIDS session ID (without ses- prefix).
+    output_path : str
+        Output HTML file path.
+    ses_dir : str
+        Session directory path (contains QC JSONs and figures/).
+    figures_dir : str
+        Directory containing figure PNG files.
+    ran_pipelines : dict
+        Dict mapping pipeline name to whether it ran.
+    command_string : str, optional
+        CLI command used to run PMRIPrep (for reproducibility).
 
-    Returns:
+    Returns
+    -------
+    str
         Path to generated HTML report.
     """
     import pmriprep

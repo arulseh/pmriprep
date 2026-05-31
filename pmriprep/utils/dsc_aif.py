@@ -10,7 +10,7 @@ arterial curve characteristics: high peak, sharp washout, narrow FWHM.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, Literal, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -19,7 +19,6 @@ from scipy import optimize
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     LESION_EXCLUSION_DISTANCE_MM,
-    QC_CNR_THRESHOLD,
 )
 from pmriprep.utils.qc_standards import QCStatus
 
@@ -440,7 +439,8 @@ def assess_aif_quality(
     >>> aif = np.zeros(60)
     >>> aif[5:] = 10 * ((t[5:] - 5) ** 2) * np.exp(-(t[5:] - 5) / 3)  # gamma-variate
     >>> result = assess_aif_quality(aif, baseline_frames=5)
-    >>> print(f"Status: {result.status}, Score: {result.quality_score:.2f}")
+    >>> print(result.status)
+    PASS
     """
     # Compute all metrics
     cnr = compute_aif_cnr(aif_curve, baseline_frames)
@@ -1307,7 +1307,7 @@ class GammaVariateFitResult:
         ``[baseline_frames : peak_idx + max(10, 2*FWHM)]`` when
         ``remove_recirculation=True``; equal to ``n_frames - baseline_frames``
         otherwise. Gamma fitting is ill-posed below ~8 samples (Welker AJNR
-        2015 §"AIF sampling adequacy", Calamante MRM 2010).
+        2015, Calamante 2013).
     """
 
     fitted_curve: npt.NDArray[Any]
@@ -1621,6 +1621,7 @@ def fit_gamma_variate(
     >>> aif = first_pass + recirc
     >>> result = fit_gamma_variate(aif, baseline_frames=5, remove_recirculation=True)
     >>> print(f"Fit R²: {result.r_squared:.3f}, AUC ratio: {result.auc_ratio:.3f}")
+    Fit R²: 0.8..., AUC ratio: 0.9...
     """
     n_frames = len(aif_curve)
     t = np.arange(n_frames, dtype=np.float64)
@@ -1721,8 +1722,8 @@ def fit_gamma_variate(
     # original and the fitted curve over the same first-pass window so the
     # ratio is apples-to-apples (else the asymmetric ratio misfires on any
     # AIF with non-trivial post-bolus tail — preloaded protocols always,
-    # and any clean recirculation pattern). See Welker AJNR 2015 §"AIF QC"
-    # and Bell MRM 2023 (OSIPI DSC pipeline conventions).
+    # and any clean recirculation pattern). See Welker 2015 AJNR 36:E41
+    # and Dickie 2024 MRM 91:1761 (OSIPI lexicon).
     if remove_recirculation:
         cutoff_for_auc = min(
             peak_idx + max(10, 2 * compute_aif_fwhm_frames(aif_curve, baseline_frames)),
@@ -1787,15 +1788,15 @@ GAMMA_PEAK_RATIO_MAX: float = 1.10
 # AUC ratio bounds retained for QC provenance only — no longer a hard gate.
 # Symmetric-window auc_ratio (see ``fit_gamma_variate``) makes this metric
 # meaningful, but R² + peak_ratio + defect detection already cover the
-# pathology this band would catch (Welker AJNR 2015, Bell MRM 2023).
+# pathology this band would catch (Welker 2015 AJNR 36:E41, Dickie 2024 MRM 91:1761).
 GAMMA_AUC_RATIO_MIN: float = 0.85
 GAMMA_AUC_RATIO_MAX: float = 1.15
 # Soft warning band: auc_ratio outside this is logged in QC but does not
-# trigger fallback (Welker AJNR 2015 §"AIF QC").
+# trigger fallback (Welker 2015 AJNR 36:E41).
 GAMMA_AUC_RATIO_SOFT_MIN: float = 0.70
 GAMMA_AUC_RATIO_SOFT_MAX: float = 1.30
 # Minimum first-pass samples for gamma fitting to be well-posed (Welker
-# AJNR 2015 §"AIF sampling adequacy", Calamante MRM 2010 review).
+# 2015 AJNR 36:E41, Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1).
 GAMMA_MIN_FIRST_PASS_SAMPLES: int = 8
 
 # Defect detection thresholds
@@ -1849,7 +1850,7 @@ def should_apply_gamma_fit(
     symmetric-window ratio falls outside ``[GAMMA_AUC_RATIO_SOFT_MIN,
     GAMMA_AUC_RATIO_SOFT_MAX]``. R² + peak_ratio + defect detection already
     cover the pathology a hard AUC gate would catch (physics review:
-    Welker AJNR 2015, Bell MRM 2023 OSIPI conventions).
+    Welker AJNR 2015, Dickie et al. MRM 2024 OSIPI lexicon).
 
     Parameters
     ----------
@@ -1875,7 +1876,7 @@ def should_apply_gamma_fit(
         )
 
     # Eligibility prerequisite: gamma fitting is ill-posed below ~8 first-pass
-    # samples (Welker AJNR 2015 §"AIF sampling adequacy", Calamante MRM 2010).
+    # samples (Welker 2015 AJNR 36:E41, Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1).
     metrics["first_pass_n"] = fit_result.first_pass_n
     if fit_result.first_pass_n < GAMMA_MIN_FIRST_PASS_SAMPLES:
         return (
@@ -1918,8 +1919,8 @@ def should_apply_gamma_fit(
 
     # AUC ratio: reported for QC provenance with a soft warning band, but
     # NOT a hard gate. R² + peak_ratio + defect detection already cover the
-    # pathology this gate would catch (physics review: Welker AJNR 2015,
-    # Bell MRM 2023 OSIPI conventions).
+    # pathology this gate would catch (physics review: Welker 2015 AJNR 36:E41,
+    # Dickie 2024 MRM 91:1761).
     auc_ratio = fit_result.auc_ratio
     metrics["auc_ratio"] = auc_ratio
     metrics["auc_ratio_warning"] = not (
@@ -2272,18 +2273,18 @@ def generate_synthetic_aif(
     Examples
     --------
     >>> # Generate synthetic AIF for 60-frame scan, full dose
-    >>> result = generate_synthetic_aif(n_frames=60, baseline_frames=5, dose_level=1.0)
-    >>> print(f"Peak ΔR2*: {result.aif_curve.max():.1f} s^-1")
-    >>> print(f"Warning: {result.warning_message}")
+    >>> result = generate_synthetic_aif(n_frames=60, baseline_frames=5, dose_level=1.0)  # doctest: +SKIP
+    >>> print(f"Peak ΔR2*: {result.aif_curve.max():.1f} s^-1")  # doctest: +SKIP
+    >>> print(f"Warning: {result.warning_message}")  # doctest: +SKIP
 
     >>> # Auto-estimate dose from global signal
-    >>> result = generate_synthetic_aif(
+    >>> result = generate_synthetic_aif(  # doctest: +SKIP
     ...     n_frames=60,
     ...     baseline_frames=5,
     ...     concentration_data=conc_4d,
     ...     brain_mask=mask,
     ... )
-    >>> print(f"Estimated dose: {result.dose_level}")
+    >>> print(f"Estimated dose: {result.dose_level}")  # doctest: +SKIP
 
     See Also
     --------

@@ -43,10 +43,13 @@ def init(
     *log_dir* is given) is always set to DEBUG so the log file captures
     everything.
 
-    Args:
-        log_level: Console logging level (default: 25/IMPORTANT).
-        log_dir: Directory for log files. If provided, a FileHandler is added
-            that writes ``pmriprep.log`` alongside Nipype's ``pypeline.log``.
+    Parameters
+    ----------
+    log_level : int, optional
+        Console logging level (default: 25/IMPORTANT).
+    log_dir : Path, optional
+        Directory for log files. If provided, a FileHandler is added
+        that writes ``pmriprep.log`` alongside Nipype's ``pypeline.log``.
     """
     # Console handler (stdout, like fMRIPrep).
     # Logger level is set to DEBUG so messages reach both handlers;

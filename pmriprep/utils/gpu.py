@@ -14,7 +14,9 @@ def detect_gpu_count() -> int:
     Works inside containers without ``nvidia-smi`` as long as the
     CUDA driver library (``libcuda.so``) is visible.
 
-    Returns:
+    Returns
+    -------
+    int
         Number of GPU devices, or 0 if no GPU is detected.
     """
     try:
@@ -34,7 +36,9 @@ def detect_gpu_count() -> int:
 def get_device_name() -> str:
     """Get the name of the current GPU device.
 
-    Returns:
+    Returns
+    -------
+    str
         Device name string, or "CPU" if no GPU is available.
     """
     return "CPU"

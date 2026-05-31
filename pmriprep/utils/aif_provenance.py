@@ -282,8 +282,10 @@ def apply_aif_sidecar(
     qc_metrics: dict[str, Any] | None,
     modality: Modality = "DSC",
 ) -> None:
-    """Stamp ``AIFDependent`` + ``TemplateAIFUsage`` on ``sidecar`` and
-    merge the ``PerfusionProcessing.AIF`` provenance block.
+    """Stamp AIF dependency tags and merge the provenance block.
+
+    Stamps ``AIFDependent`` + ``TemplateAIFUsage`` on ``sidecar`` and
+    merges the ``PerfusionProcessing.AIF`` provenance block.
 
     Raises ``KeyError`` when ``map_key`` is not registered in the
     appropriate usage registry.

@@ -28,10 +28,14 @@ def reorient_to_ras(in_file=None):
     IMPORTANT: This function must be self-contained for nipype Function nodes.
     All imports must be inside the function.
 
-    Args:
-        in_file: Path to input NIfTI file, or None if not provided.
+    Parameters
+    ----------
+    in_file : str or None
+        Path to input NIfTI file, or None if not provided.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Path to reoriented NIfTI file, or None if input was None.
     """
     if in_file is None:
@@ -80,10 +84,14 @@ def reorient_list_to_ras(in_files=None):
     IMPORTANT: This function must be self-contained for nipype Function nodes.
     All imports must be inside the function.
 
-    Args:
-        in_files: List of paths to input NIfTI files, or None.
+    Parameters
+    ----------
+    in_files : list or None
+        List of paths to input NIfTI files, or None.
 
-    Returns:
+    Returns
+    -------
+    list or None
         List of paths to reoriented NIfTI files, or None if input was None.
     """
     if in_files is None:

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -36,15 +36,22 @@ def _select_dsc_qc_voxel(
         2. Eroded brain mask with nonzero CBF — voxel nearest median CBF
         3. Brain mask center (fallback)
 
-    Args:
-        cbf: 3D CBF map.
-        brain_mask: 3D boolean brain mask.
-        binary_erosion: scipy.ndimage.binary_erosion function.
-        enhancing_mask: 3D enhancing tumor mask (optional). In native
-            DSC space. When available, voxel selection strongly prefers
-            the enhancing region.
+    Parameters
+    ----------
+    cbf : npt.NDArray[Any]
+        3D CBF map.
+    brain_mask : npt.NDArray[np.bool_]
+        3D boolean brain mask.
+    binary_erosion : Any
+        scipy.ndimage.binary_erosion function.
+    enhancing_mask : npt.NDArray[Any], optional
+        3D enhancing tumor mask (optional). In native
+        DSC space. When available, voxel selection strongly prefers
+        the enhancing region.
 
-    Returns:
+    Returns
+    -------
+    tuple[tuple[int, int, int], str]
         Tuple of ((x, y, z) voxel coordinates, tier name). The tier name
         is one of ``"enhancing"``, ``"eroded_brain"``, ``"center"`` and
         is stamped into the QC JSON so reviewers can confirm at a glance
@@ -110,16 +117,26 @@ def generate_dsc_preprocessing_qc_plot(
     - "Signal Drop Map (%)" replaces "Enhancement Map (%)"
     - CNR map replaces CV map
 
-    Args:
-        dsc_signal_4d: 4D raw DSC signal array (x, y, z, t).
-        brain_mask: 3D boolean brain mask.
-        baseline_frames: Number of baseline (pre-bolus) frames.
-        volume_tr_s: Temporal resolution between volumes in seconds.
-        subject_id: Subject identifier for title.
-        session_id: Session identifier for title.
-        output_path: Path to save PNG. If None, uses CWD.
+    Parameters
+    ----------
+    dsc_signal_4d : npt.NDArray[Any]
+        4D raw DSC signal array (x, y, z, t).
+    brain_mask : npt.NDArray[Any]
+        3D boolean brain mask.
+    baseline_frames : int
+        Number of baseline (pre-bolus) frames.
+    volume_tr_s : float
+        Temporal resolution between volumes in seconds.
+    subject_id : str, optional
+        Subject identifier for title.
+    session_id : str, optional
+        Session identifier for title.
+    output_path : str, optional
+        Path to save PNG. If None, uses CWD.
 
-    Returns:
+    Returns
+    -------
+    tuple[str, dict[str, Any]]
         Tuple of (path to saved QC plot PNG, stats dict with
         ``peak_drop_pct``, ``mean_tsnr``, ``mean_cnr``, ``fraction_cnr_gt_4``).
     """
@@ -284,15 +301,23 @@ def generate_dsc_parameter_maps_qc_plot(
     Each row shows one parameter across 3 evenly-spaced axial slices
     (25%, 50%, 75% of brain extent). Per-row colorbar with unit labels.
 
-    Args:
-        param_maps: Dict mapping parameter name to 3D array.
-            Expected keys: "rCBF", "rCBV", "MTT", "Tmax", "PSR", "TTPᶜ".
-        brain_mask: 3D boolean brain mask.
-        subject_id: Subject identifier for title.
-        session_id: Session identifier for title.
-        output_path: Path to save PNG. If None, uses CWD.
+    Parameters
+    ----------
+    param_maps : dict[str, npt.NDArray[Any]]
+        Dict mapping parameter name to 3D array.
+        Expected keys: "rCBF", "rCBV", "MTT", "Tmax", "PSR", "TTPᶜ".
+    brain_mask : npt.NDArray[Any]
+        3D boolean brain mask.
+    subject_id : str, optional
+        Subject identifier for title.
+    session_id : str, optional
+        Session identifier for title.
+    output_path : str, optional
+        Path to save PNG. If None, uses CWD.
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the saved QC plot PNG.
     """
     import matplotlib.pyplot as plt
@@ -455,23 +480,40 @@ def generate_dsc_fit_qc_plot(
         (1,0) AIF concentration curve
         (1,1) CBF map at voxel slice with marker
 
-    Args:
-        tissue_concentration: 1D measured concentration at QC voxel.
-        model_prediction: 1D model-fitted concentration at QC voxel.
-        aif: 1D AIF concentration array.
-        time_points: 1D time points array (seconds).
-        cbf_map: 3D CBF map (for spatial context panel).
-        brain_mask: 3D boolean brain mask.
-        qc_voxel: (x, y, z) coordinates of the QC voxel.
-        qc_voxel_cbf: CBF value at the QC voxel.
-        r_squared: R-squared of the fit at the QC voxel.
-        method: Deconvolution method name.
-        subject_id: Subject identifier for title.
-        session_id: Session identifier for title.
-        output_path: Path to save PNG. If None, uses CWD.
-        raw_signal: 1D raw signal intensity at QC voxel (optional).
+    Parameters
+    ----------
+    tissue_concentration : npt.NDArray[Any]
+        1D measured concentration at QC voxel.
+    model_prediction : npt.NDArray[Any] or None
+        1D model-fitted concentration at QC voxel.
+    aif : npt.NDArray[Any]
+        1D AIF concentration array.
+    time_points : npt.NDArray[Any]
+        1D time points array (seconds).
+    cbf_map : npt.NDArray[Any]
+        3D CBF map (for spatial context panel).
+    brain_mask : npt.NDArray[Any]
+        3D boolean brain mask.
+    qc_voxel : tuple[int, int, int]
+        (x, y, z) coordinates of the QC voxel.
+    qc_voxel_cbf : float
+        CBF value at the QC voxel.
+    r_squared : float, optional
+        R-squared of the fit at the QC voxel.
+    method : str, optional
+        Deconvolution method name.
+    subject_id : str, optional
+        Subject identifier for title.
+    session_id : str, optional
+        Session identifier for title.
+    output_path : str, optional
+        Path to save PNG. If None, uses CWD.
+    raw_signal : npt.NDArray[Any], optional
+        1D raw signal intensity at QC voxel (optional).
 
-    Returns:
+    Returns
+    -------
+    tuple[str, dict[str, Any]]
         Tuple of (path to saved QC plot PNG, voxel metrics dict).
     """
     import matplotlib.pyplot as plt
@@ -614,23 +656,40 @@ def generate_dsc_leakage_qc_plot(
 
     Only generated when K2 correction was applied.
 
-    Args:
-        k2_map: 3D K2 leakage rate map.
-        auc_raw: 3D AUC raw (pre-K2) map.
-        auc_corr: 3D AUC corrected (post-K2) map.
-        auc_diff: 3D AUC diff (leakage contribution) map.
-        brain_mask: 3D boolean brain mask.
-        conc_raw_4d: 4D pre-K2 concentration (optional, for voxel curves).
-        conc_corr_4d: 4D post-K2 concentration (optional, for voxel curves).
-        psr: 3D PSR map (optional, for K2 vs PSR scatter).
-        tr: Repetition time in seconds.
-        subject_id: Subject identifier for title.
-        session_id: Session identifier for title.
-        output_path: Path to save PNG. If None, uses CWD.
-        method: K2 correction method ("bsw" or "bidirectional").
-        kep_used: kep value used for bidirectional correction (s⁻¹).
+    Parameters
+    ----------
+    k2_map : npt.NDArray[Any]
+        3D K2 leakage rate map.
+    auc_raw : npt.NDArray[Any]
+        3D AUC raw (pre-K2) map.
+    auc_corr : npt.NDArray[Any]
+        3D AUC corrected (post-K2) map.
+    auc_diff : npt.NDArray[Any]
+        3D AUC diff (leakage contribution) map.
+    brain_mask : npt.NDArray[Any]
+        3D boolean brain mask.
+    conc_raw_4d : npt.NDArray[Any], optional
+        4D pre-K2 concentration (optional, for voxel curves).
+    conc_corr_4d : npt.NDArray[Any], optional
+        4D post-K2 concentration (optional, for voxel curves).
+    psr : npt.NDArray[Any], optional
+        3D PSR map (optional, for K2 vs PSR scatter).
+    tr : float, optional
+        Repetition time in seconds.
+    subject_id : str, optional
+        Subject identifier for title.
+    session_id : str, optional
+        Session identifier for title.
+    output_path : str, optional
+        Path to save PNG. If None, uses CWD.
+    method : str, optional
+        K2 correction method ("bsw" or "bidirectional").
+    kep_used : float, optional
+        kep value used for bidirectional correction (s⁻¹).
 
-    Returns:
+    Returns
+    -------
+    str
         Path to the saved QC plot PNG.
     """
     import matplotlib.pyplot as plt

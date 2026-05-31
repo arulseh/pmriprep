@@ -19,7 +19,6 @@ import numpy as np
 from nipype.interfaces.base import (
     BaseInterface,
     BaseInterfaceInputSpec,
-    File,
     TraitedSpec,
     traits,
 )
@@ -309,7 +308,9 @@ class DSCLesionStats(BaseInterface):
     def _load_maps(self) -> Dict[str, np.ndarray]:
         """Load all available perfusion maps.
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary mapping map name to 3D numpy array.
         """
         maps: Dict[str, np.ndarray] = {}
@@ -355,13 +356,20 @@ class DSCLesionStats(BaseInterface):
     ) -> Optional[RegionStatistics]:
         """Compute statistics for a single region.
 
-        Args:
-            region_name: Name of the region.
-            mask: Boolean mask for the region.
-            maps: Dictionary of perfusion maps.
-            voxel_sizes: Voxel dimensions in mm.
+        Parameters
+        ----------
+        region_name : str
+            Name of the region.
+        mask : np.ndarray
+            Boolean mask for the region.
+        maps : dict
+            Dictionary of perfusion maps.
+        voxel_sizes : tuple of float
+            Voxel dimensions in mm.
 
-        Returns:
+        Returns
+        -------
+        RegionStatistics or None
             RegionStatistics object or None if mask is empty.
         """
         voxel_count, volume_mm3, volume_ml = compute_region_volume(mask, voxel_sizes)

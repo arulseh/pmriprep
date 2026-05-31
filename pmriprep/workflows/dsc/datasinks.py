@@ -12,7 +12,7 @@ detection-method block + ``AIFDependent`` + ``TemplateAIFUsage`` tags.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]

@@ -32,11 +32,16 @@ class PipelineSkipFlags:
     These flags allow users to explicitly disable pipeline components
     even when the required data is available.
 
-    Attributes:
-        skip_anat: Skip anatomical preprocessing pipeline.
-        skip_tumor_seg: Skip tumor segmentation pipeline.
-        skip_dsc: Skip DSC perfusion pipeline.
-        skip_dce: Skip DCE perfusion pipeline.
+    Attributes
+    ----------
+    skip_anat : bool
+        Skip anatomical preprocessing pipeline.
+    skip_tumor_seg : bool
+        Skip tumor segmentation pipeline.
+    skip_dsc : bool
+        Skip DSC perfusion pipeline.
+    skip_dce : bool
+        Skip DCE perfusion pipeline.
     """
 
     skip_anat: bool = False
@@ -49,15 +54,24 @@ class PipelineSkipFlags:
 class PipelineDecision:
     """Decision about which pipelines to run.
 
-    Attributes:
-        run_anat: Whether to run anatomical preprocessing.
-        run_tumor_seg: Whether to run tumor segmentation.
-        run_dsc: Whether to run DSC perfusion processing.
-        run_dce: Whether to run DCE perfusion processing.
-        anat_reason: Reason for anat decision if not running.
-        tumor_seg_reason: Reason for tumor_seg decision if not running.
-        dsc_reason: Reason for dsc decision if not running.
-        dce_reason: Reason for dce decision if not running.
+    Attributes
+    ----------
+    run_anat : bool
+        Whether to run anatomical preprocessing.
+    run_tumor_seg : bool
+        Whether to run tumor segmentation.
+    run_dsc : bool
+        Whether to run DSC perfusion processing.
+    run_dce : bool
+        Whether to run DCE perfusion processing.
+    anat_reason : str, optional
+        Reason for anat decision if not running.
+    tumor_seg_reason : str, optional
+        Reason for tumor_seg decision if not running.
+    dsc_reason : str, optional
+        Reason for dsc decision if not running.
+    dce_reason : str, optional
+        Reason for dce decision if not running.
     """
 
     run_anat: bool = True
@@ -84,13 +98,19 @@ def decide_pipelines(
     3. dsc runs if DSC data is present (unless skipped)
     4. dce runs if DCE data is present (unless skipped)
 
-    Args:
-        session_data: Available data from discovery.
-        skip_flags: User-specified skip flags.
-        tumor_seg_config: Tumor segmentation config for device check.
+    Parameters
+    ----------
+    session_data : SessionData
+        Available data from discovery.
+    skip_flags : PipelineSkipFlags
+        User-specified skip flags.
+    tumor_seg_config : TumorSegConfig, optional
+        Tumor segmentation config for device check.
 
-    Returns:
-        PipelineDecision with boolean flags and reasons.
+    Returns
+    -------
+    PipelineDecision
+        Decision with boolean flags and reasons.
     """
     decision = PipelineDecision()
 
@@ -155,10 +175,14 @@ def _check_tumor_seg_device(
     True — the data-availability check earlier in decide_pipelines already
     gates whether tumor seg can run.
 
-    Args:
-        config: Tumor segmentation configuration, or None.
+    Parameters
+    ----------
+    config : TumorSegConfig, optional
+        Tumor segmentation configuration, or None.
 
-    Returns:
+    Returns
+    -------
+    tuple of (bool, str)
         Tuple of (available, reason). Reason is only meaningful when
         available is False.
     """
@@ -219,12 +243,18 @@ def _find_previous_anat_outputs(
     (brain mask, T1w reference, tissue segmentation, ACPC transform).
     This function locates them from a prior run's work directory.
 
-    Args:
-        work_dir: Nipype working directory (parent of the workflow directory).
-        subject_id: BIDS subject ID (without 'sub-' prefix).
-        session_id: BIDS session ID (without 'ses-' prefix), or None.
+    Parameters
+    ----------
+    work_dir : Path
+        Nipype working directory (parent of the workflow directory).
+    subject_id : str
+        BIDS subject ID (without 'sub-' prefix).
+    session_id : str or None
+        BIDS session ID (without 'ses-' prefix), or None.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with keys: t1w_preproc, brain_mask, wm_probseg, csf_probseg, t1w_to_mni_xfm, flair_coreg, t2w_coreg.
         Values are file paths (str) or None if not found.
     """
@@ -329,12 +359,18 @@ def _find_previous_tumor_seg_inputs(
     When --skip-anat is used but tumor segmentation should run, this function
     locates the skull-stripped, coregistered images from a prior anat run.
 
-    Args:
-        work_dir: Nipype working directory (parent of the workflow directory).
-        subject_id: BIDS subject ID (without 'sub-' prefix).
-        session_id: BIDS session ID (without 'ses-' prefix), or None.
+    Parameters
+    ----------
+    work_dir : Path
+        Nipype working directory (parent of the workflow directory).
+    subject_id : str
+        BIDS subject ID (without 'sub-' prefix).
+    session_id : str or None
+        BIDS session ID (without 'ses-' prefix), or None.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with keys for tumor segmentation inputs. Values are file paths or None.
     """
     session_label = f"ses-{session_id}" if session_id else "no-session"
@@ -429,13 +465,18 @@ def _read_bids_sidecar(
     - Pulse TR (RepetitionTimeExcitation): Time between RF excitations (~3-10 ms).
       Used for: SPGR signal equation in signal-to-concentration conversion.
 
-    Args:
-        nifti_path: Path to a NIfTI file (.nii.gz or .nii).
+    Parameters
+    ----------
+    nifti_path : Path or str
+        Path to a NIfTI file (.nii.gz or .nii).
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with keys: te, tr, volume_tr, pulse_tr, field_strength, flip_angle,
         r1_relaxivity, contrast_agent, scanning_sequence, sequence_variant,
         echo_entity.
+
         - tr: Pulse TR for signal equation (defaults to pulse_tr)
         - volume_tr: Volume TR for temporal resolution (model selection, time vector)
         - pulse_tr: Pulse TR for SPGR signal equation
@@ -444,6 +485,7 @@ def _read_bids_sidecar(
         - scanning_sequence: frozenset of DICOM ScanningSequence tokens, or None
         - sequence_variant: frozenset of DICOM SequenceVariant tokens, or None
         - echo_entity: True if filename contains echo-<N> BIDS entity
+
         Values are floats/str or None if not found in the sidecar.
     """
     import json
@@ -507,8 +549,8 @@ def _read_bids_sidecar(
 
     # MRAcquisitionType ("3D" or "2D") gates the inferior-side inflow
     # exclusion in DCE AIF candidate search. 3D-slab excitation has
-    # entry-slice inflow contamination at the inferior partitions
-    # (van der Schaaf MRM 2006); 2D multi-slice does not.
+    # entry-slice inflow contamination at the inferior partitions;
+    # 2D multi-slice does not.
     if "MRAcquisitionType" in meta:
         result["mr_acquisition_type"] = str(meta["MRAcquisitionType"])
 
@@ -607,12 +649,18 @@ def _find_previous_tumor_seg_outputs(
     When --skip-tumor-seg is used, DSC/DCE workflows may still need
     lesion and NAWM masks from a prior tumor segmentation run.
 
-    Args:
-        work_dir: Nipype working directory.
-        subject_id: BIDS subject ID (without 'sub-' prefix).
-        session_id: BIDS session ID (without 'ses-' prefix), or None.
+    Parameters
+    ----------
+    work_dir : Path
+        Nipype working directory.
+    subject_id : str
+        BIDS subject ID (without 'sub-' prefix).
+    session_id : str or None
+        BIDS session ID (without 'ses-' prefix), or None.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with keys: whole_tumor_mask, enhancing_mask,
         segmentation, nawm_mask.
         Values are file paths (str) or None if not found.
@@ -706,14 +754,19 @@ def _emit_2cxm_uncertainty(
     match — building a sink the producer never feeds raises
     ``NodeExecutionError: _copy_perf_map missing in_file`` at runtime.
 
-    Args:
-        model: Resolved DCE model name (``"auto"``, ``"2cxm"``,
-            ``"tofts"``, etc.). ``None`` is treated as no-emission.
-        volume_tr: DCE volume TR in seconds (BIDS ``RepetitionTime``).
-            ``None`` is treated as long TR (no-emission); a malformed
-            sidecar is preferred-conservative over a runtime crash.
+    Parameters
+    ----------
+    model : str or None
+        Resolved DCE model name (``"auto"``, ``"2cxm"``,
+        ``"tofts"``, etc.). ``None`` is treated as no-emission.
+    volume_tr : float or None
+        DCE volume TR in seconds (BIDS ``RepetitionTime``).
+        ``None`` is treated as long TR (no-emission); a malformed
+        sidecar is preferred-conservative over a runtime crash.
 
-    Returns:
+    Returns
+    -------
+    bool
         True if the build-time ``dce_present`` set should include
         ``fp_uncertainty`` and ``ps_uncertainty``.
     """
@@ -738,15 +791,22 @@ def _find_previous_dsc_outputs(
     When --skip-dsc is used, the DCE workflow may still need DSC CBV and
     the DSC→T1w transform for vp constraint and cross-validation.
 
-    Args:
-        output_dir: Path to output derivatives directory.
-        subject_id: BIDS subject ID (without 'sub-' prefix).
-        session_id: BIDS session ID (without 'ses-' prefix), or None.
-        work_dir: Path to Nipype work directory. When provided, the DSC
-            resume checkpoint (``dsc_resume.json``) is read from here to
-            recover AIF/preload/preprocessing QC dicts for DCE handoff.
+    Parameters
+    ----------
+    output_dir : Path
+        Path to output derivatives directory.
+    subject_id : str
+        BIDS subject ID (without 'sub-' prefix).
+    session_id : str or None
+        BIDS session ID (without 'ses-' prefix), or None.
+    work_dir : Path, optional
+        Path to Nipype work directory. When provided, the DSC
+        resume checkpoint (``dsc_resume.json``) is read from here to
+        recover AIF/preload/preprocessing QC dicts for DCE handoff.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with keys: rel_cbv_map, ncbv_map, dsc_to_t1w_xfm (str paths
         or None), aif_qc, preload_qc, preprocessing_stats (dict or None).
     """
@@ -2974,10 +3034,14 @@ def init_pmriprep_wf(
 def get_pipeline_summary(workflow: pe.Workflow) -> str:
     """Generate a summary of the pipeline decision.
 
-    Args:
-        workflow: The initialized pmriprep workflow.
+    Parameters
+    ----------
+    workflow : pe.Workflow
+        The initialized pmriprep workflow.
 
-    Returns:
+    Returns
+    -------
+    str
         Human-readable summary of what will run and why.
     """
     decision: PipelineDecision = workflow.pipeline_decision  # type: ignore[attr-defined]

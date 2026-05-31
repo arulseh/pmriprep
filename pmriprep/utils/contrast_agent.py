@@ -25,6 +25,7 @@ class AgentRelaxivity(NamedTuple):
     peer-reviewed plasma-37°C measurement at 7T; lookups at B0 ≥ 5T for
     those agents raise rather than extrapolate.
     """
+
     r1_1_5T: float  # R1 relaxivity at 1.5T
     r1_3_0T: float  # R1 relaxivity at 3.0T
     r1_7_0T: Optional[float] = None  # R1 at 7T; None = no measured value
@@ -192,16 +193,21 @@ def parse_contrast_agent_string(agent_string: str) -> dict[str, Any]:
     Handles ContrastBolusAgent strings that may include volume info,
     such as "gadovist 3,5 ml" or "Magnevist 10ml".
 
-    Args:
-        agent_string: Raw contrast agent string from DICOM/BIDS sidecar
+    Parameters
+    ----------
+    agent_string : str
+        Raw contrast agent string from DICOM/BIDS sidecar
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary with:
         - 'agent_name': Extracted agent name (e.g., "gadovist")
         - 'volume_ml': Volume in ml if found, else None
         - 'original': Original input string
 
-    Examples:
+    Examples
+    --------
         >>> parse_contrast_agent_string("gadovist 3,5 ml")
         {'agent_name': 'gadovist', 'volume_ml': 3.5, 'original': 'gadovist 3,5 ml'}
         >>> parse_contrast_agent_string("Magnevist 10ml")
@@ -259,11 +265,16 @@ def lookup_r1_safe(
     Unlike lookup_r1(), this function does not raise ValueError for
     unknown agents - it returns None instead, allowing flexible fallback.
 
-    Args:
-        agent: Contrast agent name (brand name, generic, or abbreviation)
-        field_strength: Magnetic field strength in Tesla
+    Parameters
+    ----------
+    agent : str
+        Contrast agent name (brand name, generic, or abbreviation)
+    field_strength : float
+        Magnetic field strength in Tesla
 
-    Returns:
+    Returns
+    -------
+    float or None
         r1 relaxivity in s^-1 per mM, or None if agent not recognized
     """
     try:
@@ -282,11 +293,16 @@ def get_r1_from_sidecar(
     appropriate r1 value. Returns a dict with all relevant information,
     allowing the caller to decide how to handle missing data.
 
-    Args:
-        sidecar_path: Path to JSON sidecar file
-        field_strength: Field strength in Tesla. If None, reads from sidecar.
+    Parameters
+    ----------
+    sidecar_path : Path or str
+        Path to JSON sidecar file
+    field_strength : float, optional
+        Field strength in Tesla. If None, reads from sidecar.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary with:
         - 'r1': float or None (r1 in s^-1 mM^-1)
         - 'agent_name': str or None (parsed agent name)
@@ -295,9 +311,10 @@ def get_r1_from_sidecar(
         - 'volume_ml': float or None (if volume in agent string)
         - 'source': str ('dicom_lookup', 'not_found', 'unknown_agent', 'file_error')
 
-    Examples:
-        >>> result = get_r1_from_sidecar("sub-01_dce.json")
-        >>> if result['r1'] is not None:
+    Examples
+    --------
+        >>> result = get_r1_from_sidecar("sub-01_dce.json")  # doctest: +SKIP
+        >>> if result['r1'] is not None:  # doctest: +SKIP
         ...     print(f"r1={result['r1']:.1f} for {result['agent_name']}")
         ... else:
         ...     print(f"Using default r1 (agent: {result['source']})")
@@ -366,11 +383,16 @@ def get_r1_from_sidecar_dict(
 
     Like get_r1_from_sidecar() but takes an already-loaded dict.
 
-    Args:
-        sidecar: BIDS JSON sidecar as dictionary
-        field_strength: Field strength in Tesla. If None, reads from sidecar.
+    Parameters
+    ----------
+    sidecar : dict
+        BIDS JSON sidecar as dictionary
+    field_strength : float, optional
+        Field strength in Tesla. If None, reads from sidecar.
 
-    Returns:
+    Returns
+    -------
+    dict
         Same dict format as get_r1_from_sidecar()
     """
     result: dict[str, Any] = {
@@ -423,10 +445,14 @@ def get_r1_from_sidecar_dict(
 def normalize_agent_name(agent: str) -> str:
     """Normalize agent name for lookup.
 
-    Args:
-        agent: Agent name (brand name, generic, or abbreviation)
+    Parameters
+    ----------
+    agent : str
+        Agent name (brand name, generic, or abbreviation)
 
-    Returns:
+    Returns
+    -------
+    str
         Normalized lowercase agent name
     """
     name = agent.lower().strip()
@@ -442,10 +468,14 @@ def lookup_standard_dose(agent: str) -> float:
     Uses normalize_agent_name() to resolve brand names via AGENT_ALIASES.
     E.g., "Vueway" -> "gadopiclenol" -> 0.05 mmol/kg
 
-    Args:
-        agent: Contrast agent name (brand name, generic, or abbreviation).
+    Parameters
+    ----------
+    agent : str
+        Contrast agent name (brand name, generic, or abbreviation).
 
-    Returns:
+    Returns
+    -------
+    float
         Standard dose in mmol/kg (0.1 for most agents, 0.05 for Vueway, etc.).
     """
     name = normalize_agent_name(agent)
@@ -460,10 +490,14 @@ def lookup_gd_multiplicity(agent: str) -> int:
     scaling but NOT DCE (where per-molecule r1 already accounts for
     all Gd ions).
 
-    Args:
-        agent: Contrast agent name (brand name, generic, or abbreviation).
+    Parameters
+    ----------
+    agent : str
+        Contrast agent name (brand name, generic, or abbreviation).
 
-    Returns:
+    Returns
+    -------
+    int
         Number of Gd3+ ions per molecule (1 for most agents, 4 for
         gadoquatrane).
     """
@@ -478,24 +512,32 @@ def lookup_r1(
 ) -> float:
     """Look up r1 relaxivity for a contrast agent at a given field strength.
 
-    Args:
-        agent: Contrast agent name (brand name, generic, or abbreviation).
-               Examples: "gadobutrol", "Gadavist", "gd-dtpa", "Magnevist"
-        field_strength: Magnetic field strength in Tesla (default 3.0T)
+    Parameters
+    ----------
+    agent : str
+        Contrast agent name (brand name, generic, or abbreviation).
+        Examples: "gadobutrol", "Gadavist", "gd-dtpa", "Magnevist"
+    field_strength : float
+        Magnetic field strength in Tesla (default 3.0T)
 
-    Returns:
+    Returns
+    -------
+    float
         r1 relaxivity in L/(mmol·s) or equivalently s^-1 per mM
 
-    Raises:
-        ValueError: If the agent name is not recognized
+    Raises
+    ------
+    ValueError
+        If the agent name is not recognized
 
-    Examples:
+    Examples
+    --------
         >>> lookup_r1("gadobutrol", 3.0)
-        5.0
+        4.97
         >>> lookup_r1("gd-dtpa", 1.5)
         4.1
         >>> lookup_r1("Gadavist", 3.0)  # Brand name
-        5.0
+        4.97
     """
     name = normalize_agent_name(agent)
 
@@ -532,7 +574,9 @@ def lookup_r1(
 def get_available_agents() -> list[str]:
     """Get list of all available contrast agent names.
 
-    Returns:
+    Returns
+    -------
+    list
         Sorted list of recognized agent names (generic names only)
     """
     return sorted(CONTRAST_AGENTS.keys())
@@ -541,14 +585,20 @@ def get_available_agents() -> list[str]:
 def get_agent_info(agent: str) -> dict[str, float]:
     """Get detailed information about a contrast agent.
 
-    Args:
-        agent: Contrast agent name
+    Parameters
+    ----------
+    agent : str
+        Contrast agent name
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with r1_1_5T, r1_3_0T, and concentration
 
-    Raises:
-        ValueError: If the agent name is not recognized
+    Raises
+    ------
+    ValueError
+        If the agent name is not recognized
     """
     name = normalize_agent_name(agent)
 
@@ -581,18 +631,27 @@ def calculate_dose_from_volume(
 
     Standard dose is typically 0.1 mmol/kg (single dose) or 0.05 mmol/kg (half dose).
 
-    Args:
-        volume_ml: Injected volume in milliliters
-        body_weight_kg: Patient body weight in kilograms
-        agent: Contrast agent name (affects concentration)
+    Parameters
+    ----------
+    volume_ml : float
+        Injected volume in milliliters
+    body_weight_kg : float
+        Patient body weight in kilograms
+    agent : str
+        Contrast agent name (affects concentration)
 
-    Returns:
+    Returns
+    -------
+    float
         Dose in mmol/kg
 
-    Raises:
-        ValueError: If volume or weight is non-positive, or agent is unknown
+    Raises
+    ------
+    ValueError
+        If volume or weight is non-positive, or agent is unknown
 
-    Examples:
+    Examples
+    --------
         >>> # 10 mL of 0.5 M Gd-DTPA for 70 kg patient
         >>> calculate_dose_from_volume(10.0, 70.0, "gd-dtpa")
         0.0714...
@@ -630,18 +689,27 @@ def calculate_volume_for_dose(
 ) -> float:
     """Calculate injection volume required for a target dose.
 
-    Args:
-        dose_mmol_per_kg: Target dose in mmol/kg (0.1 for standard, 0.05 for half)
-        body_weight_kg: Patient body weight in kilograms
-        agent: Contrast agent name (affects concentration)
+    Parameters
+    ----------
+    dose_mmol_per_kg : float
+        Target dose in mmol/kg (0.1 for standard, 0.05 for half)
+    body_weight_kg : float
+        Patient body weight in kilograms
+    agent : str
+        Contrast agent name (affects concentration)
 
-    Returns:
+    Returns
+    -------
+    float
         Required volume in milliliters
 
-    Raises:
-        ValueError: If dose or weight is non-positive, or agent is unknown
+    Raises
+    ------
+    ValueError
+        If dose or weight is non-positive, or agent is unknown
 
-    Examples:
+    Examples
+    --------
         >>> # Standard dose (0.1 mmol/kg) of Gd-DTPA for 70 kg patient
         >>> calculate_volume_for_dose(0.1, 70.0, "gd-dtpa")
         14.0
@@ -673,10 +741,14 @@ def calculate_volume_for_dose(
 def classify_dose(dose_mmol_per_kg: float) -> str:
     """Classify a contrast agent dose.
 
-    Args:
-        dose_mmol_per_kg: Dose in mmol/kg
+    Parameters
+    ----------
+    dose_mmol_per_kg : float
+        Dose in mmol/kg
 
-    Returns:
+    Returns
+    -------
+    str
         Dose classification: "none", "quarter", "half", "full", "double", or "high"
     """
     if dose_mmol_per_kg < 0.01:
@@ -735,10 +807,14 @@ _PRIMARY_BRANDS: Final[dict[str, str]] = {
 def get_brand_name(generic_name: str) -> Optional[str]:
     """Reverse lookup: generic agent name to primary brand name.
 
-    Args:
-        generic_name: Generic or chemical agent name (e.g., "gadobutrol").
+    Parameters
+    ----------
+    generic_name : str
+        Generic or chemical agent name (e.g., "gadobutrol").
 
-    Returns:
+    Returns
+    -------
+    str or None
         Primary brand name (e.g., "Gadavist"), or None if unknown.
     """
     return _PRIMARY_BRANDS.get(generic_name.lower().strip())
@@ -761,21 +837,33 @@ def build_dce_provenance(
     All values are explicitly cast to Python scalars to ensure
     consistent nipype hashing and JSON serialization.
 
-    Args:
-        contrast_agent: Generic agent name (e.g., "gadobutrol").
-        agent_source: How the agent was determined (ParameterSource constant).
-        r1_relaxivity: R1 relaxivity in s^-1/mM.
-        field_strength: Magnetic field strength in Tesla.
-        dose_multiplier: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
-        dose_source: How the dose was determined (ParameterSource constant).
-        agent_standard_dose: Standard clinical dose in mmol/kg.
-        bids_agent_string: Raw ContrastBolusAgent string from BIDS sidecar.
-        scanner_metadata: Acquisition metadata from BIDS sidecar (TR/TE/
-            FlipAngle/etc.) emitted under PerfusionProcessing.ScannerMetadata
-            so downstream sidecars carry the acquisition context directly
-            without requiring users to traverse Sources.
+    Parameters
+    ----------
+    contrast_agent : str, optional
+        Generic agent name (e.g., "gadobutrol").
+    agent_source : str
+        How the agent was determined (ParameterSource constant).
+    r1_relaxivity : float
+        R1 relaxivity in s^-1/mM.
+    field_strength : float
+        Magnetic field strength in Tesla.
+    dose_multiplier : float
+        Dose multiplier (0.5=half, 1.0=full, 2.0=double).
+    dose_source : str
+        How the dose was determined (ParameterSource constant).
+    agent_standard_dose : float
+        Standard clinical dose in mmol/kg.
+    bids_agent_string : str, optional
+        Raw ContrastBolusAgent string from BIDS sidecar.
+    scanner_metadata : dict, optional
+        Acquisition metadata from BIDS sidecar (TR/TE/
+        FlipAngle/etc.) emitted under PerfusionProcessing.ScannerMetadata
+        so downstream sidecars carry the acquisition context directly
+        without requiring users to traverse Sources.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with PerfusionProcessing namespace containing ContrastAgent,
         Relaxivity, and ContrastDose sub-dicts.
     """
@@ -835,30 +923,47 @@ def build_dsc_provenance(
     recorded for reproducibility; dose and preload affect AIF detection
     thresholds and leakage correction.
 
-    Args:
-        contrast_agent: Generic agent name (e.g., "gadopiclenol").
-        agent_source: How the agent was determined (ParameterSource constant).
-        bids_agent_string: Raw ContrastBolusAgent string from BIDS sidecar.
-        dose_multiplier: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
-        dose_source: How the dose was determined (ParameterSource constant).
-        agent_standard_dose: Standard clinical molecular dose in mmol/kg.
-        agent_standard_dose_source: How agent std dose was determined.
-        gd_multiplicity: Gd3+ ions per molecule (1 for monomeric, 4 for
-            gadoquatrane). Recorded in provenance when != 1.
-        preload_source: How preload was determined (user_specified or auto_detected).
-        deconv_method: Deconvolution method name.
-        inference: Inference method (nlls/map/vb/svb) for CPI/vascular.
-        leakage_method: Leakage correction method name.
-        scanner_metadata: Acquisition metadata from BIDS sidecar (TR/TE/
-            FlipAngle/FieldStrength) emitted under
-            PerfusionProcessing.ScannerMetadata.
+    Parameters
+    ----------
+    contrast_agent : str, optional
+        Generic agent name (e.g., "gadopiclenol").
+    agent_source : str
+        How the agent was determined (ParameterSource constant).
+    bids_agent_string : str, optional
+        Raw ContrastBolusAgent string from BIDS sidecar.
+    dose_multiplier : float
+        Dose multiplier (0.5=half, 1.0=full, 2.0=double).
+    dose_source : str
+        How the dose was determined (ParameterSource constant).
+    agent_standard_dose : float
+        Standard clinical molecular dose in mmol/kg.
+    agent_standard_dose_source : str
+        How agent std dose was determined.
+    gd_multiplicity : int
+        Gd3+ ions per molecule (1 for monomeric, 4 for
+        gadoquatrane). Recorded in provenance when != 1.
+    preload_source : str
+        How preload was determined (user_specified or auto_detected).
+    deconv_method : str
+        Deconvolution method name.
+    inference : str, optional
+        Inference method (nlls/map/vb/svb) for CPI/vascular.
+    leakage_method : str
+        Leakage correction method name.
+    scanner_metadata : dict, optional
+        Acquisition metadata from BIDS sidecar (TR/TE/
+        FlipAngle/FieldStrength) emitted under
+        PerfusionProcessing.ScannerMetadata.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict with PerfusionProcessing namespace containing ContrastAgent
         (when agent is known), ContrastDose, Deconvolution, and
         LeakageCorrection sub-dicts.
 
-    Note:
+    Notes
+    -----
         The ``PerfusionProcessing.AIF`` sub-block is assembled
         downstream at sidecar-write time by
         :func:`pmriprep.utils.aif_provenance.apply_aif_sidecar`, which
@@ -963,14 +1068,20 @@ def collect_default_warnings(
     Inspects Source fields in the provenance dict and returns warning
     strings for any parameters that fell back to pipeline defaults.
 
-    Args:
-        provenance_dict: Provenance dict from build_dce_provenance or
-            build_dsc_provenance.
-        modality: "DCE" or "DSC".
-        qc_metrics: Optional QC metrics dict for enriching preload
-            warnings with detection results.
+    Parameters
+    ----------
+    provenance_dict : dict
+        Provenance dict from build_dce_provenance or
+        build_dsc_provenance.
+    modality : str
+        "DCE" or "DSC".
+    qc_metrics : dict, optional
+        Optional QC metrics dict for enriching preload
+        warnings with detection results.
 
-    Returns:
+    Returns
+    -------
+    list
         List of warning strings. Empty if all parameters were
         user-specified or BIDS-detected.
     """
@@ -1065,11 +1176,16 @@ def collect_aif_fallback_warning(
 ) -> Optional[str]:
     """Return a warning string if AIF fell back to population/template.
 
-    Args:
-        qc_metrics: QC metrics dict containing AIF detection results.
-        modality: ``"DSC"`` or ``"DCE"``.
+    Parameters
+    ----------
+    qc_metrics : dict, optional
+        QC metrics dict containing AIF detection results.
+    modality : str
+        ``"DSC"`` or ``"DCE"``.
 
-    Returns:
+    Returns
+    -------
+    str or None
         Warning string if AIF used population/template, else ``None``.
     """
     if not qc_metrics:

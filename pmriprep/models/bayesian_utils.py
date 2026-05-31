@@ -3,14 +3,15 @@
 Provides generic MCMC sampling, convergence diagnostics, and statistical
 utilities used by both BayesianDSCFitter and BayesianPKFitter.
 
-References:
-    Goodman J, Weare J (2010). CAMCOS 5(1):65-80. — Ensemble sampler
-    Chappell MA et al. (2009). IEEE TMI 28(1):94-104. — FABBER VB
-    Vehtari A et al. (2021). Bayesian Analysis 16(2):667-718. — Split R-hat
+References
+----------
+Goodman J, Weare J (2010). CAMCOS 5(1):65-80. — Ensemble sampler
+Chappell MA et al. (2009). IEEE Trans Signal Process 57(1):223-236. — FABBER VB
+Vehtari A et al. (2021). Bayesian Analysis 16(2):667-718. — Split R-hat
 """
 
 import enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Protocol, Sequence
 
 import numpy as np
@@ -35,8 +36,9 @@ class TransformType(enum.Enum):
         fitting-space prior mean=0.5 corresponds to natural=0.5. Used for
         CPI control-point fractions.
 
-    References:
-        Chappell MA et al. (2009). IEEE TMI 28(1):94-104 — FABBER VB.
+    References
+    ----------
+    Chappell MA et al. (2009). IEEE Trans Signal Process 57(1):223-236 — FABBER VB.
     """
 
     IDENTITY = "identity"
@@ -57,12 +59,18 @@ def to_transformed(
 ) -> float | npt.NDArray[np.floating]:
     """Map from natural parameter space to unconstrained transformed space.
 
-    Args:
-        theta: Parameter value(s) in natural space.
-        transform: Transform type.
-        upper_bound: Upper bound for LOG_LOGIT (required).
+    Parameters
+    ----------
+    theta : float or numpy.ndarray
+        Parameter value(s) in natural space.
+    transform : TransformType
+        Transform type.
+    upper_bound : float, optional
+        Upper bound for LOG_LOGIT (required).
 
-    Returns:
+    Returns
+    -------
+    float or numpy.ndarray
         Parameter value(s) in transformed space.
     """
     if transform == TransformType.LOG:
@@ -90,12 +98,18 @@ def from_transformed(
 ) -> float | npt.NDArray[np.floating]:
     """Map from unconstrained transformed space to natural parameter space.
 
-    Args:
-        theta_prime: Parameter value(s) in transformed space.
-        transform: Transform type.
-        upper_bound: Upper bound for LOG_LOGIT (required).
+    Parameters
+    ----------
+    theta_prime : float or numpy.ndarray
+        Parameter value(s) in transformed space.
+    transform : TransformType
+        Transform type.
+    upper_bound : float, optional
+        Upper bound for LOG_LOGIT (required).
 
-    Returns:
+    Returns
+    -------
+    float or numpy.ndarray
         Parameter value(s) in natural space.
     """
     if transform == TransformType.LOG:
@@ -126,12 +140,18 @@ def to_transformed_batch(
     Maps from natural parameter space to unconstrained transformed space,
     with NaN guards for numerical safety in batched fitting.
 
-    Args:
-        values: Parameter values in natural space, shape (N,).
-        transform: Transform type for this parameter.
-        upper_bound: Upper bound for LOG_LOGIT (required).
+    Parameters
+    ----------
+    values : numpy.ndarray
+        Parameter values in natural space, shape (N,).
+    transform : TransformType
+        Transform type for this parameter.
+    upper_bound : float, optional
+        Upper bound for LOG_LOGIT (required).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Parameter values in transformed space, shape (N,).
     """
     if transform == TransformType.LOG:
@@ -159,12 +179,18 @@ def from_transformed_batch(
     Maps from unconstrained transformed space to natural parameter space,
     with NaN guards for numerical safety in batched fitting.
 
-    Args:
-        values: Parameter values in transformed space, shape (N,).
-        transform: Transform type for this parameter.
-        upper_bound: Upper bound for LOG_LOGIT (required).
+    Parameters
+    ----------
+    values : numpy.ndarray
+        Parameter values in transformed space, shape (N,).
+    transform : TransformType
+        Transform type for this parameter.
+    upper_bound : float, optional
+        Upper bound for LOG_LOGIT (required).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Parameter values in natural space, shape (N,).
     """
     if transform == TransformType.LOG:
@@ -196,12 +222,18 @@ def log_jacobian_det(
     For log: |J| = theta, so log|J| = log(theta).
     For log-logit: |J| = theta*(ub-theta)/ub, so log|J| = log(theta) + log(ub-theta) - log(ub).
 
-    Args:
-        theta: Parameter value(s) in natural space.
-        transform: Transform type.
-        upper_bound: Upper bound for LOG_LOGIT.
+    Parameters
+    ----------
+    theta : float or numpy.ndarray
+        Parameter value(s) in natural space.
+    transform : TransformType
+        Transform type.
+    upper_bound : float, optional
+        Upper bound for LOG_LOGIT.
 
-    Returns:
+    Returns
+    -------
+    float or numpy.ndarray
         Log absolute Jacobian determinant.
     """
     if transform == TransformType.LOG:
@@ -228,12 +260,18 @@ def inverse_transform_all(
 ) -> npt.NDArray[np.float64]:
     """Inverse-transform all parameters from transformed to natural space.
 
-    Args:
-        params_t: Parameter values in transformed space.
-        transforms: Per-parameter transform types.
-        upper_bounds: Per-parameter upper bounds (for LOG_LOGIT).
+    Parameters
+    ----------
+    params_t : numpy.ndarray
+        Parameter values in transformed space.
+    transforms : list of TransformType
+        Per-parameter transform types.
+    upper_bounds : list of float or None
+        Per-parameter upper bounds (for LOG_LOGIT).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Parameter values in natural space.
     """
     return np.array([
@@ -249,12 +287,18 @@ def forward_transform_all(
 ) -> npt.NDArray[np.float64]:
     """Transform all parameters from natural to transformed space.
 
-    Args:
-        params_nat: Parameter values in natural space.
-        transforms: Per-parameter transform types.
-        upper_bounds: Per-parameter upper bounds (for LOG_LOGIT).
+    Parameters
+    ----------
+    params_nat : numpy.ndarray
+        Parameter values in natural space.
+    transforms : list of TransformType
+        Per-parameter transform types.
+    upper_bounds : list of float or None
+        Per-parameter upper bounds (for LOG_LOGIT).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Parameter values in transformed space.
     """
     return np.array([
@@ -275,13 +319,20 @@ def transform_prior(
     (CV < ~0.5). For log: mu'=ln(mu), sigma'=sigma/mu.
     For log-logit: mu'=ln(mu/(ub-mu)), sigma'=sigma*ub/(mu*(ub-mu)).
 
-    Args:
-        mean: Prior mean in natural space.
-        std: Prior std in natural space.
-        transform: Transform type.
-        upper_bound: Upper bound for LOG_LOGIT.
+    Parameters
+    ----------
+    mean : float
+        Prior mean in natural space.
+    std : float
+        Prior std in natural space.
+    transform : TransformType
+        Transform type.
+    upper_bound : float, optional
+        Upper bound for LOG_LOGIT.
 
-    Returns:
+    Returns
+    -------
+    tuple of float
         Tuple of (transformed_mean, transformed_std).
     """
     if transform == TransformType.LOG:
@@ -316,8 +367,13 @@ class ParameterDef(Protocol):
     bounds: tuple[float, float]
     transformed_prior_sigma: float | None
 
-    def get_prior_mean(self) -> float: ...
-    def get_prior_sigma(self) -> float: ...
+    def get_prior_mean(self) -> float:
+        """Return the prior mean in natural space."""
+        ...
+
+    def get_prior_sigma(self) -> float:
+        """Return the prior standard deviation in natural space."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -332,13 +388,20 @@ class BayesianPrior:
     code operates in transformed space; natural-space values are kept
     for reporting and diagnostics.
 
-    Attributes:
-        mean: Prior mean in natural space.
-        std: Prior standard deviation in natural space.
-        transform: Parameter space transform type.
-        upper_bound: Upper bound for LOG_LOGIT transform (None otherwise).
-        mean_transformed: Prior mean in transformed space.
-        std_transformed: Prior std in transformed space.
+    Attributes
+    ----------
+    mean : float
+        Prior mean in natural space.
+    std : float
+        Prior standard deviation in natural space.
+    transform : TransformType
+        Parameter space transform type.
+    upper_bound : float or None
+        Upper bound for LOG_LOGIT transform (None otherwise).
+    mean_transformed : float
+        Prior mean in transformed space.
+    std_transformed : float
+        Prior std in transformed space.
     """
 
     mean: float
@@ -358,12 +421,16 @@ def validate_bayesian_inputs(
 ) -> None:
     """Validate input arrays for NaN/Inf values and length consistency.
 
-    Args:
-        *arrays: Tuples of (name, array) to validate. All arrays must have
-            the same length and contain only finite values.
+    Parameters
+    ----------
+    *arrays : tuple of (str, numpy.ndarray)
+        Tuples of (name, array) to validate. All arrays must have
+        the same length and contain only finite values.
 
-    Raises:
-        ValueError: If inputs contain NaN/Inf or lengths don't match.
+    Raises
+    ------
+    ValueError
+        If inputs contain NaN/Inf or lengths don't match.
     """
     if not arrays:
         return
@@ -397,10 +464,14 @@ def build_priors_from_params(
     Priors are also transformed to the fitting space using the delta
     method (first-order Taylor approximation).
 
-    Args:
-        param_defs: List of parameter objects implementing ParameterDef.
+    Parameters
+    ----------
+    param_defs : sequence of ParameterDef
+        List of parameter objects implementing ParameterDef.
 
-    Returns:
+    Returns
+    -------
+    list of BayesianPrior
         List of BayesianPrior objects with both natural and transformed
         prior mean/std populated.
     """
@@ -443,13 +514,19 @@ def compute_log_prior(
 ) -> float:
     """Compute log prior probability.
 
-    Args:
-        params: Parameter values (in natural or transformed space).
-        priors: Prior specifications.
-        transformed: If True, params are in transformed space and the
-            prior is evaluated using transformed mean/std.
+    Parameters
+    ----------
+    params : numpy.ndarray
+        Parameter values (in natural or transformed space).
+    priors : list of BayesianPrior
+        Prior specifications.
+    transformed : bool, optional
+        If True, params are in transformed space and the
+        prior is evaluated using transformed mean/std.
 
-    Returns:
+    Returns
+    -------
+    float
         Log prior probability (unnormalized).
     """
     log_p = 0.0
@@ -477,13 +554,20 @@ def compute_goodness_of_fit(
 ) -> dict[str, float]:
     """Compute goodness-of-fit metrics.
 
-    Args:
-        observed: Measured concentration/signal.
-        predicted: Model-predicted values.
-        n_params: Number of fitted parameters.
-        epsilon: Floor for log(rss/n) to avoid log(0).
+    Parameters
+    ----------
+    observed : numpy.ndarray
+        Measured concentration/signal.
+    predicted : numpy.ndarray
+        Model-predicted values.
+    n_params : int
+        Number of fitted parameters.
+    epsilon : float, optional
+        Floor for log(rss/n) to avoid log(0).
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary with r_squared, rss, aic, bic.
     """
     residuals = observed - predicted
@@ -523,14 +607,22 @@ def run_ensemble_sampler(
 
     Implements the stretch move from Goodman & Weare (2010).
 
-    Args:
-        log_prob: Log posterior function.
-        init_positions: Initial walker positions (n_walkers x n_params).
-        n_iterations: Number of iterations.
-        bounds: Parameter bounds.
-        a: Stretch move scale parameter (default 2.0).
+    Parameters
+    ----------
+    log_prob : callable
+        Log posterior function.
+    init_positions : numpy.ndarray
+        Initial walker positions (n_walkers x n_params).
+    n_iterations : int
+        Number of iterations.
+    bounds : list of tuple of float
+        Parameter bounds.
+    a : float, optional
+        Stretch move scale parameter (default 2.0).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Samples array (n_iterations x n_walkers x n_params).
     """
     n_walkers, n_params = init_positions.shape
@@ -588,10 +680,14 @@ def compute_split_rhat(
     in half, then compute R-hat between the two halves (recommended
     by emcee documentation and Vehtari et al. 2021).
 
-    Args:
-        samples: MCMC samples (n_samples x n_walkers x n_params).
+    Parameters
+    ----------
+    samples : numpy.ndarray
+        MCMC samples (n_samples x n_walkers x n_params).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Split R-hat values for each parameter.
     """
     _, _, n_params = samples.shape
@@ -635,12 +731,17 @@ def compute_per_walker_ess(
     avoids underestimating autocorrelation that occurs when
     correlated walkers are flattened into a single sequence.
 
-    Args:
-        samples: MCMC samples (n_samples x n_walkers x n_params).
-        epsilon: Minimum variance threshold below which chain is
-            treated as constant (ESS = n).
+    Parameters
+    ----------
+    samples : numpy.ndarray
+        MCMC samples (n_samples x n_walkers x n_params).
+    epsilon : float, optional
+        Minimum variance threshold below which chain is
+        treated as constant (ESS = n).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         ESS values for each parameter.
     """
     _, n_walkers, n_params = samples.shape

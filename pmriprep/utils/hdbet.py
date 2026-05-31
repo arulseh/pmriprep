@@ -31,16 +31,24 @@ def run_hdbet(
     the brain-extracted output (more consistent than HD-BET's own
     ``_mask.nii.gz``).
 
-    Args:
-        in_file: Path to the input NIfTI image.
-        out_brain: Path for the brain-extracted output NIfTI.
-        device: Torch device for HD-BET inference.  ``"auto"`` resolves
-            via :func:`~pmriprep.utils.device.detect_torch_device`.
-        conda_env: Conda environment name.  When non-empty, HD-BET is
-            invoked via ``conda run -n <env>``.
-        timeout: Subprocess timeout in seconds (default 300 = 5 min).
+    Parameters
+    ----------
+    in_file : str
+        Path to the input NIfTI image.
+    out_brain : str
+        Path for the brain-extracted output NIfTI.
+    device : str
+        Torch device for HD-BET inference.  ``"auto"`` resolves
+        via :func:`~pmriprep.utils.device.detect_torch_device`.
+    conda_env : str
+        Conda environment name.  When non-empty, HD-BET is
+        invoked via ``conda run -n <env>``.
+    timeout : int
+        Subprocess timeout in seconds (default 300 = 5 min).
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of ``(succeeded, mask_path)``:
             - *succeeded*: True if HD-BET produced a valid brain image.
             - *mask_path*: Path to the derived binary mask, or None on

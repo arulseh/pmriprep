@@ -57,7 +57,8 @@ class PatlakModel(PKModel):
             - slope = Ktrans
             - intercept = vp
 
-    Parameters:
+    Parameters
+    ----------
         Ktrans: Volume transfer constant (min⁻¹), 0-3 min⁻¹
             - Reflects unidirectional influx rate
             - For intact BBB: typically < 0.05 min⁻¹
@@ -78,7 +79,8 @@ class PatlakModel(PKModel):
         - Not valid when significant contrast egress occurs
         - Should use only early time points if backflux is present
 
-    References:
+    References
+    ----------
         Patlak CS, Blasberg RG, Fenstermacher JD. Graphical evaluation of
         blood-to-brain transfer constants from multiple-time uptake data.
         J Cereb Blood Flow Metab. 1983;3(1):1-7.
@@ -102,7 +104,9 @@ class PatlakModel(PKModel):
     def get_parameter_definitions(self) -> Sequence[ModelParameter]:
         """Get parameter definitions for Patlak model.
 
-        Returns:
+        Returns
+        -------
+        Sequence[ModelParameter]
             List of two ModelParameter objects:
                 - Ktrans: volume transfer constant (influx)
                 - vp: plasma volume fraction
@@ -141,12 +145,18 @@ class PatlakModel(PKModel):
         Uses the fast graphical (linear regression) method to provide
         data-driven starting values for Bayesian MAP multi-start.
 
-        Args:
-            tissue_curve: Observed tissue concentration (mM).
-            aif: Arterial input function (mM).
-            time_points: Time points (minutes).
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration (mM).
+        aif : np.ndarray
+            Arterial input function (mM).
+        time_points : np.ndarray
+            Time points (minutes).
 
-        Returns:
+        Returns
+        -------
+        list of float
             List of [Ktrans, vp] estimates.
         """
         try:
@@ -172,12 +182,18 @@ class PatlakModel(PKModel):
 
         The integral is computed using the cumulative trapezoidal rule.
 
-        Args:
-            params: Parameter values [Ktrans, vp].
-            aif: Arterial input function plasma concentration values Cp(t) in mM.
-            time_points: Time points (minutes) at which to evaluate C_t.
+        Parameters
+        ----------
+        params : ParamsType
+            Parameter values [Ktrans, vp].
+        aif : np.ndarray
+            Arterial input function plasma concentration values Cp(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes) at which to evaluate C_t.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Tissue concentration values C_t(t) at each time point in mM.
         """
         ktrans = params[0]
@@ -218,12 +234,18 @@ class PatlakModel(PKModel):
 
         Where Y = vp + Ktrans × X (linear relationship).
 
-        Args:
-            tissue_curve: Observed tissue concentration values C_t(t) in mM.
-            aif: Arterial input function plasma concentration values Cp(t) in mM.
-            time_points: Time points (minutes) corresponding to measurements.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration values C_t(t) in mM.
+        aif : np.ndarray
+            Arterial input function plasma concentration values Cp(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes) corresponding to measurements.
 
-        Returns:
+        Returns
+        -------
+        tuple
             Tuple of (X, Y, valid_mask) where:
                 - X: normalized cumulative AIF (independent variable)
                 - Y: normalized tissue concentration (dependent variable)
@@ -276,14 +298,21 @@ class PatlakModel(PKModel):
         This is computationally fast and provides robust parameter estimates
         when the no-backflux assumption is valid.
 
-        Args:
-            tissue_curve: Observed tissue concentration values C_t(t) in mM.
-            aif: Arterial input function plasma concentration values Cp(t) in mM.
-            time_points: Time points (minutes) corresponding to measurements.
-            start_index: Optional index to start linear fit (skip early points).
-                If None, uses points after peak AIF.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration values C_t(t) in mM.
+        aif : np.ndarray
+            Arterial input function plasma concentration values Cp(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes) corresponding to measurements.
+        start_index : int, optional
+            Optional index to start linear fit (skip early points).
+            If None, uses points after peak AIF.
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult containing:
                 - parameters: Fitted Ktrans and vp values
                 - goodness-of-fit: R², AIC, BIC
@@ -386,17 +415,26 @@ class PatlakModel(PKModel):
         By default, uses nonlinear least squares.
         Can optionally use graphical (linear regression) method.
 
-        Args:
-            tissue_curve: Observed tissue concentration values C_t(t) in mM.
-            aif: Arterial input function plasma concentration values Cp(t) in mM.
-            time_points: Time points (minutes) corresponding to measurements.
-            initial_guess: Optional initial parameter values [Ktrans, vp].
-                Used only for nonlinear fitting (use_graphical=False).
-            weights: Optional per-frame weights for motion-weighted fitting.
-            use_graphical: If True (default), use fast graphical analysis.
-                If False, use nonlinear least squares optimization.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration values C_t(t) in mM.
+        aif : np.ndarray
+            Arterial input function plasma concentration values Cp(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes) corresponding to measurements.
+        initial_guess : Sequence[float], optional
+            Optional initial parameter values [Ktrans, vp].
+            Used only for nonlinear fitting (use_graphical=False).
+        weights : np.ndarray, optional
+            Optional per-frame weights for motion-weighted fitting.
+        use_graphical : bool, optional
+            If True (default), use fast graphical analysis.
+            If False, use nonlinear least squares optimization.
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult containing:
                 - parameters: Fitted Ktrans and vp values
                 - goodness-of-fit: R², AIC, BIC
@@ -513,15 +551,24 @@ class PatlakModel(PKModel):
         Uses analytical weighted least-squares with trapezoidal integral
         matching evaluate() exactly.
 
-        Args:
-            tissue_curve: Observed tissue concentration C_t(t) in mM.
-            aif: Arterial input function Cp(t) in mM.
-            time_points: Time points (minutes).
-            fixed_vp: Fixed plasma volume fraction from DSC CBV.
-            initial_guess: Not used (analytical solution).
-            weights: Optional per-frame weights for motion-weighted fitting.
+        Parameters
+        ----------
+        tissue_curve : np.ndarray
+            Observed tissue concentration C_t(t) in mM.
+        aif : np.ndarray
+            Arterial input function Cp(t) in mM.
+        time_points : np.ndarray
+            Time points (minutes).
+        fixed_vp : float
+            Fixed plasma volume fraction from DSC CBV.
+        initial_guess : Sequence[float], optional
+            Not used (analytical solution).
+        weights : np.ndarray, optional
+            Optional per-frame weights for motion-weighted fitting.
 
-        Returns:
+        Returns
+        -------
+        FitResult
             FitResult with n_parameters=1 and fitting_method='analytical_constrained_vp'.
         """
         from pmriprep.models.dce.base import EPSILON_RSS
@@ -585,10 +632,14 @@ class PatlakModel(PKModel):
         For the Patlak model, there are no derived parameters since
         kep is assumed to be zero (no backflux).
 
-        Args:
-            params: Fitted parameter values [Ktrans, vp].
+        Parameters
+        ----------
+        params : ParamsType
+            Fitted parameter values [Ktrans, vp].
 
-        Returns:
+        Returns
+        -------
+        dict
             Empty dictionary (no derived parameters for Patlak).
         """
         # Patlak assumes kep = 0 (no backflux), so no derived parameters

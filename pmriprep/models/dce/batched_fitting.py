@@ -9,9 +9,10 @@ The key insight is that while each LM iteration requires solving a small
 per-voxel normal equation (2-4 unknowns), the forward model evaluations
 (the expensive part) can be batched across all voxels.
 
-References:
-    Marquardt DW. An algorithm for least-squares estimation of nonlinear
-    parameters. J Soc Indust Appl Math. 1963;11(2):431-441.
+References
+----------
+Marquardt DW. An algorithm for least-squares estimation of nonlinear
+parameters. J Soc Indust Appl Math. 1963;11(2):431-441.
 """
 
 from __future__ import annotations
@@ -25,8 +26,6 @@ import numpy.typing as npt
 
 from pmriprep.models.dce.batched_models import evaluate_model
 from pmriprep.utils.dce_constants import (
-    EPSILON_VE,
-    EPSILON_VP,
     FP_BOUNDS,
     KTRANS_BOUNDS,
     PS_BOUNDS,
@@ -73,18 +72,27 @@ _PARAM_FD_FLOORS: dict[str, float] = {
 class FitResult:
     """Result from batched fitting.
 
-    Attributes:
-        params: Parameter arrays, param_name → (N,).
-        r_squared: R-squared values, shape (N,).
-        converged: Convergence flags, shape (N,).
-        fitted_curves: Fitted concentration curves, shape (N, T) or None.
-        n_iterations: Number of LM iterations performed.
-        model_name: Name of the fitted model.
-        uncertainties: Parameter uncertainties, param_name → (N,).
-            NaN for non-converged voxels.
-        vp_at_bound: Per-voxel indicator (0/1) of whether vp ended at a
-            bound in the active-set SOFT NLLS path. None for HARD / SKIP /
-            unconstrained / Bayesian fits. Shape (N,).
+    Attributes
+    ----------
+    params : dict of str to numpy.ndarray
+        Parameter arrays, param_name → (N,).
+    r_squared : numpy.ndarray
+        R-squared values, shape (N,).
+    converged : numpy.ndarray
+        Convergence flags, shape (N,).
+    fitted_curves : numpy.ndarray or None
+        Fitted concentration curves, shape (N, T) or None.
+    n_iterations : int
+        Number of LM iterations performed.
+    model_name : str
+        Name of the fitted model.
+    uncertainties : dict of str to numpy.ndarray
+        Parameter uncertainties, param_name → (N,).
+        NaN for non-converged voxels.
+    vp_at_bound : numpy.ndarray or None
+        Per-voxel indicator (0/1) of whether vp ended at a
+        bound in the active-set SOFT NLLS path. None for HARD / SKIP /
+        unconstrained / Bayesian fits. Shape (N,).
     """
 
     params: dict[str, npt.NDArray[np.floating]]
@@ -117,12 +125,17 @@ def concat_fit_results(
     ``n_iterations`` is reported as the max across chunks
     (representative — logging only; no downstream decision depends on it).
 
-    Args:
-        results: Non-empty list of per-chunk FitResults in voxel order.
-        n_total: Expected total voxel count across all chunks
-            (sanity-checked against the concatenated length).
+    Parameters
+    ----------
+    results : list of FitResult
+        Non-empty list of per-chunk FitResults in voxel order.
+    n_total : int
+        Expected total voxel count across all chunks
+        (sanity-checked against the concatenated length).
 
-    Returns:
+    Returns
+    -------
+    FitResult
         A single FitResult spanning all n_total voxels.
     """
     assert len(results) > 0, "concat_fit_results requires at least one chunk"
@@ -198,11 +211,16 @@ def _compute_r_squared(
 ) -> npt.NDArray[np.floating]:
     """Compute R-squared for each voxel.
 
-    Args:
-        observed: Observed curves, shape (N, T).
-        predicted: Predicted curves, shape (N, T).
+    Parameters
+    ----------
+    observed : numpy.ndarray
+        Observed curves, shape (N, T).
+    predicted : numpy.ndarray
+        Predicted curves, shape (N, T).
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         R-squared values, shape (N,).
     """
     ss_res = np.sum((observed - predicted) ** 2, axis=1)
@@ -218,12 +236,18 @@ def _build_param_dict(
 ) -> dict[str, npt.NDArray[np.floating]]:
     """Convert (N, P) params matrix to a dict for evaluate_model.
 
-    Args:
-        model_name: Model name.
-        params_matrix: Parameter matrix, shape (N, P).
-        param_names: Parameter names for this model.
+    Parameters
+    ----------
+    model_name : str
+        Model name.
+    params_matrix : numpy.ndarray
+        Parameter matrix, shape (N, P).
+    param_names : list of str
+        Parameter names for this model.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dict mapping parameter names to (N,) arrays.
     """
     return {name: params_matrix[:, j] for j, name in enumerate(param_names)}
@@ -237,11 +261,16 @@ def _apply_volume_constraint_batched(
 
     Only applies to models that have both ve and vp.
 
-    Args:
-        params: Parameter matrix, shape (N, P).
-        param_names: Parameter names.
+    Parameters
+    ----------
+    params : numpy.ndarray
+        Parameter matrix, shape (N, P).
+    param_names : list of str
+        Parameter names.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Params with volume constraint applied.
     """
     if "ve" not in param_names or "vp" not in param_names:
@@ -292,18 +321,29 @@ def batched_patlak_lstsq(
 
     ``vp_uncertainty == 0.0`` raises ``ValueError`` — pass ``None`` for HARD.
 
-    Args:
-        tissue_curves: Observed tissue curves, shape (N, T).
-        aif: Arterial input function, shape (T,).
-        time_points: Time points in minutes, shape (T,).
-        fixed_vp: Fixed vp values, shape (N,). See modes above.
-        vp_uncertainty: Relative uncertainty σ for the SOFT box constraint.
-            Must be positive or None.
-        weights: Per-frame motion weights, shape (T,).
-        save_fitted_curves: Whether to store fitted curves in result.
-        compute_uncertainties: Whether to compute parameter uncertainties.
+    Parameters
+    ----------
+    tissue_curves : numpy.ndarray
+        Observed tissue curves, shape (N, T).
+    aif : numpy.ndarray
+        Arterial input function, shape (T,).
+    time_points : numpy.ndarray
+        Time points in minutes, shape (T,).
+    fixed_vp : numpy.ndarray or None, optional
+        Fixed vp values, shape (N,). See modes above.
+    vp_uncertainty : float or None, optional
+        Relative uncertainty σ for the SOFT box constraint.
+        Must be positive or None.
+    weights : numpy.ndarray or None, optional
+        Per-frame motion weights, shape (T,).
+    save_fitted_curves : bool, optional
+        Whether to store fitted curves in result.
+    compute_uncertainties : bool, optional
+        Whether to compute parameter uncertainties.
 
-    Returns:
+    Returns
+    -------
+    FitResult
         FitResult with fitted Patlak parameters. ``vp_at_bound`` is set
         (per-voxel 0/1) only for the SOFT box mode; None otherwise.
     """
@@ -480,14 +520,22 @@ def _batched_initial_guess(
 
     Uses data-driven heuristics specific to each model type.
 
-    Args:
-        model_name: Model name.
-        tissue_curves: Observed curves, shape (N, T).
-        aif: AIF, shape (T,).
-        time_points: Time points, shape (T,).
-        param_names: Parameter names for this model.
+    Parameters
+    ----------
+    model_name : str
+        Model name.
+    tissue_curves : numpy.ndarray
+        Observed curves, shape (N, T).
+    aif : numpy.ndarray
+        AIF, shape (T,).
+    time_points : numpy.ndarray
+        Time points, shape (T,).
+    param_names : list of str
+        Parameter names for this model.
 
-    Returns:
+    Returns
+    -------
+    numpy.ndarray
         Initial guess matrix, shape (N, P).
     """
     n_voxels = tissue_curves.shape[0]
@@ -743,24 +791,39 @@ def batched_lm_fit(
 
     ``vp_uncertainty == 0.0`` raises ``ValueError`` — pass ``None`` for HARD.
 
-    Args:
-        model_name: Model to fit ('tofts', 'extended_tofts', 'patlak', '2cxm').
-        tissue_curves: Observed tissue curves, shape (N, T).
-        aif: Arterial input function, shape (T,).
-        time_points: Time points in minutes, shape (T,).
-        fixed_vp: Fixed vp values for constrained fitting, shape (N,).
-            See modes above.
-        vp_uncertainty: Relative uncertainty σ for the SOFT box constraint.
-            Must be positive or None.
-        weights: Per-frame motion weights, shape (T,).
-        max_iter: Maximum LM iterations. Default 100.
-        ftol: Relative cost function convergence tolerance. Default 1e-6.
-        xtol: Relative parameter convergence tolerance. Default 1e-5.
-        save_fitted_curves: Whether to store final fitted curves.
-        compute_uncertainties: Whether to compute parameter uncertainties
-            from the final Jacobian.
+    Parameters
+    ----------
+    model_name : str
+        Model to fit ('tofts', 'extended_tofts', 'patlak', '2cxm').
+    tissue_curves : numpy.ndarray
+        Observed tissue curves, shape (N, T).
+    aif : numpy.ndarray
+        Arterial input function, shape (T,).
+    time_points : numpy.ndarray
+        Time points in minutes, shape (T,).
+    fixed_vp : numpy.ndarray or None, optional
+        Fixed vp values for constrained fitting, shape (N,).
+        See modes above.
+    vp_uncertainty : float or None, optional
+        Relative uncertainty σ for the SOFT box constraint.
+        Must be positive or None.
+    weights : numpy.ndarray or None, optional
+        Per-frame motion weights, shape (T,).
+    max_iter : int, optional
+        Maximum LM iterations. Default 100.
+    ftol : float, optional
+        Relative cost function convergence tolerance. Default 1e-6.
+    xtol : float, optional
+        Relative parameter convergence tolerance. Default 1e-5.
+    save_fitted_curves : bool, optional
+        Whether to store final fitted curves.
+    compute_uncertainties : bool, optional
+        Whether to compute parameter uncertainties
+        from the final Jacobian.
 
-    Returns:
+    Returns
+    -------
+    FitResult
         FitResult with fitted parameters, R², and convergence flags. The
         ``vp_at_bound`` field is set (per-voxel 0/1) only for the SOFT box
         mode; None otherwise.

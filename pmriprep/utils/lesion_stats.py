@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 class MapStatistics:
     """Statistics for a single perfusion map within a ROI.
 
-    Attributes:
+    Attributes
+    ----------
         mean: Mean value within ROI.
         std: Standard deviation within ROI.
         median: Median (50th percentile) value.
@@ -42,7 +43,7 @@ class MapStatistics:
         p75: 75th percentile (Q3) value.
         p90: 90th percentile value.
         p95: 95th percentile value.
-        p98: 98th percentile (preferred hotspot per Federau Neuroradiol 2017).
+        p98: 98th percentile (robust hotspot; Federau 2017 Clin Neuroradiol 27:485).
         p99: 99th percentile (max-robust hotspot).
         cv: Coefficient of variation (std/mean).
         iqr: Interquartile range (p75 - p25).
@@ -51,8 +52,8 @@ class MapStatistics:
         entropy: Shannon entropy on 64-bin histogram over [p1, p99]
             (O'Connor Clin Cancer Res 2015).
         ppp: Percent positive pixels above noise threshold; populated only
-            for permeability biomarkers (Ktrans/vp/k2). Padhani Targ Oncol
-            2010; Bjornerud NMR Biomed 2011 for k2.
+            for permeability biomarkers (Ktrans/vp/k2). Zweifel & Padhani,
+            Targ Oncol 2010; Bjornerud JCBFM 2011 for k2.
         cohens_d_vs_nawm: Pooled-SD Cohen's d of region vs NAWM reference;
             populated post-hoc by ``LesionStatisticsResult.augment_with_cohens_d``.
         n_valid: Count of finite values used in statistics.
@@ -90,7 +91,8 @@ class MapStatistics:
 class RegionStatistics:
     """Statistics for all perfusion maps within a single region.
 
-    Attributes:
+    Attributes
+    ----------
         region_name: Name of the region (e.g., "contrast_enhancing_tumor").
         voxel_count: Number of voxels in the region.
         volume_mm3: Volume in cubic millimeters.
@@ -118,7 +120,8 @@ class RegionStatistics:
 class LesionStatisticsResult:
     """Complete lesion statistics result for a subject/session.
 
-    Attributes:
+    Attributes
+    ----------
         subject_id: BIDS subject ID (without 'sub-' prefix).
         session_id: BIDS session ID (without 'ses-' prefix).
         modality: Perfusion modality ("DSC" or "DCE").
@@ -210,10 +213,11 @@ class LesionStatisticsResult:
 # PPP (percent positive pixels) noise-floor thresholds for permeability
 # biomarkers. Map-name keys must match what callers pass to
 # compute_map_statistics; values are in the map's native units.
-#   Ktrans:  Padhani & Khan, Targ Oncol 2010 5:39 (>0.01 min⁻¹)
+#   Ktrans:  >0.01 min⁻¹ pipeline noise floor (Ktrans biomarker:
+#            Padhani & Khan 2010 Targ Oncol 5:39)
 #   vp:      conservative noise floor for plasma fraction
-#   k2:      Bjornerud NMR Biomed 2011 24:443; Leu MRM 2017 — explicit
-#            noise-floor cutoff in K2 → corrected-CBV pipeline (>0.001 s⁻¹)
+#   k2:      >0.001 s⁻¹ pipeline noise floor (k2 leakage biomarker:
+#            Bjornerud 2011 JCBFM 31:2041)
 PPP_THRESHOLDS: Dict[str, float] = {
     "Ktrans": 0.01,
     "ktrans": 0.01,  # accept either casing
@@ -272,17 +276,24 @@ def compute_map_statistics(
 ) -> Optional[MapStatistics]:
     """Compute comprehensive statistics for a perfusion map within a mask.
 
-    Args:
-        map_data: 3D array of perfusion map values.
-        mask: 3D boolean array defining the ROI.
-        map_name: Optional map identifier used to enable PPP for known
-            permeability biomarkers (Ktrans/vp/k2).
-        compute_advanced: When True, also compute p98, p99, skewness,
-            kurtosis, entropy. Disable for NAWM-reference computation
-            where these histogram metrics add noise on small ROIs and
-            aren't used downstream.
+    Parameters
+    ----------
+    map_data : np.ndarray
+        3D array of perfusion map values.
+    mask : np.ndarray
+        3D boolean array defining the ROI.
+    map_name : str, optional
+        Optional map identifier used to enable PPP for known
+        permeability biomarkers (Ktrans/vp/k2).
+    compute_advanced : bool, optional
+        When True, also compute p98, p99, skewness,
+        kurtosis, entropy. Disable for NAWM-reference computation
+        where these histogram metrics add noise on small ROIs and
+        aren't used downstream.
 
-    Returns:
+    Returns
+    -------
+    MapStatistics or None
         MapStatistics object or None if mask is empty.
         When mask is non-empty but all values are invalid, returns a
         ``MapStatistics`` with ``n_valid=0`` so callers can distinguish
@@ -360,12 +371,18 @@ def compute_fraction_above_threshold(
     This is used for fractional volume calculations, e.g., fraction of
     tumor with nCBV > 1.75 (high-grade glioma indicator).
 
-    Args:
-        map_data: 3D array of perfusion map values.
-        mask: 3D boolean array defining the ROI.
-        threshold: Value threshold.
+    Parameters
+    ----------
+    map_data : np.ndarray
+        3D array of perfusion map values.
+    mask : np.ndarray
+        3D boolean array defining the ROI.
+    threshold : float
+        Value threshold.
 
-    Returns:
+    Returns
+    -------
+    float or None
         Fraction (0-1) of voxels above threshold, or None if mask empty.
     """
     values = map_data[mask]
@@ -391,12 +408,18 @@ def compute_hotspot_value(
     Hotspot values represent the most aggressive tumor regions and are
     clinically relevant for treatment planning.
 
-    Args:
-        map_data: 3D array of perfusion map values.
-        mask: 3D boolean array defining the ROI.
-        percentile: Percentile to compute (default 90th).
+    Parameters
+    ----------
+    map_data : np.ndarray
+        3D array of perfusion map values.
+    mask : np.ndarray
+        3D boolean array defining the ROI.
+    percentile : float, optional
+        Percentile to compute (default 90th).
 
-    Returns:
+    Returns
+    -------
+    float or None
         Hotspot value or None if mask empty.
     """
     values = map_data[mask]
@@ -415,10 +438,14 @@ def detect_mask_type(
 ) -> Tuple[str, int]:
     """Detect the type of lesion mask from its label values.
 
-    Args:
-        mask_data: 3D array of mask values.
+    Parameters
+    ----------
+    mask_data : np.ndarray
+        3D array of mask values.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (mask_type, max_label):
             - mask_type: "multi_label_tumor_seg" if max >= 2, else "binary"
             - max_label: Maximum label value in mask
@@ -435,11 +462,16 @@ def extract_label_mask(
 ) -> np.ndarray:
     """Extract a binary mask for a specific label value.
 
-    Args:
-        mask_data: 3D array of mask values (multi-label).
-        label: Label value to extract.
+    Parameters
+    ----------
+    mask_data : np.ndarray
+        3D array of mask values (multi-label).
+    label : int
+        Label value to extract.
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         Boolean 3D array where mask_data == label.
     """
     return mask_data == label  # type: ignore[no-any-return]
@@ -501,11 +533,16 @@ def compute_region_volume(
 ) -> Tuple[int, float, float]:
     """Compute voxel count and volume for a mask.
 
-    Args:
-        mask: Boolean 3D array.
-        voxel_sizes: Voxel dimensions in mm (x, y, z).
+    Parameters
+    ----------
+    mask : np.ndarray
+        Boolean 3D array.
+    voxel_sizes : tuple of float
+        Voxel dimensions in mm (x, y, z).
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (voxel_count, volume_mm3, volume_ml).
     """
     voxel_count = int(np.sum(mask))
@@ -623,19 +660,26 @@ def combine_tumor_masks(
     2. If only whole_tumor present: use as binary mask
     3. If none present: return (None, "")
 
-    Args:
-        tumor_segmentation_file: Path to multi-label tumor segmentation (or None).
-        whole_tumor_mask_file: Path to whole tumor binary mask (or None).
-        reference_file: Path to reference image for output geometry (unused but
-            kept for interface compatibility).
+    Parameters
+    ----------
+    tumor_segmentation_file : str, optional
+        Path to multi-label tumor segmentation (or None).
+    whole_tumor_mask_file : str, optional
+        Path to whole tumor binary mask (or None).
+    reference_file : str, optional
+        Path to reference image for output geometry (unused but
+        kept for interface compatibility).
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (mask_file_path, mask_origin) where mask_origin is
         "tumor_segmentation" or "whole_tumor" or "" if no masks available.
         Returns ("", "") (not (None, "")) when no masks present because
         downstream traits.Str rejects None.
 
-    Note:
+    Notes
+    -----
         This function is used as a Nipype Function node, so type hints are removed
         from the signature (Optional requires import which breaks Function nodes).
     """
@@ -660,29 +704,35 @@ def combine_tumor_masks(
     return ("", "")
 
 
-# Per-map NAWM physiological ranges by field strength.
-#   3T table — Helenius Acta Radiol 2003; Calamante NMR Biomed 2013;
-#              Tofts JMRI 1999.
-#   1.5T table — CBF/CBV ~30% lower per Helenius 2003 1.5T values.
-# Outside [1.5T, 3T] we DO NOT extrapolate (Uludag NeuroImage 2009 —
-# CBF/CBV scale non-linearly with B0 via r2*; 7T values from a 3T
-# table would systematically over-flag).
+# Per-map NAWM physiological ranges by field strength. These bound
+# UNCALIBRATED DSC output: with relative ΔR2*-derived CBF/CBV (no absolute
+# k_H/r2*/AIF calibration), 3T reads ~40% higher than 1.5T because ΔR2*
+# per unit contrast and SNR are larger at 3T (true perfusion is
+# field-independent). MTT = CBV/CBF, so the ΔR2* scaling cancels and MTT
+# is field-independent (same band both tables).
+#   1.5T table — anchored to Helenius 2003 Acta Radiol 44:538 (1.5T DSC
+#                normative WM CBF~20, CBV~1.3, MTT~4.3 s).
+#   3T table   — 1.5T CBF/CBV bands scaled up for the larger 3T ΔR2* readout.
+#   ve — Tofts 1999 JMRI 10:223 (field-independent).
+# Outside [1.5T, 3T] we DO NOT extrapolate: ΔR2*-driven CBF/CBV scale
+# non-linearly with B0, so 7T values from a 3T table would systematically
+# over-flag.
 NAWM_RANGES_3T: Dict[str, Tuple[float, float]] = {
-    "cbf":    (15.0, 35.0),     # mL/100g/min — Helenius Acta Radiol 2003
-    "cbv":    (1.5, 4.0),       # mL/100g
-    "mtt":    (3.0, 8.0),       # s — Calamante NMR Biomed 2013
+    "cbf":    (15.0, 35.0),     # mL/100g/min — 1.5T Helenius scaled up for 3T ΔR2*
+    "cbv":    (1.5, 4.0),       # mL/100g — 1.5T Helenius scaled up for 3T ΔR2*
+    "mtt":    (3.0, 8.0),       # s — Helenius 2003 Acta Radiol 44:538 (field-independent)
     "ncbv":   (0.85, 1.15),     # normalization sanity check
     "ncbf":   (0.85, 1.15),
-    "ve":     (0.05, 0.30),     # Tofts JMRI 1999
+    "ve":     (0.05, 0.30),     # Tofts 1999 JMRI 10:223
     "vp":     (0.005, 0.05),
     "ktrans": (0.0, 0.02),      # NAWM intact BBB
     "Ktrans": (0.0, 0.02),
 }
 
 NAWM_RANGES_1T5: Dict[str, Tuple[float, float]] = {
-    "cbf":    (10.0, 25.0),     # ~30% lower than 3T
-    "cbv":    (1.0, 3.0),
-    "mtt":    (3.0, 8.0),
+    "cbf":    (10.0, 25.0),     # mL/100g/min — Helenius 2003 Acta Radiol 44:538 (1.5T)
+    "cbv":    (1.0, 3.0),       # mL/100g — Helenius 2003 Acta Radiol 44:538 (1.5T)
+    "mtt":    (3.0, 8.0),       # s — Helenius 2003 Acta Radiol 44:538 (field-independent)
     "ncbv":   (0.85, 1.15),
     "ncbf":   (0.85, 1.15),
     "ve":     (0.05, 0.30),
@@ -737,15 +787,22 @@ def compute_nawm_reference(
           alongside the per-map sub-dict so that
           ``extract_per_map_lesion_stats`` can slice cleanly.
 
-    Args:
-        nawm_mask: Boolean NAWM mask.
-        maps: Dictionary mapping map name to 3D array.
-        voxel_sizes: Voxel dimensions in mm.
-        field_strength_t: B0 in tesla. When None or outside the
-            validated [1.5T, 3.0T] range, value-level QC is reported
-            as ``UNKNOWN`` (observed values still emitted).
+    Parameters
+    ----------
+    nawm_mask : np.ndarray
+        Boolean NAWM mask.
+    maps : dict
+        Dictionary mapping map name to 3D array.
+    voxel_sizes : tuple of float
+        Voxel dimensions in mm.
+    field_strength_t : float, optional
+        B0 in tesla. When None or outside the
+        validated [1.5T, 3.0T] range, value-level QC is reported
+        as ``UNKNOWN`` (observed values still emitted).
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary with NAWM statistics for each available map plus
         the QC fields described above.
     """
@@ -852,18 +909,25 @@ def write_tumor_dseg_tsv(
     :func:`pmriprep.utils.sidecar_builders.build_tumor_seg_dseg_sidecar`,
     which describes both the NIfTI label map and these TSV columns.
 
-    Args:
-        segmentation_file: Path to HD-GLIO dseg NIfTI (int labels 0/1/2).
-        output_path: Output ``.tsv`` path. Should match the NIfTI basename
-            (e.g. ``sub-X_space-T1w_desc-tumorseg_dseg.tsv``) so the
-            companion JSON sidecar applies to both files per BIDS.
+    Parameters
+    ----------
+    segmentation_file : str or Path
+        Path to HD-GLIO dseg NIfTI (int labels 0/1/2).
+    output_path : str or Path
+        Output ``.tsv`` path. Should match the NIfTI basename
+        (e.g. ``sub-X_space-T1w_desc-tumorseg_dseg.tsv``) so the
+        companion JSON sidecar applies to both files per BIDS.
 
-    Returns:
+    Returns
+    -------
+    Path
         Resolved ``output_path`` as a ``Path``.
 
-    Raises:
-        ValueError: if the NIfTI contains label values outside the
-            registered set (0, 1, 2).
+    Raises
+    ------
+    ValueError
+        if the NIfTI contains label values outside the
+        registered set (0, 1, 2).
     """
     import csv
 
