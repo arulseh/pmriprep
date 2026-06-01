@@ -2277,8 +2277,9 @@ def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
 
     Returns
     -------
-    str or None
-        Selected mask path, or None if neither is available.
+    str
+        Selected mask path, or "" if neither is available (the empty-string
+        convention required by the downstream lesion_mask_file trait).
     """
     from nipype.interfaces.base import isdefined
 
@@ -2288,7 +2289,7 @@ def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
     if isdefined(transformed_lesion_mask) and transformed_lesion_mask is not None:
         if transformed_lesion_mask != "":
             return transformed_lesion_mask
-    return None
+    return ""
 
 
 def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
@@ -2409,18 +2410,19 @@ def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
 
     Returns
     -------
-    str or None
-        Path to transformed probability map in DCE space, or None if no input.
+    str
+        Path to transformed probability map in DCE space, or "" if no input
+        (the empty-string convention required by the downstream probseg traits).
     """
     from nipype.interfaces.base import isdefined
 
     # Handle both None and Nipype Undefined
     if not isdefined(probseg_file) or probseg_file is None:
-        return None
+        return ""
     if not isdefined(reference_file) or reference_file is None:
-        return None
+        return ""
     if not isdefined(transform_matrix) or transform_matrix is None:
-        return None
+        return ""
 
     from pathlib import Path
     import subprocess
@@ -2430,7 +2432,7 @@ def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
 
     probseg_path = Path(probseg_file)
     if not probseg_path.is_file():
-        return None
+        return ""
 
     out_dir = Path.cwd()
     # Derive output name from input (e.g., *_pve_0 → csf, *_pve_1 → gm, *_pve_2 → wm)

@@ -1127,16 +1127,23 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Magnetic field strength in Tesla for QC range selection",
     )
-    csf_probseg = File(
-        exists=True,
-        desc="CSF probability map for excluding CSF voxels from T1 fitting",
+    csf_probseg = traits.Either(
+        File(exists=True),
+        traits.Enum(""),
+        mandatory=False,
+        desc="CSF probability map for excluding CSF voxels from T1 fitting. "
+        "Empty string when unavailable (Function-node empty-string convention).",
     )
-    wm_probseg = File(
-        exists=True,
+    wm_probseg = traits.Either(
+        File(exists=True),
+        traits.Enum(""),
+        mandatory=False,
         desc="WM probability map for tissue-segmented T1 fallback (optional)",
     )
-    gm_probseg = File(
-        exists=True,
+    gm_probseg = traits.Either(
+        File(exists=True),
+        traits.Enum(""),
+        mandatory=False,
         desc="GM probability map for tissue-segmented T1 fallback (optional)",
     )
     csf_threshold = traits.Float(

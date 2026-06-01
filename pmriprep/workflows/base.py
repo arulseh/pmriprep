@@ -1808,7 +1808,7 @@ def init_pmriprep_wf(
         )
         _dsc_prev_seg = (
             _find_previous_tumor_seg_outputs(Path(work_dir), subject_id, session_id)
-            if _dsc_skip_tumor
+            if _dsc_skip_tumor and work_dir is not None
             else {}
         )
 
@@ -2533,7 +2533,7 @@ def init_pmriprep_wf(
         )
         _dce_prev_seg = (
             _find_previous_tumor_seg_outputs(Path(work_dir), subject_id, session_id)
-            if _dce_skip_tumor
+            if _dce_skip_tumor and work_dir is not None
             else {}
         )
 

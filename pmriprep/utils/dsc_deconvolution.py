@@ -101,8 +101,7 @@ def build_toeplitz_matrix(
         C_tissue = A @ R
 
     where the convolution integral is discretized using trapezoidal
-    weighting, consistent with the Volterra discretization described
-    by Østergaard (1996) and UMMPerfusion (Sourbron PMC3597952).
+    weighting, consistent with the Volterra discretization (Østergaard 1996).
 
     Trapezoidal weighting applies 0.5× weight to the first and last
     points of each row's integration interval, and 1.0× to interior
@@ -991,7 +990,7 @@ def _deconvolve_with_threshold(
     causal_indices = (peak_position + np.arange(n_original)) % m
 
     # OI from raw causal residue — negative oscillations are the signal
-    # OI is designed to detect (Wu 2003 MRM 50:164)
+    # OI is designed to detect
     oi = compute_oscillation_index(residue_raw[causal_indices])
 
     return residue, oi, n_retained, condition_number, peak_position
@@ -1009,7 +1008,7 @@ def svd_deconvolve_oscillation(
 ) -> OscillationDeconvolutionResult:
     """Oscillation-index limited SVD deconvolution (oSVD).
 
-    Uses a block-circulant matrix (Wu 2003) for delay-insensitive
+    Uses a block-circulant matrix for delay-insensitive
     deconvolution with adaptive OI-based threshold selection.
 
     The oscillation index is defined as:
@@ -1125,7 +1124,7 @@ def svd_deconvolve_oscillation(
         best_threshold = threshold_max
         converged = False
 
-    # Extract delay from peak position (Wu et al. 2003; zero-delay at index 0)
+    # Extract delay from peak position (zero-delay at index 0)
     if best_peak < n:
         delay_frames = best_peak
     else:
@@ -1175,7 +1174,7 @@ def svd_deconvolve_oscillation_batch(
     npt.NDArray[np.floating],  # threshold_used
     npt.NDArray[np.floating],  # delay (seconds)
 ]:
-    """Batch oSVD deconvolution using block-circulant matrix (Wu 2003).
+    """Batch oSVD deconvolution using block-circulant matrix.
 
     Each voxel gets an individually optimized threshold via OI-based
     linear search. Returns 2N residues and delay maps.
@@ -1282,7 +1281,7 @@ def svd_deconvolve_oscillation_batch(
             )
             best_threshold = threshold_max
 
-        # Extract delay (Wu et al. 2003; zero-delay at index 0)
+        # Extract delay (zero-delay at index 0)
         if best_peak < n_timepoints:
             delay_frames = best_peak
         else:
@@ -1433,8 +1432,9 @@ def tikhonov_deconvolve(
     is the residue function, and ``L`` is the (n-1, n) forward-difference
     operator that penalises oscillations rather than residue magnitude.
     First-order Tikhonov is more appropriate than zeroth-order for DSC
-    residues (which physically should vary smoothly) — see Wirestam 2000,
-    Calamante 2003.
+    residues, which physically should vary smoothly (Hansen 1998 for the
+    L-operator theory, Zanderigo 2009 for derivative-penalty regularization
+    in perfusion).
 
     The optimal λ is selected via the L-curve corner method (Hansen 1998):
     sweep λ on a log grid, record (||A·r_λ - C||, ||L·r_λ||), find the
@@ -1471,7 +1471,7 @@ def tikhonov_deconvolve(
     References
     ----------
         Hansen PC. Rank-Deficient and Discrete Ill-Posed Problems. SIAM, 1998.
-        Wirestam R et al. MRM 43:691-700 (2000).
+        Zanderigo F et al. IEEE Trans Biomed Eng 56:1287-1297 (2009).
         Calamante F et al. MRM 50:1237-1247 (2003).
         Castellanos JL et al. App Numer Math 43:359-373 (2002).
     """

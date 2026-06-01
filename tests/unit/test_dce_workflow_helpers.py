@@ -410,3 +410,73 @@ class TestComputeDCEMapsDoseTraits:
             agent_standard_dose=0.05,
         )
         assert result.config.mode == ConstraintMode.SKIP
+
+
+class TestMaskProducersReturnEmptyString:
+    """Regression for v0.57.2: workflow Function nodes that select/transform
+    optional masks must return the empty string (not None) when no mask is
+    available, because the downstream traits are
+    ``Either(File(exists=True), Enum(""))`` and reject None.
+
+    The crash (``_select_aif_exclusion_mask`` → ``aif_detection.lesion_mask_file``)
+    was introduced in d75a996 and slipped past the earlier 27fada7 fix because
+    the new override pathway had no test. ``_transform_probseg_to_dce`` was the
+    remaining latent instance of the same class.
+    """
+
+    def test_select_aif_exclusion_mask_returns_empty_when_no_mask(self) -> None:
+        from pmriprep.workflows.dce.base import _select_aif_exclusion_mask
+
+        assert _select_aif_exclusion_mask(None, None) == ""
+        assert _select_aif_exclusion_mask("", "") == ""
+
+    def test_select_aif_exclusion_mask_prefers_user_then_transformed(self) -> None:
+        from pmriprep.workflows.dce.base import _select_aif_exclusion_mask
+
+        assert _select_aif_exclusion_mask("/user.nii.gz", "/seg.nii.gz") == "/user.nii.gz"
+        assert _select_aif_exclusion_mask("", "/seg.nii.gz") == "/seg.nii.gz"
+
+    def test_transform_probseg_returns_empty_on_missing_input(self) -> None:
+        from pmriprep.workflows.dce.base import _transform_probseg_to_dce
+
+        assert _transform_probseg_to_dce(None, "/ref.nii.gz", "/xfm.mat") == ""
+        assert _transform_probseg_to_dce("/p.nii.gz", None, "/xfm.mat") == ""
+        assert _transform_probseg_to_dce("/p.nii.gz", "/ref.nii.gz", None) == ""
+        # Non-existent path on disk also degrades to "".
+        assert _transform_probseg_to_dce("/nope.nii.gz", "/ref.nii.gz", "/xfm.mat") == ""
+
+
+class TestT1MappingProbsegTraitsAcceptEmptyString:
+    """Regression for v0.57.2: the T1Mapping CSF/WM/GM probseg traits must accept
+    the empty string returned by ``_transform_probseg_to_dce`` when no probseg is
+    available, mirroring the lesion-mask trait fix (27fada7). They must still
+    reject non-existent paths."""
+
+    def test_probseg_traits_accept_empty_string(self) -> None:
+        from pmriprep.interfaces.dce import T1Mapping
+
+        iface = T1Mapping()
+        iface.inputs.csf_probseg = ""
+        iface.inputs.wm_probseg = ""
+        iface.inputs.gm_probseg = ""
+        assert iface.inputs.csf_probseg == ""
+        assert iface.inputs.wm_probseg == ""
+        assert iface.inputs.gm_probseg == ""
+
+    def test_probseg_traits_accept_existing_path(self, tmp_path: Any) -> None:
+        from pmriprep.interfaces.dce import T1Mapping
+
+        f = tmp_path / "csf.nii.gz"
+        f.write_bytes(b"")
+        iface = T1Mapping()
+        iface.inputs.csf_probseg = str(f)
+        assert iface.inputs.csf_probseg == str(f)
+
+    def test_probseg_traits_reject_nonexistent_path(self) -> None:
+        from traits.trait_errors import TraitError
+
+        from pmriprep.interfaces.dce import T1Mapping
+
+        iface = T1Mapping()
+        with pytest.raises(TraitError):
+            iface.inputs.wm_probseg = "/nonexistent/missing.nii.gz"

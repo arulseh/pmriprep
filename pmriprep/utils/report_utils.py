@@ -33,7 +33,7 @@ _DSC_DECONV_TEXT: dict[str, str] = {
     "oSVD": "oscillation-index regularized SVD (oSVD; Wu et al., 2003)",
     "tikhonov": (
         "Tikhonov-regularized deconvolution with L-curve corner detection "
-        "(Hansen, 1998; Calamante et al., 2003)"
+        "(Hansen, 1998; Calamante et al., 2003; Zanderigo et al., 2009)"
     ),
     "vascular": (
         "the vascular model with gamma-variate transit time distribution "
@@ -262,6 +262,13 @@ _REFERENCES: dict[str, str] = {
         "Actual flip-angle imaging in the pulsed steady state: a method for rapid three-dimensional mapping "
         "of the transmitted radiofrequency field. "
         "Magn Reson Med. 2007;57(1):192-200. doi:10.1002/mrm.21120"
+    ),
+    "zanderigo_2009": (
+        "Zanderigo F, Bertoldo A, Pillonetto G, Cobelli C. "
+        "Nonlinear stochastic regularization to characterize tissue residue function "
+        "in bolus-tracking MRI: assessment and comparison with SVD, block-circulant SVD, "
+        "and Tikhonov. "
+        "IEEE Trans Biomed Eng. 2009;56(5):1287-1297. doi:10.1109/TBME.2009.2013820"
     ),
     "zhang_2001": (
         "Zhang Y, Brady M, Smith S. "
@@ -507,7 +514,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
     elif method_lower == "osvd":
         refs.add("wu_2003")
     elif method_lower == "tikhonov":
-        refs.update(["hansen_1998", "calamante_2003"])
+        refs.update(["hansen_1998", "calamante_2003", "zanderigo_2009"])
     elif method_lower == "vascular":
         refs.add("mouridsen_2006")
     elif method_lower == "cpi":
