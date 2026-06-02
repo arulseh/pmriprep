@@ -1,6 +1,6 @@
 """Two-Compartment Exchange pharmacokinetic model (2CXM).
 
-Implements the Two-Compartment Exchange Model (Sourbron & Buckley 2011) for
+Implements the Two-Compartment Exchange Model for
 DCE-MRI analysis. This model accounts for flow-limited contrast agent exchange
 and is appropriate for tissues with high permeability relative to flow.
 
@@ -12,15 +12,6 @@ The model describes contrast agent kinetics in terms of:
 
 The tissue concentration is computed using an analytical solution based on
 eigenvalue decomposition of the two-compartment system.
-
-References
-----------
-    Sourbron SP, Buckley DL. On the scope and interpretation of the Tofts
-    models for DCE-MRI. Magn Reson Med. 2011;66(3):735-745.
-
-    Brix G, Kiessling F, Lucht R, et al. Microcirculation and microvasculature
-    in breast tumors: pharmacokinetic analysis of dynamic MR image series.
-    Magn Reson Med. 2004;52(2):420-429.
 """
 
 from typing import Optional, Sequence
@@ -113,15 +104,6 @@ class TwoCompartmentExchangeModel(PKModel):
         - Flow-limited (PS >> Fp): Ktrans ≈ Fp
         - Permeability-limited (Fp >> PS): Ktrans ≈ PS
         - Mixed regime: Ktrans = E × Fp
-
-    References
-    ----------
-        Sourbron SP, Buckley DL. On the scope and interpretation of the Tofts
-        models for DCE-MRI. Magn Reson Med. 2011;66(3):735-745.
-
-        Brix G, Kiessling F, Lucht R, et al. Microcirculation and
-        microvasculature in breast tumors: pharmacokinetic analysis of
-        dynamic MR image series. Magn Reson Med. 2004;52(2):420-429.
     """
 
     @property

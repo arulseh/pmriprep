@@ -53,12 +53,6 @@ class ToftsModel(PKModel):
     Derived parameter:
         kep = Ktrans / ve: Efflux rate constant (min⁻¹)
             - Rate of contrast efflux from EES back to plasma
-
-    References
-    ----------
-        Tofts PS, Kermode AG. Measurement of the blood-brain barrier
-        permeability and leakage space using dynamic MR imaging.
-        1. Fundamental concepts. Magn Reson Med. 1991;17(2):357-367.
     """
 
     @property

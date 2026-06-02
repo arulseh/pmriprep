@@ -86,8 +86,8 @@ _MIN_CANDIDATE_SCORE = 0.5
 _MIN_CANDIDATES_FOR_DETECTED = 2
 # Maximum post-arrival peak time (seconds) for the EARLIEST candidate in a
 # tier to be considered "anchored" by an arterial-grade voxel. Derived from
-# physiological arterial bolus arrival range (4-12s post-injection,
-# Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1) plus capillary MTT margin (~4s in GM) for
+# physiological arterial bolus arrival range (4-12s post-injection)
+# plus capillary MTT margin (~4s in GM) for
 # adult brain DCE. Tiers whose earliest candidate peaks later than this
 # are treated as venous-only clusters and fail Pass-1 acceptance. If
 # pediatric or extreme-cardiac-output cohorts are added later, expose as
@@ -179,7 +179,7 @@ def parker_population_aif(
     Uses normalized Gaussian components where A1/A2 are areas (mM·min) under
     the Gaussian curves. Dividing by (sigma * sqrt(2*pi)) converts these to
     peak amplitudes, producing ~6 mM peak for full dose (0.1 mmol/kg), which
-    matches Parker et al. 2006 reported values (6.3 ± 1.5 mM).
+    matches the population value (6.3 ± 1.5 mM).
 
     Parameters
     ----------
@@ -200,11 +200,6 @@ def parker_population_aif(
     np.ndarray
         Concentration time course in mM.
 
-    References
-    ----------
-    Parker GJM et al. "Experimentally-derived functional form for a
-    population-averaged high-temporal-resolution arterial input function
-    for dynamic contrast-enhanced MRI." Magn Reson Med. 2006;56:993-1000.
     """
     # Convert time to minutes
     t_min = t / 60.0
@@ -594,8 +589,7 @@ def compute_dce_aif_ratio_30s(
     ``ceil(30 / tr)`` frames after the peak, so the gate behaves
     consistently across temporal resolutions from sub-second compressed-
     sensing 4D up to ~7 s clinical DCE-VIBE. Parker bi-exponential gives
-    ratio ~0.32 at peak+30 s; venous AIFs sit at >=0.55 (Bleeker 2011 MRM
-    65:448).
+    ratio ~0.32 at peak+30 s; venous AIFs sit at >=0.55.
 
     Parameters
     ----------
@@ -689,7 +683,7 @@ def _apply_aif_scale(
         Plasma-converted AIF curve (already divided by ``1 - Hct``).
     hct : float
         Arterial hematocrit (used to convert Parker blood-voxel target
-        amplitudes to plasma units; matches Parker 2006 convention).
+        amplitudes to plasma units).
     target_peak : float
         User-supplied target peak (mM blood). When ``> 0``, overrides
         the field-strength default; when ``<= 0``, falls back to the
@@ -1273,15 +1267,9 @@ class AIFDetection(BaseInterface):
     - Baseline should be ~0 (pre-contrast)
     - Washout fraction: ≥0.2 (strict) or ≥0.1 (relaxed)
 
-    The Parker population AIF (2006) is used as fallback and for scaling
+    The Parker population AIF is used as fallback and for scaling
     reference. It represents a well-characterized arterial input for
     standard contrast dose.
-
-    References
-    ----------
-    Parker GJM et al. "Experimentally-derived functional form for a
-    population-averaged high-temporal-resolution arterial input function
-    for dynamic contrast-enhanced MRI." Magn Reson Med. 2006;56:993-1000.
 
     See Also
     --------
@@ -1321,7 +1309,7 @@ class AIFDetection(BaseInterface):
     def _get_expected_peak_range(self) -> tuple[float, float]:
         """Get expected peak concentration range based on dose.
 
-        Returns values in **plasma units** — Parker 2006 population AIF
+        Returns values in **plasma units** — the population AIF
         is the Tofts plasma input function, so
         ``DCE_AIF_EXPECTED_FULL_DOSE`` inherits plasma scaling. The
         cluster-mean QC warning at ``final_peak_mm`` compares correctly
@@ -2112,9 +2100,8 @@ class AIFDetection(BaseInterface):
             removed. If at least one non-venous candidate survives, drops
             only the venous-flagged ones (preserving the survivors). If
             ALL candidates are flagged venous, returns ``([], [], [])`` so
-            the cascade treats the tier as failed (Willats & Calamante 2013
-            NMR Biomed 26:913: venous-derived AIFs produce quantitatively
-            biased PK estimates).
+            the cascade treats the tier as failed (venous-derived AIFs
+            produce quantitatively biased PK estimates).
         """
         if not candidates:
             return candidates, scores, metrics_list
@@ -2152,8 +2139,8 @@ class AIFDetection(BaseInterface):
             )
 
         # All flagged venous — fail the tier. The cascade will descend or
-        # fall to Parker (Willats & Calamante 2013 NMR Biomed 26:913: venous-derived AIFs
-        # produce quantitatively biased PK estimates).
+        # fall to Parker (venous-derived AIFs produce quantitatively
+        # biased PK estimates).
         logger.warning(
             "Tier rejected: %d/%d candidates flagged as likely venous "
             "(no non-venous alternative). Cascade will descend.",
@@ -4152,9 +4139,8 @@ class AIFDetection(BaseInterface):
             # Whole-brain fallback: full erosion, midline exclusion,
             # SSS-sized superior margin, and a 10 mm physical-depth cut
             # to strip the lateral cortical surface where cortical-vein
-            # drainage produces arterial-shaped curves at clinical TR
-            # (Rhoton 2002 Neurosurgery 51 supp; Tanriover 2003
-            # Neurosurgery 53:1326). Atlas search skips this cut so it
+            # drainage produces arterial-shaped curves at clinical TR.
+            # Atlas search skips this cut so it
             # retains 75-94 % of MCA_ACA territory.
             wb_search_mask = self._prepare_search_mask(
                 brain_mask,
@@ -4520,7 +4506,7 @@ class AIFDetection(BaseInterface):
                 bat_override = True
 
             # Scale population AIF to match pipeline's plasma-Tofts
-            # convention (Tofts 1999 JMRI; QIBA DCE-MRI Profile v2.0).
+            # convention.
             # Parker's published AIF parameters were derived from blood-voxel
             # ΔR1/r1 in a cohort with Hct = 0.42, so under FXL the published
             # "C_p" values are effectively (1-Hct) × C_p_true. Dividing by
@@ -4624,7 +4610,7 @@ class AIFDetection(BaseInterface):
                 #   path /(1-Hct) at line 2744, population path at line 2895).
                 # - Parker's peak_min/peak_max (and user-supplied target_peak)
                 #   are in BLOOD-VOXEL units = (1-Hct) × true_plasma_Cp, per
-                #   Parker 2006 derivation (see comment block above population
+                #   the Parker AIF derivation (see comment block above population
                 #   Hct-correction for details).
                 # The target must therefore be divided by (1-Hct) so its
                 # scale matches current_peak.
@@ -4665,7 +4651,7 @@ class AIFDetection(BaseInterface):
         final_washout = compute_dce_aif_washout(aif_curve, baseline_frames)
 
         # Peak-amplitude QC warning. Both final_peak (post-Hct division
-        # at the aif_curve scaling site) and expected_max_mm (Parker 2006
+        # at the aif_curve scaling site) and expected_max_mm (population
         # plasma input) are plasma units — no Hct conversion needed.
         # Suppressed for population fallback (population AIF is
         # tautologically within its own expected range).

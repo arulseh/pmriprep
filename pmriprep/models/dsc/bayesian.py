@@ -7,16 +7,6 @@ Provides Bayesian fitting methods for DSC models including:
 
 The BayesianDSCFitter class works with any model implementing the DSCModel
 interface, including VascularModel and CPIModel.
-
-References
-----------
-    Mouridsen K, Friston K, Hjort N, et al. (2006).
-    "Bayesian estimation of cerebral perfusion using a physiological
-    model of microvasculature." NeuroImage 33(2):570-579.
-
-    Woolrich MW, Jbabdi S, Patenaude B, et al. (2009).
-    "Bayesian analysis of neuroimaging data in FSL."
-    NeuroImage 45(1):S173-S186.
 """
 
 from typing import Callable
@@ -707,8 +697,7 @@ class BayesianDSCFitter:
     ) -> DSCFitResult:
         """Fit model using FABBER-style linearized Variational Bayes.
 
-        Implements the linearized VB algorithm from Chappell et al. (2009,
-        IEEE Trans Signal Process 57(1):223-236). At each iteration the forward model is
+        Implements the linearized VB algorithm. At each iteration the forward model is
         linearized around the current posterior mean, enabling analytic
         Gaussian posterior updates. Noise precision is treated as a conjugate
         Gamma random variable.
@@ -740,12 +729,6 @@ class BayesianDSCFitter:
         -------
         DSCFitResult
             DSCFitResult with parameters, uncertainties, and credible intervals.
-
-        References
-        ----------
-            Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
-            "Variational Bayesian Inference for a Nonlinear Forward Model."
-            IEEE Trans Signal Process 57(1):223-236.
         """
         if sloppy:
             n_iterations = 8

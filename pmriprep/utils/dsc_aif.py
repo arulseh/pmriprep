@@ -1306,8 +1306,7 @@ class GammaVariateFitResult:
         Number of samples in the first-pass window
         ``[baseline_frames : peak_idx + max(10, 2*FWHM)]`` when
         ``remove_recirculation=True``; equal to ``n_frames - baseline_frames``
-        otherwise. Gamma fitting is ill-posed below ~8 samples (Welker AJNR
-        2015, Calamante 2013).
+        otherwise. Gamma fitting is ill-posed below ~8 samples.
     """
 
     fitted_curve: npt.NDArray[Any]
@@ -1722,8 +1721,7 @@ def fit_gamma_variate(
     # original and the fitted curve over the same first-pass window so the
     # ratio is apples-to-apples (else the asymmetric ratio misfires on any
     # AIF with non-trivial post-bolus tail — preloaded protocols always,
-    # and any clean recirculation pattern). See Welker 2015 AJNR 36:E41
-    # and Dickie 2024 MRM 91:1761 (OSIPI lexicon).
+    # and any clean recirculation pattern).
     if remove_recirculation:
         cutoff_for_auc = min(
             peak_idx + max(10, 2 * compute_aif_fwhm_frames(aif_curve, baseline_frames)),
@@ -1788,15 +1786,14 @@ GAMMA_PEAK_RATIO_MAX: float = 1.10
 # AUC ratio bounds retained for QC provenance only — no longer a hard gate.
 # Symmetric-window auc_ratio (see ``fit_gamma_variate``) makes this metric
 # meaningful, but R² + peak_ratio + defect detection already cover the
-# pathology this band would catch (Welker 2015 AJNR 36:E41, Dickie 2024 MRM 91:1761).
+# pathology this band would catch.
 GAMMA_AUC_RATIO_MIN: float = 0.85
 GAMMA_AUC_RATIO_MAX: float = 1.15
 # Soft warning band: auc_ratio outside this is logged in QC but does not
-# trigger fallback (Welker 2015 AJNR 36:E41).
+# trigger fallback.
 GAMMA_AUC_RATIO_SOFT_MIN: float = 0.70
 GAMMA_AUC_RATIO_SOFT_MAX: float = 1.30
-# Minimum first-pass samples for gamma fitting to be well-posed (Welker
-# 2015 AJNR 36:E41, Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1).
+# Minimum first-pass samples for gamma fitting to be well-posed.
 GAMMA_MIN_FIRST_PASS_SAMPLES: int = 8
 
 # Defect detection thresholds
@@ -1849,8 +1846,7 @@ def should_apply_gamma_fit(
     for QC provenance, with ``metrics["auc_ratio_warning"]`` set when the
     symmetric-window ratio falls outside ``[GAMMA_AUC_RATIO_SOFT_MIN,
     GAMMA_AUC_RATIO_SOFT_MAX]``. R² + peak_ratio + defect detection already
-    cover the pathology a hard AUC gate would catch (physics review:
-    Welker AJNR 2015, Dickie et al. MRM 2024 OSIPI lexicon).
+    cover the pathology a hard AUC gate would catch.
 
     Parameters
     ----------
@@ -1876,7 +1872,7 @@ def should_apply_gamma_fit(
         )
 
     # Eligibility prerequisite: gamma fitting is ill-posed below ~8 first-pass
-    # samples (Welker 2015 AJNR 36:E41, Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1).
+    # samples.
     metrics["first_pass_n"] = fit_result.first_pass_n
     if fit_result.first_pass_n < GAMMA_MIN_FIRST_PASS_SAMPLES:
         return (
@@ -1919,8 +1915,7 @@ def should_apply_gamma_fit(
 
     # AUC ratio: reported for QC provenance with a soft warning band, but
     # NOT a hard gate. R² + peak_ratio + defect detection already cover the
-    # pathology this gate would catch (physics review: Welker 2015 AJNR 36:E41,
-    # Dickie 2024 MRM 91:1761).
+    # pathology this gate would catch.
     auc_ratio = fit_result.auc_ratio
     metrics["auc_ratio"] = auc_ratio
     metrics["auc_ratio_warning"] = not (
@@ -2068,7 +2063,6 @@ def fit_gamma_variate_from_file(
 
 
 # Population parameters for synthetic gamma-variate AIF
-# Based on literature values: Parker et al. (2006), Mouridsen et al. (2006)
 SYNTHETIC_AIF_PARAMS: dict[str, float] = {
     # Gamma-variate parameters (typical values for healthy subjects at 3T)
     "alpha": 2.5,  # Shape parameter (typical 2-3)
@@ -2208,8 +2202,7 @@ def generate_synthetic_aif(
     quantification but absolute CBV/CBF measurements are NOT valid.
 
     The synthetic AIF is generated using a gamma-variate model with
-    population-derived parameters from the literature (Parker et al. 2006,
-    Mouridsen et al. 2006).
+    population-derived parameters from the literature.
 
     Parameters
     ----------

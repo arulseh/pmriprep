@@ -3027,11 +3027,10 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
         }
 
     # xval requires nCBV (NAWM-normalized). get_expected_ratio ≈ 0.669
-    # is derived for absolute mL/100g CBV (Tofts 1999); pmriprep only
-    # produces dimensionless rel-AUC-CBV. No universal expected ratio
-    # exists for vp / rel_AUC_CBV without NAWM anchoring (Rempp 1994
-    # Radiology 193:637; Knutsson 2010 MAGMA 23:1). Skip cleanly rather than emit false POOR on
-    # subjects with no NAWM mask.
+    # is derived for absolute mL/100g CBV; pmriprep only produces
+    # dimensionless rel-AUC-CBV. No universal expected ratio exists for
+    # vp / rel_AUC_CBV without NAWM anchoring. Skip cleanly rather than
+    # emit false POOR on subjects with no NAWM mask.
     if not have_ncbv:
         return {
             "skipped": True,
@@ -4030,7 +4029,6 @@ def _smooth_dce_maps(  # type: ignore[no-untyped-def]
     Uses normalized convolution for maps containing NaN (PK maps in auto
     mode, wash-in/out slopes). This prevents edge dilution where unfitted
     voxels would otherwise contribute 0 to the Gaussian kernel.
-    Reference: Knutsson & Westin, CVPR 1993.
 
     Parameters
     ----------
@@ -4714,8 +4712,8 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
         )
 
         # FXL-suspect tumor-stratified flag and ROI-stratified Patlak fractions.
-        # conc_data is already baseline-subtracted; np.nanmax gives peak tissue Ct
-        # per Landis 2000 MRM 44:563 / Li 2005 MRM 54:1351. Report-only diagnostic — shutter-speed
+        # conc_data is already baseline-subtracted; np.nanmax gives peak tissue Ct.
+        # Report-only diagnostic — shutter-speed
         # model not viable at clinical TR_vol.
         peak_ct = np.nanmax(conc_data, axis=-1)
 
@@ -4752,7 +4750,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
         # ROI-stratified Patlak fraction: intersect model-selection map with
         # each tissue class. Whole-brain patlak_fraction emitted by
         # ComputeDCEMaps is only meaningful stratified by tissue class (BBB-DCE
-        # methodology: Heye 2014 NeuroImage Clin 6:262; tissue fractions are
+        # methodology; tissue fractions are
         # pipeline-empirical: enhancing tumor 20-40%, NAWM/GM 70-90%).
         _PATLAK_CODE = 1  # from _MODEL_SELECTION_CODES in dce_compute.py
         if is_auto and model_sel_data is not None:

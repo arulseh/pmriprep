@@ -324,7 +324,7 @@ AIF_THRESHOLDS_RELAXED: Final[AIFThresholds] = AIFThresholds(
 
 #: Permissive AIF quality thresholds (for very difficult cases)
 #: Note: ``washout_min`` matches the relaxed value (0.10) — physics review
-#: (Willats & Calamante 2013 NMR Biomed 26:913) showed the CNR relaxation (5.0→2.0) is
+#: showed the CNR relaxation (5.0→2.0) is
 #: sufficient for the sensitivity gain on low-dose/preloaded protocols, and
 #: lowering washout below 0.10 admits tissue voxels without proportional
 #: arterial-detection benefit.
@@ -374,7 +374,7 @@ DCE_AIF_TAIL_PEAK_FRACTION: Final[float] = 0.40
 
 #: Time (seconds) to skip immediately after the first-pass peak before
 #: searching for secondary maxima. Skips the physiologic recirculation
-#: hump (~25-35 s post-peak per Parker 2006 second Gaussian) plus its
+#: hump (~25-35 s post-peak) plus its
 #: descending shoulder (~45-60 s). True late-tail anomalies (motion,
 #: inflow, venous mixing) live beyond 60 s post-peak.
 DCE_AIF_TAIL_SHOULDER_SECONDS: Final[float] = 60.0
@@ -390,17 +390,16 @@ DCE_AIF_TAIL_MIN_SEPARATION_SECONDS: Final[float] = 10.0
 
 #: G1 — scale_aif amplitude floor. Scaling factor above this threshold
 #: triggers HARD reject; G6 escape allows up to G6_SCALE_CEILING.
-#: Parker plasma peak ~10 mM at 1.5T full-dose Gd-DTPA (Parker 2006 MRM
-#: 56:993); scale_factor is dimensionless against the dose-corrected
+#: Plasma peak ~10 mM at 1.5T full-dose Gd-DTPA; scale_factor is
+#: dimensionless against the dose-corrected
 #: target so the threshold is field-strength and dose independent.
 DCE_AIF_GATE_SCALE_HARD: Final[float] = 3.0
 
 #: G6 (a) — escape ceiling for amplitude floor when shape gates pass.
 #: 8x corresponds to partial-volume fill fraction of about 0.12
 #: (0.8-1.5 mm caliber branch artery in 5 mm slab at oblique
-#: orientation). Blood AIF peaks of 1-12 mM at 1.5T (Parker 2006 MRM
-#: 56:993); Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1 confirms
-#: partial-volume dilution of 2-10x is typical.
+#: orientation). Blood AIF peaks of 1-12 mM at 1.5T; partial-volume
+#: dilution of 2-10x is typical.
 DCE_AIF_GATE_SCALE_G6_CEILING: Final[float] = 8.0
 
 #: G6 graded uncertainty threshold — above this scale factor,
@@ -409,13 +408,12 @@ DCE_AIF_GATE_SCALE_G6_HIGH: Final[float] = 6.0
 
 #: G2 — late-tail/peak ratio HARD reject threshold.
 #: Parker bi-exponential arterial plasma decays to <=0.20 by 2 min
-#: post-peak; venous mixing produces persistent late-tail above 0.40
-#: (Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1).
+#: post-peak; venous mixing produces persistent late-tail above 0.40.
 DCE_AIF_GATE_LATE_TAIL_RATIO_MAX: Final[float] = 0.35
 
 #: G3 — FWHM HARD reject threshold (seconds).
 #: Assumes power injection >=2 mL/s. For hand-injection cohorts,
-#: override to ~28 s (Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1). Distal-ACA
+#: override to ~28 s. Distal-ACA
 #: broadens FWHM by 2-4 s relative to M1.
 DCE_AIF_GATE_FWHM_MAX_SECONDS: Final[float] = 22.0
 
@@ -444,8 +442,8 @@ DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL: Final[int] = 10
 DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL: Final[int] = 2
 
 #: G6-admitted reduced-confidence AIF: per-parameter PK posterior sigma
-#: multiplier reflecting Tofts/2CXM AIF-peak sensitivity hierarchy
-#: (Buckley 2002 MRM 47:601). ve is uninflated because ve fits late-
+#: multiplier reflecting Tofts/2CXM AIF-peak sensitivity hierarchy.
+#: ve is uninflated because ve fits late-
 #: phase washout slope, decoupled from AIF peak amplitude. Workflow
 #: base inflation=2.0 propagates per-parameter via this map; base=1.0
 #: (standard AIF) yields all 1.0x regardless of map.
@@ -950,7 +948,7 @@ AIF_LOW_TR_THRESHOLD: Final[float] = 5.0
 
 #: Minimum peak enhancement for reliable DCE quantification (%)
 #: 5% ≈ 2σ above noise floor; failed injection shows <3%
-#: Subtle WM BBB enhancement occurs in normal aging (Heye 2016 NeuroImage 125:446)
+#: Subtle WM BBB enhancement occurs in normal aging
 QC_PEAK_ENHANCEMENT_MIN: Final[float] = 5.0
 
 #: Peak enhancement below this triggers REVIEW (%)
@@ -1082,7 +1080,7 @@ NAWM_VP_REFERENCE: Final[float] = 0.010
 #: With vp = NAWM_VP_REFERENCE × nCBV and physiological whole-brain nCBV
 #: medians ~0.4–3.0, vp_median is algebraically pinned near 0.005–0.03.
 #: A scale error in nCBV or a corrupted NAWM mask breaches this range.
-#: WM vp ≈ 0.005–0.015 (Larsson 2009), GM ≈ 0.015–0.025, tumor ≈ 0.02–0.05.
+#: WM vp ≈ 0.005–0.015, GM ≈ 0.015–0.025, tumor ≈ 0.02–0.05.
 #: Factor-of-3 band around the NAWM anchor preserves the
 #: gross-miscalibration semantics of the gate.
 VP_MEDIAN_MIN: Final[float] = 0.005
@@ -1100,8 +1098,8 @@ VP_NCBV_RATIO_MIN: Final[float] = 0.005
 VP_NCBV_RATIO_MAX: Final[float] = 0.02
 
 #: nCBV input range for cross-validation (per-voxel values to retain).
-#: Upper bound 5.0 covers hypervascular HGG tumor rim (Law 2008, Hu 2009
-#: report rCBV up to 6 in clinical GBM). Voxels beyond 5.0 are likely
+#: Upper bound 5.0 covers hypervascular HGG tumor rim (clinical GBM
+#: rCBV reported up to ~6). Voxels beyond 5.0 are likely
 #: vessels or partial-volume artifacts and are excluded from ratio stats.
 MIN_NCBV_FOR_VALIDATION: Final[float] = 0.3
 MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
@@ -1134,9 +1132,9 @@ ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD: Final[float] = 0.7
 
 #: Widened lower edge of the vp/nCBV ratio band, applied only when the
 #: ``acquisition_limited`` flag fires. Pinned at the brain-capillary
-#: physiological floor (Larsson 2009 MRM 62:1270, vp ≥ 0.005) so it does not
+#: physiological floor (vp ≥ 0.005) so it does not
 #: undercut the magnitude-plausibility gate. Acquisition-limited CRLB band
-#: from Buckley MRM 2002 first-pass temporal-undersampling analysis —
+#: from first-pass temporal-undersampling analysis —
 #: independent of ``NAWM_VP_REFERENCE`` position (physics-expert 2026-04-19).
 #: Excursions below 0.005 remain a real data issue even in the
 #: prior-dominated regime.

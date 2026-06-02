@@ -1,6 +1,6 @@
 """Extended Tofts pharmacokinetic model.
 
-Implements the Extended Tofts model (Tofts et al. 1999) for DCE-MRI
+Implements the Extended Tofts model for DCE-MRI
 analysis. This model includes a vascular plasma volume term (vp) in
 addition to the Standard Tofts model parameters.
 
@@ -76,13 +76,6 @@ class ExtendedToftsModel(PKModel):
     Derived parameter:
         kep = Ktrans / ve: Efflux rate constant (min⁻¹)
             - Rate of contrast efflux from EES back to plasma
-
-    References
-    ----------
-        Tofts PS, Brix G, Buckley DL, et al. Estimating kinetic parameters
-        from dynamic contrast-enhanced T1-weighted MRI of a diffusable
-        tracer: standardized quantities and symbols. J Magn Reson Imaging.
-        1999;10(3):223-232.
     """
 
     @property

@@ -74,7 +74,7 @@ class DSCBrainExtract(SimpleInterface):
     Uses a three-level fallback chain to ensure brain extraction always
     succeeds:
 
-    1. **HD-BET** — deep learning skull stripping (Isensee et al., 2019).
+    1. **HD-BET** — deep learning skull stripping.
        Most accurate, handles pathological anatomy.
     2. **FSL BET -F** — functional/EPI mode.  Designed for T2*-weighted
        EPI data with susceptibility distortion.

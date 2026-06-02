@@ -162,7 +162,7 @@ def test_load_pipeline_sidecars_anat_boilerplate_fields(tmp_path: Path) -> None:
     # Boilerplate generator now picks up the real values
     from pmriprep.utils.report_utils import _build_anat_boilerplate
 
-    text, _refs = _build_anat_boilerplate(out)
+    text = _build_anat_boilerplate(out)
     assert "with prior denoising" in text
     assert "HD-BET" in text  # _BRAIN_EXTRACTION_TEXT["hdbet"]
     assert "Tissue segmentation" in text
@@ -173,25 +173,25 @@ def test_anat_boilerplate_unknown_tool_omits_citation() -> None:
     from pmriprep.utils.report_utils import _build_anat_boilerplate
 
     # tool key missing entirely
-    text, refs = _build_anat_boilerplate({})
+    text = _build_anat_boilerplate({})
     assert "Brain extraction was performed." in text
-    assert "isensee_2019" not in refs
-    assert "avants_2011" not in refs
+    assert "@isensee_2019" not in text
+    assert "@avants_2011" not in text
 
     # tool present but unrecognized (e.g., a future tool not yet in the
     # boilerplate dict) — must not silently miscite HD-BET.
-    text2, refs2 = _build_anat_boilerplate(
+    text2 = _build_anat_boilerplate(
         {"brain_extraction": {"tool": "synthstrip"}},
     )
     assert "HD-BET" not in text2
-    assert "isensee_2019" not in refs2
+    assert "@isensee_2019" not in text2
 
-    # Known tool still emits its specific sentence + ref.
-    text3, refs3 = _build_anat_boilerplate(
+    # Known tool still emits its specific sentence + citation.
+    text3 = _build_anat_boilerplate(
         {"brain_extraction": {"tool": "hdbet"}},
     )
     assert "HD-BET" in text3
-    assert "isensee_2019" in refs3
+    assert "@isensee_2019" in text3
 
 
 def test_load_pipeline_sidecars_anat_tool_normalization(tmp_path: Path) -> None:

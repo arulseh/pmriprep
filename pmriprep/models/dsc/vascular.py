@@ -1,8 +1,7 @@
 """Vascular (gamma-variate) model for DSC perfusion.
 
 Implements a parametric model where the residue function is based on
-a gamma-variate distribution of capillary transit times, following
-Mouridsen et al. (2006) and Jespersen et al. (2012).
+a gamma-variate distribution of capillary transit times.
 
 The model accounts for transit time heterogeneity (CTH) in the
 microvasculature, which affects the relationship between CBF and CBV.
@@ -62,16 +61,6 @@ class VascularModel(DSCModel):
               Also known as coefficient of variation (CV) of transit times.
               RCTH = CTH / MTT = 1/√α
 
-    References
-    ----------
-        Mouridsen K, Friston K, Hjort N, et al. (2006).
-        "Bayesian estimation of cerebral perfusion using a physiological
-        model of microvasculature." NeuroImage 33(2):570-579.
-
-        Jespersen SN, Østergaard L (2012).
-        "The roles of cerebral blood flow, capillary transit time
-        heterogeneity, and oxygen tension in brain oxygenation and
-        metabolism." J Cereb Blood Flow Metab 32(2):264-277.
     """
 
     @property
@@ -168,7 +157,7 @@ class VascularModel(DSCModel):
             DSCModelParameter(
                 name="mtt",
                 bounds=(0.5, 30.0),
-                typical_range=(2.0, 8.0),  # mean=5.0s, Ostergaard 1996
+                typical_range=(2.0, 8.0),  # mean=5.0s
                 transform=TransformType.LOG,
                 transformed_prior_sigma=1.0,
                 description="Mean transit time",

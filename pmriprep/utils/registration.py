@@ -36,7 +36,7 @@ def compare_transforms(
     distance ``radius`` from the origin) and returns the maximum Euclidean
     distance between the transformed positions.
 
-    Adapted from niworkflows ``compare_xforms()`` (Esteban et al., 2019).
+    Adapted from niworkflows ``compare_xforms()``.
 
     Parameters
     ----------

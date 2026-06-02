@@ -158,7 +158,7 @@ def get_preload_thresholds(
 
 
 #: Administered-dose bin edges for user-specified ``preload`` float.
-#: Clinically calibrated (ASFNR Welker 2015, Boxerman 2020):
+#: Clinically calibrated:
 #:   quarter-dose preload (0.25) → HALF_DOSE class
 #:   half-dose preload (0.5)      → HALF_DOSE class
 #:   full-dose preload (1.0)      → SIGNIFICANT class
@@ -332,7 +332,7 @@ def classify_preload_adequacy_from_k2(
     """Classify preload adequacy from K2 residual distribution.
 
     K2 is the direct physical signature of T1-leakage contamination in
-    DSC (Boxerman AJNR 2006; Leu AJNR 2016; Welker ASFNR AJNR 2015). Low
+    DSC. Low
     K2 means the CBV correction is reliable, regardless of whether preload
     was physically given (low K2 also occurs in intact-BBB tissue);
     operationally these are equivalent for the downstream constraint.
@@ -961,7 +961,7 @@ def _compute_mean_brain_reference(
     concentration: npt.NDArray[np.floating],
     brain_mask: Optional[npt.NDArray[np.bool_]],
 ) -> Optional[npt.NDArray[np.floating]]:
-    """Compute mean brain reference curve C̄(t) per Boxerman 2006.
+    """Compute mean brain reference curve C̄(t).
 
     Averages concentration across non-enhancing brain voxels.
     Excludes voxels with negative mean post-bolus concentration
@@ -1048,7 +1048,7 @@ def estimate_k2_per_voxel(
 
     K2 represents the rate of contrast agent leakage through the BBB.
     Estimated using the Boxerman-Schmainda-Weisskoff model with a mean
-    brain reference curve C̄(t) (Boxerman et al., AJNR 2006):
+    brain reference curve C̄(t):
 
         C_voxel(t) = K1 × C̄(t) + K2_reg × ∫₀ᵗ C̄(τ)dτ
 
@@ -1082,9 +1082,6 @@ def estimate_k2_per_voxel(
         - K2 > 0: BBB disruption (T1 leakage)
         - Uses vectorized OLS for efficiency
 
-    References
-    ----------
-        Boxerman JL, Schmainda KM, Weisskoff RM. AJNR 2006;27:859-867.
     """
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
@@ -1167,8 +1164,7 @@ def apply_k2_correction(
     """Apply K2 leakage correction using the BSW method with mean brain reference.
 
     Implements the Boxerman-Schmainda-Weisskoff (BSW) leakage correction
-    for DSC-MRI using a mean brain reference curve C̄(t) rather than AIF
-    (Boxerman et al., AJNR 2006):
+    for DSC-MRI using a mean brain reference curve C̄(t) rather than AIF:
 
         C_corrected(t) = C_tissue(t) + K2 × ∫₀ᵗ C̄(τ)dτ
 
@@ -1198,9 +1194,6 @@ def apply_k2_correction(
     K2CorrectionResult
         K2CorrectionResult with corrected concentration and K2 map.
 
-    References
-    ----------
-        Boxerman JL, Schmainda KM, Weisskoff RM. AJNR 2006;27(4):859-867.
     """
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
@@ -1208,7 +1201,6 @@ def apply_k2_correction(
     # Baseline-subtract before K2 estimation. The BSW model assumes
     # C(t)=0 at baseline; non-zero offset biases the cumulative integral
     # in K2 regression. For non-preloaded data, baseline ≈ 0 (no-op).
-    # Ref: Ostergaard MRM 1996, Boxerman AJNR 2006.
     n_bl = max(baseline_frames, 4)
     conc_bl = np.mean(concentration[..., :n_bl], axis=-1, keepdims=True)
     concentration = concentration - conc_bl
@@ -1275,10 +1267,9 @@ def apply_k2_correction(
 
 
 # K2 QC thresholds (s⁻¹)
-# Boxerman et al. AJNR 2006;27:859-867; Schmainda et al. Neuro Oncol 2015
 _K2_CLINICAL_THRESHOLD: Final[float] = 0.04  # clinically meaningful BBB disruption
 _K2_LEAKY_THRESHOLD: Final[float] = 0.1  # used by dsc_cbv_constraint.py
-_K2_SEVERE_THRESHOLD: Final[float] = 0.10  # physiological maximum (Boxerman 2006)
+_K2_SEVERE_THRESHOLD: Final[float] = 0.10  # physiological maximum
 
 
 def _compute_k2_qc_metrics(
@@ -1335,7 +1326,7 @@ def _compute_k2_qc_metrics(
     n_severe = int(np.sum(k2_values > _K2_SEVERE_THRESHOLD))
     percent_severe = 100.0 * n_severe / k2_values.size
 
-    # Fraction above clinical maximum (Boxerman 2006)
+    # Fraction above clinical maximum
     n_clinical = int(np.sum(k2_values > _K2_CLINICAL_THRESHOLD))
     percent_clinical = 100.0 * n_clinical / k2_values.size
 
@@ -1353,7 +1344,7 @@ def _compute_k2_qc_metrics(
 
 
 # =============================================================================
-# Bidirectional K2 Leakage Correction (Leu et al. 2016)
+# Bidirectional K2 Leakage Correction
 # =============================================================================
 
 
@@ -1389,9 +1380,6 @@ def _compute_ees_concentration(
     npt.NDArray[np.floating]
         Instantaneous EES concentration C_e(t), shape (n_timepoints,).
 
-    References
-    ----------
-        Leu K et al. AJNR 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759
     """
     n_tp = len(c_bar)
     time = np.arange(n_tp) * tr
@@ -1437,9 +1425,6 @@ def estimate_k2_bidirectional(
     npt.NDArray[np.floating]
         3D K2 map with leakage rate per voxel (s⁻¹).
 
-    References
-    ----------
-        Leu K et al. AJNR 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759
     """
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
@@ -1513,7 +1498,7 @@ def apply_k2_correction_bidirectional(
     k2_map: Optional[npt.NDArray[np.floating]] = None,
     baseline_frames: int = 5,
 ) -> K2CorrectionResult:
-    """Apply bidirectional K2 leakage correction (Leu et al. 2016).
+    """Apply bidirectional K2 leakage correction.
 
     Extends the standard BSW model to account for contrast agent washout
     from the EES:
@@ -1528,7 +1513,7 @@ def apply_k2_correction_bidirectional(
     - Bidirectional uses C_e(t) (accounts for washout, can decrease)
 
     This produces ~16.6% lower rCBV in high-grade gliomas because standard
-    BSW overcorrects late timepoints (Leu 2016).
+    BSW overcorrects late timepoints.
 
     Parameters
     ----------
@@ -1550,9 +1535,6 @@ def apply_k2_correction_bidirectional(
     K2CorrectionResult
         K2CorrectionResult with corrected concentration and K2 map.
 
-    References
-    ----------
-        Leu K et al. AJNR 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759
     """
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
@@ -1656,7 +1638,7 @@ def estimate_preload_correction_factor(
 
     # Signal loss due to preload reduces apparent contrast effect
     # Correction factor based on baseline T2* shortening
-    # Reference: Boxerman et al. approach
+    # Boxerman-Schmainda-Weisskoff approach
 
     delta_r2 = preload_result.baseline_delta_r2
 

@@ -11,21 +11,6 @@ TwoCompartmentExchangeModel.
 
 The constraint ve + vp <= 1.0 is enforced during sampling for models
 that have both ve and vp parameters.
-
-References
-----------
-Tofts PS, Brix G, Buckley DL, et al. (1999).
-"Estimating kinetic parameters from dynamic contrast-enhanced
-T1-weighted MRI of a diffusable tracer."
-J Magn Reson Imaging 10(3):223-232.
-
-Goodman J, Weare J. (2010).
-"Ensemble samplers with affine invariance."
-Comm App Math Comp Sci 5(1):65-80.
-
-Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
-"Variational Bayesian Inference for a Nonlinear Forward Model."
-IEEE Trans Signal Process 57(1):223-236.
 """
 
 from typing import Callable
@@ -862,8 +847,7 @@ class BayesianPKFitter:
     ) -> FitResult:
         """Fit model using FABBER-style linearized Variational Bayes.
 
-        Implements the linearized VB algorithm from Chappell et al. (2009,
-        IEEE Trans Signal Process 57(1):223-236). At each iteration the forward model is
+        Implements the linearized VB algorithm. At each iteration the forward model is
         linearized around the current posterior mean, enabling analytic
         Gaussian posterior updates. Noise precision is treated as a conjugate
         Gamma random variable.
@@ -886,7 +870,7 @@ class BayesianPKFitter:
         weights : numpy.ndarray or None, optional
             Optional per-frame motion weights (1.0 = full weight).
             Weights modify data fidelity terms (J^T W J, k^T W k) but
-            NOT the observation count in Gamma shape/ELBO (Chappell 2009).
+            NOT the observation count in Gamma shape/ELBO.
         sloppy : bool, optional
             Use fast, low-quality settings for testing.
 
@@ -895,11 +879,6 @@ class BayesianPKFitter:
         FitResult
             FitResult with parameters, uncertainties, and credible intervals.
 
-        References
-        ----------
-        Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
-        "Variational Bayesian Inference for a Nonlinear Forward Model."
-        IEEE Trans Signal Process 57(1):223-236.
         """
         if sloppy:
             n_iterations = 8

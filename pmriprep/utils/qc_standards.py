@@ -6,8 +6,6 @@ for consistent QC assessment and visualization across the pipeline.
 References
 ----------
 - Paul Tol's color schemes: https://personal.sron.nl/~pault/
-- Motion QC thresholds based on Power et al. (2012)
-- Physiological T1 values from Stanisz et al. (2005)
 """
 
 from typing import Any, Final, NamedTuple
@@ -81,7 +79,7 @@ DIVERGING_COLORMAP: Final[tuple[str, str, str]] = (
 # =============================================================================
 # Motion QC Thresholds
 # =============================================================================
-# Based on Power et al. (2012) framewise displacement thresholds
+# Framewise displacement thresholds
 # FD = sum(|d_i - d_{i-1}|) for 6 motion parameters, with rotation scaled by 50mm
 
 
@@ -115,7 +113,6 @@ MOTION_OUTLIER_FRACTION_MAX: Final[float] = 0.20
 #: Pass: <5% outlier frames (minimal motion artifacts)
 #: Warn: 5-20% (some motion-corrupted volumes)
 #: Poor: >=20% (excessive motion corruption)
-#: References: Power et al. (2012), Satterthwaite et al. (2013)
 MOTION_OUTLIER_PCT_THRESHOLDS: Final[QCThresholds] = QCThresholds(
     pass_threshold=5.0,
     warn_threshold=20.0,
@@ -125,7 +122,6 @@ MOTION_OUTLIER_PCT_THRESHOLDS: Final[QCThresholds] = QCThresholds(
 #: Pass: max FD <1mm (no large motion spikes)
 #: Warn: 1-2mm (transient spike, may affect bolus tracking)
 #: Poor: >=2mm (large spike, likely corrupts perfusion estimates)
-#: References: Power et al. (2012), Boxerman et al. (2020)
 MOTION_FD_MAX_THRESHOLDS: Final[QCThresholds] = QCThresholds(
     pass_threshold=1.0,
     warn_threshold=2.0,
@@ -180,7 +176,6 @@ NMI_THRESHOLDS: Final[QCThresholds] = QCThresholds(
 # Physiological Ranges at 3T
 # =============================================================================
 # Expected T1 values for QC validation at 3.0 Tesla
-# Based on Stanisz et al. (2005), Wright et al. (2008)
 
 
 # =============================================================================
@@ -285,11 +280,6 @@ def get_composite_motion_status(
     str
         QC status string: "PASS", "WARN", or "POOR".
 
-    References
-    ----------
-        Power et al. (2012). doi:10.1016/j.neuroimage.2011.10.018
-        Satterthwaite et al. (2013). doi:10.1016/j.neuroimage.2012.08.052
-        Boxerman et al. (2020). doi:10.3174/ajnr.A6365
     """
     status_mean = get_qc_status(
         fd_mean, MOTION_FD_THRESHOLDS, higher_is_better=False,

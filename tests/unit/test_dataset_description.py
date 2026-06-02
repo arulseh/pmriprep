@@ -42,7 +42,7 @@ def test_first_run_writes_pmriprep_entry(tmp_path: Path) -> None:
     assert "**/*.html" in content
     assert "**/*_xfm.h5" in content
     assert "**/figures/" in content
-    assert "log/" in content
+    assert "**/logs/" in content
 
 
 def test_write_bidsignore_idempotent(tmp_path: Path) -> None:

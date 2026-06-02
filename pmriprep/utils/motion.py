@@ -3,11 +3,6 @@
 Provides functions to calculate framewise displacement (FD) and
 root-mean-square displacement (RMSD) from rigid-body motion parameters
 in FSL mcflirt `.par` format.
-
-References
-----------
-    Power et al. (2012). "Spurious but systematic correlations in functional
-    connectivity MRI networks arise from subject motion."
 """
 
 from typing import Any

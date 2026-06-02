@@ -36,7 +36,7 @@ class DCEConfig:
         Scale AIF amplitude to population reference.
     target_peak : Optional[float]
         Target AIF peak concentration (mM) for scaling, in blood-voxel units
-        (Parker 2006 convention, pre-Hct-correction). The pipeline divides
+        (pre-Hct-correction). The pipeline divides
         by (1-Hct) internally before comparing against the plasma-scale
         aif_curve. None = use field-strength default.
     aif_mask_file : Optional[Path]

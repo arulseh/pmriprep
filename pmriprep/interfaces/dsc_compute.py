@@ -82,10 +82,6 @@ def _compute_dsc_motion_weights(
     npt.NDArray[np.floating]
         Per-frame weight array (1.0 = full weight, <1.0 = downweighted).
 
-    References
-    ----------
-    Melbourne A, et al. Phys Med Biol. 2007;52(17):5147-5156.
-    Buckley DL. Magn Reson Med. 2002;47(3):601-606.
     """
     weights = np.ones(n_frames, dtype=np.float64)
     fd_arr = np.array(fd_values[:n_frames], dtype=np.float64)
@@ -689,14 +685,6 @@ class ComputeDSCMaps(BaseInterface):
     The oSVD method additionally outputs a delay map showing the
     estimated tracer arrival delay relative to the AIF.
 
-    References
-    ----------
-    Østergaard et al. (1996). High resolution measurement of cerebral
-    blood flow using intravascular tracer bolus passages. Part I.
-    Magn Reson Med 36(5):715-725.
-
-    Wu et al. (2003). Tracer arrival timing-insensitive technique for
-    estimating flow in MR perfusion-weighted imaging. Magn Reson Med 50(1):164-174.
     """
 
     input_spec = ComputeDSCMapsInputSpec
@@ -2130,7 +2118,6 @@ class ComputeDSCMaps(BaseInterface):
         # has its offset; this removes it. Also catches edge cases where
         # K2 was skipped. Unconditional: for non-preloaded data, baseline
         # is approximately zero (no-op).
-        # Ref: Ostergaard MRM 1996, Boxerman AJNR 2006.
         n_bl = max(detected_baseline, 4)
         aif_bl_offset = float(np.mean(aif[:n_bl]))
         aif = aif - aif_bl_offset
@@ -2306,14 +2293,13 @@ class ComputeDSCMaps(BaseInterface):
         # Upper bound 10000 rejects sentinel/overflow voxels. No lower
         # bound: half-rectifying symmetric noise biases NAWM voxels (the
         # nCBV denominator) upward, depressing tumor nCBV near the 1.75
-        # progression cutoff (Boxerman 2020 Neuro Oncol 22:1262).
+        # progression cutoff.
         auc_corr = np.minimum(np.sum(conc_data, axis=-1) * dt, 10000.0)
         auc_raw = np.minimum(np.sum(raw_conc_for_auc, axis=-1) * dt, 10000.0)
         auc_diff = auc_raw - auc_corr
 
         # -----------------------------------------------------------
-        # AUC-based CBV: full bolus passage per ASFNR/NCI/ABTC consensus
-        # (Boxerman 2020 Neuro Oncol 22:1262; Boxerman 2006 AJNR 27:859).
+        # AUC-based CBV: full bolus passage per ASFNR/NCI/ABTC consensus.
         # Window: BAT → end of acquisition on K2-corrected tissue ΔR2*;
         # denominator is measured AIF over the same window. Recirculation
         # contributes to both integrals and cancels in the ratio.

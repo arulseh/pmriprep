@@ -1,4 +1,4 @@
-"""Spatial Variational Bayes for DSC perfusion (Groves et al. 2009).
+"""Spatial Variational Bayes for DSC perfusion.
 
 Wraps the standard batched VI to add MRF spatial priors that couple
 neighboring voxels' parameters, reducing noise without explicit smoothing.
@@ -86,7 +86,7 @@ def _compute_spatial_contributions(
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """Compute per-voxel spatial precision and eta under FABBER M-prior.
 
-    M-prior (Penny et al. 2005): spatial precision = aK * (nn + 1e-8),
+    M-prior: spatial precision = aK * (nn + 1e-8),
     eta = aK * (adj @ posteriors), where nn is the neighbour count.
 
     Parameters
@@ -126,7 +126,7 @@ def _update_aK_penny(
     q1: float = 10.0,
     q2: float = 1.0,
 ) -> npt.NDArray[np.float64]:
-    """FABBER M-prior aK closed-form update (Penny et al. 2005).
+    """FABBER M-prior aK closed-form update.
 
     Posterior on the spatial-precision hyperparameter aK is Gamma; the
     update has the closed form:

@@ -99,7 +99,7 @@ def signal_to_concentration(
     # Lower-bound signal ratio to prevent log(0). No upper bound:
     # S(t)/S0 > 1.0 produces negative ΔR2*, preserving symmetric noise
     # in post-bolus frames. Clipping to 1.0 creates half-rectified noise
-    # with positive bias (Calamante 1999, Willats 2006).
+    # with positive bias.
     signal_ratio_clipped = np.maximum(signal_ratio, EPSILON_SIGNAL)
 
     # Compute ΔR2* = -ln(S/S0) / TE
@@ -431,7 +431,7 @@ def compute_psr(
     -----
         - This is the physics-correct version for post-integration expert
           review. The legacy version (compute_psr_legacy) uses the
-          Cha et al. (Radiology 2002) formula for validation ground truth.
+          formula for validation ground truth.
         - s_min uses post-baseline frames only (signal[..., baseline_frames:])
           to avoid baseline contamination.
         - PSR can exceed 100% in cases where the signal overshoots baseline
@@ -499,9 +499,9 @@ def compute_psr_legacy(
     baseline_frames: int = 5,
     tail_frames: int = 5,
 ) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute PSR using the legacy formula (Cha et al., Radiology 2002).
+    """Compute PSR using the legacy formula.
 
-    Legacy formula (Cha et al., Radiology 2002):
+    Legacy formula:
         PSR = 100 × (S1 - Smin) / (S0 - Smin)
     where S0 = mean baseline signal, S1 = mean tail signal,
     Smin = minimum signal in post-baseline frames.

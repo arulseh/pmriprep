@@ -3,18 +3,6 @@
 This module provides pure-computation functions for quantifying
 test-retest reproducibility of perfusion parameter maps. All functions
 operate on numpy arrays with no I/O dependencies.
-
-References
-----------
-    Shrout PE, Fleiss JL. Intraclass correlations: uses in assessing
-    rater reliability. Psychol Bull 1979;86:420-428.
-
-    Bland JM, Altman DG. Statistical methods for assessing agreement
-    between two methods of clinical measurement. Lancet 1986;1:307-310.
-
-    Heye AK et al. Assessment of blood-brain barrier disruption using
-    dynamic contrast-enhanced MRI. A systematic review. NeuroImage Clin
-    2014;6:262-274.
 """
 
 from dataclasses import dataclass

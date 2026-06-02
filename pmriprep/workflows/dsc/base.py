@@ -465,8 +465,8 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
     # K2-primary is the sole classifier. Run detect_preload() only for the
     # ΔR2* advisory metric (logged as tissue-heterogeneity-biased motion/
     # S0-baseline diagnostic; never drives effective_class). K2 correction
-    # runs unconditionally (preload-class-agnostic per Boxerman 2006 / Leu
-    # 2016), and the K2 residual distribution is then used to classify
+    # runs unconditionally (preload-class-agnostic), and the K2 residual
+    # distribution is then used to classify
     # preload adequacy (ADEQUATE / PARTIAL / INADEQUATE / UNKNOWN).
     from pmriprep.utils.dsc_preload import (
         PreloadClass,
@@ -1439,7 +1439,7 @@ def _smooth_maps(  # type: ignore[no-untyped-def]
 
     Uses normalized convolution for maps containing NaN to prevent edge
     dilution where unfitted voxels would otherwise contribute 0 to the
-    Gaussian kernel. Reference: Knutsson & Westin, CVPR 1993.
+    Gaussian kernel.
 
     Parameters
     ----------
@@ -2067,7 +2067,7 @@ def init_dsc_preproc_wf(
         n_procs=config.num_processes if config.num_processes > 0 else 1,
         # baseline_frames wired dynamically from aif_detect.aif_baseline_frames
         fallback_baseline_frames=config.pre_bolus,
-        tail_frames=5,  # Post-bolus frames for PSR (Cha 2002 Radiology 223:11)
+        tail_frames=5,  # Post-bolus frames for PSR
         sloppy=config.sloppy,
     )
     if random_seed is not None:

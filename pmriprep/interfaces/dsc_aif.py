@@ -1598,8 +1598,7 @@ class AIFDetection(BaseInterface):
            frames are retained.
         2. **Tail/peak filter**: keep voxels with
            ``tail_fraction_late <= AIF_TAIL_FRACTION_MAX`` (default
-           0.15 — see ``dsc_constants.py`` for the Bleeker 2009 PVF
-           rationale).
+           0.15 — see ``dsc_constants.py`` for the PVF rationale).
 
         TTP causality (peak before tissue) is **not** enforced here;
         it is the responsibility of ``_score_candidate_cost`` upstream
@@ -1785,7 +1784,6 @@ class AIFDetection(BaseInterface):
         # Negative ΔR2* is physically valid (symmetric noise, T1 recirculation).
         # Do NOT clip to zero — it biases the AIF integral, corrupts the SVD
         # Toeplitz matrix, and disables the gamma-fit defect detector.
-        # (Willats 2006 MRM 56:146)
 
         return aif_curve, aif_mask
 
@@ -2139,7 +2137,7 @@ class AIFDetection(BaseInterface):
         """Generate synthetic AIF using physiologically calibrated gamma-variate.
 
         Peak amplitude is dose- and B0-scaled from population-median arterial
-        ΔR2* at 3T (Kjølby 2006 MRM 56:187).
+        ΔR2* at 3T.
 
         Parameters
         ----------

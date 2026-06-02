@@ -8,17 +8,10 @@ maintaining physiological constraints.
 The CPI model is particularly useful when the underlying transit time
 distribution is unknown or doesn't follow a standard parametric form.
 
-The parameterization follows Mehndiratta et al. (2013) / Quantiphyse:
+The parameterization follows the Quantiphyse convention:
 - R(t) is **dimensionless** (0-1), with R(0) = 1.0 fixed
 - CBF is a **separate** scaling parameter
 - C_tissue(t) = CBF × [A_trap @ R_norm]
-
-References
-----------
-    Mehndiratta A, MacIntosh BJ, Crane DE, et al. (2013).
-    "A control point interpolation method for the non-parametric quantification
-    of cerebral haemodynamics from dynamic susceptibility contrast MRI."
-    NeuroImage 64:560-570.
 """
 
 from typing import Sequence
@@ -86,12 +79,6 @@ class CPIModel(DSCModel):
         - R(0) = 1.0 (fixed, not a parameter)
         - R(t_1) = f1, R(t_2) = f1*f2, ..., R(t_5) = f1*f2*f3*f4*f5
         - Control point times: uniformly spaced from 0 to t_max
-
-    References
-    ----------
-        Mehndiratta A, et al. (2013). "A control point interpolation method
-        for the non-parametric quantification of cerebral haemodynamics from
-        dynamic susceptibility contrast MRI." NeuroImage 64:560-570.
     """
 
     def __init__(
@@ -112,7 +99,7 @@ class CPIModel(DSCModel):
         ----------
         n_control_points : int, optional
             Number of control points (4-24, default 6).
-            Mehndiratta 2013 / FABBER paper used 5; production default is 6
+            The FABBER implementation used 5; production default is 6
             with ``select_n_control_points`` available for auto-selection.
         n_acquisition_frames : int, optional
             Number of frames in the DSC acquisition
@@ -470,7 +457,7 @@ class CPIModel(DSCModel):
         C_tissue(t) = CBF × [A_trap @ R_norm]
 
         Uses trapezoidal Toeplitz matrix for convolution, consistent with
-        the SVD deconvolution path (Sourbron & Luypaert PMB 2007).
+        the SVD deconvolution path.
 
         Parameters
         ----------

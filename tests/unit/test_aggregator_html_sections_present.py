@@ -9,8 +9,11 @@ recommendation, warnings, per-pipeline section headings) render.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
+from pmriprep.data import get_boilerplate_bib
+from pmriprep.utils import report_utils as ru
 from pmriprep.utils.report_utils import generate_unified_report
 
 
@@ -20,6 +23,7 @@ def _write(path: Path, payload: dict) -> None:
 
 
 def test_unified_report_renders_recommendation_and_warnings(tmp_path: Path) -> None:
+    """End-to-end render carries recommendation banner, warnings, and section headings."""
     ses = tmp_path / "pmriprep" / "sub-01" / "ses-0001"
     prefix = "sub-01_ses-0001"
 
@@ -69,3 +73,57 @@ def test_unified_report_renders_recommendation_and_warnings(tmp_path: Path) -> N
     # Warnings rendered
     assert "Tissue segmentation" in html
     assert "FLAIR not available" in html
+
+
+def test_boilerplate_bib_resolves_every_cited_key() -> None:
+    """The bundled ``boilerplate.bib`` is the single source of truth for cites.
+
+    The methods boilerplate carries Pandoc ``@key`` markers and
+    ``boilerplate.bib`` holds the entries. A typo'd marker (which pandoc only
+    *warns* about, silently leaving ``[@key]`` in the report) or a duplicate
+    ``.bib`` key is a hard failure here. Keys are read from inside ``[@key]``
+    groups so a typo of any shape (wrong case, missing underscore, multi-token
+    surname) is caught rather than silently skipped.
+    """
+    bib_text = get_boilerplate_bib().read_text(encoding="utf-8")
+    keys = re.findall(r"@\w+\{\s*([^,\s]+)\s*,", bib_text)
+
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    assert not dupes, f"duplicate keys in boilerplate.bib: {dupes}"
+
+    # Pull keys from inside Pandoc citation groups ([@key], [@a; @b]) so a
+    # typo'd marker of ANY shape is caught: a shape-restricted regex would
+    # silently drop e.g. [@Wu_2003] or [@van_osch_2018] from ``used`` and let
+    # the phantom check pass while pandoc emits a literal "[@key]". Bracketing
+    # also excludes the bare ``@key`` doc-mentions and any Python decorator.
+    src = Path(ru.__file__).read_text(encoding="utf-8")
+    used: set[str] = set()
+    for group in re.findall(r"\[([^\]]*@[^\]]*)\]", src):
+        used |= set(re.findall(r"@([^\s;,\]]+)", group))
+    assert used, "no @key citation markers found in report_utils (regex drift?)"
+    phantom = sorted(used - set(keys))
+    assert not phantom, f"@key markers with no boilerplate.bib entry: {phantom}"
+
+
+def test_render_citations_falls_back_to_markdown(tmp_path: Path, monkeypatch) -> None:
+    """When pandoc fails, raw ``@key`` markdown is embedded so Methods is never lost.
+
+    Guards the degradation path for platforms without a pandoc binary: the
+    HTML fragment falls back to the raw markdown and ``CITATION.md`` is still
+    written for manuscript reuse.
+    """
+    import pypandoc
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("pandoc not found")
+
+    monkeypatch.setattr(pypandoc, "convert_text", _boom)
+
+    ses = tmp_path / "pmriprep" / "sub-01" / "ses-0001"
+    ses.mkdir(parents=True)
+    md = "Methods text [@wu_2003]."
+
+    html, raw = ru._render_citations(md, ses)
+
+    assert html == md and raw == md
+    assert (ses / "logs" / "CITATION.md").read_text(encoding="utf-8") == md

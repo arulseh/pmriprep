@@ -2,12 +2,6 @@
 
 Provides generic MCMC sampling, convergence diagnostics, and statistical
 utilities used by both BayesianDSCFitter and BayesianPKFitter.
-
-References
-----------
-Goodman J, Weare J (2010). CAMCOS 5(1):65-80. — Ensemble sampler
-Chappell MA et al. (2009). IEEE Trans Signal Process 57(1):223-236. — FABBER VB
-Vehtari A et al. (2021). Bayesian Analysis 16(2):667-718. — Split R-hat
 """
 
 import enum
@@ -36,9 +30,6 @@ class TransformType(enum.Enum):
         fitting-space prior mean=0.5 corresponds to natural=0.5. Used for
         CPI control-point fractions.
 
-    References
-    ----------
-    Chappell MA et al. (2009). IEEE Trans Signal Process 57(1):223-236 — FABBER VB.
     """
 
     IDENTITY = "identity"
@@ -605,7 +596,7 @@ def run_ensemble_sampler(
 ) -> npt.NDArray[np.floating]:
     """Run affine-invariant ensemble sampler.
 
-    Implements the stretch move from Goodman & Weare (2010).
+    Implements the stretch move.
 
     Parameters
     ----------
@@ -664,7 +655,7 @@ def run_ensemble_sampler(
 
 
 # ---------------------------------------------------------------------------
-# Split R-hat (Vehtari et al. 2021)
+# Split R-hat
 # ---------------------------------------------------------------------------
 
 def compute_split_rhat(
@@ -678,7 +669,7 @@ def compute_split_rhat(
 
     Instead, concatenate all walkers into a single chain and split
     in half, then compute R-hat between the two halves (recommended
-    by emcee documentation and Vehtari et al. 2021).
+    by emcee documentation).
 
     Parameters
     ----------

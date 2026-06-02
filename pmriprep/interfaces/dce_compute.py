@@ -114,10 +114,6 @@ def _compute_motion_weights(
     numpy.ndarray
         Per-frame weight array (1.0 = full weight, <1.0 = downweighted).
 
-    References
-    ----------
-    Melbourne A, et al. Phys Med Biol. 2007;52(17):5147-5156.
-    Buckley DL. Magn Reson Med. 2002;47(3):601-606.
     """
     weights = np.ones(n_frames, dtype=np.float64)
     fd_arr = np.array(fd_values[:n_frames], dtype=np.float64)
@@ -431,10 +427,9 @@ def _fit_single_voxel(
             )
 
             # Require strong BIC evidence to upgrade from simplest model.
-            # Kass & Raftery (1995): ΔBIC ≥ 6 = "strong evidence".
+            # ΔBIC ≥ 6 = "strong evidence".
             # Prevents noise-driven model selection in low-enhancement
             # voxels where complex models have unidentifiable parameters.
-            # Refs: Bagher-Ebadian 2012 MRM 68:241, Sourbron & Buckley 2011 MRM 66:735.
             _MIN_DELTA_BIC_UPGRADE = 6.0
             simplest = min(all_results, key=lambda r: r.n_parameters)
             if (best.model_name != simplest.model_name
@@ -1256,18 +1251,6 @@ class ComputeDCEMaps(BaseInterface):
     The tSNR threshold can exclude noisy voxels from fitting. tSNR is
     computed as mean(baseline) / std(baseline). A typical threshold is 4.0.
 
-    References
-    ----------
-    Tofts PS, Kermode AG. "Measurement of the blood-brain barrier
-    permeability and leakage space using dynamic MR imaging."
-    Magn Reson Med. 1991;17(2):357-367.
-
-    Tofts PS, et al. "Estimating kinetic parameters from dynamic
-    contrast-enhanced T1-weighted MRI of a diffusable tracer."
-    J Magn Reson Imaging. 1999;10(3):223-232.
-
-    Sourbron SP, Buckley DL. "On the scope and interpretation of
-    the Tofts models for DCE-MRI." Magn Reson Med. 2011;66(3):735-745.
     """
 
     input_spec = ComputeDCEMapsInputSpec
@@ -1419,7 +1402,7 @@ class ComputeDCEMaps(BaseInterface):
         return model_name in ("tofts", "extended_tofts", "2cxm")
 
     # Temporal resolution gates for BIC candidate set
-    _MAX_VOLUME_TR_2CXM = 3.0       # Nadav et al. JMRI 2017
+    _MAX_VOLUME_TR_2CXM = 3.0       # 2CXM temporal-resolution limit
     _MAX_VOLUME_TR_ETOFTS = 10.0    # Conservative clinical limit
 
     def _build_candidate_set(self, volume_tr: float) -> list[str]:
@@ -1428,7 +1411,7 @@ class ComputeDCEMaps(BaseInterface):
         Standard Tofts is excluded from auto selection because its vp=0
         assumption is never valid in brain tissue. The intravascular
         contribution vp×Cp(t) is absorbed into Ktrans, causing systematic
-        overestimation (Sourbron & Buckley MRM 2011). Patlak (2 params,
+        overestimation. Patlak (2 params,
         has vp) and Extended Tofts (3 params, has vp) form a complete
         nested hierarchy for brain DCE. Standard Tofts remains available
         via explicit ``model=tofts`` selection.
@@ -1556,7 +1539,7 @@ class ComputeDCEMaps(BaseInterface):
         # (~1/(E1*TR)), making CNR > 3 reject 50-66% of brain tissue with adequate
         # signal-domain tSNR. Quality gating deferred to post-fit QC mask (R² >= 0.5,
         # tSNR >= 10, physiological bounds).
-        # Ref: Buckley MRM 2002 CNR guideline is informational, not a hard cutoff.
+        # CNR guideline is informational, not a hard cutoff.
         enhancement_mask = np.max(conc_data, axis=-1) > MIN_ENHANCEMENT_MM
         fitting_mask = fitting_mask & enhancement_mask
 
@@ -1699,8 +1682,8 @@ class ComputeDCEMaps(BaseInterface):
                 # to 0.5. Under the NAWM-anchored prior (vp =
                 # NAWM_VP_REFERENCE × nCBV) and the plasma-corrected AIF
                 # convention, that test no longer measures scale. It
-                # primarily detects first-pass temporal undersampling
-                # (Buckley MRM 2002, Henderson MRI 1998): max(Ct_samp)
+                # primarily detects first-pass temporal undersampling:
+                # max(Ct_samp)
                 # is Jensen-biased by (TR/FWHM)² so vp·Cp_peak >
                 # Ct_samp_peak is expected at any realistic volume TR
                 # even at perfect scale. Widening σ at long TR is
@@ -1912,7 +1895,7 @@ class ComputeDCEMaps(BaseInterface):
         # G6-admitted (reduced confidence). Base inflation 1.0 (standard
         # AIF) yields all 1.0x regardless of map; base 2.0 propagates
         # the per-parameter Tofts/2CXM sensitivity hierarchy from
-        # DCE_AIF_G6_SIGMA_INFLATION (Buckley 2002 MRM 47:601).
+        # DCE_AIF_G6_SIGMA_INFLATION.
         from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
         _base_inflation = float(self.inputs.aif_uncertainty_inflation_factor)
         if _base_inflation <= 1.0 + 1e-9:
@@ -2251,8 +2234,8 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["failure_reasons"] = failure_reason_counts
 
         # FXL-suspect whole-brain flag. Tissue Ct peaks above ~0.8 mM
-        # violate the Tofts fast-exchange-limit assumption (Landis 2000
-        # MRM 44:563; Li 2005 MRM 54:1351). conc_data is already baseline-subtracted
+        # violate the Tofts fast-exchange-limit assumption. conc_data is
+        # already baseline-subtracted
         # (C_t = (R1(t) - R1(0))/r1). Tumor-mask-stratified fraction
         # emitted in _generate_dce_pk_fit_qc. Shutter-speed model is not
         # viable at this pipeline's clinical TR_vol — report only.
@@ -3020,7 +3003,6 @@ class ComputeDCEMaps(BaseInterface):
 
         # Kass & Raftery guard: require strong BIC evidence to upgrade
         # from simplest model. ΔBIC >= 6 = "strong evidence".
-        # Refs: Kass & Raftery (1995), Bagher-Ebadian MRM 2012.
         _MIN_DELTA_BIC_UPGRADE = 6.0
 
         # Find simplest model (minimum parameters) using existing _N_PARAMS dict

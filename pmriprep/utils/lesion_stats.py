@@ -43,17 +43,15 @@ class MapStatistics:
         p75: 75th percentile (Q3) value.
         p90: 90th percentile value.
         p95: 95th percentile value.
-        p98: 98th percentile (robust hotspot; Federau 2017 Clin Neuroradiol 27:485).
+        p98: 98th percentile (robust hotspot).
         p99: 99th percentile (max-robust hotspot).
         cv: Coefficient of variation (std/mean).
         iqr: Interquartile range (p75 - p25).
-        skewness: Histogram skewness (Emblem Radiology 2008).
-        kurtosis: Histogram kurtosis (Just Br J Cancer 2014).
-        entropy: Shannon entropy on 64-bin histogram over [p1, p99]
-            (O'Connor Clin Cancer Res 2015).
+        skewness: Histogram skewness.
+        kurtosis: Histogram kurtosis.
+        entropy: Shannon entropy on 64-bin histogram over [p1, p99].
         ppp: Percent positive pixels above noise threshold; populated only
-            for permeability biomarkers (Ktrans/vp/k2). Zweifel & Padhani,
-            Targ Oncol 2010; Bjornerud JCBFM 2011 for k2.
+            for permeability biomarkers (Ktrans/vp/k2).
         cohens_d_vs_nawm: Pooled-SD Cohen's d of region vs NAWM reference;
             populated post-hoc by ``LesionStatisticsResult.augment_with_cohens_d``.
         n_valid: Count of finite values used in statistics.
@@ -213,11 +211,9 @@ class LesionStatisticsResult:
 # PPP (percent positive pixels) noise-floor thresholds for permeability
 # biomarkers. Map-name keys must match what callers pass to
 # compute_map_statistics; values are in the map's native units.
-#   Ktrans:  >0.01 min⁻¹ pipeline noise floor (Ktrans biomarker:
-#            Padhani & Khan 2010 Targ Oncol 5:39)
+#   Ktrans:  >0.01 min⁻¹ pipeline noise floor
 #   vp:      conservative noise floor for plasma fraction
-#   k2:      >0.001 s⁻¹ pipeline noise floor (k2 leakage biomarker:
-#            Bjornerud 2011 JCBFM 31:2041)
+#   k2:      >0.001 s⁻¹ pipeline noise floor
 PPP_THRESHOLDS: Dict[str, float] = {
     "Ktrans": 0.01,
     "ktrans": 0.01,  # accept either casing
@@ -710,29 +706,28 @@ def combine_tumor_masks(
 # per unit contrast and SNR are larger at 3T (true perfusion is
 # field-independent). MTT = CBV/CBF, so the ΔR2* scaling cancels and MTT
 # is field-independent (same band both tables).
-#   1.5T table — anchored to Helenius 2003 Acta Radiol 44:538 (1.5T DSC
-#                normative WM CBF~20, CBV~1.3, MTT~4.3 s).
+#   1.5T table — normative WM CBF~20, CBV~1.3, MTT~4.3 s.
 #   3T table   — 1.5T CBF/CBV bands scaled up for the larger 3T ΔR2* readout.
-#   ve — Tofts 1999 JMRI 10:223 (field-independent).
+#   ve — field-independent.
 # Outside [1.5T, 3T] we DO NOT extrapolate: ΔR2*-driven CBF/CBV scale
 # non-linearly with B0, so 7T values from a 3T table would systematically
 # over-flag.
 NAWM_RANGES_3T: Dict[str, Tuple[float, float]] = {
     "cbf":    (15.0, 35.0),     # mL/100g/min — 1.5T Helenius scaled up for 3T ΔR2*
     "cbv":    (1.5, 4.0),       # mL/100g — 1.5T Helenius scaled up for 3T ΔR2*
-    "mtt":    (3.0, 8.0),       # s — Helenius 2003 Acta Radiol 44:538 (field-independent)
+    "mtt":    (3.0, 8.0),       # s (field-independent)
     "ncbv":   (0.85, 1.15),     # normalization sanity check
     "ncbf":   (0.85, 1.15),
-    "ve":     (0.05, 0.30),     # Tofts 1999 JMRI 10:223
+    "ve":     (0.05, 0.30),
     "vp":     (0.005, 0.05),
     "ktrans": (0.0, 0.02),      # NAWM intact BBB
     "Ktrans": (0.0, 0.02),
 }
 
 NAWM_RANGES_1T5: Dict[str, Tuple[float, float]] = {
-    "cbf":    (10.0, 25.0),     # mL/100g/min — Helenius 2003 Acta Radiol 44:538 (1.5T)
-    "cbv":    (1.0, 3.0),       # mL/100g — Helenius 2003 Acta Radiol 44:538 (1.5T)
-    "mtt":    (3.0, 8.0),       # s — Helenius 2003 Acta Radiol 44:538 (field-independent)
+    "cbf":    (10.0, 25.0),     # mL/100g/min (1.5T)
+    "cbv":    (1.0, 3.0),       # mL/100g (1.5T)
+    "mtt":    (3.0, 8.0),       # s (field-independent)
     "ncbv":   (0.85, 1.15),
     "ncbf":   (0.85, 1.15),
     "ve":     (0.05, 0.30),

@@ -181,10 +181,6 @@ class MotionCorrection(CommandLine):
     --------
     FSL mcflirt: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/MCFLIRT
 
-    References
-    ----------
-    Power et al. (2012). "Spurious but systematic correlations in functional
-    connectivity MRI networks arise from subject motion."
     """
 
     input_spec = MotionCorrectionInputSpec

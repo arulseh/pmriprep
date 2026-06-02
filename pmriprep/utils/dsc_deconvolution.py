@@ -261,7 +261,7 @@ def svd_deconvolve_standard(
     # Extract perfusion parameters
     cbf = float(np.max(residue))
 
-    # CBV via trapezoidal integration of residue (Sourbron & Luypaert 2007)
+    # CBV via trapezoidal integration of residue
     cbv = float(np.trapezoid(residue, dx=dt))
 
     # MTT from central volume theorem: MTT = CBV / CBF
@@ -382,7 +382,7 @@ def svd_deconvolve_standard_batch(
         # Extract parameters
         cbf_masked = np.max(residues_masked, axis=1)
 
-        # CBV via trapezoidal integration (Sourbron & Luypaert 2007)
+        # CBV via trapezoidal integration
         cbv_masked = np.trapezoid(residues_masked, dx=dt, axis=1)
 
         # MTT = CBV / CBF
@@ -439,7 +439,7 @@ class CirculantDeconvolutionResult(DeconvolutionResultBase):
         """Get Tmax for cSVD (= delay).
 
         For cSVD, Tmax represents the time delay of the tissue residue
-        function relative to the AIF (Calamante et al. Stroke 2010). This is
+        function relative to the AIF. This is
         the standard definition used in DEFUSE-3 and DAWN trials.
 
         Parameters
@@ -492,7 +492,7 @@ def build_block_circulant_matrix(
     n = len(aif)
     m = 2 * n
 
-    # Zero-pad AIF to length 2N for full delay range (Wu 2003 Eq. 4)
+    # Zero-pad AIF to length 2N for full delay range
     aif_padded = np.zeros(m, dtype=np.float64)
     aif_padded[:n] = aif
 
@@ -525,8 +525,7 @@ def svd_deconvolve_circulant(
         else:              delay = argmax(R) - 2N      (negative / wrap-around)
 
     where N is the original curve length and 2N is the padded length.
-    Index 0 in the block-circulant residue corresponds to zero delay
-    (Wu et al. 2003).
+    Index 0 in the block-circulant residue corresponds to zero delay.
 
     Parameters
     ----------
@@ -590,7 +589,7 @@ def svd_deconvolve_circulant(
         raise ValueError(f"threshold must be in (0, 1), got {threshold}")
 
     n = len(tissue_curve)
-    m = 2 * n  # Padded length (Wu 2003 Eq. 4)
+    m = 2 * n  # Padded length
 
     # Zero-pad tissue curve to length 2N
     tissue_padded = np.zeros(m, dtype=np.float64)
@@ -630,7 +629,7 @@ def svd_deconvolve_circulant(
     if apply_non_negativity:
         residue = np.maximum(residue, 0.0)
 
-    # Extract delay from position of maximum (Wu et al. 2003)
+    # Extract delay from position of maximum
     # Zero-delay is at index 0; indices >= n wrap to negative delays.
     peak_position = int(np.argmax(residue))
     if peak_position < n:
@@ -773,7 +772,7 @@ def svd_deconvolve_circulant_batch(
         if apply_non_negativity:
             residues_masked = np.maximum(residues_masked, 0.0)
 
-        # Extract delays from peak positions (Wu et al. 2003; zero-delay at index 0)
+        # Extract delays from peak positions (zero-delay at index 0)
         peak_positions = np.argmax(residues_masked, axis=1)
         delay_frames = np.where(
             peak_positions < n_timepoints,
@@ -930,8 +929,8 @@ def _deconvolve_with_threshold(
 ) -> tuple[npt.NDArray[np.floating], float, int, float, int]:
     """Deconvolve with a given threshold using block-circulant SVD (helper).
 
-    OI is computed on the raw (unclipped) causal residue per Wu 2003
-    (MRM 50:164). The returned residue is clipped when
+    OI is computed on the raw (unclipped) causal residue. The returned
+    residue is clipped when
     apply_non_negativity is True, for downstream parameter extraction.
 
     Parameters
@@ -1321,8 +1320,8 @@ def svd_deconvolve_oscillation_batch(
 class TikhonovDeconvolutionResult(DeconvolutionResultBase):
     """Result from Tikhonov regularised deconvolution.
 
-    First-derivative penalty operator with L-curve corner detection
-    (Hansen 1998). Replaces the legacy zeroth-order + GCV implementation
+    First-derivative penalty operator with L-curve corner detection.
+    Replaces the legacy zeroth-order + GCV implementation
     that failed on noisy DSC data.
 
     Attributes
@@ -1388,7 +1387,7 @@ def _select_lambda_lcurve(
     residual_norms: npt.NDArray[np.floating],
     solution_norms: npt.NDArray[np.floating],
 ) -> tuple[int, bool]:
-    """Triangle-method L-curve corner detection (Hansen 1998 + Castellanos 2002).
+    """Triangle-method L-curve corner detection.
 
     Returns (best_index, corner_found). ``corner_found=False`` indicates
     the L-curve is approximately monotone — the caller should fall back
@@ -1432,11 +1431,9 @@ def tikhonov_deconvolve(
     is the residue function, and ``L`` is the (n-1, n) forward-difference
     operator that penalises oscillations rather than residue magnitude.
     First-order Tikhonov is more appropriate than zeroth-order for DSC
-    residues, which physically should vary smoothly (Hansen 1998 for the
-    L-operator theory, Zanderigo 2009 for derivative-penalty regularization
-    in perfusion).
+    residues, which physically should vary smoothly.
 
-    The optimal λ is selected via the L-curve corner method (Hansen 1998):
+    The optimal λ is selected via the L-curve corner method:
     sweep λ on a log grid, record (||A·r_λ - C||, ||L·r_λ||), find the
     point of maximum curvature in log-log space.
 
@@ -1471,9 +1468,7 @@ def tikhonov_deconvolve(
     References
     ----------
         Hansen PC. Rank-Deficient and Discrete Ill-Posed Problems. SIAM, 1998.
-        Zanderigo F et al. IEEE Trans Biomed Eng 56:1287-1297 (2009).
         Calamante F et al. MRM 50:1237-1247 (2003).
-        Castellanos JL et al. App Numer Math 43:359-373 (2002).
     """
     # Validate inputs
     if len(tissue_curve) != len(aif):

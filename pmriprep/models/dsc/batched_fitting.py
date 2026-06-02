@@ -9,16 +9,6 @@ Supported models:
 - **CPI**: Control-point interpolation with PCHIP residue functions.
     Vectorized Fritsch-Carlson PCHIP on CPU + shared Toeplitz matmul.
 - **Vascular**: Gamma-variate residue with FFT convolution + delay shift.
-
-References
-----------
-    Chappell MA, Groves AR, Whitcher B, Woolrich MW (2009).
-    Variational Bayesian Inference for a Nonlinear Forward Model.
-    IEEE Trans Signal Process 57(1):223-236.
-
-    Mouridsen K, Friston K, Hjort N, et al. (2006). Bayesian estimation
-    of cerebral perfusion using a physiological model of microvasculature.
-    NeuroImage 33(2):570-579.
 """
 
 from __future__ import annotations
@@ -888,8 +878,8 @@ def batched_dsc_vi_fit(
 ) -> DSCBatchedFitResult:
     """Batched Variational Bayes fitting for DSC perfusion models.
 
-    Implements the linearized VB algorithm from Chappell et al. (2009)
-    vectorized across all voxels. Supports both CPI and Vascular models.
+    Implements the linearized VB algorithm vectorized across all voxels.
+    Supports both CPI and Vascular models.
 
     Parameters
     ----------

@@ -637,7 +637,7 @@ class BrainExtractionOutputSpec(TraitedSpec):
 class BrainExtraction(CommandLine):
     """Deep learning brain extraction using HD-BET or ANTs fallback.
 
-    This interface wraps HD-BET (Isensee et al., 2019) for accurate deep learning
+    This interface wraps HD-BET for accurate deep learning
     brain extraction, with ANTs antsBrainExtraction.sh as a fallback option.
 
     HD-BET is preferred for its superior performance on pathological cases

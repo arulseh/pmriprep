@@ -187,7 +187,7 @@ class B1MappingOutputSpec(TraitedSpec):
 class B1Mapping(SimpleInterface):
     """B1+ mapping from Actual Flip angle Imaging (AFI) acquisition.
 
-    This interface implements the AFI method (Yarnykh, 2007) for mapping
+    This interface implements the AFI method for mapping
     the B1+ transmit field inhomogeneity. B1+ correction is critical for
     accurate T1 mapping and DCE quantification, particularly at higher
     field strengths (3T, 7T).
@@ -250,12 +250,6 @@ class B1Mapping(SimpleInterface):
     QC criteria:
         - Mean B1+: 0.85-1.15 (expected ~1.0 for well-calibrated system)
         - Spatial std: <0.3 (B1+ should be spatially smooth)
-
-    References
-    ----------
-    Yarnykh VL. "Actual flip-angle imaging in the pulsed steady state:
-    A method for rapid three-dimensional mapping of the transmitted
-    radiofrequency field." Magn Reson Med. 2007;57(1):192-200.
 
     See Also
     --------
@@ -540,7 +534,7 @@ class B1Mapping(SimpleInterface):
         valid = signal_mask & ratio_valid & denominator_stable
 
         # -----------------------------------------------------------------
-        # Simplified Yarnykh (MRM 2007) equation, accurate to first order
+        # Simplified AFI equation, accurate to first order
         # in TR1/T1:  cos(alpha) = (r*n - 1) / (n - r)
         # Compute only for valid voxels; set the rest to B1+=1.0.
         # -----------------------------------------------------------------
@@ -1255,7 +1249,7 @@ class T1Mapping(SimpleInterface):
         α_actual = α_nominal × B1+
 
     For linearized fitting with two flip angles, we use the DESPOT1
-    approach (Deoni et al., 2003):
+    approach:
 
         S(α)/sin(α) = E1 × S(α)/tan(α) + S0 × (1 - E1)
 
@@ -1271,12 +1265,6 @@ class T1Mapping(SimpleInterface):
     QC ranges by field strength (3T):
         - WM T1: 800-1000ms
         - GM T1: 1200-1600ms
-
-    References
-    ----------
-    Deoni SCL, Rutt BK, Peters TM. "Rapid combined T1 and T2 mapping
-    using gradient recalled acquisition in the steady state."
-    Magn Reson Med. 2003;49(3):515-526.
 
     See Also
     --------
@@ -1492,7 +1480,7 @@ class T1Mapping(SimpleInterface):
         # multi-FA data well, implying B1 is close to nominal.
         # For n_fa = 2, the system is exactly determined (NRMSE ≡ 0).
         # Smooth B1 error without a B1 map is invisible to this metric —
-        # fundamental VFA limitation (Deoni et al., MRM 2003).
+        # fundamental VFA limitation.
         vfa_fit_nrmse: Optional[float] = None
         if n_fa >= 3:
             t1_s = t1_map / 1000.0  # back to seconds for E1
@@ -2097,9 +2085,6 @@ class T1Mapping(SimpleInterface):
         numpy.ndarray
             T1 map in seconds
 
-        References
-        ----------
-        Chang LC, et al. Magn Reson Med. 2008;60(2):496-501.
         """
         from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1
 
@@ -2128,7 +2113,7 @@ class T1Mapping(SimpleInterface):
         e1 = (n_fa * sum_xy - sum_x * sum_y) / denom
         e1 = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
 
-        # Iterative reweighting (Chang 2008 MRM 60:496)
+        # Iterative reweighting
         for _ in range(n_iterations):
             # w_i = (sin(a_i) / (1 - E1 * cos(a_i)))^2
             denom_w = 1.0 - e1[np.newaxis, :] * cos_flat  # (n_fa, n_voxels)

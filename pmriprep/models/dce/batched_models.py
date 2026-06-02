@@ -9,20 +9,6 @@ Supported models:
 - Extended Tofts: C_t(t) = vp * Cp(t) + Ktrans * [Cp ⊗ exp(-kep*t)]
 - Patlak: C_t(t) = vp * Cp(t) + Ktrans * ∫Cp(τ)dτ
 - 2CXM: C_t(t) = [A1*exp(-K1*t) + A2*exp(-K2*t)] ⊗ Ca(t)
-
-References
-----------
-    Tofts PS, Kermode AG. Measurement of the blood-brain barrier
-    permeability and leakage space using dynamic MR imaging.
-    1. Fundamental concepts. Magn Reson Med. 1991;17(2):357-367.
-
-    Tofts PS, Brix G, Buckley DL, et al. Estimating kinetic parameters
-    from dynamic contrast-enhanced T1-weighted MRI of a diffusable
-    tracer: standardized quantities and symbols. J Magn Reson Imaging.
-    1999;10(3):223-232.
-
-    Sourbron SP, Buckley DL. On the scope and interpretation of the Tofts
-    models for DCE-MRI. Magn Reson Med. 2011;66(3):735-745.
 """
 
 from __future__ import annotations

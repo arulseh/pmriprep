@@ -46,7 +46,7 @@ VFA_NAN_FRACTION_GOOD: float = 0.20
 # Above this (for well-conditioned VFA): abandon VFA entirely.
 VFA_NAN_FRACTION_TISSUE_FALLBACK: float = 0.40
 
-# VFA conditioning thresholds (Deoni SCL et al. MRM 2003).
+# VFA conditioning thresholds.
 # VFA condition number = E1/(1-E1); higher means 1% B1 error
 # propagates to larger T1 error.
 # E1 > 0.997 → cond > 332 → fallback unconditionally
@@ -613,8 +613,8 @@ def _auto_correct_t1(
        - *Conditional zone* (E1 0.993-0.997, cond 141-332): VFA T1 is biased
          but retains spatial information. Without B1 correction, offset
          correction is preferred over fallback when NaN fraction is manageable,
-         as it preserves spatial variation while fixing the median bias
-         (Deoni SCL et al. MRM 2003). When NaN fraction exceeds the E1-adaptive
+         as it preserves spatial variation while fixing the median bias.
+         When NaN fraction exceeds the E1-adaptive
          abandon threshold, fallback is used instead.
 
     3. **Offset correction**: Applied when median T1 deviates from expected

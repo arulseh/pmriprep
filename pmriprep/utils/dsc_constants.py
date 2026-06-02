@@ -96,17 +96,17 @@ EPSILON_SHAPE: Final[float] = 1e-10
 #: treats K2 > 0.5 as "severe leakage."
 K2_UPPER_BOUND: Final[float] = 0.5
 
-# Bidirectional K2 (Leu 2016 AJNR 37:1440)
+# Bidirectional K2
 # kep = EES efflux rate in s^-1 (NOT min^-1 like DCE literature).
-# Using s^-1 for consistency with K2 units and Leu 2016 convention.
+# Using s^-1 for consistency with K2 units.
 # To convert from DCE (min^-1): kep_s = kep_min / 60.0
 #
-# Leu 2016 measured GBM values:
+# Measured GBM values:
 #   DCE kep: 0.0050 ± 0.0018 s^-1 (= 0.30 ± 0.11 min^-1)
 #   DSC kep: 0.0057 ± 0.0042 s^-1 (= 0.34 ± 0.25 min^-1)
 # Figure 3D scatter: DCE 0-0.03, DSC 0-0.05 s^-1
 
-#: Default kep for bidirectional K2 correction (s⁻¹), GBM mean from Leu 2016
+#: Default kep for bidirectional K2 correction (s⁻¹), GBM mean
 KEP_DSC_DEFAULT: Final[float] = 0.005
 
 #: Lower bound for kep (s⁻¹), below this ≈ standard BSW
@@ -167,7 +167,6 @@ K2_SIGMA_CORRECTION: Final[float] = 0.005     # s⁻¹
 #: literature-derived 0.003 to 0.005 per physics consult 2026-04-18:
 #: observed well-suppressed half-dose GBM cohort sits at k2_median
 #: 0.0018–0.0048, so 0.005 captures it without reclassifying as partial.
-#: References: Boxerman 2006 AJNR 27:859, Leu 2016 AJNR 37:1440, Welker 2015 AJNR 36:E41.
 K2_PRIMARY_ADEQUATE: Final[float] = 0.005     # s⁻¹
 K2_PRIMARY_INADEQUATE: Final[float] = 0.01    # s⁻¹, == K2_SIGMA_SUPPRESSED
 LEAKY_PRIMARY_ADEQUATE: Final[float] = 1.0    # percent
@@ -308,7 +307,7 @@ AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
 
 #: Maximum peak-time spread (seconds) within an averaged AIF voxel pool.
 #: True intra-arterial dispersion across the MCA tree (M1 → M3) is sub-
-#: second (Calamante 2013 Prog Nucl Magn Reson Spectrosc 74:1; Bleeker 2011 MRM 65:448), but the MEASURED
+#: second, but the MEASURED
 #: spread among co-arterial voxels at typical DSC TR (1-2 s) exceeds this
 #: due to (a) frame quantization on argmax peak detection and (b) per-voxel
 #: argmax jitter at SNR 20-40 (~±1 frame). Converted at runtime to a frame
@@ -464,7 +463,7 @@ def calculate_k_h(
     rho_brain: float = RHO_BRAIN,
     rho_blood: float = RHO_BLOOD,
 ) -> float:
-    """K_H calibration factor for absolute quantification (Østergaard 1996).
+    """K_H calibration factor for absolute quantification.
 
     K_H = (rho_brain / rho_blood) * (1 / (1 - hematocrit)) * 100
 
@@ -484,10 +483,5 @@ def calculate_k_h(
     -------
     float
         K_H calibration factor (dimensionless scaling).
-
-    References
-    ----------
-    Østergaard L, et al. Magn Reson Med. 1996;36(5):715-725.
-    Rempp KA, et al. Radiology. 1994;193(3):637-641.
     """
     return (rho_brain / rho_blood) * (1.0 / (1.0 - hematocrit)) * 100.0

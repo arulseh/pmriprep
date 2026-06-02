@@ -18,13 +18,6 @@ Two calibration paths are supported:
 Ratio deviations indicate:
 - Ratio << expected: preload effect (reduced DSC signal from prior contrast).
 - Ratio >> expected: DCE overestimation or DSC underestimation.
-
-References
-----------
-- Boxerman et al., Neuro-Oncology 2020 (ASFNR/NCI consensus — NAWM
-  normalization is the reference scale for clinical DSC).
-- Larsson et al., MRM 2009;62:1270 (direct DCE-measured NAWM vp ≈ 0.0089
-  at matched Hct=0.42; anchor for ``NAWM_VP_REFERENCE``).
 """
 
 import logging
@@ -76,8 +69,8 @@ MAX_CBV_FOR_VALIDATION: float = 8.0
 
 #: Spearman rank correlation thresholds for unconstrained vp-CBV validation.
 #: ρ=0.40 → ~16% shared variance, a conventional "moderate" cutoff. DSC and
-#: DCE measure related but distinct vascular features (Quarles 2019 NeuroImage
-#: 187:32). ρ<0.20 is effectively noise.
+#: DCE measure related but distinct vascular features. ρ<0.20 is
+#: effectively noise.
 CORRELATION_PASS_UNCONSTRAINED: float = 0.40
 CORRELATION_WARN_UNCONSTRAINED: float = 0.20
 
@@ -220,7 +213,7 @@ class ValidationResult:
     acquisition_limited : bool
         True when the AIF-tissue overshoot fraction
         exceeds the prior-dominance threshold and the nCBV-anchored
-        ratio tolerance was widened (Buckley MRM 2002). Informational
+        ratio tolerance was widened. Informational
         flag; does not imply data-quality failure.
     """
 
@@ -374,7 +367,7 @@ def validate_vp_cbv(
          legitimately have absolute CBV (e.g., pipelines with a κ
          calibration or steady-state reference); no universal
          ``vp / rel_AUC_CBV`` expected ratio exists without NAWM
-         anchoring (Rempp 1994; Knutsson 2010).
+         anchoring.
 
     - **nCBV (``use_ncbv_scale=True``):** CBV is NAWM-normalized
       (dimensionless, NAWM=1). Expected ratio = ``NAWM_VP_REFERENCE`` by
@@ -409,8 +402,8 @@ def validate_vp_cbv(
         (fraction of voxels where ``vp_prior × Cp(peak) > observed
         C_tissue(peak)``). When greater than
         ``ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD`` on the nCBV path,
-        vp is prior-dominated by first-pass temporal undersampling
-        (Buckley MRM 2002); the ratio tolerance is widened to
+        vp is prior-dominated by first-pass temporal undersampling;
+        the ratio tolerance is widened to
         [``VP_NCBV_RATIO_MIN_LIMITED``, ``VP_NCBV_RATIO_MAX_LIMITED``]
         and ``result.acquisition_limited`` is set. Pass ``None`` to
         skip (legacy tight-band behavior).
@@ -563,7 +556,7 @@ def validate_vp_cbv(
 
     # Acquisition-limited flag: when the upstream overshoot detector fires
     # on the nCBV-anchored path, vp is prior-dominated by first-pass
-    # temporal undersampling (Buckley MRM 2002). Widen the ratio band to
+    # temporal undersampling. Widen the ratio band to
     # the physiological envelope instead of flagging WARN on what is a
     # physics ceiling, not a data-quality failure.
     acquisition_limited = (

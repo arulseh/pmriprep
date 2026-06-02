@@ -141,3 +141,44 @@ def get_lobar_atlas_dir() -> Path:
     if not atlas_dir.is_dir():
         raise FileNotFoundError(f"Lobar atlas directory not found: {atlas_dir}")
     return atlas_dir
+
+
+def get_boilerplate_bib() -> Path:
+    """Get path to the bundled methods-boilerplate BibTeX file.
+
+    Single source of truth for the citation references rendered into the QC
+    report Methods section (see ``pmriprep.utils.report_utils``).
+
+    Returns
+    -------
+    Path
+        Path to ``boilerplate.bib``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the file is missing (e.g. a non-editable install lacking package data).
+    """
+    bib = DATA_DIR / "boilerplate.bib"
+    if not bib.is_file():
+        raise FileNotFoundError(f"Boilerplate bibliography not found: {bib}")
+    return bib
+
+
+def get_citation_csl() -> Path:
+    """Get path to the bundled numbered (Vancouver-style) citation CSL.
+
+    Returns
+    -------
+    Path
+        Path to ``vancouver.csl``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the file is missing.
+    """
+    csl = DATA_DIR / "vancouver.csl"
+    if not csl.is_file():
+        raise FileNotFoundError(f"Citation CSL not found: {csl}")
+    return csl

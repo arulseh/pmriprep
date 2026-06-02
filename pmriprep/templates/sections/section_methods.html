@@ -13,14 +13,17 @@
         </p>
         <div id="methods-text" style="background: #fafafa; padding: 15px;
              border-radius: 4px; font-family: Georgia, serif; line-height: 1.7;
-             font-size: 0.95em; border: 1px solid #eee; white-space: pre-wrap;">{{ boilerplate_text }}</div>
+             font-size: 0.95em; border: 1px solid #eee;">{{ boilerplate_html }}</div>
     </div>
 </section>
 
+<!-- Raw Markdown (with @key citation markers) for the Copy button — JSON-encoded
+     so arbitrary boilerplate text round-trips safely into clipboard. -->
+<script type="application/json" id="methods-md-data">{{ boilerplate_md | default("") | tojson }}</script>
 <script>
 function copyMethods() {
-    const text = document.getElementById('methods-text').innerText;
-    navigator.clipboard.writeText(text).then(() => {
+    const md = JSON.parse(document.getElementById('methods-md-data').textContent);
+    navigator.clipboard.writeText(md).then(() => {
         const btn = document.querySelector('.copy-btn');
         btn.textContent = 'Copied!';
         setTimeout(() => btn.textContent = 'Copy', 2000);

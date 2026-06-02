@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.57.2"
+version = "0.58.0"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -42,6 +42,8 @@ dependencies = [
     "toml>=0.10.0",
     # Report generation
     "jinja2>=3.0",
+    # Bundles the pandoc binary for citation-boilerplate rendering (--citeproc)
+    "pypandoc-binary>=1.13",
     # QC figures (dce_aif_qc.py uses add_axes(tuple) and mpl.colormaps["…"] subscript, both ≥3.7)
     "matplotlib>=3.7",
 ]
@@ -107,4 +109,4 @@ where = ["."]
 include = ["pmriprep*"]
 
 [tool.setuptools.package-data]
-pmriprep = ["templates/**/*.html", "data/atlases/**/*.nii.gz"]
+pmriprep = ["templates/**/*.html", "data/atlases/**/*.nii.gz", "data/*.bib", "data/*.csl"]

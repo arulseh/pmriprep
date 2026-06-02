@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" class="in-text" version="1.0" default-locale="en-US">
+  <info>
+    <title>PMRIPrep Numbered (Vancouver-style)</title>
+    <id>https://github.com/arulseh/pmriprep/styles/numbered</id>
+    <category citation-format="numeric"/>
+    <updated>2000-01-01T00:00:00+00:00</updated>
+  </info>
+  <citation collapse="citation-number">
+    <sort>
+      <key variable="citation-number"/>
+    </sort>
+    <layout prefix="[" suffix="]" delimiter=",">
+      <text variable="citation-number"/>
+    </layout>
+  </citation>
+  <bibliography second-field-align="flush">
+    <sort>
+      <key variable="citation-number"/>
+    </sort>
+    <layout>
+      <text variable="citation-number" prefix="[" suffix="] "/>
+      <group suffix=".">
+        <names variable="author" suffix=". ">
+          <name name-as-sort-order="all" sort-separator=" " initialize-with="" delimiter=", " delimiter-precedes-last="always" et-al-min="7" et-al-use-first="6"/>
+          <et-al term="et-al"/>
+        </names>
+        <text variable="title" suffix=". "/>
+        <text variable="container-title" suffix=". "/>
+        <group>
+          <date variable="issued">
+            <date-part name="year"/>
+          </date>
+          <text variable="volume" prefix=";"/>
+          <text variable="issue" prefix="(" suffix=")"/>
+          <text variable="page" prefix=":"/>
+        </group>
+        <text variable="DOI" prefix=". doi:"/>
+      </group>
+    </layout>
+  </bibliography>
+</style>

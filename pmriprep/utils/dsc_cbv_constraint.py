@@ -10,14 +10,6 @@ The constraint pipeline:
     2. Convert CBV to vp: vp = CBV * (1 - Hct) / (100 * rho)
     3. Determine constraint mode: hard (fix vp), soft (Bayesian prior), skip
 
-References
-----------
-    Prah MA, Schmainda KM. "Practical guidance to identify and troubleshoot
-    suboptimal DSC-MRI results." Front Radiol. 2024;4:1307586.
-
-    Boxerman JL, et al. "Relative cerebral blood volume maps corrected for
-    contrast agent extravasation significantly correlate with glioma tumor
-    grade." AJNR. 2006;27(4):859-867.
 """
 
 import logging
@@ -94,8 +86,8 @@ AIF_BASELINE_RETURN_MARGINAL: float = 0.30
 #: ~0.7–1.5; tumor-heavy subjects up to ~2–3. Outside this range, the
 #: normalization reference or the underlying CBV map is compromised.
 #: Note: MAX_NCBV_FOR_VALIDATION=5.0 is a PER-VOXEL upper bound that
-#: accommodates hypervascular HGG tumor-rim (Law 2008, Hu 2009: rCBV up
-#: to 6 in GBM); this median range is for the whole-brain distribution.
+#: accommodates hypervascular HGG tumor-rim (clinical GBM rCBV up
+#: to ~6); this median range is for the whole-brain distribution.
 CBV_MEDIAN_RANGE: tuple[float, float] = (0.3, 3.0)
 
 #: Maximum fraction of negative CBV values before quality downgrade
@@ -363,8 +355,8 @@ def _bolus_gd_fraction(
     """Bolus Gd dose as a fraction of the Gd-DOTA reference (0.1 mmol Gd/kg).
 
     Peak first-pass ΔR2* and CNR scale linearly with the product
-    ``dose × agent_standard_dose`` (Rose criterion; Boxerman AJNR 2006;
-    Welker AJNR 2015). CNR coverage thresholds calibrated at full
+    ``dose × agent_standard_dose`` (Rose criterion). CNR coverage
+    thresholds calibrated at full
     standard dose must be scaled by this fraction to remain valid on
     reduced-dose protocols or lower-dose agents.
 
@@ -556,7 +548,7 @@ def assess_dsc_cbv_quality(
 
     # --- AIF Candidate Count ---
     # Single-voxel AIF has no noise averaging; AIF SNR < 20 degrades
-    # SVD deconvolution (Wu et al. MRM 2003).  Default 3 when key is
+    # SVD deconvolution.  Default 3 when key is
     # absent for backward compatibility (no penalty).
     n_candidates = int(aif_qc_data.get("n_aif_voxels_selected", 3))
     result.n_aif_voxels = n_candidates
@@ -748,8 +740,8 @@ def ncbv_to_vp_prior(
 ) -> npt.NDArray[np.floating]:
     """Convert NAWM-normalized CBV (nCBV) to a vp prior map.
 
-    Anchors NAWM vp at ``NAWM_VP_REFERENCE`` (Larsson 2009 MRM direct
-    measurement) and scales linearly with the per-voxel
+    Anchors NAWM vp at ``NAWM_VP_REFERENCE`` and scales linearly
+    with the per-voxel
     nCBV ratio. Because nCBV cancels AIF partial-volume, recirculation,
     and first-pass-truncation biases (all affect numerator and denominator
     equally), this is the scientifically defensible conversion from a
@@ -775,12 +767,6 @@ def ncbv_to_vp_prior(
     npt.NDArray[np.floating]
         3D vp prior map (dimensionless), clipped to [0, VP_MAX_PHYSIOLOGICAL].
 
-    References
-    ----------
-        Larsson HBW et al., MRM 2009;62:1270 (NAWM vp = 0.0089 ± 0.0038,
-        direct DCE measurement at matched Hct = 0.42).
-        Sourbron SP, Buckley DL, NMR Biomed 2013;26:1004 (WM vp 0.005–0.02
-        literature review).
     """
     ncbv_safe = np.where(
         np.isfinite(ncbv_data) & (ncbv_data >= 0),
@@ -1137,7 +1123,7 @@ def prepare_vp_constraint_from_data(
         )
 
         # Step 4: Magnitude gate (undershoot + overshoot).
-        # Physiological plausibility: WM vp ≈ 0.005–0.015 (Larsson 2009),
+        # Physiological plausibility: WM vp ≈ 0.005–0.015,
         # GM ≈ 0.015–0.025, tumor up to ~0.05. Values outside
         # [VP_MEDIAN_MIN, VP_MEDIAN_MAX] indicate a gross calibration
         # failure — downgrade to SKIP rather than feeding biased priors

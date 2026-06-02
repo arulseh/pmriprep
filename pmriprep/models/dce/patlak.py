@@ -1,6 +1,6 @@
 """Patlak pharmacokinetic model with graphical analysis.
 
-Implements the Patlak model (Patlak et al. 1983) for DCE-MRI analysis.
+Implements the Patlak model for DCE-MRI analysis.
 This model assumes irreversible or negligible backflux of contrast agent
 from the extravascular space and is appropriate for tissues with intact
 blood-brain barrier or when only early time points are used.
@@ -78,17 +78,6 @@ class PatlakModel(PKModel):
         - Assumes no backflux (kep = 0)
         - Not valid when significant contrast egress occurs
         - Should use only early time points if backflux is present
-
-    References
-    ----------
-        Patlak CS, Blasberg RG, Fenstermacher JD. Graphical evaluation of
-        blood-to-brain transfer constants from multiple-time uptake data.
-        J Cereb Blood Flow Metab. 1983;3(1):1-7.
-
-        Tofts PS, Brix G, Buckley DL, et al. Estimating kinetic parameters
-        from dynamic contrast-enhanced T1-weighted MRI of a diffusable
-        tracer: standardized quantities and symbols. J Magn Reson Imaging.
-        1999;10(3):223-232.
     """
 
     @property
@@ -123,8 +112,7 @@ class PatlakModel(PKModel):
             ModelParameter(
                 name="vp",
                 bounds=(VP_BOUNDS.min, VP_BOUNDS.max),
-                # Brain vp 0.005-0.04 (Larsson MRM 2009; Sourbron NMR
-                # Biomed 2013). Match Extended Tofts. Wider prior
+                # Brain vp 0.005-0.04. Match Extended Tofts. Wider prior
                 # (0.01, 0.2) centered ~3× too high vs physiology and
                 # biased Patlak Ki via the Patlak-plot intercept.
                 typical_range=(0.001, 0.04),

@@ -9,6 +9,7 @@ quality control.
 import json
 import logging
 import math
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -29,25 +30,25 @@ logger = logging.getLogger(__name__)
 
 # Boilerplate text mappings for DSC deconvolution methods
 _DSC_DECONV_TEXT: dict[str, str] = {
-    "sSVD": "standard singular value decomposition (sSVD; Ostergaard et al., 1996)",
-    "oSVD": "oscillation-index regularized SVD (oSVD; Wu et al., 2003)",
+    "sSVD": "standard singular value decomposition (sSVD) [@ostergaard_1996]",
+    "oSVD": "oscillation-index regularized SVD (oSVD) [@wu_2003]",
     "tikhonov": (
         "Tikhonov-regularized deconvolution with L-curve corner detection "
-        "(Hansen, 1998; Calamante et al., 2003; Zanderigo et al., 2009)"
+        "[@calamante_2003; @hansen_1998]"
     ),
     "vascular": (
         "the vascular model with gamma-variate transit time distribution "
-        "(Mouridsen et al., 2006)"
+        "[@mouridsen_2006]"
     ),
-    "cpi": "control point interpolation (CPI; Mehndiratta et al., 2013)",
+    "cpi": "control point interpolation (CPI) [@mehndiratta_2013]",
 }
 
 # Boilerplate text mappings for DCE pharmacokinetic models
 _DCE_PK_MODEL_TEXT: dict[str, str] = {
-    "tofts": "the standard Tofts model (Tofts & Kermode, 1991)",
-    "extended_tofts": "the extended Tofts model (Tofts et al., 1999)",
-    "patlak": "the Patlak model (Patlak et al., 1983)",
-    "2cxm": "the two-compartment exchange model (Sourbron & Buckley, 2013)",
+    "tofts": "the standard Tofts model [@tofts_1991]",
+    "extended_tofts": "the extended Tofts model [@tofts_1999]",
+    "patlak": "the Patlak model [@patlak_1983]",
+    "2cxm": "the two-compartment exchange model [@sourbron_2011; @brix_2004]",
 }
 
 # Boilerplate text for T1 mapping methods
@@ -55,11 +56,11 @@ _T1_METHOD_TEXT: dict[str, str] = {
     "hybrid": (
         "Baseline T1 was estimated from variable flip angle (VFA) images using "
         "hybrid fitting (linearized DESPOT1 with nonlinear refinement for "
-        "ill-conditioned voxels; Deoni et al., 2003)"
+        "ill-conditioned voxels) [@deoni_2003]"
     ),
     "wlls": (
         "Baseline T1 was estimated from variable flip angle (VFA) images using "
-        "linearized DESPOT1 fitting (Deoni et al., 2003)"
+        "linearized DESPOT1 fitting [@deoni_2003]"
     ),
     "nlls": (
         "Baseline T1 was estimated from variable flip angle (VFA) images using "
@@ -73,7 +74,7 @@ _T1_METHOD_TEXT: dict[str, str] = {
 _B1_CORRECTION_TEXT: dict[str, str] = {
     "afi": (
         " with B1+ transmit field correction using the actual flip angle imaging "
-        "(AFI) method (Yarnykh, 2007)"
+        "(AFI) method [@yarnykh_2007]"
     ),
     "tfl_b1map": " with B1+ transmit field correction",
     "none": "",
@@ -83,221 +84,25 @@ _B1_CORRECTION_TEXT: dict[str, str] = {
 _INFERENCE_TEXT: dict[str, str] = {
     "vi": (
         "Parameter estimation used variational Bayesian inference "
-        "(Chappell et al., 2009)."
+        "[@chappell_2009]."
     ),
     "svb": (
         "Parameter estimation used spatial variational Bayes with the "
-        "M-prior (Penny et al., 2005; Groves et al., 2009)."
+        "M-prior [@penny_2005; @groves_2009]."
     ),
     "map": (
         "Parameter estimation used maximum a posteriori (MAP) inference "
         "with Laplace approximation for uncertainty quantification "
-        "(Woolrich et al., 2009)."
+        "[@woolrich_2009]."
     ),
     "nlls": "Parameter estimation used nonlinear least squares.",
 }
 
 # Boilerplate text for brain extraction tools
 _BRAIN_EXTRACTION_TEXT: dict[str, str] = {
-    "hdbet": "HD-BET (Isensee et al., 2019)",
-    "ants": "ANTs brain extraction (Avants et al., 2011)",
+    "hdbet": "HD-BET [@isensee_2019]",
+    "ants": "ANTs brain extraction [@avants_2011]",
 }
-
-# Full bibliographic references for all cited works
-_REFERENCES: dict[str, str] = {
-    "avants_2011": (
-        "Avants BB, Tustison NJ, Song G, Cook PA, Klein A, Gee JC. "
-        "A reproducible evaluation of ANTs similarity metric performance in brain image registration. "
-        "NeuroImage. 2011;54(3):2033-2044. doi:10.1016/j.neuroimage.2010.09.025"
-    ),
-    "boxerman_2006": (
-        "Boxerman JL, Schmainda KM, Weisskoff RM. "
-        "Relative cerebral blood volume maps corrected for contrast agent extravasation "
-        "significantly correlate with glioma tumor grade, whereas uncorrected maps do not. "
-        "AJNR Am J Neuroradiol. 2006;27(4):859-867."
-    ),
-    "calamante_2003": (
-        "Calamante F, Gadian DG, Connelly A. "
-        "Quantification of bolus-tracking MRI: improved characterization of the tissue "
-        "residue function using Tikhonov regularization. "
-        "Magn Reson Med. 2003;50(6):1237-1247. doi:10.1002/mrm.10643"
-    ),
-    "chappell_2009": (
-        "Chappell MA, Groves AR, Whitcher B, Woolrich MW. "
-        "Variational Bayesian inference for a nonlinear forward model. "
-        "IEEE Trans Signal Process. 2009;57(1):223-236. doi:10.1109/TSP.2008.2005752"
-    ),
-    "deoni_2003": (
-        "Deoni SCL, Rutt BK, Peters TM. "
-        "Rapid combined T1 and T2 mapping using gradient recalled acquisition in the steady state. "
-        "Magn Reson Med. 2003;49(3):515-526. doi:10.1002/mrm.10407"
-    ),
-    "groves_2009": (
-        "Groves AR, Chappell MA, Woolrich MW. "
-        "Combined spatial and non-spatial prior for inference on MRI time-series. "
-        "NeuroImage. 2009;45(3):795-809. doi:10.1016/j.neuroimage.2008.12.027"
-    ),
-    "gorgolewski_2011": (
-        "Gorgolewski K, Burns CD, Madison C, et al. "
-        "Nipype: a flexible, lightweight and extensible neuroimaging data processing framework in Python. "
-        "Front Neuroinform. 2011;5:13. doi:10.3389/fninf.2011.00013"
-    ),
-    "hansen_1998": (
-        "Hansen PC. "
-        "Rank-Deficient and Discrete Ill-Posed Problems: "
-        "Numerical Aspects of Linear Inversion. "
-        "Philadelphia: SIAM; 1998."
-    ),
-    "isensee_2019": (
-        "Isensee F, Schell M, Pflueger I, et al. "
-        "Automated brain extraction of multisequence MRI using artificial neural networks. "
-        "Hum Brain Mapp. 2019;40(17):4952-4964. doi:10.1002/hbm.24750"
-    ),
-    "jenkinson_2002": (
-        "Jenkinson M, Bannister P, Brady M, Smith S. "
-        "Improved optimization for the robust and accurate linear registration and motion correction of brain images. "
-        "NeuroImage. 2002;17(2):825-841. doi:10.1006/nimg.2002.1132"
-    ),
-    "kickingereder_2019": (
-        "Kickingereder P, Isensee F, Tursunova I, et al. "
-        "Automated quantitative tumour response assessment of MRI in neuro-oncology with artificial neural networks: "
-        "a multicentre, retrospective study. "
-        "Lancet Oncol. 2019;20(5):728-740. doi:10.1016/S1470-2045(19)30098-1"
-    ),
-    "mehndiratta_2013": (
-        "Mehndiratta A, MacIntosh BJ, Crane DE, Payne SJ, Chappell MA. "
-        "A control point interpolation method for the non-parametric quantification of cerebral haemodynamics "
-        "from dynamic susceptibility contrast MRI. "
-        "NeuroImage. 2013;64:560-570. doi:10.1016/j.neuroimage.2012.08.083"
-    ),
-    "nicholson_1998": (
-        "Nicholson C, Syková E. "
-        "Extracellular space structure revealed by diffusion analysis. "
-        "Trends Neurosci. 1998;21(5):207-215. doi:10.1016/S0166-2236(98)01261-2"
-    ),
-    "mouridsen_2006": (
-        "Mouridsen K, Friston K, Hjort N, Gyldensted L, Ostergaard L, Kiebel S. "
-        "Bayesian estimation of cerebral perfusion using a physiological model of microvasculature. "
-        "NeuroImage. 2006;33(2):570-579. doi:10.1016/j.neuroimage.2006.06.015"
-    ),
-    "ostergaard_1996": (
-        "Ostergaard L, Weisskoff RM, Chesler DA, Gyldensted C, Rosen BR. "
-        "High resolution measurement of cerebral blood flow using intravascular tracer bolus passages. "
-        "Part I: Mathematical approach and statistical analysis. "
-        "Magn Reson Med. 1996;36(5):715-725. doi:10.1002/mrm.1910360510"
-    ),
-    "parker_2006": (
-        "Parker GJM, Roberts C, Macdonald A, et al. "
-        "Experimentally-derived functional form for a population-averaged high-temporal-resolution "
-        "arterial input function for dynamic contrast-enhanced MRI. "
-        "Magn Reson Med. 2006;56(5):993-1000. doi:10.1002/mrm.21066"
-    ),
-    "penny_2005": (
-        "Penny WD, Trujillo-Barreto NJ, Friston KJ. "
-        "Bayesian fMRI time series analysis with spatial priors. "
-        "NeuroImage. 2005;24(2):350-362. doi:10.1016/j.neuroimage.2004.08.034"
-    ),
-    "patlak_1983": (
-        "Patlak CS, Blasberg RG, Fenstermacher JD. "
-        "Graphical evaluation of blood-to-brain transfer constants from multiple-time uptake data. "
-        "J Cereb Blood Flow Metab. 1983;3(1):1-7. doi:10.1038/jcbfm.1983.1"
-    ),
-    "rulseh_inprep": (
-        "Rulseh AM, et al. "
-        "PMRIPrep: A standardized preprocessing pipeline for perfusion and permeability MRI. "
-        "In preparation."
-    ),
-    "sourbron_2013": (
-        "Sourbron SP, Buckley DL. "
-        "Classic models for dynamic contrast-enhanced MRI. "
-        "NMR Biomed. 2013;26(8):1004-1027. doi:10.1002/nbm.2940"
-    ),
-    "tofts_1997": (
-        "Tofts PS. "
-        "Modeling tracer kinetics in dynamic Gd-DTPA MR imaging. "
-        "J Magn Reson Imaging. 1997;7(1):91-101. doi:10.1002/jmri.1880070113"
-    ),
-    "tofts_1991": (
-        "Tofts PS, Kermode AG. "
-        "Measurement of the blood-brain barrier permeability and leakage space using dynamic MR imaging. "
-        "1. Fundamental concepts. "
-        "Magn Reson Med. 1991;17(2):357-367. doi:10.1002/mrm.1910170208"
-    ),
-    "tofts_1999": (
-        "Tofts PS, Brix G, Buckley DL, et al. "
-        "Estimating kinetic parameters from dynamic contrast-enhanced T1-weighted MRI of a diffusable tracer: "
-        "standardized quantities and symbols. "
-        "J Magn Reson Imaging. 1999;10(3):223-232. doi:10.1002/(SICI)1522-2586(199909)10:3<223::AID-JMRI2>3.0.CO;2-S"
-    ),
-    "tustison_2010": (
-        "Tustison NJ, Avants BB, Cook PA, et al. "
-        "N4ITK: improved N3 bias correction. "
-        "IEEE Trans Med Imaging. 2010;29(6):1310-1320. doi:10.1109/TMI.2010.2046908"
-    ),
-    "leu_2016": (
-        "Leu K, Boxerman JL, Cloughesy TF, et al. "
-        "Improved leakage correction for single-echo dynamic susceptibility contrast "
-        "perfusion MRI estimates of relative cerebral blood volume in high-grade gliomas "
-        "by accounting for bidirectional contrast agent exchange. "
-        "AJNR Am J Neuroradiol. 2016;37(8):1440-1446. doi:10.3174/ajnr.A4759"
-    ),
-    "weisskoff_1994": (
-        "Weisskoff RM, Boxerman JL, Sorensen AG, Kulke SM, Campbell TA, Rosen BR. "
-        "Simultaneous blood volume and permeability mapping using a single Gd-based contrast injection. "
-        "Proc SMR 2nd Annual Meeting. 1994:279."
-    ),
-    "woolrich_2009": (
-        "Woolrich MW, Jbabdi S, Patenaude B, et al. "
-        "Bayesian analysis of neuroimaging data in FSL. "
-        "NeuroImage. 2009;45(1 Suppl):S173-S186. doi:10.1016/j.neuroimage.2008.10.055"
-    ),
-    "wu_2003": (
-        "Wu O, Ostergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG. "
-        "Tracer arrival timing-insensitive technique for estimating flow in MR perfusion-weighted imaging "
-        "using singular value decomposition with a block-circulant deconvolution matrix. "
-        "Magn Reson Med. 2003;50(1):164-174. doi:10.1002/mrm.10522"
-    ),
-    "yarnykh_2007": (
-        "Yarnykh VL. "
-        "Actual flip-angle imaging in the pulsed steady state: a method for rapid three-dimensional mapping "
-        "of the transmitted radiofrequency field. "
-        "Magn Reson Med. 2007;57(1):192-200. doi:10.1002/mrm.21120"
-    ),
-    "zanderigo_2009": (
-        "Zanderigo F, Bertoldo A, Pillonetto G, Cobelli C. "
-        "Nonlinear stochastic regularization to characterize tissue residue function "
-        "in bolus-tracking MRI: assessment and comparison with SVD, block-circulant SVD, "
-        "and Tikhonov. "
-        "IEEE Trans Biomed Eng. 2009;56(5):1287-1297. doi:10.1109/TBME.2009.2013820"
-    ),
-    "zhang_2001": (
-        "Zhang Y, Brady M, Smith S. "
-        "Segmentation of brain MR images through a hidden Markov random field model "
-        "and the expectation-maximization algorithm. "
-        "IEEE Trans Med Imaging. 2001;20(1):45-57. doi:10.1109/42.906424"
-    ),
-}
-
-
-def _generate_references_text(used_refs: set[str]) -> str:
-    """Generate formatted references section for used citations.
-
-    Parameters
-    ----------
-    used_refs : set of str
-        Set of reference keys that were used.
-
-    Returns
-    -------
-    str
-        Formatted references text with numbered entries.
-    """
-    if not used_refs:
-        return ""
-    # Sort by first author surname
-    sorted_keys = sorted(used_refs, key=lambda k: _REFERENCES[k].split()[0].lower())
-    lines = [f"[{i + 1}] {_REFERENCES[k]}" for i, k in enumerate(sorted_keys)]
-    return "References:\n" + "\n".join(lines)
 
 
 def _generate_boilerplate_text(
@@ -322,65 +127,53 @@ def _generate_boilerplate_text(
     Returns
     -------
     str
-        Formatted methods text with references section.
+        Methods text in Markdown with Pandoc ``@key`` citation markers. The
+        reference list is produced from the bundled ``boilerplate.bib`` by
+        :func:`_render_citations`; this function emits no reference section.
     """
     sentences: list[str] = []
-    used_refs: set[str] = {"gorgolewski_2011", "rulseh_inprep"}  # Always include Nipype and PMRIPrep
 
     # Opening sentence
     sentences.append(
         f"Data were preprocessed using PMRIPrep version {version} "
-        "(Rulseh et al., in preparation), a Nipype-based (Gorgolewski et al., 2011) "
-        "tool for MRI perfusion and permeability analysis."
+        "[@rulseh_inprep], a Nipype-based [@gorgolewski_2011] tool for MRI "
+        "perfusion and permeability analysis."
     )
 
     # Anatomical preprocessing
     anat_data = pipeline_data.get("anat")
     if ran_pipelines.get("anat") and anat_data is not None:
-        anat_qc = anat_data.get("qc_metrics", {})
-        anat_text, anat_refs = _build_anat_boilerplate(anat_qc)
+        anat_text = _build_anat_boilerplate(anat_data.get("qc_metrics", {}))
         if anat_text:
             sentences.append(anat_text)
-            used_refs.update(anat_refs)
 
     # Tumor segmentation
     if ran_pipelines.get("tumor_seg"):
         sentences.append(
             "Automated lesion segmentation was performed using HD-GLIO "
-            "(Kickingereder et al., 2019), providing lesion masks for "
-            "AIF candidate exclusion and contralateral NAWM ROI "
-            "lateralization."
+            "[@kickingereder_2019], providing lesion masks for AIF candidate "
+            "exclusion and contralateral NAWM ROI lateralization."
         )
-        used_refs.add("kickingereder_2019")
 
     # DSC perfusion
     dsc_data = pipeline_data.get("dsc")
     if ran_pipelines.get("dsc") and dsc_data is not None:
-        dsc_qc = dsc_data.get("qc_metrics", {})
-        dsc_text, dsc_refs = _build_dsc_boilerplate(dsc_qc)
+        dsc_text = _build_dsc_boilerplate(dsc_data.get("qc_metrics", {}))
         if dsc_text:
             sentences.append(dsc_text)
-            used_refs.update(dsc_refs)
 
     # DCE perfusion
     dce_data = pipeline_data.get("dce")
     if ran_pipelines.get("dce") and dce_data is not None:
-        dce_qc = dce_data.get("qc_metrics", {})
-        dce_text, dce_refs = _build_dce_boilerplate(dce_qc)
+        dce_text = _build_dce_boilerplate(dce_data.get("qc_metrics", {}))
         if dce_text:
             sentences.append(dce_text)
-            used_refs.update(dce_refs)
 
-    # Build final text: methods as single paragraph, then references
-    methods_text = " ".join(sentences)
-    if used_refs:
-        refs_text = _generate_references_text(used_refs)
-        return f"{methods_text}\n\n{refs_text}"
-    return methods_text
+    return " ".join(sentences)
 
 
-def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> tuple[str, set[str]]:
-    """Build anatomical preprocessing boilerplate text.
+def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> str:
+    """Build anatomical preprocessing boilerplate markdown.
 
     Parameters
     ----------
@@ -389,19 +182,16 @@ def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> tuple[str, set[str]]:
 
     Returns
     -------
-    tuple
-        Tuple of (methods text, set of reference keys used).
+    str
+        Methods text with Pandoc ``@key`` citation markers.
     """
     sentences: list[str] = []
-    refs: set[str] = set()
 
     # Bias field correction (always performed)
     bias_text = (
         "Anatomical images were corrected for intensity non-uniformity using "
-        "ANTs N4BiasFieldCorrection (Tustison et al., 2010)"
+        "ANTs N4BiasFieldCorrection [@tustison_2010]"
     )
-    refs.add("tustison_2010")
-    # Check for denoising
     preprocessing = anat_qc.get("preprocessing", {})
     if preprocessing.get("denoising"):
         bias_text += " with prior denoising using ANTs DenoiseImage"
@@ -417,10 +207,6 @@ def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> tuple[str, set[str]]:
         sentences.append(
             f"Brain extraction was performed using {_BRAIN_EXTRACTION_TEXT[tool]}."
         )
-        if tool == "hdbet":
-            refs.add("isensee_2019")
-        else:
-            refs.add("avants_2011")
     else:
         sentences.append("Brain extraction was performed.")
 
@@ -428,23 +214,21 @@ def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> tuple[str, set[str]]:
     if anat_qc.get("tissue_segmentation"):
         sentences.append(
             "Tissue segmentation (GM, WM, CSF) was performed using "
-            "FSL FAST (Zhang et al., 2001)."
+            "FSL FAST [@zhang_2001]."
         )
-        refs.add("zhang_2001")
 
     sentences.append(
         "Secondary structural modalities were coregistered to the "
-        "T1-weighted reference using FLIRT (Jenkinson et al., 2002). "
+        "T1-weighted reference using FLIRT [@jenkinson_2002]. "
         "A rigid-body transform between T1-weighted and MNI152 space "
         "was computed using FLIRT."
     )
-    refs.add("jenkinson_2002")
 
-    return " ".join(sentences), refs
+    return " ".join(sentences)
 
 
-def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
-    """Build DSC perfusion boilerplate text.
+def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
+    """Build DSC perfusion boilerplate markdown.
 
     Parameters
     ----------
@@ -453,19 +237,17 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
 
     Returns
     -------
-    tuple
-        Tuple of (methods text, set of reference keys used).
+    str
+        Methods text with Pandoc ``@key`` citation markers.
     """
     sentences: list[str] = []
-    refs: set[str] = set()
 
     # Opening: motion correction and concentration conversion
     sentences.append(
         "DSC perfusion images were motion-corrected using FSL MCFLIRT "
-        "(Jenkinson et al., 2002) and converted to concentration-time "
+        "[@jenkinson_2002] and converted to concentration-time "
         "curves via ΔR2* estimation."
     )
-    refs.add("jenkinson_2002")
 
     # Baseline detection
     sentences.append(
@@ -476,7 +258,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
     # Registration
     sentences.append(
         "A rigid-body transform between DSC and T1-weighted space "
-        "was computed using FLIRT (Jenkinson et al., 2002)."
+        "was computed using FLIRT [@jenkinson_2002]."
     )
 
     # AIF detection
@@ -488,9 +270,8 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
         sentences.append(
             "A synthetic population-derived AIF was used, based on "
             "gamma-variate parameters from the literature "
-            "(Parker et al., 2006; Mouridsen et al., 2006)."
+            "[@parker_2006; @mouridsen_2006]."
         )
-        refs.update(["parker_2006", "mouridsen_2006"])
     elif aif_source == "external":
         sentences.append("A user-supplied arterial input function was used.")
     else:
@@ -498,45 +279,25 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
             "The DSC arterial input function (AIF) was automatically "
             "detected using MRA-atlas-guided voxel selection with a "
             "multi-level criteria cascade and bilateral hemisphere "
-            "preference (Rulseh et al., in preparation)."
+            "preference [@rulseh_inprep]."
         )
 
-    # Deconvolution method
+    # Deconvolution method (citation lives in the _DSC_DECONV_TEXT @key marker)
     deconv = dsc_qc.get("deconvolution", {})
     method = deconv.get("method", "oSVD")
     method_text = _DSC_DECONV_TEXT.get(method, _DSC_DECONV_TEXT.get("oSVD", ""))
     sentences.append(f"Perfusion parameter maps were quantified using {method_text}.")
 
-    # Add deconvolution method references
-    method_lower = method.lower()
-    if method_lower == "ssvd":
-        refs.add("ostergaard_1996")
-    elif method_lower == "osvd":
-        refs.add("wu_2003")
-    elif method_lower == "tikhonov":
-        refs.update(["hansen_1998", "calamante_2003", "zanderigo_2009"])
-    elif method_lower == "vascular":
-        refs.add("mouridsen_2006")
-    elif method_lower == "cpi":
-        refs.add("mehndiratta_2013")
-
     # Inference engine (only for vascular/cpi parametric methods).
     # Backward-compat: older sidecars may carry "bayesian"/"bayesian_inference"
     # keys; their values are already in canonical "vi"/"svb"/"map" naming.
-    if method_lower in ("vascular", "cpi"):
+    if method.lower() in ("vascular", "cpi"):
         inference = deconv.get(
             "inference",
             deconv.get("bayesian_inference", deconv.get("bayesian", "vi")),
         )
         if inference in _INFERENCE_TEXT:
             sentences.append(_INFERENCE_TEXT[inference])
-            if inference == "vi":
-                refs.add("chappell_2009")
-            elif inference == "svb":
-                refs.add("groves_2009")
-                refs.add("penny_2005")
-            elif inference == "map":
-                refs.add("woolrich_2009")
 
     # Leakage correction
     preload = dsc_qc.get("preload", {})
@@ -545,15 +306,13 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
         if k2_method == "bidirectional":
             sentences.append(
                 "Bidirectional K2 leakage correction was applied to account for "
-                "contrast extravasation and washout (Leu et al., 2016)."
+                "contrast extravasation and washout [@leu_2016]."
             )
-            refs.add("leu_2016")
         else:
             sentences.append(
                 "K2 leakage correction was applied to account for contrast "
-                "extravasation (Weisskoff et al., 1994; Boxerman et al., 2006)."
+                "extravasation [@weisskoff_1994; @boxerman_2006]."
             )
-            refs.update(["weisskoff_1994", "boxerman_2006"])
 
     # NAWM normalization
     norm_factor = dsc_qc.get("normalization_factor")
@@ -564,11 +323,11 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> tuple[str, set[str]]:
             "white matter (NAWM)."
         )
 
-    return " ".join(sentences), refs
+    return " ".join(sentences)
 
 
-def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
-    """Build DCE perfusion boilerplate text.
+def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
+    """Build DCE perfusion boilerplate markdown.
 
     Parameters
     ----------
@@ -577,11 +336,10 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
 
     Returns
     -------
-    tuple
-        Tuple of (methods text, set of reference keys used).
+    str
+        Methods text with Pandoc ``@key`` citation markers.
     """
     sentences: list[str] = []
-    refs: set[str] = set()
 
     # Opening: motion correction and signal conversion
     opening = (
@@ -621,10 +379,6 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
             t1_sentence += b1_text
         t1_sentence += "."
         sentences.append(t1_sentence)
-        if t1_method in ("hybrid", "wlls", "nlls"):
-            refs.add("deoni_2003")
-        if b1_method == "afi":
-            refs.add("yarnykh_2007")
 
         # T1 correction status
         t1_correction = t1_info.get("t1_correction", {})
@@ -645,9 +399,8 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
     # Registration
     sentences.append(
         "A rigid-body transform between DCE and T1-weighted space "
-        "was computed using FLIRT (Jenkinson et al., 2002)."
+        "was computed using FLIRT [@jenkinson_2002]."
     )
-    refs.add("jenkinson_2002")
 
     # AIF detection
     aif_info = dce_qc.get("aif_detection", {})
@@ -655,9 +408,8 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
 
     if aif_source == "population":
         sentences.append(
-            "The Parker population AIF was used (Parker et al., 2006)."
+            "The Parker population AIF was used [@parker_2006]."
         )
-        refs.add("parker_2006")
     elif aif_source == "external":
         sentences.append("A user-supplied arterial input function was used.")
     else:
@@ -665,7 +417,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
             "The DCE arterial input function (AIF) was automatically "
             "detected using MRA-atlas-guided candidate selection with "
             "dose-aware scaling and quality-weighted averaging "
-            "(Rulseh et al., in preparation)."
+            "[@rulseh_inprep]."
         )
 
     # Hematocrit correction (only for auto-detected AIF; population AIF
@@ -681,13 +433,10 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
     pk_info = dce_qc.get("pk_modeling", {})
     model = pk_info.get("model", "auto")
 
-    # Track models used for references
-    models_used: list[str] = []
     if model == "auto":
         candidates = pk_info.get("candidate_models", [])
         if candidates:
-            models_used = candidates
-            # Format candidate list nicely
+            # Format candidate list nicely (citations live in the @key markers)
             model_names = [_DCE_PK_MODEL_TEXT.get(m, m) for m in candidates]
             if len(model_names) > 1:
                 model_list = ", ".join(model_names[:-1]) + f", and {model_names[-1]}"
@@ -703,23 +452,10 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
                 "model selection (BIC)."
             )
     else:
-        models_used = [model]
         model_text = _DCE_PK_MODEL_TEXT.get(model, model)
         sentences.append(
             f"Pharmacokinetic analysis was performed using {model_text}."
         )
-
-    # Add PK model references
-    for m in models_used:
-        m_lower = m.lower()
-        if m_lower == "tofts":
-            refs.add("tofts_1991")
-        elif m_lower == "extended_tofts":
-            refs.add("tofts_1999")
-        elif m_lower == "patlak":
-            refs.add("patlak_1983")
-        elif m_lower == "2cxm":
-            refs.add("sourbron_2013")
 
     # Inference engine — DCE NLLS path produces no boilerplate sentence
     # (the `nlls` entry is generic; emit only when a Bayesian engine
@@ -728,10 +464,6 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
     inference_text = _INFERENCE_TEXT.get(inference, "")
     if inference_text:
         sentences.append(inference_text)
-        if inference == "vi":
-            refs.add("chappell_2009")
-        elif inference == "map":
-            refs.add("woolrich_2009")
 
     # NAWM normalization
     if dce_qc.get("nawm_normalization", False):
@@ -741,7 +473,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> tuple[str, set[str]]:
             "white matter (NAWM)."
         )
 
-    return " ".join(sentences), refs
+    return " ".join(sentences)
 
 
 # Mapping: internal image key -> (desc_label, default_suffix)
@@ -1345,6 +1077,67 @@ def _collect_pipeline_warnings(
     return result
 
 
+def _render_citations(methods_md: str, ses_path: Path) -> tuple[str, str]:
+    """Render the methods markdown into citation artifacts and an HTML fragment.
+
+    Writes ``logs/CITATION.md`` and ``logs/CITATION.bib`` under *ses_path* and,
+    when pandoc is available (bundled via ``pypandoc-binary``), renders
+    ``logs/CITATION.html`` (an embeddable fragment, not a standalone page) with
+    numbered, cross-referenced citations resolved against the boilerplate
+    bibliography. The HTML fragment is returned for
+    embedding in the report; if pandoc is unavailable or fails, the raw
+    ``@key`` markdown is returned instead so the report never loses the Methods.
+
+    Parameters
+    ----------
+    methods_md : str
+        Methods text in Markdown with Pandoc ``@key`` citation markers.
+    ses_path : Path
+        Session derivatives directory; artifacts are written to ``ses_path/logs``.
+
+    Returns
+    -------
+    tuple of (str, str)
+        ``(embed_html, raw_markdown)`` — the HTML fragment to embed and the
+        raw markdown (for the report's copy-for-manuscript button).
+    """
+    from pmriprep.data import get_boilerplate_bib, get_citation_csl
+
+    logs_dir = ses_path / "logs"
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        bib = get_boilerplate_bib()
+        (logs_dir / "CITATION.md").write_text(methods_md, encoding="utf-8")
+        shutil.copyfile(bib, logs_dir / "CITATION.bib")
+    except OSError as exc:
+        logger.warning("Could not write citation artifacts: %s", exc)
+
+    try:
+        import pypandoc
+
+        html = pypandoc.convert_text(
+            methods_md,
+            to="html",
+            format="markdown",
+            extra_args=[
+                "--citeproc",
+                f"--bibliography={get_boilerplate_bib()}",
+                f"--csl={get_citation_csl()}",
+            ],
+        )
+        try:
+            (logs_dir / "CITATION.html").write_text(html, encoding="utf-8")
+        except OSError:
+            pass
+        return html, methods_md
+    except Exception as exc:  # pandoc missing / render failure — degrade gracefully
+        logger.warning(
+            "pandoc citation rendering unavailable (%s); embedding raw markdown.",
+            exc,
+        )
+        return methods_md, methods_md
+
+
 def generate_unified_report(
     subject_id: str,
     session_id: str,
@@ -1490,9 +1283,10 @@ def generate_unified_report(
     processing_warnings = _collect_pipeline_warnings(
         pipeline_data, "processing_warnings",
     )
-    boilerplate_text = _generate_boilerplate_text(
+    boilerplate_md = _generate_boilerplate_text(
         pmriprep.__version__, ran_pipelines, pipeline_data
     )
+    boilerplate_html, boilerplate_md = _render_citations(boilerplate_md, ses_path)
 
     context: dict[str, Any] = {
         "subject_id": subject_id,
@@ -1512,8 +1306,9 @@ def generate_unified_report(
         "provenance_warnings": provenance_warnings,
         "acquisition_warnings": acquisition_warnings,
         "processing_warnings": processing_warnings,
-        # Boilerplate methods text
-        "boilerplate_text": boilerplate_text,
+        # Boilerplate methods: pandoc-rendered HTML + raw markdown (copy button)
+        "boilerplate_html": boilerplate_html,
+        "boilerplate_md": boilerplate_md,
     }
 
     # Render template
