@@ -569,23 +569,30 @@ def _resolve_bids_anchor(
     prefix and the trailing entities/suffix to absorb arbitrary BIDS
     run/acq entities written by upstream nodes.
 
-    Filenames containing any token in ``exclude_entities`` are dropped
-    BEFORE picking the lowest-run-numbered match. Default excludes
-    ``"_ce-"`` so an anatomy probe like
-    ``{prefix}*_space-T1w_desc-preproc_T1w.json`` does NOT silently
-    return a contrast-enhanced postcon T1w when the native T1w
-    coexists in the same directory. Sorted-ascending returns
-    ``_run-1`` before ``_run-2`` etc.
+    Filenames containing any token in ``exclude_entities`` are
+    de-prioritized: a match without an excluded token is preferred, but
+    when every match carries one (e.g. acquisitions where the only
+    anatomical is contrast-enhanced) the excluded set is used as a
+    fallback rather than returning nothing. Default excludes ``"_ce-"``
+    so an anatomy probe like ``{prefix}*_space-T1w_desc-preproc_T1w.json``
+    prefers the native T1w when it coexists with a contrast-enhanced
+    postcon T1w. Sorted-ascending returns ``_run-1`` before ``_run-2`` etc.
 
     Returns the first match after filtering, or a non-existent path
     when nothing matches (so callers' ``Path.exists()`` semantics still
     hold for resume / fallback logic).
     """
-    matches = sorted(
-        m for m in ses_dir.glob(glob_pattern)
+    all_matches = sorted(ses_dir.glob(glob_pattern))
+    preferred = [
+        m for m in all_matches
         if not any(token in m.name for token in exclude_entities)
-    )
-    return matches[0] if matches else (ses_dir / glob_pattern)
+    ]
+    # Prefer matches without an excluded entity (e.g. native over postcon
+    # T1w when both exist), but fall back to the excluded set when that is
+    # all the dataset provides (e.g. acquisitions where every anatomical
+    # image is contrast-enhanced).
+    chosen = preferred or all_matches
+    return chosen[0] if chosen else (ses_dir / glob_pattern)
 
 
 def figure_filename(

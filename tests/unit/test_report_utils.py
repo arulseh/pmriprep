@@ -177,6 +177,25 @@ class TestRunEntityHandling:
         assert "_ce-" not in result.name
         assert "_run-1_" in result.name
 
+    def test_anchor_falls_back_to_contrast_variant_when_only_postcon(
+        self, tmp_path,
+    ) -> None:
+        """Postcon-only acquisitions: when the only anat sidecar is the
+        `_ce-GAD_*preproc_T1w` variant, the helper MUST fall back to it
+        rather than returning a non-existent bare path (which would drop
+        the anat section and its HD-BET citation from the report).
+        """
+        from pmriprep.utils.report_utils import _resolve_bids_anchor
+        ses = self._make_anat(
+            tmp_path,
+            f"{self.PREFIX}_ce-GAD_run-1_space-T1w_desc-preproc_T1w.json",
+        )
+        result = _resolve_bids_anchor(
+            ses, f"anat/{self.PREFIX}*_space-T1w_desc-preproc_T1w.json",
+        )
+        assert result.exists()
+        assert "_ce-GAD_" in result.name
+
     def test_anchor_lowest_run_when_multiple(self, tmp_path) -> None:
         """Multiple legitimate runs (`_run-1` and `_run-2`) — return run-1."""
         from pmriprep.utils.report_utils import _resolve_bids_anchor

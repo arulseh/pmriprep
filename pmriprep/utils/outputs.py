@@ -150,7 +150,8 @@ _BIDSIGNORE_CONTENT = """\
 # QC figures
 **/figures/
 
-# Pipeline logs and citation boilerplate
+# Pipeline run logs (nipype) and citation boilerplate
+**/log/
 **/logs/
 
 # ITK/ANTs composite transforms (.h5 not yet in BIDS schema)

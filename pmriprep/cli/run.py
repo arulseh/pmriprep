@@ -694,13 +694,12 @@ def _run_report_only(
             # presence-probe sidecars on disk.
             ran_pipelines: Dict[str, bool] = {}
             for pipeline, anchor_pattern in _PIPELINE_PRESENCE_PROBES.items():
-                # Glob match excluding contrast-enhanced postcon variants
-                # so a `_ce-GAD_*` T1w preproc sidecar doesn't masquerade
-                # as the native anat anchor (mirrors `_resolve_bids_anchor`).
+                # Presence = a probe sidecar exists, contrast-enhanced or not.
+                # A `_ce-GAD_*` anat sidecar still means anat ran (postcon-only
+                # acquisitions have no native T1w); choosing the right file
+                # among variants is `_resolve_bids_anchor`'s job downstream.
                 pattern = anchor_pattern.format(prefix=prefix)
-                ran_pipelines[pipeline] = any(
-                    "_ce-" not in m.name for m in ses_dir.glob(pattern)
-                )
+                ran_pipelines[pipeline] = any(ses_dir.glob(pattern))
 
             if not any(ran_pipelines.values()):
                 logger.warning(

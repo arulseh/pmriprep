@@ -14,7 +14,7 @@
       <text variable="citation-number"/>
     </layout>
   </citation>
-  <bibliography second-field-align="flush">
+  <bibliography>
     <sort>
       <key variable="citation-number"/>
     </sort>
