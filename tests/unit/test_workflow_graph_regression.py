@@ -642,11 +642,18 @@ def test_wrong_decomposition_broken_handoff_caught() -> None:
 
 
 def test_flatten_collapse_matches_legacy_flat_on_monolith(bids: Path) -> None:
-    """On an UN-decomposed monolith, flatten+collapse reproduces the legacy flat
-    graph exactly -- the equivalence that keeps the 5 original baseline tiers
-    unchanged after the harness rewrite.
+    """On a still-FLAT monolith, flatten+collapse reproduces the legacy flat
+    graph exactly -- the equivalence that kept the original baseline tiers
+    unchanged across the harness rewrite.
+
+    Scope shrinks as decomposition progresses: a workflow that has been split
+    into sub-workflows no longer satisfies this (its ``_graph`` holds an opaque
+    sub-wf node) -- its correctness is instead proven by ``test_graph_matches_
+    baseline`` (collapsed graph == committed baseline). DSC is now partly
+    decomposed (``init_dsc_motion_wf``), so only DCE remains here until it too is
+    decomposed, at which point this test is retired.
     """
-    for build in (_dsc, _dce):
+    for build in (_dce,):
         wf = build(bids)
         legacy_nodes = sorted(
             (n.name, type(_iface(n) or n).__qualname__) for n in wf._graph.nodes()

@@ -56,6 +56,149 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
 
 
 
+def init_dsc_motion_wf(
+    *,
+    motion_thresh: float,
+    baseline_frames: int,
+    subject_id: str,
+    session_id: Optional[str],
+    mem_gb: float,
+    name: str = "dsc_motion_wf",
+) -> pe.Workflow:
+    """Build the DSC motion-correction sub-workflow.
+
+    Reorients the raw DSC series to RAS, runs motion correction, and computes a
+    pre-bolus mean reference (used downstream for brain extraction, registration,
+    and mask/atlas resampling), plus a motion-QC plot.
+
+    Parameters
+    ----------
+    motion_thresh : float
+        Framewise-displacement threshold (mm) for motion outliers.
+    baseline_frames : int
+        Number of pre-bolus baseline frames for the pre-bolus mean.
+    subject_id : str
+        BIDS subject label (for the motion-QC plot annotation).
+    session_id : str or None
+        BIDS session label (for the motion-QC plot annotation).
+    mem_gb : float
+        Memory estimate (GB) for the heavy motion-correction node.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The DSC motion sub-workflow.
+
+    Inputs
+    ------
+    dsc_file
+        Raw DSC 4D timeseries.
+    tr
+        Repetition time (s), for the motion-QC plot.
+
+    Outputs
+    -------
+    dsc_moco
+        Motion-corrected DSC 4D series.
+    dsc_mean
+        Mean of the motion-corrected series.
+    motion_params
+        Per-volume motion parameters.
+    fd_values
+        Framewise-displacement values.
+    motion_qc_metrics
+        Motion QC metrics.
+    prebolus_mean_file
+        Pre-bolus mean reference volume.
+    motion_qc_plot_file
+        Motion-QC plot (PNG).
+    motion_summary
+        Motion summary metrics for the merged QC.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=["dsc_file", "tr"]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "dsc_moco",
+                "dsc_mean",
+                "motion_params",
+                "fd_values",
+                "motion_qc_metrics",
+                "prebolus_mean_file",
+                "motion_qc_plot_file",
+                "motion_summary",
+            ]
+        ),
+        name="outputnode",
+    )
+
+    # Node 0: Reorient DSC to RAS orientation
+    dsc_reorient = pe.Node(
+        Reorient(),
+        name="dsc_reorient",
+    )
+
+    # Node 1: Motion Correction
+    motion_correct = pe.Node(
+        MotionCorrection(
+            ref_vol="mean",
+            motion_thresh=motion_thresh,
+        ),
+        name="motion_correct",
+        mem_gb=mem_gb,
+    )
+
+    # Node 1a: Motion QC Plot
+    motion_qc_plot = pe.Node(
+        niu.Function(
+            input_names=["motion_params_file", "tr", "subject_id", "session_id"],
+            output_names=["plot_file", "motion_summary"],
+            function=_generate_motion_qc_plot,
+        ),
+        name="motion_qc_plot",
+    )
+    motion_qc_plot.inputs.subject_id = subject_id
+    motion_qc_plot.inputs.session_id = session_id or ""
+
+    # Node 1b: Pre-Bolus Mean Reference
+    prebolus_mean = pe.Node(
+        niu.Function(
+            input_names=["moco_file", "baseline_frames"],
+            output_names=["prebolus_mean_file"],
+            function=_compute_prebolus_mean,
+        ),
+        name="prebolus_mean",
+    )
+    prebolus_mean.inputs.baseline_frames = baseline_frames
+
+    workflow.connect([
+        (inputnode, dsc_reorient, [("dsc_file", "in_file")]),
+        (dsc_reorient, motion_correct, [("out_file", "in_file")]),
+        (motion_correct, prebolus_mean, [("out_file", "moco_file")]),
+        (motion_correct, motion_qc_plot, [("out_params", "motion_params_file")]),
+        (inputnode, motion_qc_plot, [("tr", "tr")]),
+        (motion_correct, outputnode, [
+            ("out_file", "dsc_moco"),
+            ("mean_img", "dsc_mean"),
+            ("out_params", "motion_params"),
+            ("fd", "fd_values"),
+            ("qc_metrics", "motion_qc_metrics"),
+        ]),
+        (prebolus_mean, outputnode, [("prebolus_mean_file", "prebolus_mean_file")]),
+        (motion_qc_plot, outputnode, [
+            ("plot_file", "motion_qc_plot_file"),
+            ("motion_summary", "motion_summary"),
+        ]),
+    ])
+    return workflow
+
+
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -331,59 +474,21 @@ def init_dsc_preproc_wf(
     _heavy_mem = mem_gb if mem_gb is not None else cap_mem_gb(4.0, mem_limit_gb)
 
     # -------------------------------------------------------------------
-    # Node 0: Reorient DSC to RAS orientation
+    # Motion sub-workflow: reorient -> motion-correct -> pre-bolus mean (+ QC)
     # -------------------------------------------------------------------
-    dsc_reorient = pe.Node(
-        Reorient(),
-        name="dsc_reorient",
-    )
-
-    workflow.connect([
-        (inputnode, dsc_reorient, [("dsc_file", "in_file")]),
-    ])
-
-    # -------------------------------------------------------------------
-    # Node 1: Motion Correction
-    # -------------------------------------------------------------------
-    motion_correct = pe.Node(
-        MotionCorrection(
-            ref_vol="mean",
-            motion_thresh=config.motion_thresh,
-        ),
-        name="motion_correct",
+    motion_wf = init_dsc_motion_wf(
+        motion_thresh=config.motion_thresh,
+        baseline_frames=config.pre_bolus,
+        subject_id=subject_id,
+        session_id=session_id,
         mem_gb=_heavy_mem,
     )
-
-    # -------------------------------------------------------------------
-    # Node 1a: Motion QC Plot
-    # Generate motion QC visualization from motion parameters.
-    # -------------------------------------------------------------------
-    motion_qc_plot = pe.Node(
-        niu.Function(
-            input_names=["motion_params_file", "tr", "subject_id", "session_id"],
-            output_names=["plot_file", "motion_summary"],
-            function=_generate_motion_qc_plot,
-        ),
-        name="motion_qc_plot",
-    )
-    motion_qc_plot.inputs.subject_id = subject_id
-    motion_qc_plot.inputs.session_id = session_id or ""
-
-    # -------------------------------------------------------------------
-    # Node 1b: Pre-Bolus Mean Reference
-    # Compute mean of pre-bolus frames only, avoiding bolus passage
-    # contamination in the reference volume used for brain extraction
-    # and registration.
-    # -------------------------------------------------------------------
-    prebolus_mean = pe.Node(
-        niu.Function(
-            input_names=["moco_file", "baseline_frames"],
-            output_names=["prebolus_mean_file"],
-            function=_compute_prebolus_mean,
-        ),
-        name="prebolus_mean",
-    )
-    prebolus_mean.inputs.baseline_frames = config.pre_bolus
+    workflow.connect([
+        (inputnode, motion_wf, [
+            ("dsc_file", "inputnode.dsc_file"),
+            ("tr", "inputnode.tr"),
+        ]),
+    ])
 
     # -------------------------------------------------------------------
     # Node 1b: HD-BET Brain Extraction (for registration quality)
@@ -990,26 +1095,10 @@ def init_dsc_preproc_wf(
     # Workflow Connections
     # -------------------------------------------------------------------
 
-    # Input to Motion Correction (using reoriented DSC file)
-    workflow.connect([
-        (dsc_reorient, motion_correct, [("out_file", "in_file")]),
-    ])
-
-    # Motion Correction to Pre-Bolus Mean
-    workflow.connect([
-        (motion_correct, prebolus_mean, [("out_file", "moco_file")]),
-    ])
-
-    # Motion Correction to Motion QC Plot
-    workflow.connect([
-        (motion_correct, motion_qc_plot, [("out_params", "motion_params_file")]),
-        (inputnode, motion_qc_plot, [("tr", "tr")]),
-    ])
-
     # Pre-Bolus Mean to HD-BET Brain Extraction
     # HD-BET on pre-bolus mean for brain-extracted DSC (improves registration)
     workflow.connect([
-        (prebolus_mean, hdbet_dsc, [("prebolus_mean_file", "dsc_mean_file")]),
+        (motion_wf, hdbet_dsc, [("outputnode.prebolus_mean_file", "dsc_mean_file")]),
     ])
 
     # Brain mask filmstrip QC (after HD-BET)
@@ -1024,8 +1113,8 @@ def init_dsc_preproc_wf(
     dsc_brain_mask_qc.inputs.subject_id = subject_id
     dsc_brain_mask_qc.inputs.session_id = session_id or ""
     workflow.connect([
-        (prebolus_mean, dsc_brain_mask_qc, [
-            ("prebolus_mean_file", "mean_file"),
+        (motion_wf, dsc_brain_mask_qc, [
+            ("outputnode.prebolus_mean_file", "mean_file"),
         ]),
         (hdbet_dsc, dsc_brain_mask_qc, [
             ("dsc_brain_mask_file", "brain_mask_file"),
@@ -1044,7 +1133,7 @@ def init_dsc_preproc_wf(
 
     # Motion Correction to Signal Conversion
     workflow.connect([
-        (motion_correct, signal_to_conc, [("out_file", "dsc_file")]),
+        (motion_wf, signal_to_conc, [("outputnode.dsc_moco", "dsc_file")]),
         (inputnode, signal_to_conc, [
             ("te", "te"),
         ]),
@@ -1140,8 +1229,8 @@ def init_dsc_preproc_wf(
             ("te", "te"),
             ("field_strength", "field_strength"),
         ]),
-        (motion_correct, compute_maps, [
-            ("fd", "fd_values"),
+        (motion_wf, compute_maps, [
+            ("outputnode.fd_values", "fd_values"),
         ]),
         (signal_to_conc, compute_maps, [
             ("signal_file", "signal_file"),
@@ -1194,7 +1283,7 @@ def init_dsc_preproc_wf(
     # Use pre-bolus mean as reference for output geometry
     workflow.connect([
         (concat_mni_to_dsc, transform_atlas, [("out_file", "in_matrix_file")]),
-        (prebolus_mean, transform_atlas, [("prebolus_mean_file", "reference")]),
+        (motion_wf, transform_atlas, [("outputnode.prebolus_mean_file", "reference")]),
     ])
 
     # Connect transformed atlas to AIF detection
@@ -1206,7 +1295,7 @@ def init_dsc_preproc_wf(
     if isdefined(transform_full_atlas.inputs.in_file):
         workflow.connect([
             (concat_mni_to_dsc, transform_full_atlas, [("out_file", "in_matrix_file")]),
-            (prebolus_mean, transform_full_atlas, [("prebolus_mean_file", "reference")]),
+            (motion_wf, transform_full_atlas, [("outputnode.prebolus_mean_file", "reference")]),
             (transform_full_atlas, aif_detect, [("out_file", "full_atlas_mask_file")]),
         ])
 
@@ -1217,17 +1306,17 @@ def init_dsc_preproc_wf(
             ("nawm_mask", "nawm_mask_file"),
             ("nawm_needs_transform", "needs_transform"),
         ]),
-        (prebolus_mean, transform_nawm, [("prebolus_mean_file", "reference_file")]),
+        (motion_wf, transform_nawm, [("outputnode.prebolus_mean_file", "reference_file")]),
         (register, transform_nawm, [("out_matrix", "transform_matrix")]),
     ])
 
     # Validate user-supplied masks against DSC reference grid
     workflow.connect([
         (inputnode, validate_roi_mask, [("roi_mask", "mask_file")]),
-        (prebolus_mean, validate_roi_mask, [("prebolus_mean_file", "reference_file")]),
+        (motion_wf, validate_roi_mask, [("outputnode.prebolus_mean_file", "reference_file")]),
         (inputnode, validate_user_lesion_mask, [("user_lesion_mask", "mask_file")]),
-        (prebolus_mean, validate_user_lesion_mask, [
-            ("prebolus_mean_file", "reference_file"),
+        (motion_wf, validate_user_lesion_mask, [
+            ("outputnode.prebolus_mean_file", "reference_file"),
         ]),
     ])
 
@@ -1263,7 +1352,7 @@ def init_dsc_preproc_wf(
 
     # Registration QC filmstrip
     workflow.connect([
-        (prebolus_mean, reg_filmstrip, [("prebolus_mean_file", "dsc_mean_file")]),
+        (motion_wf, reg_filmstrip, [("outputnode.prebolus_mean_file", "dsc_mean_file")]),
         (register, reg_filmstrip, [("out_file", "registered_t1w_file")]),
         (hdbet_dsc, reg_filmstrip, [
             ("dsc_brain_mask_file", "brain_mask_file"),
@@ -1279,7 +1368,7 @@ def init_dsc_preproc_wf(
             ("out_raw_aif_curve", "raw_aif_curve_file"),
             ("gamma_fit_applied", "gamma_fit_applied"),
         ]),
-        (motion_correct, aif_qc_plot, [("out_file", "dsc_file")]),
+        (motion_wf, aif_qc_plot, [("outputnode.dsc_moco", "dsc_file")]),
         (hdbet_dsc, aif_qc_plot, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
@@ -1294,7 +1383,7 @@ def init_dsc_preproc_wf(
 
     # DSC Preprocessing QC
     workflow.connect([
-        (motion_correct, dsc_preproc_qc, [("out_file", "dsc_signal_file")]),
+        (motion_wf, dsc_preproc_qc, [("outputnode.dsc_moco", "dsc_signal_file")]),
         (hdbet_dsc, dsc_preproc_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
         (inputnode, dsc_preproc_qc, [("tr", "tr"), ("te", "te")]),
     ])
@@ -1349,20 +1438,20 @@ def init_dsc_preproc_wf(
             ("tumor_segmentation", "tumor_segmentation_file"),
             ("whole_tumor_mask", "whole_tumor_mask_file"),
         ]),
-        (prebolus_mean, combine_masks, [("prebolus_mean_file", "reference_file")]),
+        (motion_wf, combine_masks, [("outputnode.prebolus_mean_file", "reference_file")]),
     ])
 
     # Transform combined lesion mask from T1w to DSC space
     workflow.connect([
         (combine_masks, transform_lesion, [("combined_mask_file", "lesion_mask_file")]),
-        (prebolus_mean, transform_lesion, [("prebolus_mean_file", "reference_file")]),
+        (motion_wf, transform_lesion, [("outputnode.prebolus_mean_file", "reference_file")]),
         (register, transform_lesion, [("out_matrix", "transform_matrix")]),
     ])
 
     # Transform enhancing mask from T1w to DSC space
     workflow.connect([
         (inputnode, transform_enhancing_mask, [("enhancing_mask", "lesion_mask_file")]),
-        (prebolus_mean, transform_enhancing_mask, [("prebolus_mean_file", "reference_file")]),
+        (motion_wf, transform_enhancing_mask, [("outputnode.prebolus_mean_file", "reference_file")]),
         (register, transform_enhancing_mask, [("out_matrix", "transform_matrix")]),
     ])
 
@@ -1510,28 +1599,28 @@ def init_dsc_preproc_wf(
     if transform_t1_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_t1_to_dsc, [("t1w_underlay", "structural_file")]),
-            (prebolus_mean, transform_t1_to_dsc, [("prebolus_mean_file", "reference_file")]),
+            (motion_wf, transform_t1_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
             (register, transform_t1_to_dsc, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_t1_postcon_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_t1_postcon_to_dsc, [("t1w_postcon_underlay", "structural_file")]),
-            (prebolus_mean, transform_t1_postcon_to_dsc, [("prebolus_mean_file", "reference_file")]),
+            (motion_wf, transform_t1_postcon_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
             (register, transform_t1_postcon_to_dsc, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_flair_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_flair_to_dsc, [("flair_in_t1w", "structural_file")]),
-            (prebolus_mean, transform_flair_to_dsc, [("prebolus_mean_file", "reference_file")]),
+            (motion_wf, transform_flair_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
             (register, transform_flair_to_dsc, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_t2w_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_t2w_to_dsc, [("t2w_in_t1w", "structural_file")]),
-            (prebolus_mean, transform_t2w_to_dsc, [("prebolus_mean_file", "reference_file")]),
+            (motion_wf, transform_t2w_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
             (register, transform_t2w_to_dsc, [("out_matrix", "transform_matrix")]),
         ])
 
@@ -1592,13 +1681,13 @@ def init_dsc_preproc_wf(
 
     # Merge QC metrics
     workflow.connect([
-        (motion_correct, merge_qc, [("qc_metrics", "motion_qc")]),
+        (motion_wf, merge_qc, [("outputnode.motion_qc_metrics", "motion_qc")]),
         (preload_correct, merge_qc, [("qc_dict", "preload_qc")]),
         (aif_detect, merge_qc, [("qc_metrics", "aif_qc")]),
         (compute_maps, merge_qc, [("qc_metrics", "deconv_qc")]),
         (register, merge_qc, [("qc_metrics", "registration_qc")]),
         (normalize, merge_qc, [("normalization_factor", "normalization_factor")]),
-        (motion_qc_plot, merge_qc, [("motion_summary", "motion_summary")]),
+        (motion_wf, merge_qc, [("outputnode.motion_summary", "motion_summary")]),
         (aif_qc_plot, merge_qc, [("out_aif_metrics", "aif_metrics")]),
         (dsc_preproc_qc, merge_qc, [("stats", "preprocessing_stats")]),
     ])
@@ -1606,10 +1695,10 @@ def init_dsc_preproc_wf(
     # Connect to Output Node
     workflow.connect([
         # Motion correction outputs
-        (motion_correct, outputnode, [
-            ("out_file", "dsc_moco"),
-            ("mean_img", "dsc_mean"),
-            ("out_params", "motion_params"),
+        (motion_wf, outputnode, [
+            ("outputnode.dsc_moco", "dsc_moco"),
+            ("outputnode.dsc_mean", "dsc_mean"),
+            ("outputnode.motion_params", "motion_params"),
         ]),
         # Quantification-independent maps
         (compute_maps, outputnode, [
@@ -1723,7 +1812,7 @@ def init_dsc_preproc_wf(
             ("out_aif_candidates", "aif_candidates_plot"),
         ]),
         # Motion QC plot
-        (motion_qc_plot, outputnode, [("plot_file", "motion_qc_plot")]),
+        (motion_wf, outputnode, [("outputnode.motion_qc_plot_file", "motion_qc_plot")]),
         # DSC QC plots
         (dsc_preproc_qc, outputnode, [
             ("plot_file", "dsc_preprocessing_qc_plot"),
@@ -1743,7 +1832,7 @@ def init_dsc_preproc_wf(
         # QC metrics
         (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
         (preload_correct, outputnode, [("qc_dict", "preload_qc")]),
-        (motion_correct, outputnode, [("qc_metrics", "motion_qc")]),
+        (motion_wf, outputnode, [("outputnode.motion_qc_metrics", "motion_qc")]),
         (aif_qc_plot, outputnode, [("out_aif_metrics", "aif_metrics")]),
     ])
 
