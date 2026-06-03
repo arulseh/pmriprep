@@ -56,6 +56,183 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
 
 
 
+def init_dsc_concentration_aif_wf(
+    *,
+    baseline_frames: int,
+    aif_method: str,
+    n_candidates: int,
+    lesion_distance: float,
+    disable_fallback: bool,
+    dose: float,
+    agent_standard_dose: float,
+    gd_multiplicity: int,
+    external_aif_file: Optional[str],
+    aif_mask_file: Optional[str],
+    mem_gb: float,
+    name: str = "dsc_conc_aif_wf",
+) -> pe.Workflow:
+    """Build the DSC concentration + AIF-detection sub-workflow.
+
+    Converts the motion-corrected DSC series to ΔR2* concentration (s⁻¹) and
+    detects the arterial input function.
+
+    Parameters
+    ----------
+    baseline_frames : int
+        Pre-bolus baseline frames (S0 estimation; also the AIF baseline).
+    aif_method : str
+        AIF detection method ("auto" or "synthetic").
+    n_candidates : int
+        Number of AIF candidate voxels to average.
+    lesion_distance : float
+        Minimum distance (mm) from lesion for AIF candidates.
+    disable_fallback : bool
+        Disable the synthetic-AIF fallback when detection fails.
+    dose, agent_standard_dose : float
+        Contrast dose multiplier and the agent's standard dose (mmol Gd/kg).
+    gd_multiplicity : int
+        Gadolinium multiplicity for the contrast agent.
+    external_aif_file : str or None
+        External AIF curve path (bypasses detection) or None.
+    aif_mask_file : str or None
+        User-supplied AIF mask path (overrides atlas mask) or None.
+    mem_gb : float
+        Memory estimate (GB) for the heavy signal-conversion node.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The concentration/AIF sub-workflow.
+
+    Inputs
+    ------
+    dsc_moco
+        Motion-corrected DSC 4D series.
+    te, tr, field_strength
+        Acquisition parameters.
+    brain_mask_file
+        DSC-space brain mask.
+    lesion_mask_file, enhancing_mask_file, atlas_mask_file, full_atlas_mask_file
+        AIF exclusion / search masks (``full_atlas_mask_file`` is fed by the
+        parent only when the posterior-circulation atlas tier is installed; an
+        unfed inputnode field collapses to a no-op).
+
+    Outputs
+    -------
+    concentration_file, signal_file
+        ΔR2* concentration and raw signal.
+    out_aif_curve, out_measured_aif_curve, out_aif_mask, out_aif_coord,
+    detection_level, aif_baseline_frames, qc_metrics, out_raw_aif_curve,
+    gamma_fit_applied
+        AIF detection products and QC.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "dsc_moco",
+                "te",
+                "tr",
+                "field_strength",
+                "brain_mask_file",
+                "lesion_mask_file",
+                "enhancing_mask_file",
+                "atlas_mask_file",
+                "full_atlas_mask_file",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "concentration_file",
+                "signal_file",
+                "out_aif_curve",
+                "out_measured_aif_curve",
+                "out_aif_mask",
+                "out_aif_coord",
+                "detection_level",
+                "aif_baseline_frames",
+                "qc_metrics",
+                "out_raw_aif_curve",
+                "gamma_fit_applied",
+            ]
+        ),
+        name="outputnode",
+    )
+
+    # Node 2: Signal to Concentration Conversion (always ΔR2*, s⁻¹)
+    signal_to_conc = pe.Node(
+        niu.Function(
+            input_names=["dsc_file", "te", "baseline_frames"],
+            output_names=["concentration_file", "signal_file"],
+            function=_signal_to_concentration,
+        ),
+        name="signal_to_conc",
+        mem_gb=mem_gb,
+    )
+    signal_to_conc.inputs.baseline_frames = baseline_frames
+
+    # Node 3: AIF Detection (uses uncorrected concentration; arterial BBB intact)
+    aif_detect = pe.Node(
+        AIFDetection(
+            aif_method=aif_method,
+            criteria="strict",
+            n_candidates=n_candidates,
+            lesion_distance=lesion_distance,
+            disable_fallback=disable_fallback,
+            baseline_frames=baseline_frames,
+            dose=dose,
+            agent_standard_dose=agent_standard_dose,
+            gd_multiplicity=gd_multiplicity,
+        ),
+        name="aif_detect",
+    )
+    if external_aif_file is not None:
+        aif_detect.inputs.external_aif_file = external_aif_file
+    if aif_mask_file is not None:
+        aif_detect.inputs.aif_mask_file = aif_mask_file
+
+    workflow.connect([
+        (inputnode, signal_to_conc, [
+            ("dsc_moco", "dsc_file"),
+            ("te", "te"),
+        ]),
+        (signal_to_conc, aif_detect, [
+            ("concentration_file", "concentration_file"),
+            ("signal_file", "signal_file"),
+        ]),
+        (inputnode, aif_detect, [
+            ("tr", "tr"),
+            ("field_strength", "field_strength"),
+            ("brain_mask_file", "brain_mask_file"),
+            ("lesion_mask_file", "lesion_mask_file"),
+            ("enhancing_mask_file", "enhancing_mask_file"),
+            ("atlas_mask_file", "atlas_mask_file"),
+            ("full_atlas_mask_file", "full_atlas_mask_file"),
+        ]),
+        (signal_to_conc, outputnode, [
+            ("concentration_file", "concentration_file"),
+            ("signal_file", "signal_file"),
+        ]),
+        (aif_detect, outputnode, [
+            ("out_aif_curve", "out_aif_curve"),
+            ("out_measured_aif_curve", "out_measured_aif_curve"),
+            ("out_aif_mask", "out_aif_mask"),
+            ("out_aif_coord", "out_aif_coord"),
+            ("detection_level", "detection_level"),
+            ("aif_baseline_frames", "aif_baseline_frames"),
+            ("qc_metrics", "qc_metrics"),
+            ("out_raw_aif_curve", "out_raw_aif_curve"),
+            ("gamma_fit_applied", "gamma_fit_applied"),
+        ]),
+    ])
+    return workflow
+
+
 def init_dsc_motion_wf(
     *,
     motion_thresh: float,
@@ -539,49 +716,27 @@ def init_dsc_preproc_wf(
     # )
 
     # -------------------------------------------------------------------
-    # Node 2: Signal to Concentration Conversion
-    # Always produces ΔR2* (s⁻¹). All downstream quantification is relative.
+    # Concentration + AIF sub-workflow (signal->ΔR2* conversion + AIF detection)
     # -------------------------------------------------------------------
-    signal_to_conc = pe.Node(
-        niu.Function(
-            input_names=["dsc_file", "te", "baseline_frames"],
-            output_names=["concentration_file", "signal_file"],
-            function=_signal_to_concentration,
-        ),
-        name="signal_to_conc",
-        mem_gb=_heavy_mem,
-    )
-    signal_to_conc.inputs.baseline_frames = config.pre_bolus
-
-    # -------------------------------------------------------------------
-    # Node 3: AIF Detection
-    # AIF detection uses the uncorrected concentration - leakage doesn't
-    # affect arterial voxels (which should have intact BBB)
-    # -------------------------------------------------------------------
-    aif_detect = pe.Node(
-        AIFDetection(
-            aif_method=config.aif_method,
-            criteria="strict",
-            n_candidates=config.n_aif_candidates,
-            lesion_distance=config.lesion_distance,
-            disable_fallback=config.disable_aif_fallback,
-            baseline_frames=config.pre_bolus,
-            dose=config.dose,
-            agent_standard_dose=config.agent_standard_dose,
-            gd_multiplicity=gd_multiplicity,
-        ),
-        name="aif_detect",
-    )
-
-    # Wire external AIF file if provided (bypasses all detection)
-    if config.aif_file is not None:
-        aif_detect.inputs.external_aif_file = str(config.aif_file)
-
-    # Wire user-supplied AIF mask if provided (overrides atlas mask)
+    _external_aif = str(config.aif_file) if config.aif_file is not None else None
+    _aif_mask: Optional[str] = None
     if config.aif_mask_file is not None:
         from pmriprep.utils.lesion_stats import validate_mask_ndim
         validate_mask_ndim(config.aif_mask_file, "dsc.aif_mask_file")
-        aif_detect.inputs.aif_mask_file = str(config.aif_mask_file)
+        _aif_mask = str(config.aif_mask_file)
+    conc_aif_wf = init_dsc_concentration_aif_wf(
+        baseline_frames=config.pre_bolus,
+        aif_method=config.aif_method,
+        n_candidates=config.n_aif_candidates,
+        lesion_distance=config.lesion_distance,
+        disable_fallback=config.disable_aif_fallback,
+        dose=config.dose,
+        agent_standard_dose=config.agent_standard_dose,
+        gd_multiplicity=gd_multiplicity,
+        external_aif_file=_external_aif,
+        aif_mask_file=_aif_mask,
+        mem_gb=_heavy_mem,
+    )
 
     # -------------------------------------------------------------------
     # Node 4: Preload Detection and K2 Correction
@@ -639,7 +794,7 @@ def init_dsc_preproc_wf(
         inference=config.inference,
         mcmc_samples=config.mcmc_samples,
         n_procs=config.num_processes if config.num_processes > 0 else 1,
-        # baseline_frames wired dynamically from aif_detect.aif_baseline_frames
+        # baseline_frames wired dynamically from conc_aif_wf.outputnode.aif_baseline_frames
         fallback_baseline_frames=config.pre_bolus,
         tail_frames=5,  # Post-bolus frames for PSR
         sloppy=config.sloppy,
@@ -1131,11 +1286,11 @@ def init_dsc_preproc_wf(
     #     (hdbet_dsc, transform_brain_mask, [("dsc_brain_mask_file", "hdbet_mask_file")]),
     # ])
 
-    # Motion Correction to Signal Conversion
+    # Motion + acquisition params into the concentration/AIF sub-workflow
     workflow.connect([
-        (motion_wf, signal_to_conc, [("outputnode.dsc_moco", "dsc_file")]),
-        (inputnode, signal_to_conc, [
-            ("te", "te"),
+        (motion_wf, conc_aif_wf, [("outputnode.dsc_moco", "inputnode.dsc_moco")]),
+        (inputnode, conc_aif_wf, [
+            ("te", "inputnode.te"),
         ]),
     ])
 
@@ -1161,33 +1316,29 @@ def init_dsc_preproc_wf(
     # Use DSC-space brain mask (not T1w-space) for proper geometry match
     # Pass raw signal for S0-based partial volume rejection
     workflow.connect([
-        (signal_to_conc, aif_detect, [
-            ("concentration_file", "concentration_file"),
-            ("signal_file", "signal_file"),
+        (hdbet_dsc, conc_aif_wf, [
+            ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
         ]),
-        (hdbet_dsc, aif_detect, [
-            ("dsc_brain_mask_file", "brain_mask_file"),
+        (select_aif_exclusion, conc_aif_wf, [
+            ("out_mask", "inputnode.lesion_mask_file"),
         ]),
-        (select_aif_exclusion, aif_detect, [
-            ("out_mask", "lesion_mask_file"),
+        (transform_enhancing_mask, conc_aif_wf, [
+            ("lesion_mask_dsc_file", "inputnode.enhancing_mask_file"),
         ]),
-        (transform_enhancing_mask, aif_detect, [
-            ("lesion_mask_dsc_file", "enhancing_mask_file"),
-        ]),
-        (inputnode, aif_detect, [
-            ("tr", "tr"),
-            ("field_strength", "field_strength"),
+        (inputnode, conc_aif_wf, [
+            ("tr", "inputnode.tr"),
+            ("field_strength", "inputnode.field_strength"),
         ]),
     ])
 
     # AIF Detection and Signal Conversion to Preload Correction
     # Use DSC-space brain mask for proper geometry match
     workflow.connect([
-        (signal_to_conc, preload_correct, [
-            ("concentration_file", "concentration_file"),
-            ("signal_file", "signal_file"),
+        (conc_aif_wf, preload_correct, [
+            ("outputnode.concentration_file", "concentration_file"),
+            ("outputnode.signal_file", "signal_file"),
+            ("outputnode.out_aif_curve", "aif_file"),
         ]),
-        (aif_detect, preload_correct, [("out_aif_curve", "aif_file")]),
         (hdbet_dsc, preload_correct, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
@@ -1210,13 +1361,13 @@ def init_dsc_preproc_wf(
             ("corrected_concentration_file", "concentration_file"),
             ("k2_map_file", "k2_map_input_file"),
         ]),
-        (aif_detect, compute_maps, [
-            ("out_aif_curve", "aif_file"),
-            ("out_measured_aif_curve", "measured_aif_file"),
-            ("out_aif_mask", "aif_mask_file"),
-            ("out_aif_coord", "aif_best_coord"),
-            ("detection_level", "aif_detection_level"),
-            ("aif_baseline_frames", "baseline_frames"),
+        (conc_aif_wf, compute_maps, [
+            ("outputnode.out_aif_curve", "aif_file"),
+            ("outputnode.out_measured_aif_curve", "measured_aif_file"),
+            ("outputnode.out_aif_mask", "aif_mask_file"),
+            ("outputnode.out_aif_coord", "aif_best_coord"),
+            ("outputnode.detection_level", "aif_detection_level"),
+            ("outputnode.aif_baseline_frames", "baseline_frames"),
         ]),
         (hdbet_dsc, compute_maps, [
             ("dsc_brain_mask_file", "brain_mask_file"),
@@ -1232,9 +1383,9 @@ def init_dsc_preproc_wf(
         (motion_wf, compute_maps, [
             ("outputnode.fd_values", "fd_values"),
         ]),
-        (signal_to_conc, compute_maps, [
-            ("signal_file", "signal_file"),
-            ("concentration_file", "raw_concentration_file"),
+        (conc_aif_wf, compute_maps, [
+            ("outputnode.signal_file", "signal_file"),
+            ("outputnode.concentration_file", "raw_concentration_file"),
         ]),
         (extract_preload, compute_maps, [
             ("preload_classification", "preload_classification"),
@@ -1288,7 +1439,7 @@ def init_dsc_preproc_wf(
 
     # Connect transformed atlas to AIF detection
     workflow.connect([
-        (transform_atlas, aif_detect, [("out_file", "atlas_mask_file")]),
+        (transform_atlas, conc_aif_wf, [("out_file", "inputnode.atlas_mask_file")]),
     ])
 
     # Transform + connect full atlas (posterior circulation tier)
@@ -1296,7 +1447,7 @@ def init_dsc_preproc_wf(
         workflow.connect([
             (concat_mni_to_dsc, transform_full_atlas, [("out_file", "in_matrix_file")]),
             (motion_wf, transform_full_atlas, [("outputnode.prebolus_mean_file", "reference")]),
-            (transform_full_atlas, aif_detect, [("out_file", "full_atlas_mask_file")]),
+            (transform_full_atlas, conc_aif_wf, [("out_file", "inputnode.full_atlas_mask_file")]),
         ])
 
     # Transform NAWM mask to DSC space (FLIRT when from tumor seg, passthrough
@@ -1361,12 +1512,12 @@ def init_dsc_preproc_wf(
 
     # AIF QC plots
     workflow.connect([
-        (aif_detect, aif_qc_plot, [
-            ("out_aif_curve", "aif_curve_file"),
-            ("out_aif_mask", "aif_mask_file"),
-            ("qc_metrics", "qc_metrics"),
-            ("out_raw_aif_curve", "raw_aif_curve_file"),
-            ("gamma_fit_applied", "gamma_fit_applied"),
+        (conc_aif_wf, aif_qc_plot, [
+            ("outputnode.out_aif_curve", "aif_curve_file"),
+            ("outputnode.out_aif_mask", "aif_mask_file"),
+            ("outputnode.qc_metrics", "qc_metrics"),
+            ("outputnode.out_raw_aif_curve", "raw_aif_curve_file"),
+            ("outputnode.gamma_fit_applied", "gamma_fit_applied"),
         ]),
         (motion_wf, aif_qc_plot, [("outputnode.dsc_moco", "dsc_file")]),
         (hdbet_dsc, aif_qc_plot, [
@@ -1411,7 +1562,7 @@ def init_dsc_preproc_wf(
             ("out_psr", "psr_file"),
         ]),
         (hdbet_dsc, dsc_leakage_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
-        (signal_to_conc, dsc_leakage_qc, [("concentration_file", "concentration_file")]),
+        (conc_aif_wf, dsc_leakage_qc, [("outputnode.concentration_file", "concentration_file")]),
         (preload_correct, dsc_leakage_qc, [
             ("corrected_concentration_file", "corrected_concentration_file"),
             ("qc_dict", "preload_qc"),
@@ -1484,7 +1635,7 @@ def init_dsc_preproc_wf(
         (compute_maps, lesion_stats, [("out_k2", "k2_map")]),
         # AIF provenance — surface PerfusionProcessing.AIF block in
         # the lesion-stats sidecar.
-        (aif_detect, lesion_stats, [("qc_metrics", "aif_qc")]),
+        (conc_aif_wf, lesion_stats, [("outputnode.qc_metrics", "aif_qc")]),
     ])
     # Connect lesion stats outputs to outputnode
     workflow.connect([
@@ -1529,7 +1680,7 @@ def init_dsc_preproc_wf(
         (normalize, roi_stats, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, roi_stats, [("ncbf_file", "ncbf_map")]),
         (compute_maps, roi_stats, [("out_k2", "k2_map")]),
-        (aif_detect, roi_stats, [("qc_metrics", "aif_qc")]),
+        (conc_aif_wf, roi_stats, [("outputnode.qc_metrics", "aif_qc")]),
     ])
     # Connect ROI stats outputs to outputnode
     workflow.connect([
@@ -1576,7 +1727,7 @@ def init_dsc_preproc_wf(
         (normalize, user_lesion_stats, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, user_lesion_stats, [("ncbf_file", "ncbf_map")]),
         (compute_maps, user_lesion_stats, [("out_k2", "k2_map")]),
-        (aif_detect, user_lesion_stats, [("qc_metrics", "aif_qc")]),
+        (conc_aif_wf, user_lesion_stats, [("outputnode.qc_metrics", "aif_qc")]),
     ])
     workflow.connect([
         (validate_user_lesion_mask, outputnode, [
@@ -1683,7 +1834,7 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (motion_wf, merge_qc, [("outputnode.motion_qc_metrics", "motion_qc")]),
         (preload_correct, merge_qc, [("qc_dict", "preload_qc")]),
-        (aif_detect, merge_qc, [("qc_metrics", "aif_qc")]),
+        (conc_aif_wf, merge_qc, [("outputnode.qc_metrics", "aif_qc")]),
         (compute_maps, merge_qc, [("qc_metrics", "deconv_qc")]),
         (register, merge_qc, [("qc_metrics", "registration_qc")]),
         (normalize, merge_qc, [("normalization_factor", "normalization_factor")]),
@@ -1749,10 +1900,10 @@ def init_dsc_preproc_wf(
             ("out_fallback_mask", "fallback_mask"),
         ]),
         # AIF outputs
-        (aif_detect, outputnode, [
-            ("out_aif_curve", "aif_curve"),
-            ("out_aif_mask", "aif_mask"),
-            ("qc_metrics", "aif_qc"),
+        (conc_aif_wf, outputnode, [
+            ("outputnode.out_aif_curve", "aif_curve"),
+            ("outputnode.out_aif_mask", "aif_mask"),
+            ("outputnode.qc_metrics", "aif_qc"),
         ]),
         # Leakage correction (use recomputed K2 from compute_maps when baseline differs)
         (compute_maps, outputnode, [("out_k2", "k2_map")]),
