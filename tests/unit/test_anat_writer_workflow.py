@@ -96,13 +96,13 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     dd = out_root / "pmriprep" / "dataset_description.json"
     assert dd.exists()
 
-    # No legacy QC JSON at session root after v0.46.0
+    # No QC JSON orphan at session root
     legacy_qc = (
         out_root / "pmriprep" / "sub-01" / "ses-0001"
         / "sub-01_ses-0001_desc-anatQC_quality.json"
     )
     assert not legacy_qc.exists(), (
-        f"Legacy desc-anatQC_quality.json should not exist: {legacy_qc}"
+        f"desc-anatQC_quality.json should not exist: {legacy_qc}"
     )
 
 
@@ -272,7 +272,7 @@ def test_warnings_block_populated_in_anchor_sidecar(
     assert any("FLAIR not available" in w for w in warnings), warnings
     assert any("T2w not available" in w for w in warnings), warnings
 
-    # No legacy QC JSON at session root after v0.46.0
+    # No QC JSON orphan at session root
     legacy_qc = (
         out_root / "pmriprep" / "sub-01" / "ses-0001"
         / "sub-01_ses-0001_desc-anatQC_quality.json"

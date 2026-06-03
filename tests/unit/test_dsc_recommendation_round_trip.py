@@ -2,7 +2,7 @@
 
 Verifies that ``enrich_recommendation_keys`` produces ``QC*`` flat keys
 on a synthetic DSC-preproc anchor sidecar, and ``_qc_keys_from_anchor``
-reads them back into the legacy nested ``qc_metrics["recommendation"]``
+reads them back into the nested ``qc_metrics["recommendation"]``
 shape consumed by ``_compute_overall_recommendation``.
 """
 from __future__ import annotations

@@ -1,22 +1,17 @@
-"""Tests for v0.25.4 scale-mismatch safeguard removal + QC diagnostic.
+"""Tests for the scale-mismatch QC diagnostic.
 
-The legacy v0.25.0 safeguard at ``dce_compute.py:1516-1607`` widened SOFT
-σ → 0.5 (or downgraded HARD → SKIP) when ``vp_prior × Cp(peak) >
-C_tissue(peak)`` in > 30% of voxels. Post-v0.25.1 NAWM-anchored prior
-and v0.25.3 plasma-correct AIF, that test statistic no longer measures
-scale — it primarily captures first-pass temporal undersampling
-(Buckley MRM 2002). Widening σ at long TR is backward.
+The ``vp_prior × Cp(peak) > C_tissue(peak)`` statistic does not measure
+scale under the NAWM-anchored prior and plasma-correct AIF — it primarily
+captures first-pass temporal undersampling (Buckley MRM 2002). It is kept
+as a QC-only diagnostic (``aif_tissue_overshoot_fraction``,
+``peak_alignment_lag_s``, ``acquisition_limited_note``) rather than a
+safeguard that widens SOFT σ or downgrades HARD → SKIP. ``VP_MEDIAN_MIN/MAX``
+bound the NAWM-anchored path.
 
-v0.25.4:
-- Deletes the sigma-widening / SKIP-downgrade behavior.
-- Keeps the arithmetic as a QC-only diagnostic (``aif_tissue_overshoot_fraction``,
-  ``peak_alignment_lag_s``, ``acquisition_limited_note``).
-- Tightens ``VP_MEDIAN_MIN/MAX`` to ``[0.008, 0.06]`` for the NAWM-anchored path.
-
-These tests validate the arithmetic of the new diagnostic at unit level
+These tests validate the arithmetic of the diagnostic at unit level
 (reproducing the code path without instantiating the full ComputeDCEMaps
-interface) plus regression guards against re-introducing the removed
-behavior.
+interface) plus regression guards against re-introducing the mutating
+safeguard behavior.
 """
 
 from __future__ import annotations
@@ -36,9 +31,9 @@ from pmriprep.utils.dce_constants import (
 
 
 class TestVpMedianBoundsTightened:
-    """v0.27.0: VP_MEDIAN_MIN/MAX re-tuned to [0.005, 0.03] around the
+    """VP_MEDIAN_MIN/MAX are [0.005, 0.03] around the
     Larsson-2009-anchored NAWM_VP_REFERENCE = 0.010. Factor-of-3-either-side
-    band preserved to keep the gross-miscalibration gate intact.
+    band keeps the gross-miscalibration gate intact.
     """
 
     def test_vp_median_min_retuned(self) -> None:
@@ -67,11 +62,11 @@ def _compute_acquisition_limited_qc(
     fitting_mask: np.ndarray,
     tr: float,
 ) -> dict[str, float | str | None]:
-    """Re-implementation of the v0.25.4 diagnostic for unit testing.
+    """Re-implementation of the diagnostic for unit testing.
 
-    Mirrors the code path in ``dce_compute.py`` (post-v0.25.4 scale-
-    mismatch safeguard removal) so we can exercise the arithmetic
-    without running the full ComputeDCEMaps interface.
+    Mirrors the scale-mismatch code path in ``dce_compute.py`` so we can
+    exercise the arithmetic without running the full ComputeDCEMaps
+    interface.
     """
     aif_peak = float(np.max(aif_curve))
     if aif_peak <= 0:
@@ -113,8 +108,8 @@ def _compute_acquisition_limited_qc(
 
 
 class TestAcquisitionLimitedDiagnostic:
-    """v0.25.4 diagnostic arithmetic — pure-function tests of the code
-    path that replaced the removed scale-mismatch safeguard."""
+    """Scale-mismatch diagnostic arithmetic — pure-function tests of the
+    QC code path."""
 
     @staticmethod
     def _synthesize(
@@ -193,13 +188,13 @@ class TestAcquisitionLimitedDiagnostic:
 
 
 # =============================================================================
-# Regression: safeguard text/action no longer in source
+# Regression: safeguard text/action absent from source
 # =============================================================================
 
 
 class TestSafeguardRemovalRegression:
-    """Confirm the v0.25.0 scale-mismatch safeguard's mutating behavior is
-    gone from the live source (sigma widening, HARD→SKIP downgrade)."""
+    """Confirm the scale-mismatch safeguard's mutating behavior is
+    absent from the live source (sigma widening, HARD→SKIP downgrade)."""
 
     def test_no_sigma_widening_to_05_in_dce_compute(self) -> None:
         """The removed safeguard wrote constraint_vp_uncertainty = 0.5.

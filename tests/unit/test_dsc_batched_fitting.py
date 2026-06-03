@@ -873,7 +873,7 @@ class TestBatchedMAPVsPerVoxelMAP:
 
 
 # ---------------------------------------------------------------------------
-# TestBatchedFitParallel — multiprocess dispatch (v0.36.0)
+# TestBatchedFitParallel — multiprocess dispatch
 # ---------------------------------------------------------------------------
 
 

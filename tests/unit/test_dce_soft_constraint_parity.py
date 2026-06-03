@@ -1,8 +1,8 @@
 """Contract tests for DSC-CBV SOFT constraint parity across fitting backends.
 
-The v0.28.0 fix plumbs the ``vp_uncertainty`` (σ) parameter through the
-batched NLLS fitting path. Prior to this, SOFT mode silently degraded to
-HARD in the batched path because σ was dropped at the dispatcher. This
+The ``vp_uncertainty`` (σ) parameter is plumbed through the
+batched NLLS fitting path. Without it, SOFT mode silently degrades to
+HARD in the batched path because σ is dropped at the dispatcher. This
 test file enforces the structural invariants that a future backend
 (GPU, JAX, alternative solver) would need to satisfy on day one:
 
@@ -11,7 +11,7 @@ test file enforces the structural invariants that a future backend
   3. σ monotonicity: vp spread grows with σ.
   4. Within-regime cross-backend parity (NLLS serial vs NLLS batched at
      σ=0.4): vp agrees to 2% relative, Ktrans to 1% relative. This is the
-     exact invariant violated pre-v0.28.
+     exact invariant the σ-plumbing must preserve.
   5. BIC parameter count: HARD reduces k by 1 for constrained voxels;
      SOFT uses k = k_base (Self-Liang 1987 pragmatic convention).
   6. Negative cross-regime parity: NLLS box (inference=nlls) and Bayesian
@@ -20,8 +20,8 @@ test file enforces the structural invariants that a future backend
      SOFT implementations ARE different by design.
   7. fraction_vp_at_bound diagnostic: synthetic cohort with controlled
      boundary pressure produces a fraction in the expected range.
-  8. Serial byte-identity: serial NLLS outputs are unchanged from the
-     pre-v0.28 serial path. Hashes committed at
+  8. Serial byte-identity: serial NLLS outputs match the committed
+     baseline. Hashes committed at
      tests/fixtures/dce_soft_v0_27_3_hashes.json. (Slow-marked.)
   9. fixed_vp unit consistency: array values lie in the physical vp range.
 
@@ -351,7 +351,7 @@ def test_fraction_vp_at_bound_in_expected_range(aif_and_time):
 
 
 # ---------------------------------------------------------------------------
-# Assertion 8: serial byte-identity against v0.27.3 baseline (slow)
+# Assertion 8: serial byte-identity against committed baseline (slow)
 # ---------------------------------------------------------------------------
 
 _FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "dce_soft_v0_27_3_hashes.json"
@@ -388,7 +388,7 @@ def _compute_serial_hashes(aif, time_points):
 
 @pytest.mark.slow
 def test_serial_byte_identity(aif_and_time):
-    """Serial path output is byte-identical to the committed v0.28.0
+    """Serial path output is byte-identical to the committed
     baseline hash. Regenerate fixture only on intentional semantics changes."""
     aif, time_points = aif_and_time
     hashes = _compute_serial_hashes(aif, time_points)
@@ -401,7 +401,7 @@ def test_serial_byte_identity(aif_and_time):
     baseline = json.loads(_FIXTURE_PATH.read_text())
     for key in ("patlak_vp_sha256", "patlak_ktrans_sha256"):
         assert hashes[key] == baseline[key], (
-            f"Serial path output changed for {key}: v0.28.0 hash {hashes[key]} "
+            f"Serial path output changed for {key}: computed hash {hashes[key]} "
             f"vs baseline {baseline[key]}. Intentional semantics change? "
             f"Regenerate fixture. Accidental drift? Revert the change that "
             f"produced it."

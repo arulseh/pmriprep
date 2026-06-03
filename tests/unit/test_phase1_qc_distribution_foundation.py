@@ -10,8 +10,7 @@ Coverage targets the critical paths only:
   ``enrich_probseg_sidecar``: empty-qc no-op + happy path
 - ``build_aif_timeseries_sidecar``: per-modality units (DSC vs DCE) +
   invalid-modality ValueError
-- ``build_tumor_seg_dseg_sidecar``: ``Columns`` block now present (extension
-  added in this PR)
+- ``build_tumor_seg_dseg_sidecar``: ``Columns`` block present
 """
 from __future__ import annotations
 

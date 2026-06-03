@@ -1,7 +1,7 @@
 """Unit tests for DCE signal quality QC gating.
 
 Tests for peak enhancement and baseline tSNR gating in the DCE QC
-recommendation system (v0.22.0).
+recommendation system.
 """
 
 import pytest

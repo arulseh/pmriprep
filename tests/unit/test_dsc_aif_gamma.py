@@ -268,9 +268,9 @@ class TestFitGammaVariate:
 
         assert result.fit_converged is True
         # Symmetric window: numerator and denominator both first-pass.
-        # Ratio should be near 1.0; it will pass the legacy [0.85, 1.15]
-        # gate range even though that gate is no longer enforced.
-        # Pre-fix asymmetric (full-curve denominator) would give ~0.5 here.
+        # Ratio should be near 1.0, inside the informational [0.85, 1.15]
+        # range (not an enforced gate). An asymmetric full-curve
+        # denominator would give ~0.5 here.
         assert 0.85 <= result.auc_ratio <= 1.15, (
             f"auc_ratio = {result.auc_ratio:.3f} — symmetric window should "
             f"yield ratio near 1.0 even with persistent post-bolus tail"
@@ -388,7 +388,7 @@ def _make_fit_result(
 
     Default ``first_pass_n=25`` is well above the
     ``GAMMA_MIN_FIRST_PASS_SAMPLES`` (8) eligibility threshold, so existing
-    tests that don't care about sample count won't trip the new prerequisite.
+    tests that don't care about sample count won't trip the prerequisite.
     """
     if fitted_curve is None:
         fitted_curve = original_aif.copy()
@@ -441,7 +441,7 @@ class TestShouldApplyGammaFit:
         assert "peak" in decision.reason.lower() or "Peak" in decision.reason
 
     def test_auc_ratio_no_longer_hard_gate_when_no_defect(self) -> None:
-        """auc_ratio outside legacy [0.85, 1.15] no longer gates: fit is
+        """auc_ratio outside [0.85, 1.15] does not gate: fit is
         rejected for the usual 'no defect detected' reason, and auc_ratio
         is still reported in metrics for QC provenance.
         """
@@ -490,7 +490,7 @@ class TestShouldApplyGammaFit:
         self,
     ) -> None:
         """Hard prerequisite: < 8 first-pass samples → reject regardless of fit
-        quality (Welker AJNR 2015 §"AIF sampling adequacy", Calamante MRM 2010).
+        quality (Welker AJNR 2015, Calamante MRM 2010).
         """
         aif = _make_clean_aif()
         fit = _make_fit_result(
@@ -645,7 +645,7 @@ class TestShouldApplyGammaFit:
 
 
 class TestDSCConfigGammaFitRemoved:
-    """Verify gamma_fit is no longer a DSCConfig field (hardcoded to auto)."""
+    """Verify gamma_fit is not a DSCConfig field (hardcoded to auto)."""
 
     def test_no_gamma_fit_field(self) -> None:
         config = DSCConfig()

@@ -1,6 +1,6 @@
-"""PR1 (BIDS arc finishing): DCE preproc-4D sidecar carries flat-key cosmetic QC.
+"""DCE preproc-4D sidecar carries flat-key cosmetic QC.
 
-Mirrors v0.45.0 ``test_dsc_preproc_sidecar_carries_flat_qc.py``.
+Mirrors ``test_dsc_preproc_sidecar_carries_flat_qc.py``.
 """
 from __future__ import annotations
 

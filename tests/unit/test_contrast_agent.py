@@ -551,7 +551,7 @@ class TestCollectDefaultWarnings:
         qc = {
             "preload": {
                 "preload_classification": "minimal",
-                # v0.25.2: key renamed to preload_baseline_delta_r2_advisory.
+                # Advisory key: preload_baseline_delta_r2_advisory.
                 "preload_baseline_delta_r2_advisory": 0.85,
             }
         }

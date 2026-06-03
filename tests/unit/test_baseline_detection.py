@@ -98,10 +98,10 @@ class TestPhase1Detectors:
     def test_max_slope_sharp_upstroke_immediate_washout(
         self, post_peak_drop: float, seed: int,
     ) -> None:
-        """Penn sub-03/06/09 pattern: sharp single-frame upstroke + immediate washout.
+        """Sharp single-frame upstroke + immediate washout pattern.
 
         Boxcar smoothing of a single-frame Δsig spike followed by an
-        immediate decline used to pull the smoothed-derivative argmax 1
+        immediate decline can pull the smoothed-derivative argmax 1
         frame backward.  The forward-verification sweep must advance
         through the smeared peak to land on the actual upstroke frame.
         """

@@ -1135,7 +1135,7 @@ ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD: Final[float] = 0.7
 #: physiological floor (vp ≥ 0.005) so it does not
 #: undercut the magnitude-plausibility gate. Acquisition-limited CRLB band
 #: from first-pass temporal-undersampling analysis —
-#: independent of ``NAWM_VP_REFERENCE`` position (physics-expert 2026-04-19).
+#: independent of ``NAWM_VP_REFERENCE`` position.
 #: Excursions below 0.005 remain a real data issue even in the
 #: prior-dominated regime.
 VP_NCBV_RATIO_MIN_LIMITED: Final[float] = 0.005

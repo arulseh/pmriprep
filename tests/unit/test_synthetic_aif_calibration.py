@@ -1,4 +1,4 @@
-"""Tests for synthetic AIF peak calibration (v0.29.1).
+"""Tests for synthetic AIF peak calibration.
 
 Verifies the population-median, B0-scaled, dose-aware peak formula:
     peak = max(SYNTH_AIF_BASE_PEAK_3T * (B0 / 3.0) * effective_dose,
@@ -71,7 +71,7 @@ class TestSyntheticAIFPeak:
         "field_strength, effective_dose, expected_peak",
         [
             (3.0, 1.0, 35.0),            # standard single dose 3T
-            (3.0, 0.75, 26.25),           # Penn sub-02 dose
+            (3.0, 0.75, 26.25),           # three-quarter dose
             (3.0, 2.0, 70.0),             # double dose
             (1.5, 1.0, 17.5),             # 1.5T scaling
             (7.0, 1.0, 35.0 * 7 / 3),    # 7T scaling
@@ -126,7 +126,7 @@ class TestSyntheticAIFPeak:
         )
 
     def test_tissue_max_none_uses_formula(self):
-        """Regression: tissue_max=None no longer falls back to Bleeker 250."""
+        """Regression: tissue_max=None must not fall back to Bleeker 250."""
         det = _make_aif_detection()
         _, metrics = det._generate_synthetic_aif(
             n_timepoints=60, field_strength=3.0, effective_dose=1.0,

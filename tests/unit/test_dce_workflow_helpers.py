@@ -4,8 +4,8 @@ and the skip-DSC glob helper in ``pmriprep/workflows/base.py``.
 These tests target path-dispatch invariants that are not covered by the
 validation/constraint unit tests: specifically, that the Function-node
 wrappers correctly route nCBV vs absolute CBV to the right downstream
-consumer, and that the skip-DSC glob handles pre-v0.25.0 output layouts
-without silently feeding biased data to the new pathway.
+consumer, and that the skip-DSC glob handles older output layouts
+without silently feeding biased data to the cross-validation pathway.
 """
 
 from __future__ import annotations
@@ -95,8 +95,8 @@ class TestDscDceValidationNodeDispatch:
         assert captured["cbv_path"] is None
 
     def test_both_files_present_uses_ncbv_only(self, tmp_path: Any) -> None:
-        """v0.25.4: when both exist, the node routes only the nCBV path
-        (cbv_path=None) because the legacy rel-AUC-CBV fallback is
+        """When both exist, the node routes only the nCBV path
+        (cbv_path=None) because the rel-AUC-CBV fallback is
         miscalibrated against dimensionless rel-AUC-CBV.
         """
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
@@ -135,9 +135,9 @@ class TestDscDceValidationNodeDispatch:
         assert captured["ncbv_path"] == ncbv_file
 
     def test_workflow_skips_xval_on_no_nawm(self, tmp_path: Any) -> None:
-        """v0.25.4: when only rel-AUC-CBV is available (no NAWM → no nCBV),
-        xval is cleanly SKIPPED rather than falling back to the legacy
-        path with miscalibrated expected ratio 0.669."""
+        """When only rel-AUC-CBV is available (no NAWM → no nCBV),
+        xval is cleanly SKIPPED rather than falling back to the
+        rel-AUC-CBV path with miscalibrated expected ratio 0.669."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
         cbv_file = _write_nifti(
@@ -173,7 +173,7 @@ class TestDscDceValidationNodeDispatch:
         assert captured == {}  # validator was not called
 
     def test_no_cbv_no_ncbv_returns_skipped(self, tmp_path: Any) -> None:
-        """No CBV + no DSC config at all → skipped with no_dsc_run reason (v0.26.6)."""
+        """No CBV + no DSC config at all → skipped with no_dsc_run reason."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
         vp_file = _write_nifti(tmp_path / "vp.nii.gz", np.zeros((3, 3, 3)))
@@ -338,7 +338,7 @@ class TestFindPreviousDscOutputsNcbv:
     def test_ncbv_missing_warns_and_sets_none(
         self, tmp_path: Any, caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Pre-v0.25.0 layout (no dscNawmNormCbv_stat) → ``ncbv_map is None`` and a warning fires."""
+        """Layout with no dscNawmNormCbv_stat → ``ncbv_map is None`` and a warning fires."""
         from pmriprep.workflows.base import _find_previous_dsc_outputs
 
         perf_dir = self._make_layout(tmp_path, "02", "01")
@@ -360,7 +360,7 @@ class TestFindPreviousDscOutputsNcbv:
 
 
 # =============================================================================
-# ComputeDCEMaps dose-trait forwarding (v0.25.2)
+# ComputeDCEMaps dose-trait forwarding
 # =============================================================================
 
 
@@ -413,15 +413,14 @@ class TestComputeDCEMapsDoseTraits:
 
 
 class TestMaskProducersReturnEmptyString:
-    """Regression for v0.57.2: workflow Function nodes that select/transform
+    """Workflow Function nodes that select/transform
     optional masks must return the empty string (not None) when no mask is
     available, because the downstream traits are
     ``Either(File(exists=True), Enum(""))`` and reject None.
 
-    The crash (``_select_aif_exclusion_mask`` → ``aif_detection.lesion_mask_file``)
-    was introduced in d75a996 and slipped past the earlier 27fada7 fix because
-    the new override pathway had no test. ``_transform_probseg_to_dce`` was the
-    remaining latent instance of the same class.
+    Covers the override pathway (``_select_aif_exclusion_mask`` →
+    ``aif_detection.lesion_mask_file``) and ``_transform_probseg_to_dce``,
+    both instances of the same class.
     """
 
     def test_select_aif_exclusion_mask_returns_empty_when_no_mask(self) -> None:
@@ -447,9 +446,9 @@ class TestMaskProducersReturnEmptyString:
 
 
 class TestT1MappingProbsegTraitsAcceptEmptyString:
-    """Regression for v0.57.2: the T1Mapping CSF/WM/GM probseg traits must accept
+    """The T1Mapping CSF/WM/GM probseg traits must accept
     the empty string returned by ``_transform_probseg_to_dce`` when no probseg is
-    available, mirroring the lesion-mask trait fix (27fada7). They must still
+    available, mirroring the lesion-mask trait behavior. They must still
     reject non-existent paths."""
 
     def test_probseg_traits_accept_empty_string(self) -> None:

@@ -1,13 +1,13 @@
-"""Workflow-level tests for preload classification precedence (v0.26.0 W3).
+"""Workflow-level tests for preload classification precedence.
 
 ``_detect_and_correct_preload`` in ``pmriprep/workflows/dsc/base.py`` resolves
 the effective preload class from three sources with strict precedence:
 
     user override > K2-primary > ΔR2* advisory
 
-Prior to v0.26.0 no integration test exercised this path as a whole — unit
-tests covered ``classify_preload`` / ``classify_preload_adequacy_from_k2`` /
-``preload_class_from_dose`` in isolation only. These tests mock the four
+These tests exercise that path as a whole, complementing the unit
+tests that cover ``classify_preload`` / ``classify_preload_adequacy_from_k2`` /
+``preload_class_from_dose`` in isolation. These tests mock the four
 ``pmriprep.utils.dsc_preload`` entrypoints the function imports locally
 (patch at the source module so the local import resolves to the mock) and
 write small synthetic NIfTI fixtures to ``tmp_path`` so the real nibabel
@@ -80,7 +80,7 @@ def _chdir_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 class TestPreloadPrecedence:
-    """v0.26.0 W3: user override > K2-primary > ΔR2* advisory."""
+    """user override > K2-primary > ΔR2* advisory."""
 
     def test_user_override_wins_over_k2(self, tmp_path: Path) -> None:
         """preload='0.3' (user half-dose) overrides K2 classification."""

@@ -47,7 +47,9 @@ def _load_dro_pair(
 ) -> Optional[Tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.bool_]]]:
     """Load GT Ktrans, pmriprep Ktrans, and tumor mask for a DRO session.
 
-    Returns:
+    Returns
+    -------
+    Optional[Tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.bool_]]]
         Tuple of (gt_data, calc_data, mask) or None if files missing.
     """
     gt = load_ground_truth_ktrans(subject, session)
@@ -68,13 +70,20 @@ def _extract_valid_pairs(
 ) -> Tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Extract valid voxel pairs within the tumor mask.
 
-    Args:
-        gt: Ground truth Ktrans array.
-        calc: Calculated Ktrans array.
-        mask: Boolean tumor mask.
-        require_positive_gt: If True, exclude voxels where GT <= 0.
+    Parameters
+    ----------
+    gt : NDArray[np.floating]
+        Ground truth Ktrans array.
+    calc : NDArray[np.floating]
+        Calculated Ktrans array.
+    mask : NDArray[np.bool_]
+        Boolean tumor mask.
+    require_positive_gt : bool
+        If True, exclude voxels where GT <= 0.
 
-    Returns:
+    Returns
+    -------
+    Tuple[NDArray[np.floating], NDArray[np.floating]]
         Tuple of (gt_values, calc_values) as 1D arrays.
     """
     gt_vals = gt[mask]
@@ -100,11 +109,16 @@ def _concordance_correlation_coefficient(
         Lin LI. A concordance correlation coefficient to evaluate
         reproducibility. Biometrics 1989;45:255-268.
 
-    Args:
-        x: First measurement array.
-        y: Second measurement array.
+    Parameters
+    ----------
+    x : NDArray[np.floating]
+        First measurement array.
+    y : NDArray[np.floating]
+        Second measurement array.
 
-    Returns:
+    Returns
+    -------
+    float
         CCC value in [-1, 1].
     """
     mean_x = np.mean(x)

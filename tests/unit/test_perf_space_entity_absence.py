@@ -14,8 +14,8 @@ Two rules enforced here:
    pmriprep uses ``space-T1w`` (and ``from-T1w`` / ``to-T1w``) uniformly
    for the chosen anat reference space; pre- vs post-contrast
    disambiguation lives in the JSON ``SpatialReference`` field.
-   v0.46.0 PR2 deleted the last legacy ``space-anat_desc-lesionStats.json``
-   orphan; the allowlist is now empty.
+   No producer writes ``space-anat_desc-lesionStats.json``; only a
+   documentation reference remains, captured by the allowlist below.
 
 Cross-modality outputs in ``anat/`` (T1w/FLAIR/T2w resampled to DCE/DSC
 space, masks describing anatomy in perf-space) DO carry
@@ -46,8 +46,7 @@ _ALLOWLIST: list[tuple[str, str, str]] = [
     (
         "interfaces/qc_writers.py",
         "space-anat_desc-lesionStats.json",
-        "Docstring reference describing the legacy orphan deleted in "
-        "v0.46.0; producer code no longer writes this filename.",
+        "Docstring reference only; producer code does not write this filename.",
     ),
 ]
 

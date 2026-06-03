@@ -40,7 +40,9 @@ def _make_synthetic_dce_4d(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Create synthetic 4D DCE concentration data with arterial and tissue curves.
 
-    Returns:
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
         (conc_data, brain_mask) — 4D concentration and 3D binary mask.
     """
     nx, ny, nz, nt = shape
@@ -459,12 +461,12 @@ class TestComputeRescueScore:
 
 
 # =============================================================================
-# AIF scaling unit-mismatch fix (v0.25.3)
+# AIF scaling unit-mismatch fix
 # =============================================================================
 
 
 class TestAIFScalingUnitFix:
-    """v0.25.3: Parker's peak_min/peak_max are in blood-voxel units; aif_curve
+    """Parker's peak_min/peak_max are in blood-voxel units; aif_curve
     is in plasma units after /(1-Hct) correction. Scaling target must be
     divided by (1-Hct) to produce a correct plasma target.
     """
@@ -923,7 +925,7 @@ class TestAnchorGateInCascade:
     """Cascade-level integration tests for the anchor gate."""
 
     def test_all_venous_tier_fails_via_anchor_gate(self) -> None:
-        """Sub-20402855 pattern: 3 candidates per tier, all peaking at
+        """All-venous-tier pattern: 3 candidates per tier, all peaking at
         post-arrival 13s (above 10s threshold). Cascade descends through
         all 10 tiers, none anchored, falls to population.
         """
@@ -972,7 +974,7 @@ class TestAnchorGateInCascade:
         descend, not short-circuit on the anchor-failed strict tier.
 
         Exercises the exact regression the anchor gate is intended to
-        catch: quorum alone is no longer sufficient.
+        catch: quorum alone is not sufficient.
         """
         inputs = _make_cascade_inputs()
         atlas_masks, atlas_names = _make_atlas_cascade()
@@ -1021,7 +1023,7 @@ class TestAnchorGateInCascade:
         assert anchor_outcomes[1]["has_anchor"] is True
 
     def test_anchored_tier_with_late_companions_succeeds(self) -> None:
-        """Sub-20449286 pattern: 4 candidates, anchor #1 at post-arr 8s,
+        """Anchored-tier pattern: 4 candidates, anchor #1 at post-arr 8s,
         rest at 12.2s. Tier should pass on anchor + quorum.
         """
         inputs = _make_cascade_inputs()
@@ -1188,8 +1190,8 @@ class TestInflowExclusionHelper:
         assert _inflow_exclusion_mm(1.0, 150) == pytest.approx(20.0)
 
     def test_typical_clinical_uniform_20mm(self) -> None:
-        """3.5/4/5mm at typical slab counts all return ~20mm (the
-        Penn / sub-20449286 / OSIPI corpus)."""
+        """3.5/4/5mm at typical slab counts all return ~20mm (typical
+        across clinical corpora)."""
         # 3.5mm × 28 = 98mm slab; max(20, 14)=20; cap=34.3 → 20
         assert _inflow_exclusion_mm(3.5, 28) == pytest.approx(20.0)
         # 4mm × 24 = 96mm slab; max(20, 16)=20; cap=33.6 → 20
@@ -1315,9 +1317,9 @@ class TestSlabEdgeConstants:
 class TestInflowExclusionAppliedUniversally:
     """End-to-end coverage for the universal inferior-inflow apply.
 
-    v0.46.7's MRAcquisitionType gate was dropped in v0.46.8 because BIDS
+    No MRAcquisitionType gate is applied, as BIDS
     metadata can't reliably distinguish slab-selective 2D-prep sequences
-    from plain 2D-MS. Inferior inflow exclusion is now applied to both
+    from plain 2D-MS. Inferior inflow exclusion applies to both
     atlas + WB call sites regardless of acquisition type. These tests
     assert that the helper output (`_inflow_exclusion_mm`) actually
     reaches `_prepare_search_mask` and zeroes the expected slice count.
@@ -1404,7 +1406,7 @@ class TestInflowExclusionAppliedUniversally:
 
 
 # =============================================================================
-# Test: Peak-amplitude QC warning (v0.46.8)
+# Test: Peak-amplitude QC warning
 # =============================================================================
 
 
@@ -1498,7 +1500,7 @@ class TestDCEAIFPeakAmplitudeWarning:
 
 
 # =============================================================================
-# Test: Multi-bump tail detector (v0.46.8)
+# Test: Multi-bump tail detector
 # =============================================================================
 
 
@@ -1709,12 +1711,12 @@ class TestMultiBumpTailConstantValue:
 
 
 class TestDCEAIFDetectionLesionMaskFileTrait:
-    """Regression for v0.50.1: DCE AIF detection must accept the empty string
+    """DCE AIF detection must accept the empty string
     that upstream Function nodes return when no lesion mask is available.
 
-    Reproduced on sub-0081 (OSIPI test-retest, no lesion mask): Nipype rejected
-    ``""`` because the trait was ``File(exists=True)`` (mandatory by default)
-    and ``Path("").is_file()`` is False. v0.50.1 widens the trait to
+    When no lesion mask is available, Nipype would reject
+    ``""`` if the trait were ``File(exists=True)`` (mandatory by default)
+    because ``Path("").is_file()`` is False. The trait is
     ``Either(File(exists=True), Enum(""))`` so the documented Function-node-
     returns-empty-string convention works without changing the runtime guard
     in ``_run_interface``.
@@ -1746,8 +1748,8 @@ class TestDCEAIFDetectionLesionMaskFileTrait:
         when no whole-tumor mask is available), assigning that value to the
         downstream trait must not raise.
 
-        Pre-v0.50.1 this raised ``TraitError`` because ``File(exists=True)``
-        normalized ``""`` → ``"."`` and rejected. Pure ``wf.connect([...])``
+        A ``File(exists=True)`` trait would raise ``TraitError`` here because
+        it normalizes ``""`` → ``"."`` and rejects. Pure ``wf.connect([...])``
         validation is structural-only and does NOT propagate values, so this
         test runs the upstream node explicitly and assigns its result to the
         downstream trait — that's the actual code path the engine takes at
@@ -1773,7 +1775,7 @@ class TestDCEAIFDetectionLesionMaskFileTrait:
 
         aif = AIFDetection()
         # This is the assignment Nipype's MultiProc plugin makes at node-run
-        # time. Pre-v0.50.1 it raised TraitError; post-fix it must succeed.
+        # time. It must succeed for the empty-string convention.
         aif.inputs.lesion_mask_file = upstream_value
         assert aif.inputs.lesion_mask_file == ""
 
@@ -1831,7 +1833,7 @@ def _make_qc(
 # ----- Constants -----------------------------------------------------------
 
 def test_bump_detector_constants_updated():
-    """sh60 + f0.40 are the v0.51.0 defaults."""
+    """sh60 + f0.40 are the bump-detector defaults."""
     assert DCE_AIF_TAIL_PEAK_FRACTION == 0.40
     assert DCE_AIF_TAIL_SHOULDER_SECONDS == 60.0
 

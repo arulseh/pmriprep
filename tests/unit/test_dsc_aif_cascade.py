@@ -185,8 +185,6 @@ class TestGraduatedNCandidates:
         """Permissive uses ceil(0.4 * 10) = 4."""
         assert self._level_n("permissive", 10) == 4
 
-    # Note: test_fraction_degraded removed in v0.19.16 (degraded tier removed)
-
     def test_small_n_floors(self) -> None:
         """n_candidates=5 → relaxed=3, permissive=3 (floor at MIN)."""
         assert self._level_n("relaxed", 5) == 3
@@ -336,7 +334,9 @@ class TestPostGammaFitR2Fallback:
     ) -> tuple[bool, Optional[str]]:
         """Simulate the post-gamma-fit quality gate logic.
 
-        Returns:
+        Returns
+        -------
+        tuple[bool, Optional[str]]
             (triggers_fallback, fallback_reason)
         """
         from pmriprep.interfaces.dsc_aif import GAMMA_R2_SYNTHETIC_FALLBACK
@@ -435,7 +435,7 @@ class TestPostGammaFitR2Fallback:
 
 
 # =============================================================================
-# Progressive-trim + averaged-BRR gate (v0.28.2)
+# Progressive-trim + averaged-BRR gate
 # =============================================================================
 
 
@@ -448,8 +448,8 @@ def _curve_with_negative_tail(
     fwhm_frames: int = 5,
 ) -> np.ndarray:
     """Build a curve with a clean first-pass peak but a constant negative
-    pedestal in the post-peak tail.  Mimics the sub-02 / sub-04 failure
-    mode where T1 leakage or motion produces a negative-going tail."""
+    pedestal in the post-peak tail.  Mimics the failure mode where T1
+    leakage or motion produces a negative-going tail."""
     curve = np.zeros(n_frames)
     for i in range(peak_frame, n_frames):
         dt = i - peak_frame
@@ -461,7 +461,7 @@ def _curve_with_negative_tail(
 
 
 class TestAifAvgBrrConstant:
-    """The new averaged-AIF BRR floor (v0.28.2)."""
+    """The averaged-AIF BRR floor."""
 
     def test_value(self) -> None:
         from pmriprep.interfaces.dsc_aif import AIF_AVG_BRR_MIN
@@ -502,7 +502,7 @@ class TestAifPassesQualityBrrGate:
     """_aif_passes_quality now gates on averaged BRR ≥ AIF_AVG_BRR_MIN."""
 
     def test_rejects_negative_tail(self) -> None:
-        """Curve with BRR well below -3 % fails the new gate."""
+        """Curve with BRR well below -3 % fails the BRR gate."""
         curve = _curve_with_negative_tail(
             peak_height=30.0, tail_offset=-8.0,
         )
@@ -586,7 +586,7 @@ class TestProgressiveTrimSemantics:
         pool: list[tuple[float, tuple[int, int, int], dict]],
     ) -> int:
         """Replicates the trim-selection predicate inside the cascade
-        loop in `pmriprep/interfaces/dsc_aif.py` (v0.28.2)."""
+        loop in `pmriprep/interfaces/dsc_aif.py`."""
         def key(i: int) -> float:
             brr = pool[i][2].get("baseline_return_ratio", float("nan"))
             if not np.isnan(brr):

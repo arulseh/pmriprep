@@ -1,11 +1,11 @@
-"""Sweep regression: no legacy ``desc-*QC_quality.json`` orphans after PR2.
+"""Sweep regression: no ``desc-*QC_quality.json`` orphans.
 
-After v0.46.0 the four legacy session-root QC summary files
+The four session-root QC summary files
 (``desc-anatQC``, ``desc-tumorsegQC``, ``desc-dscQC``, ``desc-dceQC``)
-are gone. This test scans the source tree to confirm:
+must not be written. This test scans the source tree to confirm:
 
 1. No producer code path writes those filenames.
-2. No legacy lesion/ROI ``space-{anat,dsc,dce}_desc-{lesion,roi}Stats.json``
+2. No lesion/ROI ``space-{anat,dsc,dce}_desc-{lesion,roi}Stats.json``
    orphans are written by producer code.
 """
 from __future__ import annotations

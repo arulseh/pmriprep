@@ -228,7 +228,7 @@ class TestOSIPIDSCDRO:
         small singular values, Tikhonov applies a continuous
         first-order smoothness penalty with L-curve λ selection. On
         the OSIPI phantom (exponential residue) Tikhonov's smoothing
-        biases CBF higher than sSVD's truncation. Kudo et al. (Stroke
+        biases CBF higher than sSVD's truncation. Kudo et al. (Radiology
         2010) reported 20–40% inter-method CBF variation on phantom
         data; ours runs to ~65% on the high-CBF case for these two
         methods, dominated by Tikhonov's residue broadening.

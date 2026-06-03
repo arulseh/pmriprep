@@ -1,13 +1,13 @@
-"""Regression tests for v0.50.2 datasink Function-node None-tolerance.
+"""Regression tests for datasink Function-node None-tolerance.
 
 The 6 ``_copy_*`` Function-node helpers across DCE/DSC/anat datasinks
 all call ``shutil.copy2(in_file, ...)``. Conditional producers like
 ``_normalize_by_nawm`` legitimately return ``None`` when their
-preconditions aren't met. Pre-v0.50.2 this would crash the whole
+preconditions aren't met. Without a guard this would crash the whole
 subject inside ``shutil.copy2(None, ...)`` with ``TypeError: stat:
 path should be string, bytes, os.PathLike or integer, not NoneType``.
 
-Each helper now early-returns ``""`` when given Undefined/None/"".
+Each helper early-returns ``""`` when given Undefined/None/"".
 These tests cover the two perfusion-map helpers explicitly (the most
 complex signatures); the four xfm/B1+ helpers share the same guard
 pattern with simpler signatures and rely on the perf-map tests for

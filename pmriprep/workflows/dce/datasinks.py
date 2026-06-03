@@ -689,7 +689,7 @@ _PK_MAP_KEY: dict[str, str] = {
 
 
 # Model-free maps that should carry per-region LesionStats. Excluded
-# (intentional, per physics-expert review): bat_map (timing offset, not
+# (intentional): bat_map (timing offset, not
 # magnitude biomarker), curve_type_map (categorical, not amenable to
 # ROI summary stats).
 _MF_LESIONSTATS_MAP_KEY: dict[str, str] = {

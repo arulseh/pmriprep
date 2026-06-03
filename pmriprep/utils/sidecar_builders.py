@@ -703,8 +703,7 @@ def build_anat_probseg_sidecar(
 # Per-image anat sidecar enrichment (Option A QC distribution)
 #
 # These helpers take a base sidecar dict + the upstream `qc_metrics` dict
-# and inject the relevant subset of pipeline state matching what was
-# previously aggregated into the standalone anat QC summary JSON.
+# and inject the relevant subset of pipeline QC state into the sidecar.
 #
 # Pattern: each helper mutates the sidecar in-place AND returns it for
 # chaining. Missing qc fields are silently skipped — sidecars that lack
@@ -1164,7 +1163,7 @@ def enrich_recommendation_keys(
 # ---------------------------------------------------------------------------
 # DCE cosmetic enrichment (PR1 of arc-finishing work)
 #
-# Mirror of the DSC enrichment pattern shipped in v0.45.0. Reads the
+# Enriches the sidecar with QC metrics read from the
 # producer-shape ``qc_metrics`` sub-blocks (``t1_mapping``, ``b1_mapping``,
 # ``preprocessing``, ``pk_modeling``, ``dsc_dce_validation``,
 # ``cbv_constraint``) and writes flat top-level PascalCase keys per

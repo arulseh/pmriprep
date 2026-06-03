@@ -543,7 +543,7 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
 
 # Per-image canonical sidecar paths whose existence proves the pipeline
 # ran. These replace the legacy ``desc-*QC_quality.json`` summary files
-# at session root (deleted in v0.46.0). The aggregator uses them as
+# at session root. The aggregator uses them as
 # presence probes AND as the source of QC* recommendation/warnings flat
 # keys. Anat / tumor_seg patterns use ``{prefix}*`` between the bare
 # ``sub-XX_ses-YY`` prefix and the trailing ``_space-...`` so optional
@@ -777,12 +777,10 @@ def _read_json_safe(path: Path) -> dict[str, Any]:
 def _qc_keys_from_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
     """Translate flat ``QC*`` recommendation/warnings keys to legacy nested.
 
-    The pre-v0.46.0 aggregator read ``recommendation``, ``warnings``,
+    The canonical anchor sidecars carry ``recommendation``, ``warnings``,
     ``provenance_warnings``, ``acquisition_warnings``, and
-    ``processing_warnings`` as top-level
-    keys on ``qc_metrics``. PR2 moves them onto the canonical anchor
-    sidecars as flat ``QC*``-prefixed keys (per bids-spec-expert
-    guidance). This translates them back to the nested shape so
+    ``processing_warnings`` as flat ``QC*``-prefixed keys. This translates
+    them back to the nested shape on ``qc_metrics`` so
     ``_compute_overall_recommendation`` / ``_collect_*_warnings`` can be
     consumed unchanged.
     """
@@ -814,10 +812,8 @@ def _load_pipeline_sidecars(
 ) -> dict[str, Any]:
     """Build the legacy ``qc_metrics`` nested shape from per-image sidecars.
 
-    Replaces the pre-v0.46.0 ``_load_qc_json`` helper, which read a
-    single ``desc-*QC_quality.json`` summary file at session root. The
-    summary files are gone after v0.46.0; this loader composes the same
-    nested dict from:
+    Composes the QC summary from the canonical per-image sidecars. The
+    nested dict is assembled from:
 
     - The anchor sidecar (``QC*`` recommendation/warnings flat keys).
     - The pipeline-internal resume sidecar (full producer-shape

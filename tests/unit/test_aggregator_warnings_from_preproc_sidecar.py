@@ -1,8 +1,8 @@
 """Aggregator helpers consume QC* flat keys translated from preproc sidecars.
 
-PR2 collapse: ``_compute_overall_recommendation`` /
+``_compute_overall_recommendation`` /
 ``_collect_all_warnings`` / ``_collect_provenance_warnings`` /
-``_collect_pipeline_warnings`` operate on the legacy nested shape
+``_collect_pipeline_warnings`` operate on the nested shape
 returned by ``_load_pipeline_sidecars``. This test feeds those helpers
 the dict the loader produces from anchor-sidecar QC* flat keys and
 confirms they pick up the recommendation + three warnings flavors.

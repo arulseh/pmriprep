@@ -20,7 +20,9 @@ def _make_synthetic_data(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate synthetic vascular model tissue curve with noise.
 
-    Returns:
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
         Tuple of (concentration, aif, time_points).
     """
     n = 40

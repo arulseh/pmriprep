@@ -868,16 +868,10 @@ def create_nawm_roi(
     5. Erosion: SINGLE pass, ellipsoidal kernel of nawm_erosion * min(voxel_sizes) mm
     6. Adaptive fallback: erosion-only reduction (2 -> 1 -> 0 voxels)
 
-    Unlike the previous implementation, this does NOT relax WM threshold,
-    tumor margin, or hemisphere constraints. Only erosion is reduced.
+    This does NOT relax the WM threshold, tumor margin, or hemisphere
+    constraints; only erosion is reduced.
     If still below nawm_min_voxels after 0-erosion, the mask is saved
     with ``valid=False`` rather than raising an error.
-
-    References
-    ----------
-    Prah MA, Schmainda KM. rCBV estimation in tumors: comparison of methods
-    for normalization to normal appearing white matter. J Magn Reson Imaging.
-    2024.
     """
     import logging
 

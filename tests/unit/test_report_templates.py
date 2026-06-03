@@ -80,7 +80,7 @@ def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
 
 
 # =============================================================================
-# Template AIF caveat (v0.29.0)
+# Template AIF caveat
 # =============================================================================
 
 
@@ -115,7 +115,7 @@ def test_measured_aif_omits_caveat(env):
 
 
 # =============================================================================
-# Deconvolution panel — v0.34.2 metric renames
+# Deconvolution panel — metric labels
 # =============================================================================
 
 
@@ -145,14 +145,14 @@ def _dsc_ctx_with_deconv(method: str, **deconv_extra) -> dict:
 
 
 def test_deconv_panel_inference_shown_for_cpi(env):
-    """CPI runs render an "Inference" metric box (not the legacy "Bayesian" label)."""
+    """CPI runs render an "Inference" metric box (not a "Bayesian" label)."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_deconv(
         "cpi", inference="vi", fallback_rate=0.05, fe_plateau_rate=0.0001,
     )
     rendered = template.render(dsc=dsc_ctx)
     assert ">Inference<" in rendered
-    assert ">Bayesian<" not in rendered  # old label retired
+    assert ">Bayesian<" not in rendered
     assert ">vi<" in rendered
 
 
@@ -188,7 +188,7 @@ def test_deconv_panel_fallback_only_for_parametric(env):
     osvd_rendered = template.render(dsc=osvd_ctx)
     assert ">oSVD Fallback<" not in osvd_rendered
 
-    # The legacy "Convergence Rate" label should be retired everywhere.
+    # The "Convergence Rate" label must not appear anywhere.
     assert ">Convergence Rate<" not in cpi_rendered
     assert ">Convergence Rate<" not in osvd_rendered
 
@@ -203,7 +203,7 @@ def test_quality_flag_colour_synthetic_is_poor(env):
 
 
 # =============================================================================
-# Acquisition Advisory section (v0.29.4)
+# Acquisition Advisory section
 # =============================================================================
 
 

@@ -7,7 +7,8 @@ and published tissue parameter tables (Semmineh 2017, Boxerman 2020).
 Phase 1: Code-generated synthetic data for CI.
 Phase 4: TCIA GBM-DSC-MRI-DRO (Semmineh 2017) for external validation.
 
-References:
+References
+----------
     Patil V, Johnson G. An improved model for describing the contrast
     bolus in perfusion MRI. Med Phys 2011;38:6380-6383.
 
@@ -95,11 +96,16 @@ class QIBATissueParams:
     CBV is derived via central volume theorem: CBV = CBF * MTT / 60.
     Never independently specified.
 
-    Attributes:
-        name: Human-readable tissue label.
-        cbf: Cerebral blood flow (mL/100g/min).
-        mtt: Mean transit time (seconds).
-        description: Source reference and notes.
+    Attributes
+    ----------
+    name : str
+        Human-readable tissue label.
+    cbf : float
+        Cerebral blood flow (mL/100g/min).
+    mtt : float
+        Mean transit time (seconds).
+    description : str
+        Source reference and notes.
     """
 
     name: str
@@ -126,10 +132,14 @@ class CTHConfig:
     alpha → ∞ gives exponential (no heterogeneity).
     alpha → 1 gives maximum heterogeneity.
 
-    Attributes:
-        alpha: Gamma shape parameter.
-        rcth: Relative CTH = 1/sqrt(alpha) (dimensionless).
-        description: Human-readable description.
+    Attributes
+    ----------
+    alpha : float
+        Gamma shape parameter.
+    rcth : float
+        Relative CTH = 1/sqrt(alpha) (dimensionless).
+    description : str
+        Human-readable description.
     """
 
     alpha: float
@@ -141,10 +151,14 @@ class CTHConfig:
 class QIBANoiseLevel:
     """Noise level for QIBA DRO tests.
 
-    Attributes:
-        fraction: Noise std as fraction of peak tissue concentration.
-        label: Short label for test IDs.
-        description: Human-readable description.
+    Attributes
+    ----------
+    fraction : float
+        Noise std as fraction of peak tissue concentration.
+    label : str
+        Short label for test IDs.
+    description : str
+        Human-readable description.
     """
 
     fraction: float
@@ -258,18 +272,30 @@ def generate_qiba_aif(
 
     Recirculation: c_recirc = kappa * convolve(c_fp, G(t - delay, sigma))
 
-    Args:
-        n_timepoints: Number of time points (80 for QIBA).
-        dt_sec: Temporal resolution in seconds.
-        baseline_frames: Number of pre-bolus baseline frames.
-        peak_delta_r2: Peak first-pass delta-R2* (s^-1).
-        kappa: Recirculation fraction (Patil 2011: 0.34 +/- 0.12).
-        recirc_delay_sec: Recirculation delay in seconds.
-        recirc_sigma_sec: Gaussian dispersion sigma for recirculation (s).
-        alpha_fp: First-pass gamma shape parameter.
-        beta_fp: First-pass gamma scale parameter (seconds).
+    Parameters
+    ----------
+    n_timepoints : int
+        Number of time points (80 for QIBA).
+    dt_sec : float
+        Temporal resolution in seconds.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+    peak_delta_r2 : float
+        Peak first-pass delta-R2* (s^-1).
+    kappa : float
+        Recirculation fraction (Patil 2011: 0.34 +/- 0.12).
+    recirc_delay_sec : float
+        Recirculation delay in seconds.
+    recirc_sigma_sec : float
+        Gaussian dispersion sigma for recirculation (s).
+    alpha_fp : float
+        First-pass gamma shape parameter.
+    beta_fp : float
+        First-pass gamma scale parameter (seconds).
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (aif_concentration, time_sec).
     """
     time_sec = np.arange(n_timepoints, dtype=np.float64) * dt_sec
@@ -330,14 +356,22 @@ def generate_cth_residue(
     from Mouridsen et al. 2006. The residue function is the survival
     function of the gamma distribution of transit times.
 
-    Args:
-        cbf: Cerebral blood flow (mL/100g/min).
-        alpha: Gamma shape parameter (controls heterogeneity).
-        beta: Gamma scale parameter (seconds). Related to MTT: beta = MTT / alpha.
-        n_points: Number of time points.
-        dt: Time step in seconds.
+    Parameters
+    ----------
+    cbf : float
+        Cerebral blood flow (mL/100g/min).
+    alpha : float
+        Gamma shape parameter (controls heterogeneity).
+    beta : float
+        Gamma scale parameter (seconds). Related to MTT: beta = MTT / alpha.
+    n_points : int
+        Number of time points.
+    dt : float
+        Time step in seconds.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Residue array R(t) = CBF * [1 - gammainc(alpha, t / beta)].
     """
     t = np.arange(n_points, dtype=np.float64) * dt
@@ -361,7 +395,9 @@ def qiba_aif_and_time() -> (
 
     80 timepoints, dt=1.5s, kappa=0.35.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (aif_concentration, time_sec).
     """
     return generate_qiba_aif(
@@ -381,7 +417,9 @@ def qiba_aif_no_recirc() -> (
 
     Same first-pass parameters as qiba_aif_and_time but kappa=0.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (aif_concentration, time_sec).
     """
     return generate_qiba_aif(
@@ -411,13 +449,20 @@ def deconvolve_dro_batch(
 ]:
     """Deconvolve DRO tissue curves using specified method.
 
-    Args:
-        concentration_2d: Tissue curves, shape (n_voxels, n_timepoints).
-        aif: AIF curve, shape (n_timepoints,).
-        dt: Time step in seconds.
-        method: One of "ssvd", "osvd", "tikhonov".
+    Parameters
+    ----------
+    concentration_2d : npt.NDArray[np.floating]
+        Tissue curves, shape (n_voxels, n_timepoints).
+    aif : npt.NDArray[np.floating]
+        AIF curve, shape (n_timepoints,).
+    dt : float
+        Time step in seconds.
+    method : str
+        One of "ssvd", "osvd", "tikhonov".
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating], npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (residues, cbf, cbv, mtt) arrays.
     """
     from pmriprep.utils.dsc_deconvolution import (
@@ -455,14 +500,22 @@ TCIA_DRO_ROOT = PROJECT_ROOT / "sourcedata" / "qiba" / "tcia_gbm_dsc_dro"
 class TCIAConfig:
     """TCIA GBM-DSC-MRI-DRO configuration.
 
-    Attributes:
-        name: Config directory name.
-        tr_ms: Repetition time in milliseconds.
-        te_ms: Echo time in milliseconds.
-        fa_deg: Flip angle in degrees.
-        preload: Preload dose ("none", "quarter", "half", "full").
-        bolus_dose: Bolus dose ("full", "three_quarter", "half").
-        b0_tesla: Static field strength in Tesla.
+    Attributes
+    ----------
+    name : str
+        Config directory name.
+    tr_ms : float
+        Repetition time in milliseconds.
+    te_ms : float
+        Echo time in milliseconds.
+    fa_deg : float
+        Flip angle in degrees.
+    preload : str
+        Preload dose ("none", "quarter", "half", "full").
+    bolus_dose : str
+        Bolus dose ("full", "three_quarter", "half").
+    b0_tesla : float
+        Static field strength in Tesla.
     """
 
     name: str
@@ -478,15 +531,24 @@ class TCIAConfig:
 class TCIADROData:
     """Loaded TCIA DRO data for a single configuration.
 
-    Attributes:
-        delta_r2: DeltaR2* concentration, shape (230, 200, T).
-        baseline: Baseline signal intensity, shape (230, 200).
-        aif: AIF deltaR2* curve, shape (T,).
-        time_sec: Time vector in seconds, shape (T,).
-        dt: Temporal resolution in seconds.
-        roi_masks: Dict of boolean masks {tumor_leak, tumor_noleak, nawm, aif_region}.
-        config: TCIAConfig with acquisition parameters.
-        metadata: Full metadata dict from metadata.json.
+    Attributes
+    ----------
+    delta_r2 : npt.NDArray[np.floating]
+        DeltaR2* concentration, shape (230, 200, T).
+    baseline : npt.NDArray[np.floating]
+        Baseline signal intensity, shape (230, 200).
+    aif : npt.NDArray[np.floating]
+        AIF deltaR2* curve, shape (T,).
+    time_sec : npt.NDArray[np.floating]
+        Time vector in seconds, shape (T,).
+    dt : float
+        Temporal resolution in seconds.
+    roi_masks : Dict[str, npt.NDArray[np.bool_]]
+        Dict of boolean masks {tumor_leak, tumor_noleak, nawm, aif_region}.
+    config : TCIAConfig
+        TCIAConfig with acquisition parameters.
+    metadata : Dict[str, Any]
+        Full metadata dict from metadata.json.
     """
 
     delta_r2: npt.NDArray[np.floating]
@@ -537,15 +599,21 @@ def _parse_tcia_config_name(name: str) -> TCIAConfig:
 def load_tcia_dro(config_name: str) -> TCIADROData:
     """Load converted TCIA DRO data with caching.
 
-    Args:
-        config_name: Config directory name
-            (e.g. "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg").
+    Parameters
+    ----------
+    config_name : str
+        Config directory name
+        (e.g. "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg").
 
-    Returns:
+    Returns
+    -------
+    TCIADROData
         TCIADROData with all arrays, metadata, and config.
 
-    Raises:
-        FileNotFoundError: If converted NPZ files don't exist.
+    Raises
+    ------
+    FileNotFoundError
+        If converted NPZ files don't exist.
     """
     if config_name in _tcia_dro_cache:
         return _tcia_dro_cache[config_name]
@@ -653,11 +721,16 @@ def deconvolve_tcia_regions(
     Extracts voxels from each tissue ROI mask, deconvolves against the
     provided AIF, and returns per-region median perfusion parameters.
 
-    Args:
-        dro: Loaded TCIA DRO data.
-        method: Deconvolution method ("ssvd", "osvd", "tikhonov").
+    Parameters
+    ----------
+    dro : TCIADROData
+        Loaded TCIA DRO data.
+    method : str
+        Deconvolution method ("ssvd", "osvd", "tikhonov").
 
-    Returns:
+    Returns
+    -------
+    Dict[str, Dict[str, float]]
         Dict keyed by region name, each containing:
             cbf: Median CBF (mL/100g/min × calibration).
             cbv: Median CBV (raw = CBF × MTT).

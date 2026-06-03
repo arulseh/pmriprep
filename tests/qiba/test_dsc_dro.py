@@ -114,7 +114,9 @@ def _make_qiba_exponential_data(
 ]:
     """Generate QIBA test data with exponential residue.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating], float, npt.NDArray[np.floating], float, float]
         Tuple of (tissue, aif, dt, time_sec, cbf, mtt).
     """
     params = QIBA_TISSUE_PARAMS[tissue_key]
@@ -155,7 +157,9 @@ def _make_qiba_cth_data(
 
     beta = mtt / alpha (from gamma distribution mean = alpha * beta).
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating], float, npt.NDArray[np.floating], float, float, float]
         Tuple of (tissue, aif, dt, time_sec, cbf, mtt, alpha).
     """
     params = QIBA_TISSUE_PARAMS[tissue_key]
@@ -1451,7 +1455,8 @@ class TestTCIAPreloadLeakage:
     Key physics: preloading saturates T1 shortening effects, reducing
     T1 contamination in leaky tumor regions (Boxerman et al. 2006).
 
-    References:
+    References
+    ----------
         Boxerman JL, Schmainda KM, Weisskoff RM. Relative cerebral
         blood volume maps corrected for contrast agent extravasation
         significantly correlate with glioma tumor grade, whereas

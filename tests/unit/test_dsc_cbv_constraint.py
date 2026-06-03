@@ -150,9 +150,6 @@ class TestAssessDSCCBVQuality:
         assert result.confidence == "low"
         assert result.use_constraint is False
 
-    # Note: test_brain_degraded_downgrades_to_low removed in v0.19.16
-    # because brain_degraded tier was removed from the cascade.
-
     def test_atlas_permissive_downgrades_to_moderate(self) -> None:
         """atlas_permissive AIF should downgrade to moderate (FWHM up to 18 frames)."""
         aif_qc_data = {
@@ -315,7 +312,7 @@ class TestDetermineConstraintMode:
     """Tests for determine_constraint_mode."""
 
     def test_high_quality_soft_uses_unified_sigma(self) -> None:
-        """High confidence in auto mode emits SOFT at unified σ = 0.40 (v0.27.0+).
+        """High confidence in auto mode emits SOFT at unified σ = 0.40.
 
         DSC CBV and DCE vp measure different vascular compartments; HARD
         equality is an unsupported physics claim, so ``auto`` caps at SOFT.
@@ -476,7 +473,7 @@ class TestNormalizeAifQcKeys:
 
 
 class TestQcReportSchema:
-    """Tests that qc_report uses the renamed key schema (mode, reason)."""
+    """Tests that qc_report uses the (mode, reason) key schema."""
 
     def test_qc_report_keys_from_prepare_vp_constraint_from_data(self, tmp_path: Any) -> None:
         """prepare_vp_constraint_from_data returns qc_report with 'mode'/'reason' keys."""
@@ -640,10 +637,10 @@ class TestPreloadAwareUncertainty:
     )
 
     def test_preload_low_k2_uses_unified_sigma(self) -> None:
-        """Preload + low K2 tier uses unified σ = 0.40 (v0.27.0+).
+        """Preload + low K2 tier uses unified σ = 0.40.
 
-        The preload/K2 tiers still set their reason-string suffix for QC
-        provenance, but σ no longer stratifies — biological uncertainty on
+        The preload/K2 tiers set their reason-string suffix for QC
+        provenance, but σ does not stratify — biological uncertainty on
         vp dominates and is DSC-SNR-independent.
         """
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
@@ -657,10 +654,7 @@ class TestPreloadAwareUncertainty:
         assert "preload" in config.reason.lower()
 
     def test_no_preload_high_k2_uses_unified_sigma(self) -> None:
-        """No preload + high leaky uses unified σ = 0.40 (v0.27.0+).
-
-        Previously stratified to σ=0.50; now unified with default.
-        """
+        """No preload + high leaky uses unified σ = 0.40, unified with default."""
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
@@ -687,7 +681,7 @@ class TestPreloadAwareUncertainty:
         assert config.vp_uncertainty == pytest.approx(0.40)
 
     def test_high_confidence_caps_at_soft(self) -> None:
-        """High confidence in auto mode emits SOFT at unified σ = 0.40 (v0.27.0+), never HARD."""
+        """High confidence in auto mode emits SOFT at unified σ = 0.40, never HARD."""
         quality = CBVQualityAssessment(
             confidence="high", use_constraint=True, reasons=["All quality checks passed"],
         )
@@ -754,7 +748,7 @@ class TestNcbvToVpPrior:
 
     def test_above_physiological_max_clipped_to_nan(self) -> None:
         """nCBV large enough to exceed VP_MAX_PHYSIOLOGICAL → NaN."""
-        # With NAWM_VP_REFERENCE = 0.010 (v0.27.0+) and VP_MAX_PHYSIOLOGICAL
+        # With NAWM_VP_REFERENCE = 0.010 and VP_MAX_PHYSIOLOGICAL
         # = 0.2, nCBV = 25 gives vp = 0.25 which is beyond the physiological
         # cap.
         ncbv = np.array([25.0], dtype=np.float64)
@@ -893,7 +887,7 @@ class TestNcbvIntegration:
 
 
 # =============================================================================
-# Dose-aware CNR coverage gate (v0.25.2)
+# Dose-aware CNR coverage gate
 # =============================================================================
 
 
@@ -913,13 +907,13 @@ class TestDoseAwareCnrGate:
         }
 
     def test_full_dose_thresholds_unchanged(self) -> None:
-        """dose=1.0 × agent=0.1 (Gd-DOTA) → thresholds match v0.25.1."""
+        """dose=1.0 × agent=0.1 (Gd-DOTA) → full-dose thresholds."""
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
         assert _bolus_gd_fraction(1.0, 0.1) == pytest.approx(1.0)
 
     def test_half_dose_gddota_half_thresholds(self) -> None:
         """dose=0.5 × agent=0.1 → eff=0.5; coverage 0.55 now passes SKIP."""
-        # v0.25.1 thresholds: SKIP=0.70, MODERATE=0.84, HIGH=0.95
+        # Full-dose thresholds: SKIP=0.70, MODERATE=0.84, HIGH=0.95
         # At eff=0.5, SKIP becomes 0.35. Coverage=0.55 clears it.
         result = assess_dsc_cbv_quality(
             aif_qc_data=self._qc(0.55, "atlas_permissive"),
@@ -972,7 +966,7 @@ class TestDoseAwareCnrGate:
 
 
 class TestDetermineConstraintModeUnknownSkips:
-    """v0.25.2: UNKNOWN preload short-circuits to SKIP regardless of quality."""
+    """UNKNOWN preload short-circuits to SKIP regardless of quality."""
 
     def test_unknown_preload_skips_even_with_high_quality(self) -> None:
         """Preload=UNKNOWN → SKIP even if DSC quality signals are excellent."""
@@ -1018,7 +1012,7 @@ class TestDetermineConstraintModeUnknownSkips:
 
 
 class TestBolusGdFractionValidation:
-    """_bolus_gd_fraction rejects invalid dose (W1 from v0.25.2 review)."""
+    """_bolus_gd_fraction rejects invalid dose."""
 
     def test_zero_dose_raises(self) -> None:
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
@@ -1037,8 +1031,7 @@ class TestBolusGdFractionValidation:
 
 
 class TestCnrBypassFallThrough:
-    """atlas_strict bypass only overrides SKIP; MODERATE/HIGH tiers still apply
-    (S3 from v0.25.2 review)."""
+    """atlas_strict bypass only overrides SKIP; MODERATE/HIGH tiers still apply."""
 
     @staticmethod
     def _qc(cnr_coverage: float, detection: str) -> dict[str, Any]:
@@ -1075,9 +1068,9 @@ class TestCnrBypassFallThrough:
 
 
 class TestSigmaUnification:
-    """v0.27.0: σ unified at 0.40 across all DSC-confidence + preload/K2 tiers.
+    """σ unified at 0.40 across all DSC-confidence + preload/K2 tiers.
 
-    Per physics-expert 2026-04-19: residual scale uncertainty on vp is
+    Residual scale uncertainty on vp is
     dominated by biological sources (Hct heterogeneity ~15% CoV, capillary-
     vs-total vessel partitioning ~20%) which are DSC-SNR-independent.
     Stratifying σ by DSC confidence confuses orthogonal uncertainties.
@@ -1116,7 +1109,7 @@ class TestSigmaUnification:
 
 
 class TestNAWMVpReferenceAnchor:
-    """v0.27.0: NAWM_VP_REFERENCE = 0.010 from Larsson MRM 2009;62:1270.
+    """NAWM_VP_REFERENCE = 0.010 from Larsson MRM 2009;62:1270.
 
     Regression guard — pinning the anchor value ensures any future retuning
     carries an explicit test update + citation.
@@ -1155,7 +1148,7 @@ class TestSkipReasonConstants:
 
 
 # =============================================================================
-# Synthetic-AIF SKIP plumbing (v0.28.3)
+# Synthetic-AIF SKIP plumbing
 # =============================================================================
 
 

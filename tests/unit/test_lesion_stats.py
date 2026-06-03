@@ -384,10 +384,10 @@ class TestComputeNAWMReference:
     def test_no_maps_in_range_table_reports_unknown_not_pass(self) -> None:
         """Field strength provided but emitted maps have no range entries → UNKNOWN.
 
-        Reproduces the M1 bug from the v0.50.0 code review: previously
-        compute_nawm_reference returned ``value_qc_status="PASS"`` with a
-        misleading "All NAWM medians within ranges" note when zero maps
-        had registered ranges (e.g., DCE-only modality with kep / iauc60).
+        Guards against compute_nawm_reference returning
+        ``value_qc_status="PASS"`` with a misleading "All NAWM medians
+        within ranges" note when zero maps had registered ranges (e.g.,
+        DCE-only modality with kep / iauc60).
         """
         nawm_mask = np.zeros((10, 10, 10), dtype=bool)
         nawm_mask[1:9, 1:9, 1:9] = True
@@ -553,7 +553,7 @@ class TestLesionStatisticsResultToDict:
 
 
 class TestLesionStatisticsAifProvenance:
-    """PerfusionProcessing.AIF sidecar block (v0.29.0)."""
+    """PerfusionProcessing.AIF sidecar block."""
 
     def test_measured_aif_provenance(self) -> None:
         aif_block = {

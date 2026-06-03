@@ -447,7 +447,7 @@ class TestConfidenceScore:
 
 
 # =============================================================================
-# K2-primary preload adequacy classifier (v0.25.2)
+# K2-primary preload adequacy classifier
 # =============================================================================
 
 
@@ -505,7 +505,7 @@ class TestClassifyPreloadAdequacyFromK2:
 
 
 class TestPreloadClassHasUnknown:
-    """PreloadClass.UNKNOWN was added in v0.25.2."""
+    """PreloadClass.UNKNOWN is a defined member."""
 
     def test_unknown_exists(self) -> None:
         assert PreloadClass.UNKNOWN.value == "unknown"

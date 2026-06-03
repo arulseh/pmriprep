@@ -99,12 +99,18 @@ def load_map(
 ) -> Optional[NDArray[np.floating]]:
     """Load a parameter map NIfTI file.
 
-    Args:
-        subject: Subject ID (e.g., "sub-0081").
-        session: Session ID (e.g., "ses-0001").
-        suffix: Map suffix key from MAP_SUFFIXES.
+    Parameters
+    ----------
+    subject : str
+        Subject ID (e.g., "sub-0081").
+    session : str
+        Session ID (e.g., "ses-0001").
+    suffix : str
+        Map suffix key from MAP_SUFFIXES.
 
-    Returns:
+    Returns
+    -------
+    Optional[NDArray[np.floating]]
         3D numpy array of map data, or None if file not found.
     """
     import nibabel as nib
@@ -127,12 +133,18 @@ def load_mask(
 ) -> Optional[NDArray[np.floating]]:
     """Load a mask NIfTI file.
 
-    Args:
-        subject: Subject ID (e.g., "sub-0081").
-        session: Session ID (e.g., "ses-0001").
-        mask_type: One of "brain", "qc", "aif".
+    Parameters
+    ----------
+    subject : str
+        Subject ID (e.g., "sub-0081").
+    session : str
+        Session ID (e.g., "ses-0001").
+    mask_type : str
+        One of "brain", "qc", "aif".
 
-    Returns:
+    Returns
+    -------
+    Optional[NDArray[np.floating]]
         3D numpy array of mask data, or None if file not found.
     """
     import nibabel as nib
@@ -162,11 +174,16 @@ def load_ref_dce(
 ) -> Optional[NDArray[np.floating]]:
     """Load the DCE reference image for registration.
 
-    Args:
-        subject: Subject ID.
-        session: Session ID.
+    Parameters
+    ----------
+    subject : str
+        Subject ID.
+    session : str
+        Session ID.
 
-    Returns:
+    Returns
+    -------
+    Optional[NDArray[np.floating]]
         3D numpy array, or None if not found.
     """
     import nibabel as nib
@@ -214,7 +231,9 @@ def get_mask_path(subject: str, session: str, mask_type: str) -> Path:
 def load_perfplus_reference() -> Optional[Dict]:
     """Load perf-plus clinical test-retest analysis JSON.
 
-    Returns:
+    Returns
+    -------
+    Optional[Dict]
         Parsed JSON dict, or None if file not found.
     """
     if not PERFPLUS_REFERENCE_JSON.exists():
@@ -227,10 +246,14 @@ def load_perfplus_reference() -> Optional[Dict]:
 def get_perfplus_test_retest(subject: str) -> Optional[Dict]:
     """Get perf-plus test-retest metrics for a subject.
 
-    Args:
-        subject: Subject ID (e.g., "sub-0081").
+    Parameters
+    ----------
+    subject : str
+        Subject ID (e.g., "sub-0081").
 
-    Returns:
+    Returns
+    -------
+    Optional[Dict]
         Dict with ses1_median, ses2_median, percent_difference,
         coefficient_of_variation. None if unavailable.
     """
@@ -248,12 +271,18 @@ def get_perfplus_session_stats(
 ) -> Optional[Dict]:
     """Get perf-plus summary statistics for a subject/session/parameter.
 
-    Args:
-        subject: Subject ID (e.g., "sub-0081").
-        session: Session ID (e.g., "ses-0001").
-        parameter: Parameter name (e.g., "Ktrans").
+    Parameters
+    ----------
+    subject : str
+        Subject ID (e.g., "sub-0081").
+    session : str
+        Session ID (e.g., "ses-0001").
+    parameter : str
+        Parameter name (e.g., "Ktrans").
 
-    Returns:
+    Returns
+    -------
+    Optional[Dict]
         Dict with p5/p25/p50/p75/p95/mean/std/n_voxels. None if unavailable.
     """
     ref = load_perfplus_reference()
@@ -385,12 +414,18 @@ def register_sessions(
        More robust for large positioning differences, but the 3-transform
        chain can accumulate interpolation error.
 
-    Args:
-        subject: Subject ID (e.g., "sub-0081").
-        ses_ref: Reference session ID.
-        ses_mov: Moving session ID.
+    Parameters
+    ----------
+    subject : str
+        Subject ID (e.g., "sub-0081").
+    ses_ref : str
+        Reference session ID.
+    ses_mov : str
+        Moving session ID.
 
-    Returns:
+    Returns
+    -------
+    Optional[Tuple[str, str]]
         Tuple of (transform_mat_path, output_dir) or None if registration
         fails or FSL is unavailable.
     """
@@ -517,14 +552,22 @@ def apply_transform(
 ) -> Optional[Path]:
     """Apply a FLIRT transform to a NIfTI file.
 
-    Args:
-        in_file: Path to input image.
-        ref_file: Path to reference image (defines output grid).
-        mat_file: Path to FLIRT .mat transform.
-        out_file: Path for output image.
-        interp: Interpolation method ("trilinear" or "nearestneighbour").
+    Parameters
+    ----------
+    in_file : Path
+        Path to input image.
+    ref_file : Path
+        Path to reference image (defines output grid).
+    mat_file : str
+        Path to FLIRT .mat transform.
+    out_file : Path
+        Path for output image.
+    interp : str
+        Interpolation method ("trilinear" or "nearestneighbour").
 
-    Returns:
+    Returns
+    -------
+    Optional[Path]
         Path to output file, or None if transform fails.
     """
     if not in_file.exists():
@@ -562,16 +605,25 @@ def compute_joint_mask(
     ``require_qc=True``, also requires QC mask overlap (much more
     restrictive, especially with model-auto per-voxel model selection).
 
-    Args:
-        subject: Subject ID.
-        mat_file: Path to FLIRT transform (ses_mov → ses_ref).
-        ses_ref: Reference session.
-        ses_mov: Moving session.
-        min_voxels: Minimum required voxels in joint mask.
-        require_qc: If True, also intersect with QC masks from both
-            sessions. Default False.
+    Parameters
+    ----------
+    subject : str
+        Subject ID.
+    mat_file : str
+        Path to FLIRT transform (ses_mov → ses_ref).
+    ses_ref : str
+        Reference session.
+    ses_mov : str
+        Moving session.
+    min_voxels : int
+        Minimum required voxels in joint mask.
+    require_qc : bool
+        If True, also intersect with QC masks from both
+        sessions. Default False.
 
-    Returns:
+    Returns
+    -------
+    Optional[NDArray[np.bool_]]
         Boolean 3D array, or None if insufficient voxels or files missing.
     """
     import nibabel as nib
@@ -662,11 +714,16 @@ def load_ground_truth_ktrans(
     function resamples the GT Ktrans to match the pmriprep output grid
     and applies GT_SCALE to convert to min⁻¹.
 
-    Args:
-        subject: Subject ID (e.g., "sub-0091").
-        session: Session ID (e.g., "ses-0001").
+    Parameters
+    ----------
+    subject : str
+        Subject ID (e.g., "sub-0091").
+    session : str
+        Session ID (e.g., "ses-0001").
 
-    Returns:
+    Returns
+    -------
+    Optional[NDArray[np.floating]]
         3D numpy array of Ktrans in min⁻¹, or None if files not found.
     """
     import nibabel as nib
@@ -700,11 +757,16 @@ def load_tumor_mask(
     indexing is correct — the affine difference is an artifact of the
     DICOM conversion, not a real spatial offset.
 
-    Args:
-        subject: Subject ID (e.g., "sub-0091").
-        session: Session ID (e.g., "ses-0001").
+    Parameters
+    ----------
+    subject : str
+        Subject ID (e.g., "sub-0091").
+    session : str
+        Session ID (e.g., "ses-0001").
 
-    Returns:
+    Returns
+    -------
+    Optional[NDArray[np.bool_]]
         Boolean 3D array, or None if files not found.
     """
     import nibabel as nib
@@ -729,7 +791,9 @@ def load_tumor_mask(
 def load_perfplus_dro_reference() -> Optional[Dict]:
     """Load perf-plus DRO validation JSON (non-Bayesian).
 
-    Returns:
+    Returns
+    -------
+    Optional[Dict]
         Parsed JSON dict, or None if file not found.
     """
     if not PERFPLUS_DRO_JSON.exists():
@@ -742,7 +806,9 @@ def load_perfplus_dro_reference() -> Optional[Dict]:
 def load_perfplus_dro_bayesian() -> Optional[Dict]:
     """Load perf-plus DRO Bayesian validation JSON.
 
-    Returns:
+    Returns
+    -------
+    Optional[Dict]
         Parsed JSON dict, or None if file not found.
     """
     if not PERFPLUS_DRO_BAYESIAN_JSON.exists():
@@ -759,12 +825,18 @@ def get_perfplus_dro_session(
 ) -> Optional[Dict]:
     """Get perf-plus DRO stats for a specific session.
 
-    Args:
-        subject: Subject ID (e.g., "sub-0091").
-        session: Session ID (e.g., "ses-0001").
-        bayesian: If True, load from Bayesian JSON.
+    Parameters
+    ----------
+    subject : str
+        Subject ID (e.g., "sub-0091").
+    session : str
+        Session ID (e.g., "ses-0001").
+    bayesian : bool
+        If True, load from Bayesian JSON.
 
-    Returns:
+    Returns
+    -------
+    Optional[Dict]
         Dict with ground_truth, calculated, comparison dicts.
         None if unavailable.
     """
@@ -784,13 +856,20 @@ def load_ci_map(
 ) -> Optional[NDArray[np.floating]]:
     """Load a Bayesian confidence interval bound map.
 
-    Args:
-        subject: Subject ID.
-        session: Session ID.
-        bound: "lower" or "upper".
-        parameter: Parameter name (e.g., "Ktrans").
+    Parameters
+    ----------
+    subject : str
+        Subject ID.
+    session : str
+        Session ID.
+    bound : str
+        "lower" or "upper".
+    parameter : str
+        Parameter name (e.g., "Ktrans").
 
-    Returns:
+    Returns
+    -------
+    Optional[NDArray[np.floating]]
         3D numpy array, or None if file not found.
     """
     import nibabel as nib
@@ -852,7 +931,9 @@ def load_osipi_aif() -> Optional[NDArray[np.floating]]:
     include small negative baseline values — these are NOT clipped, as
     they represent noise in the pre-contrast baseline.
 
-    Returns:
+    Returns
+    -------
+    Optional[NDArray[np.floating]]
         1D array of plasma concentration (mM), or None if file not found.
     """
     if not OSIPI_AIF_PATH.exists():
@@ -871,13 +952,20 @@ def load_osipi_aif() -> Optional[NDArray[np.floating]]:
 class OSIPIDSCCase:
     """A single OSIPI DSC DRO test case.
 
-    Attributes:
-        label: Test case label from CSV.
-        c_tis: Tissue concentration time course (1D).
-        c_aif: AIF concentration time course (1D).
-        cbv: Ground truth CBV in ml/100ml.
-        cbf: Ground truth CBF in ml/100ml/min.
-        tr: Repetition time in seconds.
+    Attributes
+    ----------
+    label : str
+        Test case label from CSV.
+    c_tis : NDArray[np.floating]
+        Tissue concentration time course (1D).
+    c_aif : NDArray[np.floating]
+        AIF concentration time course (1D).
+    cbv : float
+        Ground truth CBV in ml/100ml.
+    cbf : float
+        Ground truth CBF in ml/100ml/min.
+    tr : float
+        Repetition time in seconds.
     """
 
     label: str
@@ -895,7 +983,9 @@ def load_osipi_dsc_dro() -> Optional[list]:
     commit a55b83d8, 2022-04-21). Contains 14 concentration-domain test
     cases with known CBV/CBF ground truth and gamma-variate residue (λ=3).
 
-    Returns:
+    Returns
+    -------
+    Optional[list]
         List of OSIPIDSCCase, or None if CSV not found.
     """
     import csv

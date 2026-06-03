@@ -1,10 +1,9 @@
 """_anat_nested_from_sidecars — round-trip of brain-extraction QC fields.
 
-The legacy ``desc-anatQC_quality.json`` carried brain volume, qc_status,
-and warnings on the ``brain_extraction`` block. After v0.46.0 those
-fields land on the brain-mask sidecar as flat ``BrainExtraction*`` keys.
+Brain volume, qc_status, and warnings for the ``brain_extraction`` block
+land on the brain-mask sidecar as flat ``BrainExtraction*`` keys.
 This test verifies the writer + loader round-trip by writing a synthetic
-mask sidecar and asserting the loader reconstructs the legacy nested
+mask sidecar and asserting the loader reconstructs the nested
 shape that ``section_anat.html`` consumes.
 """
 from __future__ import annotations

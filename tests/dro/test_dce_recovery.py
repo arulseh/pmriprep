@@ -41,12 +41,18 @@ def _assert_param_recovery(
     Uses relative tolerance for non-zero parameters, absolute tolerance
     for near-zero parameters.
 
-    Args:
-        recovered: Recovered parameter value.
-        truth: Ground truth parameter value.
-        rel_tol: Relative tolerance (e.g. 0.05 = 5%).
-        abs_tol: Absolute tolerance for near-zero truth values.
-        param_name: Name for error messages.
+    Parameters
+    ----------
+    recovered : float
+        Recovered parameter value.
+    truth : float
+        Ground truth parameter value.
+    rel_tol : float
+        Relative tolerance (e.g. 0.05 = 5%).
+    abs_tol : float
+        Absolute tolerance for near-zero truth values.
+    param_name : str
+        Name for error messages.
     """
     if abs(truth) < 0.005:
         assert abs(recovered - truth) < abs_tol, (

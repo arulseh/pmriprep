@@ -25,12 +25,18 @@ class DSCSignalConfig:
 
     Follows the pattern from qiba/conftest.py (QIBATissueParams).
 
-    Attributes:
-        tr_sec: Repetition time in seconds.
-        te_sec: Echo time in seconds.
-        s0: Baseline signal intensity (arbitrary units).
-        field_strength: Magnetic field strength in Tesla.
-        label: Human-readable label for test IDs.
+    Attributes
+    ----------
+    tr_sec : float
+        Repetition time in seconds.
+    te_sec : float
+        Echo time in seconds.
+    s0 : float
+        Baseline signal intensity (arbitrary units).
+    field_strength : float
+        Magnetic field strength in Tesla.
+    label : str
+        Human-readable label for test IDs.
     """
 
     tr_sec: float
@@ -55,10 +61,14 @@ DSC_SIGNAL_CONFIGS: Dict[str, DSCSignalConfig] = {
 class DSCTissueParams:
     """Ground-truth tissue parameters for DSC DRO tests.
 
-    Attributes:
-        cbf: Cerebral blood flow (relative units, same as deconvolution output).
-        mtt: Mean transit time in seconds.
-        name: Tissue type name.
+    Attributes
+    ----------
+    cbf : float
+        Cerebral blood flow (relative units, same as deconvolution output).
+    mtt : float
+        Mean transit time in seconds.
+    name : str
+        Tissue type name.
     """
 
     cbf: float
@@ -92,12 +102,18 @@ def generate_parker_aif_dro(
 
     Wraps the existing Parker AIF generator from tests/conftest.py.
 
-    Args:
-        n_timepoints: Number of time points.
-        dt_min: Time step in minutes.
-        peak_concentration: Peak AIF concentration in mM.
+    Parameters
+    ----------
+    n_timepoints : int
+        Number of time points.
+    dt_min : float
+        Time step in minutes.
+    peak_concentration : float
+        Peak AIF concentration in mM.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (aif_mM, time_min).
     """
     time_min = np.arange(n_timepoints, dtype=np.float64) * dt_min
@@ -119,13 +135,20 @@ def generate_dsc_aif_dro(
 ) -> Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
     """Generate a gamma-variate AIF in concentration domain for DSC DRO tests.
 
-    Args:
-        n_timepoints: Number of time points.
-        dt_sec: Time step in seconds.
-        baseline_frames: Number of pre-bolus baseline frames.
-        peak_delta_r2: Peak delta-R2* value (s^-1).
+    Parameters
+    ----------
+    n_timepoints : int
+        Number of time points.
+    dt_sec : float
+        Time step in seconds.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+    peak_delta_r2 : float
+        Peak delta-R2* value (s^-1).
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (aif_concentration, time_sec).
     """
     time_sec = np.arange(n_timepoints, dtype=np.float64) * dt_sec
@@ -167,14 +190,21 @@ def concentration_to_signal(
     is zero (pure S0). Named to avoid confusion with existing dsc_forward_model
     (AIF * residue convolution).
 
-    Args:
-        concentration: ΔR2* array (1D time or 4D x,y,z,time). Must not
-            include baseline frames — they are prepended here.
-        te: Echo time in seconds.
-        s0: Baseline signal intensity.
-        baseline_frames: Number of baseline frames to prepend.
+    Parameters
+    ----------
+    concentration : npt.NDArray[np.floating]
+        ΔR2* array (1D time or 4D x,y,z,time). Must not
+        include baseline frames — they are prepended here.
+    te : float
+        Echo time in seconds.
+    s0 : float
+        Baseline signal intensity.
+    baseline_frames : int
+        Number of baseline frames to prepend.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Signal array with baseline prepended, same dtype as float64.
     """
     if concentration.ndim == 1:
@@ -207,17 +237,24 @@ def generate_leaky_dsc_tissue(
         C_leaky(t) = C_noleak(t) - K2 * cumsum(reference) * dt
 
     The reference_curve should be C̄(t) (mean brain reference) for K2 DRO
-    phantoms, matching the estimator. For legacy single-voxel tests, AIF
+    phantoms, matching the estimator. For single-voxel tests, AIF
     may be used as reference.
 
-    Args:
-        c_tissue_noleak: Clean tissue concentration (1D, no leakage).
-        reference_curve: Reference curve for leakage (1D, same length).
-            Typically mean brain C̄(t) or AIF.
-        k2: K2 leakage rate parameter.
-        dt: Time step in seconds.
+    Parameters
+    ----------
+    c_tissue_noleak : npt.NDArray[np.floating]
+        Clean tissue concentration (1D, no leakage).
+    reference_curve : npt.NDArray[np.floating]
+        Reference curve for leakage (1D, same length).
+        Typically mean brain C̄(t) or AIF.
+    k2 : float
+        K2 leakage rate parameter.
+    dt : float
+        Time step in seconds.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Leaky tissue concentration (1D). May contain negative values
         at high K2 (physically correct: T1 leakage overshoot).
     """
@@ -245,17 +282,26 @@ def generate_leaky_dsc_tissue_bidirectional(
 
     where C_e(t) = reference_curve ⊗ exp(-kep*t) (instantaneous with washout).
 
-    Args:
-        c_tissue_noleak: Clean tissue concentration (1D, no leakage).
-        reference_curve: Reference curve for leakage (1D, same length).
-        k2: K2 leakage rate parameter.
-        kep: EES efflux rate constant in s⁻¹.
-        dt: Time step in seconds.
+    Parameters
+    ----------
+    c_tissue_noleak : npt.NDArray[np.floating]
+        Clean tissue concentration (1D, no leakage).
+    reference_curve : npt.NDArray[np.floating]
+        Reference curve for leakage (1D, same length).
+    k2 : float
+        K2 leakage rate parameter.
+    kep : float
+        EES efflux rate constant in s⁻¹.
+    dt : float
+        Time step in seconds.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Leaky tissue concentration (1D).
 
-    References:
+    References
+    ----------
         Leu K et al. AJNR 2016;37(8):1440-1446.
     """
     if len(c_tissue_noleak) != len(reference_curve):
@@ -309,18 +355,30 @@ def generate_k2_dro_phantom(
     The forward leakage model uses the mean brain reference C̄(t),
     matching what the estimator recovers.
 
-    Args:
-        k2_enhancing: K2 value for enhancing voxels.
-        n_brain_voxels: Number of non-enhancing brain voxels.
-        n_enhancing_voxels: Number of enhancing (leaky) voxels.
-        dt_sec: Time step in seconds.
-        n_timepoints: Number of post-baseline timepoints.
-        baseline_frames: Number of baseline frames.
-        aif_peak: Peak AIF delta-R2* in s⁻¹.
-        noise_frac: Fraction of peak for Gaussian noise (0=noiseless).
-        seed: Random seed for reproducibility.
+    Parameters
+    ----------
+    k2_enhancing : float
+        K2 value for enhancing voxels.
+    n_brain_voxels : int
+        Number of non-enhancing brain voxels.
+    n_enhancing_voxels : int
+        Number of enhancing (leaky) voxels.
+    dt_sec : float
+        Time step in seconds.
+    n_timepoints : int
+        Number of post-baseline timepoints.
+    baseline_frames : int
+        Number of baseline frames.
+    aif_peak : float
+        Peak AIF delta-R2* in s⁻¹.
+    noise_frac : float
+        Fraction of peak for Gaussian noise (0=noiseless).
+    seed : int
+        Random seed for reproducibility.
 
-    Returns:
+    Returns
+    -------
+    K2DROPhantom
         K2DROPhantom with all fields populated.
     """
     rng = np.random.default_rng(seed)
@@ -432,17 +490,27 @@ def generate_dsc_3d_phantom(
 ) -> Tuple[npt.NDArray[np.floating], Dict[str, npt.NDArray[np.bool_]]]:
     """Build a multi-tissue 3D+t concentration volume.
 
-    Args:
-        shape: Spatial dimensions (x, y, z).
-        aif_coords: Set of (x, y, z) tuples for AIF voxels.
-        aif: 1D AIF concentration (post-baseline only, n_post frames).
-        tissue_curves: Dict mapping tissue name -> 1D concentration curve
-            (post-baseline only).
-        tissue_map: 3D integer array mapping each voxel to a tissue label.
-        tissue_labels: Dict mapping tissue name -> integer label in tissue_map.
-        baseline_frames: Number of zero-concentration baseline frames to prepend.
+    Parameters
+    ----------
+    shape : Tuple[int, int, int]
+        Spatial dimensions (x, y, z).
+    aif_coords : Set[Tuple[int, int, int]]
+        Set of (x, y, z) tuples for AIF voxels.
+    aif : npt.NDArray[np.floating]
+        1D AIF concentration (post-baseline only, n_post frames).
+    tissue_curves : Dict[str, npt.NDArray[np.floating]]
+        Dict mapping tissue name -> 1D concentration curve
+        (post-baseline only).
+    tissue_map : npt.NDArray[np.integer]
+        3D integer array mapping each voxel to a tissue label.
+    tissue_labels : Dict[str, int]
+        Dict mapping tissue name -> integer label in tissue_map.
+    baseline_frames : int
+        Number of zero-concentration baseline frames to prepend.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], Dict[str, npt.NDArray[np.bool_]]]
         Tuple of:
             - 4D concentration array (x, y, z, baseline+post_frames)
             - Dict of tissue name -> 3D boolean mask
@@ -497,12 +565,18 @@ def add_gaussian_noise(
 ) -> npt.NDArray[np.floating]:
     """Add Gaussian noise to a signal.
 
-    Args:
-        signal: Clean signal array.
-        noise_std: Standard deviation of noise.
-        seed: Random seed for reproducibility.
+    Parameters
+    ----------
+    signal : npt.NDArray[np.floating]
+        Clean signal array.
+    noise_std : float
+        Standard deviation of noise.
+    seed : int
+        Random seed for reproducibility.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Noisy signal array.
     """
     rng = np.random.default_rng(seed)
@@ -521,12 +595,18 @@ def add_rician_noise(
     It is computed as |S + n_real + j*n_imag| where n_real, n_imag are
     independent Gaussian noise.
 
-    Args:
-        magnitude_signal: Clean magnitude signal array.
-        noise_std: Standard deviation of noise in each channel.
-        seed: Random seed for reproducibility.
+    Parameters
+    ----------
+    magnitude_signal : npt.NDArray[np.floating]
+        Clean magnitude signal array.
+    noise_std : float
+        Standard deviation of noise in each channel.
+    seed : int
+        Random seed for reproducibility.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Noisy magnitude signal array (always positive).
     """
     rng = np.random.default_rng(seed)
@@ -541,11 +621,16 @@ def snr_to_noise_std(s0: float, snr: float) -> float:
 
     SNR = S0 / sigma, so sigma = S0 / SNR.
 
-    Args:
-        s0: Baseline signal intensity.
-        snr: Signal-to-noise ratio.
+    Parameters
+    ----------
+    s0 : float
+        Baseline signal intensity.
+    snr : float
+        Signal-to-noise ratio.
 
-    Returns:
+    Returns
+    -------
+    float
         Noise standard deviation.
     """
     if snr <= 0 or np.isinf(snr):
@@ -568,12 +653,18 @@ def dsc_forward_model(
     C(t) = A @ R where A is the trapezoidal Toeplitz matrix of the AIF.
     Matched forward model for sSVD, Tikhonov, and CPI deconvolution.
 
-    Args:
-        aif: Arterial input function concentration array.
-        residue: Residue function array (CBF * R(t)).
-        dt: Time step in seconds.
+    Parameters
+    ----------
+    aif : npt.NDArray[np.floating]
+        Arterial input function concentration array.
+    residue : npt.NDArray[np.floating]
+        Residue function array (CBF * R(t)).
+    dt : float
+        Time step in seconds.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Tissue concentration array.
     """
     from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
@@ -592,12 +683,18 @@ def dsc_forward_model_circulant(
     Matched forward model for oSVD and cSVD deconvolution (Wu 2003).
     Uses rectangular weighting, consistent with the circulant inverse.
 
-    Args:
-        aif: Arterial input function concentration array.
-        residue: Residue function array (CBF * R(t)).
-        dt: Time step in seconds.
+    Parameters
+    ----------
+    aif : npt.NDArray[np.floating]
+        Arterial input function concentration array.
+    residue : npt.NDArray[np.floating]
+        Residue function array (CBF * R(t)).
+    dt : float
+        Time step in seconds.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Tissue concentration array (length N, truncated from 2N).
     """
     from pmriprep.utils.dsc_deconvolution import build_block_circulant_matrix
@@ -617,13 +714,20 @@ def make_exponential_residue(
 ) -> npt.NDArray[np.floating]:
     """Create an exponential residue function R(t) = CBF * exp(-t/MTT).
 
-    Args:
-        cbf: Cerebral blood flow (relative units).
-        mtt: Mean transit time in seconds.
-        n_points: Number of time points.
-        dt: Time step in seconds.
+    Parameters
+    ----------
+    cbf : float
+        Cerebral blood flow (relative units).
+    mtt : float
+        Mean transit time in seconds.
+    n_points : int
+        Number of time points.
+    dt : float
+        Time step in seconds.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Residue array R(t) = CBF * exp(-t/MTT).
     """
     t = np.arange(n_points, dtype=np.float64) * dt
@@ -641,13 +745,20 @@ def make_dsc_tissue_concentration(
 
     Convenience wrapper combining make_exponential_residue + dsc_forward_model.
 
-    Args:
-        cbf: Cerebral blood flow (relative units).
-        mtt: Mean transit time in seconds.
-        aif: AIF concentration array (1D).
-        dt: Time step in seconds.
+    Parameters
+    ----------
+    cbf : float
+        Cerebral blood flow (relative units).
+    mtt : float
+        Mean transit time in seconds.
+    aif : npt.NDArray[np.floating]
+        AIF concentration array (1D).
+    dt : float
+        Time step in seconds.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[np.floating]
         Tissue concentration array (1D, same length as AIF).
     """
     residue = make_exponential_residue(cbf, mtt, len(aif), dt)
@@ -665,7 +776,9 @@ def dce_aif_and_time() -> Tuple[npt.NDArray[np.floating], npt.NDArray[np.floatin
 
     80 timepoints, dt=4s (0.0667 min), peak 5 mM.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (aif_mM, time_min).
     """
     return generate_parker_aif_dro(
@@ -681,7 +794,9 @@ def dsc_aif_and_time() -> Tuple[npt.NDArray[np.floating], npt.NDArray[np.floatin
 
     60 timepoints, dt=1.5s, peak delta-R2*=40 s^-1.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (aif_concentration, time_sec).
     """
     return generate_dsc_aif_dro(

@@ -87,7 +87,7 @@ class TestFlatKeyShape:
         assert sidecar["AIFHematocrit"] == pytest.approx(0.42)
 
     def test_no_legacy_nested_block(self, aif_qc, bids_root):
-        """Regression: must not re-emit the round-1 AIFDetection nest."""
+        """Regression: must not emit a nested AIFDetection block."""
         sidecar = build_aif_timeseries_sidecar(
             modality="DSC",
             source_paths=[],

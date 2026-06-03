@@ -339,7 +339,7 @@ def classify_preload_adequacy_from_k2(
 
     Thresholds from :mod:`pmriprep.utils.dsc_constants` (physics-expert
     calibrated for BSW K2 at 3T, relaxed from literature 0.003 → 0.005
-    per 2026-04-18 consult to match observed well-suppressed half-dose
+    to match observed well-suppressed half-dose
     cohort k2_median 0.0018–0.0048):
 
     * ``k2_median < K2_PRIMARY_ADEQUATE (0.005)`` AND

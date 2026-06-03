@@ -119,7 +119,7 @@ class TestSelectNAdaptive:
         return _synthetic_aif(), 1.5
 
     def test_no_change_when_infer_cpt_false(self, aif_dt) -> None:
-        """Legacy (positional, infer_cpt=False) path unchanged."""
+        """Non-adaptive (positional, infer_cpt=False) path ignores mean_tissue."""
         # Bolus duration 15 frames → n_bolus = 9, n_spacing = 4 → N = 9
         n_legacy = select_n_control_points(15)
         assert n_legacy == 9
@@ -147,10 +147,10 @@ class TestSelectNAdaptive:
         n_long_bolus = select_n_control_points(
             40, infer_cpt=True, mean_tissue=mt, dt=dt,
         )
-        # Legacy would give n_bolus=4 vs 22 — wildly different. Adaptive
+        # Non-adaptive would give n_bolus=4 vs 22 — wildly different. Adaptive
         # ignores bolus_duration_frames entirely.
         assert n_short_bolus == n_long_bolus
-        # And the legacy path responds to bolus_duration_frames as before:
+        # And the non-adaptive path responds to bolus_duration_frames:
         n_legacy_short = select_n_control_points(5)   # infer_cpt=False
         n_legacy_long = select_n_control_points(40)
         assert n_legacy_short < n_legacy_long
@@ -163,7 +163,7 @@ class TestSelectNAdaptive:
         assert n >= 8
 
     def test_stroke_mtt_elevates_n(self, aif_dt) -> None:
-        """τ=20s stroke-like tissue must elevate N above legacy 9."""
+        """τ=20s stroke-like tissue must elevate N above the non-adaptive baseline of 9."""
         aif, dt = aif_dt
         mt = _convolve_exp(aif, dt, tau=20.0)
         n = select_n_control_points(15, infer_cpt=True, mean_tissue=mt, dt=dt)
@@ -188,8 +188,8 @@ class TestSelectNAdaptive:
         assert n == CPI_N_MAX  # 24
 
     def test_min_n_floor_holds(self, aif_dt) -> None:
-        """If both legacy and adaptive floors are below min_n, return min_n."""
-        # Tiny bolus_duration → legacy n_bolus=2, n_spacing=4. Zero tissue
+        """If both non-adaptive and adaptive floors are below min_n, return min_n."""
+        # Tiny bolus_duration → non-adaptive n_bolus=2, n_spacing=4. Zero tissue
         # gives fallback 30s decay → N=10 (overrides). So use a curve where
         # decay is small enough that min_n=4 dominates.
         n_frames = 30

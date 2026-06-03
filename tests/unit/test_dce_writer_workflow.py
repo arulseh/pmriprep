@@ -300,7 +300,7 @@ def test_dce_factory_warnings_in_anchor_sidecar(
     assert any("Brain mask" in w for w in warnings)
     assert any("registration transform" in w for w in warnings)
 
-    # Legacy session-root QC JSON must not exist
+    # Session-root QC JSON orphan must not exist
     legacy = (
         out / "pmriprep" / "sub-01" / "ses-0001"
         / "sub-01_ses-0001_desc-dceQC_quality.json"
@@ -309,7 +309,7 @@ def test_dce_factory_warnings_in_anchor_sidecar(
 
 
 # ---------------------------------------------------------------------------
-# Dual-T1w-underlay support (v0.47.0): a session configured with both
+# Dual-T1w-underlay support: a session configured with both
 # t1w_precon and t1w_postcon must produce TWO anat-side cross-modality
 # outputs differing only by the BIDS ce-GAD entity.
 # ---------------------------------------------------------------------------
@@ -425,7 +425,7 @@ def test_dce_both_t1w_underlays(
 
 
 # ---------------------------------------------------------------------------
-# Fp/PS uncertainty TR gate (v0.46.2): the build-time decision to add
+# Fp/PS uncertainty TR gate: the build-time decision to add
 # fp_uncertainty/ps_uncertainty to dce_present must mirror the runtime
 # decision in dce_compute._build_candidate_set so the sink isn't built
 # without an upstream feed.
@@ -670,7 +670,7 @@ def test_dsc_figures_writer_accepts_none_for_optional_figures(
 def test_dce_figures_writer_accepts_none_for_optional_figures(
     tmp_path: Path,
 ) -> None:
-    """Regression: dsc_dce_xval_plot=None used to raise TraitError + stall DAG."""
+    """Regression: dsc_dce_xval_plot=None must not raise TraitError or stall the DAG."""
     from pmriprep.interfaces.qc_writers import DCEFiguresWriter
 
     writer = DCEFiguresWriter()

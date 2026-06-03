@@ -1,4 +1,4 @@
-"""Integration tests for v0.28.3 synthetic-AIF SKIP plumbing.
+"""Integration tests for synthetic-AIF SKIP plumbing.
 
 Exercises the plumbing that carries the synthetic-AIF signal from the
 DSC AIF cascade through to downstream consumers (DCE vp constraint,
@@ -53,7 +53,7 @@ def test_validation_node_synthetic_aif_short_circuits() -> None:
     """`_dsc_dce_validation_node` returns SKIP with synthetic_aif reason
     when the upstream constraint already SKIPped for that reason.
 
-    This guards the v0.28.3 round-trip: AIF QC → prepare_vp_constraint_from_data
+    This guards the round-trip: AIF QC → prepare_vp_constraint_from_data
     → constraint_qc.skip_reason='synthetic_aif' → validation node reads the
     reason and returns a matching SKIP status without running the xval.
     """

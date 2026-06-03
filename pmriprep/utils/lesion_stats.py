@@ -773,7 +773,7 @@ def compute_nawm_reference(
 ) -> Dict[str, Any]:
     """Compute NAWM reference values for normalization context.
 
-    Carries two distinct QC fields per physics-expert review:
+    Carries two distinct QC fields:
         - ``mask_qc_status`` describes the NAWM mask itself (validity,
           voxel count). Same value on every map's downstream slice.
         - per-map ``value_qc_status`` reports whether THAT map's NAWM
@@ -986,7 +986,7 @@ def _slice_nawm_for_map(
         - ``median``, ``std``, ``p25``, ``p75`` for ``map_name`` (in that
           map's native units; e.g. normalized maps carry ~1.0 ± noise SD)
         - ``value_qc_status`` / ``value_qc_notes`` for that map only
-          (cross-map contamination avoided per physics-expert review)
+          (cross-map contamination avoided)
 
     Returns None when no NAWM reference is available for the map.
     """

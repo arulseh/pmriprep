@@ -210,7 +210,7 @@ class TestCompositeMotionStatus:
         assert get_composite_motion_status(0.1, 2.5, 12.0) == "POOR"
 
     def test_sub0005_scenario(self) -> None:
-        """Sub-0005: fd_mean=0.297, fd_max=1.015, pct=11.7 -> WARN."""
+        """Realistic clinical scenario: fd_mean=0.297, fd_max=1.015, pct=11.7 -> WARN."""
         status = get_composite_motion_status(0.297, 1.015, 11.7)
         assert status == "WARN"
 
@@ -278,10 +278,9 @@ class TestCompoundDetectionLevelDispatch:
         assert self._aif_action("atlas_relaxed+synthetic") == QCAction.EXCLUDE
 
     def test_full_atlas_permissive_reviews(self) -> None:
-        """``full_atlas_permissive`` was previously missed by the
-        chained-membership dispatch and would land in the catchall
-        REVIEW branch. The set-membership dispatch now classifies it
-        explicitly as REVIEW."""
+        """The set-membership dispatch classifies ``full_atlas_permissive``
+        explicitly as REVIEW (a chained-membership dispatch would let it
+        fall through to the catchall REVIEW branch)."""
         from pmriprep.utils.qc_standards import QCAction
         assert self._aif_action("full_atlas_permissive") == QCAction.REVIEW
 

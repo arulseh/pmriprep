@@ -36,7 +36,9 @@ def _make_synthetic_tofts_data(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Generate synthetic Tofts tissue curve with a bi-exponential AIF.
 
-    Returns:
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
         Tuple of (tissue_curve, aif, time_points, true_params).
     """
     time_points = np.linspace(0, 6, n_times)
@@ -542,7 +544,7 @@ class TestMCMCQualityFlag:
 
 
 # =============================================================================
-# v0.51.0 — Per-parameter sigma inflation from upstream AIF confidence
+# Per-parameter sigma inflation from upstream AIF confidence
 # =============================================================================
 
 from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION

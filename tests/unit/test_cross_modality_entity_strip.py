@@ -1,4 +1,4 @@
-"""Regression tests for v0.50.3 cross-modality DataSink entity stripping.
+"""Regression tests for cross-modality DataSink entity stripping.
 
 Bug: niworkflows ``DerivativesDataSink`` inherits all entities from the
 ``source_file`` (the BIDS source). For pmriprep DSC/DCE workflows, the

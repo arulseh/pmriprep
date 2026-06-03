@@ -102,8 +102,8 @@ class TestAutoDetectionFullShape:
             assert k not in qc, f"flat key {k!r} reintroduced into qc top level"
 
     def test_ph_preserved(self):
-        """``ph`` survives the new producer-side path; it was previously
-        dropped by the rounded-subset construction in ``aif_qc_plot``.
+        """``ph`` survives the producer-side path (the rounded-subset
+        construction in ``aif_qc_plot`` would drop it).
         """
         aif_curve = np.zeros(60, dtype=np.float64)
         aif_curve[10:14] = np.array([5.0, 25.0, 18.0, 9.0])

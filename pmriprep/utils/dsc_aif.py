@@ -1783,7 +1783,7 @@ def fit_gamma_variate(
 GAMMA_R2_THRESHOLD: float = 0.85
 GAMMA_PEAK_RATIO_MIN: float = 0.90
 GAMMA_PEAK_RATIO_MAX: float = 1.10
-# AUC ratio bounds retained for QC provenance only — no longer a hard gate.
+# AUC ratio bounds are QC provenance only, not a hard gate.
 # Symmetric-window auc_ratio (see ``fit_gamma_variate``) makes this metric
 # meaningful, but R² + peak_ratio + defect detection already cover the
 # pathology this band would catch.
@@ -2175,7 +2175,7 @@ def _estimate_dose_from_global_signal(
 
     # With continuous dose estimation, dose_level already captures the
     # observed-vs-expected ratio — scaling_factor is unity by definition.
-    # Callers that previously relied on scaling_factor should use dose_level.
+    # Use dose_level, not scaling_factor.
     scaling_factor = 1.0
 
     return (dose_level, peak_deltaR2, scaling_factor)

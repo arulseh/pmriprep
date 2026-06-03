@@ -1122,7 +1122,7 @@ class TestPostOffsetRecovery:
         offset_ms: float,
         field_key: float = 3.0,
     ) -> tuple[np.ndarray, int]:
-        """Run the post-offset recovery algorithm (extracted from dce.py)."""
+        """Run the post-offset recovery algorithm (mirrors the dce.py implementation)."""
         t1_ref = T1_TISSUE_REFERENCE[field_key]
         clamp_lo = t1_ref["reject_min"] * 0.9
         raw_t1_max = t1_ref["t1_parenchyma_upper"] + abs(offset_ms)

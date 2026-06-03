@@ -88,16 +88,26 @@ def create_synthetic_3d_volume(
 ) -> Tuple[npt.NDArray[Any], npt.NDArray[np.float64]]:
     """Create a synthetic 3D volume with a specified shape and voxel sizes.
 
-    Args:
-        shape: Volume dimensions (x, y, z).
-        voxel_sizes: Voxel dimensions in mm.
-        dtype: Data type for the array.
-        fill_value: Value to fill the volume with.
-        add_noise: Whether to add Gaussian noise.
-        noise_std: Standard deviation of the noise.
-        random_seed: Random seed for reproducibility.
+    Parameters
+    ----------
+    shape : Tuple[int, int, int]
+        Volume dimensions (x, y, z).
+    voxel_sizes : Tuple[float, float, float]
+        Voxel dimensions in mm.
+    dtype : type
+        Data type for the array.
+    fill_value : float
+        Value to fill the volume with.
+    add_noise : bool
+        Whether to add Gaussian noise.
+    noise_std : float
+        Standard deviation of the noise.
+    random_seed : Optional[int]
+        Random seed for reproducibility.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[Any], npt.NDArray[np.float64]]
         Tuple of (data array, affine matrix).
     """
     if random_seed is not None:
@@ -132,16 +142,26 @@ def create_synthetic_brain_volume(
     Creates an ellipsoidal brain region with white matter core and
     gray matter shell, plus background.
 
-    Args:
-        shape: Volume dimensions.
-        voxel_sizes: Voxel sizes in mm.
-        brain_intensity: Base intensity for brain tissue.
-        gm_wm_contrast: Gray/white matter contrast ratio.
-        add_noise: Whether to add Gaussian noise.
-        noise_std: Standard deviation of noise.
-        random_seed: Random seed for reproducibility.
+    Parameters
+    ----------
+    shape : Tuple[int, int, int]
+        Volume dimensions.
+    voxel_sizes : Tuple[float, float, float]
+        Voxel sizes in mm.
+    brain_intensity : float
+        Base intensity for brain tissue.
+    gm_wm_contrast : float
+        Gray/white matter contrast ratio.
+    add_noise : bool
+        Whether to add Gaussian noise.
+    noise_std : float
+        Standard deviation of noise.
+    random_seed : Optional[int]
+        Random seed for reproducibility.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[Any], npt.NDArray[np.float64], npt.NDArray[Any]]
         Tuple of (intensity volume, affine matrix, brain mask).
     """
     if random_seed is not None:
@@ -205,11 +225,16 @@ def create_synthetic_brain_mask(
 ) -> Tuple[npt.NDArray[Any], npt.NDArray[np.float64]]:
     """Create a synthetic brain mask (ellipsoid).
 
-    Args:
-        shape: Volume dimensions.
-        voxel_sizes: Voxel sizes in mm.
+    Parameters
+    ----------
+    shape : Tuple[int, int, int]
+        Volume dimensions.
+    voxel_sizes : Tuple[float, float, float]
+        Voxel sizes in mm.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[Any], npt.NDArray[np.float64]]
         Tuple of (mask array, affine matrix).
     """
     x, y, z = shape
@@ -239,13 +264,20 @@ def create_synthetic_lesion_mask(
 ) -> npt.NDArray[Any]:
     """Create a synthetic lesion mask within a brain mask.
 
-    Args:
-        brain_mask: 3D brain mask array.
-        lesion_center: (x, y, z) center of lesion. If None, randomly placed.
-        lesion_radius_voxels: Radius of spherical lesion in voxels.
-        random_seed: Random seed for reproducibility.
+    Parameters
+    ----------
+    brain_mask : npt.NDArray[Any]
+        3D brain mask array.
+    lesion_center : Optional[Tuple[int, int, int]]
+        (x, y, z) center of lesion. If None, randomly placed.
+    lesion_radius_voxels : int
+        Radius of spherical lesion in voxels.
+    random_seed : Optional[int]
+        Random seed for reproducibility.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[Any]
         Binary lesion mask array.
     """
     if random_seed is not None:
@@ -290,17 +322,28 @@ def create_synthetic_4d_volume(
 ) -> Tuple[npt.NDArray[Any], npt.NDArray[np.float64]]:
     """Create a synthetic 4D volume with constant baseline.
 
-    Args:
-        shape: Spatial dimensions (x, y, z).
-        n_timepoints: Number of time points.
-        voxel_sizes: Voxel sizes in mm.
-        tr: Repetition time in seconds.
-        baseline_value: Baseline signal value.
-        add_noise: Whether to add Gaussian noise.
-        noise_std: Standard deviation of noise.
-        random_seed: Random seed for reproducibility.
+    Parameters
+    ----------
+    shape : Tuple[int, int, int]
+        Spatial dimensions (x, y, z).
+    n_timepoints : int
+        Number of time points.
+    voxel_sizes : Tuple[float, float, float]
+        Voxel sizes in mm.
+    tr : float
+        Repetition time in seconds.
+    baseline_value : float
+        Baseline signal value.
+    add_noise : bool
+        Whether to add Gaussian noise.
+    noise_std : float
+        Standard deviation of noise.
+    random_seed : Optional[int]
+        Random seed for reproducibility.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[Any], npt.NDArray[np.float64]]
         Tuple of (4D data array, affine matrix).
     """
     if random_seed is not None:
@@ -343,18 +386,30 @@ def generate_dsc_gamma_variate(
     The DSC signal follows: S(t) = S0 * exp(-TE * ΔR2*(t))
     where ΔR2* follows a gamma-variate curve representing the bolus.
 
-    Args:
-        n_timepoints: Number of time points.
-        tr: Repetition time in seconds.
-        baseline_frames: Number of pre-bolus baseline frames.
-        peak_amplitude: Peak signal drop fraction (0-1).
-        alpha: Gamma-variate shape parameter.
-        beta: Gamma-variate scale parameter.
-        arrival_time: Bolus arrival time in seconds. If None, uses baseline_frames * tr.
-        noise_std: Standard deviation of Gaussian noise (fraction of baseline).
-        random_seed: Random seed for reproducibility.
+    Parameters
+    ----------
+    n_timepoints : int
+        Number of time points.
+    tr : float
+        Repetition time in seconds.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+    peak_amplitude : float
+        Peak signal drop fraction (0-1).
+    alpha : float
+        Gamma-variate shape parameter.
+    beta : float
+        Gamma-variate scale parameter.
+    arrival_time : Optional[float]
+        Bolus arrival time in seconds. If None, uses baseline_frames * tr.
+    noise_std : float
+        Standard deviation of Gaussian noise (fraction of baseline).
+    random_seed : Optional[int]
+        Random seed for reproducibility.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[Any]
         1D array of DSC signal values.
     """
     if random_seed is not None:
@@ -417,17 +472,28 @@ def generate_dsc_tissue_curve(
     Creates a tissue curve using convolution of AIF with residue function,
     with parameters approximating real tissue perfusion.
 
-    Args:
-        n_timepoints: Number of time points.
-        tr: Repetition time in seconds.
-        baseline_frames: Number of baseline frames.
-        cbf: Cerebral blood flow (mL/100g/min).
-        cbv: Cerebral blood volume (mL/100g).
-        mtt: Mean transit time in seconds.
-        noise_std: Noise standard deviation.
-        random_seed: Random seed.
+    Parameters
+    ----------
+    n_timepoints : int
+        Number of time points.
+    tr : float
+        Repetition time in seconds.
+    baseline_frames : int
+        Number of baseline frames.
+    cbf : float
+        Cerebral blood flow (mL/100g/min).
+    cbv : float
+        Cerebral blood volume (mL/100g).
+    mtt : float
+        Mean transit time in seconds.
+    noise_std : float
+        Noise standard deviation.
+    random_seed : Optional[int]
+        Random seed.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[Any]
         1D array of DSC tissue signal.
     """
     if random_seed is not None:
@@ -481,17 +547,28 @@ def generate_dsc_4d_volume(
 ) -> Tuple[npt.NDArray[Any], npt.NDArray[np.float64], npt.NDArray[Any]]:
     """Generate a synthetic 4D DSC volume with brain-like perfusion.
 
-    Args:
-        shape: Spatial dimensions.
-        n_timepoints: Number of time points.
-        tr: Repetition time in seconds.
-        baseline_frames: Number of baseline frames.
-        brain_mask: Optional brain mask. If None, one is generated.
-        add_perfusion_variation: Add spatial variation in perfusion.
-        noise_std: Noise standard deviation.
-        random_seed: Random seed.
+    Parameters
+    ----------
+    shape : Tuple[int, int, int]
+        Spatial dimensions.
+    n_timepoints : int
+        Number of time points.
+    tr : float
+        Repetition time in seconds.
+    baseline_frames : int
+        Number of baseline frames.
+    brain_mask : Optional[npt.NDArray[Any]]
+        Optional brain mask. If None, one is generated.
+    add_perfusion_variation : bool
+        Add spatial variation in perfusion.
+    noise_std : float
+        Noise standard deviation.
+    random_seed : Optional[int]
+        Random seed.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[Any], npt.NDArray[np.float64], npt.NDArray[Any]]
         Tuple of (4D data, affine, brain_mask).
     """
     if random_seed is not None:
@@ -564,19 +641,32 @@ def generate_dce_tofts_curve(
 
     where kep = Ktrans / ve
 
-    Args:
-        n_timepoints: Number of time points.
-        tr: Repetition time in seconds.
-        baseline_frames: Number of baseline frames.
-        ktrans: Transfer constant (min^-1).
-        ve: Extravascular extracellular volume fraction.
-        vp: Plasma volume fraction.
-        extended_model: Use Extended Tofts (with vp) vs Standard Tofts.
-        aif_peak: Peak AIF concentration (mM).
-        noise_std: Noise standard deviation (mM).
-        random_seed: Random seed.
+    Parameters
+    ----------
+    n_timepoints : int
+        Number of time points.
+    tr : float
+        Repetition time in seconds.
+    baseline_frames : int
+        Number of baseline frames.
+    ktrans : float
+        Transfer constant (min^-1).
+    ve : float
+        Extravascular extracellular volume fraction.
+    vp : float
+        Plasma volume fraction.
+    extended_model : bool
+        Use Extended Tofts (with vp) vs Standard Tofts.
+    aif_peak : float
+        Peak AIF concentration (mM).
+    noise_std : float
+        Noise standard deviation (mM).
+    random_seed : Optional[int]
+        Random seed.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[Any]
         1D array of tissue concentration (mM).
     """
     if random_seed is not None:
@@ -633,12 +723,18 @@ def generate_parker_aif(
 
     Based on Parker et al. (2006) population-averaged AIF.
 
-    Args:
-        t_min: Time array in minutes.
-        arrival_time_min: Bolus arrival time in minutes.
-        peak_concentration: Peak AIF concentration (mM).
+    Parameters
+    ----------
+    t_min : npt.NDArray[Any]
+        Time array in minutes.
+    arrival_time_min : float
+        Bolus arrival time in minutes.
+    peak_concentration : float
+        Peak AIF concentration (mM).
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[Any]
         AIF concentration array (mM).
     """
     aif = np.zeros_like(t_min)
@@ -676,17 +772,28 @@ def generate_dce_4d_volume(
 ) -> Tuple[npt.NDArray[Any], npt.NDArray[np.float64], npt.NDArray[Any]]:
     """Generate a synthetic 4D DCE volume with Tofts-model perfusion.
 
-    Args:
-        shape: Spatial dimensions.
-        n_timepoints: Number of time points.
-        tr: Repetition time in seconds.
-        baseline_frames: Number of baseline frames.
-        brain_mask: Optional brain mask.
-        add_parameter_variation: Add spatial variation in PK parameters.
-        noise_std: Noise standard deviation.
-        random_seed: Random seed.
+    Parameters
+    ----------
+    shape : Tuple[int, int, int]
+        Spatial dimensions.
+    n_timepoints : int
+        Number of time points.
+    tr : float
+        Repetition time in seconds.
+    baseline_frames : int
+        Number of baseline frames.
+    brain_mask : Optional[npt.NDArray[Any]]
+        Optional brain mask.
+    add_parameter_variation : bool
+        Add spatial variation in PK parameters.
+    noise_std : float
+        Noise standard deviation.
+    random_seed : Optional[int]
+        Random seed.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[Any], npt.NDArray[np.float64], npt.NDArray[Any]]
         Tuple of (4D concentration data, affine, brain_mask).
     """
     if random_seed is not None:
@@ -754,19 +861,32 @@ def generate_synthetic_dsc_aif(
 ) -> npt.NDArray[Any]:
     """Generate a synthetic DSC AIF (ΔR2* concentration curve).
 
-    Args:
-        n_timepoints: Number of time points.
-        tr: Repetition time in seconds.
-        baseline_frames: Number of baseline frames.
-        peak_delta_r2: Peak ΔR2* value (s^-1).
-        alpha: Gamma-variate shape parameter.
-        beta: Gamma-variate scale parameter.
-        add_recirculation: Add recirculation component.
-        recirculation_fraction: Amplitude of recirculation relative to first pass.
-        noise_std: Noise standard deviation.
-        random_seed: Random seed.
+    Parameters
+    ----------
+    n_timepoints : int
+        Number of time points.
+    tr : float
+        Repetition time in seconds.
+    baseline_frames : int
+        Number of baseline frames.
+    peak_delta_r2 : float
+        Peak ΔR2* value (s^-1).
+    alpha : float
+        Gamma-variate shape parameter.
+    beta : float
+        Gamma-variate scale parameter.
+    add_recirculation : bool
+        Add recirculation component.
+    recirculation_fraction : float
+        Amplitude of recirculation relative to first pass.
+    noise_std : float
+        Noise standard deviation.
+    random_seed : Optional[int]
+        Random seed.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[Any]
         1D array of AIF concentration (ΔR2* in s^-1).
     """
     if random_seed is not None:
@@ -835,15 +955,24 @@ def generate_synthetic_dce_aif(
 ) -> npt.NDArray[Any]:
     """Generate a synthetic DCE AIF (plasma concentration).
 
-    Args:
-        n_timepoints: Number of time points.
-        tr: Repetition time in seconds.
-        baseline_frames: Number of baseline frames.
-        peak_concentration: Peak AIF concentration (mM).
-        dose_level: Dose multiplier (0.5=half, 1.0=full, 2.0=double).
-        random_seed: Random seed.
+    Parameters
+    ----------
+    n_timepoints : int
+        Number of time points.
+    tr : float
+        Repetition time in seconds.
+    baseline_frames : int
+        Number of baseline frames.
+    peak_concentration : float
+        Peak AIF concentration (mM).
+    dose_level : float
+        Dose multiplier (0.5=half, 1.0=full, 2.0=double).
+    random_seed : Optional[int]
+        Random seed.
 
-    Returns:
+    Returns
+    -------
+    npt.NDArray[Any]
         1D array of AIF plasma concentration (mM).
     """
     if random_seed is not None:
@@ -880,13 +1009,20 @@ def save_synthetic_nifti(
 ) -> Path:
     """Save synthetic data as a NIfTI file.
 
-    Args:
-        data: Array data to save.
-        affine: Affine transformation matrix.
-        filepath: Output file path.
-        dtype: Optional data type for output.
+    Parameters
+    ----------
+    data : npt.NDArray[Any]
+        Array data to save.
+    affine : npt.NDArray[np.float64]
+        Affine transformation matrix.
+    filepath : Union[str, Path]
+        Output file path.
+    dtype : Optional[type]
+        Optional data type for output.
 
-    Returns:
+    Returns
+    -------
+    Path
         Path to saved file.
     """
     import nibabel as nib  # type: ignore[import-untyped]

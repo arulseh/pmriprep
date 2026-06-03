@@ -164,8 +164,8 @@ K2_SIGMA_CORRECTION: Final[float] = 0.005     # s⁻¹
 #: Primary-classification tier (stricter, commits to a discrete class).
 #: Used by classify_preload_adequacy_from_k2 when the auto path must
 #: decide adequate/partial/inadequate absent user input. Relaxed from
-#: literature-derived 0.003 to 0.005 per physics consult 2026-04-18:
-#: observed well-suppressed half-dose GBM cohort sits at k2_median
+#: literature-derived 0.003 to 0.005: observed well-suppressed half-dose
+#: GBM cohort sits at k2_median
 #: 0.0018–0.0048, so 0.005 captures it without reclassifying as partial.
 K2_PRIMARY_ADEQUATE: Final[float] = 0.005     # s⁻¹
 K2_PRIMARY_INADEQUATE: Final[float] = 0.01    # s⁻¹, == K2_SIGMA_SUPPRESSED

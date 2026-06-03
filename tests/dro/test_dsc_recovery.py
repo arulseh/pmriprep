@@ -395,18 +395,30 @@ def _make_vascular_test_data(
     Uses VascularModel.tissue_curve() for data generation (FFT convolution),
     ensuring a true round-trip test with the MAP fitter.
 
-    Args:
-        cbf: Cerebral blood flow (mL/100g/min).
-        alpha: Gamma shape parameter.
-        beta: Gamma scale parameter (seconds).
-        delay: Bolus arrival delay (seconds).
-        noise_frac: Noise as fraction of peak concentration.
-        n_timepoints: Number of time points.
-        dt_sec: Time step in seconds.
-        baseline_frames: Number of pre-bolus baseline frames.
-        seed: Random seed for reproducibility.
+    Parameters
+    ----------
+    cbf : float
+        Cerebral blood flow (mL/100g/min).
+    alpha : float
+        Gamma shape parameter.
+    beta : float
+        Gamma scale parameter (seconds).
+    delay : float
+        Bolus arrival delay (seconds).
+    noise_frac : float
+        Noise as fraction of peak concentration.
+    n_timepoints : int
+        Number of time points.
+    dt_sec : float
+        Time step in seconds.
+    baseline_frames : int
+        Number of pre-bolus baseline frames.
+    seed : int
+        Random seed for reproducibility.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (tissue_concentration, aif, time_sec).
     """
     aif, time_sec = generate_dsc_aif_dro(
@@ -524,7 +536,9 @@ def _make_cpi_gamma_test_data(
     residue R(t) = CBF * [1 - gammainc(alpha, t/beta)], then convolves
     with the DRO AIF via the specified forward model.
 
-    Returns:
+    Returns
+    -------
+    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating], npt.NDArray[np.floating], float]
         Tuple of (tissue_concentration, aif, time_sec, true_mtt).
     """
     if forward_model is None:
@@ -564,10 +578,10 @@ CPI_BAYESIAN_PARAMS = [
 ]
 
 # (noise_fraction, cbf_tol, mtt_tol)
-# v0.34 FABBER-parity tolerances per Mehndiratta 2013 / Chappell 2009 +
-# physics review: FABBER's loose sigmoid fraction prior systematically
+# FABBER-parity tolerances per Mehndiratta 2013 / Chappell 2009:
+# FABBER's loose sigmoid fraction prior systematically
 # inflates MTT (5-20%) and CBF/CBV are biased by the wider full-acquisition
-# CP layout. PMRIPrep §6 numerical-change table.
+# CP layout.
 CPI_BAYESIAN_NOISE_LEVELS = [
     pytest.param(0.0, 0.30, 0.25, id="zero"),
     pytest.param(0.02, 0.30, 0.25, id="low"),

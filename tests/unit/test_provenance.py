@@ -181,7 +181,7 @@ class TestEnrichDSC:
                 "preload_correction_applied": True,
                 "k2_median": 0.008,
                 "preload_classification": "none",
-                # v0.25.2: key renamed to preload_baseline_delta_r2_advisory.
+                # Advisory key: preload_baseline_delta_r2_advisory.
                 "preload_baseline_delta_r2_advisory": 0.12,
                 "preload_classification_source": "k2_primary",
                 "preload_k2_classification": "none",

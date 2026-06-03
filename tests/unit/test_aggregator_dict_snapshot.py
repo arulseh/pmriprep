@@ -1,11 +1,10 @@
-"""Aggregator snapshot: ``_load_pipeline_sidecars`` returns the legacy nested shape.
+"""Aggregator snapshot: ``_load_pipeline_sidecars`` returns the nested shape.
 
-The pre-v0.46.0 HTML aggregator read a single ``desc-*QC_quality.json``
-summary file at session root; the v0.46.0 aggregator reads canonical
-per-image sidecars (anchor ``desc-{anat,dsc,dce}Preproc_*`` + the
-pipeline-internal resume sidecars for DSC/DCE) and translates flat
-``QC*`` keys back into the legacy nested ``qc_metrics`` shape that the
-boilerplate generators (``_build_dsc_boilerplate`` etc.) expect.
+The HTML aggregator reads canonical per-image sidecars (anchor
+``desc-{anat,dsc,dce}Preproc_*`` + the pipeline-internal resume sidecars
+for DSC/DCE) and translates flat ``QC*`` keys into the nested
+``qc_metrics`` shape that the boilerplate generators
+(``_build_dsc_boilerplate`` etc.) expect.
 
 This test pins the translation table by writing realistic per-image
 sidecars to a temp session and asserting the loader produces a nested

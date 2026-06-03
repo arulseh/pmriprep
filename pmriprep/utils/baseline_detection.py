@@ -33,7 +33,6 @@ logger = logging.getLogger(__name__)
 #: Minimum fractional signal change to accept Phase 2 earlier refinement.
 #: At clinical Gd doses (0.1 mmol/kg), first-frame tissue enhancement
 #: is 5-15%. 1.5% is conservatively below this for low-dose/saturated cases.
-#: Ref: physics expert review (2026-03-28).
 _MIN_FRACTIONAL_CHANGE: float = 0.015
 
 #: Minimum baseline frames for reliable z-score estimation.

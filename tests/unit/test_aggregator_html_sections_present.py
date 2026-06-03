@@ -1,7 +1,7 @@
-"""HTML report integration: rendered HTML carries expected sections after PR2.
+"""HTML report integration: rendered HTML carries expected sections.
 
-Section-presence test (NOT byte-equality) — the v0.46.0 aggregator
-reads canonical per-image sidecars instead of legacy ``desc-*QC_quality.json``
+Section-presence test (NOT byte-equality) — the aggregator
+reads canonical per-image sidecars rather than ``desc-*QC_quality.json``
 files. This test wires up a fake session tree, runs
 ``generate_unified_report``, and confirms key HTML banners (overall
 recommendation, warnings, per-pipeline section headings) render.

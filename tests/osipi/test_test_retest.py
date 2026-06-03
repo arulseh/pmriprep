@@ -227,11 +227,16 @@ def _compute_slab_overlap(
     (outside the original slab). This function identifies which slices
     have brain data from both sessions and restricts comparison to those.
 
-    Args:
-        brain1: ses-0001 brain mask (3D array).
-        brain2_reg: Registered ses-0002 brain mask (3D array).
+    Parameters
+    ----------
+    brain1 : NDArray[np.floating]
+        ses-0001 brain mask (3D array).
+    brain2_reg : NDArray[np.floating]
+        Registered ses-0002 brain mask (3D array).
 
-    Returns:
+    Returns
+    -------
+    NDArray[np.bool_]
         Boolean 3D mask where both sessions have brain coverage.
     """
     # Identify slices (z-axis) where each session has brain data
@@ -384,18 +389,27 @@ def _load_registered_pair(
 ) -> tuple:
     """Load ses-0001 map and registered ses-0002 map.
 
-    Args:
-        subject: Subject ID.
-        suffix: Map suffix key.
-        mat_file: FLIRT transform path.
-        out_dir: Output directory for intermediate files.
-        joint_mask: Boolean 3D mask defining the comparison region.
-        require_positive: If True, additionally require that at least one
-            session has a positive value at each voxel. Useful for PK
-            parameters (Ktrans, ve, vp) where non-enhancing tissue
-            produces zeros that dilute correlation.
+    Parameters
+    ----------
+    subject : str
+        Subject ID.
+    suffix : str
+        Map suffix key.
+    mat_file : str
+        FLIRT transform path.
+    out_dir : str
+        Output directory for intermediate files.
+    joint_mask : NDArray[np.bool_]
+        Boolean 3D mask defining the comparison region.
+    require_positive : bool
+        If True, additionally require that at least one
+        session has a positive value at each voxel. Useful for PK
+        parameters (Ktrans, ve, vp) where non-enhancing tissue
+        produces zeros that dilute correlation.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (ses1_values, ses2_values) as masked 1D arrays,
         or pytest.skip if data unavailable.
     """
@@ -442,11 +456,16 @@ def _setup_for_subject(
     cannot support meaningful voxelwise analysis — summary-level
     tests (Tier 1) are the appropriate level for those.
 
-    Args:
-        subject: Subject ID.
-        min_brain_dice: Minimum brain mask Dice to accept registration.
+    Parameters
+    ----------
+    subject : str
+        Subject ID.
+    min_brain_dice : float
+        Minimum brain mask Dice to accept registration.
 
-    Returns:
+    Returns
+    -------
+    tuple
         Tuple of (mat_file, out_dir, joint_mask), or pytest.skip.
     """
     _skip_if_missing(subject)

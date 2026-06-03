@@ -1727,8 +1727,8 @@ class ComputeDCEMaps(BaseInterface):
                                     vp_constraint_map[valid_constrained]
                                 )
                             )
-                            # Overshoot is TR-modulated, not TR-invariant
-                            # (physics consult 2026-04-18): at long volume
+                            # Overshoot is TR-modulated, not TR-invariant:
+                            # at long volume
                             # TR, max(Ct) samples the tissue peak with bias
                             # ∝ FWHM_tissue/TR, firing overshoot more often
                             # from sampling asymmetry. Interpret thresholds

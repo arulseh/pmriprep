@@ -286,7 +286,7 @@ class TestCoverageWarn:
 
 
 class TestTightenedThresholds:
-    """Tests for tightened cross-validation thresholds (v0.11.6)."""
+    """Tests for tightened cross-validation thresholds."""
 
     def test_marginal_correlation_unconstrained_warns(self) -> None:
         """ρ≈0.35 is between new WARN (0.20) and PASS (0.40) → WARN."""
@@ -318,7 +318,7 @@ class TestTightenedThresholds:
 
 
 class TestNcbvPathValidation:
-    """Tests for the NAWM-normalized cross-validation path (v0.25.0+)."""
+    """Tests for the NAWM-normalized cross-validation path."""
 
     def test_validation_with_ncbv_uses_nawm_anchored_expected_ratio(
         self,
@@ -411,7 +411,7 @@ class TestAcquisitionLimited:
         assert "Buckley" in result.interpretation
 
     def test_overshoot_below_threshold_keeps_tight_band(self) -> None:
-        """overshoot=0.3 with low ratio still hits legacy WARN on tight band."""
+        """overshoot=0.3 with low ratio still hits WARN on the tight band."""
         vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
         result = validate_vp_cbv(
             vp, ncbv, mask,
@@ -423,7 +423,7 @@ class TestAcquisitionLimited:
         assert result.status == QCStatus.WARN
 
     def test_overshoot_boundary_exactly_0_7_not_flagged(self) -> None:
-        """Threshold uses strict ``>``; overshoot == 0.7 exactly → legacy path."""
+        """Threshold uses strict ``>``; overshoot == 0.7 exactly → tight-band path."""
         vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
         result = validate_vp_cbv(
             vp, ncbv, mask,
@@ -434,7 +434,7 @@ class TestAcquisitionLimited:
         assert result.acquisition_limited is False
 
     def test_overshoot_none_uses_tight_band(self) -> None:
-        """Missing overshoot (user-forced mode / no-NAWM path) → legacy tight band."""
+        """Missing overshoot (user-forced mode / no-NAWM path) → tight band."""
         vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
         result = validate_vp_cbv(
             vp, ncbv, mask,
@@ -444,7 +444,7 @@ class TestAcquisitionLimited:
         )
         assert result.acquisition_limited is False
         # Observed ratio ≈0.007 is outside the tight ±30% band around 0.02,
-        # so the legacy path still WARNs — proving the flag was not applied.
+        # so the tight-band path still WARNs — proving the flag was not applied.
         assert result.status == QCStatus.WARN
 
     def test_outside_widened_band_still_warns(self) -> None:
