@@ -961,6 +961,130 @@ def init_dsc_normalization_wf(
     return workflow
 
 
+def init_dsc_smoothing_wf(
+    *,
+    fwhm: float,
+    name: str = "dsc_smoothing_wf",
+) -> pe.Workflow:
+    """Build the DSC perfusion-map smoothing sub-workflow.
+
+    Spatially smooths the intensive hemodynamic maps (MTT, rel-CBF, rel-CBV,
+    nCBF, nCBV) and the leakage-corrected relative AUC map (a CBV surrogate)
+    within the brain mask. Timing / leakage maps (Tmax, TTP, PSR, PH, K2,
+    auc_diff) are deliberately NOT smoothed. The orchestrator instantiates this
+    sub-workflow only when ``config.smooth_fwhm > 0``.
+
+    Parameters
+    ----------
+    fwhm : float
+        Smoothing-kernel full-width-at-half-maximum (mm).
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The smoothing sub-workflow.
+
+    Inputs
+    ------
+    mtt, rel_cbf, rel_cbv, ncbf, ncbv
+        Hemodynamic maps (assembled into one dict internally before smoothing).
+    rel_auc_corr
+        Leakage-corrected relative AUC map (CBV surrogate).
+    brain_mask_file
+        DSC-space brain mask (smoothing is restricted to brain voxels).
+
+    Outputs
+    -------
+    smoothed_hemodynamic
+        Smoothed hemodynamic map files.
+    smoothed_auc
+        Smoothed AUC map file(s).
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "mtt",
+                "rel_cbf",
+                "rel_cbv",
+                "ncbf",
+                "ncbv",
+                "rel_auc_corr",
+                "brain_mask_file",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=["smoothed_hemodynamic", "smoothed_auc"]
+        ),
+        name="outputnode",
+    )
+
+    # Hemodynamic maps: CBF, CBV, MTT, nCBF, nCBV
+    # Physics-approved: intensive quantities that vary smoothly
+    build_hemo_dict = pe.Node(
+        niu.Function(
+            input_names=[
+                "mtt", "rel_cbf", "rel_cbv",
+                "ncbf", "ncbv",
+            ],
+            output_names=["map_dict"],
+            function=_build_hemodynamic_dict,
+        ),
+        name="build_hemo_dict",
+    )
+    smooth_hemodynamic = pe.Node(
+        niu.Function(
+            input_names=["map_files", "brain_mask_file", "fwhm"],
+            output_names=["smoothed_files"],
+            function=_smooth_maps,
+        ),
+        name="smooth_hemodynamic",
+    )
+    smooth_hemodynamic.inputs.fwhm = fwhm
+
+    # Leakage-corrected AUC (CBV surrogate); only auc_corr is smoothed
+    build_auc_dict = pe.Node(
+        niu.Function(
+            input_names=["rel_auc_corr"],
+            output_names=["map_dict"],
+            function=_build_auc_corr_dict,
+        ),
+        name="build_auc_dict",
+    )
+    smooth_auc = pe.Node(
+        niu.Function(
+            input_names=["map_files", "brain_mask_file", "fwhm"],
+            output_names=["smoothed_files"],
+            function=_smooth_maps,
+        ),
+        name="smooth_auc",
+    )
+    smooth_auc.inputs.fwhm = fwhm
+
+    workflow.connect([
+        (inputnode, build_hemo_dict, [
+            ("mtt", "mtt"),
+            ("rel_cbf", "rel_cbf"),
+            ("rel_cbv", "rel_cbv"),
+            ("ncbf", "ncbf"),
+            ("ncbv", "ncbv"),
+        ]),
+        (build_hemo_dict, smooth_hemodynamic, [("map_dict", "map_files")]),
+        (inputnode, smooth_hemodynamic, [("brain_mask_file", "brain_mask_file")]),
+        (inputnode, build_auc_dict, [("rel_auc_corr", "rel_auc_corr")]),
+        (build_auc_dict, smooth_auc, [("map_dict", "map_files")]),
+        (inputnode, smooth_auc, [("brain_mask_file", "brain_mask_file")]),
+        (smooth_hemodynamic, outputnode, [("smoothed_files", "smoothed_hemodynamic")]),
+        (smooth_auc, outputnode, [("smoothed_files", "smoothed_auc")]),
+    ])
+    return workflow
+
+
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1506,33 +1630,9 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     # Node 7c: Smoothing (conditional on config.smooth_fwhm > 0)
     # -------------------------------------------------------------------
-    smooth_hemodynamic = None
-    smooth_auc = None
-
+    smoothing_wf = None
     if config.smooth_fwhm > 0:
-        # Smoothing for hemodynamic maps: CBF, CBV, MTT, nCBF, nCBV
-        # Physics-approved: intensive quantities that vary smoothly
-        smooth_hemodynamic = pe.Node(
-            niu.Function(
-                input_names=["map_files", "brain_mask_file", "fwhm"],
-                output_names=["smoothed_files"],
-                function=_smooth_maps,
-            ),
-            name="smooth_hemodynamic",
-        )
-        smooth_hemodynamic.inputs.fwhm = config.smooth_fwhm
-
-        # Smoothing for leakage-corrected AUC (CBV surrogate)
-        # Only auc_corr; auc_raw contains leakage artifact
-        smooth_auc = pe.Node(
-            niu.Function(
-                input_names=["map_files", "brain_mask_file", "fwhm"],
-                output_names=["smoothed_files"],
-                function=_smooth_maps,
-            ),
-            name="smooth_auc",
-        )
-        smooth_auc.inputs.fwhm = config.smooth_fwhm
+        smoothing_wf = init_dsc_smoothing_wf(fwhm=config.smooth_fwhm)
 
     # -------------------------------------------------------------------
     # Node 8: Merge QC Metrics
@@ -2235,55 +2335,23 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     # Smoothing connections (only if smooth_fwhm > 0)
     # -------------------------------------------------------------------
-    if smooth_hemodynamic is not None:
-        # Build dict of hemodynamic maps for smoothing:
-        # MTT, rel_CBF, rel_CBV, plus optional abs_CBF, abs_CBV, nCBF, nCBV
-        # Physics-approved: intensive quantities that vary smoothly across tissue.
-        # NOT smoothed: Tmax, TTP, delay (timing), PSR, PH, K2, auc_diff (BBB/leakage)
-
-        build_hemo_dict = pe.Node(
-            niu.Function(
-                input_names=[
-                    "mtt", "rel_cbf", "rel_cbv",
-                    "ncbf", "ncbv",
-                ],
-                output_names=["map_dict"],
-                function=_build_hemodynamic_dict,
-            ),
-            name="build_hemo_dict",
-        )
+    if smoothing_wf is not None:
+        # nCBF/nCBV come from the normalization sub-wf; the hemodynamic +
+        # AUC-corr maps from deconvolution; brain mask fans out to both
+        # smoothers inside the sub-workflow.
         workflow.connect([
-            (deconvolution_wf, build_hemo_dict, [
-                ("outputnode.out_mtt", "mtt"),
-                ("outputnode.out_rel_cbf", "rel_cbf"),
-                ("outputnode.out_rel_cbv_auc", "rel_cbv"),
+            (deconvolution_wf, smoothing_wf, [
+                ("outputnode.out_mtt", "inputnode.mtt"),
+                ("outputnode.out_rel_cbf", "inputnode.rel_cbf"),
+                ("outputnode.out_rel_cbv_auc", "inputnode.rel_cbv"),
+                ("outputnode.out_rel_auc_corr", "inputnode.rel_auc_corr"),
             ]),
-            (normalization_wf, build_hemo_dict, [("outputnode.ncbf_file", "ncbf")]),
-            (normalization_wf, build_hemo_dict, [("outputnode.ncbv_file", "ncbv")]),
-            (build_hemo_dict, smooth_hemodynamic, [("map_dict", "map_files")]),
-            (hdbet_dsc, smooth_hemodynamic, [
-                ("dsc_brain_mask_file", "brain_mask_file"),
+            (normalization_wf, smoothing_wf, [
+                ("outputnode.ncbf_file", "inputnode.ncbf"),
+                ("outputnode.ncbv_file", "inputnode.ncbv"),
             ]),
-        ])
-
-        # Build dict of leakage-corrected AUC maps for smoothing (CBV surrogate).
-        # Only auc_corr is smoothed; auc_raw contains leakage artifact.
-
-        build_auc_dict = pe.Node(
-            niu.Function(
-                input_names=["rel_auc_corr"],
-                output_names=["map_dict"],
-                function=_build_auc_corr_dict,
-            ),
-            name="build_auc_dict",
-        )
-        workflow.connect([
-            (deconvolution_wf, build_auc_dict, [
-                ("outputnode.out_rel_auc_corr", "rel_auc_corr"),
-            ]),
-            (build_auc_dict, smooth_auc, [("map_dict", "map_files")]),
-            (hdbet_dsc, smooth_auc, [
-                ("dsc_brain_mask_file", "brain_mask_file"),
+            (hdbet_dsc, smoothing_wf, [
+                ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
             ]),
         ])
 
@@ -2445,10 +2513,12 @@ def init_dsc_preproc_wf(
     ])
 
     # Smoothed outputs (only if smooth_fwhm > 0)
-    if smooth_hemodynamic is not None:
+    if smoothing_wf is not None:
         workflow.connect([
-            (smooth_hemodynamic, outputnode, [("smoothed_files", "smooth_hemodynamic")]),
-            (smooth_auc, outputnode, [("smoothed_files", "smooth_auc")]),
+            (smoothing_wf, outputnode, [
+                ("outputnode.smoothed_hemodynamic", "smooth_hemodynamic"),
+                ("outputnode.smoothed_auc", "smooth_auc"),
+            ]),
         ])
 
     # Store config in workflow for reference by child nodes
