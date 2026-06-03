@@ -638,7 +638,7 @@ def init_dce_preproc_wf(
     ])
 
     # Brain mask filmstrip QC (after brain extraction)
-    from pmriprep.workflows.dsc.base import _create_perfusion_brain_mask_filmstrip
+    from pmriprep.workflows.dsc._helpers import _create_perfusion_brain_mask_filmstrip
 
     dce_brain_mask_qc = pe.Node(
         niu.Function(
