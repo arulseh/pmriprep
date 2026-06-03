@@ -518,6 +518,123 @@ def init_dsc_preload_wf(
     return workflow
 
 
+def init_dsc_registration_wf(
+    *,
+    registration: str,
+    mem_gb: float,
+    name: str = "dsc_registration_wf",
+) -> pe.Workflow:
+    """Build the DSC<->T1w registration + MNI->DSC transform-chain sub-workflow.
+
+    Registers the DSC reference to T1w, and builds the MNI->DSC transform by
+    concatenating MNI->T1w (inverted T1w->MNI) with T1w->DSC.
+
+    Parameters
+    ----------
+    registration : str
+        Registration strategy ("flirt" or "flirt_bbr").
+    mem_gb : float
+        Memory estimate (GB) for the registration node.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The registration sub-workflow.
+
+    Inputs
+    ------
+    matched_t1w_file
+        Histogram-matched T1w (moving image's target).
+    brain_mask, wm_probseg
+        T1w-space brain mask and WM segmentation (for BBR).
+    dsc_brain
+        Brain-extracted DSC reference.
+    t1w_to_mni_xfm
+        T1w->MNI transform (inverted to MNI->T1w internally).
+
+    Outputs
+    -------
+    t1w_to_dsc_matrix
+        T1w->DSC FLIRT matrix (register.out_matrix).
+    registered_t1w
+        T1w resampled into DSC space.
+    t1w_to_dsc_h5
+        T1w->DSC transform as ITK .h5.
+    qc_metrics
+        Registration QC.
+    dsc_to_t1w_matrix
+        DSC->T1w FLIRT matrix (inverse).
+    mni_to_dsc_matrix
+        MNI->DSC concatenated transform (for atlas resampling).
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "matched_t1w_file",
+                "brain_mask",
+                "wm_probseg",
+                "dsc_brain",
+                "t1w_to_mni_xfm",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "t1w_to_dsc_matrix",
+                "registered_t1w",
+                "t1w_to_dsc_h5",
+                "qc_metrics",
+                "dsc_to_t1w_matrix",
+                "mni_to_dsc_matrix",
+            ]
+        ),
+        name="outputnode",
+    )
+
+    # Node 6: DSC to T1w Registration
+    register = pe.Node(
+        DSCRegistration(
+            registration=registration,
+            dof=6,  # Rigid body
+            cost="normmi",
+        ),
+        name="register",
+        mem_gb=mem_gb,
+    )
+
+    # MNI->DSC transform chain: invert T1w->MNI, invert T1w->DSC, concatenate
+    invert_mni_xfm = pe.Node(ConvertXFM(invert_xfm=True), name="invert_mni_xfm")
+    invert_dsc_xfm = pe.Node(ConvertXFM(invert_xfm=True), name="invert_dsc_xfm")
+    concat_mni_to_dsc = pe.Node(ConvertXFM(concat_xfm=True), name="concat_mni_to_dsc")
+
+    workflow.connect([
+        (inputnode, register, [
+            ("matched_t1w_file", "t1w_file"),
+            ("brain_mask", "brain_mask"),
+            ("wm_probseg", "wm_seg"),
+            ("dsc_brain", "dsc_mean"),
+        ]),
+        (inputnode, invert_mni_xfm, [("t1w_to_mni_xfm", "in_file")]),
+        (register, invert_dsc_xfm, [("out_matrix", "in_file")]),
+        (invert_mni_xfm, concat_mni_to_dsc, [("out_file", "in_file")]),
+        (register, concat_mni_to_dsc, [("out_matrix", "in_file2")]),
+        (register, outputnode, [
+            ("out_matrix", "t1w_to_dsc_matrix"),
+            ("out_file", "registered_t1w"),
+            ("out_h5", "t1w_to_dsc_h5"),
+            ("qc_metrics", "qc_metrics"),
+        ]),
+        (invert_dsc_xfm, outputnode, [("out_file", "dsc_to_t1w_matrix")]),
+        (concat_mni_to_dsc, outputnode, [("out_file", "mni_to_dsc_matrix")]),
+    ])
+    return workflow
+
+
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -919,40 +1036,11 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 6: DSC to T1w Registration
+    # Registration sub-workflow: DSC<->T1w + MNI->DSC transform chain
     # -------------------------------------------------------------------
-    register = pe.Node(
-        DSCRegistration(
-            registration=config.registration,
-            dof=6,  # Rigid body
-            cost="normmi",
-        ),
-        name="register",
+    registration_wf = init_dsc_registration_wf(
+        registration=config.registration,
         mem_gb=_static_mem,
-    )
-
-    # -------------------------------------------------------------------
-    # Node 6b: Transform Chain for MNI Atlas to DSC Space
-    # Creates MNI→DSC transform by concatenating:
-    #   MNI→T1w (inverted T1w→MNI) + T1w→DSC (register output)
-    # -------------------------------------------------------------------
-
-    # Invert T1w→MNI to get MNI→T1w
-    invert_mni_xfm = pe.Node(
-        ConvertXFM(invert_xfm=True),
-        name="invert_mni_xfm",
-    )
-
-    # Invert T1w→DSC to get DSC→T1w (for output labeling)
-    invert_dsc_xfm = pe.Node(
-        ConvertXFM(invert_xfm=True),
-        name="invert_dsc_xfm",
-    )
-
-    # Concatenate: MNI→T1w + T1w→DSC = MNI→DSC
-    concat_mni_to_dsc = pe.Node(
-        ConvertXFM(concat_xfm=True),
-        name="concat_mni_to_dsc",
     )
 
     # Transform arterial atlas from MNI to DSC space
@@ -1508,38 +1596,21 @@ def init_dsc_preproc_wf(
         (hdbet_dsc, hist_match_t1w, [("dsc_brain_file", "dsc_brain_file")]),
     ])
 
-    # DSC Map Computation to Registration
-    # Use brain-extracted DSC (from HD-BET) and histogram-matched T1w
+    # Feed the registration sub-workflow
     workflow.connect([
-        (hist_match_t1w, register, [("matched_t1w_file", "t1w_file")]),
-        (inputnode, register, [
-            ("brain_mask", "brain_mask"),
-            ("wm_probseg", "wm_seg"),
+        (hist_match_t1w, registration_wf, [("matched_t1w_file", "inputnode.matched_t1w_file")]),
+        (inputnode, registration_wf, [
+            ("brain_mask", "inputnode.brain_mask"),
+            ("wm_probseg", "inputnode.wm_probseg"),
+            ("t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
         ]),
-        (hdbet_dsc, register, [("dsc_brain_file", "dsc_mean")]),
-    ])
-
-    # Transform Chain: Create MNI→DSC transform for atlas
-    # Step 1: Invert T1w→MNI to get MNI→T1w
-    workflow.connect([
-        (inputnode, invert_mni_xfm, [("t1w_to_mni_xfm", "in_file")]),
-    ])
-
-    # Step 2: Invert T1w→DSC to get DSC→T1w (for output labeling)
-    workflow.connect([
-        (register, invert_dsc_xfm, [("out_matrix", "in_file")]),
-    ])
-
-    # Step 3: Concatenate MNI→T1w + T1w→DSC = MNI→DSC
-    workflow.connect([
-        (invert_mni_xfm, concat_mni_to_dsc, [("out_file", "in_file")]),
-        (register, concat_mni_to_dsc, [("out_matrix", "in_file2")]),
+        (hdbet_dsc, registration_wf, [("dsc_brain_file", "inputnode.dsc_brain")]),
     ])
 
     # Step 4: Transform arterial atlas from MNI to DSC space
     # Use pre-bolus mean as reference for output geometry
     workflow.connect([
-        (concat_mni_to_dsc, transform_atlas, [("out_file", "in_matrix_file")]),
+        (registration_wf, transform_atlas, [("outputnode.mni_to_dsc_matrix", "in_matrix_file")]),
         (motion_wf, transform_atlas, [("outputnode.prebolus_mean_file", "reference")]),
     ])
 
@@ -1551,7 +1622,7 @@ def init_dsc_preproc_wf(
     # Transform + connect full atlas (posterior circulation tier)
     if isdefined(transform_full_atlas.inputs.in_file):
         workflow.connect([
-            (concat_mni_to_dsc, transform_full_atlas, [("out_file", "in_matrix_file")]),
+            (registration_wf, transform_full_atlas, [("outputnode.mni_to_dsc_matrix", "in_matrix_file")]),
             (motion_wf, transform_full_atlas, [("outputnode.prebolus_mean_file", "reference")]),
             (transform_full_atlas, conc_aif_wf, [("out_file", "inputnode.full_atlas_mask_file")]),
         ])
@@ -1564,7 +1635,7 @@ def init_dsc_preproc_wf(
             ("nawm_needs_transform", "needs_transform"),
         ]),
         (motion_wf, transform_nawm, [("outputnode.prebolus_mean_file", "reference_file")]),
-        (register, transform_nawm, [("out_matrix", "transform_matrix")]),
+        (registration_wf, transform_nawm, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
     ])
 
     # Validate user-supplied masks against DSC reference grid
@@ -1610,7 +1681,7 @@ def init_dsc_preproc_wf(
     # Registration QC filmstrip
     workflow.connect([
         (motion_wf, reg_filmstrip, [("outputnode.prebolus_mean_file", "dsc_mean_file")]),
-        (register, reg_filmstrip, [("out_file", "registered_t1w_file")]),
+        (registration_wf, reg_filmstrip, [("outputnode.registered_t1w", "registered_t1w_file")]),
         (hdbet_dsc, reg_filmstrip, [
             ("dsc_brain_mask_file", "brain_mask_file"),
         ]),
@@ -1633,8 +1704,8 @@ def init_dsc_preproc_wf(
             ("tr", "tr"),
             ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
         ]),
-        (register, aif_qc_plot, [
-            ("out_matrix", "t1w_to_dsc_xfm"),
+        (registration_wf, aif_qc_plot, [
+            ("outputnode.t1w_to_dsc_matrix", "t1w_to_dsc_xfm"),
         ]),
     ])
 
@@ -1702,14 +1773,14 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (combine_masks, transform_lesion, [("combined_mask_file", "lesion_mask_file")]),
         (motion_wf, transform_lesion, [("outputnode.prebolus_mean_file", "reference_file")]),
-        (register, transform_lesion, [("out_matrix", "transform_matrix")]),
+        (registration_wf, transform_lesion, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
     ])
 
     # Transform enhancing mask from T1w to DSC space
     workflow.connect([
         (inputnode, transform_enhancing_mask, [("enhancing_mask", "lesion_mask_file")]),
         (motion_wf, transform_enhancing_mask, [("outputnode.prebolus_mean_file", "reference_file")]),
-        (register, transform_enhancing_mask, [("out_matrix", "transform_matrix")]),
+        (registration_wf, transform_enhancing_mask, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
     ])
 
     # Lesion statistics extraction
@@ -1857,28 +1928,28 @@ def init_dsc_preproc_wf(
         workflow.connect([
             (inputnode, transform_t1_to_dsc, [("t1w_underlay", "structural_file")]),
             (motion_wf, transform_t1_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (register, transform_t1_to_dsc, [("out_matrix", "transform_matrix")]),
+            (registration_wf, transform_t1_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
         ])
 
     if transform_t1_postcon_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_t1_postcon_to_dsc, [("t1w_postcon_underlay", "structural_file")]),
             (motion_wf, transform_t1_postcon_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (register, transform_t1_postcon_to_dsc, [("out_matrix", "transform_matrix")]),
+            (registration_wf, transform_t1_postcon_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
         ])
 
     if transform_flair_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_flair_to_dsc, [("flair_in_t1w", "structural_file")]),
             (motion_wf, transform_flair_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (register, transform_flair_to_dsc, [("out_matrix", "transform_matrix")]),
+            (registration_wf, transform_flair_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
         ])
 
     if transform_t2w_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_t2w_to_dsc, [("t2w_in_t1w", "structural_file")]),
             (motion_wf, transform_t2w_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (register, transform_t2w_to_dsc, [("out_matrix", "transform_matrix")]),
+            (registration_wf, transform_t2w_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
         ])
 
     # -------------------------------------------------------------------
@@ -1942,7 +2013,7 @@ def init_dsc_preproc_wf(
         (preload_wf, merge_qc, [("outputnode.qc_dict", "preload_qc")]),
         (conc_aif_wf, merge_qc, [("outputnode.qc_metrics", "aif_qc")]),
         (compute_maps, merge_qc, [("qc_metrics", "deconv_qc")]),
-        (register, merge_qc, [("qc_metrics", "registration_qc")]),
+        (registration_wf, merge_qc, [("outputnode.qc_metrics", "registration_qc")]),
         (normalize, merge_qc, [("normalization_factor", "normalization_factor")]),
         (motion_wf, merge_qc, [("outputnode.motion_summary", "motion_summary")]),
         (aif_qc_plot, merge_qc, [("out_aif_metrics", "aif_metrics")]),
@@ -2017,10 +2088,10 @@ def init_dsc_preproc_wf(
         (normalize, outputnode, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, outputnode, [("ncbf_file", "ncbf_map")]),
         # Registration (.mat for internal consumers)
-        (invert_dsc_xfm, outputnode, [("out_file", "dsc_to_t1w_xfm")]),
-        (register, outputnode, [("out_matrix", "t1w_to_dsc_xfm")]),
+        (registration_wf, outputnode, [("outputnode.dsc_to_t1w_matrix", "dsc_to_t1w_xfm")]),
+        (registration_wf, outputnode, [("outputnode.t1w_to_dsc_matrix", "t1w_to_dsc_xfm")]),
         # Registration (.h5 for derivatives)
-        (register, outputnode, [("out_h5", "t1w_to_dsc_h5")]),
+        (registration_wf, outputnode, [("outputnode.t1w_to_dsc_h5", "t1w_to_dsc_h5")]),
         (reg_filmstrip, outputnode, [("filmstrip_file", "registration_filmstrip")]),
     ])
 
@@ -2034,7 +2105,7 @@ def init_dsc_preproc_wf(
         name="convert_inv_dsc_h5",
     )
     workflow.connect([
-        (invert_dsc_xfm, convert_inv_h5, [("out_file", "mat_path")]),
+        (registration_wf, convert_inv_h5, [("outputnode.dsc_to_t1w_matrix", "mat_path")]),
         (inputnode, convert_inv_h5, [("t1w_reference", "reference")]),
         (hdbet_dsc, convert_inv_h5, [("dsc_brain_file", "moving")]),
         (convert_inv_h5, outputnode, [("out_h5", "dsc_to_t1w_h5")]),
