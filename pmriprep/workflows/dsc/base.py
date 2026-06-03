@@ -1085,6 +1085,156 @@ def init_dsc_smoothing_wf(
     return workflow
 
 
+def init_dsc_lesion_stats_wf(
+    *,
+    subject_id: str,
+    session_id: Optional[str],
+    name: str = "dsc_lesion_stats_wf",
+) -> pe.Workflow:
+    """Build the DSC lesion / ROI / user-mask statistics sub-workflow.
+
+    Extracts per-region perfusion statistics from the DSC parameter maps within
+    three (independently optional) masks: the tumor-segmentation lesion mask, a
+    user-supplied ROI mask, and a user-supplied lesion mask. The perfusion maps,
+    NAWM reference, field strength, and AIF QC are shared across all three
+    extractions; the ROI and user-lesion extractions force a binary mask.
+
+    Parameters
+    ----------
+    subject_id : str
+        BIDS subject label.
+    session_id : str or None
+        BIDS session label.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The lesion-statistics sub-workflow.
+
+    Inputs
+    ------
+    cbf_map, cbv_map, mtt_map, tmax_map, ttp_map, ttp_corrected_map, rttp_map
+        DSC perfusion and transit-time maps (shared by all three nodes).
+    psr_map, ph_map
+        Percentage signal recovery and peak height.
+    auc_corr_map, auc_diff_map, rel_auc_corr_map, k2_map
+        Leakage maps.
+    ncbv_map, ncbf_map
+        Normalized CBV / CBF maps.
+    nawm_mask
+        NAWM reference mask.
+    field_strength_t
+        Field strength (Tesla).
+    aif_qc
+        AIF QC-metrics dict (surfaced into the stats sidecars).
+    tumor_lesion_mask, mask_origin
+        Tumor-segmentation lesion mask (DSC space) and its provenance label.
+    roi_mask
+        Validated user ROI mask (DSC native space).
+    user_mask
+        Validated user lesion mask (DSC native space).
+
+    Outputs
+    -------
+    lesion_stats_json
+        Tumor-lesion statistics sidecar.
+    roi_stats_json
+        User-ROI statistics sidecar.
+    user_lesion_stats_json
+        User-lesion statistics sidecar.
+    """
+    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "cbf_map",
+                "cbv_map",
+                "mtt_map",
+                "tmax_map",
+                "psr_map",
+                "ph_map",
+                "ttp_map",
+                "ttp_corrected_map",
+                "rttp_map",
+                "auc_corr_map",
+                "auc_diff_map",
+                "rel_auc_corr_map",
+                "k2_map",
+                "ncbv_map",
+                "ncbf_map",
+                "nawm_mask",
+                "field_strength_t",
+                "aif_qc",
+                "tumor_lesion_mask",
+                "mask_origin",
+                "roi_mask",
+                "user_mask",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=["lesion_stats_json", "roi_stats_json", "user_lesion_stats_json"]
+        ),
+        name="outputnode",
+    )
+
+    lesion_stats = pe.Node(DSCLesionStats(), name="lesion_stats")
+    lesion_stats.inputs.subject_id = subject_id
+    lesion_stats.inputs.session_id = session_id
+
+    roi_stats = pe.Node(DSCLesionStats(force_binary=True), name="roi_stats")
+    roi_stats.inputs.subject_id = subject_id
+    roi_stats.inputs.session_id = session_id
+
+    user_lesion_stats = pe.Node(
+        DSCLesionStats(force_binary=True), name="user_lesion_stats"
+    )
+    user_lesion_stats.inputs.subject_id = subject_id
+    user_lesion_stats.inputs.session_id = session_id
+
+    # Perfusion maps + NAWM + field strength + AIF QC are shared by all three
+    # stats nodes; the lesion mask differs (tumor-seg / ROI / user), and only
+    # the tumor-seg node receives the mask-origin provenance label.
+    shared_inputs = [
+        ("cbf_map", "cbf_map"),
+        ("cbv_map", "cbv_map"),
+        ("mtt_map", "mtt_map"),
+        ("tmax_map", "tmax_map"),
+        ("psr_map", "psr_map"),
+        ("ph_map", "ph_map"),
+        ("ttp_map", "ttp_map"),
+        ("ttp_corrected_map", "ttp_corrected_map"),
+        ("rttp_map", "rttp_map"),
+        ("auc_corr_map", "auc_corr_map"),
+        ("auc_diff_map", "auc_diff_map"),
+        ("rel_auc_corr_map", "rel_auc_corr_map"),
+        ("k2_map", "k2_map"),
+        ("ncbv_map", "ncbv_map"),
+        ("ncbf_map", "ncbf_map"),
+        ("nawm_mask", "nawm_mask"),
+        ("field_strength_t", "field_strength_t"),
+        ("aif_qc", "aif_qc"),
+    ]
+    workflow.connect([
+        (inputnode, lesion_stats, shared_inputs + [
+            ("tumor_lesion_mask", "lesion_mask"),
+            ("mask_origin", "mask_origin"),
+        ]),
+        (inputnode, roi_stats, shared_inputs + [("roi_mask", "lesion_mask")]),
+        (inputnode, user_lesion_stats, shared_inputs + [("user_mask", "lesion_mask")]),
+        (lesion_stats, outputnode, [("stats_json", "lesion_stats_json")]),
+        (roi_stats, outputnode, [("stats_json", "roi_stats_json")]),
+        (user_lesion_stats, outputnode, [("stats_json", "user_lesion_stats_json")]),
+    ])
+    return workflow
+
+
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1609,17 +1759,12 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 6f: Lesion Statistics Extraction
-    # Conditional - only run if lesion mask is available
+    # Node 6f: Lesion / ROI / user-mask statistics extraction
     # -------------------------------------------------------------------
-    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
-
-    lesion_stats = pe.Node(
-        DSCLesionStats(),
-        name="lesion_stats",
+    lesion_stats_wf = init_dsc_lesion_stats_wf(
+        subject_id=subject_id,
+        session_id=session_id,
     )
-    lesion_stats.inputs.subject_id = subject_id
-    lesion_stats.inputs.session_id = session_id
 
     normalization_wf = init_dsc_normalization_wf(
         derivatives_dir=derivatives_dir,
@@ -2163,135 +2308,51 @@ def init_dsc_preproc_wf(
         (registration_wf, transform_enhancing_mask, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
     ])
 
-    # Lesion statistics extraction
-    # Connect lesion mask in DSC space
+    # -------------------------------------------------------------------
+    # Lesion / ROI / user-mask statistics: feed the stats sub-workflow.
+    # The perfusion maps + NAWM + field strength + AIF QC are shared by all
+    # three stats nodes (fanned out inside the sub-wf); the three lesion masks
+    # (tumor-seg, user ROI, user lesion) route to their respective nodes.
+    # -------------------------------------------------------------------
     workflow.connect([
-        (transform_lesion, lesion_stats, [("lesion_mask_dsc_file", "lesion_mask")]),
-        (combine_masks, lesion_stats, [("mask_origin", "mask_origin")]),
-        (transform_nawm, lesion_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
-        (inputnode, lesion_stats, [("field_strength", "field_strength_t")]),
-    ])
-    # Connect perfusion maps
-    workflow.connect([
-        (deconvolution_wf, lesion_stats, [
-            ("outputnode.out_rel_cbf", "cbf_map"),
-            ("outputnode.out_rel_cbv_auc", "cbv_map"),
-            ("outputnode.out_mtt", "mtt_map"),
-            ("outputnode.out_tmax", "tmax_map"),
-            ("outputnode.out_psr", "psr_map"),
-            ("outputnode.out_ph", "ph_map"),
-            ("outputnode.out_ttp", "ttp_map"),
-            ("outputnode.out_ttp_corrected", "ttp_corrected_map"),
-            ("outputnode.out_rttp", "rttp_map"),
-            ("outputnode.out_auc_corr", "auc_corr_map"),
-            ("outputnode.out_auc_diff", "auc_diff_map"),
-            ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
+        (deconvolution_wf, lesion_stats_wf, [
+            ("outputnode.out_rel_cbf", "inputnode.cbf_map"),
+            ("outputnode.out_rel_cbv_auc", "inputnode.cbv_map"),
+            ("outputnode.out_mtt", "inputnode.mtt_map"),
+            ("outputnode.out_tmax", "inputnode.tmax_map"),
+            ("outputnode.out_psr", "inputnode.psr_map"),
+            ("outputnode.out_ph", "inputnode.ph_map"),
+            ("outputnode.out_ttp", "inputnode.ttp_map"),
+            ("outputnode.out_ttp_corrected", "inputnode.ttp_corrected_map"),
+            ("outputnode.out_rttp", "inputnode.rttp_map"),
+            ("outputnode.out_auc_corr", "inputnode.auc_corr_map"),
+            ("outputnode.out_auc_diff", "inputnode.auc_diff_map"),
+            ("outputnode.out_rel_auc_corr", "inputnode.rel_auc_corr_map"),
+            ("outputnode.out_k2", "inputnode.k2_map"),
         ]),
-        (normalization_wf, lesion_stats, [("outputnode.ncbv_file", "ncbv_map")]),
-        (normalization_wf, lesion_stats, [("outputnode.ncbf_file", "ncbf_map")]),
-        (deconvolution_wf, lesion_stats, [("outputnode.out_k2", "k2_map")]),
-        # AIF provenance — surface PerfusionProcessing.AIF block in
-        # the lesion-stats sidecar.
-        (conc_aif_wf, lesion_stats, [("outputnode.qc_metrics", "aif_qc")]),
+        (normalization_wf, lesion_stats_wf, [
+            ("outputnode.ncbv_file", "inputnode.ncbv_map"),
+            ("outputnode.ncbf_file", "inputnode.ncbf_map"),
+        ]),
+        (conc_aif_wf, lesion_stats_wf, [("outputnode.qc_metrics", "inputnode.aif_qc")]),
+        (transform_nawm, lesion_stats_wf, [("nawm_mask_dsc_file", "inputnode.nawm_mask")]),
+        (inputnode, lesion_stats_wf, [("field_strength", "inputnode.field_strength_t")]),
+        (transform_lesion, lesion_stats_wf, [("lesion_mask_dsc_file", "inputnode.tumor_lesion_mask")]),
+        (combine_masks, lesion_stats_wf, [("mask_origin", "inputnode.mask_origin")]),
+        (validate_roi_mask, lesion_stats_wf, [("validated_mask", "inputnode.roi_mask")]),
+        (validate_user_lesion_mask, lesion_stats_wf, [("validated_mask", "inputnode.user_mask")]),
     ])
-    # Connect lesion stats outputs to outputnode
+
+    # Stats sub-workflow outputs + the DSC-space masks they were computed on
+    # (the masks come from transform/validate nodes that stay in the parent).
     workflow.connect([
         (transform_lesion, outputnode, [("lesion_mask_dsc_file", "lesion_mask_dsc")]),
-        (lesion_stats, outputnode, [
-            ("stats_json", "lesion_stats_json"),
-        ]),
-    ])
-
-    # -------------------------------------------------------------------
-    # ROI statistics (conditional on roi_mask input)
-    # roi_mask is user-supplied in DSC native space — no FLIRT transform.
-    # -------------------------------------------------------------------
-    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats as _DSCLesionStatsROI
-
-    roi_stats = pe.Node(
-        _DSCLesionStatsROI(force_binary=True),
-        name="roi_stats",
-    )
-    roi_stats.inputs.subject_id = subject_id
-    roi_stats.inputs.session_id = session_id
-
-    # Connect validated ROI mask
-    workflow.connect([
-        (validate_roi_mask, roi_stats, [("validated_mask", "lesion_mask")]),
-        (transform_nawm, roi_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
-        (inputnode, roi_stats, [("field_strength", "field_strength_t")]),
-        (deconvolution_wf, roi_stats, [
-            ("outputnode.out_rel_cbf", "cbf_map"),
-            ("outputnode.out_rel_cbv_auc", "cbv_map"),
-            ("outputnode.out_mtt", "mtt_map"),
-            ("outputnode.out_tmax", "tmax_map"),
-            ("outputnode.out_psr", "psr_map"),
-            ("outputnode.out_ph", "ph_map"),
-            ("outputnode.out_ttp", "ttp_map"),
-            ("outputnode.out_ttp_corrected", "ttp_corrected_map"),
-            ("outputnode.out_rttp", "rttp_map"),
-            ("outputnode.out_auc_corr", "auc_corr_map"),
-            ("outputnode.out_auc_diff", "auc_diff_map"),
-            ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
-        ]),
-        (normalization_wf, roi_stats, [("outputnode.ncbv_file", "ncbv_map")]),
-        (normalization_wf, roi_stats, [("outputnode.ncbf_file", "ncbf_map")]),
-        (deconvolution_wf, roi_stats, [("outputnode.out_k2", "k2_map")]),
-        (conc_aif_wf, roi_stats, [("outputnode.qc_metrics", "aif_qc")]),
-    ])
-    # Connect ROI stats outputs to outputnode
-    workflow.connect([
         (validate_roi_mask, outputnode, [("validated_mask", "roi_mask_dsc")]),
-        (roi_stats, outputnode, [
-            ("stats_json", "roi_stats_json"),
-        ]),
-    ])
-
-    # -------------------------------------------------------------------
-    # User lesion statistics (conditional on user_lesion_mask input)
-    # user_lesion_mask is in DSC native space — no FLIRT transform.
-    # Additive: runs alongside tumor seg lesion_stats when both exist.
-    # -------------------------------------------------------------------
-    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats as _DSCLesionStatsUser
-
-    user_lesion_stats = pe.Node(
-        _DSCLesionStatsUser(force_binary=True),
-        name="user_lesion_stats",
-    )
-    user_lesion_stats.inputs.subject_id = subject_id
-    user_lesion_stats.inputs.session_id = session_id
-
-    workflow.connect([
-        (validate_user_lesion_mask, user_lesion_stats, [
-            ("validated_mask", "lesion_mask"),
-        ]),
-        (transform_nawm, user_lesion_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
-        (inputnode, user_lesion_stats, [("field_strength", "field_strength_t")]),
-        (deconvolution_wf, user_lesion_stats, [
-            ("outputnode.out_rel_cbf", "cbf_map"),
-            ("outputnode.out_rel_cbv_auc", "cbv_map"),
-            ("outputnode.out_mtt", "mtt_map"),
-            ("outputnode.out_tmax", "tmax_map"),
-            ("outputnode.out_psr", "psr_map"),
-            ("outputnode.out_ph", "ph_map"),
-            ("outputnode.out_ttp", "ttp_map"),
-            ("outputnode.out_ttp_corrected", "ttp_corrected_map"),
-            ("outputnode.out_rttp", "rttp_map"),
-            ("outputnode.out_auc_corr", "auc_corr_map"),
-            ("outputnode.out_auc_diff", "auc_diff_map"),
-            ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
-        ]),
-        (normalization_wf, user_lesion_stats, [("outputnode.ncbv_file", "ncbv_map")]),
-        (normalization_wf, user_lesion_stats, [("outputnode.ncbf_file", "ncbf_map")]),
-        (deconvolution_wf, user_lesion_stats, [("outputnode.out_k2", "k2_map")]),
-        (conc_aif_wf, user_lesion_stats, [("outputnode.qc_metrics", "aif_qc")]),
-    ])
-    workflow.connect([
-        (validate_user_lesion_mask, outputnode, [
-            ("validated_mask", "user_lesion_mask_dsc"),
-        ]),
-        (user_lesion_stats, outputnode, [
-            ("stats_json", "user_lesion_stats_json"),
+        (validate_user_lesion_mask, outputnode, [("validated_mask", "user_lesion_mask_dsc")]),
+        (lesion_stats_wf, outputnode, [
+            ("outputnode.lesion_stats_json", "lesion_stats_json"),
+            ("outputnode.roi_stats_json", "roi_stats_json"),
+            ("outputnode.user_lesion_stats_json", "user_lesion_stats_json"),
         ]),
     ])
 
