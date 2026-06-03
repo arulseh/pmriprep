@@ -635,6 +635,203 @@ def init_dsc_registration_wf(
     return workflow
 
 
+def init_dsc_deconvolution_wf(
+    *,
+    dsc_map_kwargs: dict[str, Any],
+    mem_gb: float,
+    name: str = "dsc_deconvolution_wf",
+) -> pe.Workflow:
+    """Build the DSC deconvolution (perfusion-map computation) sub-workflow.
+
+    Wraps :class:`~pmriprep.interfaces.dsc_compute.ComputeDSCMaps`, which performs
+    residue-function deconvolution to produce CBF/CBV/MTT/Tmax and leakage (K2)
+    maps from the leakage-corrected concentration time series and the AIF.
+
+    Parameters
+    ----------
+    dsc_map_kwargs : dict
+        Keyword arguments forwarded verbatim to ``ComputeDSCMaps`` (method,
+        thresholds, inference settings, ``random_seed`` when set, etc.). Built by
+        the orchestrator from the run configuration.
+    mem_gb : float
+        Memory estimate (GB) for the deconvolution node.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The deconvolution sub-workflow.
+
+    Inputs
+    ------
+    concentration_file, signal_file, raw_concentration_file
+        Leakage-corrected and raw concentration / signal time series.
+    aif_file, measured_aif_file, aif_mask_file, aif_best_coord, aif_detection_level, baseline_frames
+        Arterial input function and detection provenance.
+    k2_map_input_file, preload_classification
+        Preload-detection leakage inputs.
+    brain_mask_file, enhancing_mask_file, nawm_mask_file
+        DSC-space masks (brain, enhancing tumor, NAWM for rTTP normalization).
+    tr, te, field_strength, fd_values
+        Acquisition parameters and framewise displacement.
+
+    Outputs
+    -------
+    out_rel_cbf, out_rel_cbv, out_rel_cbv_auc, out_rel_auc_raw, out_rel_auc_corr
+        Relative perfusion and AUC maps.
+    out_mtt, out_tmax, out_ttp, out_ttp_corrected, out_rttp
+        Transit-time and timing maps.
+    out_psr, out_ph
+        Percentage signal recovery and peak height.
+    out_auc_raw, out_auc_corr, out_auc_diff, out_k2
+        Leakage (blood-brain-barrier) maps.
+    out_cnr, out_snr, out_tsnr
+        Quality maps.
+    out_alpha, out_beta, out_cth
+        Vascular-model parameters (undefined for SVD methods).
+    out_cbf_std, out_cbv_std, out_cbf_cv, out_cbv_cv, out_cbf_ci95_lower, out_cbf_ci95_upper, out_cbv_ci95_lower, out_cbv_ci95_upper
+        Bayesian uncertainty maps (parametric methods only).
+    out_parametric_r2, out_fallback_mask
+        Parametric-fit diagnostics (CPI / vascular only).
+    out_qc_fit_data, qc_metrics
+        Deconvolution QC-fit data and the QC ``qc_metrics`` dict.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "concentration_file",
+                "k2_map_input_file",
+                "aif_file",
+                "measured_aif_file",
+                "aif_mask_file",
+                "aif_best_coord",
+                "aif_detection_level",
+                "baseline_frames",
+                "brain_mask_file",
+                "enhancing_mask_file",
+                "tr",
+                "te",
+                "field_strength",
+                "fd_values",
+                "signal_file",
+                "raw_concentration_file",
+                "preload_classification",
+                "nawm_mask_file",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "out_rel_cbf",
+                "out_rel_cbv",
+                "out_rel_cbv_auc",
+                "out_rel_auc_raw",
+                "out_rel_auc_corr",
+                "out_mtt",
+                "out_tmax",
+                "out_psr",
+                "out_ph",
+                "out_ttp",
+                "out_ttp_corrected",
+                "out_rttp",
+                "out_cnr",
+                "out_auc_raw",
+                "out_auc_corr",
+                "out_auc_diff",
+                "out_k2",
+                "out_snr",
+                "out_tsnr",
+                "out_alpha",
+                "out_beta",
+                "out_cth",
+                "out_cbf_std",
+                "out_cbv_std",
+                "out_cbf_cv",
+                "out_cbv_cv",
+                "out_cbf_ci95_lower",
+                "out_cbf_ci95_upper",
+                "out_cbv_ci95_lower",
+                "out_cbv_ci95_upper",
+                "out_parametric_r2",
+                "out_fallback_mask",
+                "out_qc_fit_data",
+                "qc_metrics",
+            ]
+        ),
+        name="outputnode",
+    )
+
+    compute_maps = pe.Node(
+        ComputeDSCMaps(**dsc_map_kwargs),
+        name="compute_maps",
+        mem_gb=mem_gb,
+    )
+
+    workflow.connect([
+        (inputnode, compute_maps, [
+            ("concentration_file", "concentration_file"),
+            ("k2_map_input_file", "k2_map_input_file"),
+            ("aif_file", "aif_file"),
+            ("measured_aif_file", "measured_aif_file"),
+            ("aif_mask_file", "aif_mask_file"),
+            ("aif_best_coord", "aif_best_coord"),
+            ("aif_detection_level", "aif_detection_level"),
+            ("baseline_frames", "baseline_frames"),
+            ("brain_mask_file", "brain_mask_file"),
+            ("enhancing_mask_file", "enhancing_mask_file"),
+            ("tr", "tr"),
+            ("te", "te"),
+            ("field_strength", "field_strength"),
+            ("fd_values", "fd_values"),
+            ("signal_file", "signal_file"),
+            ("raw_concentration_file", "raw_concentration_file"),
+            ("preload_classification", "preload_classification"),
+            ("nawm_mask_file", "nawm_mask_file"),
+        ]),
+        (compute_maps, outputnode, [
+            ("out_rel_cbf", "out_rel_cbf"),
+            ("out_rel_cbv", "out_rel_cbv"),
+            ("out_rel_cbv_auc", "out_rel_cbv_auc"),
+            ("out_rel_auc_raw", "out_rel_auc_raw"),
+            ("out_rel_auc_corr", "out_rel_auc_corr"),
+            ("out_mtt", "out_mtt"),
+            ("out_tmax", "out_tmax"),
+            ("out_psr", "out_psr"),
+            ("out_ph", "out_ph"),
+            ("out_ttp", "out_ttp"),
+            ("out_ttp_corrected", "out_ttp_corrected"),
+            ("out_rttp", "out_rttp"),
+            ("out_cnr", "out_cnr"),
+            ("out_auc_raw", "out_auc_raw"),
+            ("out_auc_corr", "out_auc_corr"),
+            ("out_auc_diff", "out_auc_diff"),
+            ("out_k2", "out_k2"),
+            ("out_snr", "out_snr"),
+            ("out_tsnr", "out_tsnr"),
+            ("out_alpha", "out_alpha"),
+            ("out_beta", "out_beta"),
+            ("out_cth", "out_cth"),
+            ("out_cbf_std", "out_cbf_std"),
+            ("out_cbv_std", "out_cbv_std"),
+            ("out_cbf_cv", "out_cbf_cv"),
+            ("out_cbv_cv", "out_cbv_cv"),
+            ("out_cbf_ci95_lower", "out_cbf_ci95_lower"),
+            ("out_cbf_ci95_upper", "out_cbf_ci95_upper"),
+            ("out_cbv_ci95_lower", "out_cbv_ci95_lower"),
+            ("out_cbv_ci95_upper", "out_cbv_ci95_upper"),
+            ("out_parametric_r2", "out_parametric_r2"),
+            ("out_fallback_mask", "out_fallback_mask"),
+            ("out_qc_fit_data", "out_qc_fit_data"),
+            ("qc_metrics", "qc_metrics"),
+        ]),
+    ])
+    return workflow
+
+
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1029,9 +1226,8 @@ def init_dsc_preproc_wf(
     )
     if random_seed is not None:
         dsc_map_kwargs["random_seed"] = random_seed
-    compute_maps = pe.Node(
-        ComputeDSCMaps(**dsc_map_kwargs),
-        name="compute_maps",
+    deconvolution_wf = init_dsc_deconvolution_wf(
+        dsc_map_kwargs=dsc_map_kwargs,
         mem_gb=_heavy_mem,
     )
 
@@ -1551,38 +1747,38 @@ def init_dsc_preproc_wf(
     # Preload Correction to DSC Map Computation
     # Use DSC-space brain mask for proper geometry match
     workflow.connect([
-        (preload_wf, compute_maps, [
-            ("outputnode.corrected_concentration_file", "concentration_file"),
-            ("outputnode.k2_map_file", "k2_map_input_file"),
+        (preload_wf, deconvolution_wf, [
+            ("outputnode.corrected_concentration_file", "inputnode.concentration_file"),
+            ("outputnode.k2_map_file", "inputnode.k2_map_input_file"),
         ]),
-        (conc_aif_wf, compute_maps, [
-            ("outputnode.out_aif_curve", "aif_file"),
-            ("outputnode.out_measured_aif_curve", "measured_aif_file"),
-            ("outputnode.out_aif_mask", "aif_mask_file"),
-            ("outputnode.out_aif_coord", "aif_best_coord"),
-            ("outputnode.detection_level", "aif_detection_level"),
-            ("outputnode.aif_baseline_frames", "baseline_frames"),
+        (conc_aif_wf, deconvolution_wf, [
+            ("outputnode.out_aif_curve", "inputnode.aif_file"),
+            ("outputnode.out_measured_aif_curve", "inputnode.measured_aif_file"),
+            ("outputnode.out_aif_mask", "inputnode.aif_mask_file"),
+            ("outputnode.out_aif_coord", "inputnode.aif_best_coord"),
+            ("outputnode.detection_level", "inputnode.aif_detection_level"),
+            ("outputnode.aif_baseline_frames", "inputnode.baseline_frames"),
         ]),
-        (hdbet_dsc, compute_maps, [
-            ("dsc_brain_mask_file", "brain_mask_file"),
+        (hdbet_dsc, deconvolution_wf, [
+            ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
         ]),
-        (transform_enhancing_mask, compute_maps, [
-            ("lesion_mask_dsc_file", "enhancing_mask_file"),
+        (transform_enhancing_mask, deconvolution_wf, [
+            ("lesion_mask_dsc_file", "inputnode.enhancing_mask_file"),
         ]),
-        (inputnode, compute_maps, [
-            ("tr", "tr"),
-            ("te", "te"),
-            ("field_strength", "field_strength"),
+        (inputnode, deconvolution_wf, [
+            ("tr", "inputnode.tr"),
+            ("te", "inputnode.te"),
+            ("field_strength", "inputnode.field_strength"),
         ]),
-        (motion_wf, compute_maps, [
-            ("outputnode.fd_values", "fd_values"),
+        (motion_wf, deconvolution_wf, [
+            ("outputnode.fd_values", "inputnode.fd_values"),
         ]),
-        (conc_aif_wf, compute_maps, [
-            ("outputnode.signal_file", "signal_file"),
-            ("outputnode.concentration_file", "raw_concentration_file"),
+        (conc_aif_wf, deconvolution_wf, [
+            ("outputnode.signal_file", "inputnode.signal_file"),
+            ("outputnode.concentration_file", "inputnode.raw_concentration_file"),
         ]),
-        (preload_wf, compute_maps, [
-            ("outputnode.preload_classification", "preload_classification"),
+        (preload_wf, deconvolution_wf, [
+            ("outputnode.preload_classification", "inputnode.preload_classification"),
         ]),
     ])
 
@@ -1650,15 +1846,15 @@ def init_dsc_preproc_wf(
 
     # Wire NAWM mask to compute_maps for rTTP normalization
     workflow.connect([
-        (transform_nawm, compute_maps, [
-            ("nawm_mask_dsc_file", "nawm_mask_file"),
+        (transform_nawm, deconvolution_wf, [
+            ("nawm_mask_dsc_file", "inputnode.nawm_mask_file"),
         ]),
     ])
 
     # DSC Map Computation to CBV Normalization (uses relative CBV)
     # Use DSC-space brain mask for fallback normalization
     workflow.connect([
-        (compute_maps, normalize, [("out_rel_cbv_auc", "cbv_file")]),
+        (deconvolution_wf, normalize, [("outputnode.out_rel_cbv_auc", "cbv_file")]),
         (transform_nawm, normalize, [
             ("nawm_mask_dsc_file", "nawm_mask_file"),
         ]),
@@ -1669,7 +1865,7 @@ def init_dsc_preproc_wf(
 
     # DSC Map Computation to CBF Normalization (uses relative CBF)
     workflow.connect([
-        (compute_maps, normalize_cbf, [("out_rel_cbf", "cbf_file")]),
+        (deconvolution_wf, normalize_cbf, [("outputnode.out_rel_cbf", "cbf_file")]),
         (transform_nawm, normalize_cbf, [
             ("nawm_mask_dsc_file", "nawm_mask_file"),
         ]),
@@ -1718,25 +1914,25 @@ def init_dsc_preproc_wf(
 
     # DSC Parameter Maps QC
     workflow.connect([
-        (compute_maps, dsc_param_maps_qc, [
-            ("out_rel_cbf", "rel_cbf_file"),
-            ("out_rel_cbv_auc", "rel_cbv_file"),
-            ("out_mtt", "mtt_file"),
-            ("out_tmax", "tmax_file"),
-            ("out_psr", "psr_file"),
-            ("out_ttp_corrected", "ttp_file"),
+        (deconvolution_wf, dsc_param_maps_qc, [
+            ("outputnode.out_rel_cbf", "rel_cbf_file"),
+            ("outputnode.out_rel_cbv_auc", "rel_cbv_file"),
+            ("outputnode.out_mtt", "mtt_file"),
+            ("outputnode.out_tmax", "tmax_file"),
+            ("outputnode.out_psr", "psr_file"),
+            ("outputnode.out_ttp_corrected", "ttp_file"),
         ]),
         (hdbet_dsc, dsc_param_maps_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
     ])
 
     # DSC Leakage Correction QC
     workflow.connect([
-        (compute_maps, dsc_leakage_qc, [
-            ("out_k2", "k2_map_file"),
-            ("out_auc_raw", "auc_raw_file"),
-            ("out_auc_corr", "auc_corr_file"),
-            ("out_auc_diff", "auc_diff_file"),
-            ("out_psr", "psr_file"),
+        (deconvolution_wf, dsc_leakage_qc, [
+            ("outputnode.out_k2", "k2_map_file"),
+            ("outputnode.out_auc_raw", "auc_raw_file"),
+            ("outputnode.out_auc_corr", "auc_corr_file"),
+            ("outputnode.out_auc_diff", "auc_diff_file"),
+            ("outputnode.out_psr", "psr_file"),
         ]),
         (hdbet_dsc, dsc_leakage_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
         (conc_aif_wf, dsc_leakage_qc, [("outputnode.concentration_file", "concentration_file")]),
@@ -1749,9 +1945,9 @@ def init_dsc_preproc_wf(
 
     # DSC Fit QC (all deconvolution methods)
     workflow.connect([
-        (compute_maps, dsc_fit_qc, [
-            ("out_qc_fit_data", "qc_fit_data_file"),
-            ("out_rel_cbf", "cbf_file"),
+        (deconvolution_wf, dsc_fit_qc, [
+            ("outputnode.out_qc_fit_data", "qc_fit_data_file"),
+            ("outputnode.out_rel_cbf", "cbf_file"),
         ]),
         (hdbet_dsc, dsc_fit_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
     ])
@@ -1793,23 +1989,23 @@ def init_dsc_preproc_wf(
     ])
     # Connect perfusion maps
     workflow.connect([
-        (compute_maps, lesion_stats, [
-            ("out_rel_cbf", "cbf_map"),
-            ("out_rel_cbv_auc", "cbv_map"),
-            ("out_mtt", "mtt_map"),
-            ("out_tmax", "tmax_map"),
-            ("out_psr", "psr_map"),
-            ("out_ph", "ph_map"),
-            ("out_ttp", "ttp_map"),
-            ("out_ttp_corrected", "ttp_corrected_map"),
-            ("out_rttp", "rttp_map"),
-            ("out_auc_corr", "auc_corr_map"),
-            ("out_auc_diff", "auc_diff_map"),
-            ("out_rel_auc_corr", "rel_auc_corr_map"),
+        (deconvolution_wf, lesion_stats, [
+            ("outputnode.out_rel_cbf", "cbf_map"),
+            ("outputnode.out_rel_cbv_auc", "cbv_map"),
+            ("outputnode.out_mtt", "mtt_map"),
+            ("outputnode.out_tmax", "tmax_map"),
+            ("outputnode.out_psr", "psr_map"),
+            ("outputnode.out_ph", "ph_map"),
+            ("outputnode.out_ttp", "ttp_map"),
+            ("outputnode.out_ttp_corrected", "ttp_corrected_map"),
+            ("outputnode.out_rttp", "rttp_map"),
+            ("outputnode.out_auc_corr", "auc_corr_map"),
+            ("outputnode.out_auc_diff", "auc_diff_map"),
+            ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
         ]),
         (normalize, lesion_stats, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, lesion_stats, [("ncbf_file", "ncbf_map")]),
-        (compute_maps, lesion_stats, [("out_k2", "k2_map")]),
+        (deconvolution_wf, lesion_stats, [("outputnode.out_k2", "k2_map")]),
         # AIF provenance — surface PerfusionProcessing.AIF block in
         # the lesion-stats sidecar.
         (conc_aif_wf, lesion_stats, [("outputnode.qc_metrics", "aif_qc")]),
@@ -1840,23 +2036,23 @@ def init_dsc_preproc_wf(
         (validate_roi_mask, roi_stats, [("validated_mask", "lesion_mask")]),
         (transform_nawm, roi_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
         (inputnode, roi_stats, [("field_strength", "field_strength_t")]),
-        (compute_maps, roi_stats, [
-            ("out_rel_cbf", "cbf_map"),
-            ("out_rel_cbv_auc", "cbv_map"),
-            ("out_mtt", "mtt_map"),
-            ("out_tmax", "tmax_map"),
-            ("out_psr", "psr_map"),
-            ("out_ph", "ph_map"),
-            ("out_ttp", "ttp_map"),
-            ("out_ttp_corrected", "ttp_corrected_map"),
-            ("out_rttp", "rttp_map"),
-            ("out_auc_corr", "auc_corr_map"),
-            ("out_auc_diff", "auc_diff_map"),
-            ("out_rel_auc_corr", "rel_auc_corr_map"),
+        (deconvolution_wf, roi_stats, [
+            ("outputnode.out_rel_cbf", "cbf_map"),
+            ("outputnode.out_rel_cbv_auc", "cbv_map"),
+            ("outputnode.out_mtt", "mtt_map"),
+            ("outputnode.out_tmax", "tmax_map"),
+            ("outputnode.out_psr", "psr_map"),
+            ("outputnode.out_ph", "ph_map"),
+            ("outputnode.out_ttp", "ttp_map"),
+            ("outputnode.out_ttp_corrected", "ttp_corrected_map"),
+            ("outputnode.out_rttp", "rttp_map"),
+            ("outputnode.out_auc_corr", "auc_corr_map"),
+            ("outputnode.out_auc_diff", "auc_diff_map"),
+            ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
         ]),
         (normalize, roi_stats, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, roi_stats, [("ncbf_file", "ncbf_map")]),
-        (compute_maps, roi_stats, [("out_k2", "k2_map")]),
+        (deconvolution_wf, roi_stats, [("outputnode.out_k2", "k2_map")]),
         (conc_aif_wf, roi_stats, [("outputnode.qc_metrics", "aif_qc")]),
     ])
     # Connect ROI stats outputs to outputnode
@@ -1887,23 +2083,23 @@ def init_dsc_preproc_wf(
         ]),
         (transform_nawm, user_lesion_stats, [("nawm_mask_dsc_file", "nawm_mask")]),
         (inputnode, user_lesion_stats, [("field_strength", "field_strength_t")]),
-        (compute_maps, user_lesion_stats, [
-            ("out_rel_cbf", "cbf_map"),
-            ("out_rel_cbv_auc", "cbv_map"),
-            ("out_mtt", "mtt_map"),
-            ("out_tmax", "tmax_map"),
-            ("out_psr", "psr_map"),
-            ("out_ph", "ph_map"),
-            ("out_ttp", "ttp_map"),
-            ("out_ttp_corrected", "ttp_corrected_map"),
-            ("out_rttp", "rttp_map"),
-            ("out_auc_corr", "auc_corr_map"),
-            ("out_auc_diff", "auc_diff_map"),
-            ("out_rel_auc_corr", "rel_auc_corr_map"),
+        (deconvolution_wf, user_lesion_stats, [
+            ("outputnode.out_rel_cbf", "cbf_map"),
+            ("outputnode.out_rel_cbv_auc", "cbv_map"),
+            ("outputnode.out_mtt", "mtt_map"),
+            ("outputnode.out_tmax", "tmax_map"),
+            ("outputnode.out_psr", "psr_map"),
+            ("outputnode.out_ph", "ph_map"),
+            ("outputnode.out_ttp", "ttp_map"),
+            ("outputnode.out_ttp_corrected", "ttp_corrected_map"),
+            ("outputnode.out_rttp", "rttp_map"),
+            ("outputnode.out_auc_corr", "auc_corr_map"),
+            ("outputnode.out_auc_diff", "auc_diff_map"),
+            ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
         ]),
         (normalize, user_lesion_stats, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, user_lesion_stats, [("ncbf_file", "ncbf_map")]),
-        (compute_maps, user_lesion_stats, [("out_k2", "k2_map")]),
+        (deconvolution_wf, user_lesion_stats, [("outputnode.out_k2", "k2_map")]),
         (conc_aif_wf, user_lesion_stats, [("outputnode.qc_metrics", "aif_qc")]),
     ])
     workflow.connect([
@@ -1973,10 +2169,10 @@ def init_dsc_preproc_wf(
             name="build_hemo_dict",
         )
         workflow.connect([
-            (compute_maps, build_hemo_dict, [
-                ("out_mtt", "mtt"),
-                ("out_rel_cbf", "rel_cbf"),
-                ("out_rel_cbv_auc", "rel_cbv"),
+            (deconvolution_wf, build_hemo_dict, [
+                ("outputnode.out_mtt", "mtt"),
+                ("outputnode.out_rel_cbf", "rel_cbf"),
+                ("outputnode.out_rel_cbv_auc", "rel_cbv"),
             ]),
             (normalize_cbf, build_hemo_dict, [("ncbf_file", "ncbf")]),
             (normalize, build_hemo_dict, [("ncbv_file", "ncbv")]),
@@ -1998,8 +2194,8 @@ def init_dsc_preproc_wf(
             name="build_auc_dict",
         )
         workflow.connect([
-            (compute_maps, build_auc_dict, [
-                ("out_rel_auc_corr", "rel_auc_corr"),
+            (deconvolution_wf, build_auc_dict, [
+                ("outputnode.out_rel_auc_corr", "rel_auc_corr"),
             ]),
             (build_auc_dict, smooth_auc, [("map_dict", "map_files")]),
             (hdbet_dsc, smooth_auc, [
@@ -2012,7 +2208,7 @@ def init_dsc_preproc_wf(
         (motion_wf, merge_qc, [("outputnode.motion_qc_metrics", "motion_qc")]),
         (preload_wf, merge_qc, [("outputnode.qc_dict", "preload_qc")]),
         (conc_aif_wf, merge_qc, [("outputnode.qc_metrics", "aif_qc")]),
-        (compute_maps, merge_qc, [("qc_metrics", "deconv_qc")]),
+        (deconvolution_wf, merge_qc, [("outputnode.qc_metrics", "deconv_qc")]),
         (registration_wf, merge_qc, [("outputnode.qc_metrics", "registration_qc")]),
         (normalize, merge_qc, [("normalization_factor", "normalization_factor")]),
         (motion_wf, merge_qc, [("outputnode.motion_summary", "motion_summary")]),
@@ -2029,52 +2225,52 @@ def init_dsc_preproc_wf(
             ("outputnode.motion_params", "motion_params"),
         ]),
         # Quantification-independent maps
-        (compute_maps, outputnode, [
-            ("out_mtt", "mtt_map"),
-            ("out_tmax", "tmax_map"),
-            ("out_psr", "psr_map"),
-            ("out_ph", "ph_map"),
-            ("out_ttp", "ttp_map"),
-            ("out_ttp_corrected", "ttp_corrected_map"),
-            ("out_rttp", "rttp_map"),
-            ("out_cnr", "cnr_map"),
-            ("out_auc_diff", "auc_diff_map"),
+        (deconvolution_wf, outputnode, [
+            ("outputnode.out_mtt", "mtt_map"),
+            ("outputnode.out_tmax", "tmax_map"),
+            ("outputnode.out_psr", "psr_map"),
+            ("outputnode.out_ph", "ph_map"),
+            ("outputnode.out_ttp", "ttp_map"),
+            ("outputnode.out_ttp_corrected", "ttp_corrected_map"),
+            ("outputnode.out_rttp", "rttp_map"),
+            ("outputnode.out_cnr", "cnr_map"),
+            ("outputnode.out_auc_diff", "auc_diff_map"),
         ]),
         # Relative maps
-        (compute_maps, outputnode, [
-            ("out_rel_cbf", "rel_cbf_map"),
-            ("out_rel_cbv", "rel_cbv_map"),
-            ("out_rel_cbv_auc", "rel_cbv_auc_map"),
-            ("out_rel_auc_raw", "rel_auc_raw_map"),
-            ("out_rel_auc_corr", "rel_auc_corr_map"),
+        (deconvolution_wf, outputnode, [
+            ("outputnode.out_rel_cbf", "rel_cbf_map"),
+            ("outputnode.out_rel_cbv", "rel_cbv_map"),
+            ("outputnode.out_rel_cbv_auc", "rel_cbv_auc_map"),
+            ("outputnode.out_rel_auc_raw", "rel_auc_raw_map"),
+            ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
         ]),
         # Quality metrics
-        (compute_maps, outputnode, [
-            ("out_snr", "snr_map"),
-            ("out_tsnr", "tsnr_map"),
+        (deconvolution_wf, outputnode, [
+            ("outputnode.out_snr", "snr_map"),
+            ("outputnode.out_tsnr", "tsnr_map"),
         ]),
         # Vascular model parameters (optional — undefined for SVD methods)
-        (compute_maps, outputnode, [
-            ("out_alpha", "alpha_map"),
-            ("out_beta", "beta_map"),
-            ("out_cth", "cth_map"),
+        (deconvolution_wf, outputnode, [
+            ("outputnode.out_alpha", "alpha_map"),
+            ("outputnode.out_beta", "beta_map"),
+            ("outputnode.out_cth", "cth_map"),
         ]),
         # Bayesian uncertainty maps (only for parametric methods: cpi, vascular)
-        (compute_maps, outputnode, [
-            ("out_cbf_std", "cbf_std_map"),
-            ("out_cbv_std", "cbv_std_map"),
-            ("out_cbf_cv", "cbf_cv_map"),
-            ("out_cbv_cv", "cbv_cv_map"),
-            ("out_cbf_ci95_lower", "cbf_ci95_lower_map"),
-            ("out_cbf_ci95_upper", "cbf_ci95_upper_map"),
-            ("out_cbv_ci95_lower", "cbv_ci95_lower_map"),
-            ("out_cbv_ci95_upper", "cbv_ci95_upper_map"),
+        (deconvolution_wf, outputnode, [
+            ("outputnode.out_cbf_std", "cbf_std_map"),
+            ("outputnode.out_cbv_std", "cbv_std_map"),
+            ("outputnode.out_cbf_cv", "cbf_cv_map"),
+            ("outputnode.out_cbv_cv", "cbv_cv_map"),
+            ("outputnode.out_cbf_ci95_lower", "cbf_ci95_lower_map"),
+            ("outputnode.out_cbf_ci95_upper", "cbf_ci95_upper_map"),
+            ("outputnode.out_cbv_ci95_lower", "cbv_ci95_lower_map"),
+            ("outputnode.out_cbv_ci95_upper", "cbv_ci95_upper_map"),
         ]),
         # Parametric-fit diagnostics (CPI/Vascular only;
         # undefined for SVD methods)
-        (compute_maps, outputnode, [
-            ("out_parametric_r2", "parametric_r2_map"),
-            ("out_fallback_mask", "fallback_mask"),
+        (deconvolution_wf, outputnode, [
+            ("outputnode.out_parametric_r2", "parametric_r2_map"),
+            ("outputnode.out_fallback_mask", "fallback_mask"),
         ]),
         # AIF outputs
         (conc_aif_wf, outputnode, [
@@ -2083,7 +2279,7 @@ def init_dsc_preproc_wf(
             ("outputnode.qc_metrics", "aif_qc"),
         ]),
         # Leakage correction (use recomputed K2 from compute_maps when baseline differs)
-        (compute_maps, outputnode, [("out_k2", "k2_map")]),
+        (deconvolution_wf, outputnode, [("outputnode.out_k2", "k2_map")]),
         # Normalized CBV and CBF
         (normalize, outputnode, [("ncbv_file", "ncbv_map")]),
         (normalize_cbf, outputnode, [("ncbf_file", "ncbf_map")]),
