@@ -832,6 +832,135 @@ def init_dsc_deconvolution_wf(
     return workflow
 
 
+def init_dsc_normalization_wf(
+    *,
+    derivatives_dir: Union[str, Path],
+    subject_id: str,
+    session_id: Optional[str],
+    name: str = "dsc_normalization_wf",
+) -> pe.Workflow:
+    """Build the DSC CBV / CBF normalization sub-workflow.
+
+    Normalizes the relative CBV and CBF maps to a reference tissue (NAWM when
+    available, else a whole-brain fallback), producing nCBV / nCBF maps and the
+    shared normalization factor. CBV and CBF use the same normalization method.
+
+    Parameters
+    ----------
+    derivatives_dir : str or pathlib.Path
+        Derivatives output directory (forwarded to the normalization nodes).
+    subject_id : str
+        BIDS subject label.
+    session_id : str or None
+        BIDS session label.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The normalization sub-workflow.
+
+    Inputs
+    ------
+    cbv_file
+        Relative CBV map to normalize.
+    cbf_file
+        Relative CBF map to normalize.
+    brain_mask_file
+        DSC-space brain mask (whole-brain fallback reference).
+    nawm_mask_file
+        NAWM mask (preferred normalization reference).
+
+    Outputs
+    -------
+    ncbv_file
+        Normalized CBV map.
+    ncbf_file
+        Normalized CBF map.
+    normalization_factor
+        The CBV normalization factor (surfaced for QC).
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=["cbv_file", "cbf_file", "brain_mask_file", "nawm_mask_file"]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=["ncbv_file", "ncbf_file", "normalization_factor"]
+        ),
+        name="outputnode",
+    )
+
+    # -------------------------------------------------------------------
+    # Node 7: CBV Normalization
+    # -------------------------------------------------------------------
+    normalize = pe.Node(
+        niu.Function(
+            input_names=[
+                "cbv_file",
+                "brain_mask_file",
+                "derivatives_dir",
+                "subject_id",
+                "session_id",
+                "nawm_mask_file",
+            ],
+            output_names=["ncbv_file", "normalization_factor"],
+            function=_normalize_cbv,
+        ),
+        name="normalize",
+    )
+    normalize.inputs.derivatives_dir = str(derivatives_dir)
+    normalize.inputs.subject_id = subject_id
+    normalize.inputs.session_id = session_id
+
+    # -------------------------------------------------------------------
+    # Node 7b: CBF Normalization (same method as CBV normalization)
+    # -------------------------------------------------------------------
+    normalize_cbf = pe.Node(
+        niu.Function(
+            input_names=[
+                "cbf_file",
+                "brain_mask_file",
+                "derivatives_dir",
+                "subject_id",
+                "session_id",
+                "nawm_mask_file",
+            ],
+            output_names=["ncbf_file", "normalization_factor"],
+            function=_normalize_cbf,
+        ),
+        name="normalize_cbf",
+    )
+    normalize_cbf.inputs.derivatives_dir = str(derivatives_dir)
+    normalize_cbf.inputs.subject_id = subject_id
+    normalize_cbf.inputs.session_id = session_id
+
+    workflow.connect([
+        (inputnode, normalize, [
+            ("cbv_file", "cbv_file"),
+            ("brain_mask_file", "brain_mask_file"),
+            ("nawm_mask_file", "nawm_mask_file"),
+        ]),
+        (inputnode, normalize_cbf, [
+            ("cbf_file", "cbf_file"),
+            ("brain_mask_file", "brain_mask_file"),
+            ("nawm_mask_file", "nawm_mask_file"),
+        ]),
+        (normalize, outputnode, [
+            ("ncbv_file", "ncbv_file"),
+            ("normalization_factor", "normalization_factor"),
+        ]),
+        (normalize_cbf, outputnode, [
+            ("ncbf_file", "ncbf_file"),
+        ]),
+    ])
+    return workflow
+
+
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1368,49 +1497,11 @@ def init_dsc_preproc_wf(
     lesion_stats.inputs.subject_id = subject_id
     lesion_stats.inputs.session_id = session_id
 
-    # -------------------------------------------------------------------
-    # Node 7: CBV Normalization
-    # -------------------------------------------------------------------
-    normalize = pe.Node(
-        niu.Function(
-            input_names=[
-                "cbv_file",
-                "brain_mask_file",
-                "derivatives_dir",
-                "subject_id",
-                "session_id",
-                "nawm_mask_file",
-            ],
-            output_names=["ncbv_file", "normalization_factor"],
-            function=_normalize_cbv,
-        ),
-        name="normalize",
+    normalization_wf = init_dsc_normalization_wf(
+        derivatives_dir=derivatives_dir,
+        subject_id=subject_id,
+        session_id=session_id,
     )
-    normalize.inputs.derivatives_dir = str(derivatives_dir)
-    normalize.inputs.subject_id = subject_id
-    normalize.inputs.session_id = session_id
-
-    # -------------------------------------------------------------------
-    # Node 7b: CBF Normalization (same method as CBV normalization)
-    # -------------------------------------------------------------------
-    normalize_cbf = pe.Node(
-        niu.Function(
-            input_names=[
-                "cbf_file",
-                "brain_mask_file",
-                "derivatives_dir",
-                "subject_id",
-                "session_id",
-                "nawm_mask_file",
-            ],
-            output_names=["ncbf_file", "normalization_factor"],
-            function=_normalize_cbf,
-        ),
-        name="normalize_cbf",
-    )
-    normalize_cbf.inputs.derivatives_dir = str(derivatives_dir)
-    normalize_cbf.inputs.subject_id = subject_id
-    normalize_cbf.inputs.session_id = session_id
 
     # -------------------------------------------------------------------
     # Node 7c: Smoothing (conditional on config.smooth_fwhm > 0)
@@ -1851,26 +1942,19 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
-    # DSC Map Computation to CBV Normalization (uses relative CBV)
-    # Use DSC-space brain mask for fallback normalization
+    # Feed the normalization sub-workflow (rel-CBV / rel-CBF + masks).
+    # The NAWM (preferred) and brain (fallback) masks fan out to both the CBV
+    # and CBF normalizers inside the sub-workflow.
     workflow.connect([
-        (deconvolution_wf, normalize, [("outputnode.out_rel_cbv_auc", "cbv_file")]),
-        (transform_nawm, normalize, [
-            ("nawm_mask_dsc_file", "nawm_mask_file"),
+        (deconvolution_wf, normalization_wf, [
+            ("outputnode.out_rel_cbv_auc", "inputnode.cbv_file"),
+            ("outputnode.out_rel_cbf", "inputnode.cbf_file"),
         ]),
-        (hdbet_dsc, normalize, [
-            ("dsc_brain_mask_file", "brain_mask_file"),
+        (transform_nawm, normalization_wf, [
+            ("nawm_mask_dsc_file", "inputnode.nawm_mask_file"),
         ]),
-    ])
-
-    # DSC Map Computation to CBF Normalization (uses relative CBF)
-    workflow.connect([
-        (deconvolution_wf, normalize_cbf, [("outputnode.out_rel_cbf", "cbf_file")]),
-        (transform_nawm, normalize_cbf, [
-            ("nawm_mask_dsc_file", "nawm_mask_file"),
-        ]),
-        (hdbet_dsc, normalize_cbf, [
-            ("dsc_brain_mask_file", "brain_mask_file"),
+        (hdbet_dsc, normalization_wf, [
+            ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
         ]),
     ])
 
@@ -2003,8 +2087,8 @@ def init_dsc_preproc_wf(
             ("outputnode.out_auc_diff", "auc_diff_map"),
             ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
         ]),
-        (normalize, lesion_stats, [("ncbv_file", "ncbv_map")]),
-        (normalize_cbf, lesion_stats, [("ncbf_file", "ncbf_map")]),
+        (normalization_wf, lesion_stats, [("outputnode.ncbv_file", "ncbv_map")]),
+        (normalization_wf, lesion_stats, [("outputnode.ncbf_file", "ncbf_map")]),
         (deconvolution_wf, lesion_stats, [("outputnode.out_k2", "k2_map")]),
         # AIF provenance — surface PerfusionProcessing.AIF block in
         # the lesion-stats sidecar.
@@ -2050,8 +2134,8 @@ def init_dsc_preproc_wf(
             ("outputnode.out_auc_diff", "auc_diff_map"),
             ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
         ]),
-        (normalize, roi_stats, [("ncbv_file", "ncbv_map")]),
-        (normalize_cbf, roi_stats, [("ncbf_file", "ncbf_map")]),
+        (normalization_wf, roi_stats, [("outputnode.ncbv_file", "ncbv_map")]),
+        (normalization_wf, roi_stats, [("outputnode.ncbf_file", "ncbf_map")]),
         (deconvolution_wf, roi_stats, [("outputnode.out_k2", "k2_map")]),
         (conc_aif_wf, roi_stats, [("outputnode.qc_metrics", "aif_qc")]),
     ])
@@ -2097,8 +2181,8 @@ def init_dsc_preproc_wf(
             ("outputnode.out_auc_diff", "auc_diff_map"),
             ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
         ]),
-        (normalize, user_lesion_stats, [("ncbv_file", "ncbv_map")]),
-        (normalize_cbf, user_lesion_stats, [("ncbf_file", "ncbf_map")]),
+        (normalization_wf, user_lesion_stats, [("outputnode.ncbv_file", "ncbv_map")]),
+        (normalization_wf, user_lesion_stats, [("outputnode.ncbf_file", "ncbf_map")]),
         (deconvolution_wf, user_lesion_stats, [("outputnode.out_k2", "k2_map")]),
         (conc_aif_wf, user_lesion_stats, [("outputnode.qc_metrics", "aif_qc")]),
     ])
@@ -2174,8 +2258,8 @@ def init_dsc_preproc_wf(
                 ("outputnode.out_rel_cbf", "rel_cbf"),
                 ("outputnode.out_rel_cbv_auc", "rel_cbv"),
             ]),
-            (normalize_cbf, build_hemo_dict, [("ncbf_file", "ncbf")]),
-            (normalize, build_hemo_dict, [("ncbv_file", "ncbv")]),
+            (normalization_wf, build_hemo_dict, [("outputnode.ncbf_file", "ncbf")]),
+            (normalization_wf, build_hemo_dict, [("outputnode.ncbv_file", "ncbv")]),
             (build_hemo_dict, smooth_hemodynamic, [("map_dict", "map_files")]),
             (hdbet_dsc, smooth_hemodynamic, [
                 ("dsc_brain_mask_file", "brain_mask_file"),
@@ -2210,7 +2294,7 @@ def init_dsc_preproc_wf(
         (conc_aif_wf, merge_qc, [("outputnode.qc_metrics", "aif_qc")]),
         (deconvolution_wf, merge_qc, [("outputnode.qc_metrics", "deconv_qc")]),
         (registration_wf, merge_qc, [("outputnode.qc_metrics", "registration_qc")]),
-        (normalize, merge_qc, [("normalization_factor", "normalization_factor")]),
+        (normalization_wf, merge_qc, [("outputnode.normalization_factor", "normalization_factor")]),
         (motion_wf, merge_qc, [("outputnode.motion_summary", "motion_summary")]),
         (aif_qc_plot, merge_qc, [("out_aif_metrics", "aif_metrics")]),
         (dsc_preproc_qc, merge_qc, [("stats", "preprocessing_stats")]),
@@ -2281,8 +2365,8 @@ def init_dsc_preproc_wf(
         # Leakage correction (use recomputed K2 from compute_maps when baseline differs)
         (deconvolution_wf, outputnode, [("outputnode.out_k2", "k2_map")]),
         # Normalized CBV and CBF
-        (normalize, outputnode, [("ncbv_file", "ncbv_map")]),
-        (normalize_cbf, outputnode, [("ncbf_file", "ncbf_map")]),
+        (normalization_wf, outputnode, [("outputnode.ncbv_file", "ncbv_map")]),
+        (normalization_wf, outputnode, [("outputnode.ncbf_file", "ncbf_map")]),
         # Registration (.mat for internal consumers)
         (registration_wf, outputnode, [("outputnode.dsc_to_t1w_matrix", "dsc_to_t1w_xfm")]),
         (registration_wf, outputnode, [("outputnode.t1w_to_dsc_matrix", "t1w_to_dsc_xfm")]),
