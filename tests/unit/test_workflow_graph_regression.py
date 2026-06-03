@@ -1,33 +1,45 @@
 """Canonical graph-regression harness for the perfusion preproc workflows.
 
-This is the safety net for the deferred ``init_dce_preproc_wf`` /
-``init_dsc_preproc_wf`` decomposition. It builds each workflow across a matrix
-of construction-gating configurations and compares a four-tier *graph
-signature* against committed golden baselines:
+This is the safety net for the ``init_dce_preproc_wf`` / ``init_dsc_preproc_wf``
+sub-workflow decomposition. It builds each workflow across a matrix of
+construction-gating configurations and compares a *graph signature* against
+committed golden baselines.
 
-1. ``nodes``  -- sorted ``(node_name, interface_qualname)``. The qualname uses
-   the bare ``__qualname__`` (no module prefix) so a deliberate relocation of an
-   interface *class* between modules is invisible, while a genuine class swap
-   still differs.
+The signature is computed over the **flattened-collapsed** graph
+(``flatten_collapsed_graph``): nipype's ``_create_flat_graph`` expands nested
+sub-workflows into leaf nodes, then the INTERNAL sub-workflow ``IdentityInterface``
+passthroughs are spliced out with nipype's own ``_remove_identity_node`` while the
+top-level inputnode/outputnode (the public contract) are kept. This makes the
+signature **invariant under a correct sub-workflow decomposition** (a sub-wf's
+inputnode/outputnode collapse away), while still catching a swapped/dropped/
+mis-wired field across a sub-wf boundary. Internal-vs-top-level identities are
+classified by ``_hierarchy`` (never ``.name`` -- nipype hashes nodes by object
+identity, so many share ``.name == 'inputnode'``).
+
+Seven tiers:
+
+1. ``nodes``  -- sorted ``(node_name, interface_qualname)`` (bare name + bare
+   ``__qualname__``; a module relocation of an interface class is invisible, a
+   class swap differs).
 2. ``edges``  -- sorted field-level ``(src_node, src_field, dst_node, dst_field)``
-   tuples (every ``connect`` field-mapping is flattened; a node-pair may carry
-   several).
-3. ``function_sha256`` -- ``{node_name: sha256(function_str)}`` for every
-   ``niu.Function`` node. nipype serialises each Function body via
-   ``getsource = dedent(inspect.getsource(fn))`` at construction time, so moving
-   a helper between modules (or dedenting an embedded ``def`` to module level)
-   must leave this hash unchanged. This tier proves the helper-extraction PRs
-   are byte-identical.
-4. ``node_params`` -- ``{node_name: {trait: value}}`` for each node's statically
-   set, deterministic, non-path scalar input traits (e.g.
-   ``compute_maps.oi_threshold``, ``.method``). Turns "relocation cannot touch
-   OI=0.065" into "the gate proves it did not". Path-valued traits are dropped
-   so temp/install locations never leak into a baseline.
-5. ``function_io`` -- per ``niu.Function`` node, its declared ``input_names``
-   and ``output_names``. ``output_names`` is a constructor argument that is NOT
-   reflected in ``function_str``, so an added/renamed/dropped output -- in
-   particular an *unconsumed* terminal output, invisible to the ``edges`` tier
-   -- would otherwise pass undetected.
+   tuples (every ``connect`` field-mapping flattened).
+3. ``function_sha256`` -- ``{node_name: sha256(function_str)}`` per ``niu.Function``
+   node (nipype serialises each body via ``getsource`` at construction; unchanged
+   by relocation / decomposition).
+4. ``function_io`` -- per Function node, declared ``input_names``/``output_names``
+   (``output_names`` is not in ``function_str``; catches an unconsumed-output change).
+5. ``node_params`` -- per-node statically-set, deterministic, non-path scalar input
+   traits (e.g. ``compute_maps.oi_threshold``); path-valued traits dropped.
+6. ``node_attrs`` -- per-node ``mem_gb``/``n_procs`` (Node *attributes*, NOT
+   interface inputs, so ``node_params`` cannot see them; catches a dropped
+   ``mem_gb=_heavy_mem`` when a node is moved into a sub-workflow).
+7. ``public_outputnode_fields`` -- the top-level ``outputnode`` field list (pins
+   the public contract even if a field becomes unconsumed).
+
+Tiers 3-6 cover leaf nodes, which a decomposition does not change, so they stay
+identical (independent proof no node behaviour changed). **Documented blind spot:**
+swapping two outputnode fields that carry the *identical* upstream source is
+invisible -- a semantic no-op; negative self-tests use *distinct* sources.
 
 Workflow *construction* is data-free. Acquisition sidecar parameters (TR/TE/flip
 angle) are *injected* post-construction by ``pmriprep.workflows.base``; only that
@@ -52,10 +64,14 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
+import networkx as nx
 import nipype
+import nipype.interfaces.utility as niu
 import nipype.pipeline.engine as pe
 import pytest
 from nipype.interfaces.base import isdefined
+from nipype.interfaces.utility import IdentityInterface
+from nipype.pipeline.engine.utils import _remove_identity_node
 
 from pmriprep.config.dce import DCEConfig
 from pmriprep.config.dsc import DSCConfig
@@ -95,31 +111,41 @@ def _canon_src(src: Any) -> str:
     return str(src)
 
 
-def extract_edges(wf: pe.Workflow) -> list[EdgeTuple]:
-    """Flatten ``wf._graph`` to a canonical, sorted field-level edge list."""
+def extract_edges(graph: Any) -> list[EdgeTuple]:
+    """Canonical, sorted field-level edge list from a (flattened) nx graph."""
     edges: list[EdgeTuple] = []
-    for u, v, data in wf._graph.edges(data=True):
+    for u, v, data in graph.edges(data=True):
         for src, dst in data.get("connect", []) or []:
             edges.append((u.name, _canon_src(src), v.name, str(dst)))
     edges.sort()
     return edges
 
 
-def extract_nodes(wf: pe.Workflow) -> list[NodeTuple]:
-    """Sorted ``(node_name, interface_qualname)`` pairs (bare qualname)."""
+def extract_nodes(graph: Any) -> list[NodeTuple]:
+    """Sorted ``(node_name, interface_qualname)`` pairs (bare name + qualname).
+
+    After flatten-collapse, leaf nodes keep their bare ``.name`` (the sub-wf
+    hierarchy prefix lives on ``_hierarchy``/``fullname``). All current node names
+    are globally unique; the assertion fails loudly if a future sub-wf reuses a
+    bare name, which would collapse two distinct leaves into one tuple -- a
+    false-pass risk.
+    """
     out: list[NodeTuple] = []
-    for n in wf._graph.nodes():
+    seen: set[str] = set()
+    for n in graph.nodes():
         ifc = _iface(n)
         cls = type(ifc) if ifc is not None else type(n)
+        assert n.name not in seen, f"duplicate bare node name after flatten: {n.name!r}"
+        seen.add(n.name)
         out.append((n.name, cls.__qualname__))
     out.sort()
     return out
 
 
-def extract_function_sha256(wf: pe.Workflow) -> dict[str, str]:
+def extract_function_sha256(graph: Any) -> dict[str, str]:
     """``{node_name: sha256(function_str)}`` for every Function node."""
     out: dict[str, str] = {}
-    for n in wf._graph.nodes():
+    for n in graph.nodes():
         ifc = _iface(n)
         fstr = getattr(getattr(ifc, "inputs", None), "function_str", None)
         if isinstance(fstr, str) and fstr.strip():
@@ -127,7 +153,7 @@ def extract_function_sha256(wf: pe.Workflow) -> dict[str, str]:
     return dict(sorted(out.items()))
 
 
-def extract_function_io(wf: pe.Workflow) -> dict[str, dict[str, list[str]]]:
+def extract_function_io(graph: Any) -> dict[str, dict[str, list[str]]]:
     """Per Function node: declared ``input_names`` and ``output_names``.
 
     ``output_names`` is a ``niu.Function`` constructor argument that does not
@@ -136,7 +162,7 @@ def extract_function_io(wf: pe.Workflow) -> dict[str, dict[str, list[str]]]:
     undetected. Names are sorted -- nipype output ordering is semantically inert.
     """
     out: dict[str, dict[str, list[str]]] = {}
-    for n in wf._graph.nodes():
+    for n in graph.nodes():
         ifc = _iface(n)
         if ifc is None or type(ifc).__qualname__ != "Function":
             continue
@@ -176,10 +202,10 @@ def _clean(value: Any) -> Any:
     return _OMIT
 
 
-def extract_node_params(wf: pe.Workflow) -> dict[str, dict[str, Any]]:
+def extract_node_params(graph: Any) -> dict[str, dict[str, Any]]:
     """Per-node statically set, deterministic, non-path scalar input traits."""
     out: dict[str, dict[str, Any]] = {}
-    for n in wf._graph.nodes():
+    for n in graph.nodes():
         ifc = _iface(n)
         inp = getattr(ifc, "inputs", None)
         if inp is None or not hasattr(inp, "copyable_trait_names"):
@@ -201,32 +227,103 @@ def extract_node_params(wf: pe.Workflow) -> dict[str, dict[str, Any]]:
     return dict(sorted(out.items()))
 
 
-def graph_signature(wf: pe.Workflow) -> dict[str, Any]:
-    """Full five-tier signature plus a diagnostic nipype-version stamp.
+def extract_node_attrs(graph: Any) -> dict[str, dict[str, Any]]:
+    """Per-node nipype Node-level resource attributes (``mem_gb``, ``n_procs``).
 
-    ``nipype_version`` is recorded for diagnosis only (nipype is loosely pinned,
-    so it is NOT part of the equality comparison); ``function_sha256`` catches
-    any real serialisation change regardless of version.
-
-    The extractor is intentionally *flat*: it walks ``wf._graph.nodes()`` and
-    does not recurse. Both preproc workflows are flat today (only plain
-    ``pe.Node``s). The guard below fails loudly if a future change (e.g. the
-    deferred sub-workflow decomposition) introduces a nested ``pe.Workflow``,
-    which would otherwise appear as one opaque node and silently drop its
-    internals -- a signal to upgrade the extractor to recurse first.
+    These are Node *attributes*, NOT interface input traits, so ``node_params``
+    never sees them. A dropped ``mem_gb=_heavy_mem`` while relocating a node into
+    a sub-workflow would otherwise be invisible to every other tier.
     """
-    nested = [n.name for n in wf._graph.nodes() if isinstance(n, pe.Workflow)]
-    assert not nested, (
-        f"flat graph signature cannot capture nested sub-workflow(s) {nested}; "
-        "upgrade the extractor to recurse before relying on it"
-    )
+    out: dict[str, dict[str, Any]] = {}
+    for n in graph.nodes():
+        rec: dict[str, Any] = {}
+        mem = getattr(n, "mem_gb", None)
+        if isinstance(mem, (int, float)) and not isinstance(mem, bool):
+            rec["mem_gb"] = mem
+        nprocs = getattr(n, "n_procs", None)
+        if isinstance(nprocs, int) and not isinstance(nprocs, bool):
+            rec["n_procs"] = nprocs
+        if rec:
+            out[n.name] = dict(sorted(rec.items()))
+    return dict(sorted(out.items()))
+
+
+def extract_public_outputnode_fields(graph: Any) -> list[str]:
+    """Sorted field list of the top-level ``outputnode`` IdentityInterface.
+
+    Pins the public output contract: catches a renamed/dropped public field even
+    if it becomes unconsumed (which the ``edges`` tier can miss). After collapse
+    the only ``outputnode`` is the top-level one (sub-wf outputnodes are spliced).
+    Does NOT close the same-source field-swap blind spot (that swaps which output
+    gets a value, not the field set).
+    """
+    for n in graph.nodes():
+        if n.name == "outputnode" and isinstance(_iface(n), IdentityInterface):
+            inp = getattr(_iface(n), "inputs", None)
+            if inp is not None and hasattr(inp, "copyable_trait_names"):
+                return sorted(inp.copyable_trait_names())
+    return []
+
+
+def _is_internal_identity(node: Any, top_name: str) -> bool:
+    """True for a SUB-workflow inputnode/outputnode (not the top-level pair).
+
+    After ``_create_flat_graph`` every leaf keeps its bare ``.name`` but carries
+    the enclosing hierarchy on ``_hierarchy``. The two top-level IdentityInterface
+    nodes have ``_hierarchy == top_name``; sub-workflow identities are strictly
+    deeper. Key on ``_hierarchy`` (never ``.name``) -- nipype hashes graph nodes
+    by object identity, so multiple nodes share ``.name == 'inputnode'``.
+    """
+    if not isinstance(_iface(node), IdentityInterface):
+        return False
+    return (getattr(node, "_hierarchy", None) or "") != top_name
+
+
+def flatten_collapsed_graph(wf: pe.Workflow) -> Any:
+    """``wf``'s execution-flattened graph with INTERNAL sub-workflow identity
+    passthroughs spliced out and the top-level inputnode/outputnode preserved.
+
+    Computed over a deep copy (``_create_flat_graph`` deepcopies; ``wf`` is never
+    mutated). Reuses nipype's own ``_remove_identity_node`` so field-mapping
+    propagation across a sub-wf boundary is identical to the execution engine's.
+    Splice order follows ``nx.topological_sort`` (chained identities collapse
+    correctly). The resulting leaf-to-leaf edge set is invariant under a correct
+    decomposition -- the load-bearing premise (verified empirically and pinned by
+    ``test_flatten_collapse_matches_legacy_flat_on_monolith``).
+    """
+    g = wf._create_flat_graph()
+    top = wf.name
+    for node in list(nx.topological_sort(g)):
+        if _is_internal_identity(node, top):
+            _remove_identity_node(g, node)
+    remaining = [n.name for n in g.nodes() if isinstance(n, pe.Workflow)]
+    assert not remaining, f"flatten left nested workflow(s): {remaining}"
+    return g
+
+
+def graph_signature(wf: pe.Workflow) -> dict[str, Any]:
+    """Seven-tier signature over the flattened-collapsed graph + a diagnostic
+    ``nipype_version`` stamp (NOT compared -- nipype is loosely pinned;
+    ``function_sha256`` catches any real serialisation change regardless).
+
+    The graph is flattened (nested sub-workflows expanded to leaf nodes) and the
+    internal sub-wf IdentityInterface passthroughs are spliced out, so the
+    signature is invariant under a correct sub-workflow decomposition.
+    ``function_sha256``/``function_io``/``node_params``/``node_attrs`` cover leaf
+    nodes (unchanged by decomposition); ``public_outputnode_fields`` pins the
+    public contract. Blind spot: swapping two outputnode fields carrying the
+    *identical* source is invisible (a semantic no-op).
+    """
+    g = flatten_collapsed_graph(wf)
     return {
         "nipype_version": nipype.__version__,
-        "nodes": extract_nodes(wf),
-        "edges": extract_edges(wf),
-        "function_sha256": extract_function_sha256(wf),
-        "function_io": extract_function_io(wf),
-        "node_params": extract_node_params(wf),
+        "nodes": extract_nodes(g),
+        "edges": extract_edges(g),
+        "function_sha256": extract_function_sha256(g),
+        "function_io": extract_function_io(g),
+        "node_params": extract_node_params(g),
+        "node_attrs": extract_node_attrs(g),
+        "public_outputnode_fields": extract_public_outputnode_fields(g),
     }
 
 
@@ -361,6 +458,12 @@ def test_graph_matches_baseline(name: str, builder: Builder, bids: Path) -> None
         f"{name}: a Function-node input/output name set changed"
     )
     assert expected["node_params"] == sig["node_params"], f"{name}: a node parameter changed"
+    assert expected["node_attrs"] == sig["node_attrs"], (
+        f"{name}: a node attribute (mem_gb/n_procs) changed"
+    )
+    assert expected["public_outputnode_fields"] == sig["public_outputnode_fields"], (
+        f"{name}: public outputnode field contract changed"
+    )
 
 
 def test_regen_flag_not_set_in_normal_run() -> None:
@@ -396,60 +499,166 @@ def test_dsc_method_is_parameter_not_topology(bids: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sensitivity tests -- prove the comparator rejects the real failure modes
+# Sensitivity tests -- prove the harness CATCHES real regressions by building
+# REAL workflows (a correct one and a deliberately-broken one) and comparing the
+# full graph_signature. (Mutating an extracted list would test Python, not the
+# comparator -- so we never do that.) Toy leaves use niu.Merge (non-identity, so
+# they survive the collapse); niu.Function is avoided (it rejects
+# interactively-defined functions).
 # ---------------------------------------------------------------------------
-def test_sensitivity_field_swap(bids: Path) -> None:
-    """A swapped src field on one edge must change the edge list."""
-    edges = extract_edges(_dce(bids))
-    assert edges
-    mutated = list(edges)
-    s, sf, d, df = mutated[0]
-    mutated[0] = (s, sf + "_SWAPPED", d, df)
-    assert sorted(mutated) != edges
-
-
-def test_sensitivity_node_rename(bids: Path) -> None:
-    """A renamed node must change the node set."""
-    nodes = extract_nodes(_dce(bids))
-    assert nodes
-    mutated = [("RENAMED_" + n, q) if i == 0 else (n, q) for i, (n, q) in enumerate(nodes)]
-    assert sorted(mutated) != nodes
-
-
-def test_sensitivity_dropped_edge(bids: Path) -> None:
-    """A dropped optional-output edge must change the edge list."""
-    edges = extract_edges(_dce(bids))
-    assert len(edges) > 1
-    assert sorted(edges[1:]) != edges
-
-
 def test_sensitivity_function_str_change(bids: Path) -> None:
     """Perturbing a Function node's serialised source changes its hash."""
-    wf = _dsc(bids)
-    before = extract_function_sha256(wf)
+    g = flatten_collapsed_graph(_dsc(bids))
+    before = extract_function_sha256(g)
     target = next(
-        n for n in wf._graph.nodes()
+        n for n in g.nodes()
         if isinstance(getattr(getattr(_iface(n), "inputs", None), "function_str", None), str)
         and getattr(_iface(n).inputs, "function_str").strip()
     )
     _iface(target).inputs.function_str = (
         _iface(target).inputs.function_str + "\n# perturbation\n"
     )
-    after = extract_function_sha256(wf)
+    after = extract_function_sha256(g)
     assert before != after
     assert before[target.name] != after[target.name]
 
 
 def test_sensitivity_physics_param_drift(bids: Path) -> None:
     """Changing a physics kwarg (oSVD OI threshold) changes node_params."""
-    wf = _dsc(bids)
-    before = extract_node_params(wf)
-    cm = next(n for n in wf._graph.nodes() if n.name == "compute_maps")
+    g = flatten_collapsed_graph(_dsc(bids))
+    before = extract_node_params(g)
+    cm = next(n for n in g.nodes() if n.name == "compute_maps")
     assert before["compute_maps"]["oi_threshold"] == 0.065
     _iface(cm).inputs.oi_threshold = 0.1
-    after = extract_node_params(wf)
+    after = extract_node_params(g)
     assert before != after
     assert after["compute_maps"]["oi_threshold"] == 0.1
+
+
+# -- toy workflows for the decomposition self-tests -------------------------
+def _toy_monolith() -> pe.Workflow:
+    """Flat: inputnode.src -> {leaf_a.in1, leaf_b.in1}; leaf_a.out->out.p, leaf_b.out->out.q."""
+    wf = pe.Workflow(name="toy_wf")
+    inp = pe.Node(niu.IdentityInterface(fields=["src"]), name="inputnode")
+    out = pe.Node(niu.IdentityInterface(fields=["p", "q"]), name="outputnode")
+    a = pe.Node(niu.Merge(2), name="leaf_a")
+    b = pe.Node(niu.Merge(2), name="leaf_b")
+    wf.connect([
+        (inp, a, [("src", "in1")]), (inp, b, [("src", "in1")]),
+        (a, out, [("out", "p")]), (b, out, [("out", "q")]),
+    ])
+    return wf
+
+
+def _toy_one_subwf(*, swap: bool = False, drop: bool = False, miswire: bool = False) -> pe.Workflow:
+    """Same leaves wrapped in one sub-wf; flags inject a specific regression."""
+    sub = pe.Workflow(name="sub_wf")
+    si = pe.Node(niu.IdentityInterface(fields=["src"]), name="inputnode")
+    fields = ["p"] if drop else ["p", "q"]
+    so = pe.Node(niu.IdentityInterface(fields=fields), name="outputnode")
+    a = pe.Node(niu.Merge(2), name="leaf_a")
+    b = pe.Node(niu.Merge(2), name="leaf_b")
+    a_dst = "in2" if miswire else "in1"      # mis-wired inputnode->leaf field
+    conn = [(si, a, [("src", a_dst)]), (si, b, [("src", "in1")])]
+    if drop:
+        conn += [(a, so, [("out", "p")])]
+    elif swap:                               # distinct-source crossed outputs
+        conn += [(a, so, [("out", "q")]), (b, so, [("out", "p")])]
+    else:
+        conn += [(a, so, [("out", "p")]), (b, so, [("out", "q")])]
+    sub.connect(conn)
+    wf = pe.Workflow(name="toy_wf")
+    inp = pe.Node(niu.IdentityInterface(fields=["src"]), name="inputnode")
+    out = pe.Node(niu.IdentityInterface(fields=fields), name="outputnode")
+    wf.connect([(inp, sub, [("src", "inputnode.src")])]
+               + [(sub, out, [(f"outputnode.{f}", f)]) for f in fields])
+    return wf
+
+
+def _toy_chain_monolith() -> pe.Workflow:
+    """Flat chain: inputnode.src -> leaf_a -> leaf_b -> outputnode.dst."""
+    wf = pe.Workflow(name="toy_wf")
+    inp = pe.Node(niu.IdentityInterface(fields=["src"]), name="inputnode")
+    out = pe.Node(niu.IdentityInterface(fields=["dst"]), name="outputnode")
+    a = pe.Node(niu.Merge(2), name="leaf_a")
+    b = pe.Node(niu.Merge(2), name="leaf_b")
+    wf.connect([(inp, a, [("src", "in1")]), (a, b, [("out", "in1")]),
+                (b, out, [("out", "dst")])])
+    return wf
+
+
+def _toy_chain_two_subwf(*, broken: bool = False) -> pe.Workflow:
+    """Two sub-wfs chained; ``broken`` omits the sub_a->sub_b handoff edge."""
+    sub_a = pe.Workflow(name="sub_a_wf")
+    ai = pe.Node(niu.IdentityInterface(fields=["src"]), name="inputnode")
+    ao = pe.Node(niu.IdentityInterface(fields=["mid"]), name="outputnode")
+    la = pe.Node(niu.Merge(2), name="leaf_a")
+    sub_a.connect([(ai, la, [("src", "in1")]), (la, ao, [("out", "mid")])])
+    sub_b = pe.Workflow(name="sub_b_wf")
+    bi = pe.Node(niu.IdentityInterface(fields=["mid"]), name="inputnode")
+    bo = pe.Node(niu.IdentityInterface(fields=["dst"]), name="outputnode")
+    lb = pe.Node(niu.Merge(2), name="leaf_b")
+    sub_b.connect([(bi, lb, [("mid", "in1")]), (lb, bo, [("out", "dst")])])
+    wf = pe.Workflow(name="toy_wf")
+    inp = pe.Node(niu.IdentityInterface(fields=["src"]), name="inputnode")
+    out = pe.Node(niu.IdentityInterface(fields=["dst"]), name="outputnode")
+    conn = [(inp, sub_a, [("src", "inputnode.src")]),
+            (sub_b, out, [("outputnode.dst", "dst")])]
+    if not broken:
+        conn.append((sub_a, sub_b, [("outputnode.mid", "inputnode.mid")]))
+    wf.connect(conn)
+    return wf
+
+
+def test_decomposition_invisible_one_subwf() -> None:
+    """A correct 1-sub-wf decomposition collapses to the monolith's signature."""
+    assert graph_signature(_toy_monolith()) == graph_signature(_toy_one_subwf())
+
+
+def test_decomposition_invisible_two_subwf() -> None:
+    """A correct 2-sub-wf decomposition (mirrors the PR1->PR2 handoff) is invisible."""
+    assert graph_signature(_toy_chain_monolith()) == graph_signature(_toy_chain_two_subwf())
+
+
+def test_wrong_decomposition_dropped_output_caught() -> None:
+    assert graph_signature(_toy_monolith()) != graph_signature(_toy_one_subwf(drop=True))
+
+
+def test_wrong_decomposition_swapped_output_caught() -> None:
+    """Crossing two outputnode fields with DISTINCT sources changes the edges.
+
+    (A *same-source* swap is a semantic no-op and intentionally invisible.)
+    """
+    assert graph_signature(_toy_monolith()) != graph_signature(_toy_one_subwf(swap=True))
+
+
+def test_wrong_decomposition_miswired_input_caught() -> None:
+    assert graph_signature(_toy_monolith()) != graph_signature(_toy_one_subwf(miswire=True))
+
+
+def test_wrong_decomposition_broken_handoff_caught() -> None:
+    """A 2-sub-wf decomposition missing the sub_a->sub_b handoff is caught."""
+    assert graph_signature(_toy_chain_monolith()) != graph_signature(_toy_chain_two_subwf(broken=True))
+
+
+def test_flatten_collapse_matches_legacy_flat_on_monolith(bids: Path) -> None:
+    """On an UN-decomposed monolith, flatten+collapse reproduces the legacy flat
+    graph exactly -- the equivalence that keeps the 5 original baseline tiers
+    unchanged after the harness rewrite.
+    """
+    for build in (_dsc, _dce):
+        wf = build(bids)
+        legacy_nodes = sorted(
+            (n.name, type(_iface(n) or n).__qualname__) for n in wf._graph.nodes()
+        )
+        legacy_edges: list[EdgeTuple] = []
+        for u, v, d in wf._graph.edges(data=True):
+            for s, dd in d.get("connect", []) or []:
+                legacy_edges.append((u.name, _canon_src(s), v.name, str(dd)))
+        legacy_edges.sort()
+        g = flatten_collapsed_graph(wf)
+        assert extract_nodes(g) == legacy_nodes
+        assert extract_edges(g) == legacy_edges
 
 
 def test_determinism_path_independent(tmp_path: Path) -> None:

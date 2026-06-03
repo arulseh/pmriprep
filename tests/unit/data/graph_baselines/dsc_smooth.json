@@ -1970,6 +1970,184 @@
     "validate_user_lesion_mask": "101bbd09f95c1cce98d73492199f454568b79d5dffec25ec04a6ccd7b67139c8"
   },
   "nipype_version": "1.10.0",
+  "node_attrs": {
+    "aif_detect": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "aif_qc_plot": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "build_auc_dict": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "build_hemo_dict": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "combine_masks": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "compute_maps": {
+      "mem_gb": 4.0,
+      "n_procs": 1
+    },
+    "concat_mni_to_dsc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "convert_inv_dsc_h5": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dsc_brain_mask_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dsc_fit_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dsc_leakage_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dsc_param_maps_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dsc_preproc_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dsc_reorient": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "extract_preload": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "hdbet_dsc": {
+      "mem_gb": 2.0,
+      "n_procs": 1
+    },
+    "hist_match_t1w": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "inputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "invert_dsc_xfm": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "invert_mni_xfm": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "lesion_stats": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "merge_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "motion_correct": {
+      "mem_gb": 4.0,
+      "n_procs": 1
+    },
+    "motion_qc_plot": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "normalize": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "normalize_cbf": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "outputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "prebolus_mean": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "preload_correct": {
+      "mem_gb": 4.0,
+      "n_procs": 1
+    },
+    "reg_filmstrip": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "register": {
+      "mem_gb": 2.0,
+      "n_procs": 1
+    },
+    "roi_stats": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "select_aif_exclusion": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "signal_to_conc": {
+      "mem_gb": 4.0,
+      "n_procs": 1
+    },
+    "smooth_auc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "smooth_hemodynamic": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_atlas": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_enhancing_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_full_atlas": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_lesion": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_nawm": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "user_lesion_stats": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "validate_roi_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "validate_user_lesion_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    }
+  },
   "node_params": {
     "aif_detect": {
       "agent_standard_dose": 0.1,
@@ -2345,5 +2523,78 @@
       "validate_user_lesion_mask",
       "Function"
     ]
+  ],
+  "public_outputnode_fields": [
+    "aif_candidates_plot",
+    "aif_curve",
+    "aif_curve_plot",
+    "aif_location_plot",
+    "aif_mask",
+    "aif_metrics",
+    "aif_qc",
+    "alpha_map",
+    "auc_diff_map",
+    "beta_map",
+    "brain_mask_dsc",
+    "brain_mask_filmstrip",
+    "cbf_ci95_lower_map",
+    "cbf_ci95_upper_map",
+    "cbf_cv_map",
+    "cbf_std_map",
+    "cbv_ci95_lower_map",
+    "cbv_ci95_upper_map",
+    "cbv_cv_map",
+    "cbv_std_map",
+    "cnr_map",
+    "cth_map",
+    "dsc_fit_qc_plot",
+    "dsc_leakage_qc_plot",
+    "dsc_mean",
+    "dsc_moco",
+    "dsc_param_maps_qc_plot",
+    "dsc_preprocessing_qc_plot",
+    "dsc_to_t1w_h5",
+    "dsc_to_t1w_xfm",
+    "fallback_mask",
+    "flair_in_dsc",
+    "k2_map",
+    "lesion_mask_dsc",
+    "lesion_stats_json",
+    "motion_params",
+    "motion_qc",
+    "motion_qc_plot",
+    "mtt_map",
+    "nawm_mask_dsc",
+    "ncbf_map",
+    "ncbv_map",
+    "parametric_r2_map",
+    "ph_map",
+    "preload_qc",
+    "preprocessing_stats",
+    "psr_map",
+    "qc_metrics",
+    "registration_filmstrip",
+    "rel_auc_corr_map",
+    "rel_auc_raw_map",
+    "rel_cbf_map",
+    "rel_cbv_auc_map",
+    "rel_cbv_map",
+    "roi_mask_dsc",
+    "roi_stats_json",
+    "rttp_map",
+    "smooth_auc",
+    "smooth_hemodynamic",
+    "snr_map",
+    "t1w_in_dsc",
+    "t1w_postcon_in_dsc",
+    "t1w_to_dsc_h5",
+    "t1w_to_dsc_xfm",
+    "t2w_in_dsc",
+    "tmax_map",
+    "tsnr_map",
+    "ttp_corrected_map",
+    "ttp_map",
+    "user_lesion_mask_dsc",
+    "user_lesion_stats_json"
   ]
 }
