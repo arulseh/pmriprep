@@ -34,8 +34,10 @@ WORKFLOW_FILES = [
     "pmriprep/workflows/anat/datasinks.py",
     "pmriprep/workflows/base.py",
     "pmriprep/workflows/dce/base.py",
+    "pmriprep/workflows/dce/_helpers.py",
     "pmriprep/workflows/dce/datasinks.py",
     "pmriprep/workflows/dsc/base.py",
+    "pmriprep/workflows/dsc/_helpers.py",
     "pmriprep/workflows/dsc/datasinks.py",
     "pmriprep/workflows/tumor_seg/base.py",
     "pmriprep/workflows/tumor_seg/datasinks.py",
@@ -57,12 +59,24 @@ def _walk_funcs(node):
 def _collect_function_node_helpers():
     cases = []
     repo_root = Path(__file__).resolve().parents[2]
+
+    # Gather sources once, and the GLOBAL set of names used as ``function=_X``
+    # across all workflow modules. Usage-site and def-site may live in different
+    # files (e.g. a helper used in ``dce/base.py`` but defined in
+    # ``dce/_helpers.py`` after the helper extraction), so target discovery must
+    # not be scoped per-file.
+    sources = {}
+    target_names: set[str] = set()
     for relpath in WORKFLOW_FILES:
         f = repo_root / relpath
         if not f.exists():
             continue
         src = f.read_text()
-        target_names = set(re.findall(r"function=(_\w+)", src))
+        sources[relpath] = src
+        target_names |= set(re.findall(r"function=(_\w+)", src))
+
+    # Find each target helper's def wherever it is defined.
+    for relpath, src in sources.items():
         tree = ast.parse(src)
         module_names = _module_level_names(tree)
         for func in _walk_funcs(tree):
